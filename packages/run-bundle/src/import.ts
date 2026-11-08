@@ -34,6 +34,7 @@ import {
 } from '@farmslot/protocol/runs/portable-bundle';
 
 import { readBundleManifestFromDir, unpackFarmrunArchive } from './archive.js';
+import { isRunBundleMedia } from './copy-tree.js';
 import {
   appendDecisionHistoryFile,
   decisionHistoryFile,
@@ -41,12 +42,7 @@ import {
 } from './decision-history.js';
 import { sha256File, sha256Text } from './hashing.js';
 import { resolveRunsDir } from './paths.js';
-import {
-  isRunBundleMedia,
-  materializeRunBundle,
-  openRunBundleStore,
-  type RunBundleStore,
-} from './retained.js';
+import { materializeRunBundle, openRunBundleStore, type RunBundleStore } from './retained.js';
 import {
   assertSafeBundleRelativePath,
   assertSafeBundleSegment,

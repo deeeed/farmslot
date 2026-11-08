@@ -44,7 +44,11 @@ import {
 } from '@farmslot/protocol/runs/portable-bundle';
 
 import { loadAllRunRecords } from './collect.js';
-import { shouldSkipBundleFilesystemEntry } from './copy-tree.js';
+import {
+  isRunBundleMedia,
+  shouldSkipBundleFile,
+  shouldSkipBundleFilesystemEntry,
+} from './copy-tree.js';
 import {
   captureDecisionHistoryPrefix,
   decisionHistoryFile,
@@ -755,10 +759,6 @@ export function parseRunBundleMissingData(entry: string): { reason: string; path
   return split < 0
     ? { reason: '', path: entry }
     : { reason: entry.slice(0, split), path: entry.slice(split + 1) };
-}
-
-export function isRunBundleMedia(file: string): boolean {
-  return /\.(?:png|jpe?g|gif|webp|mp4|mov|webm|m4v|mp3|m4a|wav)$/iu.test(file);
 }
 
 // One awaited stat at a time cost ~5 ms each inside a busy gateway, so a walk over
@@ -2290,7 +2290,9 @@ export async function materializeRunBundle(
       for (const artifact of ordered) {
         assertSafeBundleRelativePath(artifact.path);
         if (
-          artifact.path
+          shouldSkipBundleFile(path.posix.basename(artifact.path)) ||
+          path.posix
+            .dirname(artifact.path)
             .split('/')
             .some((segment) => shouldSkipBundleFilesystemEntry(segment, false))
         ) {

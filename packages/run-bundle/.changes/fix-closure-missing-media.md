@@ -1,0 +1,1 @@
+- Retain media files whose name mentions a token, secret or credential (for example `evidence-ac3-token-format.png`); non-media files and folders with those names stay excluded.

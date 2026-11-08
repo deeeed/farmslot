@@ -17,6 +17,10 @@ const SENSITIVE_FILE_NAMES = new Set([
 ]);
 const SENSITIVE_FILE_SUFFIXES = ['.pem', '.key', '.p12', '.pfx'];
 
+export function isRunBundleMedia(file: string): boolean {
+  return /\.(?:png|jpe?g|gif|webp|mp4|mov|webm|m4v|mp3|m4a|wav)$/iu.test(file);
+}
+
 export function shouldSkipBundleFilesystemEntry(name: string, isDirectory: boolean): boolean {
   if (isDirectory) return SKIP_DIR_NAMES.has(name);
   if (SENSITIVE_FILE_NAMES.has(name)) return true;
@@ -28,16 +32,25 @@ export function shouldSkipBundleFilesystemEntry(name: string, isDirectory: boole
   return false;
 }
 
+/** A media file's name describes what it shows (evidence-ac3-token-format.png), not a secret. */
+export function shouldSkipBundleFile(name: string): boolean {
+  return shouldSkipBundleFilesystemEntry(name, false) && !isRunBundleMedia(name);
+}
+
 export function copyDirectoryRecursive(sourceDir: string, destDir: string): void {
   if (!existsSync(sourceDir)) return;
   mkdirSync(destDir, { recursive: true });
   for (const entry of readdirSync(sourceDir)) {
-    if (shouldSkipBundleFilesystemEntry(entry, false)) continue;
+    if (shouldSkipBundleFile(entry)) continue;
     const sourcePath = path.join(sourceDir, entry);
     const destPath = path.join(destDir, entry);
     const stats = statSync(sourcePath);
     if (stats.isDirectory()) {
-      if (shouldSkipBundleFilesystemEntry(entry, true)) continue;
+      if (
+        shouldSkipBundleFilesystemEntry(entry, false) ||
+        shouldSkipBundleFilesystemEntry(entry, true)
+      )
+        continue;
       copyDirectoryRecursive(sourcePath, destPath);
       continue;
     }
@@ -66,7 +79,7 @@ export function registerDirectoryEntries(
         walk(sourcePath);
         continue;
       }
-      if (shouldSkipBundleFilesystemEntry(entry, false)) continue;
+      if (shouldSkipBundleFile(entry)) continue;
       if (!stats.isFile()) continue;
       const relative = path.relative(bundleRoot, sourcePath).replace(/\\/g, '/');
       assertSafeBundleRelativePath(relative);

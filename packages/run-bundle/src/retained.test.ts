@@ -154,6 +154,46 @@ test('gateway-written files are retained from their own directory, not the sourc
   }
 });
 
+test('a screenshot whose name mentions a token is retained; a token file or secrets folder is not', async (t) => {
+  const f = await fixture(t);
+  const declared: ArtifactRef[] = [];
+  for (const [name, body] of [
+    ['screenshots/evidence-ac3-token-format.png', 'png bytes'],
+    ['api-token.txt', 'not for the bundle'],
+    ['token.pem', 'key bytes'],
+    ['credentials.json', '{}'],
+    ['secrets/shot.png', 'png under a sensitive folder'],
+    ['client-secret.png/id_rsa', 'key under a media-named folder'],
+  ]) {
+    await mkdir(path.dirname(path.join(f.taskDir, 'artifacts', name)), { recursive: true });
+    await writeFile(path.join(f.taskDir, 'artifacts', name), body);
+    declared.push({
+      path: `artifacts/${name}`,
+      purpose: name.endsWith('.png') ? 'screenshot' : 'other',
+      sha256: createHash('sha256').update(body).digest('hex'),
+      sizeBytes: Buffer.byteLength(body),
+    });
+  }
+  const result = await materializeRunBundle({
+    ...f.request,
+    artifacts: [...f.artifacts, ...declared],
+  });
+  assert.deepEqual(result.missingData, [
+    'excluded:artifacts/api-token.txt',
+    'excluded:artifacts/client-secret.png/id_rsa',
+    'excluded:artifacts/credentials.json',
+    'excluded:artifacts/token.pem',
+    'excluded:artifacts/secrets/shot.png',
+  ]);
+  const entry = await resolveRunBundleEntry({
+    store: f.store,
+    ref: result.ref,
+    runId: f.run.id,
+    path: 'artifacts/screenshots/evidence-ac3-token-format.png',
+  });
+  assert.equal(await readFile(entry.path, 'utf8'), 'png bytes');
+});
+
 test('published capture retries its failed Run commit with identical manifest and no source read', async (t) => {
   const f = await fixture(t);
   await assert.rejects(
