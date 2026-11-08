@@ -440,6 +440,8 @@ export function createGatewayResourceCache(
     // A retired store's late I/O failure cannot replace the new principal's store.
     if (failed !== store || disposed) return;
     replaceStore(createMemoryResourceStore());
+    // Retry on the next connection lifecycle, never in an I/O failure loop.
+    needsStore = options.openStore !== undefined;
     storageNotice = `Cached data will not survive a restart: ${queryError(error).message}`;
     if (metadata) await store.setMetadata(metadata);
     try {
@@ -520,7 +522,7 @@ export function createGatewayResourceCache(
     } catch (error) {
       await recoverStore(error);
     }
-    needsStore = false;
+    needsStore = options.openStore !== undefined && !store.persistent;
     for (const entry of entries.values()) if (entry.state.status !== 'ready') hydrateEntry(entry);
   }
 

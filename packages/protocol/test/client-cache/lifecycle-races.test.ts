@@ -157,6 +157,57 @@ test('storage write failure retains the current in-memory value and a visible no
   }
 });
 
+for (const failure of ['write', 'open', 'fallback'] as const) {
+  test(`a reconnect restores persistence after a temporary store ${failure} failure`, async () => {
+    const saved = createMemoryResourceStore();
+    const healthy: ResourceStore = { ...saved, persistent: true };
+    let opens = 0;
+    const notices: Array<string | undefined> = [];
+    const transport = new ResourceCacheConformanceTransport(scope);
+    transport.setConnection({ connected: true, id: 1 });
+    const cache = createGatewayResourceCache({
+      transport,
+      onStorageNotice: (notice) => notices.push(notice),
+      openStore: async () => {
+        if (++opens > 1) return healthy;
+        if (failure === 'open') throw new Error('temporary storage I/O error');
+        if (failure === 'fallback') return createMemoryResourceStore();
+        return {
+          ...createMemoryResourceStore(),
+          persistent: true,
+          putQuery: async () => {
+            throw new Error('temporary storage I/O error');
+          },
+        };
+      },
+    });
+    try {
+      const first = cache.retry(query);
+      (await transport.nextRead()).resolve({ value: 'kept while storage is unavailable' });
+      assert.equal((await first).data?.value, 'kept while storage is unavailable');
+      if (failure !== 'fallback')
+        assert.match(cache.read(query).storageNotice!, /temporary storage I\/O error/);
+      assert.equal(opens, 1, 'Storage failures must not create an immediate retry loop');
+
+      transport.setConnection({ connected: false }, 'network');
+      assert.equal(cache.read(query).data?.value, 'kept while storage is unavailable');
+      transport.setConnection({ connected: true, id: 2 });
+      const reconnected = cache.retry(query);
+      (await transport.nextRead()).resolve({ value: 'saved after storage recovered' });
+      await reconnected;
+      assert.equal(opens, 2, 'A reconnect must reopen the persistent store');
+      assert.equal(cache.read(query).storageNotice, undefined);
+      assert.equal(notices.at(-1), undefined, 'A persistent store clears the visible notice');
+      assert.equal(
+        (await saved.getQuery<{ value: string }>(query.id))?.data.value,
+        'saved after storage recovered',
+      );
+    } finally {
+      await cache.dispose();
+    }
+  });
+}
+
 test('an old gateway is unsupported without a retry loop', async () => {
   const transport = new ResourceCacheConformanceTransport(scope);
   transport.setConnection({ connected: true, id: 1, capabilities: undefined });

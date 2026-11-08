@@ -42,6 +42,7 @@ export class ResourceStoreNotice extends LitElement {
       bottom: 8px;
       z-index: 200;
       pointer-events: none;
+      max-width: calc(100vw - 24px);
     }
     div {
       padding: 4px 8px;
@@ -52,7 +53,8 @@ export class ResourceStoreNotice extends LitElement {
       font:
         12px/18px 'SF Mono',
         monospace;
-      white-space: nowrap;
+      white-space: normal;
+      overflow-wrap: anywhere;
     }
   `;
   connectedCallback() {
@@ -68,9 +70,7 @@ export class ResourceStoreNotice extends LitElement {
   }
   render() {
     return this.notice
-      ? html`<div role="status" data-testid="resource-store-notice">
-          Offline data will not survive a restart in this tab.
-        </div>`
+      ? html`<div role="status" data-testid="resource-store-notice">${this.notice}</div>`
       : nothing;
   }
 }
