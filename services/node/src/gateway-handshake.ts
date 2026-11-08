@@ -198,6 +198,7 @@ export interface NodeRegisterOptions {
   capabilities: RecipeRuntimeCapabilityDeclaration[];
   nativeSessions?: NativeExecutionNodeDeclaration;
   execCancellation?: boolean;
+  taskRuntime?: 1;
   /** The node checks `expectedHash` on file writes (ADR-009 Amendment 1). */
   conditionalWrites?: boolean;
   /** The node types a `tmux.send` carrying `seq` once per (pane, stream, n). */
@@ -238,6 +239,7 @@ export async function registerNode(
         ? { observationCapabilities: options.observationCapabilities }
         : {}),
       ...(options.execCancellation ? { execCancellation: true } : {}),
+      ...(options.taskRuntime === 1 ? { taskRuntime: 1 } : {}),
       ...(options.conditionalWrites ? { conditionalWrites: true } : {}),
       ...(options.terminalInputSequence ? { terminalInputSequence: true } : {}),
       ...(options.nativeSessions ? { nativeSessions: options.nativeSessions } : {}),

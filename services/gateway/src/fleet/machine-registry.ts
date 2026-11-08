@@ -31,6 +31,7 @@ export interface ConnectedNode extends PeerVersionDeclaration {
   /** URL the node itself dials to reach this gateway (its GATEWAY_URL). */
   gatewayUrl?: string;
   execCancellation?: boolean;
+  taskRuntime?: 1;
   /** The node checks `expectedHash` on file writes (ADR-009 Amendment 1). */
   conditionalWrites?: boolean;
   /** The node types a `tmux.send` carrying `seq` once per (pane, stream, n). */
@@ -81,6 +82,7 @@ export function registerNode(
     gateway?: PeerVersionDeclaration;
     nodeLink?: NodeLinkCapabilities;
     nodePrincipal?: NodeLinkPrincipal;
+    taskRuntime?: 1;
   },
 ): void {
   const declaration = { ...versions?.node, protocolVersion };
@@ -97,6 +99,7 @@ export function registerNode(
     pid,
     ...(versions?.nodeLink ? { nodeLink: versions.nodeLink } : {}),
     ...(versions?.nodePrincipal ? { nodePrincipal: versions.nodePrincipal } : {}),
+    ...(versions?.taskRuntime === 1 ? { taskRuntime: 1 } : {}),
     connectedAt: new Date().toISOString(),
     ...declaration,
     versionMatch: compatibility.compatible,
@@ -152,6 +155,7 @@ export function getAllNodes(): NodeInfo[] {
     versionMatch: node.versionMatch,
     compatibilityReason: node.compatibilityReason,
     ...(node.execCancellation ? { execCancellation: true } : {}),
+    ...(node.taskRuntime === 1 ? { taskRuntime: 1 } : {}),
     ...(node.conditionalWrites ? { conditionalWrites: true } : {}),
     ...(node.terminalInputSequence ? { terminalInputSequence: true } : {}),
     uptime: (Date.now() - new Date(node.connectedAt).getTime()) / 1000,

@@ -6,9 +6,11 @@ import {
   type NodeFsPathParams,
   NodeLinkFailure,
   type NodeLinkProcessInput,
+  type NodeLinkTaskRuntimeInput,
   type NodeLinkTerminalSize,
   type TypedNodeLinkCommand,
 } from '@farmslot/protocol';
+import { parseTaskRuntimeRequest } from '@farmslot/slot-config/task-runtime';
 
 const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -19,6 +21,15 @@ const integer = (value: unknown, maximum: number, minimum = 0): value is number 
   typeof value === 'number' && Number.isSafeInteger(value) && value >= minimum && value <= maximum;
 
 export { NODE_LINK_OPERATIONS } from '@farmslot/protocol';
+
+export function parseNodeLinkTask(value: unknown): NodeLinkTaskRuntimeInput {
+  try {
+    return parseTaskRuntimeRequest(value);
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    throw new NodeLinkFailure('INVALID_PARAMS', error.message);
+  }
+}
 
 function fields(value: Record<string, unknown>, allowed: string[]): void {
   if (Object.keys(value).some((key) => !allowed.includes(key)))
@@ -281,6 +292,9 @@ export function parseNodeLinkOperation(value: unknown): TypedNodeLinkCommand {
     }
     case 'process.run':
       return { ...value, operation: value.operation, input: parseNodeLinkProcess(input) };
+    case 'task.runtime':
+      fields(input, ['action', 'taskPath', 'supportDir', 'env']);
+      return { ...value, operation: value.operation, input: parseNodeLinkTask(input) };
     default:
       throw new NodeLinkFailure(
         'UNSUPPORTED_OPERATION',

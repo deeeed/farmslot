@@ -1,4 +1,8 @@
-import { type ExecResult, NodeLinkFailure } from '@farmslot/protocol';
+import {
+  type ExecResult,
+  NodeLinkFailure,
+  type NodeLinkOperationRequest,
+} from '@farmslot/protocol';
 
 import { assertCleanupCurrent, cleanupSignal, trackCleanupCommand } from '../core/cleanup-scope.js';
 import type { SlotVars } from '../core/config.js';
@@ -24,6 +28,36 @@ export async function execThroughNodeLink(
   options: ExecOnSlotOptions,
   environment: 'service' | 'login',
 ): Promise<ExecResult> {
+  return executeThroughNodeLink(
+    vars,
+    {
+      operation: 'process.run',
+      input: {
+        argv,
+        cwd: options.cwd ?? vars.remoteRepo,
+        timeoutMs: options.timeout ?? 10 * 60_000,
+        ...(options.closeoutTimeoutMs ? { closeoutTimeoutMs: options.closeoutTimeoutMs } : {}),
+        maxOutputBytes: options.maxBuffer ?? 8 * 1024 * 1024,
+        environment,
+      },
+    },
+    options,
+  );
+}
+
+export async function taskRuntimeThroughNodeLink(
+  vars: SlotVars,
+  input: import('@farmslot/slot-config/task-runtime').TaskRuntimeRequest,
+  options: ExecOnSlotOptions,
+): Promise<ExecResult> {
+  return executeThroughNodeLink(vars, { operation: 'task.runtime', input }, options);
+}
+
+async function executeThroughNodeLink(
+  vars: SlotVars,
+  request: NodeLinkOperationRequest,
+  options: ExecOnSlotOptions,
+): Promise<ExecResult> {
   assertCleanupCurrent();
   const node = getNode(vars.machine);
   if (!node?.nodePrincipal)
@@ -42,71 +76,58 @@ export async function execThroughNodeLink(
   const commandId = createNodeLinkCommandId(timeoutMs);
   const signal = cleanupSignal(options.signal);
   const receipt = await trackCleanupCommand(
-    invokeNodeLink(
-      {
-        operation: 'process.run',
-        input: {
-          argv,
-          cwd: options.cwd ?? vars.remoteRepo,
-          timeoutMs,
-          ...(options.closeoutTimeoutMs ? { closeoutTimeoutMs: options.closeoutTimeoutMs } : {}),
-          maxOutputBytes: options.maxBuffer ?? 8 * 1024 * 1024,
-          environment,
-        },
-      },
-      {
-        commandId,
-        target: { nodeId: vars.machine, resourceId: vars.slotId },
-        authority: {
-          requester:
-            principal.kind === 'principal'
-              ? {
-                  principalId: principal.principalId,
-                  generation: principal.principalGeneration ?? 0,
-                }
-              : { kind: 'system' },
-          executor: node.nodePrincipal,
-          grantId: `process:${commandId}`,
-          approvalId: `framework:${commandId}`,
-          approval: 'framework',
-          ...(runId && typeof epoch === 'number'
+    invokeNodeLink(request, {
+      commandId,
+      target: { nodeId: vars.machine, resourceId: vars.slotId },
+      authority: {
+        requester:
+          principal.kind === 'principal'
             ? {
-                lease: {
-                  runId,
-                  contextId: 'workspace',
-                  leaseId: `workspace:${vars.slotId}:${epoch}`,
-                  generation: String(epoch),
-                },
+                principalId: principal.principalId,
+                generation: principal.principalGeneration ?? 0,
               }
-            : {}),
-        },
-        timeoutMs,
-        signal,
-        assertCurrent: async () => {
-          assertCleanupCurrent();
-          signal?.throwIfAborted();
-          if (getNode(vars.machine) !== node || fence(await readSlotRow(vars.slotId)) !== expected)
-            throw new NodeLinkFailure(
-              'STALE_AUTHORITY',
-              'Workspace or enrolled node changed before execution.',
-            );
-        },
-        onOutput: (stream, text) => options.onOutput?.(stream, text),
-        onReset: (snapshot) => {
-          options.onOutput?.(
-            'stderr',
-            '\n[output window expired; resynchronized snapshot follows]\n',
-          );
-          if (
-            snapshot &&
-            typeof snapshot === 'object' &&
-            'text' in snapshot &&
-            typeof snapshot.text === 'string'
-          )
-            options.onOutput?.('stdout', snapshot.text);
-        },
+            : { kind: 'system' },
+        executor: node.nodePrincipal,
+        grantId: `process:${commandId}`,
+        approvalId: `framework:${commandId}`,
+        approval: 'framework',
+        ...(runId && typeof epoch === 'number'
+          ? {
+              lease: {
+                runId,
+                contextId: 'workspace',
+                leaseId: `workspace:${vars.slotId}:${epoch}`,
+                generation: String(epoch),
+              },
+            }
+          : {}),
       },
-    ),
+      timeoutMs,
+      signal,
+      assertCurrent: async () => {
+        assertCleanupCurrent();
+        signal?.throwIfAborted();
+        if (getNode(vars.machine) !== node || fence(await readSlotRow(vars.slotId)) !== expected)
+          throw new NodeLinkFailure(
+            'STALE_AUTHORITY',
+            'Workspace or enrolled node changed before execution.',
+          );
+      },
+      onOutput: (stream, text) => options.onOutput?.(stream, text),
+      onReset: (snapshot) => {
+        options.onOutput?.(
+          'stderr',
+          '\n[output window expired; resynchronized snapshot follows]\n',
+        );
+        if (
+          snapshot &&
+          typeof snapshot === 'object' &&
+          'text' in snapshot &&
+          typeof snapshot.text === 'string'
+        )
+          options.onOutput?.('stdout', snapshot.text);
+      },
+    }),
   );
   if (receipt.state !== 'completed')
     throw new NodeLinkFailure(

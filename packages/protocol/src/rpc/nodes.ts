@@ -12,6 +12,8 @@ export interface NodeInfo extends PeerVersionDeclaration {
   uptime?: number;
   /** This node can cancel exec requests on their original connection. */
   execCancellation?: boolean;
+  /** This node supports version 1 of hosted task initialization and receipt verification. */
+  taskRuntime?: 1;
   /** This node checks `expectedHash` on file writes, renames and deletes. */
   conditionalWrites?: boolean;
   /** This node types a `tmux.send` carrying `seq` once per (pane, stream, n). */

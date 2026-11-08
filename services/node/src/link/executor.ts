@@ -5,6 +5,7 @@ import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
+  type ExecResult,
   isNodeLinkAuthority,
   isNodeLinkTarget,
   NODE_LINK_LIMITS,
@@ -12,6 +13,7 @@ import {
   NodeLinkFailure,
   type NodeLinkGrant,
   type NodeLinkPrincipal,
+  type NodeLinkProcessSummary,
   type NodeLinkProcessUpdate,
   type NodeLinkTerminalSize,
 } from '@farmslot/protocol';
@@ -29,18 +31,33 @@ import {
   fsWrite,
   fsWriteChunk,
 } from '../commands/fs.js';
+import { executeTaskRuntime } from '../commands/task-runtime.js';
 
 import { NodeLinkCommands } from './commands.js';
 import {
   NODE_LINK_OPERATIONS,
   parseNodeLinkOperation,
   parseNodeLinkProcess,
+  parseNodeLinkTask,
 } from './operations.js';
 import { type NodeLinkTerminal, openNodeLinkTerminal } from './terminal.js';
 
 const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 const equal = isDeepStrictEqual;
+
+function processSummary(result: ExecResult): NodeLinkProcessSummary {
+  const digest = (text: string) => ({
+    bytes: Buffer.byteLength(text),
+    sha256: createHash('sha256').update(text).digest('hex'),
+  });
+  return {
+    kind: 'streamed-process-result',
+    exitCode: result.exitCode,
+    stdout: digest(result.stdout),
+    stderr: digest(result.stderr),
+  };
+}
 
 function grantValue(value: unknown): NodeLinkGrant {
   if (
@@ -55,7 +72,10 @@ function grantValue(value: unknown): NodeLinkGrant {
     (value.root !== undefined &&
       (typeof value.root !== 'string' || !path.isAbsolute(value.root))) ||
     Object.keys(value).some(
-      (key) => !['target', 'authority', 'expiresAt', 'operations', 'root', 'process'].includes(key),
+      (key) =>
+        !['target', 'authority', 'expiresAt', 'operations', 'root', 'process', 'task'].includes(
+          key,
+        ),
     )
   )
     throw new NodeLinkFailure('INVALID_PARAMS', 'Invalid server resource grant.');
@@ -66,6 +86,7 @@ function grantValue(value: unknown): NodeLinkGrant {
     operations: value.operations,
     ...(typeof value.root === 'string' ? { root: value.root } : {}),
     ...(value.process !== undefined ? { process: parseNodeLinkProcess(value.process) } : {}),
+    ...(value.task !== undefined ? { task: parseNodeLinkTask(value.task) } : {}),
   };
 }
 
@@ -133,6 +154,11 @@ export class NodeLinkExecutor {
       throw new NodeLinkFailure(
         'INVALID_PARAMS',
         'Process operations require exact approved argv and limits.',
+      );
+    if (grant.operations.includes('task.runtime') && !grant.task)
+      throw new NodeLinkFailure(
+        'INVALID_PARAMS',
+        'Task operations require an exact approved call.',
       );
     const owner = { lease: grant.authority.lease, executor: grant.authority.executor };
     const previous = this.resourceOwners.get(grant.target.resourceId);
@@ -227,6 +253,12 @@ export class NodeLinkExecutor {
           'POLICY_REFUSED',
           'Process input differs from its exact approved policy.',
         );
+    } else if (typed.operation === 'task.runtime') {
+      if (!equal(typed.input, grant.task))
+        throw new NodeLinkFailure(
+          'POLICY_REFUSED',
+          'Task input differs from its exact approved policy.',
+        );
     } else if (typed.operation !== 'system.which' && typed.input.root !== grant.root) {
       throw new NodeLinkFailure('POLICY_REFUSED', 'File input cannot replace its admitted root.');
     }
@@ -274,6 +306,23 @@ export class NodeLinkExecutor {
     const grant = this.authorize(command);
     const typed = parseNodeLinkOperation(command);
     signal.throwIfAborted();
+    if (typed.operation === 'task.runtime') {
+      const result = await executeTaskRuntime(typed.input, signal);
+      if (Buffer.byteLength(JSON.stringify(result)) <= 128 * 1024) return result;
+      for (const stream of ['stdout', 'stderr'] as const) {
+        for (let offset = 0; offset < result[stream].length; offset += 16 * 1024)
+          await this.output?.(
+            command,
+            {
+              kind: 'output',
+              stream,
+              text: result[stream].slice(offset, offset + 16 * 1024),
+            },
+            signal,
+          );
+      }
+      return processSummary(result);
+    }
     if (typed.operation === 'process.run') {
       if (typed.input.terminal) {
         const terminal = await openNodeLinkTerminal(
@@ -306,16 +355,7 @@ export class NodeLinkExecutor {
         signal,
       );
       if (Buffer.byteLength(JSON.stringify(result)) <= 128 * 1024) return result;
-      const digest = (text: string) => ({
-        bytes: Buffer.byteLength(text),
-        sha256: createHash('sha256').update(text).digest('hex'),
-      });
-      return {
-        kind: 'streamed-process-result',
-        exitCode: result.exitCode,
-        stdout: digest(result.stdout),
-        stderr: digest(result.stderr),
-      };
+      return processSummary(result);
     }
     if (typed.operation === 'system.which') {
       const directories = (await resolveLoginPath()).split(path.delimiter).filter(Boolean);

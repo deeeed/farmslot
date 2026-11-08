@@ -1574,10 +1574,12 @@ export async function initializeWrittenTask(
     taskAbsDir,
     frozen.input,
     run,
+    { deferSidecars: true },
   );
+  let deliveredSidecars: readonly string[] = [];
   if (run.acceptanceContractVersion === 1) {
     const taskDir = opts?.initializeTask ? taskAbsDir : frozen.input.task.taskDir;
-    await syncAcceptanceExecutionContract(
+    deliveredSidecars = await syncAcceptanceExecutionContract(
       run,
       opts?.initializeTask ? ORCHESTRATOR_LOCALITY : slotVars,
       taskDir,
@@ -1591,7 +1593,15 @@ export async function initializeWrittenTask(
   await writeQaInput(taskAbsDir, { ...run, executionTemplate });
 
   if (!opts?.initializeTask)
-    await syncHostedTaskSidecars(slotVars, taskAbsDir, frozen.input.task.taskDir, [], run);
+    // Acceptance revisions were delivered and confirmed above. All remaining
+    // sidecars travel once, after QA has read the producer's final template.
+    await syncHostedTaskSidecars(
+      slotVars,
+      taskAbsDir,
+      frozen.input.task.taskDir,
+      deliveredSidecars,
+      run,
+    );
 }
 
 /**

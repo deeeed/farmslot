@@ -1386,6 +1386,7 @@ async function routeAuthorizedMethod(
         capabilities,
         gatewayUrl,
         execCancellation,
+        taskRuntime,
         conditionalWrites,
         terminalInputSequence,
         observationCapabilities,
@@ -1399,6 +1400,7 @@ async function routeAuthorizedMethod(
         capabilities?: import('@farmslot/protocol').RecipeRuntimeCapabilityDeclaration[];
         gatewayUrl?: unknown;
         execCancellation?: unknown;
+        taskRuntime?: unknown;
         conditionalWrites?: unknown;
         terminalInputSequence?: unknown;
         observationCapabilities?: import('@farmslot/protocol').NodeObservationCapabilities;
@@ -1528,7 +1530,13 @@ async function routeAuthorizedMethod(
         },
         conditionalWrites === true,
         terminalInputSequence === true,
-        { node: peerVersions, gateway: gatewayPeerVersions, nodeLink, nodePrincipal },
+        {
+          node: peerVersions,
+          gateway: gatewayPeerVersions,
+          nodeLink,
+          nodePrincipal,
+          ...(taskRuntime === 1 ? { taskRuntime: 1 as const } : {}),
+        },
       );
       nativeConversations.reconcile();
       nativeObservations.registrationChanged(

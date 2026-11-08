@@ -66,6 +66,36 @@ test(
 );
 
 test(
+  'node registration retains only task runtime version 1 and clears it on downgrade',
+  { timeout: 4000 },
+  async () => {
+    const harness = await startServer();
+    try {
+      const machine = 'task-runtime-capability-fixture';
+      const node = await connect(harness.url);
+      await request(node, Methods.AUTH_CONNECT, { clientKind: 'node' });
+      for (const taskRuntime of [1, undefined, 2, true, '1']) {
+        const registered = await request(node, 'node.connect', {
+          machine,
+          pid: 1,
+          ...(taskRuntime === undefined ? {} : { taskRuntime }),
+        });
+        assert.equal(registered.ok, true);
+        const expected = taskRuntime === 1 ? 1 : undefined;
+        assert.equal(getNode(machine)?.taskRuntime, expected);
+        assert.equal(
+          getAllNodes().find((entry) => entry.machine === machine)?.taskRuntime,
+          expected,
+        );
+      }
+      node.close();
+    } finally {
+      await harness.close();
+    }
+  },
+);
+
+test(
   'native source refresh and unavailable codes survive both RPC error boundaries',
   { timeout: 4000 },
   async (t) => {

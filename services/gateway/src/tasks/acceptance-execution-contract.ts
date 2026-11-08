@@ -30,8 +30,8 @@ export async function syncAcceptanceExecutionContract(
   mirrorDir: string,
   owns: () => Promise<boolean>,
   inheritedIds: readonly string[] = run.acceptanceExecutionContract?.inheritedCriterionIds ?? [],
-): Promise<void> {
-  if (run.acceptanceContractVersion !== 1) return;
+): Promise<readonly string[]> {
+  if (run.acceptanceContractVersion !== 1) return [];
   if (!(await owns())) throw new Error('Acceptance execution contract lost its task owner');
   const baseBytes = await slotReadFile(io, path.join(taskDir, WORKER_TERMINAL_CONTRACT_INPUT));
   const base: unknown = JSON.parse(baseBytes);
@@ -111,4 +111,5 @@ export async function syncAcceptanceExecutionContract(
     }
     await writeFile(path.join(mirrorDir, ACCEPTANCE_CONTRACT_INPUT), bytes);
   }
+  return [ACCEPTANCE_CONTRACT_INPUT, frozenPath];
 }
