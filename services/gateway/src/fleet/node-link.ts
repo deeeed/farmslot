@@ -24,6 +24,7 @@ import {
   type NodeLinkTarget,
 } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { TASK_RUNTIME_CLOSEOUT_MS } from '@farmslot/slot-config/task-runtime';
 
 import { assertCleanupCurrent } from '../core/cleanup-scope.js';
 import { currentSessionOriginator } from '../security/work-originator.js';
@@ -60,6 +61,14 @@ interface NodeLinkIntent {
 }
 
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
+
+function operationCloseoutMs(request: NodeLinkOperationRequest): number {
+  return request.operation === 'process.run'
+    ? (request.input.closeoutTimeoutMs ?? NODE_EXEC_CLOSEOUT_MS)
+    : request.operation === 'task.runtime'
+      ? TASK_RUNTIME_CLOSEOUT_MS
+      : 0;
+}
 
 export function createNodeLinkCommandId(timeoutMs = 60_000): string {
   return `nl1:${Date.now() + timeoutMs}:${randomUUID()}`;
@@ -201,6 +210,7 @@ async function invokeUnqueued(
         operations: [operation],
         ...(invocation.root ? { root: invocation.root } : {}),
         ...(request.operation === 'process.run' ? { process: request.input } : {}),
+        ...(request.operation === 'task.runtime' ? { task: request.input } : {}),
       },
     };
     await writeIntent(file, intent);
@@ -253,9 +263,7 @@ async function invokeUnqueued(
                 new Promise<never>((_resolve, reject) => {
                   timer = setTimeout(
                     () => reject(unconfirmed(undefined)),
-                    (request.operation === 'process.run'
-                      ? (request.input.closeoutTimeoutMs ?? NODE_EXEC_CLOSEOUT_MS)
-                      : 0) + 5000,
+                    operationCloseoutMs(request) + 5000,
                   );
                 }),
               ]);
@@ -274,12 +282,7 @@ async function invokeUnqueued(
         await assertCurrent();
         invocation.signal?.throwIfAborted();
         response = sendNodeRequest(node, 'node.link.command', intent.command, {
-          timeout:
-            (invocation.timeoutMs ?? 60_000) +
-            (request.operation === 'process.run'
-              ? (request.input.closeoutTimeoutMs ?? NODE_EXEC_CLOSEOUT_MS)
-              : 0) +
-            5000,
+          timeout: (invocation.timeoutMs ?? 60_000) + operationCloseoutMs(request) + 5000,
           requireSameConnection: true,
           onRequestId: (id) => {
             dispatched = true;
@@ -657,7 +660,7 @@ function streamCandidate(socket: WebSocket, value: unknown): PendingInvocation |
     return (
       node?.ws === socket &&
       node.observationAuthority?.() &&
-      held.request.operation === 'process.run' &&
+      (held.request.operation === 'process.run' || held.request.operation === 'task.runtime') &&
       pendingInvocations.get(invocationKey({ commandId, target: held.target })) === held
     );
   });
@@ -717,7 +720,11 @@ function applyNodeLinkStream(socket: WebSocket, value: unknown): boolean {
       );
     if (!candidate.deliveryError) {
       const limit =
-        candidate.request.operation === 'process.run' ? candidate.request.input.maxOutputBytes : 0;
+        candidate.request.operation === 'process.run'
+          ? candidate.request.input.maxOutputBytes
+          : candidate.request.operation === 'task.runtime'
+            ? 8 * 1024 * 1024
+            : 0;
       const terminal =
         candidate.request.operation === 'process.run' &&
         candidate.request.input.terminal !== undefined;

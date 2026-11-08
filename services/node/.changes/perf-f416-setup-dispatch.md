@@ -1,0 +1,1 @@
+- Advertise support for initializing and verifying hosted tasks in isolated node threads using the selected CLI's task libraries and retained receipt checks.

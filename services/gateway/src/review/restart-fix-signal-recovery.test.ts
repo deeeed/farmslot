@@ -735,3 +735,36 @@ test('a post-launch relaunch clears the boundary once the new process replaced t
   );
   assert.doesNotMatch(launch, /Farmslot fix delivery/u);
 });
+
+test('scripted review-fix relaunch reaches process proof without a settle timer', async (t) => {
+  const run = await reviewFixRunAtReload(t, 'tmux', 'scripted');
+  paneCommand = 'scripted-runner';
+  withPrimaryWorker(run.id);
+  const originalTimeout = globalThis.setTimeout;
+  t.mock.method(globalThis, 'setTimeout', (...args: Parameters<typeof setTimeout>) => {
+    assert.notEqual(args[1], 500, 'scripted relaunch has no terminal settle wait');
+    return originalTimeout(...args);
+  });
+  assert.equal(await relaunchWorkerForFix(vars, 'scripted', 'scripted', run.id), true);
+});
+
+test(
+  'real review-fix runners retain the 500 ms settle capability default',
+  { timeout: 5000 },
+  async (t) => {
+    const run = await reviewFixRunAtReload(t, 'tmux', 'pi');
+    paneCommand = 'pi-coding-agent';
+    withPrimaryWorker(run.id);
+    const originalTimeout = globalThis.setTimeout;
+    const delays: number[] = [];
+    t.mock.method(globalThis, 'setTimeout', (...args: Parameters<typeof setTimeout>) => {
+      if (args[1] === 500) {
+        delays.push(args[1]);
+        args[1] = 0;
+      }
+      return originalTimeout(...args);
+    });
+    assert.equal(await relaunchWorkerForFix(vars, 'pi', 'local/model', run.id), true);
+    assert.deepEqual(delays, [500]);
+  },
+);

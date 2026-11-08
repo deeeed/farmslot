@@ -37,6 +37,11 @@ const { FORCE_COLOR: _droppedForceColor, ...PROCESS_ENV_NO_FORCE_COLOR } = proce
 void _droppedForceColor;
 const LOCAL_ENV = { ...PROCESS_ENV_NO_FORCE_COLOR, PATH: `${SHIMS_DIR}:${process.env.PATH}` };
 
+/** In-process task libraries inherit the same boot-time environment as local commands. */
+export function localCommandEnvironment(): NodeJS.ProcessEnv {
+  return { ...LOCAL_ENV };
+}
+
 // ─── isLocal ───
 // Mirrors bash is_local(): checks if host/machine refers to this machine.
 

@@ -97,3 +97,17 @@ test('PTY process uses bounded dimensions and cannot widen its admitted argv pol
       code: 'INVALID_PARAMS',
     });
 });
+
+test('typed task calls validate action, exact fields and node-local paths', () => {
+  const input = { action: 'verify', taskPath: '/workspace/task', supportDir: '/captured', env: {} };
+  assert.deepEqual(parseNodeLinkOperation(command('task.runtime', input)).input, input);
+  for (const invalid of [
+    { action: 'mark' },
+    { taskPath: '../task' },
+    { cmd: 'shell' },
+    { env: { PROVIDER_ROOT: 17 } },
+  ])
+    assert.throws(() => parseNodeLinkOperation(command('task.runtime', { ...input, ...invalid })), {
+      code: 'INVALID_PARAMS',
+    });
+});

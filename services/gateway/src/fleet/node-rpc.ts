@@ -9,6 +9,7 @@ import {
   type NodeExecParams,
   observeNodeExecAbort,
 } from '@farmslot/protocol';
+import { TASK_RUNTIME_CLOSEOUT_MS } from '@farmslot/slot-config/task-runtime';
 
 import { isLocal, loadSlotVars } from '../core/index.js';
 import { executionKind, measureManagedOperation } from '../observability/performance.js';
@@ -567,6 +568,33 @@ export async function nodeExecArgv(
   opts?: NodeExecOpts,
 ): Promise<ExecResult> {
   return nodeExecRequest(machine, { argv, cwd }, opts);
+}
+
+/** Task libraries execute in a node worker with the same owned closeout as exec. */
+export async function nodeTaskRuntime(
+  machine: string,
+  request: import('@farmslot/slot-config/task-runtime').TaskRuntimeRequest,
+  timeout: number,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  const node = await waitForNode(machine, 15_000, signal);
+  assertNodeReconnectCurrent();
+  signal?.throwIfAborted();
+  if (node.taskRuntime !== 1) throw new Error(`Node ${machine} does not advertise task.runtime.`);
+  if (!node.execCancellation)
+    throw new Error(`Node ${machine} needs an update before it can run cancellable commands.`);
+  return measureManagedOperation('exec', 'node', () =>
+    sendNodeRequestStreaming(
+      node,
+      'task.runtime',
+      { ...request, requestScoped: true },
+      {
+        timeout: timeout + NODE_EXEC_TRANSPORT_GRACE_MS + TASK_RUNTIME_CLOSEOUT_MS,
+        signal: signal ?? new AbortController().signal,
+        closeoutTimeoutMs: TASK_RUNTIME_CLOSEOUT_MS,
+      },
+    ),
+  );
 }
 
 async function nodeExecRequest(

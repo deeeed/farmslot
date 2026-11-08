@@ -68,7 +68,13 @@ mock.module('../run-engine/branch-maintenance.js', {
 const hosted = await import('./hosted-task-init.js');
 let beforeAcceptanceWrite: () => Promise<void>;
 let initializations = 0;
-const initialize: typeof hosted.initializeHostedTaskOnSlot = async (_slot, directory, input) => {
+const initialize: typeof hosted.initializeHostedTaskOnSlot = async (
+  _slot,
+  directory,
+  input,
+  ...args
+) => {
+  assert.deepEqual(args[1], { deferSidecars: true });
   initializations++;
   const result = await taskInit({
     ...input.task,
@@ -82,7 +88,9 @@ mock.module('./hosted-task-init.js', {
   namedExports: {
     ...hosted,
     initializeHostedTaskOnSlot: initialize,
-    syncHostedTaskSidecars: async () => {},
+    syncHostedTaskSidecars: async (...args: Parameters<typeof hosted.syncHostedTaskSidecars>) => {
+      assert.deepEqual(args[3], [ACCEPTANCE_CONTRACT_INPUT, 'inputs/acceptance-contracts/1.json']);
+    },
   },
 });
 const writerModule: string = './writer.js?handoff-owner-regression';

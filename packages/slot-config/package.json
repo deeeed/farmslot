@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./sources": "./src/sources/index.ts",
-    "./provider-cli": "./src/provider-cli.ts"
+    "./provider-cli": "./src/provider-cli.ts",
+    "./task-runtime": "./src/task-runtime.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
