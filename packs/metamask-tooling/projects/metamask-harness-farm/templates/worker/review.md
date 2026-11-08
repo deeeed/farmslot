@@ -18,7 +18,7 @@ VALIDATION_DEPTH: {{VALIDATION_DEPTH}}
 - [ ] **2. Read the rules** - `{{REPO}}/CLAUDE.md` (its hard rules are blocking) and `{{TASK_DIR}}/artifacts/report.md`, `pr-description.md`, `recipe-coverage.md`.
 - [ ] **3. Read the diff** - `git -C {{REPO}} diff origin/{{DEFAULT_BRANCH}}...HEAD`, every changed file in full. Check root cause, minimality, no duplicated logic, no edits under `node_modules`, and a `CHANGELOG.md` Unreleased entry for user-visible changes.
 - [ ] **4. Inspect recorded validation** - read `{{TASK_DIR}}/artifacts/deterministic-checks/` receipts and logs and existing CI results. Missing evidence is a finding.
-- [ ] **5. Audit the proof** - the before (baseline) run used the published harness and the after run used `{{REPO}}/bin/mm-harness`, both with the same `--library perps=` retained library; both identities are recorded. Open the screenshots under `artifacts/before-fix` (or `baseline`) and `artifacts/after-fix` and confirm they show the claimed state. An unproven claim is a finding.
+- [ ] **5. Audit the proof** - the before (baseline) run used the published harness and the after run used `{{REPO}}/bin/mm-harness`, both with the same `--library perps=` retained library; both identities are recorded. Open the before screenshots (`artifacts/before-fix`, or `artifacts/baseline` for dev and QA) and the after screenshots (`artifacts/after-fix`, or `artifacts/candidate` for QA) and confirm they show the claimed state. An unproven claim is a finding.
 - [ ] **6. Write `{{TASK_DIR}}/{{REVIEW_FEEDBACK}}`** - use `## Verdict: ISSUES` when any blocking issue or cheap introduced nit remains. Only findings go under `## Issues`:
   ```markdown
   # Review: {{TICKET}}

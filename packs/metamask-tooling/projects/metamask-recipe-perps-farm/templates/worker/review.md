@@ -18,7 +18,7 @@ VALIDATION_DEPTH: {{VALIDATION_DEPTH}}
 - [ ] **2. Read the rules** - `{{REPO}}/README.md` (its Design rules are blocking) and `{{TASK_DIR}}/artifacts/report.md`, `pr-description.md`, `recipe-coverage.md`.
 - [ ] **3. Read the diff** - `git -C {{REPO}} diff origin/{{DEFAULT_BRANCH}}...HEAD`, every changed file in full. Check root cause, minimality, repaired or parameterized recipes over near-duplicates, and no guessed selector, route, action or controller contract.
 - [ ] **4. Inspect recorded validation** - read `{{TASK_DIR}}/artifacts/deterministic-checks/` receipts and logs and existing CI results. Missing evidence is a finding.
-- [ ] **5. Audit the proof** - both runs used the published harness; the before (baseline) run selected the retained library and the after run selected `--library perps={{REPO}}`; both identities are recorded. Open the screenshots under `artifacts/before-fix` (or `baseline`) and `artifacts/after-fix` and confirm they show the claimed state. An unproven claim is a finding.
+- [ ] **5. Audit the proof** - both runs used the published harness; the before (baseline) run selected the retained library and the after run selected `--library perps={{REPO}}`; both identities are recorded. Open the before screenshots (`artifacts/before-fix`, or `artifacts/baseline` for dev and QA) and the after screenshots (`artifacts/after-fix`, or `artifacts/candidate` for QA) and confirm they show the claimed state. An unproven claim is a finding.
 - [ ] **6. Write `{{TASK_DIR}}/{{REVIEW_FEEDBACK}}`** - use `## Verdict: ISSUES` when any blocking issue or cheap introduced nit remains. Only findings go under `## Issues`:
   ```markdown
   # Review: {{TICKET}}

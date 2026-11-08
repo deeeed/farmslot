@@ -170,6 +170,13 @@ test('each project ships the static review template that request-review loads', 
     assert.match(content, /\{\{TASK_DIR\}\}\/\{\{REVIEW_FEEDBACK\}\}/);
     // The gateway scopes findings to `## Issues`; without it every bullet is a finding.
     assert.match(content, /^ {2}## Issues\n {2}- \*\*file:line\*\* — description$/m);
+    assert.match(
+      content,
+      name === PROJECTS[0]
+        ? /after run used `\{\{REPO\}\}\/bin\/mm-harness`, both with the same `--library perps=` retained library/
+        : /both runs used the published harness; .* after run selected `--library perps=\{\{REPO\}\}`/,
+    );
+    assert.match(content, /`artifacts\/after-fix`, or `artifacts\/candidate` for QA/);
     assert.doesNotMatch(content, / run <recipe>/);
   }
 });
