@@ -160,7 +160,10 @@ test('a screenshot whose name mentions a token is retained; a token file or secr
   for (const [name, body] of [
     ['screenshots/evidence-ac3-token-format.png', 'png bytes'],
     ['api-token.txt', 'not for the bundle'],
+    ['token.pem', 'key bytes'],
+    ['credentials.json', '{}'],
     ['secrets/shot.png', 'png under a sensitive folder'],
+    ['client-secret.png/id_rsa', 'key under a media-named folder'],
   ]) {
     await mkdir(path.dirname(path.join(f.taskDir, 'artifacts', name)), { recursive: true });
     await writeFile(path.join(f.taskDir, 'artifacts', name), body);
@@ -177,6 +180,9 @@ test('a screenshot whose name mentions a token is retained; a token file or secr
   });
   assert.deepEqual(result.missingData, [
     'excluded:artifacts/api-token.txt',
+    'excluded:artifacts/client-secret.png/id_rsa',
+    'excluded:artifacts/credentials.json',
+    'excluded:artifacts/token.pem',
     'excluded:artifacts/secrets/shot.png',
   ]);
   const entry = await resolveRunBundleEntry({

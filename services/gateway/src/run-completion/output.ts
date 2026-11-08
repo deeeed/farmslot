@@ -444,8 +444,8 @@ export async function verifyRunOutputReview(
   const artifacts = (await retainedRunArtifactManifest(run, ref)).filter((artifact) =>
     artifact.path.startsWith('artifacts/'),
   );
-  // The bundle never retains sensitive-named files (a `token` or `secret` in the name), so
-  // the retained bytes must match the rest of the reviewed capture.
+  // The bundle never retains sensitive-named files or folders (a `token` or `secret` in a
+  // non-media name), so the retained bytes must match the rest of the reviewed capture.
   const excluded = await retainedRunExcludedPaths(run, ref);
   const retainable = excluded.size
     ? outputManifestDigest(

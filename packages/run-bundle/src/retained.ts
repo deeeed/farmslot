@@ -44,7 +44,11 @@ import {
 } from '@farmslot/protocol/runs/portable-bundle';
 
 import { loadAllRunRecords } from './collect.js';
-import { isRunBundleMedia, shouldSkipBundleFilesystemEntry } from './copy-tree.js';
+import {
+  isRunBundleMedia,
+  shouldSkipBundleFile,
+  shouldSkipBundleFilesystemEntry,
+} from './copy-tree.js';
 import {
   captureDecisionHistoryPrefix,
   decisionHistoryFile,
@@ -2286,7 +2290,9 @@ export async function materializeRunBundle(
       for (const artifact of ordered) {
         assertSafeBundleRelativePath(artifact.path);
         if (
-          artifact.path
+          shouldSkipBundleFile(path.posix.basename(artifact.path)) ||
+          path.posix
+            .dirname(artifact.path)
             .split('/')
             .some((segment) => shouldSkipBundleFilesystemEntry(segment, false))
         ) {

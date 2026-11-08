@@ -26,26 +26,31 @@ export function shouldSkipBundleFilesystemEntry(name: string, isDirectory: boole
   if (SENSITIVE_FILE_NAMES.has(name)) return true;
   const lower = name.toLowerCase();
   if (SENSITIVE_FILE_SUFFIXES.some((suffix) => lower.endsWith(suffix))) return true;
-  // A name like evidence-ac3-token-format.png describes what media shows, not a secret file.
-  if (
-    !isRunBundleMedia(lower) &&
-    (lower.includes('credential') || lower.includes('secret') || lower.includes('token'))
-  ) {
+  if (lower.includes('credential') || lower.includes('secret') || lower.includes('token')) {
     return true;
   }
   return false;
+}
+
+/** A media file's name describes what it shows (evidence-ac3-token-format.png), not a secret. */
+export function shouldSkipBundleFile(name: string): boolean {
+  return shouldSkipBundleFilesystemEntry(name, false) && !isRunBundleMedia(name);
 }
 
 export function copyDirectoryRecursive(sourceDir: string, destDir: string): void {
   if (!existsSync(sourceDir)) return;
   mkdirSync(destDir, { recursive: true });
   for (const entry of readdirSync(sourceDir)) {
-    if (shouldSkipBundleFilesystemEntry(entry, false)) continue;
+    if (shouldSkipBundleFile(entry)) continue;
     const sourcePath = path.join(sourceDir, entry);
     const destPath = path.join(destDir, entry);
     const stats = statSync(sourcePath);
     if (stats.isDirectory()) {
-      if (shouldSkipBundleFilesystemEntry(entry, true)) continue;
+      if (
+        shouldSkipBundleFilesystemEntry(entry, false) ||
+        shouldSkipBundleFilesystemEntry(entry, true)
+      )
+        continue;
       copyDirectoryRecursive(sourcePath, destPath);
       continue;
     }
@@ -74,7 +79,7 @@ export function registerDirectoryEntries(
         walk(sourcePath);
         continue;
       }
-      if (shouldSkipBundleFilesystemEntry(entry, false)) continue;
+      if (shouldSkipBundleFile(entry)) continue;
       if (!stats.isFile()) continue;
       const relative = path.relative(bundleRoot, sourcePath).replace(/\\/g, '/');
       assertSafeBundleRelativePath(relative);
