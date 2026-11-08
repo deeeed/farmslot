@@ -1,11 +1,11 @@
 {
-  "version": "0.38.0",
+  "version": "0.39.1",
   "date": "2026-11-08",
   "items": [
-    "Preserve core quality grades while presenting fresh advisory recipe-shape feedback and portable catalog context",
-    "Complete artifact-only runs with their retained working-tree diff and artifacts, without requiring a commit or publication nudge",
-    "Complete gate-free comparison runs with unreviewed claims retained for separate review, while preserving evidence integrity and publication checks",
-    "Keep dev-server log panes out of worker targets and let failed launches release slots held only by their log tail",
-    "Give runtime boot at least 15 minutes when it inherits a compile timeout, while preserving explicit preparation budgets and longer compile budgets"
+    "Backlog items can declare `completionPolicy`, `pipelineReview` and `skipPrepare`, and every run they dispatch gets exactly that shape; a command-mode `scripted` config now survives a gateway restart",
+    "Evaluate recipes against an immutable supplied implementation, retain failed or missing cases as measurements, and judge the frozen proof output once",
+    "The launch Code drift probe rechecks the task's frozen required skills; a missing or changed file refuses launch",
+    "Admit fix-bug before evidence captured on the ticket's marker-only child of the baseline, retaining verified Git ownership with the evidence package. Dirty, unrelated, and after-evidence commits remain refused",
+    "Preserve requested xhigh and max thinking levels for router models instead of letting Pi round them down to high"
   ]
 }
