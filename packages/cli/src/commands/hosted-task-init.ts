@@ -9,6 +9,7 @@ import {
   freezeRequiredSkills,
   type HandoffMetadata,
   projectWorkerTemplateSource,
+  REQUIRED_SKILLS_REPAIR,
   RequiredSkillsError,
   resolveConfiguredExecutionTemplateSources,
   type ResolveConfiguredExecutionTemplateSourcesOptions,
@@ -421,10 +422,7 @@ export function hostedRequiredSkills(
     });
   } catch (error) {
     if (!(error instanceof RequiredSkillsError)) throw error;
-    throw Object.assign(refusal(error.message, error.code), {
-      userAction:
-        "Refresh the slot's skills (the pack skills seed and its prepare deps phase), then prepare this run again.",
-    });
+    throw Object.assign(refusal(error.message, error.code), { userAction: REQUIRED_SKILLS_REPAIR });
   }
 }
 

@@ -121,7 +121,7 @@ function defaultBaseRef(target: string): string {
 }
 
 // Files touched by the change: committed since the base, plus the working tree.
-export function changedFiles(target: string, base?: string): { base: string; files: string[] } {
+function changedFiles(target: string, base?: string): { base: string; files: string[] } {
   const ref = base ?? defaultBaseRef(target);
   const lists = [
     ref === 'HEAD' ? '' : git(target, ['diff', '--name-only', `${ref}...HEAD`]),

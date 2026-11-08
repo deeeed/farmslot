@@ -5,14 +5,10 @@
  * and its pipeline review both read.
  */
 
-import { compileGlob } from './glob.js';
-
 export interface RequiredSkillRuleMatch {
   flows?: string[];
   platforms?: string[];
   domains?: string[];
-  /** Repository-relative globs (`*`, `**`, `?`) matched against task paths. */
-  paths?: string[];
 }
 
 export interface RequiredSkillDeclaration {
@@ -38,7 +34,6 @@ export interface RequiredSkillSelectionInput {
   flow: string;
   platform: string;
   domain?: string;
-  paths?: readonly string[];
 }
 
 export interface RequiredSkillFile {
@@ -57,13 +52,11 @@ export interface FrozenRequiredSkill {
 /** The frozen set, recorded once at task init. */
 export interface RequiredSkillSet {
   schemaVersion: 1;
-  /** Selection inputs; `paths` are the declared task paths, if any. */
-  selection: { flow: string; platform: string; domain: string; paths: string[] };
+  /** Selection inputs. */
+  selection: { flow: string; platform: string; domain: string };
   /** Matched rule ids, in pack order. */
   rules: string[];
   skills: FrozenRequiredSkill[];
-  /** The pack rules as frozen, so a later diff can be checked for scope changes. */
-  config: RequiredSkillsConfig;
 }
 
 const SAFE_NAME = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
@@ -117,16 +110,11 @@ export function parseRequiredSkillsConfig(
     let when: RequiredSkillRuleMatch | undefined;
     if (rule.when !== undefined) {
       const match = record(rule.when, `${ruleField}.when`);
-      onlyKeys(match, ['flows', 'platforms', 'domains', 'paths'], `${ruleField}.when`);
+      onlyKeys(match, ['flows', 'platforms', 'domains'], `${ruleField}.when`);
       when = {};
-      for (const key of ['flows', 'platforms', 'domains', 'paths'] as const) {
+      for (const key of ['flows', 'platforms', 'domains'] as const) {
         if (match[key] !== undefined)
           when[key] = stringList(match[key], `${ruleField}.when.${key}`);
-      }
-      for (const glob of when.paths ?? []) {
-        const compiled = compileGlob(glob, { anchoring: 'anchored', caseSensitive: true });
-        if (compiled.invalid)
-          throw new Error(`${ruleField}.when.paths "${glob}" ${compiled.reason ?? 'is invalid'}`);
       }
     }
     if (!Array.isArray(rule.skills) || rule.skills.length === 0)
@@ -159,16 +147,10 @@ export function isRequiredSkillSet(value: unknown): value is RequiredSkillSet {
     typeof selection.flow !== 'string' ||
     typeof selection.platform !== 'string' ||
     typeof selection.domain !== 'string' ||
-    !Array.isArray(selection.paths) ||
     !Array.isArray(set.rules) ||
     !Array.isArray(set.skills)
   )
     return false;
-  try {
-    parseRequiredSkillsConfig(set.config);
-  } catch {
-    return false;
-  }
   return set.skills.every((entry: unknown) => {
     const skill = entry as Record<string, unknown> | null;
     return (

@@ -165,7 +165,18 @@ ${options.runtimeChecks ? `export function checkRequiredSkills(repo, set) { writ
   return { root, value };
 }
 
-const frozenSet = { schemaVersion: 1, skills: [{ name: 'mms-mobile-testing' }] };
+const frozenSet = {
+  schemaVersion: 1,
+  selection: { flow: 'dev', platform: 'ios', domain: '' },
+  rules: ['mobile-testing'],
+  skills: [
+    {
+      name: 'mms-mobile-testing',
+      rules: ['mobile-testing'],
+      files: [{ path: '.agents/skills/mms-mobile-testing/SKILL.md', sha256: 'c'.repeat(64) }],
+    },
+  ],
+};
 
 test('a removed required skill file is a code mismatch that refuses launch', async (t) => {
   const { root, value } = await requiredSkillsFixture(t, {
@@ -180,7 +191,6 @@ test('a removed required skill file is a code mismatch that refuses launch', asy
           reason: 'missing',
         },
       ],
-      scopeChanged: [],
     },
   });
   const result = await probe(value);
@@ -199,7 +209,7 @@ test('frozen required skills that still match their digests verify', async (t) =
   const { value } = await requiredSkillsFixture(t, {
     runtimeChecks: true,
     requiredSkills: frozenSet,
-    check: { status: 'pass', missing: [], scopeChanged: [] },
+    check: { status: 'pass', missing: [] },
   });
   const result = await probe(value);
   assert.equal(result.status, 'verified');
@@ -220,4 +230,15 @@ test('a task without a required skill set verifies as before', async (t) => {
   const { value } = await requiredSkillsFixture(t, { runtimeChecks: false });
   const plain = await probe(value);
   assert.equal(plain.status, 'verified', plain.detail);
+});
+
+test('an invalid frozen required skill record is a mismatch', async (t) => {
+  const { value } = await requiredSkillsFixture(t, {
+    runtimeChecks: true,
+    requiredSkills: { schemaVersion: 1, skills: [{ name: 'mms-mobile-testing' }] },
+    check: { status: 'pass', missing: [] },
+  });
+  const result = await probe(value);
+  assert.equal(result.status, 'mismatch');
+  assert.match(result.detail, /invalid requiredSkills record/);
 });

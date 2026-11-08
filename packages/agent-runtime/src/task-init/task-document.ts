@@ -373,7 +373,6 @@ export function buildHandoffMetadata(input: {
   startedAt?: string;
   executionTemplate?: HandoffExecutionTemplate;
   templateProvenance?: Omit<TemplateProvenance, 'executionTemplate'>;
-  requiredSkills?: RequiredSkillSet;
 }): HandoffMetadata {
   const complete = input.terminalContract.commands.complete;
   const ticket = input.ticket?.trim();
@@ -400,7 +399,6 @@ export function buildHandoffMetadata(input: {
     learnings: 'artifacts/learnings.md',
     ...(input.executionTemplate ? { executionTemplate: input.executionTemplate } : {}),
     ...(input.templateProvenance ? { templateProvenance: input.templateProvenance } : {}),
-    ...(input.requiredSkills ? { requiredSkills: input.requiredSkills } : {}),
   };
 }
 

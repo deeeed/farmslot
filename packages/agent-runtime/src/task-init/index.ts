@@ -266,8 +266,13 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     taskMarkdown = taskMarkdown.replace(/^(#.+\n)/, `$1\n${spec.modePreamble}\n`);
   if (spec.taskDocumentAdditions)
     taskMarkdown = `${taskMarkdown.trimEnd()}${spec.taskDocumentAdditions.startsWith('\n') ? '' : '\n\n'}${spec.taskDocumentAdditions}`;
-  const requiredSkillsSection =
-    spec.requiredSkills && !spec.authored ? requiredSkillsTaskSection(spec.requiredSkills) : '';
+  // Frozen once: an authored task keeps the set its handoff already carries.
+  const frozenRequiredSkills = spec.authored?.handoff.requiredSkills
+    ? undefined
+    : spec.requiredSkills;
+  const requiredSkillsSection = frozenRequiredSkills
+    ? requiredSkillsTaskSection(frozenRequiredSkills)
+    : '';
   if (requiredSkillsSection) taskMarkdown = `${taskMarkdown.trimEnd()}\n\n${requiredSkillsSection}`;
   if (spec.artifactOnlyReplay) {
     if (checklistMarkdown !== null)
@@ -307,10 +312,10 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
       startedAt: spec.handoff.startedAt,
       executionTemplate,
       templateProvenance: spec.handoff.templateProvenance,
-      ...(spec.requiredSkills ? { requiredSkills: spec.requiredSkills } : {}),
     });
 
   if (!handoffMetadata.executionTemplate) handoffMetadata.executionTemplate = executionTemplate;
+  if (frozenRequiredSkills) handoffMetadata.requiredSkills = frozenRequiredSkills;
 
   const executionProvenance = spec.execution
     ? retainTaskExecution(spec.taskDir, spec.execution, [templateRoot])

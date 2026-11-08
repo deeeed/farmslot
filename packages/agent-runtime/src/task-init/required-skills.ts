@@ -7,7 +7,6 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import {
-  compileGlob,
   type FrozenRequiredSkill,
   type RequiredSkillRule,
   type RequiredSkillsConfig,
@@ -33,10 +32,12 @@ export interface RequiredSkillGap {
 }
 
 export interface RequiredSkillsCheck {
-  status: 'pass' | 'missing' | 'scope-changed';
+  status: 'pass' | 'missing';
   missing: RequiredSkillGap[];
-  scopeChanged: Array<{ skill: string; rules: string[] }>;
 }
+
+/** The one repair instruction for a missing or changed required skill. */
+export const REQUIRED_SKILLS_REPAIR = 'Refresh the slot skills, then prepare again.';
 
 export class RequiredSkillsError extends Error {
   override name = 'RequiredSkillsError';
@@ -49,12 +50,6 @@ function matches(rule: RequiredSkillRule, input: RequiredSkillSelectionInput): b
   if (when.flows && !when.flows.includes(input.flow)) return false;
   if (when.platforms && !when.platforms.includes(input.platform)) return false;
   if (when.domains && !(input.domain && when.domains.includes(input.domain))) return false;
-  if (when.paths) {
-    const globs = when.paths.map(
-      (glob) => compileGlob(glob, { anchoring: 'anchored', caseSensitive: true }).regex,
-    );
-    if (!(input.paths ?? []).some((file) => globs.some((glob) => glob.test(file)))) return false;
-  }
   return true;
 }
 
@@ -110,31 +105,17 @@ export function freezeRequiredSkills(
       );
     return { name: skill.name, rules: skill.rules, files };
   });
-  if (gaps.length)
-    throw new RequiredSkillsError(`${gaps.join(' ')} Refresh the slot skills, then prepare again.`);
+  if (gaps.length) throw new RequiredSkillsError(`${gaps.join(' ')} ${REQUIRED_SKILLS_REPAIR}`);
   return {
     schemaVersion: 1,
-    selection: {
-      flow: input.flow,
-      platform: input.platform,
-      domain: input.domain ?? '',
-      paths: [...(input.paths ?? [])],
-    },
+    selection: { flow: input.flow, platform: input.platform, domain: input.domain ?? '' },
     rules: selection.rules,
     skills,
-    config,
   };
 }
 
-/**
- * Read-only check of a frozen set: every file still present with its frozen bytes,
- * and (given the current changed paths) no rule outside the set now applies.
- */
-export function checkRequiredSkills(
-  repoRoot: string,
-  set: RequiredSkillSet,
-  changedPaths?: readonly string[],
-): RequiredSkillsCheck {
+/** Read-only check of a frozen set: every file still present with its frozen bytes. */
+export function checkRequiredSkills(repoRoot: string, set: RequiredSkillSet): RequiredSkillsCheck {
   const missing: RequiredSkillGap[] = [];
   for (const skill of set.skills)
     for (const file of skill.files) {
@@ -146,23 +127,7 @@ export function checkRequiredSkills(
           reason: sha256 === null ? 'missing' : 'changed',
         });
     }
-  const scopeChanged: RequiredSkillsCheck['scopeChanged'] = [];
-  if (changedPaths) {
-    const frozen = new Set(set.skills.map((skill) => skill.name));
-    const current = selectRequiredSkills(set.config, {
-      flow: set.selection.flow,
-      platform: set.selection.platform,
-      ...(set.selection.domain ? { domain: set.selection.domain } : {}),
-      paths: [...set.selection.paths, ...changedPaths],
-    });
-    for (const skill of current.skills)
-      if (!frozen.has(skill.name)) scopeChanged.push({ skill: skill.name, rules: skill.rules });
-  }
-  return {
-    status: missing.length ? 'missing' : scopeChanged.length ? 'scope-changed' : 'pass',
-    missing,
-    scopeChanged,
-  };
+  return { status: missing.length ? 'missing' : 'pass', missing };
 }
 
 /** TASK.md section naming the frozen files; empty when nothing is required. */

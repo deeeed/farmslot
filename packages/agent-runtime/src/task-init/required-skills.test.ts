@@ -32,9 +32,9 @@ const config: RequiredSkillsConfig = parseRequiredSkillsConfig({
       skills: [{ name: 'mms-perps-review-pr', files: ['SKILL.md'] }],
     },
     {
-      id: 'navigation',
-      when: { flows: ['dev'], paths: ['app/components/Nav/**'] },
-      skills: [{ name: 'mms-navigation', files: ['SKILL.md'] }],
+      id: 'android-placement',
+      when: { platforms: ['android'] },
+      skills: [{ name: 'mms-mobile-testing', files: ['SKILL.md', 'references/placement.md'] }],
     },
   ],
 });
@@ -53,7 +53,6 @@ const ALL = [
   'mms-mobile-testing/SKILL.md',
   'mms-mobile-testing/references/layers.md',
   'mms-perps-review-pr/SKILL.md',
-  'mms-navigation/SKILL.md',
 ];
 
 test('selects the union of matching rules in pack order, without duplicates', () => {
@@ -71,18 +70,17 @@ test('selects the union of matching rules in pack order, without duplicates', ()
       ],
     },
   );
-  assert.deepEqual(selectRequiredSkills(config, { flow: 'fix-bug', platform: 'android' }).rules, [
-    'mobile-testing',
-  ]);
+  assert.deepEqual(selectRequiredSkills(config, { flow: 'fix-bug', platform: 'android' }), {
+    rules: ['mobile-testing', 'android-placement'],
+    skills: [
+      {
+        name: 'mms-mobile-testing',
+        rules: ['mobile-testing', 'android-placement'],
+        files: ['SKILL.md', 'references/layers.md', 'references/placement.md'],
+      },
+    ],
+  });
   assert.deepEqual(selectRequiredSkills(config, { flow: 'ci-fix', platform: 'ios' }).rules, []);
-  assert.deepEqual(
-    selectRequiredSkills(config, {
-      flow: 'dev',
-      platform: 'ios',
-      paths: ['app/components/Nav/Main.tsx'],
-    }).rules,
-    ['mobile-testing', 'navigation'],
-  );
 });
 
 test('freezes the selected files with their digests', () => {
@@ -94,13 +92,12 @@ test('freezes the selected files with their digests', () => {
       domain: 'perps',
     });
     assert.equal(set.schemaVersion, 1);
-    assert.deepEqual(set.selection, { flow: 'dev', platform: 'ios', domain: 'perps', paths: [] });
+    assert.deepEqual(set.selection, { flow: 'dev', platform: 'ios', domain: 'perps' });
     assert.deepEqual(set.rules, ['mobile-testing', 'perps-review']);
     assert.deepEqual(set.skills[0]!.files[0], {
       path: '.agents/skills/mms-mobile-testing/SKILL.md',
       sha256: createHash('sha256').update('# mms-mobile-testing/SKILL.md\n').digest('hex'),
     });
-    assert.deepEqual(set.config, config);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -143,11 +140,7 @@ test('check passes on the frozen bytes and reports removed or changed files', ()
       platform: 'ios',
       domain: 'perps',
     });
-    assert.deepEqual(checkRequiredSkills(repo, set), {
-      status: 'pass',
-      missing: [],
-      scopeChanged: [],
-    });
+    assert.deepEqual(checkRequiredSkills(repo, set), { status: 'pass', missing: [] });
     rmSync(path.join(repo, '.agents/skills/mms-mobile-testing/references/layers.md'));
     writeFileSync(path.join(repo, '.agents/skills/mms-perps-review-pr/SKILL.md'), 'edited\n');
     assert.deepEqual(checkRequiredSkills(repo, set), {
@@ -164,22 +157,6 @@ test('check passes on the frozen bytes and reports removed or changed files', ()
           reason: 'changed',
         },
       ],
-      scopeChanged: [],
-    });
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
-
-test('a diff that matches a rule outside the frozen set is a scope change', () => {
-  const repo = checkout(ALL);
-  try {
-    const set = freezeRequiredSkills(repo, config, { flow: 'dev', platform: 'ios' });
-    assert.equal(checkRequiredSkills(repo, set, ['app/util/a.ts']).status, 'pass');
-    assert.deepEqual(checkRequiredSkills(repo, set, ['app/components/Nav/Main.tsx']), {
-      status: 'scope-changed',
-      missing: [],
-      scopeChanged: [{ skill: 'mms-navigation', rules: ['navigation'] }],
     });
   } finally {
     rmSync(repo, { recursive: true, force: true });
@@ -224,6 +201,16 @@ test('pack config validation names the offending field', () => {
         rules: [{ id: 'a', when: { flow: ['dev'] }, skills: [{ name: 'x', files: ['SKILL.md'] }] }],
       }),
     /required_skills.rules\[0\].when has unsupported properties: flow/,
+  );
+  assert.throws(
+    () =>
+      parseRequiredSkillsConfig({
+        root: '.agents/skills',
+        rules: [
+          { id: 'a', when: { paths: ['app/**'] }, skills: [{ name: 'x', files: ['SKILL.md'] }] },
+        ],
+      }),
+    /when has unsupported properties: paths/,
   );
   assert.throws(
     () =>

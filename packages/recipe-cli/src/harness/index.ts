@@ -153,12 +153,7 @@ export {
   type RecipeQualityCommandOptions,
 } from './commands/recipe-quality.js';
 export { handleReload } from './commands/reload.js';
-export {
-  changedFiles,
-  handleReview,
-  type ReviewCommandOptions,
-  type ReviewLibrary,
-} from './commands/review.js';
+export { handleReview, type ReviewCommandOptions, type ReviewLibrary } from './commands/review.js';
 export {
   type DeviceTargeting,
   handleRun,

@@ -390,7 +390,7 @@ test('hosted task init freezes the pack required skill set or refuses a missing 
   fs.writeFileSync(path.join(repo, '.agents/skills/mms-mobile-testing/SKILL.md'), '# testing\n');
   const frozen = hostedRequiredSkills(projectJson, repo, task);
   assert.deepEqual(frozen?.rules, ['mobile-testing']);
-  assert.deepEqual(frozen?.selection, { flow: 'dev', platform: 'ios', domain: 'perps', paths: [] });
+  assert.deepEqual(frozen?.selection, { flow: 'dev', platform: 'ios', domain: 'perps' });
   assert.deepEqual(
     hostedRequiredSkills(projectJson, repo, { ...task, flow: 'ci-fix' })?.skills,
     [],
