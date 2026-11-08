@@ -150,7 +150,8 @@ export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal):
   await executeGit('isolate', vars, spec, signal);
   // The worker sandbox denies the node's other slot checkouts, resolved as each slot's own launch resolves them.
   const siblingRepos = await resolvedSiblingRepos(vars);
-  await executeGit('boundary', vars, { ...spec, siblingRepos }, signal);
+  const farmConfigRoots = [path.join(await farmslotDirectoryForSlot(vars), 'pool')];
+  await executeGit('boundary', vars, { ...spec, siblingRepos, farmConfigRoots }, signal);
   await ownedEpoch(run, epoch);
   await persistRunNow(
     updateBlind(runId, {
@@ -216,6 +217,7 @@ export async function verifyBlindTrialForDispatch(run: Run, retained = false): P
     await executeGit('boundary', vars, {
       ...gitSpec(run, vars, blind, blind.isolation.slotEpoch, blind.isolation.capsulePath),
       siblingRepos: await resolvedSiblingRepos(vars),
+      farmConfigRoots: [path.join(await farmslotDirectoryForSlot(vars), 'pool')],
       proofBoundary: {
         taskRoot,
         currentTask,

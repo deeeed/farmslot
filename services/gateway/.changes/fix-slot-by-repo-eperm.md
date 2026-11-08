@@ -1,0 +1,1 @@
+- The blind trial worker sandbox denies writes to the node's slot pool, including through links.

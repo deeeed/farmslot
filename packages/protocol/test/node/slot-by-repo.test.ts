@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import fsPromises from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -93,6 +95,34 @@ test('skips ignored and unparsable pool files, and answers null when nothing map
   pool(root, 'broken.json', '{');
   assert.equal(await findSlotByRepo(root, checkout), null);
   await assert.rejects(findSlotByRepo(join(root, 'no-pools'), checkout), { code: 'ENOENT' });
+});
+
+test('a slot repo the caller may not read is a non-match, not a failure', async (t) => {
+  const root = tempDir(t);
+  const checkout = join(root, 'checkout');
+  mkdirSync(checkout);
+  // A sandboxed worker cannot stat other slots' checkouts (EPERM under sandbox-exec, EACCES by mode).
+  const denied = { [join(root, 'eperm')]: 'EPERM', [join(root, 'eacces')]: 'EACCES' };
+  const realpath = fsPromises.realpath;
+  t.mock.method(fsPromises, 'realpath', (target: string) => {
+    const code = denied[target];
+    if (code) return Promise.reject(Object.assign(new Error(code), { code }));
+    return realpath(target);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  pool(root, 'macpro.json', {
+    host: 'localhost',
+    slots: [
+      { id: 'other-eperm', repo: join(root, 'eperm') },
+      { id: 'other-eacces', repo: join(root, 'eacces') },
+      { id: 'mine', repo: checkout },
+    ],
+  });
+  assert.equal((await findSlotByRepo(root, checkout))?.slot.id, 'mine');
 });
 
 test('strict lookup refuses multiple local slots and accepts an explicit matching slot', async (t) => {
