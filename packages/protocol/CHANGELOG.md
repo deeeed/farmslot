@@ -6,6 +6,13 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.82.2 - 2026-11-08
+
+- Add `completionPolicy`, `pipelineReview` and `skipPrepare` to backlog items and their create/update inputs, `pipelineReview` to dispatch queue items, and the `isRunCompletionPolicy` / `isRunPipelineReviewPolicy` guards.
+- Add the required skill set contract (ADR-049 Amendment 3): `RequiredSkillsConfig`, `RequiredSkillSet`, `parseRequiredSkillsConfig` and `isRequiredSkillSet`.
+- Report blind trial Git isolation in slot repo checks.
+- Add advertised task runtime support and an authorized node-link task operation so initialization and retained verification can run in node threads with their existing execution identity and lease fences.
+
 ## 0.82.1 - 2026-11-08
 
 - Add frozen proof-only eval inputs and proof-output identity alongside existing implementation trials.

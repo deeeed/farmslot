@@ -194,10 +194,10 @@ export async function runRetentionPass(
   }
   const roots = options.roots ?? (await gatewayRetentionRoots());
   if (options.apply) {
+    if (!options.roots) await warnRunBundleCapacity();
     await assertArchiveRoot(roots.archiveRoot);
     if (!options.roots) {
       await archiveRunArtifactHousekeeping();
-      await warnRunBundleCapacity();
     }
   }
   const runs = await getAllRunsWithArchived();

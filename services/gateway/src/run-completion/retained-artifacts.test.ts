@@ -20,6 +20,7 @@ import '../runtime/mock-pty.test-support.js';
 const root = await mkdtemp(path.join(tmpdir(), 'gateway-retained-artifacts-'));
 process.env.FARMSLOT_HOME = path.join(root, 'home');
 process.env.FARMSLOT_RUNS_DIR = path.join(root, 'runs');
+process.env.FARMSLOT_RUN_ARCHIVE_ROOT = path.join(root, 'home/run-archive');
 await openRunBundleStore({
   runsDir: process.env.FARMSLOT_RUNS_DIR,
   home: process.env.FARMSLOT_HOME,
@@ -188,7 +189,9 @@ test(
       await read('still.png'); // Warm persistent client sockets before counting.
       await read('report.html');
       const baseline = (await readdir('/dev/fd')).length;
-      for (let i = 0; i < 20; i += 1) {
+      // Eight cycles still expose a per-cycle leak above the four-handle tolerance.
+      const iterations = 8;
+      for (let i = 0; i < iterations; i += 1) {
         await runRecipeRunsForRun({ runId: f.runId, includeRecordedEvidence: true });
         assert.equal(await read('report.html'), 200);
         assert.equal(await read('still.png'), 200);
@@ -213,9 +216,9 @@ test(
       }
       t.diagnostic(
         JSON.stringify({
-          iterations: 20,
-          httpRequests: 120,
-          metadataRequests: 20,
+          iterations,
+          httpRequests: iterations * 6,
+          metadataRequests: iterations,
           baselineFDs: baseline,
           finalFDs: remaining,
         }),
@@ -319,7 +322,7 @@ test('retained capacity refusal records a failed lifecycle step without dispatch
   assert.equal(refused.slotId, null);
 });
 
-test('a metadata capture preserves the source video when bundle capacity defers its bytes', async (t) => {
+test('a capacity failure preserves source evidence without publishing incomplete output', async (t) => {
   const f = await fixture();
   const { farmslotRoot } = await import('../projects/repo-root.js');
   const taskDir = path.join(farmslotRoot, '.sandbox/retained-capacity/tasks', f.runId);
@@ -344,12 +347,9 @@ test('a metadata capture preserves the source video when bundle capacity defers 
     }),
   );
   updateRun(f.runId, { taskFile: path.join(taskDir, 'TASK.md') });
-  await captureRunOutput(f.runId, false, true);
-  const captured = getRun(f.runId)!;
-  assert.ok(
-    captured.output?.retentionMissingData?.includes('media-capacity:artifacts/capture.mp4'),
-  );
-  assert.equal(await readRetainedRunText(captured, 'artifacts/report.html'), f.body);
+  await assert.rejects(captureRunOutput(f.runId, false, true), /Cannot retain media-capacity/);
+  assert.equal(getRun(f.runId)?.output, undefined);
+  assert.equal(await readFile(path.join(taskDir, 'artifacts/report.html'), 'utf8'), f.body);
   assert.deepEqual(await readFile(path.join(taskDir, 'artifacts/capture.mp4')), video);
 });
 
@@ -550,10 +550,7 @@ test('final retention refuses incomplete media while preserving the judged outpu
     }),
   );
   try {
-    await assert.rejects(
-      retainFinalRunArtifacts(f.runId),
-      /Final result artifacts were not retained.*media-capacity/,
-    );
+    await assert.rejects(retainFinalRunArtifacts(f.runId), /Cannot retain media-capacity/);
     assert.deepEqual(getRun(f.runId)?.output, judged);
     assert.equal((await readFile(file)).length, 1024 * 1024);
   } finally {

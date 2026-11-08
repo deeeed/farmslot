@@ -1,7 +1,8 @@
 {
-  "version": "0.36.0",
-  "date": "2026-11-07",
+  "version": "0.36.1",
+  "date": "2026-11-08",
   "items": [
-    "Use registered ACP agents with the native model and effort picker, audited tool approvals and file diffs"
+    "Map proof-eval candidates to QA execution and preserve their frozen QA selection in queued cells",
+    "View the actual offline-storage notice and its failure reason"
   ]
 }

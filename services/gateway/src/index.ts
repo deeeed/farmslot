@@ -38,6 +38,7 @@ import {
   getQueueSnapshot,
   initDispatchQueue,
   loadQueue,
+  queuedRunCreateParams,
   removeQueueItemInternalNow,
   stampQueueItemRunId,
   stampQueueItemRunIdNow,
@@ -138,7 +139,7 @@ import { initReview } from './review/orchestrator.js';
 import { roadmapRoot, setRoadmapObservationGuard } from './roadmap/store.js';
 import { watchRoadmapItems } from './roadmap/watcher.js';
 import { initRunCompletion } from './run-completion/orchestrator.js';
-import { runBundleStore } from './run-completion/retained-artifacts.js';
+import { initializeRunBundleStore } from './run-completion/retained-artifacts.js';
 import {
   initRunEngine,
   rearmPublicationReviewRecoveryForRun,
@@ -479,7 +480,7 @@ async function main(): Promise<void> {
   // Restore PR ownership before periodic monitoring can perform its first check.
   await loadAllRuns();
   await backfillMissingRunLinks(getAllRuns());
-  if (!process.env.FARMSLOT_SANDBOX_HOME) await runBundleStore(true);
+  await initializeRunBundleStore();
   startRunRetention(observedBroadcast);
   const prMonitoring = await initPRMonitoring(
     gatewayAuthRuntime,
@@ -682,61 +683,7 @@ async function main(): Promise<void> {
     }
     const { runCreate, queuedQaExpectation } = await import('./methods/run.js');
     const expectedQa = queuedQaExpectation(item);
-    const runParams = {
-      transport: item.transport,
-      nativeProfile: item.nativeProfile,
-      skipPrepare: item.skipPrepare,
-      flowType: item.flowType,
-      project: item.project,
-      ticketOrPr: item.ticketOrPr,
-      familyId: item.familyId,
-      parentRunId: item.parentRunId ?? undefined,
-      familyRootTicketOrPr: item.familyRootTicketOrPr,
-      lane: item.lane,
-      variant: item.variant ?? undefined,
-      taskTemplate: item.taskTemplate ? { ...item.taskTemplate } : undefined,
-      executionTemplateId: item.executionTemplateId,
-      sourceSelections: item.sourceSelections,
-      domain: item.domain,
-      app: item.app,
-      prepareProfile: item.prepareProfile,
-      waitPolicy: item.waitPolicy,
-      slotId: item.slotId,
-      reviewWorkspaceTarget: item.reviewWorkspaceTarget,
-      allowedSlots:
-        item.allowedSlots && item.allowedSlots.length > 0 ? item.allowedSlots : undefined,
-      branch: item.branch ?? undefined,
-      completionPolicy: item.completionPolicy,
-      startRef: item.startRef?.requestedRef,
-      startRefSource: item.startRef?.source,
-      model: item.model,
-      runner: item.runner,
-      scripted: item.scripted,
-      effort: item.effort,
-      mode: item.mode,
-      devInteractiveProfile: item.devInteractiveProfile,
-      tags: item.tags,
-      initialContext: item.initialContext,
-      ticketData: item.ticketData,
-      backlogItemId: item.backlogItemId,
-      workGraphId: item.workGraphId,
-      workNodeId: item.workNodeId,
-      launchPlanId: item.launchPlanId,
-      launchCandidateId: item.launchCandidateId,
-      launchGroupId: item.launchGroupId,
-      launchSlotPolicy: item.launchSlotPolicy,
-      launchAttempt: item.launchAttempt,
-      devChecklist: item.devChecklist,
-      reviewPolicy: item.reviewPolicy,
-      reviewMode: item.reviewMode,
-      reviewValidationDepth: item.reviewValidationDepth,
-      qaProfileId: item.qaProfileId,
-      qaInputs: item.qaInputs,
-      reviewSequence: item.reviewSequence,
-      reviewSequenceContext: item.reviewSequenceContext,
-      reviewContext: item.reviewContext,
-      safetyTier: effectiveSafetyTier,
-    } satisfies import('@farmslot/protocol').RunCreateParams;
+    const runParams = queuedRunCreateParams(item, effectiveSafetyTier);
     const createQueuedRun = () =>
       runCreate(runParams, broadcastEvent, {
         ...(item.delegatedOwnerPrincipalId

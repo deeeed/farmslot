@@ -1,1 +1,0 @@
-- Admit fix-bug before evidence captured on the ticket's marker-only child of the baseline, retaining verified Git ownership with the evidence package. Dirty, unrelated, and after-evidence commits remain refused.

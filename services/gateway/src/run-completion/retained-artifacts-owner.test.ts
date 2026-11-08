@@ -52,7 +52,7 @@ test('runs-only gateway boot owns an isolated bundle root and sandboxes cannot r
   assert.deepEqual(await readdir(path.join(operatorHome, 'run-bundles')), ['sentinel']);
 
   process.env.FARMSLOT_SANDBOX_HOME = path.join(root, 'sandbox');
-  assert.throws(() => runBundleStore(true), /may only read/);
+  await assert.rejects(runBundleStore(true), /may only read/);
   await runBundleStore();
   assert.deepEqual(await runBundleStore(), owner);
   assert.equal(await readFile(path.join(owner.runsDir, 'bundle-store.json'), 'utf8'), binding);

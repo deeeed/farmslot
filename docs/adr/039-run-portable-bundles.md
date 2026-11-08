@@ -525,3 +525,17 @@ gateway computes neither.
   agent attempt began after that capture. It is false otherwise (cancelled while
   monitoring, even after a manual mirror refresh, or during a review fix after
   completion); a repin after the receipt's `recordedAt` is then not reflected.
+
+## Amendment 5: 2026-11-08 archive retained media on pressure
+
+**Status:** Accepted, lead-approved amendment (2026-11-08).
+**Specification:** [Retained run artifacts](../reference/retained-run-artifacts.md#limits-retention-and-gc).
+
+At 85% of admission's charged total, archive oldest unpinned retained media
+toward 70%, leaving capture headroom without repeatedly crossing one threshold.
+Expiry uses the same verified copy before source removal, replacing media deletion.
+Keep manifests and metadata in the store; journal media locations in availability's
+`archivedPaths` before unlinking and updating recorded bytes. Readers fall back
+to that location and verify size and digest. Admission retries in the same capture.
+Missing archives preserve source bytes and refuse reclamation. Capacity warnings
+and archive events use the existing `monitor.violation` board and health channel.

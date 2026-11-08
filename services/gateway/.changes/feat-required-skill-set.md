@@ -1,1 +1,0 @@
-- The launch Code drift probe rechecks the task's frozen required skills; a missing or changed file refuses launch.

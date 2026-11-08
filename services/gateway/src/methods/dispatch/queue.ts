@@ -10,6 +10,7 @@ import {
   type DispatchQueueReorderResult,
   type DispatchQueueUpdateParams,
   type DispatchQueueUpdateResult,
+  pipelineReviewPolicyError,
 } from '@farmslot/protocol';
 import {
   assertReviewPolicy,
@@ -99,6 +100,8 @@ export async function dispatchQueueAdd(
   if (params.reviewSequenceContext)
     parseReviewRequestContext(params.reviewSequenceContext, params.reviewSequence?.length ?? 0);
   if (params.reviewContext) parseReviewRequestContext(params.reviewContext, 1);
+  const pipelineReviewError = pipelineReviewPolicyError(params);
+  if (pipelineReviewError) throw new Error(pipelineReviewError);
   if (params.reviewSequence)
     assertWarmReviewContext(params.reviewSequence, params.reviewSequenceContext);
   const projectVars = await loadProjectVars(params.project);
