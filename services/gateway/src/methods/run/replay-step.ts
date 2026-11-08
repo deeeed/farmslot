@@ -46,6 +46,7 @@ import {
   renewQueueClaim,
 } from '../../backlog/dispatch-queue.js';
 import { assertPRRunActivation } from '../../backlog/pr-admission.js';
+import { supersededMultiPrRunReplayRefusal } from '../../backlog/store.js';
 import { execOnSlot, isDisconnectedRemote } from '../../core/exec.js';
 import { readSlotRow, SLOT_PHASE_RELEASING } from '../../core/index.js';
 import { GatewayMethodError } from '../../core/method-error.js';
@@ -1132,6 +1133,8 @@ async function replayRunStep(
     if (reclaimed) throw new Error(reclaimed);
   }
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
+  const superseded = supersededMultiPrRunReplayRefusal(existing);
+  if (superseded) throw new Error(superseded);
   if (existing.reviewWorkspaceTarget) assertNativeRunOwner(existing);
   let reviewBlock = staticReviewReplayBlock(existing, params);
   if (

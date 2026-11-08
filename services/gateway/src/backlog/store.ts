@@ -2400,6 +2400,24 @@ export async function markBacklogRunStarted(queueItem: QueueItem, run: Run): Pro
   });
 }
 
+/** The item a dispatcher handoff names, while that item is mid-dispatch for this ticket and project. */
+function liveHandoffItem(
+  backlogItemId: string | undefined,
+  ticketOrPr: string,
+  project: string,
+): BacklogItem | undefined {
+  const item = backlogItemId
+    ? items.find((candidate) => candidate.id === backlogItemId)
+    : undefined;
+  const ref = item?.sourceKind === 'manual' ? normalizeManualRef(ticketOrPr) : ticketOrPr;
+  return item &&
+    item.sourceRef === ref &&
+    item.project === project &&
+    HANDOFF_ACTIVE_STATUSES.has(item.status)
+    ? item
+    : undefined;
+}
+
 /**
  * A multi-PR item in handoff runs again and again on one ticket, so run.create
  * lets it start once every earlier run of that item is terminal.
@@ -2409,13 +2427,23 @@ export function isMultiPrBacklogHandoff(
   ticketOrPr: string,
   project: string,
 ): boolean {
-  const item = backlogItemId ? items.find((candidate) => candidate.id === backlogItemId) : null;
-  return Boolean(
-    item?.multiPr &&
-    item.project === project &&
-    item.sourceRef ===
-      (item.sourceKind === 'manual' ? normalizeManualRef(ticketOrPr) : ticketOrPr) &&
-    HANDOFF_ACTIVE_STATUSES.has(item.status),
+  return Boolean(liveHandoffItem(backlogItemId, ticketOrPr, project)?.multiPr);
+}
+
+/**
+ * A multi-PR item advances only through its linked run. Its other runs stay unarchived
+ * between nights, and replaying one would put a second live run on the ticket.
+ */
+export function supersededMultiPrRunReplayRefusal(
+  run: Pick<Run, 'id' | 'backlogItemId'>,
+): string | null {
+  const item = run.backlogItemId
+    ? items.find((candidate) => candidate.id === run.backlogItemId)
+    : undefined;
+  if (!item?.multiPr || (item.runId === run.id && !item.queuedQueueItemId)) return null;
+  return (
+    `Run ${run.id.slice(0, 8)} is an earlier run of multi-PR backlog item ${item.sourceRef}; ` +
+    'replaying it would start a second run on the ticket. Start a new run from the item instead.'
   );
 }
 
@@ -2424,16 +2452,8 @@ export function isValidManualBacklogRunHandoff(
   ticketOrPr: string,
   project: string,
 ): boolean {
-  const normalizedRef = normalizeManualRef(ticketOrPr);
-  if (!backlogItemId || !MANUAL_REF_RE.test(normalizedRef)) return false;
-  const item = items.find((candidate) => candidate.id === backlogItemId);
-  return Boolean(
-    item &&
-    item.sourceKind === 'manual' &&
-    item.sourceRef === normalizedRef &&
-    item.project === project &&
-    HANDOFF_ACTIVE_STATUSES.has(item.status),
-  );
+  if (!MANUAL_REF_RE.test(normalizeManualRef(ticketOrPr))) return false;
+  return liveHandoffItem(backlogItemId, ticketOrPr, project)?.sourceKind === 'manual';
 }
 
 /** Outcome of matching a direct run.create to a backlog item by sourceRef. */

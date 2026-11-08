@@ -1239,6 +1239,130 @@ test('only a multi-PR item in handoff names a standing backlog run', async () =>
   );
 });
 
+async function standingNightFixture(t: import('node:test').TestContext) {
+  const { backlog, runStore } = await freshStores();
+  const { runCreate } = await import('../methods/run.js');
+  const previous = {
+    context: process.env.NODE_TEST_CONTEXT,
+    start: process.env.FARMSLOT_DISABLE_RUN_ENGINE_START,
+  };
+  process.env.NODE_TEST_CONTEXT = '1';
+  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  const item = (
+    await backlog.createBacklogItem(
+      {
+        project: 'farmslot-farm',
+        title: 'Nightly device build',
+        sourceKind: 'manual',
+        // Runs outlive freshStores, so other tests' MANUAL-000001 runs would collide.
+        sourceRef: `manual-${100000 + Math.floor(Math.random() * 800000)}`,
+        flowType: 'dev',
+        status: 'ready',
+        multiPr: true,
+      },
+      { kind: 'system' },
+    )
+  ).item;
+  const runs: string[] = [];
+  t.after(async () => {
+    for (const id of runs) {
+      runStore.updateRun(id, { status: 'done', completedAt: new Date().toISOString() });
+      await runStore.deleteRun(id);
+    }
+    if (previous.context === undefined) delete process.env.NODE_TEST_CONTEXT;
+    else process.env.NODE_TEST_CONTEXT = previous.context;
+    if (previous.start === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+    else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previous.start;
+  });
+  const earlierNight = (status: 'done' | 'failed' | 'monitoring') => {
+    const run = runStore.createRun({
+      flowType: 'dev',
+      project: 'farmslot-farm',
+      ticketOrPr: item.sourceRef,
+    });
+    runs.push(run.id);
+    runStore.updateRun(run.id, { status, backlogItemId: item.id });
+    return run.id;
+  };
+  // The dispatcher's handoff: the item mid-dispatch, the run named after it.
+  const tonight = () => {
+    backlog.mutateBacklogItemForTests(item.id, (current) => {
+      current.status = 'dispatching';
+      delete current.runId;
+    });
+    return runCreate(
+      {
+        flowType: 'dev',
+        project: 'farmslot-farm',
+        ticketOrPr: item.sourceRef,
+        backlogItemId: item.id,
+        ticketData: {
+          source: 'manual',
+          title: item.title,
+          description: '',
+          acceptanceCriteria: [],
+          affectedArea: '',
+          stepsToReproduce: [],
+          screenshots: [],
+          labels: ['backlog'],
+          comments: [],
+          linkedTickets: [],
+        },
+      },
+      () => {},
+    );
+  };
+  return { backlog, item, runs, earlierNight, tonight };
+}
+
+test('the next night of a standing item starts through run.create with earlier nights unarchived', async (t) => {
+  const { item, runs, earlierNight, tonight } = await standingNightFixture(t);
+  earlierNight('failed');
+  earlierNight('done');
+  const { run } = await tonight();
+  runs.push(run.id);
+  assert.equal(run.ticketOrPr, item.sourceRef);
+  assert.equal(run.backlogItemId, item.id);
+});
+
+test('a standing item does not start a night while an earlier night is still live', async (t) => {
+  const { earlierNight, tonight } = await standingNightFixture(t);
+  earlierNight('done');
+  earlierNight('monitoring');
+  await assert.rejects(
+    tonight(),
+    /Active run already exists for MANUAL-\d+: .*status=monitoring\)\. Cancel it first/,
+  );
+});
+
+test('an earlier night of a standing item cannot be replayed into a second live run', async (t) => {
+  const { backlog, item, earlierNight } = await standingNightFixture(t);
+  const { runReplayStep } = await import('../methods/run/replay-step.js');
+  const lastNight = earlierNight('failed');
+  const tonightRun = earlierNight('done');
+  backlog.mutateBacklogItemForTests(item.id, (current) => {
+    current.status = 'running';
+    current.runId = tonightRun;
+  });
+  await assert.rejects(
+    runReplayStep({ runId: lastNight, stepName: 'dispatch' }, () => {}),
+    /earlier run of multi-PR backlog item MANUAL-\d+.*Start a new run from the item instead/,
+  );
+  assert.equal(
+    backlog.supersededMultiPrRunReplayRefusal({ id: tonightRun, backlogItemId: item.id }),
+    null,
+  );
+  backlog.mutateBacklogItemForTests(item.id, (current) => {
+    current.status = 'ready';
+    delete current.runId;
+  });
+  assert.match(
+    backlog.supersededMultiPrRunReplayRefusal({ id: tonightRun, backlogItemId: item.id }) ?? '',
+    /Start a new run from the item/,
+    'a ready item holds no run: its last night is not replayed either',
+  );
+});
+
 test('archived and adopted historical publication observations preserve ordinary and multi-PR successor ownership', async () => {
   const { backlog } = await freshStores();
   for (const multiPr of [false, true]) {

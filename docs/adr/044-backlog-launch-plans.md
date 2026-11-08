@@ -326,3 +326,8 @@ A run created by a `multiPr` item's own handoff (`backlogItemId` set by the disp
 non-archived run on that ticket belongs to the item and is terminal. A run still going, a run of
 another item or none, and any item that is not `multiPr` are refused as before. Earlier runs stay in
 history and in the default run views; the item still advances only through its currently linked run.
+Because they stay replayable, `run.replayStep` refuses any run of a `multiPr` item except the one it
+currently links with no queue link (`supersededMultiPrRunReplayRefusal`): replaying an earlier night would
+put a second live run on the ticket, and its later observations could take the item back. Start a new run
+from the item instead. The shared `liveHandoffItem` lookup decides both the manual-ref handoff and this
+multi-PR check.
