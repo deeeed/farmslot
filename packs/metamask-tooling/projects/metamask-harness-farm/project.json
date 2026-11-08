@@ -1,0 +1,332 @@
+{
+  "$schema": "../../schemas/project.schema.json",
+  "name": "metamask-harness-farm",
+  "type": "standalone",
+  "repo_url": "git@github.com:MetaMask/experimental-metamask-harness.git",
+  "default_branch": "main",
+  "paths": {
+    "runtime_dir": "temp/farmslot/runtime",
+    "artifact_dir": "temp/farmslot/tasks"
+  },
+  "defaults": {
+    "dev": {
+      "runner": "claude",
+      "model": "opus",
+      "effort": "high"
+    },
+    "fix-bug": {
+      "runner": "claude",
+      "model": "opus",
+      "effort": "high"
+    }
+  },
+  "reference_repos": {
+    "mobile": {
+      "repo_url": "git@github.com:MetaMask/metamask-mobile.git",
+      "local_name": "mmh-mobile",
+      "branch": "main"
+    },
+    "perps_library": {
+      "repo_url": "git@github.com:MetaMask/experimental-metamask-recipe-perps.git",
+      "local_name": "mmh-recipe-perps",
+      "branch": "main"
+    }
+  },
+  "recipe": {
+    "provider": {
+      "module": "@deeeed/metamask-harness/provider",
+      "package": "@deeeed/metamask-harness",
+      "root": {
+        "env": "MM_HARNESS_PACKAGE_ROOT"
+      }
+    },
+    "adapter": "mobile",
+    "domain": "perps",
+    "libraries": [
+      {
+        "name": "perps",
+        "source": {
+          "env": "METAMASK_PERPS_LIBRARY_ROOT"
+        },
+        "owner": "perps",
+        "revision": "85ab3b95f228eff750055ae1df5b0d052b5a87aa"
+      }
+    ],
+    "checks": [
+      {
+        "recipe": "perps.smoke"
+      }
+    ]
+  },
+  "command_env": {
+    "set": {
+      "MM_HARNESS_NO_UPDATE_CHECK": "1",
+      "METAMASK_RUNNER_PROTOCOL_ROOT": "",
+      "FARMSLOT_ROOT": ""
+    }
+  },
+  "hooks": {
+    "prerequisites": "bash \"{{farmslot_dir}}/projects/metamask-harness-farm/scripts/tooling.sh\" prerequisites harness \"{{repo}}\" \"{{mobile_repo}}\"",
+    "post_merge_install": "bash \"{{farmslot_dir}}/projects/metamask-harness-farm/scripts/tooling.sh\" install harness \"{{repo}}\"",
+    "preflight": "bash \"{{farmslot_dir}}/projects/metamask-harness-farm/scripts/tooling.sh\" ready harness \"{{repo}}\"",
+    "health_check": "bash \"{{farmslot_dir}}/projects/metamask-harness-farm/scripts/tooling.sh\" ready harness \"{{repo}}\"",
+    "dev_server_check": "bash \"{{farmslot_dir}}/projects/metamask-harness-farm/scripts/tooling.sh\" ready harness \"{{repo}}\"",
+    "teardown": "bash \"{{farmslot_dir}}/projects/metamask-harness-farm/scripts/tooling.sh\" mobile-stop harness \"{{repo}}\" \"{{mobile_repo}}\" \"{{port}}\" \"{{simulator}}\" \"{{slot_id}}\""
+  },
+  "health": {
+    "ready_indicator": "ready",
+    "parse_health": "tail -1",
+    "dev_server_name": "Tooling"
+  },
+  "platforms": {
+    "ios": {
+      "device_check": "true",
+      "recycle": null
+    }
+  },
+  "ci": {
+    "enabled": true,
+    "repo": "MetaMask/experimental-metamask-harness",
+    "local_check": "PATH=\"${FARMSLOT_NODE22_BIN:+$FARMSLOT_NODE22_BIN:}$PATH\" corepack yarn check"
+  },
+  "node_support": {
+    "paths": [
+      "projects/metamask-harness-farm/setup",
+      "projects/metamask-harness-farm/scripts",
+      "projects/metamask-harness-farm/templates"
+    ]
+  },
+  "execution_templates": {
+    "sources": [],
+    "defaults": [
+      {
+        "when": {
+          "flow": "dev"
+        },
+        "templateId": "dev/tooling"
+      },
+      {
+        "when": {
+          "flow": "fix-bug"
+        },
+        "templateId": "fix-bug/tooling"
+      },
+      {
+        "when": {
+          "flow": "qa"
+        },
+        "templateId": "qa/tooling"
+      }
+    ]
+  },
+  "qa": {
+    "profiles": [
+      {
+        "id": "tooling-pr",
+        "title": "Tooling PR with Mobile after-fix proof",
+        "description": "Run the frozen repository check, then prove the change on this slot's owned Mobile fixture with the candidate harness selected explicitly.",
+        "template_id": "qa/tooling",
+        "inputs": {
+          "scope": {
+            "kind": "pr"
+          }
+        }
+      }
+    ]
+  },
+  "prepare": {
+    "core": {
+      "label": "Tooling checkout and dependencies",
+      "description": "Sync the harness checkout and install its locked dependencies. Mobile, Metro and the simulator are acquired only through the mobile-proof capability.",
+      "phases": [
+        "git",
+        "fixtures",
+        "deps",
+        "preflight",
+        "health"
+      ]
+    }
+  },
+  "resources": {
+    "ios-sim": {
+      "type": "device",
+      "platform": "ios",
+      "label": "Owned Mobile simulator",
+      "streamable": true,
+      "controllable": true,
+      "watch": {
+        "type": "process-poll",
+        "provider": "ios-simulator-inventory",
+        "target": "{{simulator}}",
+        "cmd": "xcrun simctl list devices booted 2>/dev/null | grep -q '{{simulator}}'"
+      },
+      "hooks": {
+        "health": "xcrun simctl list devices booted 2>/dev/null | grep -q '{{simulator}}'",
+        "boot": "xcrun simctl boot '{{simulator}}' 2>/dev/null || xcrun simctl list devices booted | grep -q '{{simulator}}'",
+        "shutdown": "xcrun simctl shutdown '{{simulator}}'"
+      }
+    },
+    "dev-server": {
+      "type": "dev-server",
+      "label": "Owned Mobile Metro and dev client",
+      "streamable": false,
+      "controllable": true,
+      "watch": {
+        "type": "port-listen",
+        "port": "{{port}}"
+      },
+      "hooks": {
+        "boot": "bash \"{{farmslot_dir}}/projects/metamask-harness-farm/scripts/tooling.sh\" mobile-boot harness \"{{repo}}\" \"{{mobile_repo}}\" \"{{port}}\" \"{{simulator}}\" \"{{slot_id}}\" \"{{farmslot_dir}}\"",
+        "health": "bash \"{{farmslot_dir}}/projects/metamask-harness-farm/scripts/tooling.sh\" mobile-health harness \"{{repo}}\" \"{{mobile_repo}}\" \"{{port}}\" \"{{simulator}}\"",
+        "shutdown": "bash \"{{farmslot_dir}}/projects/metamask-harness-farm/scripts/tooling.sh\" mobile-stop harness \"{{repo}}\" \"{{mobile_repo}}\" \"{{port}}\" \"{{simulator}}\" \"{{slot_id}}\""
+      }
+    }
+  },
+  "runtime_capabilities": {
+    "providers": {
+      "mobile-proof": {
+        "label": "Owned Mobile live-proof fixture",
+        "description": "Boot this slot's simulator and launch its own Mobile checkout on the slot Metro port through the published harness. Release stops Metro and retains the simulator and installed dev client.",
+        "version": "1",
+        "share_policy": "exclusive",
+        "cost": {
+          "class": "high",
+          "resources": [
+            {
+              "id": "ios-sim",
+              "kind": "device",
+              "access": "exclusive",
+              "scope": "slot"
+            },
+            {
+              "id": "dev-server",
+              "kind": "process",
+              "access": "exclusive",
+              "scope": "slot"
+            }
+          ]
+        },
+        "actions": {
+          "acquire": {
+            "kind": "resource",
+            "resource_id": "dev-server",
+            "action": "boot"
+          },
+          "health": {
+            "kind": "resource",
+            "resource_id": "dev-server",
+            "action": "health"
+          },
+          "release": {
+            "kind": "resource",
+            "resource_id": "dev-server",
+            "action": "shutdown"
+          }
+        },
+        "affected_resources": [
+          {
+            "resource_id": "dev-server",
+            "ownership": "capability",
+            "release_effect": "stop"
+          },
+          {
+            "resource_id": "ios-sim",
+            "ownership": "slot-lifecycle",
+            "release_effect": "retain"
+          }
+        ],
+        "release_effects": [
+          "Stop this slot's Metro; keep its simulator, dev client and wallet fixture for the next proof."
+        ],
+        "keep_warm_ms": 0
+      }
+    }
+  },
+  "worker_terminal": {
+    "flows": {
+      "dev": {
+        "acceptance": {
+          "require": true
+        },
+        "complete": {
+          "report": "artifacts/pr-description.md",
+          "artifacts": [
+            "artifacts/pr-description.md",
+            "artifacts/report.md",
+            "artifacts/recipe-coverage.md"
+          ]
+        }
+      },
+      "fix-bug": {
+        "acceptance": {
+          "require": true
+        },
+        "complete": {
+          "report": "artifacts/pr-description.md",
+          "artifacts": [
+            "artifacts/pr-description.md",
+            "artifacts/report.md",
+            "artifacts/recipe-coverage.md"
+          ]
+        }
+      },
+      "qa": {
+        "complete": {
+          "report": "artifacts/report.md",
+          "artifacts": [
+            "artifacts/report.md",
+            "artifacts/recipe-coverage.md"
+          ]
+        }
+      }
+    }
+  },
+  "publication_review": {
+    "dev": {
+      "minimum_reviews": 1
+    },
+    "fix-bug": {
+      "minimum_reviews": 1
+    }
+  },
+  "slot_actions": {
+    "mobile-deps": {
+      "label": "Install owned Mobile dependencies",
+      "description": "Install the locked dependencies if this slot's Mobile checkout has none, then run Mobile's minimal setup:expo.",
+      "command": "bash \"{{farmslot_dir}}/projects/metamask-harness-farm/scripts/tooling.sh\" mobile-deps harness \"{{repo}}\" \"{{mobile_repo}}\" \"{{slot_id}}\"",
+      "timeoutMs": 3600000,
+      "refresh": [
+        "resources"
+      ]
+    },
+    "mobile-dev-client": {
+      "label": "Install Mobile dev client",
+      "description": "Install the cached Runway iOS dev client on this slot's simulator through the published harness.",
+      "command": "bash \"{{farmslot_dir}}/projects/metamask-harness-farm/scripts/tooling.sh\" mobile-client harness \"{{repo}}\" \"{{mobile_repo}}\" \"{{port}}\" \"{{simulator}}\" \"{{slot_id}}\"",
+      "timeoutMs": 1800000,
+      "refresh": [
+        "resources"
+      ]
+    },
+    "mobile-wallet-fixture": {
+      "label": "Apply approved testnet wallet fixture",
+      "description": "One-time operator action. Requires this slot's dev-server resource to be booted. Stages the approved testnet wallet saved on this node at <owned Mobile checkout>/temp/recipe/private/wallet-fixture.json, then applies it to the running app.",
+      "command": "bash \"{{farmslot_dir}}/projects/metamask-harness-farm/scripts/tooling.sh\" mobile-fixture harness \"{{repo}}\" \"{{mobile_repo}}\" \"{{slot_id}}\" \"{{port}}\" \"{{simulator}}\"",
+      "refresh": [
+        "resources"
+      ],
+      "timeoutMs": 300000
+    },
+    "tooling-candidate": {
+      "label": "Show after-fix candidate",
+      "mode": "copy",
+      "command": "bash \"{{farmslot_dir}}/projects/metamask-harness-farm/scripts/tooling.sh\" candidate harness \"{{repo}}\"",
+      "refresh": [
+        "none"
+      ]
+    }
+  },
+  "vars": {
+    "owned_mobile_repo": "{{mobile_repo}}"
+  }
+}
