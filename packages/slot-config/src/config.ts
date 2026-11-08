@@ -12,6 +12,7 @@ import {
   type HostPressureAdmissionMode,
   isReviewMode,
   isRuntimeCapabilityClaimScope,
+  isScriptedCommandRuntime,
   isValidDomainName,
   normalizeProjectWorkflowDefaults,
   parseRequiredSkillsConfig,
@@ -409,6 +410,8 @@ export interface RawProjectJson {
         timeout_ms?: number;
         timeoutMs?: number;
         cwd?: string;
+        /** `self-managed`: the command runs its own runtime; dispatch boots none. */
+        runtime?: string;
       }
     >;
   };
@@ -1551,6 +1554,9 @@ export function validateScriptedConfig(projectJson: RawProjectJson, projectConfi
     }
     if (commandConfig.cwd !== undefined && typeof commandConfig.cwd !== 'string') {
       throw new Error(`${projectConfig}: scripted.commands.${name}.cwd must be a string`);
+    }
+    if (commandConfig.runtime !== undefined && !isScriptedCommandRuntime(commandConfig.runtime)) {
+      throw new Error(`${projectConfig}: scripted.commands.${name}.runtime must be "self-managed"`);
     }
   }
 }
