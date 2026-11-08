@@ -402,7 +402,7 @@ The sandbox profile is generated from the pool during preparation. It denies rea
 
 **Status:** Proposed. Lead-assigned proof baseline capability.
 
-**Decision.** Add a `proof` task profile to the existing eval APIs. It admits a farm QA preset, its inputs and its execution-template snapshot, then runs the existing `qa` flow with explicit ordered ACs. The worker authors, composes, parameterizes and runs recipes for a supplied change. Product code and pinned tool/library inputs are immutable.
+**Decision.** Add a `proof` task profile to the existing eval APIs. It admits a farm QA preset, its inputs and its exact configured execution-template snapshot, including package-sourced templates, then runs the existing `qa` flow with explicit ordered ACs. The worker authors, composes, parameterizes and runs recipes for a supplied change. Product code and pinned tool/library inputs are immutable.
 
 Freeze the implementation commit/tree/diff and `qaSource { baseSha, headSha }`. A merged PR uses its merge commit as the implementation and the merge's first parent as the QA base only when that range's stable patch identity matches the complete PR diff; otherwise admission refuses. The supplied diff is derived from the admitted QA range, with the PR diff retained as provenance. Other sources need an explicit committed QA range containing the change; uncommitted-only prior outputs refuse. The independent Git store contains those two shallow snapshots, so existing QA scope resolution can read base..head without exposing other history.
 

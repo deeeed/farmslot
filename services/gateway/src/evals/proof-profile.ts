@@ -96,7 +96,7 @@ export interface ProofInputDependencies {
   ) => Promise<Pick<EvalProofInput, 'qa' | 'executionTemplate'>>;
 }
 
-async function admitProofQa(
+export async function admitProofQa(
   params: EvalExperimentCreateParams,
 ): Promise<Pick<EvalProofInput, 'qa' | 'executionTemplate'>> {
   const vars = await loadProjectVars(params.project);
@@ -106,8 +106,7 @@ async function admitProofQa(
     explicitId: qa.profile.template_id,
   });
   const template = catalog.options.find((option) => option.id === qa.profile.template_id);
-  if (!template || template.sourceKind !== 'project')
-    throw new Error('Proof profile requires its admitted farm-owned QA execution template.');
+  if (!template) throw new Error('Proof profile requires its admitted farm QA execution template.');
   const snapshot = readConfiguredExecutionTemplateSnapshot(vars, { ...template, flow: 'qa' });
   return { qa, executionTemplate: executionTemplateReference(snapshot.entry) };
 }

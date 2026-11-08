@@ -136,8 +136,6 @@ export async function resolveCandidateTemplateProvenance(
       throw new Error('Proof template axis cannot override the admitted QA snapshot.');
     const vars = await loadProjectVars(project);
     const snapshot = readConfiguredExecutionTemplateSnapshot(vars, { ...frozen, flow: 'qa' });
-    if (snapshot.entry.sourceKind !== 'project')
-      throw new Error('Proof trials require a farm-owned QA template.');
     const provenance = await buildTemplateProvenance({
       flowType: 'qa',
       project,
@@ -147,10 +145,12 @@ export async function resolveCandidateTemplateProvenance(
       templateVariant: null,
       templateIsDefault: true,
       role: 'eval-candidate',
+      source: snapshot.entry.sourceKind === 'project' ? 'current-project' : 'external',
+      projectRepoPath: path.dirname(vars.projectConfig),
     });
     return {
       axes: { ...axes, template: expected },
-      provenance: { ...provenance, taskProfile },
+      provenance: { ...provenance, taskProfile, executionTemplate: frozen },
       templateContent: snapshot.markdown,
       executionTemplate: frozen,
       mode: 'autonomous',
