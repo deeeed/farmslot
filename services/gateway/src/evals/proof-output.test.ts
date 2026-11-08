@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -100,4 +100,52 @@ test('proof metadata cannot change completion policy for an ordinary production 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('proof output uses the retained inventory when media is no longer in the mutable task mirror', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'proof-retained-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const run = await firstOutputFixture(root, makeRun({ flowType: 'qa' }));
+  run.id = path.basename(root);
+  run.engineState!.evalExperiment!.blind!.proof = proof;
+  const { materializeRunBundle, openRunBundleStore, readRetainedRunBundle } =
+    await import('@farmslot/run-bundle');
+  const { runBundleHome, runBundleStore } = await import('../run-completion/retained-artifacts.js');
+  const { runsDirectory } = await import('../runs/store.js');
+  const { scanResultPackageArtifacts, sha256Text } = await import('./package-store.js');
+  const taskDir = path.dirname(run.taskFile!);
+  const media = path.join(taskDir, 'artifacts/recording.mp4');
+  await writeFile(media, 'retained test bytes');
+  const artifacts = await scanResultPackageArtifacts(taskDir, run);
+  const manifestDigest = sha256Text(JSON.stringify(artifacts));
+  await openRunBundleStore({ runsDir: runsDirectory(), home: runBundleHome(), create: true });
+  const store = await runBundleStore();
+  const captured = await materializeRunBundle({
+    store,
+    farmslotRoot: root,
+    run,
+    taskDir,
+    artifacts,
+    manifestDigest,
+    captureKey: 'proof-first-output',
+    commit: async () => {},
+  });
+  run.output = {
+    workerFinished: true,
+    capturedAt: new Date().toISOString(),
+    artifactManifest: artifacts,
+    manifestDigest,
+    artifactBundle: captured.ref,
+  };
+  await rm(media);
+  await rm(path.join(taskDir, 'artifacts/report.md'));
+  run.engineState!.evalExperiment!.blind!.firstOutput!.proofPackage = await freezeProofOutput(run);
+  const output = await readProofOutput(run);
+  assert.ok(output);
+  assert.match(output, /artifacts\/recording.mp4/);
+  const bundle = await readRetainedRunBundle(store, captured.ref, run.id);
+  const retained = await bundle.resolveEntry('artifacts/recording.mp4');
+  await chmod(retained.path, 0o600);
+  await writeFile(retained.path, 'tampered test bytes');
+  await assert.rejects(readProofOutput(run), /Frozen proof artifact changed/);
 });

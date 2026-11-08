@@ -11,7 +11,7 @@ import {
   validateRecipeArtifactPackage,
   validateRecipeSuitePackage,
 } from '@farmslot/protocol';
-import { resolveRunBundleEntry } from '@farmslot/run-bundle';
+import { readRetainedRunBundle } from '@farmslot/run-bundle';
 
 import {
   getOrchestratorTaskRoot,
@@ -22,11 +22,7 @@ import {
 } from '../core/config.js';
 import { execArgvOnSlot } from '../core/exec.js';
 import { slotFileExists, slotReadFile, slotRealpath, slotStat } from '../core/slot-io.js';
-import {
-  readRetainedRunText,
-  retainedRunBundleRef,
-  runBundleStore,
-} from '../run-completion/retained-artifacts.js';
+import { retainedRunBundleRef, runBundleStore } from '../run-completion/retained-artifacts.js';
 import { BlockedRunError } from '../run-engine/errors.js';
 import { getRun } from '../runs/store.js';
 import { qaEvidenceStartedAt } from '../runs/task-execution.js';
@@ -457,24 +453,20 @@ async function retainedQaCompletionIO(run: Run): Promise<QaCompletionIO> {
   requireProof(run.qaSource, 'the retained QA execution has no frozen source identity');
   const ref = run.output?.artifactBundle ?? retainedRunBundleRef(run);
   const store = await runBundleStore();
+  const bundle = await readRetainedRunBundle(store, ref, run.id);
   return {
     read: async (name, optional = false) => {
-      try {
-        return JSON.parse(await readRetainedRunText(run, `artifacts/${name}`, ref));
-      } catch (error) {
-        if (optional && error instanceof Error && 'code' in error && error.code === 'ENOENT')
-          return undefined;
-        throw error;
-      }
+      relative(name);
+      if (
+        optional &&
+        !Object.hasOwn(bundle.manifest.entries, `tasks/${ref.taskKey}/artifacts/${name}`)
+      )
+        return undefined;
+      return JSON.parse(await bundle.readText(`artifacts/${name}`));
     },
     file: async (name, nonempty = true) => {
       relative(name);
-      const entry = await resolveRunBundleEntry({
-        store,
-        ref,
-        runId: run.id,
-        path: `artifacts/${name}`,
-      });
+      const entry = await bundle.resolveEntry(`artifacts/${name}`);
       requireProof(!nonempty || entry.bytes > 0, `artifact is empty: ${name}`);
       return entry.path;
     },
