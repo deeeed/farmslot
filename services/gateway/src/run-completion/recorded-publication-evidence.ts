@@ -13,6 +13,7 @@ import type {
 } from '@farmslot/protocol';
 
 import {
+  BASELINE_MARKER_DIR,
   isGatewayOwnedArtifactPath,
   PUBLICATION_SELECTION_DIR,
 } from '../core/artifact-copy-policy.js';
@@ -143,6 +144,14 @@ export async function recordedPublicationDependencies(
         sha256: input.artifactDigests[file]!.replace(/^sha256:/u, ''),
       });
     }
+  }
+  // Keep the gateway's verified marker baseline readable after the slot is released.
+  for (const artifact of artifacts) {
+    if (!artifact.path.startsWith(`artifacts/${BASELINE_MARKER_DIR}/`)) continue;
+    const bytes = await readFile(path.join(taskRoot, artifact.path), 'utf8');
+    if (artifact.sha256?.replace(/^sha256:/u, '') !== sha256Text(bytes))
+      throw new Error('Captured marker baseline receipt is missing or changed.');
+    entries.set(artifact.path, { ...artifact, purpose: 'evidence-dependency' });
   }
   if (!source && expectedManifest)
     throw new Error('Publication selection changed while preparing its frozen package.');
