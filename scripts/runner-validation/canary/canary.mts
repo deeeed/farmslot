@@ -27,6 +27,8 @@ import { FULLFLOW_MODEL } from './fullflow-fixture.mjs';
 //             --model haiku selects Claude instead, for hosts with an existing valid login.
 //             Refreshes package prep, holds publication, cancels, verifies retention, then releases.
 //             Baseline/acceptance refusals fail normally; never publish, post or push.
+//             --only marker-contract checks Recipe Cook's marker topology in seconds, model-free,
+//             using the checkout's publication verifier without a stack, slot or device.
 //
 // Every model a case would use must be on config.json's allowlist, or the canary stops before
 // dispatching anything. Known failures (config.json) report as KNOWN; one that passes fails the
@@ -59,6 +61,7 @@ import {
   type Variant,
 } from './isolated.mjs';
 import { runLive } from './live.mjs';
+import { runMarkerContract } from './marker-contract.mjs';
 import { applyKnownFailures, type CheckResult, type KnownFailure } from './outcome.mjs';
 import { report, type Verdict } from './report.mjs';
 
@@ -121,6 +124,7 @@ for (const entry of args('budget')) {
 
 // ---------------------------------------------------------------- the cases this run makes
 const CASES = [
+  'marker-contract',
   ...FULLFLOW_CASES,
   ...RECOVERY_CASES,
   'performance',
@@ -139,7 +143,7 @@ for (const name of only ?? [])
   if (!(CASES as readonly string[]).includes(name)) throw new Error(`Unknown case ${name}`);
 const available: readonly string[] =
   profile === 'fullflow'
-    ? FULLFLOW_CASES
+    ? ['marker-contract', ...FULLFLOW_CASES]
     : profile === 'recovery'
     ? RECOVERY_CASES
     : profile === 'canary'
@@ -196,7 +200,8 @@ const fullflowWorker = arg('model') === 'haiku'
   : FULLFLOW_MODEL;
 if (profile === 'fullflow' && arg('model') && !['haiku', FULLFLOW_MODEL.model].includes(arg('model')!))
   throw new Error('--model for fullflow must be haiku or litellm/deepseek-v4p1-flash');
-const models = profile === 'fullflow' ? [fullflowWorker.model, REVIEWER.model] : ['scripted', ...(reviews ? [REVIEWER.model] : [])];
+const fullflowModels = profile === 'fullflow' && FULLFLOW_CASES.some(wants);
+const models = profile === 'fullflow' ? (fullflowModels ? [fullflowWorker.model, REVIEWER.model] : []) : ['scripted', ...(reviews ? [REVIEWER.model] : [])];
 const refused = models.filter((model) => !config.modelAllowlist.includes(model));
 
 await mkdir(evidence, { recursive: true });
@@ -218,6 +223,7 @@ const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: '
 const reaper = startReaper();
 let stopStack: (() => Promise<string[]>) | undefined;
 let stopLive: (() => Promise<string[]>) | undefined;
+let markerContract: Promise<void> | undefined;
 const checks: CheckResult[] = [];
 const cleanupErrors: string[] = [];
 let setupError: string | undefined;
@@ -264,6 +270,11 @@ const finish = () =>
   })());
 const cleanup = cleanupOnExit(async () => {
   cleaning = true;
+  try {
+    await markerContract;
+  } catch (error) {
+    cleanupErrors.push(`marker-contract: ${String(error)}`);
+  }
   cleanupErrors.push(...((await stopLive?.()) ?? []));
   const stackErrors = (await stopStack?.()) ?? [];
   cleanupErrors.push(...stackErrors);
@@ -281,11 +292,15 @@ try {
   const onCheck = (check: CheckResult) => {
     checks.push(check);
   };
-  if (profile === 'fullflow')
+  if (profile === 'fullflow' && wants('marker-contract')) {
+    markerContract = runMarkerContract(evidence).then(onCheck);
+    await markerContract;
+  }
+  if (fullflowModels)
     await runFullflow({
       root, evidence, log, reaper, onCheck,
       worker: fullflowWorker,
-      cases: only as (typeof FULLFLOW_CASES)[number][] | undefined,
+      cases: FULLFLOW_CASES.filter(wants),
       ownerTag: process.env.CANARY_STAMP ?? String(process.pid),
       cliSnapshots: expand(arg('cli-snapshots') ?? path.join(evidence, 'cli-snapshots')),
       ...(arg('cli-snapshot') ? { cliSnapshot: expand(arg('cli-snapshot')!) } : {}),
@@ -367,7 +382,7 @@ try {
         stopStack = stop;
       },
     });
-  completed = true;
+  completed = !cleaning;
 } catch (error) {
   // During a signal's cleanup the calls in flight fail; the report says it was interrupted.
   if (!cleaning) {
