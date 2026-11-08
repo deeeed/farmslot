@@ -1,0 +1,1 @@
+- Add the required skill set contract (ADR-049 Amendment 3): `RequiredSkillsConfig`, `RequiredSkillSet`, `parseRequiredSkillsConfig` and `isRequiredSkillSet`.

@@ -258,6 +258,7 @@ export async function admitWorkerLaunch(
             protocolVersion: await packageVersion('protocol'),
             runtimeScript: await agentRuntimeScriptForSlot(input.vars, 'task-init-cli.mjs'),
             taskDir: workerTaskDir(initial, input.vars, project),
+            repoRoot: input.vars.remoteRepo,
           });
           const result = await execute(command, signal, timeout);
           return typeof result === 'string'
