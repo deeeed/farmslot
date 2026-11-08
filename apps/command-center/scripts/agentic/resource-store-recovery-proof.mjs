@@ -60,7 +60,7 @@ try {
   await page.addInitScript(() => {
     // Fail one real store I/O request at the worker boundary. Never inject UI/cache state.
     const WorkerClass = window.Worker;
-    const result = { injected: false, successfulWrites: 0 };
+    const result = { injected: false, retryRefused: false, successfulWrites: 0 };
     window.__resourceStoreProof = result;
     window.Worker = class extends WorkerClass {
       constructor(url, options) {
@@ -72,20 +72,29 @@ try {
         });
       }
       postMessage(request, ...args) {
-        if (this.storage && ['putQuery', 'mergeRows'].includes(request.operation)) {
-          if (!result.injected) {
-            result.injected = true;
-            queueMicrotask(() =>
-              this.dispatchEvent(
-                new MessageEvent('message', {
-                  data: { id: request.id, ok: false, message: 'Proof: temporary store I/O error' },
-                }),
-              ),
-            );
-            return;
-          }
-          this.writes.add(request.id);
+        const write = this.storage && ['putQuery', 'mergeRows'].includes(request.operation);
+        const failWrite = write && !result.injected;
+        const failRetry =
+          this.storage && request.operation === 'open' && result.injected && !result.retryRefused;
+        if (failWrite || failRetry) {
+          if (failWrite) result.injected = true;
+          else result.retryRefused = true;
+          queueMicrotask(() =>
+            this.dispatchEvent(
+              new MessageEvent('message', {
+                data: {
+                  id: request.id,
+                  ok: false,
+                  message: failWrite
+                    ? 'Proof: temporary store I/O error'
+                    : 'Proof: storage still unavailable on first retry',
+                },
+              }),
+            ),
+          );
+          return;
         }
+        if (write) this.writes.add(request.id);
         super.postMessage(request, ...args);
       }
     };
@@ -125,7 +134,14 @@ try {
       async () => (await import('/src/gateway-client.ts')).gateway.connectionState === 'connected',
     ),
   );
+  let retryFailed;
   if (!before) {
+    await until(() => page.evaluate(() => window.__resourceStoreProof.retryRefused));
+    retryFailed = await read();
+    assert(retryFailed.notice, 'The failed reopen must retain a storage notice');
+    assert.deepEqual(retryFailed.appBounds, failed.appBounds, 'Failed recovery moved the app');
+    await page.screenshot({ path: path.join(output, 'retry-unavailable.png') });
+    await page.evaluate(async () => (await import('/src/gateway-client.ts')).gateway.reconnect());
     await until(() =>
       page.evaluate(
         async () =>
@@ -142,6 +158,7 @@ try {
       {
         before,
         failed,
+        retryFailed,
         reconnected,
         consoleErrors: errors,
       },
