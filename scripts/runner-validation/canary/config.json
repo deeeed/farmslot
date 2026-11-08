@@ -1,5 +1,5 @@
 {
-  "modelAllowlist": ["scripted", "haiku", "gpt-6-luna"],
+  "modelAllowlist": ["scripted", "haiku", "gpt-6-luna", "litellm/deepseek-v4p1-flash"],
   "budgetsS": {
     "find-slot": 10,
     "write-task": 20,
