@@ -1,0 +1,1 @@
+- Start proof-only QA trials through their frozen QA source instead of the dev/fix-bug comparison start-ref admission path.
