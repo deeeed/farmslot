@@ -30,6 +30,7 @@ import {
   type ProjectRecipeHostOptions,
   withProjectRecipeHostContext,
 } from './project-host.js';
+import { providerEnvironmentRoot } from './provider-root.js';
 
 interface TaskProjectSelection {
   identity: TaskRecipeBindingIdentity | null;
@@ -447,7 +448,11 @@ export async function withTaskProjectHost<T>(
       tokens: ['--target', selected.target],
       adapter: false,
     });
-    const root = readProjectPool(context)?.env?.[variable];
+    const root = providerEnvironmentRoot(config.recipe.provider, {
+      env: options.load?.env ?? process.env,
+      poolEnv: readProjectPool(context)?.env,
+      authorizedProviders: options.authorizedProviders,
+    });
     if (typeof root === 'string' && root.trim()) poolProviderRoot = fs.realpathSync(root);
   }
   const retained = (file: string): string => {
@@ -469,6 +474,20 @@ export async function withTaskProjectHost<T>(
       'use the recorded selection or initialize a separate task',
     );
   };
+  const requestedTarget =
+    optionValues(options.tokens, '--target').at(-1) ??
+    optionValues(options.invocation?.argv ?? [], '--target').at(-1);
+  const explicitTarget = requestedTarget
+    ? path.resolve(options.cwd ?? process.cwd(), requestedTarget)
+    : undefined;
+  const runtimeTarget =
+    (options.command === 'run' || options.command === 'call') &&
+    explicitTarget &&
+    explicitTarget !== selection.checkoutRoot &&
+    explicitTarget !== selected.target &&
+    !explicitTarget.startsWith(`${selected.target}${path.sep}`)
+      ? explicitTarget
+      : undefined;
   const rewrite = (argv: readonly string[], stripSelectors: boolean): string[] => {
     const fixed: Record<string, string | null> = {
       '--project': selected.project,
@@ -483,6 +502,7 @@ export async function withTaskProjectHost<T>(
     if (requestedTarget) {
       const requested = path.resolve(options.cwd ?? process.cwd(), requestedTarget);
       const allowed =
+        requested === runtimeTarget ||
         requested === selection.checkoutRoot ||
         requested === selected.target ||
         requested.startsWith(`${selected.target}${path.sep}`);
@@ -526,6 +546,7 @@ export async function withTaskProjectHost<T>(
   return withProjectRecipeHostContext(
     {
       ...options,
+      ...(runtimeTarget ? { runtimeTarget } : {}),
       ...(invocation ? { invocation } : {}),
       options: {
         ...options.options,
@@ -590,7 +611,7 @@ export async function withTaskProjectHost<T>(
         const actual = host.context.project!.provider;
         const warning =
           provider.version !== actual.version
-            ? `Task recorded harness ${provider.version ?? 'unknown'}; using pool-selected ${actual.version ?? 'unknown'} (${actual.root}).`
+            ? `Task recorded harness ${provider.version ?? 'unknown'}; using selected ${actual.version ?? 'unknown'} (${actual.root}).`
             : undefined;
         fs.mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
         fs.writeFileSync(

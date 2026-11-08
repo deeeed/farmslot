@@ -1980,16 +1980,15 @@ describe('run', () => {
     assert.equal(fs.existsSync(path.join(target, 'temp')), false);
   });
 
-  test('--plan reports an outside-checkout task artifact directory in JSON before preflight', async () => {
+  test('--plan accepts an explicitly bound task outside the application checkout', async () => {
     const target = checkout();
     const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
     process.env.RECIPE_TASK_DIR = path.dirname(target);
     const result = await capture(() =>
       handleRun([recipe, '--plan', '--adapter', 'web', '--target', target, '--json'], runOptions),
     );
-    assert.equal(result.value, 2);
-    assert.equal((lastJson(result.stdout).error as { code: string }).code, 'ARTIFACT_DIR_INVALID');
-    assert.deepEqual(calls.mutationHooks, []);
+    assert.equal(result.value, 0);
+    assert.deepEqual(calls.mutationHooks, ['preflight:web']);
     assert.equal(fs.existsSync(path.join(target, 'temp')), false);
   });
 
@@ -2524,84 +2523,91 @@ describe('run', () => {
     assert.equal(fixtureDetail(byEnv.stdout), fixtureDetail(byFlag.stdout));
   });
 
-  test('a run with a task dir records its proof targets in the acceptance ledger', async () => {
-    const target = checkout();
-    const taskDir = path.join(target, 'temp', 'tasks', 'feat', 'shop-1');
-    fs.mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
-    fs.writeFileSync(
-      path.join(taskDir, 'inputs', 'handoff.json'),
-      JSON.stringify({
-        task: { acceptanceCriteria: ['The shop answers a ping.', 'Not proven here.'] },
-      }),
-    );
-    const recipe = path.join(target, 'proof.recipe.json');
-    fs.writeFileSync(
-      recipe,
-      JSON.stringify({
-        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-        title: 'Shop proof',
-        description: 'Prove the ping.',
-        proofTargets: [{ id: 'AC1', claim: 'The shop answers a ping.' }],
-        workflow: {
-          entry: 'ping',
-          nodes: {
-            ping: {
-              action: 'shop.ping',
-              mode: 'fast',
-              intent: 'Ping the shop.',
-              next: 'check',
+  for (const placement of ['checkout', 'separate', 'separate-explicit'] as const)
+    test(`a run records its task acceptance ledger with ${placement} artifacts`, async () => {
+      const target = checkout();
+      const taskCheckout = placement === 'checkout' ? target : checkout();
+      const taskDir = path.join(taskCheckout, 'temp', 'tasks', 'feat', 'shop-1');
+      fs.mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
+      fs.writeFileSync(
+        path.join(taskDir, 'inputs', 'handoff.json'),
+        JSON.stringify({
+          task: { acceptanceCriteria: ['The shop answers a ping.', 'Not proven here.'] },
+        }),
+      );
+      const recipe = path.join(target, 'proof.recipe.json');
+      fs.writeFileSync(
+        recipe,
+        JSON.stringify({
+          $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+          title: 'Shop proof',
+          description: 'Prove the ping.',
+          proofTargets: [{ id: 'AC1', claim: 'The shop answers a ping.' }],
+          workflow: {
+            entry: 'ping',
+            nodes: {
+              ping: {
+                action: 'shop.ping',
+                mode: 'fast',
+                intent: 'Ping the shop.',
+                next: 'check',
+              },
+              check: {
+                action: 'assert_output',
+                source: 'ping',
+                assert: { path: '$.pong', operator: 'eq', value: 1 },
+                intent: 'The shop answered the ping.',
+                proves: ['AC1'],
+                next: 'done',
+              },
+              done: { action: 'end', status: 'pass' },
             },
-            check: {
-              action: 'assert_output',
-              source: 'ping',
-              assert: { path: '$.pong', operator: 'eq', value: 1 },
-              intent: 'The shop answered the ping.',
-              proves: ['AC1'],
-              next: 'done',
-            },
-            done: { action: 'end', status: 'pass' },
           },
-        },
-      }),
-    );
-    process.env.RECIPE_TASK_DIR = path.relative(target, taskDir);
-    const run = await capture(() =>
-      handleRun(
+        }),
+      );
+      process.env.RECIPE_TASK_DIR =
+        placement === 'checkout' ? path.relative(target, taskDir) : taskDir;
+      const run = await capture(() =>
+        handleRun(
+          [
+            recipe,
+            ...(placement === 'separate-explicit'
+              ? ['--artifacts-dir', path.join(taskDir, 'artifacts', 'recipe-runs', 'proof')]
+              : []),
+            '--adapter',
+            'web',
+            '--target',
+            target,
+            '--heal',
+            'off',
+            '--cdp-port',
+            '9444',
+            '--json',
+          ],
+          runOptions,
+        ),
+      );
+      assert.equal(run.value, 0, run.stderr.join('\n'));
+      assert.equal(lastJson(run.stdout).status, 'pass');
+      const tracePath = (lastJson(run.stdout).result as { tracePath: string }).tracePath;
+      const taskTrace = path.relative(taskDir, tracePath).split(path.sep).join('/');
+      assert(fs.existsSync(path.join(taskDir, 'artifacts/latest-valid-recipe-run.json')));
+      const ledger = JSON.parse(
+        fs.readFileSync(path.join(taskDir, 'artifacts', 'acceptance-status.json'), 'utf8'),
+      );
+      assert.deepEqual(
+        ledger.criteria.map((entry: Record<string, unknown>) => [
+          entry.id,
+          entry.verdict,
+          entry.recipeNodes,
+          entry.evidence,
+        ]),
         [
-          recipe,
-          '--adapter',
-          'web',
-          '--target',
-          target,
-          '--heal',
-          'off',
-          '--cdp-port',
-          '9444',
-          '--json',
+          ['AC-1', 'proven', ['check'], [taskTrace]],
+          ['AC-2', 'missing', [], [taskTrace]],
         ],
-        runOptions,
-      ),
-    );
-    assert.equal(run.value, 0, run.stderr.join('\n'));
-    assert.equal(lastJson(run.stdout).status, 'pass');
-    const tracePath = (lastJson(run.stdout).result as { tracePath: string }).tracePath;
-    const taskTrace = path.relative(taskDir, tracePath).split(path.sep).join('/');
-    const ledger = JSON.parse(
-      fs.readFileSync(path.join(taskDir, 'artifacts', 'acceptance-status.json'), 'utf8'),
-    );
-    assert.deepEqual(
-      ledger.criteria.map((entry: Record<string, unknown>) => [
-        entry.id,
-        entry.verdict,
-        entry.recipeNodes,
-        entry.evidence,
-      ]),
-      [
-        ['AC-1', 'proven', ['check'], [taskTrace]],
-        ['AC-2', 'missing', [], [taskTrace]],
-      ],
-    );
-  });
+      );
+    });
 
   test('task runs keep authored inputs, ledgers and prior attempts in distinct directories', async () => {
     const target = checkout();
