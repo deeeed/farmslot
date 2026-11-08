@@ -1,0 +1,1 @@
+- Keep recipe acceptance artifacts bound to the task when execution targets a separate app checkout, and honor explicitly authorized provider environment roots without changing retained task receipts.

@@ -1,0 +1,1 @@
+- Clarify the recipe execution artifact destination in the generated CLI reference.

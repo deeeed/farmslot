@@ -213,7 +213,7 @@ export function registerProjectExecutionCommand(
         .allowUnknownOption(),
     )
       .option('--target <path>', 'Checkout to execute against')
-      .option('--artifacts-dir <path>', 'Checkout-relative artifact directory')
+      .option('--artifacts-dir <path>', 'Artifact directory for this execution')
       .option('--action-manifest <path>', 'Select an action manifest')
       .addOption(
         new Option('--heal <policy>', 'Healing policy').choices(['off', 'infra-only', 'auto']),

@@ -52,13 +52,14 @@ export function recipeOutputRoots(
   target: string,
   binding: Pick<
     ResolvedProjectBinding,
-    'checkoutRoot' | 'runtimeDir' | 'farmRuntimeDir' | 'artifactDir'
+    'checkoutRoot' | 'runtimeDir' | 'farmRuntimeDir' | 'artifactDir' | 'executionArtifactsDir'
   >,
 ): string[] {
   return [
     path.join(binding.checkoutRoot, binding.artifactDir),
     path.join(binding.checkoutRoot, binding.farmRuntimeDir),
     path.join(target, binding.runtimeDir),
+    ...(binding.executionArtifactsDir ? [binding.executionArtifactsDir] : []),
   ];
 }
 

@@ -21,6 +21,7 @@ import {
   validateCommandEnvConfig,
   validateExecutionTemplatesConfig,
   validatePrepareConfig,
+  validateRequiredSkillsConfig,
   validateRuntimeCapabilitiesConfig,
 } from './config.js';
 
@@ -1362,5 +1363,34 @@ test('host-pressure admission is opt-in, validated, and normalized', () => {
         'project.json',
       ),
     /load1_critical_multiplier must be a positive number/,
+  );
+});
+
+test('required_skills is optional and validated with the pack path', () => {
+  assert.doesNotThrow(() => validateRequiredSkillsConfig({}, 'project.json'));
+  assert.doesNotThrow(() =>
+    validateRequiredSkillsConfig(
+      {
+        required_skills: {
+          root: '.agents/skills',
+          rules: [
+            {
+              id: 'mobile-testing',
+              when: { flows: ['dev', 'fix-bug'] },
+              skills: [{ name: 'mms-mobile-testing', files: ['SKILL.md'] }],
+            },
+          ],
+        },
+      },
+      'project.json',
+    ),
+  );
+  assert.throws(
+    () =>
+      validateRequiredSkillsConfig(
+        { required_skills: { root: '.agents/skills', rules: [{ id: 'x', skills: [] }] } },
+        'project.json',
+      ),
+    /project.json: required_skills.rules\[0\].skills must be a non-empty array/,
   );
 });
