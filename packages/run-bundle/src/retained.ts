@@ -757,8 +757,6 @@ export function parseRunBundleMissingData(entry: string): { reason: string; path
     : { reason: entry.slice(0, split), path: entry.slice(split + 1) };
 }
 
-export { isRunBundleMedia };
-
 // One awaited stat at a time cost ~5 ms each inside a busy gateway, so a walk over
 // ~50k historical task files held run completion for 30+ minutes. Keep a bounded
 // number of filesystem calls in flight instead.

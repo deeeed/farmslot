@@ -1,5 +1,6 @@
 export * from './archive.js';
 export * from './collect.js';
+export { isRunBundleMedia } from './copy-tree.js';
 export {
   appendDecisionHistoryFile,
   decisionHistoryFile,
