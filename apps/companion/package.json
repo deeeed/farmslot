@@ -12,7 +12,7 @@
     "android": "bash scripts/agentic/run-android.sh",
     "android:device": "ANDROID_DEVICE_PICK=1 bash scripts/agentic/run-android.sh",
     "launch": "bash scripts/agentic/launch.sh",
-    "prebuild": "bash -c 'source scripts/agentic/agentic.conf && node scripts/install-sherpa-prebuilts.mjs && exec expo prebuild'",
+    "prebuild": "bash -c 'source scripts/agentic/agentic.conf && exec expo prebuild'",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
     "test:lib": "METRO_PORT=41234 node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src && node --test scripts/agentic/*.test.mjs && node --test scripts/screenshots/build-recipe-ux-catalog.test.mjs && bash scripts/agentic/port-config.test.sh && GATEWAY_PORT=41235 METRO_PORT=41234 bash scripts/agentic/identity.test.sh && node --test scripts/release/*.test.mjs",
@@ -56,8 +56,7 @@
     "quality:structure": "node ../../scripts/quality/check-companion-structure.mjs",
     "quality:structure:ci": "node ../../scripts/quality/check-companion-structure.mjs --strict --scope all",
     "recipe:run:ux-review-flow:android": "PLATFORM=android bash scripts/agentic/run-recipe.sh run scripts/agentic/recipe/recipes/ux-review-flow-android.recipe.json",
-    "recipe:run:jank:android": "PLATFORM=android bash scripts/agentic/run-recipe.sh run scripts/agentic/recipe/recipes/jank.recipe.json --record-video=off \"--recording-reason=screen recording competes with the app for the frames being measured\"",
-    "eas-build-post-install": "node scripts/install-sherpa-prebuilts.mjs"
+    "recipe:run:jank:android": "PLATFORM=android bash scripts/agentic/run-recipe.sh run scripts/agentic/recipe/recipes/jank.recipe.json --record-video=off \"--recording-reason=screen recording competes with the app for the frames being measured\""
   },
   "dependencies": {
     "@babel/runtime": "^7.29.2",

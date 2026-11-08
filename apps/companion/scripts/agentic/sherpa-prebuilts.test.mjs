@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,6 +11,13 @@ import { fileURLToPath } from 'node:url';
 const appDir = fileURLToPath(new URL('../..', import.meta.url));
 const rootManifest = JSON.parse(fs.readFileSync(path.join(appDir, '../../package.json'), 'utf8'));
 const appManifest = JSON.parse(fs.readFileSync(path.join(appDir, 'package.json'), 'utf8'));
+const require = createRequire(import.meta.url);
+const { getConfig } = require('expo/config');
+const nativePlugin = './plugins/withSherpaPrebuilts.cjs';
+const pluginRegistered = getConfig(appDir, { skipSDKVersionRequirement: true }).exp.plugins.some(
+  (entry) => entry === nativePlugin,
+);
+const expoRoot = path.dirname(require.resolve('expo/config-plugins'));
 
 function scratch(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-sherpa-'));
@@ -112,12 +120,16 @@ function nativeFixture(t) {
   for (const directory of [
     'scripts/agentic',
     'scripts/doctor',
+    'plugins',
     'bin',
     'node_modules/@siteed/sherpa-onnx.rn',
     'ios/Fixture.xcworkspace',
     'ios/Pods',
   ])
     fs.mkdirSync(path.join(root, directory), { recursive: true });
+  fs.symlinkSync(expoRoot, path.join(root, 'node_modules/expo'));
+  if (pluginRegistered)
+    fs.copyFileSync(path.join(appDir, nativePlugin), path.join(root, nativePlugin));
   const helper = path.join(appDir, 'scripts/install-sherpa-prebuilts.mjs');
   if (fs.existsSync(helper))
     fs.copyFileSync(helper, path.join(root, 'scripts/install-sherpa-prebuilts.mjs'));
@@ -153,7 +165,24 @@ function nativeFixture(t) {
     '[[ -f "$SHERPA_NATIVE_READY" ]] || { echo "native prebuilts missing" >&2; exit 42; }; printf started > "$SHERPA_NATIVE_STARTED"';
   const executable = (name, source) =>
     fs.writeFileSync(path.join(root, 'bin', name), `#!/bin/bash\n${source}\n`, { mode: 0o755 });
-  executable('expo', nativeStarted);
+  fs.writeFileSync(
+    path.join(root, 'bin/expo'),
+    `#!${process.execPath}
+(async () => {
+  const fs = require('node:fs'), path = require('node:path');
+  if (process.env.SHERPA_NATIVE_PLUGIN) {
+    const config = require(process.env.SHERPA_NATIVE_PLUGIN)({ name: 'fixture', slug: 'fixture' });
+    const index = process.argv.indexOf('--platform');
+    const platform = index >= 0 ? process.argv[index + 1] : 'ios';
+    await config.mods[platform].dangerous({ ...config, modResults: null, modRequest: { projectRoot: process.cwd(), platformProjectRoot: path.join(process.cwd(), platform), platform, modName: 'dangerous' } });
+  }
+  fs.writeFileSync(process.env.SHERPA_PREBUILD_FINISHED, 'finished');
+})().catch(error => { console.error(error.message); process.exitCode = 1; });
+`,
+    { mode: 0o755 },
+  );
+  executable('pod', nativeStarted);
+  executable('gradle', nativeStarted);
   executable('xcodebuild', nativeStarted);
   executable('curl', 'exit 0');
   executable('adb', 'printf "List of devices attached\\n"');
@@ -167,10 +196,13 @@ function nativeFixture(t) {
   );
   const ready = path.join(root, 'ready'),
     started = path.join(root, 'started');
+  const prebuildFinished = path.join(root, 'prebuild-finished');
   const env = {
     ...process.env,
     PATH: `${path.join(root, 'bin')}${path.delimiter}${process.env.PATH}`,
     SHERPA_NATIVE_READY: ready,
+    SHERPA_NATIVE_PLUGIN: pluginRegistered ? path.join(root, nativePlugin) : '',
+    SHERPA_PREBUILD_FINISHED: prebuildFinished,
     SHERPA_NATIVE_STARTED: started,
     SKIP_SHERPA_DOWNLOAD: '1',
     SITEED_SHERPA_ONNX_ALLOW_MISSING_PREBUILTS: '1',
@@ -178,26 +210,50 @@ function nativeFixture(t) {
     IOS_SIMULATOR: 'fixture',
     FARMSLOT_SLOT_ID: '',
   };
-  return { root, ready, started, env };
+  return { root, ready, started, prebuildFinished, env };
 }
 
-for (const command of ['prebuild', 'eas-build-post-install']) {
-  test(`${command} fetches native prebuilts explicitly after workspace installation`, (t) => {
+test('public config registration leaves native acquisition lazy', (t) => {
+  const f = nativeFixture(t);
+  assert.equal(pluginRegistered, true);
+  const config = require(path.join(f.root, nativePlugin))({ name: 'fixture', slug: 'fixture' });
+  assert.equal(typeof config.mods.ios.dangerous, 'function');
+  assert.equal(typeof config.mods.android.dangerous, 'function');
+  assert.equal(fs.existsSync(f.ready), false);
+});
+
+test('prebuild fetches native prebuilts explicitly after workspace installation', (t) => {
+  const f = nativeFixture(t);
+  const result = spawnSync('bash', ['-c', appManifest.scripts.prebuild], {
+    cwd: f.root,
+    env: f.env,
+    encoding: 'utf8',
+    timeout: 3000,
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(fs.readFileSync(f.ready, 'utf8'), 'native-prebuilts');
+  assert.equal(fs.existsSync(f.prebuildFinished), true);
+});
+
+for (const platform of ['ios', 'android']) {
+  test(`EAS automatic ${platform} prebuild acquires assets before native dependency installation`, (t) => {
     const f = nativeFixture(t);
-    assert.equal(typeof appManifest.scripts[command], 'string', `native hook ${command} exists`);
-    const result = spawnSync('bash', ['-c', appManifest.scripts[command]], {
+    const nativeStep = platform === 'ios' ? 'pod install' : 'gradle build';
+    const lateHook = appManifest.scripts['eas-build-post-install'];
+    const command = `expo prebuild --platform ${platform} && ${nativeStep}${lateHook ? ` && ${lateHook}` : ''}`;
+    const result = spawnSync('bash', ['-c', command], {
       cwd: f.root,
       env: f.env,
       encoding: 'utf8',
       timeout: 3000,
     });
     assert.equal(result.status, 0, result.stdout + result.stderr);
-    assert.equal(fs.readFileSync(f.ready, 'utf8'), 'native-prebuilts');
-    if (command === 'prebuild') assert.equal(fs.existsSync(f.started), true);
+    assert.equal(fs.existsSync(f.ready), true);
+    assert.equal(fs.existsSync(f.started), true);
   });
 }
 
-test('native prebuild stops before Expo when the explicit dependency fetch fails', (t) => {
+test('failed acquisition stops native prebuild before Pods or compilation', (t) => {
   const f = nativeFixture(t);
   const result = spawnSync('bash', ['-c', appManifest.scripts.prebuild], {
     cwd: f.root,
@@ -205,7 +261,8 @@ test('native prebuild stops before Expo when the explicit dependency fetch fails
     encoding: 'utf8',
     timeout: 3000,
   });
-  assert.equal(result.status, 7, result.stdout + result.stderr);
+  assert.notEqual(result.status, 0, result.stdout + result.stderr);
+  assert.equal(fs.existsSync(f.prebuildFinished), false);
   assert.equal(fs.existsSync(f.started), false);
 });
 
