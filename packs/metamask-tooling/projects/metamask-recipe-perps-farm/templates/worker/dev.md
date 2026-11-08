@@ -3,6 +3,7 @@ id: dev/tooling
 title: MetaMask Perps recipe library development
 flow: dev
 platforms: [ios, mobile]
+recipe_checks: [perps.smoke]
 recipe_capture: true
 runtime_capabilities: [mobile-proof]
 runtime_capability_requirements: '[{"capabilityId":"mobile-proof","reason":"Baseline and candidate proof run on this slot''s owned Mobile fixture","mode":"visual"}]'

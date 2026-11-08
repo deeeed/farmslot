@@ -16,6 +16,8 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { parseMarkdownDocument } from '@farmslot/agent-runtime';
+import { recipeFlowRequirements, resolveRecipeProofRequirements } from '@farmslot/protocol';
 import {
   expandTemplate,
   type ProjectVars,
@@ -134,6 +136,26 @@ test('worker templates keep the generated TASK.md out and name the explicit cand
           ? /\{\{REPO\}\}\/bin\/mm-harness run <recipe> --library perps="\$RETAINED"/
           : /"\$PUBLISHED" run <recipe> --library perps=\{\{REPO\}\}/,
       );
+    }
+  }
+});
+
+test('every template passes dispatch admission for the project smoke and proof resource', () => {
+  for (const name of PROJECTS) {
+    const project = readProject(name);
+    const smokes = (project.recipe?.checks ?? []).map((check) => check.recipe);
+    for (const flow of ['dev', 'fix-bug', 'qa']) {
+      const text = readFileSync(
+        join(pack, 'projects', name, 'templates/worker', `${flow}.md`),
+        'utf8',
+      );
+      // The same parse and requirement read that find-slot runs before claiming a slot.
+      const required = recipeFlowRequirements(parseMarkdownDocument(text).frontmatter);
+      assert.deepEqual(required.recipes, smokes, `${name} ${flow}`);
+      assert.deepEqual(required.resources, ['mobile-proof'], `${name} ${flow}`);
+      const proof = resolveRecipeProofRequirements({ required });
+      assert.deepEqual(proof.missingRequirements, [], `${name} ${flow}`);
+      assert.equal(proof.requirements[0]?.mode, 'visual', `${name} ${flow}`);
     }
   }
 });
