@@ -1581,8 +1581,9 @@ export async function dispatchExecute(
   }
 
   // Retained native reconciliation returned above. This boundary also covers
-  // replay and skip-prepare fallbacks that launch a fresh worker.
-  if (currentRun && !options.nativeRetainedFrom)
+  // replay and skip-prepare fallbacks that launch a fresh worker. A scripted
+  // command that manages its own runtime gets none booted for it.
+  if (currentRun && !options.nativeRetainedFrom && scriptedCommand?.runtime !== 'self-managed')
     await ensureRunRuntimeReady(
       params.slotId,
       currentRun.id,

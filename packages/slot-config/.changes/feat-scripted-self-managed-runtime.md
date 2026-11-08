@@ -1,0 +1,1 @@
+- `scripted.commands.<name>.runtime` accepts `"self-managed"`; any other value fails project load.

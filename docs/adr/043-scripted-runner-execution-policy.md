@@ -189,3 +189,11 @@ Rejected for v1. Project-owned `commandRef` preserves flexibility without lettin
 ### Implement generic `executionPlan.steps[]` now
 
 Rejected for v1. Current needs are worker executor selection plus existing review/CI follow-up configuration. A generic step DAG should wait for concrete flows that prove the shape.
+
+## Amendment 1 (2026-11-09): Self-managed runtime for project commands
+
+Dispatch boots every controllable dev-server, browser and device resource of the slot before it launches a worker, scripted commands included. A command that brings up its own runtime (the nightly device build starts its own Metro on another port and takes its own device lease, after a clean uninstall) cannot run behind that boot: on the Pixel slot the boot launched the installed release build and waited for a debug bridge that never came.
+
+A project command may now declare `runtime: "self-managed"` (`scripted.commands.<name>.runtime` in project.json). Dispatch then skips the slot runtime boot for runs of that command. The command owns its resources and must release them itself. No other value is accepted; a project with one fails to load. Commands without the field, and every other runner, keep the boot.
+
+Public surface: `ProjectScriptedCommandConfig.runtime`, `ScriptedCommandRuntime`, `isScriptedCommandRuntime` (protocol).

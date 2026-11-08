@@ -23,6 +23,7 @@ import {
   validatePrepareConfig,
   validateRequiredSkillsConfig,
   validateRuntimeCapabilitiesConfig,
+  validateScriptedConfig,
 } from './config.js';
 
 test('normalizeSlotTaskRel strips nested task-dir and TASK.md suffixes', () => {
@@ -84,6 +85,17 @@ test('prepare core and capability providers validate while legacy profiles remai
     normalizeRawRuntimeCapabilities(migrated.runtime_capabilities)?.providers['browser-cdp']
       ?.sharePolicy,
     'exclusive',
+  );
+});
+
+test('a scripted command may declare a self-managed runtime and nothing else', () => {
+  const withRuntime = (runtime: string) => ({
+    scripted: { commands: { nightly: { command: 'true', runtime } } },
+  });
+  assert.doesNotThrow(() => validateScriptedConfig(withRuntime('self-managed'), 'project.json'));
+  assert.throws(
+    () => validateScriptedConfig(withRuntime('none'), 'project.json'),
+    /scripted\.commands\.nightly\.runtime must be "self-managed"/,
   );
 });
 

@@ -1,4 +1,9 @@
-import type { ProjectConfig, ScriptedRunnerConfig } from '@farmslot/protocol';
+import {
+  isScriptedCommandRuntime,
+  type ProjectConfig,
+  type ScriptedCommandRuntime,
+  type ScriptedRunnerConfig,
+} from '@farmslot/protocol';
 
 import { loadProjectVars, type RawProjectJson } from '../core/config.js';
 
@@ -6,6 +11,7 @@ export interface ResolvedScriptedCommand {
   command: string;
   timeoutMs?: number;
   cwd?: string;
+  runtime?: ScriptedCommandRuntime;
 }
 
 export function scriptedScenariosEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -90,6 +96,7 @@ export function resolveScriptedCommandFromProjectConfig(
     command: command.command,
     ...(command.timeoutMs ? { timeoutMs: command.timeoutMs } : {}),
     ...(command.cwd ? { cwd: command.cwd } : {}),
+    ...(command.runtime ? { runtime: command.runtime } : {}),
   };
 }
 
@@ -109,6 +116,7 @@ export function resolveScriptedCommandFromRawProjectJson(
     command: raw.command,
     ...(timeoutMs ? { timeoutMs } : {}),
     ...(raw.cwd?.trim() ? { cwd: raw.cwd } : {}),
+    ...(isScriptedCommandRuntime(raw.runtime) ? { runtime: raw.runtime } : {}),
   };
 }
 

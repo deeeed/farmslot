@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
 
+import type { RawProjectJson } from '../../core/config.js';
 import type { SlotPrepareResult } from '../slot/shared.js';
 
 await import('../../runtime/mock-pty.test-support.js');
@@ -29,6 +30,8 @@ const baseline = 'a058550f8d0ad59470460ca37afb252d17380b48';
 const fixedHead = 'f3f36fc1' + '1'.repeat(32);
 const captured: string[] = [];
 let prepares = 0;
+let runtimeBoots = 0;
+let projectJson: RawProjectJson = {};
 const stop = new Error('Fixture stops before worker task copy or launch');
 
 mock.module('../../core/config.js', {
@@ -54,7 +57,7 @@ mock.module('../../core/index.js', {
   namedExports: {
     ...core,
     loadSlotVars: async () => vars,
-    loadProjectVars: async () => ({ projectJson: {}, projectConfig: 'project.json' }),
+    loadProjectVars: async () => ({ projectJson, projectConfig: 'project.json' }),
   },
 });
 mock.module('../../run-engine/declared-capabilities.js', {
@@ -103,7 +106,11 @@ mock.module('../../run-completion/commit-signatures.js', {
   },
 });
 mock.module('../../fleet/runtime-ready.js', {
-  namedExports: { ensureRunRuntimeReady: async () => {} },
+  namedExports: {
+    ensureRunRuntimeReady: async () => {
+      runtimeBoots++;
+    },
+  },
 });
 // This fixture isolates baseline preservation and stops before launch. Probe behavior has its own tests.
 mock.module('../../run-engine/worker-launch-preflight.js', {
@@ -362,3 +369,67 @@ test('fresh dispatch validates inherited local commits before trusting its basel
   );
   assert.equal(getRun(run.id)?.worktreeHeadAtDispatch, undefined);
 });
+
+for (const scenario of [
+  { name: 'a self-managed scripted command', runtime: 'self-managed' as const, boots: 0 },
+  { name: 'a default scripted command', runtime: undefined, boots: 1 },
+]) {
+  test(`dispatch of ${scenario.name} boots the slot runtime ${scenario.boots} time(s)`, async (t) => {
+    // The nightly device build starts its own Metro and holds its own device lease;
+    // booting the slot's dev-server first failed its dispatch (run f6b3ed2c).
+    const task = path.join(root, 'SCRIPTED-TASK.md');
+    await writeFile(task, '# Worker: dev\n\n**Branch:** feat/dispatch-baseline\n');
+    projectJson = {
+      scripted: {
+        commands: {
+          nightly: {
+            command: 'true',
+            ...(scenario.runtime ? { runtime: scenario.runtime } : {}),
+          },
+        },
+      },
+    };
+    const run = createRun({
+      flowType: 'dev',
+      project: vars.projectName,
+      ticketOrPr: 'TAT-4153',
+      slotId: vars.slotId,
+      transport: 'tmux',
+      mode: 'autonomous',
+    });
+    updateRun(run.id, { scripted: { mode: 'command', commandRef: 'nightly' } });
+    await core.rewriteStatusFile(() => ({
+      slots: [
+        {
+          slot: vars.slotId,
+          current_run_id: run.id,
+          slot_epoch: 1,
+          lifecycle: 'ready',
+          phase: null,
+          agent: 'idle',
+        },
+      ],
+    }));
+    t.after(async () => {
+      projectJson = {};
+      updateRun(run.id, { status: 'done' });
+      await deleteRun(run.id);
+    });
+    runtimeBoots = 0;
+    await assert.rejects(
+      dispatchExecute(
+        {
+          slotId: vars.slotId,
+          runId: run.id,
+          taskFile: task,
+          runner: 'scripted',
+          mode: 'autonomous',
+          skipPrepare: true,
+        },
+        () => {},
+      ),
+      (error: unknown) => error === stop,
+    );
+    assert.equal(runtimeBoots, scenario.boots);
+  });
+}
