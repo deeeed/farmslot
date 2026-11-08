@@ -232,7 +232,7 @@ function modelEntry(row, source, defaults, info = {}, configured = {}) {
           },
         }
       : {}),
-    input: ['text'],
+    input: source === 'router' ? ['text', 'image'] : ['text'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: modelLimit(
       context,

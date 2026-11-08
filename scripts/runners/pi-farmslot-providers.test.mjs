@@ -273,6 +273,16 @@ test('router model definitions preserve xhigh and max instead of letting Pi roun
   assert.equal(other.models[0].thinkingLevelMap, undefined);
 });
 
+test('router models accept image input so workers can read their screenshots', async () => {
+  const [provider] = await resolvePiProviderCatalog(
+    { FARMSLOT_PI_OLLAMA: '0', FARMSLOT_PI_ROUTER_URL: 'http://router.test/v1' },
+    { fetchImpl: modelsFetch({ id: 'DeepSeek-V4.1-Flash-1017', supports_reasoning: true }) },
+  );
+  assert.deepEqual(provider.models[0].input, ['text', 'image']);
+  const [other] = await resolvePiProviderCatalog({}, { fetchImpl: modelsFetch({ id: 'local' }) });
+  assert.deepEqual(other.models[0].input, ['text']);
+});
+
 test('id-only router discovery uses configured limits and defaults reasoning on', async () => {
   const [provider] = await resolvePiProviderCatalog(
     {
