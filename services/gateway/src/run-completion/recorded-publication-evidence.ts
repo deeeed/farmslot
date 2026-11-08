@@ -149,9 +149,16 @@ export async function recordedPublicationDependencies(
   for (const artifact of artifacts) {
     if (!artifact.path.startsWith(`artifacts/${BASELINE_MARKER_DIR}/`)) continue;
     const bytes = await readFile(path.join(taskRoot, artifact.path), 'utf8');
-    if (artifact.sha256?.replace(/^sha256:/u, '') !== sha256Text(bytes))
+    const sha256 = sha256Text(bytes);
+    if (artifact.sha256?.replace(/^sha256:/u, '') !== sha256)
       throw new Error('Captured marker baseline receipt is missing or changed.');
-    entries.set(artifact.path, { ...artifact, purpose: 'evidence-dependency' });
+    // Content only: retention fields change on every re-retain and would read as changed evidence.
+    entries.set(artifact.path, {
+      path: artifact.path,
+      purpose: 'evidence-dependency',
+      ...(artifact.sizeBytes !== undefined ? { sizeBytes: artifact.sizeBytes } : {}),
+      sha256,
+    });
   }
   if (!source && expectedManifest)
     throw new Error('Publication selection changed while preparing its frozen package.');
