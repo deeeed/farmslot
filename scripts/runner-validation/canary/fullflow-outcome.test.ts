@@ -27,6 +27,21 @@ test('normal publication and output cards are not product failures', () => {
   }), undefined);
 });
 
+for (const message of [
+  'slot.release: slot is owned by a different run',
+  'run.cancel: stop-runner: runner termination failed',
+]) {
+  test(`held cleanup preserves the thrown failure verbatim: ${message}`, () => {
+    const run: Pick<Run, 'steps' | 'decisions' | 'error'> = {
+      steps: [{ name: 'human-gate', status: 'skipped' }, { name: 'finalize', status: 'pending' }],
+      decisions: [], error: 'canary: held publication verified; test cleanup',
+    };
+    assert.equal(fullflowFailure(run), undefined);
+    assert.equal(fullflowFailure(run) ?? new Error(message).message, message);
+    assert.equal(fullflowFailure({ ...run, error: 'Actual engine failure' }), 'run: Actual engine failure');
+  });
+}
+
 test('publication always selects offered hold, including when a later close action appears', () => {
   const gate: Pick<Run['decisions'][number], 'type' | 'actions'> = {
     type: 'engine_human_gate', actions: [
@@ -79,4 +94,16 @@ test('interrupt finalizes running timing without extending completed steps', () 
   assert.equal(fullflowTerminal('decline'), 'cancelled');
   assert.equal(fullflowTerminal('hold'), 'cancelled');
   assert.equal(fullflowTerminal('close-run'), 'done');
+});
+
+test('shared timings keep completed-only defaults and round interruption durations', () => {
+  const run: Pick<Run, 'steps'> = { steps: [
+    { name: 'dispatch', status: 'done', startedAt: '2026-11-08T00:00:00Z', completedAt: '2026-11-08T00:00:02.140Z' },
+    { name: 'monitor', status: 'running', startedAt: '2026-11-08T00:00:02Z' },
+    { name: 'complete', status: 'pending' },
+    { name: 'finalize', status: 'done', completedAt: '2026-11-08T00:00:07Z' },
+  ] };
+  assert.deepEqual(fullflowTimings(run), { dispatch: 2.1 });
+  assert.deepEqual(fullflowTimings(run, Date.parse('2026-11-08T00:00:07.260Z')), { dispatch: 2.1, monitor: 5.3 });
+  assert.deepEqual(fullflowTimings({ steps: [{ name: 'monitor', status: 'running', startedAt: '1969-12-31T23:59:59Z' }] }, 0), { monitor: 1 });
 });

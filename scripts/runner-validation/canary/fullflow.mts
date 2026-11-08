@@ -11,7 +11,7 @@ import { startRemoteNodeStack } from '../lib/remote-node-stack.mjs';
 
 import { FULLFLOW_MODEL, FULLFLOW_PROJECT, FULLFLOW_SEED, fullflowPack } from './fullflow-fixture.mjs';
 import { REVIEWER } from './fixtures.mjs';
-import { fullflowCloseAction, fullflowFailure, fullflowGateFailure, fullflowNativeFailure, fullflowTerminal, fullflowTimings } from './fullflow-outcome.js';
+import { FULLFLOW_CANCEL_REASON, fullflowCloseAction, fullflowFailure, fullflowGateFailure, fullflowNativeFailure, fullflowTerminal, fullflowTimings } from './fullflow-outcome.js';
 import type { IsolatedOptions } from './isolated.mjs';
 import { failureText, type CheckResult } from './outcome.mjs';
 import { driveRun, readSlot, retire } from './run-driver.mjs';
@@ -181,7 +181,7 @@ export default function(pi) {
                 await writeJson(path.join(dir, 'gate-held.json'), current);
                 held = true;
                 check.observations.push('hold accepted: human-gating, replacement gate open, human-gate running, finalize pending; public run.cancel used for cleanup.');
-                const cancelled = await call<RunCancelResult>('run.cancel', { runId: current.id, reason: 'canary: held publication verified; test cleanup' });
+                const cancelled = await call<RunCancelResult>('run.cancel', { runId: current.id, reason: FULLFLOW_CANCEL_REASON });
                 await writeJson(path.join(dir, 'cancel.json'), cancelled);
                 Object.assign(current, cancelled.run);
                 const failed = cancelled.effects?.filter((effect) => effect.status === 'failed') ?? [];

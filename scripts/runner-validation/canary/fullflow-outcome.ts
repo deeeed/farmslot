@@ -1,6 +1,10 @@
 import type { NativeSessionEvent, Run } from '../../../packages/protocol/src/index.js';
 import type { CheckResult } from './outcome.mjs';
 
+export { stepTimings as fullflowTimings } from './outcome.mjs';
+
+export const FULLFLOW_CANCEL_REASON = 'canary: held publication verified; test cleanup';
+
 type GateActions = Pick<Run['decisions'][number], 'type' | 'actions'>;
 
 export function fullflowCloseAction(decision: GateActions): string | undefined {
@@ -20,7 +24,7 @@ export function fullflowFailure(run: Pick<Run, 'steps' | 'decisions' | 'error'>)
   const failed = run.steps.find((step) => step.status === 'failed');
   const decision = run.decisions.find((item) => !item.resolvedAt && !['engine_human_gate', 'engine_output_review', 'retrospective'].includes(item.type));
   const step = failed?.name ?? run.steps.find((item) => item.status === 'running')?.name;
-  const message = failed?.detail || run.error || decision?.description || decision?.title;
+  const message = failed?.detail || (run.error === FULLFLOW_CANCEL_REASON ? undefined : run.error) || decision?.description || decision?.title;
   return message ? `${step ?? 'run'}: ${message}` : undefined;
 }
 
@@ -28,15 +32,6 @@ export function fullflowFailure(run: Pick<Run, 'steps' | 'decisions' | 'error'>)
 export function fullflowNativeFailure(run: Pick<Run, 'steps'>, events: NativeSessionEvent[]): string | undefined {
   const error = events.find((event) => event.type === 'error' || (event.type === 'turn.completed' && ['failed', 'interrupted'].includes(event.status ?? '')));
   return error ? `${run.steps.find((step) => step.status === 'running')?.name ?? 'runner'}: ${error.text ?? `Native turn ${error.status ?? 'failed'}`}` : undefined;
-}
-
-export function fullflowTimings(run: Pick<Run, 'steps'>, endedAt: number): Record<string, number> {
-  const timings: Record<string, number> = {};
-  for (const step of run.steps) {
-    if (!step.startedAt) continue;
-    timings[step.name] = Math.round(((step.completedAt ? Date.parse(step.completedAt) : endedAt) - Date.parse(step.startedAt)) / 100) / 10;
-  }
-  return timings;
 }
 
 /** Hold is verified before public run.cancel cleanup; output close finishes normally. */
