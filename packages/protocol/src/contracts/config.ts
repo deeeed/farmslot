@@ -99,10 +99,18 @@ export interface ProjectPublicationReviewFlowConfig {
   minimumReviews?: number;
 }
 
+/** The command starts and stops its own runtime, so dispatch does not boot the slot's. */
+export type ScriptedCommandRuntime = 'self-managed';
+
+export function isScriptedCommandRuntime(value: unknown): value is ScriptedCommandRuntime {
+  return value === 'self-managed';
+}
+
 export interface ProjectScriptedCommandConfig {
   command: string;
   timeoutMs?: number;
   cwd?: string;
+  runtime?: ScriptedCommandRuntime;
 }
 
 export interface ProjectScriptedConfig {

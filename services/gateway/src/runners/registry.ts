@@ -5,6 +5,7 @@ import { resolvePiBinary, resolvePiModel } from './launch-command.js';
 import {
   runnerPaneContainsInstruction,
   runnerPaneHasQueuedInstruction,
+  runnerPaneWithoutPromptSuggestion,
 } from './runner-pane-input.js';
 export {
   runnerPaneContainsInstruction,
@@ -1827,10 +1828,10 @@ export function runnerPaneComposerDraftState(
   pane: string,
   runnerId?: string | null,
 ): ComposerDraftState {
-  if (paneShowsBusyComposer(pane)) return 'draft';
+  const composerPane = runnerPaneWithoutPromptSuggestion(pane);
+  if (paneShowsBusyComposer(composerPane)) return 'draft';
   const markers = normalizeRunner(runnerId) === 'codex' ? ['›', '❯'] : ['❯', '›'];
-  const lines = pane
-    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
+  const lines = composerPane
     .split('\n')
     .map((line) => line.trimEnd())
     .filter((line) => line.trim().length > 0);
@@ -2649,11 +2650,14 @@ async function captureTmuxPane(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
   tailLines = 40,
+  preserveAnsi = false,
 ): Promise<string> {
   return (
     await execOnSlot(
       vars,
-      tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -${tailLines}`),
+      tmuxShellSnippet(
+        `capture-pane -p${preserveAnsi ? ' -e' : ''} -t ${shellQuote(target)} 2>/dev/null | tail -${tailLines}`,
+      ),
     )
   ).stdout;
 }
@@ -3101,7 +3105,7 @@ async function sendRunnerInstructionHookOnly(
     // instruction — that the hook signal cannot see would otherwise concatenate with the typed
     // message. This pane read is a pre-send safety confirmation, not a send decision; hold and let
     // the degraded window own it rather than risk a blind concat.
-    const preSendPane = await captureTmuxPane(vars, target);
+    const preSendPane = await captureTmuxPane(vars, target, 40, true);
     const composerState = runnerPaneComposerDraftState(preSendPane, runner);
     if (composerState !== 'empty') {
       // 'draft' → foreign text a fresh type would concatenate onto. 'unknown' → no prompt marker,

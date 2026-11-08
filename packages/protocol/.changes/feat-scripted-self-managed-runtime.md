@@ -1,0 +1,1 @@
+- `ProjectScriptedCommandConfig` gains `runtime?: 'self-managed'` and the `isScriptedCommandRuntime` guard: a project command that starts and stops its own runtime.

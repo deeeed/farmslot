@@ -1,1 +1,0 @@
-- Retain host-reported HUD unavailability in summary and trace metadata without changing the run outcome or action counts.

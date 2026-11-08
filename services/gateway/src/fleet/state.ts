@@ -13,6 +13,7 @@ import {
   type FleetPoolReadError,
   type FleetStatus,
   type FleetSummary,
+  isScriptedCommandRuntime,
   normalizeProjectWorkflowDefaults,
   parseProjectVisualClaimReviewPolicy,
   type PoolConfig,
@@ -257,6 +258,7 @@ function normalizeProjectScripted(rawScripted: unknown): ProjectConfig['scripted
       ...(typeof rawCommand.cwd === 'string' && rawCommand.cwd.trim()
         ? { cwd: rawCommand.cwd }
         : {}),
+      ...(isScriptedCommandRuntime(rawCommand.runtime) ? { runtime: rawCommand.runtime } : {}),
     };
   }
   return Object.keys(commands).length > 0 ? { commands } : undefined;

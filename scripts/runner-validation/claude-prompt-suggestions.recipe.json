@@ -1,0 +1,17 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Prompt suggestion transport guard",
+  "description": "Verify scoped session settings and read-only native sender classification on selected idle panes. Set GHOST_PROOF_PANES and optionally GHOST_PROOF_BASELINE_ROOT.",
+  "workflow": {
+    "entry": "verify",
+    "nodes": {
+      "verify": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/claude-prompt-suggestions.mts",
+        "intent": "Verify actual settings and native sender state without sending worker input.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
