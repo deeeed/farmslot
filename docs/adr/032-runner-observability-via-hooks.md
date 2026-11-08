@@ -448,3 +448,29 @@ A passing review could replay the worker's recipe into its task artifacts, chang
 ### Public surface
 
 No public command, flag, SDK export, package version or harness extension changes. The private gateway reviewer contract uses the existing recipe CLI `--artifacts-dir` flag and clears the existing `RECIPE_TASK_DIR` and `FARMSLOT_TASK_DIR` bindings. Harnesses keep their configured recipe command.
+
+## Amendment 3: shared run activity analytics, 2026-11-08
+
+**Status:** Proposed. This amendment records direction only; implementation requires the normative specification and schema review described below.
+
+### Context and rationale
+
+Hooks, normalized tool events, history/archive readers, `sessionUsage`, pipeline/checklist timing and `RunAnalyticsRecord` already exist under ADRs 032, 047, 056 and 057. The gap is their common activity attribution across runners, roles and steps.
+
+### Decision
+
+Extend the existing per-run analytics record with one runner-agnostic activity projection: skills invoked/read, tools, scripts/results, tokens and time by step/role, with source references and capture gaps. Reuse existing persistence; add no skill recorder or parallel event stream.
+
+1. Prefer ADR-057 structured events and ADR-032 runtime-owned hooks across all supported runners and transports. Use existing transcript readers and ADR-056 archives only as fallback. Unsupported fields stay unavailable; no terminal-text inference.
+2. Join execution node/account, exact session, run/context ownership, command/turn and step/role intervals. Preserve retries and shared-session participation. Deduplicate journal sequence/generation and correlated tool IDs across sources; retain cursors. Ambiguous bindings stay unattributed.
+3. Derive skills from explicit invocations or normalized entry-file reads, including `SKILL.md`/`skill.md`. Distinguish requested reads, successful opens and completed invocations; none proves adherence. Scripts are observed commands, not inferred descendants. Raw bodies stay on their execution host.
+4. Reuse `sessionUsage` counters, pricing and family deduplication. Step/role token attribution requires verified boundary measurements; otherwise retain session totals and gaps. Reuse task clocks and paired tool timestamps. Distinguish elapsed, waiting and tool time; never prorate tokens or sum overlapping durations as wall time. Analytics cannot control lifecycle or verdicts.
+5. Mobile's collector remains an optional local-dev input. Join exact session bindings with node/repository/slot and ownership time; start-only events prove neither success nor duration. Other repos need no collector. Missing data is not zero. No Mobile tooling changes or upload dependency.
+
+### Consequences and consumers
+
+Skill selection, the proof-model dataset and cost/speed reports consume this projection with coverage limits. Revisit selection after a few weeks of joined data. No selection model.
+
+### Public surface
+
+Add optional activity data to `RunAnalyticsRecord` in `@farmslot/protocol`; version its analytics schema. `@farmslot/agent-runtime` normalizes events; gateway analytics aggregates them. Existing readers/exports and harnesses inherit the projection. No new CLI, RPC, repository hook or accounting API. Normative spec and schema review precede implementation.
