@@ -980,6 +980,7 @@ export async function writeTaskFile(
 
   const vars: Record<string, string> = {
     RUN_ID: run.id,
+    ...(['dev', 'fix-bug', 'qa'].includes(run.flowType) ? { FARM_RECIPE_SHAPE_FEEDBACK: '1' } : {}),
     // Missing legacy modes already use the human-operated preamble.
     MODE: run.mode ?? 'interactive',
     FAMILY_ID: run.familyId,

@@ -22,6 +22,7 @@ farmslot-agent task init <task-dir> --flow fix-bug --platform mobile --template 
 farmslot-agent mark <task-dir> complete --mark-last
 farmslot-agent artifact-check <task-dir> --require-recipe-quality-if-recipe
 farmslot-agent recipe-quality build --input recipe-quality-input.json --output artifacts/recipe-quality.json
+farmslot-agent recipe-quality feedback --task <task-dir> --json
 farmslot-agent contract resolve --flow fix-bug
 ```
 
@@ -56,3 +57,20 @@ node scripts/quality/check-farmslot-package-readiness.mjs --packages @farmslot/a
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+### Farm proof-shape feedback
+
+Farm-generated recipe-writing tasks opt into a pre-completion advisory step. The
+installed helper reads the bound recipe, registered worker criteria and declared
+libraries, then prints short/composed/parameterized scores and exact fix hints.
+Threshold warnings exit successfully. The helper adds optional `shape` feedback
+to `artifacts/recipe-quality.json` and keeps its catalog in the separate
+`artifacts/recipe-shape-catalog.json`; existing core fields remain unchanged.
+The gateway verifies/recomputes fresh shape inputs independently of its core
+structural grade. A worker-supplied catalog is self-consistent, not certified
+complete. Review-only/non-local obligations never become local proof by scoring.
+
+`RECIPE_QUALITY_FEEDBACK_CMD` resolves from retained task tooling and is available
+for project overrides under the existing task-command rules. Only Farm generation
+sets the managed opt-in; standalone/org skill behavior and library-owned checklist
+bytes are unchanged. This helper runs no recipe, build, test or model request.

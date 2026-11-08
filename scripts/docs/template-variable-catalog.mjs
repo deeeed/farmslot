@@ -40,6 +40,11 @@ export const WORKER_TASK = {
       note: 'rebase | merge | project-default; project-default resolves against force-push policy at runtime.',
     },
     {
+      scope: 'managed Farm dev/fix-bug/qa proof guidance',
+      vars: 'FARM_RECIPE_SHAPE_FEEDBACK, RECIPE_QUALITY_FEEDBACK_CMD',
+      note: 'Internal managed opt-in and task-local helper; advisory only. Standalone and static-review tasks do not opt in.',
+    },
+    {
       scope: 'project.json vars',
       vars: 'any key',
       note: 'Both double-brace key forms; expanded once, no nested re-expansion',

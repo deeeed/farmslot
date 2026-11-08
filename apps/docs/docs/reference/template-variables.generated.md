@@ -21,6 +21,7 @@ Headings=phases; checkboxes=steps; pre-heading checkboxes=Checklist phase; skip 
 - **pr-complete:** `COMMENT_SUMMARY, HAS_RECIPE, RECIPE_SOURCE`
 - **pr-complete, update-branch, inline ci-fix:** `PUBLICATION_BASE, PUBLICATION_PARENT_BASE_SHA, PUBLICATION_PARENT_HEAD_SHA, BRANCH_UPDATE_GUARD_CMD, BRANCH_UPDATE_PUSH_CMD` (The gateway captures stack ownership and the pinned operation in Run persistence. Shared runtime commands perform verified replay and exact-lease push; DEFAULT_BRANCH freshness remains separate.)
 - **update-branch:** `BRANCH_UPDATE_STRATEGY` (rebase | merge | project-default; project-default resolves against force-push policy at runtime.)
+- **managed Farm dev/fix-bug/qa proof guidance:** `FARM_RECIPE_SHAPE_FEEDBACK, RECIPE_QUALITY_FEEDBACK_CMD` (Internal managed opt-in and task-local helper; advisory only. Standalone and static-review tasks do not opt in.)
 - **project.json vars:** `any key` (Both double-brace key forms; expanded once, no nested re-expansion)
 
 ## Hooks, fixtures, recipe_run (double-brace var)

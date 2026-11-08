@@ -26,6 +26,7 @@ export function retainedMarkCommand(executable: string): string {
 export function installedTaskCommands(mapPath?: (file: string) => string): {
   AC_CMD: string;
   ARTIFACT_CHECK_CMD: string;
+  RECIPE_QUALITY_FEEDBACK_CMD: string;
   BRANCH_UPDATE_SCRIPT: string;
 } {
   const file = path.join(packageRoot, 'bin/farmslot-agent.mjs');
@@ -33,6 +34,7 @@ export function installedTaskCommands(mapPath?: (file: string) => string): {
   const branchScript = path.join(packageRoot, 'scripts/branch-update.mjs');
   return {
     AC_CMD: `${entry} ac`,
+    RECIPE_QUALITY_FEEDBACK_CMD: `${entry} recipe-quality feedback`,
     ARTIFACT_CHECK_CMD: `${entry} artifact-check`,
     BRANCH_UPDATE_SCRIPT: mapPath ? mapPath(branchScript) : branchScript,
   };

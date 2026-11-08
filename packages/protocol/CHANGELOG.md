@@ -6,6 +6,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.82.0 - 2026-11-08
+
+- Share versioned recipe-shape policy, static AC coverage and concrete feedback across runtime and offline consumers.
+
 ## 0.81.0 - 2026-11-07
 
 - Define capability-gated persistent node commands, durable outcomes and bounded resumable streams without changing peer compatibility rules.

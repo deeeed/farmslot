@@ -57,13 +57,14 @@ Older ADRs **001–025** are foundation/shipped for their core scope. This file 
 
 **Implementation: Partial (fragments only, loop not closed)**
 
-| ADR requirement                           | Status      | Evidence / gap                                                                                             |
-| ----------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------- |
-| Retrospective as primary grading surface  | Partial     | `family-observability` exists; structured proof-target checklist grading per ADR-026 not fully productized |
-| Structured proof-target checklist grades  | Not started | `grade-form.ts` on run-detail remains legacy three-button flow                                             |
-| Rerun verdict as scoped grade             | Not started | Warm-slot rerun exists; no structured rerun-grade contract                                                 |
-| Improvement proposals gated on bad grades | Partial     | ADR-021 improvement-engine / `learnings.md` path exists; ADR-026 wiring into retrospective incomplete      |
-| Validator-loop scoring in UI              | Not started | `packages/skills` validator-loop scripts are CLI-only                                                      |
+| ADR requirement                           | Status                           | Evidence / gap                                                                                                                                         |
+| ----------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Retrospective as primary grading surface  | Partial                          | `family-observability` exists; structured proof-target checklist grading per ADR-026 not fully productized                                             |
+| Structured proof-target checklist grades  | Not started                      | `grade-form.ts` on run-detail remains legacy three-button flow                                                                                         |
+| Rerun verdict as scoped grade             | Not started                      | Warm-slot rerun exists; no structured rerun-grade contract                                                                                             |
+| Improvement proposals gated on bad grades | Partial                          | ADR-021 improvement-engine / `learnings.md` path exists; ADR-026 wiring into retrospective incomplete                                                  |
+| Validator-loop scoring in UI              | Not started                      | `packages/skills` validator-loop scripts are CLI-only                                                                                                  |
+| Shared advisory recipe shape feedback     | Implemented, awaiting live proof | Amendment 3; protocol scorer, task-local helper and portable Gateway recomputation share policy; structural verdicts and existing gates stay unchanged |
 
 **Do not schedule as shipped.** Accept ADR-026 or revise before treating the recursive loop as canonical.
 

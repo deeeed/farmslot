@@ -1,3 +1,6 @@
+import { isRecipeShapeFeedback, type RecipeShapeFeedback } from '../../recipe-shape.cjs';
+export type { RecipeShapeFeedback } from '../../recipe-shape.cjs';
+
 import type { FlowType } from './runs.js';
 
 export type EvidenceQualityVerdict = 'RELEVANT_HIGH' | 'RELEVANT_LOW' | 'IRRELEVANT' | 'MISSING';
@@ -145,6 +148,8 @@ export interface RecipeQualityArtifactMeta {
 }
 
 export interface RecipeQualityArtifact {
+  /** Advisory shape; never a proof verdict or a catalog completeness attestation. */
+  shape?: RecipeShapeFeedback;
   version: 1;
   verdict: RecipeQualityVerdict;
   compact: RecipeQualityCompactProjection;
@@ -263,6 +268,7 @@ export function isRecipeQualityArtifact(value: unknown): value is RecipeQualityA
     return false;
   if (!isStringArray(artifact.suggested_recipe_delta)) return false;
   if (!isRecipeQualityTrainingFields(artifact.training_fields)) return false;
+  if (artifact.shape !== undefined && !isRecipeShapeFeedback(artifact.shape)) return false;
   if (!isRecipeQualityMeta(artifact.meta)) return false;
   return true;
 }

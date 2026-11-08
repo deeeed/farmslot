@@ -14,6 +14,12 @@ import {
   validateRecipeDocument,
 } from '@farmslot/protocol';
 
+import {
+  readRecipeShapeFeedback,
+  type RecipeShapeContext,
+  type RecipeShapeTexts,
+} from './recipe-shape-feedback.js';
+
 const RECIPE_QUALITY_FILENAME = 'recipe-quality.json';
 const RECIPE_QUALITY_MARKER = `artifacts/${RECIPE_QUALITY_FILENAME}`;
 
@@ -23,7 +29,10 @@ export interface RecipeQualityEvaluation {
 }
 
 interface RecipeQualityEvaluationInput {
-  run: Pick<Run, 'id' | 'flowType' | 'project' | 'taskFile' | 'slotId'>;
+  run: Pick<Run, 'id' | 'flowType' | 'project' | 'taskFile' | 'slotId'> &
+    Partial<Pick<Run, 'ticketData' | 'acceptanceRegistration'>>;
+  shapeContext?: RecipeShapeContext;
+  readShapeTexts?: () => Promise<RecipeShapeTexts>;
   workerReport?: string | null;
   recipeJson?: string | null;
   /** Coverage rendered from schema-2 engine claims; never worker-authored prose. */
@@ -480,17 +489,42 @@ export async function loadRecipeQualityEvaluation(
     !hasPortableArtifact && artifactsDir
       ? await readTextIfExists(path.join(artifactsDir, RECIPE_QUALITY_FILENAME))
       : null;
+  let shapeSource = suppliedArtifact?.shape;
+  const finish = async (artifact: RecipeQualityArtifact): Promise<RecipeQualityEvaluation> => {
+    const shape = await readRecipeShapeFeedback({
+      run,
+      recipeJson: input.recipeJson,
+      stored: shapeSource,
+      context: input.shapeContext,
+      readTexts:
+        input.readShapeTexts ??
+        (hasPortableArtifact
+          ? async () => ({ catalog: null, binding: null })
+          : async () => ({
+              catalog: artifactsDir
+                ? await readTextIfExists(path.join(artifactsDir, 'recipe-shape-catalog.json'))
+                : null,
+              binding: artifactsDir
+                ? await readTextIfExists(path.join(artifactsDir, 'harness-provenance.json'))
+                : null,
+            })),
+    });
+    const { shape: _oldShape, ...core } = artifact;
+    const merged: RecipeQualityArtifact = { ...core, ...(shape ? { shape } : {}) };
+    return { artifact: merged, signal: buildSignal(run.id, merged) };
+  };
   const structural = evaluateRecipeStructure(input.recipeJson);
   const hasCurrentRecipeSources = Boolean(input.recipeJson || input.recipeCoverage);
 
-  // The gateway is the sole producer of recipe-quality.json (ADR/roadmap:
+  // The gateway owns the core quality verdict (ADR/roadmap:
   // run-metrics consolidation). A previously-generated, schema-valid artifact is
-  // reused for idempotency; anything else (absent, unparseable, or non-conformant)
+  // reused for idempotency; advisory shape inputs are checked separately.
+  // Anything else (absent, unparseable, or non-conformant)
   // is regenerated from the recipe structure — never salvaged or fabricated into a
   // misleading fail. Workers no longer hand-author this file.
   if (suppliedArtifact && !input.recipeQualityArtifactIsStale) {
     const merged = mergeStructuralEvaluation(suppliedArtifact, structural);
-    return { artifact: merged, signal: buildSignal(run.id, merged) };
+    return finish(merged);
   }
 
   if (artifactText) {
@@ -498,6 +532,7 @@ export async function loadRecipeQualityEvaluation(
       const parsed = JSON.parse(artifactText);
       if (isRecipeQualityArtifact(parsed)) {
         const artifact = parsed as RecipeQualityArtifact;
+        shapeSource = artifact.shape;
         // Worker-authored verdicts are legacy input. Once current recipe
         // sources exist, derive quality from them instead of guessing artifact
         // freshness from copy-order-dependent mtimes.
@@ -505,7 +540,7 @@ export async function loadRecipeQualityEvaluation(
           artifact.meta.producer === 'worker' && hasCurrentRecipeSources;
         if (!workerArtifactIsStale) {
           const merged = mergeStructuralEvaluation(artifact, structural);
-          return { artifact: merged, signal: buildSignal(run.id, merged) };
+          return finish(merged);
         }
         console.warn(
           `[recipe-quality] ignoring stale worker-authored ${RECIPE_QUALITY_FILENAME}; deriving quality from newer recipe sources.`,
@@ -530,5 +565,5 @@ export async function loadRecipeQualityEvaluation(
     artifactRequired: false,
   });
   const artifact = mergeStructuralEvaluation(evaluation.artifact, structural);
-  return { artifact, signal: buildSignal(run.id, artifact) };
+  return finish(artifact);
 }

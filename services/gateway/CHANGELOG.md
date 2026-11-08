@@ -6,6 +6,15 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.38.0 - 2026-11-08
+
+- Preserve core quality grades while presenting fresh advisory recipe-shape feedback and portable catalog context.
+- Complete artifact-only runs with their retained working-tree diff and artifacts, without requiring a commit or publication nudge.
+- Complete gate-free comparison runs with unreviewed claims retained for separate review, while preserving evidence integrity and publication checks.
+- Keep dev-server log panes out of worker targets and let failed launches release slots held only by their log tail.
+- Give runtime boot at least 15 minutes when it inherits a compile timeout, while preserving explicit preparation budgets and longer compile budgets.
+- Preserve discovered Pi model limits, use LiteLLM metadata with model-specific comparison budgets, and record actual reasoning requests instead of fixed context and output defaults.
+
 ## 0.37.0 - 2026-11-07
 
 - Route pilot task transfers and terminal streams over the enrolled node link, preserving command ownership and uncertain outcomes.

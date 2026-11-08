@@ -1,2 +1,0 @@
-- Keep dev-server log panes out of worker targets and let failed launches release slots held only by their log tail.
-- Give runtime boot at least 15 minutes when it inherits a compile timeout, while preserving explicit preparation budgets and longer compile budgets.

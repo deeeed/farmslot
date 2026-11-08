@@ -297,3 +297,38 @@ test('CI fix push commands carry scope for ordinary and pinned branch maintenanc
     `node '/runtime/branch-update.mjs' execute '${JSON.stringify({ kind: 'ordinary', repo: '/product', branch: 'fix/product', baseRef: 'main' })}'`,
   );
 });
+
+test('Farm-only shape guidance uses its supplied task helper and never changes standalone defaults', () => {
+  const input = {
+    flowType: 'dev',
+    modePreamble: '',
+    vars: { TASK_DIR: '.task/proof' },
+    description: 'Read state',
+    acceptanceCriteria: ['State is observed'],
+    hasTicketData: true,
+  };
+  assert.doesNotMatch(buildTaskDocument(input), /advisory shape\/AC feedback/);
+  assert.doesNotMatch(
+    buildTaskDocument({
+      ...input,
+      flowType: 'review',
+      vars: { ...input.vars, FARM_RECIPE_SHAPE_FEEDBACK: '1' },
+    }),
+    /advisory shape\/AC feedback/,
+  );
+  const document = buildTaskDocument({
+    ...input,
+    vars: {
+      ...input.vars,
+      FARM_RECIPE_SHAPE_FEEDBACK: '1',
+      RECIPE_QUALITY_FEEDBACK_CMD:
+        'node /retained/runtime/farmslot-agent.mjs recipe-quality feedback',
+    },
+  });
+  assert.match(
+    document,
+    /node \/retained\/runtime\/farmslot-agent\.mjs recipe-quality feedback --task "\.task\/proof"/,
+  );
+  assert.match(document, /parameterized ≥0\.7/);
+  assert.match(document, /record which target cannot be reached and why/);
+});
