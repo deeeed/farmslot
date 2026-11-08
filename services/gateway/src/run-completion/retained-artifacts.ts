@@ -180,10 +180,33 @@ export async function runBundleStore(create = false) {
       await Promise.all([
         assertConfiguredRootPresent(home),
         assertConfiguredRootPresent(runsDirectory()),
-        assertHeavyWriteRoom(root),
       ]);
     }
     return await open();
+  } catch (error) {
+    if (error instanceof HeavyWriteRefusedError)
+      reportGatewayWarning(
+        'run-bundle.capacity',
+        `Retained capture paused; runs continue. ${error.message}`,
+      );
+    throw error;
+  }
+}
+
+/** A disconnected store pauses capture without preventing the gateway from running. */
+export async function initializeRunBundleStore(): Promise<void> {
+  if (process.env.FARMSLOT_SANDBOX_HOME) return;
+  try {
+    await runBundleStore(true);
+  } catch (error) {
+    // Store opening already published the capacity warning; only storage refusal is recoverable.
+    if (!(error instanceof HeavyWriteRefusedError)) throw error;
+  }
+}
+
+async function assertRunBundleWriteRoom(root: string, copyBytes = 0): Promise<void> {
+  try {
+    await assertHeavyWriteRoom(root, process.env, copyBytes);
   } catch (error) {
     if (error instanceof HeavyWriteRefusedError)
       reportGatewayWarning(
@@ -407,6 +430,7 @@ export async function archiveRunArtifactHousekeeping(includeReferencedMedia = tr
         store,
         farmslotRoot,
         archiveRoot: root,
+        assertArchiveWriteRoom: assertRunBundleWriteRoom,
         policy: await retentionPolicy(),
         acquisitionTaskDirs: acquisitionTaskDirToken,
       }),
@@ -576,7 +600,7 @@ export async function retainCapturedRunArtifacts(input: {
 }): Promise<MaterializedRunBundle> {
   if (!input.run.taskFile) throw new Error('Run has no captured task artifacts.');
   const store = await runBundleStore(true);
-  await assertHeavyWriteRoom(store.root);
+  await assertRunBundleWriteRoom(store.root);
   // The materializer protects this run and its source snapshot while moving referenced media.
   await tryArchiveRunArtifactHousekeeping(false);
   const artifacts = [...input.artifacts];
@@ -629,6 +653,7 @@ export async function retainCapturedRunArtifacts(input: {
     farmslotRoot,
     acquisitionTaskDirs: acquisitionTaskDirToken,
     archiveRoot: (await import('../runs/storage-archive.js')).runArchiveRoot(),
+    assertArchiveWriteRoom: assertRunBundleWriteRoom,
     onMediaArchived: reportRunMediaArchive,
     run: input.run,
     artifacts,

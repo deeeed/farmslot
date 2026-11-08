@@ -4,6 +4,7 @@ import fs, {
   chmod,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rm,
@@ -273,6 +274,68 @@ test('an unavailable archive cannot delete media or claim it was archived', asyn
   assert.deepEqual(
     (await bundles.readRunBundleAvailability(f.store, saved.result.ref, saved.run.id)).prunedPaths,
     [],
+  );
+});
+
+test('archive destination admission refuses before copying or changing retained evidence', async (t) => {
+  const f = await fixture(t);
+  const saved = await f.capture('archive-floor', 10_000);
+  const before = await bundles.readRunBundleAvailability(f.store, saved.result.ref, saved.run.id);
+  const assertArchiveWriteRoom = t.mock.fn(async () => {
+    throw new Error('archive destination is under the heavy-write floor');
+  });
+  await assert.rejects(
+    bundles.archiveRunBundleMedia({
+      store: f.store,
+      farmslotRoot: f.root,
+      archiveRoot: f.archiveRoot,
+      policy: { ...bundles.DEFAULT_RUN_BUNDLE_RETENTION, mediaRetentionDays: 0 },
+      assertArchiveWriteRoom,
+    }),
+    /heavy-write floor/,
+  );
+  assert.deepEqual(
+    assertArchiveWriteRoom.mock.calls.map(({ arguments: args }) => args),
+    [[f.archiveRoot, saved.body.length]],
+  );
+  assert.deepEqual(await readdir(f.archiveRoot), []);
+  assert.deepEqual(
+    await readFile(path.join(saved.bundle.taskDir, 'artifacts/proof.png')),
+    saved.body,
+  );
+  assert.deepEqual(
+    await bundles.readRunBundleAvailability(f.store, saved.result.ref, saved.run.id),
+    before,
+  );
+});
+
+test('archive destination admission rechecks the byte requirement before every copy', async (t) => {
+  const f = await fixture(t);
+  const first = await f.capture('first-copy', 10_000);
+  const second = await f.capture('second-copy', 20_000);
+  const copies: number[] = [];
+  await assert.rejects(
+    bundles.archiveRunBundleMedia({
+      store: f.store,
+      farmslotRoot: f.root,
+      archiveRoot: f.archiveRoot,
+      policy: { ...bundles.DEFAULT_RUN_BUNDLE_RETENTION, mediaRetentionDays: 0 },
+      assertArchiveWriteRoom: async (_root, bytes) => {
+        copies.push(bytes);
+        if (copies.length === 2)
+          throw new Error('archive destination is under the heavy-write floor');
+      },
+    }),
+    /heavy-write floor/,
+  );
+  const refused = [first, second].find(({ body }) => body.length === copies[1]);
+  assert.ok(refused);
+  const source = path.join(refused.bundle.taskDir, 'artifacts/proof.png');
+  assert.deepEqual(await readFile(source), refused.body);
+  assert.equal((await refused.bundle.resolveEntry('artifacts/proof.png')).path, source);
+  assert.deepEqual(
+    copies.sort((a, b) => a - b),
+    [10_000, 20_000],
   );
 });
 

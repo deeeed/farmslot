@@ -158,6 +158,7 @@ export interface MaterializeRunBundleRequest {
   acquisitionTaskDirs?: AcquisitionTaskDirClassifier;
   /** Owning gateway's run archive root; media is moved here before capacity can defer it. */
   archiveRoot?: string;
+  assertArchiveWriteRoom?: RunBundleMediaArchiveRequest['assertArchiveWriteRoom'];
   onMediaArchived?: (result: RunBundleMediaArchiveResult) => void;
   /** Inventory is frozen before metadata commits; media transport writes only admitted bytes. */
   acquireMedia?: (
@@ -215,6 +216,8 @@ export interface RunBundleMediaArchiveRequest {
   store: RunBundleStore;
   farmslotRoot: string;
   archiveRoot: string;
+  /** The host checks the destination volume's floor, including this copy's bytes. */
+  assertArchiveWriteRoom?(root: string, copyBytes: number): Promise<void>;
   policy?: RunBundleRetentionPolicy;
   acquisitionTaskDirs?: AcquisitionTaskDirClassifier;
   now?: number;
@@ -1951,11 +1954,14 @@ async function archiveRunBundleMediaLocked(
         sha256Text(key),
       );
       const parent = path.dirname(destination);
-      await mkdir(parent, { recursive: true });
-      if ((await realpath(parent)) !== parent) throw new Error('Run media archive is redirected.');
       if (!(await readOptionalArchiveIdentity(destination, meta))) {
+        await input.assertArchiveWriteRoom?.(archiveRoot, meta.bytes);
+        await mkdir(parent, { recursive: true });
+        if ((await realpath(parent)) !== parent)
+          throw new Error('Run media archive is redirected.');
         const partial = `${destination}.copy`;
         await rm(partial, { force: true });
+        // Hash the source during copy and again afterward to detect mutation; hash the copy to verify it.
         const copied = await copyHashed(source, partial, meta.bytes);
         const verified = await copyHashed(partial, null, meta.bytes);
         const unchanged = await copyHashed(source, null, meta.bytes);
@@ -2028,6 +2034,7 @@ async function archiveCaptureMedia(
       store: request.store,
       farmslotRoot: request.farmslotRoot,
       archiveRoot: request.archiveRoot,
+      assertArchiveWriteRoom: request.assertArchiveWriteRoom,
       policy: request.policy,
     },
     acquisitionSize,
@@ -2051,7 +2058,10 @@ export async function collectRunBundleGarbage(
   store: RunBundleStore,
   policy = DEFAULT_RUN_BUNDLE_RETENTION,
   now = Date.now(),
-  archive?: Pick<RunBundleMediaArchiveRequest, 'archiveRoot' | 'farmslotRoot'>,
+  archive?: Pick<
+    RunBundleMediaArchiveRequest,
+    'archiveRoot' | 'farmslotRoot' | 'assertArchiveWriteRoom'
+  >,
 ): Promise<{ reclaimedBytes: number; prunedPaths: string[] }> {
   await assertStorePairing(store);
   assertPolicy(policy);
@@ -2090,6 +2100,7 @@ export async function collectRunBundleGarbage(
         {
           store,
           archiveRoot: archive.archiveRoot,
+          assertArchiveWriteRoom: archive.assertArchiveWriteRoom,
           farmslotRoot: archive.farmslotRoot,
           policy,
           now,

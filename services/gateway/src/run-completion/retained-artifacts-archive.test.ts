@@ -28,6 +28,7 @@ const { makeRun } = await import('./test-fixtures.js');
 const {
   archiveRunArtifactHousekeeping,
   runBundleStore,
+  initializeRunBundleStore,
   warnRunBundleCapacity,
   retainedRunArtifactManifest,
   retainCapturedRunArtifacts,
@@ -169,6 +170,7 @@ test('an unavailable configured store pauses capture, warns the board and leaves
   initCopilotObserver((event, payload) => broadcasts.push({ event, payload }));
   t.after(resetCopilotObserverForTests);
   await warnRunBundleCapacity();
+  await initializeRunBundleStore();
   await reserveRunArtifactMetadata(makeRun({ id: 'continue-without-volume' }));
   await assert.rejects(
     retainCapturedRunArtifacts({
@@ -187,6 +189,90 @@ test('an unavailable configured store pauses capture, warns the board and leaves
     ),
   );
   await assert.rejects(realpath(path.dirname(missing)), { code: 'ENOENT' });
+});
+
+test('startup and pairing stay available below the floor while capture refuses and warns', async (t) => {
+  const previousFloor = process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB;
+  process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB = '100000000000';
+  t.after(() => {
+    if (previousFloor === undefined) delete process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB;
+    else process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB = previousFloor;
+  });
+  const broadcasts: Array<{ event: string; payload: unknown }> = [];
+  initCopilotObserver((event, payload) => broadcasts.push({ event, payload }));
+  t.after(resetCopilotObserverForTests);
+  const owner = await runBundleStore(true);
+  await initializeRunBundleStore();
+  assert.deepEqual(await runBundleStore(), owner);
+  await reserveRunArtifactMetadata(makeRun({ id: 'dispatch-below-floor' }));
+  const source = path.join(root, 'new-task/artifacts/proof.png');
+  const before = await readFile(source);
+  await assert.rejects(
+    retainCapturedRunArtifacts({
+      run: makeRun({ id: 'capture-below-floor', taskFile: path.join(root, 'new-task/TASK.md') }),
+      artifacts: [{ path: 'artifacts/proof.png', purpose: 'screenshot' }],
+      manifestDigest: 'below-floor',
+      commit: async () => assert.fail('capture must pause'),
+    }),
+    /floor/,
+  );
+  assert.deepEqual(await readFile(source), before);
+  assert.ok(
+    broadcasts.some(
+      ({ event, payload }) =>
+        event === Events.MONITOR_VIOLATION &&
+        (payload as MonitorViolationPayload).violation.target === 'run-bundle.capacity' &&
+        (payload as MonitorViolationPayload).violation.message.includes('floor'),
+    ),
+    'capture refusal reaches the board stream',
+  );
+});
+
+test('housekeeping refuses an archive destination below its floor and warns without moving media', async (t) => {
+  const store = await runBundleStore(true);
+  const run = makeRun({ id: 'archive-floor', taskFile: path.join(root, 'new-task/TASK.md') });
+  const saved = await materializeRunBundle({
+    store,
+    farmslotRoot: root,
+    run,
+    taskDir: path.dirname(run.taskFile!),
+    artifacts: [{ path: 'artifacts/proof.png', purpose: 'screenshot' }],
+    manifestDigest: run.id,
+    captureKey: run.id,
+    commit: async (ref) => {
+      run.artifactBundle = ref;
+      await writeFile(path.join(store.runsDir, `${run.id}.json`), JSON.stringify(run));
+    },
+  });
+  const bundle = await readRetainedRunBundle(store, saved.ref, run.id);
+  const source = path.join(bundle.taskDir, 'artifacts/proof.png');
+  const before = await readFile(source);
+  const config = path.join(root, 'home/run-bundle-retention.json');
+  await writeFile(config, JSON.stringify({ runBundleRetention: { mediaRetentionDays: 0 } }));
+  t.after(() => rm(config, { force: true }));
+  const previousFloor = process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB;
+  process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB = '100000000000';
+  t.after(() => {
+    if (previousFloor === undefined) delete process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB;
+    else process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB = previousFloor;
+  });
+  const broadcasts: Array<{ event: string; payload: unknown }> = [];
+  initCopilotObserver((event, payload) => broadcasts.push({ event, payload }));
+  t.after(resetCopilotObserverForTests);
+  await assert.rejects(archiveRunArtifactHousekeeping(), /floor/);
+  assert.deepEqual(await readFile(source), before);
+  assert.equal((await bundle.resolveEntry('artifacts/proof.png')).path, source);
+  assert.ok(
+    broadcasts.some(
+      ({ event, payload }) =>
+        event === Events.MONITOR_VIOLATION &&
+        (payload as MonitorViolationPayload).violation.target === 'run-bundle.capacity' &&
+        (payload as MonitorViolationPayload).violation.message.includes(
+          process.env.FARMSLOT_RUN_ARCHIVE_ROOT!,
+        ),
+    ),
+    'the refusal names the archive destination',
+  );
 });
 
 test('heavy-write admission reserves the migration copy bytes above the free-space floor', async () => {
