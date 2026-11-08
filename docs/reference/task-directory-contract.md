@@ -190,6 +190,8 @@ The selected checklist travels inside `inputs/handoff.json` as `executionTemplat
 
 `sha256` is the template source. `renderedSha256` is the checklist file as written. For a placeholder-free template they are equal, and equal to a skill-side materialization of the same id. Farmslot adds `templateProvenance` beside it (project repository revision, selection source, render time) for the run record; the reference is never stored twice. Task dirs written before 0.9 keep `inputs/template-provenance.json`; readers fall back to it for one release.
 
+When the pack declares `required_skills`, the handoff also carries `requiredSkills`: the one frozen required skill set the dev worker and its review load. See [project packs: Required skills](project-packs.md#required-skills).
+
 ### Retained task tooling
 
 `farmslot task init` uses the shared runtime producer. It retains the CLI distribution and selected provider, library and configuration bytes through the immutable installation mechanism. `inputs/recipe-binding.json` records the selection; `artifacts/harness-provenance.json` binds its bytes and the executable. The runtime owns this receipt and the installation pin manifest that verifies it. A provider is never recorded as the CLI. Full development workspaces refuse with `TASK_INSTALL_UNSUPPORTED`; task pinning uses the existing immutable CLI installation or a self-contained package install.

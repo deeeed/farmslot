@@ -1,0 +1,1 @@
+- Validate optional project `required_skills` rules.

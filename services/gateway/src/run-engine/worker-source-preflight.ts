@@ -10,6 +10,8 @@ export interface WorkerSourceExpectation {
   protocolVersion: string;
   runtimeScript: string;
   taskDir: string | null;
+  /** Checkout the worker launches in; frozen required skill paths resolve against it. */
+  repoRoot?: string;
 }
 
 /** Verify retained templates/libraries through their existing provenance owner, never current main. */
@@ -80,7 +82,15 @@ const fs=require('node:fs'),path=require('node:path'),{createRequire}=require('n
   if((e.exitCode===5 && typeof e.code==='string') || e.code==='ENOENT'){result('mismatch',e.code+': '+e.message+' Repair the retained input through its supported source owner, then retry this same run.');return}
   throw e;
  }
- result('verified','Selected CLI/protocol and retained pack/template/library bytes match their receipts.');
+ const handoffFile=path.join(expected.taskDir,'inputs/handoff.json');
+ const requiredSkills=fs.existsSync(handoffFile)?JSON.parse(fs.readFileSync(handoffFile,'utf8')).requiredSkills:undefined;
+ if(requiredSkills!==undefined){
+  if(typeof protocol.isRequiredSkillSet!=='function'||typeof runtime.checkRequiredSkills!=='function'||!expected.repoRoot){result('unverified','This worker runtime cannot check the frozen required skill set; update the node runtime through its supported route.',false);return}
+  if(!protocol.isRequiredSkillSet(requiredSkills)){result('mismatch','The task handoff has an invalid requiredSkills record. Prepare the run again.');return}
+  const check=runtime.checkRequiredSkills(expected.repoRoot,requiredSkills);
+  if(check.status==='missing'){result('mismatch',check.missing.map(gap=>'Required skill '+gap.skill+': '+gap.path+' is '+(gap.reason==='missing'?'missing':'changed since task init')).join('; ')+'. Refresh the slot skills, then prepare again.');return}
+ }
+ result('verified','Selected CLI/protocol and retained pack/template/library bytes match their receipts.'+(requiredSkills!==undefined?' Required skills match their frozen digests.':''));
 })().catch(e=>{process.stdout.write(JSON.stringify({status:'unverified',detail:e.message,...(peerVersions?{peerVersions}:{})}));});`;
   const packet = JSON.stringify({ ...expected, runtimeModule });
   return `node -e ${shellQuote(program)} ${shellQuote(packet)} "\${FARMSLOT_CLI:-$(command -v farmslot)}"`;
