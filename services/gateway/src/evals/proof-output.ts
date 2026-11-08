@@ -22,7 +22,10 @@ type ProofPackage = NonNullable<NonNullable<EvalBlindTrial['firstOutput']>['proo
 
 /** Reuse the captured inventory, including media retained outside the worker mirror. */
 async function proofInventory(run: Run) {
+  if (run.output?.captureError)
+    throw new Error('Proof output capture failed; repair the retained capture before freezing');
   const ref = run.output?.artifactBundle ?? run.artifactBundle;
+  if (run.output && !ref) throw new Error('Proof output requires a committed retained capture');
   if (!ref) {
     const { scanResultPackageArtifacts } = await import('./package-store.js');
     return {
@@ -117,7 +120,7 @@ export async function readProofOutput(
     value.bundle === undefined
       ? undefined
       : await readRetainedRunBundle(await runBundleStore(), bundleRef(value.bundle), run.id);
-  const root = await realpath(path.dirname(run.taskFile));
+  const root = bundle ? undefined : await realpath(path.dirname(run.taskFile));
   // Verify exactly the frozen inventory. Later judge files are not worker output.
   for (const expected of value.artifacts) {
     if (
@@ -130,7 +133,7 @@ export async function readProofOutput(
       throw new Error('Invalid proof artifact reference');
     const full = bundle
       ? (await bundle.resolveEntry(expected.path)).path
-      : path.join(root, expected.path);
+      : path.join(root!, expected.path);
     const info = await lstat(full);
     if (
       !info.isFile() ||

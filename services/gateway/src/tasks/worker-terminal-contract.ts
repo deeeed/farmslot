@@ -37,6 +37,7 @@ import { subtaskTerminalRefusal } from './subtasks.js';
 const require = createRequire(import.meta.url);
 const {
   resolveWorkerTerminalContract,
+  isProofMeasurementContract,
   deterministicChecks,
   lintWorkerTemplateAgainstContract,
   templateUsesTerminalMark,
@@ -44,8 +45,9 @@ const {
   resolveWorkerTerminalContract: (
     config: WorkerTerminalProjectConfig | null | undefined,
     flowType: string,
-    options?: { mode?: string | null; now?: string },
+    options?: { mode?: string | null; now?: string; proofMeasurement?: true },
   ) => WorkerTerminalContractDocument;
+  isProofMeasurementContract: (contract: unknown) => boolean;
   lintWorkerTemplateAgainstContract: (
     templateContent: string,
     contract: WorkerTerminalContractDocument,
@@ -145,20 +147,34 @@ export async function validateTerminalSignalArtifacts(
   const vars = await loadSlotVars(slotId);
   const taskDir = path.posix.dirname(signalJsonPath);
 
-  // A registered child checklist unit (ADR-060) is part of this signal's proof.
-  // The mark engine already refuses a parent terminal command with an open
-  // child, but a signal written around the engine — by hand, by an older node's
-  // `mark`, or by a runner that edited the file — would otherwise sail through,
-  // so the gateway asserts it too, from the child signals on the slot. The
-  // review-workspace completion read calls the same refusal on its own task dir.
-  const openChild = await subtaskTerminalRefusal(vars, taskDir, terminalCommand);
-  if (openChild) return { ok: false, kind: 'artifact', message: openChild };
-
   const checklistBasename = checklistBasenameFromTaskPath(checklistTaskFile);
   const contractInput = checklistBasename
     ? terminalContractInputForChecklist(checklistBasename)
     : WORKER_TERMINAL_CONTRACT_INPUT;
   const contractPath = `${taskDir}/${contractInput}`;
+  let contract: unknown;
+  if (await slotFileExists(vars, contractPath)) {
+    try {
+      contract = JSON.parse(await slotReadFile(vars, contractPath));
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      return {
+        ok: false,
+        kind: 'artifact',
+        message: 'The frozen worker terminal contract is invalid JSON.',
+      };
+    }
+  }
+  const rootContract: unknown =
+    contractInput === WORKER_TERMINAL_CONTRACT_INPUT
+      ? contract
+      : (await slotFileExists(vars, `${taskDir}/${WORKER_TERMINAL_CONTRACT_INPUT}`))
+        ? JSON.parse(await slotReadFile(vars, `${taskDir}/${WORKER_TERMINAL_CONTRACT_INPUT}`))
+        : undefined;
+  if (!isProofMeasurementContract(rootContract)) {
+    const openChild = await subtaskTerminalRefusal(vars, taskDir, terminalCommand);
+    if (openChild) return { ok: false, kind: 'artifact', message: openChild };
+  }
   // The acceptance ledger (ADR-060 phase 5) is part of this signal's proof for the
   // same reason as an open child: `mark complete` already requires a verdict per
   // criterion, and a signal written around the engine must not skip it.

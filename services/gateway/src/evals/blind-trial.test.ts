@@ -131,6 +131,12 @@ mock.module('../tasks/agent-runtime-script.js', {
 mock.module('./package-store.js', {
   namedExports: { sha256Text: (value: string) => createHash('sha256').update(value).digest('hex') },
 });
+mock.module('./proof-output.js', {
+  namedExports: {
+    freezeProofOutput: async () => undefined,
+    readProofOutput: async () => undefined,
+  },
+});
 const {
   freezeBlindTrialFirstOutput,
   prepareBlindTrialGit,
@@ -315,4 +321,39 @@ test('retained redispatch accepts candidate progress while rechecking Git isolat
   assert.equal(verifications, 2);
   verifyAllowed = false;
   await assert.rejects(verifyBlindTrialForDispatch(run, true), /isolation changed/);
+});
+
+test('proof dispatch preserves the sibling restrictions installed during prepare', async (t) => {
+  await fixture(t);
+  const blind = run.engineState!.evalExperiment!.blind!;
+  blind.proof = {
+    version: 1,
+    source: {
+      baseSha: 'd'.repeat(40),
+      headSha: base,
+      treeSha: 'c'.repeat(40),
+      diffSha256: 'f'.repeat(64),
+    },
+    acceptanceCriteria: ['Observe supplied behavior'],
+    qa: { profile: { id: 'pr', title: 'QA', template_id: 'qa/default' }, inputs: {} },
+    executionTemplate: {
+      id: 'qa/default',
+      sourceId: 'project:fixture',
+      flow: 'qa',
+      platforms: ['cli'],
+      labels: [],
+      relativePath: 'qa.md',
+      sha256: 'e'.repeat(64),
+    },
+  };
+  run.taskFile = '/farm/tasks/qa/current/TASK.md';
+  slotCommands.length = 0;
+  await prepareBlindTrialGit(run.id);
+  await verifyBlindTrialForDispatch(run);
+  const boundaries = slotCommands
+    .filter((command) => command.includes('"action":"boundary"'))
+    .map((command) => JSON.parse(command.slice(command.indexOf("'") + 1, command.indexOf("' <<"))));
+  assert.equal(boundaries.length, 2);
+  for (const boundary of boundaries)
+    assert.deepEqual(boundary.siblingRepos, ['/farm/slots/sibling']);
 });

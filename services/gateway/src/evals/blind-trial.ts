@@ -117,6 +117,14 @@ function updateBlind(runId: string, blind: EvalBlindTrial): Run {
   });
 }
 
+async function resolvedSiblingRepos(vars: SlotVars): Promise<string[]> {
+  return Promise.all(
+    (await loadMachineSlots(vars.machine))
+      .filter((slot) => slot.id !== vars.slotId)
+      .map(async (slot) => (await loadSlotVars(slot.id)).remoteRepo),
+  );
+}
+
 export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal): Promise<void> {
   const run = getRun(runId);
   if (!run?.engineState?.evalExperiment) return;
@@ -141,11 +149,7 @@ export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal):
   const spec = gitSpec(run, vars, blind, isolation.slotEpoch, isolation.capsulePath);
   await executeGit('isolate', vars, spec, signal);
   // The worker sandbox denies the node's other slot checkouts, resolved as each slot's own launch resolves them.
-  const siblingRepos = await Promise.all(
-    (await loadMachineSlots(vars.machine))
-      .filter((slot) => slot.id !== vars.slotId)
-      .map(async (slot) => (await loadSlotVars(slot.id)).remoteRepo),
-  );
+  const siblingRepos = await resolvedSiblingRepos(vars);
   await executeGit('boundary', vars, { ...spec, siblingRepos }, signal);
   await ownedEpoch(run, epoch);
   await persistRunNow(
@@ -211,6 +215,7 @@ export async function verifyBlindTrialForDispatch(run: Run, retained = false): P
     );
     await executeGit('boundary', vars, {
       ...gitSpec(run, vars, blind, blind.isolation.slotEpoch, blind.isolation.capsulePath),
+      siblingRepos: await resolvedSiblingRepos(vars),
       proofBoundary: {
         taskRoot,
         currentTask,

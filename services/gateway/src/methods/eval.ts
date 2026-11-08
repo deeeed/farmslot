@@ -865,6 +865,7 @@ export async function evalTrialStart(
         ? {
             expectedQa: {
               profileId: proof.qa.profile.id,
+              profile: proof.qa.profile,
               templateId: proof.qa.profile.template_id,
               inputs: proof.qa.inputs,
             },

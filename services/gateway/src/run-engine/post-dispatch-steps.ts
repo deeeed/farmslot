@@ -679,7 +679,8 @@ export async function executeMonitorStep(
         failRunOutputCapture(runId, error, true);
       }
       if (!canSettle()) return retiredResult();
-      if (after.engineState?.evalExperiment?.blind?.proof) await assertQaCompletion(after);
+      if (after.engineState?.evalExperiment?.blind?.proof)
+        await assertQaCompletion(getRun(runId)!, { retained: true });
       await freezeBlindTrialFirstOutput(runId);
       broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
     }

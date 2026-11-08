@@ -6,6 +6,11 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.82.1 - 2026-11-08
+
+- Add frozen proof-only eval inputs and proof-output identity alongside existing implementation trials.
+- Retry persistent caching on reconnect after temporary store failures, retaining readable data and clearing the storage notice after recovery.
+
 ## 0.82.0 - 2026-11-08
 
 - Share versioned recipe-shape policy, static AC coverage and concrete feedback across runtime and offline consumers.

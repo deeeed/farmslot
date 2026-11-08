@@ -137,8 +137,7 @@ test('proof output uses the retained inventory when media is no longer in the mu
     manifestDigest,
     artifactBundle: captured.ref,
   };
-  await rm(media);
-  await rm(path.join(taskDir, 'artifacts/report.md'));
+  await rm(taskDir, { recursive: true });
   run.engineState!.evalExperiment!.blind!.firstOutput!.proofPackage = await freezeProofOutput(run);
   const output = await readProofOutput(run);
   assert.ok(output);
@@ -148,4 +147,19 @@ test('proof output uses the retained inventory when media is no longer in the mu
   await chmod(retained.path, 0o600);
   await writeFile(retained.path, 'tampered test bytes');
   await assert.rejects(readProofOutput(run), /Frozen proof artifact changed/);
+});
+
+test('a failed capture cannot become a permanent missing proof measurement', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'proof-transfer-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const run = await firstOutputFixture(root, makeRun({ flowType: 'qa' }));
+  run.engineState!.evalExperiment!.blind!.proof = proof;
+  run.output = {
+    workerFinished: true,
+    capturedAt: new Date().toISOString(),
+    artifactManifest: [],
+    manifestDigest: 'f'.repeat(64),
+    captureError: 'Transfer interrupted',
+  };
+  await assert.rejects(freezeProofOutput(run), /repair the retained capture/);
 });

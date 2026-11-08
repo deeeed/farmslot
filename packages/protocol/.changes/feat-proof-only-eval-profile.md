@@ -1,1 +1,0 @@
-- Add frozen proof-only eval inputs and proof-output identity alongside existing implementation trials.
