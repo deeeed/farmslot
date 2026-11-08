@@ -9,11 +9,27 @@ import {
   isRecord,
   type Run,
 } from '@farmslot/protocol';
+import {
+  currentProjectSources,
+  farmslotRoot,
+  sourceExecutionEnvironment,
+} from '@farmslot/slot-config';
+import {
+  runTaskRuntime,
+  TASK_RUNTIME_TIMEOUT_MS,
+  type TaskRuntimeRequest,
+} from '@farmslot/slot-config/task-runtime';
 
+import { assertCleanupCurrent, cleanupSignal, trackCleanupCommand } from '../core/cleanup-scope.js';
 import type { SlotVars } from '../core/config.js';
-import { execOnSlot } from '../core/exec.js';
+import {
+  EXEC_TIMEOUT_EXIT_CODE,
+  execOnSlot,
+  isLocal,
+  localCommandEnvironment,
+} from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
-import { withMachineEnv } from '../core/project-env.js';
+import { machineShellEnv, withMachineEnv } from '../core/project-env.js';
 import { isShellHomePath } from '../core/remote-paths.js';
 import {
   slotDeletePath,
@@ -23,6 +39,15 @@ import {
   slotWriteFiles,
 } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
+import { getNode } from '../fleet/machine-registry.js';
+import { usesNodeLink } from '../fleet/node-link-policy.js';
+import { taskRuntimeThroughNodeLink } from '../fleet/node-link-process.js';
+import { nodeTaskRuntime } from '../fleet/node-rpc.js';
+import {
+  NodeSupportPendingError,
+  resolveRemoteFarmCommand,
+} from '../node-support/remote-command.js';
+import { measureManagedOperation } from '../observability/performance.js';
 
 import { farmslotDirectoryForSlot } from './agent-runtime-script.js';
 import { copyPreparedTaskRootSidecars, copyTaskDirSubdirectories } from './sidecars.js';
@@ -38,9 +63,82 @@ const producedTaskFiles = [
   'artifacts/harness-provenance.json',
 ] as const;
 
-// Three loaded-node samples reached 265s retaining installed CLI/provider inputs.
-// Round twice that sample p95 up to ten minutes; partial initialization is never retried.
-const HOSTED_TASK_INIT_TIMEOUT_MS = 10 * 60_000;
+async function hostedTaskRuntime(
+  slot: SlotVars,
+  action: TaskRuntimeRequest['action'],
+  taskPath: string,
+) {
+  assertCleanupCurrent();
+  const nodeLink = usesNodeLink(slot.machine);
+  const node = getNode(slot.machine);
+  const supported = nodeLink
+    ? node?.nodeLink?.operations?.includes('task.runtime') === true
+    : node?.taskRuntime === 1;
+  // Negotiate before execution. A failed runtime call may already have changed task files.
+  if (!supported) {
+    console.warn(
+      `[hosted-task] Node ${slot.machine} does not advertise task.runtime; using CLI for ${action}.`,
+    );
+    const command = await hostedTaskCommand(
+      slot,
+      action === 'init' ? ['internal', 'task-init', taskPath] : ['task', 'verify', taskPath],
+    );
+    return execOnSlot(slot, command, {
+      timeout: TASK_RUNTIME_TIMEOUT_MS[action],
+      maxBuffer: 8 * 1024 * 1024,
+      noRetry: true,
+    });
+  }
+  const local = isLocal(slot.host, slot.machine) && !nodeLink;
+  const support = expandTemplate('{{farmslot_dir}}', slot);
+  let supportDir = support;
+  if (!local) {
+    try {
+      supportDir = await resolveRemoteFarmCommand(slot, support, {
+        budgetMs: TASK_RUNTIME_TIMEOUT_MS[action],
+      });
+    } catch (error) {
+      if (!(error instanceof NodeSupportPendingError)) throw error;
+      return { exitCode: EXEC_TIMEOUT_EXIT_CODE, stdout: '', stderr: error.message };
+    }
+  }
+  const sources = currentProjectSources();
+  if (sources) {
+    const { verifyExecutionSources } = await import('../sources/runtime.js');
+    await verifyExecutionSources(slot.machine, sources.execution ?? sources.materialization);
+  }
+  const request: TaskRuntimeRequest = {
+    action,
+    taskPath,
+    supportDir,
+    env: { ...machineShellEnv(slot), ...(sources ? sourceExecutionEnvironment(sources) : {}) },
+  };
+  const signal = cleanupSignal();
+  if (local)
+    return trackCleanupCommand(
+      measureManagedOperation('exec', 'node', () =>
+        runTaskRuntime(request, farmslotRoot, localCommandEnvironment(), signal),
+      ),
+    );
+  if (nodeLink)
+    return measureManagedOperation('exec', 'node', () =>
+      taskRuntimeThroughNodeLink(slot, request, {
+        timeout: TASK_RUNTIME_TIMEOUT_MS[action],
+        signal,
+      }),
+    );
+  const result = await trackCleanupCommand(
+    nodeTaskRuntime(slot.machine, request, TASK_RUNTIME_TIMEOUT_MS[action], signal),
+  );
+  if (
+    !isRecord(result) ||
+    typeof result.exitCode !== 'number' ||
+    typeof result.stdout !== 'string' ||
+    typeof result.stderr !== 'string'
+  )
+    throw new Error('Node task runtime returned an invalid result.');
+  return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
+}
 
 export interface HostedTaskInput {
   runner?: string;
@@ -90,6 +188,7 @@ export async function initializeHostedTaskOnSlot(
   gatewayTaskDir: string,
   input: HostedTaskInput,
   run?: Run,
+  options?: { deferSidecars?: boolean },
 ): Promise<ExecutionTemplateReference> {
   const requestPath = path.posix.join(input.task.taskDir, `.task-init-${randomUUID()}.json`);
   const request = hostedTaskRequest(slot.slotId, input);
@@ -106,12 +205,7 @@ export async function initializeHostedTaskOnSlot(
         mode: 0o600,
       },
     ]);
-    const command = await hostedTaskCommand(slot, ['internal', 'task-init', requestPath]);
-    const result = await execOnSlot(slot, command, {
-      timeout: HOSTED_TASK_INIT_TIMEOUT_MS,
-      maxBuffer: 8 * 1024 * 1024,
-      noRetry: true,
-    });
+    const result = await hostedTaskRuntime(slot, 'init', requestPath);
     if (result.exitCode !== 0)
       throw new Error(`Node task initialization refused: ${result.stdout || result.stderr}`);
     const envelope: unknown = JSON.parse(result.stdout);
@@ -123,7 +217,7 @@ export async function initializeHostedTaskOnSlot(
     )
       throw new Error('Node task initialization returned an invalid result.');
     const reference = envelope.data.executionTemplate;
-    if (!hadReceipt)
+    if (!hadReceipt && !options?.deferSidecars)
       await syncHostedTaskSidecars(
         slot,
         gatewayTaskDir,
@@ -152,12 +246,7 @@ export async function initializeHostedTaskOnSlot(
 
 /** Dispatch verifies the node-owned receipt after copying sidecars, before launch. */
 export async function verifyHostedTaskOnSlot(slot: SlotVars, taskDir: string): Promise<void> {
-  const command = await hostedTaskCommand(slot, ['task', 'verify', taskDir]);
-  const result = await execOnSlot(slot, command, {
-    timeout: 120_000,
-    maxBuffer: 8 * 1024 * 1024,
-    noRetry: true,
-  });
+  const result = await hostedTaskRuntime(slot, 'verify', taskDir);
   if (result.exitCode !== 0)
     throw new Error(`Retained task verification refused: ${result.stdout || result.stderr}`);
 }

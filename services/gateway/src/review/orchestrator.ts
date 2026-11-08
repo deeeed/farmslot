@@ -3487,7 +3487,9 @@ export async function relaunchWorkerForFix(
     preserveWindowAfterExit: true,
   });
   if (!launchDeliveryStartedAt) await recordLaunchBoundary();
-  await new Promise((r) => setTimeout(r, TMUX_WINDOW_RESPAWN_SETTLE_MS));
+  const settleMs =
+    getRunnerDefinition(runner).roleWindowStartupSettleMs ?? TMUX_WINDOW_RESPAWN_SETTLE_MS;
+  if (settleMs) await new Promise((r) => setTimeout(r, settleMs));
   const run = getRun(runId);
   const workerRole = resolved.role ?? primaryRoleForFlow(run?.flowType);
   const windowSeparator = workerTarget.indexOf(':');

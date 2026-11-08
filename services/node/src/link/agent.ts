@@ -223,7 +223,7 @@ export class NodeLinkAgent {
           'INVALID_PARAMS',
           'Stream control requires its authorized command and cursor.',
         );
-      if (value.command.operation !== 'process.run')
+      if (value.command.operation !== 'process.run' && value.command.operation !== 'task.runtime')
         throw new NodeLinkFailure('UNSUPPORTED_OPERATION', 'Command has no process stream.');
       const cursor = cursorValue(value.cursor);
       const receipt = await this.executor.commands.receipt(value.command);

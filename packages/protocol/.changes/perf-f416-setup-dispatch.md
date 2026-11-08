@@ -1,0 +1,1 @@
+- Add advertised task runtime support and an authorized node-link task operation so initialization and retained verification can run in node threads with their existing execution identity and lease fences.

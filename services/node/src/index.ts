@@ -64,6 +64,7 @@ import {
   startMetricsSubscription,
   stopMetricsSubscription,
 } from './commands/system-metrics.js';
+import { executeTaskRuntime } from './commands/task-runtime.js';
 import {
   createTerminalInputWriter,
   requireInputSequence,
@@ -222,6 +223,7 @@ async function handshake(socket: WebSocket): Promise<void> {
       nativeSessions: nativeSessions.declaration,
       gatewayUrl: GATEWAY_URL,
       execCancellation: true,
+      taskRuntime: 1,
       conditionalWrites: true,
       ...(nodeLinkEnabled
         ? { nodeLink: { commands: 1, streams: 1, operations: NODE_LINK_OPERATIONS } }
@@ -603,6 +605,11 @@ async function handleRequest(
           undefined,
           socket,
         );
+        break;
+      }
+      case 'task.runtime': {
+        const result = await requests.run(frame.id, (signal) => executeTaskRuntime(params, signal));
+        sendResponse(frame.id, true, result, undefined, undefined, socket);
         break;
       }
       case 'exec.cancel': {

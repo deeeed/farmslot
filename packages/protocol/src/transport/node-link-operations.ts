@@ -49,6 +49,14 @@ export interface NodeLinkProcessInput {
   terminal?: NodeLinkTerminalSize;
 }
 
+/** Exact node-local library call approved by the gateway's task owner. */
+export interface NodeLinkTaskRuntimeInput {
+  action: 'init' | 'verify';
+  taskPath: string;
+  supportDir: string;
+  env: Record<string, string>;
+}
+
 export interface NodeLinkWriteFilesInput extends NodeFsWriteFilesParams {
   createOnly?: boolean;
 }
@@ -91,6 +99,7 @@ export interface NodeLinkOperationMap {
   'file.delete': { input: NodeFsDeleteParams; result: { ok: true } };
   'file.rename': { input: NodeFsRenameParams; result: { ok: true; hash?: string } };
   'process.run': { input: NodeLinkProcessInput; result: ExecResult | NodeLinkProcessSummary };
+  'task.runtime': { input: NodeLinkTaskRuntimeInput; result: ExecResult | NodeLinkProcessSummary };
 }
 
 export type NodeLinkOperation = keyof NodeLinkOperationMap;
@@ -110,6 +119,7 @@ export interface NodeLinkGrant {
   root?: string;
   /** A process request must match this exact admitted argv/cwd/limit policy. */
   process?: NodeLinkProcessInput;
+  task?: NodeLinkTaskRuntimeInput;
 }
 
 export const NODE_LINK_OPERATIONS: NodeLinkOperation[] = [
@@ -127,6 +137,7 @@ export const NODE_LINK_OPERATIONS: NodeLinkOperation[] = [
   'file.delete',
   'file.rename',
   'process.run',
+  'task.runtime',
 ];
 
 /** Unknown future operation names remain unsupported without breaking peer registration. */
@@ -162,7 +173,22 @@ export function isNodeLinkGrant(value: unknown): value is NodeLinkGrant {
       NODE_LINK_OPERATIONS.some((known) => known === operation),
     ) &&
     (grant.root === undefined || typeof grant.root === 'string') &&
-    (grant.process === undefined || isNodeLinkProcessInput(grant.process))
+    (grant.process === undefined || isNodeLinkProcessInput(grant.process)) &&
+    (grant.task === undefined || isNodeLinkTaskRuntimeInput(grant.task))
+  );
+}
+
+export function isNodeLinkTaskRuntimeInput(value: unknown): value is NodeLinkTaskRuntimeInput {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const task = value as Record<string, unknown>;
+  return (
+    (task.action === 'init' || task.action === 'verify') &&
+    typeof task.taskPath === 'string' &&
+    typeof task.supportDir === 'string' &&
+    task.env !== null &&
+    typeof task.env === 'object' &&
+    !Array.isArray(task.env) &&
+    Object.values(task.env).every((entry) => typeof entry === 'string')
   );
 }
 

@@ -1,21 +1,74 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 
-import { projectWorkerTemplateSource, selectExecutionTemplate } from '@farmslot/agent-runtime';
+import {
+  projectWorkerTemplateSource,
+  selectExecutionTemplate,
+  taskInit,
+} from '@farmslot/agent-runtime';
+import type { ExecResult, NodeLinkOperation } from '@farmslot/protocol';
+import {
+  TASK_RUNTIME_CLOSEOUT_MS,
+  TASK_RUNTIME_TIMEOUT_MS,
+  type TaskRuntimeRequest,
+} from '@farmslot/slot-config/task-runtime';
 
 import type { SlotVars } from '../core/config.js';
 import * as realExec from '../core/exec.js';
-import { remapRemoteFarmRefs } from '../node-support/remote-command.js';
+import { shellQuote } from '../core/tmux.js';
+import * as registry from '../fleet/machine-registry.js';
+import * as nodeLinkProcess from '../fleet/node-link-process.js';
+import * as realRpc from '../fleet/node-rpc.js';
+import * as remoteCommands from '../node-support/remote-command.js';
 
-import * as realRuntime from './agent-runtime-script.js';
+import * as runtimeScript from './agent-runtime-script.js';
+import * as sidecars from './sidecars.js';
 
 let fixtureFarm = '';
-let executedOptions: realExec.ExecOnSlotOptions | undefined;
 let executionCount = 0;
+let cliCommand: string | undefined;
+let cliOptions: realExec.ExecOnSlotOptions | undefined;
+let advertisedRuntime: 1 | undefined = 1;
+let advertisedOperations: NodeLinkOperation[] | undefined = ['task.runtime'];
+let runtimeError: Error | undefined;
+const runtimeResult: ExecResult = { exitCode: 5, stdout: 'TASK_INPUT_CHANGED', stderr: '' };
+const runtimeRequests: TaskRuntimeRequest[] = [];
+let inheritedEnvironment: NodeJS.ProcessEnv | undefined;
+let initialize: (() => Promise<ExecResult>) | undefined;
+const transfers: string[] = [];
+mock.module('./sidecars.js', {
+  namedExports: {
+    ...sidecars,
+    copyPreparedTaskRootSidecars: async (params: sidecars.CopyPreparedTaskRootSidecarsParams) => {
+      transfers.push('root');
+      return sidecars.copyPreparedTaskRootSidecars(params);
+    },
+    copyTaskDirSubdirectories: async (params: sidecars.CopyTaskDirSubdirectoriesParams) => {
+      transfers.push('directories');
+      return sidecars.copyTaskDirSubdirectories(params);
+    },
+  },
+});
+mock.module('@farmslot/slot-config/task-runtime', {
+  namedExports: {
+    TASK_RUNTIME_TIMEOUT_MS,
+    TASK_RUNTIME_CLOSEOUT_MS,
+    runTaskRuntime: async (
+      request: TaskRuntimeRequest,
+      _farm: string,
+      environment?: NodeJS.ProcessEnv,
+    ) => {
+      runtimeRequests.push(request);
+      if (runtimeError) throw runtimeError;
+      inheritedEnvironment = environment;
+      if (initialize) return initialize();
+      return { exitCode: 2, stdout: 'TASK_INIT_PARTIAL', stderr: '' };
+    },
+  },
+});
 function fixtureSlot(root: string): SlotVars {
   return {
     slotId: 'fixture-1',
@@ -41,24 +94,79 @@ function fixtureSlot(root: string): SlotVars {
     resourceVars: {},
   };
 }
-mock.module('./agent-runtime-script.js', {
-  namedExports: { ...realRuntime, farmslotDirectoryForSlot: async () => fixtureFarm },
-});
-
 mock.module('../core/exec.js', {
   namedExports: {
     ...realExec,
-    execOnSlot: async (_slot: SlotVars, _command: string, options?: realExec.ExecOnSlotOptions) => {
-      executedOptions = options;
+    execOnSlot: async (_slot: SlotVars, command: string, options?: realExec.ExecOnSlotOptions) => {
       executionCount += 1;
+      cliCommand = command;
+      cliOptions = options;
       return { exitCode: 2, stdout: 'TASK_INIT_PARTIAL', stderr: '' };
     },
   },
 });
+mock.module('./agent-runtime-script.js', {
+  namedExports: { ...runtimeScript, farmslotDirectoryForSlot: async () => '/node/install' },
+});
+mock.module('../fleet/machine-registry.js', {
+  namedExports: {
+    ...registry,
+    getNode: () => ({
+      taskRuntime: advertisedRuntime,
+      nodeLink: { operations: advertisedOperations },
+    }),
+  },
+});
+let remoteRequest: TaskRuntimeRequest | undefined;
+let linked = false;
+let linkedRequest: TaskRuntimeRequest | undefined;
+let supportPending = false;
+let supportBudget: number | undefined;
+mock.module('../fleet/node-link-policy.js', {
+  namedExports: { usesNodeLink: () => linked },
+});
+mock.module('../fleet/node-link-process.js', {
+  namedExports: {
+    ...nodeLinkProcess,
+    taskRuntimeThroughNodeLink: async (_slot: SlotVars, request: TaskRuntimeRequest) => {
+      linkedRequest = request;
+      if (runtimeError) throw runtimeError;
+      return runtimeResult;
+    },
+  },
+});
+mock.module('../node-support/remote-command.js', {
+  namedExports: {
+    ...remoteCommands,
+    resolveRemoteFarmCommand: async (
+      _slot: SlotVars,
+      support: string,
+      options?: Parameters<typeof remoteCommands.resolveRemoteFarmCommand>[2],
+    ) => {
+      supportBudget = options?.budgetMs;
+      if (supportPending)
+        throw new remoteCommands.NodeSupportPendingError('support delivery exceeded its budget');
+      return path.isAbsolute(support) ? support : '/captured/support';
+    },
+  },
+});
+mock.module('../fleet/node-rpc.js', {
+  namedExports: {
+    ...realRpc,
+    nodeTaskRuntime: async (_machine: string, request: TaskRuntimeRequest) => {
+      remoteRequest = request;
+      if (runtimeError) throw runtimeError;
+      return runtimeResult;
+    },
+  },
+});
 const fresh: string = './hosted-task-init.js?partial-preservation';
-const { initializeHostedTaskOnSlot, hostedTaskCommand, hostedTaskRequest } = (await import(
-  fresh
-)) as typeof import('./hosted-task-init.js');
+const {
+  initializeHostedTaskOnSlot,
+  verifyHostedTaskOnSlot,
+  hostedTaskRequest,
+  syncHostedTaskSidecars,
+} = (await import(fresh)) as typeof import('./hosted-task-init.js');
 
 test('partial initialization refuses before any gateway sidecar replaces retained files', async (t) => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'partial-hosted-task-')));
@@ -111,11 +219,9 @@ test('partial initialization refuses before any gateway sidecar replaces retaine
     }),
     /TASK_INIT_PARTIAL/,
   );
-  // The three loaded-node samples reached 265.096s; allow twice that sample p95.
-  assert.ok((executedOptions?.timeout ?? 0) >= 2 * 265_096);
-  assert.ok((executedOptions?.timeout ?? Infinity) <= 10 * 60_000);
-  assert.equal(executedOptions?.noRetry, true);
-  assert.equal(executionCount, 1, 'a refused partial initialization must not be retried');
+  assert.equal(executionCount, 0, 'local task initialization must not start a CLI process');
+  assert.equal(runtimeRequests.length, 1, 'a refused partial initialization must not be retried');
+  assert.equal(runtimeRequests[0].action, 'init');
   assert.deepEqual(
     files.map((file) => fs.readFileSync(path.join(worker, file), 'utf8')),
     before,
@@ -126,86 +232,16 @@ test('partial initialization refuses before any gateway sidecar replaces retaine
   );
 });
 
-test('local task initialization uses the pool provider instead of the gateway provider', async (t) => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'hosted-local-provider-')));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fixtureFarm = root;
-  const cli = path.join(root, 'installed-cli');
-  fs.writeFileSync(
-    cli,
-    `#!${process.execPath}\nprocess.stdout.write(process.env.MM_HARNESS_PACKAGE_ROOT);\n`,
-    { mode: 0o755 },
-  );
-  const selectedProvider = path.join(root, 'pool-provider');
-  const slot = {
-    ...fixtureSlot(root),
-    machineEnv: { MM_HARNESS_PACKAGE_ROOT: selectedProvider },
-  };
-  const command = await hostedTaskCommand(slot, ['internal', 'task-init', 'request.json']);
-  const output = execFileSync('/bin/bash', ['-c', command], {
-    env: {
-      ...process.env,
-      FARMSLOT_CLI: cli,
-      MM_HARNESS_PACKAGE_ROOT: path.join(root, 'stale-provider'),
-    },
-    cwd: root,
-    encoding: 'utf8',
-    timeout: 4000,
+test('retained verification imports the verifier without a CLI and preserves its refusal', async () => {
+  runtimeRequests.length = 0;
+  executionCount = 0;
+  await assert.rejects(verifyHostedTaskOnSlot(fixtureSlot(fixtureFarm), '/retained/task'), {
+    message: 'Retained task verification refused: TASK_INIT_PARTIAL',
   });
-  assert.equal(output, selectedProvider);
-});
-
-test('transport forwards node pool and captured pack roots through the installed CLI', async (t) => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'hosted-node-command-')));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fixtureFarm = path.join(root, 'node');
-  const support = path.join(root, 'support');
-  fs.mkdirSync(path.join(support, 'scripts/lib'), { recursive: true });
-  fs.copyFileSync(
-    new URL('../../../../scripts/lib/resolve-farmslot-cli.sh', import.meta.url),
-    path.join(support, 'scripts/lib/resolve-farmslot-cli.sh'),
-  );
-  const cli = path.join(root, 'installed-cli');
-  fs.writeFileSync(
-    cli,
-    `#!${process.execPath}\nprocess.stdout.write(JSON.stringify({args:process.argv.slice(2),root:process.env.FARMSLOT_ROOT??null,pool:process.env.FARMSLOT_POOL_DIR,projects:process.env.FARMSLOT_PROJECTS_DIR,provider:process.env.MM_HARNESS_PACKAGE_ROOT}));\n`,
-    { mode: 0o755 },
-  );
-  const slot = {
-    ...fixtureSlot(root),
-    host: 'remote.invalid',
-    machine: 'remote-node',
-    sshTarget: 'remote.invalid',
-    machineEnv: { MM_HARNESS_PACKAGE_ROOT: path.join(root, 'pool-provider') },
-  };
-  const command = await hostedTaskCommand(slot, ['internal', 'slot-vars', 'fixture-1']);
-  assert.match(
-    command,
-    /~\/farmslot-node/,
-    'the existing content-addressed remapper must see the support reference',
-  );
-  const selected = remapRemoteFarmRefs(command, support, ['scripts', 'projects/fixture']);
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    FARMSLOT_CLI: cli,
-    MM_HARNESS_PACKAGE_ROOT: path.join(root, 'stale-provider'),
-  };
-  delete env.FARMSLOT_ROOT;
-  delete env.FARMSLOT_POOL_DIR;
-  delete env.FARMSLOT_PROJECTS_DIR;
-  const output = execFileSync('/bin/bash', ['-c', selected], {
-    env,
-    cwd: root,
-    encoding: 'utf8',
-    timeout: 4000,
-  });
-  assert.deepEqual(JSON.parse(output), {
-    args: ['--json', 'internal', 'slot-vars', 'fixture-1'],
-    root: null,
-    pool: path.join(fixtureFarm, 'pool'),
-    projects: path.join(support, 'projects'),
-    provider: path.join(root, 'pool-provider'),
-  });
+  assert.equal(executionCount, 0, 'retained verification must not start a CLI process');
+  assert.equal(runtimeRequests.length, 1);
+  assert.equal(runtimeRequests[0].action, 'verify');
+  assert.equal(runtimeRequests[0].taskPath, '/retained/task');
 });
 
 test('hosted requests keep the installed request shape for ordinary runners', (t) => {
@@ -236,4 +272,292 @@ test('hosted requests keep the installed request shape for ordinary runners', (t
     assert.equal(Object.hasOwn(request, 'runner'), runner === 'scripted');
     if (runner === 'scripted') assert.equal(request.runner, 'scripted');
   }
+});
+
+test('remote verification stays on its node with the selected provider and captured pack', async () => {
+  runtimeRequests.length = 0;
+  const slot = {
+    ...fixtureSlot(fixtureFarm),
+    host: 'remote.invalid',
+    machine: 'remote-node',
+    machineEnv: { MM_HARNESS_PACKAGE_ROOT: '/node/provider' },
+  };
+  await assert.rejects(verifyHostedTaskOnSlot(slot, '/node/task'), {
+    message: 'Retained task verification refused: TASK_INPUT_CHANGED',
+  });
+  assert.equal(runtimeRequests.length, 0);
+  assert.deepEqual(remoteRequest, {
+    action: 'verify',
+    taskPath: '/node/task',
+    supportDir: '/captured/support',
+    env: { MM_HARNESS_PACKAGE_ROOT: '/node/provider' },
+  });
+});
+
+test('written task stages sidecars once after QA inputs and mirrors all producer bytes', async (t) => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'hosted-staging-')));
+  t.after(() => {
+    initialize = undefined;
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const gateway = path.join(root, 'gateway');
+  const worker = path.join(root, 'worker');
+  const templates = path.join(root, 'templates');
+  fs.mkdirSync(path.join(templates, 'worker'), { recursive: true });
+  fs.writeFileSync(path.join(templates, 'worker/dev.md'), '# Task\n- [ ] Observe\n');
+  const template = selectExecutionTemplate({
+    sources: [projectWorkerTemplateSource('fixture', templates)],
+    flow: 'dev',
+    platform: 'cli',
+  });
+  const task = {
+    taskDir: worker,
+    flow: 'dev',
+    platform: 'cli',
+    task: { title: 'Sidecars', sourceKind: 'text' as const },
+    handoff: { surface: 'farmslot', project: 'fixture', attemptId: 'sidecars' },
+  };
+  const sidecarFiles = [
+    'assets/image.png',
+    'inputs/context.json',
+    'artifacts/recipe.json',
+    'subtasks/index.json',
+    'task-actions/index.json',
+  ];
+  for (const file of sidecarFiles) {
+    fs.mkdirSync(path.dirname(path.join(gateway, file)), { recursive: true });
+    fs.writeFileSync(path.join(gateway, file), Buffer.from([0, 1, 128, 255]));
+  }
+  fs.writeFileSync(path.join(gateway, 'inputs/context.json.worker'), 'stale mirror');
+  fs.writeFileSync(path.join(gateway, '.task-init.json'), 'private gateway input');
+  initialize = async () => {
+    const result = await taskInit({ ...task, template: { sources: [], selection: template } });
+    fs.mkdirSync(path.join(worker, 'artifacts'), { recursive: true });
+    fs.writeFileSync(path.join(worker, 'inputs/recipe-binding.json'), '{"identity":null}\n');
+    fs.writeFileSync(
+      path.join(worker, 'artifacts/harness-provenance.json'),
+      '{"node":"receipt"}\n',
+    );
+    return { exitCode: 0, stdout: JSON.stringify({ status: 'ok', data: result }), stderr: '' };
+  };
+  transfers.length = 0;
+  const reference = await initializeHostedTaskOnSlot(
+    fixtureSlot(root),
+    gateway,
+    { task, template, binding: 'static' },
+    undefined,
+    { deferSidecars: true },
+  );
+  assert.deepEqual(transfers, []);
+  const produced = [
+    'TASK.md',
+    'CHECKLIST.md',
+    'mark',
+    'inputs/handoff.json',
+    'inputs/worker-terminal-contract.json',
+    'inputs/recipe-binding.json',
+    'artifacts/harness-provenance.json',
+  ];
+  for (const file of produced)
+    assert.deepEqual(
+      fs.readFileSync(path.join(gateway, file)),
+      fs.readFileSync(path.join(worker, file)),
+    );
+  fs.writeFileSync(
+    path.join(gateway, 'inputs/qa.json'),
+    JSON.stringify({ executionTemplate: reference }),
+  );
+  await syncHostedTaskSidecars(fixtureSlot(root), gateway, worker);
+  assert.deepEqual(transfers, ['root', 'directories']);
+  for (const file of [...sidecarFiles, ...produced, 'inputs/qa.json'])
+    assert.deepEqual(
+      fs.readFileSync(path.join(worker, file)),
+      fs.readFileSync(path.join(gateway, file)),
+      file,
+    );
+  assert.equal(fs.statSync(path.join(worker, 'mark')).mode & 0o777, 0o755);
+  assert.equal(fs.existsSync(path.join(worker, '.task-init.json')), false);
+  assert.equal(fs.existsSync(path.join(worker, 'inputs/context.json.worker')), false);
+});
+
+test('remote task calls retain the machine-selected workspace root', async () => {
+  const slot = {
+    ...fixtureSlot(fixtureFarm),
+    host: 'remote.invalid',
+    machine: 'remote-node',
+    machineEnv: { FARMSLOT_WORKSPACE: '/node/selected-workspace' },
+  };
+  await assert.rejects(verifyHostedTaskOnSlot(slot, '/node/task'), /TASK_INPUT_CHANGED/);
+  assert.equal(remoteRequest?.supportDir, '/node/selected-workspace');
+});
+
+test('a local node-link pilot uses its fenced task operation and local support root', async (t) => {
+  linked = true;
+  t.after(() => {
+    linked = false;
+  });
+  remoteRequest = undefined;
+  runtimeRequests.length = 0;
+  await assert.rejects(
+    verifyHostedTaskOnSlot(fixtureSlot(fixtureFarm), '/node/task'),
+    /TASK_INPUT_CHANGED/,
+  );
+  assert.equal(remoteRequest, undefined, 'node-link must not use the classic task RPC');
+  assert.equal(
+    runtimeRequests.length,
+    0,
+    'node-link must not initialize through gateway-local authority',
+  );
+  assert.equal(linkedRequest?.action, 'verify');
+  assert.equal(linkedRequest?.supportDir, path.resolve(import.meta.dirname, '../../../..'));
+});
+
+test('remote support delivery retains its verification budget and timeout refusal', async (t) => {
+  supportPending = true;
+  t.after(() => {
+    supportPending = false;
+  });
+  remoteRequest = undefined;
+  const slot = { ...fixtureSlot(fixtureFarm), host: 'remote.invalid', machine: 'remote-node' };
+  await assert.rejects(verifyHostedTaskOnSlot(slot, '/node/task'), {
+    message: 'Retained task verification refused: support delivery exceeded its budget',
+  });
+  assert.equal(supportBudget, TASK_RUNTIME_TIMEOUT_MS.verify);
+  assert.equal(remoteRequest, undefined);
+});
+
+test('local task libraries retain the command environment captured at gateway boot', async (t) => {
+  const previous = process.env.F416_TRANSIENT_PROVIDER_ENV;
+  const captured = realExec.localCommandEnvironment().F416_TRANSIENT_PROVIDER_ENV;
+  t.after(() => {
+    if (previous === undefined) delete process.env.F416_TRANSIENT_PROVIDER_ENV;
+    else process.env.F416_TRANSIENT_PROVIDER_ENV = previous;
+  });
+  process.env.F416_TRANSIENT_PROVIDER_ENV = 'another invocation';
+  await assert.rejects(
+    verifyHostedTaskOnSlot(fixtureSlot(fixtureFarm), '/node/task'),
+    /TASK_INIT_PARTIAL/,
+  );
+  assert.equal(inheritedEnvironment?.F416_TRANSIENT_PROVIDER_ENV, captured);
+});
+
+for (const transport of ['local', 'classic', 'node-link'] as const) {
+  const slot = () => ({
+    ...fixtureSlot(fixtureFarm),
+    ...(transport === 'classic' ? { host: 'remote.invalid', machine: 'remote-node' } : {}),
+  });
+
+  test(`${transport} node without task.runtime uses the CLI once and logs the reason`, async (t) => {
+    advertisedRuntime = transport === 'node-link' ? 1 : undefined;
+    advertisedOperations = transport === 'node-link' ? ['process.run'] : ['task.runtime'];
+    linked = transport === 'node-link';
+    t.after(() => {
+      advertisedRuntime = 1;
+      advertisedOperations = ['task.runtime'];
+      linked = false;
+    });
+    const log = t.mock.method(console, 'warn', () => {});
+    executionCount = 0;
+    runtimeRequests.length = 0;
+    remoteRequest = linkedRequest = undefined;
+    const taskPath = "/node/task with 'quotes'";
+    await assert.rejects(verifyHostedTaskOnSlot(slot(), taskPath), /TASK_INIT_PARTIAL/);
+    assert.equal(executionCount, 1);
+    assert.ok(cliCommand?.endsWith(`'task' 'verify' ${shellQuote(taskPath)}`));
+    assert.deepEqual(cliOptions, { timeout: 120_000, maxBuffer: 8 * 1024 * 1024, noRetry: true });
+    assert.equal(runtimeRequests.length, 0);
+    assert.equal(remoteRequest, undefined);
+    assert.equal(linkedRequest, undefined);
+    assert.deepEqual(
+      log.mock.calls.map((call) => call.arguments),
+      [
+        [
+          `[hosted-task] Node ${slot().machine} does not advertise task.runtime; using CLI for verify.`,
+        ],
+      ],
+    );
+  });
+
+  test(`${transport} node advertising task.runtime uses the runtime without CLI fallback on refusal`, async (t) => {
+    linked = transport === 'node-link';
+    advertisedRuntime = linked ? undefined : 1;
+    advertisedOperations = linked ? ['task.runtime'] : ['process.run'];
+    t.after(() => {
+      linked = false;
+      advertisedRuntime = 1;
+      advertisedOperations = ['task.runtime'];
+    });
+    const log = t.mock.method(console, 'warn', () => {});
+    executionCount = 0;
+    runtimeRequests.length = 0;
+    remoteRequest = linkedRequest = undefined;
+    await assert.rejects(
+      verifyHostedTaskOnSlot(slot(), '/node/task'),
+      /TASK_(INIT_PARTIAL|INPUT_CHANGED)/,
+    );
+    assert.equal(executionCount, 0);
+    assert.equal(runtimeRequests.length, transport === 'local' ? 1 : 0);
+    assert.equal(Boolean(remoteRequest), transport === 'classic');
+    assert.equal(Boolean(linkedRequest), transport === 'node-link');
+    assert.equal(log.mock.callCount(), 0);
+  });
+
+  test(`${transport} task.runtime transport failure never retries through the CLI`, async (t) => {
+    linked = transport === 'node-link';
+    runtimeError = new Error('task.runtime connection lost after send');
+    t.after(() => {
+      linked = false;
+      runtimeError = undefined;
+    });
+    const log = t.mock.method(console, 'warn', () => {});
+    executionCount = 0;
+    await assert.rejects(verifyHostedTaskOnSlot(slot(), '/node/task'), runtimeError);
+    assert.equal(executionCount, 0);
+    assert.equal(log.mock.callCount(), 0);
+  });
+}
+
+test('initialization without task.runtime preserves the CLI command, bounds and no-retry refusal', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hosted-cli-fallback-'));
+  advertisedRuntime = undefined;
+  t.after(() => {
+    advertisedRuntime = 1;
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const log = t.mock.method(console, 'warn', () => {});
+  fs.mkdirSync(path.join(root, 'worker'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'worker/dev.md'), '# Task\n- [ ] Observe\n');
+  const template = selectExecutionTemplate({
+    sources: [projectWorkerTemplateSource('fixture', root)],
+    flow: 'dev',
+    platform: 'cli',
+  });
+  executionCount = 0;
+  runtimeRequests.length = 0;
+  await assert.rejects(
+    initializeHostedTaskOnSlot(fixtureSlot(root), path.join(root, 'gateway'), {
+      binding: 'static',
+      template,
+      task: {
+        taskDir: path.join(root, 'task'),
+        flow: 'dev',
+        platform: 'cli',
+        task: { title: 'CLI fallback', sourceKind: 'text' },
+        handoff: { surface: 'farmslot', project: 'fixture', attemptId: 'fallback' },
+      },
+    }),
+    /TASK_INIT_PARTIAL/,
+  );
+  assert.equal(executionCount, 1);
+  assert.match(cliCommand!, /'internal' 'task-init' '[^']*\/\.task-init-[^']+\.json'$/);
+  assert.deepEqual(cliOptions, { timeout: 600_000, maxBuffer: 8 * 1024 * 1024, noRetry: true });
+  assert.equal(runtimeRequests.length, 0);
+  assert.equal(
+    fs.readdirSync(path.join(root, 'task')).some((file) => file.startsWith('.task-init-')),
+    false,
+  );
+  assert.deepEqual(
+    log.mock.calls.map((call) => call.arguments),
+    [['[hosted-task] Node local does not advertise task.runtime; using CLI for init.']],
+  );
 });

@@ -33,7 +33,7 @@ const NON_LOGIN_SHELL_ARGS = IS_DARWIN ? ['-f', '-c'] : ['--noprofile', '--norc'
 const SYSTEM_PATH_FALLBACK = '/usr/sbin:/usr/bin:/sbin:/bin';
 
 const LOGIN_ENV_MARKER = 'FARMSLOT_LOGIN_ENV_BEGIN';
-const SHELL_BOOKKEEPING_ENV = new Set(['SHLVL', 'PWD', 'OLDPWD', '_']);
+export const SHELL_BOOKKEEPING_ENV: ReadonlySet<string> = new Set(['SHLVL', 'PWD', 'OLDPWD', '_']);
 let loginEnvironmentPromise: Promise<NodeJS.ProcessEnv> | undefined;
 
 export function resolveLoginEnvironment(): Promise<NodeJS.ProcessEnv> {

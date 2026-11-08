@@ -1,0 +1,1 @@
+- Share isolated task library execution across gateway and nodes while preserving installation selection, machine environment and CLI results.
