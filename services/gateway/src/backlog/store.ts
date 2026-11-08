@@ -2021,7 +2021,7 @@ function reserveCandidateAttempt(item: BacklogItem, queueItem: QueueItem): void 
 
 async function buildBacklogQueueParams(
   item: BacklogItem,
-  options: { workGraphId?: string; workNodeId?: string },
+  options: { workGraphId?: string; workNodeId?: string; archivedPriorRunIds?: string[] },
   candidate?: BacklogLaunchCandidate,
   baselineRun?: Run,
 ): Promise<InternalDispatchQueueAddParams> {
@@ -2032,6 +2032,7 @@ async function buildBacklogQueueParams(
     backlogItemId: item.id,
     workGraphId: options.workGraphId,
     workNodeId: options.workNodeId,
+    archivedPriorRunIds: options.archivedPriorRunIds,
     launchPlanId: item.launchPlan?.id,
     launchCandidateId: candidate?.id,
     launchGroupId: item.launchPlanState?.launchGroupId,
@@ -2102,6 +2103,8 @@ export async function enqueueBacklogItem(
     workGraphId?: string;
     workNodeId?: string;
     dispatchOriginator?: WorkOriginator;
+    /** Failed runs of this multi-PR item archived just before (standing-rerun.ts). */
+    archivedPriorRunIds?: string[];
   } = {},
   originator?: WorkOriginator,
 ): Promise<BacklogEnqueueResult> {
@@ -2400,36 +2403,6 @@ export async function markBacklogRunStarted(queueItem: QueueItem, run: Run): Pro
   });
 }
 
-/** The item a dispatcher handoff names, while that item is mid-dispatch for this ticket and project. */
-function liveHandoffItem(
-  backlogItemId: string | undefined,
-  ticketOrPr: string,
-  project: string,
-): BacklogItem | undefined {
-  const item = backlogItemId
-    ? items.find((candidate) => candidate.id === backlogItemId)
-    : undefined;
-  const ref = item?.sourceKind === 'manual' ? normalizeManualRef(ticketOrPr) : ticketOrPr;
-  return item &&
-    item.sourceRef === ref &&
-    item.project === project &&
-    HANDOFF_ACTIVE_STATUSES.has(item.status)
-    ? item
-    : undefined;
-}
-
-/**
- * A multi-PR item in handoff runs again and again on one ticket, so run.create
- * lets it start once every earlier run of that item is terminal.
- */
-export function isMultiPrBacklogHandoff(
-  backlogItemId: string | undefined,
-  ticketOrPr: string,
-  project: string,
-): boolean {
-  return Boolean(liveHandoffItem(backlogItemId, ticketOrPr, project)?.multiPr);
-}
-
 /**
  * A multi-PR item advances only through its linked run. Its other runs stay unarchived
  * between nights, and replaying one would put a second live run on the ticket.
@@ -2452,8 +2425,16 @@ export function isValidManualBacklogRunHandoff(
   ticketOrPr: string,
   project: string,
 ): boolean {
-  if (!MANUAL_REF_RE.test(normalizeManualRef(ticketOrPr))) return false;
-  return liveHandoffItem(backlogItemId, ticketOrPr, project)?.sourceKind === 'manual';
+  const normalizedRef = normalizeManualRef(ticketOrPr);
+  if (!backlogItemId || !MANUAL_REF_RE.test(normalizedRef)) return false;
+  const item = items.find((candidate) => candidate.id === backlogItemId);
+  return Boolean(
+    item &&
+    item.sourceKind === 'manual' &&
+    item.sourceRef === normalizedRef &&
+    item.project === project &&
+    HANDOFF_ACTIVE_STATUSES.has(item.status),
+  );
 }
 
 /** Outcome of matching a direct run.create to a backlog item by sourceRef. */

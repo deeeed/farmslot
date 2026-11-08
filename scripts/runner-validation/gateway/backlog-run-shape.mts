@@ -4,8 +4,8 @@
 // private tmux server) the proof creates a nightly-shaped item (multiPr, scripted command,
 // artifact-only, pipelineReview none, skipPrepare, one pinned slot), restarts the gateway, then
 // marks it ready and enqueues it the way a nightly trigger does. The dispatched run must carry
-// that shape, skip REVIEW for pipeline-review-off, finish, and return the item to ready. Then the
-// next night: enqueued again with the first run unarchived, a second run starts and finishes.
+// that shape, skip REVIEW for pipeline-review-off, finish, and return the item to ready. Then two
+// more nights: the second fails; the third's handoff archives it and names it on the new run.
 // `codex` and `claude` on the node's PATH are fixtures that refuse, so no model is reached.
 //
 // Run: yarn tsx scripts/runner-validation/gateway/backlog-run-shape.mts [evidence-dir]
@@ -52,6 +52,8 @@ const session = path.basename(fixture);
 const repo = path.join(fixture, 'repo');
 // Created once MONITOR watches the worker; the worker's command waits for it.
 const release = path.join(fixture, 'worker-release');
+// Present: the worker fails after its release, the way a partial nightly does.
+const failNight = path.join(fixture, 'worker-fail');
 const baseEnv: NodeJS.ProcessEnv = { ...process.env, TMUX_TMPDIR: tmuxDir };
 delete baseEnv.TMUX;
 delete baseEnv.TMUX_PANE;
@@ -127,6 +129,7 @@ try {
   // after 120 s if that never comes.
   const work = [
     `deadline=$(( $(date +%s) + 120 )); until [ -e '${release}' ]; do [ $(date +%s) -lt $deadline ] || exit 1; sleep 0.2; done`,
+    `[ ! -e '${failNight}' ]`,
     'printf "# Nightly proof\\n\\nNo change.\\n" > "$FARMSLOT_TASK_DIR/artifacts/pr-description.md"',
     'printf "# Learnings\\n\\n- Scripted proof worker.\\n" > "$FARMSLOT_TASK_DIR/artifacts/learnings.md"',
   ].join(' && ');
@@ -313,47 +316,74 @@ try {
   );
   await json(path.join(evidence, 'item-final.json'), item);
 
-  // 4. The next night: the first run stays unarchived; the item's own handoff starts another.
-  await rm(release, { force: true });
-  await gw.call('backlog.enqueue', { itemId: created.id });
-  let second = await poll(
-    'the next night run',
-    async () =>
-      (await gw.call<{ runs: Run[] }>('run.list', { project: projectName, limit: 5 })).runs.find(
-        (candidate) => candidate.ticketOrPr === created.sourceRef && candidate.id !== runId,
-      ),
-    120_000,
-  );
-  const secondId = second.id;
+  // 4. Later nights. A failed, unarchived run holds its ticket and slot, so a failed night is
+  // what blocked the next one. Night 2 fails; night 3 must still start.
+  const seen = new Set([runId]);
+  const night = async (label: string, expect: 'done' | 'failed'): Promise<Run> => {
+    await rm(release, { force: true });
+    if (expect === 'failed') await writeFile(failNight, '');
+    else await rm(failNight, { force: true });
+    await gw.call('backlog.enqueue', { itemId: created.id });
+    let next = await poll(
+      `the ${label} run`,
+      async () =>
+        (await gw.call<{ runs: Run[] }>('run.list', { project: projectName, limit: 10 })).runs.find(
+          (candidate) => candidate.ticketOrPr === created.sourceRef && !seen.has(candidate.id),
+        ),
+      120_000,
+    );
+    seen.add(next.id);
+    await poll(
+      `MONITOR to watch the ${label}`,
+      async () => {
+        next = (await gw.call<{ run: Run }>('run.get', { runId: next.id })).run;
+        if (['failed', 'cancelled'].includes(next.status))
+          throw new Error(
+            `The ${label} ended before MONITOR (${next.status}): ${next.error ?? ''}`,
+          );
+        return next.steps.find((step) => step.name === 'monitor')?.status === 'running'
+          ? next
+          : undefined;
+      },
+      300_000,
+    );
+    await writeFile(release, '');
+    next = await poll(
+      `the ${label} to end ${expect}`,
+      async () => {
+        next = (await gw.call<{ run: Run }>('run.get', { runId: next.id })).run;
+        if (next.status === expect) return next;
+        if (['done', 'failed', 'cancelled'].includes(next.status))
+          throw new Error(`The ${label} ended ${next.status}, not ${expect}: ${next.error ?? ''}`);
+        return undefined;
+      },
+      240_000,
+    );
+    assert.equal(next.backlogItemId, created.id);
+    await json(path.join(evidence, `${label.replaceAll(' ', '-')}-final.json`), next);
+    return next;
+  };
+  const failed = await night('second night', 'failed');
   await poll(
-    'MONITOR to watch the next night',
-    async () => {
-      second = (await gw.call<{ run: Run }>('run.get', { runId: secondId })).run;
-      if (['failed', 'cancelled'].includes(second.status))
-        throw new Error(
-          `The next night ended before MONITOR (${second.status}): ${second.error ?? ''}`,
-        );
-      return second.steps.find((step) => step.name === 'monitor')?.status === 'running'
-        ? second
-        : undefined;
-    },
-    300_000,
+    'the standing item to show the failed night',
+    async () =>
+      (
+        await gw.call<{ items: BacklogItem[] }>('backlog.list', { project: projectName })
+      ).items.find((candidate) => candidate.id === created.id && candidate.status === 'failed'),
+    60_000,
   );
-  await writeFile(release, '');
-  second = await poll(
-    'the next night to finish',
-    async () => {
-      second = (await gw.call<{ run: Run }>('run.get', { runId: secondId })).run;
-      if (['failed', 'cancelled'].includes(second.status))
-        throw new Error(`The next night ended ${second.status}: ${second.error ?? ''}`);
-      return second.status === 'done' ? second : undefined;
-    },
-    240_000,
+  // The nightly trigger's step after a failed night (CUTOVER): mark ready, then enqueue.
+  await gw.call('backlog.markReady', { itemId: created.id });
+  const third = await night('third night', 'done');
+  // The handoff archived the failed night (history kept) and named it on the next run.
+  assert.deepEqual(third.archivedPriorRunIds, [failed.id]);
+  const archivedNight = path.join(fixture, 'runs', 'archive', `${failed.id}.json`);
+  assert.ok(
+    existsSync(archivedNight),
+    `the failed night is kept in the run archive: ${archivedNight}`,
   );
-  const firstNight = (await gw.call<{ run: Run }>('run.get', { runId })).run;
-  assert.equal(firstNight.status, 'done', 'the first night stays unarchived and done');
-  assert.equal(second.backlogItemId, created.id);
-  await json(path.join(evidence, 'next-night-final.json'), second);
+  const doneNight = (await gw.call<{ run: Run }>('run.get', { runId })).run;
+  assert.equal(doneNight.status, 'done', 'a done night blocks nothing and is left alone');
   await poll(
     'the standing item to return to ready again',
     async () =>
@@ -380,7 +410,11 @@ try {
       review: review && { status: review.status, outputs: review.outputs },
     },
     itemStatus: item.status,
-    nextNight: { runId: secondId, status: second.status, firstNightUnarchived: firstNight.status },
+    laterNights: {
+      failed: { runId: failed.id, status: failed.status },
+      afterFailure: { runId: third.id, status: third.status },
+      archivedPriorRunIds: third.archivedPriorRunIds,
+    },
   };
   await json(path.join(evidence, 'result.json'), result);
 } catch (error) {

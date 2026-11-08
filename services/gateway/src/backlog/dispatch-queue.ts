@@ -645,6 +645,9 @@ export function addItem(
     branch: params.branch ?? null,
     completionPolicy: params.completionPolicy,
     pipelineReview: params.pipelineReview,
+    ...(params.archivedPriorRunIds?.length
+      ? { archivedPriorRunIds: [...params.archivedPriorRunIds] }
+      : {}),
     startRef,
     reviewPolicy: params.reviewPolicy,
     reviewMode: params.reviewMode,

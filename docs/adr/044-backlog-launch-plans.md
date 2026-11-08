@@ -315,19 +315,26 @@ Rules:
   good night; after a failed or blocked one the trigger calls `backlog.markReady` first, because
   `backlog.enqueue` takes only a `ready` item.
 
-## Amendment 2 (2026-11-09): A multi-PR item starts its next run without archiving the last
+## Amendment 2 (2026-11-09): A multi-PR item starts again after a failed run
 
-`run.create` refuses a second non-archived run on the same ticket. A `multiPr` item runs one ticket
-again and again (slices, or a standing nightly item), so every run after the first was refused until
-the previous one was archived by hand.
+A failed, unarchived run counts as active (`isActiveListRun`). It keeps its ticket, because
+`run.create` refuses a second active run on it, and its slot, because the fleet refresh re-holds an
+active run's slot. Only a run that completed and released its slot, or archive, frees them. A
+`multiPr` item runs one ticket again and again (slices, or a standing nightly item), so after a
+failed run it could not start until someone archived that run by hand. A done or cancelled run
+blocks nothing.
 
-A run created by a `multiPr` item's own handoff (`backlogItemId` set by the dispatcher, the item in
-`queued`, `dispatching` or `running`, same project and source ref) may now start when every
-non-archived run on that ticket belongs to the item and is terminal. A run still going, a run of
-another item or none, and any item that is not `multiPr` are refused as before. Earlier runs stay in
-history and in the default run views; the item still advances only through its currently linked run.
-Because they stay replayable, `run.replayStep` refuses any run of a `multiPr` item except the one it
-currently links with no queue link (`supersededMultiPrRunReplayRefusal`): replaying an earlier night would
-put a second live run on the ticket, and its later observations could take the item back. Start a new run
-from the item instead. The shared `liveHandoffItem` lookup decides both the manual-ref handoff and this
-multi-PR check.
+When a `multiPr` item is enqueued for its next run (`backlog.enqueue`, the only way a `multiPr`
+item is queued: auto-dispatch and work graphs refuse them), it first archives that item's failed,
+unarchived runs on the ticket through the supported archive path (slot-release guards, history kept
+in the run archive). This has to happen before the queue row exists: the dispatcher picks a slot
+before it calls `run.create`, and a failed run still holds its slot. The ids ride on the queue item
+(`QueueItem.archivedPriorRunIds`) and the dispatcher records them on the new run
+(`Run.archivedPriorRunIds`), so a failed night stays traceable from the next one. Nothing is archived
+when any other active run is on the ticket, a live run or another item's run: the next run then waits
+or is refused as before. Any item that is not `multiPr` is unchanged.
+
+Archived runs cannot be replayed, but a done earlier run can. `run.replayStep` refuses any run of a
+`multiPr` item except the one the item currently links with no queue link
+(`supersededMultiPrRunReplayRefusal`): replaying an earlier run would put a second live run on the
+ticket, and its later observations could take the item back. Start a new run from the item instead.

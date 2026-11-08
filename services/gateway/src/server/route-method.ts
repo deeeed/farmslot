@@ -1002,7 +1002,9 @@ async function routeAuthorizedMethod(
     case Methods.BACKLOG_ARCHIVE:
       return backlogArchive(p as BacklogArchiveParams);
     case Methods.BACKLOG_ENQUEUE:
-      return backlogEnqueue(p as BacklogEnqueueParams);
+      return backlogEnqueue(p as BacklogEnqueueParams, (event, payload) => {
+        broadcast({ type: 'event', event, payload, seq: nextEventSeq() });
+      });
     case Methods.BACKLOG_DEQUEUE:
       return backlogDequeue(p as BacklogDequeueParams);
     case Methods.BACKLOG_AUTO_DISPATCH_TICK:

@@ -112,6 +112,8 @@ export interface QueueItem {
   completionPolicy?: RunCompletionPolicy;
   /** As on run.create; persisted through queue dispatch handoff. */
   pipelineReview?: RunPipelineReviewPolicy;
+  /** Failed runs of the multi-PR backlog item its enqueue archived; stamped on the created run. */
+  archivedPriorRunIds?: string[];
   /** Requested/resolved base ref for artifact-only comparison replay runs. */
   startRef?: RunStartRefProvenance | null;
   /** Fix-bug publication review depth requested when the queue item was created. */

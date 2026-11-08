@@ -16,6 +16,7 @@ export type InternalDispatchQueueAddParams = DispatchQueueAddParams &
     | 'executionTemplate'
     | 'workflowExecution'
     | 'reviewQaContract'
+    | 'archivedPriorRunIds'
   > & {
     autoDispatch?: boolean;
   };
