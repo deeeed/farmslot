@@ -1,1 +1,1 @@
-- Add `completionPolicy`, `pipelineReview` and `skipPrepare` to backlog items and their create/update inputs, and `pipelineReview` to dispatch queue items.
+- Add `completionPolicy`, `pipelineReview` and `skipPrepare` to backlog items and their create/update inputs, `pipelineReview` to dispatch queue items, and the `isRunCompletionPolicy` / `isRunPipelineReviewPolicy` guards.

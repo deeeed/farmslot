@@ -306,9 +306,10 @@ Rules:
 ### Public surface
 
 - RPC: `backlog.create` / `backlog.update` accept `completionPolicy`, `pipelineReview`,
-  `skipPrepare`; `dispatch.queue.add` accepts `pipelineReview`. No new CLI flags; no new SDK
-  exports beyond the `@farmslot/protocol` type fields (`BacklogItem`, `BacklogCreateInput`,
-  `BacklogUpdateInput`, `QueueItem`, `DispatchQueueAddParams`).
+  `skipPrepare`; `dispatch.queue.add` accepts `pipelineReview`. No new CLI flags. `@farmslot/protocol` gains the type fields (`BacklogItem`,
+  `BacklogCreateInput`, `BacklogUpdateInput`, `QueueItem`, `DispatchQueueAddParams`) and the value guards
+  `isRunCompletionPolicy` / `isRunPipelineReviewPolicy`, shared by `pipelineReviewPolicyError` and the
+  backlog validation.
 - Consumer: the nightly device build's 04:00 trigger enqueues its standing manual item instead of
   calling `run.create` with a ticket it cannot have. `multiPr` returns the item to `ready` after a
   good night; after a failed or blocked one the trigger calls `backlog.markReady` first, because
