@@ -210,6 +210,8 @@ export interface DispatchQueueAddParams {
   branch?: string;
   /** Same semantics as RunCreateParams.completionPolicy — persisted for queue -> run parity. */
   completionPolicy?: import('../contracts/index.js').RunCompletionPolicy;
+  /** Same semantics as RunCreateParams.pipelineReview — persisted for queue -> run parity. */
+  pipelineReview?: import('../contracts/index.js').RunPipelineReviewPolicy;
   /** Same semantics as RunCreateParams.startRef — queued replay/compare base ref. */
   startRef?: string;
   startRefSource?: import('../contracts/index.js').RunStartRefSource;

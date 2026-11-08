@@ -109,6 +109,8 @@ export interface QueueItem {
   branch?: string | null;
   /** Completion safety policy persisted through queue dispatch handoff. */
   completionPolicy?: RunCompletionPolicy;
+  /** As on run.create; persisted through queue dispatch handoff. */
+  pipelineReview?: import('./runs.js').RunPipelineReviewPolicy;
   /** Requested/resolved base ref for artifact-only comparison replay runs. */
   startRef?: RunStartRefProvenance | null;
   /** Fix-bug publication review depth requested when the queue item was created. */

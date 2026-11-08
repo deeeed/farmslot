@@ -39,6 +39,7 @@ import {
   normalizeRunTags,
   type OkResult,
   parseGitHubRef,
+  pipelineReviewPolicyError,
   PR_BOUND_FLOW_TYPES,
   type QueueItem,
   RESOURCE_POSTURE_WAIT_POLICIES,
@@ -47,7 +48,10 @@ import {
   type ReviewPolicy,
   type ReviewSelection,
   type Run,
+  type RunCompletionPolicy,
+  type RunPipelineReviewPolicy,
   type RunStatus,
+  type ScriptedRunnerConfig,
   type TaskTemplateSelection,
 } from '@farmslot/protocol';
 import {
@@ -161,6 +165,9 @@ const BACKLOG_UPDATE_KEYS = new Set([
   'waitPolicy',
   'reviewSequence',
   'reviewSequenceContext',
+  'completionPolicy',
+  'pipelineReview',
+  'skipPrepare',
   'launchPlan',
 ]);
 
@@ -302,6 +309,42 @@ function normalizeOptionalString(value: unknown): string | undefined {
 }
 
 /** ADR-054 dispatch preset. `project-default` is not a policy — omit it instead. */
+// Run shape an item hands to every run it dispatches (same values as on run.create).
+function normalizeCompletionPolicy(value: unknown): RunCompletionPolicy | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (value === 'default' || value === 'artifact-only') return value;
+  throw new Error(
+    `completionPolicy must be 'default' or 'artifact-only', not ${JSON.stringify(value)}`,
+  );
+}
+
+function normalizePipelineReview(value: unknown): RunPipelineReviewPolicy | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (value === 'default' || value === 'none') return value;
+  throw new Error(`pipelineReview must be 'default' or 'none', not ${JSON.stringify(value)}`);
+}
+
+function normalizeSkipPrepare(value: unknown): boolean | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'boolean') return value;
+  throw new Error(`skipPrepare must be a boolean, not ${JSON.stringify(value)}`);
+}
+
+// Only command mode persists: scenario mode is a checkout-local validation aid behind
+// FARMSLOT_ENABLE_SCRIPTED_SCENARIOS.
+function normalizePersistedScripted(value: unknown): ScriptedRunnerConfig | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const mode = Reflect.get(value, 'mode');
+  const commandRef = Reflect.get(value, 'commandRef');
+  const timeoutMs = Reflect.get(value, 'timeoutMs');
+  if (mode !== 'command' || typeof commandRef !== 'string' || !commandRef) return undefined;
+  return {
+    mode,
+    commandRef,
+    ...(typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
+  };
+}
+
 function normalizeWaitPolicy(value: unknown): ResourcePostureWaitPolicy | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== 'string') throw new Error('waitPolicy must be a string');
@@ -395,6 +438,8 @@ function assertExecutionHintsCompatible(item: BacklogItem): void {
   if (item.runner && item.model && !runnerSupportsModel(item.runner, item.model)) {
     throw new Error(`model ${item.model} is not compatible with runner ${item.runner}`);
   }
+  const pipelineReviewError = pipelineReviewPolicyError(item);
+  if (pipelineReviewError) throw new Error(pipelineReviewError);
   if (item.taskTemplate) {
     normalizeBacklogTaskTemplate(item.flowType, item.taskTemplate);
   }
@@ -498,6 +543,10 @@ function normalizeStoredItem(raw: unknown): BacklogRecord | null {
     raw.reviewSequenceContext == null
       ? undefined
       : parseReviewRequestContext(raw.reviewSequenceContext, reviewSequence?.length ?? 0);
+  const scripted = normalizePersistedScripted(raw.scripted);
+  const completionPolicy = normalizeCompletionPolicy(raw.completionPolicy);
+  const pipelineReview = normalizePipelineReview(raw.pipelineReview);
+  const skipPrepare = normalizeSkipPrepare(raw.skipPrepare);
   const launchPlan = normalizeLaunchPlan(raw.launchPlan);
   const launchPlanState = isRecord(raw.launchPlanState)
     ? {
@@ -568,6 +617,7 @@ function normalizeStoredItem(raw: unknown): BacklogRecord | null {
     ...(raw.multiPr === true ? { multiPr: true } : {}),
     ...(runner ? { runner } : {}),
     ...(model ? { model } : {}),
+    ...(scripted ? { scripted } : {}),
     ...(effort ? { effort } : {}),
     ...(taskTemplate ? { taskTemplate } : {}),
     ...(app ? { app } : {}),
@@ -580,6 +630,9 @@ function normalizeStoredItem(raw: unknown): BacklogRecord | null {
     ...(waitPolicy ? { waitPolicy } : {}),
     ...(reviewSequence ? { reviewSequence } : {}),
     ...(reviewSequenceContext ? { reviewSequenceContext } : {}),
+    ...(completionPolicy ? { completionPolicy } : {}),
+    ...(pipelineReview ? { pipelineReview } : {}),
+    ...(skipPrepare !== undefined ? { skipPrepare } : {}),
     ...(launchPlan ? { launchPlan } : {}),
     ...(launchPlanState?.launchGroupId ? { launchPlanState } : {}),
     createdAt,
@@ -1274,6 +1327,9 @@ export async function createBacklogItem(
         ? undefined
         : parseReviewRequestContext(params.reviewSequenceContext, reviewSequence?.length ?? 0);
     const launchPlan = normalizeLaunchPlan(params.launchPlan);
+    const completionPolicy = normalizeCompletionPolicy(params.completionPolicy);
+    const pipelineReview = normalizePipelineReview(params.pipelineReview);
+    const skipPrepare = normalizeSkipPrepare(params.skipPrepare);
     const now = new Date().toISOString();
     const item: BacklogRecord = {
       id: randomUUID(),
@@ -1307,6 +1363,9 @@ export async function createBacklogItem(
       ...(waitPolicy ? { waitPolicy } : {}),
       ...(reviewSequence ? { reviewSequence } : {}),
       ...(reviewSequenceContext ? { reviewSequenceContext } : {}),
+      ...(completionPolicy ? { completionPolicy } : {}),
+      ...(pipelineReview ? { pipelineReview } : {}),
+      ...(skipPrepare !== undefined ? { skipPrepare } : {}),
       ...(launchPlan ? { launchPlan } : {}),
       createdAt: now,
       updatedAt: now,
@@ -1626,6 +1685,21 @@ export async function updateBacklogItem(
             params.reviewSequenceContext,
             item.reviewSequence?.length ?? 0,
           );
+      }
+      if (params.completionPolicy !== undefined) {
+        const completionPolicy = normalizeCompletionPolicy(params.completionPolicy);
+        if (completionPolicy) item.completionPolicy = completionPolicy;
+        else delete item.completionPolicy;
+      }
+      if (params.pipelineReview !== undefined) {
+        const pipelineReview = normalizePipelineReview(params.pipelineReview);
+        if (pipelineReview) item.pipelineReview = pipelineReview;
+        else delete item.pipelineReview;
+      }
+      if (params.skipPrepare !== undefined) {
+        const skipPrepare = normalizeSkipPrepare(params.skipPrepare);
+        if (skipPrepare !== undefined) item.skipPrepare = skipPrepare;
+        else delete item.skipPrepare;
       }
       if (params.launchPlan !== undefined) {
         if (params.launchPlan === null) {
@@ -1981,6 +2055,9 @@ async function buildBacklogQueueParams(
     runner: candidate?.runner ?? item.runner,
     model: candidate?.model ?? item.model,
     scripted: item.scripted,
+    completionPolicy: item.completionPolicy,
+    pipelineReview: item.pipelineReview,
+    ...(item.skipPrepare !== undefined ? { skipPrepare: item.skipPrepare } : {}),
     effort: candidate?.effort ?? item.effort,
     taskTemplate,
     app: item.app,

@@ -186,6 +186,95 @@ test('waitPolicy is validated, persisted, clearable, and carried onto the queue 
   assert.equal(cleared.item.waitPolicy, undefined);
 });
 
+test('backlog run shape persists across reload and reaches the queued run.create', async () => {
+  const { backlog, queue } = await freshStores();
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Nightly device build',
+      sourceKind: 'manual',
+      flowType: 'dev',
+      multiPr: true,
+      runner: 'scripted',
+      scripted: { mode: 'command', commandRef: 'nightly-device-build' },
+      completionPolicy: 'artifact-only',
+      pipelineReview: 'none',
+      skipPrepare: true,
+    },
+    { kind: 'system' },
+  );
+  await backlog.flushBacklogForTests();
+  await backlog.loadBacklog();
+  const reloaded = backlog.getBacklogItemSnapshot(created.item.id);
+  assert.deepEqual(
+    {
+      scripted: reloaded?.scripted,
+      completionPolicy: reloaded?.completionPolicy,
+      pipelineReview: reloaded?.pipelineReview,
+      skipPrepare: reloaded?.skipPrepare,
+    },
+    {
+      scripted: { mode: 'command', commandRef: 'nightly-device-build' },
+      completionPolicy: 'artifact-only',
+      pipelineReview: 'none',
+      skipPrepare: true,
+    },
+  );
+
+  await backlog.markBacklogItemReady({ itemId: created.item.id });
+  const { queueItem } = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  const params = queue.queuedRunCreateParams(queueItem, 'sandboxed');
+  assert.equal(params.ticketOrPr, created.item.sourceRef);
+  assert.equal(params.backlogItemId, created.item.id);
+  assert.equal(params.runner, 'scripted');
+  assert.deepEqual(params.scripted, { mode: 'command', commandRef: 'nightly-device-build' });
+  assert.equal(params.completionPolicy, 'artifact-only');
+  assert.equal(params.pipelineReview, 'none');
+  assert.equal(params.skipPrepare, true);
+});
+
+test('backlog run shape is validated on create and update, and clearable', async () => {
+  const { backlog } = await freshStores();
+  const base = {
+    project: 'farmslot-farm',
+    title: 'Run shape',
+    sourceKind: 'manual' as const,
+    flowType: 'dev' as const,
+  };
+  await assert.rejects(
+    backlog.createBacklogItem({ ...base, pipelineReview: 'none' }, { kind: 'system' }),
+    /pipelineReview none is only for artifact-only runs/,
+  );
+  await assert.rejects(
+    backlog.createBacklogItem(
+      { ...base, completionPolicy: 'publish' as never },
+      { kind: 'system' },
+    ),
+    /completionPolicy must be 'default' or 'artifact-only'/,
+  );
+  await assert.rejects(
+    backlog.createBacklogItem({ ...base, skipPrepare: 'yes' as never }, { kind: 'system' }),
+    /skipPrepare must be a boolean/,
+  );
+  const created = await backlog.createBacklogItem(
+    { ...base, completionPolicy: 'artifact-only', pipelineReview: 'none', skipPrepare: true },
+    { kind: 'system' },
+  );
+  await assert.rejects(
+    backlog.updateBacklogItem({ itemId: created.item.id, completionPolicy: null }),
+    /pipelineReview none is only for artifact-only runs/,
+  );
+  const cleared = await backlog.updateBacklogItem({
+    itemId: created.item.id,
+    completionPolicy: null,
+    pipelineReview: null,
+    skipPrepare: null,
+  });
+  assert.equal(cleared.item.completionPolicy, undefined);
+  assert.equal(cleared.item.pipelineReview, undefined);
+  assert.equal(cleared.item.skipPrepare, undefined);
+});
+
 test('backlog review selections preserve mode and effort through enqueue', async () => {
   const { backlog } = await freshStores();
   const request = {

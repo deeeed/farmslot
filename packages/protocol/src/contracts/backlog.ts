@@ -9,6 +9,8 @@ import type {
   ReviewPolicy,
   ReviewRequestContext,
   ReviewSequence,
+  RunCompletionPolicy,
+  RunPipelineReviewPolicy,
   RunStatus,
 } from './runs.js';
 
@@ -244,6 +246,10 @@ export interface BacklogItem {
   reviewSequence?: ReviewSequence;
   reviewContext?: ReviewRequestContext;
   reviewSequenceContext?: ReviewRequestContext;
+  /** Run shape copied onto every run dispatched from this item (same semantics as on run.create). */
+  completionPolicy?: RunCompletionPolicy;
+  pipelineReview?: RunPipelineReviewPolicy;
+  skipPrepare?: boolean;
   launchPlan?: BacklogLaunchPlan;
   launchPlanState?: BacklogLaunchPlanState;
   createdAt: string;
@@ -292,6 +298,9 @@ export interface BacklogCreateInput {
   reviewSequence?: ReviewSequence;
   reviewContext?: ReviewRequestContext;
   reviewSequenceContext?: ReviewRequestContext;
+  completionPolicy?: RunCompletionPolicy;
+  pipelineReview?: RunPipelineReviewPolicy;
+  skipPrepare?: boolean;
   launchPlan?: BacklogLaunchPlan;
   status?: Extract<BacklogStatus, 'candidate' | 'ready'>;
 }
@@ -326,6 +335,9 @@ export interface BacklogUpdateInput {
   reviewSequence?: ReviewSequence | null;
   reviewContext?: ReviewRequestContext | null;
   reviewSequenceContext?: ReviewRequestContext | null;
+  completionPolicy?: RunCompletionPolicy | null;
+  pipelineReview?: RunPipelineReviewPolicy | null;
+  skipPrepare?: boolean | null;
   launchPlan?: BacklogLaunchPlan | null;
 }
 

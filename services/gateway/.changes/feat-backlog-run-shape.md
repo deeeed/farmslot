@@ -1,0 +1,1 @@
+- Backlog items can declare `completionPolicy`, `pipelineReview` and `skipPrepare`, and every run they dispatch gets exactly that shape; a command-mode `scripted` config now survives a gateway restart.
