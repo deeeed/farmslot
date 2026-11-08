@@ -440,6 +440,8 @@ export function createGatewayResourceCache(
     // A retired store's late I/O failure cannot replace the new principal's store.
     if (failed !== store || disposed) return;
     replaceStore(createMemoryResourceStore());
+    // Retry on the next connection lifecycle, never in an I/O failure loop.
+    needsStore = options.openStore !== undefined && canPersist(connection);
     storageNotice = `Cached data will not survive a restart: ${queryError(error).message}`;
     if (metadata) await store.setMetadata(metadata);
     try {
@@ -484,13 +486,23 @@ export function createGatewayResourceCache(
     next: ResourceStoreMetadata,
     nextConnection: ResourceCacheConnection,
   ): Promise<void> {
+    const previous = store;
+    const recoveringMemory = metadata !== undefined && !previous.persistent;
     metadata = next;
     try {
-      replaceStore(
+      const opened =
         options.openStore && canPersist(nextConnection)
           ? await options.openStore(next)
-          : createMemoryResourceStore(),
-      );
+          : createMemoryResourceStore();
+      if (opened !== previous) {
+        if (recoveringMemory && !opened.persistent) {
+          // A failed retry must not discard the active fallback's cached bodies.
+          await opened.close();
+        } else {
+          replaceStore(opened);
+          await previous.close();
+        }
+      }
       const stored = await store.getMetadata();
       if (
         stored &&
@@ -520,8 +532,10 @@ export function createGatewayResourceCache(
     } catch (error) {
       await recoverStore(error);
     }
-    needsStore = false;
-    for (const entry of entries.values()) if (entry.state.status !== 'ready') hydrateEntry(entry);
+    needsStore = options.openStore !== undefined && !store.persistent && canPersist(nextConnection);
+    // Same-owner recovery must not replace a newer visible reply with older disk data.
+    for (const entry of entries.values())
+      if (entry.state.data === undefined && entry.state.status !== 'ready') hydrateEntry(entry);
   }
 
   async function warmStoredQueries(): Promise<void> {
@@ -701,7 +715,7 @@ export function createGatewayResourceCache(
           for (const entry of entries.values()) invalidate(entry, true);
         }
         if (nextMetadata && !revoke) {
-          if (needsStore && (next.connected || canPersist(next)))
+          if (needsStore && (next.connected || (!metadata && canPersist(next))))
             await openFreshStore(nextMetadata, next);
           if (next.connected) {
             metadata = nextMetadata;
