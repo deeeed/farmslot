@@ -220,6 +220,18 @@ function modelEntry(row, source, defaults, info = {}, configured = {}) {
     id: row.id,
     name: row.id,
     reasoning,
+    ...(source === 'router'
+      ? {
+          thinkingLevelMap: {
+            minimal: 'minimal',
+            low: 'low',
+            medium: 'medium',
+            high: 'high',
+            xhigh: 'xhigh',
+            max: 'max',
+          },
+        }
+      : {}),
     input: ['text'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: modelLimit(
