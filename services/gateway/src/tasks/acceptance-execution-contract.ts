@@ -5,11 +5,10 @@ import { isDeepStrictEqual } from 'node:util';
 
 import {
   ACCEPTANCE_CONTRACT_INPUT,
-  acceptanceCriteriaMatch,
   type AcceptanceExecutionContract,
   isRecord,
-  registeredAcceptanceCriteria,
   type Run,
+  ticketCriteriaAsRegistered,
   WORKER_TERMINAL_CONTRACT_INPUT,
 } from '@farmslot/protocol';
 
@@ -38,7 +37,7 @@ export async function syncAcceptanceExecutionContract(
   const base: unknown = JSON.parse(baseBytes);
   if (!isRecord(base) || base.acceptanceContractVersion !== 1)
     throw new Error('Frozen worker contract does not support acceptance revisions');
-  const criteria = registeredAcceptanceCriteria(
+  const criteria = ticketCriteriaAsRegistered(
     run.ticketData?.acceptanceCriteria ?? [],
     run.acceptanceRegistration,
   );
@@ -48,7 +47,7 @@ export async function syncAcceptanceExecutionContract(
     const row = ledger?.criteria.find(({ id }) => id === criterion.id);
     if (
       row &&
-      (!acceptanceCriteriaMatch([criterion], [row]) ||
+      (row.text !== criterion.text ||
         (criterion.proofMode && row.proofMode !== criterion.proofMode))
     )
       throw new Error(`${criterion.id}: proof differs from its registered definition or mode`);

@@ -1,1 +1,1 @@
-- Normalize acceptance text consistently so nested ticket lists match existing task ledgers and retained raw registrations without changing verdict rules.
+- Match raw ticket criteria to task-init definitions without changing stored criteria or derived proof identity.

@@ -609,8 +609,8 @@ async function attachAcceptanceStatus(
   // can be read, so the panel says "unreadable" instead of quietly showing nothing.
   const read = await readAcceptanceStatusForDisplay(vars, path.dirname(effectiveMdPath));
   if (run?.acceptanceRegistration) {
-    const { registeredAcceptanceCriteria } = await import('@farmslot/protocol');
-    read.criteria = registeredAcceptanceCriteria(
+    const { ticketCriteriaAsRegistered } = await import('@farmslot/protocol');
+    read.criteria = ticketCriteriaAsRegistered(
       run.ticketData?.acceptanceCriteria ?? [],
       run.acceptanceRegistration,
     );

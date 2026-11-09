@@ -5,7 +5,6 @@ import {
   validateRecordedEvidencePackage,
 } from '@farmslot/adapter-sdk/evidence';
 import {
-  acceptanceCriteriaMatch,
   acceptanceRowExecution,
   type EvidenceAttestationApprover,
   isTerminalRunStatus,
@@ -100,7 +99,7 @@ export async function runOverrideClaim(
     (taskRow
       ? acceptanceRowExecution(acceptance.ledger, taskRow)
       : acceptance.ledger.recipeRunId) !== params.recipeRunId ||
-    !acceptance.criteria.some((criterion) => acceptanceCriteriaMatch([criterion], [claim]))
+    !acceptance.criteria.some(({ id, text }) => id === claim.id && text === claim.text)
   )
     throw new Error('The selected claim does not match the registered task execution.');
   if (

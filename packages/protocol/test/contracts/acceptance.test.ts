@@ -6,6 +6,7 @@ import * as portable from '../../scripts/acceptance.mjs';
 import {
   acceptanceCriteriaMatch,
   registeredAcceptanceCriteria,
+  ticketCriteriaAsRegistered,
 } from '../../src/contracts/acceptance.js';
 import type { AcceptanceRegistration } from '../../src/contracts/acceptance-registration.js';
 
@@ -22,12 +23,12 @@ const raw = rawTicketCriteria.map((text: string, index: number) => ({
 }));
 
 test('nested-list ticket originals have exactly the existing task ledger text', () => {
-  assert.deepEqual(registeredAcceptanceCriteria(rawTicketCriteria), normalized);
-  assert.equal(acceptanceCriteriaMatch(raw, normalized), true);
-  assert.equal(acceptanceCriteriaMatch(normalized, raw), true);
+  assert.deepEqual(ticketCriteriaAsRegistered(rawTicketCriteria), normalized);
+  assert.equal(acceptanceCriteriaMatch(raw, normalized), false);
+  assert.equal(acceptanceCriteriaMatch(normalized, raw), false);
 });
 
-test('raw retained registrations still match normalized handoffs without rewriting originals', () => {
+test('raw retained registrations validate against raw tickets without rewriting originals', () => {
   const registration: AcceptanceRegistration = {
     schemaVersion: 1,
     runId: 'nested-list-run',
@@ -43,18 +44,12 @@ test('raw retained registrations still match normalized handoffs without rewriti
     derived: [],
     units: [],
   };
-  assert.deepEqual(
-    registeredAcceptanceCriteria(
-      normalized.map(({ text }: { text: string }) => text),
-      registration,
-    ),
-    raw,
-  );
-  assert.equal(acceptanceCriteriaMatch(normalized, registration.original), true);
+  assert.deepEqual(ticketCriteriaAsRegistered(rawTicketCriteria, registration), raw);
+  assert.equal(acceptanceCriteriaMatch(normalized, registration.original), false);
   const changed = [...rawTicketCriteria];
   changed[2] = changed[2].replace('2 kg', '3 kg');
   assert.throws(
-    () => registeredAcceptanceCriteria(changed, registration),
+    () => ticketCriteriaAsRegistered(changed, registration),
     /changed original criteria/,
   );
   assert.equal(acceptanceCriteriaMatch(registeredAcceptanceCriteria(changed), normalized), false);
@@ -62,10 +57,13 @@ test('raw retained registrations still match normalized handoffs without rewriti
 });
 
 test('empty entries keep compact positional ids', () => {
-  assert.deepEqual(registeredAcceptanceCriteria(['', '  ', '- First', '\n', '* [x] Second', '']), [
-    { id: 'AC-1', text: 'First' },
-    { id: 'AC-2', text: 'Second' },
-  ]);
+  assert.deepEqual(
+    ticketCriteriaAsRegistered(['', '  ', '- First', '\n', '* [x] Second', '', '* [x] ']),
+    [
+      { id: 'AC-1', text: 'First' },
+      { id: 'AC-2', text: 'Second' },
+    ],
+  );
 });
 
 test('the portable normalizer preserves task init marker, whitespace and blank-line rules', () => {
@@ -83,7 +81,7 @@ test('the portable normalizer preserves task init marker, whitespace and blank-l
 test('single-pass markers retain raw registration compatibility', () => {
   const original = [{ id: 'AC-1', text: '- - Keep one marker' }];
   const registration = { schemaVersion: 1, revision: 1, original, derived: [], units: [] };
-  const criteria = registeredAcceptanceCriteria(original.map(({ text }) => text));
+  const criteria = ticketCriteriaAsRegistered(original.map(({ text }) => text));
   assert.deepEqual(criteria, [{ id: 'AC-1', text: '- Keep one marker' }]);
   assert.deepEqual(
     portable.registeredAcceptanceCriteria(
@@ -92,6 +90,35 @@ test('single-pass markers retain raw registration compatibility', () => {
     ),
     original,
   );
-  assert.equal(acceptanceCriteriaMatch(criteria, original), true);
-  assert.equal(acceptanceCriteriaMatch(original, criteria), true);
+  assert.equal(acceptanceCriteriaMatch(criteria, original), false);
+  assert.equal(acceptanceCriteriaMatch(original, criteria), false);
+});
+
+test('stored definitions retain their bytes and checkbox obligations remain distinct', () => {
+  const first = 'Default selection:\n- [x] Active\n- [ ] Archived';
+  const reversed = 'Default selection:\n- [ ] Active\n- [x] Archived';
+  assert.deepEqual(
+    portable.normalizeAcceptanceCriteria([first]),
+    portable.normalizeAcceptanceCriteria([reversed]),
+  );
+  assert.equal(
+    acceptanceCriteriaMatch([{ id: 'AC-2', text: first }], [{ id: 'AC-2', text: reversed }]),
+    false,
+  );
+  assert.deepEqual(registeredAcceptanceCriteria(['- Keep one marker']), [
+    { id: 'AC-1', text: '- Keep one marker' },
+  ]);
+});
+
+test('raw tickets validate raw or normalized registration originals exactly', () => {
+  const raw = ['- - Keep one marker'];
+  for (const text of [raw[0], '- Keep one marker']) {
+    const original = [{ id: 'AC-1', text }];
+    const registration = { schemaVersion: 1, revision: 1, original, derived: [], units: [] };
+    assert.deepEqual(portable.ticketCriteriaAsRegistered(raw, registration), original);
+    assert.throws(
+      () => portable.ticketCriteriaAsRegistered(['- - Changed marker'], registration),
+      /changed original criteria/,
+    );
+  }
 });

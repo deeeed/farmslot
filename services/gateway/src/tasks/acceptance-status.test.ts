@@ -338,12 +338,11 @@ test('manifest coverage of every criterion never satisfies the terminal acceptan
   }
 });
 
-test('raw retained acceptance registration reads against a normalized nested-list handoff', async (t) => {
+test('raw retained registration and handoff keep their original bytes', async (t) => {
   const raw = ['First\n- Nested example', 'Second'];
-  const normalized = ['First\nNested example', 'Second'];
   const taskDir = taskDirWith(
     null,
-    JSON.stringify({ attemptId: 'retained-run', task: { acceptanceCriteria: normalized } }),
+    JSON.stringify({ attemptId: 'retained-run', task: { acceptanceCriteria: raw } }),
   );
   t.after(() => rmSync(taskDir, { recursive: true, force: true }));
   const original = raw.map((text, index) => ({ id: `AC-${index + 1}`, text }));
@@ -364,15 +363,15 @@ test('raw retained acceptance registration reads against a normalized nested-lis
   assert.deepEqual(await readHandoffAcceptanceCriteria(LOCAL, taskDir), original);
 });
 
-test('handoff text and slot readers normalize nested lines and compact empty positions identically', async (t) => {
+test('handoff text and slot readers preserve stored marker and whitespace bytes', async (t) => {
   const text = JSON.stringify({
-    task: { acceptanceCriteria: ['', ' First\n- Nested ', '  ', '* [x] Second'] },
+    task: { acceptanceCriteria: [' First\n- Nested ', '- Keep one marker'] },
   });
   const taskDir = taskDirWith(null, text);
   t.after(() => rmSync(taskDir, { recursive: true, force: true }));
   const expected = [
-    { id: 'AC-1', text: 'First\nNested' },
-    { id: 'AC-2', text: 'Second' },
+    { id: 'AC-1', text: ' First\n- Nested ' },
+    { id: 'AC-2', text: '- Keep one marker' },
   ];
   assert.deepEqual(handoffCriteriaFromText(text), { criteria: expected });
   assert.deepEqual(await readHandoffAcceptanceCriteria(LOCAL, taskDir), expected);

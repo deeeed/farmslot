@@ -114,7 +114,7 @@ test('legacy opted-out contracts keep their original policy for every proof mode
   }
 });
 
-test('a retained raw proof declaration matches a normalized nested-list task', (t) => {
+test('a retained proof declaration must exactly match stored task text', (t) => {
   const f = fixture(t);
   f.revision.proofModes[0].text = 'Original\n- Nested example';
   f.project();
@@ -125,10 +125,10 @@ test('a retained raw proof declaration matches a normalized nested-list task', (
       task: { acceptanceCriteria: ['Original\nNested example'] },
     }),
   );
-  assert.deepEqual(effectiveAcceptanceContract(f.dir, f.base, f.baseBytes), {
-    ...f.base,
-    inheritedAcceptanceCriteria: [],
-  });
+  assert.throws(
+    () => effectiveAcceptanceContract(f.dir, f.base, f.baseBytes),
+    /proof mode changed/,
+  );
   f.revision.proofModes[0].text = 'Original\n- Changed example';
   f.project();
   assert.throws(

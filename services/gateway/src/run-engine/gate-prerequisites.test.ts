@@ -597,7 +597,11 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
   t.after(() => rm(root, { recursive: true, force: true }));
   const directory = path.join(root, 'artifacts/proof');
   await mkdir(directory, { recursive: true });
-  const declaration = { id: 'AC-1', claim: 'The counter is one.', proofMode: 'state' as const };
+  const declaration = {
+    id: 'AC-1',
+    claim: 'Default selection:\n- [ ] Active\n- [x] Archived',
+    proofMode: 'state' as const,
+  };
   const recipe = {
     $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
     title: 'Counter proof',
@@ -731,7 +735,19 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
     progress: idle,
     selectedEvidence: passed,
     acceptance: async () => ({
-      criteria: [{ id: declaration.id, text: declaration.claim }],
+      criteria: [
+        {
+          id: declaration.id,
+          text: declaration.claim,
+          proofMode: declaration.proofMode,
+          source: {
+            kind: 'instruction' as const,
+            sourceId: 'message:1',
+            sourceVersion: 'v1',
+            obligationIndex: 0,
+          },
+        },
+      ],
       ledger: claims,
       issues: [],
     }),
@@ -743,15 +759,19 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
   assert.equal(owner.status, 'valid', JSON.stringify(owner.findings));
   const valid = await check();
   assert.equal(valid.state, 'ready', JSON.stringify(valid.reasons));
-  const rawRegistration = await collectRunGateReadiness(run, prepared, {
+  const reversedDefaults = await collectRunGateReadiness(run, prepared, {
     ...sources,
     acceptance: async () => ({
-      criteria: [{ id: declaration.id, text: `- [ ] ${declaration.claim}` }],
+      criteria: [{ id: declaration.id, text: 'Default selection:\n- [x] Active\n- [ ] Archived' }],
       ledger: claims,
       issues: [],
     }),
   });
-  assert.equal(rawRegistration.state, 'ready', JSON.stringify(rawRegistration.reasons));
+  assert.equal(reversedDefaults.state, 'not-ready');
+  assert.ok(
+    reversedDefaults.reasons.some(({ evidencePolicy }) => evidencePolicy === 'criterion-binding'),
+    JSON.stringify(reversedDefaults.reasons),
+  );
   const retained = (await readRecordedEvidencePackage(directory)).input;
   const staleLedger = await collectRunGateReadiness(run, prepared, {
     ...sources,

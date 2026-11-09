@@ -3,7 +3,6 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
-  acceptanceCriteriaMatch,
   type AcceptanceEvidenceAnalyzeParams,
   type AcceptanceEvidenceGetParams,
   type AcceptanceEvidenceResult,
@@ -155,7 +154,7 @@ async function snapshot(
   ]);
   const criterion = criteria.find((item) => item.id === criterionId);
   const recorded = ledger?.criteria.find((item) => item.id === criterionId);
-  if (!criterion || !recorded || !acceptanceCriteriaMatch([criterion], [recorded]))
+  if (!criterion || !recorded || recorded.text !== criterion.text)
     return { result: { eligible: false, reason: 'not-found' } };
   if (recorded.proofMode !== 'state') return { result: { eligible: false, reason: 'non-textual' } };
   if (

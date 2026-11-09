@@ -14,6 +14,10 @@ export const ACCEPTANCE_PROOF_MODES: readonly ['state', 'visual', 'mixed', 'revi
 export const ACCEPTANCE_CRITERION_ID_PATTERN: RegExp;
 export function acceptanceCriterionId(index: number): string;
 export function normalizeAcceptanceCriteria(items: readonly string[]): string[];
+export function ticketCriteriaAsRegistered(
+  rawTicketCriteria: readonly string[],
+  registration?: unknown,
+): Array<{ id: string; text: string }>;
 export function registeredAcceptanceCriteria(
   criteria: readonly unknown[],
   registration?: unknown,

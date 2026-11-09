@@ -207,23 +207,31 @@ test('original evidence coexists with required derived proof without changing pa
   assert.match(acceptanceContractIssues(dir).join(';'), /does not match/);
 });
 
-test('raw engine originals transfer to normalized nested-list handoffs and changed text refuses', (t) => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'acceptance-nested-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  mkdirSync(path.join(dir, 'inputs'));
-  mkdirSync(path.join(dir, 'artifacts'));
-  const raw = 'Original\n- Nested example';
-  writeFileSync(
-    path.join(dir, 'inputs/handoff.json'),
-    JSON.stringify({ task: { acceptanceCriteria: ['Original\nNested example'] } }),
-  );
-  const claims = engineClaims([raw]);
+test('different checkbox states in derived obligations refuse claim transfer', (t) => {
+  const { dir, registration, project } = fixture(t);
+  const text = 'Default selection:\n- [x] Active\n- [ ] Archived';
+  registration.units = [];
+  registration.derived = [
+    {
+      id: 'AC-2',
+      text,
+      proofMode: 'state',
+      source: {
+        kind: 'instruction',
+        sourceId: 'message:1',
+        sourceVersion: 'v1',
+        obligationIndex: 0,
+      },
+    },
+  ];
+  project();
+  const claims = engineClaims(['Original', 'Default selection:\n- [ ] Active\n- [x] Archived']);
+  assert.throws(() => setDerivedClaims(dir, claims), /does not match the registered task/);
+  claims.criteria[1].text = text;
   setDerivedClaims(dir, claims);
   assert.equal(
-    JSON.parse(readFileSync(path.join(dir, 'artifacts/acceptance-status.json'), 'utf8')).criteria[0]
+    JSON.parse(readFileSync(path.join(dir, 'artifacts/acceptance-status.json'), 'utf8')).criteria[1]
       .text,
-    raw,
+    text,
   );
-  claims.criteria[0].text = 'Original\n- Changed example';
-  assert.throws(() => setDerivedClaims(dir, claims), /does not match the registered task/);
 });

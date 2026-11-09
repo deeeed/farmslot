@@ -47,13 +47,23 @@ function normalizeAcceptanceCriteria(items) {
     .filter(Boolean);
 }
 
+/** Convert only raw ticket originals to the representation written by task init. */
+function ticketCriteriaAsRegistered(rawTicketCriteria, registration) {
+  const normalized = normalizeAcceptanceCriteria(rawTicketCriteria);
+  // Older registrations may have frozen raw originals. Validate those against
+  // the raw ticket; otherwise validate the task-init representation exactly.
+  const criteria =
+    isRecord(registration) &&
+    acceptanceCriteriaMatch(registeredAcceptanceCriteria(rawTicketCriteria), registration.original)
+      ? rawTicketCriteria
+      : normalized;
+  return registeredAcceptanceCriteria(criteria, registration);
+}
+
 function registeredAcceptanceCriteria(criteria, registration) {
   const original = criteria
     .filter((text) => String(text).trim().length > 0)
-    .map((text, index) => ({
-      id: acceptanceCriterionId(index),
-      text: normalizeAcceptanceCriteria([String(text)])[0] ?? '',
-    }));
+    .map((text, index) => ({ id: acceptanceCriterionId(index), text: String(text) }));
   if (registration === undefined) return original;
   if (
     !isRecord(registration) ||
@@ -97,29 +107,15 @@ function acceptanceCriteriaMatch(expected, actual) {
     Array.isArray(expected) &&
     Array.isArray(actual) &&
     expected.length === actual.length &&
-    expected.every((criterion, index) => {
-      const row = actual[index];
-      if (
-        !isRecord(criterion) ||
-        !isRecord(row) ||
-        criterion.id !== row.id ||
-        typeof criterion.text !== 'string' ||
-        typeof row.text !== 'string'
-      )
-        return false;
-      const expectedText = criterion.text.trim();
-      const actualText = row.text.trim();
-      const normalizedExpected = normalizeAcceptanceCriteria([expectedText])[0] ?? '';
-      const normalizedActual = normalizeAcceptanceCriteria([actualText])[0] ?? '';
-      // Task init strips one marker per line. Keep raw/normalized pairs valid
-      // even when the resulting text still starts with another marker.
-      return (
-        expectedText === actualText ||
-        normalizedExpected === normalizedActual ||
-        normalizedExpected === actualText ||
-        expectedText === normalizedActual
-      );
-    })
+    expected.every(
+      (criterion, index) =>
+        isRecord(criterion) &&
+        isRecord(actual[index]) &&
+        criterion.id === actual[index].id &&
+        typeof criterion.text === 'string' &&
+        typeof actual[index].text === 'string' &&
+        criterion.text.trim() === actual[index].text.trim(),
+    )
   );
 }
 
@@ -363,5 +359,6 @@ export {
   registeredAcceptanceCriteria,
   renderAcceptanceCoverage,
   summarizeAcceptanceStatus,
+  ticketCriteriaAsRegistered,
   validateAcceptanceStatusLedger,
 };

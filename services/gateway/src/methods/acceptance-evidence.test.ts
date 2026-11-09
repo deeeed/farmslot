@@ -496,7 +496,7 @@ test('two bounded text artifacts can exceed 4 KiB together without a false previ
   assert.equal(readFileSync(ledger, 'utf8'), originalLedger);
 });
 
-test('raw nested-list evidence matches normalized task text and changed text refuses', async (t) => {
+test('stored evidence text must match task text exactly', async (t) => {
   const { dir, ledger, body, params } = fixture(t);
   writeFileSync(
     path.join(dir, 'inputs/handoff.json'),
@@ -506,7 +506,7 @@ test('raw nested-list evidence matches normalized task text and changed text ref
   recorded.criteria[0].text = 'The output reads ready\n- Nested example';
   writeFileSync(ledger, JSON.stringify(recorded));
   const result = await withPrincipal(() => acceptanceEvidenceGet(params));
-  assert.equal(result.reason, 'not-admitted');
+  assert.equal(result.reason, 'not-found');
   recorded.criteria[0].text = 'The output reads ready\n- Changed example';
   writeFileSync(ledger, JSON.stringify(recorded));
   assert.equal((await withPrincipal(() => acceptanceEvidenceGet(params))).reason, 'not-found');
