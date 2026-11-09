@@ -6,9 +6,10 @@ import test from 'node:test';
 
 import { DEFAULT_CODEX_EFFORT } from '@farmslot/protocol';
 
+import { fixture } from '../../test/native-filesystem-fixture.mjs';
+
 import { claudeNativeAdapter } from './claude.js';
 import { codexNativeAdapter } from './codex.js';
-import { fixture } from './filesystem-policy.fixture.js';
 import { NativeSessionManager } from './manager.js';
 import { nativeRunnerDefinitions } from './registry.js';
 

@@ -4,7 +4,7 @@ import test from 'node:test';
 
 import { DEFAULT_CODEX_EFFORT } from '@farmslot/protocol';
 import { codexNativeAdapter } from '../../src/native/codex.js';
-import { fixture } from '../../src/native/filesystem-policy.fixture.js';
+import { fixture } from '../native-filesystem-fixture.mjs';
 import type { NativeAdapterSession, NativeEventInput } from '../../src/native/types.js';
 
 for (const mode of ['default', 'plan'] as const) {

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 // A protocol contract regression fixture. Production sandbox enforcement has a separate live gate.
-export async function fixture(confirm: boolean) {
+export async function fixture(confirm) {
   const root = await mkdtemp(join(tmpdir(), 'native-filesystem-contract-'));
   const executable = join(root, 'runner');
   const requests = join(root, 'requests.jsonl');
