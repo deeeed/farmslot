@@ -136,9 +136,11 @@ async function resolveLink(link: string, lookup: LinkLookup): Promise<string> {
 }
 
 /** The journal's original inventory also resolves links during resume and rollback. */
-function originalLookup(steps: Pick<MoveStep, 'source' | 'expected'>[]): LinkLookup {
+function originalLookup(steps: MoveStep[], owner: string): LinkLookup {
   return async (file) => {
     const source = steps.find((step) => within(step.source, file));
+    if (source && source.source !== owner)
+      throw new Error(`Migration symlink traverses another migration source: ${source.source}`);
     if (source) return source.expected[path.relative(source.source, file)];
     if (steps.some((step) => within(file, step.source))) return { kind: 'directory', digest: '' };
     return filesystemEntry(file);
@@ -148,9 +150,10 @@ function originalLookup(steps: Pick<MoveStep, 'source' | 'expected'>[]): LinkLoo
 /** The journal keeps original link text; only the destination inventory is translated. */
 export async function movedInventory(
   step: Pick<MoveStep, 'source' | 'target' | 'expected'>,
+  steps: MoveStep[],
 ): Promise<Inventory> {
   const result = { ...step.expected };
-  const lookup = originalLookup([step]);
+  const lookup = originalLookup(steps, step.source);
   for (const [relative, entry] of Object.entries(result)) {
     if (entry.kind !== 'link' || !path.isAbsolute(entry.digest)) continue;
     const target = await resolveLink(entry.digest, lookup);
@@ -166,9 +169,8 @@ export async function movedInventory(
 /** Resolve both trees and refuse any link whose real target changes during the move. */
 export async function assertMigratedLinks(steps: MoveStep[]): Promise<void> {
   const destinations = await Promise.all(
-    steps.map(async (step) => ({ ...step, inventory: await movedInventory(step) })),
+    steps.map(async (step) => ({ ...step, inventory: await movedInventory(step, steps) })),
   );
-  const before = originalLookup(steps);
   const after: LinkLookup = async (file) => {
     const destination = destinations.find((step) => within(step.target, file));
     if (destination) return destination.inventory[path.relative(destination.target, file)];
@@ -180,7 +182,10 @@ export async function assertMigratedLinks(steps: MoveStep[]): Promise<void> {
   for (const step of destinations)
     for (const [relative, entry] of Object.entries(step.inventory)) {
       if (entry.kind !== 'link') continue;
-      const original = await resolveLink(path.join(step.source, relative), before);
+      const original = await resolveLink(
+        path.join(step.source, relative),
+        originalLookup(steps, step.source),
+      );
       const owner = steps.find((move) => within(move.source, original));
       const expected = owner
         ? path.join(owner.target, path.relative(owner.source, original))

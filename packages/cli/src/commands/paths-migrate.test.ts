@@ -498,7 +498,7 @@ for (const copy of [false, true])
     await symlink(outside, path.join(task, 'outside-link'));
     if (!copy) {
       await mkdir(path.join(f.archive, 'empty'));
-      await symlink('run-a/old-generation/payload.txt', path.join(f.archive, 'loose-link'));
+      await symlink(outside, path.join(f.archive, 'loose-link'));
     }
     const expected = await inventory(task);
     const plan = await planMigration(f.options);
@@ -523,23 +523,17 @@ for (const copy of [false, true])
       'absolute-link': { ...expected['absolute-link'], digest: path.join(movedTask, 'script') },
     });
     if (!copy) {
-      assert.equal(
-        await fs.readlink(path.join(plan.dataRoot, 'run-archive/loose-link')),
-        'run-a/old-generation/payload.txt',
-      );
+      assert.equal(await fs.readlink(path.join(plan.dataRoot, 'run-archive/loose-link')), outside);
       assert.equal(
         await readFile(path.join(plan.dataRoot, 'run-archive/loose-link'), 'utf8'),
-        'archived proof\n',
+        'outside proof',
       );
       assert.ok((await fs.lstat(path.join(plan.dataRoot, 'run-archive/empty'))).isDirectory());
     }
     await migratePaths(f.options, 'rollback');
     if (!copy) {
-      assert.equal(
-        await fs.readlink(path.join(f.archive, 'loose-link')),
-        'run-a/old-generation/payload.txt',
-      );
-      assert.equal(await readFile(path.join(f.archive, 'loose-link'), 'utf8'), 'archived proof\n');
+      assert.equal(await fs.readlink(path.join(f.archive, 'loose-link')), outside);
+      assert.equal(await readFile(path.join(f.archive, 'loose-link'), 'utf8'), 'outside proof');
     }
     for (const [link, body] of [
       ['link', 'proof'],
@@ -590,6 +584,99 @@ for (const copy of [false, true])
       'real target bytes',
     );
     assert.deepEqual(await inventory(task), before);
+  });
+
+test('sibling alias traversal refuses at plan without mutation', async (t) => {
+  const f = await fixture(t);
+  const task = path.join(f.archive, 'task');
+  await put(path.join(task, 'dir/proof.txt'), 'sibling proof');
+  await symlink('task/dir', path.join(f.archive, 'alias'));
+  await symlink('../alias', path.join(task, 'through'));
+  await symlink(`${task}/through/proof.txt`, path.join(task, 'proof-link'));
+  assert.equal(await readFile(path.join(task, 'proof-link'), 'utf8'), 'sibling proof');
+  const before = await inventory(f.root);
+  const plan = await planMigration(f.options);
+  assert.match(plan.conflicts.join('\n'), /symlink traverses another migration source/);
+  assert.deepEqual(await inventory(f.root), before);
+  await assert.rejects(
+    migratePaths(f.options, 'apply'),
+    /symlink traverses another migration source/,
+  );
+  assert.deepEqual(await inventory(f.root), before);
+});
+
+for (const partial of [false, true])
+  test(`sibling alias journal refuses apply and rollback identically, partial=${partial}`, async (t) => {
+    const f = await fixture(t);
+    const task = path.join(f.archive, 'task');
+    await put(path.join(task, 'dir/proof.txt'), 'sibling proof');
+    await symlink('task/dir', path.join(f.archive, 'alias'));
+    await symlink('../alias', path.join(task, 'through'));
+    await symlink(`${task}/through/proof.txt`, path.join(task, 'proof-link'));
+    const plan = await planMigration(f.options);
+    // Reproduce a journal accepted by the previous implementation.
+    plan.conflicts = [];
+    const alias = plan.steps.find((step) => step.source === path.join(f.archive, 'alias'));
+    assert.ok(alias && alias.kind === 'move');
+    if (partial) {
+      await mkdir(path.dirname(alias.target), { recursive: true });
+      await fs.rename(alias.source, alias.target);
+      alias.status = 'done';
+      plan.status = 'applying';
+    }
+    await put(plan.journal, plan);
+    const before = await inventory(f.root);
+    const refusal = {
+      message: `Migration symlink traverses another migration source: ${alias.source}`,
+    };
+    for (const mode of ['apply', 'rollback'] as const) {
+      await assert.rejects(migratePaths(f.options, mode), refusal);
+      assert.deepEqual(await inventory(f.root), before);
+    }
+  });
+
+for (const copy of [false, true])
+  test(`internal alias chain resumes between sibling moves and rolls back, copy=${copy}`, async (t) => {
+    const f = await fixture(t);
+    const sibling = path.join(f.archive, 'a-sibling');
+    const task = path.join(f.archive, 'task');
+    await put(sibling, 'first sibling');
+    await put(path.join(task, 'dir/proof.txt'), 'internal proof');
+    await symlink('dir', path.join(task, 'alias'));
+    await symlink('alias', path.join(task, 'through'));
+    const original = `${task}/through/proof.txt`;
+    await symlink(original, path.join(task, 'proof-link'));
+    const expected = await inventory(task);
+    const plan = await planMigration(f.options);
+    assert.deepEqual(plan.conflicts, []);
+    if (copy) for (const step of plan.steps) if (step.kind === 'move') step.method = 'copy';
+    await put(plan.journal, plan);
+    await assert.rejects(
+      migratePaths(f.options, 'apply', {
+        async checkpoint(saved, index) {
+          if (saved.steps[index].source === sibling && saved.steps[index].status === 'done')
+            throw new Error('interrupted between siblings');
+        },
+      }),
+      /interrupted between siblings/,
+    );
+    assert.equal(await info(sibling), undefined);
+    assert.equal(await readFile(path.join(task, 'proof-link'), 'utf8'), 'internal proof');
+    const resumed = await migratePaths(f.options, 'apply');
+    const movedTask = path.join(resumed.dataRoot, 'run-archive/task');
+    for (const link of ['alias/proof.txt', 'through/proof.txt', 'proof-link'])
+      assert.equal(await readFile(path.join(movedTask, link), 'utf8'), 'internal proof');
+    assert.equal(
+      await fs.readlink(path.join(movedTask, 'proof-link')),
+      path.join(movedTask, 'dir/proof.txt'),
+    );
+    await migratePaths(f.options, 'rollback');
+    for (const link of ['alias/proof.txt', 'through/proof.txt', 'proof-link'])
+      assert.equal(await readFile(path.join(task, link), 'utf8'), 'internal proof');
+    assert.equal(await fs.readlink(path.join(task, 'proof-link')), original);
+    assert.deepEqual(await inventory(task), expected);
+    assert.equal(await readFile(sibling, 'utf8'), 'first sibling');
+    await assertLegacy(f);
   });
 
 for (const target of [
