@@ -1,6 +1,7 @@
 import {
   Events,
   parseGitHubPullUrl,
+  publishedBranchOf,
   type ReadyGatePayload,
   type Run,
   type RunRefreshPublishedEvidenceParams,
@@ -97,7 +98,7 @@ async function refreshPublishedEvidenceLocked(
     adoption &&
     (adoption.runId !== run.id ||
       adoption.prNumber !== run.prNumber ||
-      adoption.observedBranch !== run.branch ||
+      (adoption.match?.runBranch ?? adoption.observedBranch) !== run.branch ||
       !adoption.priorGate?.packageId ||
       !adoption.priorGate.packageHash ||
       prepared.id !== adoption.priorGate.packageId ||
@@ -170,7 +171,8 @@ async function refreshPublishedEvidenceLocked(
   };
   const before = await readPr();
   assertPublicationTextSafe(before.title, before.body);
-  if (!run.branch || before.headRefName !== run.branch || before.state === 'CLOSED') {
+  // An adoption owns its PR branch, which may differ from the run's (a republished PR).
+  if (!run.branch || before.headRefName !== publishedBranchOf(run) || before.state === 'CLOSED') {
     throw new Error('Published PR no longer matches the run branch');
   }
   assertAdoptedTarget(before);

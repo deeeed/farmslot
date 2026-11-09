@@ -8,6 +8,7 @@ import {
   PipelineSteps,
   pipelineStepsForRun,
   PUBLICATION_ADOPTION_ACTION,
+  type PublicationAdoptionMatch,
   type Run,
   type RunAdoptPublishedPrParams,
   type RunAdoptPublishedPrResult,
@@ -35,6 +36,10 @@ import { getRun, getRunWithArchived, persistRunNow } from '../../runs/store.js';
 import { withRunSources } from '../../sources/runtime.js';
 
 import type { releaseCompletedRunSlot } from './lifecycle-control.js';
+import {
+  comparePublishedContent,
+  type PublishedContentComparison,
+} from './publication-content-match.js';
 
 interface PublishedPrFacts {
   number: number;
@@ -42,7 +47,7 @@ interface PublishedPrFacts {
   state: 'open' | 'closed';
   merged_at: string | null;
   draft: boolean;
-  base: { repo: { full_name: string } };
+  base: { sha: string; repo: { full_name: string } };
   head: { sha: string; ref: string; repo: { full_name: string } | null };
 }
 
@@ -55,6 +60,28 @@ export interface PublicationAdoptionDependencies {
   continuationRefusals?: typeof adoptedPublicationContinuationRefusals;
   continueDecision?: (run: Run, decisionId: string) => Promise<boolean>;
   releaseSlot?: typeof releaseCompletedRunSlot;
+  compareContent?: typeof comparePublishedContent;
+}
+
+const CONTENT_MATCH_REASON = 'Published PR content matches the reviewed patch.';
+
+function contentMismatchMessage(
+  run: Run,
+  prUrl: string,
+  prNumber: number,
+  prBranch: string,
+  prHead: string,
+  content: PublishedContentComparison,
+): string {
+  const why =
+    'unavailable' in content
+      ? content.unavailable
+      : `differs in ${content.differingFiles.join(', ')}`;
+  return (
+    `PR #${prNumber} (${prBranch}) does not match the reviewed patch of run ${run.id} (${run.branch}): ${why}. ` +
+    `If a person reviewed this publication, adopt its head with: farmslot run adopt-published-pr ${run.id} ` +
+    `--pr ${prUrl} --head ${prHead} --attest-reviewed-publication --reason "<why this head is approved>"`
+  );
 }
 
 function adoptionIdentity(run: Run): string {
@@ -140,13 +167,24 @@ export async function runAdoptPublishedPr(
       'Publication adoption requires an authenticated person attestation',
     );
   const approver = authorize();
-  if (params.attestReviewedPublication !== true || !params.reason?.trim())
+  // Without an attestation the PR must carry the reviewed patch; with one, a person vouches for the head.
+  const attested = params.attestReviewedPublication === true;
+  if (attested) {
+    if (!params.reason?.trim())
+      throw new Error(
+        'Explicit reviewed-publication attestation and a written reason are required',
+      );
+    if (!/^[a-f0-9]{40}$/i.test(params.headSha ?? ''))
+      throw new Error('Publication adoption requires a full commit SHA');
+  } else if (params.attestReviewedPublication !== undefined) {
     throw new Error('Explicit reviewed-publication attestation and a written reason are required');
-  if (!/^[a-f0-9]{40}$/i.test(params.headSha ?? ''))
-    throw new Error('Publication adoption requires a full commit SHA');
+  } else if (params.headSha !== undefined) {
+    throw new Error('--head is only accepted with --attest-reviewed-publication');
+  }
   const ref = parseGitHubPullUrl(params.prRef);
   if (!ref) throw new Error('Publication adoption requires a GitHub pull request URL');
-  const headSha = params.headSha.toLowerCase();
+  const headSha =
+    params.attestReviewedPublication === true ? params.headSha.toLowerCase() : undefined;
   const initial = await getRunWithArchived(params.runId);
   if (!initial) throw new Error(`Run not found: ${params.runId}`);
   assertPublicationRun(initial);
@@ -157,7 +195,7 @@ export async function runAdoptPublishedPr(
     if (
       previous.repository.toLowerCase() !== ref.repo.toLowerCase() ||
       previous.prNumber !== ref.number ||
-      previous.headSha !== headSha
+      (headSha !== undefined && previous.headSha !== headSha)
     )
       throw new Error('Conflicting human publication adoption');
   } else {
@@ -175,17 +213,22 @@ export async function runAdoptPublishedPr(
     const facts: PublishedPrFacts = JSON.parse(
       (await github(['api', `repos/${repository}/pulls/${ref.number}`], { force: true })).stdout,
     );
+    // Same repository only, base and head: a fork or another repository is never adopted. The branch
+    // name may differ (a republished PR); the content match or the attestation decides.
     if (
       facts.number !== ref.number ||
       facts.base?.repo?.full_name?.toLowerCase() !== repository.toLowerCase() ||
       facts.head?.repo?.full_name?.toLowerCase() !== repository.toLowerCase() ||
-      facts.head.ref !== initial.branch ||
+      typeof facts.head.ref !== 'string' ||
+      !facts.head.ref ||
       !/^[a-f0-9]{40}$/i.test(facts.head.sha) ||
+      !/^[a-f0-9]{40}$/i.test(facts.base?.sha ?? '') ||
       typeof facts.draft !== 'boolean' ||
       !['open', 'closed'].includes(facts.state)
     )
-      throw new Error('GitHub PR facts do not match the retained repository and branch');
-    if (headSha !== facts.head.sha.toLowerCase()) {
+      throw new Error('GitHub PR facts do not match the retained repository');
+    const observedHead = facts.head.sha.toLowerCase();
+    if (headSha !== undefined && headSha !== observedHead) {
       const commits = (
         await github(
           [
@@ -216,6 +259,28 @@ export async function runAdoptPublishedPr(
           candidate.payload?.kind === 'ready',
       );
     const prepared = decision?.payload?.kind === 'ready' ? decision.payload.prPackage : undefined;
+    // Pinned to the SHAs just read: a push after this cannot change what is compared or recorded.
+    const compared = { baseSha: facts.base.sha.toLowerCase(), headSha: observedHead };
+    const content = await (dependencies.compareContent ?? comparePublishedContent)(
+      initial,
+      prepared,
+      { repository, ...compared },
+      github,
+    );
+    const contentMatch = !('unavailable' in content) && content.differingFiles.length === 0;
+    const prUrl = githubPullUrl({ repo: repository, number: ref.number });
+    if (!attested && !contentMatch)
+      throw new Error(
+        contentMismatchMessage(initial, prUrl, ref.number, facts.head.ref, observedHead, content),
+      );
+    const match: PublicationAdoptionMatch = {
+      type: contentMatch ? 'content-match' : 'attested',
+      runBranch: initial.branch!,
+      prBranch: facts.head.ref,
+      differingFiles: content.differingFiles ?? [],
+      compared,
+      ...('unavailable' in content ? { unavailable: content.unavailable } : {}),
+    };
     let unmetPrerequisites: RunGatePrerequisiteReason[] = [];
     if (decision && !initial.archivedAt) {
       try {
@@ -232,17 +297,18 @@ export async function runAdoptPublishedPr(
       runId: initial.id,
       generation: initial.engineState?.generation ?? 0,
       approver,
-      reason: params.reason.trim(),
+      reason: params.reason?.trim() || CONTENT_MATCH_REASON,
       adoptedAt: new Date().toISOString(),
       repository,
       prNumber: ref.number,
-      prUrl: githubPullUrl({ repo: repository, number: ref.number }),
-      headSha,
-      observedHeadSha: facts.head.sha.toLowerCase(),
+      prUrl,
+      headSha: headSha ?? observedHead,
+      observedHeadSha: observedHead,
       observedBranch: facts.head.ref,
       observedDraft: facts.draft,
       observedState: facts.merged_at ? 'merged' : facts.state,
       publicationStatus: facts.draft ? 'published_draft' : 'published_ready',
+      match,
       ...(gate || decision
         ? {
             priorGate: {
@@ -272,7 +338,7 @@ export async function runAdoptPublishedPr(
       if (
         concurrent.repository.toLowerCase() !== ref.repo.toLowerCase() ||
         concurrent.prNumber !== ref.number ||
-        concurrent.headSha !== headSha
+        (headSha !== undefined && concurrent.headSha !== headSha)
       )
         throw new Error('Conflicting human publication adoption');
       receipt = concurrent;

@@ -53,7 +53,7 @@ mock.module('../integrations/github-client.js', {
             state: 'closed',
             merged_at: new Date().toISOString(),
             draft: false,
-            base: { repo: { full_name: 'owner/repo' } },
+            base: { sha: 'e'.repeat(40), repo: { full_name: 'owner/repo' } },
             head: { sha: pr.headRefOid, ref: pr.headRefName, repo: { full_name: 'owner/repo' } },
           }),
           stderr: '',

@@ -2,6 +2,7 @@ import {
   adoptedPublicationTarget,
   type FlowType,
   PR_BOUND_FLOW_TYPES,
+  publishedBranchOf,
   type Run,
   type RunCreateParams,
 } from '@farmslot/protocol';
@@ -68,7 +69,8 @@ export function buildCIWatchChainedRunParams(
       project: current.project,
       ticketOrPr,
       slotId: current.slotId ?? undefined,
-      branch: current.branch ?? undefined,
+      // Work follows the PR, whose branch may differ from the run's (an adopted, republished PR).
+      branch: publishedBranchOf(current),
       // Chained runs inherit the parent's runner+model unchanged. The parent
       // already validated that combo at runCreate, so propagating it can't
       // produce an impossible runner+model wedge. Flow-specific model
@@ -104,6 +106,10 @@ export function buildCIWatchChainedRunParams(
     // task (for example on Example App unlock actionability flakes). Prefer
     // warmSessionReuse so DISPATCH hands the task to the still-alive parent
     // worker; fall back to fresh launch when the session is gone.
-    engineFlags: current.slotId ? { skipPrepare: true, warmSessionReuse: true } : {},
+    // An adopted PR on another branch is not the slot's checkout: prepare the PR instead of reusing it.
+    engineFlags:
+      current.slotId && publishedBranchOf(current) === current.branch
+        ? { skipPrepare: true, warmSessionReuse: true }
+        : {},
   };
 }
