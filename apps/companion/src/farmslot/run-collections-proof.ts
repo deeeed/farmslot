@@ -398,6 +398,7 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
                 resumeAvailable: conversation.resumeAvailable,
                 resumeReady: conversation.resumeReady,
                 busy: conversation.busy,
+                follow: conversation.follow,
               },
             }
           : {}),
