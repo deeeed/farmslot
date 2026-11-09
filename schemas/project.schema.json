@@ -49,6 +49,23 @@
       "type": "object",
       "required": ["provider"],
       "properties": {
+        "viewer": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Local run evidence viewer (ADR-062 Amendment 23).",
+          "properties": {
+            "link": {
+              "type": "boolean",
+              "default": true,
+              "description": "False turns off the view link a run prints when it ends."
+            },
+            "template": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Project-relative module exporting a run evidence page template."
+            }
+          }
+        },
         "recordingCapability": {
           "type": "string",
           "minLength": 1,

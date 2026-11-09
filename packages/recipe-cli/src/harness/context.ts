@@ -18,6 +18,7 @@ import {
   DEFAULT_TASK_DIR,
   type ExecutionTemplateSourceRoot,
   type ProjectConfig,
+  type ProjectRecipeViewerConfig,
   type SourceEntryRef,
   validateProjectRecipeConfig,
 } from '@farmslot/protocol';
@@ -617,7 +618,12 @@ export interface LoadProjectProviderOptions {
   host?: HarnessHostConfig;
   hostHints?: Pick<
     HarnessHostConfig,
-    'doctorHint' | 'doctorCommand' | 'supportsLast' | 'journaledCommands' | 'taskRunCliArgs'
+    | 'doctorHint'
+    | 'doctorCommand'
+    | 'supportsLast'
+    | 'journaledCommands'
+    | 'taskRunCliArgs'
+    | 'viewCommand'
   >;
   command?: string;
   options?: CliOptions;
@@ -652,10 +658,39 @@ export function readProjectPool(context: HarnessContext): ProjectContextPool | u
     : undefined;
 }
 
-/** Read project metadata and resolve defaults without importing executable code. */
-export async function resolveProjectContext(
-  options: ResolveProjectContextOptions,
-): Promise<HarnessContext> {
+/** Registered projects, then the checkout's own project.json when no registered one shares its name. */
+function projectEntries(
+  options: Pick<ResolveProjectContextOptions, 'projects' | 'projectsDir'>,
+  checkoutRoot: string,
+): { registered: ConfiguredRecipeProject[]; entries: ConfiguredRecipeProject[] } {
+  const registered = [...(options.projects ?? [])];
+  if (options.projectsDir) {
+    for (const name of fs.readdirSync(options.projectsDir).sort()) {
+      const root = path.join(options.projectsDir, name);
+      const file = path.join(root, 'project.json');
+      if (fs.existsSync(file)) registered.push({ root, config: readProject(file) });
+    }
+  }
+  const localFile = path.join(checkoutRoot, 'project.json');
+  const discovered = fs.existsSync(localFile)
+    ? [{ root: checkoutRoot, config: readProject(localFile) }]
+    : [];
+  return {
+    registered,
+    entries: [
+      ...registered,
+      ...discovered.filter(
+        (entry) => !registered.some((existing) => existing.config.name === entry.config.name),
+      ),
+    ],
+  };
+}
+
+/**
+ * The project a command selects: `--project`, then the checkout's runtime binding, its slot,
+ * then detection by checkout path or origin, then the default. Reads metadata only.
+ */
+async function selectProject(options: ResolveProjectContextOptions, metadataOnly = false) {
   const cwd = options.cwd ?? process.cwd();
   const requested = optionValues(options.tokens, '--target').at(-1);
   const checkoutRoot =
@@ -679,34 +714,23 @@ export async function resolveProjectContext(
     ],
     adapter: false,
   };
-  let context = await resolveHarnessContext(contextOptions);
-  let runtime = readBinding(
+  const runtime = readBinding(
     checkoutRoot,
     optionValues(options.tokens, '--runtime-dir').at(-1),
   ).runtime;
-  const registered = [...(options.projects ?? [])];
-  if (options.projectsDir) {
-    for (const name of fs.readdirSync(options.projectsDir).sort()) {
-      const root = path.join(options.projectsDir, name);
-      const file = path.join(root, 'project.json');
-      if (fs.existsSync(file)) registered.push({ root, config: readProject(file) });
-    }
-  }
-  const localFile = path.join(checkoutRoot, 'project.json');
-  const discovered = fs.existsSync(localFile)
-    ? [{ root: checkoutRoot, config: readProject(localFile) }]
-    : [];
-  const entries = [
-    ...registered,
-    ...discovered.filter(
-      (entry) => !registered.some((existing) => existing.config.name === entry.config.name),
-    ),
-  ];
+  const projectFlag = optionValues(options.tokens, '--project').at(-1);
+  const bindingName = stringField(runtime, 'project');
+  // Reading metadata needs no execution slot: an explicit or bound project already decides,
+  // so slots sharing this checkout need no disambiguation.
+  const context = await resolveHarnessContext(
+    metadataOnly && (projectFlag ?? bindingName)
+      ? { ...contextOptions, strictSlot: false }
+      : contextOptions,
+  );
+  const { registered, entries } = projectEntries(options, checkoutRoot);
   const pool = readProjectPool(context);
   const poolSlot = context.slot?.value ? (context.slot.poolSlot ?? context.slot.value) : undefined;
   const slot = pool?.slots?.find((entry) => entry.id === poolSlot);
-  const projectFlag = optionValues(options.tokens, '--project').at(-1);
-  const bindingName = stringField(runtime, 'project');
   const slotName = slot?.project ?? pool?.project;
   const named = projectFlag ?? bindingName ?? slotName;
   const remote = checkoutRemote(checkoutRoot) || undefined;
@@ -742,6 +766,68 @@ export async function resolveProjectContext(
     );
   }
   const selected = candidates[0]!;
+  return {
+    cwd,
+    requested,
+    checkoutRoot,
+    contextOptions,
+    context,
+    runtime,
+    registered,
+    pool,
+    slot,
+    projectFlag,
+    remote,
+    source,
+    selected,
+  };
+}
+
+/**
+ * The run evidence viewer settings of the project a command selects, by the same rules as
+ * execution but without its provider, app or checkout-origin prerequisites. Undefined only
+ * when nothing selects a project and none matches the checkout.
+ */
+export async function resolveProjectViewer(
+  options: ResolveProjectContextOptions,
+): Promise<{ root: string; viewer?: ProjectRecipeViewerConfig } | undefined> {
+  let selected: ConfiguredRecipeProject;
+  try {
+    ({ selected } = await selectProject(options, true));
+  } catch (error) {
+    // A run folder needs no project: only an unselected checkout outside every project falls
+    // back to the default page; an explicit, bound or ambiguous selection that fails throws.
+    if (
+      error instanceof ProjectBindingError &&
+      error.code === 'PROJECT_NOT_FOUND' &&
+      error.selectedProject === undefined
+    )
+      return undefined;
+    throw error;
+  }
+  const { root, config } = selected;
+  if (config.recipe !== undefined) validateProjectRecipeConfig(config.recipe);
+  return { root, ...(config.recipe?.viewer ? { viewer: config.recipe.viewer } : {}) };
+}
+
+/** Read project metadata and resolve defaults without importing executable code. */
+export async function resolveProjectContext(
+  options: ResolveProjectContextOptions,
+): Promise<HarnessContext> {
+  const selection = await selectProject(options);
+  const {
+    cwd,
+    requested,
+    checkoutRoot,
+    contextOptions,
+    registered,
+    pool,
+    slot,
+    projectFlag,
+    remote,
+    selected,
+  } = selection;
+  let { context, runtime, source } = selection;
   const config = selected.config;
   const root = fs.realpathSync(selected.root);
   const recipe = config.recipe;
@@ -1020,6 +1106,7 @@ export async function resolveProjectContext(
     ...(app ? { app } : {}),
     domain: recipe.domain,
     template: recipe.template,
+    ...(recipe.viewer ? { viewer: recipe.viewer } : {}),
     checks: recipe.checks?.map((check) => ({ ...check, recipe: check.recipe.trim() })),
     ...(recipe.manifest ? { manifest: path.resolve(root, recipe.manifest) } : {}),
     provider,

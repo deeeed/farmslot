@@ -2,13 +2,17 @@
 // that prints the same thing once. Task files supply worker progress; a bound
 // run supplies its lifecycle through the authenticated control-plane read stream.
 
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
 import { isTerminalWorkerSignalStatus } from '@farmslot/protocol';
 
 import { color } from '../cli-color.js';
-import { harnessContextField } from '../context-state.js';
+import { harnessContext, harnessContextField } from '../context-state.js';
+import { listRunEvidenceHistory } from '../evidence-view.js';
+import { loadRunEvidenceTemplate } from '../evidence-view-page.js';
 import { harnessHost, withRecipeSignals } from '../host.js';
 import { EXIT } from '../shared.js';
 import { observeTaskRun, type TaskRunBinding, type TaskRunObserver } from '../task-run.js';
@@ -23,10 +27,17 @@ import {
   type TaskViewSubtask,
 } from '../task-view.js';
 
+import { recipeRunAttemptsRoot } from './run.js';
+import { type RunEvidenceServer, serveRunEvidence } from './view.js';
+
 const REFRESH_MS = 2000;
 const CLEAR_SCREEN = '\x1b[2J\x1b[H';
 const HIDE_CURSOR = '\x1b[?25l';
 const SHOW_CURSOR = '\x1b[?25h';
+const EVIDENCE_KEY = 'v';
+/** Raw mode delivers Ctrl-C as this key instead of SIGINT. */
+const CTRL_C = '\u0003';
+const EVIDENCE_HINT = `${EVIDENCE_KEY}  open the live run evidence page`;
 
 export interface StatusWatchOptions {
   target: string;
@@ -42,6 +53,11 @@ export interface StatusWatchDeps {
   write: (text: string) => void;
   isTty: boolean;
   observeRun?: (binding: TaskRunBinding, signal?: AbortSignal) => Promise<TaskRunObserver>;
+  /** Keypresses while a terminal watch redraws; returns the unsubscribe. */
+  keys?: (onKey: (keys: string) => void) => () => void;
+  /** Serves the live evidence pages of a folder of runs until the watch ends. */
+  serveEvidence?: (runsRoot: string) => Promise<Pick<RunEvidenceServer, 'url' | 'close'>>;
+  openUrl?: (url: string) => void;
 }
 
 export async function handleStatusTaskView(options: StatusWatchOptions): Promise<number> {
@@ -60,6 +76,41 @@ export async function handleStatusTaskView(options: StatusWatchOptions): Promise
       }),
     write: (text) => process.stdout.write(text),
     isTty: Boolean(process.stdout.isTTY),
+    ...(process.stdin.isTTY
+      ? {
+          keys: (onKey: (keys: string) => void) => {
+            const stdin = process.stdin;
+            stdin.setRawMode(true);
+            stdin.setEncoding('utf8');
+            stdin.on('data', onKey);
+            stdin.resume();
+            return () => {
+              stdin.off('data', onKey);
+              stdin.setRawMode(false);
+              stdin.pause();
+            };
+          },
+        }
+      : {}),
+    serveEvidence: async (dir) => {
+      const project = harnessContext()?.project;
+      const template = project?.viewer?.template
+        ? await loadRunEvidenceTemplate(path.resolve(project.root, project.viewer.template))
+        : undefined;
+      return serveRunEvidence({ dir, ...(template ? { template } : {}) });
+    },
+    openUrl: (url) => {
+      const opener =
+        process.platform === 'darwin'
+          ? 'open'
+          : process.platform === 'win32'
+            ? 'explorer'
+            : 'xdg-open';
+      const child = spawn(opener, [url], { stdio: 'ignore', detached: true });
+      // No browser opener on this machine: the footer already prints the URL to open by hand.
+      child.on('error', () => undefined);
+      child.unref();
+    },
   };
   if (!options.watch || !deps.isTty) return runStatusWatch(options, deps);
 
@@ -110,6 +161,41 @@ export async function runStatusWatch(
   process.on('SIGINT', interrupt);
   process.on('SIGTERM', interrupt);
   process.on('SIGHUP', interrupt);
+  // The evidence key works only where the watch redraws a terminal it owns.
+  const interactive = options.watch && deps.isTty && !options.json;
+  let wake = new AbortController();
+  let wantEvidence = false;
+  let evidence: { root: string; server: Pick<RunEvidenceServer, 'url' | 'close'> } | undefined;
+  let evidenceLine: string | undefined;
+  const offKeys = interactive
+    ? deps.keys?.((keys) => {
+        for (const key of keys) {
+          if (key === CTRL_C) control.abort();
+          else if (key === EVIDENCE_KEY) {
+            wantEvidence = true;
+            wake.abort();
+          }
+        }
+      })
+    : undefined;
+  // The newest run of the task this watch shows, served live: the task it was asked for or
+  // sees in progress, else the writer's binding. Retained history never stands in for it.
+  const openEvidence = async (view: TaskView): Promise<string> => {
+    const root = recipeRunAttemptsRoot(options.target, {
+      ...(options.taskDir ? { explicit: options.taskDir } : {}),
+      ...(view.activity.ongoing && view.taskDir ? { active: view.taskDir } : {}),
+    });
+    const current = fs.existsSync(root) ? listRunEvidenceHistory(root)[0] : undefined;
+    if (!current) return `no recipe run yet under ${root}`;
+    if (evidence?.root !== root) {
+      await evidence?.server.close();
+      evidence = undefined;
+      evidence = { root, server: await (deps.serveEvidence ?? defaultServeEvidence)(root) };
+    }
+    const url = `${evidence.server.url}runs/${encodeURIComponent(current.id)}/#story`;
+    deps.openUrl?.(url);
+    return `evidence ${url}`;
+  };
   try {
     for (;;) {
       if (control.signal.aborted) return EXIT.ok;
@@ -138,6 +224,14 @@ export async function runStatusWatch(
         view = applyTaskRunLifecycle(view, observer?.current());
       }
       if (control.signal.aborted) return EXIT.ok;
+      if (wantEvidence) {
+        wantEvidence = false;
+        evidenceLine = await openEvidence(view).catch(
+          // A page that cannot start is reported in the footer; the watch itself goes on.
+          (error: unknown) =>
+            `evidence page failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
       const changes = changedLines(previous, view);
 
       if (options.json && !options.watch) {
@@ -148,8 +242,12 @@ export async function runStatusWatch(
       } else if (options.watch && !deps.isTty) {
         for (const line of changes) deps.write(`${line}\n`);
       } else {
+        const footer =
+          interactive && offKeys
+            ? ['', ...(evidenceLine ? [evidenceLine] : []), EVIDENCE_HINT]
+            : [];
         deps.write(
-          `${deps.isTty && options.watch ? CLEAR_SCREEN : ''}${renderTaskView(view, title, options.taskDir !== undefined).join('\n')}\n`,
+          `${deps.isTty && options.watch ? CLEAR_SCREEN : ''}${[...renderTaskView(view, title, options.taskDir !== undefined), ...footer].join('\n')}\n`,
         );
       }
 
@@ -162,8 +260,9 @@ export async function runStatusWatch(
         return EXIT.ok;
       const changed = new AbortController();
       const offChange = observer?.onChange?.(() => changed.abort());
+      wake = new AbortController();
       try {
-        await deps.wait(REFRESH_MS, AbortSignal.any([control.signal, changed.signal]));
+        await deps.wait(REFRESH_MS, AbortSignal.any([control.signal, changed.signal, wake.signal]));
       } finally {
         offChange?.();
       }
@@ -172,8 +271,14 @@ export async function runStatusWatch(
     process.off('SIGINT', interrupt);
     process.off('SIGTERM', interrupt);
     process.off('SIGHUP', interrupt);
+    offKeys?.();
     await observer?.close();
+    await evidence?.server.close();
   }
+}
+
+function defaultServeEvidence(dir: string): Promise<RunEvidenceServer> {
+  return serveRunEvidence({ dir });
 }
 
 // `explicitTask` is true when the caller named the task directory: its rows are

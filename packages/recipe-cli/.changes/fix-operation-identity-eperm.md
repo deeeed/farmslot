@@ -1,1 +1,0 @@
-- The command journal, task view and checkout lock work inside the worker sandbox, where `ps` fails with EPERM: an unknown owner identity falls back to a liveness check, so a live owner is never reclaimed.

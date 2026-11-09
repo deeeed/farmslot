@@ -1,0 +1,1 @@
+- `runEvidenceView(model, run?)` (evidence entry) projects the shared review model into the plain-JSON run evidence view-model: criteria in run order with verdict, clip cue, files and before/after pair, steps with marker cues, and step groups.

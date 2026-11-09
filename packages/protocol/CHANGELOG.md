@@ -6,6 +6,13 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.83.0 - 2026-11-09
+
+- Resolve and report instance paths, including validated remote deployment markers and legacy machine overrides.
+- `TaskOperation.processStartedAt` is optional: a sandboxed owner that cannot run `ps` records no start time.
+- `LinkedTicket.fromPrBody` marks a ticket fetched only because the PR body links it, so a later fetch derives it again from the current body instead of keeping it.
+- Share Codex effort resolution across terminal and native callers, preserving automatic defaults and refusing unsupported model levels.
+
 ## 0.82.3 - 2026-11-09
 
 - `RunAdoptPublishedPrParams` is a union of a content-match request (`runId`, `prRef`, optional `reason`) and the attested request. New optional `HumanPublicationAdoptionReceipt.match` and `RunDecision.publicationAdoption` record how an adopted PR was matched.
