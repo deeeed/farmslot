@@ -43,7 +43,9 @@ export async function execResourceCommand(
       if (
         commandIncludesRemotePath(
           cmd,
-          node.farmPaths?.code.node ?? legacyRemoteFarmPaths().code.node,
+          node.farmPaths?.layout === 2
+            ? node.farmPaths.code.node
+            : legacyRemoteFarmPaths().code.node,
         )
       ) {
         // Resource hooks call farm scripts too; run them from the bundle that

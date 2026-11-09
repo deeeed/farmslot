@@ -490,7 +490,12 @@ for (const copy of [false, true])
     await fs.chmod(path.join(task, 'empty'), 0o700);
     await fs.chmod(path.join(task, 'script'), 0o751);
     await symlink('script', path.join(task, 'link'));
-    await symlink(path.join(task, 'script'), path.join(task, 'absolute-link'));
+    const originalTarget = `${task}/empty/../script`;
+    await symlink(originalTarget, path.join(task, 'absolute-link'));
+    await symlink('absolute-link', path.join(task, 'chain-link'));
+    const outside = path.join(f.checkout, 'outside.txt');
+    await put(outside, 'outside proof');
+    await symlink(outside, path.join(task, 'outside-link'));
     if (!copy) {
       await mkdir(path.join(f.archive, 'empty'));
       await symlink('run-a/old-generation/payload.txt', path.join(f.archive, 'loose-link'));
@@ -500,41 +505,72 @@ for (const copy of [false, true])
     if (copy) for (const step of plan.steps) if (step.kind === 'move') step.method = 'copy';
     await put(plan.journal, plan);
     await migratePaths(f.options, 'apply');
-    assert.deepEqual(
-      await inventory(path.join(plan.dataRoot, 'run-archive/run-a/old-generation/task')),
-      expected,
+    const movedTask = path.join(plan.dataRoot, 'run-archive/run-a/old-generation/task');
+    for (const [link, body] of [
+      ['link', 'proof'],
+      ['chain-link', 'proof'],
+      ['absolute-link', 'proof'],
+      ['outside-link', 'outside proof'],
+    ])
+      assert.equal(await readFile(path.join(movedTask, link), 'utf8'), body);
+    assert.equal(
+      await fs.readlink(path.join(movedTask, 'absolute-link')),
+      path.join(movedTask, 'script'),
     );
+    const migrated = await inventory(movedTask);
+    assert.deepEqual(migrated, {
+      ...expected,
+      'absolute-link': { ...expected['absolute-link'], digest: path.join(movedTask, 'script') },
+    });
     if (!copy) {
       assert.equal(
         await fs.readlink(path.join(plan.dataRoot, 'run-archive/loose-link')),
         'run-a/old-generation/payload.txt',
       );
+      assert.equal(
+        await readFile(path.join(plan.dataRoot, 'run-archive/loose-link'), 'utf8'),
+        'archived proof\n',
+      );
       assert.ok((await fs.lstat(path.join(plan.dataRoot, 'run-archive/empty'))).isDirectory());
     }
     await migratePaths(f.options, 'rollback');
-    if (!copy)
+    if (!copy) {
       assert.equal(
         await fs.readlink(path.join(f.archive, 'loose-link')),
         'run-a/old-generation/payload.txt',
       );
+      assert.equal(await readFile(path.join(f.archive, 'loose-link'), 'utf8'), 'archived proof\n');
+    }
+    for (const [link, body] of [
+      ['link', 'proof'],
+      ['chain-link', 'proof'],
+      ['absolute-link', 'proof'],
+      ['outside-link', 'outside proof'],
+    ])
+      assert.equal(await readFile(path.join(task, link), 'utf8'), body);
+    assert.equal(await fs.readlink(path.join(task, 'absolute-link')), originalTarget);
     assert.deepEqual(await inventory(task), expected);
     await assertLegacy(f);
   });
 
-test('cross-volume archive link escaping its moved tree refuses before mutation', async (t) => {
-  const f = await fixture(t);
-  const task = path.join(f.archive, 'run-a/old-generation/task');
-  await mkdir(task);
-  await symlink(
-    path.join(f.checkout, 'slot/.farmslot-runtime/context.json'),
-    path.join(task, 'outside'),
-  );
-  const plan = await planMigration(f.options);
-  for (const step of plan.steps) if (step.kind === 'move') step.method = 'copy';
-  await put(plan.journal, plan);
-  await assert.rejects(migratePaths(f.options, 'apply'), /symlink.*outside|outside.*symlink/i);
-  await assertLegacy(f);
-});
+for (const target of ['missing', 'cycle', 'relative-escape', 'moving-external'] as const)
+  test(`dangling migration link refuses before mutation: ${target}`, async (t) => {
+    const f = await fixture(t);
+    const task = path.join(f.archive, 'run-a/old-generation/task');
+    await mkdir(task);
+    const link = path.join(task, 'bad-link');
+    const targets = {
+      missing: path.join(task, 'missing'),
+      cycle: link,
+      'relative-escape': '../../../../missing',
+      'moving-external': path.join(f.home, 'task-pins/pin/provenance.json'),
+    };
+    await symlink(targets[target], link);
+    const before = await inventory(f.root);
+    await assert.rejects(migratePaths(f.options, 'apply'), /symlink|link/i);
+    assert.deepEqual(await inventory(f.root), before);
+    await assertLegacy(f);
+  });
 
 test('rollback resumes after interruption during cross-volume target removal', async (t) => {
   const f = await fixture(t);

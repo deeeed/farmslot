@@ -456,10 +456,10 @@ export async function restoreFinishedBlindTrialGit(run: Run): Promise<string | n
 }
 
 async function blindFarmPaths(vars: SlotVars) {
-  return (
-    reportedFarmPaths(vars.machine) ??
-    (isLocal(vars.host, vars.machine)
+  const report = reportedFarmPaths(vars.machine);
+  return report?.layout === 2
+    ? report
+    : isLocal(vars.host, vars.machine)
       ? currentFarmPaths('gateway')
-      : legacyRemoteFarmPaths(vars.machineEnv, await farmslotDirectoryForSlot(vars)))
-  );
+      : legacyRemoteFarmPaths(vars.machineEnv, await farmslotDirectoryForSlot(vars));
 }

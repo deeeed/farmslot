@@ -5,13 +5,14 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, mock, test, type TestContext } from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
 
 import { type ResourceKey, resourceKeyId } from '@farmslot/protocol/client-cache';
 import type { ResourceChangedPayload } from '@farmslot/protocol/transport/events';
 
 // Guard must precede all production imports, including transitive PTY imports.
 import '../runtime/mock-pty.test-support.js';
+
+import { withWatcherClock } from '../core/watch-clock.test-support.js';
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fleet-writer-publication-')));
 const statusPath = path.join(root, 'fixture-status.json');
@@ -237,11 +238,12 @@ for (const source of ['pool', 'project'] as const)
       await mkdir(path.dirname(file), { recursive: true });
       await writeFile(file, '{}');
     }
-    const watcher = fleet.startFileWatcher();
-    t.after(() => watcher.close());
-    await watcher.ready;
-    // Keep the producer write outside Chokidar's 50 ms discovery/change coalescer.
-    await delay(60);
+    const watcher = await withWatcherClock(t, async () => {
+      const watcher = fleet.startFileWatcher();
+      t.after(() => watcher.close());
+      await watcher.ready;
+      return watcher;
+    });
     packets = [];
     const previous = JSON.parse(await readFile(file, 'utf8'));
     await writeFile(file, JSON.stringify({ ...previous, label: 'committed config change' }));

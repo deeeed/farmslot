@@ -6,6 +6,7 @@ import { reportedFarmPaths } from '@farmslot/slot-config';
 import { type ProjectVars, type SlotVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
 import { expandTemplateWithReservedLast } from '../core/hooks.js';
+import { farmslotDirForSlot } from '../fleet/farm-paths.js';
 import { nodeExecArgv } from '../fleet/node-rpc.js';
 
 /** Resolve remote helpers from the connected node, which may be a dev deployment. */
@@ -14,7 +15,7 @@ export async function agentRuntimeScriptForSlot(
   filename: string,
 ): Promise<string> {
   const report = reportedFarmPaths(vars.machine);
-  if (report) return path.posix.join(report.code.agentRuntimeScripts, filename);
+  if (report?.layout === 2) return path.posix.join(report.code.agentRuntimeScripts, filename);
   if (isLocal(vars.host, vars.machine))
     return path.posix.join(
       currentFarmPaths('gateway').code.checkout,
@@ -50,21 +51,21 @@ export async function agentRuntimeScriptForSlot(
 
 /** Framework-relative pack commands use the connected node's installation, too. */
 export async function farmslotDirectoryForSlot(
-  vars: Pick<SlotVars, 'host' | 'machine'>,
+  vars: Pick<SlotVars, 'host' | 'machine' | 'machineEnv'>,
 ): Promise<string> {
-  const report = reportedFarmPaths(vars.machine);
-  if (report) return report.code.node;
-  if (isLocal(vars.host, vars.machine)) return currentFarmPaths('gateway').code.checkout;
+  const directory = farmslotDirForSlot(vars);
+  if (reportedFarmPaths(vars.machine)?.layout === 2 || path.posix.isAbsolute(directory))
+    return directory;
   const result = await nodeExecArgv(vars.machine, ['node', '-p', 'process.cwd()'], undefined, {
     timeout: 10_000,
     maxBuffer: 16 * 1024,
   });
-  const directory = result.stdout.trim();
-  if (result.exitCode !== 0 || !path.posix.isAbsolute(directory))
+  const installed = result.stdout.trim();
+  if (result.exitCode !== 0 || !path.posix.isAbsolute(installed))
     throw new Error(
       `The connected node ${vars.machine} cannot resolve its Farmslot installation directory.`,
     );
-  return legacyRemoteFarmPaths({}, directory).code.node;
+  return legacyRemoteFarmPaths({}, installed).code.node;
 }
 
 export async function renderRoleTemplate(

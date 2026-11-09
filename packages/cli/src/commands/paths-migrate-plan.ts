@@ -12,12 +12,13 @@ import {
 import { expandHome } from '@farmslot/protocol/node/farmslot-home';
 
 import {
-  assertContainedLinks,
+  assertMigratedLinks,
   assertUnredirected,
   existingParent,
   info,
   type Inventory,
   inventory,
+  movedInventory,
   within,
 } from './paths-migrate-io.js';
 
@@ -380,17 +381,17 @@ export async function planMigration(options: MigrationOptions): Promise<Migratio
       return;
     }
     const expected = await inventory(source);
-    const method =
+    let method: MoveStep['method'] =
       value.dev === (await info(await existingParent(path.dirname(target))))?.dev
         ? 'rename'
         : 'copy';
-    if (method === 'copy') {
-      try {
-        assertContainedLinks(source, expected);
-      } catch (error) {
-        plan.conflicts.push(String(error));
-      }
-    }
+    const step = { source, target, expected };
+    if (
+      Object.entries(movedInventory(step)).some(
+        ([key, entry]) => entry.digest !== expected[key].digest,
+      )
+    )
+      method = 'copy';
     plan.steps.push({
       kind: 'move',
       source,
@@ -505,5 +506,10 @@ export async function planMigration(options: MigrationOptions): Promise<Migratio
   for (const entry of plan.mappings)
     if (entry.source === entry.target || within(next.data.root, entry.source))
       plan.stays.push({ path: entry.source, reason: 'External data already under the data root' });
+  try {
+    await assertMigratedLinks(plan.steps.filter((step) => step.kind === 'move'));
+  } catch (error) {
+    plan.conflicts.push(String(error));
+  }
   return plan;
 }

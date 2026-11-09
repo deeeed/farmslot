@@ -11,7 +11,6 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
 
 import type { Run, SlotLifecycle, TaskProgressResult } from '@farmslot/protocol';
 // See replay-step-nested-checklist.test.ts: mock.module replaces a module
@@ -24,6 +23,7 @@ import '../runtime/mock-pty.test-support.js';
 
 import * as realConfig from '../core/config.js';
 import * as realState from '../core/state.js';
+import { withWatcherClock } from '../core/watch-clock.test-support.js';
 import * as realFleetState from '../fleet/state.js';
 import { resourceRevisions } from '../resources/revisions.js';
 import * as realRunStore from '../runs/store.js';
@@ -258,8 +258,6 @@ function registerChild(dir: string): void {
  * `index.json` path, which only fsevents replays.
  */
 async function registerChildAndWait(dir: string, label: string): Promise<Emitted> {
-  // Keep the one producer write outside Chokidar's 50 ms startup coalescer.
-  await delay(60);
   registerChild(dir);
   // The initial parent signal can also include this child. Wait for the
   // child-driven report whose parentChecklist contract these tests verify.
@@ -313,12 +311,12 @@ function childProgressOf(entry: Emitted) {
     .find((step) => step.index === 2)?.subtask;
 }
 
-test('the watcher discovers a child unit registered mid-run and emits its marks', async () => {
+test('the watcher discovers a child unit registered mid-run and emits its marks', async (t) => {
   useIds('discovery');
   const root = writeTaskDir();
   emitted.length = 0;
   try {
-    await watchSlot(SLOT_ID, { runId: RUN_ID });
+    await withWatcherClock(t, () => watchSlot(SLOT_ID, { runId: RUN_ID }));
 
     // The registry appears only when the worker runs `mark sub start`: the watch
     // must pick it up without a re-dispatch.
@@ -371,7 +369,7 @@ test('the watcher discovers a child unit registered mid-run and emits its marks'
   }
 });
 
-test('a corrupt child registry is reported at error level, and the watch survives it', async () => {
+test('a corrupt child registry is reported at error level, and the watch survives it', async (t) => {
   useIds('corrupt-registry');
   const root = writeTaskDir();
   emitted.length = 0;
@@ -381,7 +379,7 @@ test('a corrupt child registry is reported at error level, and the watch survive
     errors.push(args.map(String).join(' '));
   };
   try {
-    await watchSlot(SLOT_ID, { runId: RUN_ID });
+    await withWatcherClock(t, () => watchSlot(SLOT_ID, { runId: RUN_ID }));
     await registerChildAndWait(taskDirAbs(), 'the child registration update');
 
     // `mark sub` is the registry's only writer, so a file that does not parse is
@@ -423,7 +421,7 @@ test('a corrupt child registry is reported at error level, and the watch survive
   }
 });
 
-test('a child registered after the watch is armed, with subtasks/ empty, is observed', async () => {
+test('a child registered after the watch is armed, with subtasks/ empty, is observed', async (t) => {
   useIds('arm-then-register');
   // The regression this guards: the watch used to be registered on the
   // not-yet-existing `subtasks/index.json` path. fsevents replays that creation,
@@ -433,7 +431,7 @@ test('a child registered after the watch is armed, with subtasks/ empty, is obse
   const root = writeTaskDir({ withSubtasksDir: true });
   emitted.length = 0;
   try {
-    await watchSlot(SLOT_ID, { runId: RUN_ID });
+    await withWatcherClock(t, () => watchSlot(SLOT_ID, { runId: RUN_ID }));
     // Armed, and the directory is real but empty: nothing has been reported yet.
     assert.deepEqual(emitted, []);
 
@@ -447,7 +445,7 @@ test('a child registered after the watch is armed, with subtasks/ empty, is obse
   }
 });
 
-test('a child registered when subtasks/ did not exist at arm time is observed', async () => {
+test('a child registered when subtasks/ did not exist at arm time is observed', async (t) => {
   useIds('arm-without-dir');
   // `subtasks/` appears only with the first `mark sub start`. The gateway creates
   // it before attaching (both watch primitives observe a file through its parent),
@@ -457,7 +455,7 @@ test('a child registered when subtasks/ did not exist at arm time is observed', 
   emitted.length = 0;
   try {
     assert.equal(existsSync(path.join(taskDirAbs(), 'subtasks')), false);
-    await watchSlot(SLOT_ID, { runId: RUN_ID });
+    await withWatcherClock(t, () => watchSlot(SLOT_ID, { runId: RUN_ID }));
     // The observer created the contract directory and wrote nothing into it.
     assert.equal(existsSync(path.join(taskDirAbs(), 'subtasks')), true);
     assert.deepEqual(readdirSync(path.join(taskDirAbs(), 'subtasks')), []);

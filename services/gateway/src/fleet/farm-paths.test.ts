@@ -20,6 +20,7 @@ import { buildRunnerObservabilityInstallCommand } from '../runners/runner-observ
 import {
   agentRuntimeScriptForSlot,
   farmslotDirectoryForSlot,
+  renderRoleTemplate,
 } from '../tasks/agent-runtime-script.js';
 
 import { farmPathsForSlot } from './farm-paths.js';
@@ -161,7 +162,7 @@ test('layout-2 status writes require the same gateway authority as the legacy st
 });
 
 for (const ipHost of [false, true])
-  test(`legacy registered local helpers use installed checkout, IP host=${ipHost}`, (t) => {
+  test(`legacy registered local helpers use installed checkout, IP host=${ipHost}`, async (t) => {
     const root = mkdtempSync(path.join(tmpdir(), 'installed-workspace-'));
     const prior = process.env;
     process.env = {
@@ -208,6 +209,9 @@ for (const ipHost of [false, true])
       { node: {}, farmPaths: report },
     );
     if (!ipHost) assert.equal(expandTemplate('{{farmslot_dir}}', local), checkout);
+    assert.equal(farmPathsForSlot(local).code.node, '~/farmslot-node');
+    assert.equal(await farmslotDirectoryForSlot(local), checkout);
+    assert.equal(await renderRoleTemplate('{{farmslot_dir}}', local, undefined, {}), checkout);
     assert.ok(
       hostIdentityInspectionCommand(local, 'codex').includes(
         `${checkout}/scripts/provider-account-cli.mjs`,

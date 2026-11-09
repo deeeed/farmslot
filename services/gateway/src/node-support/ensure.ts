@@ -34,7 +34,7 @@ import {
   slotWriteFiles,
 } from '../core/index.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
-import { farmPathsForSlot } from '../fleet/farm-paths.js';
+import { farmPathsForSlot, farmslotDirForSlot } from '../fleet/farm-paths.js';
 import { usesNodeLink } from '../fleet/node-link-policy.js';
 import {
   nodeSupportHashPath,
@@ -229,10 +229,7 @@ export async function ensureNodeSupportBundle(
   if (currentProjectSources() ?? options.projectVars?.sourceContext) {
     // No copied pack bundle is admitted. The service deployment still owns framework scripts.
     return {
-      supportDir:
-        isLocal(vars.host, vars.machine) && !usesNodeLink(vars.machine)
-          ? farmslotRoot()
-          : farmPathsForSlot(vars).code.node,
+      supportDir: farmslotDirForSlot(vars),
       hash: null,
       published: false,
       paths: ['scripts'],
@@ -463,8 +460,7 @@ export async function selectedNodeSupportDir(
   timeout?: number,
 ): Promise<string | undefined> {
   if (isLocal(vars.host, vars.machine) && !usesNodeLink(vars.machine)) return farmslotRoot();
-  if (currentProjectSources() ?? projectVars?.sourceContext)
-    return farmPathsForSlot(vars).code.node;
+  if (currentProjectSources() ?? projectVars?.sourceContext) return farmslotDirForSlot(vars);
   const result = await io.exec(
     vars,
     nodeSupportSelectionCommand(vars.remoteRepo, runtimeDir, farmPathsForSlot(vars).code.support),

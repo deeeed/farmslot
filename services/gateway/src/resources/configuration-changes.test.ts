@@ -4,10 +4,10 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { mock } from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
 
 import type { PRTeamConfig } from '@farmslot/protocol';
 
+import { watcherClock } from '../core/watch-clock.test-support.js';
 import type { ClientState } from '../server/client-state.js';
 
 // All owning files and env are private before importing the config decision core.
@@ -77,12 +77,6 @@ const { canReadResourceKey } = await import('./authorization.js');
 const { createGatewayAuthRuntime, initializeGatewayIdentity } = await import('../security/auth.js');
 const farm = { family: 'configuration', scope: 'farm' } as const;
 const project = { ...farm, project: 'example' };
-
-async function until(check: () => boolean, label: string): Promise<void> {
-  const deadline = Date.now() + 1500;
-  while (!check() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5));
-  assert(check(), label);
-}
 
 test.after(async () => {
   await rm(root, { recursive: true, force: true });
@@ -194,12 +188,12 @@ test('owning project/pool/slot/provider/registration writers publish readable co
   assert.equal((await llmAuthList()).profiles.length, 0);
 });
 
-test('actual external template/project/registration file writes use the existing bounded watcher', async () => {
+test('actual external template/project/registration file writes use the existing bounded watcher', async (t) => {
+  const clock = watcherClock(t);
   const watcher = startFileWatcher();
   try {
     await watcher.ready;
-    // Separate producer writes from Chokidar's 50 ms startup coalescing window.
-    await delay(60);
+    clock.flush();
     for (const [file, content] of [
       [path.join(root, 'projects/example/templates/worker/dev.md'), '# Updated worker template'],
       [projectFile, JSON.stringify({ name: 'example', default_branch: 'trunk' })],
@@ -211,10 +205,7 @@ test('actual external template/project/registration file writes use the existing
       if (file === getOpenClawStorePath()) await mkdir(path.dirname(file), { recursive: true });
       const before = resourceRevisions.revision(farm);
       await writeFile(file, content);
-      const deadline = Date.now() + 1500;
-      while (resourceRevisions.revision(farm) <= before && Date.now() < deadline)
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      assert(resourceRevisions.revision(farm) > before, path.basename(file));
+      await clock.until(() => resourceRevisions.revision(farm) > before, path.basename(file));
     }
     // Stop the existing pool health debounce before performing further filesystem assertions.
     await watcher.close();
@@ -236,23 +227,19 @@ test('actual external template/project/registration file writes use the existing
   }
 });
 
-test('an immediate atomic template replacement publishes after the earlier observation', async () => {
+test('an immediate atomic template replacement publishes after the earlier observation', async (t) => {
+  const clock = watcherClock(t);
   const watcher = startFileWatcher();
   const file = path.join(root, 'projects/example/templates/worker/dev.md');
   const replacement = `${file}.tmp`;
-  const waitForRevision = async (previous: number) => {
-    const deadline = Date.now() + 1500;
-    while (resourceRevisions.revision(farm) <= previous && Date.now() < deadline)
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    assert(
-      resourceRevisions.revision(farm) > previous,
+  const waitForRevision = (previous: number) =>
+    clock.until(
+      () => resourceRevisions.revision(farm) > previous,
       'The final readable replacement must invalidate configuration',
     );
-  };
   try {
     await watcher.ready;
-    // Separate producer writes from Chokidar's 50 ms startup coalescing window.
-    await delay(60);
+    clock.flush();
     const before = resourceRevisions.revision(farm);
     await writeFile(file, '# First observed template');
     await waitForRevision(before);
@@ -358,13 +345,13 @@ test('malformed project sources fail client observations instead of returning an
   assert((await config.configProjects()).projects.some((item) => item.name === 'example'));
 });
 
-test('the selected-home observer invalidates each assessment policy on add, replacement and deletion', async () => {
+test('the selected-home observer invalidates each assessment policy on add, replacement and deletion', async (t) => {
+  const clock = watcherClock(t);
   const watcher = startFileWatcher();
   const key = { family: 'assessment', scope: 'farm' } as const;
   try {
     await watcher.ready;
-    // Separate producer writes from Chokidar's 50 ms startup coalescing window.
-    await delay(60);
+    clock.flush();
     for (const name of [
       'assessment-config.json',
       'assessment-suggestion-policy.json',
@@ -382,7 +369,7 @@ test('the selected-home observer invalidates each assessment policy on add, repl
       ]) {
         const before = resourceRevisions.revision(key);
         await write();
-        await until(() => resourceRevisions.revision(key) > before, name);
+        await clock.until(() => resourceRevisions.revision(key) > before, name);
       }
     }
   } finally {
@@ -390,7 +377,7 @@ test('the selected-home observer invalidates each assessment policy on add, repl
   }
 });
 
-test('the owning home watcher rebinds the selected triage receipt directory', async () => {
+test('the owning home watcher rebinds the selected triage receipt directory', async (t) => {
   const home = path.join(root, 'home');
   const file = path.join(home, 'triage-policy.json');
   const first = path.join(root, 'pilot-first');
@@ -419,13 +406,13 @@ test('the owning home watcher rebinds the selected triage receipt directory', as
       }),
     );
   await writePolicy(first);
+  const clock = watcherClock(t);
   const watcher = startFileWatcher();
   const key = { family: 'assessment', scope: 'farm' } as const;
   try {
     await watcher.ready;
-    // Separate producer writes from Chokidar's 50 ms startup coalescing window.
-    await delay(60);
-    await until(() => {
+    clock.flush();
+    await clock.until(() => {
       try {
         watcher.assertTriagePilotObserved(first);
         return true;
@@ -441,9 +428,9 @@ test('the owning home watcher rebinds the selected triage receipt directory', as
     }, 'current initial triage selection readiness');
     let before = resourceRevisions.revision(key);
     await writeFile(path.join(first, 'evaluation.json'), 'current selected source');
-    await until(() => resourceRevisions.revision(key) > before, 'selected receipt bytes');
+    await clock.until(() => resourceRevisions.revision(key) > before, 'selected receipt bytes');
     await writePolicy(second);
-    await until(() => {
+    await clock.until(() => {
       try {
         watcher.assertTriagePilotObserved(second);
         return true;
@@ -459,7 +446,7 @@ test('the owning home watcher rebinds the selected triage receipt directory', as
     }, 'policy-selected observation replacement');
     before = resourceRevisions.revision(key);
     await writeFile(path.join(second, 'evaluation.json'), 'new selected source');
-    await until(() => resourceRevisions.revision(key) > before, 'new selected receipt bytes');
+    await clock.until(() => resourceRevisions.revision(key) > before, 'new selected receipt bytes');
     assert.throws(() => watcher.assertTriagePilotObserved(first));
   } finally {
     await watcher.close();
@@ -500,6 +487,7 @@ test('the actual PR rule file observer reloads replacements and refuses malforme
   };
   await rules.store.saveTeam(owner.id, config);
   const file = path.join(root, '.pr-rules.json');
+  const clock = watcherClock(t);
   const watcher = startFileWatcher();
   const diagnostics: unknown[][] = [];
   t.mock.method(console, 'error', (...args: unknown[]) => {
@@ -516,23 +504,22 @@ test('the actual PR rule file observer reloads replacements and refuses malforme
   };
   try {
     await watcher.ready;
-    // Separate producer writes from Chokidar's 50 ms startup coalescing window.
-    await delay(60);
+    clock.flush();
     const external = rules.store.snapshot();
     external.teams[0].config.name = 'External team';
     await writeFile(`${file}.tmp`, JSON.stringify(external));
     await rename(`${file}.tmp`, file);
-    await until(
+    await clock.until(
       () => rules.store.snapshot().teams[0].config.name === 'External team',
       'External rule rename must replace readable memory',
     );
     assert(publications.length > 0);
     for (const breakSource of [() => writeFile(file, '{broken'), () => rm(file)]) {
       await breakSource();
-      await until(unavailable, 'A broken rule source must refuse retained memory');
+      await clock.until(unavailable, 'A broken rule source must refuse retained memory');
       await assert.rejects(rules.store.saveTeam(owner.id, config), { code: 'SOURCE_UNAVAILABLE' });
       await writeFile(file, JSON.stringify(external));
-      await until(
+      await clock.until(
         () => !unavailable(),
         'A valid source must recover without reinitializing schedulers',
       );

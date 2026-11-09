@@ -225,11 +225,13 @@ export async function allocateReviewWorkspace(
       throw new Error('Node returned an incompatible worker state root');
     const nativeRoot = state.stateDirectory.slice(0, -suffix.length);
     const configuredRoot = admission.project.staticReview?.workspace?.root;
+    const report = reportedFarmPaths(admission.pool.machine);
+    const reportedRoot = report?.layout === 2 ? report.state.reviewWorkspaces : undefined;
     const root = originalBinding
       ? path.posix.resolve(originalBinding.checkoutPath, '../../..')
       : path.posix.join(
           configuredRoot ??
-            reportedFarmPaths(admission.pool.machine)?.state.reviewWorkspaces ??
+            reportedRoot ??
             path.posix.join(path.posix.dirname(nativeRoot), 'review-workspaces'),
           ownerHash,
         );

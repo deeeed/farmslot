@@ -4,10 +4,11 @@ import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
 
 import { DEFAULT_PRESSURE_STALE_AFTER_MS, type FleetStatus, Methods } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
+
+import { withWatcherClock } from '../core/watch-clock.test-support.js';
 
 const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'slot-binding-resources-')));
 process.env.NODE_TEST_CONTEXT = '1';
@@ -68,11 +69,12 @@ test('project catalog writes notify capabilities and retire the owning project v
   assert.equal((await loadProjectVars(project)).projectJson.default_branch, 'before');
   const key = { family: 'capabilities' } as const;
   const before = resourceRevisions.revision(key);
-  const watcher = startFileWatcher();
-  t.after(() => watcher.close());
-  await watcher.ready;
-  // Keep fixture mutations outside Chokidar's 50 ms discovery/change coalescer.
-  await delay(60);
+  await withWatcherClock(t, async () => {
+    const watcher = startFileWatcher();
+    t.after(() => watcher.close());
+    await watcher.ready;
+    return watcher;
+  });
   await fs.writeFile(file, JSON.stringify({ name: project, default_branch: 'after' }));
   const deadline = Date.now() + 3000;
   while (resourceRevisions.revision(key) === before) {
@@ -387,11 +389,12 @@ test(
     const detail = { family: 'slot', slotId: 'proof' } as const;
     const before = resourceRevisions.revision(detail);
     const beforeRuns = resourceRevisions.revision(key);
-    const watcher = startFileWatcher();
-    t.after(() => watcher.close());
-    await watcher.ready;
-    // Keep fixture mutations outside Chokidar's 50 ms discovery/change coalescer.
-    await delay(60);
+    const watcher = await withWatcherClock(t, async () => {
+      const watcher = startFileWatcher();
+      t.after(() => watcher.close());
+      await watcher.ready;
+      return watcher;
+    });
     await fs.unlink(pool);
     const deadline = Date.now() + 4500;
     while (resourceRevisions.revision(detail) === before) {
@@ -568,11 +571,12 @@ test(
     overlays.setBranchOverlay('proof', 'retained-watch-branch');
     overlays.setTaskProgressOverlay('proof', 'Verify', 1, 2);
     resources.setCachedResourceStatus('proof', 'watch-resource', 'running', { broadcast: false });
-    const watcher = startFileWatcher();
-    t.after(() => watcher.close());
-    await watcher.ready;
-    // Keep fixture mutations outside Chokidar's 50 ms discovery/change coalescer.
-    await delay(60);
+    await withWatcherClock(t, async () => {
+      const watcher = startFileWatcher();
+      t.after(() => watcher.close());
+      await watcher.ready;
+      return watcher;
+    });
     t.diagnostic('Both filesystem watchers are ready');
     let receiver: ((fleet: FleetStatus) => void) | undefined;
     onStateChange((fleet) => receiver?.(fleet));

@@ -6,7 +6,6 @@ import { createRequire, syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 
 const require = createRequire(new URL('../../services/gateway/package.json', import.meta.url));
@@ -45,6 +44,7 @@ for (const [format, { watch }] of [
         stub.mock.restore();
         syncBuiltinESMExports();
       });
+      t.mock.timers.enable({ apis: ['setTimeout'] });
       const watcher = watch(file, { persistent: false, ignoreInitial: true });
       t.after(() => watcher.close());
       await once(watcher, 'ready');
@@ -59,8 +59,9 @@ for (const [format, { watch }] of [
       assert.equal((await changed)[0], file);
       const [, name, details] = await raw;
       assert.equal(path.resolve(path.dirname(details.watchedPath), name), file);
-      // Chokidar coalesces change notifications for 50 ms. Observe replacement separately.
-      await delay(60);
+      // Advance Chokidar's timers before observing replacement, with no wall-clock wait.
+      t.mock.timers.tick(1001);
+      t.mock.timers.reset();
       const replacement = once(watcher, 'change');
       await writeFile(file + '.next', 'replacement');
       await rename(file + '.next', file);

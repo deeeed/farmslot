@@ -8,8 +8,8 @@ import { TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
 import { expandHome } from '@farmslot/protocol/node/farmslot-home';
 
 import {
-  assertContainedLinks,
   assertIdentity,
+  assertMigratedLinks,
   assertUnredirected,
   atomicFile,
   availableBytes,
@@ -17,6 +17,7 @@ import {
   hasCode,
   info,
   inventory,
+  movedInventory,
   removeVerifiedSource,
   syncDirectory,
   within,
@@ -165,6 +166,7 @@ async function assertSafe(
 ): Promise<void> {
   if (plan.conflicts.length) throw new Error(`Migration conflicts:\n${plan.conflicts.join('\n')}`);
   await assertOffline(plan, env);
+  await assertMigratedLinks(plan.steps.filter((step) => step.kind === 'move'));
   for (const mapping of plan.mappings) {
     await assertUnredirected(mapping.source);
     await assertUnredirected(mapping.target);
@@ -175,8 +177,6 @@ async function assertSafe(
         ? path.dirname(step.target)
         : step.target,
     );
-    if (step.kind === 'move' && step.method === 'copy')
-      assertContainedLinks(step.source, step.expected);
     if (step.kind === 'move' && (await info(step.source))) {
       for (const name of Object.keys(await inventory(step.source)))
         if (name.split(path.sep).some((part) => part.startsWith('.retention-')))
@@ -251,12 +251,13 @@ async function moveStep(plan: MigrationPlan, step: MoveStep): Promise<void> {
   await ensureDirectory(plan, path.dirname(step.target));
   const source = await info(step.source);
   const target = await info(step.target);
+  const destination = movedInventory(step);
   if (target) {
-    await assertIdentity(step.target, step.expected);
+    await assertIdentity(step.target, destination);
     if (source) {
       if (step.method !== 'copy' || step.phase !== 'copy-verified')
         throw new Error(`Migration target exists with source: ${step.target}`);
-      await removeVerifiedSource(step.source, step.target, step.expected);
+      await removeVerifiedSource(step.source, step.target, step.expected, destination);
     }
     return;
   }
@@ -269,14 +270,14 @@ async function moveStep(plan: MigrationPlan, step: MoveStep): Promise<void> {
   } else {
     const partial = `${step.target}.migrate-${plan.id}.partial`;
     await assertUnredirected(partial);
-    await copyTree(step.source, partial, step.expected);
-    await assertIdentity(partial, step.expected);
+    await copyTree(step.source, partial, destination);
+    await assertIdentity(partial, destination);
     await assertIdentity(step.source, step.expected);
     step.phase = 'copy-verified';
     await save(plan);
     await rename(partial, step.target);
     await syncDirectory(path.dirname(step.target));
-    await removeVerifiedSource(step.source, step.target, step.expected);
+    await removeVerifiedSource(step.source, step.target, step.expected, destination);
   }
 }
 async function writeStep(
@@ -475,12 +476,13 @@ export async function migratePaths(
           await atomicFile(step.target, await readFile(step.backup), step.mode);
         }
       } else {
+        const destination = movedInventory(step);
         await assertUnredirected(
           step.expected['']?.kind === 'link' ? path.dirname(step.source) : step.source,
         );
         if (await info(step.target)) {
           if (step.rollbackPhase !== 'copy-verified')
-            await assertIdentity(step.target, step.expected);
+            await assertIdentity(step.target, destination);
           await mkdir(path.dirname(step.source), { recursive: true });
           if (step.method === 'rename') {
             if (await info(step.source)) throw new Error(`Rollback source exists: ${step.source}`);
@@ -494,7 +496,7 @@ export async function migratePaths(
               step.rollbackPhase = 'copy-verified';
               await save(plan);
             }
-            await removeVerifiedSource(step.target, step.source, step.expected);
+            await removeVerifiedSource(step.target, step.source, destination, step.expected);
           }
         }
         await syncDirectory(path.dirname(step.source));
