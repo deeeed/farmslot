@@ -232,7 +232,7 @@ function modelEntry(row, source, defaults, info = {}, configured = {}) {
           },
         }
       : {}),
-    input: source === 'router' ? ['text', 'image'] : ['text'],
+    input: ['text', 'image'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: modelLimit(
       context,
@@ -292,15 +292,12 @@ export async function resolvePiProviderCatalog(env = process.env, opts = {}) {
 /** @typedef {{ provider: string, model: string, contextWindow: number, maxTokens: number, reasoning: boolean, effort: string, requestedMaxTokens?: number }} PiModelRequestConfiguration */
 
 /**
- * Refuse a reasoning-enabled request that Pi downgraded to non-reasoning; record actual wire effort.
+ * Refuse undeclared effort changes before sending; record actual wire effort.
  * @param {(configuration: PiModelRequestConfiguration) => void} [onRequest]
+ * @param {string} [requestedEffort]
  */
-export function providerReasoningFetch(fetchImpl, providers = [], onRequest) {
-  const byUrl = new Map(
-    providers
-      .filter((source) => ['router', 'litellm'].includes(source.id))
-      .map((source) => [`${source.baseUrl}/chat/completions`, source]),
-  );
+export function providerReasoningFetch(fetchImpl, providers = [], onRequest, requestedEffort) {
+  const byUrl = new Map(providers.map((source) => [`${source.baseUrl}/chat/completions`, source]));
   if (byUrl.size === 0) return fetchImpl;
   return async (input, options = {}) => {
     const url = input instanceof Request ? input.url : String(input);
@@ -309,8 +306,17 @@ export function providerReasoningFetch(fetchImpl, providers = [], onRequest) {
       const raw = options.body ?? (input instanceof Request ? await input.clone().text() : '');
       const payload = JSON.parse(raw);
       const model = provider.models.find((entry) => entry.id === payload.model);
+      const effort = payload.reasoning_effort;
+      if (model && requestedEffort) {
+        const mapped = model.thinkingLevelMap?.[requestedEffort];
+        const expected =
+          mapped === undefined ? (requestedEffort === 'off' ? undefined : requestedEffort) : mapped;
+        if (effort !== expected)
+          throw new PiProviderConfigurationError(
+            `PI_REASONING_EFFORT_MISMATCH: Model ${provider.id}/${model.id} requested ${requestedEffort}, mapped to ${expected}, but wire effort was ${effort}`,
+          );
+      }
       if (model && (provider.id === 'router' || model.reasoning)) {
-        const effort = payload.reasoning_effort;
         if (
           !model.reasoning ||
           typeof effort !== 'string' ||
