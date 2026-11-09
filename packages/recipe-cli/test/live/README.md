@@ -19,3 +19,15 @@ node --import tsx packages/recipe-cli/test/live/recipe-task-context.test.mts
 Uses disposable project/provider/task fixtures with the real CLI and engine. Checks
 both acceptance artifacts, explicit provider selection, retained receipts and a
 provider action with explicit output storage. No device or existing farm run changes.
+
+## Sandbox process identity
+
+```bash
+TSX_TSCONFIG_PATH=packages/recipe-cli/tsconfig.json node --import tsx --test packages/recipe-cli/test/live/sandbox-process-identity.test.mts
+```
+
+Runs the command journal, task view and checkout lock in a child process that may
+not run `ps`: under real `sandbox-exec` on macOS (EPERM, setuid `/bin/ps` refused)
+and with a non-executable `ps` on `PATH` (EACCES). Each child compiles the CLI
+sources through tsx, about 10-13 seconds per case, so it is outside default CI.
+`test/sandbox-process-identity.test.ts` covers the same behaviour in-process.
