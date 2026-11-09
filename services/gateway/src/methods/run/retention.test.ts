@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -31,9 +31,15 @@ import {
   runsDirectory,
   runSessionArchiveDir,
   updateRun,
+  withTaskAdmission,
 } from '../../runs/store.js';
 
-import { retentionContext, RUN_RETENTION_DEPS, runRetentionPass } from './retention.js';
+import {
+  formatRunRetention,
+  retentionContext,
+  RUN_RETENTION_DEPS,
+  runRetentionPass,
+} from './retention.js';
 import { makeRun } from './test-fixtures.js';
 
 const NOW = Date.parse('2026-10-20T12:00:00.000Z');
@@ -350,6 +356,14 @@ test('a settled untagged 48h run keeps both live and archived records while all 
     assert.ok(manifest.entries.length >= 5);
     for (const entry of manifest.entries) {
       assert.equal(existsSync(entry.source), false);
+      if (entry.store === 'task-pins' || entry.store === 'review-workspaces') {
+        assert.equal(entry.state, 'deleted');
+        assert.equal('destination' in entry, false);
+        assert.equal('staged' in entry, false);
+        assert.ok(entry.bytes > 0);
+        assert.ok(entry.deletedAt);
+        continue;
+      }
       assert.ok(existsSync(entry.destination));
       assert.ok(entry.destination.endsWith(entry.source));
       if (entry.store !== 'task-pins')
@@ -579,3 +593,205 @@ test('the pass holds the bundle lock one run at a time, so a waiting admission g
   assert.equal(order[1], 'admission');
   assert.deepEqual([order[0], order[2]].sort(), [...ids].sort());
 });
+
+async function recreatableRun(t: test.TestContext) {
+  const roots = await retentionRoots(t, runsDirectory());
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    mode: 'autonomous',
+    ticketOrPr: 'RETENTION-DELETE',
+  });
+  const task = path.join(roots.taskRoots[0], run.id);
+  const review = path.join(roots.reviewWorkspaces, 'owner', 'runs', run.id);
+  updateRun(run.id, {
+    status: 'done',
+    completedAt: settled,
+    taskFile: path.join(task, 'TASK.md'),
+    reviewWorkspace: workspace(review),
+  });
+  await persistRunNow(run);
+  await file(path.join(task, 'TASK.md'));
+  await file(path.join(review, 'source', 'copy'));
+  const taskPin = await pin(roots, run.id, task, NOW - RUN_RETENTION_AGE_MS - 60_000);
+  const options = { apply: true, roots, now: Date.now() + RUN_RETENTION_AGE_MS + 60_000 };
+  const manifest = async () =>
+    JSON.parse(await readFile(storageArchiveManifest(roots.archiveRoot, run.id), 'utf8'));
+  return { roots, run, task, review, taskPin, options, manifest };
+}
+
+test(
+  'settled retention deletes recreatable copies and journals them beside the archived task',
+  { timeout: 4500 },
+  async (t) => {
+    const f = await recreatableRun(t);
+    await runRetentionPass(f.options, privateDeps);
+    assert.equal(existsSync(f.taskPin), false);
+    assert.equal(existsSync(f.review), false);
+    assert.equal(existsSync(f.task), false);
+    const { entries } = await f.manifest();
+    for (const [store, source] of [
+      ['task-pins', f.taskPin],
+      ['review-workspaces', f.review],
+    ]) {
+      const entry = entries.find((entry: { source: string }) => entry.source === source);
+      assert.deepEqual(Object.keys(entry).sort(), [
+        'bytes',
+        'deletedAt',
+        'source',
+        'state',
+        'store',
+      ]);
+      assert.equal(entry.state, 'deleted');
+      assert.equal(entry.store, store);
+      assert.ok(entry.bytes > 0);
+      assert.ok(Number.isFinite(Date.parse(entry.deletedAt)));
+    }
+    const archived = entries.filter((entry: { state: string }) => entry.state === 'archived');
+    assert.deepEqual(
+      archived.map((entry: { store: string }) => entry.store),
+      ['task-dirs'],
+    );
+    assert.equal(
+      await readFile(path.join(archived[0].destination, 'TASK.md'), 'utf8'),
+      'x'.repeat(4096),
+    );
+  },
+);
+
+test(
+  'recreatable pins survive admission, a retention hold and an active run',
+  { timeout: 4500 },
+  async (t) => {
+    const f = await recreatableRun(t);
+    await withTaskAdmission(path.join(f.task, 'TASK.md'), async () => {
+      await runRetentionPass(f.options, privateDeps);
+      assert.ok(existsSync(f.taskPin));
+    });
+    for (const patch of [{ tags: ['keep'] }, { tags: [], status: 'monitoring' as const }]) {
+      updateRun(f.run.id, patch);
+      await runRetentionPass(f.options, privateDeps);
+      assert.ok(existsSync(f.taskPin));
+    }
+    const other = await recreatableRun(t);
+    await rm(f.task, { recursive: true });
+    const activePlan = await runRetentionPass({ ...f.options, apply: false }, privateDeps);
+    assert.equal(activePlan.paths['task-pins'].includes(f.taskPin), false);
+    // The other candidate scans this pin root while the active owner has no task directory.
+    await runRetentionPass(
+      { ...other.options, roots: { ...other.roots, taskPins: f.roots.taskPins } },
+      privateDeps,
+    );
+    assert.ok(existsSync(f.taskPin));
+    // An admission can also precede writing a missing task directory.
+    updateRun(f.run.id, { status: 'done' });
+    await withTaskAdmission(path.join(f.task, 'TASK.md'), async () => {
+      await runRetentionPass(f.options, privateDeps);
+      assert.ok(existsSync(f.taskPin));
+    });
+    await runRetentionPass(f.options, {
+      ...privateDeps,
+      holdsSlot: async (run) => run.id === f.run.id,
+    });
+    assert.ok(existsSync(f.taskPin));
+    await runRetentionPass(f.options, privateDeps);
+    assert.equal(existsSync(f.taskPin), false);
+    assert.equal(
+      (await f.manifest()).entries.find((entry: { source: string }) => entry.source === f.taskPin)
+        .state,
+      'deleted',
+    );
+  },
+);
+
+test(
+  'deleting a run workspace leaves shared review caches and symlink targets untouched',
+  { timeout: 4500 },
+  async (t) => {
+    const f = await recreatableRun(t);
+    const caches = ['repositories', 'support'].map((name) =>
+      path.join(f.roots.reviewWorkspaces, 'owner', name, 'bytes'),
+    );
+    for (const cache of caches) await file(cache);
+    await symlink(path.dirname(caches[0]), path.join(f.review, 'external-cache'));
+    const shared = createRun({
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      mode: 'autonomous',
+      ticketOrPr: 'RETENTION-SHARED-REVIEW',
+    });
+    updateRun(shared.id, { status: 'monitoring', reviewWorkspace: workspace(f.review) });
+    await persistRunNow(shared);
+    await runRetentionPass(f.options, privateDeps);
+    assert.ok(existsSync(f.review), 'an active shared owner keeps its workspace');
+    updateRun(shared.id, { reviewWorkspace: undefined });
+    await runRetentionPass(f.options, privateDeps);
+    for (const cache of caches) assert.equal(await readFile(cache, 'utf8'), 'x'.repeat(4096));
+    const entry = (await f.manifest()).entries.find(
+      (entry: { source: string }) => entry.source === f.review,
+    );
+    assert.equal(entry.state, 'deleted');
+    assert.equal('destination' in entry, false);
+    const escaped = await recreatableRun(t);
+    const owner = path.join(escaped.roots.reviewWorkspaces, 'owner');
+    const outside = path.join(path.dirname(escaped.roots.reviewWorkspaces), 'outside-review');
+    await rename(owner, outside);
+    await symlink(outside, owner);
+    await runRetentionPass(escaped.options, privateDeps);
+    assert.ok(
+      existsSync(path.join(outside, 'runs', escaped.run.id, 'source', 'copy')),
+      'a symlink parent cannot redirect deletion outside the store',
+    );
+    assert.equal(
+      (await escaped.manifest()).entries.some(
+        (entry: { state: string }) => entry.state === 'deleted',
+      ),
+      false,
+    );
+  },
+);
+
+test(
+  'deleted manifests resume cleanly and dry runs distinguish deleted bytes from archived bytes',
+  { timeout: 4500 },
+  async (t) => {
+    const f = await recreatableRun(t);
+    await stageStoragePaths(f.roots.archiveRoot, f.run.id, [
+      { source: f.taskPin, store: 'task-pins' },
+    ]);
+    await pin(f.roots, f.run.id, f.task, NOW - RUN_RETENTION_AGE_MS - 60_000);
+    const plan = await runRetentionPass({ ...f.options, apply: false }, privateDeps);
+    const formatted = formatRunRetention(plan);
+    assert.match(formatted, /task-pins deleted/);
+    assert.match(formatted, /review-workspaces deleted/);
+    assert.match(formatted, /task-dirs archived/);
+    assert.ok(plan.stores['task-pins'].bytes > 0);
+    assert.ok(plan.stores['review-workspaces'].bytes > 0);
+    assert.ok(existsSync(f.taskPin));
+    await runRetentionPass(f.options, privateDeps);
+    const before = await f.manifest();
+    const oldPin = before.entries.find(
+      (entry: { store: string; state: string }) =>
+        entry.store === 'task-pins' && entry.state === 'archived',
+    );
+    assert.ok(existsSync(oldPin.destination), 'previously archived pins remain archived');
+    const again = await runRetentionPass(f.options, privateDeps);
+    assert.deepEqual(again.runs, []);
+    assert.equal(again.stores['task-pins'].entries, 0);
+    assert.equal(again.stores['review-workspaces'].entries, 0);
+    assert.deepEqual(await f.manifest(), before);
+    await writeFile(
+      storageArchiveManifest(f.roots.archiveRoot, f.run.id),
+      JSON.stringify({
+        ...before,
+        entries: before.entries.filter((entry: { state: string }) => entry.state !== 'deleted'),
+      }),
+    );
+    const recovered = await runRetentionPass(f.options, privateDeps);
+    assert.deepEqual(
+      recovered.runs,
+      [],
+      'a deletion whose journal was interrupted safely skips missing copies',
+    );
+  },
+);

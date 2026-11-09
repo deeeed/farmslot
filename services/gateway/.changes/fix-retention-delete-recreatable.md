@@ -1,0 +1,1 @@
+- Retention deletes recreatable task pins and run-owned review workspaces after the existing eligibility and ownership checks, records deletions in storage manifests, and reports deleted bytes separately from archived bytes. Other run storage and permanent run records keep their existing retention behavior.

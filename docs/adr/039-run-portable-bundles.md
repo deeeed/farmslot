@@ -580,3 +580,10 @@ instance's files are deleted once nothing reads them; any unique run history,
 evidence or datasets they hold move to `FARMSLOT_DATA` first. Settled task pins
 are archived to `FARMSLOT_DATA`, never deleted. Directories with no reader are
 archived there too.
+
+
+## Amendment 7: 2026-11-09 recreatable run storage is deleted, not archived
+
+**Status:** Accepted by Arthur, 2026-11-09.
+
+Task pins and run-owned review workspaces are recreatable copies. Retention deletes them under the same eligibility, admission and ownership checks used for archival, and journals each deletion in the run's storage manifest with `state: 'deleted'`, `store`, `source`, `bytes` and `deletedAt`, without a destination. Manifest recovery and restore skip these entries. Shared review caches remain untouched. Everything else keeps Amendments 3 and 5 archival, including agent logs and session archives, final reports and task directories, run bundles and evidence. Run records are still never deleted. Existing archived pins and workspaces remain archived.

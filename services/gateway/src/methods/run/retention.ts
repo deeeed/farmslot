@@ -22,6 +22,7 @@ import {
   diskBytes,
   planRunRetention,
   retiredTaskPins,
+  retentionStoreAction,
   runOwnedPaths,
   type RunPrState,
   type RunRetentionContext,
@@ -36,6 +37,7 @@ import {
   runArchiveRoot,
   stageStoragePaths,
   storageArchiveManifest,
+  type StorageDeletion,
 } from '../../runs/storage-archive.js';
 import {
   getAllRuns,
@@ -46,6 +48,7 @@ import {
   recordRunStorageArchive,
   runsDirectory,
   runSessionArchiveDir,
+  runTaskDirectories,
 } from '../../runs/store.js';
 
 type Emit = (event: string, payload: unknown) => void;
@@ -179,7 +182,7 @@ export const RUN_RETENTION_DEPS: RunRetentionDeps = {
     }),
 };
 
-/** Archive only eligible run-owned storage. Live and archived run records stay in place forever. */
+/** Archive irreplaceable storage and delete recreatable copies only for eligible runs. Live and archived run records stay in place forever. */
 export async function runRetentionPass(
   options: { apply: boolean; emit?: Emit; now?: number; roots?: RunRetentionRoots },
   deps: RunRetentionDeps = RUN_RETENTION_DEPS,
@@ -260,6 +263,7 @@ export async function runRetentionPass(
           roots.taskPins,
           new Set(files.filter((file) => file.store === 'task-dirs').map((file) => file.source)),
           context.now,
+          new Set(others.flatMap(runTaskDirectories)),
         );
         for (const source of pins)
           files.push({ source, store: 'task-pins', bytes: await diskBytes(source) });
@@ -269,35 +273,60 @@ export async function runRetentionPass(
         }
         await recordRunStorageArchive(run.id, storageArchiveManifest(roots.archiveRoot, run.id));
         await getRunWithArchived(run.id); // Reload after the durable link invalidates archived cache.
-        await stageStoragePaths(roots.archiveRoot, run.id, files, () => {
-          const latest = getCachedRunWithArchived(run.id);
-          if (!latest || runRetentionHold(latest, context)) return false;
-          const current = [...runs, ...getAllRuns()].filter(
-            (other) =>
-              other.id !== run.id &&
-              (!processed.has(other.id) || Boolean(runRetentionHold(other, context))),
-          );
-          const eligible = runOwnedPaths([run], current, roots);
-          return files.every((file) => {
-            if (file.store === 'task-pins') {
-              const provenance: { taskDir?: unknown } = JSON.parse(
-                readFileSync(path.join(file.source, 'provenance.json'), 'utf8'),
-              );
-              const taskDir = provenance.taskDir;
-              if (typeof taskDir !== 'string' || isTaskDirectoryAdmitting(taskDir)) return false;
-              return (
-                !existsSync(taskDir) ||
-                files.some(
-                  (entry) => entry.store === 'task-dirs' && entry.source === path.resolve(taskDir),
-                )
-              );
-            }
-            return (
-              eligible[file.store].includes(file.source) &&
-              (file.store !== 'task-dirs' || !isTaskDirectoryAdmitting(file.source))
+        const archiveFiles = files.filter(
+          (file) => retentionStoreAction(file.store) === 'archived',
+        );
+        const deleteFiles: StorageDeletion[] = files.flatMap((file) =>
+          file.store === 'task-pins' || file.store === 'review-workspaces'
+            ? [
+                {
+                  ...file,
+                  store: file.store,
+                  root: file.store === 'task-pins' ? roots.taskPins : roots.reviewWorkspaces,
+                },
+              ]
+            : [],
+        );
+        await stageStoragePaths(
+          roots.archiveRoot,
+          run.id,
+          archiveFiles,
+          () => {
+            const latest = getCachedRunWithArchived(run.id);
+            if (!latest || runRetentionHold(latest, context)) return false;
+            const current = [...runs, ...getAllRuns()].filter(
+              (other) =>
+                other.id !== run.id &&
+                (!processed.has(other.id) || Boolean(runRetentionHold(other, context))),
             );
-          });
-        });
+            const eligible = runOwnedPaths([run], current, roots);
+            return files.every((file) => {
+              if (file.store === 'task-pins') {
+                const provenance: { taskDir?: unknown } = JSON.parse(
+                  readFileSync(path.join(file.source, 'provenance.json'), 'utf8'),
+                );
+                const taskDir = provenance.taskDir;
+                if (typeof taskDir !== 'string' || isTaskDirectoryAdmitting(taskDir)) return false;
+                if (
+                  current.some((other) => runTaskDirectories(other).includes(path.resolve(taskDir)))
+                )
+                  return false;
+                return (
+                  !existsSync(taskDir) ||
+                  files.some(
+                    (entry) =>
+                      entry.store === 'task-dirs' && entry.source === path.resolve(taskDir),
+                  )
+                );
+              }
+              return (
+                eligible[file.store].includes(file.source) &&
+                (file.store !== 'task-dirs' || !isTaskDirectoryAdmitting(file.source))
+              );
+            });
+          },
+          deleteFiles,
+        );
         processed.add(run.id);
         stagedRuns.push({ id: run.id, files });
       } catch (error) {
@@ -324,7 +353,10 @@ export async function runRetentionPass(
 
 export function formatRunRetention(plan: RunRetentionPlan): string {
   const stores = Object.entries(plan.stores)
-    .map(([store, { entries, bytes }]) => `${store} ${entries} (${(bytes / 1e9).toFixed(2)} GB)`)
+    .map(
+      ([store, { entries, bytes }]) =>
+        `${store} ${retentionStoreAction(store)} ${entries} (${(bytes / 1e9).toFixed(2)} GB)`,
+    )
     .join(', ');
   return `${plan.runs.length} run(s): ${stores}`;
 }
@@ -338,7 +370,7 @@ export function startRunRetention(emit: Emit): void {
     running = true;
     runRetentionPass({ apply: true, emit })
       .then((plan) => {
-        if (plan.runs.length) console.log(`[run-retention] archived ${formatRunRetention(plan)}`);
+        if (plan.runs.length) console.log(`[run-retention] ${formatRunRetention(plan)}`);
       })
       .catch((err) =>
         console.error(

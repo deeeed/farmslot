@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream, existsSync, renameSync } from 'node:fs';
+import { createReadStream, existsSync, lstatSync, renameSync, rmSync } from 'node:fs';
 import { cp, lstat, mkdir, open, readdir, readFile, readlink, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -14,7 +14,7 @@ export function runArchiveRoot(): string {
   return process.env.FARMSLOT_RUN_ARCHIVE_ROOT ?? path.join(farmslotHome(), 'run-archive');
 }
 
-export interface StorageArchiveEntry {
+interface ArchivedStorageEntry {
   source: string;
   staged: string;
   destination: string;
@@ -23,6 +23,23 @@ export interface StorageArchiveEntry {
   verifiedCopy?: Record<string, string>;
   partial?: string;
   state?: 'planned' | 'staged' | 'archived';
+}
+
+export interface DeletedStorageEntry {
+  state: 'deleted';
+  store: 'task-pins' | 'review-workspaces';
+  source: string;
+  bytes: number;
+  deletedAt: string;
+}
+
+export type StorageArchiveEntry = ArchivedStorageEntry | DeletedStorageEntry;
+
+export interface StorageDeletion {
+  source: string;
+  store: DeletedStorageEntry['store'];
+  bytes: number;
+  root: string;
 }
 
 interface StorageArchiveManifest {
@@ -77,15 +94,24 @@ async function saveManifest(file: string, manifest: StorageArchiveManifest): Pro
     const prior: StorageArchiveManifest = existsSync(file)
       ? JSON.parse(await readFile(file, 'utf8'))
       : { runId: manifest.runId, entries: [] };
-    const entries = new Map(prior.entries.map((entry) => [entry.destination, entry]));
+    const key = (entry: StorageArchiveEntry) =>
+      entry.state === 'deleted'
+        ? `deleted:${entry.store}:${entry.source}:${entry.deletedAt}`
+        : entry.destination;
+    const entries = new Map(prior.entries.map((entry) => [key(entry), entry]));
     const phases = { planned: 0, staged: 1, archived: 2 };
     for (const entry of manifest.entries) {
-      const old = entries.get(entry.destination);
+      const old = entries.get(key(entry));
+      if (entry.state === 'deleted') {
+        entries.set(key(entry), entry);
+        continue;
+      }
+      if (old?.state === 'deleted') throw new Error('Archive entry key collision');
       const state =
         phases[old?.state ?? 'planned'] > phases[entry.state ?? 'planned']
           ? old?.state
           : entry.state;
-      entries.set(entry.destination, {
+      entries.set(key(entry), {
         ...old,
         ...entry,
         state,
@@ -133,7 +159,7 @@ async function syncTree(file: string): Promise<void> {
 }
 
 async function finishEntry(entry: StorageArchiveEntry, save: () => Promise<void>): Promise<void> {
-  if (entry.completedAt) return;
+  if (entry.state === 'deleted' || entry.completedAt) return;
   if (existsSync(entry.staged)) {
     await assertHeavyWriteRoom(path.dirname(entry.destination));
     await mkdir(path.dirname(entry.destination), { recursive: true });
@@ -199,6 +225,7 @@ export async function stageStoragePaths(
   runId: string,
   files: { source: string; store: string }[],
   beforeStage: () => boolean = () => true,
+  deletions: StorageDeletion[] = [],
 ): Promise<void> {
   const manifestPath = storageArchiveManifest(root, runId);
   const manifest: StorageArchiveManifest = existsSync(manifestPath)
@@ -210,7 +237,9 @@ export async function stageStoragePaths(
       throw new Error('Archive cannot overlap its source');
     if (!existsSync(source)) continue;
     const relative = source.slice(path.parse(source).root.length);
-    const prior = manifest.entries.find((entry) => entry.source === source && !entry.completedAt);
+    const prior = manifest.entries.find(
+      (entry) => entry.state !== 'deleted' && entry.source === source && !entry.completedAt,
+    );
     if (prior) continue;
     // Keep every generation if a restored task is later archived again.
     const generation = randomUUID();
@@ -228,6 +257,7 @@ export async function stageStoragePaths(
   const selected = new Set(files.map((file) => path.resolve(file.source)));
   for (const entry of manifest.entries) {
     if (
+      entry.state !== 'deleted' &&
       !entry.completedAt &&
       selected.has(entry.source) &&
       existsSync(entry.source) &&
@@ -237,7 +267,34 @@ export async function stageStoragePaths(
       entry.state = 'staged';
     }
   }
-  await saveManifest(manifestPath, manifest);
+  // Stay synchronous from the ownership re-check through staging and deletion. No
+  // admission can pick these paths up between the check and the destructive step.
+  try {
+    for (const file of deletions) {
+      const source = path.resolve(file.source);
+      const storeRoot = path.resolve(file.root);
+      const relative = path.relative(storeRoot, source);
+      if (!relative || relative.startsWith('..') || path.isAbsolute(relative))
+        throw new Error(`Deletion must be inside its store: ${source}`);
+      // rm does not follow child symlinks, but a symlink in a parent would escape
+      // the store before rm sees the exact path. Refuse those parents too.
+      for (let parent = path.dirname(source); ; parent = path.dirname(parent)) {
+        if (lstatSync(parent).isSymbolicLink())
+          throw new Error(`Deletion parent is a symlink: ${parent}`);
+        if (parent === storeRoot) break;
+      }
+      rmSync(source, { recursive: true, force: true });
+      manifest.entries.push({
+        state: 'deleted',
+        store: file.store,
+        source,
+        bytes: file.bytes,
+        deletedAt: new Date().toISOString(),
+      });
+    }
+  } finally {
+    await saveManifest(manifestPath, manifest);
+  }
 }
 
 export async function finishStorageArchive(root: string, runId: string): Promise<void> {
@@ -246,6 +303,7 @@ export async function finishStorageArchive(root: string, runId: string): Promise
     if (!existsSync(manifestPath)) return;
     const manifest: StorageArchiveManifest = JSON.parse(await readFile(manifestPath, 'utf8'));
     for (const entry of manifest.entries) {
+      if (entry.state === 'deleted') continue;
       if (!entry.completedAt && !existsSync(entry.staged) && !existsSync(entry.destination))
         continue;
       await finishEntry(entry, () => saveManifest(manifestPath, manifest));
