@@ -25,7 +25,9 @@ import { getRun, updateRun } from '../runs/store.js';
 
 import { recordedReviewRounds } from './recorded-review-rounds.test-support.js';
 import {
+  fingerprintReviewedInputs,
   lastIssuesReviewInputsChanged,
+  noteReviewFixInputsAtLaunch,
   noteReviewInputsAtLaunch,
   readReviewedInputs,
   recordReviewedInputs,
@@ -150,6 +152,56 @@ test('what a passing review judged changes with the evidence or HEAD, not the de
 
   await git(repo, 'commit', '-q', '--allow-empty', '-m', 'squash');
   assert.equal(await changed(), true, 'a new HEAD, e.g. a squash');
+});
+
+test('empty-fix inputs retain description and report changes without invalidating approval', async (t) => {
+  const { run, artifacts } = await slotWithTask(t);
+  await reviewPasses(run.id);
+  const before = await readReviewedInputs(getRun(run.id)!);
+  assert.ok(before);
+  assert.equal(getRun(run.id)!.engineState?.reviewFullInputsAtLaunch, before.fixFingerprint);
+  assert.equal(getRun(run.id)!.engineState?.reviewFixInputsAtLaunch, undefined);
+  await noteReviewFixInputsAtLaunch(run.id);
+  assert.deepEqual(getRun(run.id)!.engineState?.reviewFixInputsAtLaunch, {
+    attempt: 1,
+    fingerprint: before.fixFingerprint,
+  });
+  await writeFile(path.join(artifacts, 'report.md'), '## Review Fixes\nCorrected test count\n');
+  const afterReport = await readReviewedInputs(getRun(run.id)!);
+  assert.ok(afterReport);
+  assert.notEqual(afterReport.fixFingerprint, before.fixFingerprint);
+  assert.equal(afterReport.fingerprint, before.fingerprint);
+  assert.equal(afterReport.legacyFingerprint, before.legacyFingerprint);
+  assert.equal(await reviewedInputsChanged(getRun(run.id)!), false);
+  await writeFile(path.join(artifacts, 'pr-description.md'), 'Corrected test count\n');
+  const afterDescription = await readReviewedInputs(getRun(run.id)!);
+  assert.ok(afterDescription);
+  assert.notEqual(afterDescription.fixFingerprint, afterReport.fixFingerprint);
+  assert.equal(afterDescription.fingerprint, before.fingerprint);
+  assert.equal(await reviewedInputsChanged(getRun(run.id)!), false);
+  assert.equal(getRun(run.id)!.engineState?.reviewFullInputsAtLaunch, before.fixFingerprint);
+  // A later fix handoff replaces the snapshot and binds it to a new attempt.
+  await noteReviewFixInputsAtLaunch(run.id);
+  assert.deepEqual(getRun(run.id)!.engineState?.reviewFixInputsAtLaunch, {
+    attempt: 2,
+    fingerprint: afterDescription.fixFingerprint,
+  });
+  assert.equal(getRun(run.id)!.engineState?.reviewFixAttempt, 2);
+  // A new review replaces its full identity without refreshing the fix baseline.
+  await writeFile(path.join(artifacts, 'report.md'), 'An operator edit during re-review\n');
+  await noteReviewInputsAtLaunch(run.id);
+  const rereview = await readReviewedInputs(getRun(run.id)!);
+  assert.ok(rereview);
+  assert.equal(getRun(run.id)!.engineState?.reviewFullInputsAtLaunch, rereview.fixFingerprint);
+  assert.notEqual(rereview.fixFingerprint, before.fixFingerprint);
+  assert.deepEqual(getRun(run.id)!.engineState?.reviewFixInputsAtLaunch, {
+    attempt: 2,
+    fingerprint: afterDescription.fixFingerprint,
+  });
+  // An unreadable new review cannot retain a prior review's full identity.
+  updateRun(run.id, { slotId: undefined });
+  await noteReviewInputsAtLaunch(run.id);
+  assert.equal(getRun(run.id)!.engineState?.reviewFullInputsAtLaunch, undefined);
 });
 
 test('a pass records what the review was given, not the slot as it is when it passes', async (t) => {
@@ -684,4 +736,22 @@ test('findings awaiting a fix come before the gate re-review of changed inputs',
   assert.notEqual(await reviewedInputsAwaitingReview(getRun(run.id)!), null);
   assert.equal(await rerunReviewIfReviewedInputsChanged(run.id, context), false);
   assert.deepEqual(plans, [], 'Continue Fixing re-reviews after the fix');
+});
+
+test('approval fingerprints keep their pre-description-fix values', () => {
+  // Frozen from the pre-change listing and approval algorithm. The report was not listed.
+  const listing =
+    '0123456789abcdef\ntasks/pinned/artifacts/pr-description.md description-blob\ntasks/pinned/artifacts/evidence-manifest.json evidence-blob\n';
+  const current = fingerprintReviewedInputs(
+    listing + 'tasks/pinned/artifacts/report.md report-blob\n',
+    'tasks/pinned',
+  );
+  assert.equal(
+    current.fingerprint,
+    '749a47afc7f94e7ee7bd363ef89d1c3dcc2cd7ab147e8e45f4a413d32620356e',
+  );
+  assert.equal(
+    current.legacyFingerprint,
+    '7e82899742502e0fd41fd95d3433528ba7b07ce641a8d993ab1ba977d1d03f2c',
+  );
 });
