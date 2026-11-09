@@ -64,10 +64,11 @@ test('the runner publishes each finished step to trace.json while the run contin
             intent: 'Do the first step.',
             next: 'peek',
           },
-          // Read the live trace from inside the run, before the run writes its summary.
+          // Read the live trace from inside the run, before the run writes its summary. The
+          // publish is asynchronous, so poll briefly rather than race it.
           peek: {
             action: 'command',
-            cmd: 'cat trace.json',
+            cmd: 'for i in $(seq 1 40); do grep -q "Do the first step." trace.json 2>/dev/null && break; sleep 0.05; done; cat trace.json',
             intent: 'Read the live trace.',
             next: 'check',
           },
