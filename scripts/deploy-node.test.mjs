@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url';
 
 import { buildSync } from 'esbuild';
 
+import { legacyCliBinDirs } from '../packages/protocol/dist/node/farm-paths.js';
+
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // Both the platform matrix and owner cases read generated plists on Linux CI.
@@ -1384,8 +1386,7 @@ test('node CLI refreshes started together over a stale lock never overlap', asyn
           path.join(home, '.farmslot'),
           path.join(home, '.local/bin'),
           'legacy',
-          path.join(home, '.local/bin'),
-          path.join(home, '.npm-global/bin'),
+          ...legacyCliBinDirs(home),
         ],
         {
           env: { PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: home },

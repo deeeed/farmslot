@@ -32,6 +32,7 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import type { GatewayConnection } from '../../../packages/cli/src/gateway-client.js';
+import { legacyCliBinDirs } from '../../../packages/protocol/src/node/farm-paths.js';
 import { RUNNER_OBSERVABILITY_SUPPORT_PATHS } from '../../../services/gateway/src/runners/runner-observability.js';
 import {
   testGatewayIdentity,
@@ -44,9 +45,9 @@ import {
   freePort,
   issueNodeCredential,
   linkCheckout,
+  listProcesses,
   poll,
   type Reaper,
-  listProcesses,
   startWorkspaceProcess,
   stopProcess,
   writeJson,
@@ -1003,7 +1004,20 @@ async function ensureCliSnapshot(
   try {
     execFileSync(
       'bash',
-      ['-c', refresh, '_', store, sha, sha256, path.dirname(process.execPath), '600'],
+      [
+        '-c',
+        refresh,
+        '_',
+        store,
+        sha,
+        sha256,
+        path.dirname(process.execPath),
+        '600',
+        path.join(linkHome, '.farmslot'),
+        legacyCliBinDirs(linkHome)[0],
+        'legacy',
+        ...legacyCliBinDirs(linkHome),
+      ],
       {
         stdio: [stdin, buildLog, buildLog],
         env: {

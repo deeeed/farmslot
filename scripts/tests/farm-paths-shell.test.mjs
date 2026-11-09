@@ -14,6 +14,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { legacyCliBinDirs } from '../../packages/protocol/dist/node/farm-paths.js';
+
 const repo = fileURLToPath(new URL('../../', import.meta.url));
 function fixture(t) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'farm-shell-'));
@@ -176,6 +178,7 @@ for (const legacyBin of ['.local/bin', '.npm-global/bin'])
           home,
           path.join(home, 'code/bin'),
           '2',
+          ...legacyCliBinDirs(root),
         ],
         { HOME: root },
         refresh,
@@ -196,6 +199,7 @@ for (const legacyBin of ['.local/bin', '.npm-global/bin'])
         homes[0],
         path.join(homes[0], 'code/bin'),
         '2',
+        ...legacyCliBinDirs(root),
       ],
       { HOME: root },
       refresh,

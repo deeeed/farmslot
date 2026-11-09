@@ -76,11 +76,9 @@ const values = {
   SCREEN_CONTROL_SOCKET_PATH: socket,
   GATEWAY_PORT: String(gatewayPort),
 };
-for (const [key, value] of Object.entries(values))
-  console.log(`${key}='${value.replaceAll("'", "'\\''")}'`);
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+for (const [key, value] of Object.entries(values)) console.log(`${key}=${shellQuote(value)}`);
 // Keep the array intact across local/SSH argument quoting, including spaces in homes.
-console.log(
-  `CLI_USER_BINS=(${legacyCliBinDirs(userHome)
-    .map((directory) => `'${directory.replaceAll("'", "'\\''")}'`)
-    .join(' ')})`,
-);
+console.log(`CLI_USER_BINS=(${legacyCliBinDirs(userHome).map(shellQuote).join(' ')})`);
