@@ -210,6 +210,15 @@ export const nativeSessionStyles = css`
     content-visibility: auto;
     contain-intrinsic-size: auto 120px;
   }
+  /* That containment keeps a row's edge margins inside it, where they used to collapse into the
+     gap between rows. Rows without padding drop them, so every row keeps its spacing. */
+  .timeline > article:not(.user, .proposal) > :first-child {
+    margin-top: 0;
+  }
+  .timeline > article:not(.user, .proposal) > :last-child,
+  .timeline > article:not(.user, .proposal) > :last-child chat-message .cm-wrapper {
+    margin-bottom: 0;
+  }
   article.user {
     margin-left: 12%;
     background: ${unsafeCSS(colors.bgCard)};
