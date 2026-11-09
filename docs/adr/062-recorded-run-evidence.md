@@ -1286,6 +1286,11 @@ keeps polling in case it caught a write. A lost server or failed playback shows
 on the page. History lists the run folders beside the one viewed, newest first; a
 folder of runs opens on the index, which also polls.
 
+**Status watch.** The generic `status --watch` view, which every host's TUI
+uses, takes `v`: it serves the folder of runs the checkout's `run` writes to,
+live, and opens the newest run's Story page; the footer shows the key and the
+URL, and the server stops with the watch.
+
 **Command Center.** Its acceptance panel renders proof steps from
 `runEvidenceView(model).stepGroups`, the same projection the viewer reads.
 Criterion rows already come from the same model's claims.
@@ -1295,8 +1300,8 @@ Criterion rows already come from the same model's claims.
 Engineers and agents can review a run without a gateway, and the page stays
 honest: pruned media, an unqualified recording and untimed claims show their
 errors with no seekable cue. The projection is experimental until a harness
-template adopts it. mm-harness ships its MetaMask template, its `viewCommand`
-and a `status --watch` shortcut separately, over the same contract. Hosting,
+template adopts it. mm-harness ships its MetaMask template and its `viewCommand`
+separately, over the same contract. Hosting,
 uploading, editing evidence and gate decisions stay out of scope.
 
 ### Public surface
