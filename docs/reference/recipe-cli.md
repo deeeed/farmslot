@@ -31,6 +31,8 @@ Commands:
                                    artifact package) against the Farmslot Recipe v1
                                    contract
   artifacts [options] [directory]  Inspect, validate or render retained recipe evidence
+  view [options] <run-dir>         Serve a read-only local page of a recipe run's
+                                   evidence, live while it runs
   project-hook                     Inspect or execute Recipe v1 project hooks through
                                    the Farmslot gateway
   run [options] [args...]          Run a recipe through the selected project provider
@@ -485,6 +487,23 @@ Options:
   --require-runner-provenance  Require runner provenance in summary, trace metadata,
                                and artifact manifest
   -h, --help                   display help for command
+```
+
+## farmslot recipe view
+
+```text
+Usage: farmslot recipe view [options] <run-dir>
+
+Serve a read-only local page of a recipe run's evidence, live while it runs
+
+Arguments:
+  run-dir              Recipe run folder, or a folder of runs for the run history
+
+Options:
+  --port <port>        Port on 127.0.0.1; 0 picks a free one (default: "0")
+  --template <module>  Page template module; default: the project's recipe.viewer
+  --project <name>     Select a registered project for its page template
+  -h, --help           display help for command
 ```
 
 ## farmslot recipe project-hook
