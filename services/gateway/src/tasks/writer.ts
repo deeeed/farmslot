@@ -826,7 +826,7 @@ export async function writeTaskFile(
       ? '> Autonomous execution: complete the authorized work. Respect task and repository approval requirements.'
       : run.flowType === 'pr-complete' && run.mode === 'interactive'
         ? '> Interactive PR-complete — reload prior PR/run context and perform the PR-complete work, then stop before terminal SIGNAL.json so the operator can take over.'
-        : isLightweightInteractiveDevRun(run)
+        : isLightweightInteractiveDevRun(run) && !isArtifactOnlyScriptedCommandRun(run)
           ? '> Interactive lightweight dev — operator may steer the session; keep CHECKLIST.md and inputs/dev-intake.json current, then wait for Farmslot operator completion.'
           : '> Human-operated — pauses at HUMAN GATE steps for approval.';
   // The execution template becomes CHECKLIST.md untouched and the preamble moves
@@ -1289,7 +1289,8 @@ export async function writeTaskFile(
     detail: `Rendering ${path.basename(taskAbsDir)}/${splitChecklist ? EXECUTION_CHECKLIST_DOCUMENT : 'TASK.md'}`,
   });
   vars['ci.local_check'] = getProjectField(projectVars.projectJson, 'ci.local_check') || '';
-  vars.CI_PARITY_CHECKLIST = splitChecklist ? EXECUTION_CHECKLIST_DOCUMENT : 'TASK.md';
+  vars.CI_PARITY_CHECKLIST =
+    splitChecklist && !scriptedCommand ? EXECUTION_CHECKLIST_DOCUMENT : 'TASK.md';
   if (publicationBase) {
     const operation = await prepareBranchMaintenance(run, slotVars, defaultBranch);
     if (operation) {

@@ -524,10 +524,11 @@ export async function executeWriteTaskStep(
       { path: 'TASK.md', purpose: 'task-md' },
       { path: CHECKLIST_MARKER_INPUT, purpose: 'checklist-marker' },
       ...taskDocumentArtifacts({
+        // An existing checklist is always listed; a scripted command run is written without one.
         includeChecklist:
-          !isArtifactOnlyScriptedCommandRun(current) &&
-          (!isLightweightInteractiveDevRun(current) ||
-            existsSync(path.join(path.dirname(current.taskFile), EXECUTION_CHECKLIST_DOCUMENT))),
+          (!isLightweightInteractiveDevRun(current) &&
+            !isArtifactOnlyScriptedCommandRun(current)) ||
+          existsSync(path.join(path.dirname(current.taskFile), EXECUTION_CHECKLIST_DOCUMENT)),
       }),
     ];
     const inputArtifacts = await captureReviewInputArtifactsForRun(current);

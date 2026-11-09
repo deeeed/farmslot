@@ -6,6 +6,7 @@ import {
   checklistBasenameFromTaskPath,
   type DeterministicChecklistCheck,
   type ExecResult,
+  isArtifactOnlyScriptedCommandRun,
   primaryRoleForFlow,
   type Run,
   taskDirRelPath,
@@ -558,7 +559,9 @@ function requiredDeterministicChecks(
 export async function validateDeterministicChecksForRun(
   run: Run,
 ): Promise<DeterministicChecklistCheck[]> {
-  if (!run.taskFile) return [];
+  // A scripted command run executes no checklist, so it owes no checklist receipt, even
+  // when an older worker contract and CHECKLIST.md were frozen for it (ADR-043 Amendment 2).
+  if (!run.taskFile || isArtifactOnlyScriptedCommandRun(run)) return [];
   const taskFile = deterministicChecklistTaskFileForPublication(run);
   const checklist = checklistBasenameFromTaskPath(taskFile);
   const input = checklist

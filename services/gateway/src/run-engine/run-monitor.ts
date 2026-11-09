@@ -867,7 +867,7 @@ export async function probeWorkerSignalForRun(
       signalJsonPath,
       boundSig,
       ctx?.taskFile,
-      isArtifactOnlyScriptedCommandRun(run) && run.scripted?.mode === 'command'
+      isArtifactOnlyScriptedCommandRun(run)
         ? { project: run.project, commandRef: run.scripted.commandRef }
         : undefined,
     );

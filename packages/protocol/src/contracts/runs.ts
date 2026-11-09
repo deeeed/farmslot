@@ -3196,9 +3196,11 @@ export function isLightweightInteractiveDevRun(
 }
 
 /** A scripted command run has no worker; with artifact-only completion, its command's result is its proof. */
-export function isArtifactOnlyScriptedCommandRun(
-  run: Pick<Run, 'scripted' | 'completionPolicy'> & { metrics?: Pick<Run['metrics'], 'runner'> },
-): boolean {
+export function isArtifactOnlyScriptedCommandRun<
+  T extends Pick<Run, 'scripted' | 'completionPolicy'> & {
+    metrics?: Pick<Run['metrics'], 'runner'>;
+  },
+>(run: T): run is T & { scripted: Extract<ScriptedRunnerConfig, { mode: 'command' }> } {
   return (
     run.metrics?.runner === 'scripted' &&
     run.scripted?.mode === 'command' &&
