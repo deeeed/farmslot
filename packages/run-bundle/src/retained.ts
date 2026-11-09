@@ -155,6 +155,8 @@ export interface MaterializeRunBundleRequest {
   /** Gateway-written files read from this directory instead of `taskDir`. */
   gatewayFiles?: { taskDir: string; paths: readonly string[] };
   artifacts: readonly ArtifactRef[];
+  /** Diagnostic metadata may be omitted; it must not displace required evidence. */
+  advisoryPaths?: readonly string[];
   manifestDigest: string;
   /** Persisted identity of this acquisition, including task and generation. */
   captureKey: string;
@@ -1152,6 +1154,8 @@ export interface RunBundleReference {
   ref: RunArtifactBundleRef;
   /** The decision whose captured snapshot this is; absent for the run's own bundles. */
   decision?: RunDecision;
+  /** Keep provenance metadata without extending the lifetime of unrelated media. */
+  metadataOnly?: boolean;
 }
 
 /** Every bundle a run references, each decision's with the decision that captured it. */
@@ -1159,6 +1163,8 @@ export function runBundleRefs(run: Run): RunBundleReference[] {
   const refs: RunBundleReference[] = [];
   if (run.artifactBundle) refs.push({ ref: run.artifactBundle });
   if (run.output?.artifactBundle) refs.push({ ref: run.output.artifactBundle });
+  const processSource = run.metrics?.activity?.process.sourceBundle;
+  if (processSource) refs.push({ ref: processSource, metadataOnly: true });
   for (const decision of run.decisions) {
     const ref = decisionArtifactBundleRef(run, decision.payload);
     if (ref) refs.push({ ref, decision });
@@ -1755,17 +1761,18 @@ async function runBundleHousekeepingInventory(store: RunBundleStore, now: number
         retainReference(ref ? resolveRetainedRunBundleRef(run, ref) : undefined, pin);
       const active = isActiveListRun(run);
       if (active) activeRuns.set(run.id, run.engineState?.generation);
-      for (const { ref, decision } of runBundleRefs(run))
+      for (const { ref, decision, metadataOnly } of runBundleRefs(run))
         retain(
           ref,
-          active ||
-            (decision
-              ? !decision.resolvedAt ||
-                (decision.payload?.kind === 'ready' &&
-                  ['published_draft', 'published_ready'].includes(
-                    decision.payload.prPackage?.publicationStatus ?? '',
-                  ))
-              : false),
+          !metadataOnly &&
+            (active ||
+              (decision
+                ? !decision.resolvedAt ||
+                  (decision.payload?.kind === 'ready' &&
+                    ['published_draft', 'published_ready'].includes(
+                      decision.payload.prPackage?.publicationStatus ?? '',
+                    ))
+                : false)),
         );
       // Retired approvals/attestations remain audit dependencies after replay removes the card.
       for (const decision of readDecisionHistoryFile(
@@ -2267,13 +2274,16 @@ export async function materializeRunBundle(
     const taskRoot = await realpath(request.taskDir);
     const gatewayRoot = request.gatewayFiles && (await realpath(request.gatewayFiles.taskDir));
     const gatewayPaths = new Set(request.gatewayFiles?.paths);
+    const advisory = new Set(request.advisoryPaths);
     const ordered = [...request.artifacts].sort(
       (a, b) =>
+        Number(advisory.has(a.path)) - Number(advisory.has(b.path)) ||
         Number(isRunBundleMedia(a.path)) - Number(isRunBundleMedia(b.path)) ||
         a.path.localeCompare(b.path),
     );
-    const manifestReserve =
-      Buffer.byteLength(JSON.stringify(ordered)) + ordered.length * 300 + 4096;
+    const required = ordered.filter((artifact) => !advisory.has(artifact.path));
+    let manifestReserve =
+      Buffer.byteLength(JSON.stringify(required)) + required.length * 300 + 4096;
     try {
       if (intent.decisionHistoryBytes) {
         if (
@@ -2312,6 +2322,11 @@ export async function materializeRunBundle(
             throw new Error(`Artifact is redirected: ${artifact.path}`);
           size = (await stat(source)).size;
         } catch (error) {
+          if (advisory.has(artifact.path)) {
+            // This source is diagnostic, never a prerequisite for retaining the run's proof.
+            missingData.push(`excluded:${artifact.path}`);
+            continue;
+          }
           if (!hasCode(error, 'ENOENT')) throw error;
           recordExpectedArtifact(manifest, taskKey, artifact);
           if (
@@ -2356,7 +2371,15 @@ export async function materializeRunBundle(
               `Cannot retain media-capacity:${artifact.path}; pinned media or metadata still occupies capacity. Source retained; retry after freeing capacity.`,
             );
         }
-        if (size > available) {
+        const advisoryOverhead = advisory.has(artifact.path)
+          ? 300 + Buffer.byteLength(artifact.path)
+          : 0;
+        if (size + advisoryOverhead > available) {
+          if (advisory.has(artifact.path)) {
+            missingData.push(`excluded:${artifact.path}`);
+            continue;
+          }
+
           if (!media)
             throw new Error(
               'Run bundle metadata capacity exhausted; free storage or raise gateway retention limits.',
@@ -2372,13 +2395,27 @@ export async function materializeRunBundle(
           continue;
         }
         const key = `tasks/${taskKey}/${artifact.path}`;
-        const copied = await copyHashed(source, path.join(stage, key), Math.min(size, available));
+        let copied: RunBundlePayloadIdentity;
+        try {
+          copied = await copyHashed(source, path.join(stage, key), Math.min(size, available));
+        } catch (error) {
+          if (!advisory.has(artifact.path)) throw error;
+          await rm(path.join(stage, key), { force: true });
+          missingData.push(`excluded:${artifact.path}`);
+          continue;
+        }
         if (artifact.sha256 && copied.sha256 !== artifact.sha256.replace(/^sha256:/u, '')) {
+          if (advisory.has(artifact.path)) {
+            await rm(path.join(stage, key), { force: true });
+            missingData.push(`excluded:${artifact.path}`);
+            continue;
+          }
           if (!request.allowChanged)
             throw new Error(`Captured artifact changed while retaining: ${artifact.path}`);
           missingData.push(`changed:${artifact.path}`);
         }
         manifest.entries[key] = { path: key, ...copied };
+        manifestReserve += advisoryOverhead;
         bundleBytes += copied.bytes;
         stagedBytes += copied.bytes;
         storeBytes += copied.bytes;

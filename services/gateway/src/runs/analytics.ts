@@ -26,6 +26,7 @@ import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { resourceRevisions } from '../resources/revisions.js';
 import { checklistTimingContext, checklistTimingForAttempt } from '../tasks/checklist-timing.js';
 
+import { activityForRun } from './process-activity.js';
 import { getAllRuns, shouldUseIsolatedRunsDir } from './store.js';
 
 // Append-only analytics sink, decoupled from the prunable run-history store.
@@ -243,6 +244,7 @@ export function buildAnalyticsRecord(
 
   return {
     schemaVersion: ANALYTICS_RECORD_SCHEMA_VERSION,
+    activity: activityForRun(run),
     // Deterministic fallback chain (no new Date() — keeps this builder pure). updatedAt is
     // always set on a real Run, so this never produces an empty ts in practice.
     ts: run.completedAt ?? run.updatedAt ?? run.createdAt,
@@ -540,6 +542,10 @@ export function emitAnalyticsForTerminalRun(
   if (run.analyticsEmittedAt) return null;
   let record: RunAnalyticsRecord;
   try {
+    // Cancellation can win while output acquisition is reading sources. Freeze
+    // its unavailable projection before the append so a late capture cannot
+    // make the episode disagree with the already emitted analytics record.
+    if (run.metrics && !run.metrics.activity) run.metrics.activity = activityForRun(run);
     // buildAnalyticsRecord runs synchronously — keep it inside the try so a malformed run can't
     // throw out of updateRun/archiveRun/deleteRun. A build failure leaves the run un-emitted
     // (flag unset) and recoverable via analyticsBackfill.

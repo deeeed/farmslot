@@ -25,7 +25,12 @@ import { copyDirectoryRecursive, registerDirectoryEntries } from './copy-tree.js
 import { captureDecisionHistoryPrefix, decisionHistoryFile } from './decision-history.js';
 import { sha256File, sha256Text } from './hashing.js';
 import { resolveRunsDir, sanitizeBundleRunId } from './paths.js';
-import { openRunBundleStore, readRetainedRunBundle, resolveRunBundleEntry } from './retained.js';
+import {
+  openRunBundleStore,
+  readRetainedRunBundle,
+  resolveRunBundleEntry,
+  runBundleRefs,
+} from './retained.js';
 
 const PACKAGE_FILENAMES = [
   'reference.result-package.json',
@@ -173,15 +178,13 @@ export async function exportRunsToBundle(
             missingData.push(`retained-payload-missing:${run.id}:${relative}`);
           }
         }
-        for (const decision of run.decisions) {
-          const pinned =
-            decision.payload?.kind === 'ready'
-              ? decision.payload.prPackage?.artifactBundle
-              : decision.payload?.kind === 'output-review'
-                ? decision.payload.artifactBundle
-                : undefined;
-          if (pinned && !entry.artifactBundleDigests.includes(pinned.bundleDigest))
-            missingData.push(`historical-capture-not-exported:${run.id}:${pinned.bundleDigest}`);
+        for (const { ref: pinned } of runBundleRefs(run)) {
+          const omission = `historical-capture-not-exported:${run.id}:${pinned.bundleDigest}`;
+          if (
+            !entry.artifactBundleDigests.includes(pinned.bundleDigest) &&
+            !missingData.includes(omission)
+          )
+            missingData.push(omission);
         }
       } else {
         missingData.push(`retention-missing:${run.id}`);

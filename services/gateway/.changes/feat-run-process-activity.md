@@ -1,0 +1,1 @@
+- Freeze original-worker process facts at output capture and share them with analytics and episodes, preserving unknowns and review/retry boundaries.

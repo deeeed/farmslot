@@ -36,6 +36,7 @@ export * from './review-publication.js';
 export * from './review-workspace.js';
 export * from './reviews.js';
 export * from './roadmap.js';
+export * from './run-activity.js';
 export * from './run-bundles.js';
 export * from './run-gate-readiness.js';
 export * from './run-lifecycle-view.js';

@@ -48,6 +48,10 @@ recorded for it, never copied.
 | `provenance`                                        | `source`, `provider {package, version}`, `libraries[] {name, revision, fingerprint, dirty}`. Libraries come from the task's node-verified receipt (`artifacts/harness-provenance.json` `bindingIdentity`, refreshed at release, also after a repin) or else its binding (`inputs/recipe-binding.json`, ADR-069); the provider is copied from the binding only while both name the same libraries. `null` for an unbound task or an unreadable binding; a re-capture after retention archived the task copy keeps the recorded value; absent on episodes written before the field. `recordedAt` is the receipt's node time; `mirrored` is true only when the completion step captured the output and no agent attempt began after it; otherwise (cancelled while monitoring, even after a manual mirror refresh, or during a review fix after completion) a later repin is not reflected. |
 | `sources`                                           | `bundles[]` (digests read), `unreadableBundles[] {digest, error}`, `undigested`, `media` (count of media files, which are not listed).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
+`process` is an additive optional field on older episode-v1 records. New episodes
+copy `RunAnalyticsRecord.activity.process`, as specified below. Its absence in
+historical files MUST NOT be interpreted as successful adherence or zero work.
+
 A file reference is `{path, sha256, bytes?, bundle?}`. `path` is relative to the
 task directory; `bundle` is the digest of the retained bundle holding the bytes.
 Without `bundle`, the bytes are where the run left them, or in the run archive
@@ -56,3 +60,72 @@ bundle and the output inventory name a path, the retained entry wins.
 
 Files that match none of the roles above are left out. The schema names no
 project, host or domain; projects differ only in the files their packs produce.
+
+## Shared process activity
+
+Normative contract for [ADR-032 Amendment 4](../adr/032-runner-observability-via-hooks.md#amendment-4-process-observations-in-the-shared-activity-record-2026-11-08).
+`Run.metrics.activity` holds the frozen original-worker projection. Analytics
+schema 3 copies it to `activity`; episode capture and recapture copy its `process`
+section. Consumers MUST reuse this record rather than reconstruct labels from
+the latest task mirror or start a separate activity stream. Analytics readers
+continue accepting schema 1 and 2 records.
+
+| Process field                            | Meaning                                                                                                                                                                                                                                                                              |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `schemaVersion`, `capturedAt`, `attempt` | Version 1; original run/context/role, engine generation, execution node and freeze boundary.                                                                                                                                                                                         |
+| `sources`, `sourceBundle`                | Source identity, verified clock, session/generation/lease/command, event or byte window and content digests; the ordinary retained bundle preserves frozen sidecars. Paths are task-relative or retained-source-relative.                                                            |
+| `checklist`                              | Original tick order/timestamps, expected rows, captured completion and source reference. Later bulk ticks do not erase earlier observations.                                                                                                                                         |
+| `commits`                                | Pinned base/head range in graph order, with parents and author/committer times. A debug subject alone never proves a marker-only commit.                                                                                                                                             |
+| `firstProductEdit`, `firstBaselineRun`   | First attributable non-marker product edit and first task-declared recorded baseline attempt, with event references. Edit start and completion observations bound the write; requested, failed and observed edits are distinguished. Baselines include failed reproduction attempts. |
+| `rootCause`                              | Whether the frozen worker document has a non-empty Root Cause section outside code fences. It does not judge correctness or infer when it was written.                                                                                                                               |
+| `markCalls`                              | Correlated requests/results, normalized checklist, step or terminal/subtask action and status. Shell success alone does not prove each nested mark succeeded.                                                                                                                        |
+| `coverage`                               | Complete, partial or unavailable per field, with the reason. A readable source does not by itself prove complete attempt coverage.                                                                                                                                                   |
+| `labels`                                 | Only `skipped_checklist` and `fix_before_baseline`, each with `true`, `false` or `null`, reason and source references.                                                                                                                                                               |
+
+### Capture and attribution
+
+The original worker's first finished-output acquisition MUST freeze these facts
+before review reuse and slot teardown, outside terminal-transition locks. The
+existing generation-fenced retained-output commit persists the projection and
+its bundle reference together. Runtime normalizes events on their execution
+host; raw command bodies, transcripts and credentials MUST NOT be copied into
+analytics or episodes. Retain the existing worker task/checklist/signal sidecars
+with the ordinary bundle. Later captures retain that original source reference.
+Sidecars are advisory metadata: they follow required proof in retention admission
+and become coverage gaps when unavailable, changed or unaffordable. The process
+reference preserves metadata without adding a media pin.
+
+Native capture uses the recorded owner, lease, generation and command window.
+It MUST NOT start a host or use a recovery reader that repairs journal bytes.
+Legacy transcript fallback needs a verified conversation and explicit attempt
+boundaries. A verified fresh legacy conversation may use its first explicit
+structured task request as a provider-clock boundary; this associates history
+only and grants no prompt-delivery or lifecycle authority. Repeated tool IDs and correlated start/completion records are
+deduplicated. Missing or ambiguous role/retry boundaries remain unattributed;
+Gateway timestamps alone do not establish execution-node clock equivalence.
+Timestamp comparisons require verified compatible clocks.
+
+Product scope excludes task/runtime outputs and uses the existing contribution
+filter. Proven diagnostic-only marker edits are excluded; ambiguous edits stay
+unknown. Git reads use the pinned worker range before teardown, never a recycled
+slot's HEAD. Baselines come from task-bound evidence/provenance metadata, not
+directory names, filenames or filesystem mtimes.
+
+`skipped_checklist` is true for a covered empty required checklist, or an observed
+non-marker product edit before any tick. A later back-fill cannot erase the
+observed skip. False requires a complete matching checklist and sufficient edit
+coverage. `fix_before_baseline` is true only when attributable edits and complete
+baseline coverage establish that order or the absence of a baseline at the
+edit. A write must complete before the baseline to establish a violation;
+overlapping intervals and equal timestamps leave order unknown. False requires
+sufficient baseline and edit coverage. Partial, ambiguous
+or incompatible observations produce `null`, never an invented negative.
+
+Source failures are recorded as bounded coverage gaps and MUST NOT change any
+run verdict or lifecycle decision. Retry only exact frozen identities, windows
+and digests. No terminal enrichment may replace original-worker facts with a
+review-fix or later task revision. Runs that ended before a snapshot receive a
+shared deterministic unavailable projection. Historical readback MUST leave
+original runs, analytics, episodes and judgments unchanged.
+If cancellation wins while capture is pending, terminal emission freezes the
+unavailable projection before its append; late acquisition cannot replace it.

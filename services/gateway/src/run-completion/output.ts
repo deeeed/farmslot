@@ -285,8 +285,8 @@ async function captureRunOutputNow(
       artifact,
     ]),
   );
+  let selection: Awaited<ReturnType<typeof resolvePublicationManifest>> = null;
   if (workerFinished || options.forPublication) {
-    let selection: Awaited<ReturnType<typeof resolvePublicationManifest>> = null;
     try {
       selection = await resolvePublicationManifest(
         path.dirname(taskFile),
@@ -314,6 +314,22 @@ async function captureRunOutputNow(
       );
       artifactsByPath.set(snapshot.path, snapshot);
     }
+  }
+  let processCapture: import('../runs/process-capture.js').CapturedProcessActivity | undefined;
+  let bindActivity:
+    | typeof import('../runs/process-capture.js').bindProcessActivityBundle
+    | undefined;
+  if (
+    workerFinished &&
+    !run.metrics.activity &&
+    !run.output?.workerFinished &&
+    run.agentContexts?.some((context) => context.runId === run.id && context.signalAttemptId)
+  ) {
+    const capture = await import('../runs/process-capture.js');
+    processCapture = await capture.captureOriginalProcessActivity(run, selection, [
+      ...artifactsByPath.values(),
+    ]);
+    bindActivity = capture.bindProcessActivityBundle;
   }
   const artifacts = [...artifactsByPath.values()];
   if (artifacts.some((artifact) => !artifact.sha256))
@@ -362,7 +378,9 @@ async function captureRunOutputNow(
   };
   const retained = await retainCapturedRunArtifacts({
     run: { ...current, output },
-    artifacts,
+    // Process sidecars are advisory provenance, outside the reviewed output inventory.
+    artifacts: [...artifacts, ...(processCapture?.artifacts ?? [])],
+    advisoryPaths: processCapture?.artifacts.map((artifact) => artifact.path),
     acquireMedia: acquisition.acquireMedia,
     manifestDigest: output.manifestDigest,
     releaseStagingMedia: true,
@@ -385,6 +403,18 @@ async function captureRunOutputNow(
       const updated = updateRun(runId, {
         artifactBundle: ref,
         output: retainedOutput,
+        ...(processCapture && bindActivity && !latest.metrics.activity
+          ? {
+              metrics: {
+                ...latest.metrics,
+                activity: bindActivity(
+                  processCapture,
+                  ref,
+                  new Set(missingData.map((entry) => parseRunBundleMissingData(entry).path)),
+                ),
+              },
+            }
+          : {}),
         decisions:
           latest.status === 'cancelled'
             ? latest.decisions

@@ -35,7 +35,7 @@ function record(value: unknown): JsonRecord {
 }
 
 /** What a Claude Code tool call does: its kind, command line and files. */
-function claudeToolKind(
+export function claudeToolKind(
   name: string,
   input: unknown,
 ): Pick<NativeSessionTool, 'kind' | 'command' | 'paths'> {
@@ -83,14 +83,13 @@ function textContent(content: unknown): string | undefined {
 
 function toolUseBlocks(content: unknown): JsonRecord[] {
   if (!Array.isArray(content)) return [];
-  return content
-    .map(record)
-    .filter(
-      (block) =>
-        block.type === 'tool_use' ||
-        block.type === 'server_tool_use' ||
-        block.type === 'mcp_tool_use',
-    );
+  return content.map(record).filter(isClaudeToolCallBlock);
+}
+
+export function isClaudeToolCallBlock(block: JsonRecord): boolean {
+  return (
+    block.type === 'tool_use' || block.type === 'server_tool_use' || block.type === 'mcp_tool_use'
+  );
 }
 
 function toolResultBlocks(content: unknown): JsonRecord[] {

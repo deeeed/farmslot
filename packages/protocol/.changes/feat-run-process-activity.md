@@ -1,0 +1,1 @@
+- Share coverage-aware worker process observations across run metrics, analytics schema 3 and episodes without adding lifecycle gates.

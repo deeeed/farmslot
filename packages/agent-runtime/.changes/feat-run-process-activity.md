@@ -1,0 +1,1 @@
+- Capture bounded, read-only process history and derive checklist and baseline-order labels from qualified worker observations.
