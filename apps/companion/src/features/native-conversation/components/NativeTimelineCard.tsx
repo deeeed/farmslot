@@ -1,5 +1,5 @@
 import * as Clipboard from 'expo-clipboard';
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
 import { type NativeSessionPlan, viewToggleField } from '@farmslot/protocol';
@@ -19,29 +19,32 @@ import {
 import { FormattedDocument } from '../../../components/FormattedDocument';
 import { MobileDiffViewer } from '../../../components/MobileDiffViewer';
 import { useViewChoice, useViewToggle } from '../../../components/view-state';
-import { formatDocument } from '../../../lib/document-format';
+import { formatDocumentCached } from '../../../lib/document-format-cache';
 import { nativeStyles as styles } from '../styles/native-conversation.styles';
 
-export function NativeTimelineCard({
-  entry,
-  onDisclosure,
-  hidden = false,
-  planOpen = true,
-  onImplement,
-  implementing = false,
-}: {
+interface NativeTimelineCardProps {
   entry: NativeTimelineEntry;
   /** Called before the card opens or closes, so the conversation keeps the reader's place. */
   onDisclosure: () => void;
-  /** Inside a closed fold: kept mounted, so its own state survives. */
-  hidden?: boolean;
   /** A checklist starts showing its steps (`nativePlanOpen`). */
   planOpen?: boolean;
-  /** On the proposal Implement is offered on (`nativeImplementableKey`). */
-  onImplement?: () => void;
+  /** On the proposal Implement is offered on (`nativeImplementableKey`); gets the plan text. */
+  onImplement?: (plan: string) => void;
   /** Implement is starting its session. */
   implementing?: boolean;
-}) {
+}
+
+/**
+ * Memoized on its props, all identities or flags: an unchanged entry (`nativeTimeline` keeps it
+ * the same object) with the same flags skips rendering while others stream in or the reader types.
+ */
+export const NativeTimelineCard = memo(function NativeTimelineCard({
+  entry,
+  onDisclosure,
+  planOpen = true,
+  onImplement,
+  implementing = false,
+}: NativeTimelineCardProps) {
   const [expanded, setExpanded] = useViewChoice(
     entry.kind === 'tool'
       ? viewToggleField('messages', nativeToolDisclosureKey(entry.key), false)
@@ -56,7 +59,7 @@ export function NativeTimelineCard({
   const command = nativeCommandText(entry.event.tool);
   const plan = entry.event.plan;
   return (
-    <View style={[styles.card, entry.kind === 'user' && styles.user, hidden && styles.hidden]}>
+    <View style={[styles.card, entry.kind === 'user' && styles.user]}>
       <Text style={styles.muted}>
         {entry.kind === 'user'
           ? 'You'
@@ -74,6 +77,8 @@ export function NativeTimelineCard({
       </Text>
       {plan ? (
         <NativePlanBody
+          // A recycled list cell gets another entry: its copy state starts over.
+          key={entry.key}
           choiceId={String(entry.key)}
           plan={plan}
           text={entry.text}
@@ -81,7 +86,8 @@ export function NativeTimelineCard({
           open={expanded}
           onToggle={toggle}
           onDisclosure={onDisclosure}
-          onImplement={onImplement}
+          // A proposal's entry text is its plan.
+          onImplement={onImplement ? () => onImplement(entry.text) : undefined}
           implementing={implementing}
         />
       ) : entry.kind === 'tool' ? (
@@ -117,7 +123,8 @@ export function NativeTimelineCard({
           {expanded
             ? entry.event.tool?.diffs?.map((diff, index) => (
                 <MobileDiffViewer
-                  key={`${diff.path}:${index}`}
+                  // Keyed by entry too: a recycled list cell must not keep another tool's diff state.
+                  key={`${entry.key}:${diff.path}:${index}`}
                   title={diff.path}
                   diffText={nativeToolDiffText(diff)}
                   initialPath={diff.path}
@@ -144,7 +151,7 @@ export function NativeTimelineCard({
       )}
     </View>
   );
-}
+});
 
 /** A checklist's progress and steps, or a proposed plan with copy and implement actions. */
 function NativePlanBody({
@@ -295,7 +302,7 @@ function NativeMessageText({
   return (
     <>
       {markdown && whole ? (
-        <FormattedDocument blocks={formatDocument('plan.md', text)} />
+        <FormattedDocument blocks={formatDocumentCached('plan.md', text)} />
       ) : (
         <Text selectable style={muted ? styles.muted : styles.text}>
           {preview && !expanded ? preview.text : text}
