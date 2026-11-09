@@ -663,6 +663,24 @@ test('expandDispatchCmd attaches runner args to a bare {runner} template', () =>
   assert.equal(command, 'cd /repo && cursor --model gpt-5.6-sol-max --force');
 });
 
+test('expandDispatchCmd only inserts effort when the template or runner args request a flag', () => {
+  const slot = runnerArgsSlotVars({
+    claudePath: '/usr/local/bin/claude',
+    dispatchCmd: '{runner_path}',
+  });
+  assert.equal(
+    expandDispatchCmd(slot, { runner: 'claude', effort: 'max' }),
+    '/usr/local/bin/claude',
+  );
+  assert.equal(
+    expandDispatchCmd(
+      { ...slot, dispatchCmd: '{runner_path} --effort {effort}' },
+      { runner: 'claude', effort: 'max' },
+    ),
+    '/usr/local/bin/claude --effort max',
+  );
+});
+
 test('expandDispatchCmd attaches runner args exactly once and prefers the path placeholder', () => {
   const command = expandDispatchCmd(
     runnerArgsSlotVars({

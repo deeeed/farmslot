@@ -1,0 +1,1 @@
+- Use the shared reasoning default for new native coding sessions and validate supported effort levels before starting a turn.
