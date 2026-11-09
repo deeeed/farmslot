@@ -816,10 +816,11 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
     }
   } catch (error) {
     // handleRun already reports trust/approval, resolution and provenance refusals
-    // with their own codes, details and exit codes; keep those paths.
+    // with their own codes, details and exit codes, and gives --json-stream its error
+    // and complete events; keep those paths.
     if (
       !authorizing ||
-      (!jsonOutput && !stream.enabled) ||
+      !jsonOutput ||
       recipeTrustFailure(error) ||
       error instanceof ProvenanceDriftError
     )
@@ -834,7 +835,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
       error instanceof Error ? error.message : String(error),
       typeof coded.userAction === 'string'
         ? coded.userAction
-        : 'resolve the reported refusal, then rerun',
+        : harnessDoctorHint(`${harnessHost().name} doctor --target ${shellQuote(target)} --json`),
       {
         exitCode: typeof coded.exitCode === 'number' ? coded.exitCode : EXIT.runtime,
         stage: 'authorize',
