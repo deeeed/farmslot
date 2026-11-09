@@ -81,7 +81,7 @@ The native host MUST publish committed journal append ranges to the node transpo
 Local and remote sessions MUST use the same feed. Observe append notifications
 and read only the new range; do not stat or reread whole journals on a timer.
 
-Proposed operations, owned by `@farmslot/protocol/rpc/native-session`:
+Operations, owned by `@farmslot/protocol/rpc/native-session`:
 
 | Operation                    | Parameters                                                    | Result or event                                                                                         |
 | ---------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
@@ -141,7 +141,11 @@ Reconnect MUST resubscribe only, never replay send/respond/create/close commands
 Every subscribe and delivered batch MUST honor the current read authorization,
 reader principal generation, node assignment and source identity. Revocation,
 reassignment, session replacement or lost node authority MUST terminate the old
-feed and evict denied cached content. No events from a successor worker may leak
+feed and evict denied cached content. The gateway evaluates read authorization once
+per delivery pass over a recipient's queue. A pass emits synchronously, so no other
+work runs between that evaluation and the updates it covers, and the reader and
+source check still runs before each emit. Each update is serialized once to size the
+queue and frame limits; recipients share that measurement. No events from a successor worker may leak
 into an earlier pinned view. An owner-scoped source tap MAY be shared internally;
 authorized recipients MUST be checked independently.
 
@@ -167,7 +171,7 @@ Memory configuration remains unchanged; no new memory writer is introduced.
 
 ## Public surface
 
-All additions below are proposed and unshipped. Existing release/version policy
+All additions below shipped with live conversation streaming (#1894). Existing release/version policy
 applies to protocol, node and native-host changes as one coordinated capability.
 A gateway/native-host capability named `conversationStreaming` MUST advertise
 support. An unsupported target stays visible with its reason; clients MUST NOT
@@ -176,7 +180,7 @@ fall back to polling or start a second runner. No compatibility service is retai
 - `@farmslot/protocol/rpc/native-session` owns the three operations, cursor,
   reset and capability contracts above. Consumers are gateway, node and native
   host transport, Command Center, Companion and the CLI.
-- `@farmslot/protocol/client-cache` exports proposed `observeNativeConversation`.
+- `@farmslot/protocol/client-cache` exports `observeNativeConversation`.
   It owns subscription lifetime, replay, incremental reduction, cursor and existing
   scoped-store integration. Consumers are the web and Companion view-models and
   the CLI follow command. Native timeline rendering stays shared; no per-platform
@@ -187,11 +191,11 @@ fall back to polling or start a second runner. No compatibility service is retai
   `nativeSession: NativeSessionTargetParams` when bound, replacing `tmuxTarget`,
   `terminalWorker` and `transcriptId`. Before launch, status supplies configuration
   without inventing a session. Consumers are the shared copilot entry and CLI RPC.
-- Extend the existing `farmslot rpc` command with proposed `--follow`, restricted
+- The existing `farmslot rpc` command takes `--follow`, restricted
   to `native.session.subscribe`. It prints the initial result and subsequent
   stream envelopes as NDJSON, accepts the compound resume cursor in JSON params,
-  and unsubscribes on Ctrl-C. No command is replayed. This is a proposed extension,
-  not an existing `native watch` command or another CLI family.
+  and unsubscribes on Ctrl-C. No command is replayed. It extends `rpc`; there is no
+  `native watch` command or other CLI family.
 - Upper-layer harnesses such as mm-harness use the typed protocol client and
   `observeNativeConversation` for observing their pinned workers. Runner extensions
   emit existing normalized text/tool/request events through the native adapter
