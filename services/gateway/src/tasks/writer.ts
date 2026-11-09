@@ -26,6 +26,7 @@ import {
   EXECUTION_CHECKLIST_DOCUMENT,
   type FlowType,
   humanGateEnabled,
+  isArtifactOnlyScriptedCommandRun,
   isBranchUpdateStrategy,
   isLightweightInteractiveDevRun,
   type PlanningContextProjection,
@@ -1349,9 +1350,13 @@ export async function writeTaskFile(
   const workerTerminalConfig = readWorkerTerminalProjectConfig(
     projectVars.projectJson as Record<string, unknown>,
   );
+  // A scripted command run has no worker: no pack checklist, and its proof is the
+  // command's result record rather than the worker gates the project declares.
+  const scriptedCommand = isArtifactOnlyScriptedCommandRun(run);
   const terminalContract = resolveWorkerTerminalContract(workerTerminalConfig, run.flowType, {
     mode: run.mode ?? undefined,
     ...(run.engineState?.evalExperiment?.blind?.proof ? { proofMeasurement: true } : {}),
+    ...(scriptedCommand ? { scriptedCommand: true } : {}),
   });
   if (
     run.flowType === 'review-pr' &&
@@ -1430,6 +1435,7 @@ export async function writeTaskFile(
   // has not checked out or installed yet: freeze its input (ADR-068 Amendment 7).
   const input: HostedTaskInput = {
     ...(run.metrics.runner === 'scripted' ? { runner: 'scripted' } : {}),
+    ...(scriptedCommand ? { scriptedCommand: true } : {}),
     binding: projectVars.projectJson.recipe?.provider ? 'project' : 'static',
     task: taskData,
     template: configuredTemplate,

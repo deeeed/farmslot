@@ -60,6 +60,8 @@ export interface WorkerTerminalContractDocument {
   recordedEvidenceContractVersion?: number;
   /** Gateway-owned proof trial completion records outcomes without requiring a passing verdict. */
   proofMeasurement?: true;
+  /** Gateway-owned: a scripted command run has no worker; its proof is the command's result record. */
+  scriptedCommand?: { result: 'artifacts/scripted-command-result.json' };
   schemaVersion: 1;
   flowType: string;
   mode?: string;

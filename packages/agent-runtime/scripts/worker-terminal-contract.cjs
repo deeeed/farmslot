@@ -52,6 +52,7 @@ const { atomicWrite } = require('./mark-io.cjs');
  * @property {1} schemaVersion
  * @property {string} flowType
  * @property {true} [proofMeasurement] Gateway-owned QA measurement policy.
+ * @property {{ result: string }} [scriptedCommand] Gateway-owned: a run with no worker, judged by its command's result.
  * @property {string} [mode]
  * @property {boolean} requireSignal
  * @property {number} [recordedEvidenceContractVersion] Gateway-owned run version projection.
@@ -218,7 +219,7 @@ function normalizeCommandLayer(layer) {
 /**
  * @param {WorkerTerminalProjectConfig | null | undefined} projectConfig
  * @param {string} flowType
- * @param {{ mode?: string | null, now?: string, proofMeasurement?: true }} [options]
+ * @param {{ mode?: string | null, now?: string, proofMeasurement?: true, scriptedCommand?: true }} [options]
  * @returns {WorkerTerminalContractDocument}
  */
 function resolveWorkerTerminalContract(projectConfig, flowType, options = {}) {
@@ -228,6 +229,27 @@ function resolveWorkerTerminalContract(projectConfig, flowType, options = {}) {
   const proofMeasurement = options.proofMeasurement === true;
   if (proofMeasurement && flowKey !== 'qa')
     throw new Error('Proof measurements require the QA flow');
+  const scriptedCommand = options.scriptedCommand === true;
+  if (scriptedCommand && proofMeasurement)
+    throw new Error('A scripted command run is not a proof measurement');
+  // A scripted command run has no worker: no checklist, acceptance ledger or recipe
+  // evidence applies. Its terminal proof is the command's own result record.
+  if (scriptedCommand)
+    return {
+      schemaVersion: 1,
+      flowType: flowKey,
+      ...(mode ? { mode } : {}),
+      scriptedCommand: { result: SCRIPTED_COMMAND_RESULT },
+      requireSignal: true,
+      commands: {
+        complete: { artifacts: [SCRIPTED_COMMAND_RESULT] },
+        'no-change': { artifacts: [SCRIPTED_COMMAND_RESULT] },
+        blocked: { artifacts: [] },
+      },
+      whenPresent: [],
+      resolvedAt: now,
+      source: projectConfig ? 'project' : 'builtin',
+    };
 
   const defaultsLayer = normalizeCommandLayer({
     complete: projectConfig?.complete,
@@ -802,6 +824,14 @@ const deterministicChecks = {
   evaluate: evaluateDeterministicChecks,
 };
 
+/** Written by the scripted runner beside SIGNAL.json; the only proof a command run gives. */
+const SCRIPTED_COMMAND_RESULT = 'artifacts/scripted-command-result.json';
+
+/** Only a frozen gateway contract for a scripted command run selects command-result completion. */
+function isScriptedCommandContract(contract) {
+  return contract?.scriptedCommand?.result === SCRIPTED_COMMAND_RESULT;
+}
+
 /** Only a frozen gateway QA contract selects measurement completion. */
 function isProofMeasurementContract(contract) {
   return contract?.flowType === 'qa' && contract.proofMeasurement === true;
@@ -820,6 +850,8 @@ function isProofMeasurementTask(taskDir) {
 
 module.exports = {
   TERMINAL_COMMANDS,
+  SCRIPTED_COMMAND_RESULT,
+  isScriptedCommandContract,
   isProofMeasurementContract,
   isProofMeasurementTask,
   BUILTIN_FLOW_COMMANDS,

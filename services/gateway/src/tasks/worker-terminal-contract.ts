@@ -38,6 +38,7 @@ const require = createRequire(import.meta.url);
 const {
   resolveWorkerTerminalContract,
   isProofMeasurementContract,
+  isScriptedCommandContract,
   deterministicChecks,
   lintWorkerTemplateAgainstContract,
   templateUsesTerminalMark,
@@ -45,9 +46,15 @@ const {
   resolveWorkerTerminalContract: (
     config: WorkerTerminalProjectConfig | null | undefined,
     flowType: string,
-    options?: { mode?: string | null; now?: string; proofMeasurement?: true },
+    options?: {
+      mode?: string | null;
+      now?: string;
+      proofMeasurement?: true;
+      scriptedCommand?: true;
+    },
   ) => WorkerTerminalContractDocument;
   isProofMeasurementContract: (contract: unknown) => boolean;
+  isScriptedCommandContract: (contract: unknown) => contract is WorkerTerminalContractDocument;
   lintWorkerTemplateAgainstContract: (
     templateContent: string,
     contract: WorkerTerminalContractDocument,
@@ -132,6 +139,40 @@ async function acceptanceRequiredByContract(
   }
 }
 
+/** The scripted runner's record of the command it ran, beside SIGNAL.json. */
+interface ScriptedCommandResultRecord {
+  commandRef?: string;
+  exitCode: number | null;
+  timedOut?: boolean;
+}
+
+/** A scripted command run has no worker: its proof is the command's result, not a checklist. */
+async function scriptedCommandTerminalRefusal(
+  vars: SlotLocality,
+  taskDir: string,
+  terminalCommand: 'complete' | 'no-change',
+  resultPath: string,
+): Promise<string | null> {
+  if (terminalCommand !== 'complete')
+    return 'A scripted command run completes or fails; it has no no-change outcome.';
+  const file = `${taskDir}/${resultPath}`;
+  if (!(await slotFileExists(vars, file)))
+    return `${resultPath} is missing; the scripted runner writes it beside SIGNAL.json.`;
+  let result: ScriptedCommandResultRecord;
+  try {
+    result = JSON.parse(await slotReadFile(vars, file)) as ScriptedCommandResultRecord;
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return `${resultPath} is invalid JSON.`;
+  }
+  const command = result.commandRef
+    ? `scripted command '${result.commandRef}'`
+    : 'scripted command';
+  if (result.timedOut === true) return `${command} timed out; it cannot complete.`;
+  if (result.exitCode !== 0) return `${command} exited ${result.exitCode}; it cannot complete.`;
+  return null;
+}
+
 export async function validateTerminalSignalArtifacts(
   slotId: string,
   signalJsonPath: string,
@@ -164,6 +205,15 @@ export async function validateTerminalSignalArtifacts(
         message: 'The frozen worker terminal contract is invalid JSON.',
       };
     }
+  }
+  if (isScriptedCommandContract(contract)) {
+    const refusal = await scriptedCommandTerminalRefusal(
+      vars,
+      taskDir,
+      terminalCommand,
+      contract.scriptedCommand!.result,
+    );
+    return refusal ? { ok: false, kind: 'artifact', message: refusal } : { ok: true };
   }
   const rootContract: unknown =
     contractInput === WORKER_TERMINAL_CONTRACT_INPUT

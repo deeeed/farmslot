@@ -87,6 +87,15 @@ type TerminalContractResolver = (
   options?: { mode?: string; now?: string },
 ) => WorkerTerminalContractDocument;
 
+/** A frozen contract for a scripted command run: the run has no worker and so no checklist. */
+function isScriptedCommandContract(contract: WorkerTerminalContractDocument): boolean {
+  const { isScriptedCommandContract: isScripted } =
+    require('../../scripts/worker-terminal-contract.cjs') as {
+      isScriptedCommandContract: (contract: unknown) => boolean;
+    };
+  return isScripted(contract);
+}
+
 /** Built-in terminal contract for a flow, as the gateway resolves it without project overrides. */
 export function builtinTerminalContract(
   flow: string,
@@ -238,9 +247,13 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
   const terminalContract =
     spec.terminalContract ??
     builtinTerminalContract(spec.flow, { ...(spec.runMode ? { mode: spec.runMode } : {}) });
+  // A scripted command run executes no checklist, so it gets none: no worker steps,
+  // and no deterministic receipts frozen from a template it never runs.
   let checklistMarkdown = spec.authored
     ? spec.authored.checklistMarkdown
-    : (spec.operatorPlan ?? renderedTemplate);
+    : isScriptedCommandContract(terminalContract)
+      ? null
+      : (spec.operatorPlan ?? renderedTemplate);
   let taskMarkdown =
     spec.authored?.taskMarkdown ??
     (spec.operatorPlan !== undefined
