@@ -1,0 +1,1 @@
+- Add `farmslot paths [--json] [--home <dir>] [--role gateway|node]` and `paths get <key>` to inspect an instance's paths.

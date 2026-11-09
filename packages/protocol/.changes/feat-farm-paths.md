@@ -1,0 +1,1 @@
+- Add an instance-aware farm path resolver that reports legacy locations and the layout 2 paths without creating or moving files.
