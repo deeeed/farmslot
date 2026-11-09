@@ -62,8 +62,8 @@ test('one-shot inventory finds active fixture ownership on disk with an empty ru
     path.join(runs, 'ended.json'),
     JSON.stringify(makeRun({ id: 'ended', status: 'done', slotId: 'fixture-1' })),
   );
-  // A failed run that is not archived can still be replayed, so it is never ended here and its
-  // captured references stay. Only unsettled runs are rescanned. Archiving ends retention.
+  // A failed run that is not archived can still be replayed, so it is never ended here. A settled
+  // one is frozen at its recorded references. Archiving ends retention.
   for (const id of ['retained-failure', 'discarded-failure', 'worker-failed']) {
     await writeFile(
       path.join(runs, `${id}.json`),
@@ -127,7 +127,9 @@ test('one-shot inventory finds active fixture ownership on disk with an empty ru
   ];
   assert.deepEqual(references.activeRuns, [
     { runId: 'active', paths: fixturePaths },
+    { runId: 'discarded-failure', paths: fixturePaths, freeze: true },
     { runId: 'retained-failure', paths: fixturePaths },
+    { runId: 'worker-failed', paths: fixturePaths, freeze: true },
   ]);
   assert.deepEqual(references.endedRunIds, ['archived-failure', 'archived-owner', 'ended']);
   assert.deepEqual(references.runInventory?.runIds, [

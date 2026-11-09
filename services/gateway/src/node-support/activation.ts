@@ -39,6 +39,8 @@ export interface RunSupportInventory {
 export interface ActiveRunSupportReferences {
   runId: string;
   paths: string[];
+  /** A settled but replayable run: keep its recorded references, and capture them only if none exist. */
+  freeze?: boolean;
 }
 
 export const NODE_SUPPORT_COMMAND_CACHE_MS = 10 * 60_000;
@@ -75,9 +77,9 @@ function supportHashes(values: readonly unknown[], supportRoot?: string): string
 }
 
 /**
- * A failed run stays replayable until archived, so the references captured while it ran stay
- * retained. Only unsettled runs are rescanned: a released failure must not acquire the bundles
- * of later runs on its slot.
+ * A failed run stays replayable until archived, so its references stay retained. Unsettled runs
+ * are rescanned; a settled one is frozen at its recorded references, so a released failure does
+ * not acquire the bundles of later runs on its slot.
  */
 function retainsNodeSupport(run: Run): boolean {
   return !run.archivedAt && isActiveListRun(run);
@@ -175,8 +177,7 @@ export async function nodeSupportRetentionReferences(
     const selection = nodeSupportHashPath(selected.remoteRepo, project.runtimeDir);
     selectionPaths.push(selection);
     for (const run of runs) {
-      if (run.archivedAt || !hasUnsettledRunExecution(run) || resolveRunSlotId(run) !== slot.id)
-        continue;
+      if (!retainsNodeSupport(run) || resolveRunSlotId(run) !== slot.id) continue;
       const paths = [selection];
       const fixtures = project.projectJson.fixtures;
       if (isRecord(fixtures)) {
@@ -197,7 +198,12 @@ export async function nodeSupportRetentionReferences(
           }
         }
       }
-      activeRuns.push({ runId: run.id, paths: [...new Set(paths)] });
+      activeRuns.push({
+        runId: run.id,
+        paths: [...new Set(paths)],
+        // A capture can be missing (an activation without inventory): take it once, never again.
+        ...(hasUnsettledRunExecution(run) ? {} : { freeze: true }),
+      });
     }
   }
   return {
@@ -296,6 +302,7 @@ with (root/'.activation.lock').open('a') as lock:
   name=hashlib.sha256(run['runId'].encode()).hexdigest()+'.json'
   record=active/name
   previous=json.loads(record.read_text()) if record.exists() else {}
+  if run.get('freeze') and previous:keep.update(previous.get('hashes',[]));continue
   hashes=set(previous.get('hashes',[]))
   generation=int(inventory.get('capturedThrough','0'))
   if previous.get('scope')==inventory.get('scope'):generation=max(generation,int(previous.get('generation','0')))
