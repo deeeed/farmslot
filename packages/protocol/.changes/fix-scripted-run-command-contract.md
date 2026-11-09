@@ -1,0 +1,1 @@
+- New `isArtifactOnlyScriptedCommandRun` and `WorkerTerminalContractDocument.scriptedCommand` for scripted command runs judged by their command result.

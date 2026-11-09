@@ -26,6 +26,7 @@ import {
   EXECUTION_CHECKLIST_DOCUMENT,
   type FlowType,
   humanGateEnabled,
+  isArtifactOnlyScriptedCommandRun,
   isBranchUpdateStrategy,
   isLightweightInteractiveDevRun,
   type PlanningContextProjection,
@@ -825,14 +826,16 @@ export async function writeTaskFile(
       ? '> Autonomous execution: complete the authorized work. Respect task and repository approval requirements.'
       : run.flowType === 'pr-complete' && run.mode === 'interactive'
         ? '> Interactive PR-complete — reload prior PR/run context and perform the PR-complete work, then stop before terminal SIGNAL.json so the operator can take over.'
-        : isLightweightInteractiveDevRun(run)
+        : isLightweightInteractiveDevRun(run) && !isArtifactOnlyScriptedCommandRun(run)
           ? '> Interactive lightweight dev — operator may steer the session; keep CHECKLIST.md and inputs/dev-intake.json current, then wait for Farmslot operator completion.'
           : '> Human-operated — pauses at HUMAN GATE steps for approval.';
   // The execution template becomes CHECKLIST.md untouched and the preamble moves
   // to the TASK.md task document. Lightweight interactive dev is the one flow that
   // keeps the template in TASK.md: its CHECKLIST.md is the operator-agreed plan
   // written by writeInteractiveDevSidecars, and the template embeds that plan.
-  const splitChecklist = !isLightweightInteractiveDevRun(run);
+  // A scripted command run has no worker, so no operator plan or worker checklist either.
+  const scriptedCommand = isArtifactOnlyScriptedCommandRun(run);
+  const splitChecklist = scriptedCommand || !isLightweightInteractiveDevRun(run);
 
   // Build task folder — each run gets its own timestamped dir (allows comparison across runs).
   // Timestamp is MMDD-HHMMSS (seconds precision). Minute-only precision caused the E12 race
@@ -930,7 +933,7 @@ export async function writeTaskFile(
   // Build branch name
   const branch =
     run.branch || buildSmartBranch(run.flowType, run.ticketOrPr, undefined, undefined, run.variant);
-  await writeInteractiveDevSidecars(run, taskAbsDir, branch);
+  if (!scriptedCommand) await writeInteractiveDevSidecars(run, taskAbsDir, branch);
 
   // Build template variables
   let ticket = run.ticketData ?? {
@@ -1286,7 +1289,8 @@ export async function writeTaskFile(
     detail: `Rendering ${path.basename(taskAbsDir)}/${splitChecklist ? EXECUTION_CHECKLIST_DOCUMENT : 'TASK.md'}`,
   });
   vars['ci.local_check'] = getProjectField(projectVars.projectJson, 'ci.local_check') || '';
-  vars.CI_PARITY_CHECKLIST = splitChecklist ? EXECUTION_CHECKLIST_DOCUMENT : 'TASK.md';
+  vars.CI_PARITY_CHECKLIST =
+    splitChecklist && !scriptedCommand ? EXECUTION_CHECKLIST_DOCUMENT : 'TASK.md';
   if (publicationBase) {
     const operation = await prepareBranchMaintenance(run, slotVars, defaultBranch);
     if (operation) {
@@ -1349,9 +1353,12 @@ export async function writeTaskFile(
   const workerTerminalConfig = readWorkerTerminalProjectConfig(
     projectVars.projectJson as Record<string, unknown>,
   );
+  // A scripted command run has no worker: no pack checklist, and its proof is the
+  // command's result record rather than the worker gates the project declares.
   const terminalContract = resolveWorkerTerminalContract(workerTerminalConfig, run.flowType, {
     mode: run.mode ?? undefined,
     ...(run.engineState?.evalExperiment?.blind?.proof ? { proofMeasurement: true } : {}),
+    ...(scriptedCommand ? { scriptedCommand: true } : {}),
   });
   if (
     run.flowType === 'review-pr' &&
@@ -1430,6 +1437,7 @@ export async function writeTaskFile(
   // has not checked out or installed yet: freeze its input (ADR-068 Amendment 7).
   const input: HostedTaskInput = {
     ...(run.metrics.runner === 'scripted' ? { runner: 'scripted' } : {}),
+    ...(scriptedCommand ? { scriptedCommand: true } : {}),
     binding: projectVars.projectJson.recipe?.provider ? 'project' : 'static',
     task: taskData,
     template: configuredTemplate,

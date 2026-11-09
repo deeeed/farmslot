@@ -120,9 +120,12 @@ try {
     'Read {{TASK_FILE}} and run the configured command.\n',
   );
   await mkdir(path.join(project, 'templates/worker'), { recursive: true });
+  // A pack worker checklist with a deterministic CI step, as the mobile pack's dev/mobile has: a
+  // scripted command run never executes it, so it must not get it (run 935c72fd stuck on this).
   await writeFile(
     path.join(project, 'templates/worker/dev.md'),
-    '# Worker: dev\n\n- [ ] Run the configured command.\n',
+    '# Worker: dev\n\n- [ ] 1. Run the configured command.\n' +
+      '- [ ] 2. Changed-file CI [DETERMINISTIC: ci.local_check]. Call `<task>/mark 2`.\n',
   );
   // The nightly's whole turn: no code change, just the two reports a dev run hands over. It holds
   // until the proof sees MONITOR watching it (the launch check needs a live worker) and gives up
@@ -138,6 +141,9 @@ try {
     repo_url: root,
     paths: { runtime_dir: '.agent', artifact_dir: '.task' },
     execution_templates: { sources: [] },
+    // Worker gates a scripted command run never meets: a CI receipt and the acceptance ledger.
+    ci: { local_check: 'exit 1' },
+    worker_terminal: { acceptance: { require: true } },
     // Review is on for this project, so only the item's own run shape can skip it.
     review: {
       enabled: true,
@@ -303,6 +309,19 @@ try {
     240_000,
   );
   await json(path.join(evidence, 'run-final.json'), finished);
+  // The scripted command run got no pack checklist and is judged by its command result.
+  const taskDirectory = path.dirname(finished.taskFile!);
+  assert.equal(existsSync(path.join(taskDirectory, 'CHECKLIST.md')), false, 'no worker checklist');
+  const frozen = JSON.parse(
+    await readFile(path.join(taskDirectory, 'inputs/worker-terminal-contract.json'), 'utf8'),
+  ) as {
+    scriptedCommand?: { result: string };
+    deterministicChecks?: unknown;
+    acceptance?: unknown;
+  };
+  assert.deepEqual(frozen.scriptedCommand, { result: 'artifacts/scripted-command-result.json' });
+  assert.equal(frozen.deterministicChecks, undefined, 'no ci.local_check receipt is required');
+  assert.equal(frozen.acceptance, undefined, 'no acceptance ledger without a worker');
   const review = finished.steps.find((step) => step.name === 'review');
   assert.equal(review?.outputs?.reason, 'pipeline-review-off', `REVIEW: ${JSON.stringify(review)}`);
   const prepare = finished.steps.find((step) => step.name === 'prepare');

@@ -87,6 +87,15 @@ type TerminalContractResolver = (
   options?: { mode?: string; now?: string },
 ) => WorkerTerminalContractDocument;
 
+/** A frozen contract for a scripted command run: the run has no worker and so no checklist. */
+function isScriptedCommandContract(contract: WorkerTerminalContractDocument): boolean {
+  const { isScriptedCommandContract: isScripted } =
+    require('../../scripts/worker-terminal-contract.cjs') as {
+      isScriptedCommandContract: (contract: unknown) => boolean;
+    };
+  return isScripted(contract);
+}
+
 /** Built-in terminal contract for a flow, as the gateway resolves it without project overrides. */
 export function builtinTerminalContract(
   flow: string,
@@ -238,12 +247,19 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
   const terminalContract =
     spec.terminalContract ??
     builtinTerminalContract(spec.flow, { ...(spec.runMode ? { mode: spec.runMode } : {}) });
+  // A scripted command run executes no checklist, so it gets none: no worker steps,
+  // and no deterministic receipts frozen from a template it never runs.
+  const scriptedCommand = !spec.authored && isScriptedCommandContract(terminalContract);
+  // An operator plan is a worker checklist too; a scripted command run takes neither.
+  const operatorPlan = scriptedCommand ? undefined : spec.operatorPlan;
   let checklistMarkdown = spec.authored
     ? spec.authored.checklistMarkdown
-    : (spec.operatorPlan ?? renderedTemplate);
+    : scriptedCommand
+      ? null
+      : (operatorPlan ?? renderedTemplate);
   let taskMarkdown =
     spec.authored?.taskMarkdown ??
-    (spec.operatorPlan !== undefined
+    (operatorPlan !== undefined
       ? `${renderedTemplate.trimEnd()}\n`
       : buildTaskDocument({
           flowType: spec.flow,
@@ -262,7 +278,7 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
             : null,
           hasTicketData: spec.bugInput !== undefined,
         }));
-  if (spec.operatorPlan !== undefined && spec.modePreamble)
+  if (operatorPlan !== undefined && spec.modePreamble)
     taskMarkdown = taskMarkdown.replace(/^(#.+\n)/, `$1\n${spec.modePreamble}\n`);
   if (spec.taskDocumentAdditions)
     taskMarkdown = `${taskMarkdown.trimEnd()}${spec.taskDocumentAdditions.startsWith('\n') ? '' : '\n\n'}${spec.taskDocumentAdditions}`;

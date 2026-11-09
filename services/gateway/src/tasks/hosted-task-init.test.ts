@@ -271,7 +271,25 @@ test('hosted requests keep the installed request shape for ordinary runners', (t
     );
     assert.equal(Object.hasOwn(request, 'runner'), runner === 'scripted');
     if (runner === 'scripted') assert.equal(request.runner, 'scripted');
+    assert.equal(Object.hasOwn(request, 'scriptedCommand'), false);
   }
+  // An artifact-only scripted command run asks the node for the command-result contract.
+  const scripted = JSON.parse(
+    hostedTaskRequest('fixture-1', {
+      runner: 'scripted',
+      scriptedCommand: true,
+      binding: 'static',
+      template,
+      task: {
+        taskDir: '/fixture/task',
+        flow: 'dev',
+        platform: 'cli',
+        task: { title: 'Task', sourceKind: 'text' },
+        handoff: { surface: 'farmslot', project: 'fixture', attemptId: 'attempt' },
+      },
+    }),
+  );
+  assert.equal(scripted.scriptedCommand, true);
 });
 
 test('remote verification stays on its node with the selected provider and captured pack', async () => {
