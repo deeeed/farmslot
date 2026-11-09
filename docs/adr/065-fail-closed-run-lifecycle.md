@@ -860,8 +860,9 @@ after the repository owner merges main in). Two paths remain, and both refuse a
 PR whose base or head is in another repository:
 
 - **Content match (automatic).** Without an attestation, the gateway takes the
-  run's reviewed patch: the gate's current package, whose review snapshot a
-  passing review covered exactly (same head SHA, same diff hash). It reads that
+  run's reviewed patch: the gate's current package, certified by the gate's own
+  review policy (enough qualifying passes on its exact head and review subject,
+  no open finding). It reads that
   diff from the frozen snapshot, verifies it against the recorded hash, and
   compares it file by file with the PR's change on GitHub between the base and
   head SHAs read with the PR facts (`compare/<base>...<head>`), so a later push

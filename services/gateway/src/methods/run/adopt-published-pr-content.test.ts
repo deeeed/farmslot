@@ -8,6 +8,7 @@ import {
   reviewDiffHash,
   type ReviewDiffSnapshot,
   reviewSnapshotIdentityText,
+  type ReviewStatus,
   type Run,
   type RunAdoptPublishedPrParams,
 } from '@farmslot/protocol';
@@ -74,8 +75,9 @@ interface FixtureOptions {
   reviewed?: string;
   untracked?: ReviewDiffSnapshot['untrackedFiles'];
   tamper?: boolean;
-  /** Whether a passing review covers the package's snapshot, covers another patch, or is absent. */
-  review?: 'covers' | 'other-patch' | 'none';
+  /** The gate's reviews, built from a review that certifies the package (default: just that one). */
+  reviews?: (certifying: ReviewStatus) => ReviewStatus[];
+  minimumReviews?: number;
   /** The gate points at another package than the ready decision's. */
   stalePackage?: boolean;
 }
@@ -110,8 +112,20 @@ async function fixture(t: test.TestContext, options: FixtureOptions = {}): Promi
     headSha: reviewedHead,
     branch: 'fix/manual-000183-fix-perps-configure-order-shee',
     reviewSnapshot: snapshot,
+    reviewPolicy: { minimumReviews: options.minimumReviews ?? 1, requestedBy: 'dispatch' },
   });
-  const review = options.review ?? 'covers';
+  const certifying: ReviewStatus = {
+    id: 'review-4',
+    source: 'human-gate',
+    mode: 'cold',
+    loopNumber: 4,
+    reviewerSessionId: 'session-4',
+    reviewedHeadSha: reviewedHead,
+    reviewedReviewSubjectHash: prepared.reviewSubjectHash,
+    reviewSnapshot: snapshot,
+    verdict: 'pass',
+    unresolvedCount: 0,
+  };
   return {
     taskDir,
     run: updateRun(run.id, {
@@ -123,21 +137,7 @@ async function fixture(t: test.TestContext, options: FixtureOptions = {}): Promi
           packageId: options.stalePackage ? 'pkg-newer' : prepared.id,
           packageHash: prepared.packageHash,
           publicationStatus: 'not_published',
-          reviews:
-            review === 'none'
-              ? []
-              : [
-                  {
-                    id: 'review-4',
-                    source: 'human-gate',
-                    mode: 'cold',
-                    loopNumber: 4,
-                    verdict: 'pass',
-                    unresolvedCount: 0,
-                    reviewSnapshot:
-                      review === 'covers' ? snapshot : { ...snapshot, diffHash: 'f'.repeat(64) },
-                  },
-                ],
+          reviews: (options.reviews ?? ((review) => [review]))(certifying),
         },
       },
       decisions: [
@@ -342,20 +342,57 @@ test('the comparison reads the PR range pinned to the SHAs read with the facts',
   assert.deepEqual(compares, [`repos/owner/repo/compare/${prBase}...${prHead}`]);
 });
 
-test('only a patch a passing review covered, on the gate package, can prove a content match', async (t) => {
-  const cases: Array<[FixtureOptions, RegExp]> = [
-    [{ review: 'none' }, /no passing review covers the recorded patch/],
-    [{ review: 'other-patch' }, /no passing review covers the recorded patch/],
-    [{ stalePackage: true }, /not the gate's current package/],
+test("only a patch the gate's review policy certifies, on the gate package, can prove a content match", async (t) => {
+  const refused = /the gate's review policy does not certify the recorded patch/;
+  const cases: Array<[string, FixtureOptions, RegExp]> = [
+    ['no review', { reviews: () => [] }, refused],
+    [
+      'a pass on another patch',
+      {
+        reviews: (review) => [
+          { ...review, reviewSnapshot: { ...review.reviewSnapshot!, diffHash: 'f'.repeat(64) } },
+        ],
+      },
+      refused,
+    ],
+    [
+      'a second reviewer with open findings on the same patch',
+      {
+        reviews: (review) => [
+          review,
+          {
+            ...review,
+            id: 'review-5',
+            reviewerSessionId: 'session-5',
+            verdict: 'issues',
+            unresolvedCount: 1,
+          },
+        ],
+      },
+      refused,
+    ],
+    [
+      'a pass that still has unresolved findings',
+      { reviews: (review) => [{ ...review, unresolvedCount: 2 }] },
+      refused,
+    ],
+    [
+      'a pass without a reviewer session',
+      { reviews: (review) => [{ ...review, reviewerSessionId: null }] },
+      refused,
+    ],
+    ['one pass where the policy needs two', { minimumReviews: 2 }, refused],
+    ['a newer package on the gate', { stalePackage: true }, /not the gate's current package/],
   ];
-  for (const [options, reason] of cases) {
+  for (const [label, options, reason] of cases) {
     const { run } = await fixture(t, options);
     const before = structuredClone(getRun(run.id));
     await assert.rejects(
       runAdoptPublishedPr(contentRequest(run), noop, dependencies(republishedDiff)),
       reason,
+      label,
     );
-    assert.deepEqual(getRun(run.id), before);
+    assert.deepEqual(getRun(run.id), before, label);
   }
 });
 

@@ -438,8 +438,8 @@ repository, using retained project/source context without requiring its old slot
 The PR's branch may differ from the run's. Without an attestation, the PR's change
 between the base and head SHAs read with its facts MUST match the run's reviewed
 patch file by file, byte for byte apart from display-only blob ids and hunk line
-numbers. The reviewed patch is the gate's current package, whose review snapshot a
-passing review covered exactly; it is read from the frozen snapshot and verified
+numbers. The reviewed patch is the gate's current package, certified by the gate's
+review policy (`codeReviewCertifiesPackage`); it is read from the frozen snapshot and verified
 against its recorded diff hash. A mismatch, an uncovered or unverifiable patch
 refuses, naming the PR branch, the differing files (or the reason) and the attested
 command. With an attestation the

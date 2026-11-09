@@ -3,12 +3,11 @@ import { createHash } from 'node:crypto';
 import type { ReadyGatePrPackage, Run } from '@farmslot/protocol';
 
 import type { ghRequest } from '../../integrations/github-client.js';
+import { codeReviewCertifiesPackage } from '../../run-engine/gate-policy.js';
 import { readVerifiedSnapshotDiff } from '../../run-engine/review-diff-refresh.js';
 
 /** Beyond this many files the comparison refuses rather than hashing an unbounded diff. */
 const MAX_COMPARED_FILES = 300;
-
-type PublishGate = NonNullable<NonNullable<Run['engineState']>['publishGate']>;
 
 /** The PR side of the comparison, pinned to the SHAs read with the PR facts. */
 export interface PublishedRange {
@@ -68,24 +67,20 @@ export function differingPatchFiles(reviewed: string, published: string): string
   });
 }
 
-/** A content match needs a reviewed patch: the gate's current package, whose snapshot a passing review
- * covered exactly (same head, same diff hash). A captured package alone certifies nothing. */
+/** A content match needs a reviewed patch: the gate's current package, certified by the gate's own review
+ * policy (enough qualifying passes on its exact head and subject, no open finding). A captured package
+ * alone certifies nothing. */
 function reviewedSnapshotOf(
+  run: Run,
   prepared: ReadyGatePrPackage | undefined,
-  gate: PublishGate | undefined,
 ): { snapshot: NonNullable<ReadyGatePrPackage['reviewSnapshot']> } | { unavailable: string } {
   const snapshot = prepared?.reviewSnapshot;
   if (!prepared || !snapshot?.diffHash || !snapshot.diffPath || !snapshot.headSha)
     return { unavailable: 'the run has no recorded reviewed patch' };
-  if (gate?.packageId !== prepared.id)
+  if (run.engineState?.publishGate?.packageId !== prepared.id)
     return { unavailable: "the recorded patch is not the gate's current package" };
-  const covered = (gate.reviews ?? []).some(
-    (review) =>
-      review.verdict === 'pass' &&
-      review.reviewSnapshot?.headSha === snapshot.headSha &&
-      review.reviewSnapshot?.diffHash === snapshot.diffHash,
-  );
-  if (!covered) return { unavailable: 'no passing review covers the recorded patch' };
+  if (!codeReviewCertifiesPackage(run, prepared))
+    return { unavailable: "the gate's review policy does not certify the recorded patch" };
   return { snapshot };
 }
 
@@ -96,7 +91,7 @@ export async function comparePublishedContent(
   range: PublishedRange,
   github: typeof ghRequest,
 ): Promise<PublishedContentComparison> {
-  const reviewed = reviewedSnapshotOf(prepared, run.engineState?.publishGate);
+  const reviewed = reviewedSnapshotOf(run, prepared);
   if ('unavailable' in reviewed) return reviewed;
   const { snapshot } = reviewed;
   let reviewedDiff: string | undefined;
