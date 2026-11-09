@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { runSessionUsage } from './session-usage.js';
+import { type PiModelCostMetadata, runSessionUsage } from './session-usage.js';
 
 const fixture = fileURLToPath(new URL('../test/fixtures/pi-session.jsonl', import.meta.url));
 
@@ -54,5 +54,124 @@ test('Pi never estimates a missing native cost or reports absent usage as zero',
       forcedRunner: 'pi',
     }),
     /no assistant usage/,
+  );
+});
+
+test('unknown provider pricing cannot turn Pi SDK placeholder zeros into a complete cost', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'pi-pricing-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = path.join(root, 'session.jsonl');
+  const header = {
+    type: 'custom',
+    customType: 'farmslot-model-request',
+    data: { provider: 'litellm', model: 'model', cost: null },
+  };
+  const message = {
+    type: 'message',
+    message: {
+      role: 'assistant',
+      provider: 'litellm',
+      model: 'model',
+      usage: {
+        input: 100,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        cost: { total: 0, totalFromProvider: false },
+      },
+    },
+  };
+  const summarize = async (
+    pricing: PiModelCostMetadata | null | undefined,
+    usage: Record<string, unknown>,
+  ) => {
+    await writeFile(
+      file,
+      [
+        JSON.stringify({ ...header, data: { ...header.data, cost: pricing } }),
+        JSON.stringify({ ...message, message: { ...message.message, usage } }),
+      ].join('\n') + '\n',
+    );
+    return runSessionUsage({
+      repo: '',
+      slotId: 'pi-pricing',
+      action: 'total',
+      forcedPath: file,
+      forcedRunner: 'pi',
+    });
+  };
+  assert.doesNotMatch(await summarize(null, message.message.usage), /cost_usd=/);
+  const free = { input: 0, output: 0, cacheRead: null, cacheWrite: null };
+  assert.match(await summarize(free, message.message.usage), /cost_usd=0\.0000/);
+  assert.doesNotMatch(
+    await summarize(free, { ...message.message.usage, cacheRead: 20 }),
+    /cost_usd=/,
+  );
+  assert.match(
+    await summarize(null, {
+      ...message.message.usage,
+      cost: { total: 0, totalFromProvider: true },
+    }),
+    /cost_usd=0\.0000/,
+  );
+  assert.match(
+    await summarize(null, {
+      ...message.message.usage,
+      cost: { total: 0.0176, totalFromProvider: true },
+    }),
+    /cost_usd=0\.0176/,
+  );
+  assert.doesNotMatch(await summarize(undefined, message.message.usage), /cost_usd=/);
+  assert.match(
+    await summarize(undefined, { ...message.message.usage, cost: { total: 0.0176 } }),
+    /cost_usd=0\.0176/,
+  );
+  const paid = { input: 2, output: 8, cacheRead: null, cacheWrite: null };
+  assert.doesNotMatch(await summarize(paid, message.message.usage), /cost_usd=/);
+  assert.match(
+    await summarize(paid, { ...message.message.usage, cost: { total: 0.00028 } }),
+    /cost_usd=0\.0003/,
+  );
+  const noUsage = { ...message.message.usage, input: 0, output: 0 };
+  assert.doesNotMatch(await summarize(paid, noUsage), /cost_usd=/);
+  assert.match(
+    await summarize(paid, { ...noUsage, cost: { total: 0, totalFromProvider: true } }),
+    /cost_usd=0\.0000/,
+  );
+  assert.doesNotMatch(
+    await summarize(paid, { ...message.message.usage, cacheRead: 20, cost: { total: 0.00028 } }),
+    /cost_usd=/,
+  );
+  const { cost: _cost, ...unpricedUsage } = message.message.usage;
+  assert.doesNotMatch(await summarize(paid, unpricedUsage), /cost_usd=/);
+  const tiered = { ...paid, input: null, tiers: [{ ...paid, input: 4, inputTokensAbove: 200000 }] };
+  assert.doesNotMatch(
+    await summarize(tiered, { ...message.message.usage, input: 200000, cost: { total: 0.8 } }),
+    /cost_usd=/,
+  );
+  assert.match(
+    await summarize(tiered, { ...message.message.usage, input: 200001, cost: { total: 0.800084 } }),
+    /cost_usd=0\.8001/,
+  );
+  assert.doesNotMatch(
+    await summarize(
+      { ...paid, reasoningOutput: 20 },
+      { ...message.message.usage, cost: { total: 0.00028 } },
+    ),
+    /cost_usd=/,
+  );
+  assert.doesNotMatch(
+    await summarize(
+      { ...paid, cacheWrite1h: 0.2 },
+      { ...message.message.usage, cacheWrite: 20, cacheWrite1h: 20, cost: { total: 0.00036 } },
+    ),
+    /cost_usd=/,
+  );
+  assert.match(
+    await summarize(
+      { ...paid, cacheWrite1h: 4 },
+      { ...message.message.usage, cacheWrite: 20, cacheWrite1h: 20, cost: { total: 0.00036 } },
+    ),
+    /cost_usd=0\.0004/,
   );
 });

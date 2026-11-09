@@ -8,6 +8,7 @@ import { piMessageTokenUsage, piTurnFailure, writePiHook } from './pi-farmslot-h
 import {
   deadlinePiFetch,
   PiProviderConfigurationError,
+  piSdkModels,
   providerReasoningFetch,
   resolvePiProviderCatalog,
 } from './pi-farmslot-providers.mjs';
@@ -90,7 +91,7 @@ export default async function (pi: {
         baseUrl: source.baseUrl,
         apiKey: source.apiKey,
         api: 'openai-completions',
-        models: source.models,
+        models: piSdkModels(source.models),
       });
       for (const model of source.models)
         console.error(
@@ -101,6 +102,7 @@ export default async function (pi: {
             contextWindow: model.contextWindow,
             maxTokens: model.maxTokens,
             reasoning: model.reasoning,
+            cost: model.cost,
           }),
         );
     }
