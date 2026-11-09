@@ -8,6 +8,7 @@ import {
   FLOW_STEPS,
   PUBLICATION_ADOPTION_ACTION,
   type Run,
+  type RunAdoptPublishedPrAttestedParams,
   type RunAdoptPublishedPrParams,
 } from '@farmslot/protocol';
 
@@ -105,7 +106,7 @@ function fixture(t: test.TestContext): Run {
   });
 }
 
-function request(run: Run): RunAdoptPublishedPrParams {
+function request(run: Run): RunAdoptPublishedPrAttestedParams {
   return {
     runId: run.id,
     prRef: 'https://github.com/owner/repo/pull/192',
@@ -580,7 +581,8 @@ test('GitHub branch/history failures, in-flight publication and conflicting link
         github: async (args, opts) => {
           const value = await normal(args, opts);
           const facts = JSON.parse(value.stdout);
-          facts.head.ref = 'wrong-branch';
+          // A branch name may differ now (content or attestation decides); another repository never.
+          facts.head.repo = { full_name: 'fork/repo' };
           return { ...value, stdout: JSON.stringify(facts) };
         },
       }),

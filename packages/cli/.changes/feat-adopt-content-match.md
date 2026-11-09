@@ -1,0 +1,1 @@
+- `farmslot run adopt-published-pr <runId> --pr <url>` adopts by content match; `--head`, `--reason` and `--attest-reviewed-publication` are now optional and form the attested override. The output names the match type and the PR branch when it differs.

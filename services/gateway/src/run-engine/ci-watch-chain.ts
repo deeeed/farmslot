@@ -2,6 +2,7 @@ import {
   adoptedPublicationTarget,
   type FlowType,
   PR_BOUND_FLOW_TYPES,
+  publishedBranchOf,
   type Run,
   type RunCreateParams,
 } from '@farmslot/protocol';
@@ -68,7 +69,8 @@ export function buildCIWatchChainedRunParams(
       project: current.project,
       ticketOrPr,
       slotId: current.slotId ?? undefined,
-      branch: current.branch ?? undefined,
+      // Work follows the PR, whose branch may differ from the run's (an adopted, republished PR).
+      branch: publishedBranchOf(current),
       // Chained runs inherit the parent's runner+model unchanged. The parent
       // already validated that combo at runCreate, so propagating it can't
       // produce an impossible runner+model wedge. Flow-specific model

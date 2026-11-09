@@ -846,3 +846,44 @@ command error; deferred failures use existing run events, `Run.error` and
 SDK export, package contract or harness hook is proposed. Harnesses inherit launch admission
 and keep their existing setup commands. Implementation is tracked in #1509; no
 public package contract or release is added.
+
+## Amendment 12: adopt a published PR by content, not branch name, 2026-11-09
+
+**Status:** Proposed; Arthur's decision of 2026-11-09, pending paired review.
+**Specification:** [Human publication adoption](../reference/fail-closed-run-lifecycle.md#human-publication-adoption).
+
+### Decision
+
+Adoption no longer requires the PR's branch to equal the run's branch. A run's
+fix can be republished from another branch of the same repository (for example
+after the repository owner merges main in). Two paths remain, and both refuse a
+PR whose base or head is in another repository:
+
+- **Content match (automatic).** Without an attestation, the gateway reads the
+  run's reviewed patch from its frozen review snapshot, verifies it against the
+  recorded diff hash, and compares it file by file with the PR's change against
+  its base on GitHub. Text hunks compare by stable patch-id, so line offsets and
+  blob ids do not matter. Every file must match. The adopted head is the
+  observed PR head.
+- **Attested head (override).** The attestation flags keep their Amendment 2
+  meaning (`--attest-reviewed-publication`, `--head <sha>`, `--reason`) and are
+  the human override for a mismatch or an unverifiable patch.
+
+On a mismatch without an attestation the refusal names the PR branch, the
+differing files (or why the patch could not be compared) and the exact
+attested command to run instead. Nothing is written.
+
+The receipt records `match`: `content-match` or `attested`, the run and PR
+branch names and the differing files. The resolved gate decision carries the
+same match and the reason. A same-branch, attested adoption behaves as before.
+Consumers that compared the PR branch with the run's branch (published-evidence
+refresh, chained CI work) follow the adopted PR's branch.
+
+### Public surface
+
+`farmslot run adopt-published-pr <runId> --pr <url>` adopts by content; the
+attestation flags become optional and are the override. `RunAdoptPublishedPrParams`
+becomes a union of the content and attested requests;
+`HumanPublicationAdoptionReceipt.match` and `RunDecision.publicationAdoption`
+are optional additions in `@farmslot/protocol`. Old receipts without `match`
+keep their meaning (attested, same branch).

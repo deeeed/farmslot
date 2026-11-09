@@ -4,7 +4,18 @@ import type {
 } from './run-gate-readiness.js';
 import type { PublicationStatus, Run } from './runs.js';
 
-/** A human attests this revision, never a newer observed PR head or the prior package. */
+/** How an adopted PR was matched to the run: by its patch, or by a human-attested head. */
+export interface PublicationAdoptionMatch {
+  type: 'content-match' | 'attested';
+  runBranch: string;
+  prBranch: string;
+  /** Files whose change differs from the reviewed patch; empty for a content match. */
+  differingFiles: string[];
+  /** Why the content could not be compared (attested adoptions only). */
+  unavailable?: string;
+}
+
+/** A human adopts this revision, never a newer observed PR head or the prior package. */
 export interface HumanPublicationAdoptionReceipt {
   schemaVersion: 1;
   id: string;
@@ -22,6 +33,8 @@ export interface HumanPublicationAdoptionReceipt {
   observedDraft: boolean;
   observedState: 'open' | 'closed' | 'merged';
   publicationStatus: Extract<PublicationStatus, 'published_draft' | 'published_ready'>;
+  /** Absent on receipts recorded before content matching (same branch, attested head). */
+  match?: PublicationAdoptionMatch;
   priorGate?: {
     decisionId?: string;
     packageId?: string;
@@ -39,4 +52,14 @@ export function adoptedPublicationTarget(
 ): { repository: string; prNumber: number } | undefined {
   const receipt = run.engineState?.publishGate?.humanPublicationAdoption;
   return receipt && { repository: receipt.repository, prNumber: receipt.prNumber };
+}
+
+/** The branch the run's published PR lives on: an adopted PR's own branch (it may differ from the
+ * run's, for a republished PR), otherwise the run's branch. */
+export function publishedBranchOf(run: Pick<Run, 'engineState' | 'branch'>): string | undefined {
+  return (
+    run.engineState?.publishGate?.humanPublicationAdoption?.observedBranch ??
+    run.branch ??
+    undefined
+  );
 }

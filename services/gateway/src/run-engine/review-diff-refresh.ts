@@ -48,6 +48,18 @@ async function readSnapshotDiff(
   return (await slotFileExists(vars, remotePath)) ? slotReadFile(vars, remotePath) : undefined;
 }
 
+/** The snapshot's captured diff bytes, only when they still verify against its recorded hash. */
+export async function readVerifiedSnapshotDiff(
+  run: Run,
+  snapshot: ReviewDiffSnapshot,
+): Promise<string | undefined> {
+  if (!snapshot.diffHash) return undefined;
+  const diff = await readSnapshotDiff(run, snapshot);
+  if (diff === undefined) return undefined;
+  const identity = reviewSnapshotIdentityText(diff, snapshot.untrackedFiles ?? []);
+  return verifiedReviewDiffHash(identity, snapshot.diffHash) ? diff : undefined;
+}
+
 /** Upgrade only a historical identity whose captured bytes still verify. */
 export async function refreshReviewDiffSnapshot(
   run: Run,
