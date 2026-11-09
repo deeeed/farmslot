@@ -196,6 +196,7 @@ export async function runRetentionPass(
   if (options.apply) {
     if (!options.roots) await warnRunBundleCapacity();
     await assertArchiveRoot(roots.archiveRoot);
+    await resumeStorageArchives(roots.archiveRoot);
     if (!options.roots) {
       await archiveRunArtifactHousekeeping();
     }
