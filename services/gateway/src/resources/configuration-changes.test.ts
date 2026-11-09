@@ -489,6 +489,7 @@ test('the owning home watcher rebinds the selected triage receipt directory', as
         return false;
       }
     }, 'current initial triage selection readiness');
+    await watcher.readyFor(path.join(first, 'evaluation.json'));
     let before = resourceRevisions.revision(key);
     await writeFile(path.join(first, 'evaluation.json'), 'current selected source');
     await clock.until(() => resourceRevisions.revision(key) > before, 'selected receipt bytes');
@@ -507,6 +508,7 @@ test('the owning home watcher rebinds the selected triage receipt directory', as
         return false;
       }
     }, 'policy-selected observation replacement');
+    await watcher.readyFor(path.join(second, 'evaluation.json'));
     before = resourceRevisions.revision(key);
     await writeFile(path.join(second, 'evaluation.json'), 'new selected source');
     await clock.until(() => resourceRevisions.revision(key) > before, 'new selected receipt bytes');

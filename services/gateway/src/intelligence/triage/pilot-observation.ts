@@ -75,6 +75,7 @@ export class TriagePilotObservation {
   private watcher?: FSWatcher;
   private cancellation?: AbortController;
   private generation = 0;
+  private readonly fileEventListeners = new Set<(event: string, file: string) => void>();
 
   constructor(
     private readonly home: string,
@@ -94,6 +95,10 @@ export class TriagePilotObservation {
 
   private hasFailed(): boolean {
     return this.status === 'failed';
+  }
+
+  onFileEvent(listener: (event: string, file: string) => void): void {
+    this.fileEventListeners.add(listener);
   }
 
   async refresh(): Promise<void> {
@@ -151,11 +156,15 @@ export class TriagePilotObservation {
         this.publish();
       };
       watcher.on('all', (event, file) => {
+        for (const listener of this.fileEventListeners) listener(event, file);
         if (['add', 'change', 'unlink', 'addDir', 'unlinkDir'].includes(event)) changed(file);
       });
       watcher.on('raw', (_event, filename: unknown, details: unknown) => {
         const file = watchedEventPath(filename, details);
-        if (file) changed(file);
+        if (file) {
+          for (const listener of this.fileEventListeners) listener('raw', file);
+          changed(file);
+        }
       });
       watcher.on('error', () => {
         if (generation === this.generation) this.fail();

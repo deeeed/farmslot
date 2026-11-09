@@ -1029,6 +1029,7 @@ export function startFileWatcher() {
     ]),
     // Native receipts let tests prove each directory is armed before its first mutation.
     onFileEvent(listener: (event: string, file: string) => void): void {
+      triagePilotObservation.onFileEvent(listener);
       for (const owner of [watcher, poolWatcher, projectWatcher, registrationWatcher]) {
         owner.on('all', listener);
         owner.on('raw', (_event, filename: unknown, details: unknown) => {
