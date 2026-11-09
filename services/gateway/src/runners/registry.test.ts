@@ -1788,14 +1788,14 @@ describe('buildLaunchCommand', () => {
         'cd {repo} && {grok_path}',
         'grok',
         {},
-        /export GROK_ASK_USER_QUESTION='0'; .*\/usr\/local\/bin\/grok/u,
+        /export GROK_ASK_USER_QUESTION='0'; .*\/usr\/local\/bin\/grok/su,
       ],
       [
         'Grok inline',
         '',
         'grok',
         {},
-        /export GROK_ASK_USER_QUESTION='0'; .*\/usr\/local\/bin\/grok/u,
+        /export GROK_ASK_USER_QUESTION='0'; .*\/usr\/local\/bin\/grok/su,
       ],
       [
         'OpenCode',
@@ -1834,7 +1834,7 @@ describe('buildLaunchCommand', () => {
       for (const [runner, expected] of [
         ['claude', /'--disallowedTools' 'AskUserQuestion' --settings '[^']+' --resume 'sess-1'/u],
         ['codex', new RegExp(` resume [^&]*${CODEX_SWITCH}[^&]* 'sess-1'`, 'u')],
-        ['grok', /export GROK_ASK_USER_QUESTION='0'; .*--resume 'sess-1'/u],
+        ['grok', /export GROK_ASK_USER_QUESTION='0'; .*--resume 'sess-1'/su],
       ] as const) {
         const reload = (opts: { modelQuestions?: 'off' }) =>
           buildRunnerSessionReloadCommand(vars, runner, null, 'sess-1', opts);
@@ -1856,10 +1856,7 @@ describe('buildLaunchCommand', () => {
         /unset CLAUDECODE && \/usr\/local\/bin\/claude --dangerously-skip-permissions --model sonnet/,
       );
       assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
-      assert.match(
-        cmd,
-        /install-runner-observability\.mjs' --runner 'claude' --repo '\/tmp\/repo'/,
-      );
+      assert.match(cmd, /--runner 'claude' --repo '\/tmp\/repo'/);
       assert.doesNotMatch(cmd, /farmslot-observability-hook\.mjs/);
       assert.doesNotMatch(cmd, /base64 --decode/);
       assert.doesNotMatch(cmd, /import fs from/);
@@ -2044,14 +2041,11 @@ describe('buildLaunchCommand', () => {
     it('uses a shell-safe HOME expression for remote observability installs', () => {
       const vars = makeVars({ host: 'remote-mac', remoteRepo: '~/work/repo' });
       const cmd = buildLaunchCommand(vars, 'claude', 'sonnet', PROMPT);
-      assert.match(
-        cmd,
-        /installer="\$\{HOME\}\/farmslot-node\/scripts\/install-runner-observability\.mjs"/,
-      );
+      assert.match(cmd, /support_dir="\$\{HOME\}\/farmslot-node"/);
       assert.match(cmd, /printf '%s\\n' "\$\{HOME\}\/farmslot-node\/support"\/"\$hash"/);
       assert.match(cmd, /\[ -f "\$support_dir\/scripts\/lib\/provider-accounts\.mjs" \]/);
-      assert.match(cmd, /installer="\$support_dir\/scripts\/install-runner-observability\.mjs"/);
-      assert.match(cmd, /node "\$installer"/);
+      assert.equal(cmd.includes('"installer":"scripts/install-runner-observability.mjs"'), true);
+      assert.match(cmd, /node -e /);
       assert.match(cmd, /--repo "\$\{HOME\}\/work\/repo"/);
       assert.match(cmd, /cd "\$\{HOME\}\/work\/repo" && unset CLAUDECODE/);
       assert.match(
@@ -2102,7 +2096,7 @@ describe('buildLaunchCommand', () => {
         cmd,
         /codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" --dangerously-bypass-approvals-and-sandbox .*--model gpt-5/,
       );
-      assert.match(cmd, /install-runner-observability\.mjs' --runner 'codex'/);
+      assert.match(cmd, /--runner 'codex'/);
       assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
       assert.match(cmd, /model_reasoning_effort="high"/);
       assert.match(cmd, /--config 'check_for_update_on_startup=false'/);
@@ -2133,7 +2127,7 @@ describe('buildLaunchCommand', () => {
       assert.doesNotMatch(cmd, /ln -sf "\$HOME\/\.codex/);
       assert.doesNotMatch(cmd, /cp "\$HOME\/\.codex/);
       assert.doesNotMatch(cmd, /codex-home\/config\.toml/);
-      assert.match(cmd, /install-runner-observability\.mjs' --runner 'codex'/);
+      assert.match(cmd, /--runner 'codex'/);
       assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
       assert.match(cmd, /model_reasoning_effort="high"/);
       assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
@@ -2248,7 +2242,7 @@ describe('buildLaunchCommand', () => {
     it('launches an interactive TUI with the Farmslot extension and no print mode', () => {
       const vars = makeVars({ dispatchCmd: '', slotId: 'runner-local-test-1' });
       const cmd = buildLaunchCommand(vars, 'pi', null, PROMPT);
-      assert.match(cmd, /install-runner-observability\.mjs' --runner 'pi'/);
+      assert.match(cmd, /--runner 'pi'/);
       assert.match(cmd, /FARMSLOT_RUNNER=pi/);
       assert.match(
         cmd,
@@ -2489,7 +2483,7 @@ describe('buildLaunchCommand', () => {
       const vars = makeVars({ dispatchCmd: '', grokPath: '' });
       const cmd = buildLaunchCommand(vars, 'grok', null, PROMPT);
       assert.ok(cmd.startsWith(CLEAR_RECIPE_TRUST_ENV));
-      assert.match(cmd, /install-runner-observability\.mjs' --runner 'grok' --repo '\/tmp\/repo'/);
+      assert.match(cmd, /--runner 'grok' --repo '\/tmp\/repo'/);
       assert.doesNotMatch(cmd, /continuing without hooks/, 'trust seeding is required for Grok');
       assert.match(
         cmd,
@@ -2601,7 +2595,7 @@ describe('buildLaunchCommand', () => {
         taskDir: TASK_DIR,
         scripted: { mode: 'command', commandRef: 'smoke' },
         scriptedCommand: { command: 'node app.mjs' },
-        scriptedSupportDir: '/tmp/verified support',
+        supportDir: '/tmp/verified support',
       });
       assert.match(cmd, /cd '\/tmp\/product repo'/);
       assert.match(cmd, /'\/tmp\/verified support' scripted-runner/);
@@ -2672,7 +2666,7 @@ describe('buildRunnerSessionReloadCommand', () => {
     });
     assert.match(cmd, /inputs\/inherited\/recipe-source[.]json/);
     assert.match(cmd, /FARMSLOT_RECIPE_SOURCE_TRUST=untrusted/);
-    assert.match(cmd, /install-runner-observability\.mjs' --runner 'grok'/);
+    assert.match(cmd, /--runner 'grok'/);
     assert.match(cmd, /grok-code-fast-1 --resume 'session'; \}$/);
   });
 
@@ -2716,7 +2710,7 @@ describe('buildRunnerSessionReloadCommand', () => {
       safetyTier: 'dangerous',
     });
     assert.ok(cmd.startsWith(CLEAR_RECIPE_TRUST_ENV));
-    assert.match(cmd, /install-runner-observability\.mjs' --runner 'grok' --repo '\/tmp\/repo'/);
+    assert.match(cmd, /--runner 'grok' --repo '\/tmp\/repo'/);
     assert.doesNotMatch(cmd, /continuing without hooks/, 'trust seeding is required for Grok');
     assert.ok(
       cmd.endsWith(

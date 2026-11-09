@@ -326,3 +326,12 @@ test('only the initial pr-complete dispatch defers the old branch Node pin', asy
   currentRun.status = 'fixing';
   await assert.rejects(admitWorkerLaunch(input), /expected 24.16.0 from \.nvmrc/);
 });
+
+test('a hook worker refuses a source probe that supplied no bundle hash', async () => {
+  currentRun = runFixture();
+  currentRun.metrics.runner = 'pi';
+  await assert.rejects(
+    admitWorkerLaunch({ runId: currentRun.id, vars, projectVars: project }),
+    /RUNNER_OBSERVABILITY_BUNDLE_MISMATCH/,
+  );
+});

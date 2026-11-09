@@ -474,7 +474,7 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
     runtimeDir,
     taskDir: taskDir ?? undefined,
     ...(await scriptedRelaunchOptions(runner, run)),
-    scriptedSupportDir: nodeSupport?.supportDir,
+    supportDir: nodeSupport?.supportDir,
     modelQuestions: modelQuestionsForRun(run),
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;

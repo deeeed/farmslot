@@ -27,8 +27,13 @@ import { readSlotRow } from '../core/state.js';
 import { shellQuote } from '../core/tmux.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { runtimeCapabilityStatus } from '../methods/runtime-capabilities.js';
+import { selectedNodeSupportDir } from '../node-support/ensure.js';
 import { wrapWorkerShellCommand } from '../runners/launch-command.js';
 import { routeNativeExecution } from '../runners/native/node.js';
+import {
+  RUNNER_OBSERVABILITY_BUNDLE_HASH,
+  runnerUsesObservabilityBundle,
+} from '../runners/runner-observability.js';
 import { getRun, updateRunStep } from '../runs/store.js';
 import { verifyExecutionSources } from '../sources/runtime.js';
 import { agentRuntimeScriptForSlot } from '../tasks/agent-runtime-script.js';
@@ -38,6 +43,7 @@ import { inspectWorkerLaunchLeftovers } from './worker-leftovers-preflight.js';
 import { type LaunchProbeResult, runLaunchPreflight } from './worker-preflight.js';
 import {
   workerSourceCompatibility,
+  type WorkerSourceExpectation,
   workerSourceProbeCommand,
   type WorkerSourceProbeResult,
 } from './worker-source-preflight.js';
@@ -84,6 +90,9 @@ function probeResult(raw: string): WorkerSourceProbeResult {
     detail: value.detail,
     ...(peerVersions ? { peerVersions } : {}),
     ...(value.retry === false ? { retry: false } : {}),
+    ...(typeof value.runnerObservabilityHash === 'string'
+      ? { runnerObservabilityHash: value.runnerObservabilityHash }
+      : {}),
   };
 }
 
@@ -253,17 +262,47 @@ export async function admitWorkerLaunch(
               throw error;
             }
           }
+          let runnerObservability: WorkerSourceExpectation['runnerObservability'];
+          if (!input.environment && runnerUsesObservabilityBundle(initial?.metrics.runner)) {
+            try {
+              runnerObservability = {
+                sourceDir:
+                  (await selectedNodeSupportDir(
+                    input.vars,
+                    project.runtimeDir ?? '.agent',
+                    project,
+                    undefined,
+                    timeout,
+                  )) ?? null,
+                hash: RUNNER_OBSERVABILITY_BUNDLE_HASH,
+              };
+            } catch (error) {
+              return {
+                status: 'mismatch',
+                detail: `RUNNER_OBSERVABILITY_BUNDLE_MISMATCH: cannot observe selected support: ${error instanceof Error ? error.message : String(error)}`,
+              };
+            }
+          }
           const command = workerSourceProbeCommand({
             cliVersion: await packageVersion('cli'),
             protocolVersion: await packageVersion('protocol'),
             runtimeScript: await agentRuntimeScriptForSlot(input.vars, 'task-init-cli.mjs'),
             taskDir: workerTaskDir(initial, input.vars, project),
             repoRoot: input.vars.remoteRepo,
+            ...(runnerObservability ? { runnerObservability } : {}),
           });
           const result = await execute(command, signal, timeout);
-          return typeof result === 'string'
-            ? workerSourceCompatibility(probeResult(result))
-            : result;
+          const observed = typeof result === 'string' ? probeResult(result) : result;
+          if (
+            runnerObservability &&
+            (!('runnerObservabilityHash' in observed) ||
+              observed.runnerObservabilityHash !== runnerObservability.hash)
+          )
+            return {
+              status: 'mismatch',
+              detail: `RUNNER_OBSERVABILITY_BUNDLE_MISMATCH: ${observed.detail}`,
+            };
+          return workerSourceCompatibility(observed);
         },
       },
       {

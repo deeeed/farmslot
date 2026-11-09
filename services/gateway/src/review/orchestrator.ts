@@ -3458,7 +3458,7 @@ export async function relaunchWorkerForFix(
     taskDir: taskDir ?? undefined,
     taskFile: fixContext?.taskFile ?? parentRun?.activeTaskFile ?? parentRun?.taskFile ?? undefined,
     ...(await scriptedRelaunchOptions(runner, parentRun)),
-    scriptedSupportDir: nodeSupport?.supportDir,
+    supportDir: nodeSupport?.supportDir,
     modelQuestions: modelQuestionsForRun(parentRun),
   });
   // In the respawned command, so the replaced worker is gone: its signal cannot confirm this one,

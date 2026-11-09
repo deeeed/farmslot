@@ -1845,7 +1845,7 @@ export async function dispatchExecute(
     taskDir: workerTaskDir,
     scripted,
     scriptedCommand,
-    scriptedSupportDir: nodeSupport?.supportDir,
+    supportDir: nodeSupport?.supportDir,
     claudeUsesDispatchCmd: true,
     effort,
     safetyTier,
