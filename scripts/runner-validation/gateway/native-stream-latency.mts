@@ -7,6 +7,10 @@
  *
  * node --import tsx scripts/runner-validation/gateway/native-stream-latency.mts \
  *   --out <dir> [--deltas 200] [--interval 20] [--viewers 3] [--load] [--status-file <json>]
+ *   [--max-p95-ms <n>]
+ * Exits non-zero when a delta is lost or reordered, or when runner→client p95 exceeds the budget.
+ * Without --status-file, --load uses 60 synthetic slot rows; pass a copy of a real
+ * `.farm-status.json` for a production-sized fleet (keep it out of git).
  */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -30,6 +34,8 @@ interface StreamSamples {
   runnerToClient: number[];
   /** Host journal append (`event.at`) → client receive, per text event. */
   hostToClient: number[];
+  /** Fixture line numbers in arrival order; a lost or reordered delta breaks 0..n-1. */
+  lines: number[];
   frames: number;
   bytes: number;
 }
@@ -49,6 +55,7 @@ const { values } = parseArgs({
     viewers: { type: 'string', default: '0' },
     load: { type: 'boolean', default: false },
     'status-file': { type: 'string' },
+    'max-p95-ms': { type: 'string' },
     label: { type: 'string', default: 'run' },
   },
 });
@@ -79,10 +86,23 @@ if (values['status-file']) await copyFile(path.resolve(values['status-file']), s
 else
   await writeFile(
     statusFile,
-    JSON.stringify({ checkedAt: new Date().toISOString(), slots: [], summary: {} }),
+    JSON.stringify({
+      checkedAt: new Date().toISOString(),
+      slots: Array.from({ length: values.load ? 60 : 0 }, (_, index) => ({
+        slot: `latency-${index}`,
+        machine: 'local',
+        project: 'latency',
+        platform: 'cli',
+        lifecycle: index % 3 ? 'ready' : 'busy',
+        branch: `perf/latency-${index}`,
+        session: `latency-${index}`,
+        repo: path.join(root, 'checkouts', String(index)),
+      })),
+      summary: {},
+    }),
   );
 const status = JSON.parse(await readFile(statusFile, 'utf8')) as { slots: { slot: string }[] };
-assert(!values.load || status.slots.length, '--load needs --status-file with at least one slot');
+assert(!values.load || status.slots.length, '--load needs at least one slot row');
 await writeFile(
   path.join(root, 'pool/local.json'),
   JSON.stringify({ machine: 'local', project: 'latency', host: 'localhost', slots: [] }),
@@ -149,7 +169,13 @@ const connect = async () => {
 const connection = await connect();
 const viewers = await Promise.all(Array.from({ length: Number(values.viewers) }, () => connect()));
 
-const samples: StreamSamples = { runnerToClient: [], hostToClient: [], frames: 0, bytes: 0 };
+const samples: StreamSamples = {
+  runnerToClient: [],
+  hostToClient: [],
+  lines: [],
+  frames: 0,
+  bytes: 0,
+};
 let completed = false;
 let subscriptionId: string | undefined;
 const stopEvents = connection.onEvent((frame) => {
@@ -164,8 +190,10 @@ const stopEvents = connection.onEvent((frame) => {
     if (event.type === 'turn.completed') completed = true;
     if (event.type !== 'text.delta' || !event.text) continue;
     samples.hostToClient.push(received - Date.parse(event.at));
-    for (const match of event.text.matchAll(/\[t=(\d+)\]/g))
+    for (const match of event.text.matchAll(/\[t=(\d+)\] line (\d+) /g)) {
       samples.runnerToClient.push(received - Number(match[1]));
+      samples.lines.push(Number(match[2]));
+    }
   }
 });
 
@@ -229,7 +257,14 @@ try {
   result.frames = samples.frames;
   result.bytes = samples.bytes;
   result.gatewayPerformance = await connection.call('gateway.performance.get', {});
-  result.pass = samples.runnerToClient.length === Number(values.deltas);
+  const runnerToClient = result.runnerToClientMs as Percentiles;
+  const inOrder =
+    samples.lines.length === Number(values.deltas) &&
+    samples.lines.every((line, index) => line === index);
+  const budget = values['max-p95-ms'] === undefined ? Infinity : Number(values['max-p95-ms']);
+  result.inOrder = inOrder;
+  result.withinBudget = runnerToClient.p95 <= budget;
+  result.pass = inOrder && runnerToClient.p95 <= budget;
 } finally {
   if (load) clearInterval(load);
   stopEvents();
@@ -264,4 +299,5 @@ try {
   );
   const { gatewayPerformance: _omitted, ...summary } = result;
   console.log(JSON.stringify(summary, null, 2));
+  if (result.pass !== true) process.exitCode = 1;
 }
