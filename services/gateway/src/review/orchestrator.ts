@@ -997,11 +997,13 @@ async function completeReviewFix(
     return undefined;
   if (noSourceChanges && delta.fixHeadSha === delta.fixBaseSha && !evidenceChanged) {
     // Approval ignores review text artifacts, but fixes to them need a real re-review.
-    // Older runs lack this full baseline, so they cannot prove that the fix was empty.
+    // Both review and attempt-bound fix inputs must match, including edits during review.
     const beforeFixInputs = run?.engineState?.reviewFixInputsAtLaunch;
     if (
       !run ||
       !beforeFixInputs ||
+      !run.engineState?.reviewFullInputsAtLaunch ||
+      after?.fixFingerprint !== run.engineState.reviewFullInputsAtLaunch ||
       beforeFixInputs.attempt !== run?.engineState?.reviewFixAttempt ||
       beforeFixInputs.attempt !==
         selectAgentContext(run, { role: 'review-fix' })?.reviewFixAttempt ||

@@ -159,6 +159,7 @@ test('empty-fix inputs retain description and report changes without invalidatin
   await reviewPasses(run.id);
   const before = await readReviewedInputs(getRun(run.id)!);
   assert.ok(before);
+  assert.equal(getRun(run.id)!.engineState?.reviewFullInputsAtLaunch, before.fixFingerprint);
   assert.equal(getRun(run.id)!.engineState?.reviewFixInputsAtLaunch, undefined);
   await noteReviewFixInputsAtLaunch(run.id);
   assert.deepEqual(getRun(run.id)!.engineState?.reviewFixInputsAtLaunch, {
@@ -178,6 +179,7 @@ test('empty-fix inputs retain description and report changes without invalidatin
   assert.notEqual(afterDescription.fixFingerprint, afterReport.fixFingerprint);
   assert.equal(afterDescription.fingerprint, before.fingerprint);
   assert.equal(await reviewedInputsChanged(getRun(run.id)!), false);
+  assert.equal(getRun(run.id)!.engineState?.reviewFullInputsAtLaunch, before.fixFingerprint);
   // A later fix handoff replaces the snapshot and binds it to a new attempt.
   await noteReviewFixInputsAtLaunch(run.id);
   assert.deepEqual(getRun(run.id)!.engineState?.reviewFixInputsAtLaunch, {
@@ -185,13 +187,21 @@ test('empty-fix inputs retain description and report changes without invalidatin
     fingerprint: afterDescription.fixFingerprint,
   });
   assert.equal(getRun(run.id)!.engineState?.reviewFixAttempt, 2);
-  // Reviewer launch still records approval inputs, without refreshing the fix baseline.
+  // A new review replaces its full identity without refreshing the fix baseline.
   await writeFile(path.join(artifacts, 'report.md'), 'An operator edit during re-review\n');
   await noteReviewInputsAtLaunch(run.id);
+  const rereview = await readReviewedInputs(getRun(run.id)!);
+  assert.ok(rereview);
+  assert.equal(getRun(run.id)!.engineState?.reviewFullInputsAtLaunch, rereview.fixFingerprint);
+  assert.notEqual(rereview.fixFingerprint, before.fixFingerprint);
   assert.deepEqual(getRun(run.id)!.engineState?.reviewFixInputsAtLaunch, {
     attempt: 2,
     fingerprint: afterDescription.fixFingerprint,
   });
+  // An unreadable new review cannot retain a prior review's full identity.
+  updateRun(run.id, { slotId: undefined });
+  await noteReviewInputsAtLaunch(run.id);
+  assert.equal(getRun(run.id)!.engineState?.reviewFullInputsAtLaunch, undefined);
 });
 
 test('a pass records what the review was given, not the slot as it is when it passes', async (t) => {

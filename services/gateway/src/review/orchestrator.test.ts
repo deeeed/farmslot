@@ -2000,6 +2000,7 @@ test('runReviewRetryLoop: an empty completed fix re-reviews a head changed since
     makeRun({
       engineState: {
         reviewInputsAtLaunch: unchanged.fingerprint,
+        reviewFullInputsAtLaunch: unchanged.fixFingerprint,
         reviewFixAttempt: 1,
         reviewFixInputsAtLaunch: { attempt: 1, fingerprint: unchanged.fixFingerprint },
       },
@@ -2080,6 +2081,7 @@ for (const artifact of ['pr-description.md', 'report.md']) {
       makeRun({
         engineState: {
           reviewInputsAtLaunch: before.fingerprint,
+          reviewFullInputsAtLaunch: before.fixFingerprint,
           reviewFixAttempt: 1,
           reviewFixInputsAtLaunch: { attempt: 1, fingerprint: before.fixFingerprint },
         },
@@ -2110,16 +2112,33 @@ for (const artifact of ['pr-description.md', 'report.md']) {
   });
 }
 
-for (const restore of [true, false]) {
-  test(`runReviewRetryLoop: production fix launch ${restore ? 're-reviews an intervening edit restored to review-launch text' : 'stops a true no-op on the same attempt'}`, async (t) => {
+for (const [scenario, label] of [
+  ['restored', 're-reviews an edit during review restored by the fix'],
+  ['corrected', 're-reviews a correction during review followed by a no-op fix'],
+  ['noop', 'stops a true no-op with no edits anywhere at the gate'],
+  ['legacy', 're-reviews when the full review-launch fingerprint is missing'],
+] as const) {
+  test(`runReviewRetryLoop: production fix launch ${label}`, async (t) => {
+    const rereview = scenario !== 'noop';
     const { run, artifacts } = await slotWithTask(t);
     const description = path.join(artifacts, 'pr-description.md');
+    if (scenario === 'corrected') await writeFile(description, 'All 999 tests passed\n');
     const original = await readFile(description, 'utf8');
     await noteReviewInputsAtLaunch(run.id);
     const reviewLaunch = await readReviewedInputs(getRun(run.id)!);
     assert.ok(reviewLaunch);
-    // The operator edits the claim while the reviewer is running. The reviewer flags it.
-    await writeFile(description, 'All 999 tests passed\n');
+    if (scenario === 'restored') {
+      // The reviewer flags an intervening edit that the fix then restores.
+      await writeFile(description, 'All 999 tests passed\n');
+    } else if (scenario === 'corrected') {
+      // The reviewer read the original claim before the operator corrected it.
+      await writeFile(description, 'Corrected test-count claim\n');
+    } else if (scenario === 'legacy') {
+      // Older runs have approval inputs, but no full review-launch identity.
+      updateRun(run.id, {
+        engineState: { ...getRun(run.id)!.engineState, reviewFullInputsAtLaunch: undefined },
+      });
+    }
     const fixLaunch = await readReviewedInputs(getRun(run.id)!);
     assert.ok(fixLaunch);
     const { deps, calls } = buildDeps({
@@ -2146,7 +2165,7 @@ for (const restore of [true, false]) {
           },
         ],
       });
-      if (restore) await writeFile(description, original);
+      if (scenario === 'restored') await writeFile(description, original);
       return send(...args);
     };
     const result = await runReviewRetryLoop({
@@ -2171,9 +2190,9 @@ for (const restore of [true, false]) {
         },
       },
     });
-    assert.equal(calls.reviewAgent, restore ? 1 : 0);
-    assert.equal(result.verdict, restore ? 'pass' : 'issues');
-    if (restore) assert.equal(result.attempts?.at(-1)?.loopNumber, 2);
+    assert.equal(calls.reviewAgent, rereview ? 1 : 0);
+    assert.equal(result.verdict, rereview ? 'pass' : 'issues');
+    if (rereview) assert.equal(result.attempts?.at(-1)?.loopNumber, 2);
     const state = getRun(run.id)!.engineState!;
     assert.deepEqual(state.reviewFixInputsAtLaunch, {
       attempt: state.reviewFixAttempt,
@@ -2200,6 +2219,7 @@ test('runReviewRetryLoop: an empty completed fix returns unchanged findings to t
     ...makeRun({
       engineState: {
         reviewInputsAtLaunch: unchanged.fingerprint,
+        reviewFullInputsAtLaunch: unchanged.fixFingerprint,
         reviewFixAttempt: 1,
         reviewFixInputsAtLaunch: { attempt: 1, fingerprint: unchanged.fixFingerprint },
       },

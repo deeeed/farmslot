@@ -271,6 +271,7 @@ async function recoveredFixAtCap(
       engineState: {
         ...getRun(run.id)!.engineState,
         reviewInputsAtLaunch: fingerprint.fingerprint,
+        reviewFullInputsAtLaunch: fingerprint.fixFingerprint,
         reviewFixAttempt: 2,
         reviewFixInputsAtLaunch: {
           attempt: changedArtifact === 'previous-attempt' ? 1 : 2,

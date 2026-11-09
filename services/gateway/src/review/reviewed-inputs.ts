@@ -108,9 +108,12 @@ async function patchEngineState(runId: string, patch: Partial<RunEngineState>): 
 export async function noteReviewInputsAtLaunch(runId: string): Promise<void> {
   const run = getRun(runId);
   if (!run) return;
+  // A new review cannot inherit the prior full identity if its probe is interrupted.
+  await patchEngineState(runId, { reviewFullInputsAtLaunch: undefined });
   const current = await readReviewedInputs(run);
   await patchEngineState(runId, {
     reviewInputsAtLaunch: current?.fingerprint,
+    reviewFullInputsAtLaunch: current?.fixFingerprint,
   });
 }
 
