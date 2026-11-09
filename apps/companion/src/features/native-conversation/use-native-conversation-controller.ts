@@ -36,7 +36,10 @@ import {
   resourceQuery,
 } from '@farmslot/protocol/client-cache';
 
-import { observeNativeConversation as observeNativeConversationProof } from '../../farmslot/run-collections-proof';
+import {
+  type NativeFollowProof,
+  observeNativeConversation as observeNativeConversationProof,
+} from '../../farmslot/run-collections-proof';
 import { useNativeConversation } from '../../hooks/useNativeConversation';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { currentFarmConnection } from '../../lib/connection-authority';
@@ -98,6 +101,8 @@ export function useNativeConversationController(params: NativeConversationParams
   const creation = useNativeSessionSetup(!params.sessionId);
   const launching = useRef(false);
   const timelineMemo = useRef<NativeTimelineMemo>({});
+  /** Reported by the screen, which owns scrolling; read only by the dev proof frame. */
+  const followProof = useRef<NativeFollowProof | undefined>(undefined);
   const [draft, setDraft] = useState(params.draft ?? '');
   const [pending, setPending] = useState<PendingCommand>();
   const [responses, setResponses] = useState<string[]>([]);
@@ -622,6 +627,7 @@ export function useNativeConversationController(params: NativeConversationParams
     if (__DEV__ && (params.runId || params.sessionId))
       return observeNativeConversationProof((params.runId || params.sessionId)!, () => ({
         ...proof.current,
+        follow: followProof.current,
       }));
   }, [params.runId, params.sessionId, storageKey]);
   return {
@@ -768,6 +774,9 @@ export function useNativeConversationController(params: NativeConversationParams
       retry,
       edit,
       respond,
+      reportFollow: (follow: NativeFollowProof) => {
+        followProof.current = follow;
+      },
       setDraft: (value: string) => {
         draftRef.current = value;
         setDraft(value);
