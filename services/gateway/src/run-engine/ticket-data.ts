@@ -54,6 +54,18 @@ function buildPrIntegrationNote(
   };
 }
 
+const BROWSE_LINK = /\/browse\/[A-Z][A-Z0-9]*-\d+/i;
+
+/**
+ * Keys the PR body links as browse URLs on the project's own Jira. A link is an
+ * explicit reference; a bare key in prose is not (HIP-3, AC-1 and EIP-1193 look like keys).
+ */
+function jiraBrowseKeys(body: string | undefined, baseUrl: string): string[] {
+  const base = baseUrl.replace(/\/+$/, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const link = new RegExp(`${base}/browse/([A-Z][A-Z0-9]*-\\d+)(?![\\w-])`, 'gi');
+  return [...(body ?? '').matchAll(link)].map((match) => match[1]!.toUpperCase());
+}
+
 export async function fetchPRData(
   runId: string,
 ): Promise<Awaited<ReturnType<typeof fetchGitHubPR>> | null> {
@@ -107,14 +119,20 @@ export async function fetchPRData(
   };
 
   // Operator additions stay editable metadata, never promoted into dispatch ticket data.
-  const jiraKeys = runLinkedTicketRefs({ ticketOrPr: run.ticketOrPr, ticketData: run.ticketData });
+  const explicitKeys = runLinkedTicketRefs({
+    ticketOrPr: run.ticketOrPr,
+    ticketData: run.ticketData,
+  });
 
-  if (jiraKeys.length > 0) {
+  if (explicitKeys.length > 0 || BROWSE_LINK.test(prData.body ?? '')) {
     try {
       const pv = await loadProjectVarsOrNull(run.project, 'run recovery', run.id);
       const pj: RawProjectJson | undefined = pv?.projectJson;
       const baseUrl: string | undefined = pj?.jira?.base_url;
-      if (baseUrl) {
+      const jiraKeys = baseUrl
+        ? [...new Set([...explicitKeys, ...jiraBrowseKeys(prData.body, baseUrl)])]
+        : [];
+      if (baseUrl && jiraKeys.length > 0) {
         const jiraConfig = {
           baseUrl,
           emailEnv: pj?.jira?.email_env,

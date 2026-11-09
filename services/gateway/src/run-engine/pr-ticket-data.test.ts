@@ -105,6 +105,41 @@ test('PR body ticket-like text never creates ticket refs or Jira requests', asyn
   assert.equal(data.githubIssue, 'owner/repo#38127');
 });
 
+test('PR body browse links to the project Jira are prefetched; other hosts and prose are not', async () => {
+  body = [
+    'Fixes: https://jira.example.test/browse/tat-4355',
+    'See https://jira.example.test/browse/TAT-4356?focusedCommentId=1 and again https://jira.example.test/browse/TAT-4355.',
+    'Unrelated https://other.example.test/browse/TAT-7777 and prose TAT-9999.',
+  ].join('\n');
+  runs.set('run', run());
+  requestedKeys.length = 0;
+  await fetchPRData('run');
+  assert.deepEqual(requestedKeys, ['TAT-4355', 'TAT-4356']);
+  const data = runs.get('run')!.ticketData!;
+  assert.deepEqual(
+    data.linkedTickets?.map((t) => [t.ref, t.url, t.description]),
+    [
+      ['TAT-4355', 'https://jira.example.test/browse/TAT-4355', 'Content TAT-4355'],
+      ['TAT-4356', 'https://jira.example.test/browse/TAT-4356', 'Content TAT-4356'],
+    ],
+  );
+  assert.equal(data.jiraKey, 'TAT-4355');
+});
+
+test('PR body browse links are not fetched when the project has no Jira', async () => {
+  configured = false;
+  try {
+    body = 'Fixes: https://jira.example.test/browse/TAT-4355';
+    runs.set('run', run());
+    requestedKeys.length = 0;
+    await fetchPRData('run');
+    assert.deepEqual(requestedKeys, []);
+    assert.deepEqual(runs.get('run')!.ticketData!.linkedTickets ?? [], []);
+  } finally {
+    configured = true;
+  }
+});
+
 const explicit: RunTicketData = {
   source: 'jira',
   title: 'Dispatch ticket',
