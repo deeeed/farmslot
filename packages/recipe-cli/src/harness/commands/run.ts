@@ -600,6 +600,9 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
     },
   };
   stream.phase('authorize');
+  // A refusal before execution (preflight, the checkout lock, runtime prepare) is
+  // still a run result: --json reports it on stdout, not only as stderr text.
+  let authorizing = true;
   // One environment scope for the run: preflight, the runtime check, the
   // observers and the execution all see the same ports.
   const restoreRuntimeEnvironment = activateRecipeRuntimeEnvironment(
@@ -651,6 +654,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
 
       const started = await startRunObservers(adapter, target, artifactsDir);
       observers = started;
+      authorizing = false;
       stream.phase('execute');
       let executionResult;
       let report: RunReport | undefined;
@@ -810,6 +814,18 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
     } finally {
       lock.release();
     }
+  } catch (error) {
+    if (!authorizing || (!jsonOutput && !stream.enabled)) throw error;
+    return emitRunUsageError(
+      jsonOutput,
+      stream,
+      adapter,
+      validated.recipeFile,
+      'RUN_AUTHORIZE_FAILED',
+      error instanceof Error ? error.message : String(error),
+      'resolve the reported refusal, then rerun',
+      { exitCode: EXIT.runtime, stage: 'authorize' },
+    );
   } finally {
     restoreRuntimeEnvironment();
   }
@@ -1292,6 +1308,7 @@ function emitRunUsageError(
   code: string,
   message: string,
   userAction: string,
+  outcome: { exitCode: number; stage?: string } = { exitCode: EXIT.usage },
 ): number {
   stream.error({ code, message, userAction });
   if (json) {
@@ -1303,7 +1320,8 @@ function emitRunUsageError(
           ...harnessContextField(),
           adapter,
           status: 'fail',
-          exitCode: EXIT.usage,
+          exitCode: outcome.exitCode,
+          ...(outcome.stage ? { stage: outcome.stage } : {}),
           recipe: recipeFile,
           error: { code, message, userAction },
         },
@@ -1315,7 +1333,7 @@ function emitRunUsageError(
     console.error(`✗ run: ${message}`);
     console.error(`  Next: ${userAction}`);
   }
-  return EXIT.usage;
+  return outcome.exitCode;
 }
 
 function emitRunValidationError(
