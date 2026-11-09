@@ -70,24 +70,38 @@ export function createSlotUpdateScheduler(
   { coalesceMs, minIntervalMs }: SlotUpdateSchedule,
 ): () => void {
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let pendingSince: number | undefined;
   let lastFired = -Infinity;
   return () => {
-    if (timer) return;
-    const delay = Math.max(coalesceMs, lastFired + minIntervalMs - Date.now());
+    const now = Date.now();
+    pendingSince ??= now;
+    // The deadline is fixed by the first pending write, so later writes re-arm the timer without
+    // postponing it, and a timer that never ran (a test's mocked clock) is replaced.
+    const due = Math.max(pendingSince + coalesceMs, lastFired + minIntervalMs);
+    if (timer) clearTimeout(timer);
     timer = withoutCleanupSignal(() =>
-      setTimeout(() => {
-        timer = null;
-        lastFired = Date.now();
-        fire();
-      }, delay),
+      setTimeout(
+        () => {
+          timer = null;
+          pendingSince = undefined;
+          lastFired = Date.now();
+          fire();
+        },
+        Math.max(0, due - now),
+      ),
     );
   };
 }
 
-const triggerSlotUpdateHook = createSlotUpdateScheduler(() => onSlotUpdated?.(), {
+const scheduleSlotUpdate = createSlotUpdateScheduler(() => onSlotUpdated?.(), {
   coalesceMs: 50,
   minIntervalMs: 250,
 });
+
+function triggerSlotUpdateHook(): void {
+  // No listener, no timer: writes before server.ts registers the hook schedule nothing.
+  if (onSlotUpdated) scheduleSlotUpdate();
+}
 
 export function setSlotUpdateHook(hook: () => void): void {
   onSlotUpdated = hook;
