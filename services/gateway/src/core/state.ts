@@ -51,25 +51,60 @@ async function atomicWriteStatus(data: unknown): Promise<void> {
 }
 
 // ─── Broadcast hook ───
-// Registered by server.ts so every updateSlotStatus triggers a fleet broadcast.
-// Debounced to coalesce rapid successive calls (e.g. release resets multiple fields).
+// Registered by server.ts so every updateSlotStatus triggers a fleet broadcast. Each broadcast
+// re-reads the status file and sends the whole fleet to every client, so writes are coalesced
+// (a release sets several fields in a row) and broadcasts are rate-limited. Unlike a debounce,
+// steady writes never postpone the broadcast indefinitely.
 let onSlotUpdated: (() => void) | null = null;
-let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-const DEBOUNCE_MS = 50;
+
+export interface SlotUpdateSchedule {
+  /** Wait after the first write so the writer's burst lands in one broadcast. */
+  coalesceMs: number;
+  /** Minimum time between two broadcasts. */
+  minIntervalMs: number;
+}
+
+/** Calls `fire` at most once per `minIntervalMs`, `coalesceMs` after the first pending trigger. */
+export function createSlotUpdateScheduler(
+  fire: () => void,
+  { coalesceMs, minIntervalMs }: SlotUpdateSchedule,
+): () => void {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let pendingSince: number | undefined;
+  let lastFired = -Infinity;
+  return () => {
+    const now = Date.now();
+    pendingSince ??= now;
+    // The deadline is fixed by the first pending write, so later writes re-arm the timer without
+    // postponing it, and a timer that never ran (a test's mocked clock) is replaced.
+    const due = Math.max(pendingSince + coalesceMs, lastFired + minIntervalMs);
+    if (timer) clearTimeout(timer);
+    timer = withoutCleanupSignal(() =>
+      setTimeout(
+        () => {
+          timer = null;
+          pendingSince = undefined;
+          lastFired = Date.now();
+          fire();
+        },
+        Math.max(0, due - now),
+      ),
+    );
+  };
+}
+
+const scheduleSlotUpdate = createSlotUpdateScheduler(() => onSlotUpdated?.(), {
+  coalesceMs: 50,
+  minIntervalMs: 250,
+});
+
+function triggerSlotUpdateHook(): void {
+  // No listener, no timer: writes before server.ts registers the hook schedule nothing.
+  if (onSlotUpdated) scheduleSlotUpdate();
+}
 
 export function setSlotUpdateHook(hook: () => void): void {
   onSlotUpdated = hook;
-}
-
-function triggerSlotUpdateHook(): void {
-  if (!onSlotUpdated) return;
-  if (debounceTimer) clearTimeout(debounceTimer);
-  debounceTimer = withoutCleanupSignal(() =>
-    setTimeout(() => {
-      debounceTimer = null;
-      onSlotUpdated?.();
-    }, DEBOUNCE_MS),
-  );
 }
 
 // ─── updateSlotStatus ───

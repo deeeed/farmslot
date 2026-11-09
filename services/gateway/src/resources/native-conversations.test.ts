@@ -333,3 +333,60 @@ test('streamed worker metadata uses the same acceptance policy as explicit histo
     controllable,
   );
 });
+
+test('queued updates drain in order under one authorization pass', async () => {
+  const f = fixture();
+  const c = client();
+  const received: { kind: string; subscriptionId: string; cursor?: { sequence: number } }[] = [];
+  const step = (sequence: number): NativeConversationUpdate => ({
+    kind: 'delta',
+    cursor: { ...cursor, sequence },
+    page: {
+      ...page,
+      cursor: sequence,
+      events: [
+        {
+          sessionId: 'session',
+          generation: 'process',
+          sequence,
+          at: '2026-11-07T00:00:00Z',
+          type: 'text.delta',
+          text: `chunk ${sequence}`,
+        },
+      ],
+    },
+  });
+  let principalReads = 0;
+  const broker = new NativeConversations(async (_node, method, value) => {
+    if (method.endsWith('unsubscribe')) return { ok: true };
+    const params = value as { subscriptionId: string };
+    // Five updates arrive before the client activates, so they queue for one drain.
+    for (let sequence = 1; sequence <= 5; sequence++)
+      broker.accept(f.ws, { ...step(sequence), subscriptionId: params.subscriptionId });
+    return initial;
+  });
+  try {
+    const result = await broker.subscribe(
+      c,
+      target,
+      () => {
+        principalReads++;
+        return f.reader;
+      },
+      (_event, payload) => received.push(payload as (typeof received)[number]),
+    );
+    principalReads = 0;
+    broker.activate(c, result.subscriptionId);
+    await settle();
+    assert.deepEqual(
+      received.map((payload) => [payload.kind, payload.cursor?.sequence, payload.subscriptionId]),
+      [1, 2, 3, 4, 5].map((sequence) => ['delta', sequence, result.subscriptionId]),
+    );
+    // One authorization (two reads) for the pass, then one reader check per emitted update.
+    // Authorizing per update would read the principal three times per update.
+    assert.equal(principalReads, 2 + 5);
+  } finally {
+    broker.disconnect(c);
+    f.close();
+  }
+});
