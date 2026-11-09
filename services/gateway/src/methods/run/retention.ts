@@ -33,6 +33,7 @@ import {
 } from '../../runs/retention.js';
 import {
   assertArchiveRoot,
+  keepStorageDeletions,
   resumeStorageArchives,
   runArchiveRoot,
   stageStoragePaths,
@@ -239,13 +240,29 @@ export async function runRetentionPass(
         { source: trash, store: 'retention-trash' },
       ]);
   });
+  const removableIds = new Set(removable.map((run) => run.id));
+  for (const run of runs) {
+    if (removableIds.has(run.id)) continue;
+    await turn(() =>
+      keepStorageDeletions(
+        roots.archiveRoot, run.id, runRetentionHold(run, context) ?? 'holds its slot',
+      ),
+    );
+  }
   const processed = new Set<string>();
   for (const candidate of removable) {
     await turn(async () => {
       try {
-        if (await deps.holdsSlot(candidate)) return;
+        if (await deps.holdsSlot(candidate)) {
+          await keepStorageDeletions(roots.archiveRoot, candidate.id, 'holds its slot');
+          return;
+        }
         const run = await getRunWithArchived(candidate.id);
-        if (!run || runRetentionHold(run, context)) return;
+        const hold = run ? runRetentionHold(run, context) : 'run missing';
+        if (!run || hold) {
+          await keepStorageDeletions(roots.archiveRoot, candidate.id, hold ?? 'run missing');
+          return;
+        }
         const others = [...runs, ...getAllRuns()].filter(
           (other) =>
             other.id !== run.id &&
@@ -267,15 +284,6 @@ export async function runRetentionPass(
         );
         for (const source of pins)
           files.push({ source, store: 'task-pins', bytes: await diskBytes(source) });
-        if (!files.length) {
-          processed.add(run.id);
-          return;
-        }
-        await recordRunStorageArchive(run.id, storageArchiveManifest(roots.archiveRoot, run.id));
-        await getRunWithArchived(run.id); // Reload after the durable link invalidates archived cache.
-        const archiveFiles = files.filter(
-          (file) => retentionStoreAction(file.store) === 'archived',
-        );
         const deleteFiles: StorageDeletion[] = files.flatMap((file) =>
           file.store === 'task-pins' || file.store === 'review-workspaces'
             ? [
@@ -286,6 +294,18 @@ export async function runRetentionPass(
                 },
               ]
             : [],
+        );
+        await keepStorageDeletions(
+          roots.archiveRoot, run.id, 'ownership or admission changed', deleteFiles,
+        );
+        if (!files.length) {
+          processed.add(run.id);
+          return;
+        }
+        await recordRunStorageArchive(run.id, storageArchiveManifest(roots.archiveRoot, run.id));
+        await getRunWithArchived(run.id); // Reload after the durable link invalidates archived cache.
+        const archiveFiles = files.filter(
+          (file) => retentionStoreAction(file.store) === 'archived',
         );
         await stageStoragePaths(
           roots.archiveRoot,

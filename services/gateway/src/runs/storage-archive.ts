@@ -25,15 +25,46 @@ interface ArchivedStorageEntry {
   state?: 'planned' | 'staged' | 'archived';
 }
 
-export interface DeletedStorageEntry {
-  state: 'deleted';
+interface StorageDeletionEntry {
   store: 'task-pins' | 'review-workspaces';
   source: string;
   bytes: number;
-  deletedAt: string;
 }
 
-export type StorageArchiveEntry = ArchivedStorageEntry | DeletedStorageEntry;
+interface DeletingStorageEntry extends StorageDeletionEntry {
+  state: 'deleting';
+  plannedAt: string;
+}
+
+export interface DeletedStorageEntry extends StorageDeletionEntry {
+  state: 'deleted';
+  // Older completed deletions predate the intent journal.
+  plannedAt?: string;
+  deletedAt: string;
+  recovered?: true;
+}
+
+interface KeptStorageEntry extends StorageDeletionEntry {
+  state: 'kept';
+  plannedAt: string;
+  reason: string;
+}
+
+export type StorageArchiveEntry =
+  | ArchivedStorageEntry
+  | DeletingStorageEntry
+  | DeletedStorageEntry
+  | KeptStorageEntry;
+
+function isArchiveEntry(entry: StorageArchiveEntry): entry is ArchivedStorageEntry {
+  return entry.state !== 'deleting' && entry.state !== 'deleted' && entry.state !== 'kept';
+}
+
+function manifestKey(entry: StorageArchiveEntry): string {
+  return isArchiveEntry(entry)
+    ? entry.destination
+    : `delete:${JSON.stringify([entry.store, entry.source])}`;
+}
 
 export interface StorageDeletion {
   source: string;
@@ -94,19 +125,25 @@ async function saveManifest(file: string, manifest: StorageArchiveManifest): Pro
     const prior: StorageArchiveManifest = existsSync(file)
       ? JSON.parse(await readFile(file, 'utf8'))
       : { runId: manifest.runId, entries: [] };
-    const key = (entry: StorageArchiveEntry) =>
-      entry.state === 'deleted'
-        ? `deleted:${entry.store}:${entry.source}:${entry.deletedAt}`
-        : entry.destination;
+    const key = manifestKey;
     const entries = new Map(prior.entries.map((entry) => [key(entry), entry]));
     const phases = { planned: 0, staged: 1, archived: 2 };
     for (const entry of manifest.entries) {
       const old = entries.get(key(entry));
-      if (entry.state === 'deleted') {
+      if (!isArchiveEntry(entry)) {
+        // A concurrent archive save must not put an already resolved intent back in flight.
+        if (
+          old &&
+          !isArchiveEntry(old) &&
+          old.plannedAt === entry.plannedAt &&
+          old.state !== 'deleting' &&
+          entry.state === 'deleting'
+        )
+          continue;
         entries.set(key(entry), entry);
         continue;
       }
-      if (old?.state === 'deleted') throw new Error('Archive entry key collision');
+      if (old && !isArchiveEntry(old)) throw new Error('Archive entry key collision');
       const state =
         phases[old?.state ?? 'planned'] > phases[entry.state ?? 'planned']
           ? old?.state
@@ -159,7 +196,7 @@ async function syncTree(file: string): Promise<void> {
 }
 
 async function finishEntry(entry: StorageArchiveEntry, save: () => Promise<void>): Promise<void> {
-  if (entry.state === 'deleted' || entry.completedAt) return;
+  if (!isArchiveEntry(entry) || entry.completedAt) return;
   if (existsSync(entry.staged)) {
     await assertHeavyWriteRoom(path.dirname(entry.destination));
     await mkdir(path.dirname(entry.destination), { recursive: true });
@@ -238,7 +275,7 @@ export async function stageStoragePaths(
     if (!existsSync(source)) continue;
     const relative = source.slice(path.parse(source).root.length);
     const prior = manifest.entries.find(
-      (entry) => entry.state !== 'deleted' && entry.source === source && !entry.completedAt,
+      (entry) => isArchiveEntry(entry) && entry.source === source && !entry.completedAt,
     );
     if (prior) continue;
     // Keep every generation if a restored task is later archived again.
@@ -251,13 +288,33 @@ export async function stageStoragePaths(
       destination: path.join(root, runId, generation, relative),
     });
   }
+  for (const file of deletions) {
+    const source = path.resolve(file.source);
+    const prior = manifest.entries.find(
+      (entry) => !isArchiveEntry(entry) && entry.store === file.store && entry.source === source,
+    );
+    if (prior?.state === 'deleting') continue;
+    const intent: DeletingStorageEntry = {
+      state: 'deleting',
+      store: file.store,
+      source,
+      bytes: file.bytes,
+      plannedAt: new Date().toISOString(),
+    };
+    if (prior) manifest.entries[manifest.entries.indexOf(prior)] = intent;
+    else manifest.entries.push(intent);
+  }
+  // writeAtomicJSON fsyncs both the intent file and its parent before removal.
   await saveManifest(manifestPath, manifest);
   // Recheck only this pass's selection; old unstarted entries cannot regain ownership.
-  if (!beforeStage()) throw new Error(`Run storage became active before archive: ${runId}`);
+  if (!beforeStage()) {
+    await keepStorageDeletions(root, runId, 'retention eligibility changed before deletion');
+    throw new Error(`Run storage became active before archive: ${runId}`);
+  }
   const selected = new Set(files.map((file) => path.resolve(file.source)));
   for (const entry of manifest.entries) {
     if (
-      entry.state !== 'deleted' &&
+      isArchiveEntry(entry) &&
       !entry.completedAt &&
       selected.has(entry.source) &&
       existsSync(entry.source) &&
@@ -267,34 +324,50 @@ export async function stageStoragePaths(
       entry.state = 'staged';
     }
   }
-  // Stay synchronous from the ownership re-check through staging and deletion. No
-  // admission can pick these paths up between the check and the destructive step.
-  try {
-    for (const file of deletions) {
-      const source = path.resolve(file.source);
-      const storeRoot = path.resolve(file.root);
-      const relative = path.relative(storeRoot, source);
-      if (!relative || relative.startsWith('..') || path.isAbsolute(relative))
-        throw new Error(`Deletion must be inside its store: ${source}`);
-      // rm does not follow child symlinks, but a symlink in a parent would escape
-      // the store before rm sees the exact path. Refuse those parents too.
-      for (let parent = path.dirname(source); ; parent = path.dirname(parent)) {
-        if (lstatSync(parent).isSymbolicLink())
-          throw new Error(`Deletion parent is a symlink: ${parent}`);
-        if (parent === storeRoot) break;
-      }
-      rmSync(source, { recursive: true, force: true });
-      manifest.entries.push({
-        state: 'deleted',
-        store: file.store,
-        source,
-        bytes: file.bytes,
-        deletedAt: new Date().toISOString(),
-      });
+  // Stay synchronous from the ownership re-check through staging and deletion.
+  for (const file of deletions) {
+    const source = path.resolve(file.source);
+    const storeRoot = path.resolve(file.root);
+    const relative = path.relative(storeRoot, source);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative))
+      throw new Error(`Deletion must be inside its store: ${source}`);
+    // rm does not follow child symlinks, but a symlink in a parent would escape
+    // the store before rm sees the exact path. Refuse those parents too.
+    for (let parent = path.dirname(source); ; parent = path.dirname(parent)) {
+      if (lstatSync(parent).isSymbolicLink())
+        throw new Error(`Deletion parent is a symlink: ${parent}`);
+      if (parent === storeRoot) break;
     }
-  } finally {
-    await saveManifest(manifestPath, manifest);
+    rmSync(source, { recursive: true, force: true });
+    const index = manifest.entries.findIndex(
+      (entry) => entry.state === 'deleting' && entry.store === file.store && entry.source === source,
+    );
+    const intent = manifest.entries[index];
+    if (intent?.state !== 'deleting') throw new Error(`Deletion intent missing: ${source}`);
+    manifest.entries[index] = { ...intent, state: 'deleted', deletedAt: new Date().toISOString() };
   }
+  await saveManifest(manifestPath, manifest);
+}
+
+/** Resolve intents rejected by the normal retention eligibility checks. */
+export async function keepStorageDeletions(
+  root: string,
+  runId: string,
+  reason: string,
+  eligible: StorageDeletion[] = [],
+): Promise<void> {
+  const file = storageArchiveManifest(root, runId);
+  if (!existsSync(file)) return;
+  const manifest: StorageArchiveManifest = JSON.parse(await readFile(file, 'utf8'));
+  const changes: KeptStorageEntry[] = manifest.entries.flatMap((entry) =>
+    entry.state === 'deleting' &&
+    !eligible.some(
+      (selected) => selected.store === entry.store && path.resolve(selected.source) === entry.source,
+    )
+      ? [{ ...entry, state: 'kept', reason }]
+      : [],
+  );
+  if (changes.length) await saveManifest(file, { runId, entries: changes });
 }
 
 export async function finishStorageArchive(root: string, runId: string): Promise<void> {
@@ -303,7 +376,21 @@ export async function finishStorageArchive(root: string, runId: string): Promise
     if (!existsSync(manifestPath)) return;
     const manifest: StorageArchiveManifest = JSON.parse(await readFile(manifestPath, 'utf8'));
     for (const entry of manifest.entries) {
-      if (entry.state === 'deleted') continue;
+      if (entry.state === 'deleting') {
+        // Recovery never removes a surviving source; the next eligibility turn decides.
+        if (!lstatSync(entry.source, { throwIfNoEntry: false })) {
+          const recovered: DeletedStorageEntry = {
+            ...entry,
+            state: 'deleted',
+            deletedAt: new Date().toISOString(),
+            recovered: true,
+          };
+          manifest.entries[manifest.entries.indexOf(entry)] = recovered;
+          await saveManifest(manifestPath, { runId, entries: [recovered] });
+        }
+        continue;
+      }
+      if (!isArchiveEntry(entry)) continue;
       if (!entry.completedAt && !existsSync(entry.staged) && !existsSync(entry.destination))
         continue;
       await finishEntry(entry, () => saveManifest(manifestPath, manifest));

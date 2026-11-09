@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import fs, { existsSync } from 'node:fs';
+import fsPromises from 'node:fs/promises';
 import { mkdir, mkdtemp, readFile, rename, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -638,6 +640,7 @@ test(
       assert.deepEqual(Object.keys(entry).sort(), [
         'bytes',
         'deletedAt',
+        'plannedAt',
         'source',
         'state',
         'store',
@@ -780,18 +783,164 @@ test(
     assert.equal(again.stores['task-pins'].entries, 0);
     assert.equal(again.stores['review-workspaces'].entries, 0);
     assert.deepEqual(await f.manifest(), before);
-    await writeFile(
-      storageArchiveManifest(f.roots.archiveRoot, f.run.id),
-      JSON.stringify({
-        ...before,
-        entries: before.entries.filter((entry: { state: string }) => entry.state !== 'deleted'),
-      }),
+  },
+);
+
+/** Stop after the durable intent, or after rm but before the completion save. */
+async function interruptedDeletion(
+  t: test.TestContext,
+  f: Awaited<ReturnType<typeof recreatableRun>>,
+  phase: 'intent' | 'removed',
+) {
+  const manifestPath = storageArchiveManifest(f.roots.archiveRoot, f.run.id);
+  const renameFile = fsPromises.rename;
+  const remove = fs.rmSync;
+  const fault =
+    phase === 'intent'
+      ? t.mock.method(fsPromises, 'rename', async (...args: Parameters<typeof fsPromises.rename>) => {
+          await renameFile(...args);
+          if (String(args[1]) === manifestPath) {
+            const manifest = await f.manifest();
+            if (manifest.entries.some((entry: { state: string }) => entry.state === 'deleting'))
+              throw new Error('crash after deletion intent');
+          }
+        })
+      : t.mock.method(fs, 'rmSync', (...args: Parameters<typeof fs.rmSync>) => {
+          remove(...args);
+          throw new Error('crash after removal');
+        });
+  syncBuiltinESMExports();
+  t.after(() => {
+    fault.mock.restore();
+    syncBuiltinESMExports();
+  });
+  try {
+    await assert.rejects(
+      stageStoragePaths(f.roots.archiveRoot, f.run.id, [], () => true, [
+        { source: f.review, store: 'review-workspaces', root: f.roots.reviewWorkspaces, bytes: 4096 },
+        { source: f.taskPin, store: 'task-pins', root: f.roots.taskPins, bytes: 4096 },
+      ]),
+      /crash after/,
     );
-    const recovered = await runRetentionPass(f.options, privateDeps);
-    assert.deepEqual(
-      recovered.runs,
-      [],
-      'a deletion whose journal was interrupted safely skips missing copies',
+  } finally {
+    fault.mock.restore();
+    syncBuiltinESMExports();
+  }
+}
+
+test(
+  'a crash after deletion intent retries eligibility and completes the same entries',
+  { timeout: 4500 },
+  async (t) => {
+    const f = await recreatableRun(t);
+    await interruptedDeletion(t, f, 'intent');
+    const intents = (await f.manifest()).entries;
+    assert.equal(intents.length, 2);
+    for (const entry of intents) {
+      assert.equal(entry.state, 'deleting');
+      assert.ok(Number.isFinite(Date.parse(entry.plannedAt)));
+      assert.ok(existsSync(entry.source));
+    }
+    await runRetentionPass(f.options, privateDeps);
+    const completed = await f.manifest();
+    for (const intent of intents) {
+      const entries = completed.entries.filter(
+        (entry: { source: string }) => entry.source === intent.source,
+      );
+      assert.equal(entries.length, 1);
+      assert.equal(entries[0].state, 'deleted');
+      assert.equal(entries[0].plannedAt, intent.plannedAt);
+      assert.equal(entries[0].recovered, undefined);
+      assert.equal(existsSync(intent.source), false);
+    }
+    await runRetentionPass(f.options, privateDeps);
+    assert.deepEqual(await f.manifest(), completed);
+  },
+);
+
+test(
+  'a deletion intent becomes kept when a hold, admission or shared owner now applies',
+  { timeout: 4500 },
+  async (t) => {
+    for (const hold of ['tag', 'slot', 'admission', 'owner'] as const) {
+      const f = await recreatableRun(t);
+      await interruptedDeletion(t, f, 'intent');
+      if (hold === 'tag') updateRun(f.run.id, { tags: ['keep'] });
+      if (hold === 'owner') {
+        const shared = createRun({
+          flowType: 'fix-bug',
+          project: 'farmslot-farm',
+          mode: 'autonomous',
+          ticketOrPr: 'RECOVERY-OWNER',
+        });
+        updateRun(shared.id, {
+          status: 'monitoring',
+          reviewWorkspace: workspace(f.review),
+          taskFile: path.join(f.task, 'TASK.md'),
+        });
+        await persistRunNow(shared);
+      }
+      const deps =
+        hold === 'slot'
+          ? { ...privateDeps, holdsSlot: async (run: Run) => run.id === f.run.id }
+          : privateDeps;
+      const pass = async () => {
+        await runRetentionPass(f.options, deps);
+        const kept = await f.manifest();
+        await runRetentionPass(f.options, deps);
+        assert.deepEqual(await f.manifest(), kept, 'kept entries are stable on repeat passes');
+      };
+      if (hold === 'admission') await withTaskAdmission(path.join(f.task, 'TASK.md'), pass);
+      else await pass();
+      const entries = (await f.manifest()).entries.filter(
+        (entry: { source: string }) => entry.source === (hold === 'admission' ? f.taskPin : f.review),
+      );
+      assert.equal(entries.length, 1);
+      assert.equal(entries[0].state, 'kept', hold);
+      assert.match(entries[0].reason, /keep|slot|ownership|admission/);
+      assert.ok(existsSync(entries[0].source));
+      const manifest = await f.manifest();
+      assert.equal(
+        manifest.entries.some((entry: { state: string }) => entry.state === 'deleting'),
+        false,
+      );
+      for (const source of [f.review, f.taskPin]) {
+        assert.equal(
+          manifest.entries.filter((entry: { source: string }) => entry.source === source).length,
+          1,
+        );
+      }
+    }
+  },
+);
+
+test(
+  'a crash after rm recovers a missing source as deleted without duplicate entries',
+  { timeout: 4500 },
+  async (t) => {
+    const f = await recreatableRun(t);
+    await interruptedDeletion(t, f, 'removed');
+    const intents = (await f.manifest()).entries;
+    assert.equal(intents.length, 2);
+    assert.ok(intents.every((entry: { state: string }) => entry.state === 'deleting'));
+    assert.equal(existsSync(f.review), false);
+    assert.ok(existsSync(f.taskPin));
+    const recoveryStarted = Date.now();
+    await runRetentionPass(f.options, privateDeps);
+    const completed = await f.manifest();
+    const entries = completed.entries.filter(
+      (entry: { source: string }) => entry.source === f.review,
     );
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].state, 'deleted');
+    assert.equal(entries[0].recovered, true);
+    assert.ok(Date.parse(entries[0].deletedAt) >= recoveryStarted);
+    assert.equal(entries[0].plannedAt, intents[0].plannedAt);
+    assert.equal(
+      completed.entries.filter((entry: { source: string }) => entry.source === f.taskPin).length,
+      1,
+    );
+    await runRetentionPass(f.options, privateDeps);
+    assert.deepEqual(await f.manifest(), completed);
   },
 );
