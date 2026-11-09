@@ -1305,7 +1305,7 @@ async function findSlotAttempt(
   const inputs: Record<string, unknown> = {
     project: run.project,
     flowType: run.flowType,
-    requestedSlotId: run.slotId || undefined,
+    requestedSlotId: requestedRunSlotId(run) ?? undefined,
   };
   // ADR-054: a slot whose detached HEAD is a park's preserved workspace is
   // dispatchable, so scoring must not charge it the stale-branch penalty. Any
