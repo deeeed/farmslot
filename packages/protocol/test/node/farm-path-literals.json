@@ -79,7 +79,7 @@
   },
   {
     "file": "services/gateway/src/runs/store.ts",
-    "literal": "Refusing to create gateway test fixture run in production .runs/ — run tests via run-tsx-tests.mjs or set NODE_TEST_CONTEXT=1",
+    "literal": "Refusing to create gateway test fixture run in production .runs/ \u2014 run tests via run-tsx-tests.mjs or set NODE_TEST_CONTEXT=1",
     "reason": "Diagnostic text names the legacy persistence directory; it does not select a path.",
     "count": 1
   },
@@ -219,6 +219,12 @@
     "file": "packages/slot-config/src/config.ts",
     "literal": ": roadmap.farmslot_command must be a string",
     "reason": "Configuration validation error names a field, not a filesystem path.",
+    "count": 1
+  },
+  {
+    "file": "packages/cli/src/commands/paths-migrate-plan.ts",
+    "literal": "Operator and slot checkouts, including their .farmslot-runtime, stay in place; deploy code separately",
+    "reason": "Operator-facing plan explanation of retained slot directories; does not construct a storage path.",
     "count": 1
   }
 ]

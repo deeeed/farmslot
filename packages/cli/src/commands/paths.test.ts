@@ -4,8 +4,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { resolveFarmPaths, farmPathEntries } from '@farmslot/protocol/node/farm-paths';
 import { Command } from 'commander';
+
+import { farmPathEntries, resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
+
+import { OutputContext } from '../output.js';
 
 import { registerPathsCommand } from './paths.js';
 
@@ -129,4 +132,51 @@ test('plain paths get reports a legacy configured store outside the farm home', 
   registerPathsCommand(program);
   program.parse(['paths', '--home', home, 'get', 'data.runBundles'], { from: 'user' });
   assert.equal(stdout, `${storeRoot}\n`);
+});
+
+test('migrate CLI requires one mode and returns reviewable JSON without file contents', async (t) => {
+  const started = performance.now();
+  t.after(() => assert.ok(performance.now() - started < 5000));
+  const root = mkdtempSync(path.join(tmpdir(), 'migrate-cli-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  // The resolver rejects redirected migration paths, including macOS /var aliases.
+  const { realpathSync } = await import('node:fs');
+  const home = realpathSync(root);
+  writeFileSync(
+    path.join(home, 'sources.json'),
+    JSON.stringify({ path: path.join(home, 'sources') }),
+  );
+  const prior = process.env;
+  process.env = {
+    HOME: home,
+    FARMSLOT_ROOT: path.join(home, 'checkout'),
+    CANARY_HOME: path.join(home, 'canary'),
+  };
+  t.after(() => {
+    process.env = prior;
+  });
+  let stdout = '';
+  t.mock.method(OutputContext.prototype, 'writeJson', (value: unknown) => {
+    stdout = JSON.stringify(value);
+  });
+  const program = () => {
+    const command = new Command().option('--json').exitOverride();
+    registerPathsCommand(command);
+    return command;
+  };
+  await program().parseAsync(['paths', 'migrate', '--home', home, '--plan', '--json'], {
+    from: 'user',
+  });
+  const result: { steps: { kind: string; body?: string; before?: string; target: string }[] } =
+    JSON.parse(stdout);
+  assert.ok(
+    result.steps.some((step) => step.kind === 'write' && step.target.endsWith('sources.json')),
+  );
+  assert.ok(result.steps.every((step) => step.body === undefined && step.before === undefined));
+  await assert.rejects(
+    program().parseAsync(['paths', 'migrate', '--home', home, '--plan', '--apply'], {
+      from: 'user',
+    }),
+    /exactly one/,
+  );
 });

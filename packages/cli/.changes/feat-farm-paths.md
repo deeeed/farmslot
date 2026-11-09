@@ -1,1 +1,2 @@
 - Resolve CLI state, onboarding and slot context through FarmPaths, report active bundle stores, and print path lookups as values.
+- Plan, journal, resume and roll back offline migration to one farm root, including merged archive roots and stored path rewrites.

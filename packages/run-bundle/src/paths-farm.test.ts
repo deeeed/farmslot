@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
-import path from 'node:path';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+
 import { currentFarmPaths, resolveReportedFarmPaths } from '@farmslot/protocol/node/farm-paths';
+
 import { resolveRunsDir } from './paths.js';
 import { migrateRunBundleStore, openRunBundleStore } from './retained.js';
 
@@ -38,4 +40,17 @@ test('FarmPaths reports the active store after a real run-bundle migration', asy
   });
   assert.equal(result.store.root, targetRoot);
   assert.equal(report.data.runBundles, (await openRunBundleStore({ home, runsDir })).root);
+});
+
+test('a new layout-2 bundle store creates its owner at the resolved data root', async (t) => {
+  const started = performance.now();
+  const home = realpathSync(mkdtempSync(path.join(tmpdir(), 'layout-two-bundle-')));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  t.after(() => assert.ok(performance.now() - started < 5000));
+  mkdirSync(path.join(home, 'config'));
+  writeFileSync(path.join(home, 'config/instance.json'), JSON.stringify({ layout: 2 }));
+  const runsDir = path.join(home, 'state/runs');
+  const store = await openRunBundleStore({ home, runsDir, create: true });
+  assert.equal(store.root, path.join(home, 'data/run-bundles'));
+  assert.deepEqual(await openRunBundleStore({ home, runsDir }), store);
 });
