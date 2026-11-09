@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { chatMarkdownHtml } from './markdown.js';
+import DOMPurify from 'dompurify';
+
+import { chatMarkdownHtml, renderChatMarkdown } from './markdown.js';
 
 const NEW_TAB = ' target="_blank" rel="noopener noreferrer"';
 
@@ -69,4 +71,59 @@ test('chat markdown renders lists, links, code and tables, and shows raw HTML as
     html,
     /<p>&lt;details&gt;<br>&lt;summary&gt;Evidence&lt;\/summary&gt;<br>&lt;\/details&gt;<\/p>/,
   );
+});
+
+// DOMPurify needs a DOM and leaves `sanitize` undefined in node. Stand in with the identity, so
+// block output is compared byte for byte with the full parse; the browser probe checks the
+// sanitized output the same way.
+assert.equal(DOMPurify.isSupported, false);
+Reflect.set(DOMPurify, 'sanitize', (html: string) => html);
+const corpus = [
+  'One paragraph.\nWith a soft break.\n\nAnother paragraph.',
+  '# Heading\n\nSetext heading\n===\n\n### Third\ntext right after',
+  '- tight\n- list\n  - nested\n\n1. loose\n\n2. ordered\n\n   continued',
+  '```ts\nconst a = 1;\n\nconst b = `x`;\n```\n\n    indented code\n\nafter',
+  '| a | b |\n| --- | :-: |\n| 1 | **2** |\n\n> quoted\n> > nested\n\n---\n\nend',
+  'See [the docs][docs] and [inline](https://example.com/a?b=1&c=2).\n\n[docs]: https://example.com/docs "Docs"',
+  '[![CI](https://example.com/ci.svg)](https://example.com/ci) and ![alt](https://example.com/i.png)',
+  'Use <details> here.\n\n<div>\n<script>alert(1)</script>\n</div>\n\ntext <b>bold</b>',
+  'Unterminated fence:\n\n```\ncode that never closes',
+];
+
+test('chat markdown rendered by block matches a full parse, at every point of a stream', () => {
+  for (const md of corpus) assert.equal(renderChatMarkdown(md), chatMarkdownHtml(md), md);
+  // Every prefix of the whole corpus: each block is split mid-way across two deltas somewhere.
+  const stream = corpus.join('\n\n');
+  for (let end = 1; end <= stream.length; end += 7) {
+    const md = stream.slice(0, end);
+    assert.equal(renderChatMarkdown(md), chatMarkdownHtml(md), JSON.stringify(md));
+  }
+});
+
+test('a reference definition arriving after its link re-renders the link', () => {
+  const before = 'Read [the guide][guide-late].\n\n';
+  assert.equal(renderChatMarkdown(before), chatMarkdownHtml(before));
+  const after = `${before}[guide-late]: https://example.com/guide-late`;
+  assert.match(renderChatMarkdown(after), /href="https:\/\/example.com\/guide-late"/);
+  assert.equal(renderChatMarkdown(after), chatMarkdownHtml(after));
+});
+
+test('unchanged blocks come from the cache; a streamed delta renders only the tail block', (t) => {
+  const sanitize = t.mock.method(DOMPurify, 'sanitize');
+  const head = [
+    '## Cached heading 7f3',
+    'A paragraph that stays the same 7f3.',
+    '- item one 7f3\n- item two 7f3',
+    '```sh\necho cached-7f3\n```',
+    '| k | v |\n| - | - |\n| a | 7f3 |',
+  ].join('\n\n');
+  const first = `${head}\n\nThe streamed tail 7f3 sta`;
+  renderChatMarkdown(first);
+  assert.equal(sanitize.mock.callCount(), 6, 'each non-empty block is sanitized once');
+  sanitize.mock.resetCalls();
+  assert.equal(renderChatMarkdown(first), chatMarkdownHtml(first));
+  assert.equal(sanitize.mock.callCount(), 0, 'an unchanged message is all cache hits');
+  const next = `${first}rts here and grows.`;
+  assert.equal(renderChatMarkdown(next), chatMarkdownHtml(next));
+  assert.equal(sanitize.mock.callCount(), 1, 'only the tail paragraph is rendered again');
 });
