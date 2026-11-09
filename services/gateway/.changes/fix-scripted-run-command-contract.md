@@ -1,0 +1,1 @@
+- An artifact-only scripted command run is judged by its command result (`artifacts/scripted-command-result.json`: exit 0, no timeout), not by the project's worker checklist and terminal gates. A green nightly no longer sits in `reconciling` holding its slot because a deterministic checklist step it never ran had no receipt.

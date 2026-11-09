@@ -473,6 +473,126 @@ async function summarizeCodex(filePath: string): Promise<SessionTotals> {
   return totals;
 }
 
+export interface PiModelCostRates {
+  input: number | null;
+  output: number | null;
+  cacheRead: number | null;
+  cacheWrite: number | null;
+  cacheWrite1h?: number | null;
+  reasoningOutput?: number | null;
+}
+
+/** USD per million tokens; null is an unreported price, not a free category. */
+export interface PiModelCostMetadata extends PiModelCostRates {
+  tiers?: Array<PiModelCostRates & { inputTokensAbove: number }>;
+}
+
+type PiRequestCost = PiModelCostMetadata | null | 'legacy';
+
+function piNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function piPricingKey(provider: string, model: string): string {
+  return JSON.stringify([provider, model]);
+}
+
+function piCostRates(value: object): PiModelCostRates {
+  return {
+    input: piNumber('input' in value ? value.input : null),
+    output: piNumber('output' in value ? value.output : null),
+    cacheRead: piNumber('cacheRead' in value ? value.cacheRead : null),
+    cacheWrite: piNumber('cacheWrite' in value ? value.cacheWrite : null),
+    ...('cacheWrite1h' in value ? { cacheWrite1h: piNumber(value.cacheWrite1h) } : {}),
+    ...('reasoningOutput' in value ? { reasoningOutput: piNumber(value.reasoningOutput) } : {}),
+  };
+}
+
+function piRequestCost(
+  record: Record<string, unknown>,
+): { key: string; cost: PiRequestCost } | null {
+  if (record.type !== 'custom' || record.customType !== 'farmslot-model-request') return null;
+  const data = record.data;
+  if (
+    !data ||
+    typeof data !== 'object' ||
+    !('provider' in data) ||
+    typeof data.provider !== 'string' ||
+    !('model' in data) ||
+    typeof data.model !== 'string'
+  )
+    return null;
+  const key = piPricingKey(data.provider, data.model);
+  // Earlier extension entries declared no prices: their SDK zero is not a quote.
+  if (!('cost' in data)) return { key, cost: 'legacy' };
+  const value = data.cost;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { key, cost: null };
+  const cost: PiModelCostMetadata = piCostRates(value);
+  if ('tiers' in value) {
+    if (!Array.isArray(value.tiers)) return { key, cost: null };
+    cost.tiers = [];
+    for (const tier of value.tiers) {
+      if (!tier || typeof tier !== 'object' || !('inputTokensAbove' in tier))
+        return { key, cost: null };
+      const threshold = piNumber(tier.inputTokensAbove);
+      if (threshold === null) return { key, cost: null };
+      cost.tiers.push({ ...piCostRates(tier), inputTokensAbove: threshold });
+    }
+  }
+  return { key, cost };
+}
+
+function piAmountsMatch(a: number | null | undefined, b: number | null): boolean {
+  return (
+    a != null &&
+    b !== null &&
+    Math.abs(a - b) <= Number.EPSILON * 4 * Math.max(1, Math.abs(a), Math.abs(b))
+  );
+}
+
+function piCostMatchesPrices(
+  cost: PiModelCostMetadata | null,
+  tokens: { inputTokens: number; outputTokens: number; cacheCreation: number; cacheRead: number },
+  longWrites: number,
+  recorded: number | null,
+): boolean {
+  if (cost === null || recorded === null) return false;
+  let rates: PiModelCostRates = cost;
+  let threshold = -1;
+  const input = tokens.inputTokens + tokens.cacheCreation + tokens.cacheRead;
+  for (const tier of cost.tiers ?? []) {
+    if (input > tier.inputTokensAbove && tier.inputTokensAbove > threshold) {
+      rates = tier;
+      threshold = tier.inputTokensAbove;
+    }
+  }
+  // Pi's SDK total bills output at one rate, even when it reports reasoning tokens.
+  if (
+    tokens.outputTokens > 0 &&
+    'reasoningOutput' in rates &&
+    !piAmountsMatch(rates.reasoningOutput, rates.output)
+  )
+    return false;
+  const shortWrites = tokens.cacheCreation - longWrites;
+  if (
+    (tokens.inputTokens > 0 && rates.input === null) ||
+    (tokens.outputTokens > 0 && rates.output === null) ||
+    (tokens.cacheRead > 0 && rates.cacheRead === null) ||
+    (shortWrites > 0 && rates.cacheWrite === null) ||
+    (longWrites > 0 && rates.cacheWrite1h == null)
+  )
+    return false;
+  // This quote validates an existing native cost; it never fills a missing cost.
+  const quoted =
+    (tokens.inputTokens * (rates.input ?? 0) +
+      tokens.outputTokens * (rates.output ?? 0) +
+      tokens.cacheRead * (rates.cacheRead ?? 0) +
+      shortWrites * (rates.cacheWrite ?? 0) +
+      longWrites * (rates.cacheWrite1h ?? 0)) /
+    1_000_000;
+  return piAmountsMatch(recorded, quoted);
+}
+
 export interface PiAssistantUsage {
   inputTokens: number;
   outputTokens: number;
@@ -484,27 +604,58 @@ export interface PiAssistantUsage {
 }
 
 /** Pi reports separate, per-message token categories and its own dollar cost. */
-export function readPiAssistantUsage(record: Record<string, unknown>): PiAssistantUsage | null {
+export function readPiAssistantUsage(
+  record: Record<string, unknown>,
+  prices?: ReadonlyMap<string, PiRequestCost>,
+): PiAssistantUsage | null {
   const message = record.message;
   if (record.type !== 'message' || !message || typeof message !== 'object') return null;
   if (!('role' in message) || message.role !== 'assistant' || !('usage' in message)) return null;
   const usage = message.usage;
   if (!usage || typeof usage !== 'object') return null;
-  const number = (value: unknown) =>
-    typeof value === 'number' && Number.isFinite(value) ? value : null;
-  const inputTokens = number('input' in usage ? usage.input : null) ?? 0;
-  const outputTokens = number('output' in usage ? usage.output : null) ?? 0;
-  const cacheCreation = number('cacheWrite' in usage ? usage.cacheWrite : null) ?? 0;
-  const cacheRead = number('cacheRead' in usage ? usage.cacheRead : null) ?? 0;
+  const inputTokens = piNumber('input' in usage ? usage.input : null) ?? 0;
+  const outputTokens = piNumber('output' in usage ? usage.output : null) ?? 0;
+  const cacheCreation = piNumber('cacheWrite' in usage ? usage.cacheWrite : null) ?? 0;
+  const cacheRead = piNumber('cacheRead' in usage ? usage.cacheRead : null) ?? 0;
+  const model = 'model' in message && typeof message.model === 'string' ? message.model : null;
+  const provider =
+    'provider' in message && typeof message.provider === 'string' ? message.provider : null;
+  const pricing = provider && model ? prices?.get(piPricingKey(provider, model)) : undefined;
   const cost = 'cost' in usage ? usage.cost : null;
+  let costUsd = cost && typeof cost === 'object' && 'total' in cost ? piNumber(cost.total) : null;
+  const providerCharge =
+    cost &&
+    typeof cost === 'object' &&
+    'totalFromProvider' in cost &&
+    cost.totalFromProvider === true;
+  // Pi initializes this counter to zero even when a stream supplies no usage.
+  if (
+    !providerCharge &&
+    costUsd === 0 &&
+    inputTokens + outputTokens + cacheCreation + cacheRead === 0
+  )
+    costUsd = null;
+  if (!providerCharge && pricing !== undefined) {
+    if (
+      pricing === 'legacy'
+        ? costUsd === 0
+        : !piCostMatchesPrices(
+            pricing,
+            { inputTokens, outputTokens, cacheCreation, cacheRead },
+            piNumber('cacheWrite1h' in usage ? usage.cacheWrite1h : null) ?? 0,
+            costUsd,
+          )
+    )
+      costUsd = null;
+  }
   return {
     inputTokens,
     outputTokens,
     cacheCreation,
     cacheRead,
     totalTokens: inputTokens + outputTokens + cacheCreation + cacheRead,
-    costUsd: cost && typeof cost === 'object' && 'total' in cost ? number(cost.total) : null,
-    model: 'model' in message && typeof message.model === 'string' ? message.model : null,
+    costUsd,
+    model,
   };
 }
 
@@ -512,8 +663,14 @@ async function summarizePi(filePath: string): Promise<SessionTotals> {
   const totals = emptyTotals();
   let cost = 0;
   let completeCost = true;
+  const prices = new Map<string, PiRequestCost>();
   for await (const record of safeJsonLines(filePath)) {
-    const usage = readPiAssistantUsage(record);
+    const quote = piRequestCost(record);
+    if (quote) {
+      prices.set(quote.key, quote.cost);
+      continue;
+    }
+    const usage = readPiAssistantUsage(record, prices);
     if (!usage) continue;
     totals.turns += 1;
     totals.input_tokens += usage.inputTokens;

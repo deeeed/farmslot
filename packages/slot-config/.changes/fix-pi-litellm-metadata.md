@@ -1,0 +1,1 @@
+- Keep Pi session cost unknown when a used price is unreported instead of counting SDK placeholder zeroes as complete spend; preserve provider-reported charges. Missing token usage and unpriced local-provider turns also leave cost unknown.
