@@ -41,7 +41,7 @@ export function versionAtLeast(version: string, minimum: [number, number, number
 }
 
 /** Read engines.node from the repo's root package.json. */
-export function requiredNodeRange(root: string = repoRoot): string | null {
+export function requiredNodeRange(root: string = repoRoot()): string | null {
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf-8')) as {
     engines?: { node?: string };
   };
@@ -76,7 +76,7 @@ const INSTALL_HINTS: Record<string, string> = {
 /** Version flag per tool — tmux only understands -V. */
 const VERSION_ARGS: Record<string, string[]> = { tmux: ['-V'] };
 
-export function checkPrereqs(root: string = repoRoot): PrereqResult[] {
+export function checkPrereqs(root: string = repoRoot()): PrereqResult[] {
   const results: PrereqResult[] = [];
 
   for (const name of ['git', 'node', 'yarn', 'tmux', 'python3']) {

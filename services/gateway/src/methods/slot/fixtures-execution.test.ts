@@ -23,7 +23,7 @@ let execute = realCore.execLocal;
 mock.module('../../core/index.js', {
   namedExports: {
     ...realCore,
-    farmslotRoot: root,
+    farmslotRoot: () => root,
     execLocal: (command: string, options?: ExecOptions) => {
       calls.push({ command, options });
       return execute(command, options);

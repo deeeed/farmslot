@@ -1,3 +1,6 @@
+import path from 'node:path';
+
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { rebindRecipeLibraryPath } from '@farmslot/recipe-runner';
 import { withSourceEnvironment } from '@farmslot/slot-config';
 
@@ -6,6 +9,7 @@ import { getNode } from '../fleet/machine-registry.js';
 import type { ProjectVars, RawProjectJson, SlotVars } from './config.js';
 import { isLocal } from './exec.js';
 import { expandTemplate } from './hooks.js';
+import { shellExpressionForRemotePath } from './remote-paths.js';
 
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const UNRESOLVED_PLACEHOLDER_RE = /\{\{[^{}\n]+\}\}/;
@@ -115,7 +119,10 @@ export function applyProjectCommandEnv(
  */
 export function buildMachineEnvPrefix(machineEnv: Record<string, string> | undefined): string {
   return Object.entries(machineEnv ?? {})
-    .map(([name, value]) => `export ${name}=${shellQuote(value)}`)
+    .map(
+      ([name, value]) =>
+        `export ${name}=${['FARMSLOT_HOME', 'FARMSLOT_POOL_DIR', 'FARMSLOT_PROJECTS_DIR'].includes(name) ? shellExpressionForRemotePath(value) : shellQuote(value)}`,
+    )
     .join(' && ');
 }
 
@@ -130,11 +137,34 @@ export function machineShellEnv(vars: {
   host?: string;
   machineEnv?: Record<string, string>;
 }): Record<string, string> {
+  if (!vars.machine || !vars.host) return { ...vars.machineEnv };
   const gatewayUrl =
     vars.machine && vars.host && !isLocal(vars.host, vars.machine)
       ? getNode(vars.machine)?.gatewayUrl
       : undefined;
-  return { ...(gatewayUrl ? { GW_URL: gatewayUrl } : {}), ...vars.machineEnv };
+  const local = !vars.machine || !vars.host || isLocal(vars.host, vars.machine);
+  const report = vars.machine ? getNode(vars.machine)?.farmPaths : undefined;
+  const paths = report ?? (local ? currentFarmPaths('gateway') : undefined);
+  const roots: Record<string, string> =
+    paths?.layout === 2
+      ? {
+          FARMSLOT_HOME: paths.home,
+          FARMSLOT_CONFIG_DIR: paths.config,
+          FARMSLOT_POOL_DIR: paths.pool,
+          FARMSLOT_PROJECTS_DIR: paths.projects,
+          FARMSLOT_RUNS_DIR: paths.state.runs,
+          FARMSLOT_NATIVE_STATE_DIR: paths.state.nativeSessions,
+          FARMSLOT_LOG_DIR: paths.state.logs,
+          FARMSLOT_CLI: path.posix.join(paths.code.bin, 'farmslot'),
+        }
+      : {};
+  // Legacy commands inherit their machine's environment and pool overrides.
+  // Only layout 2 replaces those roots with the selected instance's paths.
+  return {
+    ...(gatewayUrl ? { GW_URL: gatewayUrl } : {}),
+    ...vars.machineEnv,
+    ...roots,
+  };
 }
 
 /** `&&`-joined so a guard before the command (for example `cd repo &&`) still gates it. */

@@ -16,6 +16,7 @@ import {
   type Run,
   type RunStatus,
 } from '@farmslot/protocol';
+import { poolDirectory } from '@farmslot/slot-config';
 
 import { summarizeAgentContexts } from '../agents/contexts.js';
 import {
@@ -28,7 +29,6 @@ import {
   isLocal,
   loadProjectVars,
   loadSlotVars,
-  poolDir,
   type ProjectVars,
   type RawPoolJson,
   type RawProjectJson,
@@ -813,7 +813,7 @@ const POOL_REREAD_DELAY_MS = 250;
  * kept, never dropped silently.
  */
 export async function loadAllPools(
-  directory = poolDir,
+  directory = poolDirectory(),
   read: (file: string) => Promise<string> = (file) => readFile(file, 'utf-8'),
   pause: (ms: number) => Promise<unknown> = delay,
 ): Promise<{ pools: RawPoolJson[]; unread: UnreadPools }> {

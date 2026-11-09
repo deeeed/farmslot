@@ -9,6 +9,7 @@ import { existsSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import {
   readWorkspaceState,
   resolveWorkspaceRoot,
@@ -16,7 +17,13 @@ import {
 } from '@farmslot/slot-config';
 
 /** Absolute path to the farmslot repo root that this CLI runs from. */
-export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
+export function repoRoot(): string {
+  return currentFarmPaths(
+    'gateway',
+    process.env,
+    resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..'),
+  ).code.checkout;
+}
 
 export const STATE_SCHEMA_VERSION = 1;
 
@@ -65,7 +72,7 @@ export function workspaceAt(root: string): Workspace {
  * Returns null when this CLI runs from a plain dev checkout with no workspace.
  */
 export function resolveWorkspace(env: NodeJS.ProcessEnv = process.env): Workspace | null {
-  const root = resolveWorkspaceRoot(env, repoRoot);
+  const root = resolveWorkspaceRoot(env, repoRoot());
   return root ? workspaceAt(root) : null;
 }
 

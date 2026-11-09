@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import type { Run } from '@farmslot/protocol';
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { withRunBundleStoreLock } from '@farmslot/run-bundle';
 
 import { projectTaskRoots } from '../../core/config.js';
@@ -67,7 +67,7 @@ export async function gatewayRetentionRoots(): Promise<RunRetentionRoots> {
       ...(await projectTaskRoots()).map(({ root }) => root),
       path.join(runsDirectory(), 'review-workspace-tasks'),
     ],
-    taskPins: path.resolve(farmslotHome(), 'task-pins'),
+    taskPins: currentFarmPaths('gateway').state.taskPins,
     nativeSessions: nativeSessionManager.root,
     reviewWorkspaces: path.join(path.dirname(nativeSessionManager.root), 'review-workspaces'),
     bundles: { id: store.id, root: store.root },

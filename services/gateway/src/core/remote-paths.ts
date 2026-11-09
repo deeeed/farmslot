@@ -35,3 +35,8 @@ export function resolvePathWithinRemoteBase(basePath: string, relativePath: stri
   }
   return targetPath;
 }
+
+/** A shell-quoted path may contain apostrophe escapes instead of the raw root. */
+export function commandIncludesRemotePath(command: string, root: string): boolean {
+  return command.includes(root) || command.includes(root.replaceAll("'", "'\\''"));
+}

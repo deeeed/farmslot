@@ -86,7 +86,7 @@ def sandbox_profile(spec, capsule):
                   '(deny file-write* (subpath %s))' % quote(repo)]
         rules += ['(allow file-write* (subpath %s))' % quote(p) for p in [scope['task']] + scope['runtime']]
         rules += ['(deny file-write* (subpath %s))' % quote(p) for p in scope['pinned']]
-    # The node's live pool stays read-only to the worker, even through a link it makes.
+    # Instance pool, runs and projects stay read-only, even through worker-created links.
     rules += ['(deny file-write* (subpath %s))' % quote(Path(os.path.expanduser(p)).resolve())
               for p in spec.get('farmConfigRoots', [])]
     return '\n'.join(rules + [''])

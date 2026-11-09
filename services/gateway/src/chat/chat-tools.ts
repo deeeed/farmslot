@@ -200,7 +200,9 @@ export async function executeTool(
           outcome: r.metrics.outcome ?? null,
           error: r.error ?? null,
           summary: r.summary ?? null,
-          taskRelDir: r.taskFile ? path.dirname(r.taskFile).replace(farmslotRoot + '/', '') : null,
+          taskRelDir: r.taskFile
+            ? path.dirname(r.taskFile).replace(farmslotRoot() + '/', '')
+            : null,
           createdAt: r.createdAt,
         }));
         break;

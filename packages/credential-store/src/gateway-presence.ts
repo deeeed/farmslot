@@ -11,7 +11,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import {
   CredentialStoreRefusalError,
@@ -26,7 +26,7 @@ export interface GatewayPresence {
 }
 
 export function gatewayPresenceDirectory(env: NodeJS.ProcessEnv = process.env): string {
-  return join(farmslotHome(env), 'gateways.live');
+  return join(currentFarmPaths('node', env).config, 'gateways.live');
 }
 
 export function registerGatewayPresence(

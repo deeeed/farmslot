@@ -101,7 +101,7 @@ test('resetSlotRepoToIdle refuses to reset the gateway operator root (no destruc
   // control-plane working tree. We point the slot at the real operator root; the
   // guard throws before running git, so the operator repo is never mutated.
   await assert.rejects(
-    resetSlotRepoToIdle(slotVars(farmslotRoot, 'fs-main'), {}, undefined, 'main', {
+    resetSlotRepoToIdle(slotVars(farmslotRoot(), 'fs-main'), {}, undefined, 'main', {
       linkedWorktree: false,
     }),
     /operator root/,
@@ -113,7 +113,7 @@ test('resetSlotRepoToIdle refuses a slot pointing at a SUBDIRECTORY of the opera
   // repo: "services/gateway") shares the same git worktree — `git -C <subdir>
   // reset --hard` would still nuke the operator tree. The guard resolves the
   // owning worktree root (git rev-parse --show-toplevel) and rejects it.
-  const subdir = path.join(farmslotRoot, 'services');
+  const subdir = path.join(farmslotRoot(), 'services');
   await assert.rejects(
     resetSlotRepoToIdle(slotVars(subdir, 'fs-sub'), {}, undefined, 'main', {
       linkedWorktree: false,

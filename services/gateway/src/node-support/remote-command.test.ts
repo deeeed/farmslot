@@ -242,7 +242,7 @@ async function withTempFarm(t: test.TestContext): Promise<{
   const path = await import('node:path');
   const { farmslotRoot } = await import('../core/index.js');
   const name = `remote-command-test-${process.pid}-${Date.now()}-farm`;
-  const dir = path.join(farmslotRoot, 'projects', name);
+  const dir = path.join(farmslotRoot(), 'projects', name);
   mkdirSync(path.join(dir, 'scripts'), { recursive: true });
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(

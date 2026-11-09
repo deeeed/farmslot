@@ -20,7 +20,7 @@ import type {
   NativeSessionResponse,
   NativeSessionSendResult,
 } from '@farmslot/protocol';
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { subscribeHost } from './conversation-ipc.js';
 import { type HostIdentity, type HostRequest, requestHost } from './ipc.js';
@@ -57,7 +57,7 @@ export class NativeSessionClient {
   readonly root: string;
   private starting?: Promise<HostIdentity>;
   constructor(
-    root = process.env.FARMSLOT_NATIVE_STATE_DIR ?? join(farmslotHome(), 'native-sessions'),
+    root = currentFarmPaths('node').state.nativeSessions,
     readonly executionNodeId = 'local',
   ) {
     this.root = resolve(root);

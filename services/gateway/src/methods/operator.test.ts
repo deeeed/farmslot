@@ -34,15 +34,15 @@ function assert(cond: boolean, msg: string) {
 
 await test('run context preview paths stay inside farmslot root', () => {
   assert(
-    isReadableRunPreviewPath(path.join(farmslotRoot, 'tasks/example/TASK.md')),
+    isReadableRunPreviewPath(path.join(farmslotRoot(), 'tasks/example/TASK.md')),
     'tasks path should be readable',
   );
   assert(
-    !isReadableRunPreviewPath(path.join(farmslotRoot, 'docs/README.md')),
+    !isReadableRunPreviewPath(path.join(farmslotRoot(), 'docs/README.md')),
     'non-task repo path should not be readable',
   );
   assert(
-    !isReadableRunPreviewPath(path.resolve(farmslotRoot, '..', 'sibling-cache', 'TASK.md')),
+    !isReadableRunPreviewPath(path.resolve(farmslotRoot(), '..', 'sibling-cache', 'TASK.md')),
     'sibling path should not be readable',
   );
   assert(
@@ -62,7 +62,7 @@ async function cleanupRun(runId: string, taskDir?: string): Promise<void> {
 
 function createRecoveryTestRun(options: { withArtifact?: boolean; failedDetail?: string } = {}) {
   const taskDir = path.join(
-    farmslotRoot,
+    farmslotRoot(),
     'tasks',
     `recovery-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   );

@@ -1,10 +1,11 @@
 // repo-root.ts — locate the farmslot checkout from any consumer (gateway,
 // CLI verb, test) without configuration. FARMSLOT_ROOT overrides discovery.
-
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 const ROOT_MARKERS = ['CLAUDE.md', 'scripts/dev.sh', 'services/gateway/package.json'];
 
@@ -13,18 +14,21 @@ function hasFarmslotRootMarkers(candidate: string): boolean {
 }
 
 export function resolveFarmslotRoot(startDir = import.meta.dirname): string {
+  const paths = currentFarmPaths('node');
+  if (paths.layout === 2) return paths.code.checkout;
   const envRoot = process.env.FARMSLOT_ROOT;
   if (envRoot) {
     const resolvedEnvRoot = path.resolve(envRoot);
     if (!hasFarmslotRootMarkers(resolvedEnvRoot)) {
       throw new Error(`FARMSLOT_ROOT does not point to a Farmslot repo root: ${resolvedEnvRoot}`);
     }
-    return resolvedEnvRoot;
+    return currentFarmPaths('node', process.env, resolvedEnvRoot).code.checkout;
   }
 
   let current = path.resolve(startDir);
   while (true) {
-    if (hasFarmslotRootMarkers(current)) return current;
+    if (hasFarmslotRootMarkers(current))
+      return currentFarmPaths('node', process.env, current).code.checkout;
     const parent = path.dirname(current);
     if (parent === current) break;
     current = parent;
@@ -34,7 +38,9 @@ export function resolveFarmslotRoot(startDir = import.meta.dirname): string {
 }
 
 const thisDir = import.meta.dirname ?? path.dirname(fileURLToPath(import.meta.url));
-export const farmslotRoot = resolveFarmslotRoot(thisDir);
+export function farmslotRoot(): string {
+  return resolveFarmslotRoot(thisDir);
+}
 
 export const WORKSPACE_STATE_FILE = 'state.json';
 
@@ -48,7 +54,7 @@ function expandTilde(p: string): string {
  */
 export function resolveWorkspaceRoot(
   env: NodeJS.ProcessEnv = process.env,
-  root = farmslotRoot,
+  root = farmslotRoot(),
 ): string | null {
   const fromEnv = env.FARMSLOT_WORKSPACE;
   if (fromEnv) return path.resolve(expandTilde(fromEnv));

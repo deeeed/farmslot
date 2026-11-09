@@ -1,9 +1,12 @@
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-export const FARMSLOT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
+
+export function farmslotRoot(): string {
+  return currentFarmPaths('gateway').code.checkout;
+}
 
 interface PoolSlot {
   id?: unknown;
@@ -65,9 +68,9 @@ function readPoolConfig(poolFile: string): PoolConfig {
 
 export function resolveCurrentSlot(
   cwd = process.cwd(),
-  farmslotRoot = process.env.FARMSLOT_ROOT || FARMSLOT_ROOT,
+  root = farmslotRoot(),
 ): CurrentSlotMatch | null {
-  const poolDir = path.join(farmslotRoot, 'pool');
+  const poolDir = currentFarmPaths('gateway', process.env, root).pool;
   if (!existsSync(poolDir)) return null;
 
   const target = realpathIfExists(cwd);
@@ -84,7 +87,7 @@ export function resolveCurrentSlot(
       if (typeof slot.id !== 'string' || typeof slot.repo !== 'string') continue;
       const expandedRepo = expandHome(slot.repo);
       const repo = realpathIfExists(
-        path.isAbsolute(expandedRepo) ? expandedRepo : path.resolve(farmslotRoot, expandedRepo),
+        path.isAbsolute(expandedRepo) ? expandedRepo : path.resolve(root, expandedRepo),
       );
       if (!isPathInside(repo, target)) continue;
       matches.push({ slotId: slot.id, repo, poolFile, local: isLocalPool(pool) });

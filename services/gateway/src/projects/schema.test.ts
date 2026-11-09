@@ -18,7 +18,7 @@ type JsonSchema = {
 
 async function readProjectSchema(): Promise<JsonSchema> {
   return JSON.parse(
-    await readFile(path.join(farmslotRoot, 'schemas', 'project.schema.json'), 'utf-8'),
+    await readFile(path.join(farmslotRoot(), 'schemas', 'project.schema.json'), 'utf-8'),
   ) as JsonSchema;
 }
 

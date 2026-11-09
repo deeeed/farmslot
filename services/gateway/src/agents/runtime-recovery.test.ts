@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
 
-import { poolDir } from '../core/config.js';
+import { poolDirectory } from '../core/config.js';
 import { createRun, deleteRun, getRun, updateRun, updateRunAgentContexts } from '../runs/store.js';
 
 import { restoreTmuxWorker } from './runtime-recovery.js';
@@ -21,7 +21,7 @@ const tmuxSandbox =
     ? process.env.FARMSLOT_TMUX_SANDBOX
     : null;
 
-const testPoolFile = path.join(poolDir, `runtime-recovery-fixture-${process.pid}.json`);
+const testPoolFile = path.join(poolDirectory(), `runtime-recovery-fixture-${process.pid}.json`);
 const slotId = `runtime-recovery-${process.pid}`;
 const sessionName = `fs-rt-recovery-${process.pid}`;
 
@@ -102,7 +102,7 @@ async function cleanupRun(runId: string): Promise<void> {
 }
 
 before(() => {
-  mkdirSync(poolDir, { recursive: true });
+  mkdirSync(poolDirectory(), { recursive: true });
   writeFileSync(
     testPoolFile,
     JSON.stringify(

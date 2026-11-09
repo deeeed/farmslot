@@ -34,7 +34,7 @@ beforeEach(() => {
 afterEach(() => resetCuration());
 
 const TEST_PROJECT = `.learnings-router-test-${process.pid}`;
-const TEST_PROJECT_DIR = path.join(farmslotRoot, 'projects', TEST_PROJECT);
+const TEST_PROJECT_DIR = path.join(farmslotRoot(), 'projects', TEST_PROJECT);
 
 const TEST_LIBRARY_REPO = 'git@github.com:example/recipe-library.git';
 

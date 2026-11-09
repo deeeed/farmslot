@@ -1,6 +1,8 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
+
 const ROOT_MARKERS = ['CLAUDE.md', 'scripts/dev.sh', 'services/gateway/package.json'];
 
 export function hasFarmslotRootMarkers(candidate: string): boolean {
@@ -29,8 +31,7 @@ export function resolveFarmslotRoot(
 }
 
 export function resolveRunsDir(farmslotRoot: string, env: NodeJS.ProcessEnv = process.env): string {
-  if (env.FARMSLOT_RUNS_DIR) return path.resolve(env.FARMSLOT_RUNS_DIR);
-  return path.join(farmslotRoot, '.runs');
+  return currentFarmPaths('gateway', env, farmslotRoot).state.runs;
 }
 
 export function sanitizeBundleRunId(runId: string): string {

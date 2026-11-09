@@ -15,7 +15,7 @@ export async function makeProject(
   config: Record<string, unknown>,
 ): Promise<string> {
   const project = `auto-recovery-watcher-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
-  const projectDir = path.join(farmslotRoot, 'projects', project);
+  const projectDir = path.join(farmslotRoot(), 'projects', project);
   await mkdir(projectDir, { recursive: true });
   await writeFile(
     path.join(projectDir, 'project.json'),

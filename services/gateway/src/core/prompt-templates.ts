@@ -1,13 +1,12 @@
 // prompt-templates.ts — Load project-specific LLM prompt templates (ADR-021)
 // Templates live in projects/<name>/templates/prompts/<template>.md
 // Returns null if template doesn't exist — caller uses hardcoded fallback.
-
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { projectPackRoot } from '@farmslot/slot-config';
 
-import { farmslotRoot } from './config.js';
 import { assertNoUnknownPlaceholders } from './hooks.js';
 
 export async function loadPromptTemplate(
@@ -16,7 +15,10 @@ export async function loadPromptTemplate(
   vars: Record<string, string>,
 ): Promise<string | null> {
   const templatePath = path.join(
-    await projectPackRoot(project, path.join(farmslotRoot, 'projects', project)),
+    await projectPackRoot(
+      project,
+      path.join(currentFarmPaths('gateway').templateProjects, project),
+    ),
     'templates',
     'prompts',
     templateName,

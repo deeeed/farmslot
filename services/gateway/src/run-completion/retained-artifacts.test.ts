@@ -325,7 +325,7 @@ test('retained capacity refusal records a failed lifecycle step without dispatch
 test('a capacity failure preserves source evidence without publishing incomplete output', async (t) => {
   const f = await fixture();
   const { farmslotRoot } = await import('../projects/repo-root.js');
-  const taskDir = path.join(farmslotRoot, '.sandbox/retained-capacity/tasks', f.runId);
+  const taskDir = path.join(farmslotRoot(), '.sandbox/retained-capacity/tasks', f.runId);
   const policy = path.join(root, 'home/run-bundle-retention.json');
   t.after(async () => {
     await rm(taskDir, { recursive: true, force: true });

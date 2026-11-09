@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 
-// slot-config reads FARMSLOT_PROJECTS_DIR once, at import.
+// Task roots resolve the current project registry on each call.
 const projects = mkdtempSync(path.join(tmpdir(), 'task-root-override-'));
 const linkedTarget = `${projects}-linked`;
 after(() => {
@@ -18,7 +18,7 @@ test('task roots follow FARMSLOT_PROJECTS_DIR, and mock mode keeps the root sand
   assert.equal(getOrchestratorTaskRoot('demo'), path.join(projects, 'demo', 'tasks'));
   assert.equal(
     getOrchestratorTaskRoot('demo', { external: { mock_mode: true } }),
-    path.join(farmslotRoot, '.sandbox', 'demo', 'tasks'),
+    path.join(farmslotRoot(), '.sandbox', 'demo', 'tasks'),
   );
 });
 

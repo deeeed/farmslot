@@ -29,7 +29,7 @@ export async function slotWithTask(
 ) {
   const id = `reviewed-inputs-${process.pid}-${Date.now()}`;
   const repo = await mkdtemp(path.join(os.tmpdir(), `${id}-`));
-  const poolFile = path.join(farmslotRoot, 'pool', `${id}.json`);
+  const poolFile = path.join(farmslotRoot(), 'pool', `${id}.json`);
   const taskRelDir = `test/${id}`;
   const artifacts = path.join(repo, '.sandbox/farmslot-farm/worker-task', taskRelDir, 'artifacts');
   const run = createRun({
@@ -41,7 +41,7 @@ export async function slotWithTask(
   });
   updateRun(run.id, {
     slotId: `${id}-slot`,
-    taskFile: path.join(farmslotRoot, '.sandbox/farmslot-farm/tasks', taskRelDir, 'TASK.md'),
+    taskFile: path.join(farmslotRoot(), '.sandbox/farmslot-farm/tasks', taskRelDir, 'TASK.md'),
   });
   t.after(async () => {
     await deleteTestRunIfPresent(run.id);

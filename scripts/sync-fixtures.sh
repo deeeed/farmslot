@@ -51,7 +51,6 @@ done
 if [ -n "${SLOT_ID}" ]; then
   echo "=== Applying fixtures to slot ${SLOT_ID} ==="
 
-  POOL_DIR="${PROJECT_DIR}/pool"
   source "${SCRIPT_DIR}/lib/slot-common.sh"
   load_slot_vars "$SLOT_ID"
   check_slot_enabled || exit 0

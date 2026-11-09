@@ -6,6 +6,7 @@ clear_inherited_gateway_credentials() {
   unset GATEWAY_HOST FARMSLOT_GATEWAY_AUTH_MODE
 }
 
+# The caller selects this sandbox home. FarmPaths resolves its remaining roots.
 pin_sandbox_home() {
   if [ -n "${FARMSLOT_SANDBOX_HOME:-}" ]; then
     export FARMSLOT_HOME="$FARMSLOT_SANDBOX_HOME"

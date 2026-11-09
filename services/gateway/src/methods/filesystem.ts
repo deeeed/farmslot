@@ -201,7 +201,7 @@ async function resolveRepoPath(slotId: string): Promise<string> {
       if (repo === '.' || repo.startsWith('./') || repo.startsWith('../')) {
         const host = pool.host ?? 'localhost';
         if (host === 'localhost' || host === '127.0.0.1') {
-          return path.resolve(farmslotRoot, repo);
+          return path.resolve(farmslotRoot(), repo);
         }
       }
       return repo;

@@ -66,7 +66,7 @@ test('a pack-copied project reads its policy from runtime settings, a hand-manag
   process.env.FARMSLOT_HOME = home;
   process.env.FARMSLOT_WORKSPACE = home;
   const project = `pack-policy-${process.pid}`;
-  const directory = path.join(farmslotRoot, 'projects', project);
+  const directory = path.join(farmslotRoot(), 'projects', project);
   t.after(async () => {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];

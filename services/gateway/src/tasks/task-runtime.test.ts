@@ -355,7 +355,7 @@ test('task threads keep machine providers, pack roots and module environment iso
   );
   fs.writeFileSync(
     path.join(fakeCli, 'src/onboarding/workspace.ts'),
-    'export const repoRoot = "/fixture"; export function bootstrapFarmslotHome() {}',
+    'export function repoRoot() { return "/fixture"; } export function bootstrapFarmslotHome() {}',
   );
   fs.copyFileSync(
     path.join(repo, 'packages/cli/src/envelope.ts'),

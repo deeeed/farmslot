@@ -29,7 +29,7 @@ import {
 import { remapRemoteFarmRefs } from './remote-command.js';
 import { fakeSupportHomeResult, isSupportHomeCommand } from './support-test-fixtures.js';
 
-const projectRoot = path.join(farmslotRoot, 'projects', 'ensure-test');
+const projectRoot = path.join(farmslotRoot(), 'projects', 'ensure-test');
 test('repo-local project hooks still ship the shared prepare runtime writer', () => {
   const paths = nodeSupportBundlePaths('ensure-test', { hooks: { preflight: 'node server.mjs' } });
   assert.ok(paths.includes('scripts/write-runtime-context.sh'));
@@ -135,7 +135,7 @@ const kind = (cmd: string) =>
 
 test("a bundle carries the pack's templates and pack-rooted template sources for hosted task init", async (t) => {
   const name = 'ensure-templates-test';
-  const pack = path.join(farmslotRoot, 'projects', name);
+  const pack = path.join(farmslotRoot(), 'projects', name);
   t.after(() => rmSync(pack, { recursive: true, force: true }));
   mkdirSync(path.join(pack, 'templates/worker'), { recursive: true });
   mkdirSync(path.join(pack, 'checklists'), { recursive: true });
@@ -172,7 +172,7 @@ test('a local slot uses the checkout directly and touches no node', async () => 
     '.agent',
     { projectVars, io },
   );
-  assert.equal(state?.supportDir, farmslotRoot);
+  assert.equal(state?.supportDir, farmslotRoot());
   assert.equal(state?.hash, null);
   assert.equal(state?.published, false);
   assert.deepEqual(
@@ -391,7 +391,7 @@ test('fixture checks read the bundle the slot selected, from the pointer ensure 
   await writeFile(pointer, '../../escape\n');
   assert.equal(await selectedNodeSupportDir(vars, '.agent', projectVars, shellIo), undefined);
   const local = { ...vars, host: 'localhost', machine: 'local' };
-  assert.equal(await selectedNodeSupportDir(local, '.agent', projectVars, shellIo), farmslotRoot);
+  assert.equal(await selectedNodeSupportDir(local, '.agent', projectVars, shellIo), farmslotRoot());
 });
 
 test('a fixture check whose node drops renders without a selection instead of failing the check', async () => {

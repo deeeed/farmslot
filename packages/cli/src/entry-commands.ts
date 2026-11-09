@@ -20,6 +20,7 @@ import { registerInternalCommand } from './commands/internal.js';
 import { registerMachineCommand } from './commands/machine.js';
 import { registerNodeCommand } from './commands/node.js';
 import { registerPairCommand } from './commands/pair.js';
+import { registerPathsCommand } from './commands/paths.js';
 import { registerPRCommand } from './commands/pr.js';
 import { registerPrincipalCommands } from './commands/principal.js';
 import { registerProjectCommand } from './commands/project.js';
@@ -48,6 +49,7 @@ export function registerCommands(program: Command): void {
   registerUpCommand(program);
   registerGatewayCommand(program);
   registerPairCommand(program);
+  registerPathsCommand(program);
   registerSlotCommand(program);
   registerTuiCommand(program);
   registerDispatchCommand(program);

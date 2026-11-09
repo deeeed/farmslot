@@ -12,7 +12,7 @@ import { farmslotRoot } from '../projects/repo-root.js';
 import { resourceRevisions } from '../resources/revisions.js';
 
 const testDir = mkdtempSync(path.join(os.tmpdir(), 'farmslot-backlog-test-'));
-const specRoot = path.join(farmslotRoot, '.sandbox', `backlog-spec-test-${process.pid}`);
+const specRoot = path.join(farmslotRoot(), '.sandbox', `backlog-spec-test-${process.pid}`);
 process.env.FARMSLOT_BACKLOG_FILE = path.join(testDir, 'backlog.json');
 process.env.FARMSLOT_DISPATCH_QUEUE_FILE = path.join(testDir, 'queue.json');
 process.env.FARMSLOT_BACKLOG_SPEC_DIR = specRoot;
@@ -87,7 +87,7 @@ async function writeSpec(name: string, markdown: string): Promise<string> {
   await mkdir(specRoot, { recursive: true });
   const absolutePath = path.join(specRoot, name);
   await writeFile(absolutePath, markdown, 'utf-8');
-  return path.relative(farmslotRoot, absolutePath);
+  return path.relative(farmslotRoot(), absolutePath);
 }
 
 async function freshStores() {
@@ -443,7 +443,7 @@ test('markdown-backed backlog specs must stay within configured spec root', asyn
       title: 'Outside spec',
       sourceKind: 'manual',
       flowType: 'dev',
-      specPath: path.relative(farmslotRoot, outsidePath),
+      specPath: path.relative(farmslotRoot(), outsidePath),
     },
     { kind: 'system' },
   );
@@ -955,7 +955,7 @@ test('backlog.update rejects public lifecycle and run linkage mutation', async (
 test('backlog.update changes the owning project and clears project-owned dispatch config', async () => {
   const { backlog } = await freshStores();
   const targetProject = `backlog-test-farm-${process.pid}`;
-  const targetProjectDir = path.join(farmslotRoot, 'projects', targetProject);
+  const targetProjectDir = path.join(farmslotRoot(), 'projects', targetProject);
   await mkdir(targetProjectDir, { recursive: true });
   await writeFile(path.join(targetProjectDir, 'project.json'), '{}', 'utf-8');
   const created = await backlog.createBacklogItem(

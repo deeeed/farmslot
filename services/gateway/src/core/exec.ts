@@ -1,7 +1,6 @@
 // core/exec.ts — Local/remote command execution
 // TypeScript port of lib/slot-common.sh: is_local, run_on, remote
 // Uses node-rpc.ts for remote execution via connected nodes.
-
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,6 +8,7 @@ import path from 'node:path';
 import { createNodeExecCloseout, type ExecResult, observeNodeExecAbort } from '@farmslot/protocol';
 import { currentProjectSources, sourceExecutionEnvironment } from '@farmslot/slot-config';
 
+import { currentFarmPaths, farmPathsForSlot } from '../fleet/farm-paths.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { usesNodeLink } from '../fleet/node-link-policy.js';
 import { nodeExec, nodeExecArgv } from '../fleet/node-rpc.js';
@@ -17,6 +17,7 @@ import { executionKind, measureManagedOperation } from '../observability/perform
 import { assertCleanupCurrent, cleanupSignal, trackCleanupCommand } from './cleanup-scope.js';
 import type { SlotVars } from './config.js';
 import { currentSlotCommandExecutor } from './exec-scope.js';
+import { commandIncludesRemotePath } from './remote-paths.js';
 
 export type { ExecResult };
 
@@ -39,7 +40,13 @@ const LOCAL_ENV = { ...PROCESS_ENV_NO_FORCE_COLOR, PATH: `${SHIMS_DIR}:${process
 
 /** In-process task libraries inherit the same boot-time environment as local commands. */
 export function localCommandEnvironment(): NodeJS.ProcessEnv {
-  return { ...LOCAL_ENV };
+  const paths = currentFarmPaths('gateway');
+  return {
+    ...LOCAL_ENV,
+    FARMSLOT_HOME: paths.home,
+    FARMSLOT_POOL_DIR: paths.pool,
+    FARMSLOT_PROJECTS_DIR: paths.projects,
+  };
 }
 
 // ─── isLocal ───
@@ -120,7 +127,7 @@ function spawnLocalProcess(
       const useProcessGroup = opts?.signal != null || opts?.timeout != null;
       const proc = spawn(executable, argv, {
         cwd: opts?.cwd,
-        env: LOCAL_ENV,
+        env: localCommandEnvironment(),
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: useProcessGroup,
       });
@@ -305,7 +312,7 @@ export async function execOnSlot(
   // bundle matching this gateway's config, never from the node's last deploy
   // (ledger F15). Loaded lazily: node-support itself executes through here.
   const timeout = opts.timeout;
-  if (cmd.includes('~/farmslot-node')) {
+  if (commandIncludesRemotePath(cmd, farmPathsForSlot(slotVars).code.node)) {
     const { NodeSupportPendingError, resolveRemoteFarmCommand } =
       await import('../node-support/remote-command.js');
     try {

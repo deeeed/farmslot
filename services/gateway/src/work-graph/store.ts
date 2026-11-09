@@ -31,6 +31,7 @@ import {
   type WorkNodeReference,
   type WorkReferenceStatus,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import {
   cancelGraphQueuedItem,
@@ -48,7 +49,6 @@ import {
   markBacklogItemReady,
 } from '../backlog/store.js';
 import { isolatedTestPath } from '../core/isolated-test-path.js';
-import { farmslotRoot } from '../fleet/state.js';
 import { publishPlanningResources } from '../resources/planning-changes.js';
 import { pendingBranchMaintenance } from '../run-engine/branch-maintenance.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
@@ -90,14 +90,20 @@ function shouldUseIsolatedGraphDir(env: NodeJS.ProcessEnv, argv: readonly string
 }
 
 function resolveGraphDir(): string {
-  if (process.env.FARMSLOT_WORK_GRAPH_DIR) return process.env.FARMSLOT_WORK_GRAPH_DIR;
-  if (shouldUseIsolatedGraphDir(process.env, process.argv)) {
+  const paths = currentFarmPaths('gateway');
+  if (
+    paths.layout === 'legacy' &&
+    !paths.envOverrides.includes('FARMSLOT_WORK_GRAPH_DIR') &&
+    shouldUseIsolatedGraphDir(process.env, process.argv)
+  ) {
     return isolatedTestPath('farmslot-test-work-graphs');
   }
-  return path.join(farmslotRoot, '.work-graphs');
+  return paths.state.workGraphs;
 }
 
-const GRAPH_DIR = resolveGraphDir();
+function GRAPH_DIR(): string {
+  return resolveGraphDir();
+}
 const SAFE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 export function initWorkGraphStore(fn: BroadcastFn): void {
@@ -119,13 +125,13 @@ async function withMutation<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 async function ensureDir(): Promise<void> {
-  await mkdir(GRAPH_DIR, { recursive: true });
+  await mkdir(GRAPH_DIR(), { recursive: true });
 }
 
 function graphFile(graphId: string): string {
   if (!isSafeId(graphId)) throw new Error(`Invalid work graph id: ${graphId}`);
-  const file = path.resolve(GRAPH_DIR, `${graphId}.json`);
-  const graphDir = path.resolve(GRAPH_DIR);
+  const file = path.resolve(GRAPH_DIR(), `${graphId}.json`);
+  const graphDir = path.resolve(GRAPH_DIR());
   if (!file.startsWith(`${graphDir}${path.sep}`))
     throw new Error(`Invalid work graph path for id: ${graphId}`);
   return file;
@@ -273,14 +279,14 @@ export async function loadWorkGraphs(): Promise<void> {
   await ensureDir();
   let files: string[];
   try {
-    files = await readdir(GRAPH_DIR);
+    files = await readdir(GRAPH_DIR());
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw err;
   }
   for (const file of files) {
     if (!file.endsWith('.json') || file.includes('.tmp.')) continue;
-    const parsed: unknown = JSON.parse(await readFile(path.join(GRAPH_DIR, file), 'utf-8'));
+    const parsed: unknown = JSON.parse(await readFile(path.join(GRAPH_DIR(), file), 'utf-8'));
     const snapshot = normalizeStoredSnapshot(parsed);
     if (snapshot) {
       graphs.set(snapshot.graph.id, snapshot);

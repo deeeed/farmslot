@@ -24,7 +24,14 @@ test('the shell status helper refuses direct writes and preserves the lease byte
     ],
     {
       encoding: 'utf8',
-      env: { PATH: process.env.PATH, HOME: root, FARMSLOT_CLI: '/not-executed' },
+      env: {
+        PATH: process.env.PATH,
+        HOME: root,
+        FARMSLOT_HOME: path.join(root, 'home'),
+        FARMSLOT_POOL_DIR: path.join(root, 'pool'),
+        FARMSLOT_PROJECTS_DIR: path.join(root, 'projects'),
+        FARMSLOT_CLI: '/not-executed',
+      },
     },
   );
   assert.ifError(result.error);

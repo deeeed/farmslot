@@ -20,7 +20,7 @@ import { resolveCandidateTemplateProvenance } from './candidate-setup.js';
 
 test('catalog eval keeps a selected local variant and its exact template snapshot', async (t) => {
   const name = `eval-catalog-${process.pid}-farm`;
-  const root = path.join(farmslotRoot, 'projects', name);
+  const root = path.join(farmslotRoot(), 'projects', name);
   await mkdir(path.join(root, 'templates/worker'), { recursive: true });
   t.after(() => rm(root, { recursive: true, force: true }));
   await writeFile(
@@ -58,7 +58,7 @@ test('model-only dev comparison preserves autonomous mode and the interactive ax
 
 test('proof trials retain a package template admitted by the farm QA preset', async (t) => {
   const name = `proof-package-${process.pid}-farm`;
-  const root = path.join(farmslotRoot, 'projects', name);
+  const root = path.join(farmslotRoot(), 'projects', name);
   const packageRoot = await mkdtemp(path.join(os.tmpdir(), 'proof-template-package-'));
   const variable = 'FARMSLOT_TEST_PROOF_PACKAGE_ROOT';
   const previousRoot = process.env[variable];

@@ -2,6 +2,7 @@ import { lstatSync, readlinkSync, realpathSync, statSync, unwatchFile, watchFile
 import path from 'node:path';
 
 import { expandTilde } from '@farmslot/capabilities/fs-watch';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import { resolveRunsDir, runBundleRetentionSettings } from '@farmslot/run-bundle';
 import { farmslotRoot } from '@farmslot/slot-config';
@@ -104,9 +105,9 @@ export function gatewayStorageRoots(): string[] {
   const home = farmslotHome();
   return [
     home,
-    runBundleRetentionSettings(home).storeRoot ?? path.join(home, 'run-bundles'),
-    resolveRunsDir(farmslotRoot),
-    process.env.FARMSLOT_RUN_ARCHIVE_ROOT ?? path.join(home, 'run-archive'),
+    runBundleRetentionSettings(home).storeRoot ?? currentFarmPaths('gateway').data.runBundles,
+    resolveRunsDir(farmslotRoot()),
+    currentFarmPaths('gateway').data.runArchive,
   ];
 }
 

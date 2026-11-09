@@ -18,7 +18,7 @@ import {
 } from 'node:fs';
 import http from 'node:http';
 import { hostname, networkInterfaces } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import type { Command } from 'commander';
@@ -40,6 +40,7 @@ import {
   type PrincipalListResult,
   samePersonSessionAuthority,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { bold, cyan, dim, green, red, yellow } from '../colors.js';
@@ -62,7 +63,7 @@ import { repoRoot } from '../onboarding/workspace.js';
 import { OutputContext } from '../output.js';
 
 const LOCAL_PROFILE = 'local';
-const UI_DIST_INDEX = join(repoRoot, 'apps', 'command-center', 'ui', 'dist', 'index.html');
+const UI_DIST_INDEX = join(repoRoot(), 'apps', 'command-center', 'ui', 'dist', 'index.html');
 const HOSTED_COMMAND_CENTER_BASE = 'https://farmslot.io/cc';
 
 interface HostedGatewayCandidate {
@@ -147,19 +148,19 @@ function openUrl(url: string): boolean {
 }
 
 function pidFilePath(): string {
-  return join(farmslotHome(), 'gateway.pid');
+  return pathForStartupFile('gateway.pid');
 }
 
 function logFilePath(): string {
-  return join(farmslotHome(), 'gateway.log');
+  return pathForStartupFile('gateway.log');
 }
 
 function nodePidFilePath(): string {
-  return join(farmslotHome(), 'node.pid');
+  return pathForStartupFile('node.pid');
 }
 
 function nodeLogFilePath(): string {
-  return join(farmslotHome(), 'node.log');
+  return pathForStartupFile('node.log');
 }
 
 function readNodePid(): number | null {
@@ -188,7 +189,7 @@ function isAlive(pid: number): boolean {
 // node — its command line runs `tsx services/node/src/index.ts` from repoRoot. Prevents both
 // "won't start because a foreign pid looks alive" and "down() kills an unrelated process".
 function isLocalNodeProcess(pid: number): boolean {
-  const entry = join(repoRoot, 'services', 'node', 'src', 'index.ts');
+  const entry = join(repoRoot(), 'services', 'node', 'src', 'index.ts');
   const res = spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf-8' });
   if (res.status !== 0 || !res.stdout) return false;
   return res.stdout.includes(entry);
@@ -283,13 +284,13 @@ export function ensureLocalCredential(port: number): GatewayCredential {
 /** The local node has its own machine-bound credential, never the CLI's identity. */
 async function localNodeCredential(port: number, credential: GatewayCredential): Promise<string> {
   const machine = hostname().replace(/\.local$/, '');
-  const secretPath = join(farmslotHome(), 'node.secret');
+  const secretPath = join(currentFarmPaths('gateway').config, 'node.secret');
   // Use the node's own install/reconnect resolution before the startup cache.
   // A verified rotation must also survive a later up without the inherited env.
   const { resolveGatewayCredential } = await import(
-    pathToFileURL(join(repoRoot, 'services/node/src/gateway-credential.ts')).href
+    pathToFileURL(join(repoRoot(), 'services/node/src/gateway-credential.ts')).href
   );
-  const installed: string | undefined = resolveGatewayCredential(process.env, repoRoot)?.token;
+  const installed: string | undefined = resolveGatewayCredential(process.env, repoRoot())?.token;
   if (installed || existsSync(secretPath)) {
     const secret = installed ?? readFileSync(secretPath, 'utf8').trim();
     const runtime = new CredentialStoreRuntime();
@@ -550,8 +551,8 @@ async function startLocalNode(port: number, token: string, output: OutputContext
   if (existing && isAlive(existing) && isLocalNodeProcess(existing)) return; // already running
   if (existing) rmSync(nodePidFilePath(), { force: true }); // stale/foreign pid — clear and start fresh
 
-  const tsx = join(repoRoot, 'node_modules', '.bin', 'tsx');
-  const entry = join(repoRoot, 'services', 'node', 'src', 'index.ts');
+  const tsx = join(repoRoot(), 'node_modules', '.bin', 'tsx');
+  const entry = join(repoRoot(), 'services', 'node', 'src', 'index.ts');
   if (!existsSync(tsx) || !existsSync(entry)) {
     output.write(
       `${yellow('  local node not started')} ${dim('(node service missing — degraded)')}\n`,
@@ -560,9 +561,11 @@ async function startLocalNode(port: number, token: string, output: OutputContext
   }
 
   const machine = hostname().replace(/\.local$/, '');
+  mkdirSync(dirname(nodeLogFilePath()), { recursive: true, mode: 0o700 });
+  mkdirSync(dirname(nodePidFilePath()), { recursive: true, mode: 0o700 });
   const logFd = openSync(nodeLogFilePath(), 'a');
   const child = spawn(tsx, [entry], {
-    cwd: repoRoot,
+    cwd: repoRoot(),
     detached: true,
     stdio: ['ignore', logFd, logFd],
     env: {
@@ -662,25 +665,27 @@ async function up(
     process.exit(1);
   }
 
-  const tsx = join(repoRoot, 'node_modules', '.bin', 'tsx');
-  const entry = join(repoRoot, 'services', 'gateway', 'src', 'index.ts');
+  const tsx = join(repoRoot(), 'node_modules', '.bin', 'tsx');
+  const entry = join(repoRoot(), 'services', 'gateway', 'src', 'index.ts');
   if (!existsSync(tsx) || !existsSync(entry)) {
     output.error(
-      `cannot start gateway: ${tsx} or ${entry} missing — run install.sh / yarn install in ${repoRoot}`,
+      `cannot start gateway: ${tsx} or ${entry} missing — run install.sh / yarn install in ${repoRoot()}`,
     );
     process.exit(1);
   }
 
   const credential = ensureLocalCredential(port);
   mkdirSync(farmslotHome(), { recursive: true, mode: 0o700 });
+  mkdirSync(dirname(logFilePath()), { recursive: true, mode: 0o700 });
+  mkdirSync(dirname(pidFilePath()), { recursive: true, mode: 0o700 });
   const logFd = openSync(logFilePath(), 'a');
   const child = spawn(tsx, [entry], {
-    cwd: repoRoot,
+    cwd: repoRoot(),
     detached: true,
     stdio: ['ignore', logFd, logFd],
     env: {
       ...process.env,
-      TSX_TSCONFIG_PATH: join(repoRoot, 'services', 'gateway', 'tsconfig.json'),
+      TSX_TSCONFIG_PATH: join(repoRoot(), 'services', 'gateway', 'tsconfig.json'),
       GATEWAY_PORT: String(port),
       GATEWAY_HOST: '0.0.0.0',
       // Hand the gateway the resolved cert so it serves wss:// on tls.port too.
@@ -824,4 +829,15 @@ async function startupBrowserInvitation(
     }
     throw error;
   }
+}
+
+function pathForStartupFile(name: string): string {
+  const paths = currentFarmPaths('gateway');
+  const root =
+    paths.layout === 'legacy'
+      ? paths.home
+      : name.endsWith('.log')
+        ? paths.state.logs
+        : paths.state.nodeLink;
+  return join(root, name);
 }

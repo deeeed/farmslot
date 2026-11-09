@@ -18,7 +18,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-POOL_DIR="${FARMSLOT_POOL_DIR:-${PROJECT_DIR}/pool}"
 
 # ── Parse args ────────────────────────────────────────────────────
 PR_NUMBER=""

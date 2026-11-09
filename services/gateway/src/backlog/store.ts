@@ -56,6 +56,7 @@ import {
   type ScriptedRunnerConfig,
   type TaskTemplateSelection,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import {
   assertReviewSequence,
   assertWarmReviewContext,
@@ -201,16 +202,23 @@ function shouldUseIsolatedBacklogFile(env: NodeJS.ProcessEnv, argv: readonly str
 }
 
 function resolveBacklogFile(): string {
-  if (process.env.FARMSLOT_BACKLOG_FILE) return process.env.FARMSLOT_BACKLOG_FILE;
-  if (shouldUseIsolatedBacklogFile(process.env, process.argv)) {
+  const paths = currentFarmPaths('gateway');
+  if (
+    paths.layout === 'legacy' &&
+    !paths.envOverrides.includes('FARMSLOT_BACKLOG_FILE') &&
+    shouldUseIsolatedBacklogFile(process.env, process.argv)
+  ) {
     return isolatedTestPath('farmslot-test-backlog', '.json');
   }
-  return path.join(farmslotRoot, '.backlog.json');
+  return paths.state.backlogFile;
 }
 
-const BACKLOG_FILE = resolveBacklogFile();
-const BACKLOG_SPEC_ROOT =
-  process.env.FARMSLOT_BACKLOG_SPEC_DIR ?? path.join(farmslotRoot, '.backlog', 'specs');
+function BACKLOG_FILE(): string {
+  return resolveBacklogFile();
+}
+function BACKLOG_SPEC_ROOT(): string {
+  return currentFarmPaths('gateway').state.backlogSpecs;
+}
 
 export function initBacklogStore(broadcast: BroadcastFn): void {
   _broadcast = broadcast;
@@ -254,14 +262,14 @@ function sanitizeShipped(raw: Record<string, unknown>): NonNullable<BacklogItem[
 }
 
 async function persist(): Promise<void> {
-  await mkdir(path.dirname(BACKLOG_FILE), { recursive: true });
-  const tmpFile = `${BACKLOG_FILE}.tmp`;
+  await mkdir(path.dirname(BACKLOG_FILE()), { recursive: true });
+  const tmpFile = `${BACKLOG_FILE()}.tmp`;
   const storedItems = items.map((item) => ({
     ...item,
     ...(item.originator ? { originator: item.originator } : {}),
   }));
   await writeFile(tmpFile, JSON.stringify(storedItems, null, 2), 'utf-8');
-  await rename(tmpFile, BACKLOG_FILE);
+  await rename(tmpFile, BACKLOG_FILE());
 }
 
 function enqueuePersist(reason: string): Promise<void> {
@@ -462,8 +470,8 @@ function normalizeOptionalSpecPath(value: unknown): string | undefined {
 }
 
 function resolveSpecPath(specPath: string): string {
-  const resolved = path.resolve(farmslotRoot, specPath);
-  const root = path.resolve(BACKLOG_SPEC_ROOT);
+  const resolved = path.resolve(farmslotRoot(), specPath);
+  const root = path.resolve(BACKLOG_SPEC_ROOT());
   if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
     throw new Error('specPath must stay within the configured backlog spec directory');
   }
@@ -1085,7 +1093,7 @@ async function clearUnclaimedReconcileMarkers(): Promise<void> {
 export async function loadBacklog(): Promise<void> {
   items.length = 0;
   try {
-    const raw = await readFile(BACKLOG_FILE, 'utf-8');
+    const raw = await readFile(BACKLOG_FILE(), 'utf-8');
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) throw new Error('backlog file must contain an array');
     for (const entry of parsed) {

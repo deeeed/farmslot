@@ -40,7 +40,7 @@ export function registerDomainCommand(program: Command): void {
     .action((_: unknown, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
       const ws = resolveWorkspace();
-      const projectsRoot = join(ws?.farmslotDir ?? repoRoot, 'projects');
+      const projectsRoot = join(ws?.farmslotDir ?? repoRoot(), 'projects');
       const domains = listDomains(projectsRoot);
 
       if (output.json) {

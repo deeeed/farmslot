@@ -6,12 +6,11 @@
 // normalized gauge samples plus timestamps/generation/sampleId — never process
 // paths, PIDs, or command lines — under the resolved FARMSLOT_HOME, and
 // rehydrates the ring before ordinary fleet/resource recovery runs.
-
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import type { NodePressureHistorySample } from '@farmslot/protocol';
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 export const PRESSURE_HISTORY_STORE_VERSION = 1;
 
@@ -29,7 +28,7 @@ export interface PressureHistoryLoadResult {
 
 function storePath(): string {
   // Resolve lazily — FARMSLOT_HOME can be set after module import.
-  return path.join(farmslotHome(), 'state', 'pressure-history.json');
+  return currentFarmPaths('gateway').state.pressureHistory;
 }
 
 const SAMPLE_NUMBER_FIELDS = [

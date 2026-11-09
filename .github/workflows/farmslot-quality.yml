@@ -232,6 +232,8 @@ jobs:
               - 'packages/protocol/**'
               - 'packages/review-dispatch/**'
               - 'services/gateway/**'
+              - 'packages/run-bundle/**'
+              - 'scripts/runner-validation/farm-paths-two-instance.test.mts'
             node:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
@@ -866,6 +868,15 @@ jobs:
         env:
           FARMSLOT_QUALITY_TIMINGS_DIR: ${{ runner.temp }}/gateway-quality
         run: yarn workspace @farmslot/gateway quality --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+      - name: Two farm instances prepare and retain bundles
+        if: matrix.shard == 1
+        env:
+          TSX_TSCONFIG_PATH: services/gateway/tsconfig.json
+          FARMSLOT_TEST_TMP: '1'
+        run: |
+          proof_home=$(mktemp -d "${RUNNER_TEMP}/farm-paths-home.XXXXXX")
+          trap 'rm -rf "$proof_home"' EXIT
+          HOME="$proof_home" nice -n 15 node --import tsx --experimental-test-module-mocks --test scripts/runner-validation/farm-paths-two-instance.test.mts
       - name: Retain Gateway shard timings
         if: always()
         uses: actions/upload-artifact@v4
