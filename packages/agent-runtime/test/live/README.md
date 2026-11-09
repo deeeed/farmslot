@@ -4,7 +4,6 @@ From a repository checkout, run the bounded effort JSON-RPC fixture manually:
 
 ```sh
 TSX_TSCONFIG_PATH=packages/agent-runtime/tsconfig.json node --import tsx --test \
-  --test-name-pattern='^Codex (default|plan|refuses|preserves)' \
   packages/agent-runtime/test/live/codex-effort.test.mts
 ```
 

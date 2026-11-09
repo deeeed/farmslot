@@ -4,7 +4,6 @@ import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 
 import {
-  codexReasoningEfforts,
   DEFAULT_CODEX_EFFORT,
   nativeResultJsonSchema,
   type NativeSessionResponse,
@@ -13,6 +12,7 @@ import {
   nativeStructuredResult,
   PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA,
   PIPELINE_VISUAL_RESULT_SCHEMA,
+  resolveCodexReasoningEffort,
 } from '@farmslot/protocol';
 
 import { modelQuestionsOffByRunner } from './model-questions.js';
@@ -160,7 +160,7 @@ export const codexNativeAdapter: NativeAdapter = {
     steer: true,
   },
   async start(options, emit) {
-    const effort = options.effort?.trim().toLowerCase() || DEFAULT_CODEX_EFFORT;
+    let effort = DEFAULT_CODEX_EFFORT;
     let approvalMode = options.approvalMode ?? 'ask';
     let gitRoot: string | undefined;
     let nativeSessionId = '';
@@ -401,10 +401,12 @@ export const codexNativeAdapter: NativeAdapter = {
         throw new Error('Native runner did not confirm the read-only source permissions profile');
       nativeSessionId = wireString(wireObject(result.thread).id);
       resolvedModel = optionalString(result.model) ?? options.model;
-      if (!codexReasoningEfforts(resolvedModel).some((level) => level === effort))
-        throw new NativeRequestRefused(
-          `Invalid Codex reasoning effort: ${effort} for ${resolvedModel ?? 'default model'}`,
-        );
+      try {
+        effort = resolveCodexReasoningEffort(options.effort, resolvedModel) ?? DEFAULT_CODEX_EFFORT;
+      } catch (error) {
+        if (error instanceof Error) throw new NativeRequestRefused(error.message, { cause: error });
+        throw error;
+      }
       if (options.mode === 'plan' && !resolvedModel)
         throw new Error('Native planning mode requires the resolved model');
       if (options.resumeSessionId && nativeSessionId !== options.resumeSessionId)

@@ -1935,6 +1935,62 @@ describe('buildLaunchCommand', () => {
       }
     });
 
+    for (const effort of [undefined, 'auto']) {
+      it(`leaves Claude effort unset across all launch paths for ${effort}`, () => {
+        const vars = makeVars({ dispatchCmd: 'cd {repo} && {claude_path} --model {model}' });
+        const commands = [
+          buildLaunchCommand(vars, 'claude', 'opus', PROMPT, {
+            effort,
+            claudeUsesDispatchCmd: true,
+          }),
+          buildLaunchCommand(
+            { ...vars, dispatchCmd: vars.dispatchCmd + ' --effort {effort}' },
+            'claude',
+            'opus',
+            PROMPT,
+            { effort, claudeUsesDispatchCmd: true },
+          ),
+          buildLaunchCommand({ ...vars, dispatchCmd: '' }, 'claude', 'opus', PROMPT, { effort }),
+          buildRunnerSessionReloadCommand(vars, 'claude', 'opus', 'fixture-session', { effort }),
+          buildInteractiveRefinementRunnerCommand({
+            runner: 'claude',
+            model: 'opus',
+            effort,
+            repo: vars.remoteRepo,
+            promptPath: '/tmp/prompt.md',
+            binary: vars.claudePath,
+          }),
+        ];
+        for (const command of commands) {
+          assert.ok(command);
+          assert.doesNotMatch(command, /--effort/);
+        }
+      });
+    }
+
+    it('refuses unsafe Claude effort on reload and refinement', () => {
+      const vars = makeVars();
+      assert.throws(
+        () =>
+          buildRunnerSessionReloadCommand(vars, 'claude', 'opus', 'fixture-session', {
+            effort: '--help',
+          }),
+        /runner effort.*cannot be passed/,
+      );
+      assert.throws(
+        () =>
+          buildInteractiveRefinementRunnerCommand({
+            runner: 'claude',
+            model: 'opus',
+            effort: '--help',
+            repo: vars.remoteRepo,
+            promptPath: '/tmp/prompt.md',
+            binary: vars.claudePath,
+          }),
+        /runner effort.*cannot be passed/,
+      );
+    });
+
     it('keeps a single --model when the Claude dispatch_cmd omits the placeholder', () => {
       const vars = makeVars({ dispatchCmd: 'cd {repo} && {claude_path} {safety_flags}' });
       const cmd = buildLaunchCommand(vars, 'claude', 'opus', PROMPT, {

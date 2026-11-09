@@ -11,7 +11,6 @@ import {
   nativeRunnerDefinitions,
 } from '@farmslot/agent-runtime/native/registry';
 import {
-  codexReasoningEfforts,
   DEFAULT_CODEX_EFFORT,
   DEFAULT_CURSOR_MODEL,
   DEFAULT_GROK_EFFORT,
@@ -19,6 +18,7 @@ import {
   DEFAULT_PI_MODEL,
   DEFAULT_PI_THINKING,
   isPiThinkingLevel,
+  resolveCodexReasoningEffort,
   type Run,
   type SafetyTier,
   type ScriptedRunnerConfig,
@@ -233,7 +233,7 @@ export function buildGrokLaunch(options: {
     options.model && options.model !== 'unknown' ? options.model : DEFAULT_GROK_MODEL;
   const flagList = runnerFlagsForTier('grok', options.safetyTier);
   const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
-  const effortFlag = grokEffortFlag(options.effort);
+  const effortFlag = runnerEffortFlag('grok', options.effort);
   return `cd ${shellQuote(options.repo)} && ${options.binary}${flagFragment}${effortFlag} --model ${quoteRunnerArgValue(assertedModel(effectiveModel))}`;
 }
 
@@ -488,7 +488,7 @@ export function buildInteractiveRefinementRunnerCommand(options: {
     })} ${promptArg}`;
   }
   const flags = safetyFlags ? ` ${safetyFlags}` : '';
-  const effortFlag = runnerId === 'claude' ? claudeEffortFlag(options.effort) : '';
+  const effortFlag = runnerId === 'claude' ? runnerEffortFlag('claude', options.effort) : '';
   // Claude's list-valued switch goes ahead of the review and safety options, never before the prompt.
   return `${shellQuote(binary || runnerId)}${questionsArgs}${reviewFlags ? ` ${reviewFlags}` : ''}${flags}${modelFlag}${effortFlag} ${promptArg}`;
 }
@@ -564,7 +564,7 @@ export function buildRunnerSessionReloadCommand(
       opts.runtimeDir,
     );
     const modelFlag = runnerModelFlag(model);
-    const effortFlag = claudeEffortFlag(opts.effort);
+    const effortFlag = runnerEffortFlag('claude', opts.effort);
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
     const claudePath = resolveClaudeBinary(vars.claudePath);
@@ -631,7 +631,7 @@ export function buildRunnerSessionReloadCommand(
       opts.runtimeDir,
     );
     const modelFlag = runnerModelFlag(model);
-    const effortFlag = grokEffortFlag(opts.effort);
+    const effortFlag = runnerEffortFlag('grok', opts.effort);
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
     return withMachineEnv(
@@ -721,21 +721,16 @@ export function buildCodexExecLaunch(options: {
   return `unset CLAUDECODE && cd ${shellQuote(options.repo)} && ${codexHomeSetup} && ${options.binary}${CODEX_PLUGIN_HOOK_ARGS}${flagFragment}${effortFlag}${workerConfigFlags}${modelFlag}${prompt}`;
 }
 
-function claudeEffortFlag(effort?: string | null): string {
-  const effective = resolveRunnerEffort('claude', effort);
+function runnerEffortFlag(runner: string, effort?: string | null): string {
+  const effective = resolveRunnerEffort(runner, effort);
   if (!effective) return '';
   assertSafeRunnerArgumentValue('effort', effective);
   return ` --effort ${quoteRunnerArgValue(effective)}`;
 }
 
 function codexReasoningEffortFlag(effort?: string | null, model?: string | null): string {
-  const normalized = effort?.trim().toLowerCase();
-  // Explicit `auto` leaves Codex config untouched (CLI / config.toml default).
-  if (normalized === 'auto') return '';
-  const effective = normalized || DEFAULT_CODEX_EFFORT;
-  if (!codexReasoningEfforts(model).some((candidate) => candidate === effective)) {
-    throw new Error(`Invalid Codex reasoning effort: ${effort}`);
-  }
+  const effective = resolveCodexReasoningEffort(effort, model);
+  if (!effective) return '';
   return ` --config ${shellQuote(`model_reasoning_effort="${effective}"`)}`;
 }
 
@@ -746,15 +741,6 @@ function piThinkingFlag(effort?: string | null): string {
   }
   assertSafeRunnerArgumentValue('effort', normalized);
   return ` --thinking ${quoteRunnerArgValue(normalized)}`;
-}
-
-function grokEffortFlag(effort?: string | null): string {
-  const normalized = effort?.trim();
-  // Explicit `auto` leaves Grok config untouched.
-  if (normalized?.toLowerCase() === 'auto') return '';
-  const effective = normalized || DEFAULT_GROK_EFFORT;
-  assertSafeRunnerArgumentValue('effort', effective);
-  return ` --effort ${quoteRunnerArgValue(effective)}`;
 }
 
 function codexWorkerConfigFlags(): string {
@@ -1044,7 +1030,9 @@ export function buildLaunchCommand(
   const dispatchRunnerArgs = [
     // Grok only: codex injects its own reasoning-effort config flag after
     // expansion, and cursor has no effort flag at all.
-    runner === 'grok' && !cmdHasEffortPlaceholder ? grokEffortFlag(resolvedEffort).trim() : '',
+    runner === 'grok' && !cmdHasEffortPlaceholder
+      ? runnerEffortFlag('grok', resolvedEffort).trim()
+      : '',
     cmdHasModelPlaceholder ? '' : modelFlag.trim(),
   ]
     .filter(Boolean)
@@ -1067,7 +1055,7 @@ export function buildLaunchCommand(
   // Claude: either route through dispatch_cmd (production dispatch) or launch
   // inline via its configured binary + inline flags (relaunch paths).
   if (runner === 'claude') {
-    const effortFlag = claudeEffortFlag(resolvedEffort);
+    const effortFlag = runnerEffortFlag('claude', resolvedEffort);
     const installCommand = buildRunnerObservabilityInstallCommand(
       vars,
       runner,

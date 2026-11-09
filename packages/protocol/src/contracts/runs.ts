@@ -3804,6 +3804,20 @@ export function codexReasoningEfforts(model?: string | null): readonly CodexReas
   }
 }
 
+/** Resolve a requested level; `auto` leaves the transport's default in control. */
+export function resolveCodexReasoningEffort(
+  effort?: string | null,
+  model?: string | null,
+): CodexReasoningEffort | undefined {
+  const normalized = effort?.trim().toLowerCase();
+  if (normalized === 'auto') return undefined;
+  const effective = normalized || DEFAULT_CODEX_EFFORT;
+  const supported = codexReasoningEfforts(model).find((candidate) => candidate === effective);
+  if (!supported)
+    throw new Error(`Invalid Codex reasoning effort: ${effort} for ${model ?? 'default model'}`);
+  return supported;
+}
+
 /** Default Codex reasoning effort when dispatch/launch omits effort. */
 export const DEFAULT_CODEX_EFFORT = 'high';
 

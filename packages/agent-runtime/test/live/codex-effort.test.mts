@@ -4,12 +4,12 @@ import test from 'node:test';
 
 import { DEFAULT_CODEX_EFFORT } from '@farmslot/protocol';
 import { codexNativeAdapter } from '../../src/native/codex.js';
-import { fixture } from '../../src/native/filesystem-policy.test.js';
-import type { NativeAdapterSession } from '../../src/native/types.js';
+import { fixture } from '../../src/native/filesystem-policy.fixture.js';
+import type { NativeAdapterSession, NativeEventInput } from '../../src/native/types.js';
 
 for (const mode of ['default', 'plan'] as const) {
   test(`Codex ${mode} turns share the configured default and explicit effort`, async () => {
-    for (const effort of [undefined, 'max']) {
+    for (const effort of [undefined, 'auto', 'max']) {
       const f = await fixture(true);
       let session: NativeAdapterSession | undefined;
       try {
@@ -30,11 +30,11 @@ for (const mode of ['default', 'plan'] as const) {
           .split('\n')
           .map((line) => JSON.parse(line));
         const turn = messages.find((message) => message.method === 'turn/start').params;
-        assert.equal(turn.effort, effort ?? DEFAULT_CODEX_EFFORT);
+        assert.equal(turn.effort, effort === 'max' ? effort : DEFAULT_CODEX_EFFORT);
         if (mode === 'plan')
           assert.equal(
             turn.collaborationMode.settings.reasoning_effort,
-            effort ?? DEFAULT_CODEX_EFFORT,
+            effort === 'max' ? effort : DEFAULT_CODEX_EFFORT,
           );
       } finally {
         await session?.close();
@@ -51,13 +51,18 @@ for (const [model, effort] of [
   test(`Codex refuses unsupported ${effort} for ${model} before a turn`, async () => {
     const f = await fixture(true);
     let session: NativeAdapterSession | undefined;
+    const events: NativeEventInput[] = [];
     try {
       await assert.rejects(async () => {
         session = await codexNativeAdapter.start(
           { cwd: f.root, executable: f.executable, model, effort, approvalMode: 'bypass' },
-          () => {},
+          (event) => events.push(event),
         );
       }, /Invalid Codex reasoning effort/);
+      assert.equal(
+        events.find((event) => event.type === 'session.closed')?.data?.processStopped,
+        true,
+      );
       const messages = (await readFile(f.requests, 'utf8'))
         .trim()
         .split('\n')

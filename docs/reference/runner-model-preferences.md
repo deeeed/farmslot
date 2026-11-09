@@ -132,7 +132,9 @@ flag. An unset or explicit `auto` terminal choice leaves the runner's own
 configuration in effect.
 
 New native Codex sessions and turns use `DEFAULT_CODEX_EFFORT` when effort is
-unspecified, matching the terminal default. Explicit supported levels are
-preserved. The adapter checks `codexReasoningEfforts` against the resolved model
-and refuses unsupported levels before any turn is sent. Retained sessions keep
+unspecified or `auto`. Unspecified terminal effort uses the same default; terminal
+`auto` leaves the CLI configuration in control. Explicit supported levels are
+preserved. The terminal and native adapters use `resolveCodexReasoningEffort` from
+`@farmslot/protocol` to validate the resolved model's supported levels. Native
+refusals close the owned process before any turn is sent. Retained sessions keep
 their previously recorded effort.
