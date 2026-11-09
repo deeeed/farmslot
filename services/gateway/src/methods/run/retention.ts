@@ -21,8 +21,8 @@ import { nativeSessionManager } from '../../runners/native/manager.js';
 import {
   diskBytes,
   planRunRetention,
-  retiredTaskPins,
   retentionStoreAction,
+  retiredTaskPins,
   runOwnedPaths,
   type RunPrState,
   type RunRetentionContext,
@@ -245,7 +245,9 @@ export async function runRetentionPass(
     if (removableIds.has(run.id)) continue;
     await turn(() =>
       keepStorageDeletions(
-        roots.archiveRoot, run.id, runRetentionHold(run, context) ?? 'holds its slot',
+        roots.archiveRoot,
+        run.id,
+        runRetentionHold(run, context) ?? 'holds its slot',
       ),
     );
   }
@@ -296,7 +298,10 @@ export async function runRetentionPass(
             : [],
         );
         await keepStorageDeletions(
-          roots.archiveRoot, run.id, 'ownership or admission changed', deleteFiles,
+          roots.archiveRoot,
+          run.id,
+          'ownership or admission changed',
+          deleteFiles,
         );
         if (!files.length) {
           processed.add(run.id);

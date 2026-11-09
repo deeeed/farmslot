@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import fs, { existsSync } from 'node:fs';
-import fsPromises from 'node:fs/promises';
-import { mkdir, mkdtemp, readFile, rename, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import fsPromises, {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -797,14 +805,18 @@ async function interruptedDeletion(
   const remove = fs.rmSync;
   const fault =
     phase === 'intent'
-      ? t.mock.method(fsPromises, 'rename', async (...args: Parameters<typeof fsPromises.rename>) => {
-          await renameFile(...args);
-          if (String(args[1]) === manifestPath) {
-            const manifest = await f.manifest();
-            if (manifest.entries.some((entry: { state: string }) => entry.state === 'deleting'))
-              throw new Error('crash after deletion intent');
-          }
-        })
+      ? t.mock.method(
+          fsPromises,
+          'rename',
+          async (...args: Parameters<typeof fsPromises.rename>) => {
+            await renameFile(...args);
+            if (String(args[1]) === manifestPath) {
+              const manifest = await f.manifest();
+              if (manifest.entries.some((entry: { state: string }) => entry.state === 'deleting'))
+                throw new Error('crash after deletion intent');
+            }
+          },
+        )
       : t.mock.method(fs, 'rmSync', (...args: Parameters<typeof fs.rmSync>) => {
           remove(...args);
           throw new Error('crash after removal');
@@ -817,7 +829,12 @@ async function interruptedDeletion(
   try {
     await assert.rejects(
       stageStoragePaths(f.roots.archiveRoot, f.run.id, [], () => true, [
-        { source: f.review, store: 'review-workspaces', root: f.roots.reviewWorkspaces, bytes: 4096 },
+        {
+          source: f.review,
+          store: 'review-workspaces',
+          root: f.roots.reviewWorkspaces,
+          bytes: 4096,
+        },
         { source: f.taskPin, store: 'task-pins', root: f.roots.taskPins, bytes: 4096 },
       ]),
       /crash after/,
@@ -893,7 +910,8 @@ test(
       if (hold === 'admission') await withTaskAdmission(path.join(f.task, 'TASK.md'), pass);
       else await pass();
       const entries = (await f.manifest()).entries.filter(
-        (entry: { source: string }) => entry.source === (hold === 'admission' ? f.taskPin : f.review),
+        (entry: { source: string }) =>
+          entry.source === (hold === 'admission' ? f.taskPin : f.review),
       );
       assert.equal(entries.length, 1);
       assert.equal(entries[0].state, 'kept', hold);
