@@ -11,7 +11,7 @@ import { makeVars } from '../runners/test-fixtures.js';
 
 import type { NodeSupportIo } from './ensure.js';
 import { type NodeSupportFile, supportHash } from './files.js';
-import { isSupportHomeCommand } from './support-test-fixtures.js';
+import { isSupportHomeCommand, runnerObservabilityFixtureFiles } from './support-test-fixtures.js';
 
 test('full support verification and activation handle an inventory larger than ARG_MAX', async (t) => {
   const home = await mkdtemp(path.join(os.tmpdir(), 'support-large-command-'));
@@ -33,6 +33,7 @@ test('full support verification and activation handle an inventory larger than A
       mode: 0o644,
     };
   });
+  files.push(...(await runnerObservabilityFixtureFiles()));
   const manifest = {
     version: 1,
     project: 'large',
@@ -51,10 +52,12 @@ test('full support verification and activation handle an inventory larger than A
   await mkdir(path.join(supportDir, 'scripts'), { recursive: true });
   await Promise.all(
     files.map((file) =>
-      writeFile(
-        path.join(supportDir, file.relativePath),
-        Buffer.from(file.contentBase64, 'base64'),
-      ),
+      (async () => {
+        const destination = path.join(supportDir, file.relativePath);
+        await mkdir(path.dirname(destination), { recursive: true });
+        await writeFile(destination, Buffer.from(file.contentBase64, 'base64'));
+        await chmod(destination, file.mode);
+      })(),
     ),
   );
   await writeFile(path.join(supportDir, 'manifest.json'), JSON.stringify(manifest));

@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { parse } from 'shell-quote';
+
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { persistentLaneCommand, runnerLaunch } from '../scripts/runner-launch.mjs';
 
@@ -124,11 +126,18 @@ for (const symlinked of [false, true]) {
         model: 'fixture',
         resume_id: 'retained',
       });
-      const installer = launch.command.match(
-        /node '[^']+install-runner-observability\.mjs' --runner 'claude'.*? --slot-id 'fixture'/,
+      // Execute only the verified installer argv, never the following model launch.
+      const tokens = parse(launch.command);
+      const start = tokens.findIndex(
+        (token, index) => token === 'node' && tokens[index + 1] === '-e',
       );
-      assert.ok(installer);
-      const result = spawnSync('/bin/bash', ['-c', installer[0]], { encoding: 'utf8' });
+      assert.notEqual(start, -1);
+      const args = [];
+      for (const token of tokens.slice(start + 1)) {
+        if (typeof token !== 'string') break;
+        args.push(token);
+      }
+      const result = spawnSync(process.execPath, args, { encoding: 'utf8' });
       assert.equal(result.status, 0, result.stderr);
       // The state moves out and no link is left at the old path (ADR-032 Amendment 1).
       for (const name of ['codex-home', '.observability'])

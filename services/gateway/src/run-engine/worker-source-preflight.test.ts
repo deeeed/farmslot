@@ -4,6 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import {
+  RUNNER_OBSERVABILITY_SOURCE_FILES,
+  verifySupportBundle,
+} from '../../../../scripts/lib/runner-observability-bundle.mjs';
+
 import { runLaunchPreflight } from './worker-preflight.js';
 import { expected, probe } from './worker-source-preflight.test-support.js';
 
@@ -241,4 +246,27 @@ test('an invalid frozen required skill record is a mismatch', async (t) => {
   const result = await probe(value);
   assert.equal(result.status, 'mismatch');
   assert.match(result.detail, /invalid requiredSkills record/);
+});
+
+test('runner bundle mismatch refuses even without a legacy task source receipt', async () => {
+  const value = {
+    ...(await expected()),
+    runnerObservability: {
+      sourceDir: path.resolve(import.meta.dirname, '../../../..'),
+      hash: 'f'.repeat(64),
+    },
+  };
+  const result = await probe(value);
+  assert.equal(result.status, 'mismatch');
+  assert.match(result.detail, /RUNNER_OBSERVABILITY_BUNDLE_MISMATCH/);
+});
+
+test('matching runner bytes report their hash while legacy source receipt remains unverified', async () => {
+  const sourceDir = path.resolve(import.meta.dirname, '../../../..');
+  const bundle = await verifySupportBundle(sourceDir, undefined, RUNNER_OBSERVABILITY_SOURCE_FILES);
+  const value = { ...(await expected()), runnerObservability: { sourceDir, hash: bundle.hash } };
+  const result = await probe(value);
+  assert.equal(result.runnerObservabilityHash, bundle.hash);
+  assert.equal(result.status, 'unverified');
+  assert.match(result.detail, /No retained task source receipt/);
 });
