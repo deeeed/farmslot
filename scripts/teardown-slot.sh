@@ -28,7 +28,6 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-POOL_DIR="${PROJECT_DIR}/pool"
 FARMSLOT_DIR="${PROJECT_DIR}"
 
 # shellcheck disable=SC1091

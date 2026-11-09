@@ -2203,7 +2203,7 @@ test('PR queue prepares cold allowed slots while respecting busy slots and model
 async function onRequestPRFixture(t: TestContext, label: string) {
   setQueueDispatchPressureCaptureForTests(admitAllPressure);
   const project = `physical-devices-${process.pid}-${label}`;
-  const projectDir = path.join(farmslotRoot, 'projects', project);
+  const projectDir = path.join(farmslotRoot(), 'projects', project);
   await mkdir(projectDir, { recursive: true });
   t.after(() => rm(projectDir, { recursive: true, force: true }));
   await writeFile(

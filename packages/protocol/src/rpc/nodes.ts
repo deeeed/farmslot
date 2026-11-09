@@ -1,7 +1,9 @@
+import type { NodeFarmPaths } from '../node/farm-paths.js';
 import type { PeerVersionDeclaration } from '../peer-versions.js';
 import type { NodeLinkCapabilities } from '../transport/node-link.js';
 
 export interface NodeInfo extends PeerVersionDeclaration {
+  farmPaths?: NodeFarmPaths;
   machine: string;
   pid: number;
   nodeLink?: NodeLinkCapabilities;

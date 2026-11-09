@@ -2,15 +2,13 @@
  * Execute provider-account operations on the slot's host (local or remote).
  * Paths and ledger always expand against the execution machine's FARMSLOT_HOME.
  */
-
-import os from 'node:os';
 import path from 'node:path';
 
 import type { loadSlotVars } from '../core/config.js';
 import { execOnSlot, isLocal } from '../core/exec.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
-import { farmslotRoot } from '../projects/repo-root.js';
+import { farmslotDirForSlot } from '../fleet/farm-paths.js';
 
 import { selectEligibleProviderAccount } from './provider-account-select.js';
 import {
@@ -30,19 +28,7 @@ import {
   recordAccountSuccess,
 } from './usage-exhaustion-ledger.js';
 
-const REMOTE_AGENT_DIR = '~/farmslot-node';
 const CLI_REL = 'scripts/provider-account-cli.mjs';
-const localHostname = os.hostname().replace(/\.local$/, '');
-
-function farmslotDirForSlot(vars: Awaited<ReturnType<typeof loadSlotVars>>): string {
-  const slotHost = vars.host.replace(/\.local$/, '');
-  const local =
-    slotHost === 'localhost' ||
-    slotHost === '127.0.0.1' ||
-    slotHost === localHostname ||
-    isLocal(vars.host, vars.machine);
-  return local ? farmslotRoot : REMOTE_AGENT_DIR;
-}
 
 function cliPathForSlot(vars: Awaited<ReturnType<typeof loadSlotVars>>): string {
   return path.posix.join(farmslotDirForSlot(vars), CLI_REL);

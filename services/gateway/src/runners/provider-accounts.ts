@@ -1,15 +1,14 @@
 /**
  * Operator-local provider subscription accounts (Codex auth homes, etc.).
  *
- * Lives under farmslotHome() — never pool JSON / slot-config (ruling 2).
+ * Lives under currentFarmPaths('node').config — never pool JSON / slot-config (ruling 2).
  * Missing config → every slot resolves to the ambient provider home.
  */
-
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 export const AMBIENT_ACCOUNT_LABEL = 'ambient';
 export const DEFAULT_SESSION_COOLING_MS = 5 * 60 * 60 * 1000; // 5 hours
@@ -56,11 +55,11 @@ export interface ResolvedProviderAccount {
   ambient: boolean;
 }
 
-export function providerAccountsConfigPath(home = farmslotHome()): string {
+export function providerAccountsConfigPath(home = currentFarmPaths('node').config): string {
   return path.join(home, 'provider-accounts.json');
 }
 
-export function activeProviderAccountsPath(home = farmslotHome()): string {
+export function activeProviderAccountsPath(home = currentFarmPaths('node').config): string {
   return path.join(home, 'active-provider-accounts.json');
 }
 
@@ -73,7 +72,9 @@ export function ambientCodexAuthPath(): string {
   return path.join(homedir(), '.codex', 'auth.json');
 }
 
-export function loadProviderAccountsConfig(home = farmslotHome()): ProviderAccountsConfig | null {
+export function loadProviderAccountsConfig(
+  home = currentFarmPaths('node').config,
+): ProviderAccountsConfig | null {
   const filePath = providerAccountsConfigPath(home);
   if (!existsSync(filePath)) return null;
   const raw = readFileSync(filePath, 'utf8').trim();
@@ -91,7 +92,9 @@ export function loadProviderAccountsConfig(home = farmslotHome()): ProviderAccou
  * Node-local active seat map. Prefer `active-provider-accounts.json` so a node
  * can switch seats without rewriting the full account inventory.
  */
-export function loadActiveProviderProfiles(home = farmslotHome()): Record<string, string> {
+export function loadActiveProviderProfiles(
+  home = currentFarmPaths('node').config,
+): Record<string, string> {
   const filePath = activeProviderAccountsPath(home);
   if (existsSync(filePath)) {
     try {
@@ -131,7 +134,7 @@ export function resolveProviderAccountForSlot(options: {
   config?: ProviderAccountsConfig | null;
 }): ResolvedProviderAccount {
   const provider = options.provider ?? 'codex';
-  const home = options.home ?? farmslotHome();
+  const home = options.home ?? currentFarmPaths('node').config;
   const config = options.config === undefined ? loadProviderAccountsConfig(home) : options.config;
 
   if (!config) {
@@ -217,7 +220,7 @@ export function providerFailoverCandidates(options: {
   exclude?: Iterable<string>;
 }): string[] {
   const provider = options.provider ?? 'codex';
-  const home = options.home ?? farmslotHome();
+  const home = options.home ?? currentFarmPaths('node').config;
   const config = options.config === undefined ? loadProviderAccountsConfig(home) : options.config;
   const excluded = new Set(options.exclude ?? []);
 

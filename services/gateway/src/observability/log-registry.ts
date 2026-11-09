@@ -1,10 +1,9 @@
 // log-registry.ts — Typed production/development log sources for gateway intelligence.
-
 import { createHash } from 'node:crypto';
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { intelligenceAuditDir } from '../auto-recovery/audit-writer.js';
 import { isPathInside } from '../core/path.js';
@@ -93,17 +92,11 @@ function warnSkippedLogSource(source: string, err: unknown): void {
 }
 
 function configuredLogDir(): string {
-  return process.env.FARMSLOT_LOG_DIR
-    ? path.resolve(process.env.FARMSLOT_LOG_DIR)
-    : path.join(farmslotHome(), 'logs');
+  return currentFarmPaths('gateway').state.logs;
 }
 
 function extraLogDirs(): string[] {
-  return (process.env.FARMSLOT_EXTRA_LOG_DIRS ?? '')
-    .split(path.delimiter)
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .map((entry) => path.resolve(entry));
+  return currentFarmPaths('gateway').state.extraLogDirs;
 }
 
 function staticLogSpecs(): StaticLogSpec[] {

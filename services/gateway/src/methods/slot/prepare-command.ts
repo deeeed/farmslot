@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
+
 import { EXEC_TIMEOUT_EXIT_CODE } from '../../core/exec.js';
 import {
   execLocal,
@@ -13,8 +15,10 @@ import {
   type SlotVars,
 } from '../../core/index.js';
 import { PREPARE_PREFLIGHT_TIMEOUT_MS } from '../../core/project-timeouts.js';
+import { commandIncludesRemotePath } from '../../core/remote-paths.js';
 import { ORCHESTRATOR_LOCALITY, slotWriteFiles } from '../../core/slot-io.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
+import { farmPathsForSlot } from '../../fleet/farm-paths.js';
 import { withoutNodeReconnectWait } from '../../fleet/node-rpc.js';
 import { resolveWorkspaceRoot } from '../../projects/repo-root.js';
 
@@ -107,7 +111,7 @@ export async function clearStalePrepareProcess(
   label: string,
   cleanupPatterns?: string[],
 ): Promise<boolean> {
-  const projectPreflight = `${farmslotRoot}/projects/${vars.projectName}/setup/preflight.sh ${vars.slotId}`;
+  const projectPreflight = `${farmslotRoot()}/projects/${vars.projectName}/setup/preflight.sh ${vars.slotId}`;
   const fallbackPatterns = [
     projectPreflight,
     `${vars.remoteRepo}/temp/.agent/preflight.pid`,
@@ -711,7 +715,7 @@ export async function runPrepareCommand(
         execLocal(c, { cwd: eopts?.cwd, timeout: eopts?.timeout })
     : (c: string, eopts?: { cwd?: string; timeout?: number }) =>
         execOnSlot(vars, c, { cwd: eopts?.cwd, timeout: eopts?.timeout });
-  const windowCwd = useLocal && !slotIsLocal ? farmslotRoot : vars.remoteRepo;
+  const windowCwd = useLocal && !slotIsLocal ? farmslotRoot() : vars.remoteRepo;
   // Labels form both the tmux window target and staged script path.
   const rawLabel = (opts?.windowLabel ?? '').trim();
   const labelPart = /^[A-Za-z0-9_-]+$/.test(rawLabel) ? rawLabel : Date.now().toString();
@@ -722,7 +726,10 @@ export async function runPrepareCommand(
   // default, or the orchestrator when forceLocal is set for orchestrator-only
   // scripts. Critical for remote slots: tmux pipe-pane writes on that host, so
   // the target path must exist there.
-  const slotHostScratchDir = '/tmp/farmslot-prepare';
+  const slotHostScratchDir =
+    useLocal || slotIsLocal
+      ? currentFarmPaths('gateway').state.tmp
+      : farmPathsForSlot(vars).state.tmp;
   const phasePart = '';
   const phaseFileName = `${sessionName}-${windowName}${phasePart}`;
   const phaseBase = `${slotHostScratchDir}/${phaseFileName}`;
@@ -853,7 +860,11 @@ export async function runPrepareCommand(
   // call can exec it directly without going through a host-shell parser.
   const stageTimeout = 10_000;
   let stagedCommand = wrappedCmd;
-  if (!useLocal && !slotIsLocal && wrappedCmd.includes('~/farmslot-node')) {
+  if (
+    !useLocal &&
+    !slotIsLocal &&
+    commandIncludesRemotePath(wrappedCmd, farmPathsForSlot(vars).code.node)
+  ) {
     const { NodeSupportPendingError, resolveRemoteFarmCommand } =
       await import('../../node-support/remote-command.js');
     try {

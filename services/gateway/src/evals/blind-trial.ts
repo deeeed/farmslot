@@ -8,6 +8,8 @@ import {
   isTerminalRunStatus,
   type Run,
 } from '@farmslot/protocol';
+import { currentFarmPaths, legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
+import { reportedFarmPaths } from '@farmslot/slot-config';
 
 import { shSingleQuote } from '../../../../scripts/lib/shell-quote.mjs';
 import {
@@ -19,7 +21,7 @@ import {
   resolveProjectTaskDirName,
   type SlotVars,
 } from '../core/config.js';
-import { execLocal, execOnSlot } from '../core/exec.js';
+import { execLocal, execOnSlot, isLocal } from '../core/exec.js';
 import { ownsRunSlotCleanup, readSlotRow } from '../core/state.js';
 import { atomicWriteTextFile } from '../run-engine/diff-artifact-utils.js';
 import { captureRunDiffSnapshot } from '../run-engine/diff-artifacts.js';
@@ -150,7 +152,8 @@ export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal):
   await executeGit('isolate', vars, spec, signal);
   // The worker sandbox denies the node's other slot checkouts, resolved as each slot's own launch resolves them.
   const siblingRepos = await resolvedSiblingRepos(vars);
-  const farmConfigRoots = [path.join(await farmslotDirectoryForSlot(vars), 'pool')];
+  const paths = await blindFarmPaths(vars);
+  const farmConfigRoots = [paths.pool, paths.state.runs, paths.projects];
   await executeGit('boundary', vars, { ...spec, siblingRepos, farmConfigRoots }, signal);
   await ownedEpoch(run, epoch);
   await persistRunNow(
@@ -214,18 +217,19 @@ export async function verifyBlindTrialForDispatch(run: Run, retained = false): P
       path.basename(path.dirname(path.dirname(run.taskFile))),
       path.basename(path.dirname(run.taskFile)),
     );
+    const paths = await blindFarmPaths(vars);
     await executeGit('boundary', vars, {
       ...gitSpec(run, vars, blind, blind.isolation.slotEpoch, blind.isolation.capsulePath),
       siblingRepos: await resolvedSiblingRepos(vars),
-      farmConfigRoots: [path.join(await farmslotDirectoryForSlot(vars), 'pool')],
+      farmConfigRoots: [paths.pool, paths.state.runs, paths.projects],
       proofBoundary: {
         taskRoot,
         currentTask,
         runtimeRoots: [path.join(vars.remoteRepo, await resolveProjectRuntimeDir(run.project))],
         deniedRoots: [
           getOrchestratorTaskRoot(run.project, project.projectJson),
-          path.join(await farmslotDirectoryForSlot(vars), 'projects', run.project, 'tasks'),
-          path.join(await farmslotDirectoryForSlot(vars), '.runs'),
+          path.join(paths.projects, run.project, 'tasks'),
+          paths.state.runs,
         ],
       },
     });
@@ -449,4 +453,13 @@ export async function restoreFinishedBlindTrialGit(run: Run): Promise<string | n
   } catch (error) {
     return `Blind trial Git was not restored: ${(error as Error).message}`;
   }
+}
+
+async function blindFarmPaths(vars: SlotVars) {
+  const report = reportedFarmPaths(vars.machine);
+  return report?.layout === 2
+    ? report
+    : isLocal(vars.host, vars.machine)
+      ? currentFarmPaths('gateway')
+      : legacyRemoteFarmPaths(vars.machineEnv, await farmslotDirectoryForSlot(vars));
 }

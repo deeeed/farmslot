@@ -15,8 +15,9 @@ after(() => rm(root, { recursive: true, force: true }));
 const operatorHome = path.join(root, 'operator-home');
 await mkdir(path.join(operatorHome, 'run-bundles'), { recursive: true });
 await writeFile(path.join(operatorHome, 'run-bundles/sentinel'), 'operator store');
+const actualHome = await import('@farmslot/protocol/node/farmslot-home');
 mock.module('@farmslot/protocol/node/farmslot-home', {
-  namedExports: { farmslotHome: () => operatorHome },
+  namedExports: { ...actualHome, farmslotHome: () => operatorHome },
 });
 
 const { archiveRunArtifactHousekeeping, reserveRunArtifactMetadata, runBundleStore } =

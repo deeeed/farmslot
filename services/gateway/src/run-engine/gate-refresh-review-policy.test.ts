@@ -146,8 +146,8 @@ async function gateFixture(
 ) {
   const testId = `gate-refresh-policy-${process.pid}-${Date.now()}`;
   const repo = await mkdtemp(path.join(os.tmpdir(), `${testId}-`));
-  const taskDir = path.join(farmslotRoot, '.sandbox/farmslot-farm/tasks/test', testId);
-  const poolFile = path.join(farmslotRoot, 'pool', `${testId}.json`);
+  const taskDir = path.join(farmslotRoot(), '.sandbox/farmslot-farm/tasks/test', testId);
+  const poolFile = path.join(farmslotRoot(), 'pool', `${testId}.json`);
   const slotId = `${testId}-slot`;
   const run = createRun({
     flowType: 'dev',

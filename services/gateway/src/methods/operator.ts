@@ -40,7 +40,7 @@ const TEXT_PREVIEW_LIMIT = 12_000;
 const RECOVERY_EXCERPT_LIMIT = 600;
 const REGISTERED_LOG_PREVIEW_LIMIT = 20_000;
 const LOG_PATH_RE = /(?:\.log|\.out|\.err|farmslot-dev\.log)/;
-const realFarmslotRoot = realpathSync(farmslotRoot);
+const realFarmslotRoot = realpathSync(farmslotRoot());
 
 export async function operatorSnapshot(): Promise<OperatorSnapshotResult> {
   const generatedAt = new Date().toISOString();
@@ -689,7 +689,7 @@ async function readPreview(label: string, filePath: string | null | undefined) {
   const { content, truncated } = await readPreviewPrefix(absPath);
   return {
     label,
-    path: absPath.replace(`${farmslotRoot}/`, ''),
+    path: absPath.replace(`${farmslotRoot()}/`, ''),
     content,
     truncated,
   };

@@ -1,5 +1,15 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -79,7 +89,7 @@ test('the fixed observed receipt set exactly covers the admitted manifest', asyn
 });
 
 test('actual admitted file edits, replacements and removal invalidate without unrelated traversal', async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'triage-pilot-watch-'));
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'triage-pilot-watch-')));
   const home = path.join(root, 'home');
   const receipts = path.join(root, 'external', 'receipts');
   await mkdir(home);
@@ -99,15 +109,18 @@ test('actual admitted file edits, replacements and removal invalidate without un
   });
   await source.refresh();
   source.assertReady(receipts);
+  await quiet(revisions);
   for (const name of TRIAGE_PILOT_FILE_NAMES) {
     const file = path.join(receipts, name);
     let before = revisions.revision(key);
     await writeFile(file, 'initial');
     await until(() => revisions.revision(key) > before, `Missing actual ${name} create`);
+    await quiet(revisions);
     before = revisions.revision(key);
     await writeFile(file + '.replacement', 'replaced');
     await rename(file + '.replacement', file);
     await until(() => revisions.revision(key) > before, `Missing actual ${name} replacement`);
+    await quiet(revisions);
   }
   let before = revisions.revision(key);
   const evaluation = path.join(receipts, 'evaluation.json');
@@ -134,7 +147,7 @@ test('actual admitted file edits, replacements and removal invalidate without un
 });
 
 test('policy switches retire old sources, disabled/invalid policy fails closed and overlapping refreshes settle', async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'triage-pilot-selection-'));
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'triage-pilot-selection-')));
   const home = path.join(root, 'home');
   const first = path.join(root, 'first');
   const second = path.join(root, 'second');
@@ -176,7 +189,7 @@ test('policy switches retire old sources, disabled/invalid policy fails closed a
 });
 
 test('missing/replaced directories and symlink targets recover under bounded parent ownership', async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'triage-pilot-topology-'));
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'triage-pilot-topology-')));
   const home = path.join(root, 'home');
   const selected = path.join(root, 'later', 'receipts');
   await mkdir(home);
@@ -229,13 +242,14 @@ test('missing/replaced directories and symlink targets recover under bounded par
       return false;
     }
   }, 'A changed symlink target must become observed');
+  await quiet(revisions);
   const before = revisions.revision(key);
   await writeFile(path.join(other, 'evaluation.json'), 'new selected target');
   await until(() => revisions.revision(key) > before, 'The new physical target must publish');
 });
 
 test('observation failure and unexpected close refuse readiness instead of returning fresh data', async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'triage-pilot-failure-'));
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'triage-pilot-failure-')));
   const home = path.join(root, 'home');
   const receipts = path.join(root, 'receipts');
   await Promise.all([mkdir(home), mkdir(receipts)]);
@@ -263,7 +277,7 @@ test('observation failure and unexpected close refuse readiness instead of retur
 });
 
 test('an admitted artifact symlink observes its physical source and a replacement target', async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'triage-pilot-file-link-'));
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'triage-pilot-file-link-')));
   const home = path.join(root, 'home');
   const receipts = path.join(root, 'receipts');
   const other = path.join(root, 'outside');
@@ -322,7 +336,7 @@ test('an admitted artifact symlink observes its physical source and a replacemen
 });
 
 test('the real triage getter propagates observation failure instead of a fresh unavailable view', async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'triage-pilot-admission-'));
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'triage-pilot-admission-')));
   const variables = [
     'FARMSLOT_HOME',
     'FARMSLOT_ASSESSMENT_ENABLED',

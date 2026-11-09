@@ -75,7 +75,7 @@ function normalize(text: string, taskDir: string): string {
   return text
     .split(taskDir)
     .join('<TASK_DIR>')
-    .split(farmslotRoot)
+    .split(farmslotRoot())
     .join('<FARMSLOT_ROOT>')
     .split(path.basename(taskDir))
     .join('<TASK_ID>')

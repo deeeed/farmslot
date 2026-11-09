@@ -262,13 +262,13 @@ async function loadSnapshot(run: Run, deps: Dependencies): Promise<Snapshot | nu
 
 /** Copy the installed canonical marker and its dependencies, never a generated substitute. */
 async function runtimeFiles() {
-  const protocol = path.join(farmslotRoot, 'packages/protocol');
+  const protocol = path.join(farmslotRoot(), 'packages/protocol');
   const nobleRequire = createRequire(path.join(protocol, 'package.json'));
   const nobleRoot = path.dirname(nobleRequire.resolve('@noble/hashes/sha256'));
   const files = (
     await Promise.all([
       collectSupportFiles(
-        path.join(farmslotRoot, 'packages/agent-runtime/scripts'),
+        path.join(farmslotRoot(), 'packages/agent-runtime/scripts'),
         'inputs/runtime/node_modules/@farmslot/agent-runtime/scripts',
       ),
       collectSupportFiles(
@@ -765,7 +765,10 @@ export async function readReviewWorkspaceCompletion(
     await exec(
       process.execPath,
       [
-        path.join(farmslotRoot, 'packages/agent-runtime/scripts/check-task-artifact-contract.mjs'),
+        path.join(
+          farmslotRoot(),
+          'packages/agent-runtime/scripts/check-task-artifact-contract.mjs',
+        ),
         mirror,
         '--contract',
         contractPath,

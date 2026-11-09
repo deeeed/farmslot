@@ -1,8 +1,12 @@
 import path from 'node:path';
 
-import { farmslotRoot, type ProjectVars, type SlotVars } from '../core/config.js';
+import { currentFarmPaths, legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
+import { reportedFarmPaths } from '@farmslot/slot-config';
+
+import { type ProjectVars, type SlotVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
 import { expandTemplateWithReservedLast } from '../core/hooks.js';
+import { farmslotDirForSlot } from '../fleet/farm-paths.js';
 import { nodeExecArgv } from '../fleet/node-rpc.js';
 
 /** Resolve remote helpers from the connected node, which may be a dev deployment. */
@@ -10,8 +14,14 @@ export async function agentRuntimeScriptForSlot(
   vars: Pick<SlotVars, 'host' | 'machine'>,
   filename: string,
 ): Promise<string> {
+  const report = reportedFarmPaths(vars.machine);
+  if (report?.layout === 2) return path.posix.join(report.code.agentRuntimeScripts, filename);
   if (isLocal(vars.host, vars.machine))
-    return path.posix.join(farmslotRoot, 'packages/agent-runtime/scripts', filename);
+    return path.posix.join(
+      currentFarmPaths('gateway').code.checkout,
+      'packages/agent-runtime/scripts',
+      filename,
+    );
 
   // Omit cwd deliberately: the node's exec handler defaults to its installation
   // directory. Resolving in the product checkout or a guessed home directory
@@ -33,24 +43,29 @@ export async function agentRuntimeScriptForSlot(
       `The connected node ${vars.machine} cannot resolve its agent-runtime helper ${filename}. ` +
         `Repair that node's runtime installation; no other deployment will be used.`,
     );
-  return script;
+  return path.posix.join(
+    legacyRemoteFarmPaths({}, undefined, path.posix.dirname(script)).code.agentRuntimeScripts,
+    path.posix.basename(script),
+  );
 }
 
 /** Framework-relative pack commands use the connected node's installation, too. */
 export async function farmslotDirectoryForSlot(
-  vars: Pick<SlotVars, 'host' | 'machine'>,
+  vars: Pick<SlotVars, 'host' | 'machine' | 'machineEnv'>,
 ): Promise<string> {
-  if (isLocal(vars.host, vars.machine)) return farmslotRoot;
+  const directory = farmslotDirForSlot(vars);
+  if (reportedFarmPaths(vars.machine)?.layout === 2 || path.posix.isAbsolute(directory))
+    return directory;
   const result = await nodeExecArgv(vars.machine, ['node', '-p', 'process.cwd()'], undefined, {
     timeout: 10_000,
     maxBuffer: 16 * 1024,
   });
-  const directory = result.stdout.trim();
-  if (result.exitCode !== 0 || !path.posix.isAbsolute(directory))
+  const installed = result.stdout.trim();
+  if (result.exitCode !== 0 || !path.posix.isAbsolute(installed))
     throw new Error(
       `The connected node ${vars.machine} cannot resolve its Farmslot installation directory.`,
     );
-  return directory;
+  return legacyRemoteFarmPaths({}, installed).code.node;
 }
 
 export async function renderRoleTemplate(

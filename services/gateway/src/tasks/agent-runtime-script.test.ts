@@ -32,7 +32,7 @@ async function fixture(t: test.TestContext) {
     const runtime = path.join(deployment, 'node_modules/@farmslot/agent-runtime');
     await mkdir(runtime, { recursive: true });
     await symlink(
-      path.join(farmslotRoot, 'packages/protocol'),
+      path.join(farmslotRoot(), 'packages/protocol'),
       path.join(deployment, 'node_modules/@farmslot/protocol'),
       'dir',
     );
@@ -212,7 +212,7 @@ test('local helpers preserve their installation selection', async () => {
       { host: 'localhost', machine: 'local' },
       'acceptance-ledger.cjs',
     ),
-    path.join(farmslotRoot, 'packages/agent-runtime/scripts/acceptance-ledger.cjs'),
+    path.join(farmslotRoot(), 'packages/agent-runtime/scripts/acceptance-ledger.cjs'),
   );
 });
 
@@ -284,6 +284,6 @@ test('framework directory resolution refuses failed or relative results instead 
   }
   assert.equal(
     await farmslotDirectoryForSlot({ host: 'localhost', machine: 'local' }),
-    farmslotRoot,
+    farmslotRoot(),
   );
 });

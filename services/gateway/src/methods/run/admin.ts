@@ -28,6 +28,7 @@ import {
   type RunTagsSetParams,
   type RunTagsSetResult,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { markBacklogRunReleased } from '../../backlog/store.js';
 import {
@@ -391,6 +392,9 @@ export async function runCleanup(
   const cacheDirsRemoved = await cleanupReviewWorkspaceCaches(dryRun, {
     runs: getAllRunsWithArchived,
     runsDir: runsDirectory(),
+    ...(currentFarmPaths('gateway').layout === 2
+      ? { supportRoot: currentFarmPaths('gateway').state.reviewWorkspaceSupport }
+      : {}),
     nativeRoot: nativeSessionManager.root,
   });
   return { ...result, cacheDirsRemoved };

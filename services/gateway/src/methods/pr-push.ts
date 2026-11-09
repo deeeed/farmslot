@@ -27,7 +27,7 @@ export async function initPRPush(
   service?.stop();
   const authorized = ownerAdminAuthority(auth);
   service = new PRPushService(
-    await PRPushStore.load(resolve(farmslotRoot, '.pr-push.json')),
+    await PRPushStore.load(resolve(farmslotRoot(), '.pr-push.json')),
     authorized,
     (id) => prPushSources(id, monitors, rules, authorized),
     undefined,

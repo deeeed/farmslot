@@ -14,6 +14,7 @@ import {
   type ReviewWorkspaceSupportConfig,
   type Run,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { currentProjectSources, resolveSourceBinding } from '@farmslot/slot-config';
 
 import {
@@ -126,7 +127,10 @@ const defaults: ReviewWorkspaceSupportDependencies = {
   loadProjectVars,
   loadPoolConfigs,
   collect: collectReviewWorkspaceSupport,
-  cacheRoot: () => path.join(runsDirectory(), 'review-workspace-support'),
+  cacheRoot: () =>
+    currentFarmPaths('gateway').layout === 2
+      ? currentFarmPaths('gateway').state.reviewWorkspaceSupport
+      : path.join(runsDirectory(), 'review-workspace-support'),
   env: () => process.env,
   writeFiles: slotWriteFiles,
   writeBuffer: slotWriteFileBuffer,

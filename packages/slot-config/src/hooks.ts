@@ -1,6 +1,5 @@
 // core/hooks.ts — Hook and template expansion
 // TypeScript port of lib/slot-common.sh: expand_hook, expand_template, expand_platform_field, render_fixture_template
-
 import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,12 +9,18 @@ import {
   collectPlaceholderTokens,
   normalizeRunner,
 } from '@farmslot/protocol';
+import { currentFarmPaths, legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 // Placeholder guard lives in @farmslot/protocol so agent-runtime renders with the
 // same rule; re-exported here for the gateway's existing imports.
 export { assertNoUnknownPlaceholders, collectPlaceholderTokens };
 
-import { farmslotRoot, type ProjectVars, type RawProjectJson, type SlotVars } from './config.js';
+import {
+  type ProjectVars,
+  type RawProjectJson,
+  reportedFarmPaths,
+  type SlotVars,
+} from './config.js';
 import { currentProjectSources, expandSourceBindings } from './source-binding.js';
 
 const localHostname = os.hostname().replace(/\.local$/, '');
@@ -24,7 +29,6 @@ const localHostname = os.hostname().replace(/\.local$/, '');
 // Substitutes all {{VAR}} placeholders in a string using resourceVars dynamically.
 
 // Node deployment dir on remote machines (scripts + tools synced by deploy-node.sh)
-const REMOTE_AGENT_DIR = '~/farmslot-node';
 
 /** Explicit run/prepare domain overrides the slot's already-resolved slot/pool default. */
 export function resolveEffectiveDomain(
@@ -125,9 +129,13 @@ function expandTemplateInternal(
   const slotHost = slotVars.host.replace(/\.local$/, '');
   const isLocal =
     slotHost === 'localhost' || slotHost === '127.0.0.1' || slotHost === localHostname;
-  const farmslotDir = isLocal
-    ? farmslotRoot
-    : slotVars.machineEnv?.FARMSLOT_WORKSPACE?.trim() || REMOTE_AGENT_DIR;
+  const reported = reportedFarmPaths(slotVars.machine);
+  const farmslotDir =
+    reported?.layout === 2
+      ? reported.code.node
+      : isLocal
+        ? currentFarmPaths('gateway').code.checkout
+        : legacyRemoteFarmPaths(slotVars.machineEnv).code.templateNode;
   result = result.replaceAll('{{farmslot_dir}}', farmslotDir);
   result = result.replaceAll('{{FARMSLOT_DIR}}', farmslotDir);
   // Legacy aliases

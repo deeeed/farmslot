@@ -20,9 +20,9 @@ import {
   type RunAnalyticsRecord,
   type RunStep,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { isolatedTestPath } from '../core/isolated-test-path.js';
-import { farmslotRoot } from '../fleet/state.js';
 import { resourceRevisions } from '../resources/revisions.js';
 import { checklistTimingContext, checklistTimingForAttempt } from '../tasks/checklist-timing.js';
 
@@ -32,21 +32,20 @@ import { getAllRuns, shouldUseIsolatedRunsDir } from './store.js';
 // One record per terminal run, written before the run JSON can be deleted/archived.
 // See docs/plans/pipeline-ops-analytics-goal.md.
 
-let _analyticsDir: string | null = null;
 const analyticsAppendTails = new Map<string, Promise<void>>();
 
 // Lazy so the store↔analytics import cycle (store emits, we read its test predicate)
 // resolves at runtime rather than module-init time.
 function analyticsDir(): string {
-  if (_analyticsDir) return _analyticsDir;
-  if (process.env.FARMSLOT_ANALYTICS_DIR) {
-    _analyticsDir = process.env.FARMSLOT_ANALYTICS_DIR;
-  } else if (shouldUseIsolatedRunsDir(process.env, process.argv)) {
-    _analyticsDir = isolatedTestPath('farmslot-test-analytics');
-  } else {
-    _analyticsDir = path.join(farmslotRoot, '.runs', 'analytics');
+  const paths = currentFarmPaths('gateway');
+  if (
+    paths.layout === 'legacy' &&
+    !paths.envOverrides.includes('FARMSLOT_ANALYTICS_DIR') &&
+    shouldUseIsolatedRunsDir(process.env, process.argv)
+  ) {
+    return isolatedTestPath('farmslot-test-analytics');
   }
-  return _analyticsDir;
+  return paths.state.analytics;
 }
 
 function monthFile(ts: string): string {

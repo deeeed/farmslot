@@ -139,7 +139,7 @@ test('remote machine shells target the gateway URL their node dials, never a cre
     assert.deepEqual(machineShellEnv(remote), { GW_URL: 'ws://10.0.0.5:7777' });
     assert.equal(
       withMachineEnv('cd /repo && claude', remote),
-      "export GW_URL='ws://10.0.0.5:7777' && cd /repo && claude",
+      `export GW_URL='ws://10.0.0.5:7777' && cd /repo && claude`,
     );
     // An operator-pinned pool value wins over the node's own URL.
     assert.deepEqual(machineShellEnv({ ...remote, machineEnv: { GW_URL: 'wss://pinned' } }), {
@@ -199,4 +199,31 @@ test('a bound task resolves its named RECIPE_LIBRARY_PATH entries to the retaine
     'perps=/frozen',
     'a frozen launch binding still wins',
   );
+});
+
+test('CI home, checkout and isolated runs do not add roots to legacy machine commands', (t) => {
+  const ciEnv = {
+    HOME: '/home/runner',
+    FARMSLOT_HOME: '/home/runner/.farmslot',
+    FARMSLOT_ROOT: '/home/runner/work/farmslot/farmslot',
+    FARMSLOT_RUNS_DIR: '/tmp/farmslot-test-runs-ci',
+    FARMSLOT_TEST_TMP: '1',
+  };
+  for (const [name, value] of Object.entries(ciEnv)) {
+    const previous = process.env[name];
+    process.env[name] = value;
+    t.after(() => {
+      if (previous === undefined) delete process.env[name];
+      else process.env[name] = previous;
+    });
+  }
+  for (const host of ['localhost', 'remote.invalid']) {
+    const vars = { machine: 'legacy-ci-node', host };
+    assert.deepEqual(machineShellEnv(vars), {});
+    assert.equal(withMachineEnv('grok --resume session', vars), 'grok --resume session');
+    assert.equal(
+      withMachineEnv('claude', { ...vars, machineEnv: { MM_HARNESS_BIN: '/node/provider' } }),
+      "export MM_HARNESS_BIN='/node/provider' && claude",
+    );
+  }
 });

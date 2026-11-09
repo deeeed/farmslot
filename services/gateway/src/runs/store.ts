@@ -56,6 +56,7 @@ import {
   signalFileForTask,
   taskTitleText,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { parseReviewRequestContext, resolveReviewMode } from '@farmslot/review-dispatch';
 import {
   appendDecisionHistoryFile,
@@ -71,7 +72,7 @@ import { projectTaskRoots } from '../core/config.js';
 import { isGatewayTestProcess, isolatedTestPath } from '../core/isolated-test-path.js';
 import { readSlotField } from '../core/state.js';
 import { assertStorageVolumePresent } from '../core/storage-volume.js';
-import { farmslotRoot, isValidSafetyTier } from '../fleet/state.js';
+import { isValidSafetyTier } from '../fleet/state.js';
 import { invalidateLiveRecipeContextMemo } from '../live-recipe/context.js';
 import { invalidateRecipeRunGroupCache } from '../methods/filesystem.js';
 import { normalizeStartRefRequest } from '../projects/start-ref-policy.js';
@@ -136,38 +137,44 @@ export function backfillLegacySafetyTier(
 export { isGatewayTestProcess as shouldUseIsolatedRunsDir } from '../core/isolated-test-path.js';
 
 // Test isolation: when running under `node --test` or the repo's common
-// `yarn exec tsx .../*.test.ts` command shape, redirect RUNS_DIR to a
+// `yarn exec tsx .../*.test.ts` command shape, redirect runsDirectory() to a
 // per-process temp dir so test fixtures cannot pollute the real .runs/.
 // Manual override via FARMSLOT_RUNS_DIR for cases where you want a custom
 // path (CI fixtures, integration harnesses, etc.).
 function resolveRunsDir(): string {
-  if (process.env.FARMSLOT_RUNS_DIR) return process.env.FARMSLOT_RUNS_DIR;
-  if (isGatewayTestProcess(process.env, process.argv)) {
+  const paths = currentFarmPaths('gateway');
+  if (
+    paths.layout === 'legacy' &&
+    !paths.envOverrides.includes('FARMSLOT_RUNS_DIR') &&
+    isGatewayTestProcess(process.env, process.argv)
+  ) {
     return isolatedTestPath('farmslot-test-runs');
   }
-  return path.join(farmslotRoot, '.runs');
+  return paths.state.runs;
 }
-const RUNS_DIR = resolveRunsDir();
-const PRODUCTION_RUNS_DIR = path.join(farmslotRoot, '.runs');
-const QUARANTINE_DIR = path.join(RUNS_DIR, 'quarantine');
-
+function quarantineDirectory(): string {
+  return path.join(runsDirectory(), 'quarantine');
+}
 function isProductionRunsDir(): boolean {
-  return RUNS_DIR === PRODUCTION_RUNS_DIR;
+  return (
+    runsDirectory() ===
+    currentFarmPaths('gateway', { ...process.env, FARMSLOT_RUNS_DIR: undefined }).state.runs
+  );
 }
 const runs = new Map<string, Run>();
 
 /** Resolved persistence root shared by run-adjacent durable journals. */
 export function runsDirectory(): string {
-  return RUNS_DIR;
+  return resolveRunsDir();
 }
 
 /** Read audit rows on demand, including archived runs. No routine run read loads the journal. */
 export function readDecisionHistory(id: string): RunDecision[] {
-  const live = decisionHistoryFile(path.join(RUNS_DIR, `${id}.json`));
+  const live = decisionHistoryFile(path.join(runsDirectory(), `${id}.json`));
   const file =
     runs.has(id) || fs.existsSync(live)
       ? live
-      : decisionHistoryFile(path.join(ARCHIVE_DIR, `${id}.json`));
+      : decisionHistoryFile(path.join(archivedRunsDirectory(), `${id}.json`));
   return readDecisionHistoryFile(file);
 }
 
@@ -175,7 +182,7 @@ export const SESSION_ARCHIVES_DIRNAME = 'session-archives';
 
 /** Run-owned opaque runner transcript snapshot. Next to `.runs/`, not inside the run JSON. */
 export function runSessionArchiveDir(runId: string): string {
-  return path.join(RUNS_DIR, SESSION_ARCHIVES_DIRNAME, runId);
+  return path.join(runStatePaths().sessionArchives, runId);
 }
 
 export function resolveRunLane(
@@ -292,18 +299,18 @@ function syncPrimaryAgentContextStatus(
 }
 
 async function ensureDir(): Promise<void> {
-  assertStorageVolumePresent(RUNS_DIR);
-  if (!process.env.FARMSLOT_RUNS_DIR) {
-    await mkdir(RUNS_DIR, { recursive: true });
+  assertStorageVolumePresent(runsDirectory());
+  if (!currentFarmPaths('gateway').envOverrides.includes('FARMSLOT_RUNS_DIR')) {
+    await mkdir(runsDirectory(), { recursive: true });
     return;
   }
   // A configured root is created only inside an existing parent: recreating the missing
   // parents of an unmounted volume would put the farm's runs on the internal disk.
-  await mkdir(RUNS_DIR).catch((error: NodeJS.ErrnoException) => {
+  await mkdir(runsDirectory()).catch((error: NodeJS.ErrnoException) => {
     if (error.code === 'EEXIST') return;
     if (error.code === 'ENOENT' || error.code === 'EACCES')
       throw new Error(
-        `FARMSLOT_RUNS_DIR ${RUNS_DIR} cannot be created: its parent is missing or not writable (is its volume mounted?)`,
+        `FARMSLOT_RUNS_DIR ${runsDirectory()} cannot be created: its parent is missing or not writable (is its volume mounted?)`,
       );
     throw error;
   });
@@ -321,7 +328,7 @@ async function persistBody(run: Run, snapshot: Run = run, requireDurable = false
     return;
   }
   await ensureDir();
-  const filePath = path.join(RUNS_DIR, `${run.id}.json`);
+  const filePath = path.join(runsDirectory(), `${run.id}.json`);
   if (runs.get(run.id) !== run) return;
   // Atomic write: tmp + rename. Crash mid-write leaves the prior file intact instead
   // of truncating it — recoverActiveRuns can keep hydrating on restart.
@@ -356,7 +363,7 @@ async function persistBody(run: Run, snapshot: Run = run, requireDurable = false
   }
   await rename(tmpPath, filePath);
   if (run.transport === 'native' || requireDurable) {
-    const directory = await open(RUNS_DIR, 'r');
+    const directory = await open(runsDirectory(), 'r');
     try {
       await directory.sync();
     } finally {
@@ -563,16 +570,16 @@ export async function discardUndurableRun(id: string): Promise<void> {
   runs.delete(id);
   publishRunResources(captureRunResources(run), undefined, 'deleted');
   try {
-    await unlink(path.join(RUNS_DIR, `${id}.json`));
+    await unlink(path.join(runsDirectory(), `${id}.json`));
   } catch (err) {
     // A missing record is expected before the first persist; other failures could resurrect it.
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
   }
-  await rm(decisionHistoryFile(path.join(RUNS_DIR, `${id}.json`)), { force: true });
+  await rm(decisionHistoryFile(path.join(runsDirectory(), `${id}.json`)), { force: true });
 }
 
 // Synthetic-run detector. Test fixtures call createRun() directly, which
-// writes to the shared RUNS_DIR. When `t.after(cleanupRun)` hooks don't fire
+// writes to the shared runsDirectory(). When `t.after(cleanupRun)` hooks don't fire
 // (test crash, abort, process kill) the fixtures stay on disk forever. The
 // shape is unambiguous: status=done with no slot, no runner, every step still
 // pending, no task files/PR/decisions, and near-zero lifetime. Quarantine these
@@ -598,8 +605,8 @@ function syntheticLeakPurgeEnabled(): boolean {
 }
 
 async function quarantineRunFile(id: string, filePath: string, run?: Run): Promise<void> {
-  await mkdir(QUARANTINE_DIR, { recursive: true });
-  const dst = path.join(QUARANTINE_DIR, `${id}-${Date.now()}.json`);
+  await mkdir(quarantineDirectory(), { recursive: true });
+  const dst = path.join(quarantineDirectory(), `${id}-${Date.now()}.json`);
   const sourceHistory = decisionHistoryFile(filePath);
   mergeDecisionHistoryFile(sourceHistory, decisionHistoryFile(dst));
   try {
@@ -615,7 +622,7 @@ async function quarantineRunFile(id: string, filePath: string, run?: Run): Promi
 }
 
 export async function quarantineLeakedRun(run: Run): Promise<void> {
-  const filePath = path.join(RUNS_DIR, `${run.id}.json`);
+  const filePath = path.join(runsDirectory(), `${run.id}.json`);
   await quarantineRunFile(run.id, filePath, run);
   runs.delete(run.id);
   publishRunResources(captureRunResources(run), undefined, 'deleted');
@@ -742,7 +749,7 @@ export async function loadAllRuns(): Promise<void> {
   await ensureDir();
   let files: string[];
   try {
-    files = await readdir(RUNS_DIR);
+    files = await readdir(runsDirectory());
   } catch {
     return;
   }
@@ -753,7 +760,7 @@ export async function loadAllRuns(): Promise<void> {
     if (!file.endsWith('.json')) continue;
     if (file.includes('.tmp.')) continue; // stray atomic-write artifacts
     try {
-      const filePath = path.join(RUNS_DIR, file);
+      const filePath = path.join(runsDirectory(), file);
       const raw = await readFile(filePath, 'utf-8');
       const run = parseRunRecordFile(file, raw);
       if (!run) {
@@ -1265,7 +1272,7 @@ const SLOT_RUN_HISTORY_DEFAULT_LIMIT = 25;
 const SLOT_RUN_HISTORY_MAX_LIMIT = 100;
 
 export function runRecordPath(runId: string): string {
-  return path.join(RUNS_DIR, `${runId}.json`);
+  return path.join(runsDirectory(), `${runId}.json`);
 }
 
 export function listRunsForSlotHistory(
@@ -1533,7 +1540,7 @@ export function updateRun(id: string, partial: Partial<Run>, authorization?: sym
   // step) is not progress for the Runs list.
   const statusChanged = statusProvided && partial.status !== previousStatus;
   const retired = partial.decisions ? retainDecisionHistory(run, partial.decisions) : [];
-  appendDecisionHistoryFile(decisionHistoryFile(path.join(RUNS_DIR, `${id}.json`)), retired);
+  appendDecisionHistoryFile(decisionHistoryFile(path.join(runsDirectory(), `${id}.json`)), retired);
   const decisionHistoryCount = (run.decisionHistoryCount ?? 0) + retired.length;
   if ('agentContexts' in partial) {
     const retained = registerContextSessionUsage(run, updatedAt);
@@ -1747,11 +1754,11 @@ async function deleteRunBody(id: string): Promise<boolean> {
   runs.delete(id);
   publishRunResources(captureRunResources(run), undefined, 'deleted');
   try {
-    await unlink(path.join(RUNS_DIR, `${id}.json`));
+    await unlink(path.join(runsDirectory(), `${id}.json`));
   } catch {
     /* file may not exist */
   }
-  await rm(decisionHistoryFile(path.join(RUNS_DIR, `${id}.json`)), { force: true });
+  await rm(decisionHistoryFile(path.join(runsDirectory(), `${id}.json`)), { force: true });
   try {
     await rm(runSessionArchiveDir(id), { recursive: true, force: true });
   } catch (err) {
@@ -1761,14 +1768,16 @@ async function deleteRunBody(id: string): Promise<boolean> {
   return true;
 }
 
-const ARCHIVE_DIR = path.join(RUNS_DIR, 'archive');
+function archivedRunsDirectory(): string {
+  return path.join(runsDirectory(), 'archive');
+}
 
 /**
  * Archived runs leave the live map but stay durable on disk, so any projection
  * that claims historical lineage must read them too — archiving is exactly the
  * "outside the current page" case. Cached because roadmap delivery reads this per
  * request; `archiveRun` invalidates it and `deleteArchivedRun` drops its one record.
- * `deleteRun` unlinks from `RUNS_DIR` and never touches the archive directory.
+ * `deleteRun` unlinks from `runsDirectory()` and never touches the archive directory.
  */
 let archivedRunsCache: Run[] | null = null;
 /**
@@ -1794,7 +1803,7 @@ export async function getArchivedRuns(): Promise<Run[]> {
     const generation = archivedRunsGeneration;
     let files: string[];
     try {
-      files = await readdir(ARCHIVE_DIR);
+      files = await readdir(archivedRunsDirectory());
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         if (generation !== archivedRunsGeneration) continue;
@@ -1806,7 +1815,7 @@ export async function getArchivedRuns(): Promise<Run[]> {
     const loaded: Run[] = [];
     for (const file of files) {
       if (!file.endsWith('.json') || file.includes('.tmp.')) continue;
-      const filePath = path.join(ARCHIVE_DIR, file);
+      const filePath = path.join(archivedRunsDirectory(), file);
       try {
         const archived = parseRunRecordFile(file, await readFile(filePath, 'utf-8'));
         if (!archived) {
@@ -1976,7 +1985,7 @@ export async function updateQaFollowUp(
       publishRunResources(captureRunResources(run));
       await persistBody(run);
     } else {
-      const file = path.join(ARCHIVE_DIR, `${run.id}.json`);
+      const file = path.join(archivedRunsDirectory(), `${run.id}.json`);
       const temporary = `${file}.tmp.${randomUUID()}`;
       await writeFile(temporary, JSON.stringify({ ...run, qaAfterReview: next }, null, 2), {
         mode: 0o600,
@@ -2004,7 +2013,7 @@ export async function updateReviewPublication(
       publishRunResources(captureRunResources(run));
       await persistBody(run);
     } else {
-      const file = path.join(ARCHIVE_DIR, `${run.id}.json`);
+      const file = path.join(archivedRunsDirectory(), `${run.id}.json`);
       const temporary = `${file}.tmp.${randomUUID()}`;
       await writeFile(
         temporary,
@@ -2035,7 +2044,7 @@ async function commitRetainedRunMutation(
   let committed!: Run;
   await enqueueRunWrite(id, async () => {
     const live = getRun(id);
-    const file = path.join(ARCHIVE_DIR, `${id}.json`);
+    const file = path.join(archivedRunsDirectory(), `${id}.json`);
     // Read the raw archive so load-time migrations do not rewrite historical execution.
     const run: Run = live ?? JSON.parse(await readFile(file, 'utf-8'));
     if (run.id !== id) throw new Error('Publication run identity changed');
@@ -2048,7 +2057,7 @@ async function commitRetainedRunMutation(
       assertPRRunActivation(snapshot, getAllRuns());
     const retired = retainDecisionHistory(run, snapshot.decisions);
     appendDecisionHistoryFile(
-      decisionHistoryFile(live ? path.join(RUNS_DIR, `${id}.json`) : file),
+      decisionHistoryFile(live ? path.join(runsDirectory(), `${id}.json`) : file),
       retired,
     );
     if (retired.length) {
@@ -2086,7 +2095,7 @@ async function commitRetainedRunMutation(
       await rename(temporary, file);
       invalidateArchivedRunsCache();
       publishRunResources(captureRunResources(snapshot), previousResources);
-      const directory = await open(ARCHIVE_DIR, 'r');
+      const directory = await open(archivedRunsDirectory(), 'r');
       try {
         await directory.sync();
       } finally {
@@ -2205,9 +2214,9 @@ async function archiveRunBody(id: string): Promise<boolean> {
       return false;
     }
   }
-  await mkdir(ARCHIVE_DIR, { recursive: true });
-  const src = path.join(RUNS_DIR, `${id}.json`);
-  const dst = path.join(ARCHIVE_DIR, `${id}.json`);
+  await mkdir(archivedRunsDirectory(), { recursive: true });
+  const src = path.join(runsDirectory(), `${id}.json`);
+  const dst = path.join(archivedRunsDirectory(), `${id}.json`);
   const archivedRun: Run = { ...run, archivedAt: new Date().toISOString() };
   mergeDecisionHistoryFile(decisionHistoryFile(src), decisionHistoryFile(dst));
   // Write the stamped archive record directly to the archive destination. A
@@ -2215,7 +2224,7 @@ async function archiveRunBody(id: string): Promise<boolean> {
   // racing on src; renaming src could move that stale pre-archive JSON and lose
   // archivedAt. Direct dst write makes the archived record authoritative.
   fs.writeFileSync(dst, JSON.stringify(archivedRun, null, 2), { encoding: 'utf-8', flush: true });
-  const archiveDirectory = fs.openSync(ARCHIVE_DIR, 'r');
+  const archiveDirectory = fs.openSync(archivedRunsDirectory(), 'r');
   try {
     fs.fsyncSync(archiveDirectory);
   } finally {
@@ -2284,12 +2293,12 @@ export function runTaskDirectories(run: Run): string[] {
 export async function deleteArchivedRun(id: string): Promise<boolean> {
   const previous = (await getArchivedRuns()).find((run) => run.id === id);
   try {
-    await unlink(path.join(ARCHIVE_DIR, `${id}.json`));
+    await unlink(path.join(archivedRunsDirectory(), `${id}.json`));
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
     throw err;
   }
-  await rm(decisionHistoryFile(path.join(ARCHIVE_DIR, `${id}.json`)), { force: true });
+  await rm(decisionHistoryFile(path.join(archivedRunsDirectory(), `${id}.json`)), { force: true });
   // Drop the one record rather than rescanning the whole archive on the next read.
   if (archivedRunsCache) {
     archivedRunsCache = archivedRunsCache.filter((run) => run.id !== id);
@@ -2325,7 +2334,7 @@ export async function cleanupRuns(
     if (!isRunStoreLeak(run)) continue;
     syntheticRunsDeleted.push(id);
     if (!dryRun) {
-      const filePath = path.join(RUNS_DIR, `${id}.json`);
+      const filePath = path.join(runsDirectory(), `${id}.json`);
       await quarantineRunFile(id, filePath, run);
       runs.delete(id);
       publishRunResources(captureRunResources(run), undefined, 'deleted');
@@ -2416,4 +2425,11 @@ export async function cleanupRuns(
   }
 
   return { taskDirsRemoved, runsArchived, syntheticRunsDeleted };
+}
+
+function runStatePaths() {
+  const paths = currentFarmPaths('gateway');
+  return paths.layout === 'legacy' && runsDirectory() !== paths.state.runs
+    ? { ...paths.state, sessionArchives: path.join(runsDirectory(), SESSION_ARCHIVES_DIRNAME) }
+    : paths.state;
 }

@@ -12,6 +12,9 @@ test(
   'two readers share one append source and receive only complete utf8 records without reloading history',
   { timeout: 10_000 },
   async (t) => {
+    // File observations do not retain the process; the test owns its wait lifetime.
+    const keepAlive = setInterval(() => {}, 1_000);
+    t.after(() => clearInterval(keepAlive));
     const root = await mkdtemp(join(tmpdir(), 'legacy-appends-'));
     t.after(() => rm(root, { recursive: true, force: true }));
     const path = join(root, 'session.jsonl');

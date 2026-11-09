@@ -4,8 +4,9 @@ import {
   type NativeSessionExecutionNode,
   type Principal,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
-import { loadSlotVars, poolDir } from '../core/config.js';
+import { loadSlotVars } from '../core/config.js';
 import { farmslotRoot, isLocal } from '../core/index.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { loadPoolConfigs } from '../fleet/state.js';
@@ -39,7 +40,7 @@ export async function nativeCatalog(
   const assigned = nativeOwnerAssignedMachines(loadCredentialStore().principals, owner);
   let contexts: NativeSessionCatalogResult['contexts'] = [
     ...(ownsLocalNativeProfile(owner)
-      ? [{ cwd: farmslotRoot, label: 'Farmslot checkout', supportsProfiles: true }]
+      ? [{ cwd: farmslotRoot(), label: 'Farmslot checkout', supportsProfiles: true }]
       : []),
   ];
   /** Context node id ('local' or a machine) to the pool machine its node catalog is keyed by. */
@@ -51,7 +52,7 @@ export async function nativeCatalog(
     contextMachines = targets.contextMachines;
     executionNodes = targets.executionNodes;
   } else
-    for (const pool of await loadPoolConfigs(poolDir)) {
+    for (const pool of await loadPoolConfigs(currentFarmPaths('gateway').pool)) {
       for (const slot of pool.slots) {
         if (!slot.repo) continue;
         const executionNodeId =
@@ -117,7 +118,7 @@ export async function nativeModelNodeBlocker(
   executionNodeId: string,
 ): Promise<string | null> {
   if (!model) return null;
-  for (const pool of await loadPoolConfigs(poolDir))
+  for (const pool of await loadPoolConfigs(currentFarmPaths('gateway').pool))
     if (
       pool.machine === executionNodeId ||
       (executionNodeId === 'local' && isLocal(pool.host, pool.machine))

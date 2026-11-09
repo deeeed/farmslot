@@ -360,6 +360,16 @@
       "import": "./dist/node/farmslot-home.js",
       "default": "./dist/node/farmslot-home.js"
     },
+    "./node/farm-paths": {
+      "types": "./dist/node/farm-paths.d.ts",
+      "import": "./dist/node/farm-paths.js",
+      "default": "./dist/node/farm-paths.js"
+    },
+    "./node/tree-fingerprint": {
+      "types": "./dist/node/tree-fingerprint.d.ts",
+      "import": "./dist/node/tree-fingerprint.js",
+      "default": "./dist/node/tree-fingerprint.js"
+    },
     "./node/farm-layout": {
       "types": "./dist/node/farm-layout.d.ts",
       "import": "./dist/node/farm-layout.js",

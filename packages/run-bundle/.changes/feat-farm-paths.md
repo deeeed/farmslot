@@ -1,0 +1,2 @@
+- Use FarmPaths for instance storage and execution paths while retaining legacy locations.
+- Create new retained-bundle stores under the selected instance data root.

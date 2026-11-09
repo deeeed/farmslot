@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import WebSocket from 'ws';
 
@@ -16,7 +17,6 @@ import {
   type RequestFrame,
   type ResponseFrame,
 } from '@farmslot/protocol';
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import { configuredNodeLinkEnabled } from '@farmslot/protocol/node/slot-by-repo';
 
 import { captureHelperPath } from './commands/capture-helper-path.js';
@@ -84,6 +84,7 @@ import {
   MAX_TRANSPORT_BACKOFF,
   nodeLinkReconnectDelay,
 } from './link/reconnect.js';
+import { nodeReportedFarmPaths } from './farm-paths.js';
 import { resolveGatewayCredential } from './gateway-credential.js';
 import {
   authenticateNode,
@@ -95,6 +96,10 @@ import {
 
 const GATEWAY_URL = process.env.GATEWAY_URL ?? 'ws://localhost:7777';
 const MACHINE_NAME = process.env.MACHINE_NAME ?? hostname();
+const farmPaths = nodeReportedFarmPaths(
+  fileURLToPath(new URL('../', import.meta.url)),
+  fileURLToPath(new URL('../../scripts/', import.meta.resolve('@farmslot/agent-runtime/native'))),
+);
 const nativeSessions = new NativeNodeSessions(MACHINE_NAME);
 const sources = new NodeSources(MACHINE_NAME);
 const sendTerminalInputOnce = createTerminalInputWriter(tmux.tmuxOutput);
@@ -220,6 +225,7 @@ async function handshake(socket: WebSocket): Promise<void> {
       machine: MACHINE_NAME,
       pid: process.pid,
       capabilities,
+      farmPaths,
       nativeSessions: nativeSessions.declaration,
       gatewayUrl: GATEWAY_URL,
       execCancellation: true,
@@ -252,7 +258,7 @@ async function handshake(socket: WebSocket): Promise<void> {
       nodeLinks.set(
         socket,
         new NodeLinkAgent(
-          path.join(farmslotHome(), 'node-link', encodeURIComponent(MACHINE_NAME)),
+          path.join(farmPaths.state.nodeLink, encodeURIComponent(MACHINE_NAME)),
           MACHINE_NAME,
           { principalId: principal.id, generation: principal.generation },
           () => ws === socket && socket.readyState === WebSocket.OPEN && !disposed,

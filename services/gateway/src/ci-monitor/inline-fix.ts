@@ -611,7 +611,7 @@ export async function resolveCiFixTemplatePath(project: string): Promise<string 
   if (sources && !lockedDefaultRoot)
     throw new Error(`Locked pack ${project} has no declared CI fix default`);
   const defaultPath = path.join(
-    lockedDefaultRoot ?? farmslotRoot,
+    lockedDefaultRoot ?? farmslotRoot(),
     'templates',
     'worker',
     CI_FIX_TEMPLATE_NAME,

@@ -72,6 +72,7 @@ mock.module('../core/state.js', {
 });
 mock.module('../core/exec.js', {
   namedExports: {
+    isLocal: () => false,
     execOnSlot: async (_vars: SlotVars, command: string) => {
       slotCommands.push(command);
       if (command.includes('config --get farmslot.blindRun'))
@@ -276,7 +277,11 @@ test('the worker boundary denies sibling checkouts at the path their own slot re
   };
   assert.equal(spec('isolate').siblingRepos, undefined);
   assert.deepEqual(spec('boundary').siblingRepos, ['/farm/slots/sibling']);
-  assert.deepEqual(spec('boundary').farmConfigRoots, ['/farm/pool']);
+  assert.deepEqual(spec('boundary').farmConfigRoots, [
+    '/farm/pool',
+    '/farm/.runs',
+    '/farm/projects',
+  ]);
 });
 
 test('a recorded GitHub access attempt makes the frozen first output invalid', async (t) => {
@@ -357,6 +362,6 @@ test('proof dispatch preserves the sibling restrictions installed during prepare
   assert.equal(boundaries.length, 2);
   for (const boundary of boundaries) {
     assert.deepEqual(boundary.siblingRepos, ['/farm/slots/sibling']);
-    assert.deepEqual(boundary.farmConfigRoots, ['/farm/pool']);
+    assert.deepEqual(boundary.farmConfigRoots, ['/farm/pool', '/farm/.runs', '/farm/projects']);
   }
 });

@@ -16,7 +16,7 @@ import {
   listRecipeRunArtifactGroupsForRun,
   loadLiveRecipeContextForRun,
 } from './context.js';
-import { FakeNodeWebSocket, makeRun, poolDir } from './test-fixtures.js';
+import { FakeNodeWebSocket, makeRun, poolDirectory } from './test-fixtures.js';
 
 test('loadLiveRecipeContextForRun derives quality from recipe sources instead of a worker verdict', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-live-recipe-'));
@@ -507,7 +507,7 @@ test('loadLiveRecipeContextForRun prefers remote slot artifacts over coincidenta
   t.after(() => rm(root, { recursive: true, force: true }));
 
   const projectName = `remote-locality-${Date.now()}`;
-  const projectDir = path.join(farmslotRoot, 'projects', projectName);
+  const projectDir = path.join(farmslotRoot(), 'projects', projectName);
   const taskDir = path.join(projectDir, 'tasks', 'remote-locality');
   const collidingArtifactRoot = path.join(
     '/tmp/repo',
@@ -524,7 +524,7 @@ test('loadLiveRecipeContextForRun prefers remote slot artifacts over coincidenta
   await writeFile(path.join(collidingArtifactRoot, 'recipe.json'), '{"entry":"local"}\n', 'utf-8');
   await writeFile(path.join(collidingArtifactRoot, 'learnings.md'), 'local learnings\n', 'utf-8');
 
-  const poolFile = path.join(poolDir, `remote-slot-locality-${Date.now()}.json`);
+  const poolFile = path.join(poolDirectory(), `remote-slot-locality-${Date.now()}.json`);
   await writeFile(
     poolFile,
     JSON.stringify({
@@ -666,11 +666,11 @@ async function withOfflineRemoteCachedArtifacts(
 ) {
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const projectName = `remote-cache-${suffix}`;
-  const projectDir = path.join(farmslotRoot, 'projects', projectName);
+  const projectDir = path.join(farmslotRoot(), 'projects', projectName);
   const taskDir = path.join(projectDir, 'tasks', 'offline-cache');
   const artifactsDir = path.join(taskDir, 'artifacts');
   const passingRunDir = path.join(artifactsDir, 'recipe-runs', 'passing-run');
-  const poolFile = path.join(farmslotRoot, 'pool', `remote-cache-${suffix}.json`);
+  const poolFile = path.join(farmslotRoot(), 'pool', `remote-cache-${suffix}.json`);
 
   await mkdir(passingRunDir, { recursive: true });
   await writeFile(path.join(projectDir, 'project.json'), JSON.stringify({ hooks: {} }), 'utf-8');

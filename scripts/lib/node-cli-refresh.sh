@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Sourced by deploy-node.sh, never run on its own: it reads the deploy's MACHINE,
 # INSTANCE, IS_LOCAL, REFRESH_CLI, REPO_ROOT, SCRIPT_DIR, REMOTE_HOME, NODE_PATH,
-# NODE_DIR and NODE_GATEWAY_URL, and runs node commands through its run().
+# NODE_DIR, NODE_GATEWAY_URL and resolved CLI_ROOT/CLI_BIN/TARGET_HOME/FARM_LAYOUT.
+# It runs node commands through the deploy's run().
 
 # --- Refresh the farmslot CLI slot workers run on this machine ---
 # Workers call the gateway through `farmslot` on their PATH, so a node deployed
@@ -9,8 +10,8 @@
 # CLI was last installed at. Install the deployed revision as an immutable
 # snapshot, ~/.local/share/farmslot-cli/<sha>/, and point the user's farmslot
 # links at it. Links into a git checkout are switched too; the checkout is never
-# touched, and the previous target is printed and kept for rollback. One CLI per machine:
-# dev and prod workers resolve the same `farmslot`, so the last deploy wins. On
+# touched, and the previous target is printed and kept for rollback. Layout 2
+# snapshots and links belong to the selected instance. On
 # a local deploy the CLI is the operator's own, so it is refreshed only on request.
 if [[ "$IS_LOCAL" == true && "$REFRESH_CLI" != true ]]; then
   echo "[deploy] local deploy: node CLI left as is; pass --refresh-cli to install the deployed revision"
@@ -23,7 +24,9 @@ else
   if [[ -n "$(git -C "$REPO_ROOT" status --porcelain -- packages)" ]]; then
     echo "[deploy] WARNING: uncommitted changes under packages/ reach the node service but not the CLI snapshot of $CLI_SHA" >&2
   fi
-  CLI_ROOT="$REMOTE_HOME/.local/share/farmslot-cli"
+  # deploy-paths.ts supplies code.cli/code.bin for the selected target.
+  : "${CLI_ROOT:?missing resolved code.cli}" "${CLI_BIN:?missing resolved code.bin}"
+  : "${TARGET_HOME:?missing resolved FARMSLOT_HOME}" "${FARM_LAYOUT:?missing target layout}"
   CLI_SNAPSHOT="$CLI_ROOT/$CLI_SHA"
   CLI_ENTRY="$CLI_SNAPSHOT/packages/cli/bin/farmslot.mjs"
   # The archive is streamed only when the snapshot is missing; the node checks
@@ -55,6 +58,7 @@ else
   CLI_REFRESH=$(cat << 'REFRESH'
 set -euo pipefail
 root=$1 sha=$2 sha256=$3 node_dir=$4 lock_wait=$5
+instance_home=$6 instance_bin=$7 layout=$8
 snapshot="$root/$sha"
 entry="$snapshot/packages/cli/bin/farmslot.mjs"
 lock="$root/.lock"
@@ -175,11 +179,11 @@ fi
 
 keep=" $sha "
 moved=false
-for link in "$HOME/.local/bin/farmslot" "$HOME/.npm-global/bin/farmslot"; do
-  previous=""
+link_entry() {
+  local link="$1" target="$2" previous="" kept
   if [[ -L "$link" ]]; then
     previous=$(readlink "$link")
-    [[ "$previous" == "$entry" ]] && continue
+    [[ "$previous" == "$target" ]] && return 0
     if [[ "$previous" == "$root"/* ]]; then
       kept=${previous#"$root"/}
       keep="$keep${kept%%/*} "
@@ -187,15 +191,59 @@ for link in "$HOME/.local/bin/farmslot" "$HOME/.npm-global/bin/farmslot"; do
   elif [[ -e "$link" ]]; then
     echo "[deploy] ERROR: $link is not a symlink; move it aside so workers run the deployed CLI" >&2
     exit 1
-  elif [[ "$link" != "$HOME/.local/bin/farmslot" ]]; then
-    continue
   fi
   mkdir -p "$(dirname "$link")"
-  ln -s "$entry" "$link.tmp.$$"
+  ln -s "$target" "$link.tmp.$$"
   mv -f "$link.tmp.$$" "$link"
   moved=true
   echo "  → $link${previous:+ (was $previous)}"
+}
+
+shared="$HOME/.local/share/farmslot-cli"
+shim="$shared/farmslot-shim"
+if [[ "$layout" != 2 && ! -f "$shim" ]]; then
+  # Unmigrated machines keep their original direct snapshot links byte for byte.
+  for link in "$HOME/.local/bin/farmslot" "$HOME/.npm-global/bin/farmslot"; do
+    if [[ "$link" != "$HOME/.local/bin/farmslot" && ! -L "$link" && ! -e "$link" ]]; then continue; fi
+    link_entry "$link" "$entry"
+  done
+else
+mkdir -p "$shared"
+if [[ "$layout" == 2 ]]; then
+  link_entry "$instance_bin/farmslot" "$entry"
+else
+  # Legacy deploys retain the same immutable snapshot target as before migration.
+  link_entry "$shared/legacy" "$entry"
+fi
+# A first layout-2 deploy preserves any previously installed legacy snapshot.
+for legacy_link in "$HOME/.local/bin/farmslot" "$HOME/.npm-global/bin/farmslot"; do
+  [[ ! -e "$shared/legacy" && -L "$legacy_link" ]] || continue
+  previous=$(readlink "$legacy_link")
+  if [[ "$previous" != "$shim" ]]; then
+    # Another instance can bootstrap the shared shim at the same time.
+    if ! ln -s "$previous" "$shared/legacy"; then
+      [[ -L "$shared/legacy" ]] || exit 1
+    fi
+    break
+  fi
 done
+cat > "$shim.tmp.$$" <<'SHIM'
+#!/usr/bin/env bash
+set -euo pipefail
+farm_home="${FARMSLOT_HOME:-$HOME/.farmslot}"
+if [[ "$farm_home" == '~' ]]; then farm_home="$HOME"; elif [[ "$farm_home" == '~/'* ]]; then farm_home="$HOME/${farm_home#'~/'}"; fi
+if [[ -f "$farm_home/config/instance.json" ]]; then
+  exec "$farm_home/code/bin/farmslot" "$@"
+fi
+exec "$HOME/.local/share/farmslot-cli/legacy" "$@"
+SHIM
+chmod 755 "$shim.tmp.$$"
+mv -f "$shim.tmp.$$" "$shim"
+for link in "$HOME/.local/bin/farmslot" "$HOME/.npm-global/bin/farmslot"; do
+  if [[ "$link" != "$HOME/.local/bin/farmslot" && ! -L "$link" && ! -e "$link" ]]; then continue; fi
+  link_entry "$link" "$shim"
+done
+fi
 [[ "$moved" == true ]] || exit 0
 for dir in "$root"/*/; do
   name=$(basename "$dir")
@@ -206,7 +254,7 @@ for dir in "$root"/*/; do
 done
 REFRESH
 )
-  if ! run "bash -c $(printf '%q ' "$CLI_REFRESH" _ "$CLI_ROOT" "$CLI_SHA" "$CLI_ARCHIVE_SHA256" "$NODE_DIR" "${CLI_LOCK_WAIT_SECONDS:-600}")" < "$CLI_ARCHIVE"; then
+  if ! run "bash -c $(printf '%q ' "$CLI_REFRESH" _ "$CLI_ROOT" "$CLI_SHA" "$CLI_ARCHIVE_SHA256" "$NODE_DIR" "${CLI_LOCK_WAIT_SECONDS:-600}" "$TARGET_HOME" "$CLI_BIN" "$FARM_LAYOUT")" < "$CLI_ARCHIVE"; then
     echo "[deploy] ERROR: could not refresh the node CLI on $MACHINE; see the fix above" >&2
     exit 1
   fi
@@ -230,7 +278,8 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 const [root, machine] = process.argv.slice(2);
-const poolDir = path.join(root, 'pool');
+const poolDir = process.env.FARMSLOT_POOL_DIR;
+if (!poolDir) throw new Error('missing resolved FARMSLOT_POOL_DIR');
 if (existsSync(poolDir)) {
   const { readPoolFiles } = await import(pathToFileURL(path.join(root, 'packages/protocol/dist/node/slot-by-repo.js')));
   const pool = readPoolFiles(poolDir).find(({ pool }) => pool.machine === machine)?.pool;
@@ -241,9 +290,10 @@ if (existsSync(poolDir)) {
 }
 WORKER_HOME
   )
+  if [[ "$FARM_LAYOUT" == 2 ]]; then WORKER_FARMSLOT_HOME="$TARGET_HOME"; fi
   WORKER_CLI_HEALTH_FILE=""
   if [[ "$INSTANCE" == dev ]]; then
-    WORKER_CLI_HEALTH_FILE="$REMOTE_HOME/.farmslot-dev/node-worker-cli-health.json"
+    WORKER_CLI_HEALTH_FILE="$TARGET_HOME/node-worker-cli-health.json"
   fi
   if ! run "bash -s $(printf '%q ' "$CLI_ENTRY" "$NODE_GATEWAY_URL" "$WORKER_ENV_PREFIX" "$TMUX_BIN_LOOKUP" "${CLI_VERIFY_TIMEOUT_SECONDS:-120}" "$INSTANCE" "$WORKER_FARMSLOT_HOME" "$NODE_PATH" "$MACHINE" "$WORKER_CLI_HEALTH_FILE")" << 'VERIFY'
 set -uo pipefail
@@ -321,7 +371,16 @@ resolved=$(command -v farmslot) || {
   echo "  fix: check that $HOME/.local/bin/farmslot links to $entry, then redeploy" >&2
   exit 1
 }
-if [ ! "$resolved" -ef "$entry" ]; then
+effective="$resolved"
+profile_home="${FARMSLOT_HOME:-$HOME/.farmslot}"
+if [ "$resolved" -ef "$HOME/.local/share/farmslot-cli/farmslot-shim" ]; then
+  if [ -f "$profile_home/config/instance.json" ]; then
+    effective="$profile_home/code/bin/farmslot"
+  else
+    effective="$HOME/.local/share/farmslot-cli/legacy"
+  fi
+fi
+if [ ! "$effective" -ef "$entry" ]; then
   echo "[deploy] ERROR: farmslot on the worker PATH is $resolved, not the deployed $entry" >&2
   echo "  fix: remove $resolved from the worker PATH, or point it at $entry" >&2
   exit 1

@@ -11,7 +11,7 @@ import { WebSocket } from 'ws';
 import { type FsConflictDetails, FsErrorCodes } from '@farmslot/protocol';
 
 import * as nodeFs from '../../../node/src/commands/fs.js';
-import { poolDir } from '../core/config.js';
+import { poolDirectory } from '../core/config.js';
 import { statusFile } from '../core/state.js';
 import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import { handleNodeResponse } from '../fleet/node-rpc.js';
@@ -93,8 +93,8 @@ async function remoteSlot(t: TestContext, conditionalWrites: boolean): Promise<S
 async function slotFixture(t: TestContext, host: string, machine: string): Promise<Slot> {
   const repoDir = await mkdtemp(path.join(tmpdir(), 'farmslot-conditional-'));
   const slotId = `conditional-${path.basename(repoDir)}`;
-  const poolFile = path.join(poolDir, `${slotId}.json`);
-  await mkdir(poolDir, { recursive: true });
+  const poolFile = path.join(poolDirectory(), `${slotId}.json`);
+  await mkdir(poolDirectory(), { recursive: true });
   await writeFile(
     poolFile,
     JSON.stringify({

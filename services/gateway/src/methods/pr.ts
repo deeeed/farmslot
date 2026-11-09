@@ -1382,7 +1382,7 @@ async function findSlotRepoPath(slotId: string): Promise<string | null> {
     if (!isLocal(pool.host, pool.machine)) return null;
     const repo = expandTildePath(slotCfg.repo);
     if (repo === '.' || repo.startsWith('./') || repo.startsWith('../')) {
-      return pathResolve(farmslotRoot, repo);
+      return pathResolve(farmslotRoot(), repo);
     }
     return repo;
   }

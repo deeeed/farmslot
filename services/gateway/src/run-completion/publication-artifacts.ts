@@ -379,7 +379,7 @@ export async function uploadArtifacts(
   const flowDir = flow === 'fix' ? 'fixes' : `${flow}s`;
   // Never replace media linked by a previous body before the new body is posted.
   const publicationId = `${prNumber}-evidence/${randomUUID()}`;
-  const uploadScript = path.join(farmslotRoot, 'scripts', 'gh-upload-asset.sh');
+  const uploadScript = path.join(farmslotRoot(), 'scripts', 'gh-upload-asset.sh');
 
   let uploadDir = artifactsDir;
   let tempUploadDir: string | null = null;

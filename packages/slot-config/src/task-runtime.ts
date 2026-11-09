@@ -11,6 +11,7 @@ import {
   NODE_EXEC_CLOSEOUT_MS,
   type NodeLinkTaskRuntimeInput,
 } from '@farmslot/protocol';
+import { type FarmPaths, resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 export type TaskRuntimeRequest = NodeLinkTaskRuntimeInput;
 
@@ -78,7 +79,7 @@ ChildProcess.prototype.spawn = function(options) {
   register({ tsconfig: path.join(root, 'tsconfig.json') });
   const { loadCheckoutEnv } = await import(pathToFileURL(path.join(root, 'src/onboarding/env-file.ts')).href);
   const { bootstrapFarmslotHome, repoRoot } = await import(pathToFileURL(path.join(root, 'src/onboarding/workspace.ts')).href);
-  loadCheckoutEnv(repoRoot);
+  loadCheckoutEnv(repoRoot());
   bootstrapFarmslotHome();
   const { okEnvelope, errorEnvelope } = await import(pathToFileURL(path.join(root, 'src/envelope.ts')).href);
   const command = workerData.action === 'init' ? 'internal.task-init' : 'task.verify';
@@ -113,6 +114,7 @@ export async function runTaskRuntime(
   farmDir: string,
   inheritedEnv: NodeJS.ProcessEnv = process.env,
   signal?: AbortSignal,
+  paths?: FarmPaths,
 ): Promise<ExecResult> {
   const cancelled = (): ExecResult => ({
     stdout: '',
@@ -124,12 +126,24 @@ export async function runTaskRuntime(
   delete env.FORCE_COLOR;
   Object.assign(env, request.env);
   delete env.FARMSLOT_ROOT;
-  env.FARMSLOT_POOL_DIR ||= path.join(farmDir, 'pool');
+  const selected =
+    paths ??
+    resolveFarmPaths({
+      role: 'node',
+      env,
+      checkoutRoot: farmDir,
+      userHome: env.HOME || os.homedir(),
+    });
+  if (selected.layout === 2) env.FARMSLOT_HOME = selected.home;
+  env.FARMSLOT_POOL_DIR = selected.pool;
   const support = request.supportDir.startsWith('~/')
     ? path.join(env.HOME || os.homedir(), request.supportDir.slice(2))
     : request.supportDir;
-  env.FARMSLOT_PROJECTS_DIR ||= path.join(support, 'projects');
-  env.FARMSLOT_CLI ||= path.join(env.HOME || os.homedir(), '.local/bin/farmslot');
+  env.FARMSLOT_PROJECTS_DIR =
+    selected.layout === 2
+      ? selected.projects
+      : resolveFarmPaths({ role: 'node', env, checkoutRoot: support }).projects;
+  env.FARMSLOT_CLI ||= path.join(selected.code.bin, 'farmslot');
   const executable = await realpath(env.FARMSLOT_CLI);
   if (signal?.aborted) return cancelled();
   const packageRoot = path.resolve(path.dirname(executable), '..');

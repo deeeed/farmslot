@@ -18,6 +18,7 @@ import {
   type RunArtifactBundleRef,
   selectReviewFindings,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { ReviewApprovalPolicyError } from '@farmslot/protocol/review-approval-policy.cjs';
 
 import { farmslotRoot, getProjectField, resolveProjectTaskDirName } from '../core/config.js';
@@ -457,7 +458,7 @@ export async function executeReviewGate(runId: string, stepGeneration?: number):
           // The gateway owns session metrics, artifact upload, and archival. Use
           // argv so run metadata cannot break out of shell quoting.
           const postReviewArgs: string[] = [
-            `${farmslotRoot}/scripts/post-review.sh`,
+            `${farmslotRoot()}/scripts/post-review.sh`,
             '--run-id',
             runId,
             '--pr',
@@ -489,6 +490,7 @@ export async function executeReviewGate(runId: string, stepGeneration?: number):
 
           try {
             const { execFile } = await import('node:child_process');
+            const paths = currentFarmPaths('gateway');
             await new Promise<void>((resolve, reject) => {
               execFile(
                 'bash',
@@ -496,13 +498,18 @@ export async function executeReviewGate(runId: string, stepGeneration?: number):
                 {
                   timeout: 120_000,
                   maxBuffer: 10 * 1024 * 1024,
-                  env: publicationAccount
-                    ? {
-                        ...process.env,
-                        GH_HOST: publicationAccount.binding.host,
-                        GITHUB_TOKEN: publicationAccount.binding.token,
-                      }
-                    : process.env,
+                  env: {
+                    ...process.env,
+                    FARMSLOT_HOME: paths.home,
+                    FARMSLOT_POOL_DIR: paths.pool,
+                    FARMSLOT_PROJECTS_DIR: paths.projects,
+                    ...(publicationAccount
+                      ? {
+                          GH_HOST: publicationAccount.binding.host,
+                          GITHUB_TOKEN: publicationAccount.binding.token,
+                        }
+                      : {}),
+                  },
                 },
                 (err, stdout, stderr) => {
                   if (err) reject(Object.assign(err, { stdout, stderr }));

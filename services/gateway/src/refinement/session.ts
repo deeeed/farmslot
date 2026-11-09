@@ -108,7 +108,7 @@ export function defaultRefinementRunnerCommand(
     runner: runnerId,
     model,
     promptPath,
-    repo: farmslotRoot,
+    repo: farmslotRoot(),
     safetyTier,
     effort,
   });
@@ -172,7 +172,7 @@ export function buildRefinementShellCommand(params: {
   );
   const prelude = params.prelude;
   if (commandTemplate) {
-    return `cd ${shellQuote(farmslotRoot)} && ${prelude} && ${expandRefinementRunnerCommand(
+    return `cd ${shellQuote(farmslotRoot())} && ${prelude} && ${expandRefinementRunnerCommand(
       commandTemplate,
       {
         ...(params.runner ? { runner: params.runner } : {}),
@@ -186,9 +186,9 @@ export function buildRefinementShellCommand(params: {
     )}`;
   }
   if (defaultCommand)
-    return `cd ${shellQuote(farmslotRoot)} && ${prelude} && exec ${defaultCommand}`;
+    return `cd ${shellQuote(farmslotRoot())} && ${prelude} && exec ${defaultCommand}`;
   return [
-    `cd ${shellQuote(farmslotRoot)}`,
+    `cd ${shellQuote(farmslotRoot())}`,
     prelude,
     ...params.fallbackMessages.map((message) => `printf '%s\\n' ${shellQuote(message)}`),
     'exec ${SHELL:-zsh} -l',
@@ -196,7 +196,7 @@ export function buildRefinementShellCommand(params: {
 }
 
 function pathResolve(filePath: string): string {
-  return path.resolve(farmslotRoot, filePath);
+  return path.resolve(farmslotRoot(), filePath);
 }
 
 export async function launchRefinementTmuxSession(params: {
@@ -210,7 +210,7 @@ export async function launchRefinementTmuxSession(params: {
     '-s',
     params.session,
     '-c',
-    farmslotRoot,
+    farmslotRoot(),
     params.shellCommand,
   ]);
   return true;

@@ -11,17 +11,17 @@ import { after, before, test } from 'node:test';
 
 import { TERMINAL_ATTACHMENT_CHUNK_BYTES } from '@farmslot/protocol';
 
-import { poolDir } from '../core/config.js';
+import { poolDirectory } from '../core/config.js';
 import { createRun, deleteRun, updateRun } from '../runs/store.js';
 
 import { resolveAgentOrBareTarget } from './terminal.js';
 import { terminalAttachmentUpload } from './terminal-attachment.js';
 
 const SLOT_ID = 'runner-browser-attach-1';
-const testPoolFile = path.join(poolDir, `attachment-target-fixture-${process.pid}.json`);
+const testPoolFile = path.join(poolDirectory(), `attachment-target-fixture-${process.pid}.json`);
 
 before(() => {
-  mkdirSync(poolDir, { recursive: true });
+  mkdirSync(poolDirectory(), { recursive: true });
   writeFileSync(
     testPoolFile,
     JSON.stringify(
