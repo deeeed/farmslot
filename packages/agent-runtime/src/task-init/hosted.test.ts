@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
+
+import type { WorkerTerminalContractDocument } from '@farmslot/protocol';
 
 import { taskInit, type TaskInitSpec } from './index.js';
 
@@ -154,8 +157,15 @@ test('a scripted-command task gets no worker checklist and freezes no checklist 
     path.join(input.template.sources[0]!.root, 'dev', 'default.md'),
     '---\nid: hosted-dev\nflow: dev\n---\n# Worker\n- [ ] 1. Changed-file CI [DETERMINISTIC: ci.local_check]. Call `<task>/mark 1`.\n',
   );
-  const { resolveWorkerTerminalContract } =
-    await import('../../scripts/worker-terminal-contract.cjs');
+  const { resolveWorkerTerminalContract } = createRequire(import.meta.url)(
+    '../../scripts/worker-terminal-contract.cjs',
+  ) as {
+    resolveWorkerTerminalContract: (
+      config: unknown,
+      flow: string,
+      options: { scriptedCommand?: true },
+    ) => WorkerTerminalContractDocument;
+  };
   const result = await taskInit({
     ...input,
     vars: { 'ci.local_check': 'bash temp/farmslot/ci-parity' },

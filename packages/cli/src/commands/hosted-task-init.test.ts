@@ -418,7 +418,7 @@ test('a worker task cannot claim the scripted-command contract to drop its gates
       config: unknown,
       flow: string,
       options: { scriptedCommand?: true },
-    ) => import('@farmslot/agent-runtime').WorkerTerminalContractDocument;
+    ) => import('@farmslot/protocol').WorkerTerminalContractDocument;
   };
   const gated = { acceptance: { require: true } };
   const worker = resolveWorkerTerminalContract(gated, 'dev', {});
