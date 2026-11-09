@@ -32,7 +32,7 @@ import {
   type AcceptanceStatusLedger,
   validateAcceptanceStatusLedger,
 } from '@farmslot/protocol/contracts/acceptance';
-import { processIdentity, readOperations } from '@farmslot/recipe-runner/runtime/operation';
+import { processStillRunning, readOperations } from '@farmslot/recipe-runner/runtime/operation';
 
 import { readCommandJournal } from './command-journal.js';
 import { runtimeContextOwned } from './context.js';
@@ -240,7 +240,7 @@ export function collectTaskView(
       ...operation,
       ownerAlive:
         operation.status === 'running' &&
-        processIdentity(operation.pid) === operation.processStartedAt,
+        processStillRunning(operation.pid, operation.processStartedAt),
     }));
   const base = {
     operations,

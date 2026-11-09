@@ -1,0 +1,1 @@
+- `processIdentity` returns `null` when the sandbox refuses to run the setuid `ps` (EPERM/EACCES). New `processStillRunning` and `processAlive` fall back to a liveness check when the identity is unknown, and an operation record then omits `processStartedAt`.

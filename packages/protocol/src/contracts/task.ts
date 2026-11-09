@@ -92,7 +92,8 @@ export interface TaskOperation {
   command: string;
   target: string;
   pid: number;
-  processStartedAt: string;
+  /** `ps` start time of `pid`; absent when the owner could not run `ps` (sandboxed). */
+  processStartedAt?: string;
   startedAt: string;
   updatedAt: string;
   stage?: string;
@@ -115,8 +116,8 @@ export function validateOperationRecord(value: TaskOperation, id: string): void 
     typeof value.target !== 'string' ||
     !Number.isInteger(value.pid) ||
     value.pid <= 0 ||
-    typeof value.processStartedAt !== 'string' ||
-    !value.processStartedAt ||
+    (value.processStartedAt !== undefined &&
+      (typeof value.processStartedAt !== 'string' || !value.processStartedAt)) ||
     typeof value.startedAt !== 'string' ||
     typeof value.updatedAt !== 'string' ||
     (value.parentId !== undefined && typeof value.parentId !== 'string') ||

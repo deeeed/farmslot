@@ -6,7 +6,7 @@ import { latestTaskDir } from '@farmslot/agent-runtime';
 import {
   ensureRuntimeDirectory,
   OperationRecord,
-  processIdentity,
+  processStillRunning,
   readOperations,
 } from '@farmslot/recipe-runner/runtime/operation';
 
@@ -117,7 +117,7 @@ export function readCommandJournal(
   const live = operations.filter(
     (operation) =>
       operation.status === 'running' &&
-      processIdentity(operation.pid) === operation.processStartedAt,
+      processStillRunning(operation.pid, operation.processStartedAt),
   );
   const roots = operations
     .filter((operation) => !operation.parentId)
@@ -258,7 +258,7 @@ function tryBeginCommandJournal(
           operation.id === inherited &&
           operation.target === target &&
           operation.status === 'running' &&
-          processIdentity(operation.pid) === operation.processStartedAt,
+          processStillRunning(operation.pid, operation.processStartedAt),
       );
     const operation = new OperationRecord(directory, command, target, {
       ...(parent ? { parentId: parent.id } : {}),
