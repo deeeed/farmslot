@@ -149,6 +149,7 @@ export function machineShellEnv(vars: {
     report?.layout === 2
       ? {
           FARMSLOT_HOME: report.home,
+          FARMSLOT_CONFIG_DIR: report.config,
           FARMSLOT_POOL_DIR: report.pool,
           FARMSLOT_PROJECTS_DIR: report.projects,
           FARMSLOT_RUNS_DIR: report.state.runs,

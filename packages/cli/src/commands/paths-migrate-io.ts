@@ -1,27 +1,26 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import {
   chmod,
   copyFile,
   lstat,
   mkdir,
   open,
-  readdir,
   readlink,
   rename,
   rm,
   statfs,
+  symlink,
 } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
-export interface FileIdentity {
-  kind: 'file' | 'directory' | 'link';
-  mode: number;
-  bytes: number;
-  digest: string;
-}
-export type Inventory = Record<string, FileIdentity>;
+export {
+  type FileIdentity,
+  type Inventory,
+  inventory,
+} from '@farmslot/protocol/node/tree-fingerprint';
+import { type Inventory, inventory } from '@farmslot/protocol/node/tree-fingerprint';
+
 export function hasCode(error: unknown, code: string): boolean {
   return error instanceof Error && 'code' in error && error.code === code;
 }
@@ -35,26 +34,6 @@ export async function info(file: string) {
 }
 export function within(root: string, file: string): boolean {
   return file === root || file.startsWith(root + path.sep);
-}
-export async function inventory(root: string): Promise<Inventory> {
-  const result: Inventory = {};
-  async function visit(file: string): Promise<void> {
-    const value = await lstat(file);
-    const key = path.relative(root, file);
-    const mode = value.mode & 0o777;
-    if (value.isSymbolicLink())
-      result[key] = { kind: 'link', mode, bytes: 0, digest: await readlink(file) };
-    else if (value.isDirectory()) {
-      result[key] = { kind: 'directory', mode, bytes: 0, digest: '' };
-      for (const name of (await readdir(file)).sort()) await visit(path.join(file, name));
-    } else if (value.isFile()) {
-      const hash = createHash('sha256');
-      for await (const chunk of createReadStream(file)) hash.update(chunk);
-      result[key] = { kind: 'file', mode, bytes: value.size, digest: hash.digest('hex') };
-    } else throw new Error(`Cannot migrate special file: ${file}`);
-  }
-  await visit(root);
-  return result;
 }
 export async function assertIdentity(
   file: string,
@@ -105,16 +84,68 @@ export async function syncDirectory(directory: string): Promise<void> {
     await handle.close();
   }
 }
-/** Copy only regular files/directories. Migration never creates a symlink. */
+/** Cross-volume links must stay inside this move, including through chained links. */
+export function assertContainedLinks(source: string, expected: Inventory): void {
+  for (const [relative, entry] of Object.entries(expected)) {
+    if (entry.kind !== 'link') continue;
+    let parts = path
+      .relative(source, path.dirname(path.join(source, relative)))
+      .split(path.sep)
+      .filter(Boolean);
+    let pending = entry.digest.split(path.sep);
+    let hops = 0;
+    if (path.isAbsolute(entry.digest)) {
+      if (!within(source, path.resolve(entry.digest)))
+        throw new Error(`Cross-volume symlink points outside moved tree: ${source}/${relative}`);
+      parts = [];
+      pending = path.relative(source, entry.digest).split(path.sep);
+    }
+    while (pending.length) {
+      const part = pending.shift()!;
+      if (!part || part === '.') continue;
+      if (part === '..') {
+        if (!parts.length)
+          throw new Error(`Cross-volume symlink points outside moved tree: ${source}/${relative}`);
+        parts.pop();
+      } else {
+        parts.push(part);
+        const linked = expected[parts.join(path.sep)];
+        if (linked?.kind === 'link') {
+          if (++hops > 40)
+            throw new Error(
+              `Cross-volume symlink points outside moved tree or cycles: ${source}/${relative}`,
+            );
+          parts.pop();
+          let target = linked.digest;
+          if (path.isAbsolute(target)) {
+            if (!within(source, path.resolve(target)))
+              throw new Error(
+                `Cross-volume symlink points outside moved tree: ${source}/${relative}`,
+              );
+            parts = [];
+            target = path.relative(source, target);
+          }
+          pending = [...target.split(path.sep), ...pending];
+        }
+      }
+    }
+  }
+}
+
+/** Preserve links literally. The caller validates them against the original move root. */
 export async function copyTree(source: string, target: string, expected: Inventory): Promise<void> {
-  if (Object.values(expected).some((entry) => entry.kind === 'link'))
-    throw new Error(`Cross-volume tree contains symlinks: ${source}`);
   for (const [relative, entry] of Object.entries(expected)) {
     const to = path.join(target, relative);
-    await assertUnredirected(to);
+    await assertUnredirected(entry.kind === 'link' ? path.dirname(to) : to);
     if (entry.kind === 'directory') {
       await mkdir(to, { recursive: true, mode: entry.mode | 0o700 });
       await chmod(to, entry.mode | 0o700);
+    } else if (entry.kind === 'link') {
+      await mkdir(path.dirname(to), { recursive: true });
+      if (await info(to)) {
+        if (!(await info(to))?.isSymbolicLink() || (await readlink(to)) !== entry.digest)
+          throw new Error(`Migration link changed: ${to}`);
+      } else await symlink(entry.digest, to);
     } else {
       await mkdir(path.dirname(to), { recursive: true });
       if (await info(to)) await chmod(to, entry.mode | 0o600);

@@ -887,7 +887,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   const packRoot = sourceContext
     ? resolveSourceBinding(sourceContext.pack, sourceContext.materialization).root
     : path.join(currentProjectsDir(), projectName);
-  const cacheKey = `${projectName}\0${sourceContext?.materialization.lock.digest ?? 'legacy'}`;
+  const cacheKey = `${projectName}\0${packRoot}\0${sourceContext?.materialization.lock.digest ?? 'legacy'}`;
   const cached = projectVarsCache.get(cacheKey);
   if (cached && Date.now() - cached.at < PROJECT_VARS_CACHE_TTL_MS)
     return { ...cached.value, sourceContext };

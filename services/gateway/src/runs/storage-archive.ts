@@ -1,9 +1,11 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
-import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream, existsSync, renameSync } from 'node:fs';
-import { cp, lstat, mkdir, open, readdir, readFile, readlink, rename, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { existsSync, renameSync } from 'node:fs';
+import { cp, lstat, mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
+import { inventory } from '@farmslot/protocol/node/tree-fingerprint';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
 import { assertHeavyWriteRoom } from '../core/heavy-write-room.js';
@@ -99,23 +101,16 @@ async function saveManifest(file: string, manifest: StorageArchiveManifest): Pro
 
 /** Compare file bytes, permission bits and literal symlink targets without following links. */
 async function fingerprint(root: string): Promise<Record<string, string>> {
-  const entries: Record<string, string> = {};
-  async function visit(file: string): Promise<void> {
-    const info = await lstat(file);
-    const key = path.relative(root, file);
-    const mode = info.mode & 0o777;
-    if (info.isSymbolicLink()) entries[key] = `link:${await readlink(file)}`;
-    else if (info.isFile()) {
-      const hash = createHash('sha256');
-      for await (const chunk of createReadStream(file)) hash.update(chunk);
-      entries[key] = `${mode}:${hash.digest('hex')}`;
-    } else if (info.isDirectory()) {
-      entries[key] = `directory:${mode}`;
-      for (const name of (await readdir(file)).sort()) await visit(path.join(file, name));
-    } else throw new Error(`Cannot archive special file ${file}`);
-  }
-  await visit(root);
-  return entries;
+  return Object.fromEntries(
+    Object.entries(await inventory(root)).map(([key, entry]) => [
+      key,
+      entry.kind === 'link'
+        ? `link:${entry.digest}`
+        : entry.kind === 'directory'
+          ? `directory:${entry.mode}`
+          : `${entry.mode}:${entry.digest}`,
+    ]),
+  );
 }
 
 async function syncTree(file: string): Promise<void> {

@@ -132,10 +132,11 @@ function expandTemplateInternal(
     slotHost === 'localhost' || slotHost === '127.0.0.1' || slotHost === localHostname;
   const reported = reportedFarmPaths(slotVars.machine);
   const farmslotDir =
-    reported?.code.node ??
-    (isLocal
-      ? currentFarmPaths('gateway').code.checkout
-      : legacyRemoteFarmPaths(slotVars.machineEnv).code.templateNode);
+    reported?.layout === 2
+      ? reported.code.node
+      : isLocal
+        ? currentFarmPaths('gateway').code.checkout
+        : legacyRemoteFarmPaths(slotVars.machineEnv).code.templateNode;
   result = result.replaceAll('{{farmslot_dir}}', farmslotDir);
   result = result.replaceAll('{{FARMSLOT_DIR}}', farmslotDir);
   // Legacy aliases

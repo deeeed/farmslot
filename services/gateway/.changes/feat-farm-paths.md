@@ -1,1 +1,1 @@
-- Resolve instance storage and execution paths at call time, export shell roots, and protect pool, runs and projects in blind trials while retaining legacy locations.
+- Resolve instance storage and execution paths at call time, export shell roots, and protect pool, runs and projects in blind trials while retaining legacy local checkout helpers and refusing slots claimed by another instance.

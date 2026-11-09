@@ -12,7 +12,7 @@ import { resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { materializeRunBundle, readRetainedRunBundle } from '@farmslot/run-bundle';
 import type { SlotVars } from '../../services/gateway/src/core/config.js';
 
-// Only replace tmux transport. The production prepare staging, shell wrapper,
+// Replace tmux transport and the unrelated signing/support probes. Prepare staging, shell wrapper,
 // sentinel polling, local file transport and retained-bundle store all execute.
 const tmux = await import('../../services/gateway/src/core/tmux.js');
 mock.module('../../services/gateway/src/core/tmux.js', {
@@ -30,8 +30,19 @@ mock.module('../../services/gateway/src/core/tmux.js', {
     },
   },
 });
-const { runPrepareCommand } =
-  await import('../../services/gateway/src/methods/slot/prepare-command.js');
+await import('../../services/gateway/src/runtime/mock-pty.test-support.js');
+const identity = await import('../../services/gateway/src/methods/slot/git-identity.js');
+mock.module('../../services/gateway/src/methods/slot/git-identity.js', {
+  namedExports: {
+    ...identity,
+    checkCommitSigning: async () => ({ name: 'git.signing', status: 'pass', detail: 'fixture' }),
+  },
+});
+const support = await import('../../services/gateway/src/node-support/ensure.js');
+mock.module('../../services/gateway/src/node-support/ensure.js', {
+  namedExports: { ...support, ensureNodeSupportBundle: async () => null },
+});
+const { slotPrepare } = await import('../../services/gateway/src/methods/slot/prepare.js');
 const { runBundleStore } =
   await import('../../services/gateway/src/run-completion/retained-artifacts.js');
 const { resourceRevisions } = await import('../../services/gateway/src/resources/revisions.js');
@@ -151,18 +162,66 @@ test('two homes prepare and retain proof under their own home/data roots, includ
       resourceVars: {},
       machineEnv: {},
     };
-    const result = await runPrepareCommand(
-      vars,
-      path.join(paths.state.logs, 'prepare.log'),
-      `printf '%s' '${proof}' > artifacts/proof.txt`,
-      {
-        phase: 'deps',
-        windowLabel: 'isolated',
-        preserveOtherPrepareWindows: true,
-        tailPollIntervalMs: 10,
-      },
+    await writeFile(
+      path.join(paths.pool, 'localhost.json'),
+      JSON.stringify({
+        machine: 'localhost',
+        host: 'localhost',
+        ssh_user: 'test',
+        platform: 'cli',
+        project: 'fixture',
+        slots: [{ id: vars.slotId, repo: taskDir, session: vars.session }],
+      }),
     );
-    assert.equal(result.exitCode, 0, result.stderr);
+    await writeFile(
+      path.join(paths.projects, 'fixture/project.json'),
+      JSON.stringify({
+        prepare: { default: 'proof', profiles: { proof: { phases: ['deps'] } } },
+        hooks: { post_merge_install: `printf '%s' '${proof}' > artifacts/proof.txt` },
+      }),
+    );
+    const result = await slotPrepare({ slotId: vars.slotId }, () => undefined);
+    assert.equal(result.prepared, true);
+    const claim = await readFile(path.join(taskDir, '.farmslot-instance/owner'), 'utf8');
+    assert.ok(claim.includes(paths.home));
+    if (paths === instances[0]) {
+      const lock = path.join(taskDir, '.agent/.preparing.lock');
+      await mkdir(lock, { recursive: true });
+      const metadata = `gateway_pid=${process.ppid}\n`;
+      await writeFile(path.join(lock, 'info'), metadata);
+      const other = instances[1];
+      process.env.FARMSLOT_HOME = other.home;
+      // The same physical checkout is deliberately listed in B's pool.
+      // Refusal must precede every shell write, so the audit remains selected on A.
+      const foreignPool = path.join(other.pool, 'foreign.json');
+      selected = other;
+      await writeFile(
+        foreignPool,
+        JSON.stringify({
+          machine: 'foreign',
+          host: 'localhost',
+          ssh_user: 'test',
+          platform: 'cli',
+          project: 'fixture',
+          slots: [{ id: 'foreign-slot', repo: taskDir, session: 'foreign-slot' }],
+        }),
+      );
+      await assert.rejects(
+        slotPrepare({ slotId: 'foreign-slot' }, () => undefined),
+        /claimed by.*instance|another.*instance/i,
+      );
+      selected = paths;
+      process.env.FARMSLOT_HOME = paths.home;
+      assert.equal(await readFile(path.join(taskDir, '.farmslot-instance/owner'), 'utf8'), claim);
+      assert.equal(await readFile(path.join(lock, 'info'), 'utf8'), metadata);
+      await rm(lock, { recursive: true });
+      process.env.FARMSLOT_HOME = other.home;
+      await assert.rejects(
+        slotPrepare({ slotId: 'foreign-slot' }, () => undefined),
+        /Stale claims require.*operator release/,
+      );
+      process.env.FARMSLOT_HOME = paths.home;
+    }
     assert.equal(await readFile(path.join(taskDir, 'artifacts/proof.txt'), 'utf8'), proof);
     const run: Run = {
       id: `run-${paths.instance}`,
@@ -211,7 +270,12 @@ test('two homes prepare and retain proof under their own home/data roots, includ
       await readFile((await retained.resolveEntry('artifacts/proof.txt')).path, 'utf8'),
       proof,
     );
-    const log = await readFile(path.join(paths.state.logs, 'prepare.log'), 'utf8');
+    const logs = await tree(path.join(taskDir, '.agent/prepare-logs'));
+    const log = (
+      await Promise.all(
+        logs.filter((file) => file.endsWith('.log')).map((file) => readFile(file, 'utf8')),
+      )
+    ).join('\n');
     assert.ok(log.includes(paths.state.tmp));
     assert.ok(!log.includes('/tmp/farmslot-prepare'));
     for (const other of instances.filter((entry) => entry !== paths))
@@ -233,4 +297,55 @@ test('two homes prepare and retain proof under their own home/data roots, includ
       'bundle capture was audited',
     );
   }
+});
+
+test('foreign instance cannot reclaim a live gateway prepare lock through slotPrepare', async (t) => {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'foreign-farm-claim-')));
+  const prior = process.env;
+  process.env = { ...prior, FARMSLOT_HOME: path.join(root, 'b') };
+  t.after(() => {
+    process.env = prior;
+    return rm(root, { recursive: true, force: true });
+  });
+  const paths = resolveFarmPaths({
+    home: process.env.FARMSLOT_HOME,
+    role: 'gateway',
+    env: {},
+    instanceConfig: { layout: 2, name: 'b' },
+  });
+  const repo = path.join(root, 'a-slot');
+  for (const dir of [
+    paths.config,
+    paths.pool,
+    path.join(paths.projects, 'fixture'),
+    path.join(repo, '.farmslot-instance'),
+    path.join(repo, '.agent/.preparing.lock'),
+  ])
+    await mkdir(dir, { recursive: true });
+  await writeFile(path.join(paths.config, 'instance.json'), '{"layout":2,"name":"b"}');
+  const owner = `instance=a\nhome=${path.join(root, 'a')}\n`;
+  const lock = `gateway_pid=${process.ppid}\n`;
+  await writeFile(path.join(repo, '.farmslot-instance/owner'), owner);
+  await writeFile(path.join(repo, '.agent/.preparing.lock/info'), lock);
+  await writeFile(
+    path.join(paths.pool, 'foreign.json'),
+    JSON.stringify({
+      machine: 'foreign',
+      host: 'localhost',
+      ssh_user: 'test',
+      platform: 'cli',
+      project: 'fixture',
+      slots: [{ id: 'foreign-slot', repo, session: 'foreign-slot' }],
+    }),
+  );
+  await writeFile(
+    path.join(paths.projects, 'fixture/project.json'),
+    JSON.stringify({ prepare: { default: 'proof', profiles: { proof: { phases: ['health'] } } } }),
+  );
+  await assert.rejects(
+    slotPrepare({ slotId: 'foreign-slot' }, () => undefined),
+    /claimed by another instance/,
+  );
+  assert.equal(await readFile(path.join(repo, '.farmslot-instance/owner'), 'utf8'), owner);
+  assert.equal(await readFile(path.join(repo, '.agent/.preparing.lock/info'), 'utf8'), lock);
 });

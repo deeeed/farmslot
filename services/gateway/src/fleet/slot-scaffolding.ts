@@ -64,6 +64,7 @@ export function slotScaffoldingPaths(projectJson: RawProjectJson) {
         task,
         ...(externalRuntime ? [] : [runtime]),
         DEFAULT_TASK_DIR,
+        '.farmslot-instance',
         '.agent',
         '.observability',
         '.omc',

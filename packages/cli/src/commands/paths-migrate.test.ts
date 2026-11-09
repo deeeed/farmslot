@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { fork } from 'node:child_process';
+import { execFileSync, fork } from 'node:child_process';
 import { once } from 'node:events';
-import {
+import fs, {
   mkdir,
   mkdtemp,
   readdir,
@@ -11,10 +11,11 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test, { type TestContext } from 'node:test';
+import test, { mock, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
@@ -455,4 +456,116 @@ test('home-expanded retention settings are rewritten to the new store', async (t
     runBundleRetention: { storeRoot: string };
   };
   assert.equal(restored.runBundleRetention.storeRoot, root);
+});
+
+test('migrated layout-2 account selection runs through the provider script', async (t) => {
+  const f = await fixture(t);
+  await put(path.join(f.home, 'provider-accounts.json'), {
+    version: 1,
+    accounts: { seat: { provider: 'codex', authPath: path.join(f.root, 'seat-auth.json') } },
+    slotBindings: { slot: 'seat' },
+  });
+  await migratePaths(f.options, 'apply');
+  const paths = resolveFarmPaths({ home: f.home, role: 'node', env: {} });
+  const script = fileURLToPath(
+    new URL('../../../../scripts/provider-account-cli.mjs', import.meta.url),
+  );
+  const selected = JSON.parse(
+    execFileSync(process.execPath, [script, 'resolve', '--slot-id', 'slot'], {
+      env: { ...process.env, FARMSLOT_HOME: f.home, FARMSLOT_CONFIG_DIR: paths.config },
+      encoding: 'utf8',
+    }),
+  );
+  assert.equal(selected.label, 'seat');
+  assert.equal(selected.authPath, path.join(f.root, 'seat-auth.json'));
+});
+
+for (const copy of [false, true])
+  test(`archive task trees preserve links, empty directories and modes, copy=${copy}`, async (t) => {
+    const f = await fixture(t);
+    const task = path.join(f.archive, 'run-a/old-generation/task');
+    await mkdir(path.join(task, 'empty'), { recursive: true });
+    await put(path.join(task, 'script'), 'proof');
+    await fs.chmod(task, 0o750);
+    await fs.chmod(path.join(task, 'empty'), 0o700);
+    await fs.chmod(path.join(task, 'script'), 0o751);
+    await symlink('script', path.join(task, 'link'));
+    await symlink(path.join(task, 'script'), path.join(task, 'absolute-link'));
+    if (!copy) {
+      await mkdir(path.join(f.archive, 'empty'));
+      await symlink('run-a/old-generation/payload.txt', path.join(f.archive, 'loose-link'));
+    }
+    const expected = await inventory(task);
+    const plan = await planMigration(f.options);
+    if (copy) for (const step of plan.steps) if (step.kind === 'move') step.method = 'copy';
+    await put(plan.journal, plan);
+    await migratePaths(f.options, 'apply');
+    assert.deepEqual(
+      await inventory(path.join(plan.dataRoot, 'run-archive/run-a/old-generation/task')),
+      expected,
+    );
+    if (!copy) {
+      assert.equal(
+        await fs.readlink(path.join(plan.dataRoot, 'run-archive/loose-link')),
+        'run-a/old-generation/payload.txt',
+      );
+      assert.ok((await fs.lstat(path.join(plan.dataRoot, 'run-archive/empty'))).isDirectory());
+    }
+    await migratePaths(f.options, 'rollback');
+    if (!copy)
+      assert.equal(
+        await fs.readlink(path.join(f.archive, 'loose-link')),
+        'run-a/old-generation/payload.txt',
+      );
+    assert.deepEqual(await inventory(task), expected);
+    await assertLegacy(f);
+  });
+
+test('cross-volume archive link escaping its moved tree refuses before mutation', async (t) => {
+  const f = await fixture(t);
+  const task = path.join(f.archive, 'run-a/old-generation/task');
+  await mkdir(task);
+  await symlink(
+    path.join(f.checkout, 'slot/.farmslot-runtime/context.json'),
+    path.join(task, 'outside'),
+  );
+  const plan = await planMigration(f.options);
+  for (const step of plan.steps) if (step.kind === 'move') step.method = 'copy';
+  await put(plan.journal, plan);
+  await assert.rejects(migratePaths(f.options, 'apply'), /symlink.*outside|outside.*symlink/i);
+  await assertLegacy(f);
+});
+
+test('rollback resumes after interruption during cross-volume target removal', async (t) => {
+  const f = await fixture(t);
+  const plan = await planMigration(f.options);
+  for (const step of plan.steps) if (step.kind === 'move') step.method = 'copy';
+  await put(plan.journal, plan);
+  await migratePaths(f.options, 'apply');
+  const move = plan.steps.find(
+    (step) => step.kind === 'move' && step.source.endsWith('/task-pins'),
+  );
+  assert.ok(move && move.kind === 'move');
+  const original = fs.rm;
+  const patched = mock.method(
+    fs,
+    'rm',
+    async (file: Parameters<typeof fs.rm>[0], options: Parameters<typeof fs.rm>[1]) => {
+      if (file === move.target) {
+        await original(path.join(move.target, 'pin/provenance.json'));
+        throw new Error('interrupted target removal');
+      }
+      return original(file, options);
+    },
+  );
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(migratePaths(f.options, 'rollback'), /interrupted target removal/);
+  } finally {
+    patched.mock.restore();
+    syncBuiltinESMExports();
+  }
+  await migratePaths(f.options, 'rollback');
+  await assertLegacy(f);
+  assert.equal(await info(move.target), undefined);
 });

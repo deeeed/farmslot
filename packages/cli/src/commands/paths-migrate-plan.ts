@@ -12,6 +12,7 @@ import {
 import { expandHome } from '@farmslot/protocol/node/farmslot-home';
 
 import {
+  assertContainedLinks,
   assertUnredirected,
   existingParent,
   info,
@@ -37,6 +38,7 @@ export interface MoveStep extends PathMapping {
   bytes: number;
   expected: Inventory;
   phase?: 'copy-verified';
+  rollbackPhase?: 'copy-verified';
 }
 export interface WriteStep {
   kind: 'write';
@@ -332,25 +334,44 @@ export async function planMigration(options: MigrationOptions): Promise<Migratio
       return;
     }
     try {
-      await assertUnredirected(source);
+      await assertUnredirected(value.isSymbolicLink() ? path.dirname(source) : source);
       await assertUnredirected(target);
     } catch (error) {
       plan.conflicts.push(String(error));
       return;
     }
-    // Split trees around independently mapped children and merge archive roots by directory.
+    // Inspect both archive roots before planning whole-tree moves, so overlapping
+    // directories merge by child and payload collisions are refused before mutation.
+    const archiveRoot = [...archives].find((root) => within(root, source));
+    const sharedArchiveDir =
+      value.isDirectory() &&
+      archiveRoot &&
+      (
+        await Promise.all(
+          [...archives]
+            .filter((root) => root !== archiveRoot)
+            .map((root) => info(path.join(root, path.relative(archiveRoot, source)))),
+        )
+      ).some(Boolean);
+    // Split trees around independently mapped children and merged manifests.
     const split =
+      sharedArchiveDir ||
       roots.some((entry) => entry.source !== source && within(source, entry.source)) ||
       target === next.backups ||
       slotRoots.some((root) => within(source, root)) ||
       !!(await info(target)) ||
       moveTargets.has(target) ||
-      [...archives].some((root) => within(root, source));
+      [...manifestSources].some((file) => within(source, file));
     if (value.isDirectory() && split) {
-      for (const name of (await readdir(source)).sort()) {
+      const children = (await readdir(source)).sort();
+      if (!children.length && sharedArchiveDir) {
+        plan.conflicts.push(`Target exists: ${source} -> ${target}`);
+        return;
+      }
+      for (const name of children) {
         const child = path.join(source, name);
         if (roots.some((entry) => entry.source === child)) continue;
-        await move(child, path.join(target, name));
+        if (!manifestSources.has(child)) await move(child, path.join(target, name));
       }
       return;
     }
@@ -363,8 +384,13 @@ export async function planMigration(options: MigrationOptions): Promise<Migratio
       value.dev === (await info(await existingParent(path.dirname(target))))?.dev
         ? 'rename'
         : 'copy';
-    if (method === 'copy' && Object.values(expected).some((entry) => entry.kind === 'link'))
-      plan.conflicts.push(`Cross-volume tree contains symlinks: ${source}`);
+    if (method === 'copy') {
+      try {
+        assertContainedLinks(source, expected);
+      } catch (error) {
+        plan.conflicts.push(String(error));
+      }
+    }
     plan.steps.push({
       kind: 'move',
       source,
@@ -411,8 +437,11 @@ export async function planMigration(options: MigrationOptions): Promise<Migratio
         });
         continue;
       }
-      for (const file of await files(entry.source))
-        if (!manifestSources.has(file)) await move(file, translate(file, plan.mappings));
+      if (await info(entry.source))
+        for (const name of (await readdir(entry.source)).sort()) {
+          const child = path.join(entry.source, name);
+          if (!manifestSources.has(child)) await move(child, path.join(entry.target, name));
+        }
     } else await move(entry.source, entry.target);
   }
   let manifestIndex = 0;

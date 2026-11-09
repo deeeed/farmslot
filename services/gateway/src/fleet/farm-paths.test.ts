@@ -1,30 +1,31 @@
-import { assertStatusFileWritable } from '../projects/repo-root.js';
-import { machineShellEnv } from '../core/project-env.js';
-import { commandIncludesRemotePath, shellExpressionForRemotePath } from '../core/remote-paths.js';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+
 import { WebSocket, WebSocketServer } from 'ws';
 
 import { resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
-import { reportedFarmPaths } from '@farmslot/slot-config';
+import { expandTemplate, reportedFarmPaths, type SlotVars } from '@farmslot/slot-config';
 
+import { machineShellEnv } from '../core/project-env.js';
+import { commandIncludesRemotePath, shellExpressionForRemotePath } from '../core/remote-paths.js';
+import { remapRemoteFarmRefs } from '../node-support/remote-command.js';
+import { assertStatusFileWritable } from '../projects/repo-root.js';
+import { resourceRevisions } from '../resources/revisions.js';
 import { hostIdentityInspectionCommand } from '../runners/provider-account-host.js';
 import { buildRunnerObservabilityInstallCommand } from '../runners/runner-observability.js';
-import { remapRemoteFarmRefs } from '../node-support/remote-command.js';
 import {
   agentRuntimeScriptForSlot,
   farmslotDirectoryForSlot,
 } from '../tasks/agent-runtime-script.js';
-import { resourceRevisions } from '../resources/revisions.js';
+
 import { farmPathsForSlot } from './farm-paths.js';
 import { getNode, registerNode, unregisterByWs } from './machine-registry.js';
 
 // A real typed fixture keeps this test honest when SlotVars gains required fields.
-import { type SlotVars } from '@farmslot/slot-config';
 const vars: SlotVars = {
   slotId: 'paths-slot',
   machine: 'paths-node',
@@ -94,6 +95,7 @@ test('node report stays with its connection, selects remote helpers, and replace
   assert.strictEqual(reportedFarmPaths(vars.machine), report);
   const env = machineShellEnv({ ...vars, machineEnv: { FARMSLOT_POOL_DIR: '/stale-pool' } });
   assert.equal(env.FARMSLOT_POOL_DIR, report.pool);
+  assert.equal(env.FARMSLOT_CONFIG_DIR, report.config);
   assert.equal(env.FARMSLOT_PROJECTS_DIR, report.projects);
   assert.equal(env.FARMSLOT_CLI, path.join(report.code.bin, 'farmslot'));
   assert.equal(farmPathsForSlot(vars).code.support, path.join(root, 'code/support'));
@@ -156,4 +158,91 @@ test('layout-2 status writes require the same gateway authority as the legacy st
     /writes require gateway bootstrap/,
   );
   assert.doesNotThrow(() => assertStatusFileWritable(file, '/unused', true));
+});
+
+for (const ipHost of [false, true])
+  test(`legacy registered local helpers use installed checkout, IP host=${ipHost}`, (t) => {
+    const root = mkdtempSync(path.join(tmpdir(), 'installed-workspace-'));
+    const prior = process.env;
+    process.env = {
+      ...prior,
+      FARMSLOT_HOME: path.join(root, 'home'),
+      FARMSLOT_WORKSPACE: root,
+      FARMSLOT_ROOT: path.join(root, 'farmslot'),
+    };
+    delete process.env.FARMSLOT_CHECKOUT_ROOT;
+    const local = { ...vars, machine: hostname(), host: ipHost ? '192.0.2.1' : 'localhost' };
+    // The ws server-side constructor has no network connection. Validate its runtime type.
+    const socket: unknown = Reflect.construct(WebSocket, [null, undefined, {}]);
+    assert.ok(socket instanceof WebSocket);
+    t.after(() => {
+      unregisterByWs(socket);
+      resourceRevisions.dispose();
+      process.env = prior;
+      rmSync(root, { recursive: true, force: true });
+    });
+    const checkout = path.join(root, 'farmslot');
+    mkdirSync(checkout);
+    const report = resolveFarmPaths({
+      role: 'node',
+      home: process.env.FARMSLOT_HOME,
+      checkoutRoot: checkout,
+      env: process.env,
+    });
+    assert.equal(report.layout, 'legacy');
+    assert.equal(report.code.node, root);
+    registerNode(
+      local.machine,
+      1,
+      socket,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { node: {}, farmPaths: report },
+    );
+    if (!ipHost) assert.equal(expandTemplate('{{farmslot_dir}}', local), checkout);
+    assert.ok(
+      hostIdentityInspectionCommand(local, 'codex').includes(
+        `${checkout}/scripts/provider-account-cli.mjs`,
+      ),
+    );
+    const install = buildRunnerObservabilityInstallCommand(local, 'codex', '/repo');
+    assert.ok(
+      install.startsWith(`node '${checkout}/scripts/install-runner-observability.mjs'`),
+      install,
+    );
+  });
+
+test('IP host on gateway machine uses checkout for both helpers without a node report', (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'local-helper-'));
+  const prior = process.env;
+  process.env = {
+    ...prior,
+    FARMSLOT_HOME: path.join(root, 'home'),
+    FARMSLOT_WORKSPACE: root,
+    FARMSLOT_ROOT: path.join(root, 'farmslot'),
+  };
+  t.after(() => {
+    process.env = prior;
+    rmSync(root, { recursive: true, force: true });
+  });
+  const local = { ...vars, host: '192.0.2.1', machine: hostname() };
+  const checkout = path.join(root, 'farmslot');
+  assert.ok(
+    hostIdentityInspectionCommand(local, 'codex').includes(
+      `${checkout}/scripts/provider-account-cli.mjs`,
+    ),
+  );
+  assert.ok(
+    buildRunnerObservabilityInstallCommand(local, 'codex', '/repo').startsWith(
+      `node '${checkout}/scripts/install-runner-observability.mjs'`,
+    ),
+  );
 });

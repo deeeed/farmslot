@@ -8,6 +8,7 @@ import { TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
 import { expandHome } from '@farmslot/protocol/node/farmslot-home';
 
 import {
+  assertContainedLinks,
   assertIdentity,
   assertUnredirected,
   atomicFile,
@@ -169,7 +170,13 @@ async function assertSafe(
     await assertUnredirected(mapping.target);
   }
   for (const step of plan.steps) {
-    await assertUnredirected(step.target);
+    await assertUnredirected(
+      step.kind === 'move' && step.expected['']?.kind === 'link'
+        ? path.dirname(step.target)
+        : step.target,
+    );
+    if (step.kind === 'move' && step.method === 'copy')
+      assertContainedLinks(step.source, step.expected);
     if (step.kind === 'move' && (await info(step.source))) {
       for (const name of Object.keys(await inventory(step.source)))
         if (name.split(path.sep).some((part) => part.startsWith('.retention-')))
@@ -429,7 +436,11 @@ export async function migratePaths(
         step.status = 'running';
         await save(plan);
         await hooks.checkpoint?.(plan, index);
-        await assertUnredirected(step.target);
+        await assertUnredirected(
+          step.kind === 'move' && step.expected['']?.kind === 'link'
+            ? path.dirname(step.target)
+            : step.target,
+        );
         if (step.kind === 'move') await moveStep(plan, step);
         else await writeStep(plan, step, index);
         step.status = 'done';
@@ -445,7 +456,11 @@ export async function migratePaths(
     for (const step of [...plan.steps].reverse()) {
       if (!step.status || step.status === 'undone') continue;
       await save(plan);
-      await assertUnredirected(step.target);
+      await assertUnredirected(
+        step.kind === 'move' && step.expected['']?.kind === 'link'
+          ? path.dirname(step.target)
+          : step.target,
+      );
       if (step.kind === 'write') {
         if (step.before === undefined) {
           if (await info(step.target)) {
@@ -460,19 +475,26 @@ export async function migratePaths(
           await atomicFile(step.target, await readFile(step.backup), step.mode);
         }
       } else {
-        await assertUnredirected(step.source);
+        await assertUnredirected(
+          step.expected['']?.kind === 'link' ? path.dirname(step.source) : step.source,
+        );
         if (await info(step.target)) {
-          await assertIdentity(step.target, step.expected);
+          if (step.rollbackPhase !== 'copy-verified')
+            await assertIdentity(step.target, step.expected);
           await mkdir(path.dirname(step.source), { recursive: true });
           if (step.method === 'rename') {
             if (await info(step.source)) throw new Error(`Rollback source exists: ${step.source}`);
             await rename(step.target, step.source);
           } else {
-            // A copy may have been killed during source unlink. Refill the verified remainder.
-            if (await info(step.source)) await assertIdentity(step.source, step.expected, true);
-            await copyTree(step.target, step.source, step.expected);
-            await assertIdentity(step.source, step.expected);
-            await rm(step.target, { recursive: true });
+            if (step.rollbackPhase !== 'copy-verified') {
+              // A forward copy may have been killed during source unlink. Refill its remainder.
+              if (await info(step.source)) await assertIdentity(step.source, step.expected, true);
+              await copyTree(step.target, step.source, step.expected);
+              await assertIdentity(step.source, step.expected);
+              step.rollbackPhase = 'copy-verified';
+              await save(plan);
+            }
+            await removeVerifiedSource(step.target, step.source, step.expected);
           }
         }
         await syncDirectory(path.dirname(step.source));

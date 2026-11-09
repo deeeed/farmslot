@@ -137,6 +137,7 @@ export async function exec(
   // The daemon owns the instance, including commands launched from login shells.
   const paths = resolveExecFarmPaths();
   env.FARMSLOT_HOME = paths.home;
+  if (paths.layout === 2) env.FARMSLOT_CONFIG_DIR = paths.config;
   env.FARMSLOT_POOL_DIR = paths.pool;
   env.FARMSLOT_PROJECTS_DIR = paths.projects;
 

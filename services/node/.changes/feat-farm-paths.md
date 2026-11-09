@@ -1,1 +1,1 @@
-- Report instance paths and export the selected home, pool and projects to node commands while retaining legacy locations.
+- Report instance paths and export the selected home, config, pool and projects to node commands while retaining legacy locations.

@@ -1,13 +1,13 @@
+import path from 'node:path';
+
 import { legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { reportedFarmPaths } from '@farmslot/slot-config';
-import os from 'node:os';
-import path from 'node:path';
-import { currentFarmPaths, farmPathsForSlot } from '../fleet/farm-paths.js';
 
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import type { loadSlotVars } from '../core/config.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
+import { currentFarmPaths, farmPathsForSlot, farmslotDirForSlot } from '../fleet/farm-paths.js';
 
 export const INSTALLER_RELATIVE_PATH = 'scripts/install-runner-observability.mjs';
 export const RUNNER_OBSERVABILITY_COPY_PATHS = [
@@ -51,7 +51,6 @@ export function nodeSupportSelectionCommand(
   const root = shellExpressionForRemotePath(supportRoot);
   return `hash="$(cat ${pointer} 2>/dev/null)"; case "$hash" in (''|*[!0-9a-f]*) false ;; (*) [ \${#hash} -eq 64 ] && printf '%s\\n' ${root}/"$hash" ;; esac`;
 }
-const localHostname = os.hostname().replace(/\.local$/, '');
 
 export function claudeObservabilitySettingsPath(repo: string, runtimeDir: string): string {
   return path.posix.join(
@@ -68,15 +67,6 @@ export function buildClaudeObservabilityFallbackCommand(settingsPath: string): s
     `const fs = require('node:fs'); const file = process.argv[1]; const settings = JSON.parse(fs.readFileSync(file, 'utf8')); if (!settings || typeof settings !== 'object' || Array.isArray(settings)) process.exit(1); if (settings.promptSuggestionEnabled !== false) { settings.promptSuggestionEnabled = false; fs.writeFileSync(file, JSON.stringify(settings) + '\\n'); }`,
   )} ${settingsFile} >/dev/null 2>&1`;
   return `${configure} || { mkdir -p ${shellExpressionForRemotePath(settingsDir)} && printf '{"promptSuggestionEnabled":false}\\n' > ${settingsFile}; }`;
-}
-
-function farmslotDirForSlot(vars: Awaited<ReturnType<typeof loadSlotVars>>): string {
-  const slotHost = vars.host.replace(/\.local$/, '');
-  const isLocal =
-    slotHost === 'localhost' || slotHost === '127.0.0.1' || slotHost === localHostname;
-  return isLocal && !reportedFarmPaths(vars.machine)
-    ? currentFarmPaths('gateway').code.checkout
-    : farmPathsForSlot(vars).code.node;
 }
 
 export function buildRunnerObservabilityInstallCommand(
@@ -114,7 +104,7 @@ export function buildRunnerObservabilityInstallCommand(
   }
   if (
     farmslotDir === currentFarmPaths('gateway').code.checkout &&
-    !reportedFarmPaths(vars.machine)
+    reportedFarmPaths(vars.machine)?.layout !== 2
   ) {
     return `node ${shellExpressionForRemotePath(localInstaller)} ${parts.join(' ')}`;
   }

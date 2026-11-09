@@ -365,6 +365,11 @@
       "import": "./dist/node/farm-paths.js",
       "default": "./dist/node/farm-paths.js"
     },
+    "./node/tree-fingerprint": {
+      "types": "./dist/node/tree-fingerprint.d.ts",
+      "import": "./dist/node/tree-fingerprint.js",
+      "default": "./dist/node/tree-fingerprint.js"
+    },
     "./node/farm-layout": {
       "types": "./dist/node/farm-layout.d.ts",
       "import": "./dist/node/farm-layout.js",

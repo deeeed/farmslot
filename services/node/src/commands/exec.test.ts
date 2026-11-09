@@ -234,7 +234,7 @@ test(
         argv: [
           process.execPath,
           '-e',
-          'process.stdout.write(JSON.stringify([process.env.FARMSLOT_HOME,process.env.FARMSLOT_POOL_DIR,process.env.FARMSLOT_PROJECTS_DIR]))',
+          'process.stdout.write(JSON.stringify([process.env.FARMSLOT_HOME,process.env.FARMSLOT_POOL_DIR,process.env.FARMSLOT_PROJECTS_DIR,process.env.FARMSLOT_CONFIG_DIR]))',
         ],
       });
       assert.equal(result.exitCode, 0, result.stderr);
@@ -242,6 +242,7 @@ test(
         home,
         path.join(home, 'pool'),
         path.join(home, 'projects'),
+        path.join(home, 'config'),
       ]);
     }
   },

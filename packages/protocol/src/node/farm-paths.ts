@@ -569,6 +569,8 @@ export function legacyRemoteFarmPaths(
       templateNode: env.FARMSLOT_WORKSPACE?.trim() || node,
       cli: '~/.local/share/farmslot-cli',
       bin: '~/.local/bin',
+      // Remote bundles are deployed beside the selected node checkout; the local
+      // legacy selector uses the user-home node install even from an operator checkout.
       support: path.posix.join(node, 'support'),
     },
     state: {
