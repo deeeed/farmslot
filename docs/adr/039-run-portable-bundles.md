@@ -550,7 +550,9 @@ side on one machine, and nothing assumes a single instance. Every path an
 instance reads or writes comes from one pure resolver, `resolveFarmPaths({ home,
 role })` in `@farmslot/protocol/node`; the shell reads the same values from
 `farmslot paths --json`. Callers export resolved paths to hooks and packs, which
-never derive their own. No module-level path constants or shell fallbacks remain.
+never derive their own. `role` (gateway or node) only adds the gateway-role stores
+to the output; it never changes where a shared path lives. No module-level path
+constants or shell fallbacks remain.
 
 The gateway and node roles share one layout. `config/` holds `instance.json`
 (name, ports, data root) and credentials; `pool/`, `projects/` and `code/` (node,
