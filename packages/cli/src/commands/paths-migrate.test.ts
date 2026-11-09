@@ -314,6 +314,18 @@ for (const relative of [
   'checkout/.runs/bundle-store.json',
   'home/run-bundles/store.json',
   'home/git-identity.json',
+  'home/provider-accounts.json',
+  'checkout/.backlog.json',
+  'checkout/.dispatch-queue.json',
+  'checkout/.farm-status.json',
+  'checkout/.work-graphs/graph.json',
+  'checkout/.runs/review-workspace-tasks/run-a/snapshot.json',
+  'checkout/.runs/review-workspace-support/admissions/run-a.json',
+  'checkout/.runs/machine-parking-batches/operation.json',
+  'home/review-workspaces/owner/operations/operation/operation.json',
+  'home/native-sessions/sessions/session.journal',
+  'home/native-sessions/nodes/node-a/sessions/session.journal',
+  'checkout/.runs/retained-acceptance-links/task.json',
   'home/sources/runtime-settings/pack.json',
   'home/sources/gateway/receipts/digest.json',
   'home/sources/node/receipts/digest.json',
@@ -343,6 +355,7 @@ test('owned configuration, source receipts and run history references still rewr
     [path.join(f.checkout, 'pool/local.json'), { slots: [], runtime_dir: old }],
     [path.join(f.checkout, 'projects/pack/project.json'), { repo: old }],
     [path.join(f.home, 'git-identity.json'), { 'user.signingkey': old }],
+    [path.join(f.checkout, '.work-graphs/graph.json'), { reference: { ref: old } }],
     [
       path.join(f.home, 'sources/runtime-settings/pack.json'),
       { values: { backlog: { root: old } } },
@@ -368,6 +381,343 @@ test('owned configuration, source receipts and run history references still rewr
     assert.ok(step.body.includes(path.join(f.home, 'state/task-pins/pin')), file);
     assert.ok(!step.body.includes(old), file);
   }
+});
+
+test('pass 2: native provider profiles retain their moved runner directory', async (t) => {
+  const f = await fixture(t);
+  const directory = path.join(f.home, 'runner-profiles/codex/work');
+  await put(path.join(directory, 'auth.json'), '{ opaque native credentials }');
+  await put(path.join(f.home, 'provider-accounts.json'), {
+    version: 1,
+    accounts: {},
+    nativeProfiles: {
+      work: {
+        id: 'work',
+        runner: 'codex',
+        directory,
+        accountContextId: '12345678-1234-1234-1234-123456789abc',
+        state: 'active',
+      },
+    },
+  });
+  await migratePaths(f.options, 'apply');
+  const config = await json(path.join(f.home, 'config/provider-accounts.json'));
+  assert.ok(config && typeof config === 'object' && 'nativeProfiles' in config);
+  assert.deepEqual(config.nativeProfiles, {
+    work: {
+      id: 'work',
+      runner: 'codex',
+      directory: path.join(f.home, 'config/runner-profiles/codex/work'),
+      accountContextId: '12345678-1234-1234-1234-123456789abc',
+      state: 'active',
+    },
+  });
+  await readFile(path.join(f.home, 'config/runner-profiles/codex/work/auth.json'));
+});
+
+test('pass 2: backlog specPath stays inside the migrated spec directory', async (t) => {
+  const f = await fixture(t);
+  const specPath = path.join(f.checkout, '.backlog/specs/x.md');
+  await put(specPath, '# Acceptance criteria\n- Works\n');
+  await put(path.join(f.checkout, '.backlog.json'), [{ id: 'item', specPath }]);
+  await migratePaths(f.options, 'apply');
+  const paths = resolveFarmPaths({ home: f.home, role: 'gateway', env: {} });
+  assert.deepEqual(await json(paths.state.backlogFile), [
+    { id: 'item', specPath: path.join(paths.state.backlogSpecs, 'x.md') },
+  ]);
+  await readFile(path.join(paths.state.backlogSpecs, 'x.md'));
+});
+
+test('pass 2: review task snapshot matches the migrated Run workspace identity', async (t) => {
+  const f = await fixture(t);
+  const workspace = {
+    workspaceId: 'review',
+    checkoutPath: path.join(f.home, 'review-workspaces/review/repo'),
+    taskPath: path.join(f.home, 'review-workspaces/review/task'),
+    artifactPath: path.join(f.home, 'review-workspaces/review/task/artifacts'),
+  };
+  await put(path.join(f.runs, 'review.json'), {
+    id: 'review',
+    status: 'done',
+    reviewWorkspace: workspace,
+  });
+  await put(path.join(f.runs, 'review-workspace-tasks/review/snapshot.json'), {
+    version: 1,
+    runId: 'review',
+    workspace,
+    prompt: `Read '${workspace.taskPath}/TASK.md'. Run '${workspace.taskPath}/mark' start before reviewing.`,
+    files: [{ path: 'inputs/review-subject.json', sha256: 'frozen' }],
+  });
+  const frozen = path.join(
+    f.runs,
+    'review-workspace-tasks/review/bundle/inputs/review-subject.json',
+  );
+  const bytes = JSON.stringify({ checkoutPath: workspace.checkoutPath });
+  await put(frozen, bytes);
+  await migratePaths(f.options, 'apply');
+  const paths = resolveFarmPaths({ home: f.home, role: 'gateway', env: {} });
+  const run = await json(path.join(paths.state.runs, 'review.json'));
+  const snapshot = await json(
+    path.join(paths.state.runs, 'review-workspace-tasks/review/snapshot.json'),
+  );
+  assert.ok(run && typeof run === 'object' && 'reviewWorkspace' in run);
+  assert.ok(snapshot && typeof snapshot === 'object' && 'workspace' in snapshot);
+  assert.deepEqual(snapshot.workspace, run.reviewWorkspace);
+  assert.ok('prompt' in snapshot);
+  assert.equal(
+    snapshot.prompt,
+    `Read '${f.home}/state/review-workspaces/review/task/TASK.md'. Run '${f.home}/state/review-workspaces/review/task/mark' start before reviewing.`,
+  );
+  assert.equal(
+    await readFile(
+      path.join(
+        paths.state.runs,
+        'review-workspace-tasks/review/bundle/inputs/review-subject.json',
+      ),
+      'utf8',
+    ),
+    bytes,
+  );
+});
+
+for (const stagedExists of [false, true])
+  test(`pass 2: merged manifest already at destination refuses staged entry, staged file ${stagedExists}`, async (t) => {
+    const f = await fixture(t);
+    await rm(f.current, { recursive: true });
+    const data = path.join(f.root, 'external-data');
+    const archive = path.join(data, 'run-archive');
+    const target = path.join(archive, 'run-a/manifest.json');
+    const staged = path.join(f.root, 'staged-payload');
+    if (stagedExists) await put(staged, 'staged bytes');
+    await put(target, {
+      runId: 'run-a',
+      entries: [
+        {
+          state: stagedExists ? 'archived' : 'staged',
+          staged,
+          destination: path.join(archive, 'run-a/payload'),
+        },
+      ],
+    });
+    const options = {
+      ...f.options,
+      data,
+      env: { ...f.options.env, FARMSLOT_RUN_ARCHIVE_ROOT: archive },
+    };
+    const plan = await planMigration(options);
+    assert.deepEqual(plan.conflicts, []);
+    assert.ok(
+      plan.steps.some(
+        (step) => step.kind === 'write' && step.target === target && step.source?.includes(', '),
+      ),
+    );
+    const before = await inventory(f.root);
+    await assert.rejects(migratePaths(options, 'apply'), /Staged storage-archive entry/);
+    assert.deepEqual(await inventory(f.root), before);
+  });
+
+test('pass 2: availability sidecar alone discovers historical media archive root', async (t) => {
+  const f = await fixture(t);
+  const archive = path.join(f.root, 'historical-media');
+  const payload = path.join(archive, 'run-bundle-media/digest/proof.png');
+  await put(payload, 'historical image bytes');
+  await put(path.join(f.home, 'run-bundles/availability/only-sidecar.json'), {
+    archivedPaths: { 'proof.png': payload },
+  });
+  const plan = await migratePaths(f.options, 'apply');
+  const moved = path.join(plan.dataRoot, 'run-archive/run-bundle-media/digest/proof.png');
+  assert.deepEqual(
+    await json(path.join(plan.dataRoot, 'run-bundles/availability/only-sidecar.json')),
+    {
+      archivedPaths: { 'proof.png': moved },
+    },
+  );
+  assert.equal(await readFile(moved, 'utf8'), 'historical image bytes');
+});
+
+for (const relative of [
+  'checkout/.dispatch-queue.json',
+  'checkout/.farm-status.json',
+  'checkout/.runs/machine-parking-batches/operation.json',
+  'home/review-workspaces/operations/operation/operation.json',
+  'home/review-workspaces/owner/operations/operation/operation.json',
+  'home/native-sessions/nodes/review-workspaces/owner/operations/operation/operation.json',
+])
+  test(`pass 2 producer audit: recovery metadata rewrites ${relative}`, async (t) => {
+    const f = await fixture(t);
+    const file = path.join(f.root, relative);
+    if (relative.includes('/nodes/review-workspaces/'))
+      await put(path.join(f.runs, 'node-review.json'), {
+        id: 'node-review',
+        status: 'done',
+        reviewWorkspace: {
+          checkoutPath: path.join(
+            f.home,
+            'native-sessions/nodes/review-workspaces/owner/runs/review/source',
+          ),
+        },
+      });
+    const source = path.join(f.home, 'review-workspaces/operations/previous');
+    await put(path.join(f.home, 'runner-profiles/codex/work/auth.json'), 'opaque credentials');
+    await put(file, {
+      previousPath: source,
+      records: [
+        {
+          recoveryHandle: {
+            sessionPath: path.join(f.home, 'runner-profiles/codex/work/session.jsonl'),
+          },
+        },
+      ],
+      evalCell: { experimentManifestPath: path.join(f.runs, 'experiment.json') },
+    });
+    const plan = await planMigration(f.options);
+    assert.deepEqual(plan.conflicts, []);
+    const step = plan.steps.find((step) => step.kind === 'write' && step.source === file);
+    assert.ok(step?.kind === 'write', file);
+    assert.equal(
+      JSON.parse(step.body).previousPath,
+      path.join(f.home, 'state/review-workspaces/operations/previous'),
+    );
+    assert.equal(
+      JSON.parse(step.body).records[0].recoveryHandle.sessionPath,
+      path.join(f.home, 'config/runner-profiles/codex/work/session.jsonl'),
+    );
+  });
+
+test('pass 2 producer audit: encoded support admission identity matches the migrated Run', async (t) => {
+  const f = await fixture(t);
+  const workspace = {
+    workspaceId: 'review',
+    taskPath: path.join(f.home, 'review-workspaces/review/task'),
+  };
+  const run = { id: 'review', status: 'done', reviewWorkspace: workspace };
+  await put(path.join(f.runs, 'review.json'), run);
+  const file = path.join(f.runs, 'review-workspace-support/admissions/review.json');
+  await put(file, {
+    identity: JSON.stringify({ workspace }),
+    fingerprint: 'frozen',
+    digest: 'digest',
+  });
+  const frozen = path.join(f.runs, 'review-workspace-support/bundles/digest/manifest.json');
+  const bytes = JSON.stringify({ path: workspace.taskPath });
+  await put(frozen, bytes);
+  await migratePaths(f.options, 'apply');
+  const paths = resolveFarmPaths({ home: f.home, role: 'gateway', env: {} });
+  const admitted = await json(
+    path.join(paths.state.reviewWorkspaceSupport, 'admissions/review.json'),
+  );
+  assert.ok(admitted && typeof admitted === 'object' && 'identity' in admitted);
+  assert.equal(
+    admitted.identity,
+    JSON.stringify({
+      workspace: {
+        ...workspace,
+        taskPath: path.join(f.home, 'state/review-workspaces/review/task'),
+      },
+    }),
+  );
+  assert.equal(
+    await readFile(
+      path.join(paths.state.reviewWorkspaceSupport, 'bundles/digest/manifest.json'),
+      'utf8',
+    ),
+    bytes,
+  );
+});
+
+for (const scope of ['sessions', 'nodes/node-a/sessions'])
+  test(`pass 2 producer audit: native ${scope} journal relocates metadata and preserves events`, async (t) => {
+    const f = await fixture(t);
+    const directory = path.join(f.home, 'runner-profiles/codex/work');
+    await put(path.join(directory, 'auth.json'), 'opaque credentials');
+    const file = path.join(f.home, 'native-sessions', scope, 'session.journal');
+    const event = { type: 'tool.completed', path: directory, text: directory };
+    const commands = [{ text: directory, commandId: 'command' }];
+    await put(
+      file,
+      JSON.stringify({
+        info: { cwd: directory },
+        context: { profileDirectory: directory },
+        event,
+        commands,
+      }) + '\n',
+    );
+    const plan = await planMigration(f.options);
+    assert.deepEqual(plan.conflicts, []);
+    const step = plan.steps.find((step) => step.kind === 'write' && step.source === file);
+    assert.ok(step?.kind === 'write', file);
+    const row = JSON.parse(step.body);
+    assert.equal(
+      row.context.profileDirectory,
+      path.join(f.home, 'config/runner-profiles/codex/work'),
+    );
+    assert.equal(row.info.cwd, path.join(f.home, 'config/runner-profiles/codex/work'));
+    assert.deepEqual(row.event, event);
+    assert.deepEqual(row.commands, commands);
+    assert.ok(step.body.includes(JSON.stringify(event)));
+    assert.ok(step.body.includes(JSON.stringify(commands)));
+    const original = await readFile(file);
+    await migratePaths(f.options, 'apply');
+    const paths = resolveFarmPaths({ home: f.home, role: 'gateway', env: {} });
+    const migrated = await readFile(
+      path.join(paths.state.nativeSessions, scope, 'session.journal'),
+      'utf8',
+    );
+    assert.equal(migrated, step.body);
+    await migratePaths(f.options, 'rollback');
+    assert.deepEqual(await readFile(file), original);
+  });
+
+test('pass 2 producer audit: retained acceptance sidecar rekeys its moved task directory', async (t) => {
+  const f = await fixture(t);
+  const taskDir = path.join(f.home, 'review-workspaces/owner/runs/review/task');
+  const relative = 'artifacts/evidence-manifest.json';
+  const evidence = JSON.stringify({ taskDir });
+  await put(path.join(taskDir, relative), evidence);
+  const oldKey = createHash('sha256').update(taskDir).digest('hex');
+  await put(path.join(f.runs, 'retained-acceptance-links', oldKey + '.json'), {
+    version: 1,
+    taskDir,
+    artifacts: [{ path: relative, sha256: createHash('sha256').update(evidence).digest('hex') }],
+  });
+  await migratePaths(f.options, 'apply');
+  const paths = resolveFarmPaths({ home: f.home, role: 'gateway', env: {} });
+  const moved = path.join(paths.state.reviewWorkspaces, 'owner/runs/review/task');
+  const newKey = createHash('sha256').update(moved).digest('hex');
+  const snapshot = await json(
+    path.join(paths.state.runs, 'retained-acceptance-links', newKey + '.json'),
+  );
+  assert.ok(snapshot && typeof snapshot === 'object' && 'taskDir' in snapshot);
+  assert.equal(snapshot.taskDir, moved);
+  assert.equal(await readFile(path.join(moved, relative), 'utf8'), evidence);
+  await migratePaths(f.options, 'rollback');
+  assert.equal(await readFile(path.join(taskDir, relative), 'utf8'), evidence);
+  await readFile(path.join(f.runs, 'retained-acceptance-links', oldKey + '.json'));
+});
+
+test('pass 2 producer audit: native journal preserves raw evidence rows and fields', async (t) => {
+  const f = await fixture(t);
+  const directory = path.join(f.home, 'runner-profiles/codex/work');
+  await put(path.join(directory, 'auth.json'), 'opaque credentials');
+  const file = path.join(f.home, 'native-sessions/sessions/session.journal');
+  const event = `{ "text" : "${directory}", "escaped": "\\u0061", "nested": { "context": "${directory}" } }`;
+  const history = `{ "event": ${event}, "processesAdded" : [ { "pid": 1 } ] }\n\n`;
+  const metadata = `{ "event": ${event}, "context" : {"profileDirectory":"${directory}"}, "commands": [{ "text" : "${directory}" }] }\n`;
+  await put(file, history + metadata);
+  const plan = await planMigration(f.options);
+  assert.deepEqual(plan.conflicts, []);
+  const step = plan.steps.find((step) => step.kind === 'write' && step.source === file);
+  assert.ok(step?.kind === 'write');
+  assert.equal(
+    step.body,
+    history +
+      metadata.replace(
+        `{"profileDirectory":"${directory}"}`,
+        JSON.stringify({
+          profileDirectory: path.join(f.home, 'config/runner-profiles/codex/work'),
+        }),
+      ),
+  );
 });
 
 test('two archive roots merge the same run and never drop duplicate entries', async (t) => {
