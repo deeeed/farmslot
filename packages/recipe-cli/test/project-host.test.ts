@@ -955,3 +955,73 @@ test('command admission abort reaches inherited setup children and provider canc
   );
   assert.equal(fs.readFileSync(hookLog, 'utf8'), 'cancel\nfinalize\n');
 });
+
+test('run --json reports an authorize refusal as a JSON envelope on stdout', async (t) => {
+  const options = fixture(t);
+  const manifest = fileURLToPath(new URL('./fixtures/proof.action-manifest.json', import.meta.url));
+  const providerFile = path.join(options.cwd, 'provider.mjs');
+  fs.writeFileSync(
+    providerFile,
+    fs
+      .readFileSync(providerFile, 'utf8')
+      .replace("manifestPath: () => ''", `manifestPath: () => ${JSON.stringify(manifest)}`),
+  );
+  const recipe = path.join(options.cwd, 'proof.recipe.json');
+  fs.writeFileSync(
+    recipe,
+    JSON.stringify({
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      title: 'Retained package probe',
+      description: 'A second attempt into a retained package is refused.',
+      workflow: { entry: 'done', nodes: { done: { action: 'end', status: 'pass' } } },
+    }),
+  );
+  // A previous attempt already owns this package.
+  const artifactsDir = path.join(options.cwd, 'retained');
+  fs.mkdirSync(artifactsDir);
+  fs.writeFileSync(path.join(artifactsDir, 'summary.json'), '{}\n');
+  const stdout: string[] = [];
+  const log = console.log;
+  console.log = (...args: unknown[]) => stdout.push(args.map(String).join(' '));
+  let exitCode: number;
+  try {
+    exitCode = await withProjectRecipeHost(
+      {
+        ...options,
+        command: 'run',
+        tokens: ['--artifacts-dir', artifactsDir],
+        options: { artifactsDir },
+      },
+      ({ engine, finalize }) =>
+        handleRun(
+          [
+            recipe,
+            '--target',
+            options.cwd,
+            '--adapter',
+            'headless',
+            '--artifacts-dir',
+            artifactsDir,
+            '--json',
+          ],
+          { engine, beforeResult: finalize },
+        ),
+    );
+  } finally {
+    console.log = log;
+  }
+  assert.equal(exitCode, 1);
+  const envelope = JSON.parse(stdout.join('\n')) as {
+    command: string;
+    status: string;
+    exitCode: number;
+    stage: string;
+    error: { code: string; message: string };
+  };
+  assert.equal(envelope.command, 'run');
+  assert.equal(envelope.status, 'fail');
+  assert.equal(envelope.exitCode, 1);
+  assert.equal(envelope.stage, 'authorize');
+  assert.equal(envelope.error.code, 'RUN_AUTHORIZE_FAILED');
+  assert.match(envelope.error.message, /already contains a retained attempt/u);
+});
