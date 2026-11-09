@@ -134,9 +134,9 @@ const fixtureApi: NativeSessionApi & NativeSessionFixture = {
 
 @customElement('native-session-dev')
 export class NativeSessionDev extends LitElement {
-  /** `#dev/native-session?stream=1`: a 300+ row conversation that streams through the cache. */
+  /** `#dev/native-session?replay=stream`: a 300+ row conversation streaming through the cache. */
   private streamApi?: NativeStreamFixture =
-    getHashParam('stream') === '1' ? createNativeStreamFixture(session) : undefined;
+    getHashParam('replay') === 'stream' ? createNativeStreamFixture(session) : undefined;
   private previewApi = (() => {
     if (this.streamApi) return this.streamApi;
     const replay = getHashParam('replay');

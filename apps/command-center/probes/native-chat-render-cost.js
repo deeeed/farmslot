@@ -1,5 +1,5 @@
 // Per-delta render cost of a streamed assistant message in a 300+ row conversation.
-// Route: #dev/native-session?stream=1. The preview feeds 200 deltas, one per 50 ms, through the
+// Route: #dev/native-session?replay=stream. The preview feeds 200 deltas, one per 50 ms, through the
 // production conversation cache; this probe starts the stream and reads the preview's result.
 const dev = document.querySelector('native-session-dev');
 const view = () => dev?.shadowRoot?.querySelector('native-session-view')?.shadowRoot;
