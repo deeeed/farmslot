@@ -11,6 +11,7 @@ import type { ExecResult, Run } from '@farmslot/protocol';
 
 import { testGatewayIdentity } from '../../../../scripts/lib/test-gateway-identity-source.mjs';
 import type { RawProjectJson, SlotVars } from '../core/config.js';
+import { seedRunnerObservabilityFixture } from '../node-support/support-test-fixtures.js';
 
 const executeFile = promisify(execFile);
 export const root = mkdtempSync(path.join(tmpdir(), 'run-recovery-'));
@@ -52,6 +53,7 @@ for (const dir of [
 writeFileSync(path.join(root, 'CLAUDE.md'), '# Disposable recovery fixture\n');
 writeFileSync(path.join(root, 'scripts/dev.sh'), '');
 writeFileSync(path.join(root, 'services/gateway/package.json'), '{}');
+await seedRunnerObservabilityFixture(root);
 
 export function git(directory: string, ...args: string[]): string {
   return execFileSync('git', ['-C', directory, '-c', 'core.hooksPath=/dev/null', ...args], {
