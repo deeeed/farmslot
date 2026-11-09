@@ -8,6 +8,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## 0.46.10 - 2026-11-09
 
+- The runner republishes `trace.json` after each step, whole through a temporary file and a rename, so a live viewer can follow the run.
+
 - `processIdentity` returns `null` when the sandbox refuses to run the setuid `ps` (EPERM/EACCES). New `processStillRunning` and `processAlive` fall back to a liveness check when the identity is unknown, and an operation record then omits `processStartedAt`.
 
 ## 0.46.9 - 2026-11-09

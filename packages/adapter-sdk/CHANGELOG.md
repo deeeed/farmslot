@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.27.0 - 2026-11-09
+
+- `runEvidenceView(model, run?)` (evidence entry) projects the shared review model into the plain-JSON run evidence view-model: criteria in run order with verdict, clip cue, files and before/after pair, steps with marker cues, and step groups.
+
 ## 0.26.6 - 2026-11-09
 
 - Republish against protocol 0.83.0 and the matching worker package set so consumers load one copy of each Farmslot dependency.

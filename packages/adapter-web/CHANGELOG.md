@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.19.5 - 2026-11-09
+
+- Republish against adapter-sdk 0.27.0 so installed consumers use one copy of each Farmslot dependency.
+
 ## 0.19.4 - 2026-11-09
 
 - Republish against protocol 0.83.0 and the matching worker package set so consumers load one copy of each Farmslot dependency.
