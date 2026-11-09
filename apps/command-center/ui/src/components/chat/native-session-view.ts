@@ -31,6 +31,7 @@ import {
   NATIVE_FOLLOW_LATEST,
   nativeCommandLockSettled,
   nativeCommandText,
+  type NativeConversationCache,
   nativeConversationOmissionNotice,
   type NativeConversationState,
   nativeDeliveryLabel,
@@ -67,6 +68,7 @@ import {
   nativeWatchTools,
   type NativeWork,
   nativeWork,
+  observeNativeConversation,
   type ResourceQuery,
   resourceQuery,
   SUPERSEDED_READ_GRACE_MS,
@@ -136,6 +138,8 @@ export interface NativeSessionFixture {
   catalog(): Promise<NativeSessionCatalogResult>;
   list(): Promise<NativeSessionListResult>;
   read(params: NativeSessionReadParams): Promise<NativeSessionReadResult>;
+  /** A preview that streams: history then follows this conversation cache instead of `read`. */
+  conversations?: NativeConversationCache;
 }
 
 function timelineDistance(timeline: Element) {
@@ -583,9 +587,10 @@ export class NativeSessionView extends LitElement {
     this.historyStop = undefined;
     this.historyQuery = undefined;
     this.historyTarget = undefined;
-    if (!this.selectedId || this.fixture) return;
-    const owner = getResourceNativeOwnerId();
-    if (!owner) return;
+    const conversations = this.fixture?.conversations;
+    if (!this.selectedId || (this.fixture && !conversations)) return;
+    const owner = conversations ? undefined : getResourceNativeOwnerId();
+    if (!conversations && !owner) return;
     const revision = this.revision;
     const target: NativeSessionTargetParams = {
       sessionId: this.selectedId,
@@ -593,8 +598,8 @@ export class NativeSessionView extends LitElement {
       ...(this.worker ? { worker: nativeWorkerViewPin(this.worker) } : {}),
     };
     this.historyTarget = target;
-    this.historyQuery = nativeHistoryQuery(target, owner);
-    this.historyStop = observeNativeConversationResource(target, (state) => {
+    if (owner) this.historyQuery = nativeHistoryQuery(target, owner);
+    const changed = (state: NativeConversationState) => {
       if (!this.isConnected || revision !== this.revision) return;
       const before = this.timeline().length;
       this.historyObservation = state;
@@ -627,7 +632,10 @@ export class NativeSessionView extends LitElement {
           this.releaseLocalCommand(receipt);
       }
       this.followTimeline(before);
-    });
+    };
+    this.historyStop = conversations
+      ? observeNativeConversation({ conversations }, target, changed)
+      : observeNativeConversationResource(target, changed);
   }
 
   /** Releases the sent message; one the host failed without submitting goes back to the composer. */
@@ -1299,7 +1307,7 @@ ${JSON.stringify(
   }
 
   private schedule(delay = 0) {
-    if (!this.fixture) {
+    if (!this.fixture || this.fixture.conversations) {
       this.observeHistory();
       return;
     }

@@ -1,5 +1,5 @@
 import { html, LitElement } from 'lit';
-import { customElement } from 'lit/decorators.js';
+import { customElement, state } from 'lit/decorators.js';
 
 import { Methods, type NativeSessionInfo, type NativeSessionReadResult } from '@farmslot/protocol';
 
@@ -13,6 +13,11 @@ import type {
 import { getHashParam } from '../utils/url-state.js';
 
 import { createNativeReplayFixture } from './native-session-replay-dev.js';
+import {
+  createNativeStreamFixture,
+  type NativeStreamCost,
+  type NativeStreamFixture,
+} from './native-session-stream-dev.js';
 
 const session: NativeSessionInfo = {
   id: 'fixture-session',
@@ -129,12 +134,35 @@ const fixtureApi: NativeSessionApi & NativeSessionFixture = {
 
 @customElement('native-session-dev')
 export class NativeSessionDev extends LitElement {
+  /** `#dev/native-session?stream=1`: a 300+ row conversation that streams through the cache. */
+  private streamApi?: NativeStreamFixture =
+    getHashParam('stream') === '1' ? createNativeStreamFixture(session) : undefined;
   private previewApi = (() => {
+    if (this.streamApi) return this.streamApi;
     const replay = getHashParam('replay');
-    return replay && ['matching', 'foreign-command', 'foreign-generation'].includes(replay)
-      ? createNativeReplayFixture(session, replay)
-      : fixtureApi;
+    if (replay && ['matching', 'foreign-command', 'foreign-generation'].includes(replay))
+      return createNativeReplayFixture(session, replay);
+    // Each preview seeds its own selection, so one opened earlier does not carry over.
+    localStorage.setItem('farmslot-native:fixture:selected', session.id);
+    return fixtureApi;
   })();
+  @state() private streamCost?: NativeStreamCost | string;
+
+  private async stream() {
+    const api = this.streamApi;
+    if (!api) return;
+    this.streamCost = 'Streaming…';
+    try {
+      this.streamCost = await api.stream(200, () =>
+        this.renderRoot
+          .querySelector('native-session-view')
+          ?.shadowRoot?.querySelector('.timeline'),
+      );
+    } catch (error) {
+      // The preview shows the failure where the result would be; the probe reads it from there.
+      this.streamCost = `Stream failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
 
   render() {
     return html`<style>
@@ -143,7 +171,18 @@ export class NativeSessionDev extends LitElement {
           height: 80vh;
           flex-direction: column;
         }</style
-      ><native-session-view
+      >${this.streamApi
+        ? html`<button data-testid="native-stream-start" @click=${() => void this.stream()}>
+              Stream 200 deltas
+            </button>
+            <pre data-testid="native-stream-cost">
+${typeof this.streamCost === 'string'
+                ? this.streamCost
+                : this.streamCost
+                  ? JSON.stringify(this.streamCost)
+                  : ''}</pre
+            >`
+        : ''}<native-session-view
         .api=${this.previewApi}
         .fixture=${this.previewApi}
       ></native-session-view>`;
