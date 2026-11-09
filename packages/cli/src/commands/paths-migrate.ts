@@ -251,7 +251,7 @@ async function moveStep(plan: MigrationPlan, step: MoveStep): Promise<void> {
   await ensureDirectory(plan, path.dirname(step.target));
   const source = await info(step.source);
   const target = await info(step.target);
-  const destination = movedInventory(step);
+  const destination = await movedInventory(step);
   if (target) {
     await assertIdentity(step.target, destination);
     if (source) {
@@ -476,7 +476,7 @@ export async function migratePaths(
           await atomicFile(step.target, await readFile(step.backup), step.mode);
         }
       } else {
-        const destination = movedInventory(step);
+        const destination = await movedInventory(step);
         await assertUnredirected(
           step.expected['']?.kind === 'link' ? path.dirname(step.source) : step.source,
         );

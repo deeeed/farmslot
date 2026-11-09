@@ -20,13 +20,13 @@ export function watcherClock(t: TestContext) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   return {
     flush: () => t.mock.timers.tick(1001),
-    async until(check: () => boolean, label: string): Promise<void> {
+    async until(check: () => boolean | Promise<boolean>, label: string): Promise<void> {
       const deadline = performance.now() + 1500;
-      while (!check() && performance.now() < deadline) {
+      while (!(await check()) && performance.now() < deadline) {
         t.mock.timers.tick(1);
         await setImmediate();
       }
-      assert(check(), label);
+      assert(await check(), label);
     },
   };
 }

@@ -553,18 +553,75 @@ for (const copy of [false, true])
     await assertLegacy(f);
   });
 
-for (const target of ['missing', 'cycle', 'relative-escape', 'moving-external'] as const)
+for (const copy of [false, true])
+  test(`absolute links resolve symlinks before parent traversal, copy=${copy}`, async (t) => {
+    const f = await fixture(t);
+    const task = path.join(f.archive, 'run-a/old-generation/task');
+    await mkdir(path.join(task, 'dir/nested'), { recursive: true });
+    await put(path.join(task, 'proof.txt'), 'lexical decoy');
+    await put(path.join(task, 'dir/proof.txt'), 'real target bytes');
+    await symlink('dir/nested', path.join(task, 'alias'));
+    const original = `${task}/alias/../proof.txt`;
+    await symlink(original, path.join(task, 'proof-link'));
+    assert.equal(await readFile(path.join(task, 'proof-link'), 'utf8'), 'real target bytes');
+    const externalAlias = path.join(f.root, 'external-alias');
+    await symlink(path.join(task, 'dir/nested'), externalAlias);
+    await symlink(`${externalAlias}/../proof.txt`, path.join(task, 'external-alias-link'));
+    const before = await inventory(task);
+    const plan = await planMigration(f.options);
+    if (copy) for (const step of plan.steps) if (step.kind === 'move') step.method = 'copy';
+    await put(plan.journal, plan);
+    await migratePaths(f.options, 'apply');
+    const movedTask = path.join(plan.dataRoot, 'run-archive/run-a/old-generation/task');
+    assert.equal(await readFile(path.join(movedTask, 'proof-link'), 'utf8'), 'real target bytes');
+    assert.equal(
+      await fs.readlink(path.join(movedTask, 'proof-link')),
+      path.join(movedTask, 'dir/proof.txt'),
+    );
+    assert.equal(
+      await readFile(path.join(movedTask, 'external-alias-link'), 'utf8'),
+      'real target bytes',
+    );
+    await migratePaths(f.options, 'rollback');
+    assert.equal(await readFile(path.join(task, 'proof-link'), 'utf8'), 'real target bytes');
+    assert.equal(await fs.readlink(path.join(task, 'proof-link')), original);
+    assert.equal(
+      await readFile(path.join(task, 'external-alias-link'), 'utf8'),
+      'real target bytes',
+    );
+    assert.deepEqual(await inventory(task), before);
+  });
+
+for (const target of [
+  'missing',
+  'cycle',
+  'relative-escape',
+  'moving-external',
+  'missing-before-parent',
+  'file-before-parent',
+  'file-trailing-slash',
+  'escaping-alias',
+] as const)
   test(`dangling migration link refuses before mutation: ${target}`, async (t) => {
     const f = await fixture(t);
     const task = path.join(f.archive, 'run-a/old-generation/task');
     await mkdir(task);
     const link = path.join(task, 'bad-link');
+    const outside = path.join(f.root, 'external');
+    await mkdir(path.join(outside, 'nested'), { recursive: true });
+    await put(path.join(outside, 'proof.txt'), 'external proof');
+    await symlink(path.join(outside, 'nested'), path.join(task, 'alias'));
     const targets = {
       missing: path.join(task, 'missing'),
+      'missing-before-parent': `${task}/missing/../proof.txt`,
+      'file-before-parent': `${task}/proof.txt/../proof.txt`,
+      'file-trailing-slash': `${task}/proof.txt/`,
+      'escaping-alias': `${task}/alias/../proof.txt`,
       cycle: link,
       'relative-escape': '../../../../missing',
       'moving-external': path.join(f.home, 'task-pins/pin/provenance.json'),
     };
+    await put(path.join(task, 'proof.txt'), 'proof');
     await symlink(targets[target], link);
     const before = await inventory(f.root);
     await assert.rejects(migratePaths(f.options, 'apply'), /symlink|link/i);

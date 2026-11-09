@@ -387,7 +387,7 @@ export async function planMigration(options: MigrationOptions): Promise<Migratio
         : 'copy';
     const step = { source, target, expected };
     if (
-      Object.entries(movedInventory(step)).some(
+      Object.entries(await movedInventory(step)).some(
         ([key, entry]) => entry.digest !== expected[key].digest,
       )
     )

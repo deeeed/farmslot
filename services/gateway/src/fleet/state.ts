@@ -1027,6 +1027,16 @@ export function startFileWatcher() {
       once(registrationWatcher, 'ready'),
       triagePilotReady,
     ]),
+    // Native receipts let tests prove each directory is armed before its first mutation.
+    onFileEvent(listener: (event: string, file: string) => void): void {
+      for (const owner of [watcher, poolWatcher, projectWatcher, registrationWatcher]) {
+        owner.on('all', listener);
+        owner.on('raw', (_event, filename: unknown, details: unknown) => {
+          const file = watchedEventPath(filename, details);
+          if (file) listener('raw', file);
+        });
+      }
+    },
     assertTriagePilotObserved: (directory: string) => triagePilotObservation.assertReady(directory),
     async close(): Promise<void> {
       clearTimeout(poolDebounce);

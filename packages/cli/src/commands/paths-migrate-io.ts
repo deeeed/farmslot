@@ -19,7 +19,11 @@ export {
   type Inventory,
   inventory,
 } from '@farmslot/protocol/node/tree-fingerprint';
-import { type Inventory, inventory } from '@farmslot/protocol/node/tree-fingerprint';
+import {
+  type FileIdentity,
+  type Inventory,
+  inventory,
+} from '@farmslot/protocol/node/tree-fingerprint';
 
 import type { MoveStep } from './paths-migrate-plan.js';
 
@@ -86,65 +90,104 @@ export async function syncDirectory(directory: string): Promise<void> {
     await handle.close();
   }
 }
-/** The journal keeps original link text; only the destination inventory is translated. */
-export function movedInventory(step: Pick<MoveStep, 'source' | 'target' | 'expected'>): Inventory {
-  return Object.fromEntries(
-    Object.entries(step.expected).map(([relative, entry]) => {
-      const target = path.isAbsolute(entry.digest) ? path.resolve(entry.digest) : undefined;
-      return [
-        relative,
-        entry.kind === 'link' && target && within(step.source, target)
-          ? { ...entry, digest: path.join(step.target, path.relative(step.source, target)) }
-          : entry,
-      ];
-    }),
-  );
+type LinkEntry = Pick<FileIdentity, 'kind' | 'digest'>;
+type LinkLookup = (file: string) => Promise<LinkEntry | undefined>;
+
+async function filesystemEntry(file: string): Promise<LinkEntry | undefined> {
+  const value = await info(file);
+  if (!value) return undefined;
+  return {
+    kind: value.isSymbolicLink() ? 'link' : value.isDirectory() ? 'directory' : 'file',
+    digest: value.isSymbolicLink() ? await readlink(file) : '',
+  };
 }
 
-/** Resolve links against the completed move, including chains and stationary external targets. */
+/** Walk before normalizing: a symlink followed by /.. traverses its real parent. */
+async function resolveLink(link: string, lookup: LinkLookup): Promise<string> {
+  const components = (target: string) =>
+    target
+      .split(path.sep)
+      .filter(Boolean)
+      .concat(target.endsWith(path.sep) ? ['.'] : []);
+  let pending = components(link);
+  let resolved = path.parse(link).root;
+  let hops = 0;
+  while (pending.length) {
+    const part = pending.shift()!;
+    if (part === '.') continue;
+    if (part === '..') {
+      resolved = path.dirname(resolved);
+      continue;
+    }
+    const file = path.join(resolved, part);
+    const value = await lookup(file);
+    if (!value) throw new Error(`Migration symlink would dangle: ${link} -> ${file}`);
+    if (value.kind === 'link') {
+      if (++hops > 40) throw new Error(`Migration symlink cycles: ${link}`);
+      if (path.isAbsolute(value.digest)) resolved = path.parse(value.digest).root;
+      pending = [...components(value.digest), ...pending];
+    } else {
+      if (pending.length && value.kind !== 'directory')
+        throw new Error(`Migration symlink traverses a file: ${link}`);
+      resolved = file;
+    }
+  }
+  return resolved;
+}
+
+/** The journal's original inventory also resolves links during resume and rollback. */
+function originalLookup(steps: Pick<MoveStep, 'source' | 'expected'>[]): LinkLookup {
+  return async (file) => {
+    const source = steps.find((step) => within(step.source, file));
+    if (source) return source.expected[path.relative(source.source, file)];
+    if (steps.some((step) => within(file, step.source))) return { kind: 'directory', digest: '' };
+    return filesystemEntry(file);
+  };
+}
+
+/** The journal keeps original link text; only the destination inventory is translated. */
+export async function movedInventory(
+  step: Pick<MoveStep, 'source' | 'target' | 'expected'>,
+): Promise<Inventory> {
+  const result = { ...step.expected };
+  const lookup = originalLookup([step]);
+  for (const [relative, entry] of Object.entries(result)) {
+    if (entry.kind !== 'link' || !path.isAbsolute(entry.digest)) continue;
+    const target = await resolveLink(entry.digest, lookup);
+    if (within(step.source, target))
+      result[relative] = {
+        ...entry,
+        digest: path.join(step.target, path.relative(step.source, target)),
+      };
+  }
+  return result;
+}
+
+/** Resolve both trees and refuse any link whose real target changes during the move. */
 export async function assertMigratedLinks(steps: MoveStep[]): Promise<void> {
-  const destinations = steps.map((step) => ({ ...step, inventory: movedInventory(step) }));
-  const lookup = async (file: string) => {
+  const destinations = await Promise.all(
+    steps.map(async (step) => ({ ...step, inventory: await movedInventory(step) })),
+  );
+  const before = originalLookup(steps);
+  const after: LinkLookup = async (file) => {
     const destination = destinations.find((step) => within(step.target, file));
     if (destination) return destination.inventory[path.relative(destination.target, file)];
     if (steps.some((step) => within(step.source, file))) return undefined;
-    const value = await info(file);
-    if (value)
-      return {
-        kind: value.isSymbolicLink() ? 'link' : value.isDirectory() ? 'directory' : 'file',
-        digest: value.isSymbolicLink() ? await readlink(file) : '',
-      };
     // The migration creates these parents before installing any tree.
     if (steps.some((step) => within(file, step.target))) return { kind: 'directory', digest: '' };
-    return undefined;
+    return filesystemEntry(file);
   };
   for (const step of destinations)
     for (const [relative, entry] of Object.entries(step.inventory)) {
       if (entry.kind !== 'link') continue;
+      const original = await resolveLink(path.join(step.source, relative), before);
+      const owner = steps.find((move) => within(move.source, original));
+      const expected = owner
+        ? path.join(owner.target, path.relative(owner.source, original))
+        : original;
       const link = path.join(step.target, relative);
-      let pending = link.split(path.sep).filter(Boolean);
-      let resolved = path.parse(link).root;
-      let hops = 0;
-      while (pending.length) {
-        const part = pending.shift()!;
-        if (part === '.') continue;
-        if (part === '..') {
-          resolved = path.dirname(resolved);
-          continue;
-        }
-        const file = path.join(resolved, part);
-        const value = await lookup(file);
-        if (!value) throw new Error(`Migration symlink would dangle: ${link} -> ${file}`);
-        if (value.kind === 'link') {
-          if (++hops > 40) throw new Error(`Migration symlink cycles: ${link}`);
-          if (path.isAbsolute(value.digest)) resolved = path.parse(value.digest).root;
-          pending = [...value.digest.split(path.sep).filter(Boolean), ...pending];
-        } else {
-          if (pending.length && value.kind !== 'directory')
-            throw new Error(`Migration symlink traverses a file: ${link}`);
-          resolved = file;
-        }
-      }
+      if ((await resolveLink(link, after)) !== expected)
+        throw new Error(`Migration symlink target would change: ${link}`);
     }
 }
 

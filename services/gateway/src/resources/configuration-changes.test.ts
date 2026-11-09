@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import test, { mock } from 'node:test';
+import test, { mock, type TestContext } from 'node:test';
 
 import type { PRTeamConfig } from '@farmslot/protocol';
 
@@ -89,6 +89,49 @@ async function advances(write: () => Promise<unknown> | unknown): Promise<void> 
     resourceRevisions.revision(farm) > before,
     'The owning writer must publish after its commit',
   );
+}
+
+interface ConfigurationEvent {
+  event: string;
+  file: string;
+}
+
+function configurationWatcher(t: TestContext) {
+  const clock = watcherClock(t);
+  const watcher = startFileWatcher();
+  const events: ConfigurationEvent[] = [];
+  watcher.onFileEvent((event, file) => events.push({ event, file }));
+  return {
+    ...watcher,
+    clock,
+    async readyFor(file: string): Promise<void> {
+      const probe = `${file}.watch-ready`;
+      const start = events.length;
+      try {
+        // FSEvents can drop a write immediately after fs.watch starts. Await a receipt
+        // for this ignored probe instead of assuming Chokidar readiness arms the OS.
+        await clock.until(
+          async () => {
+            if (events.slice(start).some((item) => item.file === probe && item.event === 'raw'))
+              return true;
+            await writeFile(probe, 'ready');
+            return false;
+          },
+          `Native directory observation: ${path.dirname(file)}`,
+        );
+      } finally {
+        await rm(probe, { force: true });
+      }
+    },
+    async observe(file: string, event: string, write: () => Promise<unknown>) {
+      const start = events.length;
+      await write();
+      await clock.until(
+        () => events.slice(start).some((item) => item.file === file && item.event === event),
+        `${event}: ${file}`,
+      );
+    },
+  };
 }
 
 test('registration reads refuse malformed sources without exposing secrets or losing fallback resolution', async (t) => {
@@ -189,8 +232,8 @@ test('owning project/pool/slot/provider/registration writers publish readable co
 });
 
 test('actual external template/project/registration file writes use the existing bounded watcher', async (t) => {
-  const clock = watcherClock(t);
-  const watcher = startFileWatcher();
+  const watcher = configurationWatcher(t);
+  const { clock } = watcher;
   try {
     await watcher.ready;
     clock.flush();
@@ -203,8 +246,16 @@ test('actual external template/project/registration file writes use the existing
       [getOpenClawStorePath(), JSON.stringify({ version: 1, profiles: {} })],
     ]) {
       if (file === getOpenClawStorePath()) await mkdir(path.dirname(file), { recursive: true });
+      await watcher.readyFor(file);
       const before = resourceRevisions.revision(farm);
-      await writeFile(file, content);
+      const event = await readFile(file).then(
+        () => 'change',
+        (error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error;
+          return 'add';
+        },
+      );
+      await watcher.observe(file, event, () => writeFile(file, content));
       await clock.until(() => resourceRevisions.revision(farm) > before, path.basename(file));
     }
     // Stop the existing pool health debounce before performing further filesystem assertions.
@@ -228,8 +279,8 @@ test('actual external template/project/registration file writes use the existing
 });
 
 test('an immediate atomic template replacement publishes after the earlier observation', async (t) => {
-  const clock = watcherClock(t);
-  const watcher = startFileWatcher();
+  const watcher = configurationWatcher(t);
+  const { clock } = watcher;
   const file = path.join(root, 'projects/example/templates/worker/dev.md');
   const replacement = `${file}.tmp`;
   const waitForRevision = (previous: number) =>
@@ -240,8 +291,9 @@ test('an immediate atomic template replacement publishes after the earlier obser
   try {
     await watcher.ready;
     clock.flush();
+    await watcher.readyFor(file);
     const before = resourceRevisions.revision(farm);
-    await writeFile(file, '# First observed template');
+    await watcher.observe(file, 'change', () => writeFile(file, '# First observed template'));
     await waitForRevision(before);
     const first = resourceRevisions.revision(farm);
     assert.equal(
@@ -249,7 +301,7 @@ test('an immediate atomic template replacement publishes after the earlier obser
       '# First observed template',
     );
     await writeFile(replacement, '# Final atomic template');
-    await rename(replacement, file);
+    await watcher.observe(file, 'change', () => rename(replacement, file));
     await waitForRevision(first);
     assert.equal(
       (await config.configTemplates({ project: 'example' })).templates[0].rawMarkdown,
@@ -346,8 +398,8 @@ test('malformed project sources fail client observations instead of returning an
 });
 
 test('the selected-home observer invalidates each assessment policy on add, replacement and deletion', async (t) => {
-  const clock = watcherClock(t);
-  const watcher = startFileWatcher();
+  const watcher = configurationWatcher(t);
+  const { clock } = watcher;
   const key = { family: 'assessment', scope: 'farm' } as const;
   try {
     await watcher.ready;
@@ -359,16 +411,20 @@ test('the selected-home observer invalidates each assessment policy on add, repl
       'triage-policy.json',
     ]) {
       const file = path.join(root, 'home', name);
-      for (const write of [
-        () => writeFile(file, '{}'),
-        async () => {
-          await writeFile(`${file}.tmp`, '{"enabled":false}');
-          await rename(`${file}.tmp`, file);
-        },
-        () => rm(file),
-      ]) {
+      await watcher.readyFor(file);
+      for (const [event, write] of [
+        ['add', () => writeFile(file, '{}')],
+        [
+          'change',
+          async () => {
+            await writeFile(`${file}.tmp`, '{"enabled":false}');
+            await rename(`${file}.tmp`, file);
+          },
+        ],
+        ['unlink', () => rm(file)],
+      ] as const) {
         const before = resourceRevisions.revision(key);
-        await write();
+        await watcher.observe(file, event, write);
         await clock.until(() => resourceRevisions.revision(key) > before, name);
       }
     }
@@ -406,12 +462,13 @@ test('the owning home watcher rebinds the selected triage receipt directory', as
       }),
     );
   await writePolicy(first);
-  const clock = watcherClock(t);
-  const watcher = startFileWatcher();
+  const watcher = configurationWatcher(t);
+  const { clock } = watcher;
   const key = { family: 'assessment', scope: 'farm' } as const;
   try {
     await watcher.ready;
     clock.flush();
+    await watcher.readyFor(file);
     await clock.until(() => {
       try {
         watcher.assertTriagePilotObserved(first);
@@ -487,8 +544,8 @@ test('the actual PR rule file observer reloads replacements and refuses malforme
   };
   await rules.store.saveTeam(owner.id, config);
   const file = path.join(root, '.pr-rules.json');
-  const clock = watcherClock(t);
-  const watcher = startFileWatcher();
+  const watcher = configurationWatcher(t);
+  const { clock } = watcher;
   const diagnostics: unknown[][] = [];
   t.mock.method(console, 'error', (...args: unknown[]) => {
     diagnostics.push(args);
@@ -505,6 +562,7 @@ test('the actual PR rule file observer reloads replacements and refuses malforme
   try {
     await watcher.ready;
     clock.flush();
+    await watcher.readyFor(file);
     const external = rules.store.snapshot();
     external.teams[0].config.name = 'External team';
     await writeFile(`${file}.tmp`, JSON.stringify(external));
