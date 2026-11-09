@@ -273,14 +273,17 @@ test('router model definitions preserve xhigh and max instead of letting Pi roun
   assert.equal(other.models[0].thinkingLevelMap, undefined);
 });
 
-test('router models accept image input so workers can read their screenshots', async () => {
-  const [provider] = await resolvePiProviderCatalog(
-    { FARMSLOT_PI_OLLAMA: '0', FARMSLOT_PI_ROUTER_URL: 'http://router.test/v1' },
+test('all worker provider models declare image input without per-model detection', async () => {
+  const providers = await resolvePiProviderCatalog(
+    { LITELLM_URL: 'http://litellm.test/v1', FARMSLOT_PI_ROUTER_URL: 'http://router.test/v1' },
     { fetchImpl: modelsFetch({ id: 'DeepSeek-V4.1-Flash-1017', supports_reasoning: true }) },
   );
-  assert.deepEqual(provider.models[0].input, ['text', 'image']);
-  const [other] = await resolvePiProviderCatalog({}, { fetchImpl: modelsFetch({ id: 'local' }) });
-  assert.deepEqual(other.models[0].input, ['text']);
+  assert.deepEqual(
+    providers.map((provider) => provider.id),
+    ['ollama', 'litellm', 'router'],
+  );
+  for (const provider of providers)
+    assert.deepEqual(provider.models[0].input, ['text', 'image'], provider.id);
 });
 
 test('id-only router discovery uses configured limits and defaults reasoning on', async () => {
@@ -463,6 +466,59 @@ test('router wire guard records actual effort and refuses an off or missing effo
   assert.equal(records.length, 1);
 });
 
+function guardedRequest({ provider = 'litellm', thinking = 'max', model = {} } = {}) {
+  const sent = [];
+  const records = [];
+  const fetch = providerReasoningFetch(
+    async (input, options) => {
+      sent.push({ input, options });
+      return new Response('OK');
+    },
+    [
+      {
+        id: provider,
+        baseUrl: 'http://provider.test/v1',
+        models: [{ id: 'model', reasoning: true, input: ['text'], ...model }],
+      },
+    ],
+    (record) => records.push(record),
+    thinking,
+  );
+  const request = (payload) =>
+    fetch('http://provider.test/v1/chat/completions', {
+      body: JSON.stringify({ model: 'model', ...payload }),
+    });
+  return { fetch, request, sent, records };
+}
+
+test('wire guard refuses an undeclared max-to-high clamp before sending or recording', async () => {
+  for (const provider of ['router', 'litellm', 'ollama']) {
+    const { request, sent, records } = guardedRequest({ provider });
+    await assert.rejects(request({ reasoning_effort: 'high' }), /PI_REASONING_EFFORT_MISMATCH/);
+    assert.equal(sent.length, 0);
+    assert.equal(records.length, 0);
+    await request({ reasoning_effort: 'max' });
+    assert.equal(sent.length, 1);
+    assert.equal(records[0].effort, 'max');
+  }
+});
+
+test('wire guard honors the model thinking map rather than requiring identical labels', async () => {
+  const { request, sent } = guardedRequest({ model: { thinkingLevelMap: { max: 'high' } } });
+  await request({ reasoning_effort: 'high' });
+  await assert.rejects(request({ reasoning_effort: 'max' }), /PI_REASONING_EFFORT_MISMATCH/);
+  assert.equal(sent.length, 1);
+});
+
+test('wire guard refuses selected reasoning on a model that sends none', async () => {
+  const { request, sent } = guardedRequest({ model: { reasoning: false } });
+  await assert.rejects(request({}), /PI_REASONING_EFFORT_MISMATCH/);
+  assert.equal(sent.length, 0);
+  const disabled = guardedRequest({ thinking: 'off', model: { reasoning: false } });
+  await disabled.request({});
+  assert.equal(disabled.sent.length, 1);
+});
+
 test('router guard leaves other providers unchanged and accepts Request inputs', async () => {
   const [router] = await resolvePiProviderCatalog(routerEnv, {
     fetchImpl: modelsFetch({ id: 'model' }),
@@ -643,6 +699,7 @@ async function checkExtensionReload(extensionUrl) {
     ...originalEnv,
     FARMSLOT_PI_OLLAMA: '0',
     FARMSLOT_PI_REQUEST_TIMEOUT_MS: '300000',
+    FARMSLOT_THINKING: 'medium',
   };
   for (const key of Object.keys(process.env))
     if (
@@ -687,6 +744,12 @@ async function checkExtensionReload(extensionUrl) {
   try {
     const before = await load();
     assert.equal(await (await request()).text(), 'OK');
+    await assert.rejects(
+      globalThis.fetch('http://router.test/v1/chat/completions', {
+        body: JSON.stringify({ model: 'model', reasoning_effort: 'high' }),
+      }),
+      /PI_REASONING_EFFORT_MISMATCH/,
+    );
     const previousFetch = globalThis.fetch;
     await before.events.get('session_shutdown')?.({ reason: 'reload' });
     before.runtime.active = false;

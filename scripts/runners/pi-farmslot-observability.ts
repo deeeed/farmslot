@@ -75,10 +75,15 @@ export default async function (pi: {
   });
   try {
     const catalog = await resolvePiProviderCatalog(process.env);
-    requestFetch = providerReasoningFetch(boundedFetch, catalog, (configuration) => {
-      console.error('[farmslot-pi] request', JSON.stringify(configuration));
-      pi.appendEntry?.('farmslot-model-request', configuration);
-    });
+    requestFetch = providerReasoningFetch(
+      boundedFetch,
+      catalog,
+      (configuration) => {
+        console.error('[farmslot-pi] request', JSON.stringify(configuration));
+        pi.appendEntry?.('farmslot-model-request', configuration);
+      },
+      process.env.FARMSLOT_THINKING,
+    );
     for (const source of catalog) {
       pi.registerProvider?.(source.id, {
         name: source.name,
