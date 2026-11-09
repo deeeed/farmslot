@@ -1,1 +1,0 @@
-- Retain full review-launch inputs alongside attempt-bound fix inputs so recovery detects description and worker report edits.

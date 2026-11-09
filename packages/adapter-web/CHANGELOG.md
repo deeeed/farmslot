@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.19.6 - 2026-11-09
+
+- Align protocol 0.83.1 and its matching dependency set so legacy path tools keep JSON output clean with one protocol instance.
+
 ## 0.19.5 - 2026-11-09
 
 - Republish against adapter-sdk 0.27.0 so installed consumers use one copy of each Farmslot dependency.

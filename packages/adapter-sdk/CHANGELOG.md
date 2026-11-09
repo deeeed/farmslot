@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.27.1 - 2026-11-09
+
+- Align protocol 0.83.1 and its matching dependency set so legacy path tools keep JSON output clean with one protocol instance.
+
 ## 0.27.0 - 2026-11-09
 
 - `runEvidenceView(model, run?)` (evidence entry) projects the shared review model into the plain-JSON run evidence view-model: criteria in run order with verdict, clip cue, files and before/after pair, steps with marker cues, and step groups.

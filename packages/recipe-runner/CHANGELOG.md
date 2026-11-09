@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.46.11 - 2026-11-09
+
+- Align protocol 0.83.1 and its matching dependency set so legacy path tools keep JSON output clean with one protocol instance.
+
 ## 0.46.10 - 2026-11-09
 
 - The runner republishes `trace.json` after each step, whole through a temporary file and a rename, so a live viewer can follow the run.
