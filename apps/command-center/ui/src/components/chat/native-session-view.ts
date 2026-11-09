@@ -687,10 +687,11 @@ export class NativeSessionView extends LitElement {
     session: NativeSessionInfo,
     hidden = false,
     planOpen = true,
+    latest = false,
   ) {
     const proposal = entry.event.plan?.kind === 'proposal';
     return html`<article
-      class="${entry.kind}${proposal ? ' proposal' : ''}"
+      class="${entry.kind}${proposal ? ' proposal' : ''}${latest ? ' latest-turn' : ''}"
       data-sequence=${entry.key}
       ?hidden=${hidden}
     >
@@ -2008,6 +2009,12 @@ ${JSON.stringify(
     );
     // Rows once per render: they feed both Implement and the timeline.
     const rows = implementable || (session && !this.creating) ? this.timelineRows() : [];
+    // The latest turn, from its prompt on, may still change while the reader is scrolled away.
+    let latestTurn = rows.length;
+    while (latestTurn > 0) {
+      const row = rows[--latestTurn];
+      if (row.kind === 'entry' && row.entry.kind === 'user') break;
+    }
     this.implementKey =
       session && implementable
         ? nativeImplementableKey(session, rows, this.requests, Boolean(this.localCommand))
@@ -2330,7 +2337,7 @@ ${JSON.stringify(
                       repeat(
                         rows,
                         (row) => (row.kind === 'work' ? `work:${row.key}` : row.key),
-                        (row) =>
+                        (row, index) =>
                           row.kind === 'work'
                             ? html`<article class="work">
                                 <button
@@ -2353,6 +2360,7 @@ ${JSON.stringify(
                                 session,
                                 row.fold !== undefined && !this.foldIsOpen(row.fold),
                                 nativePlanOpen(row, this.watchedTools),
+                                index >= latestTurn,
                               ),
                       ),
                     )}

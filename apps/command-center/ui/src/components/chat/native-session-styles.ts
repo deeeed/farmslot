@@ -203,6 +203,13 @@ export const nativeSessionStyles = css`
     margin: 0 0 14px;
     overflow-wrap: anywhere;
   }
+  /* Rows of earlier turns skip layout and paint out of view, keeping their last measured height.
+     The latest turn still changes while the reader may be scrolled away, so it stays laid out:
+     its height, and so the end that following and Jump to latest scroll to, is never stale. */
+  .timeline > article:not(.latest-turn) {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 120px;
+  }
   article.user {
     margin-left: 12%;
     background: ${unsafeCSS(colors.bgCard)};
