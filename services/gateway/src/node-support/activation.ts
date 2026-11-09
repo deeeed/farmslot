@@ -5,7 +5,12 @@ import { hostname } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import { hasUnsettledRunExecution, resolveRunSlotId, type Run } from '@farmslot/protocol';
+import {
+  hasUnsettledRunExecution,
+  isActiveListRun,
+  resolveRunSlotId,
+  type Run,
+} from '@farmslot/protocol';
 import { legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { isRecord } from '@farmslot/protocol/recipe';
 import { parseRunRecordFile } from '@farmslot/run-bundle';
@@ -67,6 +72,11 @@ function supportHashes(values: readonly unknown[], supportRoot?: string): string
   };
   values.forEach(visit);
   return [...hashes];
+}
+
+/** A failed run stays replayable until archived, so the bundles its fixtures name stay too. */
+function retainsNodeSupport(run: Run): boolean {
+  return !run.archivedAt && (hasUnsettledRunExecution(run) || isActiveListRun(run));
 }
 
 export function referencedNodeSupportHashes(runs: readonly Run[], supportRoot?: string): string[] {
@@ -161,8 +171,7 @@ export async function nodeSupportRetentionReferences(
     const selection = nodeSupportHashPath(selected.remoteRepo, project.runtimeDir);
     selectionPaths.push(selection);
     for (const run of runs) {
-      if (run.archivedAt || !hasUnsettledRunExecution(run) || resolveRunSlotId(run) !== slot.id)
-        continue;
+      if (!retainsNodeSupport(run) || resolveRunSlotId(run) !== slot.id) continue;
       const paths = [selection];
       const fixtures = project.projectJson.fixtures;
       if (isRecord(fixtures)) {
@@ -199,9 +208,7 @@ export async function nodeSupportRetentionReferences(
         .digest('hex'),
       runIds: runs.map((run) => run.id),
     },
-    endedRunIds: runs
-      .filter((run) => run.archivedAt || !hasUnsettledRunExecution(run))
-      .map((run) => run.id),
+    endedRunIds: runs.filter((run) => !retainsNodeSupport(run)).map((run) => run.id),
     runHashes: referencedNodeSupportHashes(runs, farmPathsForSlot(vars).code.support),
   };
 }

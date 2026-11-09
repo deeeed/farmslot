@@ -19,6 +19,8 @@ const { listRuns } = await import('../runs/store.js');
 const { nodeSupportRetentionReferences } = await import('./activation.js');
 
 test('one-shot inventory finds active fixture ownership on disk with an empty run store', async () => {
+  // A failed run that is not archived can still be replayed, so it keeps the support bundles
+  // its prepared fixtures name. Archiving ends that retention.
   await Promise.all([
     mkdir(pool),
     mkdir(runs),
@@ -103,6 +105,13 @@ test('one-shot inventory finds active fixture ownership on disk with an empty ru
   );
   await mkdir(path.join(runs, 'archive'));
   await writeFile(
+    path.join(runs, 'archive/archived-failure.json'),
+    JSON.stringify({
+      ...makeRun({ id: 'archived-failure', status: 'failed', slotId: 'fixture-1' }),
+      archivedAt: '2026-10-23T00:00:00Z',
+    }),
+  );
+  await writeFile(
     path.join(runs, 'archive/archived-owner.json'),
     JSON.stringify({
       ...makeRun({ id: 'archived-owner', status: 'done' }),
@@ -118,15 +127,13 @@ test('one-shot inventory finds active fixture ownership on disk with an empty ru
   ];
   assert.deepEqual(references.activeRuns, [
     { runId: 'active', paths: fixturePaths },
+    { runId: 'discarded-failure', paths: fixturePaths },
     { runId: 'retained-failure', paths: fixturePaths },
+    { runId: 'worker-failed', paths: fixturePaths },
   ]);
-  assert.deepEqual(references.endedRunIds, [
-    'archived-owner',
-    'discarded-failure',
-    'ended',
-    'worker-failed',
-  ]);
+  assert.deepEqual(references.endedRunIds, ['archived-failure', 'archived-owner', 'ended']);
   assert.deepEqual(references.runInventory?.runIds, [
+    'archived-failure',
     'archived-owner',
     'active',
     'discarded-failure',
