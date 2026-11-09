@@ -815,16 +815,30 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
       lock.release();
     }
   } catch (error) {
-    if (!authorizing || (!jsonOutput && !stream.enabled)) throw error;
+    // handleRun already reports trust/approval, resolution and provenance refusals
+    // with their own codes, details and exit codes; keep those paths.
+    if (
+      !authorizing ||
+      (!jsonOutput && !stream.enabled) ||
+      recipeTrustFailure(error) ||
+      error instanceof ProvenanceDriftError
+    )
+      throw error;
+    const coded = error as { code?: unknown; userAction?: unknown; exitCode?: unknown };
     return emitRunUsageError(
       jsonOutput,
       stream,
       adapter,
       validated.recipeFile,
-      'RUN_AUTHORIZE_FAILED',
+      typeof coded.code === 'string' ? coded.code : 'RUN_AUTHORIZE_FAILED',
       error instanceof Error ? error.message : String(error),
-      'resolve the reported refusal, then rerun',
-      { exitCode: EXIT.runtime, stage: 'authorize' },
+      typeof coded.userAction === 'string'
+        ? coded.userAction
+        : 'resolve the reported refusal, then rerun',
+      {
+        exitCode: typeof coded.exitCode === 'number' ? coded.exitCode : EXIT.runtime,
+        stage: 'authorize',
+      },
     );
   } finally {
     restoreRuntimeEnvironment();

@@ -1930,6 +1930,42 @@ describe('run', () => {
     assert.equal(fs.existsSync(path.join(target, 'temp')), false);
   });
 
+  test('run --json keeps an untrusted-action refusal as the trust envelope, not a generic authorize failure', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, {
+      ping: {
+        action: 'shop.ping',
+        count: 1,
+        mode: 'fast',
+        next: 'done',
+        intent: 'Read the shop response',
+      },
+      done: { action: 'end', status: 'pass' },
+    });
+    const result = await capture(() =>
+      handleRun(
+        [
+          recipe,
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--source-trust',
+          'untrusted',
+          '--source-kind',
+          'task',
+          '--json',
+        ],
+        runOptions,
+      ),
+    );
+    assert.equal(result.value, 5);
+    const envelope = lastJson(result.stdout) as { error: { code: string; userAction: string } };
+    assert.equal(envelope.error.code, 'RECIPE_TRUST_REQUIRED');
+    assert.match(envelope.error.userAction, /--approve-plan sha256:/u);
+    assert.equal(calls.events.length, 0);
+  });
+
   test('--plan rejects a declared action whose handler is missing', async () => {
     const target = checkout();
     const recipe = recipeFile(target, {
