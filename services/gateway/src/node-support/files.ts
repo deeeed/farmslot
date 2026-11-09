@@ -88,17 +88,4 @@ async function collectEntry(
   ];
 }
 
-export function supportHash(
-  files: Array<Pick<NodeSupportFile, 'relativePath' | 'contentBase64' | 'mode'>>,
-): string {
-  const hash = createHash('sha256');
-  for (const file of [...files].sort((a, b) => a.relativePath.localeCompare(b.relativePath))) {
-    hash.update(file.relativePath);
-    hash.update('\0');
-    hash.update(file.mode.toString(8));
-    hash.update('\0');
-    hash.update(Buffer.from(file.contentBase64, 'base64'));
-    hash.update('\0');
-  }
-  return hash.digest('hex');
-}
+export { supportHash } from '../../../../scripts/lib/runner-observability-bundle.mjs';

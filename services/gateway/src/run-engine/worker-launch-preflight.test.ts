@@ -53,12 +53,24 @@ const execution = await import('../core/exec.js');
 const runtimeScript = await import('../tasks/agent-runtime-script.js');
 const store = await import('../runs/store.js');
 const capabilities = await import('../methods/runtime-capabilities.js');
+const preflight = await import('./worker-preflight.js');
+const { RUNNER_OBSERVABILITY_BUNDLE_HASH } = await import('../runners/runner-observability.js');
+let legacySourceReceipt = false;
+let sourceFailures = 0;
+let helperUnavailable = false;
+let observedBundleHash: string | undefined;
+let retryWaits = 0;
 let selectedVars = vars;
 const commands: string[] = [];
 let currentRun: Run | undefined;
 let observedToolchain: ToolchainObservation | undefined;
 let duringSlotRead: (() => void) | undefined;
 beforeEach(() => {
+  legacySourceReceipt = false;
+  sourceFailures = 0;
+  helperUnavailable = false;
+  observedBundleHash = undefined;
+  retryWaits = 0;
   selectedVars = vars;
   currentRun = undefined;
   observedToolchain = undefined;
@@ -126,13 +138,30 @@ mock.module('../runs/store.js', {
 mock.module('../methods/runtime-capabilities.js', {
   namedExports: { ...capabilities, runtimeCapabilityStatus: async () => ({ leases: [] }) },
 });
+mock.module('./worker-preflight.js', {
+  namedExports: {
+    ...preflight,
+    runLaunchPreflight: (
+      probes: readonly import('./worker-preflight.js').LaunchProbe[],
+      options: import('./worker-preflight.js').LaunchPreflightOptions,
+    ) =>
+      preflight.runLaunchPreflight(probes, {
+        ...options,
+        wait: async () => {
+          retryWaits++;
+        },
+      }),
+  },
+});
 mock.module('../tasks/agent-runtime-script.js', {
   namedExports: {
     ...runtimeScript,
-    agentRuntimeScriptForSlot: async (_vars: unknown, filename: string) =>
-      filename === 'native-worker-env.cjs'
+    agentRuntimeScriptForSlot: async (_vars: unknown, filename: string) => {
+      if (helperUnavailable) throw new Error('runtime helper unavailable');
+      return filename === 'native-worker-env.cjs'
         ? workerEnvironmentScript
-        : '/fixture/scripts/task-init-cli.mjs',
+        : '/fixture/scripts/task-init-cli.mjs';
+    },
   },
 });
 mock.module('../core/exec.js', {
@@ -140,6 +169,8 @@ mock.module('../core/exec.js', {
     ...execution,
     execOnSlot: async (_vars: unknown, command: string) => {
       commands.push(command);
+      if (!command.includes('nodeMissing') && sourceFailures-- > 0)
+        return { exitCode: 255, stderr: 'temporary transport failure', stdout: '' };
       return {
         exitCode: 0,
         stderr: '',
@@ -156,7 +187,9 @@ mock.module('../core/exec.js', {
                 },
               })
             : {
-                status: 'verified',
+                status: legacySourceReceipt ? 'unverified' : 'verified',
+                ...(legacySourceReceipt ? { retry: false } : {}),
+                runnerObservabilityHash: observedBundleHash,
                 detail: 'fixture retained inputs match',
                 peerVersions: gatewayPeerVersions,
               },
@@ -325,4 +358,59 @@ test('only the initial pr-complete dispatch defers the old branch Node pin', asy
   currentRun.flowType = 'pr-complete';
   currentRun.status = 'fixing';
   await assert.rejects(admitWorkerLaunch(input), /expected 24.16.0 from \.nvmrc/);
+});
+
+test('a hook worker refuses a source probe that supplied no bundle hash', async () => {
+  currentRun = runFixture();
+  currentRun.metrics.runner = 'pi';
+  await assert.rejects(
+    admitWorkerLaunch({ runId: currentRun.id, vars, projectVars: project }),
+    /RUNNER_OBSERVABILITY_BUNDLE_MISMATCH/,
+  );
+});
+
+test('a hook launch retries transport failures and admits only the observed bundle', async () => {
+  currentRun = runFixture();
+  currentRun.metrics.runner = 'pi';
+  sourceFailures = 1;
+  observedBundleHash = RUNNER_OBSERVABILITY_BUNDLE_HASH;
+  await admitWorkerLaunch({
+    runId: currentRun.id,
+    vars,
+    projectVars: project,
+    supportDir: '/fixture/current-bundle',
+  });
+  assert.equal(retryWaits, 1);
+  assert.equal(commands.filter((command) => !command.includes('nodeMissing')).length, 2);
+});
+
+test('a hook launch refuses when runtime helper resolution stays unavailable', async () => {
+  currentRun = runFixture();
+  currentRun.metrics.runner = 'pi';
+  helperUnavailable = true;
+  await assert.rejects(
+    admitWorkerLaunch({
+      runId: currentRun.id,
+      vars,
+      projectVars: project,
+      supportDir: '/fixture/current-bundle',
+    }),
+    /runtime helper unavailable/,
+  );
+  assert.equal(retryWaits, 1);
+  assert.equal(commands.length, 0);
+});
+
+test('a verified hook identity preserves the legacy receipt policy', async () => {
+  currentRun = runFixture();
+  currentRun.metrics.runner = 'pi';
+  observedBundleHash = RUNNER_OBSERVABILITY_BUNDLE_HASH;
+  legacySourceReceipt = true;
+  await admitWorkerLaunch({
+    runId: currentRun.id,
+    vars,
+    projectVars: project,
+    supportDir: '/fixture/current-bundle',
+  });
+  assert.equal(retryWaits, 0);
 });
