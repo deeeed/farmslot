@@ -1,5 +1,5 @@
 // Read-only dry run of the engine's run retention pass (ADR-039 Amendment 3): what the
-// next pass would archive now, per store. It reads run records directly and changes nothing.
+// next pass would archive or delete now, per store. It reads run records directly and changes nothing.
 // Run it with the gateway's FARMSLOT_ROOT and FARMSLOT_HOME so it reads the same stores.
 import path from 'node:path';
 
@@ -11,7 +11,7 @@ import {
   retentionContext,
   runHoldsSlot,
 } from '../src/methods/run/retention.js';
-import { planRunRetention } from '../src/runs/retention.js';
+import { planRunRetention, retentionStoreAction } from '../src/runs/retention.js';
 
 const extra = process.argv.slice(2).filter((arg) => arg !== '--paths');
 if (extra.length)
@@ -24,15 +24,17 @@ for (const run of loadAllRunRecords(roots.runsDir)) byId.set(run.id, run);
 const runs = [...byId.values()];
 const { plan } = await planRunRetention(runs, await retentionContext(runs), roots, runHoldsSlot);
 
-console.log(`Runs with archivable storage: ${plan.runs.length} of ${byId.size}`);
-let total = 0;
+console.log(`Runs with reclaimable storage: ${plan.runs.length} of ${byId.size}`);
+const totals = { archived: 0, deleted: 0 };
 for (const [store, { entries, bytes }] of Object.entries(plan.stores)) {
-  total += bytes;
+  const action = retentionStoreAction(store);
+  totals[action] += bytes;
   console.log(
-    `  ${store.padEnd(18)} ${String(entries).padStart(5)}  ${(bytes / 1e9).toFixed(2)} GB`,
+    `  ${store.padEnd(18)} ${action.padEnd(8)} ${String(entries).padStart(5)}  ${(bytes / 1e9).toFixed(2)} GB`,
   );
 }
-console.log(`  ${'total'.padEnd(18)} ${''.padStart(5)}  ${(total / 1e9).toFixed(2)} GB`);
+for (const [action, bytes] of Object.entries(totals))
+  console.log(`  ${action.padEnd(18)} ${''.padStart(5)}  ${(bytes / 1e9).toFixed(2)} GB`);
 console.log('Kept:');
 for (const [reason, count] of Object.entries(plan.held).sort((a, b) => b[1] - a[1]))
   console.log(`  ${String(count).padStart(5)}  ${reason}`);
