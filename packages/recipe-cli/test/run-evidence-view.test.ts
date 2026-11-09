@@ -243,6 +243,32 @@ test('recipe view selects a project template with no execution prerequisites', a
     resolveProjectViewer({ tokens: ['--project', 'broken'], cwd, projectsDir, load }),
     /recipe\.viewer\.link is invalid/u,
   );
+  // Two slots share the checkout: an explicit project needs no slot to read its template.
+  const slotPoolDir = path.join(root, 'pool');
+  fs.mkdirSync(slotPoolDir);
+  fs.writeFileSync(
+    path.join(slotPoolDir, 'local.json'),
+    JSON.stringify({
+      host: 'localhost',
+      slots: [
+        { id: 'one', repo: fs.realpathSync(cwd) },
+        { id: 'two', repo: fs.realpathSync(cwd) },
+      ],
+    }),
+  );
+  assert.deepEqual(
+    await resolveProjectViewer({
+      tokens: ['--project', 'app'],
+      cwd,
+      projectsDir,
+      slotPoolDir,
+      load,
+    }),
+    app,
+  );
+  await assert.rejects(resolveProjectViewer({ tokens: [], cwd, projectsDir, slotPoolDir, load }), {
+    code: 'SLOT_AMBIGUOUS',
+  });
   // A checkout bound to the project, whose origin matches no registered repository.
   const bound = path.join(root, 'fork');
   fs.mkdirSync(path.join(bound, 'temp/recipe/runtime'), { recursive: true });

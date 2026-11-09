@@ -690,7 +690,7 @@ function projectEntries(
  * The project a command selects: `--project`, then the checkout's runtime binding, its slot,
  * then detection by checkout path or origin, then the default. Reads metadata only.
  */
-async function selectProject(options: ResolveProjectContextOptions) {
+async function selectProject(options: ResolveProjectContextOptions, metadataOnly = false) {
   const cwd = options.cwd ?? process.cwd();
   const requested = optionValues(options.tokens, '--target').at(-1);
   const checkoutRoot =
@@ -714,17 +714,23 @@ async function selectProject(options: ResolveProjectContextOptions) {
     ],
     adapter: false,
   };
-  const context = await resolveHarnessContext(contextOptions);
   const runtime = readBinding(
     checkoutRoot,
     optionValues(options.tokens, '--runtime-dir').at(-1),
   ).runtime;
+  const projectFlag = optionValues(options.tokens, '--project').at(-1);
+  const bindingName = stringField(runtime, 'project');
+  // Reading metadata needs no execution slot: an explicit or bound project already decides,
+  // so slots sharing this checkout need no disambiguation.
+  const context = await resolveHarnessContext(
+    metadataOnly && (projectFlag ?? bindingName)
+      ? { ...contextOptions, strictSlot: false }
+      : contextOptions,
+  );
   const { registered, entries } = projectEntries(options, checkoutRoot);
   const pool = readProjectPool(context);
   const poolSlot = context.slot?.value ? (context.slot.poolSlot ?? context.slot.value) : undefined;
   const slot = pool?.slots?.find((entry) => entry.id === poolSlot);
-  const projectFlag = optionValues(options.tokens, '--project').at(-1);
-  const bindingName = stringField(runtime, 'project');
   const slotName = slot?.project ?? pool?.project;
   const named = projectFlag ?? bindingName ?? slotName;
   const remote = checkoutRemote(checkoutRoot) || undefined;
@@ -787,7 +793,7 @@ export async function resolveProjectViewer(
 ): Promise<{ root: string; viewer?: ProjectRecipeViewerConfig } | undefined> {
   let selected: ConfiguredRecipeProject;
   try {
-    ({ selected } = await selectProject(options));
+    ({ selected } = await selectProject(options, true));
   } catch (error) {
     // A run folder needs no project: only an unselected checkout outside every project falls
     // back to the default page; an explicit, bound or ambiguous selection that fails throws.
