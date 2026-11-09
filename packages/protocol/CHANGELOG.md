@@ -6,6 +6,13 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.83.1 - 2026-11-09
+
+- Match raw ticket criteria to task-init definitions without changing stored criteria or derived proof identity.
+
+- Keep farm path resolution silent for supported legacy environment overrides so JSON consumers can parse output; override names remain available in `farmslot paths --json`.
+- Retain full review-launch inputs alongside attempt-bound fix inputs so recovery detects description and worker report edits.
+
 ## 0.83.0 - 2026-11-09
 
 - `project.json` `recipe.viewer` accepts `link` (false turns off the run-end view command) and `template` (a project page template module) for the local run evidence viewer.

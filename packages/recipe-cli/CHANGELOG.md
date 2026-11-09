@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.1 - 2026-11-09
+
+- Align protocol 0.83.1 and its matching dependency set so legacy path tools keep JSON output clean with one protocol instance.
+
 ## 0.35.0 - 2026-11-09
 
 - The harness serves a read-only local run evidence page (`serveRunEvidence`) from a Recipe v1 run folder, with a default layout, project templates (`loadRunEvidenceTemplate`), live reload while a run is in progress and the run history beside it. A run's human output ends with a `view:` command unless `project.json` `recipe.viewer.link` is false; hosts name it with `viewCommand`.
