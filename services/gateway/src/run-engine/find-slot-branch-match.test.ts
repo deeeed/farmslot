@@ -2174,3 +2174,26 @@ test('a manual pick after an automatic retry reads the new pick rather than the 
   assert.equal(result.outputs?.selectedSlot, pickedSlot);
   assert.equal(run.requestedSlotId, pickedSlot);
 });
+
+test('queue placement is not recorded as caller slot intent', async () => {
+  reset('dev', 'queue-placement-fixture');
+  expectedTarget = undefined;
+  run.slotId = slots[0]!.slot;
+  run.requestedSlotId = null;
+  run.queuedAt = new Date().toISOString();
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.inputs?.requestedSlotId, undefined);
+  assert.equal(result.outputs?.selectionMethod, 'scored');
+  assert.equal(run.requestedSlotId, null);
+});
+
+test('an actual caller slot pin keeps its user-specified audit', async () => {
+  reset('dev', 'caller-pin-fixture');
+  expectedTarget = undefined;
+  run.slotId = slots[0]!.slot;
+  run.requestedSlotId = run.slotId;
+  run.queuedAt = new Date().toISOString();
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.inputs?.requestedSlotId, run.requestedSlotId);
+  assert.equal(result.outputs?.selectionMethod, 'user-specified');
+});
