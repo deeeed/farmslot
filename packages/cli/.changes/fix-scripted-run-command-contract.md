@@ -1,0 +1,1 @@
+- Hosted task init accepts `scriptedCommand: true` from a scripted-runner request and resolves the scripted-command terminal contract for it.

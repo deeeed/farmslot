@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -395,4 +396,43 @@ test('hosted task init freezes the pack required skill set or refuses a missing 
     hostedRequiredSkills(projectJson, repo, { ...task, flow: 'ci-fix' })?.skills,
     [],
   );
+});
+
+test('only a scripted-runner request may ask for the scripted-command contract', () => {
+  const scripted = { ...request(), runner: 'scripted', scriptedCommand: true as const };
+  assert.deepEqual(parseHostedTaskInitRequest(scripted), scripted);
+  for (const invalid of [
+    { ...request(), scriptedCommand: true },
+    { ...request(), runner: 'codex', scriptedCommand: true },
+    { ...request(), runner: 'scripted', scriptedCommand: false },
+  ])
+    assert.throws(() => parseHostedTaskInitRequest(invalid), /invalid or forbidden/);
+});
+
+test('a worker task cannot claim the scripted-command contract to drop its gates', async () => {
+  const { hostedTerminalPolicy } = await import('./hosted-task-init.js');
+  const { resolveWorkerTerminalContract } = createRequire(import.meta.url)(
+    '@farmslot/agent-runtime/scripts/worker-terminal-contract.cjs',
+  ) as {
+    resolveWorkerTerminalContract: (
+      config: unknown,
+      flow: string,
+      options: { scriptedCommand?: true },
+    ) => import('@farmslot/protocol').WorkerTerminalContractDocument;
+  };
+  const gated = { acceptance: { require: true } };
+  const worker = resolveWorkerTerminalContract(gated, 'dev', {});
+  const scripted = resolveWorkerTerminalContract(gated, 'dev', { scriptedCommand: true });
+  assert.throws(
+    () => hostedTerminalPolicy({ ...request().task, terminalContract: scripted }, worker),
+    /differs from the node configuration/,
+  );
+  const projected = hostedTerminalPolicy(
+    { ...request().task, terminalContract: scripted },
+    scripted,
+  );
+  assert.deepEqual(projected.scriptedCommand, {
+    result: 'artifacts/scripted-command-result.json',
+  });
+  assert.equal(projected.acceptance, undefined);
 });

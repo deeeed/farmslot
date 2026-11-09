@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.34.3 - 2026-11-09
+
+- `run --json` reports a refusal before execution (preflight, checkout lock, runtime prepare) as the run JSON error envelope on stdout (`stage: "authorize"`, `error.code: "RUN_AUTHORIZE_FAILED"`, exit 1) instead of stderr text only, for example a second attempt into a retained `--artifacts-dir`.
+
 ## 0.34.2 - 2026-11-08
 
 - Warn once when an opaque runtime suppresses the recipe HUD, including a stronger warning for explicit `--hud show`, and retain its unavailability in the run summary and trace.
