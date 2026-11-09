@@ -683,6 +683,19 @@ export async function planMigration(options: MigrationOptions): Promise<Migratio
       }
       updated.prompt = prompt;
     }
+    if (source === legacy.state.backlogFile && Array.isArray(updated)) {
+      for (const item of updated) {
+        if (!record(item) || typeof item.specPath !== 'string' || path.isAbsolute(item.specPath))
+          continue;
+        // Backlog readers resolve relative specs against the legacy checkout.
+        const resolved = path.resolve(legacy.code.checkout, item.specPath);
+        const target = translate(resolved, plan.mappings);
+        if (target !== resolved) {
+          changes.push({ source: item.specPath, target });
+          item.specPath = target;
+        }
+      }
+    }
     const target = translate(source, plan.mappings);
     if (!changes.length) continue;
     plan.steps.push({
