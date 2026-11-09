@@ -897,9 +897,17 @@ function runAttemptLayout(attempt: string): RecipeArtifactsLayout {
   return { fresh: path.join('runs', attempt), taskSubdir: path.join('recipe-runs', attempt) };
 }
 
-/** The folder `run` writes this checkout's attempts to, owned as the writer owns it. */
-export function recipeRunAttemptsRoot(target: string): string {
-  return path.dirname(layoutArtifactsDir(target, runTaskDir(target), runAttemptLayout('attempt')));
+/**
+ * The folder a task's or this checkout's `run` attempts go to, laid out as the writer lays them
+ * out. A task the caller named wins, then the writer's own task binding, then a task the caller
+ * sees in progress (its worker binds it in another shell); otherwise the checkout's.
+ */
+export function recipeRunAttemptsRoot(
+  target: string,
+  task: { explicit?: string; active?: string } = {},
+): string {
+  const taskDir = task.explicit ?? runTaskDir(target) ?? task.active ?? null;
+  return path.dirname(layoutArtifactsDir(target, taskDir, runAttemptLayout('attempt')));
 }
 
 // The task's acceptance ledger from the recipe's proof targets. The run's result

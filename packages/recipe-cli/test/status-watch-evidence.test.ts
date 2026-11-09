@@ -19,6 +19,19 @@ function tempDir(t: TestContext): string {
   return dir;
 }
 
+/** A worker task directory with its handoff and signal, as a dispatched worker leaves it. */
+function writeTask(dir: string, status: 'running' | 'complete'): void {
+  fs.mkdirSync(path.join(dir, 'inputs'), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'inputs/handoff.json'),
+    JSON.stringify({ schemaVersion: 1, surface: 'farmslot', startedAt: new Date().toISOString() }),
+  );
+  fs.writeFileSync(
+    path.join(dir, 'SIGNAL.json'),
+    JSON.stringify({ status, timestamp: new Date().toISOString() }),
+  );
+}
+
 function writeRun(runs: string, id: string, startedAt: string): void {
   fs.mkdirSync(path.join(runs, id), { recursive: true });
   fs.writeFileSync(
@@ -45,7 +58,12 @@ function taskEnv(t: TestContext, value: string | undefined): void {
 }
 
 /** A terminal watch whose keys, page server and opener the test drives. */
-function watch(t: TestContext, target: string, overrides: Partial<StatusWatchDeps> = {}) {
+function watch(
+  t: TestContext,
+  target: string,
+  overrides: Partial<StatusWatchDeps> = {},
+  taskDir?: string,
+) {
   mock.timers.enable({ apis: ['setTimeout'] });
   const frames: string[] = [];
   const opened: string[] = [];
@@ -54,9 +72,9 @@ function watch(t: TestContext, target: string, overrides: Partial<StatusWatchDep
   let unsubscribed = false;
   let closed = false;
   const watching = runStatusWatch(
-    { target, json: false, watch: true },
+    { target, json: false, watch: true, ...(taskDir ? { taskDir } : {}) },
     {
-      now: () => 0,
+      now: () => Date.now(),
       isTty: true,
       write: (text) => frames.push(text),
       wait: (ms, signal) =>
@@ -146,12 +164,7 @@ test('status --watch opens the run the recipe writer owns, not a retained task',
   const target = tempDir(t);
   // A finished task stays on display, but an unbound run writes under the checkout.
   const retained = path.join(target, 'temp/tasks/dev/task');
-  fs.mkdirSync(path.join(retained, 'inputs'), { recursive: true });
-  fs.writeFileSync(
-    path.join(retained, 'inputs/handoff.json'),
-    JSON.stringify({ schemaVersion: 1, surface: 'farmslot', startedAt: '2026-01-01T00:00:00Z' }),
-  );
-  fs.writeFileSync(path.join(retained, 'SIGNAL.json'), JSON.stringify({ status: 'complete' }));
+  writeTask(retained, 'complete');
   writeRun(path.join(retained, 'artifacts/recipe-runs'), 'history', '2026-01-03T00:00:00.000Z');
   const runs = path.join(target, 'temp/recipe/runs');
   writeRun(runs, 'current', '2026-01-02T00:00:00.000Z');
@@ -189,4 +202,41 @@ test('status --watch says when no recipe run exists yet', async (t) => {
   session.key('v');
   await settle(() => session.frames.length === 2);
   assert.match(session.frames[1]!, /no recipe run yet under .*temp\/recipe\/runs/u);
+});
+
+test('status --watch --task opens the runs of the task it was asked to show', async (t) => {
+  taskEnv(t, undefined);
+  const target = tempDir(t);
+  const task = path.join(tempDir(t), 'task');
+  writeTask(task, 'running');
+  const runs = path.join(task, 'artifacts/recipe-runs');
+  writeRun(runs, 'selected', '2026-01-02T00:00:00.000Z');
+  writeRun(path.join(target, 'temp/recipe/runs'), 'unbound', '2026-01-03T00:00:00.000Z');
+  const session = watch(t, target, {}, task);
+  await session.ready();
+  session.key('v');
+  await settle(() => session.frames.length === 2);
+  assert.deepEqual(session.served, [runs]);
+  assert.deepEqual(session.opened, ['http://127.0.0.1:4100/runs/selected/#story']);
+});
+
+test('status --watch opens the runs of the task it shows in progress, with no task binding', async (t) => {
+  // A worker binds its task in its own shell; the watch in another pane inherits nothing.
+  taskEnv(t, undefined);
+  const target = tempDir(t);
+  const active = path.join(target, 'temp/tasks/dev/task');
+  writeTask(active, 'running');
+  const runs = path.join(active, 'artifacts/recipe-runs');
+  writeRun(runs, 'active', '2026-01-02T00:00:00.000Z');
+  writeRun(path.join(target, 'temp/recipe/runs'), 'unbound', '2026-01-03T00:00:00.000Z');
+  const session = watch(t, target);
+  await session.ready();
+  session.key('v');
+  await settle(() => session.frames.length === 2);
+  // The view names the task by its real path; it is the same folder.
+  assert.deepEqual(
+    session.served.map((dir) => fs.realpathSync(dir)),
+    [fs.realpathSync(runs)],
+  );
+  assert.deepEqual(session.opened, ['http://127.0.0.1:4100/runs/active/#story']);
 });

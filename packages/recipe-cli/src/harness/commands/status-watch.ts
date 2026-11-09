@@ -178,10 +178,13 @@ export async function runStatusWatch(
         }
       })
     : undefined;
-  // The newest run under the folder `run` writes this checkout's attempts to, served live:
-  // the writer's task binding decides it, never the task the view happens to display.
-  const openEvidence = async (): Promise<string> => {
-    const root = recipeRunAttemptsRoot(options.target);
+  // The newest run of the task this watch shows, served live: the task it was asked for or
+  // sees in progress, else the writer's binding. Retained history never stands in for it.
+  const openEvidence = async (view: TaskView): Promise<string> => {
+    const root = recipeRunAttemptsRoot(options.target, {
+      ...(options.taskDir ? { explicit: options.taskDir } : {}),
+      ...(view.activity.ongoing && view.taskDir ? { active: view.taskDir } : {}),
+    });
     const current = fs.existsSync(root) ? listRunEvidenceHistory(root)[0] : undefined;
     if (!current) return `no recipe run yet under ${root}`;
     if (evidence?.root !== root) {
@@ -223,7 +226,7 @@ export async function runStatusWatch(
       if (control.signal.aborted) return EXIT.ok;
       if (wantEvidence) {
         wantEvidence = false;
-        evidenceLine = await openEvidence().catch(
+        evidenceLine = await openEvidence(view).catch(
           // A page that cannot start is reported in the footer; the watch itself goes on.
           (error: unknown) =>
             `evidence page failed: ${error instanceof Error ? error.message : String(error)}`,
