@@ -113,8 +113,8 @@ Pi requires numeric SDK price fields. The extension keeps their nullable provena
 in the existing `farmslot-model-request` journal entry, so accounting never treats
 an unpriced SDK placeholder as a quote. Provider-reported charges remain
 authoritative. Without a recorded native cost, accounting does not estimate one.
-An SDK counter must agree with the used reported token prices. A reasoning-token
-rate without a token split or an unreported long-cache price leaves it unknown.
+An SDK counter must agree with the used reported token prices. A distinct reasoning-token
+rate the SDK cannot bill or an unreported long-cache price leaves it unknown.
 The quote validates a recorded counter; it never fills a missing native charge.
 An SDK zero without recorded token usage stays unknown; a provider-reported zero
 remains an authoritative charge.

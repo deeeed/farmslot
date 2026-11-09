@@ -13,6 +13,7 @@ import {
   listPiProviderSources,
   openaiBaseUrl,
   PiProviderConfigurationError,
+  piSdkModels,
   providerReasoningFetch,
   resolvePiProviderCatalog,
   unavailablePiAuth,
@@ -393,6 +394,7 @@ test('invalid configured or reported limits refuse instead of using defaults', a
         fetchImpl: modelsFetch({ id: 'model', ...row }),
       }),
       PiProviderConfigurationError,
+      piSdkModels,
     );
   await assert.rejects(
     resolvePiProviderCatalog(
@@ -402,6 +404,7 @@ test('invalid configured or reported limits refuse instead of using defaults', a
       },
     ),
     PiProviderConfigurationError,
+    piSdkModels,
   );
 });
 
@@ -567,11 +570,25 @@ test('LiteLLM prices use reported per-token rates and preserve unknown versus ex
           output_cost_per_token_above_200k_tokens: 0.000012,
         },
         missing: {},
-        free: { input_cost_per_token: 0, output_cost_per_token: 0 },
+        free: {
+          input_cost_per_token: '0',
+          output_cost_per_token: '0',
+          cache_read_input_token_cost: '',
+        },
+        captured: {
+          input_cost_per_token: 0.000004,
+          output_cost_per_token: 0.00002,
+          cache_read_input_token_cost: 0.0000004,
+          cache_creation_input_token_cost: 0.000005,
+          input_cost_per_token_above_272k_tokens: '8e-06',
+          output_cost_per_token_above_272k_tokens: '3e-05',
+          cache_read_input_token_cost_above_272k_tokens: '8e-07',
+          cache_creation_input_token_cost_above_272k_tokens: '1e-05',
+        },
       }),
     },
   );
-  const [priced, missing, free] = provider.models;
+  const [priced, missing, free, captured] = provider.models;
   assert.equal(priced.cost.input, 2);
   assert.equal(priced.cost.output, 8);
   assert.equal(priced.cost.cacheRead, 0.5);
@@ -592,6 +609,10 @@ test('LiteLLM prices use reported per-token rates and preserve unknown versus ex
   assert.equal(free.cost.output, 0);
   assert.equal(free.cost.cacheRead, null, 'missing cache prices are not free');
   assert.equal(free.cost.cacheWrite, null);
+  assert.deepEqual(captured.cost.tiers, [
+    { inputTokensAbove: 272000, input: 8, output: 30, cacheRead: 8e-7 * 1_000_000, cacheWrite: 10 },
+  ]);
+  assert.deepEqual(piSdkModels([captured])[0].cost.tiers, captured.cost.tiers);
 });
 
 test('LiteLLM thinking maps follow declared levels and flags without model-name guesses', async () => {
@@ -731,6 +752,7 @@ test('model-specific configuration rejects malformed JSON, unknown fields and in
         { fetchImpl: modelsFetch({ id: 'model' }) },
       ),
       PiProviderConfigurationError,
+      piSdkModels,
     );
 });
 

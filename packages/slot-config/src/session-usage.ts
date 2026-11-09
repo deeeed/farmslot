@@ -566,7 +566,7 @@ function piCostMatchesPrices(
       threshold = tier.inputTokensAbove;
     }
   }
-  // Pi's normalized usage has no reasoning-token split. Do not invent one.
+  // Pi's SDK total bills output at one rate, even when it reports reasoning tokens.
   if (
     tokens.outputTokens > 0 &&
     'reasoningOutput' in rates &&

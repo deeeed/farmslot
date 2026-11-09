@@ -205,8 +205,10 @@ function modelCost(info, reasoning) {
     cache_read_input_token_cost: 'cacheRead',
     cache_creation_input_token_cost: 'cacheWrite',
   };
-  const rate = (value) =>
-    typeof value === 'number' && Number.isFinite(value) ? value * 1_000_000 : null;
+  const rate = (value) => {
+    const numeric = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
+    return typeof numeric === 'number' && Number.isFinite(numeric) ? numeric * 1_000_000 : null;
+  };
   const cost = {
     input: rate(info.input_cost_per_token),
     output: rate(info.output_cost_per_token),
