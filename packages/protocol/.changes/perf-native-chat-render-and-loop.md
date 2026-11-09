@@ -1,0 +1,1 @@
+- Keep unchanged native conversation entries and rows as the same objects across streamed updates, so clients re-render only what changed.

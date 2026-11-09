@@ -981,3 +981,40 @@ test('the files a turn changed are one entry after it, summed, or why they are u
     'Changes unavailable: The checkpoint after this turn failed',
   );
 });
+
+test('a streamed delta keeps every unchanged entry and row the same object', () => {
+  const prompt = event(1, 'command.submitted', 'task');
+  const started = { ...event(2, 'tool.started'), nativeId: 'tool', tool: { name: 'Bash' } };
+  const completed = { ...event(3, 'tool.completed'), nativeId: 'tool', tool: { name: 'Bash' } };
+  const plan = {
+    ...event(4, 'plan.updated'),
+    plan: { kind: 'proposal', text: 'Do it' } as NativeSessionPlan,
+  };
+  const delta = event(5, 'text.delta', 'Hel');
+  const before = [prompt, started, completed, plan, delta];
+  const first = nativeTimeline(before);
+  const firstRows = nativeTimelineRows(first);
+
+  // The cache merges a continuing delta into a new last event, as reduceNativeConversation does.
+  const after = [prompt, started, completed, plan, { ...delta, text: 'Hello' }];
+  const second = nativeTimeline(after, first);
+  assert.deepEqual(second, nativeTimeline(after));
+  assert.equal(second.length, 4);
+  for (const index of [0, 1, 2]) assert.equal(second[index], first[index]);
+  assert.notEqual(second[3], first[3]);
+  assert.equal(second[3].text, 'Hello');
+
+  const secondRows = nativeTimelineRows(second, firstRows);
+  assert.deepEqual(secondRows, nativeTimelineRows(second));
+  for (const index of [0, 1, 2]) assert.equal(secondRows[index], firstRows[index]);
+  assert.notEqual(secondRows[3], firstRows[3]);
+
+  // A finished turn folds its tool: the tool's row changes, the others stay.
+  const done = [...after, { ...event(6, 'turn.completed'), status: 'completed' as const }];
+  const third = nativeTimeline(done, second);
+  const thirdRows = nativeTimelineRows(third, secondRows);
+  assert.deepEqual(thirdRows, nativeTimelineRows(nativeTimeline(done)));
+  assert.equal(thirdRows[0], secondRows[0]);
+  assert.notEqual(thirdRows[1], secondRows[1]);
+  assert.equal(thirdRows[3], secondRows[3]);
+});
