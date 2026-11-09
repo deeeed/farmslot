@@ -1,1 +1,0 @@
-- `resolveWorkerTerminalContract(..., { scriptedCommand: true })` resolves a scripted-command contract (no acceptance ledger, recipe rules or project artifacts; the command result is the proof), and task init writes no `CHECKLIST.md` for it. New `isScriptedCommandContract` and `SCRIPTED_COMMAND_RESULT`.

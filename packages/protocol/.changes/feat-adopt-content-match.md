@@ -1,1 +1,0 @@
-- `RunAdoptPublishedPrParams` is a union of a content-match request (`runId`, `prRef`, optional `reason`) and the attested request. New optional `HumanPublicationAdoptionReceipt.match` and `RunDecision.publicationAdoption` record how an adopted PR was matched.

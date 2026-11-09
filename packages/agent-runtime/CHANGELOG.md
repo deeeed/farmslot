@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.45.4 - 2026-11-09
+
+- `resolveWorkerTerminalContract(..., { scriptedCommand: true })` resolves a scripted-command contract (no acceptance ledger, recipe rules or project artifacts; the command result is the proof), and task init writes no `CHECKLIST.md` for it. New `isScriptedCommandContract` and `SCRIPTED_COMMAND_RESULT`.
+
 ## 0.45.3 - 2026-11-08
 
 - Republish against protocol 0.82.2 and the current package set, so consumers load one copy of each Farmslot package.
