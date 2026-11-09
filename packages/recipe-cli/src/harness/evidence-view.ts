@@ -65,9 +65,31 @@ export function isRecipeRunFolder(dir: string): boolean {
 }
 
 /**
+ * The artifact manifest is the runner's last write, and its file exists before its bytes land.
+ * The package is complete once the manifest reads whole.
+ */
+function packageComplete(dir: string): boolean {
+  let body: string;
+  try {
+    body = fs.readFileSync(path.join(dir, 'artifact-manifest.json'), 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+  try {
+    const manifest: unknown = JSON.parse(body);
+    return isRecord(manifest) && Array.isArray(manifest.artifacts);
+  } catch (error) {
+    // Expected while the runner is still writing it: the run is finishing, not failed.
+    if (error instanceof SyntaxError) return false;
+    throw error;
+  }
+}
+
+/**
  * What the folder says about the run without reading its evidence. The runner writes
  * summary.json before both manifests, so the run is still finishing until the artifact
- * manifest lands; an unreadable summary is `unknown`, never `running`.
+ * manifest reads whole; an unreadable summary is `unknown`, never `running`.
  */
 function runFacts(dir: string): { run: RunEvidenceViewRun; errors: string[] } {
   const errors: string[] = [];
@@ -84,7 +106,7 @@ function runFacts(dir: string): { run: RunEvidenceViewRun; errors: string[] } {
       ? 'running'
       : !isRecord(summary) || (summary.status !== 'pass' && summary.status !== 'fail')
         ? 'unknown'
-        : fs.existsSync(path.join(dir, 'artifact-manifest.json'))
+        : packageComplete(dir)
           ? summary.status
           : 'running';
   return {
@@ -147,11 +169,14 @@ export async function readRunEvidenceView(runDir: string): Promise<RunEvidenceVi
   const dir = path.resolve(runDir);
   const { run, errors } = runFacts(dir);
   if (run.status === 'running') {
+    // The runner republishes trace.json whole after each step, so its steps so far read live.
+    const pendingTrace = readJson(path.join(dir, 'trace.json'), errors);
     const model = createEvidenceReviewModel({
       context: 'artifact',
       // runFacts already reported an unreadable recipe.json.
       criteria: declaredCriteria(dir, []),
       evidencePending: true,
+      ...(pendingTrace === undefined ? {} : { pendingTrace }),
       readErrors: errors,
     });
     return runEvidenceView(model, run);

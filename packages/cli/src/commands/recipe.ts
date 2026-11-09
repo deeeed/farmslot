@@ -272,7 +272,7 @@ export function registerRecipeCommand(program: Command): void {
         let templatePath = typeof options.template === 'string' ? options.template : undefined;
         if (!templatePath) {
           // A checkout outside any project gets the default page; a selection that fails throws.
-          const project = shared.resolveProjectViewer(
+          const project = await shared.resolveProjectViewer(
             await projectRecipeHostOptions('view', undefined, options),
           );
           if (project?.viewer?.template)

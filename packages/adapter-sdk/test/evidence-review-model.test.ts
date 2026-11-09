@@ -1945,3 +1945,39 @@ test('an untimed original stays playable in the run evidence view, with no measu
   assert.ok(view.criteria.every((criterion) => criterion.cue === null));
   assert.ok(view.steps.every((step) => step.cue === null));
 });
+
+test('a pending run lists its steps so far with their own files, before any package exists', () => {
+  const model = createEvidenceReviewModel({
+    criteria: [{ id: 'AC-1', text: 'The page loads.' }],
+    evidencePending: true,
+    pendingTrace: {
+      entries: [
+        { ...entry('open', 200, 900), intent: 'Open the page.' },
+        {
+          ...entry('capture', 1_000, 1_100),
+          intent: 'Keep a picture.',
+          artifacts: [{ path: 'screenshots/page.png', type: 'screenshot' }],
+        },
+        { ...entry('open', 1_200, 1_300), intent: 'Open the page again.', ok: false },
+      ],
+    },
+  });
+  const view = runEvidenceView(model, { id: 'live', status: 'running', startedAt: at(0) });
+  assert.deepEqual(
+    view.steps.map(({ traceIndex, nodeId, ok, atMs, cue, files }) => [
+      traceIndex,
+      nodeId,
+      ok,
+      atMs,
+      cue,
+      files.map((file) => [file.path, file.mediaType]),
+    ]),
+    [
+      [0, 'open', true, 200, null, []],
+      [1, 'capture', true, 1_000, null, [['screenshots/page.png', 'image']]],
+      [2, 'open', false, 1_200, null, []],
+    ],
+  );
+  // Without a pending trace, standalone recordings never borrow trace artifacts as files.
+  assert.deepEqual(runEvidenceView(createEvidenceReviewModel({ evidencePending: true })).steps, []);
+});

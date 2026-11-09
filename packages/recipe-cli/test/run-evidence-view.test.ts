@@ -105,6 +105,26 @@ test('a run in progress lists its declared criteria unjudged and goes live', asy
   );
   assert.deepEqual(view.steps, []);
   assert.equal(runEvidenceLive(view), true);
+  // The runner republishes trace.json after each step: the Story follows it.
+  const trace = JSON.parse(fixture.files['trace.json']!) as { entries: unknown[] };
+  writeRun(root, 'proof-2', {
+    'trace.json': JSON.stringify({ ...trace, entries: trace.entries.slice(0, 2) }),
+  });
+  const stepping = await readRunEvidenceView(dir);
+  assert.equal(stepping.run?.status, 'running');
+  assert.deepEqual(
+    stepping.steps.map(({ traceIndex, intent, ok, atMs, cue }) => [
+      traceIndex,
+      intent,
+      ok,
+      atMs,
+      cue,
+    ]),
+    [
+      [0, 'Read value 1.', true, 200, null],
+      [1, 'Verify value 1.', true, 400, null],
+    ],
+  );
   const before = runEvidenceSignature(dir);
   // The runner writes summary.json before both manifests: the run is still finishing.
   writeRun(
@@ -119,6 +139,13 @@ test('a run in progress lists its declared criteria unjudged and goes live', asy
   assert.equal(finishing.run?.status, 'running');
   assert.deepEqual(finishing.errors, [], 'a finishing run reports no missing-manifest errors');
   assert.equal(runEvidenceLive(finishing), true);
+  // The manifest file exists before its bytes land: still finishing, no package errors.
+  const manifest = fixture.files['artifact-manifest.json']!;
+  writeRun(root, 'proof-2', { 'artifact-manifest.json': manifest.slice(0, manifest.length >> 1) });
+  const partial = await readRunEvidenceView(dir);
+  assert.equal(partial.run?.status, 'running');
+  assert.deepEqual(partial.errors, []);
+  assert.equal(runEvidenceLive(partial), true);
   writeRun(root, 'proof-2');
   const finished = await readRunEvidenceView(dir);
   assert.equal(finished.run?.status, 'pass');
@@ -160,17 +187,17 @@ test('the run end prints the view command unless the project turns it off', asyn
   assert.equal(runEvidenceViewHint('/tmp/runs/a b', {}), "farmslot recipe view '/tmp/runs/a b'");
   assert.equal(runEvidenceViewHint('/tmp/runs/a', undefined), 'farmslot recipe view /tmp/runs/a');
   assert.equal(runEvidenceViewHint('/tmp/runs/a', { link: false }), null);
-  // A host that registers no view command prints none.
-  const host = harnessHost();
-  configureHarnessHost({ ...host, viewCommand: undefined });
-  t.after(() => configureHarnessHost(host));
-  assert.equal(runEvidenceViewHint('/tmp/runs/a', undefined), null);
-  // project.json recipe.viewer reaches the run's context.
+  // project.json recipe.viewer reaches the run's context and turns the line off.
   const project = runsRoot(t);
   writeProject(project, 'viewer-off', { link: false });
   const context = await resolveProjectContext({ tokens: [], cwd: project, load: { env: {} } });
   assert.deepEqual(context.project?.viewer, { link: false });
   assert.equal(runEvidenceViewHint('/tmp/runs/a', context.project?.viewer), null);
+  // A host that registers no view command prints none.
+  const host = harnessHost();
+  configureHarnessHost({ ...host, viewCommand: undefined });
+  t.after(() => configureHarnessHost(host));
+  assert.equal(runEvidenceViewHint('/tmp/runs/a', undefined), null);
 });
 
 function writeProject(dir: string, name: string, viewer: unknown, repoUrl = ''): void {
@@ -188,7 +215,7 @@ function writeProject(dir: string, name: string, viewer: unknown, repoUrl = ''):
   );
 }
 
-test('recipe view selects a project template with no execution prerequisites', (t) => {
+test('recipe view selects a project template with no execution prerequisites', async (t) => {
   const root = runsRoot(t);
   const projectsDir = path.join(root, 'projects');
   // A registered application project for another repository, viewed from elsewhere.
@@ -201,18 +228,34 @@ test('recipe view selects a project template with no execution prerequisites', (
   writeProject(path.join(projectsDir, 'broken'), 'broken', { link: 'no' });
   const cwd = path.join(root, 'elsewhere');
   fs.mkdirSync(cwd);
-  assert.deepEqual(resolveProjectViewer({ tokens: ['--project', 'app'], cwd, projectsDir }), {
-    root: path.join(projectsDir, 'app'),
-    viewer: { template: 'viewer.mjs' },
-  });
-  assert.equal(resolveProjectViewer({ tokens: [], cwd, projectsDir }), undefined);
-  assert.throws(() => resolveProjectViewer({ tokens: ['--project', 'typo'], cwd, projectsDir }), {
-    code: 'PROJECT_NOT_FOUND',
-  });
-  assert.throws(
-    () => resolveProjectViewer({ tokens: ['--project', 'broken'], cwd, projectsDir }),
+  const load = { env: {} };
+  const app = { root: path.join(projectsDir, 'app'), viewer: { template: 'viewer.mjs' } };
+  assert.deepEqual(
+    await resolveProjectViewer({ tokens: ['--project', 'app'], cwd, projectsDir, load }),
+    app,
+  );
+  assert.equal(await resolveProjectViewer({ tokens: [], cwd, projectsDir, load }), undefined);
+  await assert.rejects(
+    resolveProjectViewer({ tokens: ['--project', 'typo'], cwd, projectsDir, load }),
+    { code: 'PROJECT_NOT_FOUND' },
+  );
+  await assert.rejects(
+    resolveProjectViewer({ tokens: ['--project', 'broken'], cwd, projectsDir, load }),
     /recipe\.viewer\.link is invalid/u,
   );
+  // A checkout bound to the project, whose origin matches no registered repository.
+  const bound = path.join(root, 'fork');
+  fs.mkdirSync(path.join(bound, 'temp/recipe/runtime'), { recursive: true });
+  fs.writeFileSync(
+    path.join(bound, 'temp/recipe/runtime/agentic-runtime.json'),
+    JSON.stringify({ repoRoot: fs.realpathSync(bound), project: 'app' }),
+  );
+  const saved = process.env.RECIPE_RUNTIME_CONTEXT;
+  delete process.env.RECIPE_RUNTIME_CONTEXT;
+  t.after(() => {
+    if (saved !== undefined) process.env.RECIPE_RUNTIME_CONTEXT = saved;
+  });
+  assert.deepEqual(await resolveProjectViewer({ tokens: [], cwd: bound, projectsDir, load }), app);
 });
 
 test('a retained comparison run keeps its before/after pair bound to the frozen revision', async (t) => {

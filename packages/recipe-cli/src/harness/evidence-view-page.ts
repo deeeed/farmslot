@@ -171,7 +171,7 @@ const story: RunEvidenceSection = {
   id: 'story',
   render(view, context) {
     if (!view.steps.length)
-      return `<section class="story"><h2>Story</h2><p class="empty">${view.run?.status === 'running' ? 'The steps appear when the run writes its trace.' : 'This run recorded no steps.'}</p></section>`;
+      return `<section class="story"><h2>Story</h2><p class="empty">${view.run?.status === 'running' ? 'No step has finished yet.' : 'This run recorded no steps.'}</p></section>`;
     const rows = view.steps.map((step) => {
       const line = `<span class="at">${step.atMs === null ? '' : context.escape(context.formatMs(step.atMs))}</span>${badge(step.ok ? 'pass' : 'fail', step.ok ? 'ok' : 'bad')}<span class="intent">${context.escape(step.intent || step.nodeId)}</span>`;
       const stills = step.files.filter((file) => file.mediaType === 'image');

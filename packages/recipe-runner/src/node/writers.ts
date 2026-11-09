@@ -1,3 +1,6 @@
+import { rename } from 'node:fs/promises';
+import path from 'node:path';
+
 import {
   type EvidenceManifest,
   type RecipeArtifactManifestEntry,
@@ -201,28 +204,58 @@ export class JsonTraceWriter implements TraceWriter {
     this.#hud = hud;
   }
 
+  #published: Promise<void> = Promise.resolve();
+  #publishQueued = false;
+  #publishError: unknown;
+
   record(entry: TraceEntry): void {
     this.#entries.push(entry);
+    // A live viewer follows the run from trace.json, so each recorded step republishes it.
+    // Steps recorded while a write is queued share it; a failure surfaces from `write()`.
+    if (this.#publishQueued) return;
+    this.#publishQueued = true;
+    this.#published = this.#published
+      .then(async () => {
+        this.#publishQueued = false;
+        await this.#publish();
+      })
+      .catch((error: unknown) => {
+        this.#publishError ??= error;
+      });
   }
 
   list(): TraceEntry[] {
     return [...this.#entries];
   }
 
-  async write(): Promise<string> {
-    return writeJsonWithinRoot(
+  /** Replace trace.json whole, through a temporary file and a rename: never a partial read. */
+  async #publish(): Promise<string> {
+    const temporary = await writeJsonWithinRoot(
       this.#artifactsDir,
-      'trace.json',
-      this.#runner || this.#hud
-        ? {
-            metadata: {
-              ...(this.#runner ? { runner: this.#runner } : {}),
-              ...(this.#hud ? { hud: this.#hud } : {}),
-            },
-            entries: this.list(),
-          }
-        : this.list(),
+      '.trace.json.partial',
+      this.#document(),
     );
+    const tracePath = path.join(path.dirname(temporary), 'trace.json');
+    await rename(temporary, tracePath);
+    return tracePath;
+  }
+
+  #document(): unknown {
+    return this.#runner || this.#hud
+      ? {
+          metadata: {
+            ...(this.#runner ? { runner: this.#runner } : {}),
+            ...(this.#hud ? { hud: this.#hud } : {}),
+          },
+          entries: this.list(),
+        }
+      : this.list();
+  }
+
+  async write(): Promise<string> {
+    await this.#published;
+    if (this.#publishError) throw this.#publishError;
+    return this.#publish();
   }
 }
 

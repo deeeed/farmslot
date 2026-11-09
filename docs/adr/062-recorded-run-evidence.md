@@ -1262,9 +1262,10 @@ components would make `recipe-cli` build and ship them. This narrows the idea's
 
 **CLI.** `farmslot recipe view <run-dir>` serves the page on `127.0.0.1` only,
 GET/HEAD only, and serves files contained in the run folders. Video supports byte
-ranges so seeking works. `--project` selects a registered project's template
-without execution's checkout, provider or app checks; an explicit selection that
-fails is an error, and a checkout outside any project gets the default page.
+ranges so seeking works. The template comes from the project the command selects, by
+the same rules as execution (`--project`, runtime binding, slot, detection,
+default) but without its provider, app or checkout-origin checks; a selection
+that fails is an error, and a checkout no project matches gets the default page.
 Both `run` routes, the project harness and the standalone
 `--action-manifest` run, end their human output with
 `view: <viewCommand> <run-dir>`. The host sets `viewCommand`; the Farmslot CLI
@@ -1272,15 +1273,18 @@ sets `farmslot recipe view`, and a host without one prints no line.
 `recipe.viewer.link: false` turns the line off. The line is a command, not a URL:
 no server outlives the run.
 
-**Live mode and history.** A folder without `summary.json`, or with a summary but
-no artifact manifest yet, is running: the runner writes the summary before both
-manifests. Its page lists the recipe's declared criteria, unjudged, and polls a
-folder signature every 2 s. It reloads when files change, until the package is
-complete. An unreadable summary is reported as an error, never read as running;
-the page keeps polling in case it caught a write. A lost server or failed
-playback shows on the page. The runner writes the trace at the end, so steps
-appear when the run finishes. History lists the run folders beside the one
-viewed, newest first; a folder of runs opens on the index, which also polls.
+**Live mode and history.** The runner republishes `trace.json` after each step,
+whole through a temporary file and a rename, so a reader never sees a partial
+trace. A folder without `summary.json`, or with a summary whose artifact manifest
+does not read whole yet, is running: the runner writes the summary before both
+manifests, and the manifest file exists before its bytes land. Its page lists the
+recipe's declared criteria, unjudged, and the steps so far through the same
+review model (`pendingTrace`), each with its own files, and polls a folder
+signature every 2 s. It reloads when files change, until the package is complete.
+An unreadable summary is reported as an error, never read as running; the page
+keeps polling in case it caught a write. A lost server or failed playback shows
+on the page. History lists the run folders beside the one viewed, newest first; a
+folder of runs opens on the index, which also polls.
 
 **Command Center.** Its acceptance panel renders proof steps from
 `runEvidenceView(model).stepGroups`, the same projection the viewer reads.
@@ -1298,8 +1302,8 @@ uploading, editing evidence and gate decisions stay out of scope.
 ### Public surface
 
 New: `runEvidenceView`, `RUN_EVIDENCE_VIEW_VERSION` and the `RunEvidenceView`
-types (adapter-sdk evidence); `EvidenceReviewModel.currentRecordings` and
-`EvidenceReviewOccurrence.startedAt`; `serveRunEvidence`, `readRunEvidenceView`,
+types (adapter-sdk evidence); `EvidenceReviewModel.currentRecordings`,
+`EvidenceReviewOccurrence.startedAt` and `EvidenceReviewInput.pendingTrace`; `serveRunEvidence`, `readRunEvidenceView`,
 `listRunEvidenceHistory`, `isRecipeRunFolder`, `runEvidenceSignature`,
 `runEvidenceViewHint`, `resolveProjectViewer`, `loadRunEvidenceTemplate`,
 `renderRunEvidencePage`, `renderRunHistoryPage`, `escapeHtml`,

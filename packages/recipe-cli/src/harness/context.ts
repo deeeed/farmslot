@@ -658,7 +658,6 @@ export function readProjectPool(context: HarnessContext): ProjectContextPool | u
     : undefined;
 }
 
-/** Read project metadata and resolve defaults without importing executable code. */
 /** Registered projects, then the checkout's own project.json when no registered one shares its name. */
 function projectEntries(
   options: Pick<ResolveProjectContextOptions, 'projects' | 'projectsDir'>,
@@ -688,47 +687,10 @@ function projectEntries(
 }
 
 /**
- * The run evidence viewer settings of the selected project. Viewing evidence runs nothing, so
- * none of execution's checkout, provider or app prerequisites apply: `--project` names a
- * registered project, otherwise the checkout's own. Undefined only when no project is selected
- * and none matches the checkout; an explicit selection that fails is an error.
+ * The project a command selects: `--project`, then the checkout's runtime binding, its slot,
+ * then detection by checkout path or origin, then the default. Reads metadata only.
  */
-export function resolveProjectViewer(
-  options: Pick<ResolveProjectContextOptions, 'tokens' | 'cwd' | 'projects' | 'projectsDir'>,
-): { root: string; viewer?: ProjectRecipeViewerConfig } | undefined {
-  const cwd = options.cwd ?? process.cwd();
-  const checkoutRoot = gitTopLevel(cwd) ?? path.resolve(cwd);
-  const { entries } = projectEntries(options, checkoutRoot);
-  const named = optionValues(options.tokens, '--project').at(-1);
-  const remote = checkoutRemote(checkoutRoot) || undefined;
-  const candidates = named
-    ? entries.filter((entry) => entry.config.name === named)
-    : entries.filter(
-        (entry) =>
-          samePath(entry.root, checkoutRoot) ||
-          (remote !== undefined &&
-            repositoryIdentity(remote) === repositoryIdentity(entry.config.repoUrl)),
-      );
-  if (!named && candidates.length === 0) return undefined;
-  if (candidates.length !== 1) {
-    throw new ProjectBindingError(
-      candidates.length > 1 ? 'PROJECT_AMBIGUOUS' : 'PROJECT_NOT_FOUND',
-      candidates.length > 1
-        ? 'More than one project matches this checkout.'
-        : `No project binding found for ${named}.`,
-      'select a registered project with --project <name>',
-      candidates.map((entry) => entry.config.name),
-      named,
-    );
-  }
-  const { root, config } = candidates[0]!;
-  if (config.recipe !== undefined) validateProjectRecipeConfig(config.recipe);
-  return { root, ...(config.recipe?.viewer ? { viewer: config.recipe.viewer } : {}) };
-}
-
-export async function resolveProjectContext(
-  options: ResolveProjectContextOptions,
-): Promise<HarnessContext> {
+async function selectProject(options: ResolveProjectContextOptions) {
   const cwd = options.cwd ?? process.cwd();
   const requested = optionValues(options.tokens, '--target').at(-1);
   const checkoutRoot =
@@ -752,8 +714,8 @@ export async function resolveProjectContext(
     ],
     adapter: false,
   };
-  let context = await resolveHarnessContext(contextOptions);
-  let runtime = readBinding(
+  const context = await resolveHarnessContext(contextOptions);
+  const runtime = readBinding(
     checkoutRoot,
     optionValues(options.tokens, '--runtime-dir').at(-1),
   ).runtime;
@@ -798,6 +760,68 @@ export async function resolveProjectContext(
     );
   }
   const selected = candidates[0]!;
+  return {
+    cwd,
+    requested,
+    checkoutRoot,
+    contextOptions,
+    context,
+    runtime,
+    registered,
+    pool,
+    slot,
+    projectFlag,
+    remote,
+    source,
+    selected,
+  };
+}
+
+/**
+ * The run evidence viewer settings of the project a command selects, by the same rules as
+ * execution but without its provider, app or checkout-origin prerequisites. Undefined only
+ * when nothing selects a project and none matches the checkout.
+ */
+export async function resolveProjectViewer(
+  options: ResolveProjectContextOptions,
+): Promise<{ root: string; viewer?: ProjectRecipeViewerConfig } | undefined> {
+  let selected: ConfiguredRecipeProject;
+  try {
+    ({ selected } = await selectProject(options));
+  } catch (error) {
+    // A run folder needs no project: only an unselected checkout outside every project falls
+    // back to the default page; an explicit, bound or ambiguous selection that fails throws.
+    if (
+      error instanceof ProjectBindingError &&
+      error.code === 'PROJECT_NOT_FOUND' &&
+      error.selectedProject === undefined
+    )
+      return undefined;
+    throw error;
+  }
+  const { root, config } = selected;
+  if (config.recipe !== undefined) validateProjectRecipeConfig(config.recipe);
+  return { root, ...(config.recipe?.viewer ? { viewer: config.recipe.viewer } : {}) };
+}
+
+/** Read project metadata and resolve defaults without importing executable code. */
+export async function resolveProjectContext(
+  options: ResolveProjectContextOptions,
+): Promise<HarnessContext> {
+  const selection = await selectProject(options);
+  const {
+    cwd,
+    requested,
+    checkoutRoot,
+    contextOptions,
+    registered,
+    pool,
+    slot,
+    projectFlag,
+    remote,
+    selected,
+  } = selection;
+  let { context, runtime, source } = selection;
   const config = selected.config;
   const root = fs.realpathSync(selected.root);
   const recipe = config.recipe;

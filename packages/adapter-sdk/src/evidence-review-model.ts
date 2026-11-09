@@ -128,6 +128,8 @@ export interface EvidenceReviewInput {
   readErrors?: readonly string[];
   /** From `runEvidencePending`: nothing is retained yet, so a missing package is not an error. */
   evidencePending?: boolean;
+  /** A pending run's trace so far, before any package exists: its steps and their own files. */
+  pendingTrace?: unknown;
   /** Transport namespace; contract references stay relative to their recipe package. */
   artifactPrefix?: string;
   /** Display path relative to the run's artifacts; never used to resolve media. */
@@ -517,7 +519,12 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     : (packageRecording ?? ledgerRecording)
       ? { label: (packageRecording ?? ledgerRecording)! }
       : null;
-  const trace = recipeTraceEntries(pkg?.trace ?? input.recordings?.[0]?.trace) ?? [];
+  const trace =
+    recipeTraceEntries(
+      pkg?.trace ??
+        input.recordings?.[0]?.trace ??
+        (input.evidencePending ? input.pendingTrace : undefined),
+    ) ?? [];
   const recordings: EvidenceReviewRecordingInput[] = pkg
     ? Object.values(pkg.timelines).map((timeline) => ({
         timeline,
@@ -546,10 +553,17 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     pkg && isRecord(pkg.summary) && typeof pkg.summary.recipeRunId === 'string'
       ? pkg.summary.recipeRunId
       : undefined;
+  // A pending trace has no manifest yet: each step's own artifact records stand in for it.
   const manifest =
     pkg && isRecord(pkg.manifest) && Array.isArray(pkg.manifest.artifacts)
       ? pkg.manifest.artifacts.filter(isRecord)
-      : [];
+      : pkg || !input.evidencePending || input.pendingTrace === undefined
+        ? []
+        : trace.flatMap((entry) =>
+            isRecord(entry) && Array.isArray(entry.artifacts)
+              ? entry.artifacts.filter(isRecord)
+              : [],
+          );
   const links = new Map((input.evidenceLinks ?? []).map((link) => [link.id, link.evidence]));
   const judgments =
     pkg && input.visualReviewAuthority && !errors.length
