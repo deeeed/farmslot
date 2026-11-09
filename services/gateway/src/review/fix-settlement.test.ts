@@ -17,7 +17,7 @@ const SIGNAL_FILE = 'temp/tasks/feat/tat-4145/REVIEW-FIX-SIGNAL.json';
 async function runWithFixSignal(t: test.TestContext, signal: Record<string, unknown> | null) {
   const id = `review-fix-settle-${process.pid}-${Date.now()}`;
   const repo = await mkdtemp(path.join(os.tmpdir(), `${id}-`));
-  const poolFile = path.join(farmslotRoot, 'pool', `${id}.json`);
+  const poolFile = path.join(farmslotRoot(), 'pool', `${id}.json`);
   const slotId = `${id}-slot`;
   const run = createRun({
     flowType: 'dev',

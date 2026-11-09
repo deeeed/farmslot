@@ -106,7 +106,7 @@ export function gatewayStorageRoots(): string[] {
   return [
     home,
     runBundleRetentionSettings(home).storeRoot ?? currentFarmPaths('gateway').data.runBundles,
-    resolveRunsDir(farmslotRoot),
+    resolveRunsDir(farmslotRoot()),
     currentFarmPaths('gateway').data.runArchive,
   ];
 }

@@ -21,7 +21,7 @@ import { evalTrialStart } from '../eval.js';
 
 test('proof trial creation admits QA and retains the supplied implementation for prepare', async (t) => {
   const project = `proof-start-${process.pid}-farm`;
-  const projectRoot = path.join(farmslotRoot, 'projects', project);
+  const projectRoot = path.join(farmslotRoot(), 'projects', project);
   const root = await mkdtemp(path.join(os.tmpdir(), 'proof-trial-start-'));
   const previousDisableEngine = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
   let runId: string | undefined;

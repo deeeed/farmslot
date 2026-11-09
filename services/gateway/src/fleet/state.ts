@@ -84,7 +84,7 @@ export function isValidSafetyTier(value: unknown): value is SafetyTier {
 
 export type StateChangeHandler = (fleet: FleetStatus) => void;
 
-const statusFile = resolveStatusFilePath(farmslotRoot);
+const statusFile = resolveStatusFilePath(farmslotRoot());
 
 function normalizeProjectCICheckGroups(rawCi: any): ProjectConfig['ci']['checkGroups'] {
   const explicit = Array.isArray(rawCi?.check_groups) ? rawCi.check_groups : [];
@@ -803,7 +803,7 @@ export function startFileWatcher() {
   // A file watch can lose an unlink immediately after a change on macOS.
   // Keep watching its directory across atomic replacements and recreation.
   const directory = path.dirname(statusFile);
-  const prRulesFile = path.resolve(farmslotRoot, '.pr-rules.json');
+  const prRulesFile = path.resolve(farmslotRoot(), '.pr-rules.json');
   const reloadPRRules = async () => {
     try {
       const { reloadPRRulesFromFile } = await import('../methods/pr-rules.js');

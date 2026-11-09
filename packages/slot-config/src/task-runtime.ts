@@ -79,7 +79,7 @@ ChildProcess.prototype.spawn = function(options) {
   register({ tsconfig: path.join(root, 'tsconfig.json') });
   const { loadCheckoutEnv } = await import(pathToFileURL(path.join(root, 'src/onboarding/env-file.ts')).href);
   const { bootstrapFarmslotHome, repoRoot } = await import(pathToFileURL(path.join(root, 'src/onboarding/workspace.ts')).href);
-  loadCheckoutEnv(repoRoot);
+  loadCheckoutEnv(repoRoot());
   bootstrapFarmslotHome();
   const { okEnvelope, errorEnvelope } = await import(pathToFileURL(path.join(root, 'src/envelope.ts')).href);
   const command = workerData.action === 'init' ? 'internal.task-init' : 'task.verify';
@@ -134,6 +134,7 @@ export async function runTaskRuntime(
       checkoutRoot: farmDir,
       userHome: env.HOME || os.homedir(),
     });
+  if (selected.layout === 2) env.FARMSLOT_HOME = selected.home;
   env.FARMSLOT_POOL_DIR = selected.pool;
   const support = request.supportDir.startsWith('~/')
     ? path.join(env.HOME || os.homedir(), request.supportDir.slice(2))

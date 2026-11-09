@@ -8,7 +8,7 @@ import path from 'node:path';
 import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import ts from 'typescript';
+import { buildSync } from 'esbuild';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -53,6 +53,7 @@ const deployFixture = (t, prefix) => {
     'scripts/lib/worker-env-prefix.sh',
     'scripts/lib/tmux-bin.sh',
     'scripts/lib/node-cli-refresh.sh',
+    'scripts/lib/deploy-paths.mts',
     'services/node/package.json',
   ])
     write(relative, fs.readFileSync(path.join(repo, relative)));
@@ -79,14 +80,22 @@ const deployFixture = (t, prefix) => {
     );
     fs.mkdirSync(path.join(root, 'packages', name, 'dist'), { recursive: true });
   }
+  for (const name of ['farm-paths.ts', 'farm-paths-storage.ts', 'farmslot-home.ts'])
+    write(
+      `packages/protocol/src/node/${name}`,
+      fs.readFileSync(path.join(repo, 'packages/protocol/src/node', name)),
+    );
+  fs.mkdirSync(path.join(root, 'node_modules'), { recursive: true });
+  fs.symlinkSync(path.join(repo, 'node_modules/tsx'), path.join(root, 'node_modules/tsx'), 'dir');
   write(
     'packages/protocol/dist/node/slot-by-repo.js',
-    ts.transpileModule(
-      fs.readFileSync(path.join(repo, 'packages/protocol/src/node/slot-by-repo.ts'), 'utf8'),
-      {
-        compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-      },
-    ).outputText,
+    buildSync({
+      entryPoints: [path.join(repo, 'packages/protocol/src/node/slot-by-repo.ts')],
+      bundle: true,
+      write: false,
+      platform: 'node',
+      format: 'esm',
+    }).outputFiles[0].text,
   );
   write('node-token', 'fixture-node-credential');
   // tsc for the atomic dist builds: logs the package it builds and emits the current dist
@@ -531,7 +540,7 @@ for (const mode of ['local', 'remote']) {
 
 test('node project sync updates templates and checklists without deleting unrelated data', (t) => {
   const deploy = fs.readFileSync(path.join(repo, 'scripts/deploy-node.sh'), 'utf8');
-  const start = deploy.indexOf('for proj_dir in "$REPO_ROOT"/projects/*/; do');
+  const start = deploy.indexOf('for proj_dir in "$FARMSLOT_PROJECTS_DIR"/*/; do');
   const end = deploy.indexOf('\n# --- Install deps', start);
   assert.ok(start > 0 && end > start);
   const copyPhase = deploy.slice(start, end);
@@ -559,7 +568,7 @@ test('node project sync updates templates and checklists without deleting unrela
     'bash',
     [
       '-euc',
-      `REPO_ROOT=$1; REMOTE_DIR=$2; RSYNC_PREFIX=; run() { bash -euc "$1"; };\n${copyPhase}`,
+      `FARMSLOT_PROJECTS_DIR=$1/projects; TARGET_PROJECTS_DIR=$2/projects; RSYNC_PREFIX=; run() { bash -euc "$1"; };\n${copyPhase}`,
       'project-sync',
       source,
       target,
@@ -861,8 +870,8 @@ for (const instance of ['prod', 'dev']) {
     const expected = {
       script: fs.realpathSync(fixture.entry),
       gwUrl,
-      // Tmux workers keep the login shell's FARMSLOT_HOME for both instances.
-      farmslotHome: null,
+      // Explicit source-home export selects the same legacy worker profile.
+      farmslotHome: path.join(fixture.home, '.farmslot'),
       credentials: [],
     };
     assert.deepEqual(fixture.calls(), [
@@ -1361,11 +1370,27 @@ test('node CLI refreshes started together over a stale lock never overlap', asyn
     const runs = ['1', '2', '3'].map((digit) => {
       const sha = `${digit}${iteration}`.padEnd(40, '0');
       const input = fs.openSync(archive, 'r');
-      const child = spawn('bash', ['-c', refresh, '_', root, sha, 'f'.repeat(64), bin, '30'], {
-        env: { PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: home },
-        stdio: [input, 'pipe', 'pipe'],
-        detached: true,
-      });
+      const child = spawn(
+        'bash',
+        [
+          '-c',
+          refresh,
+          '_',
+          root,
+          sha,
+          'f'.repeat(64),
+          bin,
+          '30',
+          path.join(home, '.farmslot'),
+          path.join(home, '.local/bin'),
+          'legacy',
+        ],
+        {
+          env: { PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: home },
+          stdio: [input, 'pipe', 'pipe'],
+          detached: true,
+        },
+      );
       fs.closeSync(input);
       children.push(child);
       let output = '';
@@ -1579,6 +1604,9 @@ for (const tmuxServer of [true, false]) {
       NODE_PATH: path.join(fixture.root, 'node-bin/node'),
       NODE_GATEWAY_URL: 'ws://127.0.0.1:7777',
       INSTANCE: 'prod',
+      FARM_LAYOUT: 'legacy',
+      TARGET_HOME: path.join(fixture.home, '.farmslot'),
+      FARMSLOT_POOL_DIR: path.join(fixture.root, 'pool'),
       CLI_VERIFY_TIMEOUT_SECONDS: '5',
       FARMSLOT_NODE_TOKEN: 'fixture-node-credential',
       FARMSLOT_GATEWAY_TOKEN: 'fixture-control-credential',
@@ -1933,7 +1961,12 @@ test('node pool sync copies gateway contents over stale node-local links', (t) =
     'bash',
     ['-c', `set -euo pipefail\nrun() { bash -c "$1"; }\n${deploy.slice(start, end)}`],
     {
-      env: { ...process.env, REPO_ROOT: source, REMOTE_DIR: target, RSYNC_PREFIX: '' },
+      env: {
+        ...process.env,
+        FARMSLOT_POOL_DIR: path.join(source, 'pool'),
+        TARGET_POOL_DIR: path.join(target, 'pool'),
+        RSYNC_PREFIX: '',
+      },
       stdio: 'pipe',
       timeout: 5000,
     },

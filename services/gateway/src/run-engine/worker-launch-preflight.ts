@@ -89,7 +89,7 @@ function probeResult(raw: string): WorkerSourceProbeResult {
 
 async function packageVersion(name: string): Promise<string> {
   const value: unknown = JSON.parse(
-    await readFile(path.join(farmslotRoot, 'packages', name, 'package.json'), 'utf8'),
+    await readFile(path.join(farmslotRoot(), 'packages', name, 'package.json'), 'utf8'),
   );
   if (!isRecord(value) || typeof value.version !== 'string')
     throw new Error(`Missing ${name} package version`);

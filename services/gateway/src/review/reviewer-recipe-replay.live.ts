@@ -41,7 +41,7 @@ test('a passing review can replay a recipe without changing its reviewed worker 
     driver,
     `import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { resolveRecipeExecutionArtifacts } from ${JSON.stringify(pathToFileURL(path.join(farmslotRoot, 'packages/recipe-cli/src/harness/commands/run.ts')).href)};
+import { resolveRecipeExecutionArtifacts } from ${JSON.stringify(pathToFileURL(path.join(farmslotRoot(), 'packages/recipe-cli/src/harness/commands/run.ts')).href)};
 const args = process.argv.slice(2);
 const flag = args.indexOf('--artifacts-dir');
 const explicit = flag < 0 ? undefined : args[flag + 1];
@@ -75,7 +75,7 @@ console.log(JSON.stringify({ taskDir, artifactsDir }));
       cwd: repo,
       env: {
         ...process.env,
-        TSX_TSCONFIG_PATH: path.join(farmslotRoot, 'services/gateway/tsconfig.json'),
+        TSX_TSCONFIG_PATH: path.join(farmslotRoot(), 'services/gateway/tsconfig.json'),
         TMPDIR: scratch,
         RECIPE_TASK_DIR: task,
         FARMSLOT_TASK_DIR: task,

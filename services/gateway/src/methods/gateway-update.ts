@@ -12,7 +12,7 @@ import type { CheckoutUpdateOperation, GatewayUpdateParams } from '@farmslot/pro
 import { farmslotRoot } from '../core/index.js';
 
 const exec = promisify(execFile);
-async function recordPath(root = farmslotRoot): Promise<string> {
+async function recordPath(root = farmslotRoot()): Promise<string> {
   const { stdout } = await exec(
     'git',
     ['rev-parse', '--git-path', 'farmslot-checkout-update.json'],
@@ -49,7 +49,7 @@ function existingDirectoryAbove(file: string): string {
 export async function watchCheckoutUpdateChanges(
   changed: (kind: CheckoutObservationChange) => void,
   failed: (error: unknown) => void,
-  root = farmslotRoot,
+  root = farmslotRoot(),
 ): Promise<() => Promise<void>> {
   const versionFiles = [
     resolve(root, 'services/gateway/package.json'),
@@ -148,7 +148,7 @@ export async function watchCheckoutUpdateChanges(
 }
 
 export async function readCheckoutUpdate(
-  root = farmslotRoot,
+  root = farmslotRoot(),
 ): Promise<CheckoutUpdateOperation | undefined> {
   let path: string;
   try {
@@ -233,7 +233,7 @@ export async function gatewayUpdate(params: GatewayUpdateParams): Promise<Checko
       process.execPath,
       [
         fileURLToPath(new URL('../../../../scripts/update-checkout.mjs', import.meta.url)),
-        farmslotRoot,
+        farmslotRoot(),
         path,
       ],
       {

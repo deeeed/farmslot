@@ -466,8 +466,8 @@ async function slotPrepareInner(
     return command
       .replaceAll('{{node_support_dir}}', hookSupportDir)
       .replaceAll('{{NODE_SUPPORT_DIR}}', hookSupportDir)
-      .replaceAll(`${farmslotRoot}/projects/`, `${hookSupportDir}/projects/`)
-      .replaceAll(`${farmslotRoot}/scripts/`, `${hookSupportDir}/scripts/`)
+      .replaceAll(`${farmslotRoot()}/projects/`, `${hookSupportDir}/projects/`)
+      .replaceAll(`${farmslotRoot()}/scripts/`, `${hookSupportDir}/scripts/`)
       .replaceAll(`${farmPathsForSlot(vars).code.node}/projects/`, `${hookSupportDir}/projects/`)
       .replaceAll(`${farmPathsForSlot(vars).code.node}/scripts/`, `${hookSupportDir}/scripts/`);
   };
@@ -621,7 +621,7 @@ async function slotPrepareInner(
     if (projectVars) {
       await syncPrepareFixtures(vars, {
         runtimeDir,
-        supportDir: hookSupportDir ?? farmslotRoot,
+        supportDir: hookSupportDir ?? farmslotRoot(),
         sync,
         writeContext: (command) =>
           runPrepareCommand(vars, phaseLog('runtime-context'), command, {

@@ -42,8 +42,8 @@ const signal = (status: WorkerSignal['status']): WorkerSignal => ({
 /** A recovered monitor of a live Pi worker on a local fixture slot. */
 async function fixture(t: test.TestContext, maxNudges = 0) {
   const project = `transport-abort-${randomUUID()}`;
-  const projectDir = path.join(farmslotRoot, 'projects', project);
-  const poolFile = path.join(farmslotRoot, 'pool', `${project}.json`);
+  const projectDir = path.join(farmslotRoot(), 'projects', project);
+  const poolFile = path.join(farmslotRoot(), 'pool', `${project}.json`);
   const worker = await mkdtemp(path.join(os.tmpdir(), 'transport-abort-'));
   const taskDir = path.join(projectDir, 'tasks/dev/fixture');
   const signalFile = path.join(worker, 'SIGNAL.json');

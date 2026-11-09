@@ -18,7 +18,7 @@ import { farmslotRoot } from '../fleet/state.js';
 import { fleetMonitorStatus } from '../methods/fleet.js';
 import { resourceRevisions } from '../resources/revisions.js';
 
-const MONITOR_STATE_FILE = path.join(farmslotRoot, '.monitor_state.json');
+const MONITOR_STATE_FILE = path.join(farmslotRoot(), '.monitor_state.json');
 
 export type MonitorEventHandler = {
   onFleetUpdated: (fleet: FleetStatus) => void;

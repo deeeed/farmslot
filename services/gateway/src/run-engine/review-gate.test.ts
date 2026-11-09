@@ -51,7 +51,7 @@ test('a superseded review-posting gate stops without dismissing the reopened run
 });
 
 test('a review gate payload names the retained capture its artifact manifest came from', async (t) => {
-  const tasks = path.join(farmslotRoot, '.sandbox/review-gate-bundle/tasks');
+  const tasks = path.join(farmslotRoot(), '.sandbox/review-gate-bundle/tasks');
   await mkdir(tasks, { recursive: true });
   const root = await mkdtemp(path.join(tasks, 'review-gate-bundle-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -104,7 +104,7 @@ test('a review gate payload names the retained capture its artifact manifest cam
 });
 
 test('refresh preserves the fresh decision list and refuses an in-flight resolution or replacement', async (t) => {
-  const tasks = path.join(farmslotRoot, '.sandbox/review-refresh-retained/tasks');
+  const tasks = path.join(farmslotRoot(), '.sandbox/review-refresh-retained/tasks');
   await mkdir(tasks, { recursive: true });
   const root = await mkdtemp(path.join(tasks, 'review-refresh-'));
   t.after(() => rm(root, { recursive: true, force: true }));

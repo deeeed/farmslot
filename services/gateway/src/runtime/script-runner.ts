@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // script-runner.ts — Spawn bash scripts with streaming stdout/stderr via events
 
 import { type ChildProcess, spawn } from 'node:child_process';
@@ -10,7 +11,6 @@ import { farmslotRoot } from '../fleet/state.js';
 export type OutputHandler = (output: ScriptOutput) => void;
 export type CompleteHandler = (result: ScriptComplete) => void;
 
-const scriptsDir = path.join(farmslotRoot, 'scripts');
 const activeProcesses = new Map<string, ChildProcess>();
 
 let requestCounter = 0;
@@ -36,16 +36,23 @@ export function runScript(options: RunScriptOptions): string {
     requestId = generateRequestId(),
     onOutput,
     onComplete,
-    cwd = farmslotRoot,
+    cwd = farmslotRoot(),
     env,
   } = options;
 
-  const scriptPath = path.join(scriptsDir, script);
+  const scriptPath = path.join(farmslotRoot(), 'scripts', script);
+  const paths = currentFarmPaths('gateway', { ...process.env, ...env });
   const startTime = Date.now();
 
   const proc = spawn('bash', [scriptPath, ...args], {
     cwd,
-    env: { ...process.env, ...env },
+    env: {
+      ...process.env,
+      ...env,
+      FARMSLOT_HOME: paths.home,
+      FARMSLOT_POOL_DIR: paths.pool,
+      FARMSLOT_PROJECTS_DIR: paths.projects,
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 

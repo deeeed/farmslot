@@ -1,4 +1,4 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
+import { currentFarmPaths, legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { reportedFarmPaths } from '@farmslot/slot-config';
 import path from 'node:path';
 
@@ -41,7 +41,10 @@ export async function agentRuntimeScriptForSlot(
       `The connected node ${vars.machine} cannot resolve its agent-runtime helper ${filename}. ` +
         `Repair that node's runtime installation; no other deployment will be used.`,
     );
-  return script;
+  return path.posix.join(
+    legacyRemoteFarmPaths({}, undefined, path.posix.dirname(script)).code.agentRuntimeScripts,
+    path.posix.basename(script),
+  );
 }
 
 /** Framework-relative pack commands use the connected node's installation, too. */
@@ -60,7 +63,7 @@ export async function farmslotDirectoryForSlot(
     throw new Error(
       `The connected node ${vars.machine} cannot resolve its Farmslot installation directory.`,
     );
-  return directory;
+  return legacyRemoteFarmPaths({}, directory).code.node;
 }
 
 export async function renderRoleTemplate(

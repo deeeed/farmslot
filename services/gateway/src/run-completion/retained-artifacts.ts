@@ -438,7 +438,7 @@ export async function archiveRunArtifactHousekeeping(includeReferencedMedia = tr
     reportRunMediaArchive(
       await archiveRunBundleMedia({
         store,
-        farmslotRoot,
+        farmslotRoot: farmslotRoot(),
         archiveRoot: root,
         assertArchiveWriteRoom: assertRunBundleWriteRoom,
         policy: await retentionPolicy(),
@@ -545,7 +545,7 @@ export async function warnRunBundleCapacity(): Promise<void> {
   try {
     const store = await runBundleStore(true);
     const policy = await retentionPolicy();
-    const usage = await runBundleAdmissionUsage(store, farmslotRoot, acquisitionTaskDirToken);
+    const usage = await runBundleAdmissionUsage(store, farmslotRoot(), acquisitionTaskDirToken);
     if (runBundleNearCapacity(usage.total, policy))
       reportGatewayWarning(
         'run-bundle.capacity',
@@ -583,7 +583,7 @@ export async function reserveRunArtifactMetadata(run: Run): Promise<void> {
   const policy = await retentionPolicy();
   await persistRunNow(getRun(run.id) ?? run, 'retention admission');
   const reserve = () =>
-    reserveRunBundleMetadata(store, run.id, policy, farmslotRoot, acquisitionTaskDirToken);
+    reserveRunBundleMetadata(store, run.id, policy, farmslotRoot(), acquisitionTaskDirToken);
   // Housekeeping walks the store under its lock, so dispatch waits for it only when capacity
   // refuses; the retention pass and captures run it otherwise (F322).
   try {
@@ -660,7 +660,7 @@ export async function retainCapturedRunArtifacts(input: {
   }
   return materializeRunBundle({
     store,
-    farmslotRoot,
+    farmslotRoot: farmslotRoot(),
     acquisitionTaskDirs: acquisitionTaskDirToken,
     archiveRoot: (await import('../runs/storage-archive.js')).runArchiveRoot(),
     assertArchiveWriteRoom: assertRunBundleWriteRoom,
@@ -700,7 +700,7 @@ export async function retainCapturedRunArtifacts(input: {
       // Only the gateway's acquisition tree is regenerable. Slot trees and task inputs stay intact.
       if (
         input.releaseStagingMedia &&
-        strictTaskRelativePathFromFarmslotRoot(farmslotRoot, input.run.taskFile)
+        strictTaskRelativePathFromFarmslotRoot(farmslotRoot(), input.run.taskFile)
       ) {
         const unavailable = new Set(
           missingData.map((entry) => parseRunBundleMissingData(entry).path),

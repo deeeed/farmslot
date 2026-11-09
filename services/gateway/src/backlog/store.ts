@@ -470,7 +470,7 @@ function normalizeOptionalSpecPath(value: unknown): string | undefined {
 }
 
 function resolveSpecPath(specPath: string): string {
-  const resolved = path.resolve(farmslotRoot, specPath);
+  const resolved = path.resolve(farmslotRoot(), specPath);
   const root = path.resolve(BACKLOG_SPEC_ROOT());
   if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
     throw new Error('specPath must stay within the configured backlog spec directory');

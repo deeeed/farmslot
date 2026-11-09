@@ -23,7 +23,7 @@ export interface MigrationStep {
   migrate: (pool: PoolConfig) => PoolConfig | void;
 }
 
-export function poolMigrationsDir(root: string = repoRoot): string {
+export function poolMigrationsDir(root: string = repoRoot()): string {
   return join(root, 'migrations', 'pool');
 }
 

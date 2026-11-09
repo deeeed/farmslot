@@ -18,7 +18,7 @@ async function makeProject(
   t: { after: (fn: () => unknown) => void },
   name: string,
 ): Promise<string> {
-  const projectDir = path.join(farmslotRoot, 'projects', name);
+  const projectDir = path.join(farmslotRoot(), 'projects', name);
   await mkdir(projectDir, { recursive: true });
   await writeFile(
     path.join(projectDir, 'project.json'),

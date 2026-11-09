@@ -63,7 +63,7 @@ test('deleting a planning item changes collection membership and deletes only it
 
 test('real backlog, roadmap and graph stores invalidate after their new facts are readable', async (t) => {
   const project = path.basename(writerHome);
-  const projectDir = path.join(farmslotRoot, 'projects', project);
+  const projectDir = path.join(farmslotRoot(), 'projects', project);
   await mkdir(projectDir);
   t.after(() => rm(projectDir, { recursive: true, force: true }));
   await writeFile(

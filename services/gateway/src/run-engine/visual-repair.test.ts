@@ -373,7 +373,7 @@ test('Send back reasons become learning candidates bound to their receipt and re
 
 test('TAT-4085 REVIEW-FIX keeps the note and both findings alongside the AC repair', async (t) => {
   const project = `.send-back-feedback-${process.pid}`;
-  const root = path.join(farmslotRoot, 'projects', project);
+  const root = path.join(farmslotRoot(), 'projects', project);
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
     invalidateProjectVarsCache(project);

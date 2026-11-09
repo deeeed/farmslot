@@ -89,8 +89,7 @@ const VALID_SOURCE_KINDS = new Set<string>(ROADMAP_SOURCE_KINDS);
 function ROADMAP_ROOT(): string {
   return currentFarmPaths('gateway').state.roadmap;
 }
-// Compatibility value consumed by existing observer callers and tests.
-export const roadmapRoot = currentFarmPaths('gateway').state.roadmap;
+export const roadmapRoot = ROADMAP_ROOT;
 let assertObservationAvailable = (): void => {};
 
 /** Startup binds the actual filesystem observer; direct store callers keep their existing reads. */
@@ -129,7 +128,7 @@ function sha256(value: string): string {
 }
 
 function repoRelative(filePath: string): string {
-  const relative = path.relative(farmslotRoot, filePath);
+  const relative = path.relative(farmslotRoot(), filePath);
   return relative.startsWith('..') ? filePath : relative;
 }
 
@@ -146,7 +145,7 @@ function assertSafePathSegment(label: string, value: string): void {
 }
 
 function resolveRoadmapPath(filePath: string): string {
-  const resolved = path.resolve(farmslotRoot, filePath);
+  const resolved = path.resolve(farmslotRoot(), filePath);
   const root = path.resolve(ROADMAP_ROOT());
   if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
     throw new Error('roadmap filePath must stay under .roadmap');
@@ -334,7 +333,7 @@ async function latestRefinementPromptPath(item: Pick<RoadmapItem, 'id'>): Promis
 }
 
 function resolveRefinementPromptPath(promptPath: string): string {
-  const absolutePath = path.resolve(farmslotRoot, promptPath);
+  const absolutePath = path.resolve(farmslotRoot(), promptPath);
   const root = path.resolve(REFINEMENT_PROMPT_ROOT());
   if (!absolutePath.startsWith(`${root}${path.sep}`) || !absolutePath.endsWith('.md')) {
     throw new Error('Roadmap prompt path must point to a refinement prompt markdown file');
@@ -348,7 +347,7 @@ function promotionDraftDir(itemId: string): string {
 }
 
 function resolvePromotionDraftPath(draftPath: string): string {
-  const absolutePath = path.resolve(farmslotRoot, draftPath);
+  const absolutePath = path.resolve(farmslotRoot(), draftPath);
   const root = path.resolve(PROMOTION_DRAFT_ROOT());
   if (!absolutePath.startsWith(`${root}${path.sep}`) || !absolutePath.endsWith('.md')) {
     throw new Error('Roadmap promotion draft path must point to a promotion draft markdown file');
@@ -862,7 +861,7 @@ function defaultFarmslotCommand(farmslotCommand?: string): string {
 
 function checkoutFarmslotCommand(): string | null {
   for (const name of ['.env.ports', '.env']) {
-    const envPath = path.join(farmslotRoot, name);
+    const envPath = path.join(farmslotRoot(), name);
     if (!existsSync(envPath)) continue;
     let text: string;
     try {
@@ -968,7 +967,7 @@ async function roadmapFrameworkContext(item: RoadmapItem): Promise<string> {
           'No concrete target projects are set yet. Use targetProjects before drafting backlog specs.',
         ];
   return [
-    `Farmslot repo root: ${farmslotRoot}`,
+    `Farmslot repo root: ${farmslotRoot()}`,
     `Roadmap item file: ${item.filePath}`,
     '',
     'Farmslot model:',
@@ -1046,7 +1045,7 @@ async function loadExplicitRefinementPromptTemplate(
 ): Promise<string> {
   const promptPath = path.isAbsolute(refinementPromptPath)
     ? refinementPromptPath
-    : path.join(farmslotRoot, 'projects', project, refinementPromptPath);
+    : path.join(farmslotRoot(), 'projects', project, refinementPromptPath);
   return expandPromptTemplate(
     await readFile(promptPath, 'utf-8'),
     vars,
@@ -1208,8 +1207,8 @@ function buildRefinementShellCommand(
     prelude: roadmapRefinementRunnerPrelude(),
     commandLabel: 'Roadmap refinement command',
     fallbackMessages: [
-      `Roadmap refinement prompt: ${path.resolve(farmslotRoot, promptPath)}`,
-      `Edit roadmap item: ${path.resolve(farmslotRoot, item.filePath)}`,
+      `Roadmap refinement prompt: ${path.resolve(farmslotRoot(), promptPath)}`,
+      `Edit roadmap item: ${path.resolve(farmslotRoot(), item.filePath)}`,
     ],
   });
 }
@@ -1490,7 +1489,7 @@ async function promoteRoadmapItemUnlocked(
   } catch (err) {
     await Promise.allSettled(backlogItems.map((item) => deleteBacklogItem(item.id)));
     await Promise.allSettled(
-      specPaths.map((specPath) => unlink(path.resolve(farmslotRoot, specPath))),
+      specPaths.map((specPath) => unlink(path.resolve(farmslotRoot(), specPath))),
     );
     throw err;
   }

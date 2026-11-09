@@ -19,6 +19,8 @@ export interface ResolveFarmPathsOptions {
   agentRuntimeScripts?: string;
   userHome?: string;
   legacyFacts?: LegacyFarmStorageFacts;
+  /** A marker read on the target by deployment tooling; null means absent. */
+  instanceConfig?: InstanceConfig | null;
 }
 
 export interface FarmStatePaths {
@@ -143,10 +145,28 @@ export function resolveReportedFarmPaths(options: ResolveFarmPathsOptions): Farm
     : resolveFarmPaths({ ...options, legacyFacts: readLegacyStorageFacts(paths) });
 }
 
-interface InstanceConfig {
+export interface InstanceConfig {
   layout: 2;
   name?: string;
   dataRoot?: string;
+  ports?: FarmInstancePorts;
+}
+
+export interface FarmInstancePorts {
+  gateway?: number;
+}
+
+function isFarmInstancePorts(value: unknown): value is FarmInstancePorts {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    (!('gateway' in value) ||
+      (typeof value.gateway === 'number' &&
+        Number.isInteger(value.gateway) &&
+        value.gateway > 0 &&
+        value.gateway <= 65535))
+  );
 }
 
 function readInstanceConfig(home: string): InstanceConfig | undefined {
@@ -158,20 +178,26 @@ function readInstanceConfig(home: string): InstanceConfig | undefined {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
     throw error;
   }
-  const value: unknown = JSON.parse(content);
+  return parseFarmInstanceConfig(JSON.parse(content), path.join(home, 'config', 'instance.json'));
+}
+
+/** Validate a target's marker before resolving its paths on the deploying host. */
+export function parseFarmInstanceConfig(value: unknown, file: string): InstanceConfig {
   if (
     !value ||
     typeof value !== 'object' ||
     !('layout' in value) ||
     value.layout !== 2 ||
     ('name' in value && (typeof value.name !== 'string' || !value.name.trim())) ||
-    ('dataRoot' in value && (typeof value.dataRoot !== 'string' || !value.dataRoot.trim()))
+    ('dataRoot' in value && (typeof value.dataRoot !== 'string' || !value.dataRoot.trim())) ||
+    ('ports' in value && !isFarmInstancePorts(value.ports))
   ) {
-    throw new Error(`Invalid farm instance config: ${path.join(home, 'config', 'instance.json')}`);
+    throw new Error(`Invalid farm instance config: ${file}`);
   }
   return {
     layout: 2,
     ...('name' in value && typeof value.name === 'string' ? { name: value.name } : {}),
+    ...('ports' in value && isFarmInstancePorts(value.ports) ? { ports: value.ports } : {}),
     ...('dataRoot' in value && typeof value.dataRoot === 'string'
       ? { dataRoot: value.dataRoot }
       : {}),
@@ -194,7 +220,10 @@ export function resolveFarmPaths(options: ResolveFarmPathsOptions): FarmPaths {
   const selectedHome = expandHome(
     (options.home ?? env.FARMSLOT_HOME)?.trim() || path.join(homedir(), '.farmslot'),
   );
-  const config = readInstanceConfig(selectedHome);
+  const config =
+    options.instanceConfig === undefined
+      ? readInstanceConfig(selectedHome)
+      : options.instanceConfig;
   const home = config ? path.resolve(selectedHome) : selectedHome;
   const instance = config?.name ?? path.basename(home).replace(/^\./u, '');
   const envOverrides: string[] = [];
@@ -518,6 +547,7 @@ export function currentFarmPaths(
 export function legacyRemoteFarmPaths(
   env: NodeJS.ProcessEnv = {},
   discoveredCheckout?: string,
+  agentRuntimeScripts?: string,
 ): {
   home: string;
   pool: string;
@@ -528,18 +558,23 @@ export function legacyRemoteFarmPaths(
   const node = discoveredCheckout ?? path.posix.join(env.HOME?.trim() || '~', 'farmslot-node');
   return {
     home: env.FARMSLOT_HOME?.trim() || '~/.farmslot',
-    pool: path.posix.join(node, 'pool'),
-    projects: path.posix.join(node, 'projects'),
+    pool: env.FARMSLOT_POOL_DIR || path.posix.join(node, 'pool'),
+    projects: env.FARMSLOT_PROJECTS_DIR || path.posix.join(node, 'projects'),
     code: {
       checkout: node,
-      agentRuntimeScripts: path.posix.join(node, 'node_modules/@farmslot/agent-runtime/scripts'),
+      agentRuntimeScripts:
+        agentRuntimeScripts ??
+        path.posix.join(node, 'node_modules/@farmslot/agent-runtime/scripts'),
       node,
       templateNode: env.FARMSLOT_WORKSPACE?.trim() || node,
       cli: '~/.local/share/farmslot-cli',
       bin: '~/.local/bin',
       support: path.posix.join(node, 'support'),
     },
-    state: { runs: path.posix.join(node, '.runs'), tmp: '/tmp/farmslot-prepare' },
+    state: {
+      runs: env.FARMSLOT_RUNS_DIR || path.posix.join(node, '.runs'),
+      tmp: '/tmp/farmslot-prepare',
+    },
   };
 }
 

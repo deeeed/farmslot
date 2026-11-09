@@ -24,8 +24,8 @@ import { trackOpenQuestion } from './worker-question.js';
 
 async function fixture(t: TestContext, consumedBeforeWaitMs = 2000) {
   const project = `operator-monitor-${randomUUID()}`;
-  const projectDir = path.join(farmslotRoot, 'projects', project);
-  const poolFile = path.join(farmslotRoot, 'pool', `${project}.json`);
+  const projectDir = path.join(farmslotRoot(), 'projects', project);
+  const poolFile = path.join(farmslotRoot(), 'pool', `${project}.json`);
   const worker = await mkdtemp(path.join(os.tmpdir(), 'operator-monitor-'));
   const taskDir = path.join(projectDir, 'tasks/dev/fixture');
   const signalFile = path.join(worker, 'SIGNAL.json');
@@ -525,7 +525,7 @@ async function pastTotalTimeout(t: TestContext, sinceProgressMs: number) {
   const f = await fixture(t);
   await f.writeSignal({ ...f.waiting, waitingForOperator: undefined });
   await writeFile(
-    path.join(farmslotRoot, 'projects', f.run.project, 'project.json'),
+    path.join(farmslotRoot(), 'projects', f.run.project, 'project.json'),
     JSON.stringify({
       name: f.run.project,
       monitoring: {

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy-node.sh — Deploy/update farmslot node to any fleet machine
-# Usage: bash scripts/deploy-node.sh <machine> [gateway-ip] [--instance dev|prod] [--node-token-file path] [--refresh-cli|--cli-only]
+# Usage: bash scripts/deploy-node.sh <machine> [gateway-ip] [--home dir | --instance dev|prod] [--dry-run] [--node-token-file path] [--refresh-cli|--cli-only]
 #
 # Supports:
 #   macOS local  (runner-local) — launchd LaunchAgent
@@ -24,6 +24,8 @@
 # distinct install dir, service name, gateway URL, and IPC state. Default
 # instance is "prod" (identical to the original single-instance behavior).
 # Select the other with --instance dev or FARMSLOT_NODE_INSTANCE=dev.
+# --home selects a target instance marker; layout 2 installs under <home>/code/node.
+# --dry-run renders a local temporary target without building, syncing or starting services.
 # Set CAPTURE_HELPER_PATH to select an existing helper executable on the target.
 # An existing launchd capture-helper override is retained when this is unset.
 # Set FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID to opt this node into native sessions
@@ -38,6 +40,8 @@
 set -euo pipefail
 
 INSTANCE="${FARMSLOT_NODE_INSTANCE:-prod}"
+DEPLOY_HOME=""
+DRY_RUN=false
 NODE_TOKEN_FILE=""
 NODE_TOKEN_FROM_FILE=false
 REFRESH_CLI=false
@@ -45,6 +49,16 @@ CLI_ONLY=false
 ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --home)
+      DEPLOY_HOME="${2:?--home requires a directory}"
+      shift 2
+      ;;
+    --home=*)
+      DEPLOY_HOME="${1#*=}"
+      [[ -n "$DEPLOY_HOME" ]] || { echo '[deploy] ERROR: --home requires a directory' >&2; exit 1; }
+      shift
+      ;;
+    --dry-run) DRY_RUN=true; shift ;;
     --instance)
       INSTANCE="${2:?--instance requires a value (dev|prod)}"
       shift 2
@@ -82,30 +96,14 @@ while [[ $# -gt 0 ]]; do
 done
 set -- "${ARGS[@]}"
 
-MACHINE="${1:?Usage: deploy-node.sh <machine> [gateway-ip] [--instance dev|prod] [--node-token-file path] [--refresh-cli|--cli-only]}"
+MACHINE="${1:?Usage: deploy-node.sh <machine> [gateway-ip] [--home dir | --instance dev|prod] [--dry-run] [--node-token-file path] [--refresh-cli|--cli-only]}"
 GATEWAY_IP="${2:-}"
 
-# --- Per-instance configuration (dev + prod coexist on the same machine) ---
-# Single source of truth for everything that must not collide between a prod
-# node and a dev node on the same box: install dir, service name, gateway
-# port, and IPC socket. Prod is byte-identical to the pre-instance defaults.
-case "$INSTANCE" in
-  prod)
-    INSTANCE_SUFFIX=""
-    LAUNCHD_LABEL_SUFFIX=""
-    DEFAULT_GATEWAY_PORT=7777
-    ;;
-  dev)
-    INSTANCE_SUFFIX="-dev"
-    LAUNCHD_LABEL_SUFFIX=".dev"
-    DEFAULT_GATEWAY_PORT=7801
-    ;;
-  *)
-    echo "[deploy] ERROR: --instance must be 'dev' or 'prod' (got '$INSTANCE')" >&2
-    exit 1
-    ;;
-esac
-GATEWAY_PORT="${GATEWAY_PORT:-$DEFAULT_GATEWAY_PORT}"
+# --instance is the legacy deployment alias. An explicit --home selects the target marker.
+if [[ "$INSTANCE" != prod && "$INSTANCE" != dev ]]; then
+  echo "[deploy] ERROR: --instance must be 'dev' or 'prod' (got '$INSTANCE')" >&2
+  exit 1
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -196,46 +194,48 @@ RESOLVER
   node "$resolver" "$REPO_ROOT" "$SCRIPT_DIR/build-dist-atomic.mjs"
 }
 
-FARMSLOT_DEPS="$(resolve_farmslot_deps)"
-echo "[deploy] workspace packages to bundle: $(echo "$FARMSLOT_DEPS" | cut -f1 | tr '\n' ' ')"
+build_node_dependencies() {
+  FARMSLOT_DEPS="$(resolve_farmslot_deps)"
+  echo "[deploy] workspace packages to bundle: $(echo "$FARMSLOT_DEPS" | cut -f1 | tr '\n' ' ')"
 
-# --- Build every @farmslot/* dep that ships from dist/ ---
-# A missing dist/ crashes the node at startup (ERR_MODULE_NOT_FOUND); a STALE
-# dist/ is worse — it deploys cleanly and then mismatches the gateway at
-# runtime (e.g. a protocol version bump built nowhere). Builds are incremental,
-# so always building is cheap; fail loudly if one cannot build. Each dist/ is
-# switched into place atomically (scripts/build-dist-atomic.mjs), so whatever
-# imports these packages from this checkout never sees a missing dist/
-# mid-build. --cli-only deploys no node bundle: it builds only the protocol
-# dist the CLI stage reads, and only when that is missing.
-BUILD_PACKAGES=()
-BUILD_DIRS=()
-while IFS=$'\t' read -r pkg_name pkg_dir needs_build; do
-  [[ -z "$pkg_name" || "$needs_build" != "1" ]] && continue
-  if [[ "$CLI_ONLY" == true ]]; then
-    [[ "$pkg_name" == @farmslot/protocol && ! -f "$PACKAGES_DIR/$pkg_dir/dist/node/slot-by-repo.js" ]] || continue
-  fi
-  BUILD_PACKAGES+=("$pkg_name")
-  BUILD_DIRS+=("$pkg_dir")
-done <<< "$FARMSLOT_DEPS"
-if (( ${#BUILD_PACKAGES[@]} > 0 )); then
-  echo "[deploy] building ${BUILD_PACKAGES[*]} (ships from dist/)..."
-  if ! node "$SCRIPT_DIR/build-dist-atomic.mjs" "$REPO_ROOT" "${BUILD_PACKAGES[@]}" < /dev/null; then
-    echo "[deploy] ERROR: failed to build ${BUILD_PACKAGES[*]} — refusing to deploy a missing or stale dist" >&2
-    exit 1
-  fi
-  for pkg_dir in "${BUILD_DIRS[@]}"; do
-    if [[ ! -d "$PACKAGES_DIR/$pkg_dir/dist" ]]; then
-      echo "[deploy] ERROR: packages/$pkg_dir build reported success but dist/ is still missing — refusing to deploy" >&2
+  # --- Build every @farmslot/* dep that ships from dist/ ---
+  # A missing dist/ crashes the node at startup (ERR_MODULE_NOT_FOUND); a STALE
+  # dist/ is worse — it deploys cleanly and then mismatches the gateway at
+  # runtime (e.g. a protocol version bump built nowhere). Builds are incremental,
+  # so always building is cheap; fail loudly if one cannot build. Each dist/ is
+  # switched into place atomically (scripts/build-dist-atomic.mjs), so whatever
+  # imports these packages from this checkout never sees a missing dist/
+  # mid-build. --cli-only deploys no node bundle: it builds only the protocol
+  # dist the CLI stage reads, and only when that is missing.
+  BUILD_PACKAGES=()
+  BUILD_DIRS=()
+  while IFS=$'\t' read -r pkg_name pkg_dir needs_build; do
+    [[ -z "$pkg_name" || "$needs_build" != "1" ]] && continue
+    if [[ "$CLI_ONLY" == true ]]; then
+      [[ "$pkg_name" == @farmslot/protocol && ! -f "$PACKAGES_DIR/$pkg_dir/dist/node/slot-by-repo.js" ]] || continue
+    fi
+    BUILD_PACKAGES+=("$pkg_name")
+    BUILD_DIRS+=("$pkg_dir")
+  done <<< "$FARMSLOT_DEPS"
+  if (( ${#BUILD_PACKAGES[@]} > 0 )); then
+    echo "[deploy] building ${BUILD_PACKAGES[*]} (ships from dist/)..."
+    if ! node "$SCRIPT_DIR/build-dist-atomic.mjs" "$REPO_ROOT" "${BUILD_PACKAGES[@]}" < /dev/null; then
+      echo "[deploy] ERROR: failed to build ${BUILD_PACKAGES[*]} — refusing to deploy a missing or stale dist" >&2
       exit 1
     fi
-  done
-fi
+    for pkg_dir in "${BUILD_DIRS[@]}"; do
+      if [[ ! -d "$PACKAGES_DIR/$pkg_dir/dist" ]]; then
+        echo "[deploy] ERROR: packages/$pkg_dir build reported success but dist/ is still missing — refusing to deploy" >&2
+        exit 1
+      fi
+    done
+  fi
+}
 
 # --- Detect local vs remote ---
 LOCAL_HOSTNAME=$(hostname -s)
 IS_LOCAL=false
-if [[ "$MACHINE" == "$LOCAL_HOSTNAME" ]]; then
+if [[ "$MACHINE" == "$LOCAL_HOSTNAME" || "$DRY_RUN" == true ]]; then
   IS_LOCAL=true
   run() { eval "$@"; }
   RSYNC_PREFIX=""
@@ -247,7 +247,7 @@ else
   export RSYNC_RSH="ssh -o ConnectTimeout=10"
 fi
 
-if [[ "$IS_LOCAL" != true && "$NODE_TOKEN_FROM_FILE" != true && "$CLI_ONLY" != true ]]; then
+if [[ "$IS_LOCAL" != true && "$NODE_TOKEN_FROM_FILE" != true && "$CLI_ONLY" != true && "$DRY_RUN" != true ]]; then
   echo "[deploy] ERROR: remote deployment requires --node-token-file with a credential bound to $MACHINE" >&2
   exit 1
 fi
@@ -257,7 +257,14 @@ REMOTE_OS=$(run uname -s)
 
 # --- Resolve paths ---
 REMOTE_HOME=$(run 'echo $HOME')
-REMOTE_DIR="$REMOTE_HOME/farmslot-node${INSTANCE_SUFFIX}"
+if [[ -z "$DEPLOY_HOME" ]]; then
+  if [[ "$INSTANCE" == dev ]]; then DEPLOY_HOME="$REMOTE_HOME/.farmslot-dev"; else DEPLOY_HOME="$REMOTE_HOME/.farmslot"; fi
+fi
+case "$DEPLOY_HOME" in
+  '~') DEPLOY_HOME="$REMOTE_HOME" ;;
+  '~/'*) DEPLOY_HOME="$REMOTE_HOME/${DEPLOY_HOME#'~/'}" ;;
+esac
+[[ "$DEPLOY_HOME" == /* ]] || { echo '[deploy] ERROR: --home must be absolute or start with ~/' >&2; exit 1; }
 REMOTE_UID=$(run 'id -u')
 
 # MACHINE_NAME must stay the bare physical machine name, NOT suffixed by
@@ -273,8 +280,13 @@ NODE_MACHINE_NAME="${MACHINE}"
 # The IPC socket the node's screen-control server binds defaults (in
 # services/node/src) to a path keyed only by uid, so two instances on the
 # same box would collide on the same socket file without this.
-SCREEN_CONTROL_SOCKET_PATH="/tmp/farmslot-screen-control-${REMOTE_UID}${INSTANCE_SUFFIX}.sock"
+marker_path=$(printf '%q' "$DEPLOY_HOME/config/instance.json")
+TARGET_MARKER=$(run "if test -f $marker_path; then cat $marker_path; fi")
+DEPLOY_PATH_VALUES=$(node --import tsx "$SCRIPT_DIR/lib/deploy-paths.mts" "$DEPLOY_HOME" "$REMOTE_HOME" "$REMOTE_UID" "${GATEWAY_PORT:-}" <<< "$TARGET_MARKER")
+eval "$DEPLOY_PATH_VALUES"
+export FARMSLOT_POOL_DIR="$SOURCE_POOL_DIR" FARMSLOT_PROJECTS_DIR="$SOURCE_PROJECTS_DIR" FARMSLOT_HOME="$SOURCE_HOME"
 
+if [[ "$DRY_RUN" == true && -z "$GATEWAY_IP" ]]; then GATEWAY_IP=127.0.0.1; fi
 if [[ -z "$GATEWAY_IP" ]]; then
   if [[ "$IS_LOCAL" == true ]]; then
     GATEWAY_IP="127.0.0.1"
@@ -319,7 +331,9 @@ function version_key(path,   version,n,i,parts,key) {
 if [[ -n "$candidate" && -x "$candidate" ]]; then echo "$candidate"; exit 0; fi
 exit 1
 '
-if [[ -n "${FARMSLOT_NODE_PATH:-}" ]]; then
+if [[ "$DRY_RUN" == true ]]; then
+  NODE_PATH="$(command -v node)"
+elif [[ -n "${FARMSLOT_NODE_PATH:-}" ]]; then
   NODE_PATH="$FARMSLOT_NODE_PATH"
 elif [[ "$IS_LOCAL" == true ]]; then
   NODE_PATH=$(zsh -c "$NODE_DETECT")
@@ -333,7 +347,10 @@ fi
 NODE_DIR=$(dirname "$NODE_PATH")
 echo "[deploy] node: $NODE_PATH"
 
-if [[ "$CLI_ONLY" == true ]]; then
+if [[ "$DRY_RUN" != true ]]; then build_node_dependencies; fi
+
+if [[ "$CLI_ONLY" == true && "$DRY_RUN" != true ]]; then
+
   source "$SCRIPT_DIR/lib/node-cli-refresh.sh"
   exit 0
 fi
@@ -352,8 +369,8 @@ if [[ "$REMOTE_OS" == "Darwin" ]]; then
 fi
 # Updates retain the target instance's native enrollment unless explicitly overridden.
 # An explicit empty value still disables native execution. Read only this public field.
-if [[ "$NATIVE_OWNER_EXPLICIT" != x && "$REMOTE_OS" == Darwin ]]; then
-  native_plist="$REMOTE_HOME/Library/LaunchAgents/com.farmslot.node${LAUNCHD_LABEL_SUFFIX}.plist"
+if [[ "$DRY_RUN" != true && "$NATIVE_OWNER_EXPLICIT" != x && "$REMOTE_OS" == Darwin ]]; then
+  native_plist="$REMOTE_HOME/Library/LaunchAgents/${PLIST_NAME}.plist"
   native_plist_quoted=$(printf '%q' "$native_plist")
   if run "test -f $native_plist_quoted"; then
     run "/usr/bin/plutil -lint $native_plist_quoted" > /dev/null
@@ -430,13 +447,12 @@ launchd_instance_env_xml() {
         <string>%s</string>
 ' "$(printf '%s' "$FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID" | xml_escape)"
   fi
-  if [[ -n "$INSTANCE_SUFFIX" ]]; then
-    printf '        <key>FARMSLOT_HOME</key>
+  printf '        <key>FARMSLOT_HOME</key>
         <string>%s</string>
         <key>SCREEN_CONTROL_SOCKET</key>
         <string>%s</string>
-' "$(printf '%s' "$REMOTE_HOME/.farmslot${INSTANCE_SUFFIX}" | xml_escape)" "$(printf '%s' "$SCREEN_CONTROL_SOCKET_PATH" | xml_escape)"
-  fi
+' "$(printf '%s' "$TARGET_HOME" | xml_escape)" "$(printf '%s' "$SCREEN_CONTROL_SOCKET_PATH" | xml_escape)"
+
 }
 
 systemd_instance_env_lines() {
@@ -444,12 +460,21 @@ systemd_instance_env_lines() {
     printf 'Environment="FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID=%s"
 ' "$(printf '%s' "$FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID" | sed 's/\\/\\\\/g; s/"/\\"/g; s/%/%%/g')"
   fi
-  if [[ -n "$INSTANCE_SUFFIX" ]]; then
-    printf 'Environment="FARMSLOT_HOME=%s"
-Environment="SCREEN_CONTROL_SOCKET=%s"
-' "$REMOTE_HOME/.farmslot${INSTANCE_SUFFIX}" "$SCREEN_CONTROL_SOCKET_PATH"
-  fi
+  printf 'Environment="FARMSLOT_HOME=%s"\nEnvironment="SCREEN_CONTROL_SOCKET=%s"\n' \
+    "$(printf '%s' "$TARGET_HOME" | sed 's/\\/\\\\/g; s/"/\\"/g')" "$SCREEN_CONTROL_SOCKET_PATH"
+
 }
+
+# Dry-run reads only the selected marker and prints the same resolved paths and
+# service invocation used below. It never builds, syncs, opens credentials or starts services.
+if [[ "$DRY_RUN" == true ]]; then
+  printf '%s\n' "$DEPLOY_PATH_VALUES"
+  printf 'sync pool %q -> %q\nsync projects %q -> %q\n' "$FARMSLOT_POOL_DIR" "$TARGET_POOL_DIR" "$FARMSLOT_PROJECTS_DIR" "$TARGET_PROJECTS_DIR"
+  launchd_node_arguments
+  launchd_instance_env_xml
+  systemd_instance_env_lines
+  exit 0
+fi
 
 # --- Migrate: remove old farmslot-agent service and dir ---
 OLD_DIR="$REMOTE_HOME/farmslot-agent"
@@ -471,47 +496,47 @@ fi
 
 # --- rsync node source ---
 echo "[deploy] syncing node source..."
-run "mkdir -p $REMOTE_DIR/src"
+run "mkdir -p $(printf '%q' "$REMOTE_DIR/src")"
 rsync -a --delete "$NODE_SRC/src/" "${RSYNC_PREFIX}$REMOTE_DIR/src/"
 rsync -a "$NODE_SRC/tsconfig.json" "${RSYNC_PREFIX}$REMOTE_DIR/tsconfig.json"
 
 # Framework scripts used by preflight/setup hooks via {{farmslot_dir}}/scripts/
 echo "[deploy] syncing framework scripts..."
-run "mkdir -p $REMOTE_DIR/scripts"
+run "mkdir -p $(printf '%q' "$REMOTE_DIR/scripts")"
 rsync -a --exclude='deploy-node.sh' "$REPO_ROOT/scripts/" "${RSYNC_PREFIX}$REMOTE_DIR/scripts/"
 
 # Pool configs needed by lib/slot-common.sh (load_slot_vars)
 echo "[deploy] syncing pool configs..."
-run "mkdir -p $REMOTE_DIR/pool"
+run "mkdir -p $(printf '%q' "$TARGET_POOL_DIR")"
 # Release checkouts stage the gateway pool through symlinks. Copy their contents,
 # never links that could resolve into a stale checkout on the execution node.
-rsync -aL "$REPO_ROOT/pool/" "${RSYNC_PREFIX}$REMOTE_DIR/pool/"
+rsync -aL "$FARMSLOT_POOL_DIR/" "${RSYNC_PREFIX}$TARGET_POOL_DIR/"
 
 # Project dirs referenced by hooks via {{farmslot_dir}}/projects/<name>/
 # Syncs project.json, task templates and hook helper dirs used through {{farmslot_dir}}.
 echo "[deploy] syncing project configs and hook scripts..."
-for proj_dir in "$REPO_ROOT"/projects/*/; do
+for proj_dir in "$FARMSLOT_PROJECTS_DIR"/*/; do
   proj_name=$(basename "$proj_dir")
   # project.json
   [[ -f "$proj_dir/project.json" ]] && {
-    run "mkdir -p $REMOTE_DIR/projects/$proj_name"
-    rsync -a "$proj_dir/project.json" "${RSYNC_PREFIX}$REMOTE_DIR/projects/$proj_name/project.json"
+    run "mkdir -p $(printf '%q' "$TARGET_PROJECTS_DIR/$proj_name")"
+    rsync -a "$proj_dir/project.json" "${RSYNC_PREFIX}$TARGET_PROJECTS_DIR/$proj_name/project.json"
   }
   # setup/ dir
   [[ -d "$proj_dir/setup" ]] && {
-    run "mkdir -p $REMOTE_DIR/projects/$proj_name/setup"
-    rsync -a "$proj_dir/setup/" "${RSYNC_PREFIX}$REMOTE_DIR/projects/$proj_name/setup/"
+    run "mkdir -p $(printf '%q' "$TARGET_PROJECTS_DIR/$proj_name/setup")"
+    rsync -a "$proj_dir/setup/" "${RSYNC_PREFIX}$TARGET_PROJECTS_DIR/$proj_name/setup/"
   }
   # scripts/ dir
   [[ -d "$proj_dir/scripts" ]] && {
-    run "mkdir -p $REMOTE_DIR/projects/$proj_name/scripts"
-    rsync -a "$proj_dir/scripts/" "${RSYNC_PREFIX}$REMOTE_DIR/projects/$proj_name/scripts/"
+    run "mkdir -p $(printf '%q' "$TARGET_PROJECTS_DIR/$proj_name/scripts")"
+    rsync -a "$proj_dir/scripts/" "${RSYNC_PREFIX}$TARGET_PROJECTS_DIR/$proj_name/scripts/"
   }
   # Mirror both task-template layouts, including removals from the source.
   for template_dir in templates checklists; do
     [[ -d "$proj_dir/$template_dir" ]] || continue
-    run "mkdir -p $REMOTE_DIR/projects/$proj_name/$template_dir"
-    rsync -a --delete "${proj_dir}${template_dir}/" "${RSYNC_PREFIX}$REMOTE_DIR/projects/$proj_name/$template_dir/"
+    run "mkdir -p $(printf '%q' "$TARGET_PROJECTS_DIR/$proj_name/$template_dir")"
+    rsync -a --delete "${proj_dir}${template_dir}/" "${RSYNC_PREFIX}$TARGET_PROJECTS_DIR/$proj_name/$template_dir/"
   done
   echo "  → $proj_name"
 done
@@ -540,19 +565,19 @@ console.log(JSON.stringify({name: '@farmslot/node-standalone', version: '0.1.0',
   private: true, type: 'module', dependencies}, null, 2));
 PKGJSON
 )"
-run "cat > $REMOTE_DIR/package.json" <<< "$standalone_package_json"
+run "cat > $(printf '%q' "$REMOTE_DIR/package.json")" <<< "$standalone_package_json"
 
 echo "[deploy] installing dependencies..."
 # Use yarn if available (with node-modules linker), otherwise npm
 HAS_YARN=$(run "PATH=$NODE_DIR:\$PATH which yarn 2>/dev/null && echo yes || echo no")
 if [[ "$HAS_YARN" == *"yes" ]]; then
-  run "cd $REMOTE_DIR && echo 'nodeLinker: node-modules' > .yarnrc.yml && PATH=$NODE_DIR:\$PATH yarn install 2>&1 | tail -5"
+  run "cd $(printf '%q' "$REMOTE_DIR") && echo 'nodeLinker: node-modules' > .yarnrc.yml && PATH=$NODE_DIR:\$PATH yarn install 2>&1 | tail -5"
 else
-  run "cd $REMOTE_DIR && PATH=$NODE_DIR:\$PATH npm install 2>&1 | tail -5"
+  run "cd $(printf '%q' "$REMOTE_DIR") && PATH=$NODE_DIR:\$PATH npm install 2>&1 | tail -5"
 fi
 CAPTURE_HELPER_REMOTE="${CAPTURE_HELPER_PATH:-}"
 if [[ "$REMOTE_OS" == "Darwin" && -z "$CAPTURE_HELPER_REMOTE" ]]; then
-  existing_plist="$REMOTE_HOME/Library/LaunchAgents/com.farmslot.node${LAUNCHD_LABEL_SUFFIX}.plist"
+  existing_plist="$REMOTE_HOME/Library/LaunchAgents/${PLIST_NAME}.plist"
   if run "test -f $(printf '%q' "$existing_plist")"; then
     if ! run "/usr/bin/plutil -lint $(printf '%q' "$existing_plist")" >/dev/null; then
       echo "[deploy] cannot read a valid service plist: $existing_plist" >&2
@@ -585,7 +610,7 @@ while IFS=$'\t' read -r pkg_name pkg_dir needs_build; do
   # </dev/null: run() may be ssh, which otherwise consumes the loop's stdin
   # (the remaining FARMSLOT_DEPS rows) and silently drops every package after
   # the first — the node then crashes with ERR_MODULE_NOT_FOUND at startup.
-  run "mkdir -p $PKG_DEST" < /dev/null
+  run "mkdir -p $(printf '%q' "$PKG_DEST")" < /dev/null
   # Source-based packages (e.g. @farmslot/capabilities) ship no dist/; built
   # packages (e.g. @farmslot/protocol) ship both — sync whichever exist.
   [[ -d "$PKG_SRC/src" ]] && rsync -a --delete "$PKG_SRC/src/" "${RSYNC_PREFIX}$PKG_DEST/src/"
@@ -618,7 +643,7 @@ done <<< "$FARMSLOT_DEPS"
 # the remote agent dir for those task files; the node service imports its own
 # copy under node_modules/@farmslot/agent-runtime (synced above).
 echo "[deploy] syncing agent-runtime task helpers..."
-run "mkdir -p $REMOTE_DIR/packages/agent-runtime"
+run "mkdir -p $(printf '%q' "$REMOTE_DIR/packages/agent-runtime")"
 rsync -a --delete \
   --exclude node_modules \
   --exclude dist \
@@ -643,7 +668,6 @@ fi
 # --- Install service (platform-specific) ---
 
 if [[ "$REMOTE_OS" == "Darwin" ]]; then
-  PLIST_NAME="com.farmslot.node${LAUNCHD_LABEL_SUFFIX}"
   PLIST_REL="Library/LaunchAgents/${PLIST_NAME}.plist"
 
   echo "[deploy] installing launchd service..."
@@ -670,7 +694,7 @@ $(launchd_auth_env_xml)$(launchd_instance_env_xml)        <key>PATH</key>
         <string>$(printf '%s' "$NODE_SERVICE_PATH" | xml_escape)</string>
     </dict>
     <key>WorkingDirectory</key>
-    <string>${REMOTE_DIR}</string>
+    <string>$(printf '%s' "$REMOTE_DIR" | xml_escape)</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
@@ -678,9 +702,9 @@ $(launchd_auth_env_xml)$(launchd_instance_env_xml)        <key>PATH</key>
     <key>ThrottleInterval</key>
     <integer>5</integer>
     <key>StandardOutPath</key>
-    <string>${REMOTE_DIR}/node.log</string>
+    <string>$(printf '%s' "$REMOTE_DIR/node.log" | xml_escape)</string>
     <key>StandardErrorPath</key>
-    <string>${REMOTE_DIR}/node.log</string>
+    <string>$(printf '%s' "$REMOTE_DIR/node.log" | xml_escape)</string>
     <key>LimitLoadToSessionType</key>
     <string>Aqua</string>
 </dict>
@@ -719,7 +743,6 @@ launchctl kickstart -k \"\$domain/\$label\""
   echo "    $CAPTURE_HELPER_REMOTE doctor --open-permissions"
 
 elif [[ "$REMOTE_OS" == "Linux" ]]; then
-  UNIT_NAME="farmslot-node${INSTANCE_SUFFIX}"
   UNIT_DIR=".config/systemd/user"
 
   echo "[deploy] installing systemd user service..."
@@ -767,7 +790,9 @@ fi
 
 source "$SCRIPT_DIR/lib/node-cli-refresh.sh"
 
-if [[ "$INSTANCE" == "prod" ]]; then
+if [[ "$FARM_LAYOUT" == 2 ]]; then
+  printf '  Update: bash scripts/deploy-node.sh %q --home %q\n' "$MACHINE" "$TARGET_HOME"
+elif [[ "$INSTANCE" == "prod" ]]; then
   echo "  Update: bash scripts/deploy-node.sh $MACHINE"
 else
   echo "  Update: bash scripts/deploy-node.sh $MACHINE --instance $INSTANCE"

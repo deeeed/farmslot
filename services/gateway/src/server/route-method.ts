@@ -1668,7 +1668,7 @@ async function routeAuthorizedMethod(
       const { machine } = p as { machine: string };
       const { execFile } = await import('node:child_process');
       const { resolve } = await import('node:path');
-      const scriptPath = resolve(farmslotRoot, 'scripts/deploy-node.sh');
+      const scriptPath = resolve(farmslotRoot(), 'scripts/deploy-node.sh');
       return new Promise((res) => {
         execFile('bash', [scriptPath, machine], { timeout: 120_000 }, (err, stdout, stderr) => {
           if (err) {

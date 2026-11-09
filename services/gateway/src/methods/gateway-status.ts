@@ -80,7 +80,7 @@ function emptyUpdateStatus(): GatewayUpdateStatus {
 
 function readGatewayReleaseNotes(): GatewayReleaseNotes | undefined {
   try {
-    const notesPath = path.join(farmslotRoot, 'services', 'gateway', 'release-notes.json');
+    const notesPath = path.join(farmslotRoot(), 'services', 'gateway', 'release-notes.json');
     if (!existsSync(notesPath)) return undefined;
     const payload = JSON.parse(readFileSync(notesPath, 'utf-8')) as GatewayReleaseNotes;
     const items = Array.isArray(payload.items)
@@ -99,7 +99,7 @@ function readGatewayVersion(): string {
   // than throw — an uncaught throw here would take down the whole gateway since
   // route-method.ts imports this module at top level.
   try {
-    const pkgPath = path.join(farmslotRoot, 'services', 'gateway', 'package.json');
+    const pkgPath = path.join(farmslotRoot(), 'services', 'gateway', 'package.json');
     const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version?: string };
     return pkg.version ?? 'unknown';
   } catch {
@@ -125,7 +125,7 @@ interface GitResult {
 async function git(args: string[], timeout = GIT_TIMEOUT_MS): Promise<GitResult> {
   try {
     const { stdout, stderr } = await execFile('git', args, {
-      cwd: farmslotRoot,
+      cwd: farmslotRoot(),
       timeout,
       maxBuffer: 64 * 1024,
     });
@@ -373,7 +373,7 @@ export async function gatewayStatus(
   const update = {
     ...updateObservation.snapshot(),
     ...(installedError ? { error: installedError } : {}),
-    checkoutPath: farmslotRoot,
+    checkoutPath: farmslotRoot(),
     canUpdate: true,
     operation,
   };

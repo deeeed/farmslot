@@ -29,10 +29,6 @@ export const RUNNER_OBSERVABILITY_SUPPORT_PATHS = [
 ] as const;
 export const NODE_SUPPORT_HASH_FILENAME = 'node-support-hash';
 
-/** Where nodes keep content-addressed support bundles (ADR-035). */
-// Compatibility export consumed by the unchanged legacy-equivalence suite.
-export const NODE_SUPPORT_ROOT = legacyRemoteFarmPaths().code.support;
-
 /** The slot's node-support bundle selection, outside the checkout (ADR-035). */
 export function nodeSupportHashPath(repo: string, runtimeDir: string): string {
   return path.posix.join(

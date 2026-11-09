@@ -25,7 +25,7 @@ function canonicalStatusPath(file: string): string {
 }
 
 export function resolveStatusFilePath(
-  root = farmslotRoot,
+  root = farmslotRoot(),
   env: NodeJS.ProcessEnv = process.env,
   argv: readonly string[] = process.argv,
 ): string {
@@ -58,7 +58,7 @@ export function resolveStatusFilePath(
 
 export function assertStatusFileWritable(
   file: string,
-  root = farmslotRoot,
+  root = farmslotRoot(),
   gatewayProcess = gatewayStatusProcess,
 ): void {
   if (
@@ -71,4 +71,4 @@ export function assertStatusFileWritable(
     );
 }
 
-export const farmslotRuntimeLogDir = path.join(farmslotRoot, '.omx', 'logs');
+export const farmslotRuntimeLogDir = path.join(farmslotRoot(), '.omx', 'logs');

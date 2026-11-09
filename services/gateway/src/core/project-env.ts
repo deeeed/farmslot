@@ -1,3 +1,4 @@
+import { currentFarmPaths, legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import path from 'node:path';
 import { rebindRecipeLibraryPath } from '@farmslot/recipe-runner';
 import { withSourceEnvironment } from '@farmslot/slot-config';
@@ -6,6 +7,7 @@ import { getNode } from '../fleet/machine-registry.js';
 
 import type { ProjectVars, RawProjectJson, SlotVars } from './config.js';
 import { isLocal } from './exec.js';
+import { shellExpressionForRemotePath } from './remote-paths.js';
 import { expandTemplate } from './hooks.js';
 
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -116,7 +118,10 @@ export function applyProjectCommandEnv(
  */
 export function buildMachineEnvPrefix(machineEnv: Record<string, string> | undefined): string {
   return Object.entries(machineEnv ?? {})
-    .map(([name, value]) => `export ${name}=${shellQuote(value)}`)
+    .map(
+      ([name, value]) =>
+        `export ${name}=${['FARMSLOT_HOME', 'FARMSLOT_POOL_DIR', 'FARMSLOT_PROJECTS_DIR'].includes(name) ? shellExpressionForRemotePath(value) : shellQuote(value)}`,
+    )
     .join(' && ');
 }
 
@@ -131,24 +136,35 @@ export function machineShellEnv(vars: {
   host?: string;
   machineEnv?: Record<string, string>;
 }): Record<string, string> {
+  if (!vars.machine || !vars.host) return { ...vars.machineEnv };
   const gatewayUrl =
     vars.machine && vars.host && !isLocal(vars.host, vars.machine)
       ? getNode(vars.machine)?.gatewayUrl
       : undefined;
-  const paths = vars.machine ? getNode(vars.machine)?.farmPaths : undefined;
+  const local = !vars.machine || !vars.host || isLocal(vars.host, vars.machine);
+  const report = vars.machine ? getNode(vars.machine)?.farmPaths : undefined;
+  const paths =
+    report ?? (local ? currentFarmPaths('gateway') : legacyRemoteFarmPaths(vars.machineEnv));
   const roots: Record<string, string> =
-    paths?.layout === 2
+    report?.layout === 2
       ? {
+          FARMSLOT_HOME: report.home,
+          FARMSLOT_POOL_DIR: report.pool,
+          FARMSLOT_PROJECTS_DIR: report.projects,
+          FARMSLOT_RUNS_DIR: report.state.runs,
+          FARMSLOT_NATIVE_STATE_DIR: report.state.nativeSessions,
+          FARMSLOT_LOG_DIR: report.state.logs,
+          FARMSLOT_CLI: path.posix.join(report.code.bin, 'farmslot'),
+        }
+      : {
           FARMSLOT_HOME: paths.home,
           FARMSLOT_POOL_DIR: paths.pool,
           FARMSLOT_PROJECTS_DIR: paths.projects,
-          FARMSLOT_RUNS_DIR: paths.state.runs,
-          FARMSLOT_NATIVE_STATE_DIR: paths.state.nativeSessions,
-          FARMSLOT_LOG_DIR: paths.state.logs,
-          FARMSLOT_CLI: path.posix.join(paths.code.bin, 'farmslot'),
-        }
-      : {};
-  return { ...(gatewayUrl ? { GW_URL: gatewayUrl } : {}), ...vars.machineEnv, ...roots };
+        };
+  return {
+    ...(gatewayUrl ? { GW_URL: gatewayUrl } : {}),
+    ...(report?.layout === 2 ? { ...vars.machineEnv, ...roots } : { ...roots, ...vars.machineEnv }),
+  };
 }
 
 /** `&&`-joined so a guard before the command (for example `cd repo &&`) still gates it. */

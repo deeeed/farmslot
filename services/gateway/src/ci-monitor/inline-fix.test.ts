@@ -340,7 +340,7 @@ test('CI fix nudge fails closed only on an incomplete retained binding', async (
 
 test('resolveCiFixTemplatePath prefers project-owned ci-fix.md', async () => {
   const project = `ci-fix-test-${Date.now()}`;
-  const projectDir = path.join(farmslotRoot, 'projects', project, 'templates', 'worker');
+  const projectDir = path.join(farmslotRoot(), 'projects', project, 'templates', 'worker');
   await mkdir(projectDir, { recursive: true });
   const projectTemplate = path.join(projectDir, 'ci-fix.md');
   await writeFile(projectTemplate, '# test\n', 'utf-8');
@@ -348,18 +348,18 @@ test('resolveCiFixTemplatePath prefers project-owned ci-fix.md', async () => {
     const resolved = await resolveCiFixTemplatePath(project);
     assert.equal(resolved, projectTemplate);
   } finally {
-    await rm(path.join(farmslotRoot, 'projects', project), { recursive: true, force: true });
+    await rm(path.join(farmslotRoot(), 'projects', project), { recursive: true, force: true });
   }
 });
 
 test('resolveCiFixTemplatePath falls back to Farmslot default template', async () => {
   const resolved = await resolveCiFixTemplatePath('__missing-project-for-ci-fix-test__');
-  assert.equal(resolved, path.join(farmslotRoot, 'templates', 'worker', 'ci-fix.md'));
+  assert.equal(resolved, path.join(farmslotRoot(), 'templates', 'worker', 'ci-fix.md'));
 });
 
 test('default CI fix template uses explicit CI-FIX marker targeting', async () => {
   const template = await readFile(
-    path.join(farmslotRoot, 'templates', 'worker', 'ci-fix.md'),
+    path.join(farmslotRoot(), 'templates', 'worker', 'ci-fix.md'),
     'utf-8',
   );
 
@@ -378,7 +378,7 @@ test('default CI fix template uses explicit CI-FIX marker targeting', async () =
 });
 
 test('default CI fix template completion marker writes CI-FIX signal', async () => {
-  const templatePath = path.join(farmslotRoot, 'templates', 'worker', 'ci-fix.md');
+  const templatePath = path.join(farmslotRoot(), 'templates', 'worker', 'ci-fix.md');
   const template = await readFile(templatePath, 'utf-8');
   const fixtureRoot = await mkdtemp(path.join(tmpdir(), 'farmslot-ci-fix-mark-'));
   const taskDir = path.join(fixtureRoot, '.task');
@@ -401,7 +401,7 @@ test('default CI fix template completion marker writes CI-FIX signal', async () 
     JSON.stringify(contract),
   );
   const marker = path.join(
-    farmslotRoot,
+    farmslotRoot(),
     'packages',
     'agent-runtime',
     'scripts',

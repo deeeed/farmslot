@@ -10,8 +10,8 @@ import { promisify } from 'node:util';
 import { farmslotRoot } from '../projects/repo-root.js';
 
 const testDir = mkdtempSync(path.join(os.tmpdir(), 'farmslot-backlog-refine-'));
-const specRoot = path.join(farmslotRoot, '.sandbox', `backlog-refine-spec-${process.pid}`);
-const promptRoot = path.join(farmslotRoot, '.sandbox', `backlog-refine-prompts-${process.pid}`);
+const specRoot = path.join(farmslotRoot(), '.sandbox', `backlog-refine-spec-${process.pid}`);
+const promptRoot = path.join(farmslotRoot(), '.sandbox', `backlog-refine-prompts-${process.pid}`);
 process.env.FARMSLOT_BACKLOG_FILE = path.join(testDir, 'backlog.json');
 process.env.FARMSLOT_DISPATCH_QUEUE_FILE = path.join(testDir, 'queue.json');
 process.env.FARMSLOT_BACKLOG_SPEC_DIR = specRoot;
@@ -58,7 +58,7 @@ async function writeSpec(name: string, markdown: string): Promise<string> {
   await mkdir(path.join(specRoot, 'farmslot-farm'), { recursive: true });
   const absolutePath = path.join(specRoot, 'farmslot-farm', name);
   await writeFile(absolutePath, markdown, 'utf8');
-  return path.relative(farmslotRoot, absolutePath);
+  return path.relative(farmslotRoot(), absolutePath);
 }
 
 async function fresh() {
@@ -151,7 +151,7 @@ test('backlog refinement prepares prompt with bounded context and fs-backlog-spe
   assert.doesNotMatch(result.tmuxSession, /manual-000001/);
   assert.match(result.promptPath, /backlog-refine-prompts-\d+\//);
 
-  const prompt = await readFile(path.join(farmslotRoot, result.promptPath), 'utf8');
+  const prompt = await readFile(path.join(farmslotRoot(), result.promptPath), 'utf8');
   assert.match(prompt, /## Item identity/);
   assert.match(prompt, new RegExp(`id: ${created.item.id}`));
   assert.match(prompt, new RegExp(`project: ${created.item.project}`));
@@ -420,7 +420,7 @@ test('backlog refinement fails closed when an attached spec path cannot be read'
       sourceKind: 'manual',
       flowType: 'dev',
       specPath: path.relative(
-        farmslotRoot,
+        farmslotRoot(),
         path.join(specRoot, 'farmslot-farm', 'missing-spec.md'),
       ),
     },

@@ -938,7 +938,7 @@ export function registerRoadmapCommand(program: Command): void {
         const result = await withProgress(
           'Creating promotion request',
           () =>
-            createRoadmapPromotionRequest(resolve(process.env.FARMSLOT_ROOT || repoRoot), {
+            createRoadmapPromotionRequest(resolve(process.env.FARMSLOT_ROOT || repoRoot()), {
               itemId: opts.itemId ?? '',
               itemFile: opts.itemFile,
               title: opts.title,

@@ -238,7 +238,7 @@ export async function executeFinalizeStep(
       const usageEnv = runnerSessionPath
         ? `RUNNER_SESSION_PATH='${runnerSessionPath.replace(/'/g, `'\\''`)}' RUNNER_SESSION_RUNNER='${(runner ?? '').replace(/'/g, `'\\''`)}' `
         : '';
-      const cmd = `${usageEnv}bash "${farmslotRoot}/scripts/session-usage.sh" '${current.slotId}' total 2>/dev/null`;
+      const cmd = `${usageEnv}bash "${farmslotRoot()}/scripts/session-usage.sh" '${current.slotId}' total 2>/dev/null`;
       const result = usesNodeLink(vars.machine)
         ? await nodeExecArgv(
             vars.machine,

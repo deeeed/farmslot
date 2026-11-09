@@ -45,7 +45,7 @@ function slugify(value: string): string {
 }
 
 function repoRelative(filePath: string): string {
-  const relative = path.relative(farmslotRoot, filePath);
+  const relative = path.relative(farmslotRoot(), filePath);
   return relative.startsWith('..') ? filePath : relative;
 }
 
@@ -217,7 +217,7 @@ export function buildBacklogRefinementShellCommand(
     prelude: backlogRefinementPrelude(),
     commandLabel: 'Backlog refinement command',
     fallbackMessages: [
-      `Backlog refinement prompt: ${path.resolve(farmslotRoot, promptPath)}`,
+      `Backlog refinement prompt: ${path.resolve(farmslotRoot(), promptPath)}`,
       `Backlog item: ${item.sourceRef} (${item.id})`,
     ],
   });

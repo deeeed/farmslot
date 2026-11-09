@@ -75,7 +75,7 @@ function currentProjectsDir(): string {
   return currentFarmPaths('gateway').projects;
 }
 function currentFarmLayout(): FarmLayout {
-  return { farmslotRoot, projectsDir: currentProjectsDir() };
+  return { farmslotRoot: farmslotRoot(), projectsDir: currentProjectsDir() };
 }
 const PROJECT_CONFIG_NOT_FOUND_PREFIX = 'Project config not found:';
 
@@ -777,7 +777,7 @@ export async function loadSlotVars(slotId: string): Promise<SlotVars> {
   let remoteRepo = resolveRemoteRepo(repo, osType, sshUser);
   if (repo === '.' || repo.startsWith('./') || repo.startsWith('../')) {
     if (host === 'localhost' || host === '127.0.0.1') {
-      remoteRepo = path.resolve(farmslotRoot, repo);
+      remoteRepo = path.resolve(farmslotRoot(), repo);
     } else {
       throw new Error(
         `Relative repo path '${repo}' is only valid for localhost slots (slot ${slotId})`,
@@ -2562,6 +2562,3 @@ export async function resolveTaskPaths(slotId: string, taskFile: string): Promis
 // ─── Re-export paths for external use ───
 
 export { farmslotRoot, currentPoolDir as poolDirectory, currentProjectsDir as projectsDirectory };
-// Compatibility exports for existing consumers; runtime selectors above resolve at call time.
-export const poolDir = currentPoolDir();
-export const projectsDir = currentProjectsDir();

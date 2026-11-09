@@ -695,7 +695,7 @@ export async function buildTemplateProvenance(input: {
   const [projectRepoHeadSha, projectRepoDirty, farmslotHeadSha] = await Promise.all([
     readGitHead(projectRepoPath),
     readGitDirty(projectRepoPath),
-    readGitHead(farmslotRoot),
+    readGitHead(farmslotRoot()),
   ]);
   return {
     kind: 'task-template',

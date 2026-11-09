@@ -78,7 +78,7 @@ export function buildFixtureSyncCommand(
   if (selectedApp) syncArgs.push('--app', selectedApp);
   if (domain) syncArgs.push('--domain', domain);
   if (nodeSupportDir) syncArgs.push('--node-support-dir', nodeSupportDir);
-  return `bash ${shellQuote(`${farmslotRoot}/scripts/sync-fixtures.sh`)} ${syncArgs.map(shellQuote).join(' ')}`;
+  return `bash ${shellQuote(`${farmslotRoot()}/scripts/sync-fixtures.sh`)} ${syncArgs.map(shellQuote).join(' ')}`;
 }
 
 async function runFixtureSyncInline(
@@ -97,7 +97,7 @@ async function runFixtureSyncInline(
   }
   try {
     const result = await execLocal(syncCmd, {
-      cwd: farmslotRoot,
+      cwd: farmslotRoot(),
       timeout,
       signal: controller.signal,
     });
@@ -155,7 +155,7 @@ export async function runFixtureSync(
           elapsedMs: Date.now() - startedAt,
           timeoutMs: timeout,
           logPath: opts.logPath,
-          envFilePath: path.join(farmslotRoot, '.env'),
+          envFilePath: path.join(farmslotRoot(), '.env'),
           prepareProfile: opts.prepareProfile,
         })
       : `Fixture sync failed (exit ${syncResult.exitCode}) — log: ${opts.logPath}`;
@@ -172,7 +172,7 @@ export async function slotFixtureRefresh(
   const vars = await loadSlotVars(params.slotId);
   const requestId = params.requestId ?? randomUUID();
   const startTime = Date.now();
-  const logDir = path.join(farmslotRoot, '.farm-cache', 'fixture-refresh');
+  const logDir = path.join(farmslotRoot(), '.farm-cache', 'fixture-refresh');
   await mkdir(logDir, { recursive: true });
   const logPath = path.join(
     logDir,

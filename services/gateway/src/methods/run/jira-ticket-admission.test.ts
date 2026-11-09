@@ -25,7 +25,7 @@ const { jiraTicketDataForCreate } = await import('./ticket-policy.js');
 
 // A project with a Jira source whose credentials live in test-only env names.
 const project = `.jira-admission-test-${process.pid}`;
-const projectDir = path.join(farmslotRoot, 'projects', project);
+const projectDir = path.join(farmslotRoot(), 'projects', project);
 await mkdir(projectDir, { recursive: true });
 await writeFile(
   path.join(projectDir, 'project.json'),

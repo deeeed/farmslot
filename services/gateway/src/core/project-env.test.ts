@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -125,6 +126,13 @@ test('machine env exports pool.env values, quoted, ahead of the command', () => 
 test('remote machine shells target the gateway URL their node dials, never a credential', () => {
   const ws = {} as WebSocket;
   const remote = { machine: 'fixture-remote-node', host: '10.0.0.9' };
+  const roots = {
+    FARMSLOT_HOME: '~/.farmslot',
+    FARMSLOT_POOL_DIR: '~/farmslot-node/pool',
+    FARMSLOT_PROJECTS_DIR: '~/farmslot-node/projects',
+  };
+  const rootPrefix =
+    'export FARMSLOT_HOME="${HOME}/.farmslot" && export FARMSLOT_POOL_DIR="${HOME}/farmslot-node/pool" && export FARMSLOT_PROJECTS_DIR="${HOME}/farmslot-node/projects"';
   registerNode(
     remote.machine,
     1,
@@ -136,25 +144,31 @@ test('remote machine shells target the gateway URL their node dials, never a cre
     'ws://10.0.0.5:7777',
   );
   try {
-    assert.deepEqual(machineShellEnv(remote), { GW_URL: 'ws://10.0.0.5:7777' });
+    assert.deepEqual(machineShellEnv(remote), { GW_URL: 'ws://10.0.0.5:7777', ...roots });
     assert.equal(
       withMachineEnv('cd /repo && claude', remote),
-      "export GW_URL='ws://10.0.0.5:7777' && cd /repo && claude",
+      `export GW_URL='ws://10.0.0.5:7777' && ${rootPrefix} && cd /repo && claude`,
     );
     // An operator-pinned pool value wins over the node's own URL.
     assert.deepEqual(machineShellEnv({ ...remote, machineEnv: { GW_URL: 'wss://pinned' } }), {
       GW_URL: 'wss://pinned',
+      ...roots,
     });
     // Gateway-local slots keep the operator's CLI profile (and its credential).
-    assert.deepEqual(machineShellEnv({ machine: remote.machine, host: 'localhost' }), {});
+    const localPaths = currentFarmPaths('gateway');
+    assert.deepEqual(machineShellEnv({ machine: remote.machine, host: 'localhost' }), {
+      FARMSLOT_HOME: localPaths.home,
+      FARMSLOT_POOL_DIR: localPaths.pool,
+      FARMSLOT_PROJECTS_DIR: localPaths.projects,
+    });
   } finally {
     unregisterByWs(ws);
   }
-  assert.deepEqual(machineShellEnv(remote), {});
+  assert.deepEqual(machineShellEnv(remote), roots);
   for (const unsafe of ['ws://x; id', 'http://gw:7801', 'ws://user:secret@gw:7801']) {
     registerNode(remote.machine, 1, ws, undefined, undefined, undefined, undefined, unsafe);
     try {
-      assert.deepEqual(machineShellEnv(remote), {});
+      assert.deepEqual(machineShellEnv(remote), roots);
     } finally {
       unregisterByWs(ws);
     }
@@ -162,7 +176,10 @@ test('remote machine shells target the gateway URL their node dials, never a cre
   // A URL that parses yet carries shell syntax is exported inert.
   registerNode(remote.machine, 1, ws, undefined, undefined, undefined, undefined, "ws://gw/'$(id)");
   try {
-    assert.equal(withMachineEnv('true', remote), "export GW_URL='ws://gw/'\\''$(id)' && true");
+    assert.equal(
+      withMachineEnv('true', remote),
+      "export GW_URL='ws://gw/'\\''$(id)' && " + rootPrefix + ' && true',
+    );
   } finally {
     unregisterByWs(ws);
   }

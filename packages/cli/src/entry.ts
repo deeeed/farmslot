@@ -8,7 +8,7 @@ import { OutputContext } from './output.js';
 
 // Load per-checkout .env.ports / .env (FARMSLOT_HOME, GW_URL, ports) before anything reads
 // them; the shell environment always wins. Then recover a custom home from persisted state.
-loadCheckoutEnv(repoRoot);
+loadCheckoutEnv(repoRoot());
 bootstrapFarmslotHome();
 
 const program = new Command();

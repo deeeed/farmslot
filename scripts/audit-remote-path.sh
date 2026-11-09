@@ -10,7 +10,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-POOL_DIR="${POOL_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)/pool}"
 BINARIES="tmux lsof ffmpeg node python3"
 
 while [ $# -gt 0 ]; do

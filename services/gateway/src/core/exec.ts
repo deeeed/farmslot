@@ -1,4 +1,4 @@
-import { farmPathsForSlot } from '../fleet/farm-paths.js';
+import { currentFarmPaths, farmPathsForSlot } from '../fleet/farm-paths.js';
 import { commandIncludesRemotePath } from './remote-paths.js';
 // core/exec.ts — Local/remote command execution
 // TypeScript port of lib/slot-common.sh: is_local, run_on, remote
@@ -41,7 +41,13 @@ const LOCAL_ENV = { ...PROCESS_ENV_NO_FORCE_COLOR, PATH: `${SHIMS_DIR}:${process
 
 /** In-process task libraries inherit the same boot-time environment as local commands. */
 export function localCommandEnvironment(): NodeJS.ProcessEnv {
-  return { ...LOCAL_ENV };
+  const paths = currentFarmPaths('gateway');
+  return {
+    ...LOCAL_ENV,
+    FARMSLOT_HOME: paths.home,
+    FARMSLOT_POOL_DIR: paths.pool,
+    FARMSLOT_PROJECTS_DIR: paths.projects,
+  };
 }
 
 // ─── isLocal ───
@@ -122,7 +128,7 @@ function spawnLocalProcess(
       const useProcessGroup = opts?.signal != null || opts?.timeout != null;
       const proc = spawn(executable, argv, {
         cwd: opts?.cwd,
-        env: LOCAL_ENV,
+        env: localCommandEnvironment(),
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: useProcessGroup,
       });

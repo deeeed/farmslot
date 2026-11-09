@@ -1,1 +1,1 @@
-- Centralize instance paths, legacy store overrides and remote-node path reports in FarmPaths.
+- Resolve and report instance paths, including validated remote deployment markers and legacy machine overrides.

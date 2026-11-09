@@ -1,1 +1,1 @@
-- Resolve CLI state and slot context through FarmPaths, report active bundle stores, and print plain path lookups as values.
+- Resolve CLI state, onboarding and slot context through FarmPaths, report active bundle stores, and print path lookups as values.

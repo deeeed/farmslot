@@ -11,7 +11,7 @@ import test, { type TestContext } from 'node:test';
 import { WebSocket } from 'ws';
 
 import { retainFixtureTask } from '../../../../packages/run-bundle/src/retained.test-support.js';
-import { poolDir } from '../core/config.js';
+import { poolDirectory } from '../core/config.js';
 import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import { handleNodeResponse } from '../fleet/node-rpc.js';
 import { runBundleStore } from '../run-completion/retained-artifacts.js';
@@ -137,9 +137,9 @@ async function withLocalSlot(
   fn: (args: { slotId: string; repoDir: string }) => Promise<void>,
 ) {
   const repoDir = await mkdtemp(path.join(tmpdir(), 'farmslot-local-filesystem-'));
-  await mkdir(poolDir, { recursive: true });
+  await mkdir(poolDirectory(), { recursive: true });
   const slotId = `local-slot-${path.basename(repoDir)}`;
-  const poolFile = path.join(poolDir, `${slotId}.json`);
+  const poolFile = path.join(poolDirectory(), `${slotId}.json`);
   await writeFile(
     poolFile,
     JSON.stringify({
@@ -229,8 +229,8 @@ async function withRemoteRun(
     },
   });
 
-  await mkdir(poolDir, { recursive: true });
-  const poolFile = path.join(poolDir, `remote-slot-test-${run.id}.json`);
+  await mkdir(poolDirectory(), { recursive: true });
+  const poolFile = path.join(poolDirectory(), `remote-slot-test-${run.id}.json`);
   await writeFile(
     poolFile,
     JSON.stringify({
@@ -689,9 +689,9 @@ test('serveFile rejects local symlink escapes from slot repos', async (t) => {
 });
 
 test('serveFile maps oversized remote reads to HTTP 413', async (t) => {
-  await mkdir(poolDir, { recursive: true });
+  await mkdir(poolDirectory(), { recursive: true });
   const slotId = `remote-file-${Date.now()}`;
-  const poolFile = path.join(poolDir, `${slotId}.json`);
+  const poolFile = path.join(poolDirectory(), `${slotId}.json`);
   await writeFile(
     poolFile,
     JSON.stringify({

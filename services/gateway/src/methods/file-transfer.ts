@@ -391,7 +391,7 @@ export async function fileTransferRemoteE2e(
       const { farmslotRoot } = await import('../fleet/state.js');
       const httpSlotId = `e2e-http-${Date.now()}`;
       const httpRepo = path.posix.join('/tmp', httpSlotId);
-      const poolPath = path.join(farmslotRoot, 'pool', `${httpSlotId}.json`);
+      const poolPath = path.join(farmslotRoot(), 'pool', `${httpSlotId}.json`);
       const relFile = 'artifacts/http-proxy.bin';
       // Multi-chunk sized but each writeChunk stays within the node max.
       const httpPayload = Buffer.alloc(FILE_TRANSFER_CHUNK_MAX_BYTES * 2 + 64, 9);
@@ -505,7 +505,7 @@ export async function fileTransferRemoteE2e(
       const mirrorSlotId = `${testId}-slot`;
       const remoteRepo = path.posix.join('/tmp', testId);
       const taskRelDir = `test/${testId}`;
-      const taskRoot = path.join(farmslotRoot, '.sandbox/farmslot-farm/tasks');
+      const taskRoot = path.join(farmslotRoot(), '.sandbox/farmslot-farm/tasks');
       const taskDir = path.join(taskRoot, taskRelDir);
       const taskFile = path.join(taskDir, 'TASK.md');
       const workerArtifactsRel = path.posix.join(
@@ -513,7 +513,7 @@ export async function fileTransferRemoteE2e(
         taskRelDir,
         'artifacts',
       );
-      const poolPath = path.join(farmslotRoot, 'pool', `${testId}.json`);
+      const poolPath = path.join(farmslotRoot(), 'pool', `${testId}.json`);
       // Mirror a supported top-level log artifact; arbitrary binary files are excluded.
       const largeRel = path.posix.join(workerArtifactsRel, 'large-mirror.log');
       const mirrorPayload = Buffer.alloc(FILE_TRANSFER_CHUNK_MAX_BYTES * 3 + 19);

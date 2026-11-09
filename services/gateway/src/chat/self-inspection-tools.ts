@@ -52,14 +52,14 @@ const SELF_SKIP_DIRS = new Set([
 ]);
 function resolveSelfReadPath(rawPath: string): string {
   if (!rawPath) throw new Error('path is required');
-  const allowedRoots = SELF_SEARCH_ROOTS.map((root) => path.resolve(farmslotRoot, root));
+  const allowedRoots = SELF_SEARCH_ROOTS.map((root) => path.resolve(farmslotRoot(), root));
   if (path.isAbsolute(rawPath)) {
     const absPath = path.resolve(rawPath);
     // Lexical scoping keeps accidental paths out early; canonical realpath checks in readTextPrefix remain the security boundary.
     if (allowedRoots.some((root) => isPathInside(root, absPath))) return absPath;
     throw new Error(`Path outside approved self-inspection scope: ${rawPath}`);
   }
-  const absPath = path.resolve(farmslotRoot, rawPath);
+  const absPath = path.resolve(farmslotRoot(), rawPath);
   if (!allowedRoots.some((root) => isPathInside(root, absPath))) {
     throw new Error(`Path outside approved self-inspection scope: ${rawPath}`);
   }
@@ -67,7 +67,9 @@ function resolveSelfReadPath(rawPath: string): string {
 }
 
 function displaySelfPath(absPath: string): string {
-  return absPath.startsWith(`${farmslotRoot}/`) ? absPath.replace(`${farmslotRoot}/`, '') : absPath;
+  return absPath.startsWith(`${farmslotRoot()}/`)
+    ? absPath.replace(`${farmslotRoot()}/`, '')
+    : absPath;
 }
 
 export async function readFarmslotFileTool(args: Record<string, unknown>) {
@@ -86,7 +88,7 @@ export async function readFarmslotFileTool(args: Record<string, unknown>) {
     maxChars,
     registeredLog
       ? {}
-      : { allowedRoots: SELF_SEARCH_ROOTS.map((root) => path.resolve(farmslotRoot, root)) },
+      : { allowedRoots: SELF_SEARCH_ROOTS.map((root) => path.resolve(farmslotRoot(), root)) },
   );
   return {
     path: registeredLog?.displayPath ?? displaySelfPath(absPath),
@@ -124,7 +126,7 @@ export async function readTaskFileTool(args: Record<string, unknown>) {
     throw new Error('Provide run_id or path');
   }
   const { content, truncated } = await readTextPrefix(absPath, SELF_READ_LIMIT, {
-    allowedRoots: [farmslotRoot],
+    allowedRoots: [farmslotRoot()],
     requireTasksSegment: true,
   });
   return { path: displaySelfPath(absPath), content, truncated };
@@ -148,13 +150,13 @@ export function resolveTaskFileReadPath(params: {
     const suffix = params.fileSuffix ?? 'TASK.md';
     if (path.isAbsolute(suffix)) throw new Error('Task file suffix must be relative');
     const taskDir = path.dirname(path.resolve(params.taskFile));
-    if (!isPathInside(farmslotRoot, taskDir))
+    if (!isPathInside(farmslotRoot(), taskDir))
       throw new Error('Run task directory outside farmslotRoot');
-    if (!hasTasksPathSegment(farmslotRoot, taskDir))
+    if (!hasTasksPathSegment(farmslotRoot(), taskDir))
       throw new Error('Run task directory must be under a task directory');
     const absPath = path.resolve(taskDir, suffix);
     if (!isPathInside(taskDir, absPath)) throw new Error('Path outside run task directory');
-    if (!isPathInside(farmslotRoot, absPath)) throw new Error('Path outside farmslotRoot');
+    if (!isPathInside(farmslotRoot(), absPath)) throw new Error('Path outside farmslotRoot');
     return absPath;
   }
 
@@ -162,9 +164,9 @@ export function resolveTaskFileReadPath(params: {
   if (!directPath) throw new Error('Provide taskFile or directPath');
   if (path.isAbsolute(directPath))
     throw new Error('Direct read_task_file path must be relative to farmslotRoot');
-  const absPath = path.resolve(farmslotRoot, directPath);
-  if (!isPathInside(farmslotRoot, absPath)) throw new Error('Path outside farmslotRoot');
-  if (!hasTasksPathSegment(farmslotRoot, absPath))
+  const absPath = path.resolve(farmslotRoot(), directPath);
+  if (!isPathInside(farmslotRoot(), absPath)) throw new Error('Path outside farmslotRoot');
+  if (!hasTasksPathSegment(farmslotRoot(), absPath))
     throw new Error('Direct read_task_file path must be under a task directory');
   return absPath;
 }
@@ -279,9 +281,9 @@ async function searchSelfFiles(
 }
 
 function resolveSearchRoots(pathPrefix: string | undefined): string[] {
-  const allowedRoots = SELF_SEARCH_ROOTS.map((root) => path.resolve(farmslotRoot, root));
+  const allowedRoots = SELF_SEARCH_ROOTS.map((root) => path.resolve(farmslotRoot(), root));
   if (!pathPrefix) return allowedRoots.filter((root) => existsSync(root));
-  const requested = path.resolve(farmslotRoot, pathPrefix);
+  const requested = path.resolve(farmslotRoot(), pathPrefix);
   if (!allowedRoots.some((root) => isPathInside(root, requested))) {
     throw new Error(`path_prefix must be inside one of: ${SELF_SEARCH_ROOTS.join(', ')}`);
   }

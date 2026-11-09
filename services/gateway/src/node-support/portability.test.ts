@@ -9,7 +9,7 @@ import { collectNodeSupportBundle } from './ensure.js';
 
 test('gateway pack sync rejects nonportable templates even when only config is bundled', async (t) => {
   const name = `portability-test-${process.pid}-farm`;
-  const root = path.join(farmslotRoot, 'projects', name);
+  const root = path.join(farmslotRoot(), 'projects', name);
   await mkdir(path.join(root, 'templates'), { recursive: true });
   t.after(() => rm(root, { recursive: true, force: true }));
   await writeFile(
@@ -36,7 +36,7 @@ test('gateway pack sync rejects nonportable templates even when only config is b
 
 test('gateway pack sync requires QA even when config is not in the support bundle', async (t) => {
   const name = `qa-test-${process.pid}-farm`;
-  const root = path.join(farmslotRoot, 'projects', name);
+  const root = path.join(farmslotRoot(), 'projects', name);
   await mkdir(root, { recursive: true });
   t.after(() => rm(root, { recursive: true, force: true }));
   await writeFile(path.join(root, 'project.json'), '{}');

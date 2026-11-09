@@ -491,7 +491,7 @@ export async function slotAutoRefresh(
   }
   const session = autoRefreshSessionName(params.slotId);
   const pv = await loadProjectVars(vars.projectName);
-  const scriptPath = `${farmslotRoot}/projects/${pv.projectName}/setup/auto-refresh.sh`;
+  const scriptPath = `${farmslotRoot()}/projects/${pv.projectName}/setup/auto-refresh.sh`;
 
   // The monitor tmux session and this probe both run on the orchestrator via
   // execLocal (the original script never wrapped tmux in run_on so it can reach
@@ -510,13 +510,13 @@ export async function slotAutoRefresh(
   const command = buildAutoRefreshCommand({
     action,
     session,
-    projectDir: farmslotRoot,
+    projectDir: farmslotRoot(),
     scriptPath,
     slotId: params.slotId,
     repo: vars.remoteRepo,
     cdpPort: vars.resourceVars.cdp_port,
   });
-  const result = await execLocal(command, { cwd: farmslotRoot, timeout: 20_000 });
+  const result = await execLocal(command, { cwd: farmslotRoot(), timeout: 20_000 });
   if (result.exitCode !== 0) {
     throw new Error(
       `auto-refresh ${action} failed: ${result.stderr.trim() || `exit ${result.exitCode}`}`,

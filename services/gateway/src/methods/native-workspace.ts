@@ -40,7 +40,7 @@ export async function nativeCatalog(
   const assigned = nativeOwnerAssignedMachines(loadCredentialStore().principals, owner);
   let contexts: NativeSessionCatalogResult['contexts'] = [
     ...(ownsLocalNativeProfile(owner)
-      ? [{ cwd: farmslotRoot, label: 'Farmslot checkout', supportsProfiles: true }]
+      ? [{ cwd: farmslotRoot(), label: 'Farmslot checkout', supportsProfiles: true }]
       : []),
   ];
   /** Context node id ('local' or a machine) to the pool machine its node catalog is keyed by. */

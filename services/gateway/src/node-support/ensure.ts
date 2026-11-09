@@ -119,7 +119,7 @@ function hostedTaskTemplatePaths(projectName: string, projectJson: RawProjectJso
     .filter(
       (relative) =>
         relative.startsWith(`projects/${projectName}/`) &&
-        existsSync(path.join(farmslotRoot, relative)),
+        existsSync(path.join(farmslotRoot(), relative)),
     );
 }
 
@@ -128,7 +128,7 @@ export function nodeSupportBundlePaths(projectName: string, projectJson: RawProj
   const { paths: hookSupportPaths } = resolveNodeSupportPaths(
     projectName,
     projectJson,
-    farmslotRoot,
+    farmslotRoot(),
   );
   const supportPaths = [...hookSupportPaths];
   for (const requiredPath of [
@@ -159,11 +159,11 @@ export async function collectNodeSupportBundle(projectName: string, supportPaths
   );
   if (portabilityErrors.length)
     throw new Error(`Project pack is not portable:\n${portabilityErrors.join('\n')}`);
-  const farmslotRootRealPath = await realpath(farmslotRoot);
+  const farmslotRootRealPath = await realpath(farmslotRoot());
   const files: NodeSupportFile[] = (
     await Promise.all(
       supportPaths.map(async (supportPath) => {
-        const sourcePath = path.join(farmslotRoot, supportPath);
+        const sourcePath = path.join(farmslotRoot(), supportPath);
         const sourceRealPath = await realpath(sourcePath);
         if (!pathWithin(farmslotRootRealPath, sourceRealPath)) {
           throw new Error(`Node support path escapes Farmslot root: ${supportPath}`);
@@ -232,7 +232,7 @@ export async function ensureNodeSupportBundle(
     return {
       supportDir:
         isLocal(vars.host, vars.machine) && !usesNodeLink(vars.machine)
-          ? farmslotRoot
+          ? farmslotRoot()
           : farmPathsForSlot(vars).code.node,
       hash: null,
       published: false,
@@ -247,7 +247,7 @@ export async function ensureNodeSupportBundle(
   const supportPaths = nodeSupportBundlePaths(vars.projectName, projectVars.projectJson);
   if (isLocal(vars.host, vars.machine) && !usesNodeLink(vars.machine)) {
     step('support', 'Using local node support source');
-    return { supportDir: farmslotRoot, hash: null, published: false, paths: supportPaths };
+    return { supportDir: farmslotRoot(), hash: null, published: false, paths: supportPaths };
   }
 
   const { files, manifest } =
@@ -463,7 +463,7 @@ export async function selectedNodeSupportDir(
   io: Pick<NodeSupportIo, 'exec'> = defaultIo,
   timeout?: number,
 ): Promise<string | undefined> {
-  if (isLocal(vars.host, vars.machine) && !usesNodeLink(vars.machine)) return farmslotRoot;
+  if (isLocal(vars.host, vars.machine) && !usesNodeLink(vars.machine)) return farmslotRoot();
   if (currentProjectSources() ?? projectVars?.sourceContext)
     return farmPathsForSlot(vars).code.node;
   const result = await io.exec(

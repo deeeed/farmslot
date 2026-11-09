@@ -70,7 +70,7 @@ test('paired review results cannot approve a minor or hide a defect in a pass ve
 
 test('policy changes are read without restarting or waiting for the project cache', async (t) => {
   const project = `approval-policy-${process.pid}`;
-  const dir = path.join(farmslotRoot, 'projects', project);
+  const dir = path.join(farmslotRoot(), 'projects', project);
   await mkdir(dir, { recursive: true });
   t.after(async () => {
     await rm(dir, { recursive: true, force: true });

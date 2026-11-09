@@ -38,7 +38,9 @@ export function resolveFarmslotRoot(startDir = import.meta.dirname): string {
 }
 
 const thisDir = import.meta.dirname ?? path.dirname(fileURLToPath(import.meta.url));
-export const farmslotRoot = resolveFarmslotRoot(thisDir);
+export function farmslotRoot(): string {
+  return resolveFarmslotRoot(thisDir);
+}
 
 export const WORKSPACE_STATE_FILE = 'state.json';
 
@@ -52,7 +54,7 @@ function expandTilde(p: string): string {
  */
 export function resolveWorkspaceRoot(
   env: NodeJS.ProcessEnv = process.env,
-  root = farmslotRoot,
+  root = farmslotRoot(),
 ): string | null {
   const fromEnv = env.FARMSLOT_WORKSPACE;
   if (fromEnv) return path.resolve(expandTilde(fromEnv));

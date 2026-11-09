@@ -110,7 +110,7 @@ export async function clearStalePrepareProcess(
   label: string,
   cleanupPatterns?: string[],
 ): Promise<boolean> {
-  const projectPreflight = `${farmslotRoot}/projects/${vars.projectName}/setup/preflight.sh ${vars.slotId}`;
+  const projectPreflight = `${farmslotRoot()}/projects/${vars.projectName}/setup/preflight.sh ${vars.slotId}`;
   const fallbackPatterns = [
     projectPreflight,
     `${vars.remoteRepo}/temp/.agent/preflight.pid`,
@@ -714,7 +714,7 @@ export async function runPrepareCommand(
         execLocal(c, { cwd: eopts?.cwd, timeout: eopts?.timeout })
     : (c: string, eopts?: { cwd?: string; timeout?: number }) =>
         execOnSlot(vars, c, { cwd: eopts?.cwd, timeout: eopts?.timeout });
-  const windowCwd = useLocal && !slotIsLocal ? farmslotRoot : vars.remoteRepo;
+  const windowCwd = useLocal && !slotIsLocal ? farmslotRoot() : vars.remoteRepo;
   // Labels form both the tmux window target and staged script path.
   const rawLabel = (opts?.windowLabel ?? '').trim();
   const labelPart = /^[A-Za-z0-9_-]+$/.test(rawLabel) ? rawLabel : Date.now().toString();

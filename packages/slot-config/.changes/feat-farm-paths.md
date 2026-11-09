@@ -1,1 +1,1 @@
-- Use FarmPaths for instance storage and execution paths while retaining legacy locations.
+- Resolve instance storage, registries and checkout roots at call time while retaining legacy locations.

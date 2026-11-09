@@ -18,7 +18,7 @@ import {
 } from '@farmslot/protocol';
 
 import { resolveRecoverableCiFixContext } from '../ci-monitor/inline-fix.js';
-import { poolDir } from '../core/config.js';
+import { poolDirectory } from '../core/config.js';
 import { resolveAgentOrBareTarget, unavailableTerminalTarget } from '../methods/terminal.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
@@ -34,10 +34,10 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-const testPoolFile = path.join(poolDir, `agent-contexts-fixture-${process.pid}.json`);
+const testPoolFile = path.join(poolDirectory(), `agent-contexts-fixture-${process.pid}.json`);
 
 before(() => {
-  mkdirSync(poolDir, { recursive: true });
+  mkdirSync(poolDirectory(), { recursive: true });
   writeFileSync(
     testPoolFile,
     JSON.stringify(

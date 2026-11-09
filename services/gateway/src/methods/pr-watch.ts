@@ -64,7 +64,7 @@ export async function initPRMonitoring(
 ): Promise<PRMonitoringService> {
   publishPolicy = (ownerId, policy) => publish(ownerId, Events.PR_WATCH_POLICY_UPDATED, { policy });
   service?.stop();
-  const store = await PRMonitorStore.load(resolve(farmslotRoot, '.pr-monitors.json'));
+  const store = await PRMonitorStore.load(resolve(farmslotRoot(), '.pr-monitors.json'));
   const monitoring = new PRMonitoringService(
     store,
     ownerAdminAuthority(auth),

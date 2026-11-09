@@ -149,7 +149,7 @@ async function executeImprovementTool(
         const project = String(args.project);
         if (project.includes('..') || !/^[\w-]+$/.test(project))
           throw new Error('Invalid project name');
-        const projectDir = path.join(farmslotRoot, 'projects', project);
+        const projectDir = path.join(farmslotRoot(), 'projects', project);
         if (!existsSync(projectDir)) throw new Error(`Project ${project} not found`);
 
         const files: Array<{ path: string; content: string }> = [];
@@ -166,7 +166,7 @@ async function executeImprovementTool(
               if (entry.name === 'node_modules' || entry.name === '.git') continue;
               await walk(fullPath);
             } else {
-              const relPath = path.relative(farmslotRoot, fullPath);
+              const relPath = path.relative(farmslotRoot(), fullPath);
               try {
                 const content = await readFile(fullPath, 'utf-8');
                 const truncated =
@@ -183,7 +183,7 @@ async function executeImprovementTool(
 
         // Also read curated learnings
         const learningsPath = path.join(
-          farmslotRoot,
+          farmslotRoot(),
           'projects',
           project,
           'learnings',
@@ -439,7 +439,7 @@ export async function analyzeAndPropose(
               for (const change of toolArgs.changes ?? []) {
                 let before = '';
                 try {
-                  before = await readFile(path.join(farmslotRoot, change.filePath), 'utf-8');
+                  before = await readFile(path.join(farmslotRoot(), change.filePath), 'utf-8');
                 } catch {
                   // New file — before is empty
                 }
@@ -649,7 +649,7 @@ Otherwise respond conversationally.`;
             for (const change of toolArgs.changes ?? []) {
               let before = '';
               try {
-                before = await readFile(path.join(farmslotRoot, change.filePath), 'utf-8');
+                before = await readFile(path.join(farmslotRoot(), change.filePath), 'utf-8');
               } catch {
                 /* new file */
               }
@@ -724,7 +724,7 @@ export async function applyImprovement(
       refused.push({ filePath: change.filePath, reason: 'out-of-project' });
       continue;
     }
-    const fullPath = path.join(farmslotRoot, change.filePath);
+    const fullPath = path.join(farmslotRoot(), change.filePath);
 
     // Anchor check: the card's `after` is a full-file snapshot frozen at
     // proposal time. If the file on disk no longer matches the card's
@@ -775,7 +775,7 @@ export async function applyImprovement(
       await writeFile(fullPath, change.after, 'utf-8');
       // Force-add: project files may be gitignored by the parent repo.
       // Async so a slow git invocation cannot stall the gateway event loop.
-      await execFileAsync('git', ['add', '-f', '--', change.filePath], { cwd: farmslotRoot });
+      await execFileAsync('git', ['add', '-f', '--', change.filePath], { cwd: farmslotRoot() });
       applied.push(change);
       console.log(`[improvement] applied: ${change.filePath}`);
     } catch (err) {
@@ -795,10 +795,10 @@ export async function applyImprovement(
   if (applied.length === 0) {
     validationOutput = 'skipped — no files applied';
   } else {
-    const projectJson = path.join(farmslotRoot, 'projects', payload.project, 'project.json');
+    const projectJson = path.join(farmslotRoot(), 'projects', payload.project, 'project.json');
     let validateCmd = 'yarn';
     let validateArgs = ['typecheck'];
-    let validateCwd = path.join(farmslotRoot, 'apps/command-center');
+    let validateCwd = path.join(farmslotRoot(), 'apps/command-center');
     let projectOwnsValidation = false;
 
     if (existsSync(projectJson)) {
@@ -808,7 +808,7 @@ export async function applyImprovement(
           const parts = projConfig.hooks.validate.split(/\s+/);
           validateCmd = parts[0];
           validateArgs = parts.slice(1);
-          validateCwd = farmslotRoot;
+          validateCwd = farmslotRoot();
           projectOwnsValidation = true;
         }
       } catch {

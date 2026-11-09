@@ -28,9 +28,9 @@ import { deleteTestRunIfPresent, makeReadyGatePackage } from './test-fixtures.js
 // Manual release proof. Local git and full artifact preparation exceed the unit-test budget.
 test('refreshPublishPackage rebuilds the pending package and preserves safe operator choices', async (t) => {
   const testId = `refresh-package-${process.pid}-${Date.now()}`;
-  const poolFile = path.join(farmslotRoot, 'pool', `${testId}.json`);
+  const poolFile = path.join(farmslotRoot(), 'pool', `${testId}.json`);
   const workerRepo = await mkdtemp(path.join(os.tmpdir(), `${testId}-worker-`));
-  const taskRoot = path.join(farmslotRoot, '.sandbox/farmslot-farm/tasks');
+  const taskRoot = path.join(farmslotRoot(), '.sandbox/farmslot-farm/tasks');
   const taskRelDir = `test/${testId}`;
   const taskDir = path.join(taskRoot, taskRelDir);
   const workerTaskDir = path.join(workerRepo, '.sandbox/farmslot-farm/worker-task', taskRelDir);

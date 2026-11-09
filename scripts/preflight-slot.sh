@@ -27,7 +27,6 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-POOL_DIR="${PROJECT_DIR}/pool"
 
 # -- Source shared helpers + load config -----------------------------------
 source "${SCRIPT_DIR}/lib/slot-common.sh"
