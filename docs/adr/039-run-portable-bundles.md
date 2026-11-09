@@ -567,9 +567,11 @@ datasets. The instance name is a label for services, sockets and ports, never a
 path. The gateway takes each node's paths from that node's report. Slot runtime
 is keyed by instance, and prepare refuses a slot another instance has claimed.
 
-Only `FARMSLOT_HOME` and `FARMSLOT_DATA` are overridable. Per-store variables
-such as `FARMSLOT_POOL_DIR`, `FARMSLOT_RUNS_DIR` and `FARMSLOT_RUN_ARCHIVE_ROOT`
-warn for one release, then are removed. A CI test runs two instances on one
+In layout 2 only `FARMSLOT_HOME` and `FARMSLOT_DATA` are overridable, and
+per-store variables such as `FARMSLOT_POOL_DIR`, `FARMSLOT_RUNS_DIR` and
+`FARMSLOT_RUN_ARCHIVE_ROOT` are ignored. In the legacy layout they remain the
+supported overrides. The resolver never prints; `farmslot paths --json` lists
+the overrides in effect as `envOverrides`. A CI test runs two instances on one
 machine and proves their paths are disjoint.
 
 The resolver first reports each machine's current layout unchanged. Migration
