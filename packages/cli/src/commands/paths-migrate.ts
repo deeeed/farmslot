@@ -92,8 +92,10 @@ async function assertOffline(plan: MigrationPlan, env: NodeJS.ProcessEnv): Promi
       }
       if (
         /\.json$/.test(file) &&
-        (within(plan.legacy.state.runs, file) ||
-          within(translate(plan.legacy.state.runs, plan.mappings), file))
+        [plan.legacy.state.runs, translate(plan.legacy.state.runs, plan.mappings)].some(
+          (runs) =>
+            path.dirname(file) === runs || path.dirname(file) === path.join(runs, 'archive'),
+        )
       ) {
         const value = await json(file);
         if (
@@ -108,30 +110,6 @@ async function assertOffline(plan: MigrationPlan, env: NodeJS.ProcessEnv): Promi
         const presence = await json(file);
         if (record(presence) && typeof presence.pid === 'number' && alive(presence.pid))
           throw new Error(`Instance gateway is running (pid ${presence.pid}): ${file}`);
-      }
-      if (path.basename(file) === 'manifest.json') {
-        const value = await json(file);
-        if (
-          record(value) &&
-          Array.isArray(value.entries) &&
-          value.entries.some(
-            (entry) =>
-              record(entry) &&
-              (entry.state === 'staged' ||
-                (typeof entry.staged === 'string' &&
-                  !entry.completedAt &&
-                  entry.state !== 'archived')),
-          )
-        ) {
-          // An unstarted planned entry is harmless only when no staged payload exists.
-          for (const entry of value.entries)
-            if (
-              record(entry) &&
-              (entry.state === 'staged' ||
-                (typeof entry.staged === 'string' && (await info(entry.staged))))
-            )
-              throw new Error(`Staged storage-archive entry: ${file}`);
-        }
       }
     }
   // Deployments can start the node directly, without the CLI's node.pid.
@@ -191,14 +169,20 @@ async function assertSafe(
       for (const name of Object.keys(await inventory(root)))
         if (name.split(path.sep).some((part) => part.startsWith('.retention-')))
           throw new Error(`Staged bundle retention entry: ${root}/${name}`);
-  // Include archive roots outside home/runs in the staged-entry refusal.
-  for (const step of plan.steps)
+  // Check each existing manifest, including an in-place destination in a merged write.
+  const archiveManifests = new Set<string>();
+  for (const step of plan.steps) {
     if (
       step.kind === 'move' &&
-      path.basename(step.source) === 'manifest.json' &&
-      (await info(step.source))
-    ) {
-      const value = await json(step.source);
+      path.dirname(step.target) === path.join(plan.journal.slice(0, -5), 'archive-manifests')
+    )
+      archiveManifests.add(step.source);
+    if (step.kind === 'write' && path.basename(step.target) === 'manifest.json')
+      archiveManifests.add(step.target);
+  }
+  for (const file of archiveManifests)
+    if (await info(file)) {
+      const value = await json(file);
       if (record(value) && Array.isArray(value.entries))
         for (const entry of value.entries)
           if (
@@ -206,7 +190,7 @@ async function assertSafe(
             (entry.state === 'staged' ||
               (typeof entry.staged === 'string' && (await info(entry.staged))))
           )
-            throw new Error(`Staged storage-archive entry: ${step.source}`);
+            throw new Error(`Staged storage-archive entry: ${file}`);
     }
   const required = new Map<string, { directory: string; bytes: number }>();
   const charge = async (file: string, bytes: number) => {

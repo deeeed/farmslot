@@ -143,8 +143,8 @@ test('migrate CLI requires one mode and returns reviewable JSON without file con
   const { realpathSync } = await import('node:fs');
   const home = realpathSync(root);
   writeFileSync(
-    path.join(home, 'sources.json'),
-    JSON.stringify({ path: path.join(home, 'sources') }),
+    path.join(home, 'git-identity.json'),
+    JSON.stringify({ 'user.signingkey': path.join(home, 'sources/signing.key') }),
   );
   const prior = process.env;
   process.env = {
@@ -170,7 +170,7 @@ test('migrate CLI requires one mode and returns reviewable JSON without file con
   const result: { steps: { kind: string; body?: string; before?: string; target: string }[] } =
     JSON.parse(stdout);
   assert.ok(
-    result.steps.some((step) => step.kind === 'write' && step.target.endsWith('sources.json')),
+    result.steps.some((step) => step.kind === 'write' && step.target.endsWith('git-identity.json')),
   );
   assert.ok(result.steps.every((step) => step.body === undefined && step.before === undefined));
   await assert.rejects(
