@@ -51,7 +51,12 @@ function attr(node: AdfNode, key: string): string {
 }
 
 function tidy(markdown: string): string {
-  return markdown.replace(/\n{3,}/g, '\n\n').trim();
+  // Jira can mark criterion labels as issue links before the ticket is read.
+  // They are ledger identities, while real ticket links must remain intact.
+  return markdown
+    .replace(/\[(AC-\d+)\]\(https?:\/\/[^/\s)]+\/browse\/\1(?:[?#][^\s)]*)?\)/gi, '$1')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function blocks(nodes: AdfNode[], opts: AdfToMarkdownOptions): string {

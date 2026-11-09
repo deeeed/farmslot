@@ -681,3 +681,50 @@ test('an explicitly empty heading or label suppresses retired AC paragraphs', ()
     [],
   );
 });
+
+test('Jira criterion link marks stay plain while actual ticket links survive task rendering', () => {
+  const base = 'https://consensyssoftware.atlassian.net/browse/';
+  const linked = (key: string) => text(key, [{ type: 'link', attrs: { href: `${base}${key}` } }]);
+  const markdown = ticketBodyToMarkdown(
+    doc(
+      heading(2, 'Acceptance criteria'),
+      bullets(
+        item(
+          paragraph(
+            linked('AC-4'),
+            text(': complete review, see '),
+            linked('TAT-4506'),
+            text(', '),
+            linked('TTT-123'),
+            text(' and '),
+            linked('MMQA-456'),
+            text('.'),
+          ),
+        ),
+      ),
+    ),
+  );
+  const criteria = acceptanceCriteriaFromMarkdown(markdown);
+  const rendered = renderAcceptanceCriteria(criteria);
+  assert.match(rendered, /^- AC-4: complete review/);
+  assert.doesNotMatch(rendered, /browse\/AC-4/);
+  for (const key of ['TAT-4506', 'TTT-123', 'MMQA-456']) {
+    assert.ok(rendered.includes(`[${key}](${base}${key})`));
+  }
+});
+
+test('wiki and inherited Markdown remove only matching criterion Jira destinations', () => {
+  const base = 'https://consensyssoftware.atlassian.net/browse/';
+  for (const source of [`[AC-4|${base}AC-4]`, `[AC-4](${base}AC-4?focusedCommentId=1)`]) {
+    assert.equal(
+      ticketBodyToMarkdown(`${source}: review, [TAT-4506](${base}TAT-4506)`),
+      `AC-4: review, [TAT-4506](${base}TAT-4506)`,
+    );
+  }
+  for (const source of [
+    '[AC-4](https://docs.example/criteria/AC-4)',
+    `[review ticket](${base}TAT-4506)`,
+    `[AC-4](${base}TAT-4506)`,
+  ])
+    assert.equal(ticketBodyToMarkdown(source), source);
+});

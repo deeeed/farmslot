@@ -1,0 +1,71 @@
+{
+  "description": "## Acceptance criteria\n\n- AC-4: Review the change; see [TAT-4506](https://consensyssoftware.atlassian.net/browse/TAT-4506).",
+  "acceptanceCriteria": [
+    "AC-4: Review the change; see [TAT-4506](https://consensyssoftware.atlassian.net/browse/TAT-4506)."
+  ],
+  "jiraDescription": {
+    "type": "doc",
+    "version": 1,
+    "content": [
+      {
+        "type": "heading",
+        "attrs": {
+          "level": 2
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "Acceptance criteria"
+          }
+        ]
+      },
+      {
+        "type": "bulletList",
+        "content": [
+          {
+            "type": "listItem",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "AC-4",
+                    "marks": [
+                      {
+                        "type": "link",
+                        "attrs": {
+                          "href": "https://consensyssoftware.atlassian.net/browse/AC-4"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "text": ": Review the change; see "
+                  },
+                  {
+                    "type": "text",
+                    "text": "TAT-4506",
+                    "marks": [
+                      {
+                        "type": "link",
+                        "attrs": {
+                          "href": "https://consensyssoftware.atlassian.net/browse/TAT-4506"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "text": "."
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
