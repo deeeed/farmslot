@@ -29,6 +29,10 @@ import { execOnSlot } from '../core/exec.js';
 import { slotFileExists, type SlotLocality, slotReadFile } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
+import {
+  type ScriptedCommandExpectation,
+  scriptedCommandResultRefusal,
+} from '../runners/scripted-progress.js';
 
 import { AcceptanceReadError, handoffListsAcceptanceCriteria } from './acceptance-status.js';
 import { agentRuntimeScriptForSlot } from './agent-runtime-script.js';
@@ -39,6 +43,7 @@ const {
   resolveWorkerTerminalContract,
   isProofMeasurementContract,
   isScriptedCommandContract,
+  SCRIPTED_COMMAND_RESULT,
   deterministicChecks,
   lintWorkerTemplateAgainstContract,
   templateUsesTerminalMark,
@@ -54,7 +59,8 @@ const {
     },
   ) => WorkerTerminalContractDocument;
   isProofMeasurementContract: (contract: unknown) => boolean;
-  isScriptedCommandContract: (contract: unknown) => contract is WorkerTerminalContractDocument;
+  isScriptedCommandContract: (contract: unknown) => boolean;
+  SCRIPTED_COMMAND_RESULT: 'artifacts/scripted-command-result.json';
   lintWorkerTemplateAgainstContract: (
     templateContent: string,
     contract: WorkerTerminalContractDocument,
@@ -139,38 +145,27 @@ async function acceptanceRequiredByContract(
   }
 }
 
-/** The scripted runner's record of the command it ran, beside SIGNAL.json. */
-interface ScriptedCommandResultRecord {
-  commandRef?: string;
-  exitCode: number | null;
-  timedOut?: boolean;
-}
-
 /** A scripted command run has no worker: its proof is the command's result, not a checklist. */
 async function scriptedCommandTerminalRefusal(
   vars: SlotLocality,
   taskDir: string,
   terminalCommand: 'complete' | 'no-change',
-  resultPath: string,
+  expected: ScriptedCommandExpectation,
 ): Promise<string | null> {
   if (terminalCommand !== 'complete')
     return 'A scripted command run completes or fails; it has no no-change outcome.';
-  const file = `${taskDir}/${resultPath}`;
+  const file = `${taskDir}/${SCRIPTED_COMMAND_RESULT}`;
   if (!(await slotFileExists(vars, file)))
-    return `${resultPath} is missing; the scripted runner writes it beside SIGNAL.json.`;
-  let result: ScriptedCommandResultRecord;
+    return `${SCRIPTED_COMMAND_RESULT} is missing; the scripted runner writes it beside SIGNAL.json.`;
+  let result: unknown;
   try {
-    result = JSON.parse(await slotReadFile(vars, file)) as ScriptedCommandResultRecord;
+    result = JSON.parse(await slotReadFile(vars, file));
   } catch (error) {
     if (!(error instanceof SyntaxError)) throw error;
-    return `${resultPath} is invalid JSON.`;
+    return `${SCRIPTED_COMMAND_RESULT} is invalid JSON.`;
   }
-  const command = result.commandRef
-    ? `scripted command '${result.commandRef}'`
-    : 'scripted command';
-  if (result.timedOut === true) return `${command} timed out; it cannot complete.`;
-  if (result.exitCode !== 0) return `${command} exited ${result.exitCode}; it cannot complete.`;
-  return null;
+  const refusal = scriptedCommandResultRefusal(result, expected);
+  return refusal ? `${refusal}; it cannot complete.` : null;
 }
 
 export async function validateTerminalSignalArtifacts(
@@ -178,6 +173,8 @@ export async function validateTerminalSignalArtifacts(
   signalJsonPath: string,
   signal: WorkerSignal,
   checklistTaskFile?: string | null,
+  /** Set by the caller for an artifact-only scripted command run (from the run, not the slot). */
+  scriptedCommand?: ScriptedCommandExpectation,
 ): Promise<
   | { ok: true; deterministicChecks?: DeterministicChecklistCheck[] }
   | { ok: false; kind: 'artifact' | 'infrastructure'; message: string }
@@ -206,15 +203,25 @@ export async function validateTerminalSignalArtifacts(
       };
     }
   }
-  if (isScriptedCommandContract(contract)) {
+  // The run decides, not the slot copy of the contract: a scripted command run is judged by
+  // its command result even when an older worker contract was frozen for it, and a slot
+  // contract claiming that policy for any other run is refused.
+  if (scriptedCommand) {
     const refusal = await scriptedCommandTerminalRefusal(
       vars,
       taskDir,
       terminalCommand,
-      contract.scriptedCommand!.result,
+      scriptedCommand,
     );
     return refusal ? { ok: false, kind: 'artifact', message: refusal } : { ok: true };
   }
+  if (isScriptedCommandContract(contract))
+    return {
+      ok: false,
+      kind: 'artifact',
+      message:
+        'The frozen terminal contract is for a scripted command run, but this run is not one.',
+    };
   const rootContract: unknown =
     contractInput === WORKER_TERMINAL_CONTRACT_INPUT
       ? contract

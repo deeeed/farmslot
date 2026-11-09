@@ -17,6 +17,7 @@ import {
   gateActionsForReadiness,
   gateReasonsForAction,
   type GateReviewFinding,
+  isArtifactOnlyScriptedCommandRun,
   isPrerequisiteGatePayload,
   isRecord,
   isTerminalRunStatus,
@@ -158,6 +159,9 @@ const { acceptanceContractIssues } =
   };
 
 export async function readGateAcceptance(run: Run): Promise<GateAcceptanceRead> {
+  // A scripted command run has no worker to record verdicts; its command result is its
+  // whole proof (ADR-043 Amendment 2), so it carries no acceptance obligation.
+  if (isArtifactOnlyScriptedCommandRun(run)) return { criteria: [], ledger: null, issues: [] };
   const expected = registeredAcceptanceCriteria(
     run.ticketData?.acceptanceCriteria ?? [],
     run.acceptanceRegistration,

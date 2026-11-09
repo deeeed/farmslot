@@ -25,6 +25,7 @@ test('a scripted-command contract is judged by the command result, not worker ga
   assert.equal(contract.acceptance, undefined, 'no acceptance ledger without a worker');
   assert.deepEqual(contract.whenPresent, []);
   assert.deepEqual(contract.commands.complete, { artifacts: [SCRIPTED_COMMAND_RESULT] });
+  assert.deepEqual(contract.commands['no-change'], { artifacts: [] }, 'a command has no no-change');
   assert.deepEqual(contract.commands.blocked, { artifacts: [] });
   assert.equal(isScriptedCommandContract(contract), true);
 });

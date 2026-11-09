@@ -833,7 +833,9 @@ export async function writeTaskFile(
   // to the TASK.md task document. Lightweight interactive dev is the one flow that
   // keeps the template in TASK.md: its CHECKLIST.md is the operator-agreed plan
   // written by writeInteractiveDevSidecars, and the template embeds that plan.
-  const splitChecklist = !isLightweightInteractiveDevRun(run);
+  // A scripted command run has no worker, so no operator plan or worker checklist either.
+  const scriptedCommand = isArtifactOnlyScriptedCommandRun(run);
+  const splitChecklist = scriptedCommand || !isLightweightInteractiveDevRun(run);
 
   // Build task folder — each run gets its own timestamped dir (allows comparison across runs).
   // Timestamp is MMDD-HHMMSS (seconds precision). Minute-only precision caused the E12 race
@@ -931,7 +933,7 @@ export async function writeTaskFile(
   // Build branch name
   const branch =
     run.branch || buildSmartBranch(run.flowType, run.ticketOrPr, undefined, undefined, run.variant);
-  await writeInteractiveDevSidecars(run, taskAbsDir, branch);
+  if (!scriptedCommand) await writeInteractiveDevSidecars(run, taskAbsDir, branch);
 
   // Build template variables
   let ticket = run.ticketData ?? {
@@ -1352,7 +1354,6 @@ export async function writeTaskFile(
   );
   // A scripted command run has no worker: no pack checklist, and its proof is the
   // command's result record rather than the worker gates the project declares.
-  const scriptedCommand = isArtifactOnlyScriptedCommandRun(run);
   const terminalContract = resolveWorkerTerminalContract(workerTerminalConfig, run.flowType, {
     mode: run.mode ?? undefined,
     ...(run.engineState?.evalExperiment?.blind?.proof ? { proofMeasurement: true } : {}),

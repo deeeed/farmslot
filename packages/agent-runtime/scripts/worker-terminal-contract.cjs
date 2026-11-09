@@ -243,7 +243,8 @@ function resolveWorkerTerminalContract(projectConfig, flowType, options = {}) {
       requireSignal: true,
       commands: {
         complete: { artifacts: [SCRIPTED_COMMAND_RESULT] },
-        'no-change': { artifacts: [SCRIPTED_COMMAND_RESULT] },
+        // A command run has no no-change outcome; the gateway refuses that signal.
+        'no-change': { artifacts: [] },
         blocked: { artifacts: [] },
       },
       whenPresent: [],

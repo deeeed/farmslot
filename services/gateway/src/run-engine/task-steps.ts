@@ -8,6 +8,7 @@ import {
   type ArtifactRef,
   Events,
   EXECUTION_CHECKLIST_DOCUMENT,
+  isArtifactOnlyScriptedCommandRun,
   isLightweightInteractiveDevRun,
   parseGitHubRef,
   PipelineSteps,
@@ -524,8 +525,9 @@ export async function executeWriteTaskStep(
       { path: CHECKLIST_MARKER_INPUT, purpose: 'checklist-marker' },
       ...taskDocumentArtifacts({
         includeChecklist:
-          !isLightweightInteractiveDevRun(current) ||
-          existsSync(path.join(path.dirname(current.taskFile), EXECUTION_CHECKLIST_DOCUMENT)),
+          !isArtifactOnlyScriptedCommandRun(current) &&
+          (!isLightweightInteractiveDevRun(current) ||
+            existsSync(path.join(path.dirname(current.taskFile), EXECUTION_CHECKLIST_DOCUMENT))),
       }),
     ];
     const inputArtifacts = await captureReviewInputArtifactsForRun(current);
@@ -725,14 +727,21 @@ export async function executeWriteTaskStep(
     ];
     if (afterWrite.ticketData)
       artifacts.push({ path: 'inputs/bug-input.json', purpose: 'ticket-data' });
-    if (isLightweightInteractiveDevRun(afterWrite)) {
+    if (
+      isLightweightInteractiveDevRun(afterWrite) &&
+      !isArtifactOnlyScriptedCommandRun(afterWrite)
+    ) {
       artifacts.push(
         { path: 'inputs/dev-intake.json', purpose: 'dev-intake' },
         { path: 'CHECKLIST.md', purpose: 'interactive-checklist' },
       );
     }
     artifacts.push(
-      ...taskDocumentArtifacts({ includeChecklist: !isLightweightInteractiveDevRun(afterWrite) }),
+      ...taskDocumentArtifacts({
+        includeChecklist:
+          !isLightweightInteractiveDevRun(afterWrite) &&
+          !isArtifactOnlyScriptedCommandRun(afterWrite),
+      }),
     );
     if (afterWrite.repeatReviewContext && resolveReviewMode({ run: afterWrite }) === 'warm') {
       artifacts.push(

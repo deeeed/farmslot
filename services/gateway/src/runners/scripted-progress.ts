@@ -15,6 +15,36 @@ async function declaredCommand(input: RunnerTaskProgressInput): Promise<Resolved
   return scriptedCommand;
 }
 
+/** The command a scripted run declared; cwd is checked when the caller resolved it. */
+export interface ScriptedCommandExpectation {
+  project: string;
+  commandRef: string;
+  cwd?: string;
+}
+
+/**
+ * Why the scripted runner's result record does not prove a successful run of the
+ * expected command, or null when it does. The one judgment of that record: the
+ * progress probe and the terminal contract both use it.
+ */
+export function scriptedCommandResultRefusal(
+  result: unknown,
+  expected: ScriptedCommandExpectation,
+): string | null {
+  if (!isRecord(result)) return 'the scripted command result is not a JSON object';
+  if (result.project !== expected.project || result.commandRef !== expected.commandRef)
+    return `the scripted command result is not for ${expected.project}/${expected.commandRef}`;
+  if (expected.cwd !== undefined && result.cwd !== expected.cwd)
+    return 'the scripted command result ran in another directory';
+  if (result.timedOut !== false)
+    return `scripted command '${expected.commandRef}' timed out or did not record completion`;
+  if (result.signal !== null)
+    return `scripted command '${expected.commandRef}' was ended by signal ${String(result.signal)}`;
+  if (result.exitCode !== 0)
+    return `scripted command '${expected.commandRef}' exited ${String(result.exitCode)}`;
+  return null;
+}
+
 /** A terminal child result and its current monitor receipt prove command completion. */
 export async function readScriptedCommandProgress(
   input: RunnerTaskProgressInput,
@@ -83,14 +113,13 @@ export async function readScriptedCommandProgress(
     provenance.kind !== 'farmslot-scripted-runner' ||
     provenance.mode !== 'command' ||
     provenance.project !== run.project ||
-    result.project !== run.project ||
     provenance.commandRef !== run.scripted.commandRef ||
-    result.commandRef !== run.scripted.commandRef ||
     provenance.cwd !== cwd ||
-    result.cwd !== cwd ||
-    result.exitCode !== 0 ||
-    result.signal !== null ||
-    result.timedOut !== false ||
+    scriptedCommandResultRefusal(result, {
+      project: run.project,
+      commandRef: run.scripted.commandRef,
+      cwd,
+    }) !== null ||
     !stat.isFile ||
     !Number.isFinite(stat.mtimeMs) ||
     dispatchedAt === null ||
