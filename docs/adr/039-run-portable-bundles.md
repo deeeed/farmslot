@@ -421,7 +421,7 @@ that lists entries and GB per store.
 
 ## Amendment 3: 2026-10-29 permanent run history and movable storage
 
-**Status:** Proposed, explicitly requested by Arthur, 2026-10-29. Supersedes Amendment 2's deletion policy.
+**Status:** Accepted by Arthur, 2026-11-09 (proposed 2026-10-29), with Amendment 6. Supersedes Amendment 2's deletion policy.
 
 Retention never deletes run records. Active and archived JSON records remain in
 place and visible in Command Center forever. The existing settled/48-hour,
@@ -539,3 +539,42 @@ Keep manifests and metadata in the store; journal media locations in availabilit
 to that location and verify size and digest. Admission retries in the same capture.
 Missing archives preserve source bytes and refuse reclamation. Capacity warnings
 and archive events use the existing `monitor.violation` board and health channel.
+
+## Amendment 6: 2026-11-09 one farm root per instance, one path resolver
+
+**Status:** Accepted by Arthur, 2026-11-09. Implementation pending.
+
+A farm instance is one `FARMSLOT_HOME`, chosen per process by `FARMSLOT_HOME` or
+`--home`; the default is `~/.farmslot`. Any number of instances may run side by
+side on one machine, and nothing assumes a single instance. Every path an
+instance reads or writes comes from one pure resolver, `resolveFarmPaths({ home,
+role })` in `@farmslot/protocol/node`; the shell reads the same values from
+`farmslot paths --json`. Callers export resolved paths to hooks and packs, which
+never derive their own. No module-level path constants or shell fallbacks remain.
+
+The gateway and node roles share one layout. `config/` holds `instance.json`
+(name, ports, data root) and credentials; `pool/`, `projects/` and `code/` (node,
+CLI snapshots, `bin/farmslot`, support bundles) hold configuration and code;
+`state/` holds runs, task pins, native sessions, review workspaces, sources, node
+link, logs, tmp and cache, and gateway-role stores; `backups/` holds dated
+backups. Heavy data lives under `FARMSLOT_DATA` (default `$FARMSLOT_HOME/data`;
+one subdirectory per instance on a shared volume): the run-bundle store
+(Amendment 1), the run archive (Amendments 3 and 5, replacing the
+`FARMSLOT_RUN_ARCHIVE_ROOT` default), archived task pins, canary evidence and
+datasets. The instance name is a label for services, sockets and ports, never a
+path. The gateway takes each node's paths from that node's report. Slot runtime
+is keyed by instance, and prepare refuses a slot another instance has claimed.
+
+Only `FARMSLOT_HOME` and `FARMSLOT_DATA` are overridable. Per-store variables
+such as `FARMSLOT_POOL_DIR`, `FARMSLOT_RUNS_DIR` and `FARMSLOT_RUN_ARCHIVE_ROOT`
+warn for one release, then are removed. A CI test runs two instances on one
+machine and proves their paths are disjoint.
+
+The resolver first reports each machine's current layout unchanged. Migration
+then runs per instance and per machine in an idle window: copy and verify,
+rename the old location, restart and read back; rollback renames it back. No
+symlinks. The dev instance is the farm's only instance. The unused prod
+instance's files are deleted once nothing reads them; any unique run history,
+evidence or datasets they hold move to `FARMSLOT_DATA` first. Settled task pins
+are archived to `FARMSLOT_DATA`, never deleted. Directories with no reader are
+archived there too.
