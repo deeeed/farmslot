@@ -412,6 +412,7 @@ export function NativeConversationScreen({
           // FlashList v2 measures its rows itself: no estimated item size.
           <FlashList
             ref={list}
+            testID="companion-native-transcript"
             data={items}
             renderItem={renderItem}
             keyExtractor={nativeTranscriptItemKey}
@@ -466,6 +467,8 @@ export function NativeConversationScreen({
             scrollEventThrottle={100}
             onContentSizeChange={(_, height) => {
               viewport.current.content = height;
+              // Content can grow with no scroll event: the proof reads the distance it left.
+              reportFollow(follow);
               if (disclosed.current) {
                 // Keep the reader's place; follow again only if the end is still in view.
                 disclosed.current = false;
