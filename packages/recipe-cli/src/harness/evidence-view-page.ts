@@ -55,14 +55,6 @@ export function escapeHtml(value: unknown): string {
   return String(value ?? '').replace(/[&<>"']/gu, (char) => ESCAPES[char]!);
 }
 
-export function formatCueMs(ms: number): string {
-  const total = Math.max(0, ms) / 1000;
-  const minutes = Math.floor(total / 60);
-  const seconds = Math.floor(total % 60);
-  const hundredths = Math.floor((total % 1) * 100);
-  return `${minutes}:${String(seconds).padStart(2, '0')}.${String(hundredths).padStart(2, '0')}`;
-}
-
 const verdictClass = (verdict: string | null) =>
   verdict === 'proven' || verdict === 'pass'
     ? 'ok'
@@ -109,6 +101,7 @@ const header: RunEvidenceSection = {
     .map((part) => context.escape(part))
     .join(' · ')}</p>
   <p class="counts">${view.summary.total} criteria ${counts}</p>
+  <nav class="modes" aria-label="View"><a href="#story" data-mode-link="story">Story</a><a href="#" data-mode-link="evidence">Evidence</a></nav>
 </header>`;
   },
 };
@@ -121,7 +114,7 @@ const player: RunEvidenceSection = {
     return `<section class="player">${view.videos
       .map(
         (video) =>
-          `<video controls preload="metadata" data-video-path="${context.escape(video.path)}" src="${context.escape(context.fileUrl(video.path))}"></video>`,
+          `<figure><video controls preload="metadata" data-video-path="${context.escape(video.path)}" src="${context.escape(context.fileUrl(video.path))}"></video>${video.measured ? '' : '<figcaption>No measured timeline: it plays, but no claim or step seeks into it.</figcaption>'}</figure>`,
       )
       .join('')}</section>`;
   },
@@ -173,6 +166,25 @@ const timeline: RunEvidenceSection = {
   },
 };
 
+/** Every executed intent in run order, read top to bottom; a measured step seeks the player. */
+const story: RunEvidenceSection = {
+  id: 'story',
+  render(view, context) {
+    if (!view.steps.length)
+      return `<section class="story"><h2>Story</h2><p class="empty">${view.run?.status === 'running' ? 'The steps appear when the run writes its trace.' : 'This run recorded no steps.'}</p></section>`;
+    const rows = view.steps.map((step) => {
+      const line = `<span class="at">${step.atMs === null ? '' : context.escape(context.formatMs(step.atMs))}</span>${badge(step.ok ? 'pass' : 'fail', step.ok ? 'ok' : 'bad')}<span class="intent">${context.escape(step.intent || step.nodeId)}</span>`;
+      const stills = step.files.filter((file) => file.mediaType === 'image');
+      return `<li class="${step.ok ? '' : 'failed'}" data-trace-index="${step.traceIndex}">${
+        step.cue
+          ? `<button type="button" class="beat" ${context.seekAttributes(step.cue)}>${line}</button>`
+          : `<div class="beat">${line}</div>`
+      }${stills.length ? `<div class="files">${stills.map((file) => fileItem(file, context)).join('')}</div>` : ''}</li>`;
+    });
+    return `<section class="story"><h2>Story</h2><ol>${rows.join('')}</ol></section>`;
+  },
+};
+
 const history: RunEvidenceSection = {
   id: 'history',
   render(view, context) {
@@ -198,6 +210,7 @@ export const DEFAULT_RUN_EVIDENCE_SECTIONS: readonly RunEvidenceSection[] = Obje
   issues,
   player,
   criteria,
+  story,
   timeline,
   history,
 ]);
@@ -221,12 +234,19 @@ const STYLES = `
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
 main{max-width:1280px;margin:0 auto;padding:24px 16px 64px;display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
 @media (min-width:1000px){main{grid-template-columns:minmax(0,7fr) minmax(0,5fr)}.run-header,.issues,.timeline,.history{grid-column:1/-1}.player{position:sticky;top:16px;align-self:start}}
+html[data-mode=story] .criteria,html[data-mode=story] .timeline,html:not([data-mode=story]) .story{display:none}
+.modes{display:flex;gap:4px;margin-top:12px}.modes a{font-size:13px;padding:2px 12px;border:1px solid var(--line);border-radius:6px;text-decoration:none;color:var(--muted)}
+html:not([data-mode=story]) [data-mode-link=evidence],html[data-mode=story] [data-mode-link=story]{color:var(--fg);border-color:var(--fg);font-weight:600}
+.story li{padding:8px 0;border-top:1px solid var(--line)}.story li:first-child{border-top:0;padding-top:0}.story li.failed{background:color-mix(in srgb,var(--bad) 8%,transparent)}
+.beat{display:flex;gap:10px;align-items:baseline;width:100%;font:inherit;color:inherit;background:none;border:0;padding:0;text-align:left}button.beat{cursor:pointer}button.beat:hover .intent{color:var(--live)}
+.beat .at{color:var(--muted);font-variant-numeric:tabular-nums;min-width:5.5em;font-size:12px}.beat .intent{flex:1}
+#viewer-status{position:fixed;left:16px;bottom:16px;margin:0;padding:8px 12px;border-radius:8px;background:var(--card);border:1px solid var(--bad);color:var(--bad);font-size:13px}
 section,header{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
 h1{font-size:20px;margin:0}h2{font-size:15px;margin:0 0 12px}.title-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 .meta{color:var(--muted);font-size:12px;margin:4px 0}.counts{margin:8px 0 0;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .badge{display:inline-block;border:1px solid currentColor;border-radius:999px;padding:0 8px;font-size:12px;line-height:20px;white-space:nowrap}
 .badge.ok{color:var(--ok)}.badge.bad{color:var(--bad)}.badge.wait{color:var(--wait)}.badge.live{color:var(--live)}
-video{width:100%;border-radius:6px;background:#000;display:block}video+video{margin-top:8px}
+video{width:100%;border-radius:6px;background:#000;display:block}.player figure{margin:0}.player figure+figure{margin-top:8px}.player figcaption{font-size:12px;color:var(--muted);margin-top:4px}
 ol,ul{margin:0;padding:0;list-style:none}.criterion{padding:12px 0;border-top:1px solid var(--line)}.criterion:first-child{border-top:0;padding-top:0}
 .criterion.child{margin-left:20px}.criterion p{margin:6px 0}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .note{color:var(--muted)}.steps{font-size:12px;color:var(--muted)}a{color:var(--live)}
@@ -243,14 +263,22 @@ ol,ul{margin:0;padding:0;list-style:none}.criterion{padding:12px 0;border-top:1p
 .issues summary{cursor:pointer}.issues li{font-size:12px;color:var(--muted);padding:2px 0}.empty{color:var(--muted);margin:0}
 `;
 
+// Before paint: `#story` selects the Story view; reload and Back/Forward restore it.
+const MODE_SCRIPT = `(function(){var r=document.documentElement;function apply(){r.dataset.mode=location.hash==='#story'?'story':'evidence'}
+apply();addEventListener('hashchange',apply);addEventListener('popstate',apply);
+document.addEventListener('click',function(e){if(!e.target.closest('[data-mode-link=evidence]'))return;e.preventDefault();
+if(location.hash){history.pushState(null,'',location.pathname+location.search);apply()}});})();`;
+
 // Any element with data-seek-video/data-seek-ms seeks the page's player; live pages poll
-// their version and reload when the folder changes.
+// their version and reload when the folder changes. Failures show in #viewer-status.
 const SCRIPT = `
+function note(t){var n=document.getElementById('viewer-status');n.textContent=t;n.hidden=!t}
 document.addEventListener('click',function(e){var b=e.target.closest('[data-seek-ms]');if(!b)return;
 var path=b.getAttribute('data-seek-video');var v=[].slice.call(document.querySelectorAll('video[data-video-path]')).find(function(x){return x.getAttribute('data-video-path')===path});
-if(!v)return;var ms=Number(b.getAttribute('data-seek-ms'));var go=function(){v.currentTime=ms/1000;v.play().catch(function(){})};
+if(!v){note('The recording '+path+' is not on this page.');return}var ms=Number(b.getAttribute('data-seek-ms'));
+var go=function(){v.currentTime=ms/1000;v.play().catch(function(err){/* A newer seek interrupting play() rejects with AbortError; that seek wins. */if(err.name!=='AbortError')note('Playback failed: '+err.message)})};
 v.scrollIntoView({block:'nearest',behavior:'smooth'});if(v.readyState>=1)go();else v.addEventListener('loadedmetadata',go,{once:true});});
-(function(){var d=document.body.dataset;if(d.live!=='1')return;setInterval(function(){fetch(d.versionUrl,{cache:'no-store'}).then(function(r){return r.text()}).then(function(t){if(t&&t!==d.version)location.reload()}).catch(function(){})},2000);})();
+(function(){var d=document.body.dataset;if(d.live!=='1')return;setInterval(function(){fetch(d.versionUrl,{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.text()}).then(function(t){note('');if(t!==d.version)location.reload()}).catch(function(err){note('Lost the viewer server ('+err.message+'); retrying.')})},2000);})();
 `;
 
 function shell(
@@ -264,8 +292,8 @@ function shell(
     : '';
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escapeHtml(title)}</title><style>${STYLES}${template?.styles ?? ''}</style></head>
-<body${liveAttributes}><main>${body}</main><script>${SCRIPT}</script></body></html>
+<title>${escapeHtml(title)}</title><script>${MODE_SCRIPT}</script><style>${STYLES}${template?.styles ?? ''}</style></head>
+<body${liveAttributes}><main>${body}</main><p id="viewer-status" role="status" hidden></p><script>${SCRIPT}</script></body></html>
 `;
 }
 

@@ -1859,6 +1859,11 @@ test('the run evidence view keeps criteria in run order with each claim and step
       [4, true, 2_800],
     ],
   );
+  // Story time runs from the first step when the caller has no run start.
+  assert.deepEqual(
+    view.steps.map(({ atMs }) => atMs),
+    [0, 200, 1_000, 1_200, 2_600],
+  );
   assert.equal(view.steps[1]!.intent, 'Verify value 1.');
   assert.deepEqual(view.steps[1]!.cue, { videoPath: 'run/video.mp4', startMs: 400, endMs: 700 });
   assert.deepEqual(
@@ -1869,7 +1874,7 @@ test('the run evidence view keeps criteria in run order with each claim and step
       ['Other steps', [0, 2, 4]],
     ],
   );
-  assert.deepEqual(view.videos, [{ path: 'run/video.mp4', durationMs: 4_000 }]);
+  assert.deepEqual(view.videos, [{ path: 'run/video.mp4', measured: true, durationMs: 4_000 }]);
   // Plain JSON a page or a template can embed as is.
   assert.deepEqual(JSON.parse(JSON.stringify(view)), view);
 });
@@ -1902,6 +1907,41 @@ test('an unqualified recording keeps every row visible without a seekable cue', 
   const view = runEvidenceView(model);
   assert.ok(view.errors.includes('Retained recording could not be qualified.'));
   assert.equal(view.criteria.length, 2);
+  assert.ok(view.criteria.every((criterion) => criterion.cue === null));
+  assert.ok(view.steps.every((step) => step.cue === null));
+});
+
+test('a step seeks only its own execution, never a baseline recording at the same trace index', () => {
+  const baseSha = '1'.repeat(40),
+    headSha = '2'.repeat(40);
+  // The head's recording ends before its step 1; the baseline measured its own step 1.
+  const model = createEvidenceReviewModel({
+    package: withComparison(
+      boundComparisonPackage('head', 'after', headSha, 350),
+      boundComparisonPackage('baseline', 'before', baseSha),
+    ),
+    comparisonSnapshot: { baseSha, headSha },
+  });
+  assert.deepEqual(model.errors, []);
+  assert.notEqual(
+    model.markerSeekMs('comparison-dependencies/baseline/video.mp4', 1, 'start'),
+    null,
+  );
+  assert.deepEqual(
+    runEvidenceView(model).steps.map(({ traceIndex, cue }) => [traceIndex, cue?.videoPath ?? null]),
+    [
+      [0, 'video.mp4'],
+      [1, null],
+      [2, null],
+    ],
+  );
+});
+
+test('an untimed original stays playable in the run evidence view, with no measured cue', () => {
+  const model = createEvidenceReviewModel({ package: untimedRecordingFixture(qaPackage(1)) });
+  assert.deepEqual(model.errors, []);
+  const view = runEvidenceView(model);
+  assert.deepEqual(view.videos, [{ path: 'video.mp4', measured: false }]);
   assert.ok(view.criteria.every((criterion) => criterion.cue === null));
   assert.ok(view.steps.every((step) => step.cue === null));
 });

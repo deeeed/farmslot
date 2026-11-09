@@ -10,8 +10,14 @@ import {
   runEvidenceView,
   type RunEvidenceViewRun,
 } from '@farmslot/adapter-sdk/evidence';
-import { type AcceptanceCriterionRef, isRecord } from '@farmslot/protocol';
+import {
+  type AcceptanceCriterionRef,
+  isRecord,
+  type RecordedEvidencePackageInput,
+  type ReviewDiffSnapshot,
+} from '@farmslot/protocol';
 import { readRecordedEvidencePackage } from '@farmslot/recipe-runner';
+import { groupRecipeCaptureComparisons } from '@farmslot/recipe-runner/evidence';
 
 import { harnessContext } from './context-state.js';
 import { harnessHost } from './host.js';
@@ -29,10 +35,23 @@ export interface RunEvidenceHistoryEntry {
   updatedAt: string;
 }
 
-function readJson(file: string): unknown {
+/**
+ * A file the run has not written yet reads as undefined. One it wrote that cannot be read or
+ * parsed is reported in `errors`, so the page shows it instead of guessing the run's state.
+ */
+function readJson(file: string, errors: string[]): unknown {
+  let body: string;
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch {
+    body = fs.readFileSync(file, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    errors.push(`${path.basename(file)} is unreadable: ${(error as Error).message}`);
+    return undefined;
+  }
+  try {
+    return JSON.parse(body);
+  } catch (error) {
+    errors.push(`${path.basename(file)} is not valid JSON: ${(error as Error).message}`);
     return undefined;
   }
 }
@@ -45,35 +64,52 @@ export function isRecipeRunFolder(dir: string): boolean {
   return RUN_MARKERS.some((name) => fs.existsSync(path.join(dir, name)));
 }
 
-/** What the folder says about the run without reading its evidence. */
-function runFacts(dir: string): RunEvidenceViewRun {
-  const summary = readJson(path.join(dir, 'summary.json'));
-  const recipe = readJson(path.join(dir, 'recipe.json'));
-  const invocation = readJson(path.join(dir, 'recipe-invocation.json'));
+/**
+ * What the folder says about the run without reading its evidence. The runner writes
+ * summary.json before both manifests, so the run is still finishing until the artifact
+ * manifest lands; an unreadable summary is `unknown`, never `running`.
+ */
+function runFacts(dir: string): { run: RunEvidenceViewRun; errors: string[] } {
+  const errors: string[] = [];
+  const summary = readJson(path.join(dir, 'summary.json'), errors);
+  const summaryUnreadable = errors.length > 0;
+  const recipe = readJson(path.join(dir, 'recipe.json'), errors);
+  const invocation = readJson(path.join(dir, 'recipe-invocation.json'), errors);
   const title = isRecord(recipe) ? (text(recipe.title) ?? text(recipe.description)) : undefined;
   const startedAt =
     (isRecord(summary) ? text(summary.startedAt) : undefined) ??
     (isRecord(invocation) ? text(invocation.startedAt) : undefined);
-  const status = !isRecord(summary)
-    ? 'running'
-    : summary.status === 'pass' || summary.status === 'fail'
-      ? summary.status
-      : 'unknown';
+  const status =
+    summary === undefined && !summaryUnreadable
+      ? 'running'
+      : !isRecord(summary) || (summary.status !== 'pass' && summary.status !== 'fail')
+        ? 'unknown'
+        : fs.existsSync(path.join(dir, 'artifact-manifest.json'))
+          ? summary.status
+          : 'running';
   return {
-    id: path.basename(dir),
-    ...(title ? { title } : {}),
-    status,
-    ...(startedAt ? { startedAt } : {}),
-    ...(isRecord(summary) && text(summary.endedAt) ? { endedAt: String(summary.endedAt) } : {}),
-    ...(isRecord(summary) && typeof summary.durationMs === 'number'
-      ? { durationMs: summary.durationMs }
-      : {}),
+    run: {
+      id: path.basename(dir),
+      ...(title ? { title } : {}),
+      status,
+      ...(startedAt ? { startedAt } : {}),
+      ...(isRecord(summary) && text(summary.endedAt) ? { endedAt: String(summary.endedAt) } : {}),
+      ...(isRecord(summary) && typeof summary.durationMs === 'number'
+        ? { durationMs: summary.durationMs }
+        : {}),
+    },
+    errors,
   };
 }
 
+/** Whether the page keeps following the folder: until the run finishes, or its summary reads. */
+export function runEvidenceLive(view: Pick<RunEvidenceView, 'run'>): boolean {
+  return view.run?.status === 'running' || view.run?.status === 'unknown';
+}
+
 /** A running run lists the criteria its recipe declares, none judged yet. */
-function declaredCriteria(dir: string): AcceptanceCriterionRef[] {
-  const recipe = readJson(path.join(dir, 'recipe.json'));
+function declaredCriteria(dir: string, errors: string[]): AcceptanceCriterionRef[] {
+  const recipe = readJson(path.join(dir, 'recipe.json'), errors);
   if (!isRecord(recipe) || !Array.isArray(recipe.proofTargets)) return [];
   return recipe.proofTargets.flatMap((target) =>
     isRecord(target) && typeof target.id === 'string'
@@ -82,23 +118,54 @@ function declaredCriteria(dir: string): AcceptanceCriterionRef[] {
   );
 }
 
-/** One run folder as the shared view-model; read-only, media is never opened. */
+/**
+ * The review revision a run's before/after pairs were bound to. The runner keeps no copy of
+ * the host's frozen snapshot, but it writes a pair into evidence-manifest.json only when both
+ * captures match that snapshot, so the pair's captures carry its base and head.
+ */
+function recordedComparisonSnapshot(
+  dir: string,
+  input: RecordedEvidencePackageInput,
+  errors: string[],
+): Pick<ReviewDiffSnapshot, 'baseSha' | 'headSha'> | undefined {
+  const manifest = readJson(path.join(dir, 'evidence-manifest.json'), errors);
+  const pair =
+    isRecord(manifest) && Array.isArray(manifest.before_after_pairs)
+      ? manifest.before_after_pairs.find(isRecord)
+      : undefined;
+  if (!pair || !input.claims) return undefined;
+  const { media } = groupRecipeCaptureComparisons(input, input.claims.criteria);
+  const commit = (file: unknown) =>
+    media.find((entry) => entry.path === file)?.capture?.sourceCommit;
+  const baseSha = commit(pair.before);
+  const headSha = commit(pair.after);
+  return baseSha && headSha ? { baseSha, headSha } : undefined;
+}
+
+/** One run folder as the shared view-model; read-only. */
 export async function readRunEvidenceView(runDir: string): Promise<RunEvidenceView> {
   const dir = path.resolve(runDir);
-  const run = runFacts(dir);
+  const { run, errors } = runFacts(dir);
   if (run.status === 'running') {
     const model = createEvidenceReviewModel({
       context: 'artifact',
-      criteria: declaredCriteria(dir),
+      // runFacts already reported an unreadable recipe.json.
+      criteria: declaredCriteria(dir, []),
       evidencePending: true,
+      readErrors: errors,
     });
     return runEvidenceView(model, run);
   }
   const read = await readRecordedEvidencePackage(dir);
+  const comparisonSnapshot = recordedComparisonSnapshot(dir, read.input, errors);
   const model = createEvidenceReviewModel({
     context: 'artifact',
     package: read.input,
-    readErrors: read.checks.filter((check) => check.status === 'fail').map((c) => c.message),
+    ...(comparisonSnapshot ? { comparisonSnapshot } : {}),
+    readErrors: [
+      ...errors,
+      ...read.checks.filter((check) => check.status === 'fail').map((c) => c.message),
+    ],
   });
   return runEvidenceView(model, run);
 }
@@ -120,7 +187,7 @@ export function listRunEvidenceHistory(root: string): RunEvidenceHistoryEntry[] 
     .filter((entry) => entry.isDirectory() && isRecipeRunFolder(path.join(dir, entry.name)))
     .map((entry) => {
       const runDir = path.join(dir, entry.name);
-      const { id, title, status, startedAt } = runFacts(runDir);
+      const { id, title, status, startedAt } = runFacts(runDir).run;
       return {
         id,
         ...(title ? { title } : {}),
@@ -153,11 +220,13 @@ export function runEvidenceSignature(dir: string): string {
   return createHash('sha256').update(parts.sort().join('|')).digest('hex').slice(0, 16);
 }
 
-/** The command a run's end prints to open its evidence page; null when the project opts out. */
+/** The command a run's end prints to open its evidence page; null when the host has none or
+ * the project opts out. */
 export function runEvidenceViewHint(
   artifactsDir: string,
   viewer = harnessContext()?.project?.viewer,
+  command = harnessHost().viewCommand,
 ): string | null {
-  if (viewer?.link === false) return null;
-  return `${harnessHost().viewCommand ?? 'farmslot recipe view'} ${shellQuoteArg(artifactsDir)}`;
+  if (!command || viewer?.link === false) return null;
+  return `${command} ${shellQuoteArg(artifactsDir)}`;
 }

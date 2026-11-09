@@ -203,6 +203,7 @@ export {
   type ResolveHarnessContextOptions,
   resolveProjectContext,
   type ResolveProjectContextOptions,
+  resolveProjectViewer,
   runtimeContextOwned,
 } from './context.js';
 export {
@@ -244,7 +245,6 @@ export {
 export {
   DEFAULT_RUN_EVIDENCE_SECTIONS,
   escapeHtml,
-  formatCueMs,
   loadRunEvidenceTemplate,
   renderRunEvidencePage,
   renderRunHistoryPage,

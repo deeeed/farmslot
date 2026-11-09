@@ -4,16 +4,19 @@ import fs from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
+import { pipeline } from 'node:stream';
+
+import { formatEvidenceReviewVideoTime } from '@farmslot/adapter-sdk/evidence';
 
 import {
   isRecipeRunFolder,
   listRunEvidenceHistory,
   readRunEvidenceView,
+  runEvidenceLive,
   runEvidenceSignature,
 } from '../evidence-view.js';
 import {
   escapeHtml,
-  formatCueMs,
   renderRunEvidencePage,
   renderRunHistoryPage,
   type RunEvidencePageContext,
@@ -106,7 +109,9 @@ function sendFile(
     response.end();
     return;
   }
-  fs.createReadStream(file, { start, end }).pipe(response);
+  // pipeline closes the file when the player aborts a range request on seek, and ends the
+  // response if the read fails after the headers went out; neither has a client to tell.
+  pipeline(fs.createReadStream(file, { start, end }), response, () => undefined);
 }
 
 /** Serve the evidence page until `close`; resolves once listening. */
@@ -175,15 +180,14 @@ export async function serveRunEvidence(
       fileUrl: (file) => fileUrl(id, file),
       runUrl: runPath,
       escape: escapeHtml,
-      formatMs: formatCueMs,
+      formatMs: (ms) => formatEvidenceReviewVideoTime(ms / 1000),
       seekAttributes: (cue) =>
         `data-seek-video="${escapeHtml(cue.videoPath)}" data-seek-ms="${Math.round(cue.startMs)}"`,
       history: listRunEvidenceHistory(root),
     };
-    const live =
-      view.run?.status === 'running'
-        ? { versionUrl: `${runPath(id)}version`, version: runEvidenceSignature(run) }
-        : null;
+    const live = runEvidenceLive(view)
+      ? { versionUrl: `${runPath(id)}version`, version: runEvidenceSignature(run) }
+      : null;
     return send(
       response,
       200,

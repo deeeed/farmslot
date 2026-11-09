@@ -511,6 +511,7 @@ export async function projectRecipeHostOptions(
       supportsLast: false,
       journaledCommands: ['run', 'call', 'launch', 'reload', 'stop', 'doctor'],
       doctorCommand: 'farmslot doctor',
+      viewCommand: 'farmslot recipe view',
       doctorHint: `farmslot doctor ${doctorArgs.map(shared.shellQuoteArg).join(' ')}`,
     },
   };

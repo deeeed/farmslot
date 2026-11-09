@@ -70,7 +70,17 @@ export interface RunEvidenceStep {
   ok: boolean;
   proves: string[];
   files: RunEvidenceFile[];
+  /** Where this execution's own recording shows the step; null when none measured it. */
   cue: RunEvidenceCue | null;
+  /** Milliseconds from the run's start to the step's; null when the trace has no time. */
+  atMs: number | null;
+}
+
+/** A recording the page can play. Only a measured one has cues; an untimed one plays by hand. */
+export interface RunEvidenceVideo {
+  path: string;
+  measured: boolean;
+  durationMs?: number;
 }
 
 export interface RunEvidenceStepGroup {
@@ -89,11 +99,11 @@ export interface RunEvidenceView {
   summary: AcceptanceStatusSummary;
   /** Every criterion in the run's own order. */
   criteria: RunEvidenceCriterion[];
-  /** The current recording's steps in trace order. */
+  /** Every step the current execution ran, in trace order, repeats included. */
   steps: RunEvidenceStep[];
   /** The same steps grouped by the criterion they prove, then the rest. */
   stepGroups: RunEvidenceStepGroup[];
-  videos: { path: string; durationMs: number }[];
+  videos: RunEvidenceVideo[];
   errors: string[];
   warnings: string[];
 }
@@ -102,13 +112,29 @@ function file(artifact: Pick<EvidenceReviewArtifact, 'artifactPath' | 'name' | '
   return { path: artifact.artifactPath, name: artifact.name, mediaType: artifact.mediaType };
 }
 
+/** Measured recordings, then retained originals without a timeline: those still play. */
+function videos(model: EvidenceReviewModel): RunEvidenceVideo[] {
+  const measured: RunEvidenceVideo[] = model.recordings.map((timeline) => ({
+    path: model.artifactPath(timeline.videoPath),
+    measured: true,
+    durationMs: timeline.durationMs,
+  }));
+  const seen = new Set(measured.map((video) => video.path));
+  const untimed = model.claims
+    .flatMap((claim) => claim.evidence)
+    .filter((entry) => entry.mediaType === 'video' && !seen.has(entry.artifactPath))
+    .map((entry) => entry.artifactPath);
+  return [...measured, ...[...new Set(untimed)].map((path) => ({ path, measured: false }))];
+}
+
 /** Project the shared review model; reads only, never moves the model's selection. */
 export function runEvidenceView(
   model: EvidenceReviewModel,
   run: RunEvidenceViewRun | null = null,
 ): RunEvidenceView {
+  // A step seeks only its own execution's recording: a baseline's index is another trace's.
   const stepCue = (traceIndex: number): RunEvidenceCue | null => {
-    for (const { videoPath } of model.recordings) {
+    for (const { videoPath } of model.currentRecordings) {
       const startMs = model.markerSeekMs(videoPath, traceIndex, 'start');
       const endMs = model.markerSeekMs(videoPath, traceIndex, 'end');
       if (startMs !== null && endMs !== null)
@@ -116,16 +142,21 @@ export function runEvidenceView(
     }
     return null;
   };
-  const step = (occurrence: EvidenceReviewOccurrence): RunEvidenceStep => ({
-    traceIndex: occurrence.traceIndex,
-    nodeId: occurrence.nodeId,
-    action: occurrence.action,
-    intent: occurrence.intent,
-    ok: occurrence.ok,
-    proves: [...occurrence.proves],
-    files: occurrence.artifacts.map(file),
-    cue: stepCue(occurrence.traceIndex),
-  });
+  const runStart = Date.parse(run?.startedAt ?? model.currentOccurrences[0]?.startedAt ?? '');
+  const step = (occurrence: EvidenceReviewOccurrence): RunEvidenceStep => {
+    const atMs = Date.parse(occurrence.startedAt ?? '') - runStart;
+    return {
+      traceIndex: occurrence.traceIndex,
+      nodeId: occurrence.nodeId,
+      action: occurrence.action,
+      intent: occurrence.intent,
+      ok: occurrence.ok,
+      proves: [...occurrence.proves],
+      files: occurrence.artifacts.map(file),
+      cue: stepCue(occurrence.traceIndex),
+      atMs: Number.isFinite(atMs) ? Math.max(0, atMs) : null,
+    };
+  };
   const steps = model.currentOccurrences.map(step);
   const byIndex = new Map(steps.map((entry) => [entry.traceIndex, entry]));
   return {
@@ -165,10 +196,7 @@ export function runEvidenceView(
       steps: group.steps.map((entry) => byIndex.get(entry.traceIndex)!),
       failed: group.failed,
     })),
-    videos: model.recordings.map((timeline) => ({
-      path: model.artifactPath(timeline.videoPath),
-      durationMs: timeline.durationMs,
-    })),
+    videos: videos(model),
     errors: [...model.errors],
     warnings: [...model.displayWarnings],
   };

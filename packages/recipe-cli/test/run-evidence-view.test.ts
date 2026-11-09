@@ -1,16 +1,23 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
 import { createEvidenceReviewModel, runEvidenceView } from '@farmslot/adapter-sdk/evidence';
-import type { RecordedEvidencePackageInput } from '@farmslot/protocol';
+import {
+  RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+  type RecordedEvidencePackageInput,
+} from '@farmslot/protocol';
+import { createRecipeRunner, createStandardCoreAdapters } from '@farmslot/recipe-runner';
 
 import { serveRunEvidence } from '../src/harness/commands/view.js';
+import { resolveProjectContext, resolveProjectViewer } from '../src/harness/context.js';
 import {
   listRunEvidenceHistory,
   readRunEvidenceView,
+  runEvidenceLive,
   runEvidenceSignature,
   runEvidenceViewHint,
 } from '../src/harness/evidence-view.js';
@@ -18,6 +25,7 @@ import {
   DEFAULT_RUN_EVIDENCE_SECTIONS,
   loadRunEvidenceTemplate,
 } from '../src/harness/evidence-view-page.js';
+import { configureHarnessHost, harnessHost } from '../src/harness/host.js';
 
 const fixture = JSON.parse(
   fs.readFileSync(
@@ -76,6 +84,7 @@ test('a finished run folder reads as the same view the shared review model proje
   // One implementation: the folder reader adds nothing the shared projection does not.
   const shared = runEvidenceView(
     createEvidenceReviewModel({ context: 'artifact', package: fixture.input }),
+    view.run,
   );
   assert.deepEqual(view.criteria, shared.criteria);
   assert.deepEqual(view.steps, shared.steps);
@@ -95,10 +104,37 @@ test('a run in progress lists its declared criteria unjudged and goes live', asy
     ],
   );
   assert.deepEqual(view.steps, []);
+  assert.equal(runEvidenceLive(view), true);
   const before = runEvidenceSignature(dir);
-  writeRun(root, 'proof-2');
+  // The runner writes summary.json before both manifests: the run is still finishing.
+  writeRun(
+    root,
+    'proof-2',
+    Object.fromEntries(
+      Object.entries(fixture.files).filter(([name]) => name !== 'artifact-manifest.json'),
+    ),
+  );
   assert.notEqual(runEvidenceSignature(dir), before);
-  assert.equal((await readRunEvidenceView(dir)).run?.status, 'pass');
+  const finishing = await readRunEvidenceView(dir);
+  assert.equal(finishing.run?.status, 'running');
+  assert.deepEqual(finishing.errors, [], 'a finishing run reports no missing-manifest errors');
+  assert.equal(runEvidenceLive(finishing), true);
+  writeRun(root, 'proof-2');
+  const finished = await readRunEvidenceView(dir);
+  assert.equal(finished.run?.status, 'pass');
+  assert.equal(runEvidenceLive(finished), false);
+});
+
+test('an unreadable summary is reported, never read as a run in progress', async (t) => {
+  const dir = writeRun(runsRoot(t), 'proof-3', { ...fixture.files, 'summary.json': '{"status":' });
+  const view = await readRunEvidenceView(dir);
+  assert.equal(view.run?.status, 'unknown');
+  assert.ok(
+    view.errors.some((error) => error.startsWith('summary.json is not valid JSON')),
+    view.errors.join('\n'),
+  );
+  // A summary caught mid-write reads again on the next poll.
+  assert.equal(runEvidenceLive(view), true);
 });
 
 test('history lists the run folders beside each other, newest first', (t) => {
@@ -120,10 +156,178 @@ test('history lists the run folders beside each other, newest first', (t) => {
   );
 });
 
-test('the run end prints the view command unless the project turns it off', () => {
+test('the run end prints the view command unless the project turns it off', async (t) => {
   assert.equal(runEvidenceViewHint('/tmp/runs/a b', {}), "farmslot recipe view '/tmp/runs/a b'");
   assert.equal(runEvidenceViewHint('/tmp/runs/a', undefined), 'farmslot recipe view /tmp/runs/a');
   assert.equal(runEvidenceViewHint('/tmp/runs/a', { link: false }), null);
+  // A host that registers no view command prints none.
+  const host = harnessHost();
+  configureHarnessHost({ ...host, viewCommand: undefined });
+  t.after(() => configureHarnessHost(host));
+  assert.equal(runEvidenceViewHint('/tmp/runs/a', undefined), null);
+  // project.json recipe.viewer reaches the run's context.
+  const project = runsRoot(t);
+  writeProject(project, 'viewer-off', { link: false });
+  const context = await resolveProjectContext({ tokens: [], cwd: project, load: { env: {} } });
+  assert.deepEqual(context.project?.viewer, { link: false });
+  assert.equal(runEvidenceViewHint('/tmp/runs/a', context.project?.viewer), null);
+});
+
+function writeProject(dir: string, name: string, viewer: unknown, repoUrl = ''): void {
+  fs.mkdirSync(dir, { recursive: true });
+  // Discovery reads the provider's path, never its code.
+  fs.writeFileSync(path.join(dir, 'provider.mjs'), '');
+  fs.writeFileSync(
+    path.join(dir, 'project.json'),
+    JSON.stringify({
+      name,
+      repoUrl,
+      paths: { runtimeDir: '.runtime', artifactDir: 'artifacts' },
+      recipe: { provider: { module: 'provider.mjs' }, adapter: 'headless', viewer },
+    }),
+  );
+}
+
+test('recipe view selects a project template with no execution prerequisites', (t) => {
+  const root = runsRoot(t);
+  const projectsDir = path.join(root, 'projects');
+  // A registered application project for another repository, viewed from elsewhere.
+  writeProject(
+    path.join(projectsDir, 'app'),
+    'app',
+    { template: 'viewer.mjs' },
+    'git@example.test:org/app.git',
+  );
+  writeProject(path.join(projectsDir, 'broken'), 'broken', { link: 'no' });
+  const cwd = path.join(root, 'elsewhere');
+  fs.mkdirSync(cwd);
+  assert.deepEqual(resolveProjectViewer({ tokens: ['--project', 'app'], cwd, projectsDir }), {
+    root: path.join(projectsDir, 'app'),
+    viewer: { template: 'viewer.mjs' },
+  });
+  assert.equal(resolveProjectViewer({ tokens: [], cwd, projectsDir }), undefined);
+  assert.throws(() => resolveProjectViewer({ tokens: ['--project', 'typo'], cwd, projectsDir }), {
+    code: 'PROJECT_NOT_FOUND',
+  });
+  assert.throws(
+    () => resolveProjectViewer({ tokens: ['--project', 'broken'], cwd, projectsDir }),
+    /recipe\.viewer\.link is invalid/u,
+  );
+});
+
+test('a retained comparison run keeps its before/after pair bound to the frozen revision', async (t) => {
+  const root = runsRoot(t);
+  const git = (...args: string[]) =>
+    execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+  git('init', '-q');
+  git('config', 'user.name', 'Fixture');
+  git('config', 'user.email', 'fixture@example.test');
+  const commit = (body: string) => {
+    fs.writeFileSync(path.join(root, 'source.txt'), body);
+    git('add', 'source.txt');
+    git('-c', 'commit.gpgsign=false', 'commit', '-qm', body);
+    return git('rev-parse', 'HEAD');
+  };
+  const recipe = (role: 'before' | 'after') => ({
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    title: 'Compare the criterion',
+    proofTargets: [{ id: 'AC-1', claim: 'The state is visible.', proofMode: 'state' }],
+    workflow: {
+      entry: 'read',
+      nodes: {
+        read: { action: 'command', cmd: 'printf ok', intent: 'Read the fixture.', next: 'verify' },
+        verify: {
+          action: 'assert_output',
+          source: 'read',
+          contains: 'ok',
+          proves: ['AC-1'],
+          intent: 'Confirm the fixture state.',
+          next: 'capture',
+        },
+        capture: { action: 'ui.screenshot', ac: 'AC-1', role, intent: 'Keep it.', next: 'done' },
+        done: { action: 'end', status: 'pass' },
+      },
+    },
+  });
+  const runner = createRecipeRunner({
+    actionManifest: {
+      $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+      actions: {
+        command: {
+          description: 'Read the fixture.',
+          schema: {
+            type: 'object',
+            properties: { cmd: { type: 'string' } },
+            additionalProperties: false,
+          },
+          examples: [{ action: 'command', cmd: 'printf ok', intent: 'Read it.', next: 'done' }],
+        },
+        assert_output: {
+          description: 'Verify the fixture.',
+          schema: {
+            type: 'object',
+            properties: { source: { type: 'string' }, contains: { type: 'string' } },
+            additionalProperties: false,
+          },
+          examples: [
+            {
+              action: 'assert_output',
+              source: 'read',
+              contains: 'ok',
+              intent: 'Verify it.',
+              next: 'done',
+            },
+          ],
+        },
+        'ui.screenshot': {
+          description: 'Capture the visible state.',
+          schema: { type: 'object', properties: {}, additionalProperties: false },
+          examples: [{ action: 'ui.screenshot', intent: 'Keep a picture.', next: 'done' }],
+        },
+        end: { description: 'Finish.', examples: [{ action: 'end', status: 'pass' }] },
+      },
+    },
+    hud: false,
+    defaultSource: { kind: 'operator', trust: 'trusted' },
+    adapters: [
+      ...createStandardCoreAdapters({ actions: ['command', 'assert_output'] }),
+      {
+        action: 'ui.screenshot',
+        source: { kind: 'bundled', trust: 'trusted' },
+        async execute(_node, context) {
+          fs.writeFileSync(context.resolveArtifactPath('capture.png'), 'media bytes');
+          const artifact = { path: 'capture.png', type: 'screenshot' };
+          context.registerArtifact(artifact);
+          return { artifacts: [artifact] };
+        },
+      },
+    ],
+  });
+  const run = (role: 'before' | 'after', dir: string, extra = {}) =>
+    runner.run({
+      recipeDocument: recipe(role),
+      projectRoot: root,
+      artifactsDir: dir,
+      recordVideo: false,
+      recordingReason: 'Fixture has no recorder.',
+      ...extra,
+    });
+  const baseSha = commit('before');
+  const baselineDir = path.join(root, 'runs', 'baseline');
+  const baseline = await run('before', baselineDir);
+  const headSha = commit('after');
+  const headDir = path.join(root, 'runs', 'head');
+  await run('after', headDir, {
+    comparisonDependencies: [baselineDir],
+    comparisonSnapshot: { baseSha, headSha },
+  });
+  const view = await readRunEvidenceView(headDir);
+  assert.deepEqual(view.errors, []);
+  const criterion = view.criteria.find((entry) => entry.id === 'AC-1')!;
+  assert.deepEqual(criterion.pair && [criterion.pair.before.path, criterion.pair.after.path], [
+    `comparison-dependencies/${baseline.claims!.recipeRunId}/capture.png`,
+    'capture.png',
+  ]);
 });
 
 async function get(url: string, init?: RequestInit) {
@@ -144,6 +348,17 @@ test('recipe view serves a read-only page, the files and the view-model of one r
   assert.match(page.body, /<code>check-1<\/code>/u);
   assert.match(page.body, /data-seek-video="video\.mp4" data-seek-ms="0"/u);
   assert.match(page.body, /id="step-1"/u);
+  // The Story view: every executed intent in trace order with its time from the run start.
+  const story = page.body.slice(page.body.indexOf('<section class="story">'));
+  assert.deepEqual(
+    [...story.matchAll(/data-trace-index="(\d+)"/gu)].map((match) => Number(match[1])),
+    [0, 1, 2],
+  );
+  assert.match(
+    story,
+    /<button type="button" class="beat" data-seek-video="video\.mp4" data-seek-ms="400"><span class="at">0:00\.40<\/span>/u,
+  );
+  assert.match(page.body, /<a href="#story" data-mode-link="story">Story<\/a>/u);
   assert.match(page.body, /href="\/runs\/proof-0\/"/u, 'the history lists the sibling run');
   assert.doesNotMatch(page.body, /data-live="1"/u, 'a finished run does not poll');
 
@@ -203,7 +418,7 @@ test('a project template reorders and adds sections; the default layout stays un
   assert.match(body, /\.wallet\{color:red\}/u);
   assert.deepEqual(
     DEFAULT_RUN_EVIDENCE_SECTIONS.map((section) => section.id),
-    ['header', 'issues', 'player', 'criteria', 'timeline', 'history'],
+    ['header', 'issues', 'player', 'criteria', 'story', 'timeline', 'history'],
   );
   fs.writeFileSync(module.replace('.mjs', '-bad.mjs'), 'export default { sections: 1 };');
   await assert.rejects(

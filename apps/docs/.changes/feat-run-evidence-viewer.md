@@ -1,0 +1,1 @@
+- Document `farmslot recipe view`, the read-only local run evidence page.

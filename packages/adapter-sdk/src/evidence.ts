@@ -50,6 +50,7 @@ export type {
   RunEvidenceFile,
   RunEvidenceStep,
   RunEvidenceStepGroup,
+  RunEvidenceVideo,
   RunEvidenceView,
   RunEvidenceViewRun,
 } from './run-evidence-view.js';

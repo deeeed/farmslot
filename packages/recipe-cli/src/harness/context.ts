@@ -18,6 +18,7 @@ import {
   DEFAULT_TASK_DIR,
   type ExecutionTemplateSourceRoot,
   type ProjectConfig,
+  type ProjectRecipeViewerConfig,
   type SourceEntryRef,
   validateProjectRecipeConfig,
 } from '@farmslot/protocol';
@@ -617,7 +618,12 @@ export interface LoadProjectProviderOptions {
   host?: HarnessHostConfig;
   hostHints?: Pick<
     HarnessHostConfig,
-    'doctorHint' | 'doctorCommand' | 'supportsLast' | 'journaledCommands' | 'taskRunCliArgs'
+    | 'doctorHint'
+    | 'doctorCommand'
+    | 'supportsLast'
+    | 'journaledCommands'
+    | 'taskRunCliArgs'
+    | 'viewCommand'
   >;
   command?: string;
   options?: CliOptions;
@@ -653,6 +659,73 @@ export function readProjectPool(context: HarnessContext): ProjectContextPool | u
 }
 
 /** Read project metadata and resolve defaults without importing executable code. */
+/** Registered projects, then the checkout's own project.json when no registered one shares its name. */
+function projectEntries(
+  options: Pick<ResolveProjectContextOptions, 'projects' | 'projectsDir'>,
+  checkoutRoot: string,
+): { registered: ConfiguredRecipeProject[]; entries: ConfiguredRecipeProject[] } {
+  const registered = [...(options.projects ?? [])];
+  if (options.projectsDir) {
+    for (const name of fs.readdirSync(options.projectsDir).sort()) {
+      const root = path.join(options.projectsDir, name);
+      const file = path.join(root, 'project.json');
+      if (fs.existsSync(file)) registered.push({ root, config: readProject(file) });
+    }
+  }
+  const localFile = path.join(checkoutRoot, 'project.json');
+  const discovered = fs.existsSync(localFile)
+    ? [{ root: checkoutRoot, config: readProject(localFile) }]
+    : [];
+  return {
+    registered,
+    entries: [
+      ...registered,
+      ...discovered.filter(
+        (entry) => !registered.some((existing) => existing.config.name === entry.config.name),
+      ),
+    ],
+  };
+}
+
+/**
+ * The run evidence viewer settings of the selected project. Viewing evidence runs nothing, so
+ * none of execution's checkout, provider or app prerequisites apply: `--project` names a
+ * registered project, otherwise the checkout's own. Undefined only when no project is selected
+ * and none matches the checkout; an explicit selection that fails is an error.
+ */
+export function resolveProjectViewer(
+  options: Pick<ResolveProjectContextOptions, 'tokens' | 'cwd' | 'projects' | 'projectsDir'>,
+): { root: string; viewer?: ProjectRecipeViewerConfig } | undefined {
+  const cwd = options.cwd ?? process.cwd();
+  const checkoutRoot = gitTopLevel(cwd) ?? path.resolve(cwd);
+  const { entries } = projectEntries(options, checkoutRoot);
+  const named = optionValues(options.tokens, '--project').at(-1);
+  const remote = checkoutRemote(checkoutRoot) || undefined;
+  const candidates = named
+    ? entries.filter((entry) => entry.config.name === named)
+    : entries.filter(
+        (entry) =>
+          samePath(entry.root, checkoutRoot) ||
+          (remote !== undefined &&
+            repositoryIdentity(remote) === repositoryIdentity(entry.config.repoUrl)),
+      );
+  if (!named && candidates.length === 0) return undefined;
+  if (candidates.length !== 1) {
+    throw new ProjectBindingError(
+      candidates.length > 1 ? 'PROJECT_AMBIGUOUS' : 'PROJECT_NOT_FOUND',
+      candidates.length > 1
+        ? 'More than one project matches this checkout.'
+        : `No project binding found for ${named}.`,
+      'select a registered project with --project <name>',
+      candidates.map((entry) => entry.config.name),
+      named,
+    );
+  }
+  const { root, config } = candidates[0]!;
+  if (config.recipe !== undefined) validateProjectRecipeConfig(config.recipe);
+  return { root, ...(config.recipe?.viewer ? { viewer: config.recipe.viewer } : {}) };
+}
+
 export async function resolveProjectContext(
   options: ResolveProjectContextOptions,
 ): Promise<HarnessContext> {
@@ -684,24 +757,7 @@ export async function resolveProjectContext(
     checkoutRoot,
     optionValues(options.tokens, '--runtime-dir').at(-1),
   ).runtime;
-  const registered = [...(options.projects ?? [])];
-  if (options.projectsDir) {
-    for (const name of fs.readdirSync(options.projectsDir).sort()) {
-      const root = path.join(options.projectsDir, name);
-      const file = path.join(root, 'project.json');
-      if (fs.existsSync(file)) registered.push({ root, config: readProject(file) });
-    }
-  }
-  const localFile = path.join(checkoutRoot, 'project.json');
-  const discovered = fs.existsSync(localFile)
-    ? [{ root: checkoutRoot, config: readProject(localFile) }]
-    : [];
-  const entries = [
-    ...registered,
-    ...discovered.filter(
-      (entry) => !registered.some((existing) => existing.config.name === entry.config.name),
-    ),
-  ];
+  const { registered, entries } = projectEntries(options, checkoutRoot);
   const pool = readProjectPool(context);
   const poolSlot = context.slot?.value ? (context.slot.poolSlot ?? context.slot.value) : undefined;
   const slot = pool?.slots?.find((entry) => entry.id === poolSlot);

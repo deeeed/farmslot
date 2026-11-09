@@ -271,11 +271,10 @@ export function registerRecipeCommand(program: Command): void {
           throw new Error(`--port must be a port number: ${options.port}`);
         let templatePath = typeof options.template === 'string' ? options.template : undefined;
         if (!templatePath) {
-          // A checkout outside any project gets the default page.
-          const context = await shared
-            .resolveProjectContext(await projectRecipeHostOptions('view', undefined, options))
-            .catch(() => undefined);
-          const project = context?.project;
+          // A checkout outside any project gets the default page; a selection that fails throws.
+          const project = shared.resolveProjectViewer(
+            await projectRecipeHostOptions('view', undefined, options),
+          );
           if (project?.viewer?.template)
             templatePath = path.resolve(project.root, project.viewer.template);
         }
@@ -458,7 +457,7 @@ export function registerRecipeCommand(program: Command): void {
         recipePath: resolveRecipeCliPath(recipePath),
       });
       const librarySources = applyTaskLocalInvocationTrust(sources, invocationTrust);
-      const { withRecipeSignals } = await import('@farmslot/recipe-cli/harness');
+      const shared = await import('@farmslot/recipe-cli/harness');
       const request: RecipeRunRequest = {
         recipePath: match ? match.recipe.path : resolveRecipeCliPath(recipePath),
         ...(selection ? { selection } : {}),
@@ -473,12 +472,13 @@ export function registerRecipeCommand(program: Command): void {
         // A library recipe keeps its library's trust unless the caller sets one.
         ...(!trust.source && match ? { source: match.recipe.provenance } : {}),
       };
-      const result = await withRecipeSignals((signal) => runner.run({ ...request, signal }));
+      const result = await shared.withRecipeSignals((signal) => runner.run({ ...request, signal }));
       if (emit.machine) {
         emit.ok(result);
       } else {
+        const viewHint = shared.runEvidenceViewHint(path.dirname(result.artifactManifestPath));
         output.write(
-          `Recipe run: ${runStatusLabel(result.status)}\nArtifacts: ${result.artifactManifestPath}\n`,
+          `Recipe run: ${runStatusLabel(result.status)}\nArtifacts: ${result.artifactManifestPath}\n${viewHint ? `View: ${viewHint}\n` : ''}`,
         );
       }
       if (result.status !== 'pass') process.exitCode = 1;
