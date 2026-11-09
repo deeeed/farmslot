@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, readlink, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -16,6 +16,7 @@ import {
   assertMigratedLinks,
   assertUnredirected,
   existingParent,
+  hasCode,
   info,
   type Inventory,
   inventory,
@@ -51,7 +52,14 @@ export interface WriteStep {
   mode: number;
   rewrites: PathMapping[];
 }
-export type MigrationStep = (MoveStep | WriteStep) & {
+export interface SymlinkStep {
+  kind: 'symlink';
+  target: string;
+  before: string;
+  body: string;
+  rewrites: PathMapping[];
+}
+export type MigrationStep = (MoveStep | WriteStep | SymlinkStep) & {
   status?: 'running' | 'done' | 'undone';
   backup?: string;
 };
@@ -460,7 +468,7 @@ export async function planMigration(options: MigrationOptions): Promise<Migratio
       if ((await info(run))?.isDirectory() && !(await info(run))?.isSymbolicLink())
         await readDocument(path.join(run, 'manifest.json'));
   }
-  // Task receipts live with their tasks, outside the pin root. Rewrite those exact files only.
+  // Task receipts outside owned farm roots are historical evidence, even when a pin names them.
   for (const [file, { value }] of [...documents]) {
     if (
       within(legacy.state.taskPins, file) &&
@@ -469,8 +477,17 @@ export async function planMigration(options: MigrationOptions): Promise<Migratio
       record(value) &&
       typeof value.taskDir === 'string'
     ) {
-      const receipt = path.join(value.taskDir, 'artifacts', 'harness-provenance.json');
-      if (![...archives].some((root) => within(root, receipt))) await readDocument(receipt);
+      const receipt = path.resolve(
+        expandHome(value.taskDir),
+        'artifacts',
+        'harness-provenance.json',
+      );
+      const owned =
+        !slotRoots.some((root) => within(root, receipt)) &&
+        (within(home, receipt) || plan.mappings.some(({ source }) => within(source, receipt)));
+      if (!owned) {
+        plan.stays.push({ path: receipt, reason: 'historical receipt outside farm roots' });
+      } else if (![...archives].some((root) => within(root, receipt))) await readDocument(receipt);
     }
   }
   for (const source of slotRoots) plan.mappings.push({ source, target: source });
@@ -710,6 +727,30 @@ export async function planMigration(options: MigrationOptions): Promise<Migratio
           : JSON.stringify(updated, null, 2) + '\n'),
       mode: (await info(source))!.mode & 0o777,
       rewrites: changes,
+    });
+  }
+  // Bin entries stay in place, but links into trees we actually move must follow them.
+  for (const link of await children(legacy.code.bin)) {
+    if (!(await info(link))?.isSymbolicLink()) continue;
+    await assertUnredirected(path.dirname(link));
+    let resolved: string;
+    try {
+      resolved = await realpath(link);
+    } catch (error) {
+      // An unrelated broken link has no resolved target in a moved source.
+      if (hasCode(error, 'ENOENT') || hasCode(error, 'ELOOP')) continue;
+      throw error;
+    }
+    const owner = plan.steps.find((step) => step.kind === 'move' && within(step.source, resolved));
+    if (!owner || owner.kind !== 'move') continue;
+    const before = await readlink(link);
+    const body = translate(resolved, plan.mappings);
+    plan.steps.push({
+      kind: 'symlink',
+      target: link,
+      before,
+      body,
+      rewrites: [{ source: before, target: body }],
     });
   }
   // Commit the layout only after all durable references point to their new owners.

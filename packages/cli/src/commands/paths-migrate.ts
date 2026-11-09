@@ -1,5 +1,15 @@
 import { execFile } from 'node:child_process';
-import { mkdir, open, readdir, readFile, rename, rm, rmdir } from 'node:fs/promises';
+import {
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  readlink,
+  rename,
+  rm,
+  rmdir,
+  symlink,
+} from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -150,8 +160,14 @@ async function assertSafe(
     await assertUnredirected(mapping.target);
   }
   for (const step of plan.steps) {
+    if (step.kind === 'symlink') {
+      const expected = step.status === 'done' ? step.body : step.before;
+      const interrupted =
+        step.status === 'running' || (plan.status === 'rolling-back' && step.status === 'done');
+      await assertLink(step, interrupted ? [step.before, step.body] : [expected]);
+    }
     await assertUnredirected(
-      step.kind === 'move' && step.expected['']?.kind === 'link'
+      step.kind === 'symlink' || (step.kind === 'move' && step.expected['']?.kind === 'link')
         ? path.dirname(step.target)
         : step.target,
     );
@@ -267,6 +283,39 @@ async function moveStep(plan: MigrationPlan, step: MoveStep): Promise<void> {
     await removeVerifiedSource(step.source, step.target, step.expected, destination);
   }
 }
+async function assertLink(
+  step: Extract<MigrationStep, { kind: 'symlink' }>,
+  expected: string[],
+): Promise<string> {
+  await assertUnredirected(path.dirname(step.target));
+  if (!(await info(step.target))?.isSymbolicLink())
+    throw new Error(`Migration link changed: ${step.target}`);
+  const current = await readlink(step.target);
+  if (!expected.includes(current)) throw new Error(`Migration link changed: ${step.target}`);
+  return current;
+}
+async function symlinkStep(
+  plan: MigrationPlan,
+  step: Extract<MigrationStep, { kind: 'symlink' }>,
+  rollback = false,
+): Promise<void> {
+  const current = await assertLink(step, [step.before, step.body]);
+  const desired = rollback ? step.before : step.body;
+  const temporary = `${step.target}.migrate-${plan.id}.partial`;
+  if (await info(temporary)) {
+    if (
+      !(await info(temporary))?.isSymbolicLink() ||
+      ![step.before, step.body].includes(await readlink(temporary))
+    )
+      throw new Error(`Migration link changed: ${temporary}`);
+    await rm(temporary);
+  }
+  if (current === desired) return;
+  await symlink(desired, temporary);
+  await assertLink(step, [current]);
+  await rename(temporary, step.target);
+  await syncDirectory(path.dirname(step.target));
+}
 async function writeStep(
   plan: MigrationPlan,
   step: Extract<MigrationStep, { kind: 'write' }>,
@@ -322,6 +371,9 @@ function assertJournal(value: unknown): asserts value is MigrationPlan {
         (step.before !== undefined && typeof step.before !== 'string')
       )
         throw new Error('Invalid migration rewrite');
+    } else if (step.kind === 'symlink') {
+      if (typeof step.before !== 'string' || typeof step.body !== 'string')
+        throw new Error('Invalid migration symlink');
     } else if (step.kind === 'move') {
       if (
         typeof step.source !== 'string' ||
@@ -356,7 +408,7 @@ async function latestJournal(home: string): Promise<MigrationPlan | undefined> {
       !value.steps.every(
         (step) =>
           record(step) &&
-          ['move', 'write'].includes(String(step.kind)) &&
+          ['move', 'write', 'symlink'].includes(String(step.kind)) &&
           typeof step.target === 'string',
       )
     )
@@ -425,11 +477,12 @@ export async function migratePaths(
         await save(plan);
         await hooks.checkpoint?.(plan, index);
         await assertUnredirected(
-          step.kind === 'move' && step.expected['']?.kind === 'link'
+          step.kind === 'symlink' || (step.kind === 'move' && step.expected['']?.kind === 'link')
             ? path.dirname(step.target)
             : step.target,
         );
         if (step.kind === 'move') await moveStep(plan, step);
+        else if (step.kind === 'symlink') await symlinkStep(plan, step);
         else await writeStep(plan, step, index);
         step.status = 'done';
         await save(plan);
@@ -445,11 +498,13 @@ export async function migratePaths(
       if (!step.status || step.status === 'undone') continue;
       await save(plan);
       await assertUnredirected(
-        step.kind === 'move' && step.expected['']?.kind === 'link'
+        step.kind === 'symlink' || (step.kind === 'move' && step.expected['']?.kind === 'link')
           ? path.dirname(step.target)
           : step.target,
       );
-      if (step.kind === 'write') {
+      if (step.kind === 'symlink') {
+        await symlinkStep(plan, step, true);
+      } else if (step.kind === 'write') {
         if (step.before === undefined) {
           if (await info(step.target)) {
             if ((await readFile(step.target, 'utf8')) !== step.body)

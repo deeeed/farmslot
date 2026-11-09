@@ -1,0 +1,1 @@
+- Keep installed CLI links working through path migration and rollback, and retain historical task receipts outside owned farm roots.
