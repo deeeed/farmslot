@@ -1,1 +1,0 @@
-- `LinkedTicket.fromPrBody` marks a ticket fetched only because the PR body links it, so a later fetch derives it again from the current body instead of keeping it.

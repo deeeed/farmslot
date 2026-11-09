@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.34.4 - 2026-11-09
+
+- The command journal, task view and checkout lock work inside the worker sandbox, where `ps` fails with EPERM: an unknown owner identity falls back to a liveness check, so a live owner is never reclaimed.
+
 ## 0.34.3 - 2026-11-09
 
 - `run --json` reports a refusal before execution (preflight, checkout lock, runtime prepare) as the run JSON error envelope on stdout (`stage: "authorize"`, `error.code: "RUN_AUTHORIZE_FAILED"`, exit 1) instead of stderr text only, for example a second attempt into a retained `--artifacts-dir`.
