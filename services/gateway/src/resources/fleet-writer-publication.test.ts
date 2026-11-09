@@ -12,6 +12,8 @@ import type { ResourceChangedPayload } from '@farmslot/protocol/transport/events
 // Guard must precede all production imports, including transitive PTY imports.
 import '../runtime/mock-pty.test-support.js';
 
+import { withWatcherClock } from '../core/watch-clock.test-support.js';
+
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fleet-writer-publication-')));
 const statusPath = path.join(root, 'fixture-status.json');
 const overrides = {
@@ -236,9 +238,12 @@ for (const source of ['pool', 'project'] as const)
       await mkdir(path.dirname(file), { recursive: true });
       await writeFile(file, '{}');
     }
-    const watcher = fleet.startFileWatcher();
-    t.after(() => watcher.close());
-    await watcher.ready;
+    const watcher = await withWatcherClock(t, async () => {
+      const watcher = fleet.startFileWatcher();
+      t.after(() => watcher.close());
+      await watcher.ready;
+      return watcher;
+    });
     packets = [];
     const previous = JSON.parse(await readFile(file, 'utf8'));
     await writeFile(file, JSON.stringify({ ...previous, label: 'committed config change' }));

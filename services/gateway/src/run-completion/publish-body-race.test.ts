@@ -527,7 +527,7 @@ test('a publish retry that posts nothing leaves the recorded description and its
 test('a successful publication hands the posted body to the published-description record', async (t) => {
   const { capture, calls } = await installGhCapture(t);
   const project = `.publish-body-test-${process.pid}`;
-  const projectDir = path.join(farmslotRoot, 'projects', project);
+  const projectDir = path.join(farmslotRoot(), 'projects', project);
   await mkdir(projectDir, { recursive: true });
   await writeFile(
     path.join(projectDir, 'project.json'),

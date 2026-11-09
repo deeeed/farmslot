@@ -38,6 +38,7 @@ import {
   ORCHESTRATOR_TASK_DIR,
   resolveProjectsDir,
 } from '@farmslot/protocol/node/farm-layout';
+import { type FarmPaths, resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import {
   sanitizeRunForBundleExport,
   strictTaskRelativePathFromFarmslotRoot,
@@ -84,7 +85,10 @@ function absoluteStoreRoot(root: string): string {
 function retentionDocument(home: string): Record<string, unknown> {
   let raw: string;
   try {
-    raw = readFileSync(path.join(home, 'run-bundle-retention.json'), 'utf8');
+    raw = readFileSync(
+      path.join(resolveFarmPaths({ home, role: 'node' }).config, 'run-bundle-retention.json'),
+      'utf8',
+    );
   } catch (error) {
     if (hasCode(error, 'ENOENT')) return { runBundleRetention: {} };
     throw error;
@@ -283,6 +287,7 @@ async function atomicJson(file: string, value: unknown): Promise<void> {
 
 /** The Run store, rather than the caller's auth home, owns this durable pairing. */
 export async function openRunBundleStore(input: {
+  paths?: FarmPaths;
   runsDir: string;
   home: string;
   storeRoot?: string;
@@ -295,13 +300,15 @@ export async function openRunBundleStore(input: {
     input.storeRoot === undefined
       ? runBundleRetentionSettings(input.home).storeRoot
       : absoluteStoreRoot(input.storeRoot);
+  const defaultRoot = (input.paths ?? resolveFarmPaths({ role: 'node', home: input.home })).data
+    .runBundles;
   const bindingPath = path.join(runsDir, 'bundle-store.json');
   let raw = await readOptional(bindingPath);
   if (!raw) {
     if (!input.create)
       throw new Error('Run bundle store pairing is missing; start the owning gateway.');
     if (configured) await assertStoreRootParent(configured);
-    const root = configured ?? path.resolve(input.home, 'run-bundles');
+    const root = configured ?? defaultRoot;
     await mkdir(root, { recursive: true });
     const binding: RunBundleStore = {
       version: 1,
@@ -336,11 +343,7 @@ export async function openRunBundleStore(input: {
   }
   const ownerPath = path.join(binding.root, 'store.json');
   let owner = await readOptional(ownerPath);
-  if (
-    !owner &&
-    input.create &&
-    binding.root === (await realpath(configured ?? path.join(input.home, 'run-bundles')))
-  ) {
+  if (!owner && input.create && binding.root === (await realpath(configured ?? defaultRoot))) {
     try {
       await writeFile(ownerPath, `${JSON.stringify(binding)}\n`, { flag: 'wx', mode: 0o600 });
     } catch (error) {

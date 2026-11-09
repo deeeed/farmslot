@@ -8,10 +8,10 @@ import {
   renameSync,
   writeFileSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
 import { RUNNER_PICKER_MODELS, type RunnerVisibleModelState } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { GatewayMethodError } from '../core/method-error.js';
 import {
@@ -38,12 +38,7 @@ interface VisibleModelFile {
 const MAX_MODELS = 80;
 
 export function visibleModelsHome(): string {
-  const configured = process.env.FARMSLOT_HOME?.trim();
-  const root = configured?.startsWith('~/')
-    ? join(homedir(), configured.slice(2))
-    : configured === '~'
-      ? homedir()
-      : configured || join(homedir(), '.farmslot');
+  const root = currentFarmPaths('gateway').config;
   const originator = currentSessionOriginator();
   if (originator.kind === 'system') return root;
   return join(

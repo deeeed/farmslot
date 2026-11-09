@@ -21,6 +21,7 @@ import {
   primaryRoleForFlow,
   providerAccountsChangedKeys,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import './projects/gateway-status-process.js';
@@ -196,7 +197,7 @@ function processIsAlive(pid: number): boolean {
 }
 
 function acquireGatewaySingletonLock(): () => void {
-  const lockPath = resolve(farmslotRoot, '.runs', `gateway-${PORT}.pid`);
+  const lockPath = currentFarmPaths('gateway').state.gatewayLock;
   mkdirSync(dirname(lockPath), { recursive: true });
 
   for (;;) {
@@ -223,7 +224,7 @@ function acquireGatewaySingletonLock(): () => void {
       if (Number.isInteger(existingPid) && existingPid > 0 && existingPid !== process.pid) {
         if (processIsAlive(existingPid)) {
           throw new Error(
-            `Gateway already running for ${farmslotRoot} on port ${PORT} (pid ${existingPid}). ` +
+            `Gateway already running for ${farmslotRoot()} on port ${PORT} (pid ${existingPid}). ` +
               `Stop the stale gateway before starting another instance to avoid split-brain run state.`,
           );
         }
@@ -315,7 +316,7 @@ async function main(): Promise<void> {
   // Checkout files contain bind and node settings. Gateway identity is read
   // from the credential store, never imported from an environment secret.
   for (const name of ['.env']) {
-    const envPath = resolve(farmslotRoot, name);
+    const envPath = resolve(farmslotRoot(), name);
     try {
       const content = readFileSync(envPath, 'utf-8');
       for (const line of content.split('\n')) {
@@ -344,7 +345,7 @@ async function main(): Promise<void> {
     (gatewayAuthRuntime.auth.mode === 'none' ? '127.0.0.1' : undefined);
   releaseGatewayPresence = registerGatewayPresence({
     pid: process.pid,
-    farmslotRoot,
+    farmslotRoot: farmslotRoot(),
     port: PORT,
   });
   initializeGatewayIdentity(gatewayAuthRuntime, {
@@ -569,7 +570,7 @@ async function main(): Promise<void> {
   initReview(observedBroadcast);
 
   // Roadmap reads become current only while the source directory is observed.
-  const roadmapObservation = await watchRoadmapItems(roadmapRoot);
+  const roadmapObservation = await watchRoadmapItems(roadmapRoot());
   setRoadmapObservationGuard(() => roadmapObservation.assertReady());
 
   // Load dispatch queue + init auto-dispatch

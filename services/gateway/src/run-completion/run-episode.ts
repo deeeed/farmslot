@@ -5,7 +5,6 @@
 // from side stores. It holds references, never copies: each file is its
 // task-relative path plus the sha256 that the output inventory or a retained
 // bundle manifest already recorded. Nothing here reads or hashes an artifact.
-
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -17,6 +16,7 @@ import {
   type RunArtifactBundleRef,
   type RunBundleEntryMeta,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import {
   isRunBundleMedia,
   readRetainedRunBundle,
@@ -350,7 +350,9 @@ export function episodeProvenance(
 }
 
 export function runEpisodeDir(): string {
-  return path.join(runsDirectory(), 'episodes');
+  return currentFarmPaths('gateway').layout === 2
+    ? currentFarmPaths('gateway').state.episodes
+    : path.join(runsDirectory(), 'episodes');
 }
 
 function episodeFile(runId: string): string {

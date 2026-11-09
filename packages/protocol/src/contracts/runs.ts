@@ -3195,6 +3195,19 @@ export function isLightweightInteractiveDevRun(
   return isInteractiveDevRun(run) && run.devInteractiveProfile === DEFAULT_DEV_INTERACTIVE_PROFILE;
 }
 
+/** A scripted command run has no worker; with artifact-only completion, its command's result is its proof. */
+export function isArtifactOnlyScriptedCommandRun<
+  T extends Pick<Run, 'scripted' | 'completionPolicy'> & {
+    metrics?: Pick<Run['metrics'], 'runner'>;
+  },
+>(run: T): run is T & { scripted: Extract<ScriptedRunnerConfig, { mode: 'command' }> } {
+  return (
+    run.metrics?.runner === 'scripted' &&
+    run.scripted?.mode === 'command' &&
+    run.completionPolicy === 'artifact-only'
+  );
+}
+
 export function isInteractiveDevRun(run: Pick<Run, 'flowType' | 'mode'>): boolean {
   return run.flowType === 'dev' && run.mode === 'interactive';
 }
@@ -3789,6 +3802,20 @@ export function codexReasoningEfforts(model?: string | null): readonly CodexReas
     default:
       return ['low', 'medium', 'high', 'xhigh'];
   }
+}
+
+/** Resolve a requested level; `auto` leaves the transport's default in control. */
+export function resolveCodexReasoningEffort(
+  effort?: string | null,
+  model?: string | null,
+): CodexReasoningEffort | undefined {
+  const normalized = effort?.trim().toLowerCase();
+  if (normalized === 'auto') return undefined;
+  const effective = normalized || DEFAULT_CODEX_EFFORT;
+  const supported = codexReasoningEfforts(model).find((candidate) => candidate === effective);
+  if (!supported)
+    throw new Error(`Invalid Codex reasoning effort: ${effort} for ${model ?? 'default model'}`);
+  return supported;
 }
 
 /** Default Codex reasoning effort when dispatch/launch omits effort. */

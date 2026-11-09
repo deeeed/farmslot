@@ -30,6 +30,7 @@ import {
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
 import { defaultBranchProbeCommand, readDefaultBranchProbe } from '@farmslot/protocol';
+import { resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import {
   listPackOwnedEntries,
   packEntryLinkTarget,
@@ -770,6 +771,15 @@ function filterPackProjects(pack: PackJson, selectors: string[] | undefined): Pa
   return { ...pack, projects };
 }
 
+function lifecycleEnvironment(ws: Workspace, state: WorkspaceState): Record<string, string> {
+  const paths = resolveFarmPaths({ role: 'gateway', checkoutRoot: ws.farmslotDir });
+  return {
+    FARMSLOT_HOME: paths.home,
+    FARMSLOT_POOL_DIR: workspacePoolDir(ws, state),
+    FARMSLOT_PROJECTS_DIR: paths.projects,
+  };
+}
+
 export function projectAdd(
   source: string,
   ws: Workspace,
@@ -940,6 +950,7 @@ export function projectAdd(
           // can register farms quickly and prepare one project later.
           run('bash', ['scripts/sync-fixtures.sh', '--slot', slotId], {
             cwd: ws.farmslotDir,
+            env: lifecycleEnvironment(ws, state),
             stdio: childStdio(progress),
           });
           progress.step({ label: `slot ${slotId} fixtures synced` });
@@ -959,6 +970,7 @@ export function projectAdd(
           } else {
             run('bash', ['scripts/setup-slot.sh', slotId, registered.defaultBranch], {
               cwd: ws.farmslotDir,
+              env: lifecycleEnvironment(ws, state),
               stdio: childStdio(progress),
             });
             progress.step({ label: `slot ${slotId} setup complete` });
@@ -966,6 +978,7 @@ export function projectAdd(
             if (registered.preflight) {
               run('bash', ['scripts/run-project-hook.sh', slotId, 'preflight'], {
                 cwd: ws.farmslotDir,
+                env: lifecycleEnvironment(ws, state),
                 stdio: childStdio(progress),
               });
               progress.step({ label: `slot ${slotId} preflight hook ran` });
@@ -976,6 +989,7 @@ export function projectAdd(
         if (!options.noSetup) {
           run('bash', ['scripts/preflight-slot.sh', slotId], {
             cwd: ws.farmslotDir,
+            env: lifecycleEnvironment(ws, state),
             stdio: childStdio(progress),
           });
           progress.step({ label: `slot ${slotId} validated (preflight + health)` });

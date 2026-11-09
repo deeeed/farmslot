@@ -7,9 +7,17 @@ import { test, type TestContext } from 'node:test';
 
 import { farmslotRoot } from '../projects/repo-root.js';
 
-const roadmapRoot = path.join(farmslotRoot, '.sandbox', `roadmap-store-test-${process.pid}`);
-const backlogFile = path.join(farmslotRoot, '.sandbox', `roadmap-backlog-test-${process.pid}.json`);
-const backlogSpecRoot = path.join(farmslotRoot, '.sandbox', `roadmap-backlog-specs-${process.pid}`);
+const roadmapRoot = path.join(farmslotRoot(), '.sandbox', `roadmap-store-test-${process.pid}`);
+const backlogFile = path.join(
+  farmslotRoot(),
+  '.sandbox',
+  `roadmap-backlog-test-${process.pid}.json`,
+);
+const backlogSpecRoot = path.join(
+  farmslotRoot(),
+  '.sandbox',
+  `roadmap-backlog-specs-${process.pid}`,
+);
 const promptRoot = path.join(roadmapRoot, 'refinement-prompts');
 process.env.FARMSLOT_ROADMAP_DIR = roadmapRoot;
 process.env.FARMSLOT_BACKLOG_FILE = backlogFile;
@@ -44,7 +52,7 @@ async function store() {
 }
 
 async function createProjectFixture(t: TestContext, project: string): Promise<void> {
-  const projectDir = path.join(farmslotRoot, 'projects', project);
+  const projectDir = path.join(farmslotRoot(), 'projects', project);
   // The cleanup below rm -rf's this directory. Refusing to adopt an existing
   // project keeps a fixture from deleting a real one (e.g. farmslot-farm).
   if (existsSync(projectDir)) {
@@ -113,9 +121,9 @@ test('roadmap store saves rough inbox markdown and supports get/list filters', a
     created.item.filePath,
     /\.sandbox\/roadmap-store-test-\d+\/inbox\/items\/\d{4}-\d{2}-\d{2}-unassigned-brainstorm-raw-idea\.md$/,
   );
-  assert.equal(existsSync(path.join(farmslotRoot, created.item.filePath)), true);
+  assert.equal(existsSync(path.join(farmslotRoot(), created.item.filePath)), true);
 
-  const markdown = await readFile(path.join(farmslotRoot, created.item.filePath), 'utf-8');
+  const markdown = await readFile(path.join(farmslotRoot(), created.item.filePath), 'utf-8');
   assert.match(markdown, /^---\nid: /);
   assert.match(markdown, /kind: "roadmap-item"/);
   assert.match(markdown, /Raw note from the operator\./);
@@ -254,7 +262,7 @@ test('roadmap store writes project-scoped items and moves assigned inbox items b
       body: 'Inbox note.',
     },
   });
-  const oldPath = path.join(farmslotRoot, inboxItem.item.filePath);
+  const oldPath = path.join(farmslotRoot(), inboxItem.item.filePath);
 
   const assigned = await saveRoadmapItem({
     expectedHash: inboxItem.item.fileHash,
@@ -270,7 +278,7 @@ test('roadmap store writes project-scoped items and moves assigned inbox items b
     assigned.item.filePath,
     /projects\/farmslot-farm\/items\/\d{4}-\d{2}-\d{2}-assign-me-later\.md$/,
   );
-  assert.equal(existsSync(path.join(farmslotRoot, assigned.item.filePath)), true);
+  assert.equal(existsSync(path.join(farmslotRoot(), assigned.item.filePath)), true);
   assert.equal(existsSync(oldPath), false);
 });
 
@@ -308,7 +316,7 @@ test('roadmap store rejects caller-supplied paths outside indexed item directori
         item: {
           project: 'farmslot-farm',
           title: 'Invisible item',
-          filePath: path.relative(farmslotRoot, path.join(promptRoot, 'invisible.md')),
+          filePath: path.relative(farmslotRoot(), path.join(promptRoot, 'invisible.md')),
           body: 'This would not be indexed by roadmap.list.',
         },
       }),
@@ -334,7 +342,7 @@ test('roadmap store deletes unpromoted items and rejects promoted deletes', asyn
   );
   await deleteRoadmapItem({ itemId: draft.item.id, expectedHash: draft.item.fileHash });
   assert.equal((await listRoadmapItems({ includeArchived: true })).items.length, 0);
-  assert.equal(existsSync(path.join(farmslotRoot, draft.item.filePath)), false);
+  assert.equal(existsSync(path.join(farmslotRoot(), draft.item.filePath)), false);
 
   const refined = await saveRoadmapItem({
     item: {
@@ -379,7 +387,7 @@ test('roadmap store excludes archived items unless requested and parses simple h
       body: 'Archived note.',
     },
   });
-  const absolutePath = path.join(farmslotRoot, created.item.filePath);
+  const absolutePath = path.join(farmslotRoot(), created.item.filePath);
   await writeFile(
     absolutePath,
     [
@@ -444,7 +452,7 @@ test('roadmap store prepares a tmux refinement prompt without a session database
   );
   assert.match(refined.promptPath, /^\.sandbox\/roadmap-store-test-\d+\/refinement-prompts\//);
 
-  const prompt = await readFile(path.join(farmslotRoot, refined.promptPath), 'utf-8');
+  const prompt = await readFile(path.join(farmslotRoot(), refined.promptPath), 'utf-8');
   assert.match(prompt, /interactive planning\/refinement session inside the Farmslot/);
   assert.match(prompt, /Only edit the roadmap markdown file after the operator confirms/);
   assert.match(prompt, /Treat `farmslot roadmap --help` as the discoverable command surface/);
@@ -459,7 +467,7 @@ test('roadmap store prepares a tmux refinement prompt without a session database
 
   const promptResult = await getRoadmapPrompt({ path: refined.promptPath });
   assert.equal(promptResult.path, refined.promptPath);
-  assert.equal(promptResult.absolutePath, path.join(farmslotRoot, refined.promptPath));
+  assert.equal(promptResult.absolutePath, path.join(farmslotRoot(), refined.promptPath));
   assert.equal(promptResult.content, prompt);
   await assert.rejects(
     () => getRoadmapPrompt({ path: '.roadmap/inbox/items/not-a-prompt.md' }),
@@ -499,7 +507,7 @@ test('roadmap store lists, reads, and saves promotion draft attachments', async 
 
   const listed = await listRoadmapPromotionDrafts({ itemId: 'ri_test' });
   assert.equal(listed.drafts.length, 1);
-  assert.equal(listed.drafts[0]?.path, path.relative(farmslotRoot, draftPath));
+  assert.equal(listed.drafts[0]?.path, path.relative(farmslotRoot(), draftPath));
   assert.equal(listed.drafts[0]?.filename, '01-mobile.md');
 
   const loaded = await getRoadmapPromotionDraft({ path: listed.drafts[0]!.path });
@@ -544,7 +552,7 @@ test('global roadmap refinement resolves the project-neutral built-in policy', a
     expectedHash: created.item.fileHash,
     launch: false,
   });
-  const prompt = await readFile(path.join(farmslotRoot, refined.promptPath), 'utf-8');
+  const prompt = await readFile(path.join(farmslotRoot(), refined.promptPath), 'utf-8');
 
   assert.match(prompt, /draft count follows deployable objectives/);
   assert.match(prompt, /Cross-project fan-out.*each project needs distinct code or\s+dispatch/s);
@@ -679,7 +687,7 @@ test('roadmap store promotes a refined item into ready backlog markdown specs', 
   );
   assert.equal(promoted.roadmapItem.promotion?.[0]?.backlogItemId, promoted.backlogItems[0]?.id);
 
-  const markdown = await readFile(path.join(farmslotRoot, promoted.specPaths[0]!), 'utf-8');
+  const markdown = await readFile(path.join(farmslotRoot(), promoted.specPaths[0]!), 'utf-8');
   assert.match(markdown, /roadmapItemId/);
   assert.match(markdown, /Created backlog specs include provenance/);
   assert.equal(backlog.listBacklogItems({ tags: ['roadmap'] }).items.length, 1);

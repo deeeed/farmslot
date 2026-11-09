@@ -154,9 +154,9 @@ test('publish package refresh evidence summary uses shared path variants', () =>
 
 test('refreshPublishPackage fails closed when worker artifacts cannot be mirrored', async (t) => {
   const testId = `refresh-package-fail-${process.pid}-${Date.now()}`;
-  const poolFile = path.join(farmslotRoot, 'pool', `${testId}.json`);
+  const poolFile = path.join(farmslotRoot(), 'pool', `${testId}.json`);
   const workerRepo = await mkdtemp(path.join(os.tmpdir(), `${testId}-worker-`));
-  const taskRoot = path.join(farmslotRoot, '.sandbox/farmslot-farm/tasks');
+  const taskRoot = path.join(farmslotRoot(), '.sandbox/farmslot-farm/tasks');
   const taskRelDir = `test/${testId}`;
   const taskDir = path.join(taskRoot, taskRelDir);
   const taskFile = path.join(taskDir, 'TASK.md');
@@ -248,9 +248,9 @@ test('refreshPublishPackage fails closed when worker artifacts cannot be mirrore
 });
 test('refreshReviewGate does not let worker artifacts overwrite gateway-owned package state', async (t) => {
   const testId = `refresh-review-gateway-owned-${process.pid}-${Date.now()}`;
-  const poolFile = path.join(farmslotRoot, 'pool', `${testId}.json`);
+  const poolFile = path.join(farmslotRoot(), 'pool', `${testId}.json`);
   const workerRepo = await mkdtemp(path.join(os.tmpdir(), `${testId}-worker-`));
-  const taskRoot = path.join(farmslotRoot, '.sandbox/farmslot-farm/tasks');
+  const taskRoot = path.join(farmslotRoot(), '.sandbox/farmslot-farm/tasks');
   const taskRelDir = `test/${testId}`;
   const taskDir = path.join(taskRoot, taskRelDir);
   const workerTaskDir = path.join(workerRepo, '.sandbox/farmslot-farm/worker-task', taskRelDir);

@@ -1,6 +1,7 @@
 import { existsSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { farmslotRoot, resolveFarmslotRoot, resolveWorkspaceRoot } from '@farmslot/slot-config';
 
 import { isGatewayTestProcess, isolatedTestPath } from '../core/isolated-test-path.js';
@@ -24,7 +25,7 @@ function canonicalStatusPath(file: string): string {
 }
 
 export function resolveStatusFilePath(
-  root = farmslotRoot,
+  root = farmslotRoot(),
   env: NodeJS.ProcessEnv = process.env,
   argv: readonly string[] = process.argv,
 ): string {
@@ -40,7 +41,10 @@ export function resolveStatusFilePath(
       ['CLAUDE.md', 'scripts/dev.sh', 'services/gateway/package.json'].every((marker) =>
         existsSync(path.join(path.dirname(selected), marker)),
       );
-    if (selected === canonicalStatusPath(path.join(root, '.farm-status.json')) || sharedFarm)
+    if (
+      selected === canonicalStatusPath(currentFarmPaths('gateway', env, root).state.statusFile) ||
+      sharedFarm
+    )
       throw new Error('Test status path must not point to the shared fleet status store');
     return path.resolve(testPath);
   }
@@ -49,16 +53,17 @@ export function resolveStatusFilePath(
     if (!existsSync(isolated)) writeFileSync(isolated, '{"slots":[]}\n');
     return isolated;
   }
-  return path.join(root, '.farm-status.json');
+  return currentFarmPaths('gateway', env, root).state.statusFile;
 }
 
 export function assertStatusFileWritable(
   file: string,
-  root = farmslotRoot,
+  root = farmslotRoot(),
   gatewayProcess = gatewayStatusProcess,
 ): void {
   if (
-    canonicalStatusPath(file) === canonicalStatusPath(path.join(root, '.farm-status.json')) &&
+    canonicalStatusPath(file) ===
+      canonicalStatusPath(currentFarmPaths('gateway', process.env, root).state.statusFile) &&
     !gatewayProcess
   )
     throw new Error(
@@ -66,4 +71,4 @@ export function assertStatusFileWritable(
     );
 }
 
-export const farmslotRuntimeLogDir = path.join(farmslotRoot, '.omx', 'logs');
+export const farmslotRuntimeLogDir = path.join(farmslotRoot(), '.omx', 'logs');

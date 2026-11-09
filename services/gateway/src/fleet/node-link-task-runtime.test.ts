@@ -160,7 +160,7 @@ for (const size of [1024, 180000]) {
       );
       await writeFile(
         path.join(cli, 'src/onboarding/workspace.ts'),
-        'export const repoRoot = "/fixture"; export function bootstrapFarmslotHome() {}',
+        'export function repoRoot() { return "/fixture"; } export function bootstrapFarmslotHome() {}',
       );
       const marker = path.join(root, 'executed');
       await writeFile(

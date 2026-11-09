@@ -3,6 +3,7 @@ import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { DEFAULT_TASK_DIR } from '@farmslot/protocol';
+import { FARM_INSTANCE_CLAIM } from '@farmslot/protocol/node/farm-paths';
 
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { assertHeavyWriteRoom } from '../core/heavy-write-room.js';
@@ -64,6 +65,7 @@ export function slotScaffoldingPaths(projectJson: RawProjectJson) {
         task,
         ...(externalRuntime ? [] : [runtime]),
         DEFAULT_TASK_DIR,
+        FARM_INSTANCE_CLAIM,
         '.agent',
         '.observability',
         '.omc',

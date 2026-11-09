@@ -267,7 +267,7 @@ test('loadProjectVars preserves QA skill inputs and rejects an invalid farm defa
   };
   for (const invalid of [false, true]) {
     const project = `qa-config-${process.pid}-${invalid}`;
-    const directory = path.join(farmslotRoot, 'projects', project);
+    const directory = path.join(farmslotRoot(), 'projects', project);
     await mkdir(directory, { recursive: true });
     t.after(() => rm(directory, { recursive: true, force: true }));
     await writeFile(
@@ -393,14 +393,14 @@ test('getOrchestratorTaskRoot uses sandbox path for mock projects', () => {
       external: { mock_mode: true },
       task_dir: '.sandbox/farmslot-farm/worker-task',
     } as any),
-    path.join(farmslotRoot, '.sandbox', 'farmslot-farm', 'tasks'),
+    path.join(farmslotRoot(), '.sandbox', 'farmslot-farm', 'tasks'),
   );
 });
 
 test('getOrchestratorTaskRoot uses projects path for normal projects', () => {
   assert.equal(
     getOrchestratorTaskRoot('example-mobile-farm', {} as any),
-    path.join(farmslotRoot, 'projects', 'example-mobile-farm', 'tasks'),
+    path.join(farmslotRoot(), 'projects', 'example-mobile-farm', 'tasks'),
   );
 });
 
@@ -422,8 +422,8 @@ test('resolveProjectTaskDirName prefers task_dir then paths.artifact_dir then de
 test('resolveTaskRelDir derives task-relative directories from task roots', () => {
   assert.equal(
     resolveTaskRelDir(
-      path.join(farmslotRoot, 'projects', 'demo-project', 'tasks', 'feature', 'TASK.md'),
-      path.join(farmslotRoot, 'projects', 'demo-project', 'tasks'),
+      path.join(farmslotRoot(), 'projects', 'demo-project', 'tasks', 'feature', 'TASK.md'),
+      path.join(farmslotRoot(), 'projects', 'demo-project', 'tasks'),
     ),
     'feature',
   );
@@ -432,8 +432,8 @@ test('resolveTaskRelDir derives task-relative directories from task roots', () =
 test('resolveTaskRelDir rejects task files outside the task root', () => {
   assert.equal(
     resolveTaskRelDir(
-      path.join(farmslotRoot, 'projects', 'other-project', 'tasks', 'feature', 'TASK.md'),
-      path.join(farmslotRoot, 'projects', 'demo-project', 'tasks'),
+      path.join(farmslotRoot(), 'projects', 'other-project', 'tasks', 'feature', 'TASK.md'),
+      path.join(farmslotRoot(), 'projects', 'demo-project', 'tasks'),
     ),
     null,
   );
@@ -442,8 +442,8 @@ test('resolveTaskRelDir rejects task files outside the task root', () => {
 test('resolveTaskRelDir supports alternate task filenames when requested', () => {
   assert.equal(
     resolveTaskRelDir(
-      path.join(farmslotRoot, 'projects', 'demo-project', 'tasks', 'feature', 'REVIEW.md'),
-      path.join(farmslotRoot, 'projects', 'demo-project', 'tasks'),
+      path.join(farmslotRoot(), 'projects', 'demo-project', 'tasks', 'feature', 'REVIEW.md'),
+      path.join(farmslotRoot(), 'projects', 'demo-project', 'tasks'),
       'REVIEW.md',
     ),
     'feature',
@@ -452,7 +452,7 @@ test('resolveTaskRelDir supports alternate task filenames when requested', () =>
 
 test('loadProjectVars resolves documented recipe_dir default and rejects other placeholders in paths', async (t) => {
   const project = `paths-placeholder-config-${process.pid}`;
-  const projectDir = path.join(farmslotRoot, 'projects', project);
+  const projectDir = path.join(farmslotRoot(), 'projects', project);
   await mkdir(projectDir, { recursive: true });
   t.after(async () => {
     await rm(projectDir, { recursive: true, force: true });
@@ -473,7 +473,7 @@ test('loadProjectVars resolves documented recipe_dir default and rejects other p
     { recipe_dir: '{{smuggled}}/recipes' },
   ]) {
     const invalidProject = `${project}-${Object.keys(paths)[0]}`;
-    const invalidDir = path.join(farmslotRoot, 'projects', invalidProject);
+    const invalidDir = path.join(farmslotRoot(), 'projects', invalidProject);
     await mkdir(invalidDir, { recursive: true });
     t.after(async () => {
       await rm(invalidDir, { recursive: true, force: true });
@@ -491,7 +491,7 @@ test('loadProjectVars resolves documented recipe_dir default and rejects other p
 
 test('loadProjectVars validates auto_recovery disabled_patterns as string array', async (t) => {
   const project = `auto-recovery-config-${process.pid}`;
-  const projectDir = path.join(farmslotRoot, 'projects', project);
+  const projectDir = path.join(farmslotRoot(), 'projects', project);
   await mkdir(projectDir, { recursive: true });
   t.after(async () => {
     await rm(projectDir, { recursive: true, force: true });
@@ -512,7 +512,7 @@ test('loadProjectVars validates auto_recovery disabled_patterns as string array'
   );
   await assert.doesNotReject(() => loadProjectVars(project));
   const invalidProject = `${project}-invalid`;
-  const invalidDir = path.join(farmslotRoot, 'projects', invalidProject);
+  const invalidDir = path.join(farmslotRoot(), 'projects', invalidProject);
   await mkdir(invalidDir, { recursive: true });
   t.after(async () => {
     await rm(invalidDir, { recursive: true, force: true });
@@ -529,7 +529,7 @@ test('loadProjectVars validates auto_recovery disabled_patterns as string array'
 
 test('loadProjectVars rejects unknown auto_recovery categories', async (t) => {
   const project = `auto-recovery-category-${process.pid}`;
-  const projectDir = path.join(farmslotRoot, 'projects', project);
+  const projectDir = path.join(farmslotRoot(), 'projects', project);
   await mkdir(projectDir, { recursive: true });
   t.after(async () => {
     await rm(projectDir, { recursive: true, force: true });
@@ -546,7 +546,7 @@ test('loadProjectVars rejects unknown auto_recovery categories', async (t) => {
 
 test('loadProjectVars validates publication_review snake_case config', async (t) => {
   const project = `publication-review-config-${process.pid}`;
-  const projectDir = path.join(farmslotRoot, 'projects', project);
+  const projectDir = path.join(farmslotRoot(), 'projects', project);
   await mkdir(projectDir, { recursive: true });
   t.after(async () => {
     await rm(projectDir, { recursive: true, force: true });
@@ -564,7 +564,7 @@ test('loadProjectVars validates publication_review snake_case config', async (t)
   await assert.doesNotReject(() => loadProjectVars(project));
 
   const invalidProject = `${project}-invalid`;
-  const invalidDir = path.join(farmslotRoot, 'projects', invalidProject);
+  const invalidDir = path.join(farmslotRoot(), 'projects', invalidProject);
   await mkdir(invalidDir, { recursive: true });
   t.after(async () => {
     await rm(invalidDir, { recursive: true, force: true });
@@ -584,7 +584,7 @@ test('loadProjectVars validates publication_review snake_case config', async (t)
 
 test('loadProjectVars validates roadmap farmslot_command config', async (t) => {
   const project = `roadmap-config-${process.pid}`;
-  const projectDir = path.join(farmslotRoot, 'projects', project);
+  const projectDir = path.join(farmslotRoot(), 'projects', project);
   await mkdir(projectDir, { recursive: true });
   t.after(async () => {
     await rm(projectDir, { recursive: true, force: true });
@@ -602,7 +602,7 @@ test('loadProjectVars validates roadmap farmslot_command config', async (t) => {
   assert.equal(vars.roadmap?.farmslotCommand, 'yarn workspace @farmslot/cli farmslot');
 
   const invalidProject = `${project}-invalid`;
-  const invalidDir = path.join(farmslotRoot, 'projects', invalidProject);
+  const invalidDir = path.join(farmslotRoot(), 'projects', invalidProject);
   await mkdir(invalidDir, { recursive: true });
   t.after(async () => {
     await rm(invalidDir, { recursive: true, force: true });
@@ -793,7 +793,7 @@ test('validatePrepareConfig rejects unknown default profile', () => {
 
 test('loadProjectVars validates the prepare block', async (t) => {
   const project = `prepare-config-${process.pid}`;
-  const projectDir = path.join(farmslotRoot, 'projects', project);
+  const projectDir = path.join(farmslotRoot(), 'projects', project);
   await mkdir(projectDir, { recursive: true });
   t.after(async () => {
     await rm(projectDir, { recursive: true, force: true });
@@ -810,7 +810,7 @@ test('loadProjectVars validates the prepare block', async (t) => {
 
 test('resolveProjectRuntimeDir reads paths.runtime_dir from project.json', async (t) => {
   const project = `runtime-dir-${process.pid}`;
-  const projectDir = path.join(farmslotRoot, 'projects', project);
+  const projectDir = path.join(farmslotRoot(), 'projects', project);
   await mkdir(projectDir, { recursive: true });
   t.after(async () => {
     await rm(projectDir, { recursive: true, force: true });

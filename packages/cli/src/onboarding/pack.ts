@@ -8,12 +8,12 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { validateProjectRecipeConfig } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import {
   listPackOwnedEntries,
   packMachineNames,
   validatePackPortability,
 } from '@farmslot/protocol/node/pack-portability';
-import { poolDir } from '@farmslot/slot-config';
 
 export interface PackProject {
   /** Project dir inside the pack, e.g. "projects/example-app-farm". Basename = project name. */
@@ -118,7 +118,7 @@ export function validatePackJson(pack: unknown): string[] {
 /** Validate the pack directory itself: pack.json parses, project dirs + project.json exist. */
 export function validatePackDir(
   packDir: string,
-  targetPoolDir = poolDir,
+  targetPoolDir = currentFarmPaths('gateway').pool,
 ): { pack: PackJson | null; errors: string[] } {
   const packJsonPath = join(packDir, 'pack.json');
   if (!existsSync(packJsonPath)) {

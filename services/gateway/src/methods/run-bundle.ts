@@ -31,7 +31,7 @@ export async function runBundleExport(
   for (const dir of [tmpdir(), path.dirname(path.resolve(params.outputPath))])
     await assertHeavyWriteRoom(dir);
   return exportRunsToBundle({
-    farmslotRoot,
+    farmslotRoot: farmslotRoot(),
     outputPath: params.outputPath,
     profile: params.profile ?? 'reference',
     familyId: params.familyId,
@@ -52,13 +52,13 @@ export async function runBundleImport(
   if (configured) await assertHeavyWriteRootPresent(configured, 'runBundleRetention.storeRoot');
   for (const dir of [
     tmpdir(),
-    farmslotRoot,
+    farmslotRoot(),
     runsDirectory(),
     configured ?? path.join(runBundleHome(), 'run-bundles'),
   ])
     await assertHeavyWriteRoom(dir);
   const result = await importBundle({
-    farmslotRoot,
+    farmslotRoot: farmslotRoot(),
     bundlePath: params.bundlePath,
     mode: params.mode ?? 'seed',
     force: params.force,

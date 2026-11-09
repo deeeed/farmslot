@@ -1,3 +1,4 @@
+import { legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // node-support/remote-command.ts — run remote farm scripts from the bundle that
 // matches the config the command was expanded from.
 //
@@ -8,10 +9,10 @@
 // twice: ledger F15). Prepare already ran its hooks from the content-hashed
 // bundle; this does the same for every remote command, so config and scripts
 // always travel together and rollout order stops mattering.
-
 import { currentProjectSources } from '@farmslot/slot-config';
 
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/index.js';
+import { farmPathsForSlot } from '../fleet/farm-paths.js';
 
 import { NODE_SUPPORT_COMMAND_CACHE_MS, wrapNodeSupportReadCommand } from './activation.js';
 import {
@@ -28,8 +29,16 @@ import {
  * under `projects/` or `scripts/`, or the bare root handed to a farm script
  * that builds those paths itself (mobile preflight takes it as an argument).
  */
-const REMOTE_FARM_REF =
-  /~\/farmslot-node(?:\/((?:projects|scripts)\/[^\s'"`;&|()<>{},:]+)|(?=$|[\s'"`;&|()<>{},:]))/g;
+function remoteFarmRef(root: string, global = false): RegExp {
+  const escaped = [...new Set([root, root.replaceAll("'", "'\\''")])]
+    .map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|');
+  return new RegExp(
+    `(?:${escaped})` +
+      String.raw`(?:/((?:projects|scripts)/[^\s'"\x60;&|()<>{},:]+)|(?=$|[\s'"\x60;&|()<>{},:]))`,
+    global ? 'g' : '',
+  );
+}
 
 /**
  * How long a bundle this process verified on a slot is trusted without asking
@@ -72,10 +81,11 @@ const localBundles = new Map<string, { at: number; bundle: Promise<LocalBundle> 
  */
 export class NodeSupportPendingError extends Error {}
 
-const HAS_REMOTE_FARM_REF = new RegExp(REMOTE_FARM_REF.source);
-
-export function hasRemoteFarmRef(command: string): boolean {
-  return HAS_REMOTE_FARM_REF.test(command);
+export function hasRemoteFarmRef(
+  command: string,
+  root = legacyRemoteFarmPaths().code.node,
+): boolean {
+  return remoteFarmRef(root).test(command);
 }
 
 /**
@@ -84,13 +94,23 @@ export function hasRemoteFarmRef(command: string): boolean {
  * reach `scripts/` and `projects/<name>/` from it, which is what a bundle with
  * project support holds (ADR-035's `{{node_support_dir}}`).
  */
-export function remapRemoteFarmRefs(command: string, supportDir: string, paths: string[]): string {
-  return command.replace(REMOTE_FARM_REF, (whole, relative: string | undefined) => {
-    if (relative === undefined) return paths.includes('scripts') ? supportDir : whole;
-    return paths.some((covered) => relative === covered || relative.startsWith(`${covered}/`))
-      ? `${supportDir}/${relative}`
-      : whole;
-  });
+export function remapRemoteFarmRefs(
+  command: string,
+  supportDir: string,
+  paths: string[],
+  root = legacyRemoteFarmPaths().code.node,
+): string {
+  return command.replace(
+    remoteFarmRef(root, true),
+    (whole, relative: string | undefined, offset: number) => {
+      const selected =
+        command[offset - 1] === "'" ? supportDir.replaceAll("'", "'\\''") : supportDir;
+      if (relative === undefined) return paths.includes('scripts') ? selected : whole;
+      return paths.some((covered) => relative === covered || relative.startsWith(`${covered}/`))
+        ? `${selected}/${relative}`
+        : whole;
+    },
+  );
 }
 
 async function currentLocalBundle(
@@ -122,10 +142,10 @@ function ensureOnce(
   io: NodeSupportIo | undefined,
   selectSlot: boolean,
 ): Promise<NodeSupportBundleState | null> {
-  const slotKey = `${vars.slotId}\0${local.hash}\0${selectSlot}`;
+  const slotKey = `${vars.slotId}\0${farmPathsForSlot(vars).code.support}\0${local.hash}\0${selectSlot}`;
   const existing = pendingEnsures.get(slotKey);
   if (existing) return existing;
-  const machineKey = `${vars.machine}\0${local.hash}`;
+  const machineKey = `${vars.machine}\0${farmPathsForSlot(vars).code.support}\0${local.hash}`;
   const upload = machinePublishes.get(machineKey);
   const pending: Promise<NodeSupportBundleState | null> = (async () => {
     try {
@@ -200,25 +220,26 @@ export async function resolveRemoteFarmCommand(
     selectSlot?: boolean;
   } = {},
 ): Promise<string> {
+  const root = farmPathsForSlot(vars).code.node;
   const sources = currentProjectSources();
   if (sources) {
     // Project hooks already resolve to exact read-only source roots. Framework scripts
     // remain part of node service deployment, separate from pack synchronization.
-    if (command.includes('~/farmslot-node/projects/'))
+    if (command.includes(`${root}/projects/`))
       throw new Error('Loose node pack reference is refused for locked execution');
     return command;
   }
-  if (!hasRemoteFarmRef(command)) return command;
+  if (!hasRemoteFarmRef(command, root)) return command;
   // No project config means no bundle to run from; the command keeps the
   // node's own copy, as it always has.
   const projectVars = await loadProjectVarsIfAny(vars.projectName);
   if (!projectVars) return command;
   const local = await currentLocalBundle(vars.projectName, projectVars.projectJson);
   const selectSlot = options.selectSlot !== false;
-  const cacheKey = `${vars.slotId}\0${local.hash}\0${selectSlot}`;
+  const cacheKey = `${vars.slotId}\0${farmPathsForSlot(vars).code.support}\0${local.hash}\0${selectSlot}`;
   const verified = verifiedBundles.get(cacheKey);
   if (verified && Date.now() - verified.at < VERIFIED_TTL_MS) {
-    const mapped = remapRemoteFarmRefs(command, verified.supportDir, local.paths);
+    const mapped = remapRemoteFarmRefs(command, verified.supportDir, local.paths, root);
     return selectSlot ? mapped : wrapNodeSupportReadCommand(mapped, verified.supportDir);
   }
   const state = await withinBudget(
@@ -228,7 +249,7 @@ export async function resolveRemoteFarmCommand(
   );
   if (!state?.hash) return command;
   verifiedBundles.set(cacheKey, { at: Date.now(), supportDir: state.supportDir });
-  const mapped = remapRemoteFarmRefs(command, state.supportDir, state.paths);
+  const mapped = remapRemoteFarmRefs(command, state.supportDir, state.paths, root);
   return selectSlot ? mapped : wrapNodeSupportReadCommand(mapped, state.supportDir);
 }
 
@@ -241,7 +262,6 @@ export async function resolveSlotFarmCommand(
   command: string,
   budgetMs?: number,
 ): Promise<string> {
-  if (!hasRemoteFarmRef(command)) return command;
   const { loadSlotVars } = await import('../core/index.js');
   return resolveRemoteFarmCommand(await loadSlotVars(slotId), command, { budgetMs });
 }

@@ -27,9 +27,9 @@ process.env.FARMSLOT_DEMO_POOL = '1';
 
 // Template-selection regressions use an isolated configured catalog.
 const legacyProject = `writer-legacy-${process.pid}-farm`;
-const legacyPack = path.join(farmslotRoot, 'projects', legacyProject);
+const legacyPack = path.join(farmslotRoot(), 'projects', legacyProject);
 before(async () => {
-  await cp(path.join(farmslotRoot, 'projects/farmslot-farm'), legacyPack, { recursive: true });
+  await cp(path.join(farmslotRoot(), 'projects/farmslot-farm'), legacyPack, { recursive: true });
   const configFile = path.join(legacyPack, 'project.json');
   const config = JSON.parse(await readFile(configFile, 'utf8'));
   config.name = legacyProject;
@@ -210,7 +210,7 @@ test('worker proof guides use prepared resources without control-plane lease cal
     'projects/farmslot-farm/templates/worker/dev.md',
     'projects/farmslot-farm/fixtures/runtime/recipe-quality.md',
   ]) {
-    const guide = await readFile(path.join(farmslotRoot, file), 'utf8');
+    const guide = await readFile(path.join(farmslotRoot(), file), 'utf8');
     assert.doesNotMatch(guide, /runtime\.capability\.(list|acquire|status|release)/, file);
     assert.match(guide, /prepared/i, file);
     assert.match(guide, /blocked/i, file);

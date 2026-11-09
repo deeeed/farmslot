@@ -7,9 +7,10 @@ import {
   type NativeWorkerSessionBinding,
   type Run,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { selectAgentContext } from '../../agents/contexts.js';
-import { poolDir, type SlotVars } from '../../core/config.js';
+import { type SlotVars } from '../../core/config.js';
 import { isLocal } from '../../core/exec.js';
 import { loadPoolConfigs } from '../../fleet/state.js';
 
@@ -33,7 +34,7 @@ export async function nativeProfileAllowedSlots(
   profile: NativeProfileReference,
   allowedSlots?: string[],
 ): Promise<string[]> {
-  const pools = await loadPoolConfigs(poolDir);
+  const pools = await loadPoolConfigs(currentFarmPaths('gateway').pool);
   const slots = pools
     .filter(
       (pool) =>

@@ -3,7 +3,7 @@ import { appendFile, chmod, mkdir, open, readFile, rename, writeFile } from 'nod
 import path from 'node:path';
 
 import type { CopilotRuntimeSession } from '@farmslot/protocol';
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 export interface PersistedCopilotRuntime {
   schemaVersion: 1;
@@ -51,8 +51,11 @@ export class CopilotRuntimeStore {
   readonly bootstrapPath: string;
   private writing: Promise<void> = Promise.resolve();
 
-  constructor(home = farmslotHome()) {
-    this.dir = path.join(home, 'copilot-runtime');
+  constructor(home?: string) {
+    this.dir =
+      home === undefined
+        ? currentFarmPaths('gateway').state.copilotRuntime
+        : path.join(home, 'copilot-runtime');
     this.sessionPath = path.join(this.dir, 'session.json');
     this.auditPath = path.join(this.dir, 'audit.jsonl');
     this.rawTranscriptPath = path.join(this.dir, 'tmux-transcript.log');

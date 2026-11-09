@@ -4,6 +4,7 @@
  * Paths expand against THIS machine's home — never the gateway's.
  */
 
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -25,16 +26,34 @@ export function farmslotHomeFromEnv(env = process.env) {
   return path.join(os.homedir(), '.farmslot');
 }
 
+// The gateway exports FarmPaths.config. Standalone migrated helpers ask the CLI.
+function configRoot(home) {
+  if (home === farmslotHomeFromEnv() && process.env.FARMSLOT_CONFIG_DIR?.trim()) {
+    return expandTilde(process.env.FARMSLOT_CONFIG_DIR.trim());
+  }
+  if (!fs.existsSync(path.join(home, 'config/instance.json'))) return home;
+  if (!process.env.FARMSLOT_CLI) {
+    throw new Error(
+      'Export FARMSLOT_CONFIG_DIR from FarmPaths or set FARMSLOT_CLI to resolve paths get config',
+    );
+  }
+  return execFileSync(
+    expandTilde(process.env.FARMSLOT_CLI),
+    ['paths', '--home', home, 'get', 'config'],
+    { encoding: 'utf8' },
+  ).trim();
+}
+
 export function providerAccountsConfigPath(home = farmslotHomeFromEnv()) {
-  return path.join(home, 'provider-accounts.json');
+  return path.join(configRoot(home), 'provider-accounts.json');
 }
 
 export function activeProviderAccountsPath(home = farmslotHomeFromEnv()) {
-  return path.join(home, 'active-provider-accounts.json');
+  return path.join(configRoot(home), 'active-provider-accounts.json');
 }
 
 export function exhaustionLedgerPath(home = farmslotHomeFromEnv()) {
-  return path.join(home, 'provider-usage-exhaustion.json');
+  return path.join(configRoot(home), 'provider-usage-exhaustion.json');
 }
 
 export function ambientCodexAuthPath() {

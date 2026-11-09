@@ -112,3 +112,5 @@ Its [retained-link amendment 8](062-recorded-run-evidence.md#amendment-8-2026-10
 Its [local run evidence viewer amendment 23](062-recorded-run-evidence.md#amendment-23-2026-11-09-local-run-evidence-viewer) is Proposed: `farmslot recipe view` serves one run's evidence from its folder over the shared review model, as a Story of executed intents and an Evidence view of criteria, with project templates, live mode and run history.
 
 ADR-040 has a [Accepted retained-run attachment amendment](040-work-graph-orchestration.md#amendment-3-retained-run-stack-attachment) and [normative specification](../reference/stacked-work.md). The base decision remains Accepted.
+
+ADR-039 [Amendment 7](039-run-portable-bundles.md#amendment-7-2026-11-09-recreatable-run-storage-is-deleted-not-archived), Accepted by Arthur, 2026-11-09, deletes and journals recreatable task pins and run-owned review workspaces under the existing retention checks; other storage keeps Amendments 3 and 5 archival, and run records are never deleted.

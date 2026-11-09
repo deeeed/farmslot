@@ -49,6 +49,7 @@ import {
   summarizeRoadmapDelivery,
   type WorkGraphSnapshot,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import {
   createBacklogItem,
@@ -85,20 +86,25 @@ import {
 
 const VALID_STAGES = new Set<RoadmapItemStage>(ROADMAP_ITEM_STAGES);
 const VALID_SOURCE_KINDS = new Set<string>(ROADMAP_SOURCE_KINDS);
-const ROADMAP_ROOT = process.env.FARMSLOT_ROADMAP_DIR ?? path.join(farmslotRoot, '.roadmap');
-export { ROADMAP_ROOT as roadmapRoot };
+function ROADMAP_ROOT(): string {
+  return currentFarmPaths('gateway').state.roadmap;
+}
+export const roadmapRoot = ROADMAP_ROOT;
 let assertObservationAvailable = (): void => {};
 
 /** Startup binds the actual filesystem observer; direct store callers keep their existing reads. */
 export function setRoadmapObservationGuard(assertReady: () => void): void {
   assertObservationAvailable = assertReady;
 }
-const BACKLOG_SPEC_ROOT =
-  process.env.FARMSLOT_BACKLOG_SPEC_DIR ?? path.join(farmslotRoot, '.backlog', 'specs');
-const REFINEMENT_PROMPT_ROOT =
-  process.env.FARMSLOT_ROADMAP_REFINEMENT_PROMPT_DIR ??
-  path.join(ROADMAP_ROOT, 'refinement-prompts');
-const PROMOTION_DRAFT_ROOT = path.join(ROADMAP_ROOT, 'promotion-drafts');
+function BACKLOG_SPEC_ROOT(): string {
+  return currentFarmPaths('gateway').state.backlogSpecs;
+}
+function REFINEMENT_PROMPT_ROOT(): string {
+  return currentFarmPaths('gateway').state.refinementPrompts;
+}
+function PROMOTION_DRAFT_ROOT(): string {
+  return path.join(ROADMAP_ROOT(), 'promotion-drafts');
+}
 const DEFAULT_PROMPT_PROJECT = 'farmslot-farm';
 const ROADMAP_REFINEMENT_PROMPT_TEMPLATE = 'roadmap-refinement.md';
 let roadmapMutationTail: Promise<void> = Promise.resolve();
@@ -122,7 +128,7 @@ function sha256(value: string): string {
 }
 
 function repoRelative(filePath: string): string {
-  const relative = path.relative(farmslotRoot, filePath);
+  const relative = path.relative(farmslotRoot(), filePath);
   return relative.startsWith('..') ? filePath : relative;
 }
 
@@ -139,8 +145,8 @@ function assertSafePathSegment(label: string, value: string): void {
 }
 
 function resolveRoadmapPath(filePath: string): string {
-  const resolved = path.resolve(farmslotRoot, filePath);
-  const root = path.resolve(ROADMAP_ROOT);
+  const resolved = path.resolve(farmslotRoot(), filePath);
+  const root = path.resolve(ROADMAP_ROOT());
   if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
     throw new Error('roadmap filePath must stay under .roadmap');
   }
@@ -257,7 +263,7 @@ function slugify(value: string): string {
 
 function backlogSpecDirForProject(project: string): string {
   assertSafePathSegment('backlog spec project', project);
-  return path.join(BACKLOG_SPEC_ROOT, project);
+  return path.join(BACKLOG_SPEC_ROOT(), project);
 }
 
 function newRoadmapId(): string {
@@ -266,9 +272,9 @@ function newRoadmapId(): string {
 
 function targetDirForProject(project: string): string {
   if (project === ROADMAP_GLOBAL_PROJECT || project === ROADMAP_UNASSIGNED_PROJECT) {
-    return path.join(ROADMAP_ROOT, 'inbox', 'items');
+    return path.join(ROADMAP_ROOT(), 'inbox', 'items');
   }
-  return path.join(ROADMAP_ROOT, 'projects', project, 'items');
+  return path.join(ROADMAP_ROOT(), 'projects', project, 'items');
 }
 
 async function exists(filePath: string): Promise<boolean> {
@@ -310,25 +316,25 @@ async function allocateBacklogSpecPath(project: string, title: string): Promise<
 }
 
 async function allocateRefinementPromptPath(item: RoadmapItem): Promise<string> {
-  await mkdir(REFINEMENT_PROMPT_ROOT, { recursive: true });
+  await mkdir(REFINEMENT_PROMPT_ROOT(), { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   return path.join(
-    REFINEMENT_PROMPT_ROOT,
+    REFINEMENT_PROMPT_ROOT(),
     `${stamp}-${slugify(item.id)}-${slugify(item.title)}.md`,
   );
 }
 
 async function latestRefinementPromptPath(item: Pick<RoadmapItem, 'id'>): Promise<string | null> {
   const idSlug = slugify(item.id);
-  const files = (await collectMarkdownFiles(REFINEMENT_PROMPT_ROOT))
+  const files = (await collectMarkdownFiles(REFINEMENT_PROMPT_ROOT()))
     .filter((file) => path.basename(file).includes(`-${idSlug}-`))
     .sort((a, b) => path.basename(b).localeCompare(path.basename(a)));
   return files[0] ? repoRelative(files[0]) : null;
 }
 
 function resolveRefinementPromptPath(promptPath: string): string {
-  const absolutePath = path.resolve(farmslotRoot, promptPath);
-  const root = path.resolve(REFINEMENT_PROMPT_ROOT);
+  const absolutePath = path.resolve(farmslotRoot(), promptPath);
+  const root = path.resolve(REFINEMENT_PROMPT_ROOT());
   if (!absolutePath.startsWith(`${root}${path.sep}`) || !absolutePath.endsWith('.md')) {
     throw new Error('Roadmap prompt path must point to a refinement prompt markdown file');
   }
@@ -337,12 +343,12 @@ function resolveRefinementPromptPath(promptPath: string): string {
 
 function promotionDraftDir(itemId: string): string {
   assertSafePathSegment('roadmap item id', itemId);
-  return path.join(PROMOTION_DRAFT_ROOT, itemId);
+  return path.join(PROMOTION_DRAFT_ROOT(), itemId);
 }
 
 function resolvePromotionDraftPath(draftPath: string): string {
-  const absolutePath = path.resolve(farmslotRoot, draftPath);
-  const root = path.resolve(PROMOTION_DRAFT_ROOT);
+  const absolutePath = path.resolve(farmslotRoot(), draftPath);
+  const root = path.resolve(PROMOTION_DRAFT_ROOT());
   if (!absolutePath.startsWith(`${root}${path.sep}`) || !absolutePath.endsWith('.md')) {
     throw new Error('Roadmap promotion draft path must point to a promotion draft markdown file');
   }
@@ -468,10 +474,10 @@ async function collectMarkdownFiles(dir: string): Promise<string[]> {
 }
 
 async function collectRoadmapItemFiles(): Promise<string[]> {
-  const files = await collectMarkdownFiles(path.join(ROADMAP_ROOT, 'inbox', 'items'));
+  const files = await collectMarkdownFiles(path.join(ROADMAP_ROOT(), 'inbox', 'items'));
   let projectDirs;
   try {
-    projectDirs = await readdir(path.join(ROADMAP_ROOT, 'projects'), { withFileTypes: true });
+    projectDirs = await readdir(path.join(ROADMAP_ROOT(), 'projects'), { withFileTypes: true });
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return files;
     throw err;
@@ -479,7 +485,7 @@ async function collectRoadmapItemFiles(): Promise<string[]> {
   for (const entry of projectDirs) {
     if (!entry.isDirectory()) continue;
     files.push(
-      ...(await collectMarkdownFiles(path.join(ROADMAP_ROOT, 'projects', entry.name, 'items'))),
+      ...(await collectMarkdownFiles(path.join(ROADMAP_ROOT(), 'projects', entry.name, 'items'))),
     );
   }
   return files;
@@ -855,7 +861,7 @@ function defaultFarmslotCommand(farmslotCommand?: string): string {
 
 function checkoutFarmslotCommand(): string | null {
   for (const name of ['.env.ports', '.env']) {
-    const envPath = path.join(farmslotRoot, name);
+    const envPath = path.join(farmslotRoot(), name);
     if (!existsSync(envPath)) continue;
     let text: string;
     try {
@@ -961,7 +967,7 @@ async function roadmapFrameworkContext(item: RoadmapItem): Promise<string> {
           'No concrete target projects are set yet. Use targetProjects before drafting backlog specs.',
         ];
   return [
-    `Farmslot repo root: ${farmslotRoot}`,
+    `Farmslot repo root: ${farmslotRoot()}`,
     `Roadmap item file: ${item.filePath}`,
     '',
     'Farmslot model:',
@@ -1039,7 +1045,7 @@ async function loadExplicitRefinementPromptTemplate(
 ): Promise<string> {
   const promptPath = path.isAbsolute(refinementPromptPath)
     ? refinementPromptPath
-    : path.join(farmslotRoot, 'projects', project, refinementPromptPath);
+    : path.join(farmslotRoot(), 'projects', project, refinementPromptPath);
   return expandPromptTemplate(
     await readFile(promptPath, 'utf-8'),
     vars,
@@ -1201,8 +1207,8 @@ function buildRefinementShellCommand(
     prelude: roadmapRefinementRunnerPrelude(),
     commandLabel: 'Roadmap refinement command',
     fallbackMessages: [
-      `Roadmap refinement prompt: ${path.resolve(farmslotRoot, promptPath)}`,
-      `Edit roadmap item: ${path.resolve(farmslotRoot, item.filePath)}`,
+      `Roadmap refinement prompt: ${path.resolve(farmslotRoot(), promptPath)}`,
+      `Edit roadmap item: ${path.resolve(farmslotRoot(), item.filePath)}`,
     ],
   });
 }
@@ -1483,7 +1489,7 @@ async function promoteRoadmapItemUnlocked(
   } catch (err) {
     await Promise.allSettled(backlogItems.map((item) => deleteBacklogItem(item.id)));
     await Promise.allSettled(
-      specPaths.map((specPath) => unlink(path.resolve(farmslotRoot, specPath))),
+      specPaths.map((specPath) => unlink(path.resolve(farmslotRoot(), specPath))),
     );
     throw err;
   }

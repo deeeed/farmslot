@@ -8,6 +8,7 @@ import {
   type ReviewWorkspaceBinding,
   type Run,
 } from '@farmslot/protocol';
+import { reportedFarmPaths } from '@farmslot/slot-config';
 
 import { execFileArgv, isLocal } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
@@ -224,10 +225,14 @@ export async function allocateReviewWorkspace(
       throw new Error('Node returned an incompatible worker state root');
     const nativeRoot = state.stateDirectory.slice(0, -suffix.length);
     const configuredRoot = admission.project.staticReview?.workspace?.root;
+    const report = reportedFarmPaths(admission.pool.machine);
+    const reportedRoot = report?.layout === 2 ? report.state.reviewWorkspaces : undefined;
     const root = originalBinding
       ? path.posix.resolve(originalBinding.checkoutPath, '../../..')
       : path.posix.join(
-          configuredRoot ?? path.posix.join(path.posix.dirname(nativeRoot), 'review-workspaces'),
+          configuredRoot ??
+            reportedRoot ??
+            path.posix.join(path.posix.dirname(nativeRoot), 'review-workspaces'),
           ownerHash,
         );
     const workspace = path.posix.join(root, 'runs', workspaceId);

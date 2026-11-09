@@ -6,9 +6,7 @@ import { WebSocket } from 'ws';
 import type { Run } from '@farmslot/protocol';
 
 import { handleNodeResponse } from '../fleet/node-rpc.js';
-import { farmslotRoot } from '../projects/repo-root.js';
-
-export const poolDir = path.join(farmslotRoot, 'pool');
+export { poolDirectory } from '../core/config.js';
 
 export class FakeNodeWebSocket {
   readyState = WebSocket.OPEN;

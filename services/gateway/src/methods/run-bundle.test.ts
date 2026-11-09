@@ -52,7 +52,7 @@ const { runsDirectory } = await import('../runs/store.js');
 const outputPath = path.join(tmpdir(), 'exports/runs.farmslot-bundle');
 const importDestinations = () => [
   tmpdir(),
-  farmslotRoot,
+  farmslotRoot(),
   runsDirectory(),
   path.join(runBundleHome(), 'run-bundles'),
 ];
@@ -89,7 +89,7 @@ test('bundle imports guard the configured store instead of the default home path
   configuredRoot = path.join(tmpdir(), 'configured-bundle-store');
   await runBundleImport({ bundlePath: '/bundles/b' });
   assert.deepEqual(rootChecks, [configuredRoot]);
-  assert.deepEqual(checked, [tmpdir(), farmslotRoot, runsDirectory(), configuredRoot]);
+  assert.deepEqual(checked, [tmpdir(), farmslotRoot(), runsDirectory(), configuredRoot]);
   wrote.length = 0;
   refused = configuredRoot;
   await assert.rejects(runBundleImport({ bundlePath: '/bundles/b' }), /volume is missing/);

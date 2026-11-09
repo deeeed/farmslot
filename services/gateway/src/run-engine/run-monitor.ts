@@ -10,6 +10,7 @@ import {
   FLOW_STEPS,
   type FlowType,
   interactiveHandoffDecisionActions,
+  isArtifactOnlyScriptedCommandRun,
   isLightweightInteractiveDevRun,
   isTerminalRunStatus,
   type MonitorSnapshot,
@@ -866,6 +867,9 @@ export async function probeWorkerSignalForRun(
       signalJsonPath,
       boundSig,
       ctx?.taskFile,
+      isArtifactOnlyScriptedCommandRun(run)
+        ? { project: run.project, commandRef: run.scripted.commandRef }
+        : undefined,
     );
     if (!artifactValidation.ok) {
       return {

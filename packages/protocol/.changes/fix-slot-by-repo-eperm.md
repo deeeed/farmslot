@@ -1,1 +1,0 @@
-- `findSlotByRepo` treats a slot repo the caller may not read (EPERM/EACCES) as a non-match instead of failing the lookup.

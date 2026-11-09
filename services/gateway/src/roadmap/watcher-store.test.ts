@@ -31,7 +31,7 @@ test('real observed files feed the actual store and read failures remain visible
   const key = { family: 'planning', collection: 'roadmap' } as const;
   let source!: FSWatcher;
   const observation = await watchRoadmapItems(
-    store.roadmapRoot,
+    store.roadmapRoot(),
     revisions,
     (directory, options) => {
       source = watch(directory, options);
@@ -49,7 +49,7 @@ test('real observed files feed the actual store and read failures remain visible
     revision = revisions.revision(key);
   }
   try {
-    const directory = path.join(store.roadmapRoot, 'inbox', 'items');
+    const directory = path.join(store.roadmapRoot(), 'inbox', 'items');
     await mkdir(directory, { recursive: true });
     const file = path.join(directory, 'external.md');
     await writeFile(file, item('Original'));

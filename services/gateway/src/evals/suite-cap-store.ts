@@ -1,12 +1,10 @@
 // eval-suite-cap-store.ts — Durable eval matrix concurrency caps
-
 import { readFile, writeFile } from 'node:fs/promises';
-import path from 'node:path';
 
 import { isTerminalRunStatus, type QueueItem } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { isolatedTestPath } from '../core/isolated-test-path.js';
-import { farmslotRoot } from '../fleet/state.js';
 import { getAllRuns } from '../runs/store.js';
 
 const DEFAULT_EVAL_SUITE_CAP = 1;
@@ -24,14 +22,20 @@ function shouldUseIsolatedEvalCapStore(env: NodeJS.ProcessEnv, argv: readonly st
 }
 
 function resolveEvalCapFile(): string {
-  if (process.env.FARMSLOT_EVAL_SUITE_CAP_FILE) return process.env.FARMSLOT_EVAL_SUITE_CAP_FILE;
-  if (shouldUseIsolatedEvalCapStore(process.env, process.argv)) {
+  const paths = currentFarmPaths('gateway');
+  if (
+    paths.layout === 'legacy' &&
+    !paths.envOverrides.includes('FARMSLOT_EVAL_SUITE_CAP_FILE') &&
+    shouldUseIsolatedEvalCapStore(process.env, process.argv)
+  ) {
     return isolatedTestPath('farmslot-test-eval-suite-caps', '.json');
   }
-  return path.join(farmslotRoot, '.eval-suite-caps.json');
+  return paths.state.evalCaps;
 }
 
-const CAP_FILE = resolveEvalCapFile();
+function CAP_FILE(): string {
+  return resolveEvalCapFile();
+}
 const caps = new Map<string, EvalSuiteCapRecord>();
 
 function normalizeCapGroupId(capGroupId: string): string {
@@ -46,13 +50,13 @@ function normalizeCap(cap: number): number {
 }
 
 async function persistEvalSuiteCaps(): Promise<void> {
-  await writeFile(CAP_FILE, JSON.stringify([...caps.values()], null, 2), 'utf-8');
+  await writeFile(CAP_FILE(), JSON.stringify([...caps.values()], null, 2), 'utf-8');
 }
 
 export async function loadEvalSuiteCaps(): Promise<void> {
   caps.clear();
   try {
-    const raw = await readFile(CAP_FILE, 'utf-8');
+    const raw = await readFile(CAP_FILE(), 'utf-8');
     const records = JSON.parse(raw) as EvalSuiteCapRecord[];
     for (const record of records) {
       if (!record?.capGroupId) continue;

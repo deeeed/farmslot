@@ -1,6 +1,5 @@
 // Backlog item refinement sessions — tighten an existing work contract without
 // mutating lifecycle, source identity, or run/work-graph linkage.
-
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -14,6 +13,7 @@ import {
   DEFAULT_BACKLOG_REFINEMENT_RUNNER,
   type SafetyTier,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { farmslotRoot } from '../fleet/state.js';
 import {
@@ -29,9 +29,9 @@ import { getBacklogItemSnapshot, getBacklogSpec } from './store.js';
 
 const SAFETY_TIERS = new Set<SafetyTier>(['sandboxed', 'full-auto', 'dangerous']);
 
-const REFINEMENT_PROMPT_ROOT =
-  process.env.FARMSLOT_BACKLOG_REFINEMENT_PROMPT_DIR ??
-  path.join(farmslotRoot, '.backlog', 'refinement-prompts');
+function REFINEMENT_PROMPT_ROOT(): string {
+  return currentFarmPaths('gateway').state.backlogRefinementPrompts;
+}
 
 function slugify(value: string): string {
   const slug = value
@@ -44,7 +44,7 @@ function slugify(value: string): string {
 }
 
 function repoRelative(filePath: string): string {
-  const relative = path.relative(farmslotRoot, filePath);
+  const relative = path.relative(farmslotRoot(), filePath);
   return relative.startsWith('..') ? filePath : relative;
 }
 
@@ -54,10 +54,10 @@ export function backlogRefinementSessionName(item: Pick<BacklogItem, 'id'>): str
 }
 
 async function allocateRefinementPromptPath(item: BacklogItem): Promise<string> {
-  await mkdir(REFINEMENT_PROMPT_ROOT, { recursive: true });
+  await mkdir(REFINEMENT_PROMPT_ROOT(), { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   return path.join(
-    REFINEMENT_PROMPT_ROOT,
+    REFINEMENT_PROMPT_ROOT(),
     `${stamp}-${slugify(item.sourceRef || item.id)}-${slugify(item.title)}.md`,
   );
 }
@@ -216,7 +216,7 @@ export function buildBacklogRefinementShellCommand(
     prelude: backlogRefinementPrelude(),
     commandLabel: 'Backlog refinement command',
     fallbackMessages: [
-      `Backlog refinement prompt: ${path.resolve(farmslotRoot, promptPath)}`,
+      `Backlog refinement prompt: ${path.resolve(farmslotRoot(), promptPath)}`,
       `Backlog item: ${item.sourceRef} (${item.id})`,
     ],
   });

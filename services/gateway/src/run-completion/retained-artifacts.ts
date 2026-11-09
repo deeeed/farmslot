@@ -21,7 +21,7 @@ import {
   sanitizeLatestValidRecipeRunPointer,
   WORKER_TERMINAL_CONTRACT_INPUT,
 } from '@farmslot/protocol';
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { strictTaskRelativePathFromFarmslotRoot } from '@farmslot/protocol/runs/portable-bundle';
 import {
   type AcquisitionTaskDirToken,
@@ -150,13 +150,20 @@ export function createRunArtifactAcquisition(run: Run): RunArtifactAcquisition {
 
 /** The home whose `run-bundles` directory is the gateway's retained bundle store. */
 export function runBundleHome(): string {
-  return process.env.FARMSLOT_HOME
-    ? farmslotHome()
-    : process.env.FARMSLOT_RUNS_DIR
-      ? path.join(runsDirectory(), 'bundle-home')
-      : shouldUseIsolatedRunsDir(process.env, process.argv)
-        ? isolatedTestPath('farmslot-test-bundle-home')
-        : farmslotHome();
+  const paths = currentFarmPaths('gateway');
+  if (
+    paths.layout === 'legacy' &&
+    !process.env.FARMSLOT_HOME &&
+    !paths.envOverrides.includes('FARMSLOT_RUNS_DIR') &&
+    shouldUseIsolatedRunsDir(process.env, process.argv)
+  ) {
+    return isolatedTestPath('farmslot-test-bundle-home');
+  }
+  return paths.layout === 2 ||
+    process.env.FARMSLOT_HOME ||
+    !paths.envOverrides.includes('FARMSLOT_RUNS_DIR')
+    ? paths.home
+    : path.dirname(paths.data.runBundles);
 }
 
 export async function runBundleStore(create = false) {
@@ -164,7 +171,9 @@ export async function runBundleStore(create = false) {
     throw new Error('Sandbox gateways may only read the owning gateway retained bundle store.');
   const home = runBundleHome();
   const configured = runBundleRetentionSettings(home).storeRoot;
-  const root = configured ?? path.join(home, 'run-bundles');
+  const paths = currentFarmPaths('gateway');
+  const root =
+    configured ?? (paths.layout === 2 ? paths.data.runBundles : path.join(home, 'run-bundles'));
   try {
     if (configured) await assertHeavyWriteRootPresent(root, 'runBundleRetention.storeRoot');
     assertStorageVolumePresent(root);
@@ -173,6 +182,7 @@ export async function runBundleStore(create = false) {
       openRunBundleStore({
         runsDir: runsDirectory(),
         home,
+        ...(paths.layout === 2 ? { paths } : {}),
         create: create && !process.env.FARMSLOT_SANDBOX_HOME,
       });
     // Opening for writes creates the home and the runs directory, so both roots are checked first.
@@ -428,7 +438,7 @@ export async function archiveRunArtifactHousekeeping(includeReferencedMedia = tr
     reportRunMediaArchive(
       await archiveRunBundleMedia({
         store,
-        farmslotRoot,
+        farmslotRoot: farmslotRoot(),
         archiveRoot: root,
         assertArchiveWriteRoom: assertRunBundleWriteRoom,
         policy: await retentionPolicy(),
@@ -535,7 +545,7 @@ export async function warnRunBundleCapacity(): Promise<void> {
   try {
     const store = await runBundleStore(true);
     const policy = await retentionPolicy();
-    const usage = await runBundleAdmissionUsage(store, farmslotRoot, acquisitionTaskDirToken);
+    const usage = await runBundleAdmissionUsage(store, farmslotRoot(), acquisitionTaskDirToken);
     if (runBundleNearCapacity(usage.total, policy))
       reportGatewayWarning(
         'run-bundle.capacity',
@@ -573,7 +583,7 @@ export async function reserveRunArtifactMetadata(run: Run): Promise<void> {
   const policy = await retentionPolicy();
   await persistRunNow(getRun(run.id) ?? run, 'retention admission');
   const reserve = () =>
-    reserveRunBundleMetadata(store, run.id, policy, farmslotRoot, acquisitionTaskDirToken);
+    reserveRunBundleMetadata(store, run.id, policy, farmslotRoot(), acquisitionTaskDirToken);
   // Housekeeping walks the store under its lock, so dispatch waits for it only when capacity
   // refuses; the retention pass and captures run it otherwise (F322).
   try {
@@ -650,7 +660,7 @@ export async function retainCapturedRunArtifacts(input: {
   }
   return materializeRunBundle({
     store,
-    farmslotRoot,
+    farmslotRoot: farmslotRoot(),
     acquisitionTaskDirs: acquisitionTaskDirToken,
     archiveRoot: (await import('../runs/storage-archive.js')).runArchiveRoot(),
     assertArchiveWriteRoom: assertRunBundleWriteRoom,
@@ -690,7 +700,7 @@ export async function retainCapturedRunArtifacts(input: {
       // Only the gateway's acquisition tree is regenerable. Slot trees and task inputs stay intact.
       if (
         input.releaseStagingMedia &&
-        strictTaskRelativePathFromFarmslotRoot(farmslotRoot, input.run.taskFile)
+        strictTaskRelativePathFromFarmslotRoot(farmslotRoot(), input.run.taskFile)
       ) {
         const unavailable = new Set(
           missingData.map((entry) => parseRunBundleMissingData(entry).path),

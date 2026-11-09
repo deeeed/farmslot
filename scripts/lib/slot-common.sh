@@ -3,32 +3,12 @@
 # Source this file; do not execute directly.
 #
 # Provides: resolve_slot, resolve_remote_repo, is_local, run_on, color helpers
-# Requires: POOL_DIR to be set before sourcing.
-#
-# Node support bundles (ADR-035) sync scripts/projects but not pool JSON.
-# Hooks that derive POOL_DIR from {{node_support_dir}} therefore miss pool/;
-# fall back to the node deployment root when that directory exists.
-
-if [[ -n "${POOL_DIR:-}" && ! -d "${POOL_DIR}" && -d "${HOME}/farmslot-node/pool" ]]; then
-  POOL_DIR="${HOME}/farmslot-node/pool"
-fi
-
-# Checkout-local CLI, overridable; relocated script trees (deploy-node copies,
-# test sandboxes) fall back to the installed farmslot, which resolves the same
-# slot-config core. Fail loudly when neither exists.
-if [ -z "${FARMSLOT_CLI:-}" ]; then
-  _slot_common_cli="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../packages/cli" 2>/dev/null && pwd || true)"
-  if [ -n "$_slot_common_cli" ] && [ -f "${_slot_common_cli}/bin/farmslot.mjs" ]; then
-    FARMSLOT_CLI="${_slot_common_cli}/bin/farmslot.mjs"
-  elif command -v farmslot >/dev/null 2>&1; then
-    FARMSLOT_CLI="$(command -v farmslot)"
-  else
-    echo "FAIL: farmslot CLI not found (no packages/cli next to scripts/ and no farmslot on PATH). Set FARMSLOT_CLI." >&2
-    return 1 2>/dev/null || exit 1
-  fi
-fi
-# The CLI verbs honor the historical POOL_DIR/PROJECTS_DIR overrides via env.
-[ -n "${POOL_DIR:-}" ] && export FARMSLOT_POOL_DIR="${FARMSLOT_POOL_DIR:-$POOL_DIR}"
+# Paths are exported by the caller or read from the selected CLI's FarmPaths report.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/resolve-farmslot-cli.sh" || return 1
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/farm-paths.sh" || return 1
+resolve_farm_shell_paths || return 1
+POOL_DIR="$FARMSLOT_POOL_DIR"
+PROJECTS_DIR="$FARMSLOT_PROJECTS_DIR"
 
 # ── Colors ──────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
@@ -249,13 +229,6 @@ expand_recycle_cmd() {
 # ══════════════════════════════════════════════════════════════════════
 # ── Project config layer ─────────────────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════
-
-# Directory containing project configs (projects/<name>/project.json)
-SLOT_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FARMSLOT_ROOT="${FARMSLOT_ROOT:-$(cd "${SLOT_COMMON_DIR}/../.." && pwd)}"
-PROJECTS_DIR="${PROJECTS_DIR:-${FARMSLOT_ROOT}/projects}"
-# Point the CLI verbs at this tree's projects (relocated script trees included).
-export FARMSLOT_PROJECTS_DIR="${FARMSLOT_PROJECTS_DIR:-$PROJECTS_DIR}"
 
 # ── load_project_config ──────────────────────────────────────────────
 # Reads project.json for the slot's project. Sets:

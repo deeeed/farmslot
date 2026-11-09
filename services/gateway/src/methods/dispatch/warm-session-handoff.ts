@@ -308,7 +308,7 @@ export async function warmSessionHandoffDispatch(
   }
 
   let taskFilePath = params.taskFile;
-  if (!path.isAbsolute(taskFilePath)) taskFilePath = path.join(farmslotRoot, taskFilePath);
+  if (!path.isAbsolute(taskFilePath)) taskFilePath = path.join(farmslotRoot(), taskFilePath);
   if (!existsSync(taskFilePath)) {
     return {
       handedOff: false,

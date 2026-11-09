@@ -1082,7 +1082,7 @@ export async function dispatchExecute(
   // Resolve task file path
   let taskFilePath = params.taskFile;
   if (!path.isAbsolute(taskFilePath)) {
-    taskFilePath = path.join(farmslotRoot, taskFilePath);
+    taskFilePath = path.join(farmslotRoot(), taskFilePath);
   }
   if (!existsSync(taskFilePath)) throw new Error(`Task file not found: ${taskFilePath}`);
 

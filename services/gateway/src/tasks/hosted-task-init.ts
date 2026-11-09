@@ -117,7 +117,7 @@ async function hostedTaskRuntime(
   if (local)
     return trackCleanupCommand(
       measureManagedOperation('exec', 'node', () =>
-        runTaskRuntime(request, farmslotRoot, localCommandEnvironment(), signal),
+        runTaskRuntime(request, farmslotRoot(), localCommandEnvironment(), signal),
       ),
     );
   if (nodeLink)
@@ -142,6 +142,8 @@ async function hostedTaskRuntime(
 
 export interface HostedTaskInput {
   runner?: string;
+  /** An artifact-only scripted command run: the node resolves the command-result contract. */
+  scriptedCommand?: true;
   binding: 'project' | 'static';
   task: Omit<TaskInitSpec, 'execution' | 'markCommand' | 'template'>;
   template: SelectedExecutionTemplate;
@@ -153,7 +155,7 @@ export async function hostedTaskCommand(slot: SlotVars, args: readonly string[])
   const support = expandTemplate('{{farmslot_dir}}', slot);
   const supportArg = isShellHomePath(support) ? support : shellQuote(support);
   const script =
-    'farm="$1"; support="$2"; shift 2; unset FARMSLOT_ROOT; export FARMSLOT_POOL_DIR="${FARMSLOT_POOL_DIR:-$farm/pool}" FARMSLOT_PROJECTS_DIR="${FARMSLOT_PROJECTS_DIR:-$support/projects}" FARMSLOT_CLI="${FARMSLOT_CLI:-$HOME/.local/bin/farmslot}"; source "$support/scripts/lib/resolve-farmslot-cli.sh" && exec "$FARMSLOT_CLI" --json "$@"';
+    'farm="$1"; support="$2"; shift 2; unset FARMSLOT_ROOT; export FARMSLOT_CLI="${FARMSLOT_CLI:-$HOME/.local/bin/farmslot}"; source "$support/scripts/lib/resolve-farmslot-cli.sh" && exec "$FARMSLOT_CLI" --json "$@"';
   return withMachineEnv(
     `bash -c ${shellQuote(script)} hosted-task ${shellQuote(farm)} ${supportArg} ${args.map(shellQuote).join(' ')}`,
     slot,
@@ -166,6 +168,7 @@ export function hostedTaskRequest(slotId: string, input: HostedTaskInput): strin
     version: 1,
     slotId,
     ...(input.runner === 'scripted' ? { runner: 'scripted' } : {}),
+    ...(input.scriptedCommand ? { scriptedCommand: true } : {}),
     binding: input.binding,
     task: input.task,
     template: {

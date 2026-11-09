@@ -22,7 +22,7 @@ import { expandReviewFixTemplate, expandReviewTemplate } from './templates.js';
 
 test('configured review depth selects canonical bytes and records provenance without a runtime-to-static fallback', async (t) => {
   const project = `.canonical-review-${process.pid}`;
-  const root = path.join(farmslotRoot, 'projects', project);
+  const root = path.join(farmslotRoot(), 'projects', project);
   await mkdir(path.join(root, 'shared/review'), { recursive: true });
   const contents = Object.fromEntries(
     ['static-code', 'full-live'].map((depth) => [
@@ -111,7 +111,7 @@ test('configured review depth selects canonical bytes and records provenance wit
 test('a farm review template can use {{DEFAULT_BRANCH}}', async (t) => {
   // The va-mmcx-terminal-farm review template diffs against the default branch.
   const project = `.default-branch-review-${process.pid}`;
-  const root = path.join(farmslotRoot, 'projects', project);
+  const root = path.join(farmslotRoot(), 'projects', project);
   await mkdir(path.join(root, 'templates/worker'), { recursive: true });
   await writeFile(
     path.join(root, 'templates/worker/review.md'),
@@ -158,7 +158,7 @@ test('a farm review template can use {{DEFAULT_BRANCH}}', async (t) => {
 test('a project without a review template refuses the review launch instead of failing a review', async (t) => {
   // F250: audiolab-farm had no templates/worker/review.md; the request became a failed review.
   const project = `.missing-review-template-${process.pid}`;
-  const root = path.join(farmslotRoot, 'projects', project);
+  const root = path.join(farmslotRoot(), 'projects', project);
   await mkdir(root, { recursive: true });
   await writeFile(path.join(root, 'project.json'), JSON.stringify({ name: project }));
   invalidateProjectVarsCache(project);
@@ -190,7 +190,7 @@ test('a project without a review template refuses the review launch instead of f
 
 test('expandReviewTemplate resolves farmslot_dir placeholders', async (t) => {
   const project = `.review-farm-root-${process.pid}`;
-  const root = path.join(farmslotRoot, 'projects', project);
+  const root = path.join(farmslotRoot(), 'projects', project);
   await mkdir(path.join(root, 'templates/worker'), { recursive: true });
   await writeFile(path.join(root, 'project.json'), JSON.stringify({ name: project }));
   await writeFile(
@@ -234,7 +234,7 @@ test('expandReviewTemplate resolves farmslot_dir placeholders', async (t) => {
   assert.equal(rendered.includes('{{FARMSLOT_DIR}}'), false);
   assert.match(
     rendered,
-    new RegExp(`${farmslotRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/recorded-evidence\\.json`),
+    new RegExp(`${farmslotRoot().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/recorded-evidence\\.json`),
   );
 
   const remoteRoot = '/relocated-node/development';
@@ -274,7 +274,7 @@ test('expandReviewTemplate resolves farmslot_dir placeholders', async (t) => {
 
 test('review-fix templates resolve nested helpers in the active node and preserve authored issues', async (t) => {
   const project = `.review-fix-node-root-${process.pid}`;
-  const root = path.join(farmslotRoot, 'projects', project);
+  const root = path.join(farmslotRoot(), 'projects', project);
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
     invalidateProjectVarsCache(project);

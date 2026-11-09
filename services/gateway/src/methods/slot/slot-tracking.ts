@@ -155,7 +155,7 @@ export async function isOperatorRootSlot(vars: SlotVars): Promise<boolean> {
       return path.resolve(p);
     }
   };
-  const opRoot = canonical(farmslotRoot);
+  const opRoot = canonical(farmslotRoot());
   // Exact (or symlinked) match — the cheap path, no git needed.
   if (canonical(vars.remoteRepo) === opRoot) return true;
   // Subdirectory-of-operator case: a slot pointing at any directory INSIDE the

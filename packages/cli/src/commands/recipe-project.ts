@@ -463,7 +463,7 @@ export async function projectRecipeHostOptions(
     (configuredProjectsDir
       ? path.resolve(configuredProjectsDir)
       : path.resolve(
-          process.env.FARMSLOT_ROOT?.trim() || workspace?.farmslotDir || repoRoot,
+          process.env.FARMSLOT_ROOT?.trim() || workspace?.farmslotDir || repoRoot(),
           'projects',
         ));
   const diagnosis = recipeProjectOptions(new Command());

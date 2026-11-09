@@ -12,6 +12,7 @@ import {
 
 import {
   buildCodexExecLaunch,
+  buildInteractiveRefinementRunnerCommand,
   buildLaunchCommand,
   type BuildLaunchOptions,
   buildRunnerSessionReloadCommand,
@@ -1895,6 +1896,98 @@ describe('buildLaunchCommand', () => {
       assert.match(
         cmd,
         /unset CLAUDECODE && cd \/tmp\/repo && \/usr\/local\/bin\/claude --settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json' --model opus \.task\/fix\/abc\/TASK\.md/,
+      );
+    });
+
+    it('preserves selected effort once across the Claude tmux launch paths', () => {
+      const vars = makeVars({ dispatchCmd: 'cd {repo} && {claude_path} --model {model}' });
+      const commands = [
+        buildLaunchCommand(vars, 'claude', 'opus', PROMPT, {
+          effort: 'max',
+          claudeUsesDispatchCmd: true,
+        }),
+        buildLaunchCommand(
+          { ...vars, dispatchCmd: vars.dispatchCmd + ' --effort {effort}' },
+          'claude',
+          'opus',
+          PROMPT,
+          { effort: 'max', claudeUsesDispatchCmd: true },
+        ),
+        buildLaunchCommand({ ...vars, dispatchCmd: '' }, 'claude', 'opus', PROMPT, {
+          effort: 'max',
+        }),
+        buildRunnerSessionReloadCommand(vars, 'claude', 'opus', 'fixture-session', {
+          effort: 'max',
+        }),
+        buildInteractiveRefinementRunnerCommand({
+          runner: 'claude',
+          model: 'opus',
+          effort: 'max',
+          repo: vars.remoteRepo,
+          promptPath: '/tmp/prompt.md',
+          binary: vars.claudePath,
+        }),
+      ];
+      for (const command of commands) {
+        assert.ok(command);
+        assert.match(command, /--effort max(?: |$)/);
+        assert.equal(command.match(/--effort/g)?.length, 1);
+      }
+    });
+
+    for (const effort of [undefined, 'auto']) {
+      it(`leaves Claude effort unset across all launch paths for ${effort}`, () => {
+        const vars = makeVars({ dispatchCmd: 'cd {repo} && {claude_path} --model {model}' });
+        const commands = [
+          buildLaunchCommand(vars, 'claude', 'opus', PROMPT, {
+            effort,
+            claudeUsesDispatchCmd: true,
+          }),
+          buildLaunchCommand(
+            { ...vars, dispatchCmd: vars.dispatchCmd + ' --effort {effort}' },
+            'claude',
+            'opus',
+            PROMPT,
+            { effort, claudeUsesDispatchCmd: true },
+          ),
+          buildLaunchCommand({ ...vars, dispatchCmd: '' }, 'claude', 'opus', PROMPT, { effort }),
+          buildRunnerSessionReloadCommand(vars, 'claude', 'opus', 'fixture-session', { effort }),
+          buildInteractiveRefinementRunnerCommand({
+            runner: 'claude',
+            model: 'opus',
+            effort,
+            repo: vars.remoteRepo,
+            promptPath: '/tmp/prompt.md',
+            binary: vars.claudePath,
+          }),
+        ];
+        for (const command of commands) {
+          assert.ok(command);
+          assert.doesNotMatch(command, /--effort/);
+        }
+      });
+    }
+
+    it('refuses unsafe Claude effort on reload and refinement', () => {
+      const vars = makeVars();
+      assert.throws(
+        () =>
+          buildRunnerSessionReloadCommand(vars, 'claude', 'opus', 'fixture-session', {
+            effort: '--help',
+          }),
+        /runner effort.*cannot be passed/,
+      );
+      assert.throws(
+        () =>
+          buildInteractiveRefinementRunnerCommand({
+            runner: 'claude',
+            model: 'opus',
+            effort: '--help',
+            repo: vars.remoteRepo,
+            promptPath: '/tmp/prompt.md',
+            binary: vars.claudePath,
+          }),
+        /runner effort.*cannot be passed/,
       );
     });
 

@@ -73,9 +73,9 @@ export async function initPRRules(
   monitors: PRMonitoringService,
 ): Promise<PRRuleService> {
   service?.stop();
-  const store = await PRRuleStore.load(resolve(farmslotRoot, '.pr-rules.json'));
+  const store = await PRRuleStore.load(resolve(farmslotRoot(), '.pr-rules.json'));
   const checkpoints = await PRSourceCheckpoints.load(
-    resolve(farmslotRoot, '.pr-source-checkpoints.json'),
+    resolve(farmslotRoot(), '.pr-source-checkpoints.json'),
   );
   const isOwnerAdmin = ownerAdminAuthority(auth);
   service = new PRRuleService(

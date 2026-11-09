@@ -3,7 +3,7 @@ import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { isRecord, parseProjectVisualClaimReviewPolicy } from '@farmslot/protocol';
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { resolveApprovalPolicy } from '@farmslot/protocol/review-approval-policy.cjs';
 
 import { readWorkspaceState, resolveWorkspaceRoot } from './repo-root.js';
@@ -16,7 +16,7 @@ export type SourceRuntimeSettings = Partial<
 function settingsPath(project: string): string {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(project))
     throw new Error('Invalid project setting target');
-  return path.join(farmslotHome(), 'sources', 'runtime-settings', `${project}.json`);
+  return path.join(currentFarmPaths('node').state.sources, 'runtime-settings', `${project}.json`);
 }
 
 export async function readSourceRuntimeSettings(project: string): Promise<SourceRuntimeSettings> {

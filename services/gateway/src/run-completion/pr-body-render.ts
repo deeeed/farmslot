@@ -13,20 +13,19 @@
 // file and is returned, never written into the mirror. The mirror's
 // artifacts/pr-body.md is the worker's own copy, which every mirror refresh
 // replaces, so a body read back from there could be the worker's render.
-
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { isRecord, type Run } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { readPoolFiles } from '@farmslot/protocol/node/slot-by-repo';
 
 import {
   getProjectFieldRaw,
   loadProjectVars,
   loadSlotVars,
-  poolDir,
   type RawPoolJson,
   SlotConfigError,
 } from '../core/config.js';
@@ -70,7 +69,8 @@ export interface PrBodyRendererConfigDeps {
 const rendererConfigDeps: PrBodyRendererConfigDeps = {
   loadSlotVars,
   loadProjectVars,
-  readPools: () => readPoolFiles<RawPoolJson>(poolDir).map(({ pool }) => pool),
+  readPools: () =>
+    readPoolFiles<RawPoolJson>(currentFarmPaths('gateway').pool).map(({ pool }) => pool),
 };
 
 export async function resolvePackRenderer(

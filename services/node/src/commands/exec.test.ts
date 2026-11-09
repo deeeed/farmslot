@@ -212,3 +212,38 @@ test('scoped exec resolves the default pool in checkout and deployed layouts', a
     );
   }
 });
+
+test(
+  'ordinary and login exec export the daemon layout-2 roots to shell scripts',
+  { timeout: 4000 },
+  async (t) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'node-exec-roots-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const home = path.join(root, 'instance');
+    await mkdir(path.join(home, 'config'), { recursive: true });
+    await writeFile(path.join(home, 'config/instance.json'), '{"layout":2}');
+    const previous = process.env.FARMSLOT_HOME;
+    process.env.FARMSLOT_HOME = home;
+    t.after(() => {
+      if (previous === undefined) delete process.env.FARMSLOT_HOME;
+      else process.env.FARMSLOT_HOME = previous;
+    });
+    for (const environment of ['login', 'service'] as const) {
+      const result = await exec({
+        environment,
+        argv: [
+          process.execPath,
+          '-e',
+          'process.stdout.write(JSON.stringify([process.env.FARMSLOT_HOME,process.env.FARMSLOT_POOL_DIR,process.env.FARMSLOT_PROJECTS_DIR,process.env.FARMSLOT_CONFIG_DIR]))',
+        ],
+      });
+      assert.equal(result.exitCode, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), [
+        home,
+        path.join(home, 'pool'),
+        path.join(home, 'projects'),
+        path.join(home, 'config'),
+      ]);
+    }
+  },
+);

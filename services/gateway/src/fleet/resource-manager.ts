@@ -22,6 +22,7 @@ import {
   type SlotStatus,
 } from '@farmslot/protocol';
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { withSourceEnvironment } from '@farmslot/slot-config';
 
 // ─── Placeholder helpers ───
@@ -34,7 +35,6 @@ import { reportSlotResourceLifecycle } from '../core/resource-lifecycle-log.js';
 import { slotFileExists, slotReadFile } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
 import { resolveRemoteFarmCommand } from '../node-support/remote-command.js';
-import { farmslotRoot } from '../projects/repo-root.js';
 import { slotResourceChanges } from '../resources/slot-run-bindings.js';
 
 import { deviceControlVerdict } from './device-inventory.js';
@@ -104,9 +104,9 @@ export function purgeRemovedSlotWarnings(
 }
 
 // Track which machines have active resource watches
-const resourceWatchStateFile =
-  process.env.FARMSLOT_RESOURCE_WATCH_STATE_FILE ??
-  path.join(farmslotRoot, '.farm-cache', 'resource-watch-state.json');
+function resourceWatchStateFile(): string {
+  return currentFarmPaths('gateway').state.resourceWatchState;
+}
 const persistedResourceWatchState = loadPersistedResourceWatchState();
 let resourceWatchAutoStartEnabled =
   readEnvResourceWatchEnabled() ?? persistedResourceWatchState?.enabled ?? true;
@@ -129,9 +129,9 @@ function readEnvResourceWatchEnabled(): boolean | undefined {
 }
 
 function loadPersistedResourceWatchState(): { enabled: boolean; updatedAt: string | null } | null {
-  if (!existsSync(resourceWatchStateFile)) return null;
+  if (!existsSync(resourceWatchStateFile())) return null;
   try {
-    const parsed = JSON.parse(readFileSync(resourceWatchStateFile, 'utf8')) as {
+    const parsed = JSON.parse(readFileSync(resourceWatchStateFile(), 'utf8')) as {
       enabled?: unknown;
       updatedAt?: unknown;
     };
@@ -151,8 +151,8 @@ function loadPersistedResourceWatchState(): { enabled: boolean; updatedAt: strin
 }
 
 function persistResourceWatchState(enabled: boolean, updatedAt: string): void {
-  mkdirSync(path.dirname(resourceWatchStateFile), { recursive: true });
-  writeFileSync(resourceWatchStateFile, JSON.stringify({ enabled, updatedAt }, null, 2));
+  mkdirSync(path.dirname(resourceWatchStateFile()), { recursive: true });
+  writeFileSync(resourceWatchStateFile(), JSON.stringify({ enabled, updatedAt }, null, 2));
 }
 
 /**

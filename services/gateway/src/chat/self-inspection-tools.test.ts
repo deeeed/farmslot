@@ -95,7 +95,7 @@ await test('read_farmslot_file bounds content before returning it', async () => 
 
 await test('read_farmslot_file rejects parent symlink scope bypasses', async () => {
   const tempDir = await mkdtemp(path.join(tmpdir(), 'farmslot-scope-test-'));
-  const linkParent = path.resolve(farmslotRoot, 'services/gateway/src/chat');
+  const linkParent = path.resolve(farmslotRoot(), 'services/gateway/src/chat');
   const linkPath = path.join(linkParent, `scope-test-${process.pid}-${Date.now()}`);
   try {
     await mkdir(linkParent, { recursive: true });
@@ -143,7 +143,7 @@ await test('read_task_file path resolver rejects traversal and non-task direct p
 
   const badStoredTaskFile = () =>
     resolveTaskFileReadPath({
-      taskFile: `${farmslotRoot}/pool/example.json`,
+      taskFile: `${farmslotRoot()}/pool/example.json`,
       fileSuffix: 'TASK.md',
     });
   assertThrows(badStoredTaskFile, 'must be under a task directory');

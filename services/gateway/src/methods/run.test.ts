@@ -26,7 +26,7 @@ import {
 
 import { digest } from '../assessment/failure-triage/packet.js';
 import { beginAssessment, finishAssessment, reserveAssessment } from '../assessment/store.js';
-import { invalidateProjectVarsCache, projectsDir } from '../core/config.js';
+import { invalidateProjectVarsCache, projectsDirectory } from '../core/config.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { farmslotRoot } from '../fleet/state.js';
 import {
@@ -1904,7 +1904,7 @@ test('runInteractiveDevResolve links PR-complete handoff and closes parent ci-wa
   const previousDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
   process.env.NODE_TEST_CONTEXT = '1';
   process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
-  const projectDir = mkdtempSync(path.join(projectsDir, 'run-test-project-'));
+  const projectDir = mkdtempSync(path.join(projectsDirectory(), 'run-test-project-'));
   const project = path.basename(projectDir);
   writeFileSync(
     path.join(projectDir, 'project.json'),
@@ -1977,7 +1977,7 @@ test('runInteractiveDevResolve CI-watch actions resume the pipeline through the 
   const previousDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
   process.env.NODE_TEST_CONTEXT = '1';
   process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
-  const projectDir = mkdtempSync(path.join(projectsDir, 'run-test-project-'));
+  const projectDir = mkdtempSync(path.join(projectsDirectory(), 'run-test-project-'));
   const project = path.basename(projectDir);
   writeFileSync(
     path.join(projectDir, 'project.json'),
@@ -2319,7 +2319,7 @@ test('runCreate persists implicit pr-complete-interactive template and branch-ba
   const previousDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
   process.env.NODE_TEST_CONTEXT = '1';
   process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
-  const projectDir = mkdtempSync(path.join(projectsDir, 'run-test-pr-complete-'));
+  const projectDir = mkdtempSync(path.join(projectsDirectory(), 'run-test-pr-complete-'));
   const project = path.basename(projectDir);
   const templatesDir = path.join(projectDir, 'templates', 'worker');
   mkdirSync(templatesDir, { recursive: true });
@@ -2871,7 +2871,7 @@ test('runCreate validates scripted commandRef against project config', async (t)
   const previousDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
   process.env.NODE_TEST_CONTEXT = '1';
   process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
-  const projectDir = mkdtempSync(path.join(projectsDir, 'run-test-scripted-'));
+  const projectDir = mkdtempSync(path.join(projectsDirectory(), 'run-test-scripted-'));
   const project = path.basename(projectDir);
   const templatesDir = path.join(projectDir, 'templates', 'worker');
   mkdirSync(templatesDir, { recursive: true });
@@ -4020,7 +4020,7 @@ async function parkedPackagedGate(
   t: import('node:test').TestContext,
   actions: RunDecision['actions'],
 ) {
-  const projectDir = mkdtempSync(path.join(projectsDir, 'parked-package-'));
+  const projectDir = mkdtempSync(path.join(projectsDirectory(), 'parked-package-'));
   const project = path.basename(projectDir);
   writeFileSync(
     path.join(projectDir, 'project.json'),
@@ -4032,7 +4032,7 @@ async function parkedPackagedGate(
     invalidateProjectVarsCache();
   });
   const root = mkdtempSync(path.join(tmpdir(), 'parked-publication-source-'));
-  const poolFile = path.join(farmslotRoot, 'pool', `parked-approval-${randomUUID()}.json`);
+  const poolFile = path.join(farmslotRoot(), 'pool', `parked-approval-${randomUUID()}.json`);
   const oldRepo = path.join(root, 'foreign');
   const ownedRepo = path.join(root, 'owned');
   for (const repo of [oldRepo, ownedRepo]) {

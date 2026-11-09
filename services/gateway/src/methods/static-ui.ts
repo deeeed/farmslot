@@ -12,7 +12,7 @@ import { farmslotRoot } from '../core/index.js';
 
 import { mimeForPath } from './filesystem/range-serving.js';
 
-const UI_DIST = resolve(farmslotRoot, 'apps', 'command-center', 'ui', 'dist');
+const UI_DIST = resolve(farmslotRoot(), 'apps', 'command-center', 'ui', 'dist');
 const INDEX_HTML = join(UI_DIST, 'index.html');
 
 /**

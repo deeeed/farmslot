@@ -15,7 +15,7 @@ import {
   type PrincipalSubject,
   type RoleBinding,
 } from '@farmslot/protocol';
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { isCredentialStoreLockHeld } from './credential-lock-state.js';
 import { withCredentialLock } from './credential-store-lock.js';
@@ -67,7 +67,7 @@ interface FreshnessStamp {
 }
 
 export function credentialStorePath(env: NodeJS.ProcessEnv = process.env): string {
-  return join(farmslotHome(env), 'credentials.json');
+  return join(currentFarmPaths('node', env).config, 'credentials.json');
 }
 
 export function emptyCredentialStore(): CredentialStore {

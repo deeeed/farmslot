@@ -1,6 +1,8 @@
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
+import { currentFarmPaths } from './farm-paths.js';
+
 /** Gateway-written run task folders inside a project directory; never pack content. */
 export const ORCHESTRATOR_TASK_DIR = 'tasks';
 
@@ -9,9 +11,7 @@ export function resolveProjectsDir(
   farmslotRoot: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  return env.FARMSLOT_PROJECTS_DIR
-    ? path.resolve(env.FARMSLOT_PROJECTS_DIR)
-    : path.join(farmslotRoot, 'projects');
+  return currentFarmPaths('node', env, farmslotRoot).projects;
 }
 
 export interface FarmLayout {

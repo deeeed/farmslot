@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 
 import {
+  DEFAULT_CODEX_EFFORT,
   nativeResultJsonSchema,
   type NativeSessionResponse,
   type NativeSessionTool,
@@ -11,6 +12,7 @@ import {
   nativeStructuredResult,
   PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA,
   PIPELINE_VISUAL_RESULT_SCHEMA,
+  resolveCodexReasoningEffort,
 } from '@farmslot/protocol';
 
 import { modelQuestionsOffByRunner } from './model-questions.js';
@@ -158,6 +160,7 @@ export const codexNativeAdapter: NativeAdapter = {
     steer: true,
   },
   async start(options, emit) {
+    let effort = DEFAULT_CODEX_EFFORT;
     let approvalMode = options.approvalMode ?? 'ask';
     let gitRoot: string | undefined;
     let nativeSessionId = '';
@@ -398,6 +401,12 @@ export const codexNativeAdapter: NativeAdapter = {
         throw new Error('Native runner did not confirm the read-only source permissions profile');
       nativeSessionId = wireString(wireObject(result.thread).id);
       resolvedModel = optionalString(result.model) ?? options.model;
+      try {
+        effort = resolveCodexReasoningEffort(options.effort, resolvedModel) ?? DEFAULT_CODEX_EFFORT;
+      } catch (error) {
+        if (error instanceof Error) throw new NativeRequestRefused(error.message, { cause: error });
+        throw error;
+      }
       if (options.mode === 'plan' && !resolvedModel)
         throw new Error('Native planning mode requires the resolved model');
       if (options.resumeSessionId && nativeSessionId !== options.resumeSessionId)
@@ -442,14 +451,14 @@ export const codexNativeAdapter: NativeAdapter = {
             ...(options.resultSchema
               ? { outputSchema: nativeResultJsonSchema(options.resultSchema) }
               : {}),
-            ...(options.effort ? { effort: options.effort } : {}),
+            effort,
             ...(options.mode === 'plan'
               ? {
                   collaborationMode: {
                     mode: 'plan',
                     settings: {
                       model: resolvedModel,
-                      reasoning_effort: options.effort ?? 'low',
+                      reasoning_effort: effort,
                       developer_instructions: null,
                     },
                   },

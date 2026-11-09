@@ -13,7 +13,6 @@ HOOK_NAME="${2:?Usage: run-project-hook.sh <slot-id> <hook-name>}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-POOL_DIR="${PROJECT_DIR}/pool"
 
 source "${SCRIPT_DIR}/lib/slot-common.sh"
 load_slot_vars "$SLOT_ID"

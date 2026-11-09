@@ -50,7 +50,7 @@ for (const depth of ['static-code', 'full-live'] as const) {
         depth,
       )
     )
-      .split(farmslotRoot)
+      .split(farmslotRoot())
       .join('<FARMSLOT_ROOT>');
     const goldenPath = path.join(GOLDEN_DIR, `${depth}.golden`);
     const at = rendered.indexOf(SECTION_HEADING);

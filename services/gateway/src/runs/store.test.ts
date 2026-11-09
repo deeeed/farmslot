@@ -1354,7 +1354,7 @@ for (const reason of [
     const old = Date.now() - age;
     t.mock.timers.enable({ apis: ['Date'], now: old });
     const project = 'cleanup-retention-' + randomUUID();
-    const projectRoot = path.join(farmslotRoot, 'projects', project);
+    const projectRoot = path.join(farmslotRoot(), 'projects', project);
     const task = path.join(projectRoot, 'tasks', 'task');
     await mkdir(task, { recursive: true });
     await writeFile(path.join(task, 'report.html'), 'retained evidence');

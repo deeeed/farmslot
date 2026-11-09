@@ -40,7 +40,7 @@ export const localCopilotTmuxAdapter: CopilotTmuxAdapter = {
   },
 };
 export function resolveOperatorCheckout(): string {
-  return path.resolve(process.env.FARMSLOT_OPERATOR_CHECKOUT?.trim() || farmslotRoot);
+  return path.resolve(process.env.FARMSLOT_OPERATOR_CHECKOUT?.trim() || farmslotRoot());
 }
 
 export function resolveCopilotRunner(input?: {

@@ -3543,10 +3543,10 @@ async function disposablePoolSlot(
   const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
   const os = await import('node:os');
   const path = await import('node:path');
-  const { poolDir } = await import('../../core/config.js');
+  const { poolDirectory } = await import('../../core/config.js');
   const repo = mkdtempSync(path.join(os.tmpdir(), `farmslot-replay-${label}-`));
   const slotId = `replay-${label}-${process.pid}`;
-  const poolFile = path.join(poolDir, `replay-${label}-fixture-${process.pid}.json`);
+  const poolFile = path.join(poolDirectory(), `replay-${label}-fixture-${process.pid}.json`);
   t.after(() => {
     rmSync(poolFile, { force: true });
     rmSync(repo, { recursive: true, force: true });

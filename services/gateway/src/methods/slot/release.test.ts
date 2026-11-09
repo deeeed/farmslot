@@ -429,10 +429,10 @@ async function fixtureSlot(t: test.TestContext, label: string, branch: string): 
   const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
   const os = await import('node:os');
   const path = await import('node:path');
-  const { poolDir } = await import('../../core/config.js');
+  const { poolDirectory } = await import('../../core/config.js');
   const root = mkdtempSync(path.join(os.tmpdir(), `farmslot-release-${label}-`));
   const slotId = `release-${label}-${process.pid}`;
-  const poolFile = path.join(poolDir, `release-${label}-fixture-${process.pid}.json`);
+  const poolFile = path.join(poolDirectory(), `release-${label}-fixture-${process.pid}.json`);
   t.after(() => {
     rmSync(poolFile, { force: true });
     rmSync(root, { recursive: true, force: true });

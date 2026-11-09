@@ -10,6 +10,7 @@ import {
   type NodeExecParams,
   observeNodeExecAbort,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 export type { ExecResult };
 
@@ -89,11 +90,17 @@ export function resolveExecPoolDir(
   moduleUrl = import.meta.url,
   configured = process.env.FARMSLOT_POOL_DIR,
 ): string {
-  if (configured) return path.resolve(configured);
+  return resolveExecFarmPaths(moduleUrl, configured).pool;
+}
+
+function resolveExecFarmPaths(
+  moduleUrl = import.meta.url,
+  configured = process.env.FARMSLOT_POOL_DIR,
+) {
   const nodeRoot = fileURLToPath(new URL('../../', moduleUrl));
   const metadata = JSON.parse(readFileSync(path.join(nodeRoot, 'package.json'), 'utf8'));
   const root = metadata.name === '@farmslot/node' ? path.resolve(nodeRoot, '../..') : nodeRoot;
-  return path.join(root, 'pool');
+  return currentFarmPaths('node', { ...process.env, FARMSLOT_POOL_DIR: configured }, root);
 }
 
 export async function exec(
@@ -127,10 +134,12 @@ export async function exec(
   if (loginExports) {
     for (const name of SHELL_BOOKKEEPING_ENV) delete env[name];
   }
-  if (params.requestScoped) {
-    // The daemon knows its deployment, while a login shell may point at another gateway's pool.
-    env.FARMSLOT_POOL_DIR = resolveExecPoolDir();
-  }
+  // The daemon owns the instance, including commands launched from login shells.
+  const paths = resolveExecFarmPaths();
+  env.FARMSLOT_HOME = paths.home;
+  if (paths.layout === 2) env.FARMSLOT_CONFIG_DIR = paths.config;
+  env.FARMSLOT_POOL_DIR = paths.pool;
+  env.FARMSLOT_PROJECTS_DIR = paths.projects;
 
   return new Promise((resolve) => {
     let stdout = '';

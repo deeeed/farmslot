@@ -1,8 +1,9 @@
 import { appendFile, mkdir, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
+
 import { isolatedTestPath } from '../core/isolated-test-path.js';
-import { farmslotRoot } from '../fleet/state.js';
 import { shouldUseIsolatedRunsDir } from '../runs/store.js';
 
 import type { RunnerObservabilityAgreementEntry } from './observability-agreement.js';
@@ -21,23 +22,21 @@ export interface ObservabilityAgreementAggregate {
   disagreementReasons: Record<string, number>;
 }
 
-let _agreementDir: string | null = null;
-
 /** Test-only: clear cached agreement dir between cases. */
 export function resetAgreementLogDirCacheForTests(): void {
-  _agreementDir = null;
+  // Paths now follow the process accessor; there is no store-local cache to clear.
 }
 
 function agreementLogDir(): string {
-  if (_agreementDir) return _agreementDir;
-  if (process.env.FARMSLOT_OBSERVABILITY_AGREEMENT_DIR) {
-    _agreementDir = process.env.FARMSLOT_OBSERVABILITY_AGREEMENT_DIR;
-  } else if (shouldUseIsolatedRunsDir(process.env, process.argv)) {
-    _agreementDir = isolatedTestPath('farmslot-test-obs-agreement');
-  } else {
-    _agreementDir = path.join(farmslotRoot, '.runs', 'observability-agreement');
+  const paths = currentFarmPaths('gateway');
+  if (
+    paths.layout === 'legacy' &&
+    !paths.envOverrides.includes('FARMSLOT_OBSERVABILITY_AGREEMENT_DIR') &&
+    shouldUseIsolatedRunsDir(process.env, process.argv)
+  ) {
+    return isolatedTestPath('farmslot-test-obs-agreement');
   }
-  return _agreementDir;
+  return paths.state.observabilityAgreement;
 }
 
 function dayFile(ts: number): string {

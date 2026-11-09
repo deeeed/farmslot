@@ -319,7 +319,7 @@ export async function nudgeDispatch(
   }
 
   let taskFilePath = params.taskFile;
-  if (!path.isAbsolute(taskFilePath)) taskFilePath = path.join(farmslotRoot, taskFilePath);
+  if (!path.isAbsolute(taskFilePath)) taskFilePath = path.join(farmslotRoot(), taskFilePath);
   if (!existsSync(taskFilePath)) throw new Error(`Task file not found: ${taskFilePath}`);
 
   const taskDir = path.dirname(taskFilePath);

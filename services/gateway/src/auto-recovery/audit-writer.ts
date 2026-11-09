@@ -2,7 +2,7 @@ import { appendFile, mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { Events, type IntelligenceAction } from '@farmslot/protocol';
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { getRun, updateRun } from '../runs/store.js';
 
@@ -14,10 +14,7 @@ const TRUNCATION_SUFFIX = '…[truncated]';
 type Emit = (event: string, payload: unknown) => void;
 
 export function intelligenceAuditDir(): string {
-  return (
-    process.env.FARMSLOT_INTELLIGENCE_AUDIT_DIR ??
-    path.join(farmslotHome(), 'logs', 'intelligence-actions')
-  );
+  return currentFarmPaths('gateway').state.intelligenceAudit;
 }
 export function intelligenceAuditPathForDate(date = new Date()): string {
   return path.join(intelligenceAuditDir(), `${date.toISOString().slice(0, 10)}.ndjson`);

@@ -1,9 +1,11 @@
 import path from 'node:path';
 
 import type { SlotPrepareParams } from '@farmslot/protocol';
+import { FARM_INSTANCE_CLAIM } from '@farmslot/protocol/node/farm-paths';
 
 import { execOnSlot, isLocal, loadSlotVars, type SlotVars } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
+import { currentFarmPaths } from '../../fleet/farm-paths.js';
 import { withoutNodeReconnectWait } from '../../fleet/node-rpc.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 
@@ -48,11 +50,43 @@ function prepareSentinelPaths(
   return { lockDir, lockPath: path.posix.join(lockDir, PREPARE_SENTINEL) };
 }
 
+/** Persistent ownership is released by the operator, never by PID/age heuristics. */
+async function assertSlotInstanceClaim(vars: SlotVars, create: boolean): Promise<void> {
+  const paths = currentFarmPaths('gateway');
+  const claim = path.posix.join(vars.remoteRepo, FARM_INSTANCE_CLAIM);
+  const owner = `instance=${paths.instance}\nhome=${paths.home}`;
+  const result = await execOnSlot(
+    vars,
+    [
+      `CLAIM=${shellQuote(claim)}`,
+      `OWNER=${shellQuote(owner)}`,
+      ...(create && paths.layout === 2
+        ? [
+            `if mkdir "$CLAIM" 2>/dev/null; then`,
+            `  printf '%s\\n' "$OWNER" > "$CLAIM/owner" || exit 1`,
+            `fi`,
+            `[ -d "$CLAIM" ] || exit 1`,
+          ]
+        : []),
+      `if [ -e "$CLAIM" ] || [ -L "$CLAIM" ]; then`,
+      `  holder=$(cat "$CLAIM/owner" 2>/dev/null) || exit 1`,
+      `  [ "$holder" = "$OWNER" ] || { printf '%s\\n' "$holder"; exit 1; }`,
+      `fi`,
+    ].join('\n'),
+    { selectNodeSupport: false },
+  );
+  if (result.exitCode !== 0)
+    throw new Error(
+      `Slot ${vars.slotId} is claimed by another instance or has an unreadable instance claim: ${claim}\n${result.stdout.trim()}\nAfter stopping the owning instance and verifying no prepare/reset/checkout is running, explicitly release it with: rm -rf ${shellQuote(claim)}. Stale claims require the same operator release.`,
+    );
+}
+
 export async function acquirePrepareSentinel(
   vars: SlotVars,
   params: SlotPrepareParams,
 ): Promise<PrepareSentinelLock | null> {
   if (!vars.slotEnabled) return null;
+  await assertSlotInstanceClaim(vars, true);
 
   const runtimeDir = await resolvePrepareRuntimeDir(vars.projectName);
   const paths = prepareSentinelPaths(vars.remoteRepo, runtimeDir);
@@ -217,6 +251,7 @@ export async function reconcileStalePrepareLocks(): Promise<void> {
   const probeOne = async (slotId: string): Promise<void> => {
     try {
       const vars = await loadSlotVars(slotId);
+      await assertSlotInstanceClaim(vars, false);
       const runtimeDir = await resolvePrepareRuntimeDir(vars.projectName);
       const paths = prepareSentinelPaths(vars.remoteRepo, runtimeDir);
       // We deliberately omit the `|| echo "$now"` fallback: if both stat

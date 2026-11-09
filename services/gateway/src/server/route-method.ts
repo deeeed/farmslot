@@ -239,6 +239,7 @@ import {
   type WorkspaceMetroSubscribeParams,
   type WorkspaceMetroUnsubscribeParams,
 } from '@farmslot/protocol';
+import { isNodeFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { isClientPerformanceReport } from '@farmslot/protocol/performance';
 
 import { restoreTmuxWorker } from '../agents/runtime-recovery.js';
@@ -1487,6 +1488,10 @@ async function routeAuthorizedMethod(
               },
             }
           : undefined;
+      const report: unknown = (p as Record<string, unknown>).farmPaths;
+      if (report !== undefined && !isNodeFarmPaths(report))
+        throw new Error('Invalid node FarmPaths report');
+      const farmPaths = isNodeFarmPaths(report) ? report : undefined;
       const nodeLink = nodeLinkCapabilities((p as Record<string, unknown>).nodeLink);
       const nodePrincipal =
         resolved.ok && resolved.principal.subject.type === 'node'
@@ -1534,6 +1539,7 @@ async function routeAuthorizedMethod(
         terminalInputSequence === true,
         {
           node: peerVersions,
+          ...(farmPaths ? { farmPaths } : {}),
           gateway: gatewayPeerVersions,
           nodeLink,
           nodePrincipal,
@@ -1662,7 +1668,7 @@ async function routeAuthorizedMethod(
       const { machine } = p as { machine: string };
       const { execFile } = await import('node:child_process');
       const { resolve } = await import('node:path');
-      const scriptPath = resolve(farmslotRoot, 'scripts/deploy-node.sh');
+      const scriptPath = resolve(farmslotRoot(), 'scripts/deploy-node.sh');
       return new Promise((res) => {
         execFile('bash', [scriptPath, machine], { timeout: 120_000 }, (err, stdout, stderr) => {
           if (err) {

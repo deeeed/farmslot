@@ -38,6 +38,7 @@ import {
 import { assertNoNativeWorkerRecovery } from '../../core/native-worker-exclusion.js';
 import { assertStorageVolumePresent } from '../../core/storage-volume.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
+import { farmPathsForSlot } from '../../fleet/farm-paths.js';
 import { excludeSlotScaffolding } from '../../fleet/slot-scaffolding.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
 import {
@@ -465,10 +466,10 @@ async function slotPrepareInner(
     return command
       .replaceAll('{{node_support_dir}}', hookSupportDir)
       .replaceAll('{{NODE_SUPPORT_DIR}}', hookSupportDir)
-      .replaceAll(`${farmslotRoot}/projects/`, `${hookSupportDir}/projects/`)
-      .replaceAll(`${farmslotRoot}/scripts/`, `${hookSupportDir}/scripts/`)
-      .replaceAll('~/farmslot-node/projects/', `${hookSupportDir}/projects/`)
-      .replaceAll('~/farmslot-node/scripts/', `${hookSupportDir}/scripts/`);
+      .replaceAll(`${farmslotRoot()}/projects/`, `${hookSupportDir}/projects/`)
+      .replaceAll(`${farmslotRoot()}/scripts/`, `${hookSupportDir}/scripts/`)
+      .replaceAll(`${farmPathsForSlot(vars).code.node}/projects/`, `${hookSupportDir}/projects/`)
+      .replaceAll(`${farmPathsForSlot(vars).code.node}/scripts/`, `${hookSupportDir}/scripts/`);
   };
 
   // Selected prepare profile (ADR-037). Assigned right after the connection
@@ -620,7 +621,7 @@ async function slotPrepareInner(
     if (projectVars) {
       await syncPrepareFixtures(vars, {
         runtimeDir,
-        supportDir: hookSupportDir ?? farmslotRoot,
+        supportDir: hookSupportDir ?? farmslotRoot(),
         sync,
         writeContext: (command) =>
           runPrepareCommand(vars, phaseLog('runtime-context'), command, {

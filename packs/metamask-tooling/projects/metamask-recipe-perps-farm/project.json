@@ -44,7 +44,7 @@
           "env": "METAMASK_PERPS_LIBRARY_ROOT"
         },
         "owner": "perps",
-        "revision": "85ab3b95f228eff750055ae1df5b0d052b5a87aa"
+        "revision": "d2e262af62dc0519f6cc8b51907e4a6b10393df3"
       }
     ],
     "checks": [
