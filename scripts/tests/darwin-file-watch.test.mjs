@@ -10,6 +10,34 @@ import { pathToFileURL } from 'node:url';
 
 const require = createRequire(new URL('../../services/gateway/package.json', import.meta.url));
 const cjs = require('chokidar');
+
+function eventPath(name, details) {
+  const watched = details?.watchedPath;
+  if (typeof name !== 'string') return watched;
+  if (path.isAbsolute(name)) return name;
+  if (typeof watched !== 'string') return undefined;
+  return path.basename(watched) === name ? watched : path.join(watched, name);
+}
+
+async function observe(watcher, file, write, signal, normalized = false) {
+  // Raw receipts bypass Chokidar's change/remove throttles. The symlink's
+  // one mutation uses normalized events for its logical alias.
+  const receipts = on(watcher, normalized ? 'all' : 'raw', { signal });
+  try {
+    await write();
+    for await (const [event, observed, details] of receipts) {
+      if (
+        normalized
+          ? observed === file && ['add', 'change', 'unlink'].includes(event)
+          : eventPath(observed, details) === file
+      )
+        return file;
+    }
+  } finally {
+    await receipts.return();
+  }
+}
+
 const esm = await import(new URL('esm/index.js', pathToFileURL(require.resolve('chokidar'))).href);
 
 for (const [format, { watch }] of [
@@ -32,7 +60,7 @@ for (const [format, { watch }] of [
       const original = fs.watch;
       const stub = mock.method(fs, 'watch', (...args) => {
         const handle = original(...args);
-        const entry = { path: String(args[0]), closed: false };
+        const entry = { path: String(args[0]), handle, closed: false };
         handle.once('close', () => {
           entry.closed = true;
         });
@@ -53,23 +81,40 @@ for (const [format, { watch }] of [
         native.every((entry) => fs.statSync(entry.path).isDirectory()),
         'File inode watchers abort in libuv when their volume is revoked',
       );
-      const changed = once(watcher, 'change');
       const raw = once(watcher, 'raw');
-      await writeFile(file, 'after');
-      assert.equal((await changed)[0], file);
+      assert.equal(await observe(watcher, file, () => writeFile(file, 'after'), t.signal), file);
+      assert.equal(await fs.promises.readFile(file, 'utf8'), 'after');
       const [, name, details] = await raw;
       assert.equal(path.resolve(path.dirname(details.watchedPath), name), file);
       // Advance Chokidar's timers before observing replacement, with no wall-clock wait.
       t.mock.timers.tick(1001);
       t.mock.timers.reset();
-      const replacement = (async () => {
-        for await (const [event, observedFile] of on(watcher, 'all', { signal: t.signal })) {
-          if (observedFile === file && ['change', 'add'].includes(event)) return observedFile;
-        }
-      })();
-      await writeFile(file + '.next', 'replacement');
-      await rename(file + '.next', file);
-      assert.equal(await replacement, file);
+      // Every native Darwin stream watches this directory, even when Chokidar
+      // filters it to one basename. Cross each stream before the next receipt
+      // baseline, so a late raw event from the first write cannot satisfy it.
+      const marker = file + '.watch-drain';
+      const drained = native
+        .filter((entry) => !entry.closed)
+        .map(async ({ handle }) => {
+          for await (const [, name] of on(handle, 'change', { signal: t.signal })) {
+            if (String(name) === path.basename(marker)) return;
+          }
+        });
+      await writeFile(marker, 'drain');
+      await Promise.all(drained);
+      await rm(marker);
+      assert.equal(
+        await observe(
+          watcher,
+          file,
+          async () => {
+            await writeFile(file + '.next', 'replacement');
+            await rename(file + '.next', file);
+          },
+          t.signal,
+        ),
+        file,
+      );
       assert.equal(await fs.promises.readFile(file, 'utf8'), 'replacement');
       await watcher.close();
       await new Promise((resolve) => setImmediate(resolve));
@@ -93,7 +138,9 @@ for (const [format, { watch }] of [
     const watcher = watch(alias, { ignoreInitial: true });
     t.after(() => watcher.close());
     await once(watcher, 'ready');
-    const changed = once(watcher, 'change');
-    await writeFile(target, 'after');
-    assert.equal((await changed)[0], alias);
+    assert.equal(
+      await observe(watcher, alias, () => writeFile(target, 'after'), t.signal, true),
+      alias,
+    );
+    assert.equal(await fs.promises.readFile(alias, 'utf8'), 'after');
   });

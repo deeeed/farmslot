@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import fs, { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import test, { mock, type TestContext } from 'node:test';
@@ -96,11 +97,33 @@ interface ConfigurationEvent {
   file: string;
 }
 
-// Rename-over can be a change or a rediscovered add, depending on native event ordering.
-const replacementEvents = ['change', 'add'] as const;
+interface NativeWatch {
+  directory: string;
+  names: string[];
+  closed: boolean;
+}
 
 function configurationWatcher(t: TestContext) {
   const clock = watcherClock(t);
+  // Observe the real native handles without changing their listeners or options.
+  const native: NativeWatch[] = [];
+  let drainId = 0;
+  const original = fs.watch;
+  const stub = t.mock.method(fs, 'watch', (...args: Parameters<typeof fs.watch>) => {
+    const handle = original(...args);
+    const entry: NativeWatch = { directory: String(args[0]), names: [], closed: false };
+    handle.on('change', (_event, name) => entry.names.push(String(name)));
+    handle.once('close', () => {
+      entry.closed = true;
+    });
+    native.push(entry);
+    return handle;
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    stub.mock.restore();
+    syncBuiltinESMExports();
+  });
   const watcher = startFileWatcher();
   const events: ConfigurationEvent[] = [];
   watcher.onFileEvent((event, file) => events.push({ event, file }));
@@ -126,15 +149,38 @@ function configurationWatcher(t: TestContext) {
         await rm(probe, { force: true });
       }
     },
-    async observe(file: string, expectedEvents: readonly string[], write: () => Promise<unknown>) {
+    async drain(file: string): Promise<void> {
+      // Cross every Darwin directory stream, including the streams hidden behind
+      // Chokidar's file filters. Linux shares one ordered inotify queue. A marker
+      // follows earlier native receipts; delayed normalized events cannot satisfy
+      // observe(), which requires the exact path's unthrottled raw receipt.
+      const marker = `${file}.watch-drain-${++drainId}`;
+      const streams = native
+        .filter((entry) => !entry.closed && entry.directory === path.dirname(file))
+        .map((entry) => ({ entry, start: entry.names.length }));
+      assert(streams.length > 0);
+      try {
+        await clock.until(async () => {
+          if (
+            streams.every(
+              ({ entry, start }) =>
+                entry.closed || entry.names.slice(start).includes(path.basename(marker)),
+            )
+          )
+            return true;
+          await writeFile(marker, 'drain');
+          return false;
+        }, `Earlier native receipts drained: ${file}`);
+      } finally {
+        await rm(marker, { force: true });
+      }
+    },
+    async observe(file: string, write: () => Promise<unknown>) {
       const start = events.length;
       await write();
       await clock.until(
-        () =>
-          events
-            .slice(start)
-            .some((item) => item.file === file && expectedEvents.includes(item.event)),
-        `${expectedEvents.join(' or ')}: ${file}`,
+        () => events.slice(start).some((item) => item.file === file && item.event === 'raw'),
+        `Production raw receipt: ${file}`,
       );
     },
   };
@@ -254,14 +300,8 @@ test('actual external template/project/registration file writes use the existing
       if (file === getOpenClawStorePath()) await mkdir(path.dirname(file), { recursive: true });
       await watcher.readyFor(file);
       const before = resourceRevisions.revision(farm);
-      const event = await readFile(file).then(
-        () => 'change',
-        (error: NodeJS.ErrnoException) => {
-          if (error.code !== 'ENOENT') throw error;
-          return 'add';
-        },
-      );
-      await watcher.observe(file, [event], () => writeFile(file, content));
+      await watcher.observe(file, () => writeFile(file, content));
+      assert.equal(await readFile(file, 'utf8'), content);
       await clock.until(() => resourceRevisions.revision(farm) > before, path.basename(file));
     }
     // Stop the existing pool health debounce before performing further filesystem assertions.
@@ -299,15 +339,17 @@ test('an immediate atomic template replacement publishes after the earlier obser
     clock.flush();
     await watcher.readyFor(file);
     const before = resourceRevisions.revision(farm);
-    await watcher.observe(file, ['change'], () => writeFile(file, '# First observed template'));
+    await watcher.observe(file, () => writeFile(file, '# First observed template'));
     await waitForRevision(before);
-    const first = resourceRevisions.revision(farm);
     assert.equal(
       (await config.configTemplates({ project: 'example' })).templates[0].rawMarkdown,
       '# First observed template',
     );
     await writeFile(replacement, '# Final atomic template');
-    await watcher.observe(file, replacementEvents, () => rename(replacement, file));
+    await watcher.drain(file);
+    const first = resourceRevisions.revision(farm);
+    // Probes and .tmp files cannot publish here: projectChanged requires .md.
+    await watcher.observe(file, () => rename(replacement, file));
     await waitForRevision(first);
     assert.equal(
       (await config.configTemplates({ project: 'example' })).templates[0].rawMarkdown,
@@ -418,20 +460,23 @@ test('the selected-home observer invalidates each assessment policy on add, repl
     ]) {
       const file = path.join(root, 'home', name);
       await watcher.readyFor(file);
-      for (const [expectedEvents, write] of [
-        [['add'], () => writeFile(file, '{}')],
+      for (const [content, write] of [
+        ['{}', () => writeFile(file, '{}')],
         [
-          replacementEvents,
+          '{"enabled":false}',
           async () => {
             await writeFile(`${file}.tmp`, '{"enabled":false}');
             await rename(`${file}.tmp`, file);
           },
         ],
-        [['unlink'], () => rm(file)],
+        [undefined, () => rm(file)],
       ] as const) {
+        await watcher.drain(file);
         const before = resourceRevisions.revision(key);
-        await watcher.observe(file, expectedEvents, write);
+        await watcher.observe(file, write);
         await clock.until(() => resourceRevisions.revision(key) > before, name);
+        if (content === undefined) await assert.rejects(readFile(file), { code: 'ENOENT' });
+        else assert.equal(await readFile(file, 'utf8'), content);
       }
     }
   } finally {
@@ -491,9 +536,16 @@ test('the owning home watcher rebinds the selected triage receipt directory', as
     }, 'current initial triage selection readiness');
     await watcher.readyFor(path.join(first, 'evaluation.json'));
     let before = resourceRevisions.revision(key);
-    await writeFile(path.join(first, 'evaluation.json'), 'current selected source');
+    await watcher.observe(path.join(first, 'evaluation.json'), () =>
+      writeFile(path.join(first, 'evaluation.json'), 'current selected source'),
+    );
     await clock.until(() => resourceRevisions.revision(key) > before, 'selected receipt bytes');
-    await writePolicy(second);
+    assert.equal(
+      await readFile(path.join(first, 'evaluation.json'), 'utf8'),
+      'current selected source',
+    );
+    await watcher.drain(file);
+    await watcher.observe(file, () => writePolicy(second));
     await clock.until(() => {
       try {
         watcher.assertTriagePilotObserved(second);
@@ -510,8 +562,14 @@ test('the owning home watcher rebinds the selected triage receipt directory', as
     }, 'policy-selected observation replacement');
     await watcher.readyFor(path.join(second, 'evaluation.json'));
     before = resourceRevisions.revision(key);
-    await writeFile(path.join(second, 'evaluation.json'), 'new selected source');
+    await watcher.observe(path.join(second, 'evaluation.json'), () =>
+      writeFile(path.join(second, 'evaluation.json'), 'new selected source'),
+    );
     await clock.until(() => resourceRevisions.revision(key) > before, 'new selected receipt bytes');
+    assert.equal(
+      await readFile(path.join(second, 'evaluation.json'), 'utf8'),
+      'new selected source',
+    );
     assert.throws(() => watcher.assertTriagePilotObserved(first));
   } finally {
     await watcher.close();
@@ -574,17 +632,19 @@ test('the actual PR rule file observer reloads replacements and refuses malforme
     const external = rules.store.snapshot();
     external.teams[0].config.name = 'External team';
     await writeFile(`${file}.tmp`, JSON.stringify(external));
-    await watcher.observe(file, replacementEvents, () => rename(`${file}.tmp`, file));
+    await watcher.observe(file, () => rename(`${file}.tmp`, file));
     await clock.until(
       () => rules.store.snapshot().teams[0].config.name === 'External team',
       'External rule rename must replace readable memory',
     );
     assert(publications.length > 0);
     for (const breakSource of [() => writeFile(file, '{broken'), () => rm(file)]) {
-      await breakSource();
+      await watcher.drain(file);
+      await watcher.observe(file, breakSource);
       await clock.until(unavailable, 'A broken rule source must refuse retained memory');
       await assert.rejects(rules.store.saveTeam(owner.id, config), { code: 'SOURCE_UNAVAILABLE' });
-      await writeFile(file, JSON.stringify(external));
+      await watcher.drain(file);
+      await watcher.observe(file, () => writeFile(file, JSON.stringify(external)));
       await clock.until(
         () => !unavailable(),
         'A valid source must recover without reinitializing schedulers',
