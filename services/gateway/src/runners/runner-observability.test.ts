@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -35,14 +35,14 @@ test('remote observability install prefers the prepared immutable node-support b
 
   assert.match(command, /node-support-hash/);
   assert.match(command, /"\$\{HOME\}\/farmslot-node\/support"\/"\$hash"/);
-  assert.match(command, /installer="\$support_dir\/scripts\/install-runner-observability\.mjs"/);
-  assert.match(command, /farmslot-node\/scripts\/install-runner-observability\.mjs/);
+  assert.equal(command.includes('"installer":"scripts/install-runner-observability.mjs"'), true);
+  assert.equal(command.includes('support_dir="${HOME}/farmslot-node"'), true);
   assert.match(command, /scripts\/lib\/provider-accounts\.mjs/);
 });
 
 const farmslotRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 
-test('explicit support bundle installs into external native state without a workspace marker', () => {
+test('explicit support refuses an incomplete native bundle before state mutation', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'native-worker-support-'));
   try {
     const supportDir = path.join(root, 'support');
@@ -57,17 +57,11 @@ test('explicit support bundle installs into external native state without a work
       '.',
       { supportDir },
     );
-    const args = JSON.parse(execFileSync('/bin/bash', ['-c', command], { encoding: 'utf8' }));
-    assert.deepEqual(args, [
-      '--runner',
-      'codex',
-      '--repo',
-      stateDir,
-      '--runtime-dir',
-      '.',
-      '--slot-id',
-      'native-worker-fixture',
-    ]);
+    assert.throws(
+      () => execFileSync('/bin/bash', ['-c', command], { stdio: 'pipe' }),
+      /RUNNER_OBSERVABILITY_BUNDLE_MISMATCH/,
+    );
+    assert.equal(existsSync(stateDir), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -133,9 +127,13 @@ test('remote observability install falls back when an immutable bundle is incomp
       path.join(runnerRuntimeDir(repo, runtimeDir), '.observability', 'node-support-hash'),
       `${supportHash}\n`,
     );
-    writeFileSync(fakeNode, '#!/bin/sh\nprintf "%s\\n" "$1" > "$SELECTED_INSTALLER"\n', {
-      mode: 0o755,
-    });
+    writeFileSync(
+      fakeNode,
+      '#!/bin/sh\nprintf "%s/scripts/install-runner-observability.mjs\\n" "$4" > "$SELECTED_INSTALLER"\n',
+      {
+        mode: 0o755,
+      },
+    );
 
     const command = buildRunnerObservabilityInstallCommand(
       {
@@ -165,6 +163,10 @@ test('remote observability install falls back when an immutable bundle is incomp
     mkdirSync(path.join(supportRoot, 'scripts/runners'), { recursive: true });
     writeFileSync(path.join(supportRoot, 'scripts/lib/provider-accounts.mjs'), 'dependency\n');
     writeFileSync(path.join(supportRoot, 'scripts/lib/runner-runtime.cjs'), 'dependency\n');
+    writeFileSync(
+      path.join(supportRoot, 'scripts/lib/runner-observability-bundle.mjs'),
+      'dependency\n',
+    );
     mkdirSync(path.join(supportRoot, 'packages/agent-runtime/scripts'), { recursive: true });
     writeFileSync(
       path.join(supportRoot, 'packages/agent-runtime/scripts/toml-scan.cjs'),

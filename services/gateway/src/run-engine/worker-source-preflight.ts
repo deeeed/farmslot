@@ -2,6 +2,10 @@ import path from 'node:path';
 
 import { peerVersionCompatibility, type PeerVersionDeclaration } from '@farmslot/protocol';
 
+import {
+  RUNNER_OBSERVABILITY_SOURCE_FILES,
+  supportVerificationProgram,
+} from '../../../../scripts/lib/runner-observability-bundle.mjs';
 import { shellQuote } from '../core/tmux.js';
 import { gatewayPeerVersions } from '../fleet/peer-versions.js';
 
@@ -12,6 +16,7 @@ export interface WorkerSourceExpectation {
   taskDir: string | null;
   /** Checkout the worker launches in; frozen required skill paths resolve against it. */
   repoRoot?: string;
+  runnerObservability?: { sourceDir: string | null; hash: string };
 }
 
 /** Verify retained templates/libraries through their existing provenance owner, never current main. */
@@ -20,6 +25,7 @@ export interface WorkerSourceProbeResult {
   detail: string;
   retry?: false;
   peerVersions?: PeerVersionDeclaration;
+  runnerObservabilityHash?: string;
 }
 
 /** The remote reports facts; range decisions always use the gateway's shared comparator. */
@@ -51,14 +57,20 @@ export function workerSourceProbeCommand(expected: WorkerSourceExpectation): str
     '../dist/index.js',
   );
   const program = String.raw`
-const fs=require('node:fs'),path=require('node:path'),{createRequire}=require('node:module'),{pathToFileURL}=require('node:url');let peerVersions;
+${supportVerificationProgram()}
+const fs=require('node:fs'),{createRequire}=require('node:module'),{pathToFileURL}=require('node:url');let peerVersions,runnerObservabilityHash;
 (async()=>{
  const expected=JSON.parse(process.argv[1]),cliPath=process.argv[2];
  const warnings=[];
  const result=(status,detail,retry)=>{
   if(warnings.length){detail='Package version warning: '+warnings.join('; ')+'. '+detail;}
-  process.stdout.write(JSON.stringify({status,detail,...(peerVersions?{peerVersions}:{}),...(retry===false?{retry:false}:{})}));
+  process.stdout.write(JSON.stringify({status,detail,...(peerVersions?{peerVersions}:{}),...(runnerObservabilityHash?{runnerObservabilityHash}:{}),...(retry===false?{retry:false}:{})}));
  };
+ if(expected.runnerObservability){
+  const bundle=expected.runnerObservability;
+  try{const verified=await verifySupportBundle(bundle.sourceDir,bundle.hash,bundle.files);runnerObservabilityHash=verified.hash}
+  catch(error){result('mismatch',error.message);return}
+ }
  if(!cliPath){result('mismatch','Worker farmslot CLI is missing. Install the matching CLI through the supported update route and retry this run.');return}
  const cli=fs.realpathSync(cliPath);
  const manifest=(file,name)=>{let root=path.dirname(file);for(;;){const p=path.join(root,'package.json');if(fs.existsSync(p)){const v=JSON.parse(fs.readFileSync(p,'utf8'));if(v.name===name)return v}const parent=path.dirname(root);if(parent===root)return null;root=parent}};
@@ -91,7 +103,18 @@ const fs=require('node:fs'),path=require('node:path'),{createRequire}=require('n
   if(check.status==='missing'){result('mismatch',check.missing.map(gap=>'Required skill '+gap.skill+': '+gap.path+' is '+(gap.reason==='missing'?'missing':'changed since task init')).join('; ')+'. Refresh the slot skills, then prepare again.');return}
  }
  result('verified','Selected CLI/protocol and retained pack/template/library bytes match their receipts.'+(requiredSkills!==undefined?' Required skills match their frozen digests.':''));
-})().catch(e=>{process.stdout.write(JSON.stringify({status:'unverified',detail:e.message,...(peerVersions?{peerVersions}:{})}));});`;
-  const packet = JSON.stringify({ ...expected, runtimeModule });
+})().catch(e=>{process.stdout.write(JSON.stringify({status:'unverified',detail:e.message,...(peerVersions?{peerVersions}:{}),...(runnerObservabilityHash?{runnerObservabilityHash}:{})}));});`;
+  const packet = JSON.stringify({
+    ...expected,
+    runtimeModule,
+    ...(expected.runnerObservability
+      ? {
+          runnerObservability: {
+            ...expected.runnerObservability,
+            files: RUNNER_OBSERVABILITY_SOURCE_FILES,
+          },
+        }
+      : {}),
+  });
   return `node -e ${shellQuote(program)} ${shellQuote(packet)} "\${FARMSLOT_CLI:-$(command -v farmslot)}"`;
 }
