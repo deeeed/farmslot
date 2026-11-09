@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { once } from 'node:events';
+import { on, once } from 'node:events';
 import fs from 'node:fs';
 import { mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
@@ -62,10 +62,15 @@ for (const [format, { watch }] of [
       // Advance Chokidar's timers before observing replacement, with no wall-clock wait.
       t.mock.timers.tick(1001);
       t.mock.timers.reset();
-      const replacement = once(watcher, 'change');
+      const replacement = (async () => {
+        for await (const [event, observedFile] of on(watcher, 'all', { signal: t.signal })) {
+          if (observedFile === file && ['change', 'add'].includes(event)) return observedFile;
+        }
+      })();
       await writeFile(file + '.next', 'replacement');
       await rename(file + '.next', file);
-      assert.equal((await replacement)[0], file);
+      assert.equal(await replacement, file);
+      assert.equal(await fs.promises.readFile(file, 'utf8'), 'replacement');
       await watcher.close();
       await new Promise((resolve) => setImmediate(resolve));
       assert(native.every((entry) => entry.closed));

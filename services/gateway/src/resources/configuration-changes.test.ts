@@ -96,6 +96,9 @@ interface ConfigurationEvent {
   file: string;
 }
 
+// Rename-over can be a change or a rediscovered add, depending on native event ordering.
+const replacementEvents = ['change', 'add'] as const;
+
 function configurationWatcher(t: TestContext) {
   const clock = watcherClock(t);
   const watcher = startFileWatcher();
@@ -123,12 +126,15 @@ function configurationWatcher(t: TestContext) {
         await rm(probe, { force: true });
       }
     },
-    async observe(file: string, event: string, write: () => Promise<unknown>) {
+    async observe(file: string, expectedEvents: readonly string[], write: () => Promise<unknown>) {
       const start = events.length;
       await write();
       await clock.until(
-        () => events.slice(start).some((item) => item.file === file && item.event === event),
-        `${event}: ${file}`,
+        () =>
+          events
+            .slice(start)
+            .some((item) => item.file === file && expectedEvents.includes(item.event)),
+        `${expectedEvents.join(' or ')}: ${file}`,
       );
     },
   };
@@ -255,7 +261,7 @@ test('actual external template/project/registration file writes use the existing
           return 'add';
         },
       );
-      await watcher.observe(file, event, () => writeFile(file, content));
+      await watcher.observe(file, [event], () => writeFile(file, content));
       await clock.until(() => resourceRevisions.revision(farm) > before, path.basename(file));
     }
     // Stop the existing pool health debounce before performing further filesystem assertions.
@@ -293,7 +299,7 @@ test('an immediate atomic template replacement publishes after the earlier obser
     clock.flush();
     await watcher.readyFor(file);
     const before = resourceRevisions.revision(farm);
-    await watcher.observe(file, 'change', () => writeFile(file, '# First observed template'));
+    await watcher.observe(file, ['change'], () => writeFile(file, '# First observed template'));
     await waitForRevision(before);
     const first = resourceRevisions.revision(farm);
     assert.equal(
@@ -301,7 +307,7 @@ test('an immediate atomic template replacement publishes after the earlier obser
       '# First observed template',
     );
     await writeFile(replacement, '# Final atomic template');
-    await watcher.observe(file, 'change', () => rename(replacement, file));
+    await watcher.observe(file, replacementEvents, () => rename(replacement, file));
     await waitForRevision(first);
     assert.equal(
       (await config.configTemplates({ project: 'example' })).templates[0].rawMarkdown,
@@ -412,19 +418,19 @@ test('the selected-home observer invalidates each assessment policy on add, repl
     ]) {
       const file = path.join(root, 'home', name);
       await watcher.readyFor(file);
-      for (const [event, write] of [
-        ['add', () => writeFile(file, '{}')],
+      for (const [expectedEvents, write] of [
+        [['add'], () => writeFile(file, '{}')],
         [
-          'change',
+          replacementEvents,
           async () => {
             await writeFile(`${file}.tmp`, '{"enabled":false}');
             await rename(`${file}.tmp`, file);
           },
         ],
-        ['unlink', () => rm(file)],
+        [['unlink'], () => rm(file)],
       ] as const) {
         const before = resourceRevisions.revision(key);
-        await watcher.observe(file, event, write);
+        await watcher.observe(file, expectedEvents, write);
         await clock.until(() => resourceRevisions.revision(key) > before, name);
       }
     }
@@ -566,7 +572,7 @@ test('the actual PR rule file observer reloads replacements and refuses malforme
     const external = rules.store.snapshot();
     external.teams[0].config.name = 'External team';
     await writeFile(`${file}.tmp`, JSON.stringify(external));
-    await rename(`${file}.tmp`, file);
+    await watcher.observe(file, replacementEvents, () => rename(`${file}.tmp`, file));
     await clock.until(
       () => rules.store.snapshot().teams[0].config.name === 'External team',
       'External rule rename must replace readable memory',
