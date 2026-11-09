@@ -5,6 +5,7 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Wallet accounts: a `RECIPE_WALLET_DERIVED_ACCOUNTS` entry for a secret index the fixture already lists names that account instead of adding a second one, and two accounts with one name are refused with both sources named. A recipe-library registry entry for `dev1` no longer gives Core Perps actions two `dev1` accounts.
 
 ## 0.19.2 - 2026-11-09
 

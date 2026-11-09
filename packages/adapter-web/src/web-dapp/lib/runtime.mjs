@@ -266,6 +266,14 @@ export function walletAccounts(fixture, projectRoot, env = process.env) {
         `wallet account "${item.name}" derives to ${account.address} from "${item.secret}" index ${item.index}, not the declared ${item.address}.`,
       );
     }
+    // An index the fixture already lists is the same account: the host's name wins there.
+    const listed = accounts.find(
+      (candidate) => candidate.secret === item.secret && candidate.index === item.index,
+    );
+    if (listed) {
+      listed.name = item.name;
+      continue;
+    }
     accounts.push({
       name: item.name,
       address: account.address,
@@ -273,6 +281,16 @@ export function walletAccounts(fixture, projectRoot, env = process.env) {
       index: item.index,
       account,
     });
+  }
+  const byName = new Map();
+  for (const account of accounts) {
+    const other = byName.get(account.name);
+    if (other) {
+      throw new Error(
+        `wallet fixture has two accounts named "${account.name}": "${other.secret}" index ${other.index} and "${account.secret}" index ${account.index}; rename one.`,
+      );
+    }
+    byName.set(account.name, account);
   }
   return accounts;
 }

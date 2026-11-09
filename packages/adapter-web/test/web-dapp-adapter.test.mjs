@@ -216,6 +216,32 @@ describe('wallet fixture accounts', () => {
       /no account named "vip"\. Available: dev1\./,
     );
   });
+
+  it('names an index the fixture already lists once, and refuses two accounts with one name', async () => {
+    const { dir, env } = await fixtureEnv([
+      { name: 'dev1', type: 'mnemonic', value: MNEMONIC, count: 3 },
+    ]);
+    const derived = (items) => ({ ...env, RECIPE_WALLET_DERIVED_ACCOUNTS: JSON.stringify(items) });
+    // A registry entry for the fixture's own dev1 is the same account, not a second one.
+    await assert.rejects(
+      fixtureAccount(
+        dir,
+        'none',
+        derived([{ name: 'dev1', secret: 'dev1', index: 0, address: ADDRESSES[0] }]),
+      ),
+      /Available: dev1, dev2, dev3\./,
+    );
+    // The registry name wins at an index the fixture already lists.
+    assert.equal(
+      (await fixtureAccount(dir, 'smoke', derived([{ name: 'smoke', secret: 'dev1', index: 1 }])))
+        .address,
+      ADDRESSES[1],
+    );
+    await assert.rejects(
+      fixtureAccount(dir, 'dev1', derived([{ name: 'dev2', secret: 'dev1', index: 0 }])),
+      /two accounts named "dev2": "dev1" index 0 and "dev1" index 1; rename one/,
+    );
+  });
 });
 
 describe('web-dapp launch helpers', () => {
