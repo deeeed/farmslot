@@ -1,0 +1,30 @@
+{
+  "rawTicketCriteria": [
+    "When both a minimum and a maximum are configured, both are shown.",
+    "Thresholds are displayed with a “<“ or “>” to say whether they apply below or above the value",
+    "The label format is “[Item type] [minimum] [condition] | [unit]”, for example:\n- Express parcel = “Express 2 kg Weight < 5 kg | box”\n- Ground parcel = “Ground Weight > 5 kg | pallet”\n- Letter = “Letter Weight < 0.1 kg | envelope”",
+    "Note: the map placement is already correct (ie. a parcel shows up at its depot, which is the expected behavior)"
+  ],
+  "ledgerCriteria": [
+    {
+      "id": "AC-1",
+      "text": "When both a minimum and a maximum are configured, both are shown.",
+      "proofMode": "state"
+    },
+    {
+      "id": "AC-2",
+      "text": "Thresholds are displayed with a “<“ or “>” to say whether they apply below or above the value",
+      "proofMode": "state"
+    },
+    {
+      "id": "AC-3",
+      "text": "The label format is “[Item type] [minimum] [condition] | [unit]”, for example:\nExpress parcel = “Express 2 kg Weight < 5 kg | box”\nGround parcel = “Ground Weight > 5 kg | pallet”\nLetter = “Letter Weight < 0.1 kg | envelope”",
+      "proofMode": "state"
+    },
+    {
+      "id": "AC-4",
+      "text": "Note: the map placement is already correct (ie. a parcel shows up at its depot, which is the expected behavior)",
+      "proofMode": "state"
+    }
+  ]
+}

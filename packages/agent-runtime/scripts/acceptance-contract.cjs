@@ -3,6 +3,7 @@ const { existsSync, readFileSync } = require('node:fs');
 const path = require('node:path');
 
 const {
+  acceptanceCriteriaMatch,
   ACCEPTANCE_CONTRACT_INPUT,
   ACCEPTANCE_PROOF_MODES,
   ACCEPTANCE_REGISTRATION_INPUT,
@@ -79,7 +80,7 @@ function effectiveAcceptanceContract(taskDir, base, baseBytes) {
     if (
       mode &&
       (proofModes.get(criterion.id)?.proofMode !== mode ||
-        proofModes.get(criterion.id)?.text !== criterion.text)
+        !acceptanceCriteriaMatch([criterion], [proofModes.get(criterion.id)]))
     )
       throw new Error(
         `${criterion.id}: proof mode changed; await the gateway execution-contract revision.`,

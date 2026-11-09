@@ -28,10 +28,32 @@ function filterWorkerAcceptanceCriteria(criteria, registration, flow) {
   return criteria.filter((row) => derived.has(row.id));
 }
 
+/** Preserve task-init text, including continuation lines, without list/check markers. */
+function normalizeAcceptanceCriteria(items) {
+  return items
+    .map((item) =>
+      item
+        .split('\n')
+        .map((line) =>
+          line
+            .trim()
+            .replace(/^[-*]\s+/, '')
+            .replace(/^\[(?: |x|X)\]\s*/, '')
+            .trim(),
+        )
+        .filter(Boolean)
+        .join('\n'),
+    )
+    .filter(Boolean);
+}
+
 function registeredAcceptanceCriteria(criteria, registration) {
   const original = criteria
     .filter((text) => String(text).trim().length > 0)
-    .map((text, index) => ({ id: acceptanceCriterionId(index), text: String(text) }));
+    .map((text, index) => ({
+      id: acceptanceCriterionId(index),
+      text: normalizeAcceptanceCriteria([String(text)])[0] ?? '',
+    }));
   if (registration === undefined) return original;
   if (
     !isRecord(registration) ||
@@ -75,15 +97,29 @@ function acceptanceCriteriaMatch(expected, actual) {
     Array.isArray(expected) &&
     Array.isArray(actual) &&
     expected.length === actual.length &&
-    expected.every(
-      (criterion, index) =>
-        isRecord(criterion) &&
-        isRecord(actual[index]) &&
-        criterion.id === actual[index].id &&
-        typeof criterion.text === 'string' &&
-        typeof actual[index].text === 'string' &&
-        criterion.text.trim() === actual[index].text.trim(),
-    )
+    expected.every((criterion, index) => {
+      const row = actual[index];
+      if (
+        !isRecord(criterion) ||
+        !isRecord(row) ||
+        criterion.id !== row.id ||
+        typeof criterion.text !== 'string' ||
+        typeof row.text !== 'string'
+      )
+        return false;
+      const expectedText = criterion.text.trim();
+      const actualText = row.text.trim();
+      const normalizedExpected = normalizeAcceptanceCriteria([expectedText])[0] ?? '';
+      const normalizedActual = normalizeAcceptanceCriteria([actualText])[0] ?? '';
+      // Task init strips one marker per line. Keep raw/normalized pairs valid
+      // even when the resulting text still starts with another marker.
+      return (
+        expectedText === actualText ||
+        normalizedExpected === normalizedActual ||
+        normalizedExpected === actualText ||
+        expectedText === normalizedActual
+      );
+    })
   );
 }
 
@@ -323,6 +359,7 @@ export {
   acceptanceVerdictLabel,
   filterWorkerAcceptanceCriteria,
   INHERITED_ACCEPTANCE_INPUT,
+  normalizeAcceptanceCriteria,
   registeredAcceptanceCriteria,
   renderAcceptanceCoverage,
   summarizeAcceptanceStatus,

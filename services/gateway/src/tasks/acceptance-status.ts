@@ -12,7 +12,6 @@ import path from 'node:path';
 import {
   ACCEPTANCE_REGISTRATION_INPUT,
   ACCEPTANCE_STATUS_ARTIFACT,
-  acceptanceCriterionId,
   type AcceptanceCriterionRef,
   type AcceptanceEvidenceLink,
   type AcceptanceStatusLedger,
@@ -270,9 +269,7 @@ export function handoffCriteriaFromText(text: string | null | undefined): {
     };
   }
   return {
-    criteria: criteria
-      .map((entry, index) => ({ id: acceptanceCriterionId(index), text: String(entry) }))
-      .filter((criterion) => criterion.text.trim().length > 0),
+    criteria: registeredAcceptanceCriteria(criteria),
   };
 }
 

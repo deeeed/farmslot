@@ -5,6 +5,7 @@ import {
   validateRecordedEvidencePackage,
 } from '@farmslot/adapter-sdk/evidence';
 import {
+  acceptanceCriteriaMatch,
   acceptanceRowExecution,
   isAuthorizedOverride,
   isRecord,
@@ -229,8 +230,7 @@ export function assessRecordedAcceptance(context: RecordedAcceptanceContext): {
         input.claims?.recipeRunId === rowExecution(criterion.id) &&
         reviewed[index]?.some(
           (claim) =>
-            claim.id === criterion.id &&
-            claim.text.trim() === criterion.text.trim() &&
+            acceptanceCriteriaMatch([criterion], [claim]) &&
             (!criterion.proofMode || claim.proofMode === criterion.proofMode) &&
             (claim.verdict ===
               acceptance.ledger?.criteria.find((row) => row.id === criterion.id)?.verdict ||

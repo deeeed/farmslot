@@ -206,3 +206,24 @@ test('original evidence coexists with required derived proof without changing pa
   );
   assert.match(acceptanceContractIssues(dir).join(';'), /does not match/);
 });
+
+test('raw engine originals transfer to normalized nested-list handoffs and changed text refuses', (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'acceptance-nested-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, 'inputs'));
+  mkdirSync(path.join(dir, 'artifacts'));
+  const raw = 'Original\n- Nested example';
+  writeFileSync(
+    path.join(dir, 'inputs/handoff.json'),
+    JSON.stringify({ task: { acceptanceCriteria: ['Original\nNested example'] } }),
+  );
+  const claims = engineClaims([raw]);
+  setDerivedClaims(dir, claims);
+  assert.equal(
+    JSON.parse(readFileSync(path.join(dir, 'artifacts/acceptance-status.json'), 'utf8')).criteria[0]
+      .text,
+    raw,
+  );
+  claims.criteria[0].text = 'Original\n- Changed example';
+  assert.throws(() => setDerivedClaims(dir, claims), /does not match the registered task/);
+});

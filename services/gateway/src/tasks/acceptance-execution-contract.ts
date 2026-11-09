@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import {
   ACCEPTANCE_CONTRACT_INPUT,
+  acceptanceCriteriaMatch,
   type AcceptanceExecutionContract,
   isRecord,
   registeredAcceptanceCriteria,
@@ -47,7 +48,7 @@ export async function syncAcceptanceExecutionContract(
     const row = ledger?.criteria.find(({ id }) => id === criterion.id);
     if (
       row &&
-      (row.text !== criterion.text ||
+      (!acceptanceCriteriaMatch([criterion], [row]) ||
         (criterion.proofMode && row.proofMode !== criterion.proofMode))
     )
       throw new Error(`${criterion.id}: proof differs from its registered definition or mode`);

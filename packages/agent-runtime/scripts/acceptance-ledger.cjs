@@ -192,7 +192,7 @@ function setDerivedClaims(taskDir, claims) {
     if (!claim && inherited.has(criterion.id)) continue;
     if (
       !claim ||
-      claim.text !== criterion.text ||
+      !acceptanceCriteriaMatch([criterion], [claim]) ||
       (criterion.proofMode && claim.proofMode !== criterion.proofMode)
     )
       throw new AcceptanceRefusal(
@@ -285,7 +285,11 @@ function mergeCaseClaims(taskDir, registered, claims) {
   if (stored?.schemaVersion === 2 && validateAcceptanceStatusLedger(stored).length === 0) {
     for (const row of stored.criteria) {
       const registration = registered.find(({ id }) => id === row.id);
-      if (ACCEPTANCE_CRITERION_ID_PATTERN.test(row.id) && registration?.text !== row.text) continue;
+      if (
+        ACCEPTANCE_CRITERION_ID_PATTERN.test(row.id) &&
+        !acceptanceCriteriaMatch([registration], [row])
+      )
+        continue;
       const execution = acceptanceRowExecution(stored, row);
       // A row whose evidence is gone, or whose case directory now holds another
       // execution, has nothing left to bind; the new row stands.

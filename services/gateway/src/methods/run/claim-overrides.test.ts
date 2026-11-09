@@ -475,3 +475,16 @@ test('an output override changes confirmation identity and preserves the frozen 
     /snapshot changed/,
   );
 });
+
+test('raw registered text keeps the existing override authority for normalized engine claims', async (t) => {
+  const f = await fixture(t);
+  const read = await f.dependencies.acceptance();
+  const result = await runOverrideClaim(f.params, () => {}, {
+    ...f.dependencies,
+    acceptance: async () => ({
+      ...read,
+      criteria: read.criteria.map((row) => ({ ...row, text: `- [ ] ${row.text}` })),
+    }),
+  });
+  assert.equal(result.receipt.claimId, 'AC-1');
+});

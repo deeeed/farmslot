@@ -16,6 +16,7 @@ import {
   type ArtifactRef,
   EXECUTION_CHECKLIST_DOCUMENT,
   type ExecutionTemplateReference,
+  normalizeAcceptanceCriteria,
   type Run,
   type WorkerTerminalContractDocument,
 } from '@farmslot/protocol';
@@ -61,22 +62,10 @@ const TASK_BLOCK_KEYS: ReadonlyArray<{ key: string; optional?: boolean; label?: 
  * never carries a live `- [ ]` box that could be mistaken for a step.
  */
 export function renderAcceptanceCriteria(items: ReadonlyArray<string>): string {
-  const normalized = items
-    .map((item) =>
-      item
-        .split('\n')
-        .map((line) =>
-          line
-            .trim()
-            .replace(/^[-*]\s+/, '')
-            .replace(/^\[(?: |x|X)\]\s*/, '')
-            .trim(),
-        )
-        .filter(Boolean),
-    )
-    .filter((lines) => lines.length > 0)
-    // Continuation lines stay with their criterion, indented so they never start a list item.
-    .map(([first, ...rest]) => [`- ${first}`, ...rest.map((line) => `  ${line}`)].join('\n'));
+  const normalized = normalizeAcceptanceCriteria(items).map((criterion) => {
+    const [first, ...rest] = criterion.split('\n');
+    return [`- ${first}`, ...rest.map((line) => `  ${line}`)].join('\n');
+  });
   return normalized.length > 0 ? normalized.join('\n') : '_Not specified_';
 }
 

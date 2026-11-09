@@ -113,3 +113,26 @@ test('legacy opted-out contracts keep their original policy for every proof mode
     assert.equal(legacy.publicationReview, false);
   }
 });
+
+test('a retained raw proof declaration matches a normalized nested-list task', (t) => {
+  const f = fixture(t);
+  f.revision.proofModes[0].text = 'Original\n- Nested example';
+  f.project();
+  writeFileSync(
+    path.join(f.dir, 'inputs/handoff.json'),
+    JSON.stringify({
+      attemptId: 'run-1',
+      task: { acceptanceCriteria: ['Original\nNested example'] },
+    }),
+  );
+  assert.deepEqual(effectiveAcceptanceContract(f.dir, f.base, f.baseBytes), {
+    ...f.base,
+    inheritedAcceptanceCriteria: [],
+  });
+  f.revision.proofModes[0].text = 'Original\n- Changed example';
+  f.project();
+  assert.throws(
+    () => effectiveAcceptanceContract(f.dir, f.base, f.baseBytes),
+    /proof mode changed/,
+  );
+});
