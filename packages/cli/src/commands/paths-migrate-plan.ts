@@ -128,7 +128,7 @@ export async function planMigration(options: MigrationOptions): Promise<Migratio
   await assertUnredirected(home);
   if (!(await info(home))?.isDirectory()) throw new Error(`Migration home must exist: ${home}`);
   const env = options.env ?? process.env;
-  const legacy = resolveReportedFarmPaths({
+  let legacy = resolveFarmPaths({
     ...options,
     home,
     role: 'gateway',
@@ -159,11 +159,58 @@ export async function planMigration(options: MigrationOptions): Promise<Migratio
     createdDirs: [],
     status: 'planned',
   };
-  const documentRoots = new Set<string>();
+  const documents = new Map<string, { value: unknown; raw: string }>();
+  const readDocument = async (file: string) => {
+    if (documents.has(file)) return;
+    const metadata = await info(file);
+    if (!metadata?.isFile() || metadata.isSymbolicLink()) return;
+    await assertUnredirected(file);
+    const raw = await readFile(file, 'utf8');
+    try {
+      const value: unknown = file.endsWith('.jsonl')
+        ? raw
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => JSON.parse(line))
+        : JSON.parse(raw);
+      documents.set(file, { raw, value });
+    } catch (error) {
+      // A corrupt farm-owned document blocks apply; unrelated files never reach this parser.
+      if (!(error instanceof SyntaxError)) throw error;
+      plan.conflicts.push(`Invalid migration document: ${file}: ${error.message}`);
+    }
+  };
+  const children = async (root: string): Promise<string[]> => {
+    const metadata = await info(root);
+    return metadata?.isDirectory() && !metadata.isSymbolicLink()
+      ? (await readdir(root)).sort().map((name) => path.join(root, name))
+      : [];
+  };
+  const readJsonChildren = async (root: string, jsonl = false) => {
+    for (const file of await children(root))
+      if (file.endsWith('.json') || (jsonl && file.endsWith('.decisions.jsonl')))
+        await readDocument(file);
+  };
+  // Validate the pairing documents before the reporting resolver reads them synchronously.
+  const retention = path.join(legacy.config, 'run-bundle-retention.json');
+  const binding = path.join(legacy.state.runs, 'bundle-store.json');
+  await readDocument(retention);
+  await readDocument(binding);
+  const settings = documents.get(retention)?.value;
+  const pairing = documents.get(binding)?.value;
+  const configured =
+    record(settings) && record(settings.runBundleRetention)
+      ? settings.runBundleRetention.storeRoot
+      : undefined;
+  const storeRoot = record(pairing) ? pairing.root : configured;
+  if (typeof storeRoot === 'string' && path.isAbsolute(expandHome(storeRoot)))
+    await readDocument(path.join(expandHome(storeRoot), 'store.json'));
+  if (plan.conflicts.length) return plan;
+  legacy = resolveReportedFarmPaths({ ...options, home, role: 'gateway', instanceConfig: null });
+  plan.legacy = legacy;
   const add = (source: string, target: string) => {
     source = path.resolve(source);
     target = path.resolve(target);
-    documentRoots.add(source);
     if (source === target) {
       plan.stays.push({ path: source, reason: 'Already at the layout-2 path' });
       return;
@@ -228,11 +275,26 @@ export async function planMigration(options: MigrationOptions): Promise<Migratio
     reason: 'Shared legacy prepare scratch is not owned by one instance',
   });
 
+  // Explicit ownership allowlist. Never recurse into checkouts, task evidence or backups.
+  await readJsonChildren(legacy.pool);
+  for (const project of await children(legacy.projects))
+    if ((await info(project))?.isDirectory() && !(await info(project))?.isSymbolicLink())
+      await readDocument(path.join(project, 'project.json'));
+  await readDocument(path.join(legacy.config, 'git-identity.json'));
+  for (const role of ['gateway', 'node'])
+    await readJsonChildren(path.join(legacy.state.sources, role, 'receipts'));
+  await readJsonChildren(path.join(legacy.state.sources, 'runtime-settings'));
+  await readJsonChildren(legacy.state.runs, true);
+  await readJsonChildren(path.join(legacy.state.runs, 'archive'), true);
+  await readDocument(path.join(legacy.data.runBundles, 'store.json'));
+  await readJsonChildren(path.join(legacy.data.runBundles, 'availability'));
+  for (const pin of await children(legacy.state.taskPins))
+    if ((await info(pin))?.isDirectory() && !(await info(pin))?.isSymbolicLink())
+      await readDocument(path.join(pin, 'provenance.json'));
+
   const slotRoots: string[] = [];
-  for (const file of await files(legacy.pool)) {
-    if (!file.endsWith('.json')) continue;
-    const pool = await json(file);
-    if (!record(pool) || !Array.isArray(pool.slots)) continue;
+  for (const [file, { value: pool }] of documents) {
+    if (path.dirname(file) !== legacy.pool || !record(pool) || !Array.isArray(pool.slots)) continue;
     for (const slot of pool.slots)
       if (record(slot) && typeof slot.repo === 'string') {
         const repo = expandHome(slot.repo);
@@ -242,32 +304,6 @@ export async function planMigration(options: MigrationOptions): Promise<Migratio
         }
       }
   }
-  const documents = new Map<string, { value: unknown; raw: string }>();
-  const readDocuments = async (root: string) => {
-    for (const file of await files(root)) {
-      if (!/\.(?:json|jsonl)$/.test(file) || documents.has(file)) continue;
-      // Content-addressed bundles are immutable. Only their availability sidecar carries local paths.
-      if (
-        within(legacy.data.runBundles, file) &&
-        file.includes(`${path.sep}sha256${path.sep}`) &&
-        path.basename(file) !== 'availability.json'
-      )
-        continue;
-      const raw = await readFile(file, 'utf8');
-      if (file.endsWith('.jsonl'))
-        documents.set(file, {
-          raw,
-          value: raw
-            .trim()
-            .split('\n')
-            .filter(Boolean)
-            .map((line) => JSON.parse(line)),
-        });
-      else documents.set(file, { raw, value: JSON.parse(raw) });
-    }
-  };
-  for (const source of documentRoots)
-    if (!within(legacy.data.runArchive, source)) await readDocuments(source);
   const archives = new Set([
     path.resolve(legacy.data.runArchive),
     resolveFarmPaths({
@@ -278,14 +314,27 @@ export async function planMigration(options: MigrationOptions): Promise<Migratio
       env: { ...env, FARMSLOT_RUN_ARCHIVE_ROOT: undefined },
     }).data.runArchive,
   ]);
-  for (const { value } of documents.values())
+  for (const [file, { value }] of [...documents]) {
+    if (![legacy.state.runs, path.join(legacy.state.runs, 'archive')].includes(path.dirname(file)))
+      continue;
+    const manifestLinks = new Set(
+      record(value) && Array.isArray(value.links)
+        ? value.links.flatMap((link) =>
+            record(link) && link.label === 'Storage archive' && typeof link.url === 'string'
+              ? [link.url]
+              : [],
+          )
+        : [],
+    );
     for (let location of strings(value)) {
+      const manifestLink = manifestLinks.has(location);
       if (location.startsWith('file://')) location = fileURLToPath(location);
       if (!path.isAbsolute(location)) continue;
-      if (location.endsWith('/manifest.json')) {
+      if (manifestLink && location.endsWith('/manifest.json')) {
         const candidate = await info(location);
         if (candidate?.isFile()) {
-          const manifest = await json(location);
+          await readDocument(location);
+          const manifest = documents.get(location)?.value;
           if (
             record(manifest) &&
             typeof manifest.runId === 'string' &&
@@ -297,19 +346,25 @@ export async function planMigration(options: MigrationOptions): Promise<Migratio
       const media = location.indexOf('/run-bundle-media/');
       if (media >= 0) archives.add(location.slice(0, media));
     }
+  }
   for (const archive of archives) {
     add(archive, next.data.runArchive);
-    await readDocuments(archive);
+    for (const run of await children(archive))
+      if ((await info(run))?.isDirectory() && !(await info(run))?.isSymbolicLink())
+        await readDocument(path.join(run, 'manifest.json'));
   }
   // Task receipts live with their tasks, outside the pin root. Rewrite those exact files only.
   for (const [file, { value }] of [...documents]) {
     if (
       within(legacy.state.taskPins, file) &&
+      path.dirname(path.dirname(file)) === legacy.state.taskPins &&
       path.basename(file) === 'provenance.json' &&
       record(value) &&
       typeof value.taskDir === 'string'
-    )
-      await readDocuments(path.join(value.taskDir, 'artifacts', 'harness-provenance.json'));
+    ) {
+      const receipt = path.join(value.taskDir, 'artifacts', 'harness-provenance.json');
+      if (![...archives].some((root) => within(root, receipt))) await readDocument(receipt);
+    }
   }
   for (const source of slotRoots) plan.mappings.push({ source, target: source });
   plan.mappings.sort((a, b) => b.source.length - a.source.length);
@@ -469,7 +524,7 @@ export async function planMigration(options: MigrationOptions): Promise<Migratio
     });
   }
   for (const [source, { value, raw }] of documents) {
-    if (manifestSources.has(source)) continue;
+    if (manifestSources.has(source) || [...archives].some((root) => within(root, source))) continue;
     const changes: PathMapping[] = [];
     const updated = rewrite(value, plan.mappings, changes);
     const target = translate(source, plan.mappings);

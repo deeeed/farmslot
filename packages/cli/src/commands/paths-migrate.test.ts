@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, fork } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import fs, {
   mkdir,
@@ -87,7 +88,7 @@ async function fixture(t: TestContext) {
     links: [{ label: 'Storage archive', url: manifest }],
   });
   await put(path.join(runs, 'run-b.json'), { id: 'run-b', status: 'cancelled' });
-  await put(path.join(home, 'run-bundles/sha256/digest/availability.json'), {
+  await put(path.join(home, 'run-bundles/availability/digest.json'), {
     archivedPaths: { 'proof.png': payload },
   });
   await put(path.join(home, 'task-pins/pin/provenance.json'), {
@@ -145,7 +146,7 @@ async function assertMigrated(f: Awaited<ReturnType<typeof fixture>>, plan: Migr
   assert.equal(run.links[0].url, path.join(paths.data.runArchive, 'run-a/manifest.json'));
   await readFile(run.links[0].url);
   const availability = (await json(
-    path.join(paths.data.runBundles, 'sha256/digest/availability.json'),
+    path.join(paths.data.runBundles, 'availability/digest.json'),
   )) as { archivedPaths: Record<string, string> };
   assert.equal(
     availability.archivedPaths['proof.png'],
@@ -188,7 +189,7 @@ test('plan is read-only; apply rewrites all owners and rollback restores legacy 
     'bundle-store.json',
     'store.json',
     'run-bundle-retention.json',
-    'availability.json',
+    'digest.json',
     'provenance.json',
     'harness-provenance.json',
   ])
@@ -204,6 +205,169 @@ test('plan is read-only; apply rewrites all owners and rollback restores legacy 
   await migratePaths(f.options, 'rollback');
   await assertLegacy(f);
   assert.equal((await migratePaths(f.options, 'rollback')).status, 'rolled-back');
+});
+
+test('plan ignores checkout JSONC and arbitrary task artifacts', async (t) => {
+  const f = await fixture(t);
+  const evidenceManifest = path.join(
+    f.checkout,
+    'projects/pack/tasks/fix/task/artifacts/manifest.json',
+  );
+  const ignored = [
+    [path.join(f.home, 'task-pins/pin/cli/.vscode/settings.json'), '// checkout settings\n{}'],
+    [path.join(f.checkout, 'projects/pack/tasks/fix/task/artifacts/empty.json'), ''],
+    [
+      path.join(f.checkout, 'projects/pack/tasks/fix/task/artifacts/failure.json'),
+      'Recipe artifact failure',
+    ],
+    [path.join(f.home, 'review-workspaces/review/node_modules/pkg/data.json'), '{invalid'],
+    [path.join(f.checkout, '.backups/old.json'), '{invalid'],
+    [evidenceManifest, 'Recipe artifact manifest'],
+    [path.join(f.home, 'sources.json'), '{opaque declaration}'],
+    [
+      path.join(f.checkout, 'projects/pack/tasks/fix/task/artifacts/proof.json'),
+      JSON.stringify({ path: f.home + '/task-pins/pin' }),
+    ],
+    [path.join(f.home, 'task-pins/pin/cli/node_modules/pkg/data.json'), '{invalid'],
+  ];
+  for (const [file, body] of ignored) await put(file, body);
+  const run = await json(path.join(f.runs, 'run-a.json'));
+  assert.ok(run && typeof run === 'object' && 'links' in run && Array.isArray(run.links));
+  run.links.push({ label: 'Evidence', url: evidenceManifest });
+  await put(path.join(f.runs, 'run-a.json'), run);
+  const opened: string[] = [];
+  const original = fs.readFile;
+  t.mock.method(fs, 'readFile', async (...args: Parameters<typeof readFile>) => {
+    opened.push(String(args[0]));
+    return original(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  const plan = await planMigration(f.options);
+  assert.deepEqual(plan.conflicts, []);
+  for (const [file] of ignored) {
+    assert.ok(!plan.steps.some((step) => step.kind === 'write' && step.source === file), file);
+    // Move inventories hash bytes through streams; document discovery must not open these.
+    assert.ok(!opened.includes(file), file);
+  }
+});
+
+test('archived evidence keeps its bytes and manifest digest after apply', async (t) => {
+  const f = await fixture(t);
+  const evidence = path.join(f.archive, 'run-a/old-generation/evidence.json');
+  const raw = `{ "path": "${f.home}/task-pins/pin", "proof": true }\n`;
+  await put(evidence, raw);
+  const sha256 = createHash('sha256').update(raw).digest('hex');
+  const identity = (await inventory(evidence))[''];
+  const verifiedCopy = { '': `${identity.mode}:${sha256}` };
+  const manifest = await json(f.manifest);
+  assert.ok(manifest && typeof manifest === 'object' && 'entries' in manifest);
+  assert.ok(Array.isArray(manifest.entries));
+  manifest.entries.push({
+    destination: evidence,
+    verifiedCopy,
+    state: 'archived',
+    completedAt: '2026-01-01',
+  });
+  await put(f.manifest, manifest);
+  // Nested manifests are evidence too, even when they look like storage manifests.
+  const nested = path.join(f.archive, 'run-a/old-generation/task/manifest.json');
+  await put(nested, { runId: 'task', entries: [{ destination: evidence }], path: f.home });
+  const nestedBytes = await readFile(nested);
+  const opaque = path.join(f.archive, 'run-a/old-generation/task/artifacts/manifest.json');
+  await put(opaque, 'Recipe artifact ' + f.home);
+  const opaqueBytes = await readFile(opaque);
+  const plan = await migratePaths(f.options, 'apply');
+  const moved = path.join(plan.dataRoot, 'run-archive/run-a/old-generation/evidence.json');
+  assert.equal(await readFile(moved, 'utf8'), raw);
+  assert.deepEqual(
+    await readFile(
+      path.join(plan.dataRoot, 'run-archive/run-a/old-generation/task/artifacts/manifest.json'),
+    ),
+    opaqueBytes,
+  );
+  const migrated = await json(path.join(plan.dataRoot, 'run-archive/run-a/manifest.json'));
+  assert.ok(migrated && typeof migrated === 'object' && 'entries' in migrated);
+  assert.ok(Array.isArray(migrated.entries));
+  const entry = migrated.entries.find(
+    (entry: { destination: string }) => entry.destination === moved,
+  );
+  assert.equal(
+    createHash('sha256')
+      .update(await readFile(moved))
+      .digest('hex'),
+    entry.verifiedCopy[''].split(':')[1],
+  );
+  assert.deepEqual(
+    await readFile(path.join(plan.dataRoot, 'run-archive/run-a/old-generation/task/manifest.json')),
+    nestedBytes,
+  );
+});
+
+for (const relative of [
+  'checkout/pool/local.json',
+  'checkout/projects/pack/project.json',
+  'home/run-bundle-retention.json',
+  'checkout/.runs/bundle-store.json',
+  'home/run-bundles/store.json',
+  'home/git-identity.json',
+  'home/sources/runtime-settings/pack.json',
+  'home/sources/gateway/receipts/digest.json',
+  'home/sources/node/receipts/digest.json',
+  'checkout/.runs/run-a.json',
+  'checkout/.runs/archive/run-c.json',
+  'checkout/.runs/run-a.decisions.jsonl',
+  'home/run-bundles/availability/digest.json',
+  'old-archive/run-a/manifest.json',
+  'home/task-pins/pin/provenance.json',
+  'checkout/tasks/run-a/artifacts/harness-provenance.json',
+])
+  test(`malformed owned document is a named conflict before mutation: ${relative}`, async (t) => {
+    const f = await fixture(t);
+    const file = path.join(f.root, relative);
+    await put(file, '{invalid owned document');
+    const before = await inventory(f.root);
+    const plan = await migratePaths(f.options, 'plan');
+    assert.ok(plan.conflicts.some((conflict) => conflict.includes(file)));
+    await assert.rejects(migratePaths(f.options, 'apply'), /Migration conflicts/);
+    assert.deepEqual(await inventory(f.root), before);
+  });
+
+test('owned configuration, source receipts and run history references still rewrite', async (t) => {
+  const f = await fixture(t);
+  const old = path.join(f.home, 'task-pins/pin');
+  const owners = [
+    [path.join(f.checkout, 'pool/local.json'), { slots: [], runtime_dir: old }],
+    [path.join(f.checkout, 'projects/pack/project.json'), { repo: old }],
+    [path.join(f.home, 'git-identity.json'), { 'user.signingkey': old }],
+    [
+      path.join(f.home, 'sources/runtime-settings/pack.json'),
+      { values: { backlog: { root: old } } },
+    ],
+    [path.join(f.home, 'sources/gateway/receipts/digest.json'), { roots: { source: old } }],
+    [path.join(f.home, 'sources/node/receipts/digest.json'), { receiptPath: old }],
+    [path.join(f.runs, 'archive/run-c.json'), { id: 'run-c', status: 'done', taskFile: old }],
+    [
+      path.join(f.runs, 'run-a.decisions.jsonl'),
+      JSON.stringify({ artifacts: [{ path: old }] }) + '\n',
+    ],
+    [
+      path.join(f.runs, 'archive/run-c.decisions.jsonl'),
+      JSON.stringify({ artifacts: [{ path: old }] }) + '\n',
+    ],
+  ] as const;
+  for (const [file, value] of owners) await put(file, value);
+  const plan = await migratePaths(f.options, 'plan');
+  assert.deepEqual(plan.conflicts, []);
+  for (const [file] of owners) {
+    const step = plan.steps.find((step) => step.kind === 'write' && step.source === file);
+    assert.ok(step?.kind === 'write', file);
+    assert.ok(step.body.includes(path.join(f.home, 'state/task-pins/pin')), file);
+    assert.ok(!step.body.includes(old), file);
+  }
 });
 
 test('two archive roots merge the same run and never drop duplicate entries', async (t) => {

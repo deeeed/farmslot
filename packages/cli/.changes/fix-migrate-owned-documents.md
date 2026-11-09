@@ -1,0 +1,1 @@
+- Migration rewrites only farm-owned path documents from an audited allowlist. Task evidence, checkout files and archived run documents keep their bytes, and a malformed owned document is a plan conflict instead of a crash.
