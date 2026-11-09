@@ -8,6 +8,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## 0.83.1 - 2026-11-09
 
+- Match raw ticket criteria to task-init definitions without changing stored criteria or derived proof identity.
+
 - Keep farm path resolution silent for supported legacy environment overrides so JSON consumers can parse output; override names remain available in `farmslot paths --json`.
 - Retain full review-launch inputs alongside attempt-bound fix inputs so recovery detects description and worker report edits.
 

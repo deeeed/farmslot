@@ -6,6 +6,8 @@
 
 ## 0.45.7 - 2026-11-09
 
+- Match raw ticket criteria to task-init definitions without changing stored criteria or derived proof identity.
+
 - Align protocol 0.83.1 and its matching dependency set so legacy path tools keep JSON output clean with one protocol instance.
 
 ## 0.45.6 - 2026-11-09

@@ -44,7 +44,12 @@ export const ACCEPTANCE_CRITERION_ID_PATTERN = contract.ACCEPTANCE_CRITERION_ID_
  * @param index 0-based position in `inputs/handoff.json` `task.acceptanceCriteria`.
  */
 export const acceptanceCriterionId = contract.acceptanceCriterionId;
+export const normalizeAcceptanceCriteria = contract.normalizeAcceptanceCriteria;
 export const acceptanceCriteriaMatch = contract.acceptanceCriteriaMatch;
+export const ticketCriteriaAsRegistered: (
+  rawTicketCriteria: readonly string[],
+  registration?: AcceptanceRegistration,
+) => AcceptanceCriterionRef[] = contract.ticketCriteriaAsRegistered;
 export const registeredAcceptanceCriteria: (
   criteria: readonly unknown[],
   registration?: AcceptanceRegistration,

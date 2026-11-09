@@ -11,12 +11,12 @@ import {
   DEFAULT_TASK_DIR,
   type EvidenceManifest,
   PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
-  registeredAcceptanceCriteria,
   type ReviewDiffSnapshot,
   type ReviewIssue,
   type ReviewMode,
   type ReviewValidationDepth,
   type Run,
+  ticketCriteriaAsRegistered,
 } from '@farmslot/protocol';
 import { expandSourceBindings } from '@farmslot/slot-config';
 
@@ -196,7 +196,7 @@ async function reviewCriteriaSection(
   run: Run,
 ): Promise<string> {
   if (
-    !registeredAcceptanceCriteria(
+    !ticketCriteriaAsRegistered(
       run.ticketData?.acceptanceCriteria ?? [],
       run.acceptanceRegistration,
     ).length

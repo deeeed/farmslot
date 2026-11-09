@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -35,6 +35,7 @@ const {
   collectRunGateReadiness,
   projectRunGateActions,
   refreshRunGateReadiness,
+  readGateAcceptance,
   reviewsWithValidResults,
 } = await import('./gate-prerequisites.js');
 const { makeRun, makeReadyGatePackage, deleteTestRunIfPresent } =
@@ -49,6 +50,91 @@ const { computeReadyGatePackageHash } = await import('../run-completion/ready-ga
 const idle = async () => ({ kind: 'idle' as const });
 const emptyAcceptance = async () => ({ criteria: [], ledger: null, issues: [] });
 const passed = async () => {};
+
+test('nested-list normalized task acceptance stays readable and changed ticket text refuses', async (t) => {
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        '../../../../packages/protocol/test/fixtures/nested-list-criteria.json',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  );
+  const root = await mkdtemp(path.join(os.tmpdir(), 'gate-nested-criteria-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'inputs'));
+  await mkdir(path.join(root, 'artifacts'));
+  const run = makeRun({
+    id: randomUUID(),
+    taskFile: path.join(root, 'TASK.md'),
+    ticketData: {
+      source: 'jira',
+      title: 'Nested list criteria',
+      description: '',
+      affectedArea: '',
+      stepsToReproduce: [],
+      screenshots: [],
+      labels: [],
+      acceptanceCriteria: fixture.rawTicketCriteria,
+    },
+  });
+  await writeFile(path.join(root, 'TASK.md'), '# Task\n');
+  await writeFile(
+    path.join(root, 'inputs/handoff.json'),
+    JSON.stringify({
+      attemptId: run.id,
+      task: {
+        acceptanceCriteria: fixture.ledgerCriteria.map(({ text }: { text: string }) => text),
+      },
+    }),
+  );
+  await writeFile(
+    path.join(root, 'artifacts/acceptance-status.json'),
+    JSON.stringify({
+      schemaVersion: 2,
+      recipeRunId: 'fixture-execution',
+      recording: { status: 'not-required', segments: [] },
+      criteria: fixture.ledgerCriteria.map((row: { id: string; text: string }) => ({
+        ...row,
+        verdict: 'missing',
+        kind: 'acceptance',
+        assertionIndices: [],
+        moments: [],
+        evidence: [],
+        recipeNodes: [],
+      })),
+    }),
+  );
+  await retainFixtureTask(root, run, await runBundleStore(true));
+  const acceptance = await readGateAcceptance(run);
+  assert.equal(acceptance.error, undefined);
+  assert.equal(acceptance.criteria.length, 4);
+  assert.equal(acceptance.ledger?.criteria[2]?.text, fixture.ledgerCriteria[2].text);
+  const readiness = await collectRunGateReadiness(run, null, {
+    deterministic: passed,
+    progress: idle,
+  });
+  assert.equal(
+    readiness.reasons.some(({ code }) => code === 'acceptance-unreadable'),
+    false,
+  );
+  assert.equal(readiness.state, 'not-ready', 'Missing verdicts still refuse readiness');
+  assert.ok(run.ticketData);
+  run.ticketData.acceptanceCriteria[2] = run.ticketData.acceptanceCriteria[2].replace(
+    '2 kg',
+    '3 kg',
+  );
+  assert.match(
+    (await readGateAcceptance(run)).error ?? '',
+    /Original acceptance registration is missing or changed/,
+  );
+  const changed = await collectRunGateReadiness(run, null, {
+    deterministic: passed,
+    progress: idle,
+  });
+  assert.ok(changed.reasons.some(({ code }) => code === 'acceptance-unreadable'));
+});
 
 test('artifact-only comparison and reportless output retain their digest fence without a review decision', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'gate-output-no-decision-'));
@@ -511,7 +597,11 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
   t.after(() => rm(root, { recursive: true, force: true }));
   const directory = path.join(root, 'artifacts/proof');
   await mkdir(directory, { recursive: true });
-  const declaration = { id: 'AC-1', claim: 'The counter is one.', proofMode: 'state' as const };
+  const declaration = {
+    id: 'AC-1',
+    claim: 'Default selection:\n- [ ] Active\n- [x] Archived',
+    proofMode: 'state' as const,
+  };
   const recipe = {
     $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
     title: 'Counter proof',
@@ -645,7 +735,19 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
     progress: idle,
     selectedEvidence: passed,
     acceptance: async () => ({
-      criteria: [{ id: declaration.id, text: declaration.claim }],
+      criteria: [
+        {
+          id: declaration.id,
+          text: declaration.claim,
+          proofMode: declaration.proofMode,
+          source: {
+            kind: 'instruction' as const,
+            sourceId: 'message:1',
+            sourceVersion: 'v1',
+            obligationIndex: 0,
+          },
+        },
+      ],
       ledger: claims,
       issues: [],
     }),
@@ -657,6 +759,19 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
   assert.equal(owner.status, 'valid', JSON.stringify(owner.findings));
   const valid = await check();
   assert.equal(valid.state, 'ready', JSON.stringify(valid.reasons));
+  const reversedDefaults = await collectRunGateReadiness(run, prepared, {
+    ...sources,
+    acceptance: async () => ({
+      criteria: [{ id: declaration.id, text: 'Default selection:\n- [x] Active\n- [ ] Archived' }],
+      ledger: claims,
+      issues: [],
+    }),
+  });
+  assert.equal(reversedDefaults.state, 'not-ready');
+  assert.ok(
+    reversedDefaults.reasons.some(({ evidencePolicy }) => evidencePolicy === 'criterion-binding'),
+    JSON.stringify(reversedDefaults.reasons),
+  );
   const retained = (await readRecordedEvidencePackage(directory)).input;
   const staleLedger = await collectRunGateReadiness(run, prepared, {
     ...sources,
