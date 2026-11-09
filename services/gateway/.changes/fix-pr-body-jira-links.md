@@ -1,0 +1,1 @@
+- PR data prefetches Jira tickets the PR body links as browse URLs on the project Jira (`Fixes: …/browse/TAT-4355`), so they reach the task as linked tickets. Bare keys in prose stay ignored.
