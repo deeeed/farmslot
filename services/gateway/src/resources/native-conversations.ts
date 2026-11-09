@@ -34,6 +34,28 @@ import {
 import { resourceRevisions } from './revisions.js';
 
 const MAX_BYTES = 1024 * 1024;
+/** Serialized size of each update, measured once and shared by every viewer of its source. */
+const updateBytes = new WeakMap<NativeConversationUpdate, number>();
+function serializedBytes(update: NativeConversationUpdate): number {
+  let bytes = updateBytes.get(update);
+  if (bytes === undefined) {
+    bytes = Buffer.byteLength(JSON.stringify(update));
+    updateBytes.set(update, bytes);
+  }
+  return bytes;
+}
+/** Event frame bytes around a payload of `{...update, subscriptionId}`, plus the prior margin. */
+function frameOverhead(subscriptionId: string): number {
+  return (
+    Buffer.byteLength(
+      JSON.stringify({
+        type: 'event',
+        event: Events.NATIVE_SESSION_DELTA,
+        payload: { subscriptionId },
+      }),
+    ) + 64
+  );
+}
 type TerminalReason = Extract<NativeConversationUpdate, { kind: 'terminal' }>['reason'];
 interface Source {
   entry: SourceEntry;
@@ -465,7 +487,7 @@ export class NativeConversations {
           receive(update);
           return;
         }
-        bytes += Buffer.byteLength(JSON.stringify(update));
+        bytes += serializedBytes(update);
         if (bytes > MAX_BYTES) queue = [{ kind: 'terminal', reason: 'resync-required' }];
         else queue.push(update);
       },
@@ -559,7 +581,7 @@ export class NativeConversations {
   }
   private enqueue(viewer: Viewer, update: NativeConversationUpdate): void {
     if (viewer.closed) return;
-    viewer.bytes += Buffer.byteLength(JSON.stringify(update));
+    viewer.bytes += serializedBytes(update);
     if (viewer.bytes > MAX_BYTES) {
       this.terminate(viewer, 'resync-required');
       return;
@@ -574,20 +596,25 @@ export class NativeConversations {
       while (viewer.queue.length && !viewer.closed) {
         const check = await this.authorize(viewer);
         if (viewer.closed) return;
-        const update = viewer.queue.shift()!;
-        viewer.bytes -= Buffer.byteLength(JSON.stringify(update));
-        const payload = { ...this.pin(update, viewer), subscriptionId: viewer.id };
-        const frameBytes =
-          Buffer.byteLength(
-            JSON.stringify({ type: 'event', event: Events.NATIVE_SESSION_DELTA, payload }),
-          ) + 64;
-        if (viewer.client.ws.bufferedAmount + frameBytes > MAX_BYTES) {
-          this.terminate(viewer, 'resync-required');
-          return;
+        // Nothing below awaits, so this authorization covers every update queued by now, and
+        // `check` still re-validates the reader and source before each emit.
+        const overhead = frameOverhead(viewer.id);
+        while (viewer.queue.length && !viewer.closed) {
+          const update = viewer.queue.shift()!;
+          const bytes = serializedBytes(update);
+          viewer.bytes -= bytes;
+          const payload = { ...this.pin(update, viewer), subscriptionId: viewer.id };
+          // Only a worker view rewrites the session; otherwise the payload is the update itself.
+          const frameBytes =
+            (viewer.worker ? Buffer.byteLength(JSON.stringify(payload)) : bytes) + overhead;
+          if (viewer.client.ws.bufferedAmount + frameBytes > MAX_BYTES) {
+            this.terminate(viewer, 'resync-required');
+            return;
+          }
+          check();
+          viewer.emit(Events.NATIVE_SESSION_DELTA, payload);
+          if (update.kind === 'terminal') this.unsubscribe(viewer.client, viewer.id);
         }
-        check();
-        viewer.emit(Events.NATIVE_SESSION_DELTA, payload);
-        if (update.kind === 'terminal') this.unsubscribe(viewer.client, viewer.id);
       }
     } catch {
       this.terminate(viewer, 'access-denied');

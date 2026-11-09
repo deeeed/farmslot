@@ -1,6 +1,5 @@
 // node-health.ts — In-memory machine health state, local collection, headroom computation
 
-import { execSync } from 'node:child_process';
 import os from 'node:os';
 
 import {
@@ -22,6 +21,7 @@ import {
   resourceKeyId,
 } from '@farmslot/protocol/client-cache';
 
+import { execFileArgv } from '../core/exec.js';
 import { resourceRevisions } from '../resources/revisions.js';
 
 import { loadPressureHistory, savePressureHistory } from './pressure-history-store.js';
@@ -348,70 +348,74 @@ function getLocalCpuPercent(): number {
   return Math.round((1 - idleDelta / totalDelta) * 100);
 }
 
-function getLocalDiskPercent(): number {
-  try {
-    const output = execSync('df -k / | tail -1', { timeout: 5000, encoding: 'utf-8' });
-    const capField = output
-      .trim()
-      .split(/\s+/)
-      .find((p) => p.endsWith('%'));
-    return capField ? parseInt(capField, 10) : 0;
-  } catch {
-    return 0;
-  }
+// These probes run on the gateway's 30 s timer, so they use the async exec wrapper: a blocking
+// call here stalls every stream and RPC. A probe that exits non-zero leaves its metric at the
+// documented fallback (0, unknown thermal, or os.freemem); the next tick tries again.
+async function getLocalDiskPercent(): Promise<number> {
+  const { stdout, exitCode } = await execFileArgv(['df', '-k', '/'], { timeout: 5000 });
+  if (exitCode !== 0) return 0;
+  const capField = stdout
+    .trim()
+    .split('\n')
+    .at(-1)
+    ?.split(/\s+/)
+    .find((p) => p.endsWith('%'));
+  return capField ? parseInt(capField, 10) : 0;
 }
 
-function getLocalThermal(): 'nominal' | 'fair' | 'serious' | 'critical' | undefined {
+type LocalThermal = NodeSystemMetrics['thermalPressure'];
+
+async function getLocalThermal(): Promise<LocalThermal> {
   if (process.platform !== 'darwin') return undefined;
-  try {
-    const output = execSync('pmset -g therm 2>/dev/null', { timeout: 5000, encoding: 'utf-8' });
-    const match = output.match(/CPU_Speed_Limit\s*=\s*(\d+)/);
-    if (match) {
-      const limit = parseInt(match[1], 10);
-      if (limit >= 100) return 'nominal';
-      if (limit >= 75) return 'fair';
-      if (limit >= 50) return 'serious';
-      return 'critical';
-    }
-    return 'nominal';
-  } catch {
-    return undefined;
-  }
+  const { stdout, exitCode } = await execFileArgv(['pmset', '-g', 'therm'], { timeout: 5000 });
+  if (exitCode !== 0) return undefined;
+  const match = stdout.match(/CPU_Speed_Limit\s*=\s*(\d+)/);
+  if (!match) return 'nominal';
+  const limit = parseInt(match[1], 10);
+  if (limit >= 100) return 'nominal';
+  if (limit >= 75) return 'fair';
+  if (limit >= 50) return 'serious';
+  return 'critical';
 }
 
-function getLocalMemoryUsage(): { usedBytes: number; totalBytes: number } {
+interface LocalMemoryUsage {
+  usedBytes: number;
+  totalBytes: number;
+}
+
+async function getLocalMemoryUsage(): Promise<LocalMemoryUsage> {
   const totalBytes = os.totalmem();
   if (process.platform === 'darwin') {
-    try {
-      const sysctl = execSync('/usr/sbin/sysctl -n vm.page_pageable_internal_count hw.pagesize', {
+    const [sysctl, vmstat] = await Promise.all([
+      execFileArgv(['/usr/sbin/sysctl', '-n', 'vm.page_pageable_internal_count', 'hw.pagesize'], {
         timeout: 5000,
-        encoding: 'utf-8',
-      })
+      }),
+      execFileArgv(['vm_stat'], { timeout: 5000 }),
+    ]);
+    if (sysctl.exitCode === 0 && vmstat.exitCode === 0) {
+      const [internal, pageSize] = sysctl.stdout
         .trim()
-        .split('\n');
-      const internal = parseInt(sysctl[0], 10);
-      const pageSize = parseInt(sysctl[1], 10);
-      const vmstat = execSync('vm_stat', { timeout: 5000, encoding: 'utf-8' });
-      const wired = parseInt(vmstat.match(/Pages wired down:\s+(\d+)/)?.[1] ?? '0', 10);
+        .split('\n')
+        .map((line) => parseInt(line, 10));
+      const wired = parseInt(vmstat.stdout.match(/Pages wired down:\s+(\d+)/)?.[1] ?? '0', 10);
       const compressor = parseInt(
-        vmstat.match(/Pages occupied by compressor:\s+(\d+)/)?.[1] ?? '0',
+        vmstat.stdout.match(/Pages occupied by compressor:\s+(\d+)/)?.[1] ?? '0',
         10,
       );
-      return { usedBytes: (internal + wired + compressor) * pageSize, totalBytes };
-    } catch {
-      /* fallback */
+      if (Number.isFinite(internal) && Number.isFinite(pageSize))
+        return { usedBytes: (internal + wired + compressor) * pageSize, totalBytes };
     }
   }
   return { usedBytes: totalBytes - os.freemem(), totalBytes };
 }
 
-export function collectLocalMetrics(): NodeSystemMetrics {
-  const { usedBytes: usedMem, totalBytes: totalMem } = getLocalMemoryUsage();
+export async function collectLocalMetrics(): Promise<NodeSystemMetrics> {
+  const [{ usedBytes: usedMem, totalBytes: totalMem }, diskPercent, thermalPressure] =
+    await Promise.all([getLocalMemoryUsage(), getLocalDiskPercent(), getLocalThermal()]);
   const [loadAvg1, loadAvg5] = os.loadavg();
   const cpuCores = os.cpus().length;
   const cpuPercent = getLocalCpuPercent();
   const memoryPercent = Math.round((usedMem / totalMem) * 100);
-  const diskPercent = getLocalDiskPercent();
   const rounded = (value: number) => Math.round(value * 1_000) / 1_000;
   return {
     cpuPercent,
@@ -429,7 +433,7 @@ export function collectLocalMetrics(): NodeSystemMetrics {
       load1: rounded(loadAvg1 / Math.max(1, cpuCores)),
       load5: rounded(loadAvg5 / Math.max(1, cpuCores)),
     },
-    thermalPressure: getLocalThermal(),
+    thermalPressure,
     collectedAt: new Date().toISOString(),
   };
 }
@@ -464,10 +468,26 @@ export function startLocalCollection(
   onLocalUpdate = onUpdate ?? null;
   // Take initial CPU snapshot
   getLocalCpuPercent();
+  let collecting = false;
   localCollectionTimer = setInterval(() => {
-    const metrics = collectLocalMetrics();
-    updateMachineMetrics(localMachine, metrics);
-    if (onLocalUpdate) onLocalUpdate(localMachine);
+    // A slow probe must not stack a second collection behind it.
+    if (collecting) return;
+    collecting = true;
+    void collectLocalMetrics()
+      .then((metrics) => {
+        updateMachineMetrics(localMachine, metrics);
+        if (onLocalUpdate) onLocalUpdate(localMachine);
+      })
+      .catch((error: unknown) => {
+        // One missed sample is recoverable: the next tick collects again, and readers keep the
+        // previous metrics. Report it so a persistent failure is visible.
+        console.warn(
+          `[node-health] local metrics collection failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      })
+      .finally(() => {
+        collecting = false;
+      });
   }, intervalMs);
   localCollectionTimer.unref();
   // Mark online immediately

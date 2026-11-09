@@ -1,0 +1,1 @@
+- Relay native conversation updates with one serialization and one authorization pass per batch, and collect gateway host metrics without blocking the event loop.
