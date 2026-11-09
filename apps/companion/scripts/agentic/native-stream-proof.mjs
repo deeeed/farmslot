@@ -260,6 +260,29 @@ if (phase === 'setup') {
     `Scrolled to the end: ${JSON.stringify(value.follow)}`,
   );
   report({ follow: value.follow, lastAssistantKey: lastAssistant(value)?.key });
+} else if (phase === 'status-bar-top') {
+  // iOS scrolls to the top on a status bar tap: a scroll that is not a drag. The reader must stop
+  // following, even right after the screen's own jump to the end.
+  const tapped = device('click', '200', '12');
+  assert(tapped.success, JSON.stringify(tapped.error));
+  const value = await until(
+    (sample) => !sample.follow.following && sample.follow.distanceFromEnd >= SLACK,
+    'the status bar scroll leaving the end',
+    15000,
+  );
+  report({ follow: value.follow });
+} else if (phase === 'stays-away') {
+  // New output must not pull a reader who left back to the end.
+  const before = readState().completedTurns;
+  await call('POST', '/seed?turns=1');
+  await delay(1000);
+  const value = await frame();
+  assert(value, 'No conversation frame');
+  assert.equal(value.follow.following, false, `Pulled back: ${JSON.stringify(value.follow)}`);
+  assert(value.follow.distanceFromEnd >= SLACK, `Back at the end: ${JSON.stringify(value.follow)}`);
+  assert(value.follow.unseen > 0, `No unseen output: ${JSON.stringify(value.follow)}`);
+  writeState({ ...readState(), completedTurns: before + 1 });
+  report({ follow: value.follow });
 } else if (phase === 'render-metric') {
   // One more 200-delta turn into the open conversation; the app's own recorder times each streamed
   // update from receipt to the next foreground paint (farmslot_native_text_render_seconds).

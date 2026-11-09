@@ -27,6 +27,11 @@
       "id": "disclosure-exception",
       "claim": "Opening a message does not scroll the conversation to its end.",
       "proofMode": "state"
+    },
+    {
+      "id": "non-drag-scroll",
+      "claim": "A scroll that is not a drag, such as a status bar tap, stops following and new output does not undo it.",
+      "proofMode": "state"
     }
   ],
   "workflow": {
@@ -194,6 +199,55 @@
         "match": "\"phase\":\"disclosure-kept-place\"",
         "proves": ["disclosure-exception"],
         "intent": "The disclosure-kept-place phase passed its checks.",
+        "next": "wait-latest-again"
+      },
+      "wait-latest-again": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-jump-latest",
+        "timeout_ms": 15000,
+        "intent": "Latest shows again after the reader kept their place.",
+        "next": "press-latest-again"
+      },
+      "press-latest-again": {
+        "action": "ui.press",
+        "test_id": "companion-native-jump-latest",
+        "intent": "Jump back to the end.",
+        "next": "latest-again"
+      },
+      "latest-again": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-stream-proof.mjs latest",
+        "intent": "The jump lands at the end and follows.",
+        "next": "status-bar-top"
+      },
+      "status-bar-top": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-stream-proof.mjs status-bar-top",
+        "intent": "A status bar tap scrolls to the top and stops following.",
+        "next": "assert-status-bar-top"
+      },
+      "assert-status-bar-top": {
+        "action": "assert_output",
+        "source": "status-bar-top",
+        "stream": "stdout",
+        "match": "\"phase\":\"status-bar-top\"",
+        "proves": ["non-drag-scroll"],
+        "intent": "The status-bar-top phase passed its checks.",
+        "next": "stays-away"
+      },
+      "stays-away": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-stream-proof.mjs stays-away",
+        "intent": "New output does not pull that reader back to the end.",
+        "next": "assert-stays-away"
+      },
+      "assert-stays-away": {
+        "action": "assert_output",
+        "source": "stays-away",
+        "stream": "stdout",
+        "match": "\"phase\":\"stays-away\"",
+        "proves": ["non-drag-scroll"],
+        "intent": "The stays-away phase passed its checks.",
         "next": "done"
       },
       "done": {
