@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   Methods,
+  type NativeSessionEvent,
   type NativeSessionInfo,
   type NativeSessionListResult,
   type NativeSessionResponse,
@@ -27,6 +28,8 @@ import {
   nativeSendLabel,
   nativeSteerAvailable,
   nativeTimeline,
+  type NativeTimelineEntry,
+  type NativeTimelineRow,
   nativeTimelineRows,
   type NativeTranscript,
   nativeWork,
@@ -70,6 +73,14 @@ export interface NativeConversationParams {
   draft?: string;
 }
 type PendingCommand = NativeSessionSendParams & { generation: string };
+/** The last timeline built for a conversation, so the next one can reuse its unchanged parts. */
+interface NativeTimelineMemo {
+  session?: string;
+  entries?: NativeTimelineEntry[];
+  rows?: NativeTimelineRow[];
+}
+const NO_EVENTS: NativeSessionEvent[] = [];
+const NO_REQUESTS: NativeSessionEvent[] = [];
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const conversationStorage = createNativeConversationStorage(AsyncStorage);
 
@@ -86,6 +97,7 @@ export function useNativeConversationController(params: NativeConversationParams
   const authorityEpoch = useConnectionStore((state) => state.authorityEpoch);
   const creation = useNativeSessionSetup(!params.sessionId);
   const launching = useRef(false);
+  const timelineMemo = useRef<NativeTimelineMemo>({});
   const [draft, setDraft] = useState(params.draft ?? '');
   const [pending, setPending] = useState<PendingCommand>();
   const [responses, setResponses] = useState<string[]>([]);
@@ -253,9 +265,10 @@ export function useNativeConversationController(params: NativeConversationParams
   );
   const snapshot = allowed ? historyObservation.data : undefined;
   const transcript: NativeTranscript = {
-    events: snapshot?.events ?? [],
+    events: snapshot?.events ?? NO_EVENTS,
     cursor: snapshot?.cursor ?? 0,
   };
+  const historyIdentity = `${node}:${params.sessionId ?? ''}`;
   const sessions = allowed
     ? (inventoryObservation.data?.sessions ?? [])
         .filter((session) => !session.workerManaged)
@@ -537,9 +550,16 @@ export function useNativeConversationController(params: NativeConversationParams
     }
     return true;
   };
-  const entries = nativeTimeline(transcript.events);
-  const rows = nativeTimelineRows(entries);
-  const work = nativeWork(transcript.events);
+  // Built once per transcript change, never while typing. Unchanged entries and rows stay the same
+  // objects, so a streamed delta re-renders only the row it extends.
+  const { entries, rows, work } = useMemo(() => {
+    const previous: NativeTimelineMemo =
+      timelineMemo.current.session === historyIdentity ? timelineMemo.current : {};
+    const entries = nativeTimeline(transcript.events, previous.entries);
+    const rows = nativeTimelineRows(entries, previous.rows);
+    timelineMemo.current = { session: historyIdentity, entries, rows };
+    return { entries, rows, work: nativeWork(transcript.events) };
+  }, [transcript.events, historyIdentity]);
   const sendLabel = nativeSendLabel(session?.state);
   const receipt = snapshot?.commands.find((item) => item.commandId === pending?.commandId);
   /** The pending message, until the conversation shows it. */
@@ -614,7 +634,7 @@ export function useNativeConversationController(params: NativeConversationParams
       entries,
       rows,
       work,
-      requests: snapshot?.pendingRequests ?? [],
+      requests: snapshot?.pendingRequests ?? NO_REQUESTS,
       responses,
       draft,
       pending,
