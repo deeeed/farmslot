@@ -4608,6 +4608,9 @@ test('review replay clears the capacity hold so restart can observe the retry', 
     status: 'review-failed',
     taskFile,
     engineState: {
+      reviewFixAttempt: 2,
+      reviewFixInputsAtLaunch: { attempt: 2, fingerprint: 'old-fix-inputs' },
+      reviewInputsAtLaunch: 'review-approval-inputs',
       publishGate: {
         reviewRecovery: {
           status: 'operator-required',
@@ -4630,11 +4633,14 @@ test('review replay clears the capacity hold so restart can observe the retry', 
   await runReplayStep({ runId: run.id, stepName: 'review' }, () => {}, {
     startEngine: async (id) => {
       started = true;
+      assert.equal(getRun(id)?.engineState?.reviewFixInputsAtLaunch, undefined);
       assert.equal(getRun(id)?.engineState?.publishGate?.reviewRecovery, undefined);
     },
   });
   const retry = getRun(run.id)!;
   assert.equal(started, true);
+  assert.equal(retry.engineState?.reviewFixInputsAtLaunch, undefined);
+  assert.equal(retry.engineState?.reviewInputsAtLaunch, 'review-approval-inputs');
   assert.equal(retry.engineState?.publishGate?.reviewRecovery, undefined);
   assert.equal(
     isPublicationReviewRecoveryHeld(retry),

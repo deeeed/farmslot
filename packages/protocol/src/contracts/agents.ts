@@ -177,6 +177,8 @@ export interface AgentContext {
    * current attempt", which restart recovery needs.
    */
   attemptStartedAt?: string;
+  /** Fix handoff number owning this context; retained when the same fix is recovered. */
+  reviewFixAttempt?: number;
   /** Durable boundary recorded immediately before a task prompt may mutate the runner. */
   promptDeliveryStartedAt?: string;
   /** Exact CI fix prompt for duplicate-safe delivery recovery across gateway restarts. */

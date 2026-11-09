@@ -111,7 +111,25 @@ export async function noteReviewInputsAtLaunch(runId: string): Promise<void> {
   const current = await readReviewedInputs(run);
   await patchEngineState(runId, {
     reviewInputsAtLaunch: current?.fingerprint,
-    reviewFixInputsAtLaunch: current?.fixFingerprint,
+  });
+}
+
+/** A new fix handoff owns this baseline; recovery of that attempt must not refresh it. */
+export async function noteReviewFixInputsAtLaunch(runId: string): Promise<void> {
+  const run = getRun(runId);
+  if (!run) return;
+  const attempt = (run.engineState?.reviewFixAttempt ?? 0) + 1;
+  // Invalidate the previous attempt before probing, including if the gateway stops mid-probe.
+  await patchEngineState(runId, { reviewFixAttempt: attempt, reviewFixInputsAtLaunch: undefined });
+  const current = await readReviewedInputs(run);
+  const latest = getRun(runId);
+  if (
+    latest?.engineState?.reviewFixAttempt !== attempt ||
+    latest.engineState?.generation !== run.engineState?.generation
+  )
+    throw new Error('Review fix attempt changed before delivery');
+  await patchEngineState(runId, {
+    reviewFixInputsAtLaunch: current ? { attempt, fingerprint: current.fixFingerprint } : undefined,
   });
 }
 

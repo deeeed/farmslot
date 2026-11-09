@@ -129,7 +129,12 @@ async function recoveredFixAtCap(
   t: TestContext,
   fixSignal: Record<string, string>,
   atCap = true,
-  descriptionChanged = false,
+  changedArtifact:
+    | false
+    | 'pr-description.md'
+    | 'report.md'
+    | 'previous-attempt'
+    | 'previous-context' = false,
 ) {
   const run = createRun({
     project,
@@ -227,6 +232,7 @@ async function recoveredFixAtCap(
       {
         id: 'review-fix',
         role: 'review-fix',
+        reviewFixAttempt: changedArtifact === 'previous-context' ? 1 : 2,
         label: 'Fix',
         status: 'working',
         runId: run.id,
@@ -265,12 +271,16 @@ async function recoveredFixAtCap(
       engineState: {
         ...getRun(run.id)!.engineState,
         reviewInputsAtLaunch: fingerprint.fingerprint,
-        reviewFixInputsAtLaunch: fingerprint.fixFingerprint,
+        reviewFixAttempt: 2,
+        reviewFixInputsAtLaunch: {
+          attempt: changedArtifact === 'previous-attempt' ? 1 : 2,
+          fingerprint: fingerprint.fixFingerprint,
+        },
       },
     });
   }
-  if (descriptionChanged) {
-    const description = path.join(repo, taskDir, 'artifacts/pr-description.md');
+  if (changedArtifact === 'pr-description.md' || changedArtifact === 'report.md') {
+    const description = path.join(repo, taskDir, 'artifacts', changedArtifact);
     await mkdir(path.dirname(description), { recursive: true });
     await writeFile(description, 'Corrected test-count claim\n');
   }
@@ -385,30 +395,37 @@ for (const sourceLinesChanged of [0, 50]) {
   });
 }
 
-test('a recovered description-only fix gets a real re-review', async (t) => {
-  capturedFixOverride = {
-    snapshot: {
-      source: 'local-git',
-      capturedAt: new Date().toISOString(),
-      fixBaseSha: 'a'.repeat(40),
-      fixHeadSha: 'a'.repeat(40),
-      diffStat: { files: 0, additions: 0, deletions: 0 },
-    },
-    artifactPaths: ['artifacts/fix-delta.diff'],
-    sourceLinesChanged: 0,
-  };
-  const { result, launches } = await recoveredFixAtCap(
-    t,
-    { status: 'complete', outcome: 'success', disposition: 'fixed' },
-    false,
-    true,
-  );
-  assert.equal(launches, 1);
-  assert.equal(result.verdict, 'pass');
-  assert.deepEqual(result.issues, []);
-  assert.equal(result.retryCount, 1);
-  assert.equal(result.attempts?.at(-1)?.loopNumber, 2);
-});
+for (const artifact of [
+  'pr-description.md',
+  'report.md',
+  'previous-attempt',
+  'previous-context',
+] as const) {
+  test(`a recovered ${artifact} fix gets a real re-review`, async (t) => {
+    capturedFixOverride = {
+      snapshot: {
+        source: 'local-git',
+        capturedAt: new Date().toISOString(),
+        fixBaseSha: 'a'.repeat(40),
+        fixHeadSha: 'a'.repeat(40),
+        diffStat: { files: 0, additions: 0, deletions: 0 },
+      },
+      artifactPaths: ['artifacts/fix-delta.diff'],
+      sourceLinesChanged: 0,
+    };
+    const { result, launches } = await recoveredFixAtCap(
+      t,
+      { status: 'complete', outcome: 'success', disposition: 'fixed' },
+      false,
+      artifact,
+    );
+    assert.equal(launches, 1);
+    assert.equal(result.verdict, 'pass');
+    assert.deepEqual(result.issues, []);
+    assert.equal(result.retryCount, 1);
+    assert.equal(result.attempts?.at(-1)?.loopNumber, 2);
+  });
+}
 
 test('a recovered fix the worker blocked keeps its block at the no-verdict cap', async (t) => {
   const { result, launches } = await recoveredFixAtCap(t, {

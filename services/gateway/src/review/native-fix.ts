@@ -45,6 +45,7 @@ export async function prepareNativeFix(input: {
     {
       status: 'working',
       attemptStartedAt: input.attemptStartedAt,
+      reviewFixAttempt: run.engineState?.reviewFixAttempt,
       artifactScope: input.artifactScope,
       signalAttemptId: undefined,
       promptDeliveryStartedAt: undefined,

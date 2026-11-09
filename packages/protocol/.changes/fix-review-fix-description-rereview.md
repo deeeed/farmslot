@@ -1,1 +1,1 @@
-- Retain the full reviewed-input fingerprint so recovered review fixes can detect description and worker report edits.
+- Retain an attempt-bound input fingerprint at each fix handoff so recovery can detect description and worker report edits.

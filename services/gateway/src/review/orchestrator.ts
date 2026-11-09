@@ -129,6 +129,7 @@ import {
 } from './review-agent.js';
 import { reviewNoVerdictCapReason, runReviewRoundBudget } from './review-round-budget.js';
 import {
+  noteReviewFixInputsAtLaunch,
   noteReviewInputsAtLaunch,
   readReviewedInputs,
   recordReviewedInputs,
@@ -998,7 +999,15 @@ async function completeReviewFix(
     // Approval ignores review text artifacts, but fixes to them need a real re-review.
     // Older runs lack this full baseline, so they cannot prove that the fix was empty.
     const beforeFixInputs = run?.engineState?.reviewFixInputsAtLaunch;
-    if (!beforeFixInputs || after?.fixFingerprint !== beforeFixInputs) return undefined;
+    if (
+      !run ||
+      !beforeFixInputs ||
+      beforeFixInputs.attempt !== run?.engineState?.reviewFixAttempt ||
+      beforeFixInputs.attempt !==
+        selectAgentContext(run, { role: 'review-fix' })?.reviewFixAttempt ||
+      after?.fixFingerprint !== beforeFixInputs.fingerprint
+    )
+      return undefined;
     return stopReviewFixAtGate(
       result,
       attempts,
@@ -1292,6 +1301,7 @@ export async function runReviewRetryLoop({
     let fixTurnToken: string | undefined;
     let fixDeliveryDeferred = false;
     try {
+      await withNativeReviewMutation(() => noteReviewFixInputsAtLaunch(runId));
       const delivery = await deps.sendFeedbackToWorker(
         vars,
         result.issues,
@@ -3017,6 +3027,7 @@ async function sendOwnedFeedbackToWorker(
     const fixContext = await upsertAgentContext(runId, 'review-fix', {
       status: 'working',
       attemptStartedAt: fixAttemptStartedAt,
+      reviewFixAttempt: getRun(runId)?.engineState?.reviewFixAttempt,
       artifactScope: findingsArtifactScope,
       signalAttemptId: undefined,
       promptDeliveryStartedAt: undefined,

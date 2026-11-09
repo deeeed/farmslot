@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
@@ -28,7 +30,7 @@ import {
   makeRun,
 } from '../run-engine/test-fixtures.js';
 import { runnerPromptDigest } from '../runners/observability-prompt-digest.js';
-import { createRun, getRun } from '../runs/store.js';
+import { createRun, getRun, updateRun } from '../runs/store.js';
 
 import { parseReviewIssueBullets } from './issues.js';
 import {
@@ -50,7 +52,12 @@ import {
 } from './orchestrator.js';
 import type { ReReviewContinuation, ReviewAgentResult } from './review-agent.js';
 import { admitReviewRound, settleReviewRoundNoVerdict } from './review-round-budget.js';
-import { fingerprintReviewedInputs } from './reviewed-inputs.js';
+import {
+  fingerprintReviewedInputs,
+  noteReviewInputsAtLaunch,
+  readReviewedInputs,
+} from './reviewed-inputs.js';
+import { slotWithTask } from './reviewed-inputs.test-support.js';
 import { UncommittedReviewFixError } from './uncommitted-fix-error.js';
 
 test('deferred handoffs name a missing prior-task receipt instead of claiming worker activity', async (t) => {
@@ -1993,7 +2000,8 @@ test('runReviewRetryLoop: an empty completed fix re-reviews a head changed since
     makeRun({
       engineState: {
         reviewInputsAtLaunch: unchanged.fingerprint,
-        reviewFixInputsAtLaunch: unchanged.fixFingerprint,
+        reviewFixAttempt: 1,
+        reviewFixInputsAtLaunch: { attempt: 1, fingerprint: unchanged.fixFingerprint },
       },
     });
   deps.readFixedInputs = async () => unchanged;
@@ -2072,7 +2080,8 @@ for (const artifact of ['pr-description.md', 'report.md']) {
       makeRun({
         engineState: {
           reviewInputsAtLaunch: before.fingerprint,
-          reviewFixInputsAtLaunch: before.fixFingerprint,
+          reviewFixAttempt: 1,
+          reviewFixInputsAtLaunch: { attempt: 1, fingerprint: before.fixFingerprint },
         },
       });
     deps.readFixedInputs = async () => after;
@@ -2101,6 +2110,79 @@ for (const artifact of ['pr-description.md', 'report.md']) {
   });
 }
 
+for (const restore of [true, false]) {
+  test(`runReviewRetryLoop: production fix launch ${restore ? 're-reviews an intervening edit restored to review-launch text' : 'stops a true no-op on the same attempt'}`, async (t) => {
+    const { run, artifacts } = await slotWithTask(t);
+    const description = path.join(artifacts, 'pr-description.md');
+    const original = await readFile(description, 'utf8');
+    await noteReviewInputsAtLaunch(run.id);
+    const reviewLaunch = await readReviewedInputs(getRun(run.id)!);
+    assert.ok(reviewLaunch);
+    // The operator edits the claim while the reviewer is running. The reviewer flags it.
+    await writeFile(description, 'All 999 tests passed\n');
+    const fixLaunch = await readReviewedInputs(getRun(run.id)!);
+    assert.ok(fixLaunch);
+    const { deps, calls } = buildDeps({
+      reviewVerdicts: ['pass'],
+      fixDeltaFiles: 0,
+      sourceLinesChanged: 0,
+      fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+    });
+    deps.getRun = getRun;
+    deps.readFixedInputs = readReviewedInputs;
+    const send = deps.sendFeedbackToWorker;
+    deps.sendFeedbackToWorker = async (...args) => {
+      // The transport creates the fix context for the handoff whose inputs were just captured.
+      updateRun(run.id, {
+        agentContexts: [
+          {
+            id: 'review-fix',
+            role: 'review-fix',
+            label: 'Fix',
+            status: 'complete',
+            runId: run.id,
+            slotId: getRun(run.id)!.slotId,
+            reviewFixAttempt: getRun(run.id)!.engineState?.reviewFixAttempt,
+          },
+        ],
+      });
+      if (restore) await writeFile(description, original);
+      return send(...args);
+    };
+    const result = await runReviewRetryLoop({
+      ...baseArgs,
+      runId: run.id,
+      maxRetries: 2,
+      retryCount: 0,
+      deps,
+      reviewResult: {
+        verdict: 'issues',
+        issues: [
+          {
+            file: 'artifacts/pr-description.md',
+            line: 1,
+            description: 'Unsupported test-count claim',
+          },
+        ],
+        reviewSnapshot: {
+          source: 'local-git',
+          headSha: 'base-head',
+          capturedAt: new Date().toISOString(),
+        },
+      },
+    });
+    assert.equal(calls.reviewAgent, restore ? 1 : 0);
+    assert.equal(result.verdict, restore ? 'pass' : 'issues');
+    if (restore) assert.equal(result.attempts?.at(-1)?.loopNumber, 2);
+    const state = getRun(run.id)!.engineState!;
+    assert.deepEqual(state.reviewFixInputsAtLaunch, {
+      attempt: state.reviewFixAttempt,
+      fingerprint: fixLaunch.fixFingerprint,
+    });
+    assert.equal(state.reviewInputsAtLaunch, reviewLaunch.fingerprint);
+  });
+}
+
 test('runReviewRetryLoop: an empty completed fix returns unchanged findings to the gate', async () => {
   const { deps, calls } = buildDeps({
     reviewVerdicts: ['issues', 'issues', 'issues'],
@@ -2114,13 +2196,26 @@ test('runReviewRetryLoop: an empty completed fix returns unchanged findings to t
     `base-head\n${baseArgs.taskDir}/artifacts/pr-description.md unchanged\n`,
     baseArgs.taskDir,
   );
-  deps.getRun = () =>
-    makeRun({
+  deps.getRun = () => ({
+    ...makeRun({
       engineState: {
         reviewInputsAtLaunch: unchanged.fingerprint,
-        reviewFixInputsAtLaunch: unchanged.fixFingerprint,
+        reviewFixAttempt: 1,
+        reviewFixInputsAtLaunch: { attempt: 1, fingerprint: unchanged.fixFingerprint },
       },
-    });
+    }),
+    agentContexts: [
+      {
+        id: 'review-fix',
+        role: 'review-fix',
+        label: 'Fix',
+        status: 'complete',
+        runId: baseArgs.runId,
+        slotId: baseArgs.slotId,
+        reviewFixAttempt: 1,
+      },
+    ],
+  });
   deps.readFixedInputs = async () => unchanged;
   const result = await runReviewRetryLoop({
     ...baseArgs,
