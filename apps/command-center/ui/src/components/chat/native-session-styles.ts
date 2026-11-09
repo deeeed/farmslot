@@ -203,22 +203,6 @@ export const nativeSessionStyles = css`
     margin: 0 0 14px;
     overflow-wrap: anywhere;
   }
-  /* Rows of earlier turns skip layout and paint out of view, keeping their last measured height.
-     The latest turn still changes while the reader may be scrolled away, so it stays laid out:
-     its height, and so the end that following and Jump to latest scroll to, is never stale. */
-  .timeline > article:not(.latest-turn) {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 120px;
-  }
-  /* That containment keeps a row's edge margins inside it, where they used to collapse into the
-     gap between rows. Rows without padding drop them, so every row keeps its spacing. */
-  .timeline > article:not(.user, .proposal) > :first-child {
-    margin-top: 0;
-  }
-  .timeline > article:not(.user, .proposal) > :last-child,
-  .timeline > article:not(.user, .proposal) > :last-child chat-message .cm-wrapper {
-    margin-bottom: 0;
-  }
   article.user {
     margin-left: 12%;
     background: ${unsafeCSS(colors.bgCard)};

@@ -122,8 +122,21 @@ test('unchanged blocks come from the cache; a streamed delta renders only the ta
   assert.equal(sanitize.mock.callCount(), 6, 'each non-empty block is sanitized once');
   sanitize.mock.resetCalls();
   assert.equal(renderChatMarkdown(first), chatMarkdownHtml(first));
-  assert.equal(sanitize.mock.callCount(), 0, 'an unchanged message is all cache hits');
+  assert.equal(
+    sanitize.mock.callCount(),
+    1,
+    'finished blocks are cache hits; the tail is not cached',
+  );
+  sanitize.mock.resetCalls();
   const next = `${first}rts here and grows.`;
   assert.equal(renderChatMarkdown(next), chatMarkdownHtml(next));
   assert.equal(sanitize.mock.callCount(), 1, 'only the tail paragraph is rendered again');
+  sanitize.mock.resetCalls();
+  // Once a new block starts, the finished tail is cached like the others.
+  const closed = `${next}\n\nA new tail`;
+  assert.equal(renderChatMarkdown(closed), chatMarkdownHtml(closed));
+  assert.equal(sanitize.mock.callCount(), 2, 'the finished tail and the new tail');
+  sanitize.mock.resetCalls();
+  renderChatMarkdown(closed);
+  assert.equal(sanitize.mock.callCount(), 1, 'the finished tail is now cached');
 });

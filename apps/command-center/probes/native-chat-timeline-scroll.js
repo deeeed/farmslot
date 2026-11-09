@@ -1,5 +1,5 @@
-// Scroll behaviour of a long streaming timeline whose rows skip layout off screen
-// (content-visibility). Route: #dev/native-session?replay=stream, freshly loaded.
+// Scroll behaviour of a long streaming timeline.
+// Route: #dev/native-session?replay=stream, freshly loaded.
 // Checks: a reader who scrolled up is not pulled down and gets Jump to latest; the jump lands at
 // the end; collapsing a fold keeps its toggle in place; text search finds an off-screen row; the
 // streamed message matches a full markdown parse.
@@ -57,8 +57,8 @@ const fold = {
   movedPx: Math.round((toggle.getBoundingClientRect().top - before) * 10) / 10,
 };
 
-// Text search finds a row that is off screen and skipped. window.find selects the match but, with
-// or without content-visibility, does not scroll the timeline: Cmd+F itself is not driven here.
+// Text search finds a row that is off screen. window.find selects the match but does not scroll
+// the timeline: Cmd+F itself is not driven here.
 t.scrollTop = t.scrollHeight;
 await frames();
 const target = [...t.querySelectorAll(':scope > article.assistant')].find((a) =>

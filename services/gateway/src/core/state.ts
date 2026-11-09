@@ -62,18 +62,20 @@ export interface SlotUpdateSchedule {
   coalesceMs: number;
   /** Minimum time between two broadcasts. */
   minIntervalMs: number;
+  /** Monotonic milliseconds; a wall-clock step must not stall or rush broadcasts. */
+  now?: () => number;
 }
 
 /** Calls `fire` at most once per `minIntervalMs`, `coalesceMs` after the first pending trigger. */
 export function createSlotUpdateScheduler(
   fire: () => void,
-  { coalesceMs, minIntervalMs }: SlotUpdateSchedule,
+  { coalesceMs, minIntervalMs, now: clock = () => performance.now() }: SlotUpdateSchedule,
 ): () => void {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let pendingSince: number | undefined;
   let lastFired = -Infinity;
   return () => {
-    const now = Date.now();
+    const now = clock();
     pendingSince ??= now;
     // The deadline is fixed by the first pending write, so later writes re-arm the timer without
     // postponing it, and a timer that never ran (a test's mocked clock) is replaced.
@@ -84,7 +86,7 @@ export function createSlotUpdateScheduler(
         () => {
           timer = null;
           pendingSince = undefined;
-          lastFired = Date.now();
+          lastFired = clock();
           fire();
         },
         Math.max(0, due - now),
