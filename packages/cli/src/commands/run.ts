@@ -38,6 +38,7 @@ import {
   reviewRoundBudgetLabel,
   type ReviewSequence,
   type Run,
+  type RunAdoptPublishedPrParams,
   type RunAdoptPublishedPrResult,
   type RunCancelEffect,
   type RunCreateParams,
@@ -1296,37 +1297,46 @@ export function registerRunCommand(program: Command): void {
 
   run
     .command('adopt-published-pr <runId>')
-    .description('Attest and link an exact human-reviewed publication without republishing')
+    .description(
+      'Link a same-repository PR whose change matches the reviewed patch, or an attested head, without republishing',
+    )
     .requiredOption('--pr <url>', 'Published GitHub PR URL')
-    .requiredOption('--head <sha>', 'Full human-reviewed publication commit SHA')
-    .requiredOption('--reason <text>', 'Written publication attestation')
-    .requiredOption(
+    .option('--head <sha>', 'Attested only: full human-reviewed publication commit SHA')
+    .option('--reason <text>', 'Why this PR is adopted (required with an attestation)')
+    .option(
       '--attest-reviewed-publication',
-      'Attest this exact head was reviewed and approved for publication',
+      'Override a content mismatch: attest this exact head was reviewed and approved for publication',
     )
     .action(
       async (
         runId: string,
-        opts: { pr: string; head: string; reason: string; attestReviewedPublication: true },
+        opts: { pr: string; head?: string; reason?: string; attestReviewedPublication?: true },
         cmd: Command,
       ) => {
         const { client, output } = resolveContext(cmd);
         const emit = createEmitter(output, cmd);
         try {
+          if (!opts.attestReviewedPublication && opts.head !== undefined)
+            throw new Error('--head is only accepted with --attest-reviewed-publication');
+          // The gateway validates the attested fields; an empty value fails there with its message.
+          const params: RunAdoptPublishedPrParams = opts.attestReviewedPublication
+            ? {
+                runId,
+                prRef: opts.pr,
+                headSha: opts.head ?? '',
+                reason: opts.reason ?? '',
+                attestReviewedPublication: true,
+              }
+            : { runId, prRef: opts.pr, ...(opts.reason ? { reason: opts.reason } : {}) };
           const result = await client.call<RunAdoptPublishedPrResult>(
             Methods.RUN_ADOPT_PUBLISHED_PR,
-            {
-              runId,
-              prRef: opts.pr,
-              headSha: opts.head,
-              reason: opts.reason,
-              attestReviewedPublication: opts.attestReviewedPublication,
-            },
+            params,
           );
           if (emit.machine) emit.ok(result);
           else {
+            const match = result.receipt.match;
             output.write(
-              `Adopted ${result.receipt.prUrl} at ${result.receipt.headSha}, ${result.continuation}\n`,
+              `Adopted ${result.receipt.prUrl} at ${result.receipt.headSha} (${match?.type ?? 'attested'}${match && match.prBranch !== match.runBranch ? `, PR branch ${match.prBranch}` : ''}), ${result.continuation}\n`,
             );
             for (const refusal of result.refusals)
               output.write(`  ${refusal.code}: ${refusal.message}\n`);

@@ -48,6 +48,29 @@ async function readSnapshotDiff(
   return (await slotFileExists(vars, remotePath)) ? slotReadFile(vars, remotePath) : undefined;
 }
 
+/** `source`'s captured diff bytes and the canonical hash they verify to against `recorded` (the identity
+ * being checked: its hash and untracked-file manifest), or undefined when absent or no longer matching. */
+async function readVerifiedDiff(
+  run: Run,
+  source: ReviewDiffSnapshot,
+  recorded: Pick<ReviewDiffSnapshot, 'diffHash' | 'untrackedFiles'>,
+): Promise<{ diff: string; diffHash: string } | undefined> {
+  if (!recorded.diffHash) return undefined;
+  const diff = await readSnapshotDiff(run, source);
+  if (diff === undefined) return undefined;
+  const identity = reviewSnapshotIdentityText(diff, recorded.untrackedFiles ?? []);
+  const diffHash = verifiedReviewDiffHash(identity, recorded.diffHash);
+  return diffHash ? { diff, diffHash } : undefined;
+}
+
+/** The snapshot's captured diff bytes, only when they still verify against its recorded hash. */
+export async function readVerifiedSnapshotDiff(
+  run: Run,
+  snapshot: ReviewDiffSnapshot,
+): Promise<string | undefined> {
+  return (await readVerifiedDiff(run, snapshot, snapshot))?.diff;
+}
+
 /** Upgrade only a historical identity whose captured bytes still verify. */
 export async function refreshReviewDiffSnapshot(
   run: Run,
@@ -68,11 +91,11 @@ export async function refreshReviewDiffSnapshot(
     ),
   ];
   for (const candidate of candidates) {
-    const diff = await readSnapshotDiff(run, candidate);
-    if (diff === undefined) continue;
-    const identity = reviewSnapshotIdentityText(diff, snapshot.untrackedFiles ?? []);
-    const diffHash = verifiedReviewDiffHash(identity, snapshot.diffHash);
-    if (diffHash) return diffHash === snapshot.diffHash ? snapshot : { ...snapshot, diffHash };
+    const verified = await readVerifiedDiff(run, candidate, snapshot);
+    if (verified)
+      return verified.diffHash === snapshot.diffHash
+        ? snapshot
+        : { ...snapshot, diffHash: verified.diffHash };
   }
   return snapshot;
 }

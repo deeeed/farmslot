@@ -1695,6 +1695,12 @@ export interface RunDecision {
   resolvedAction?: string;
   /** Authoritative human policy waiver, stamped only by the gateway. */
   evidenceAttestation?: EvidencePolicyAttestation;
+  /** The gate's reason when an adopted human publication resolved it. */
+  publicationAdoption?: {
+    receiptId: string;
+    match: import('./human-publication.js').PublicationAdoptionMatch;
+    reason: string;
+  };
   /** Normal publication authority, retained on the resolution rather than the frozen package. */
   publicationApproval?: {
     principalId: string;

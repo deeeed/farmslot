@@ -1052,7 +1052,7 @@
     "run.adoptPublishedPr": {
       "surface": "typed-command",
       "command": "farmslot run adopt-published-pr",
-      "note": "Credential-backed human attestation of an existing exact-head publication."
+      "note": "Credential-backed adoption of an existing same-repository publication by content match, or an attested head."
     },
     "run.archive": {
       "surface": "typed-command",

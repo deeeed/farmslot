@@ -1,0 +1,1 @@
+- `run --json` reports a refusal before execution (preflight, checkout lock, runtime prepare) as the run JSON error envelope on stdout (`stage: "authorize"`, `error.code: "RUN_AUTHORIZE_FAILED"`, exit 1) instead of stderr text only, for example a second attempt into a retained `--artifacts-dir`.
