@@ -1,0 +1,1 @@
+- `project.json` `recipe.viewer` accepts `link` (false turns off the run-end view command) and `template` (a project page template module) for the local run evidence viewer.
