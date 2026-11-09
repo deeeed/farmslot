@@ -1,0 +1,1 @@
+- Retain the full reviewed-input fingerprint so recovered review fixes can detect description and worker report edits.

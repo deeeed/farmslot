@@ -125,7 +125,12 @@ test('the real review owner honors an explicit interactive opt-in when automatic
   );
 });
 
-async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, string>, atCap = true) {
+async function recoveredFixAtCap(
+  t: TestContext,
+  fixSignal: Record<string, string>,
+  atCap = true,
+  descriptionChanged = false,
+) {
   const run = createRun({
     project,
     flowType: 'dev',
@@ -260,8 +265,14 @@ async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, strin
       engineState: {
         ...getRun(run.id)!.engineState,
         reviewInputsAtLaunch: fingerprint.fingerprint,
+        reviewFixInputsAtLaunch: fingerprint.fixFingerprint,
       },
     });
+  }
+  if (descriptionChanged) {
+    const description = path.join(repo, taskDir, 'artifacts/pr-description.md');
+    await mkdir(path.dirname(description), { recursive: true });
+    await writeFile(description, 'Corrected test-count claim\n');
   }
   const retainedScope = {
     runId: run.id,
@@ -373,6 +384,31 @@ for (const sourceLinesChanged of [0, 50]) {
     else assert.doesNotThrow(publication);
   });
 }
+
+test('a recovered description-only fix gets a real re-review', async (t) => {
+  capturedFixOverride = {
+    snapshot: {
+      source: 'local-git',
+      capturedAt: new Date().toISOString(),
+      fixBaseSha: 'a'.repeat(40),
+      fixHeadSha: 'a'.repeat(40),
+      diffStat: { files: 0, additions: 0, deletions: 0 },
+    },
+    artifactPaths: ['artifacts/fix-delta.diff'],
+    sourceLinesChanged: 0,
+  };
+  const { result, launches } = await recoveredFixAtCap(
+    t,
+    { status: 'complete', outcome: 'success', disposition: 'fixed' },
+    false,
+    true,
+  );
+  assert.equal(launches, 1);
+  assert.equal(result.verdict, 'pass');
+  assert.deepEqual(result.issues, []);
+  assert.equal(result.retryCount, 1);
+  assert.equal(result.attempts?.at(-1)?.loopNumber, 2);
+});
 
 test('a recovered fix the worker blocked keeps its block at the no-verdict cap', async (t) => {
   const { result, launches } = await recoveredFixAtCap(t, {

@@ -152,6 +152,27 @@ test('what a passing review judged changes with the evidence or HEAD, not the de
   assert.equal(await changed(), true, 'a new HEAD, e.g. a squash');
 });
 
+test('empty-fix inputs retain description and report changes without invalidating approval', async (t) => {
+  const { run, artifacts } = await slotWithTask(t);
+  await reviewPasses(run.id);
+  const before = await readReviewedInputs(getRun(run.id)!);
+  assert.ok(before);
+  assert.equal(getRun(run.id)!.engineState?.reviewFixInputsAtLaunch, before.fixFingerprint);
+  await writeFile(path.join(artifacts, 'report.md'), '## Review Fixes\nCorrected test count\n');
+  const afterReport = await readReviewedInputs(getRun(run.id)!);
+  assert.ok(afterReport);
+  assert.notEqual(afterReport.fixFingerprint, before.fixFingerprint);
+  assert.equal(afterReport.fingerprint, before.fingerprint);
+  assert.equal(afterReport.legacyFingerprint, before.legacyFingerprint);
+  assert.equal(await reviewedInputsChanged(getRun(run.id)!), false);
+  await writeFile(path.join(artifacts, 'pr-description.md'), 'Corrected test count\n');
+  const afterDescription = await readReviewedInputs(getRun(run.id)!);
+  assert.ok(afterDescription);
+  assert.notEqual(afterDescription.fixFingerprint, afterReport.fixFingerprint);
+  assert.equal(afterDescription.fingerprint, before.fingerprint);
+  assert.equal(await reviewedInputsChanged(getRun(run.id)!), false);
+});
+
 test('a pass records what the review was given, not the slot as it is when it passes', async (t) => {
   const { run, artifacts } = await slotWithTask(t);
   await reviewPasses(run.id);

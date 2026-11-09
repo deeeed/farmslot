@@ -995,7 +995,10 @@ async function completeReviewFix(
   if (noSourceChanges && delta.fixHeadSha === delta.fixBaseSha && (!before || !after))
     return undefined;
   if (noSourceChanges && delta.fixHeadSha === delta.fixBaseSha && !evidenceChanged) {
-    // No changed source or reviewed inputs means these findings are unchanged by construction.
+    // Approval ignores review text artifacts, but fixes to them need a real re-review.
+    // Older runs lack this full baseline, so they cannot prove that the fix was empty.
+    const beforeFixInputs = run?.engineState?.reviewFixInputsAtLaunch;
+    if (!beforeFixInputs || after?.fixFingerprint !== beforeFixInputs) return undefined;
     return stopReviewFixAtGate(
       result,
       attempts,
