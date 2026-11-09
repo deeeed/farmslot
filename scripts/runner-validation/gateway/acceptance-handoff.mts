@@ -9,6 +9,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -22,6 +23,10 @@ import { fileURLToPath } from 'node:url';
 import type { Run, RunTicketData } from '@farmslot/protocol';
 import { shSingleQuote } from '../../lib/shell-quote.mjs';
 
+type AcceptanceHandoffInput = Pick<RunTicketData, 'description' | 'acceptanceCriteria'> & {
+  jiraDescription?: unknown;
+};
+
 const source = fileURLToPath(new URL('../../../', import.meta.url));
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const json = (file: string, value: unknown) => {
@@ -32,7 +37,7 @@ if (process.argv[2] === 'serve') {
   await import('../../../services/gateway/src/index.js');
 } else {
   execFileSync('tmux', ['-N', 'has-session']);
-  const scratch = mkdtempSync(path.join(tmpdir(), 'acceptance-handoff-proof-'));
+  const scratch = mkdtempSync(path.join(realpathSync(tmpdir()), 'acceptance-handoff-proof-'));
   const root = path.join(scratch, 'root');
   const repo = path.join(root, 'checkout');
   const out = path.resolve(
@@ -43,10 +48,9 @@ if (process.argv[2] === 'serve') {
   const session = `handoff-${randomUUID()}`;
   const slotId = `handoff-${randomUUID()}`;
   const expected = process.env.FARMSLOT_HANDOFF_PROOF_INPUT
-    ? (JSON.parse(readFileSync(process.env.FARMSLOT_HANDOFF_PROOF_INPUT, 'utf8')) as Pick<
-        RunTicketData,
-        'description' | 'acceptanceCriteria'
-      >)
+    ? (JSON.parse(
+        readFileSync(process.env.FARMSLOT_HANDOFF_PROOF_INPUT, 'utf8'),
+      ) as AcceptanceHandoffInput)
     : {
         description:
           'Scope.\n\nAC1: The current amount shows a loading placeholder.\n\nAC2: The quote belongs to the amount on screen.\n\nAC3: Invalid input is handled explicitly.\n\nAC4: Capture loading and resolved states.\n\nRelease notes stay prose.',
@@ -92,7 +96,9 @@ if (process.argv[2] === 'serve') {
                   ? emptyHeading
                   : request.url?.includes('HANDOFF-104')
                     ? emptyLabel
-                    : expected.description,
+                    : 'jiraDescription' in expected
+                      ? expected.jiraDescription
+                      : expected.description,
                 issuetype: { name: 'Task' },
                 labels: [],
                 components: [],
@@ -151,6 +157,10 @@ if (process.argv[2] === 'serve') {
       runtime_dir: '.task',
       default_branch: 'main',
       hooks: {},
+      execution_templates: {
+        sources: [],
+        defaults: [{ when: { flow: 'dev' }, templateId: 'dev/default' }],
+      },
       jira: {
         base_url: `http://127.0.0.1:${jiraAddress.port}`,
         email_env: 'FARMSLOT_PROOF_JIRA_EMAIL',
@@ -163,6 +173,12 @@ if (process.argv[2] === 'serve') {
       template,
       '# Worker: Dev\n\n## Description\n{{DESCRIPTION}}\n\n## Acceptance Criteria\n{{ACCEPTANCE_CRITERIA}}\n\n## Steps\n- [ ] Verify declared criteria\n',
     );
+    const runs = [
+      { id: randomUUID(), ticket: 'HANDOFF-101', cached: false },
+      { id: randomUUID(), ticket: 'HANDOFF-102', cached: true },
+      { id: randomUUID(), ticket: 'HANDOFF-103', cached: false },
+      { id: randomUUID(), ticket: 'HANDOFF-104', cached: false },
+    ].map((entry, index) => ({ ...entry, slotId: `${slotId}-${index}` }));
     json(path.join(root, 'pool/local.json'), {
       schema_version: 2,
       machine: hostname(),
@@ -171,16 +187,16 @@ if (process.argv[2] === 'serve') {
       os: process.platform,
       project,
       platform: 'cli',
-      slots: [
-        { id: slotId, project, platform: 'cli', repo, session, enabled: true, mode: 'dispatch' },
-      ],
+      slots: runs.map((entry) => ({
+        id: entry.slotId,
+        project,
+        platform: 'cli',
+        repo,
+        session,
+        enabled: true,
+        mode: 'dispatch',
+      })),
     });
-    const runs = [
-      { id: randomUUID(), ticket: 'HANDOFF-101', cached: false },
-      { id: randomUUID(), ticket: 'HANDOFF-102', cached: true },
-      { id: randomUUID(), ticket: 'HANDOFF-103', cached: false },
-      { id: randomUUID(), ticket: 'HANDOFF-104', cached: false },
-    ];
     const now = new Date().toISOString();
     for (const run of runs)
       json(path.join(root, '.runs', run.id + '.json'), {
@@ -192,7 +208,7 @@ if (process.argv[2] === 'serve') {
         status: 'failed',
         project,
         ticketOrPr: run.ticket,
-        slotId,
+        slotId: run.slotId,
         branch: 'proof-handoff',
         taskFile: null,
         summary: 'Acceptance handoff proof',
@@ -238,16 +254,14 @@ if (process.argv[2] === 'serve') {
       });
     json(path.join(root, '.farm-status.json'), {
       checked_at: now,
-      slots: [
-        {
-          slot: slotId,
-          machine: hostname(),
-          project,
-          platform: 'cli',
-          lifecycle: 'warm',
-          phase: 'idle',
-        },
-      ],
+      slots: runs.map((entry) => ({
+        slot: entry.slotId,
+        machine: hostname(),
+        project,
+        platform: 'cli',
+        lifecycle: 'warm',
+        phase: 'idle',
+      })),
     });
     execFileSync('tmux', ['-N', 'new-session', '-d', '-s', session, '-c', repo]);
     sessionCreated = true;
@@ -269,7 +283,7 @@ if (process.argv[2] === 'serve') {
     const loader = path.join(scratch, 'observe.mjs');
     writeFileSync(
       loader,
-      `import {registerHooks} from 'node:module';import assert from 'node:assert/strict';registerHooks({load(url,context,next){const result=next(url,context);if(!url.endsWith('/services/gateway/src/run-engine/task-sync.ts'))return result;const before=String(result.source);const done='await rm(path.join(taskDir, TASK_INIT_INPUT), { force: true });';const after=before.replace(done,done+${JSON.stringify(`const fs = await import('node:fs'); fs.writeFileSync(${JSON.stringify(out)}+'/'+runId+'.written','written'); const until=Date.now()+90000; while(!fs.existsSync(${JSON.stringify(out)}+'/'+runId+'.release')) { if(Date.now()>until)throw new Error('Proof controller did not cancel initialization checkpoint'); await new Promise(resolve=>setTimeout(resolve,50)); }`)});assert.notEqual(after,before);return {...result,source:after};}});`,
+      `import {registerHooks} from 'node:module';import assert from 'node:assert/strict';if(process.argv[2]==='serve')registerHooks({load(url,context,next){const result=next(url,context);if(!url.endsWith('/services/gateway/src/run-engine/task-sync.ts'))return result;const before=String(result.source);const done='await rm(path.join(taskDir, TASK_INIT_INPUT), { force: true });';const after=before.replace(done,done+${JSON.stringify(`const fs = await import('node:fs'); fs.writeFileSync(${JSON.stringify(out)}+'/'+runId+'.written','written'); const until=Date.now()+90000; while(!fs.existsSync(${JSON.stringify(out)}+'/'+runId+'.release')) { if(Date.now()>until)throw new Error('Proof controller did not cancel initialization checkpoint'); await new Promise(resolve=>setTimeout(resolve,50)); }`)});assert.notEqual(after,before);return {...result,source:after};}});`,
     );
     env = {
       ...env,
