@@ -30,6 +30,7 @@ const FIXTURE_NOW = Date.parse('2026-08-11T00:00:00.000Z');
 
 beforeEach((t) => {
   // The fixture registry, store compaction and restarted registries share one clock.
+  assert.ok('mock' in t);
   t.mock.timers.enable({ apis: ['Date'], now: FIXTURE_NOW });
 });
 
