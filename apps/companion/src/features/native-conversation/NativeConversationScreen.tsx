@@ -31,6 +31,7 @@ import {
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { useViewChoice } from '../../components/view-state';
 import {
+  nativeAwayFromEnd,
   type NativeTranscriptItem,
   nativeTranscriptItemKey,
   nativeTranscriptItemType,
@@ -69,11 +70,13 @@ export function NativeConversationScreen({
   }, []);
   /**
    * Set while this screen scrolls to the end itself. The list reaches a far end in steps, and the
-   * offsets on the way are not the reader leaving it; their own drag ends this.
+   * offsets on the way are not the reader leaving it. Set only when the jump has somewhere to go,
+   * since a jump that moves nothing sends no scroll event to end it; reaching the end, or the
+   * reader's own drag, ends it.
    */
   const autoScrolling = useRef(false);
-  const scrollToLatest = () => {
-    autoScrolling.current = true;
+  const scrollToLatest = (contentHeight: number) => {
+    autoScrolling.current = nativeAwayFromEnd(distanceFromEnd(contentHeight));
     void list.current?.scrollToEnd({ animated: false });
   };
   const watchedTools = useRef(new Set<number>());
@@ -137,8 +140,7 @@ export function NativeConversationScreen({
     const distance = distanceFromEnd(contentSize.height);
     if (autoScrolling.current) {
       // Following already; only arriving at the end ends the jump.
-      if (nativeFollowScrolled(NATIVE_FOLLOW_LATEST, distance).following)
-        autoScrolling.current = false;
+      if (!nativeAwayFromEnd(distance)) autoScrolling.current = false;
       reportFollow(follow);
       return;
     }
@@ -464,18 +466,25 @@ export function NativeConversationScreen({
             onScrollBeginDrag={() => {
               autoScrolling.current = false;
             }}
+            onMomentumScrollEnd={(event) => {
+              const { contentSize } = event.nativeEvent;
+              if (!nativeAwayFromEnd(distanceFromEnd(contentSize.height)))
+                autoScrolling.current = false;
+            }}
             scrollEventThrottle={100}
             onContentSizeChange={(_, height) => {
               viewport.current.content = height;
               // Content can grow with no scroll event: the proof reads the distance it left.
               reportFollow(follow);
+              // Already at the end: no jump is under way.
+              if (!nativeAwayFromEnd(distanceFromEnd(height))) autoScrolling.current = false;
               if (disclosed.current) {
                 // Keep the reader's place; follow again only if the end is still in view.
                 disclosed.current = false;
                 const distance = distanceFromEnd(height);
                 setFollow((current) => nativeFollowScrolled(current, distance));
               } else if (follow.following) {
-                scrollToLatest();
+                scrollToLatest(height);
               }
             }}
           />
@@ -488,7 +497,7 @@ export function NativeConversationScreen({
             onPress={() => {
               setFollow(NATIVE_FOLLOW_LATEST);
               // Instant, like Command Center: an animated scroll reports positions short of the end.
-              scrollToLatest();
+              scrollToLatest(viewport.current.content);
             }}
           >
             <Text style={styles.buttonText}>{jumpLabel}</Text>
