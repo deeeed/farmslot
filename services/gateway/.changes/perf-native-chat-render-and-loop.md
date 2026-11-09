@@ -1,1 +1,1 @@
-- Relay native conversation updates with one serialization and one authorization pass per batch, and collect gateway host metrics without blocking the event loop.
+- Relay native conversation updates with one serialization and one authorization pass per batch, rate-limit fleet broadcasts during steady slot writes, and collect gateway host metrics without blocking the event loop.

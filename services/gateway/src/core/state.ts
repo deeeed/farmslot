@@ -51,25 +51,46 @@ async function atomicWriteStatus(data: unknown): Promise<void> {
 }
 
 // ─── Broadcast hook ───
-// Registered by server.ts so every updateSlotStatus triggers a fleet broadcast.
-// Debounced to coalesce rapid successive calls (e.g. release resets multiple fields).
+// Registered by server.ts so every updateSlotStatus triggers a fleet broadcast. Each broadcast
+// re-reads the status file and sends the whole fleet to every client, so writes are coalesced
+// (a release sets several fields in a row) and broadcasts are rate-limited. Unlike a debounce,
+// steady writes never postpone the broadcast indefinitely.
 let onSlotUpdated: (() => void) | null = null;
-let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-const DEBOUNCE_MS = 50;
+
+export interface SlotUpdateSchedule {
+  /** Wait after the first write so the writer's burst lands in one broadcast. */
+  coalesceMs: number;
+  /** Minimum time between two broadcasts. */
+  minIntervalMs: number;
+}
+
+/** Calls `fire` at most once per `minIntervalMs`, `coalesceMs` after the first pending trigger. */
+export function createSlotUpdateScheduler(
+  fire: () => void,
+  { coalesceMs, minIntervalMs }: SlotUpdateSchedule,
+): () => void {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let lastFired = -Infinity;
+  return () => {
+    if (timer) return;
+    const delay = Math.max(coalesceMs, lastFired + minIntervalMs - Date.now());
+    timer = withoutCleanupSignal(() =>
+      setTimeout(() => {
+        timer = null;
+        lastFired = Date.now();
+        fire();
+      }, delay),
+    );
+  };
+}
+
+const triggerSlotUpdateHook = createSlotUpdateScheduler(() => onSlotUpdated?.(), {
+  coalesceMs: 50,
+  minIntervalMs: 250,
+});
 
 export function setSlotUpdateHook(hook: () => void): void {
   onSlotUpdated = hook;
-}
-
-function triggerSlotUpdateHook(): void {
-  if (!onSlotUpdated) return;
-  if (debounceTimer) clearTimeout(debounceTimer);
-  debounceTimer = withoutCleanupSignal(() =>
-    setTimeout(() => {
-      debounceTimer = null;
-      onSlotUpdated?.();
-    }, DEBOUNCE_MS),
-  );
 }
 
 // ─── updateSlotStatus ───
