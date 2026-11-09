@@ -2478,6 +2478,13 @@ async function replayRunStep(
         : currentBeforeReplayUpdate.engineState,
       params.freshDispatch || nativeFreshRestart,
     );
+    if (replayStepName === PS.REVIEW && engineStateForReplay) {
+      engineStateForReplay = {
+        ...engineStateForReplay,
+        reviewFullInputsAtLaunch: undefined,
+        reviewFixInputsAtLaunch: undefined,
+      };
+    }
     // Explicit review retry consumes the operator hold; restart must observe its new reviewer.
     if (replayStepName === PS.REVIEW && engineStateForReplay?.publishGate?.reviewRecovery) {
       engineStateForReplay = {

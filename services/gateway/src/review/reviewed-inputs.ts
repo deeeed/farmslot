@@ -17,12 +17,12 @@ const EVIDENCE_MEDIA = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'mp4', 'mov', 'webm
 const EVIDENCE_INDEXES = ['evidence-manifest.json', 'latest-valid-recipe-run.json'];
 
 /**
- * Lists HEAD, then the description, the evidence manifests (the task's own and
- * the one inherited from an upstream run) and every evidence media file or
+ * Lists HEAD, then the description, the worker report, the task's own and inherited
+ * evidence manifests and every evidence media file or
  * evidence index under the task's artifacts or inherited inputs, with git blob ids.
  * Gateway-written review files are other names, so a review never changes its
- * own fingerprint. The description is listed only so a fingerprint recorded
- * before it was left out can still be matched (see fingerprintReviewedInputs).
+ * own fingerprint. Description and report edits are tracked only for empty-fix
+ * detection; the description also matches older passing fingerprints.
  */
 export function reviewedInputsCommand(repo: string, taskDir: string): string {
   const artifacts = `${taskDir}/artifacts`;
@@ -34,15 +34,17 @@ export function reviewedInputsCommand(repo: string, taskDir: string): string {
   return [
     `cd ${shellQuote(repo)}`,
     'git rev-parse HEAD',
-    `{ printf '%s\\n' ${shellQuote(`${artifacts}/pr-description.md`)} ${shellQuote(`${artifacts}/evidence-manifest.json`)} ${shellQuote(`${inherited}/evidence-manifest.json`)}; find ${shellQuote(artifacts)} ${shellQuote(inherited)} -type f \\( ${names} \\) 2>/dev/null | LC_ALL=C sort; } | while IFS= read -r f; do if [ -f "$f" ]; then printf '%s %s\\n' "$f" "$(git hash-object "$f")"; else printf '%s missing\\n' "$f"; fi; done`,
+    `{ printf '%s\\n' ${shellQuote(`${artifacts}/pr-description.md`)} ${shellQuote(`${artifacts}/report.md`)} ${shellQuote(`${artifacts}/evidence-manifest.json`)} ${shellQuote(`${inherited}/evidence-manifest.json`)}; find ${shellQuote(artifacts)} ${shellQuote(inherited)} -type f \\( ${names} \\) 2>/dev/null | LC_ALL=C sort; } | while IFS= read -r f; do if [ -f "$f" ]; then printf '%s %s\\n' "$f" "$(git hash-object "$f")"; else printf '%s missing\\n' "$f"; fi; done`,
   ].join(' && ');
 }
 
 export interface ReviewedInputsFingerprint {
-  /** HEAD and evidence; the description is left out, so editing it never holds approval. */
+  /** HEAD and evidence; description and report edits never hold approval. */
   fingerprint: string;
-  /** The earlier fingerprint, description included, that runs recorded before. */
+  /** The earlier approval listing, including the description but excluding the worker report. */
   legacyFingerprint: string;
+  /** All listed inputs, including the description and worker report, for empty-fix detection. */
+  fixFingerprint: string;
 }
 
 /** Fingerprints of a reviewedInputsCommand listing for the task at `taskDir`. */
@@ -51,13 +53,19 @@ export function fingerprintReviewedInputs(
   taskDir: string,
 ): ReviewedInputsFingerprint {
   const description = `${taskDir}/artifacts/pr-description.md `;
-  const withoutDescription = listing
+  const report = `${taskDir}/artifacts/report.md `;
+  const withoutReport = listing
+    .split('\n')
+    .filter((line) => !line.startsWith(report))
+    .join('\n');
+  const withoutDescription = withoutReport
     .split('\n')
     .filter((line) => !line.startsWith(description))
     .join('\n');
   return {
     fingerprint: createHash('sha256').update(withoutDescription).digest('hex'),
-    legacyFingerprint: createHash('sha256').update(listing).digest('hex'),
+    legacyFingerprint: createHash('sha256').update(withoutReport).digest('hex'),
+    fixFingerprint: createHash('sha256').update(listing).digest('hex'),
   };
 }
 
@@ -100,8 +108,32 @@ async function patchEngineState(runId: string, patch: Partial<RunEngineState>): 
 export async function noteReviewInputsAtLaunch(runId: string): Promise<void> {
   const run = getRun(runId);
   if (!run) return;
+  // A new review cannot inherit the prior full identity if its probe is interrupted.
+  await patchEngineState(runId, { reviewFullInputsAtLaunch: undefined });
   const current = await readReviewedInputs(run);
-  await patchEngineState(runId, { reviewInputsAtLaunch: current?.fingerprint });
+  await patchEngineState(runId, {
+    reviewInputsAtLaunch: current?.fingerprint,
+    reviewFullInputsAtLaunch: current?.fixFingerprint,
+  });
+}
+
+/** A new fix handoff owns this baseline; recovery of that attempt must not refresh it. */
+export async function noteReviewFixInputsAtLaunch(runId: string): Promise<void> {
+  const run = getRun(runId);
+  if (!run) return;
+  const attempt = (run.engineState?.reviewFixAttempt ?? 0) + 1;
+  // Invalidate the previous attempt before probing, including if the gateway stops mid-probe.
+  await patchEngineState(runId, { reviewFixAttempt: attempt, reviewFixInputsAtLaunch: undefined });
+  const current = await readReviewedInputs(run);
+  const latest = getRun(runId);
+  if (
+    latest?.engineState?.reviewFixAttempt !== attempt ||
+    latest.engineState?.generation !== run.engineState?.generation
+  )
+    throw new Error('Review fix attempt changed before delivery');
+  await patchEngineState(runId, {
+    reviewFixInputsAtLaunch: current ? { attempt, fingerprint: current.fixFingerprint } : undefined,
+  });
 }
 
 /** A completed verdict records its launch inputs; issues retain the last passing baseline. */
