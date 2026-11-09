@@ -220,7 +220,7 @@ function historyList(
   context: Pick<RunEvidencePageContext, 'escape' | 'runUrl'>,
   current?: string,
 ): string {
-  return `<ul class="runs">${entries
+  return `<ul class="run-list">${entries
     .map(
       (entry) =>
         `<li${entry.id === current ? ' class="current"' : ''}><a href="${context.escape(context.runUrl(entry.id))}">${context.escape(entry.title ?? entry.id)}</a> ${badge(entry.status, verdictClass(entry.status))}<span class="meta">${context.escape(entry.id)} · ${context.escape(entry.startedAt ?? entry.updatedAt)}</span></li>`,
@@ -259,7 +259,7 @@ ol,ul{margin:0;padding:0;list-style:none}.criterion{padding:12px 0;border-top:1p
 .timeline li.failed{background:color-mix(in srgb,var(--bad) 8%,transparent)}.timeline .index{color:var(--muted);font-variant-numeric:tabular-nums;min-width:2.5em;text-align:right}
 .timeline .intent{flex:1 1 320px}.timeline code{color:var(--muted);font-size:12px}
 .chip{font-size:12px;border:1px solid var(--line);border-radius:4px;padding:0 6px;text-decoration:none}
-.runs li{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 0;border-top:1px solid var(--line)}.runs li:first-child{border-top:0}.runs li.current a{font-weight:600}
+.run-list li{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 0;border-top:1px solid var(--line)}.run-list li:first-child{border-top:0}.run-list li.current a{font-weight:600}
 .issues summary{cursor:pointer}.issues li{font-size:12px;color:var(--muted);padding:2px 0}.empty{color:var(--muted);margin:0}
 `;
 

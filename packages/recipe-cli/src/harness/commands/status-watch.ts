@@ -27,6 +27,7 @@ import {
   type TaskViewSubtask,
 } from '../task-view.js';
 
+import { recipeRunAttemptsRoot } from './run.js';
 import { type RunEvidenceServer, serveRunEvidence } from './view.js';
 
 const REFRESH_MS = 2000;
@@ -177,11 +178,10 @@ export async function runStatusWatch(
         }
       })
     : undefined;
-  // The newest run under the folder `run` writes this checkout's attempts to, served live.
-  const openEvidence = async (view: TaskView): Promise<string> => {
-    const root = view.taskDir
-      ? path.join(view.taskDir, 'artifacts', 'recipe-runs')
-      : path.join(options.target, 'temp', 'recipe', 'runs');
+  // The newest run under the folder `run` writes this checkout's attempts to, served live:
+  // the writer's task binding decides it, never the task the view happens to display.
+  const openEvidence = async (): Promise<string> => {
+    const root = recipeRunAttemptsRoot(options.target);
     const current = fs.existsSync(root) ? listRunEvidenceHistory(root)[0] : undefined;
     if (!current) return `no recipe run yet under ${root}`;
     if (evidence?.root !== root) {
@@ -223,7 +223,7 @@ export async function runStatusWatch(
       if (control.signal.aborted) return EXIT.ok;
       if (wantEvidence) {
         wantEvidence = false;
-        evidenceLine = await openEvidence(view).catch(
+        evidenceLine = await openEvidence().catch(
           // A page that cannot start is reported in the footer; the watch itself goes on.
           (error: unknown) =>
             `evidence page failed: ${error instanceof Error ? error.message : String(error)}`,

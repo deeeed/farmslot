@@ -488,10 +488,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
     artifactContext = resolveRecipeExecutionArtifacts(
       target,
       optionString(options, 'artifactsDir'),
-      {
-        fresh: path.join('runs', attempt),
-        taskSubdir: path.join('recipe-runs', attempt),
-      },
+      runAttemptLayout(attempt),
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -879,14 +876,30 @@ export function resolveRecipeExecutionArtifacts(
   const taskDir = runTaskDir(target, explicit !== undefined);
   return {
     artifactsDir:
-      explicit !== undefined
-        ? path.resolve(explicit)
-        : taskDir
-          ? path.join(taskDir, 'artifacts', layout.taskSubdir ?? layout.fresh)
-          : path.join(target, 'temp', 'recipe', layout.fresh),
+      explicit !== undefined ? path.resolve(explicit) : layoutArtifactsDir(target, taskDir, layout),
     taskDir,
     claims: registeredTaskClaims(taskDir),
   };
+}
+
+function layoutArtifactsDir(
+  target: string,
+  taskDir: string | null,
+  layout: RecipeArtifactsLayout,
+): string {
+  return taskDir
+    ? path.join(taskDir, 'artifacts', layout.taskSubdir ?? layout.fresh)
+    : path.join(target, 'temp', 'recipe', layout.fresh);
+}
+
+/** One `run` attempt's directory: under the bound task's artifacts, else the checkout's. */
+function runAttemptLayout(attempt: string): RecipeArtifactsLayout {
+  return { fresh: path.join('runs', attempt), taskSubdir: path.join('recipe-runs', attempt) };
+}
+
+/** The folder `run` writes this checkout's attempts to, owned as the writer owns it. */
+export function recipeRunAttemptsRoot(target: string): string {
+  return path.dirname(layoutArtifactsDir(target, runTaskDir(target), runAttemptLayout('attempt')));
 }
 
 // The task's acceptance ledger from the recipe's proof targets. The run's result
