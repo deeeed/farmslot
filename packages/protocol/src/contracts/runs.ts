@@ -1738,6 +1738,8 @@ export interface LinkedTicket {
   title: string; // Ticket title (empty if fetch failed)
   description: string; // Full description (empty if fetch failed)
   source: 'jira' | 'github';
+  /** Fetched only because the PR body links it; derived again from the current body on each fetch. */
+  fromPrBody?: boolean;
 }
 
 /** GitHub merge/integration signals for review-pr TASK context (informational). */

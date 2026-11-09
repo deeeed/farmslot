@@ -126,6 +126,45 @@ test('PR body browse links to the project Jira are prefetched; other hosts and p
   assert.equal(data.jiraKey, 'TAT-4355');
 });
 
+test('a later fetch follows the current PR body: a replaced or removed link drops its ticket', async () => {
+  body = 'Fixes: https://jira.example.test/browse/TAT-1001';
+  runs.set('run', run());
+  await fetchPRData('run');
+  assert.equal(runs.get('run')!.ticketData!.jiraKey, 'TAT-1001');
+
+  body = 'Fixes: https://jira.example.test/browse/TAT-1002';
+  requestedKeys.length = 0;
+  await fetchPRData('run');
+  let data = runs.get('run')!.ticketData!;
+  assert.deepEqual(requestedKeys, ['TAT-1002']);
+  assert.deepEqual(
+    data.linkedTickets?.map((t) => t.ref),
+    ['TAT-1002'],
+  );
+  assert.equal(data.jiraKey, 'TAT-1002');
+  assert.equal(data.description, `${body}\n\n---\n\nContent TAT-1002`);
+
+  body = 'No ticket link any more.';
+  requestedKeys.length = 0;
+  await fetchPRData('run');
+  data = runs.get('run')!.ticketData!;
+  assert.deepEqual(requestedKeys, []);
+  assert.deepEqual(data.linkedTickets ?? [], []);
+  assert.equal(data.jiraKey, undefined);
+  assert.equal(data.description, body);
+});
+
+test('a dispatch ticket the PR body also links stays explicit after the link is removed', async () => {
+  body = 'Fixes: https://jira.example.test/browse/TAT-4184';
+  runs.set('run', run({ ticketData: structuredClone(explicit) }));
+  await fetchPRData('run');
+  body = 'Link removed.';
+  requestedKeys.length = 0;
+  await fetchPRData('run');
+  assert.deepEqual(requestedKeys, ['TAT-4184', 'TAT-4187']);
+  assert.equal(runs.get('run')!.ticketData!.jiraKey, 'TAT-4184');
+});
+
 test('PR body browse links are not fetched when the project has no Jira', async () => {
   configured = false;
   try {
