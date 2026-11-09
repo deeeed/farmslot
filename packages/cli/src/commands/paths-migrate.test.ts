@@ -19,6 +19,7 @@ import path from 'node:path';
 import test, { mock, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import type { FleetStatus } from '@farmslot/protocol';
 import { resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { openRunBundleStore } from '@farmslot/run-bundle';
 
@@ -494,6 +495,20 @@ test('pass 3: relative backlog specPath reads, enqueues and rolls back its origi
   assert.ok(Array.isArray(migrated));
   assert.equal(migrated[0].notes, specPath);
   assert.deepEqual(migrated[1], { id: 'outside', specPath: 'tasks/unmoved.md' });
+  const fleet = {
+    checkedAt: new Date().toISOString(),
+    slots: [],
+    summary: {
+      total: 0,
+      ready: 0,
+      busy: 0,
+      held: 0,
+      manual: 0,
+      disabled: 0,
+      blocked: 0,
+      warmCount: 0,
+    },
+  } satisfies FleetStatus;
   execFileSync(
     process.execPath,
     [
@@ -506,7 +521,7 @@ test('pass 3: relative backlog specPath reads, enqueues and rolls back its origi
     import * as backlog from './services/gateway/src/backlog/store.ts';
     import * as queue from './services/gateway/src/backlog/dispatch-queue.ts';
     import { setCachedFleetForTests } from './services/gateway/src/fleet/state.ts';
-    setCachedFleetForTests({ slots: [], summary: {} });
+    setCachedFleetForTests(${JSON.stringify(fleet)});
     queue.initDispatchQueue(() => {}, async () => {});
     await backlog.loadBacklog();
     const spec = await backlog.getBacklogSpec({ itemId: 'item' });
