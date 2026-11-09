@@ -8,7 +8,7 @@ import './chat-action-card.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { renderChatMarkdown } from '../../utils/markdown.js';
 
-/** Rendered message markdown, in the light DOM of whichever view holds the message. */
+/** Rendered message markdown. */
 const markdownCss = `
   chat-message .cm-markdown { display: block; }
   chat-message .cm-markdown > :first-child { margin-top: 0; }
@@ -43,6 +43,127 @@ const markdownCss = `
     font-size: ${fonts.sizeSm};
   }
 `;
+
+/** Every message's styles, in the light DOM of whichever view holds the message. */
+const messageCss = `
+  @keyframes blink {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0;
+    }
+  }
+  chat-message .cm-system {
+    border-left: 3px solid ${colors.statusWarn};
+    background: ${colors.statusWarn}11;
+    padding: ${spacing.sm} ${spacing.lg};
+    font-family: ${fonts.mono};
+    font-size: ${fonts.sizeXs};
+    color: ${colors.textSecondary};
+    margin-bottom: ${spacing.md};
+    border-radius: 0 ${radii.sm} ${radii.sm} 0;
+  }
+  chat-message .cm-system.cm-system-error {
+    border-left-color: ${colors.statusFail};
+    background: ${colors.statusFail}11;
+  }
+  chat-message .cm-system-ts {
+    color: ${colors.textMuted};
+    font-size: ${fonts.sizeXs};
+  }
+  chat-message .cm-bubble {
+    max-width: 85%;
+    padding: ${spacing.md} ${spacing.lg};
+    border-radius: ${radii.md};
+    font-family: ${fonts.mono};
+    font-size: ${fonts.sizeSm};
+    line-height: 1.5;
+    word-break: break-word;
+  }
+  chat-message .cm-user {
+    background: ${colors.accent}22;
+    border: 1px solid ${colors.accent}33;
+    color: ${colors.textPrimary};
+    align-self: flex-end;
+    margin-left: auto;
+  }
+  chat-message .cm-assistant {
+    background: ${colors.bgCard};
+    border: 1px solid ${colors.bgCardHover};
+    color: ${colors.textPrimary};
+    align-self: flex-start;
+  }
+  chat-message .cm-ts {
+    font-size: ${fonts.sizeXs};
+    color: ${colors.textMuted};
+    margin-bottom: 2px;
+    text-align: left;
+  }
+  chat-message .cm-ts.cm-ts-user {
+    text-align: right;
+  }
+  chat-message .cm-wrapper {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: ${spacing.lg};
+  }
+  chat-message .cm-cost-badge {
+    color: ${colors.textMuted};
+    font-size: 10px;
+    font-family: ${fonts.mono};
+    margin-top: 2px;
+  }
+  chat-message .cm-tool-trace {
+    max-width: 85%;
+    margin-top: ${spacing.xs};
+    color: ${colors.textSecondary};
+    font-family: ${fonts.mono};
+    font-size: ${fonts.sizeXs};
+    align-self: flex-start;
+  }
+  chat-message .cm-tool-trace summary {
+    cursor: pointer;
+    user-select: none;
+    color: ${colors.textMuted};
+  }
+  chat-message .cm-tool-list {
+    margin-top: ${spacing.xs};
+    border-left: 2px solid ${colors.bgCardHover};
+    padding-left: ${spacing.sm};
+    display: flex;
+    flex-direction: column;
+    gap: ${spacing.xs};
+  }
+  chat-message .cm-tool-call {
+    background: ${colors.bgSurface};
+    border: 1px solid ${colors.bgCardHover};
+    border-radius: ${radii.sm};
+    padding: ${spacing.xs} ${spacing.sm};
+  }
+  chat-message .cm-tool-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: ${spacing.sm};
+    align-items: center;
+    margin-bottom: 2px;
+  }
+  chat-message .cm-tool-name {
+    color: ${colors.textPrimary};
+  }
+  chat-message .cm-tool-status,
+  chat-message .cm-tool-round {
+    color: ${colors.textMuted};
+  }
+  chat-message .cm-tool-summary {
+    color: ${colors.textSecondary};
+    line-height: 1.4;
+  }
+  ${markdownCss}
+`;
+/** Built on first connection: node tests import this module without a CSSOM. */
+let sheet: CSSStyleSheet | undefined;
 
 @customElement('chat-message')
 export class ChatMessageElement extends LitElement {
@@ -100,6 +221,29 @@ export class ChatMessageElement extends LitElement {
       .replaceAll(snippetSentinel, '[redacted sentinel file snippet]');
   }
 
+  /** The last message markdown rendered, so an update that keeps the text renders nothing. */
+  private markdown?: { source: string; html: string };
+
+  private markdownHtml(source: string): string {
+    if (this.markdown?.source !== source)
+      this.markdown = { source, html: renderChatMarkdown(source) };
+    return this.markdown.html;
+  }
+
+  override connectedCallback() {
+    super.connectedCallback();
+    // One stylesheet per document or shadow root that holds messages, not one per message. It goes
+    // before the root's own sheets, where each message's <style> element used to cascade.
+    const root = this.getRootNode();
+    if (!(root instanceof Document || root instanceof ShadowRoot)) return;
+    if (!sheet) {
+      sheet = new CSSStyleSheet();
+      sheet.replaceSync(messageCss);
+    }
+    if (!root.adoptedStyleSheets.includes(sheet))
+      root.adoptedStyleSheets = [sheet, ...root.adoptedStyleSheets];
+  }
+
   render() {
     const isUser = this.message.role === 'user';
     const isSystem = this.message.role === 'system';
@@ -109,29 +253,8 @@ export class ChatMessageElement extends LitElement {
 
     if (isSystem) {
       return html`
-        <style>
-          chat-message .cm-system {
-            border-left: 3px solid ${colors.statusWarn};
-            background: ${colors.statusWarn}11;
-            padding: ${spacing.sm} ${spacing.lg};
-            font-family: ${fonts.mono};
-            font-size: ${fonts.sizeXs};
-            color: ${colors.textSecondary};
-            margin-bottom: ${spacing.md};
-            border-radius: 0 ${radii.sm} ${radii.sm} 0;
-          }
-          chat-message .cm-system.cm-system-error {
-            border-left-color: ${colors.statusFail};
-            background: ${colors.statusFail}11;
-          }
-          chat-message .cm-system-ts {
-            color: ${colors.textMuted};
-            font-size: ${fonts.sizeXs};
-          }
-          ${markdownCss}
-        </style>
         <div class="cm-system ${content.includes('🔴') ? 'cm-system-error' : ''}">
-          <span class="cm-markdown" .innerHTML=${renderChatMarkdown(content)}></span>
+          <span class="cm-markdown" .innerHTML=${this.markdownHtml(content)}></span>
           <span class="cm-system-ts">
             — ${new Date(this.message.timestamp).toLocaleTimeString()}</span
           >
@@ -140,108 +263,14 @@ export class ChatMessageElement extends LitElement {
     }
 
     return html`
-      <style>
-        @keyframes blink {
-          0%,
-          100% {
-            opacity: 1;
-          }
-          50% {
-            opacity: 0;
-          }
-        }
-        chat-message .cm-bubble {
-          max-width: 85%;
-          padding: ${spacing.md} ${spacing.lg};
-          border-radius: ${radii.md};
-          font-family: ${fonts.mono};
-          font-size: ${fonts.sizeSm};
-          line-height: 1.5;
-          word-break: break-word;
-        }
-        chat-message .cm-user {
-          background: ${colors.accent}22;
-          border: 1px solid ${colors.accent}33;
-          color: ${colors.textPrimary};
-          align-self: flex-end;
-          margin-left: auto;
-        }
-        chat-message .cm-assistant {
-          background: ${colors.bgCard};
-          border: 1px solid ${colors.bgCardHover};
-          color: ${colors.textPrimary};
-          align-self: flex-start;
-        }
-        chat-message .cm-ts {
-          font-size: ${fonts.sizeXs};
-          color: ${colors.textMuted};
-          margin-bottom: 2px;
-          text-align: ${isUser ? 'right' : 'left'};
-        }
-        chat-message .cm-wrapper {
-          display: flex;
-          flex-direction: column;
-          margin-bottom: ${spacing.lg};
-        }
-        chat-message .cm-cost-badge {
-          color: ${colors.textMuted};
-          font-size: 10px;
-          font-family: ${fonts.mono};
-          margin-top: 2px;
-        }
-        chat-message .cm-tool-trace {
-          max-width: 85%;
-          margin-top: ${spacing.xs};
-          color: ${colors.textSecondary};
-          font-family: ${fonts.mono};
-          font-size: ${fonts.sizeXs};
-          align-self: flex-start;
-        }
-        chat-message .cm-tool-trace summary {
-          cursor: pointer;
-          user-select: none;
-          color: ${colors.textMuted};
-        }
-        chat-message .cm-tool-list {
-          margin-top: ${spacing.xs};
-          border-left: 2px solid ${colors.bgCardHover};
-          padding-left: ${spacing.sm};
-          display: flex;
-          flex-direction: column;
-          gap: ${spacing.xs};
-        }
-        chat-message .cm-tool-call {
-          background: ${colors.bgSurface};
-          border: 1px solid ${colors.bgCardHover};
-          border-radius: ${radii.sm};
-          padding: ${spacing.xs} ${spacing.sm};
-        }
-        chat-message .cm-tool-meta {
-          display: flex;
-          flex-wrap: wrap;
-          gap: ${spacing.sm};
-          align-items: center;
-          margin-bottom: 2px;
-        }
-        chat-message .cm-tool-name {
-          color: ${colors.textPrimary};
-        }
-        chat-message .cm-tool-status,
-        chat-message .cm-tool-round {
-          color: ${colors.textMuted};
-        }
-        chat-message .cm-tool-summary {
-          color: ${colors.textSecondary};
-          line-height: 1.4;
-        }
-        ${markdownCss}
-      </style>
       <div class="cm-wrapper">
-        <div class="cm-ts">${new Date(this.message.timestamp).toLocaleTimeString()}</div>
+        <div class="cm-ts ${isUser ? 'cm-ts-user' : ''}">
+          ${new Date(this.message.timestamp).toLocaleTimeString()}
+        </div>
         <div class="cm-bubble ${isUser ? 'cm-user' : 'cm-assistant'}">
           ${isUser
             ? html`<span>${this.message.content}</span>`
-            : html`<span class="cm-markdown" .innerHTML=${renderChatMarkdown(content)}></span>`}
+            : html`<span class="cm-markdown" .innerHTML=${this.markdownHtml(content)}></span>`}
         </div>
         ${!isUser && this.message.usage?.costUsd
           ? html`<span class="cm-cost-badge">$${this.message.usage.costUsd.toFixed(4)}</span>`
