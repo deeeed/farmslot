@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import test, { type TestContext } from 'node:test';
+import test, { beforeEach, type TestContext } from 'node:test';
 
 import {
   recordingTargetClaimKey,
@@ -26,6 +26,13 @@ import {
 import { RUNTIME_CAPABILITY_TERMINAL_FENCE_TTL_MS, RuntimeCapabilityStore } from './store.js';
 
 const SLOT = 'slot-a';
+const FIXTURE_NOW = Date.parse('2026-08-11T00:00:00.000Z');
+
+beforeEach((t) => {
+  // The fixture registry, store compaction and restarted registries share one clock.
+  assert.ok('mock' in t);
+  t.mock.timers.enable({ apis: ['Date'], now: FIXTURE_NOW });
+});
 
 test('run eviction checks exact owners across slots and retains deferred provider cleanup', async (t) => {
   const { registry, actions } = await fixture(t, [entry('app')]);
@@ -473,7 +480,7 @@ async function fixture(
       : {}),
     ...(options.onClaimGranted ? { onClaimGranted: options.onClaimGranted } : {}),
     leaseId: () => `lease-${++nextLease}`,
-    now: options.now ?? (() => new Date('2026-08-11T00:00:00.000Z')),
+    now: options.now ?? (() => new Date(FIXTURE_NOW)),
   });
   return { registry, actions, actionCalls, store, storePath };
 }

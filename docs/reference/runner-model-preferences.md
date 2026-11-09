@@ -86,6 +86,12 @@ missing wire effort is refused before the request reaches the router. Provider
 registration logs show each model's limits; router request logs and Pi session
 entries record the actual effort and requested output budget, without prompts or keys.
 
+Compatible-provider requests must send the requested thinking level mapped through
+the model's `thinkingLevelMap`, or the same level when no mapping is declared.
+`PI_REASONING_EFFORT_MISMATCH` refuses an undeclared clamp before network delivery.
+Every worker model declares text and image input. There is no image admission
+check; a provider that cannot accept images reports its own error.
+
 For a comparison budget on a shared provider, use `FARMSLOT_PI_LITELLM_MODEL_LIMITS`,
 a JSON object keyed by exact model ID, for example:
 
