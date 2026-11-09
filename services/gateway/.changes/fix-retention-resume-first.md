@@ -1,0 +1,1 @@
+- Finish pending run archives at the start of retention passes so gateway restarts cannot strand staged storage.

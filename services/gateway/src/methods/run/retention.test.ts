@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from 'node:f
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { setTimeout } from 'node:timers/promises';
 
 import {
   type AgentContext,
@@ -21,6 +22,7 @@ import {
   runRetentionHold,
   type RunRetentionRoots,
 } from '../../runs/retention.js';
+import { stageStoragePaths, storageArchiveManifest } from '../../runs/storage-archive.js';
 import {
   archiveRun,
   createRun,
@@ -360,8 +362,82 @@ test('a settled untagged 48h run keeps both live and archived records while all 
   }
   const after = await runRetentionPass({ apply: true, roots, now: passNow }, privateDeps);
   assert.deepEqual(after.runs, [], 'a repeat pass never destroys or duplicates archived storage');
+  assert.equal(after.stores['task-dirs'].entries, 0);
   for (const record of originals) assert.ok(existsSync(record));
 });
+
+test(
+  'a restarted pass finishes pending archives before staging another run stalls',
+  { timeout: 4500 },
+  async (t) => {
+    const roots = await retentionRoots(t, runsDirectory());
+    const source = path.join(roots.taskRoots[0], 'interrupted');
+    await file(path.join(source, 'bytes'));
+    const bytes = await readFile(path.join(source, 'bytes'));
+    await stageStoragePaths(roots.archiveRoot, 'interrupted', [{ source, store: 'task-dirs' }]);
+    const manifestFile = storageArchiveManifest(roots.archiveRoot, 'interrupted');
+    const readEntry = async () => JSON.parse(await readFile(manifestFile, 'utf8')).entries[0];
+    const staged = await readEntry();
+    assert.equal(staged.state, 'staged');
+    assert.ok(existsSync(staged.staged));
+    assert.equal(existsSync(staged.destination), false);
+
+    const run = createRun({
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      mode: 'autonomous',
+      ticketOrPr: 'RETENTION-RESTART',
+    });
+    const task = path.join(roots.taskRoots[0], run.id);
+    updateRun(run.id, {
+      status: 'done',
+      completedAt: settled,
+      taskFile: path.join(task, 'TASK.md'),
+    });
+    await persistRunNow(run);
+    await file(path.join(task, 'TASK.md'));
+
+    let release = () => {};
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    let blocked = false;
+    let finished = false;
+    const pass = runRetentionPass(
+      { apply: true, roots, now: Date.now() + RUN_RETENTION_AGE_MS + 60000 },
+      {
+        ...privateDeps,
+        holdsSlot: async (candidate) => {
+          // The first check plans this run; the second is inside its staging turn.
+          if (candidate.id === run.id && ++calls === 2) {
+            blocked = true;
+            await hold;
+          }
+          return false;
+        },
+      },
+    ).finally(() => {
+      finished = true;
+    });
+    try {
+      const deadline = Date.now() + 500;
+      let entry = await readEntry();
+      while ((!blocked || entry.state !== 'archived') && Date.now() < deadline) {
+        await setTimeout(10);
+        entry = await readEntry();
+      }
+      assert.equal(blocked, true, 'the new pass is stuck in another candidate staging turn');
+      assert.equal(finished, false);
+      assert.equal(entry.state, 'archived');
+      assert.deepEqual(await readFile(path.join(entry.destination, 'bytes')), bytes);
+      assert.equal(existsSync(entry.staged), false);
+    } finally {
+      release();
+      await pass;
+    }
+  },
+);
 
 test('missing and unwritable archive roots fail before touching run records or storage', async (t) => {
   const roots = await retentionRoots(t, runsDirectory());
