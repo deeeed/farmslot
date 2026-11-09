@@ -20,6 +20,10 @@ import {
 } from '@farmslot/protocol/node/pack-portability';
 import { currentProjectSources, poolDirectory, projectsDirectory } from '@farmslot/slot-config';
 
+import {
+  RUNNER_OBSERVABILITY_SOURCE_FILES,
+  verifySupportBundle,
+} from '../../../../scripts/lib/runner-observability-bundle.mjs';
 import { execOnSlot, type ExecOnSlotOptions, type ExecResult } from '../core/exec.js';
 import {
   farmslotRoot,
@@ -39,6 +43,7 @@ import { usesNodeLink } from '../fleet/node-link-policy.js';
 import {
   nodeSupportHashPath,
   nodeSupportSelectionCommand,
+  RUNNER_OBSERVABILITY_BUNDLE_HASH,
   RUNNER_OBSERVABILITY_SUPPORT_PATHS,
 } from '../runners/runner-observability.js';
 
@@ -227,6 +232,11 @@ export async function ensureNodeSupportBundle(
   } = {},
 ): Promise<NodeSupportBundleState | null> {
   if (currentProjectSources() ?? options.projectVars?.sourceContext) {
+    await verifySupportBundle(
+      farmslotRoot(),
+      RUNNER_OBSERVABILITY_BUNDLE_HASH,
+      RUNNER_OBSERVABILITY_SOURCE_FILES,
+    );
     // No copied pack bundle is admitted. The service deployment still owns framework scripts.
     return {
       supportDir: farmslotDirForSlot(vars),
@@ -242,6 +252,11 @@ export async function ensureNodeSupportBundle(
   if (!projectVars) return null;
   const supportPaths = nodeSupportBundlePaths(vars.projectName, projectVars.projectJson);
   if (isLocal(vars.host, vars.machine) && !usesNodeLink(vars.machine)) {
+    await verifySupportBundle(
+      farmslotRoot(),
+      RUNNER_OBSERVABILITY_BUNDLE_HASH,
+      RUNNER_OBSERVABILITY_SOURCE_FILES,
+    );
     step('support', 'Using local node support source');
     return { supportDir: farmslotRoot(), hash: null, published: false, paths: supportPaths };
   }
@@ -250,6 +265,13 @@ export async function ensureNodeSupportBundle(
     options.collected && options.collected.manifest.paths.join('\0') === supportPaths.join('\0')
       ? options.collected
       : await collectNodeSupportBundle(vars.projectName, supportPaths);
+  const runnerHash = supportHash(
+    files.filter((file) => RUNNER_OBSERVABILITY_SUPPORT_PATHS.includes(file.relativePath)),
+  );
+  if (runnerHash !== RUNNER_OBSERVABILITY_BUNDLE_HASH)
+    throw new Error(
+      'RUNNER_OBSERVABILITY_BUNDLE_MISMATCH: gateway source changed. Restart the gateway before preparing or launching a worker.',
+    );
   // Resolve on the execution node: quoting a literal ~/ path in a hook
   // suppresses shell expansion, and the gateway's home belongs to another host.
   const resolved = await io.exec(

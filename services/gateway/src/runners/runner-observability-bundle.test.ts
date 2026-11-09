@@ -20,9 +20,10 @@ import {
 } from '../../../../scripts/lib/runner-observability-bundle.mjs';
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 
-import { buildPiLaunch } from './launch-command.js';
+import { buildInteractiveRefinementRunnerCommand, buildPiLaunch } from './launch-command.js';
 import {
   buildRunnerObservabilityInstallCommand,
+  piObservabilityVerificationCommand,
   withRequiredRunnerInstall,
   withRunnerObservabilityInstall,
 } from './runner-observability.js';
@@ -192,3 +193,61 @@ for (const exitCode of [1, 78]) {
     assert.equal(result.stdout, exitCode === 78 ? '' : 'started');
   });
 }
+
+test('Pi verifies a home-relative runtime manifest in the execution home', () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'pi-home-runtime-'));
+  try {
+    const repo = path.join(home, 'repo');
+    mkdirSync(repo);
+    const source = fileURLToPath(new URL('../../../../', import.meta.url));
+    const env = { HOME: home, PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin` };
+    const install = buildRunnerObservabilityInstallCommand(
+      makeVars({ repo, remoteRepo: repo }),
+      'pi',
+      repo,
+      '~/state',
+      { supportDir: source },
+    );
+    execFileSync('/bin/bash', ['-c', install], { env, stdio: 'pipe' });
+    const result = spawnSync(
+      '/bin/bash',
+      ['-c', piObservabilityVerificationCommand('~/state/.observability')],
+      { env, encoding: 'utf8' },
+    );
+    assert.equal(result.status, 0, result.stderr);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('trusted Pi refinement installs its verified hooks before launching', () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'pi-refinement-bundle-'));
+  try {
+    const repo = path.join(home, 'repo');
+    mkdirSync(repo);
+    const promptPath = path.join(home, 'prompt.md');
+    writeFileSync(promptPath, 'owned proof');
+    const command = buildInteractiveRefinementRunnerCommand({
+      runner: 'pi',
+      model: 'fixture/model',
+      repo,
+      promptPath,
+      binary: '/usr/bin/true',
+    });
+    assert(command);
+    const result = spawnSync('/bin/bash', ['-c', command], {
+      env: { HOME: home, PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin` },
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const installed = JSON.parse(
+      readFileSync(
+        path.join(runnerRuntimeDir(repo, '.agent'), '.observability/install.json'),
+        'utf8',
+      ),
+    );
+    assert.match(installed.bundleHash, /^[a-f0-9]{64}$/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});

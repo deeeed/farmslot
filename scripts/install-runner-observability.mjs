@@ -1384,12 +1384,15 @@ async function installPi({ repo, runtimeDir, slotId, bundleFiles, bundleHash }) 
   if (!repo) throw new Error('missing --repo');
   const repoPath = path.resolve(repo);
   const obsDir = path.join(runnerRuntimeDir(repoPath, runtimeDir), '.observability');
-  const binDir = ensureObservabilityBin(obsDir);
+  ensureObservabilityBin(obsDir);
   const copied = bundleFiles.filter((file) =>
     RUNNER_OBSERVABILITY_COPY_PATHS.includes(file.relativePath),
   );
   for (const file of copied) {
-    const destination = path.join(binDir, path.basename(file.relativePath));
+    const entry = RUNNER_OBSERVABILITY_COPY_FILES.find(
+      (entry) => entry.relativePath === file.relativePath,
+    );
+    const destination = path.join(obsDir, entry.sourcePath);
     fs.writeFileSync(destination, Buffer.from(file.contentBase64, 'base64'));
     fs.chmodSync(destination, file.mode);
   }

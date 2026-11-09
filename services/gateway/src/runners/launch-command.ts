@@ -55,6 +55,7 @@ import {
   buildClaudeObservabilityFallbackCommand,
   buildRunnerObservabilityInstallCommand,
   claudeObservabilitySettingsPath,
+  gatewayRunnerObservabilityInstallCommand,
   piObservabilityVerificationCommand,
   withRequiredRunnerInstall,
   withRunnerObservabilityInstall,
@@ -480,13 +481,17 @@ export function buildInteractiveRefinementRunnerCommand(options: {
       ]
         .filter(Boolean)
         .join(' ');
-    return `${buildPiLaunch({
+    const launch = `${buildPiLaunch({
       binary,
       model: options.model,
       repo: options.repo,
       safetyTier: options.safetyTier,
       effort: options.effort,
     })} ${promptArg}`;
+    return withRequiredRunnerInstall(
+      launch,
+      gatewayRunnerObservabilityInstallCommand('pi', options.repo),
+    );
   }
   const flags = safetyFlags ? ` ${safetyFlags}` : '';
   const effortFlag = runnerId === 'claude' ? runnerEffortFlag('claude', options.effort) : '';

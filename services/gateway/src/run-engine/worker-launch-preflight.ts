@@ -27,13 +27,10 @@ import { readSlotRow } from '../core/state.js';
 import { shellQuote } from '../core/tmux.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { runtimeCapabilityStatus } from '../methods/runtime-capabilities.js';
-import { selectedNodeSupportDir } from '../node-support/ensure.js';
 import { wrapWorkerShellCommand } from '../runners/launch-command.js';
 import { routeNativeExecution } from '../runners/native/node.js';
-import {
-  RUNNER_OBSERVABILITY_BUNDLE_HASH,
-  runnerUsesObservabilityBundle,
-} from '../runners/runner-observability.js';
+import { getRunnerDefinition } from '../runners/registry.js';
+import { RUNNER_OBSERVABILITY_BUNDLE_HASH } from '../runners/runner-observability.js';
 import { getRun, updateRunStep } from '../runs/store.js';
 import { verifyExecutionSources } from '../sources/runtime.js';
 import { agentRuntimeScriptForSlot } from '../tasks/agent-runtime-script.js';
@@ -134,6 +131,8 @@ export interface WorkerLaunchPreflightInput {
   assertCurrent?: () => void;
   record?: (name: string, detail: string, outcome: SubStepRecord['outcome']) => void;
   wrapCommand?: (command: string) => string;
+  /** Current bundle synchronized before the read-only launch checks. */
+  supportDir?: string;
   environment?: { set: Record<string, string>; unset: string[] };
 }
 
@@ -232,11 +231,18 @@ export async function admitWorkerLaunch(
       } satisfies LaunchProbeResult;
     return result.stdout;
   };
+  const requiresBundle =
+    !input.environment &&
+    Boolean(
+      initial?.metrics.runner &&
+      getRunnerDefinition(initial.metrics.runner).usesObservabilityBundle,
+    );
   const probeDetails = new Map<string, string>();
   await runLaunchPreflight(
     [
       {
         name: 'code',
+        requireVerified: requiresBundle,
         inspect: async (signal, timeout) => {
           const node = getNode(input.vars.machine);
           if (node?.versionMatch === false)
@@ -263,25 +269,11 @@ export async function admitWorkerLaunch(
             }
           }
           let runnerObservability: WorkerSourceExpectation['runnerObservability'];
-          if (!input.environment && runnerUsesObservabilityBundle(initial?.metrics.runner)) {
-            try {
-              runnerObservability = {
-                sourceDir:
-                  (await selectedNodeSupportDir(
-                    input.vars,
-                    project.runtimeDir ?? '.agent',
-                    project,
-                    undefined,
-                    timeout,
-                  )) ?? null,
-                hash: RUNNER_OBSERVABILITY_BUNDLE_HASH,
-              };
-            } catch (error) {
-              return {
-                status: 'mismatch',
-                detail: `RUNNER_OBSERVABILITY_BUNDLE_MISMATCH: cannot observe selected support: ${error instanceof Error ? error.message : String(error)}`,
-              };
-            }
+          if (requiresBundle) {
+            runnerObservability = {
+              sourceDir: input.supportDir ?? null,
+              hash: RUNNER_OBSERVABILITY_BUNDLE_HASH,
+            };
           }
           const command = workerSourceProbeCommand({
             cliVersion: await packageVersion('cli'),
@@ -292,7 +284,8 @@ export async function admitWorkerLaunch(
             ...(runnerObservability ? { runnerObservability } : {}),
           });
           const result = await execute(command, signal, timeout);
-          const observed = typeof result === 'string' ? probeResult(result) : result;
+          if (typeof result !== 'string') return result;
+          const observed = probeResult(result);
           if (
             runnerObservability &&
             (!('runnerObservabilityHash' in observed) ||
@@ -302,7 +295,10 @@ export async function admitWorkerLaunch(
               status: 'mismatch',
               detail: `RUNNER_OBSERVABILITY_BUNDLE_MISMATCH: ${observed.detail}`,
             };
-          return workerSourceCompatibility(observed);
+          return {
+            ...workerSourceCompatibility(observed),
+            ...(runnerObservability ? { requiredFactsVerified: true as const } : {}),
+          };
         },
       },
       {

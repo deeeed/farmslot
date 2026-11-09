@@ -71,7 +71,10 @@ export async function verifySupportBundle(root, expectedHash, entries) {
     return { files, hash };
   } catch (error) {
     throw Object.assign(
-      new Error(`RUNNER_OBSERVABILITY_BUNDLE_MISMATCH: ${error.message}`, { cause: error }),
+      new Error(
+        `RUNNER_OBSERVABILITY_BUNDLE_MISMATCH: ${error.message}. Restart the gateway and prepare the matching support bundle before retrying.`,
+        { cause: error },
+      ),
       { code: 'RUNNER_OBSERVABILITY_BUNDLE_MISMATCH' },
     );
   }

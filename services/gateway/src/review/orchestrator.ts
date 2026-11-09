@@ -3403,10 +3403,13 @@ export async function relaunchWorkerForFix(
   const roleWindowName =
     parentRun?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(parentRun?.flowType))
       ?.target?.window ?? null;
+  const runtimeDir = await resolveProjectRuntimeDir(parentRun?.project);
+  const nodeSupport = await ensureNodeSupportBundle(vars, runtimeDir);
   const { admitWorkerLaunch } = await import('../run-engine/worker-launch-preflight.js');
   const assertPreflightCurrent = await admitWorkerLaunch({
     runId,
     vars,
+    supportDir: nodeSupport?.supportDir,
     wrapCommand: (command) => `${WORKER_ENV_PREFIX} && ${withMachineEnv(command, vars)}`,
   });
   const workerTarget = await ensureTmuxTargetReadyForRelaunch(
@@ -3446,8 +3449,6 @@ export async function relaunchWorkerForFix(
       : 'Continue working on the current TASK.md and review fix feedback.';
   // Inherit parent run's safety tier (ADR-023) so the relaunch stays on the same posture.
   const parentSafetyTier = parentRun?.safetyTier;
-  const runtimeDir = await resolveProjectRuntimeDir(parentRun?.project);
-  const nodeSupport = await ensureNodeSupportBundle(vars, runtimeDir);
   const taskDir = parentRun
     ? await resolveWorkerTaskDir(vars, parentRun.project, parentRun.taskFile)
     : null;

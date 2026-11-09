@@ -1,7 +1,6 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { normalizeRunner } from '@farmslot/protocol';
 import { legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { currentProjectSources, reportedFarmPaths } from '@farmslot/slot-config';
 
@@ -20,11 +19,13 @@ import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
 import { currentFarmPaths, farmPathsForSlot, farmslotDirForSlot } from '../fleet/farm-paths.js';
 
+const gatewaySource = fileURLToPath(new URL('../../../../', import.meta.url));
+
 export const INSTALLER_RELATIVE_PATH = 'scripts/install-runner-observability.mjs';
 export { RUNNER_OBSERVABILITY_COPY_PATHS, RUNNER_OBSERVABILITY_SUPPORT_PATHS };
 // Fixed deployment bytes: one asynchronous read at module startup, no per-launch gateway scan.
 const gatewayBundle = await verifySupportBundle(
-  fileURLToPath(new URL('../../../../', import.meta.url)),
+  gatewaySource,
   undefined,
   RUNNER_OBSERVABILITY_SOURCE_FILES,
 );
@@ -32,12 +33,6 @@ export const RUNNER_OBSERVABILITY_BUNDLE_HASH = gatewayBundle.hash;
 const piCopyHash = supportHash(
   gatewayBundle.files.filter((file) => RUNNER_OBSERVABILITY_COPY_PATHS.includes(file.relativePath)),
 );
-
-export function runnerUsesObservabilityBundle(runner: string | null | undefined): boolean {
-  return ['claude', 'codex', 'pi', 'cursor', 'grok'].includes(
-    runner ? normalizeRunner(runner) : '',
-  );
-}
 
 export function piObservabilityVerificationCommand(obsDir: string): string {
   const packet = JSON.stringify({
@@ -51,8 +46,9 @@ export function piObservabilityVerificationCommand(obsDir: string): string {
     `
 (async()=>{
  const expected=JSON.parse(process.argv[1]),fs=require('node:fs/promises'),path=require('node:path');
- await verifySupportBundle(expected.obsDir,expected.copiedHash,expected.files);
- const manifest=JSON.parse(await fs.readFile(path.join(expected.obsDir,'install.json'),'utf8'));
+ const obsDir=expandTilde(expected.obsDir);
+ await verifySupportBundle(obsDir,expected.copiedHash,expected.files);
+ const manifest=JSON.parse(await fs.readFile(path.join(obsDir,'install.json'),'utf8'));
  if(manifest.bundleHash!==expected.hash)throw new Error('installed bundle identity differs from the gateway');
 })().catch(error=>{console.error('RUNNER_OBSERVABILITY_BUNDLE_MISMATCH: '+error.message);process.exitCode=78;});`;
   return `node -e ${shellQuote(program)} ${shellQuote(packet)}`;
@@ -68,12 +64,20 @@ function verifiedInstallerCommand(sourceExpression: string, args: string): strin
     supportVerificationProgram() +
     `
 (async()=>{
- const expected=JSON.parse(process.argv[1]),root=process.argv[2],path=require('node:path'),url=require('node:url');
+ const expected=JSON.parse(process.argv[1]),root=expandTilde(process.argv[2]),path=require('node:path'),url=require('node:url');
  const bundle=await verifySupportBundle(root,expected.hash,expected.files);
  const installer=await import(url.pathToFileURL(path.join(root,expected.installer)).href);
  await installer.installRunnerObservability(process.argv.slice(3),bundle);
 })().catch(error=>{console.error('[farmslot-observability] install failed: '+error.message);process.exitCode=error.code==='RUNNER_OBSERVABILITY_BUNDLE_MISMATCH'?78:1;});`;
   return `node -e ${shellQuote(program)} ${shellQuote(packet)} ${sourceExpression} ${args}`;
+}
+
+/** Local trusted refinement uses the same verified source installer as farm workers. */
+export function gatewayRunnerObservabilityInstallCommand(runner: string, repo: string): string {
+  return verifiedInstallerCommand(
+    shellQuote(gatewaySource),
+    `--runner ${shellQuote(runner)} --repo ${shellExpressionForRemotePath(repo)} --runtime-dir '.agent'`,
+  );
 }
 
 export const NODE_SUPPORT_HASH_FILENAME = 'node-support-hash';
