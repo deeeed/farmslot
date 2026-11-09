@@ -6,6 +6,14 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.82.3 - 2026-11-09
+
+- `RunAdoptPublishedPrParams` is a union of a content-match request (`runId`, `prRef`, optional `reason`) and the attested request. New optional `HumanPublicationAdoptionReceipt.match` and `RunDecision.publicationAdoption` record how an adopted PR was matched.
+- `ProjectScriptedCommandConfig` gains `runtime?: 'self-managed'` and the `isScriptedCommandRuntime` guard: a project command that starts and stops its own runtime.
+- `Run.archivedPriorRunIds` and `QueueItem.archivedPriorRunIds`: the failed runs of a multi-PR backlog item that its enqueue archived before its next run.
+- New `isArtifactOnlyScriptedCommandRun` and `WorkerTerminalContractDocument.scriptedCommand` for scripted command runs judged by their command result.
+- `findSlotByRepo` treats a slot repo the caller may not read (EPERM/EACCES) as a non-match instead of failing the lookup.
+
 ## 0.82.2 - 2026-11-08
 
 - Add `completionPolicy`, `pipelineReview` and `skipPrepare` to backlog items and their create/update inputs, `pipelineReview` to dispatch queue items, and the `isRunCompletionPolicy` / `isRunPipelineReviewPolicy` guards.
