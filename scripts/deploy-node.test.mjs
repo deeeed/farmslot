@@ -1384,6 +1384,8 @@ test('node CLI refreshes started together over a stale lock never overlap', asyn
           path.join(home, '.farmslot'),
           path.join(home, '.local/bin'),
           'legacy',
+          path.join(home, '.local/bin'),
+          path.join(home, '.npm-global/bin'),
         ],
         {
           env: { PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: home },

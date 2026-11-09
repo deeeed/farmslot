@@ -1,0 +1,1 @@
+- Share CLI bin directories between deployment refresh and path migration so installed entrypoints keep working.

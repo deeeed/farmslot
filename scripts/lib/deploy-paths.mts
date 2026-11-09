@@ -1,11 +1,13 @@
-import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import {
+  legacyCliBinDirs,
   parseFarmInstanceConfig,
   resolveFarmPaths,
 } from '../../packages/protocol/src/node/farm-paths.js';
-import path from 'node:path';
-import { readFileSync } from 'node:fs';
 
 // The target reads its marker. No path on the deploying machine stands in for it.
 const [inputHome, userHome, uid, port] = process.argv.slice(2);
@@ -76,3 +78,9 @@ const values = {
 };
 for (const [key, value] of Object.entries(values))
   console.log(`${key}='${value.replaceAll("'", "'\\''")}'`);
+// Keep the array intact across local/SSH argument quoting, including spaces in homes.
+console.log(
+  `CLI_USER_BINS=(${legacyCliBinDirs(userHome)
+    .map((directory) => `'${directory.replaceAll("'", "'\\''")}'`)
+    .join(' ')})`,
+);

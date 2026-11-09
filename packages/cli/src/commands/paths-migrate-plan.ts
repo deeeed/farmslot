@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   farmPathEntries,
   type GatewayFarmPaths,
+  legacyCliBinDirs,
   resolveFarmPaths,
   resolveReportedFarmPaths,
 } from '@farmslot/protocol/node/farm-paths';
@@ -490,6 +491,10 @@ export async function planMigration(options: MigrationOptions): Promise<Migratio
       } else if (![...archives].some((root) => within(root, receipt))) await readDocument(receipt);
     }
   }
+  // Recorded slot ownership overrides loose home configuration, including equal-root mappings.
+  plan.mappings = plan.mappings.filter(
+    ({ source }) => !slotRoots.some((root) => within(root, source)),
+  );
   for (const source of slotRoots) plan.mappings.push({ source, target: source });
   // This registry is addressed by the absolute task directory, not just its Run ID.
   const orderedMappings = [...plan.mappings].sort((a, b) => b.source.length - a.source.length);
@@ -730,29 +735,32 @@ export async function planMigration(options: MigrationOptions): Promise<Migratio
     });
   }
   // Bin entries stay in place, but links into trees we actually move must follow them.
-  for (const link of await children(legacy.code.bin)) {
-    if (!(await info(link))?.isSymbolicLink()) continue;
-    await assertUnredirected(path.dirname(link));
-    let resolved: string;
-    try {
-      resolved = await realpath(link);
-    } catch (error) {
-      // An unrelated broken link has no resolved target in a moved source.
-      if (hasCode(error, 'ENOENT') || hasCode(error, 'ELOOP')) continue;
-      throw error;
+  for (const bin of legacyCliBinDirs(options.userHome))
+    for (const link of await children(bin)) {
+      if (!(await info(link))?.isSymbolicLink()) continue;
+      await assertUnredirected(path.dirname(link));
+      let resolved: string;
+      try {
+        resolved = await realpath(link);
+      } catch (error) {
+        // An unrelated broken link has no resolved target in a moved source.
+        if (hasCode(error, 'ENOENT') || hasCode(error, 'ELOOP')) continue;
+        throw error;
+      }
+      const owner = plan.steps.find(
+        (step) => step.kind === 'move' && within(step.source, resolved),
+      );
+      if (!owner || owner.kind !== 'move') continue;
+      const before = await readlink(link);
+      const body = translate(resolved, plan.mappings);
+      plan.steps.push({
+        kind: 'symlink',
+        target: link,
+        before,
+        body,
+        rewrites: [{ source: before, target: body }],
+      });
     }
-    const owner = plan.steps.find((step) => step.kind === 'move' && within(step.source, resolved));
-    if (!owner || owner.kind !== 'move') continue;
-    const before = await readlink(link);
-    const body = translate(resolved, plan.mappings);
-    plan.steps.push({
-      kind: 'symlink',
-      target: link,
-      before,
-      body,
-      rewrites: [{ source: before, target: body }],
-    });
-  }
   // Commit the layout only after all durable references point to their new owners.
   plan.steps.push({
     kind: 'write',

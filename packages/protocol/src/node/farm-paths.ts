@@ -8,6 +8,13 @@ import { expandHome } from './farmslot-home.js';
 
 export const FARM_INSTANCE_CLAIM = '.farmslot-instance';
 
+// Refresh always installs the first directory and updates existing entries in the rest.
+const LEGACY_CLI_BIN_DIRS = ['.local/bin', '.npm-global/bin'] as const;
+
+export function legacyCliBinDirs(userHome = homedir()): string[] {
+  return LEGACY_CLI_BIN_DIRS.map((directory) => path.join(userHome, directory));
+}
+
 export type FarmRole = 'gateway' | 'node';
 
 export type FarmPathEnv = Readonly<Record<string, string | undefined>>;
@@ -367,7 +374,7 @@ export function resolveFarmPaths(options: ResolveFarmPathsOptions): FarmPaths {
         : root,
       node: env.FARMSLOT_WORKSPACE ? path.resolve(expandHome(env.FARMSLOT_WORKSPACE)) : root,
       cli: path.join(userHome, '.local', 'share', 'farmslot-cli'),
-      bin: path.join(userHome, '.local', 'bin'),
+      bin: path.join(userHome, LEGACY_CLI_BIN_DIRS[0]),
       support: path.join(homedir(), 'farmslot-node', 'support'),
     },
     backups: path.join(root, '.backups'),
