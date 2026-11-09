@@ -197,3 +197,21 @@ Dispatch boots every controllable dev-server, browser and device resource of the
 A project command may now declare `runtime: "self-managed"` (`scripted.commands.<name>.runtime` in project.json). Dispatch then skips the slot runtime boot for runs of that command. The command owns its resources and must release them itself. No other value is accepted; a project with one fails to load. Commands without the field, and every other runner, keep the boot.
 
 Public surface: `ProjectScriptedCommandConfig.runtime`, `ScriptedCommandRuntime`, `isScriptedCommandRuntime` (protocol).
+
+## Amendment 2 (2026-11-09): A scripted command run is judged by its command result
+
+A scripted command run has no worker, yet it was given the project's worker checklist and terminal gates. On the mobile pack, the selected `dev/mobile` template has a deterministic `ci.local_check` step, and the frozen contract also requires the acceptance ledger. The nightly device build exited 0 and signalled `complete`. The monitor then refused it because step 12 had no execution receipt, and the run stayed `reconciling` holding its slot (run 935c72fd).
+
+For an artifact-only scripted command run (scripted runner, command mode, `completionPolicy: "artifact-only"`):
+
+- The gateway resolves a scripted-command terminal contract, and so does the node in hosted task init: the request carries `scriptedCommand: true`, accepted only with `runner: "scripted"`. It names `artifacts/scripted-command-result.json` as the proof. It has no acceptance ledger, recipe evidence rules or project terminal artifacts.
+- Task init writes no `CHECKLIST.md` for that contract, so no deterministic check is frozen from a template the run never executes. `TASK.md` is still written.
+- The monitor judges the terminal signal by the result record: `complete` needs it present and valid, with exit code 0 and no timeout. The worker artifact checker does not run. A blocked or failed signal is unchanged.
+
+Scenario runs, scripted command runs with another completion policy and every other runner keep the worker contract. A normal request cannot claim the scripted-command contract, because the node resolves the contract it compares against from the request's own flag.
+
+Public surface:
+
+- `isArtifactOnlyScriptedCommandRun` and `WorkerTerminalContractDocument.scriptedCommand` (protocol).
+- `resolveWorkerTerminalContract(..., { scriptedCommand: true })`, `isScriptedCommandContract` and `SCRIPTED_COMMAND_RESULT` (agent-runtime).
+- The hosted task request's `scriptedCommand` flag (CLI).

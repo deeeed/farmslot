@@ -6,7 +6,7 @@ import { resolveRetainedRunBundleRef, runBundleRefs } from '@farmslot/run-bundle
 
 import { runNeedsExecutionStorage } from '../review-workspaces/storage-use.js';
 
-import { runTaskDirectories } from './store.js';
+import { isTaskDirectoryAdmitting, runTaskDirectories } from './store.js';
 
 /** A settled run keeps its storage this long (ADR-039 Amendment 2). */
 export const RUN_RETENTION_AGE_MS = 48 * 60 * 60 * 1000;
@@ -25,6 +25,9 @@ export type RunRetentionStore =
   | 'review-workspaces'
   | 'native-sessions'
   | 'run-bundles';
+
+export const retentionStoreAction = (store: string): 'deleted' | 'archived' =>
+  store === 'task-pins' || store === 'review-workspaces' ? 'deleted' : 'archived';
 
 export interface RunRetentionRoots {
   archiveRoot: string;
@@ -174,7 +177,7 @@ export async function retiredTaskPins(
     }
     if (typeof taskDir !== 'string' || now - writtenAt < RUN_RETENTION_AGE_MS) continue;
     const resolved = path.resolve(taskDir);
-    if (pendingTaskDirs.has(resolved)) continue;
+    if (pendingTaskDirs.has(resolved) || isTaskDirectoryAdmitting(resolved)) continue;
     if (removedTaskDirs.has(resolved) || !(await exists(resolved))) retired.push(pin);
   }
   return retired;
@@ -248,7 +251,12 @@ export async function planRunRetention(
   const owned = runOwnedPaths(removable, kept, roots);
   const candidates: RunRetentionPaths = {
     ...owned,
-    'task-pins': await retiredTaskPins(roots.taskPins, new Set(owned['task-dirs']), context.now),
+    'task-pins': await retiredTaskPins(
+      roots.taskPins,
+      new Set(owned['task-dirs']),
+      context.now,
+      new Set(kept.flatMap(runTaskDirectories)),
+    ),
   };
   return { plan: await measureRetention(removable, held, candidates), removable };
 }

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Criterion IDs and real Jira links",
+  "description": "Production Jira intake keeps criterion IDs plain and real ticket links intact in stored metadata, TASK.md and handoff.",
+  "workflow": {
+    "entry": "handoff",
+    "nodes": {
+      "handoff": {
+        "action": "command",
+        "cmd": "FARMSLOT_HANDOFF_PROOF_INPUT=scripts/runner-validation/fixtures/criterion-jira-links.json TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/acceptance-handoff.mts",
+        "timeout_ms": 300000,
+        "intent": "Verify AC-4 stays plain while the real ticket link survives fresh Jira intake and cached metadata recovery.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

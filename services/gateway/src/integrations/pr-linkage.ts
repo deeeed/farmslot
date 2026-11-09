@@ -343,6 +343,15 @@ export async function recordRunPRPublication(
                       ...decision,
                       resolvedAt: adoption.adoptedAt,
                       resolvedAction: PUBLICATION_ADOPTION_ACTION,
+                      ...(adoption.match
+                        ? {
+                            publicationAdoption: {
+                              receiptId: adoption.id,
+                              match: adoption.match,
+                              reason: adoption.reason,
+                            },
+                          }
+                        : {}),
                     }
                   : decision,
               ),

@@ -48,6 +48,8 @@ type TaskData = Omit<TaskInitSpec, 'execution' | 'markCommand' | 'template'>;
 
 export interface HostedTaskInitRequest {
   runner?: string;
+  /** Gateway-owned: an artifact-only scripted command run, judged by its command result. */
+  scriptedCommand?: true;
   version: 1;
   slotId: string;
   binding: 'project' | 'static';
@@ -179,6 +181,8 @@ function isHostedRequest(value: unknown): value is HostedTaskInitRequest {
     value.version !== 1 ||
     !string(value.slotId) ||
     (value.runner !== undefined && !string(value.runner)) ||
+    (value.scriptedCommand !== undefined &&
+      (value.scriptedCommand !== true || value.runner !== 'scripted')) ||
     (value.binding !== 'project' && value.binding !== 'static') ||
     !isRecord(value.task) ||
     !isRecord(value.template)
@@ -193,6 +197,7 @@ function isHostedRequest(value: unknown): value is HostedTaskInitRequest {
           'version',
           'slotId',
           'runner',
+          'scriptedCommand',
           'binding',
           'task',
           'template',
@@ -521,7 +526,7 @@ export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResu
       resolveWorkerTerminalContract(
         config: unknown,
         flow: string,
-        options: { mode?: string },
+        options: { mode?: string; scriptedCommand?: true },
       ): WorkerTerminalContractDocument;
     } = createRequire(import.meta.url)(
       '@farmslot/agent-runtime/scripts/worker-terminal-contract.cjs',
@@ -533,6 +538,7 @@ export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResu
       request.task,
       resolveWorkerTerminalContract(projectConfig, request.task.flow, {
         mode: request.task.runMode,
+        ...(request.scriptedCommand ? { scriptedCommand: true } : {}),
       }),
     );
     const requiredSkills = hostedRequiredSkills(project.projectJson, slot.remoteRepo, request.task);

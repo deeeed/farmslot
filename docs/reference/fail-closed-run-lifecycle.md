@@ -420,10 +420,12 @@ QA, review-only, PR-bound and artifact-only runs MUST be refused.
 
 ### Request and verification
 
-The operator CLI is `farmslot run adopt-published-pr <runId> --pr <url>
---head <full-sha> --reason <text> --attest-reviewed-publication`. Its typed request
-contains `runId`, `prRef`, `headSha`, a written `reason`, and
-`attestReviewedPublication: true`. No client actor identity confers authority.
+The operator CLI is `farmslot run adopt-published-pr <runId> --pr <url>`, which
+adopts by content match (ADR-065 Amendment 12). `--head <full-sha> --reason <text>
+--attest-reviewed-publication` is the attested override. The typed request contains
+`runId`, `prRef` and an optional `reason`; the attested request adds `headSha`, a
+written `reason`, and `attestReviewedPublication: true`. No client actor identity
+confers authority.
 
 Reuse the credential-backed person/global-admin authorizer for existing human
 attestations. Missing credentials, synthetic loopback identities, services, nodes,
@@ -431,12 +433,23 @@ background callers, blank reasons and absent explicit attestation MUST refuse.
 The person attests that this exact head was reviewed and its publication was
 approved, including any external review used after the pipeline's round cap.
 
-The gateway MUST verify the PR against the run's declared repository and branch,
-using retained project/source context without requiring its old slot. The full
-supplied commit MUST equal the observed PR head or be verifiably in that PR's
-history. In the historical case, record the newer observed head separately;
+The gateway MUST verify the PR's base and head against the run's declared
+repository, using retained project/source context without requiring its old slot.
+The PR's branch may differ from the run's. Without an attestation, the PR's change
+between the base and head SHAs read with its facts MUST match the run's reviewed
+patch file by file, byte for byte apart from display-only blob ids and hunk line
+numbers. The reviewed patch is the gate's current package, certified by the gate's
+review policy (`codeReviewCertifiesPackage`); it is read from the frozen snapshot and verified
+against its recorded diff hash. A mismatch, an uncovered or unverifiable patch
+refuses, naming the PR branch, the differing files (or the reason) and the attested
+command. With an attestation the
+comparison is recorded, not required. The receipt's `match` records the type
+(`content-match` or `attested`), both branch names, the differing files and the
+compared range, and the resolved gate decision carries it with the reason. The full
+supplied commit of an attested adoption MUST equal the observed PR head or be
+verifiably in that PR's history; a content match adopts the observed head. In the historical case, record the newer observed head separately;
 ancestry does not transfer approval to it. Unavailable or inconsistent GitHub
-facts, foreign repositories/branches, unrelated commits and conflicting existing
+facts, foreign repositories, unrelated commits and conflicting existing
 PR/publication identity MUST refuse before mutation. Another in-flight publication
 MUST be reconciled before adoption.
 

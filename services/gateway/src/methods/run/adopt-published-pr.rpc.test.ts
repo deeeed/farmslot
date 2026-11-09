@@ -38,7 +38,7 @@ mock.module('../../integrations/github-client.js', {
                 state: 'open',
                 merged_at: null,
                 draft: false,
-                base: { repo: { full_name: 'owner/repo' } },
+                base: { sha: 'e'.repeat(40), repo: { full_name: 'owner/repo' } },
                 head: { sha: observed, ref: 'fix/feature', repo: { full_name: 'owner/repo' } },
               }),
       stderr: '',

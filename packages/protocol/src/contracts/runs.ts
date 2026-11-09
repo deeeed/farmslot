@@ -1695,6 +1695,12 @@ export interface RunDecision {
   resolvedAction?: string;
   /** Authoritative human policy waiver, stamped only by the gateway. */
   evidenceAttestation?: EvidencePolicyAttestation;
+  /** The gate's reason when an adopted human publication resolved it. */
+  publicationAdoption?: {
+    receiptId: string;
+    match: import('./human-publication.js').PublicationAdoptionMatch;
+    reason: string;
+  };
   /** Normal publication authority, retained on the resolution rather than the frozen package. */
   publicationApproval?: {
     principalId: string;
@@ -3187,6 +3193,19 @@ export function isLightweightInteractiveDevRun(
   run: Pick<Run, 'flowType' | 'mode' | 'devInteractiveProfile'>,
 ): boolean {
   return isInteractiveDevRun(run) && run.devInteractiveProfile === DEFAULT_DEV_INTERACTIVE_PROFILE;
+}
+
+/** A scripted command run has no worker; with artifact-only completion, its command's result is its proof. */
+export function isArtifactOnlyScriptedCommandRun<
+  T extends Pick<Run, 'scripted' | 'completionPolicy'> & {
+    metrics?: Pick<Run['metrics'], 'runner'>;
+  },
+>(run: T): run is T & { scripted: Extract<ScriptedRunnerConfig, { mode: 'command' }> } {
+  return (
+    run.metrics?.runner === 'scripted' &&
+    run.scripted?.mode === 'command' &&
+    run.completionPolicy === 'artifact-only'
+  );
 }
 
 export function isInteractiveDevRun(run: Pick<Run, 'flowType' | 'mode'>): boolean {

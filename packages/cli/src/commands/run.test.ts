@@ -7,7 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { Command } from 'commander';
+import { Command, type Option } from 'commander';
 import { WebSocketServer } from 'ws';
 
 import {
@@ -35,15 +35,18 @@ import {
   registerRunCommand,
 } from './run.js';
 
-test('adopt-published-pr CLI requires explicit attestation and full publication inputs', () => {
+test('adopt-published-pr CLI needs only the PR; the attestation flags are the override', () => {
   const program = new Command();
   registerRunCommand(program);
   const command = program.commands
     .find((entry) => entry.name() === 'run')!
     .commands.find((entry) => entry.name() === 'adopt-published-pr');
   assert.ok(command);
-  for (const flag of ['--pr', '--head', '--reason', '--attest-reviewed-publication']) {
-    assert.equal(command.options.find((option) => option.long === flag)?.mandatory, true);
+  assert.equal(command.options.find((option) => option.long === '--pr')?.mandatory, true);
+  for (const flag of ['--head', '--reason', '--attest-reviewed-publication']) {
+    const found: Option | undefined = command.options.find((entry) => entry.long === flag);
+    assert.ok(found, flag);
+    assert.equal(found.mandatory, false, flag);
   }
 });
 

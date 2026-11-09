@@ -73,13 +73,27 @@ export type { DecisionListResult, DecisionResolveParams } from './decisions.js';
 
 // ─── Run param/result types ───
 
-export interface RunAdoptPublishedPrParams {
+/** Adopt a same-repository PR whose change vs its base matches the run's reviewed patch. */
+export interface RunAdoptPublishedPrByContentParams {
+  runId: string;
+  prRef: string;
+  reason?: string;
+  headSha?: never;
+  attestReviewedPublication?: never;
+}
+
+/** The human override: adopt an attested head of a same-repository PR whatever its content. */
+export interface RunAdoptPublishedPrAttestedParams {
   runId: string;
   prRef: string;
   headSha: string;
   reason: string;
   attestReviewedPublication: true;
 }
+
+export type RunAdoptPublishedPrParams =
+  | RunAdoptPublishedPrByContentParams
+  | RunAdoptPublishedPrAttestedParams;
 
 export interface RunAdoptPublishedPrResult {
   run: Run;
