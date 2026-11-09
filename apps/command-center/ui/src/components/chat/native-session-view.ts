@@ -359,7 +359,8 @@ export class NativeSessionView extends LitElement {
   private timeline() {
     if (this.timelineEvents !== this.transcript.events) {
       this.timelineEvents = this.transcript.events;
-      this.timelineEntries = nativeTimeline(this.transcript.events);
+      // Unchanged entries stay the same objects, so their rows and messages are not rendered again.
+      this.timelineEntries = nativeTimeline(this.transcript.events, this.timelineEntries);
     }
     return this.timelineEntries;
   }
@@ -377,7 +378,7 @@ export class NativeSessionView extends LitElement {
     const entries = this.timeline();
     if (this.rowsEntries !== entries) {
       this.rowsEntries = entries;
-      this.rows = nativeTimelineRows(entries);
+      this.rows = nativeTimelineRows(entries, this.rows);
       this.folds = new Map(
         this.rows.flatMap((row) => (row.kind === 'work' ? [[row.key, row] as const] : [])),
       );
@@ -745,15 +746,21 @@ export class NativeSessionView extends LitElement {
     </article>`;
   }
 
+  /** Each entry's message, the same object while its text is unchanged, so Lit skips it. */
+  private readonly chatMessages = new WeakMap<NativeTimelineEntry, ChatMessage>();
+
   private renderMarkdown(entry: NativeTimelineEntry, content: string) {
-    return html`<chat-message
-      .message=${{
+    let message = this.chatMessages.get(entry);
+    if (message?.content !== content) {
+      message = {
         id: `${entry.event.sessionId}:${entry.key}`,
         role: 'assistant',
         content,
         timestamp: entry.event.at,
-      } satisfies ChatMessage}
-    ></chat-message>`;
+      };
+      this.chatMessages.set(entry, message);
+    }
+    return html`<chat-message .message=${message}></chat-message>`;
   }
 
   /**
@@ -1083,6 +1090,8 @@ ${JSON.stringify(
       this.catalog = undefined;
       this.responseAttempts = new Set();
       this.transcript = { events: [], cursor: 0 };
+      this.timelineEntries = [];
+      this.rows = [];
       this.follow = NATIVE_FOLLOW_LATEST;
       this.historyScope = undefined;
       this.requests = [];
@@ -1444,6 +1453,9 @@ ${JSON.stringify(
     this.profileReady = true;
     this.session = undefined;
     this.transcript = { events: [], cursor: 0 };
+    // Another conversation's entries and rows are never reused.
+    this.timelineEntries = [];
+    this.rows = [];
     this.historyScope = undefined;
     this.historyObservation = { status: 'loading' };
     this.receipts = [];
@@ -1991,14 +2003,14 @@ ${JSON.stringify(
 
   render() {
     const session = this.session;
+    const implementable = Boolean(
+      session && !this.worker && this.historyCurrent && this.inputAllowed,
+    );
+    // Rows once per render: they feed both Implement and the timeline.
+    const rows = implementable || (session && !this.creating) ? this.timelineRows() : [];
     this.implementKey =
-      session && !this.worker && this.historyCurrent && this.inputAllowed
-        ? nativeImplementableKey(
-            session,
-            this.timelineRows(),
-            this.requests,
-            Boolean(this.localCommand),
-          )
+      session && implementable
+        ? nativeImplementableKey(session, rows, this.requests, Boolean(this.localCommand))
         : undefined;
     const lastReceipt = this.localCommand
       ? this.receipts.find((receipt) => receipt.commandId === this.localCommand?.commandId)
@@ -2316,7 +2328,7 @@ ${JSON.stringify(
                     ${keyed(
                       `${this.selectedNodeId}:${this.selectedId}`,
                       repeat(
-                        this.timelineRows(),
+                        rows,
                         (row) => (row.kind === 'work' ? `work:${row.key}` : row.key),
                         (row) =>
                           row.kind === 'work'

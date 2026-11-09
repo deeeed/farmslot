@@ -1,0 +1,1 @@
+- Streaming native chat stays smooth in long conversations: a delta re-renders only the message it extends, and earlier turns skip layout while off screen.
