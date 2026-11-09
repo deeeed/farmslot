@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -56,6 +55,7 @@ import {
   validVisualJudgmentReason,
   visibleInteractiveHandoffActions,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import {
   parseReviewRequestContext,
   parseReviewSelection,

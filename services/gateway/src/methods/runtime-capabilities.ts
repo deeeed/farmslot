@@ -1,5 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
-
 import {
   Events,
   isCompletionPrerequisiteFailure,
@@ -21,6 +19,7 @@ import {
   type RuntimeCapabilityStopWarmParams,
   type RuntimeCapabilityStopWarmResult,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import {
   loadProjectVars,

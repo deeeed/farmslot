@@ -1,5 +1,3 @@
-import { currentFarmPaths, legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
-import { reportedFarmPaths } from '@farmslot/slot-config';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -10,6 +8,8 @@ import {
   isTerminalRunStatus,
   type Run,
 } from '@farmslot/protocol';
+import { currentFarmPaths, legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
+import { reportedFarmPaths } from '@farmslot/slot-config';
 
 import { shSingleQuote } from '../../../../scripts/lib/shell-quote.mjs';
 import {

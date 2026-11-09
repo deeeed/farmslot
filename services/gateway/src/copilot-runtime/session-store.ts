@@ -1,9 +1,9 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { randomUUID } from 'node:crypto';
 import { appendFile, chmod, mkdir, open, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { CopilotRuntimeSession } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 export interface PersistedCopilotRuntime {
   schemaVersion: 1;

@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { open as fsOpen, stat as fsStat } from 'node:fs/promises';
 import path from 'node:path';
-import { farmPathsForSlot } from '../../fleet/farm-paths.js';
 
-import { watch as chokidarWatch, type FSWatcher } from 'chokidar';
+import { type FSWatcher, watch as chokidarWatch } from 'chokidar';
 
 import {
   DEFAULT_BRANCH,
@@ -39,6 +38,7 @@ import {
 import { assertNoNativeWorkerRecovery } from '../../core/native-worker-exclusion.js';
 import { assertStorageVolumePresent } from '../../core/storage-volume.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
+import { farmPathsForSlot } from '../../fleet/farm-paths.js';
 import { excludeSlotScaffolding } from '../../fleet/slot-scaffolding.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
 import {
@@ -57,11 +57,11 @@ import {
 } from '../../projects/start-ref-resolution.js';
 import { executeEvalHarnessLifecycle } from '../../run-engine/eval-harness-lifecycle.js';
 import { restoreParkedBranch } from '../../run-lifecycle/validation-run-commits.js';
-import { NativeWorkerOperationUncertainError } from '../../runners/native/worker-error.js';
 import {
   assertNativeSlotReplacementOwner,
   retireNativeWorkersForSlot,
 } from '../../runners/native/worker.js';
+import { NativeWorkerOperationUncertainError } from '../../runners/native/worker-error.js';
 import { getRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { withSlotSources } from '../../sources/runtime.js';
@@ -135,7 +135,7 @@ import {
   assertPublishedPrepareBranchContained,
 } from './unmerged-work.js';
 
-export { verifyPrepareHealth, type PrepareHealthCommands } from './prepare-health.js';
+export { type PrepareHealthCommands, verifyPrepareHealth } from './prepare-health.js';
 export { isLinkedGitWorktreeMarker, worktreeBaseResetRef } from './slot-tracking.js';
 
 /**

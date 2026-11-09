@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -18,6 +17,7 @@ import {
   type SourcesPinResult,
   type SourcesUnpinParams,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import {
   configureProjectSources,
   currentProjectSources,

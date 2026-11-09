@@ -1,5 +1,3 @@
-import { poolDirectory, projectsDirectory } from '@farmslot/slot-config';
-import { farmPathsForSlot } from '../fleet/farm-paths.js';
 // node-support/ensure.ts — keep a slot's node support bundle current with the
 // gateway's own tree.
 //
@@ -20,7 +18,7 @@ import {
   validatePackBytesPortability,
   validatePackPortability,
 } from '@farmslot/protocol/node/pack-portability';
-import { currentProjectSources } from '@farmslot/slot-config';
+import { currentProjectSources, poolDirectory, projectsDirectory } from '@farmslot/slot-config';
 
 import { execOnSlot, type ExecOnSlotOptions, type ExecResult } from '../core/exec.js';
 import {
@@ -36,6 +34,7 @@ import {
   slotWriteFiles,
 } from '../core/index.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
+import { farmPathsForSlot } from '../fleet/farm-paths.js';
 import { usesNodeLink } from '../fleet/node-link-policy.js';
 import {
   nodeSupportHashPath,

@@ -1,8 +1,8 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { lstatSync, readlinkSync, realpathSync, statSync, unwatchFile, watchFile } from 'node:fs';
 import path from 'node:path';
 
 import { expandTilde } from '@farmslot/capabilities/fs-watch';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import { resolveRunsDir, runBundleRetentionSettings } from '@farmslot/run-bundle';
 import { farmslotRoot } from '@farmslot/slot-config';

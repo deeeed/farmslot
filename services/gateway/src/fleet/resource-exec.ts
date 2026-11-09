@@ -1,5 +1,5 @@
 import { legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
-import { commandIncludesRemotePath } from '../core/remote-paths.js';
+
 /**
  * One command, on the machine a slot lives on.
  *
@@ -9,6 +9,7 @@ import { commandIncludesRemotePath } from '../core/remote-paths.js';
  * would be resolved by module order rather than by design.
  */
 import { execLocal } from '../core/exec.js';
+import { commandIncludesRemotePath } from '../core/remote-paths.js';
 import { ResourceCommandUnavailableError } from '../core/resource-command-error.js';
 
 import { getNode } from './machine-registry.js';

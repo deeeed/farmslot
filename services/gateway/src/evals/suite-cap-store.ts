@@ -1,9 +1,8 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // eval-suite-cap-store.ts — Durable eval matrix concurrency caps
-
 import { readFile, writeFile } from 'node:fs/promises';
 
 import { isTerminalRunStatus, type QueueItem } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { getAllRuns } from '../runs/store.js';

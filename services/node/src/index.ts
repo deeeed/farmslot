@@ -1,4 +1,3 @@
-import { nodeReportedFarmPaths } from './farm-paths.js';
 import { readFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import path from 'node:path';
@@ -21,8 +20,8 @@ import {
 import { configuredNodeLinkEnabled } from '@farmslot/protocol/node/slot-by-repo';
 
 import { captureHelperPath } from './commands/capture-helper-path.js';
-import { ExecRequests } from './commands/exec-requests.js';
 import { exec, resolveExecPoolDir } from './commands/exec.js';
+import { ExecRequests } from './commands/exec-requests.js';
 import {
   fsCheckIgnore,
   fsDelete,
@@ -52,13 +51,13 @@ import {
   stopResourceWatch,
   type WatchInstruction,
 } from './commands/resource-watch.js';
-import { startScreenControlServer, stopScreenControlServer } from './commands/screen-control.js';
 import {
   type ScreenCaptureConfig,
   startCapture,
   stopAllCaptures,
   stopCapture,
 } from './commands/screen.js';
+import { startScreenControlServer, stopScreenControlServer } from './commands/screen-control.js';
 import { NodeSources } from './commands/sources.js';
 import {
   collectMetrics,
@@ -71,13 +70,21 @@ import {
   requireInputSequence,
   tmuxKeepsPaneOptions,
 } from './commands/terminal-input.js';
-import { startTmuxWorkerWatch, stopTmuxWorkerWatch } from './commands/tmux-worker-watch.js';
 import * as tmux from './commands/tmux.js';
+import { startTmuxWorkerWatch, stopTmuxWorkerWatch } from './commands/tmux-worker-watch.js';
 import {
   startWorkspaceWatch,
   stopAllWorkspaceWatches,
   stopWorkspaceWatch,
 } from './commands/workspace-watch.js';
+import { NodeLinkAgent } from './link/agent.js';
+import { NODE_LINK_OPERATIONS } from './link/operations.js';
+import {
+  AUTH_RETRY_DELAY,
+  MAX_TRANSPORT_BACKOFF,
+  nodeLinkReconnectDelay,
+} from './link/reconnect.js';
+import { nodeReportedFarmPaths } from './farm-paths.js';
 import { resolveGatewayCredential } from './gateway-credential.js';
 import {
   authenticateNode,
@@ -86,13 +93,6 @@ import {
   isDeterministicHandshakeRejection,
   registerNode,
 } from './gateway-handshake.js';
-import { NodeLinkAgent } from './link/agent.js';
-import { NODE_LINK_OPERATIONS } from './link/operations.js';
-import {
-  AUTH_RETRY_DELAY,
-  MAX_TRANSPORT_BACKOFF,
-  nodeLinkReconnectDelay,
-} from './link/reconnect.js';
 
 const GATEWAY_URL = process.env.GATEWAY_URL ?? 'ws://localhost:7777';
 const MACHINE_NAME = process.env.MACHINE_NAME ?? hostname();

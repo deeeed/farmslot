@@ -1,4 +1,3 @@
-import { resolveSlotPoolDir } from '../../src/node/slot-by-repo.js';
 import assert from 'node:assert/strict';
 import {
   mkdirSync,
@@ -11,9 +10,10 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
-import ts from 'typescript';
 import test, { type TestContext } from 'node:test';
+import { pathToFileURL } from 'node:url';
+
+import ts from 'typescript';
 
 import {
   currentFarmPaths,
@@ -21,6 +21,7 @@ import {
   legacyRemoteFarmPaths,
   resolveFarmPaths,
 } from '../../src/node/farm-paths.js';
+import { resolveSlotPoolDir } from '../../src/node/slot-by-repo.js';
 
 function fixture(t: TestContext) {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'farm-paths-process-')));

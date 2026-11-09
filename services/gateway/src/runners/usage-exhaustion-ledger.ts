@@ -1,11 +1,11 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 /**
  * Persisted provider usage exhaustion ledger — survives gateway restarts.
  * Session tier (default 5h) escalates to extended (default 7d) on immediate re-exhaustion.
  */
-
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import {
   coolingDurations,

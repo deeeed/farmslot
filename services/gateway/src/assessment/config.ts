@@ -1,6 +1,7 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 export interface AssessmentConfig {
   enabled: boolean;

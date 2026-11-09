@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // gateway-tls.ts — CLI-side view of the gateway's optional TLS (wss://) support.
 //
 // `farmslot certs setup` provisions a locally-trusted cert here and `farmslot up`
@@ -7,11 +6,11 @@ import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // itself only consumes the FARMSLOT_GATEWAY_TLS_* env vars (see
 // services/gateway/src/core/gateway-tls.ts); the default-path convention lives
 // here because both cert provisioning and the connect payload are CLI concerns.
-
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { DEFAULT_GATEWAY_TLS_PORT } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 export function gatewayCertsDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(currentFarmPaths('node', env).config, 'certs');

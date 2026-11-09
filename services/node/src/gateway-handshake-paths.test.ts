@@ -1,13 +1,16 @@
-import { MINIMUM_RUNTIME_VERSION, RUNTIME_VERSION } from '@farmslot/agent-runtime/version';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+
 import { WebSocket, WebSocketServer } from 'ws';
+
+import { MINIMUM_RUNTIME_VERSION, RUNTIME_VERSION } from '@farmslot/agent-runtime/version';
 import { MINIMUM_PROTOCOL_VERSION, PROTOCOL_VERSION } from '@farmslot/protocol';
 import { resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
+
 import { registerNode } from './gateway-handshake.js';
 
 test('node registration transports the optional typed FarmPaths report unchanged', async (t) => {

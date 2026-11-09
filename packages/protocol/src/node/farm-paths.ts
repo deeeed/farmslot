@@ -2,10 +2,15 @@ import { readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { expandHome } from './farmslot-home.js';
+
 import { readLegacyStorageFacts } from './farm-paths-storage.js';
+import { expandHome } from './farmslot-home.js';
+
+export const FARM_INSTANCE_CLAIM = '.farmslot-instance';
 
 export type FarmRole = 'gateway' | 'node';
+
+export type FarmPathEnv = Readonly<Record<string, string | undefined>>;
 
 export interface LegacyFarmStorageFacts {
   runBundles: string;
@@ -14,7 +19,7 @@ export interface LegacyFarmStorageFacts {
 export interface ResolveFarmPathsOptions {
   home?: string;
   role: FarmRole;
-  env?: NodeJS.ProcessEnv;
+  env?: FarmPathEnv;
   checkoutRoot?: string;
   agentRuntimeScripts?: string;
   userHome?: string;
@@ -119,7 +124,11 @@ export type FarmPaths = NodeFarmPaths | GatewayFarmPaths;
 
 /** Addressable path leaves, including indexed path arrays. Metadata is never a path. */
 export function farmPathEntries(paths: FarmPaths): [string, string][] {
-  const { layout, instance, role, envOverrides, ...roots } = paths;
+  const roots = Object.fromEntries(
+    Object.entries(paths).filter(
+      ([key]) => !['layout', 'instance', 'role', 'envOverrides'].includes(key),
+    ),
+  );
   function entries(value: unknown, prefix: string): [string, string][] {
     if (typeof value === 'string') return [[prefix, value]];
     if (!value || typeof value !== 'object') return [];
@@ -487,17 +496,17 @@ const warnedOverrides = new Set<string>();
 
 export function currentFarmPaths(
   role: 'gateway',
-  env?: NodeJS.ProcessEnv,
+  env?: FarmPathEnv,
   checkoutRoot?: string,
 ): GatewayFarmPaths;
 export function currentFarmPaths(
   role: 'node',
-  env?: NodeJS.ProcessEnv,
+  env?: FarmPathEnv,
   checkoutRoot?: string,
 ): NodeFarmPaths;
 export function currentFarmPaths(
   role: FarmRole,
-  env: NodeJS.ProcessEnv = process.env,
+  env: FarmPathEnv = process.env,
   checkoutRoot?: string,
 ): FarmPaths {
   const home = expandHome(env.FARMSLOT_HOME?.trim() || path.join(homedir(), '.farmslot'));
@@ -545,7 +554,7 @@ export function currentFarmPaths(
  * Template expansion historically honors WORKSPACE; helper execution does not.
  */
 export function legacyRemoteFarmPaths(
-  env: NodeJS.ProcessEnv = {},
+  env: FarmPathEnv = {},
   discoveredCheckout?: string,
   agentRuntimeScripts?: string,
 ): {

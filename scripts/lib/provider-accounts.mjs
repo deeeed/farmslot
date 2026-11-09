@@ -4,8 +4,8 @@
  * Paths expand against THIS machine's home — never the gateway's.
  */
 
-import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 

@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -126,13 +125,6 @@ test('machine env exports pool.env values, quoted, ahead of the command', () => 
 test('remote machine shells target the gateway URL their node dials, never a credential', () => {
   const ws = {} as WebSocket;
   const remote = { machine: 'fixture-remote-node', host: '10.0.0.9' };
-  const roots = {
-    FARMSLOT_HOME: '~/.farmslot',
-    FARMSLOT_POOL_DIR: '~/farmslot-node/pool',
-    FARMSLOT_PROJECTS_DIR: '~/farmslot-node/projects',
-  };
-  const rootPrefix =
-    'export FARMSLOT_HOME="${HOME}/.farmslot" && export FARMSLOT_POOL_DIR="${HOME}/farmslot-node/pool" && export FARMSLOT_PROJECTS_DIR="${HOME}/farmslot-node/projects"';
   registerNode(
     remote.machine,
     1,
@@ -144,31 +136,25 @@ test('remote machine shells target the gateway URL their node dials, never a cre
     'ws://10.0.0.5:7777',
   );
   try {
-    assert.deepEqual(machineShellEnv(remote), { GW_URL: 'ws://10.0.0.5:7777', ...roots });
+    assert.deepEqual(machineShellEnv(remote), { GW_URL: 'ws://10.0.0.5:7777' });
     assert.equal(
       withMachineEnv('cd /repo && claude', remote),
-      `export GW_URL='ws://10.0.0.5:7777' && ${rootPrefix} && cd /repo && claude`,
+      `export GW_URL='ws://10.0.0.5:7777' && cd /repo && claude`,
     );
     // An operator-pinned pool value wins over the node's own URL.
     assert.deepEqual(machineShellEnv({ ...remote, machineEnv: { GW_URL: 'wss://pinned' } }), {
       GW_URL: 'wss://pinned',
-      ...roots,
     });
     // Gateway-local slots keep the operator's CLI profile (and its credential).
-    const localPaths = currentFarmPaths('gateway');
-    assert.deepEqual(machineShellEnv({ machine: remote.machine, host: 'localhost' }), {
-      FARMSLOT_HOME: localPaths.home,
-      FARMSLOT_POOL_DIR: localPaths.pool,
-      FARMSLOT_PROJECTS_DIR: localPaths.projects,
-    });
+    assert.deepEqual(machineShellEnv({ machine: remote.machine, host: 'localhost' }), {});
   } finally {
     unregisterByWs(ws);
   }
-  assert.deepEqual(machineShellEnv(remote), roots);
+  assert.deepEqual(machineShellEnv(remote), {});
   for (const unsafe of ['ws://x; id', 'http://gw:7801', 'ws://user:secret@gw:7801']) {
     registerNode(remote.machine, 1, ws, undefined, undefined, undefined, undefined, unsafe);
     try {
-      assert.deepEqual(machineShellEnv(remote), roots);
+      assert.deepEqual(machineShellEnv(remote), {});
     } finally {
       unregisterByWs(ws);
     }
@@ -176,10 +162,7 @@ test('remote machine shells target the gateway URL their node dials, never a cre
   // A URL that parses yet carries shell syntax is exported inert.
   registerNode(remote.machine, 1, ws, undefined, undefined, undefined, undefined, "ws://gw/'$(id)");
   try {
-    assert.equal(
-      withMachineEnv('true', remote),
-      "export GW_URL='ws://gw/'\\''$(id)' && " + rootPrefix + ' && true',
-    );
+    assert.equal(withMachineEnv('true', remote), "export GW_URL='ws://gw/'\\''$(id)' && true");
   } finally {
     unregisterByWs(ws);
   }
@@ -216,4 +199,31 @@ test('a bound task resolves its named RECIPE_LIBRARY_PATH entries to the retaine
     'perps=/frozen',
     'a frozen launch binding still wins',
   );
+});
+
+test('CI home, checkout and isolated runs do not add roots to legacy machine commands', (t) => {
+  const ciEnv = {
+    HOME: '/home/runner',
+    FARMSLOT_HOME: '/home/runner/.farmslot',
+    FARMSLOT_ROOT: '/home/runner/work/farmslot/farmslot',
+    FARMSLOT_RUNS_DIR: '/tmp/farmslot-test-runs-ci',
+    FARMSLOT_TEST_TMP: '1',
+  };
+  for (const [name, value] of Object.entries(ciEnv)) {
+    const previous = process.env[name];
+    process.env[name] = value;
+    t.after(() => {
+      if (previous === undefined) delete process.env[name];
+      else process.env[name] = previous;
+    });
+  }
+  for (const host of ['localhost', 'remote.invalid']) {
+    const vars = { machine: 'legacy-ci-node', host };
+    assert.deepEqual(machineShellEnv(vars), {});
+    assert.equal(withMachineEnv('grok --resume session', vars), 'grok --resume session');
+    assert.equal(
+      withMachineEnv('claude', { ...vars, machineEnv: { MM_HARNESS_BIN: '/node/provider' } }),
+      "export MM_HARNESS_BIN='/node/provider' && claude",
+    );
+  }
 });

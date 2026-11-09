@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { createHash } from 'node:crypto';
 import {
   closeSync,
@@ -12,6 +11,7 @@ import {
 import { dirname, join, resolve } from 'node:path';
 
 import { RUNNER_PICKER_MODELS, type RunnerVisibleModelState } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { GatewayMethodError } from '../core/method-error.js';
 import {

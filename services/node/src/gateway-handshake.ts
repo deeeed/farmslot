@@ -1,4 +1,3 @@
-import type { NodeFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import WebSocket from 'ws';
 
 import { MINIMUM_RUNTIME_VERSION, RUNTIME_VERSION } from '@farmslot/agent-runtime/version';
@@ -18,6 +17,7 @@ import {
   type RequestFrame,
   type ResponseFrame,
 } from '@farmslot/protocol';
+import type { NodeFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import type { GatewayCredential } from './gateway-credential.js';
 

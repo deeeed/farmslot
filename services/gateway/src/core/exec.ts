@@ -1,9 +1,6 @@
-import { currentFarmPaths, farmPathsForSlot } from '../fleet/farm-paths.js';
-import { commandIncludesRemotePath } from './remote-paths.js';
 // core/exec.ts — Local/remote command execution
 // TypeScript port of lib/slot-common.sh: is_local, run_on, remote
 // Uses node-rpc.ts for remote execution via connected nodes.
-
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,6 +8,7 @@ import path from 'node:path';
 import { createNodeExecCloseout, type ExecResult, observeNodeExecAbort } from '@farmslot/protocol';
 import { currentProjectSources, sourceExecutionEnvironment } from '@farmslot/slot-config';
 
+import { currentFarmPaths, farmPathsForSlot } from '../fleet/farm-paths.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { usesNodeLink } from '../fleet/node-link-policy.js';
 import { nodeExec, nodeExecArgv } from '../fleet/node-rpc.js';
@@ -19,6 +17,7 @@ import { executionKind, measureManagedOperation } from '../observability/perform
 import { assertCleanupCurrent, cleanupSignal, trackCleanupCommand } from './cleanup-scope.js';
 import type { SlotVars } from './config.js';
 import { currentSlotCommandExecutor } from './exec-scope.js';
+import { commandIncludesRemotePath } from './remote-paths.js';
 
 export type { ExecResult };
 

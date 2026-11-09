@@ -3,7 +3,9 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+
 import { isNodeFarmPaths } from '@farmslot/protocol/node/farm-paths';
+
 import { nodeReportedFarmPaths } from './farm-paths.js';
 
 test('node report uses its explicit standalone install directory with FARMSLOT_ROOT unset', (t) => {

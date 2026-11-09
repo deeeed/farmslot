@@ -1,5 +1,3 @@
-import type { NodeFarmPaths } from '@farmslot/protocol/node/farm-paths';
-import { setNodeFarmPathsLookup } from '@farmslot/slot-config';
 import type { WebSocket } from 'ws';
 
 import {
@@ -11,6 +9,8 @@ import {
   peerVersionCompatibility,
   type PeerVersionDeclaration,
 } from '@farmslot/protocol';
+import type { NodeFarmPaths } from '@farmslot/protocol/node/farm-paths';
+import { setNodeFarmPathsLookup } from '@farmslot/slot-config';
 
 import { revokeNodeFileObservations } from '../resources/node-file-observations.js';
 import { resourceRevisions } from '../resources/revisions.js';

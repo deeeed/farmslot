@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // dispatch-queue.ts — In-memory queue + JSON file persistence
 // Items persist across gateway restarts. Auto-dispatches when slots free up.
 import { randomUUID } from 'node:crypto';
@@ -26,6 +25,7 @@ import {
   type SlotStatus,
   validateSourceSelections,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import {
   assertReviewPolicy,
   assertReviewSequence,

@@ -11,6 +11,7 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import type { Run, SlotLifecycle, TaskProgressResult } from '@farmslot/protocol';
 // See replay-step-nested-checklist.test.ts: mock.module replaces a module
@@ -257,6 +258,8 @@ function registerChild(dir: string): void {
  * `index.json` path, which only fsevents replays.
  */
 async function registerChildAndWait(dir: string, label: string): Promise<Emitted> {
+  // Keep the one producer write outside Chokidar's 50 ms startup coalescer.
+  await delay(60);
   registerChild(dir);
   // The initial parent signal can also include this child. Wait for the
   // child-driven report whose parentChecklist contract these tests verify.

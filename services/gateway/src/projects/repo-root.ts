@@ -1,7 +1,7 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { existsSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { farmslotRoot, resolveFarmslotRoot, resolveWorkspaceRoot } from '@farmslot/slot-config';
 
 import { isGatewayTestProcess, isolatedTestPath } from '../core/isolated-test-path.js';

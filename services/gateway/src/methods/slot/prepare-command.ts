@@ -1,9 +1,8 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { commandIncludesRemotePath } from '../../core/remote-paths.js';
-import { farmPathsForSlot } from '../../fleet/farm-paths.js';
+
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { EXEC_TIMEOUT_EXIT_CODE } from '../../core/exec.js';
 import {
@@ -16,8 +15,10 @@ import {
   type SlotVars,
 } from '../../core/index.js';
 import { PREPARE_PREFLIGHT_TIMEOUT_MS } from '../../core/project-timeouts.js';
+import { commandIncludesRemotePath } from '../../core/remote-paths.js';
 import { ORCHESTRATOR_LOCALITY, slotWriteFiles } from '../../core/slot-io.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
+import { farmPathsForSlot } from '../../fleet/farm-paths.js';
 import { withoutNodeReconnectWait } from '../../fleet/node-rpc.js';
 import { resolveWorkspaceRoot } from '../../projects/repo-root.js';
 

@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
+
 import * as paths from '../../src/node/farm-paths.js';
 import * as home from '../../src/node/farmslot-home.js';
 

@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { createHash } from 'node:crypto';
 // gateway-profiles.ts — kubeconfig-style gateway profiles for the CLI (ADR-036).
 //
@@ -15,10 +14,11 @@ import {
   type PersonSessionAuth,
   PersonSessionChangedError,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { isLoopbackHost } from '@farmslot/protocol/node/loopback-host';
 
-import type { GatewayCredential } from './gateway-client.js';
 import { isCheckoutGatewayUrl } from './onboarding/env-file.js';
+import type { GatewayCredential } from './gateway-client.js';
 
 export type { GatewayAuthMode };
 

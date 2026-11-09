@@ -1,7 +1,5 @@
-import { currentFarmPaths, legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // core/hooks.ts — Hook and template expansion
 // TypeScript port of lib/slot-common.sh: expand_hook, expand_template, expand_platform_field, render_fixture_template
-
 import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,15 +9,16 @@ import {
   collectPlaceholderTokens,
   normalizeRunner,
 } from '@farmslot/protocol';
+import { currentFarmPaths, legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 // Placeholder guard lives in @farmslot/protocol so agent-runtime renders with the
 // same rule; re-exported here for the gateway's existing imports.
 export { assertNoUnknownPlaceholders, collectPlaceholderTokens };
 
 import {
-  reportedFarmPaths,
   type ProjectVars,
   type RawProjectJson,
+  reportedFarmPaths,
   type SlotVars,
 } from './config.js';
 import { currentProjectSources, expandSourceBindings } from './source-binding.js';

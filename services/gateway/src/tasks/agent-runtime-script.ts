@@ -1,6 +1,7 @@
+import path from 'node:path';
+
 import { currentFarmPaths, legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { reportedFarmPaths } from '@farmslot/slot-config';
-import path from 'node:path';
 
 import { type ProjectVars, type SlotVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';

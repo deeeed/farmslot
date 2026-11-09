@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import {
   chmodSync,
   existsSync,
@@ -16,6 +15,7 @@ import {
   type PrincipalSubject,
   type RoleBinding,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { isCredentialStoreLockHeld } from './credential-lock-state.js';
 import { withCredentialLock } from './credential-store-lock.js';

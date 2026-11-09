@@ -1,7 +1,7 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import path from 'node:path';
 
 import type { SourceLock, SourceMaterialization, SourceNodeStatus } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { SourceMaterializer } from '@farmslot/slot-config/sources';
 
 /** No ref resolver here: nodes receive exact authoritative locks only. */

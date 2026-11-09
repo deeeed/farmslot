@@ -1,5 +1,4 @@
 import { legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
-import { farmPathsForSlot } from '../fleet/farm-paths.js';
 // node-support/remote-command.ts — run remote farm scripts from the bundle that
 // matches the config the command was expanded from.
 //
@@ -10,10 +9,10 @@ import { farmPathsForSlot } from '../fleet/farm-paths.js';
 // twice: ledger F15). Prepare already ran its hooks from the content-hashed
 // bundle; this does the same for every remote command, so config and scripts
 // always travel together and rollout order stops mattering.
-
 import { currentProjectSources } from '@farmslot/slot-config';
 
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/index.js';
+import { farmPathsForSlot } from '../fleet/farm-paths.js';
 
 import { NODE_SUPPORT_COMMAND_CACHE_MS, wrapNodeSupportReadCommand } from './activation.js';
 import {

@@ -1,6 +1,7 @@
-import { currentFarmPaths } from './farm-paths.js';
 import { homedir } from 'node:os';
 import path from 'node:path';
+
+import { currentFarmPaths } from './farm-paths.js';
 
 export function expandHome(value: string): string {
   return value === '~' || value.startsWith('~/') ? path.join(homedir(), value.slice(1)) : value;

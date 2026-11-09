@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
+
 import { resolveCurrentSlot } from './slot-context.js';
 
 test('CLI slot context uses the gateway pool override and keeps the legacy default', (t) => {

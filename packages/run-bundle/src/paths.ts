@@ -1,6 +1,7 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 const ROOT_MARKERS = ['CLAUDE.md', 'scripts/dev.sh', 'services/gateway/package.json'];
 

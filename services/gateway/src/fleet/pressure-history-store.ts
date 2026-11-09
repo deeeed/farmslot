@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // pressure-history-store.ts — persisted bounded pressure history (MANUAL-000109).
 //
 // The gateway keeps the normalized node-pressure sample ring in memory; a
@@ -7,11 +6,11 @@ import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // normalized gauge samples plus timestamps/generation/sampleId — never process
 // paths, PIDs, or command lines — under the resolved FARMSLOT_HOME, and
 // rehydrates the ring before ordinary fleet/resource recovery runs.
-
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import type { NodePressureHistorySample } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 export const PRESSURE_HISTORY_STORE_VERSION = 1;
 

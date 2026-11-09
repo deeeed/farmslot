@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { platform } from 'node:os';
@@ -11,6 +10,7 @@ import {
   type NodeExecParams,
   observeNodeExecAbort,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 export type { ExecResult };
 

@@ -1,12 +1,12 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // llm/config.ts — Gateway-level LLM provider configuration
 // Persisted to <FARMSLOT_HOME>/llm-config.json (default ~/.farmslot).
 // Cascade: config file → env vars → hardcoded defaults.
-
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import type { ThinkingLevel } from '@earendil-works/pi-ai';
+
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { publishConfigurationResources } from '../resources/configuration-changes.js';
 

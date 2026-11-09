@@ -1,4 +1,5 @@
 import path from 'node:path';
+
 import { resolveReportedFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 /** deploy-node.sh installs services/node directly under the installation directory. */

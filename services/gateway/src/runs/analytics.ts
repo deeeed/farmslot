@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { appendFile, mkdir, readdir, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,6 +20,7 @@ import {
   type RunAnalyticsRecord,
   type RunStep,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { resourceRevisions } from '../resources/revisions.js';

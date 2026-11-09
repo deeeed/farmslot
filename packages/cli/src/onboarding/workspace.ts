@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // onboarding/workspace.ts — workspace layout + state file for installed farmslot workspaces.
 //
 // A workspace is the directory created by install.sh:
@@ -10,6 +9,7 @@ import { existsSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import {
   readWorkspaceState,
   resolveWorkspaceRoot,

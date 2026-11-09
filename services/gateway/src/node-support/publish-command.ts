@@ -1,5 +1,6 @@
-import { legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import path from 'node:path';
+
+import { legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 

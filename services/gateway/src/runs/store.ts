@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // run-store.ts — In-memory Run cache + JSON file persistence
 // Each run persisted as .runs/{id}.json
 import { randomUUID } from 'node:crypto';
@@ -57,6 +56,7 @@ import {
   signalFileForTask,
   taskTitleText,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { parseReviewRequestContext, resolveReviewMode } from '@farmslot/review-dispatch';
 import {
   appendDecisionHistoryFile,

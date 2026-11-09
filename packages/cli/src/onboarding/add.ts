@@ -1,4 +1,3 @@
-import { resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // onboarding/add.ts — engine for `farmslot project add <source>`.
 //
 // Pipeline: resolve source → validate pack → register projects → blobless-clone
@@ -31,6 +30,7 @@ import {
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
 import { defaultBranchProbeCommand, readDefaultBranchProbe } from '@farmslot/protocol';
+import { resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import {
   listPackOwnedEntries,
   packEntryLinkTarget,

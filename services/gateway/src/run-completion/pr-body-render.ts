@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // run-completion/pr-body-render.ts — render the publishable PR body through
 // the project's harness before a publication package is built.
 //
@@ -14,13 +13,13 @@ import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // file and is returned, never written into the mirror. The mirror's
 // artifacts/pr-body.md is the worker's own copy, which every mirror refresh
 // replaces, so a body read back from there could be the worker's render.
-
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { isRecord, type Run } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { readPoolFiles } from '@farmslot/protocol/node/slot-by-repo';
 
 import {

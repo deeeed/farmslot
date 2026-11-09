@@ -1,4 +1,3 @@
-import { currentFarmPaths, type NodeFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // core/config.ts — Slot/pool/project config loading
 // TypeScript port of lib/slot-common.sh: resolve_slot, load_slot_vars, load_project_config, get_project_field
 import { readdir, readFile, realpath } from 'node:fs/promises';
@@ -46,6 +45,7 @@ import {
   orchestratorTaskRoot,
   type ProjectTaskRoot,
 } from '@farmslot/protocol/node/farm-layout';
+import { currentFarmPaths, type NodeFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import {
   findSlotByRepo,
   isIgnoredPoolFile,

@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // feedback-ledger.ts — durable record of which canonical rule consumed which
 // PR feedback candidate. Gateway-owned and machine-local (under the farmslot
 // home), never committed: it links provider comment identities to the
@@ -8,6 +7,7 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 
 import type { FeedbackConsumption } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
 import { resourceRevisions } from '../resources/revisions.js';

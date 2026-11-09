@@ -1,7 +1,8 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { createHash } from 'node:crypto';
 import { mkdir, readdir, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
+
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
 import { resourceRevisions } from '../resources/revisions.js';

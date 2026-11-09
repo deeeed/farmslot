@@ -1,6 +1,7 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { appendFile, mkdir, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { shouldUseIsolatedRunsDir } from '../runs/store.js';

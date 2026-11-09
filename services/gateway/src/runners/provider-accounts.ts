@@ -1,14 +1,14 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 /**
  * Operator-local provider subscription accounts (Codex auth homes, etc.).
  *
  * Lives under currentFarmPaths('node').config — never pool JSON / slot-config (ruling 2).
  * Missing config → every slot resolves to the ambient provider home.
  */
-
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
+
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 export const AMBIENT_ACCOUNT_LABEL = 'ambient';
 export const DEFAULT_SESSION_COOLING_MS = 5 * 60 * 60 * 1000; // 5 hours

@@ -4,11 +4,12 @@ import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import { DEFAULT_PRESSURE_STALE_AFTER_MS, type FleetStatus, Methods } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
-const root = await fs.mkdtemp(path.join(os.tmpdir(), 'slot-binding-resources-'));
+const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'slot-binding-resources-')));
 process.env.NODE_TEST_CONTEXT = '1';
 process.env.FARMSLOT_TEST_STATUS_FILE = path.join(root, 'status.json');
 process.env.FARMSLOT_POOL_DIR = path.join(root, 'pool');
@@ -70,6 +71,8 @@ test('project catalog writes notify capabilities and retire the owning project v
   const watcher = startFileWatcher();
   t.after(() => watcher.close());
   await watcher.ready;
+  // Keep fixture mutations outside Chokidar's 50 ms discovery/change coalescer.
+  await delay(60);
   await fs.writeFile(file, JSON.stringify({ name: project, default_branch: 'after' }));
   const deadline = Date.now() + 3000;
   while (resourceRevisions.revision(key) === before) {
@@ -369,7 +372,7 @@ test(
       host: 'localhost',
       project: 'proof-project',
       platform: 'cli',
-      slots: [{ id: 'proof', enabled: true, mode: 'dispatch' }],
+      slots: [{ id: 'proof', repo: path.join(root, 'repo'), enabled: true, mode: 'dispatch' }],
     });
     await fs.writeFile(pool, content);
     await state.rewriteStatusFile(() => ({
@@ -387,6 +390,8 @@ test(
     const watcher = startFileWatcher();
     t.after(() => watcher.close());
     await watcher.ready;
+    // Keep fixture mutations outside Chokidar's 50 ms discovery/change coalescer.
+    await delay(60);
     await fs.unlink(pool);
     const deadline = Date.now() + 4500;
     while (resourceRevisions.revision(detail) === before) {
@@ -566,6 +571,8 @@ test(
     const watcher = startFileWatcher();
     t.after(() => watcher.close());
     await watcher.ready;
+    // Keep fixture mutations outside Chokidar's 50 ms discovery/change coalescer.
+    await delay(60);
     t.diagnostic('Both filesystem watchers are ready');
     let receiver: ((fleet: FleetStatus) => void) | undefined;
     onStateChange((fleet) => receiver?.(fleet));

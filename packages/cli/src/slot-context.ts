@@ -1,7 +1,8 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 export function farmslotRoot(): string {
   return currentFarmPaths('gateway').code.checkout;

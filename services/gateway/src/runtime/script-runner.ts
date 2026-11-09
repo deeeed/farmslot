@@ -1,10 +1,9 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // script-runner.ts — Spawn bash scripts with streaming stdout/stderr via events
-
 import { type ChildProcess, spawn } from 'node:child_process';
 import path from 'node:path';
 
 import type { ExecResult, ScriptComplete, ScriptOutput } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { farmslotRoot } from '../fleet/state.js';
 

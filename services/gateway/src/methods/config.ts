@@ -1,4 +1,3 @@
-import { projectsDirectory } from '@farmslot/slot-config';
 // methods/config.ts — config.pools, config.pool, config.projects, config.project,
 // config.templates, config.templatePreview, config.templateOptions, config.slot.update, config.pool.update
 import { existsSync } from 'node:fs';
@@ -34,6 +33,7 @@ import type {
 } from '@farmslot/protocol';
 import {
   projectPackRoot,
+  projectsDirectory,
   readSourceRuntimeSettings,
   usesRuntimeSettings,
   writeSourceRuntimeSettings,

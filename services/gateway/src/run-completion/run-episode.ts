@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // run-episode.ts — one small episode record per finished run (ADR-039 Amendment 4).
 //
 // An episode names what a run consumed and produced, as input, trajectory and
@@ -6,7 +5,6 @@ import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // from side stores. It holds references, never copies: each file is its
 // task-relative path plus the sha256 that the output inventory or a retained
 // bundle manifest already recorded. Nothing here reads or hashes an artifact.
-
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -18,6 +16,7 @@ import {
   type RunArtifactBundleRef,
   type RunBundleEntryMeta,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import {
   isRunBundleMedia,
   readRetainedRunBundle,

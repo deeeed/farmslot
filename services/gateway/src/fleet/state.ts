@@ -1,7 +1,5 @@
-import { poolDirectory, projectsDirectory } from '@farmslot/slot-config';
 // state.ts — Read/watch .farm-status.json, pool/*.json, projects/*/project.json
 // Transforms raw JSON into protocol types
-
 import { once } from 'node:events';
 import { statSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
@@ -33,6 +31,7 @@ import {
 } from '@farmslot/protocol';
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { poolDirectory, projectsDirectory } from '@farmslot/slot-config';
 
 import {
   declaredProjectNames,

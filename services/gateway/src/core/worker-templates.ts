@@ -1,6 +1,6 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import path from 'node:path';
 
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { projectPackRoot } from '@farmslot/slot-config';
 
 /** Gateway reads template bytes from the run's pack; legacy work keeps its original root. */

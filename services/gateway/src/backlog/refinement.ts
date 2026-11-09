@@ -1,7 +1,5 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // Backlog item refinement sessions — tighten an existing work contract without
 // mutating lifecycle, source identity, or run/work-graph linkage.
-
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -15,6 +13,7 @@ import {
   DEFAULT_BACKLOG_REFINEMENT_RUNNER,
   type SafetyTier,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { farmslotRoot } from '../fleet/state.js';
 import {

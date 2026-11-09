@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // commands/up.ts — start/stop the local gateway as a background service.
 //
 // `farmslot up` runs the gateway daemon detached with token auth and an
@@ -41,6 +40,7 @@ import {
   type PrincipalListResult,
   samePersonSessionAuthority,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { bold, cyan, dim, green, red, yellow } from '../colors.js';

@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { createHash } from 'node:crypto';
 import { mkdir, readdir, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -22,13 +21,13 @@ import {
   sanitizeLatestValidRecipeRunPointer,
   WORKER_TERMINAL_CONTRACT_INPUT,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { strictTaskRelativePathFromFarmslotRoot } from '@farmslot/protocol/runs/portable-bundle';
 import {
   type AcquisitionTaskDirToken,
   archiveRunBundleMedia,
   forgetAcquisitionFootprints,
   isRunBundleMedia,
-  resolveRetainedRunBundleRef as localBundleRef,
   type MaterializedRunBundle,
   materializeRunBundle,
   type MaterializeRunBundleRequest,
@@ -37,6 +36,7 @@ import {
   readRetainedRunBundle,
   readRunBundleAvailability,
   reserveRunBundleMetadata,
+  resolveRetainedRunBundleRef as localBundleRef,
   runBundleAdmissionUsage,
   RunBundleCapacityError,
   runBundleHousekeepingPaths,

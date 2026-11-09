@@ -1,4 +1,3 @@
-import { resolveFarmPaths, type FarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { execFile } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 import os from 'node:os';
@@ -7,11 +6,12 @@ import { Worker } from 'node:worker_threads';
 
 import {
   createNodeExecCloseout,
+  type ExecResult,
   isRecord,
   NODE_EXEC_CLOSEOUT_MS,
-  type ExecResult,
   type NodeLinkTaskRuntimeInput,
 } from '@farmslot/protocol';
+import { type FarmPaths, resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 export type TaskRuntimeRequest = NodeLinkTaskRuntimeInput;
 

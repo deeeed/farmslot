@@ -1,4 +1,3 @@
-import { isNodeFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // route-method.ts — Gateway RPC dispatch boundary for non-run method families
 import { WebSocket } from 'ws';
 
@@ -240,6 +239,7 @@ import {
   type WorkspaceMetroSubscribeParams,
   type WorkspaceMetroUnsubscribeParams,
 } from '@farmslot/protocol';
+import { isNodeFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { isClientPerformanceReport } from '@farmslot/protocol/performance';
 
 import { restoreTmuxWorker } from '../agents/runtime-recovery.js';
@@ -269,10 +269,6 @@ import {
 } from '../methods/acceptance-evidence.js';
 import { analyticsBackfill, analyticsQuery } from '../methods/analytics.js';
 import {
-  assessmentSuggestionAnalyze,
-  assessmentSuggestionPreview,
-} from '../methods/assessment-suggestion.js';
-import {
   assessmentEvaluate,
   assessmentExport,
   assessmentFeedback,
@@ -282,6 +278,10 @@ import {
   assessmentSummary,
   assessmentTest,
 } from '../methods/assessment.js';
+import {
+  assessmentSuggestionAnalyze,
+  assessmentSuggestionPreview,
+} from '../methods/assessment-suggestion.js';
 import {
   backlogArchive,
   backlogAutoDispatchTick,
@@ -331,13 +331,13 @@ import {
   configTemplatePreview,
   configTemplates,
 } from '../methods/config.js';
+import { copilotFormatInstruction } from '../methods/copilot.js';
 import {
   copilotConfigure,
   copilotStart,
   copilotStatus,
   copilotStop,
 } from '../methods/copilot-runtime.js';
-import { copilotFormatInstruction } from '../methods/copilot.js';
 import { decisionAdviceAnalyze, decisionAdviceGet } from '../methods/decision-advice.js';
 import { decisionList, decisionResolve } from '../methods/decisions.js';
 import { diagnosticsRun } from '../methods/diagnostics.js';
@@ -376,12 +376,12 @@ import {
   fsWrite,
 } from '../methods/filesystem.js';
 import { finetuneExportDPO, finetuneExportSFT, finetuneIndex } from '../methods/finetune.js';
+import { fleetRefresh, fleetStatus } from '../methods/fleet.js';
 import {
   fleetPrSummary,
   fleetRefreshSlots,
   fleetRefreshSlotsCancel,
 } from '../methods/fleet-refresh.js';
-import { fleetRefresh, fleetStatus } from '../methods/fleet.js';
 import { gatewayDoctor } from '../methods/gateway-doctor.js';
 import { forgetGatewayUpdateClientInterest, gatewayStatus } from '../methods/gateway-status.js';
 import { gatewayUpdate } from '../methods/gateway-update.js';
@@ -409,9 +409,6 @@ import {
 } from '../methods/llm-auth.js';
 import { llmConfigGet, llmConfigSet, llmTiers } from '../methods/llm-config.js';
 import { nativeSessionRoute } from '../methods/native-session.js';
-import { prPushMethod } from '../methods/pr-push.js';
-import { prRulesMethod } from '../methods/pr-rules.js';
-import { routePRWatchMethod } from '../methods/pr-watch.js';
 import { prList, prMonitor, readPRForSlot, readPRStatus } from '../methods/pr.js';
 import { forgetPRDetailClientInterest } from '../methods/pr/detail-observations.js';
 import { forgetPRListClientInterest } from '../methods/pr/list-cache.js';
@@ -423,6 +420,9 @@ import {
   prReviewComments,
   prSubmitReview,
 } from '../methods/pr/review-comments.js';
+import { prPushMethod } from '../methods/pr-push.js';
+import { prRulesMethod } from '../methods/pr-rules.js';
+import { routePRWatchMethod } from '../methods/pr-watch.js';
 import {
   credentialIssue,
   credentialList,
@@ -488,7 +488,6 @@ import {
   runtimePostureStatus,
 } from '../methods/runtime-posture.js';
 import { searchQuery } from '../methods/search.js';
-import { slotActionList, slotActionRun } from '../methods/slot-actions.js';
 import {
   slotAutoRefresh,
   slotCheck,
@@ -504,6 +503,7 @@ import {
   slotShow,
   slotSoftRefresh,
 } from '../methods/slot.js';
+import { slotActionList, slotActionRun } from '../methods/slot-actions.js';
 import {
   type SourceMutationCaller,
   sourcesPin,
@@ -513,6 +513,16 @@ import {
 } from '../methods/sources.js';
 import { streamSubscribe, streamUnsubscribe } from '../methods/stream-feed.js';
 import { taskProgress } from '../methods/task.js';
+import {
+  resolveTerminalKey,
+  terminalInput,
+  terminalKey,
+  terminalReinit,
+  terminalResize,
+  terminalSend,
+  terminalSnapshot,
+  terminalSubscribe,
+} from '../methods/terminal.js';
 import {
   terminalAttachmentCleanup,
   terminalAttachmentDeliver,
@@ -526,16 +536,6 @@ import {
   terminalWorkerUnsubscribeKey,
   unsubscribeWorkerTerminalPty,
 } from '../methods/terminal-worker.js';
-import {
-  resolveTerminalKey,
-  terminalInput,
-  terminalKey,
-  terminalReinit,
-  terminalResize,
-  terminalSend,
-  terminalSnapshot,
-  terminalSubscribe,
-} from '../methods/terminal.js';
 import {
   tmuxKillPane,
   tmuxList,

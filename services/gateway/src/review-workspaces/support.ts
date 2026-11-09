@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { createHash } from 'node:crypto';
 import { lstatSync, readdirSync, readlinkSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rename, rm } from 'node:fs/promises';
@@ -15,6 +14,7 @@ import {
   type ReviewWorkspaceSupportConfig,
   type Run,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { currentProjectSources, resolveSourceBinding } from '@farmslot/slot-config';
 
 import {

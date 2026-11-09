@@ -1,11 +1,10 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // chat/chat-memory.ts — Copilot workspace: MEMORY.md + session summaries
-
 import { existsSync, realpathSync, watch } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { type ChatMessage, Events } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { assertStorageVolumePresent } from '../core/storage-volume.js';
 import { callLLM } from '../llm/index.js';

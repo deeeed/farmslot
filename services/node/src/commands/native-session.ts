@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import path from 'node:path';
 
 import { NATIVE_WORKER_METHODS, NativeSessionClient } from '@farmslot/agent-runtime/native';
@@ -17,6 +16,7 @@ import type {
   NativeConversationUpdate,
   NativeExecutionNodeDeclaration,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 /** The daemon owns routing; its detached native host survives daemon/gateway disconnects. */
 export class NativeNodeSessions {

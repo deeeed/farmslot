@@ -1,4 +1,3 @@
-import { reportedFarmPaths } from '@farmslot/slot-config';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -9,6 +8,7 @@ import {
   type ReviewWorkspaceBinding,
   type Run,
 } from '@farmslot/protocol';
+import { reportedFarmPaths } from '@farmslot/slot-config';
 
 import { execFileArgv, isLocal } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';

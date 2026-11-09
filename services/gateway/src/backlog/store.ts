@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // backlog-store.ts — durable backlog intake layer with handoff into dispatch queue
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
@@ -57,6 +56,7 @@ import {
   type ScriptedRunnerConfig,
   type TaskTemplateSelection,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import {
   assertReviewSequence,
   assertWarmReviewContext,

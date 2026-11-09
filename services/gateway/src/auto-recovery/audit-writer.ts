@@ -1,8 +1,8 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { appendFile, mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { Events, type IntelligenceAction } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { getRun, updateRun } from '../runs/store.js';
 

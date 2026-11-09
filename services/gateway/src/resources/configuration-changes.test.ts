@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { mock } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import type { PRTeamConfig } from '@farmslot/protocol';
 
 import type { ClientState } from '../server/client-state.js';
 
 // All owning files and env are private before importing the config decision core.
-const root = mkdtempSync(path.join(os.tmpdir(), 'configuration-writers-'));
+const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'configuration-writers-')));
 for (const dir of [
   'scripts',
   'services/gateway',
@@ -197,6 +198,8 @@ test('actual external template/project/registration file writes use the existing
   const watcher = startFileWatcher();
   try {
     await watcher.ready;
+    // Separate producer writes from Chokidar's 50 ms startup coalescing window.
+    await delay(60);
     for (const [file, content] of [
       [path.join(root, 'projects/example/templates/worker/dev.md'), '# Updated worker template'],
       [projectFile, JSON.stringify({ name: 'example', default_branch: 'trunk' })],
@@ -248,6 +251,8 @@ test('an immediate atomic template replacement publishes after the earlier obser
   };
   try {
     await watcher.ready;
+    // Separate producer writes from Chokidar's 50 ms startup coalescing window.
+    await delay(60);
     const before = resourceRevisions.revision(farm);
     await writeFile(file, '# First observed template');
     await waitForRevision(before);
@@ -358,6 +363,8 @@ test('the selected-home observer invalidates each assessment policy on add, repl
   const key = { family: 'assessment', scope: 'farm' } as const;
   try {
     await watcher.ready;
+    // Separate producer writes from Chokidar's 50 ms startup coalescing window.
+    await delay(60);
     for (const name of [
       'assessment-config.json',
       'assessment-suggestion-policy.json',
@@ -416,6 +423,8 @@ test('the owning home watcher rebinds the selected triage receipt directory', as
   const key = { family: 'assessment', scope: 'farm' } as const;
   try {
     await watcher.ready;
+    // Separate producer writes from Chokidar's 50 ms startup coalescing window.
+    await delay(60);
     await until(() => {
       try {
         watcher.assertTriagePilotObserved(first);
@@ -507,6 +516,8 @@ test('the actual PR rule file observer reloads replacements and refuses malforme
   };
   try {
     await watcher.ready;
+    // Separate producer writes from Chokidar's 50 ms startup coalescing window.
+    await delay(60);
     const external = rules.store.snapshot();
     external.teams[0].config.name = 'External team';
     await writeFile(`${file}.tmp`, JSON.stringify(external));

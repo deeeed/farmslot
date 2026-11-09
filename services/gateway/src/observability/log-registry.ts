@@ -1,9 +1,9 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // log-registry.ts — Typed production/development log sources for gateway intelligence.
-
 import { createHash } from 'node:crypto';
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
+
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { intelligenceAuditDir } from '../auto-recovery/audit-writer.js';
 import { isPathInside } from '../core/path.js';

@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -21,6 +20,7 @@ import type {
   NativeSessionResponse,
   NativeSessionSendResult,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { subscribeHost } from './conversation-ipc.js';
 import { type HostIdentity, type HostRequest, requestHost } from './ipc.js';

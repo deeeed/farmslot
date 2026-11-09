@@ -1,5 +1,6 @@
-import { currentFarmPaths, legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import path from 'node:path';
+
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { rebindRecipeLibraryPath } from '@farmslot/recipe-runner';
 import { withSourceEnvironment } from '@farmslot/slot-config';
 
@@ -7,8 +8,8 @@ import { getNode } from '../fleet/machine-registry.js';
 
 import type { ProjectVars, RawProjectJson, SlotVars } from './config.js';
 import { isLocal } from './exec.js';
-import { shellExpressionForRemotePath } from './remote-paths.js';
 import { expandTemplate } from './hooks.js';
+import { shellExpressionForRemotePath } from './remote-paths.js';
 
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const UNRESOLVED_PLACEHOLDER_RE = /\{\{[^{}\n]+\}\}/;
@@ -143,28 +144,26 @@ export function machineShellEnv(vars: {
       : undefined;
   const local = !vars.machine || !vars.host || isLocal(vars.host, vars.machine);
   const report = vars.machine ? getNode(vars.machine)?.farmPaths : undefined;
-  const paths =
-    report ?? (local ? currentFarmPaths('gateway') : legacyRemoteFarmPaths(vars.machineEnv));
+  const paths = report ?? (local ? currentFarmPaths('gateway') : undefined);
   const roots: Record<string, string> =
-    report?.layout === 2
+    paths?.layout === 2
       ? {
-          FARMSLOT_HOME: report.home,
-          FARMSLOT_CONFIG_DIR: report.config,
-          FARMSLOT_POOL_DIR: report.pool,
-          FARMSLOT_PROJECTS_DIR: report.projects,
-          FARMSLOT_RUNS_DIR: report.state.runs,
-          FARMSLOT_NATIVE_STATE_DIR: report.state.nativeSessions,
-          FARMSLOT_LOG_DIR: report.state.logs,
-          FARMSLOT_CLI: path.posix.join(report.code.bin, 'farmslot'),
-        }
-      : {
           FARMSLOT_HOME: paths.home,
+          FARMSLOT_CONFIG_DIR: paths.config,
           FARMSLOT_POOL_DIR: paths.pool,
           FARMSLOT_PROJECTS_DIR: paths.projects,
-        };
+          FARMSLOT_RUNS_DIR: paths.state.runs,
+          FARMSLOT_NATIVE_STATE_DIR: paths.state.nativeSessions,
+          FARMSLOT_LOG_DIR: paths.state.logs,
+          FARMSLOT_CLI: path.posix.join(paths.code.bin, 'farmslot'),
+        }
+      : {};
+  // Legacy commands inherit their machine's environment and pool overrides.
+  // Only layout 2 replaces those roots with the selected instance's paths.
   return {
     ...(gatewayUrl ? { GW_URL: gatewayUrl } : {}),
-    ...(report?.layout === 2 ? { ...vars.machineEnv, ...roots } : { ...roots, ...vars.machineEnv }),
+    ...vars.machineEnv,
+    ...roots,
   };
 }
 

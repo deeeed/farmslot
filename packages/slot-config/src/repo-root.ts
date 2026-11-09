@@ -1,11 +1,11 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // repo-root.ts — locate the farmslot checkout from any consumer (gateway,
 // CLI verb, test) without configuration. FARMSLOT_ROOT overrides discovery.
-
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 const ROOT_MARKERS = ['CLAUDE.md', 'scripts/dev.sh', 'services/gateway/package.json'];
 

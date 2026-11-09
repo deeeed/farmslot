@@ -6,6 +6,7 @@ import { createRequire, syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 
 const require = createRequire(new URL('../../services/gateway/package.json', import.meta.url));
@@ -20,6 +21,10 @@ for (const [format, { watch }] of [
     `${format} Darwin file observation uses directories, preserves events and closes its native handles`,
     { skip: process.platform !== 'darwin', timeout: 5000 },
     async (t) => {
+      // The nonpersistent watcher and Node 22's test timeout are both unrefed.
+      // Keep the test alive while awaiting events, without changing watcher behavior.
+      const keepAlive = setInterval(() => {}, 1_000);
+      t.after(() => clearInterval(keepAlive));
       const root = await mkdtemp(path.join(os.tmpdir(), 'file-watch-volume-'));
       t.after(() => rm(root, { recursive: true, force: true }));
       const file = path.join(root, 'TASK.md');
@@ -54,6 +59,8 @@ for (const [format, { watch }] of [
       assert.equal((await changed)[0], file);
       const [, name, details] = await raw;
       assert.equal(path.resolve(path.dirname(details.watchedPath), name), file);
+      // Chokidar coalesces change notifications for 50 ms. Observe replacement separately.
+      await delay(60);
       const replacement = once(watcher, 'change');
       await writeFile(file + '.next', 'replacement');
       await rename(file + '.next', file);

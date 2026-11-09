@@ -1,19 +1,19 @@
-import { legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { farmPathsForSlot } from '../fleet/farm-paths.js';
 
 import { hasUnsettledRunExecution, resolveRunSlotId, type Run } from '@farmslot/protocol';
+import { legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { isRecord } from '@farmslot/protocol/recipe';
 import { parseRunRecordFile } from '@farmslot/run-bundle';
 import { expandFixturePath } from '@farmslot/slot-config';
 
 import { loadMachineSlots, loadProjectVars, loadSlotVars, type SlotVars } from '../core/config.js';
 import { shellQuote } from '../core/tmux.js';
+import { farmPathsForSlot } from '../fleet/farm-paths.js';
 import { nodeSupportHashPath } from '../runners/runner-observability.js';
 
 export interface NodeSupportRetentionReferences {

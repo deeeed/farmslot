@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+
 import { farmslotRoot, poolDirectory, projectsDirectory } from './config.js';
 
 test('public root functions follow two selected homes and retain legacy values', (t) => {

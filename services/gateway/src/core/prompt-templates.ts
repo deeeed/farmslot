@@ -1,11 +1,10 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // prompt-templates.ts — Load project-specific LLM prompt templates (ADR-021)
 // Templates live in projects/<name>/templates/prompts/<template>.md
 // Returns null if template doesn't exist — caller uses hardcoded fallback.
-
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { projectPackRoot } from '@farmslot/slot-config';
 
 import { assertNoUnknownPlaceholders } from './hooks.js';

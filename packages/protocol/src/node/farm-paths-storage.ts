@@ -1,5 +1,6 @@
 import { readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
+
 import type { FarmPaths, LegacyFarmStorageFacts } from './farm-paths.js';
 import { expandHome } from './farmslot-home.js';
 

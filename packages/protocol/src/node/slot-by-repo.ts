@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import path from 'node:path';
+
 import { currentFarmPaths, legacyRemoteFarmPaths } from './farm-paths.js';
 
 /** The fields of a pool file the reverse lookup reads; the rest pass through. */

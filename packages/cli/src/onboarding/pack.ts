@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // onboarding/pack.ts — project pack contract: validation, content hashing, and
 // idempotency decisions for `farmslot project add` / `farmslot update`.
 //
@@ -9,6 +8,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { validateProjectRecipeConfig } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import {
   listPackOwnedEntries,
   packMachineNames,

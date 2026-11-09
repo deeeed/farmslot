@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 import type { SlotPrepareParams } from '@farmslot/protocol';
+import { FARM_INSTANCE_CLAIM } from '@farmslot/protocol/node/farm-paths';
 
 import { execOnSlot, isLocal, loadSlotVars, type SlotVars } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
@@ -52,7 +53,7 @@ function prepareSentinelPaths(
 /** Persistent ownership is released by the operator, never by PID/age heuristics. */
 async function assertSlotInstanceClaim(vars: SlotVars, create: boolean): Promise<void> {
   const paths = currentFarmPaths('gateway');
-  const claim = path.posix.join(vars.remoteRepo, '.farmslot-instance');
+  const claim = path.posix.join(vars.remoteRepo, FARM_INSTANCE_CLAIM);
   const owner = `instance=${paths.instance}\nhome=${paths.home}`;
   const result = await execOnSlot(
     vars,

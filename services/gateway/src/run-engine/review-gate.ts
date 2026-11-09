@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // review-gate.ts — Review-posting gate orchestration and refresh
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -19,6 +18,7 @@ import {
   type RunArtifactBundleRef,
   selectReviewFindings,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { ReviewApprovalPolicyError } from '@farmslot/protocol/review-approval-policy.cjs';
 
 import { farmslotRoot, getProjectField, resolveProjectTaskDirName } from '../core/config.js';

@@ -1,4 +1,3 @@
-import { poolDirectory } from '@farmslot/slot-config';
 // methods/fleet.ts — fleet.status, fleet.refresh (native TS)
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -17,6 +16,7 @@ import {
   type Run,
   type RunStatus,
 } from '@farmslot/protocol';
+import { poolDirectory } from '@farmslot/slot-config';
 
 import { summarizeAgentContexts } from '../agents/contexts.js';
 import {

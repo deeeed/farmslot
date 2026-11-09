@@ -4,9 +4,9 @@ import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
-import { resolveFarmPaths, farmPathEntries as pathEntries } from '../../src/node/farm-paths.js';
-import { farmslotHome } from '../../src/node/farmslot-home.js';
 import { resolveProjectsDir } from '../../src/node/farm-layout.js';
+import { farmPathEntries as pathEntries, resolveFarmPaths } from '../../src/node/farm-paths.js';
+import { farmslotHome } from '../../src/node/farmslot-home.js';
 import { resolveSlotPoolDir } from '../../src/node/slot-by-repo.js';
 
 function fixture(t: TestContext): string {

@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // resource-manager.ts — resolve slot resources + execute resource control hooks + health polling
 // Supports both push-based (agent watches) and pull-based (60s poll reconciliation)
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -23,6 +22,7 @@ import {
   type SlotStatus,
 } from '@farmslot/protocol';
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { withSourceEnvironment } from '@farmslot/slot-config';
 
 // ─── Placeholder helpers ───

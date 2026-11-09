@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { isAbsolute, join } from 'node:path';
 
 import type {
@@ -6,6 +5,7 @@ import type {
   NativeSessionExecutionNode,
   Principal,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { loadSlotVars } from '../core/config.js';
 import { isLocal } from '../core/index.js';

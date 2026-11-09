@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -29,7 +29,7 @@ function git(cwd: string, ...args: string[]): string {
 
 /** A checkout that has moved from `oldSha` to `headSha` by some route other than the update. */
 function checkout(t: test.TestContext) {
-  const root = mkdtempSync(path.join(tmpdir(), 'gateway-update-'));
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'gateway-update-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   git(root, 'init', '-q', '--initial-branch=main');
   git(root, 'commit', '-q', '--allow-empty', '-m', 'chore: before');
@@ -101,7 +101,7 @@ test('a dead worker is reported as stopped while HEAD is unchanged', async (t) =
 });
 
 test('a finished record is kept when HEAD cannot be read', async (t) => {
-  const root = mkdtempSync(path.join(tmpdir(), 'gateway-update-'));
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'gateway-update-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   // An unborn branch: the record path resolves, `rev-parse HEAD` fails.
   git(root, 'init', '-q', '--initial-branch=main');

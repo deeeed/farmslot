@@ -1,9 +1,9 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { randomUUID } from 'node:crypto';
 import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { isRecord, parseProjectVisualClaimReviewPolicy } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { resolveApprovalPolicy } from '@farmslot/protocol/review-approval-policy.cjs';
 
 import { readWorkspaceState, resolveWorkspaceRoot } from './repo-root.js';

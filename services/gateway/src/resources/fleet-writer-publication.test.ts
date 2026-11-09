@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, mock, test, type TestContext } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import { type ResourceKey, resourceKeyId } from '@farmslot/protocol/client-cache';
 import type { ResourceChangedPayload } from '@farmslot/protocol/transport/events';
@@ -239,6 +240,8 @@ for (const source of ['pool', 'project'] as const)
     const watcher = fleet.startFileWatcher();
     t.after(() => watcher.close());
     await watcher.ready;
+    // Keep the producer write outside Chokidar's 50 ms discovery/change coalescer.
+    await delay(60);
     packets = [];
     const previous = JSON.parse(await readFile(file, 'utf8'));
     await writeFile(file, JSON.stringify({ ...previous, label: 'committed config change' }));

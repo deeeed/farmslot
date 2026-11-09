@@ -1,4 +1,3 @@
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
@@ -11,6 +10,8 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
+
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import {
   CredentialStoreRefusalError,
