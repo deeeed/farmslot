@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // feedback-ledger.ts — durable record of which canonical rule consumed which
 // PR feedback candidate. Gateway-owned and machine-local (under the farmslot
 // home), never committed: it links provider comment identities to the
@@ -5,10 +6,8 @@
 // comments never re-propose an already-landed lesson.
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import path from 'node:path';
 
 import type { FeedbackConsumption } from '@farmslot/protocol';
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
 import { resourceRevisions } from '../resources/revisions.js';
@@ -48,9 +47,7 @@ export interface FeedbackLedger {
 }
 
 export function feedbackLedgerPath(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.FARMSLOT_FEEDBACK_LEDGER?.trim();
-  if (override) return override;
-  return path.join(farmslotHome(env), 'state', 'feedback-ledger.json');
+  return currentFarmPaths('gateway', env).state.feedbackLedger;
 }
 
 function assertLedgerShape(value: unknown, file: string): FeedbackLedger {

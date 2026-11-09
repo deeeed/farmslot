@@ -1,3 +1,4 @@
+import { resolveFarmPaths, type FarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { execFile } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 import os from 'node:os';
@@ -6,9 +7,9 @@ import { Worker } from 'node:worker_threads';
 
 import {
   createNodeExecCloseout,
-  type ExecResult,
   isRecord,
   NODE_EXEC_CLOSEOUT_MS,
+  type ExecResult,
   type NodeLinkTaskRuntimeInput,
 } from '@farmslot/protocol';
 
@@ -113,6 +114,7 @@ export async function runTaskRuntime(
   farmDir: string,
   inheritedEnv: NodeJS.ProcessEnv = process.env,
   signal?: AbortSignal,
+  paths?: FarmPaths,
 ): Promise<ExecResult> {
   const cancelled = (): ExecResult => ({
     stdout: '',
@@ -124,12 +126,23 @@ export async function runTaskRuntime(
   delete env.FORCE_COLOR;
   Object.assign(env, request.env);
   delete env.FARMSLOT_ROOT;
-  env.FARMSLOT_POOL_DIR ||= path.join(farmDir, 'pool');
+  const selected =
+    paths ??
+    resolveFarmPaths({
+      role: 'node',
+      env,
+      checkoutRoot: farmDir,
+      userHome: env.HOME || os.homedir(),
+    });
+  env.FARMSLOT_POOL_DIR = selected.pool;
   const support = request.supportDir.startsWith('~/')
     ? path.join(env.HOME || os.homedir(), request.supportDir.slice(2))
     : request.supportDir;
-  env.FARMSLOT_PROJECTS_DIR ||= path.join(support, 'projects');
-  env.FARMSLOT_CLI ||= path.join(env.HOME || os.homedir(), '.local/bin/farmslot');
+  env.FARMSLOT_PROJECTS_DIR =
+    selected.layout === 2
+      ? selected.projects
+      : resolveFarmPaths({ role: 'node', env, checkoutRoot: support }).projects;
+  env.FARMSLOT_CLI ||= path.join(selected.code.bin, 'farmslot');
   const executable = await realpath(env.FARMSLOT_CLI);
   if (signal?.aborted) return cancelled();
   const packageRoot = path.resolve(path.dirname(executable), '..');

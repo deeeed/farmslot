@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -50,17 +51,17 @@ import { slotOwnershipBlocker } from '../../run-lifecycle/slot-teardown.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import { nativeSessionManager } from '../../runners/native/manager.js';
 import {
-  archiveRun as storeArchiveRun,
   assertRunArchivable,
   blockedRunOwnsSlot,
-  cleanupRuns as storeCleanup,
-  deleteRun as storeDeleteRun,
   getAllRunsWithArchived,
   getRun,
   listRuns,
-  listRunTags as storeListRunTags,
   persistRunNow,
   runsDirectory,
+  archiveRun as storeArchiveRun,
+  cleanupRuns as storeCleanup,
+  deleteRun as storeDeleteRun,
+  listRunTags as storeListRunTags,
   updateRun,
 } from '../../runs/store.js';
 import { withRunSessionUsageContext } from '../../runtime/run-session-usage-context.js';
@@ -391,6 +392,9 @@ export async function runCleanup(
   const cacheDirsRemoved = await cleanupReviewWorkspaceCaches(dryRun, {
     runs: getAllRunsWithArchived,
     runsDir: runsDirectory(),
+    ...(currentFarmPaths('gateway').layout === 2
+      ? { supportRoot: currentFarmPaths('gateway').state.reviewWorkspaceSupport }
+      : {}),
     nativeRoot: nativeSessionManager.root,
   });
   return { ...result, cacheDirsRemoved };

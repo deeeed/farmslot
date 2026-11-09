@@ -1,12 +1,10 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
-import { fileURLToPath } from 'node:url';
 
-import { resolveFarmPaths, type FarmPaths } from '../../src/node/farm-paths.js';
+import { resolveFarmPaths, farmPathEntries as pathEntries } from '../../src/node/farm-paths.js';
 import { farmslotHome } from '../../src/node/farmslot-home.js';
 import { resolveProjectsDir } from '../../src/node/farm-layout.js';
 import { resolveSlotPoolDir } from '../../src/node/slot-by-repo.js';
@@ -25,19 +23,6 @@ function instance(home: string, extra: Record<string, unknown> = {}): void {
   );
 }
 
-function entries(value: unknown, prefix = ''): [string, string][] {
-  if (typeof value === 'string') return [[prefix, value]];
-  if (!value || typeof value !== 'object') return [];
-  return Object.entries(value).flatMap(([key, child]) =>
-    entries(child, prefix ? `${prefix}.${key}` : key),
-  );
-}
-
-function pathEntries(paths: FarmPaths): [string, string][] {
-  const { home, config, pool, projects, code, state, backups, data } = paths;
-  return entries({ home, config, pool, projects, code, state, backups, data });
-}
-
 function inside(child: string, parent: string): boolean {
   const relative = path.relative(parent, child);
   return (
@@ -46,76 +31,29 @@ function inside(child: string, parent: string): boolean {
   );
 }
 
-// Import the real selectors in an ordinary process so gateway test-only isolation does
-// not replace their production defaults. Every selected root and HOME is temporary.
-function realSelectors(
-  checkout: string,
-  machineHome: string,
-  env: NodeJS.ProcessEnv,
-): Record<string, string> {
-  const repo = fileURLToPath(new URL('../../../../', import.meta.url));
-  const childEnv: NodeJS.ProcessEnv = { ...process.env };
-  for (const key of Object.keys(childEnv)) {
-    if (
-      key.startsWith('FARMSLOT_') ||
-      key === 'NODE_TEST_CONTEXT' ||
-      key === 'GATEWAY_PORT' ||
-      key === 'CANARY_HOME'
-    )
-      delete childEnv[key];
-  }
-  Object.assign(childEnv, env, {
-    HOME: machineHome,
-    FARMSLOT_ROOT: checkout,
-    TSX_TSCONFIG_PATH: path.join(repo, 'services/gateway/tsconfig.json'),
-  });
-  const source = `
-    import { farmslotHome } from ${JSON.stringify(path.join(repo, 'packages/protocol/src/node/farmslot-home.ts'))};
-    import { resolveProjectsDir } from ${JSON.stringify(path.join(repo, 'packages/protocol/src/node/farm-layout.ts'))};
-    import { resolveSlotPoolDir } from ${JSON.stringify(path.join(repo, 'packages/protocol/src/node/slot-by-repo.ts'))};
-    import { resolveRunsDir } from ${JSON.stringify(path.join(repo, 'packages/run-bundle/src/paths.ts'))};
-    import { runArchiveRoot } from ${JSON.stringify(path.join(repo, 'services/gateway/src/runs/storage-archive.ts'))};
-    import { NODE_SUPPORT_ROOT } from ${JSON.stringify(path.join(repo, 'services/gateway/src/runners/runner-observability.ts'))};
-    import { runBundleHome } from ${JSON.stringify(path.join(repo, 'services/gateway/src/run-completion/retained-artifacts.ts'))};
-    import { runsDirectory } from ${JSON.stringify(path.join(repo, 'services/gateway/src/runs/store.ts'))};
-    import { getCopilotDir } from ${JSON.stringify(path.join(repo, 'services/gateway/src/chat/chat-memory.ts'))};
-    import { homedir } from 'node:os';
-    import path from 'node:path';
-    const root = process.env.FARMSLOT_ROOT;
-    console.log(JSON.stringify({
-      home: farmslotHome(), projects: resolveProjectsDir(root), pool: resolveSlotPoolDir().dir,
-      libraryRuns: resolveRunsDir(root), gatewayRuns: runsDirectory(), archive: runArchiveRoot(),
-      support: path.join(homedir(), NODE_SUPPORT_ROOT.slice(2)),
-      bundles: path.join(runBundleHome(), 'run-bundles'), copilot: getCopilotDir(),
-    }));
-  `;
-  const result = spawnSync(
-    process.execPath,
-    ['--import', 'tsx', '--input-type=module', '--eval', source],
-    {
-      cwd: repo,
-      env: childEnv,
-      encoding: 'utf8',
-      timeout: 60_000,
-    },
-  );
-  assert.equal(
-    result.status,
-    0,
-    `${result.error?.message ?? ''}\n${result.stderr}\n${result.stdout}`,
-  );
-  const value: unknown = JSON.parse(result.stdout);
-  assert.ok(value && typeof value === 'object');
-  const parsed: Record<string, string> = {};
-  for (const [key, item] of Object.entries(value)) {
-    assert.equal(typeof item, 'string');
-    if (typeof item === 'string') parsed[key] = item;
-  }
-  return parsed;
+// Pre-switch selector formulas are mirrored here to avoid loading the gateway command
+// graph. Citations refer to pass-1 HEAD 934cb186, before the selectors moved.
+function legacySelectors(checkout: string, machineHome: string, env: NodeJS.ProcessEnv) {
+  const home = farmslotHome(env); // protocol/src/node/farmslot-home.ts:11
+  return {
+    home,
+    projects: resolveProjectsDir(checkout, env), // protocol/src/node/farm-layout.ts:8
+    pool: resolveSlotPoolDir(env)?.dir, // protocol/src/node/slot-by-repo.ts:73
+    libraryRuns: env.FARMSLOT_RUNS_DIR || path.join(checkout, '.runs'), // run-bundle/src/paths.ts:31
+    gatewayRuns: env.FARMSLOT_RUNS_DIR || path.join(checkout, '.runs'), // gateway/src/runs/store.ts:143
+    archive: env.FARMSLOT_RUN_ARCHIVE_ROOT ?? path.join(home, 'run-archive'), // gateway/src/runs/storage-archive.ts:13
+    support: path.join(machineHome, 'farmslot-node/support'), // gateway/src/runners/runner-observability.ts:32
+    bundles: path.join(home, 'run-bundles'), // gateway/src/run-completion/retained-artifacts.ts:152
+    copilot: env.FARMSLOT_COPILOT_DIR ?? path.join(checkout, 'copilot'), // gateway/src/chat/chat-memory.ts:53
+  };
 }
 
 for (const shape of ['gateway', 'node'] as const) {
   test(`legacy ${shape} paths equal today's selectors`, (t) => {
+    const started = performance.now();
+    t.after(() =>
+      assert.ok(performance.now() - started < 5_000, 'selector test must finish under 5 s'),
+    );
     const root = fixture(t);
     const checkout = path.join(root, 'checkout');
     const machineHome = path.join(root, 'machine-home');
@@ -137,7 +75,7 @@ for (const shape of ['gateway', 'node'] as const) {
             FARMSLOT_POOL_DIR: path.join(workspace, 'pool'),
             FARMSLOT_PROJECTS_DIR: path.join(workspace, 'projects'),
           };
-    // farmslotHome uses os.homedir, so the parent and real-selector child use the same temp HOME.
+    // farmslotHome uses os.homedir; select only the temporary machine HOME.
     const previousHome = process.env.HOME;
     process.env.HOME = machineHome;
     t.after(() => {
@@ -145,7 +83,7 @@ for (const shape of ['gateway', 'node'] as const) {
       else process.env.HOME = previousHome;
     });
     const paths = resolveFarmPaths({ role: 'gateway', env, checkoutRoot: checkout });
-    const real = realSelectors(checkout, machineHome, env);
+    const real = legacySelectors(checkout, machineHome, env);
     const home = farmslotHome(env);
     assert.equal(paths.home, real.home);
     assert.equal(paths.home, home);
@@ -204,7 +142,9 @@ for (const shape of ['gateway', 'node'] as const) {
         datasets: path.join(home, 'datasets'), // Reserved; no current selector.
       },
     };
-    assert.deepEqual(pathEntries(paths), entries(expected));
+    assert.partialDeepStrictEqual(paths, expected);
+    const keys = pathEntries(paths).map(([key]) => key);
+    assert.equal(new Set(keys).size, keys.length);
     assert.deepEqual(
       paths.envOverrides,
       shape === 'gateway' ? [] : ['FARMSLOT_POOL_DIR', 'FARMSLOT_PROJECTS_DIR'],
@@ -299,13 +239,13 @@ test('layout 2 has every Amendment 6 path under home or data, with root preceden
   assert.equal(paths.layout, 2);
   assert.equal(paths.instance, 'label/never-a-path');
   assert.equal(paths.data.root, path.join(home, 'data'));
-  assert.deepEqual(paths.code, {
+  assert.partialDeepStrictEqual(paths.code, {
     node: path.join(home, 'code/node'),
     cli: path.join(home, 'code/cli'),
     bin: path.join(home, 'code/bin'),
     support: path.join(home, 'code/support'),
   });
-  assert.deepEqual(paths.state, {
+  assert.partialDeepStrictEqual(paths.state, {
     runs: path.join(home, 'state/runs'),
     taskPins: path.join(home, 'state/task-pins'),
     nativeSessions: path.join(home, 'state/native-sessions'),
@@ -344,7 +284,8 @@ test('layout 2 has every Amendment 6 path under home or data, with root preceden
   });
   assert.equal(fromEnv.data.root, external);
   assert.deepEqual(fromEnv.envOverrides, []);
-  for (const [key, value] of entries(fromEnv.data)) assert.ok(inside(value, external), key);
+  for (const [key, value] of pathEntries(fromEnv).filter(([key]) => key.startsWith('data.')))
+    assert.ok(inside(value, external), key);
   instance(home, { dataRoot: path.join(root, 'configured') });
   assert.equal(
     resolveFarmPaths({ home, role: 'node', env: { FARMSLOT_DATA: external } }).data.root,

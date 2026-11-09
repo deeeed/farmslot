@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // run-completion/pr-body-render.ts — render the publishable PR body through
 // the project's harness before a publication package is built.
 //
@@ -26,7 +27,6 @@ import {
   getProjectFieldRaw,
   loadProjectVars,
   loadSlotVars,
-  poolDir,
   type RawPoolJson,
   SlotConfigError,
 } from '../core/config.js';
@@ -70,7 +70,8 @@ export interface PrBodyRendererConfigDeps {
 const rendererConfigDeps: PrBodyRendererConfigDeps = {
   loadSlotVars,
   loadProjectVars,
-  readPools: () => readPoolFiles<RawPoolJson>(poolDir).map(({ pool }) => pool),
+  readPools: () =>
+    readPoolFiles<RawPoolJson>(currentFarmPaths('gateway').pool).map(({ pool }) => pool),
 };
 
 export async function resolvePackRenderer(

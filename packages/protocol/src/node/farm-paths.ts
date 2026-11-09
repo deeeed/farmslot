@@ -1,18 +1,24 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-import { resolveProjectsDir } from './farm-layout.js';
-import { farmslotHome } from './farmslot-home.js';
+import { expandHome } from './farmslot-home.js';
+import { readLegacyStorageFacts } from './farm-paths-storage.js';
 
 export type FarmRole = 'gateway' | 'node';
+
+export interface LegacyFarmStorageFacts {
+  runBundles: string;
+}
 
 export interface ResolveFarmPathsOptions {
   home?: string;
   role: FarmRole;
   env?: NodeJS.ProcessEnv;
   checkoutRoot?: string;
+  agentRuntimeScripts?: string;
+  userHome?: string;
+  legacyFacts?: LegacyFarmStorageFacts;
 }
 
 export interface FarmStatePaths {
@@ -26,19 +32,42 @@ export interface FarmStatePaths {
   tmp: string;
   cache: string;
   gatewayLock: string;
+  sessionArchives: string;
+  episodes: string;
+  reviewWorkspaceSupport: string;
+  browserCache: string;
+  copilotRuntime: string;
+  assessmentArtifacts: string;
+  pressureHistory: string;
+  intelligenceAudit: string;
+  feedbackLedger: string;
+  extraLogDirs: string[];
 }
 
 export interface GatewayFarmStatePaths extends FarmStatePaths {
   /** Legacy uses the backlog JSON file; layout 2 uses the backlog directory. */
   backlog: string;
+  backlogFile: string;
   roadmap: string;
   workGraphs: string;
   copilot: string;
   assessments: string;
   analytics: string;
+  backlogSpecs: string;
+  refinementPrompts: string;
+  dispatchQueue: string;
+  statusFile: string;
+  evalCaps: string;
+  observabilityAgreement: string;
+  backlogRefinementPrompts: string;
+  resourceWatchState: string;
+  capabilityStore: string;
 }
 
 export interface FarmCodePaths {
+  checkout: string;
+  agentRuntimeScripts: string;
+  templateNode: string;
   node: string;
   cli: string;
   bin: string;
@@ -48,6 +77,7 @@ export interface FarmCodePaths {
 export interface FarmDataPaths {
   /** Legacy stores have no common data root; this is the selected farm home. */
   root: string;
+  /** Legacy default candidate unless legacyFacts is supplied. Reports use resolveReportedFarmPaths. */
   runBundles: string;
   runArchive: string;
   taskPinsArchive: string;
@@ -62,8 +92,12 @@ interface SharedFarmPaths {
   /** Per-store environment variable names actually honoured, for migration warnings. */
   envOverrides: string[];
   config: string;
+  configFiles: {
+    sources: string;
+  };
   pool: string;
   projects: string;
+  templateProjects: string;
   code: FarmCodePaths;
   backups: string;
   data: FarmDataPaths;
@@ -80,6 +114,34 @@ export interface GatewayFarmPaths extends SharedFarmPaths {
 }
 
 export type FarmPaths = NodeFarmPaths | GatewayFarmPaths;
+
+/** Addressable path leaves, including indexed path arrays. Metadata is never a path. */
+export function farmPathEntries(paths: FarmPaths): [string, string][] {
+  const { layout, instance, role, envOverrides, ...roots } = paths;
+  function entries(value: unknown, prefix: string): [string, string][] {
+    if (typeof value === 'string') return [[prefix, value]];
+    if (!value || typeof value !== 'object') return [];
+    return Object.entries(value).flatMap(([key, child]) =>
+      entries(child, prefix ? `${prefix}.${key}` : key),
+    );
+  }
+  return entries(roots, '');
+}
+
+export function resolveReportedFarmPaths(
+  options: ResolveFarmPathsOptions & { role: 'node' },
+): NodeFarmPaths;
+export function resolveReportedFarmPaths(
+  options: ResolveFarmPathsOptions & { role: 'gateway' },
+): GatewayFarmPaths;
+export function resolveReportedFarmPaths(options: ResolveFarmPathsOptions): FarmPaths;
+/** Read storage authority outside the resolver before exposing an instance report. */
+export function resolveReportedFarmPaths(options: ResolveFarmPathsOptions): FarmPaths {
+  const paths = resolveFarmPaths(options);
+  return paths.layout === 2
+    ? paths
+    : resolveFarmPaths({ ...options, legacyFacts: readLegacyStorageFacts(paths) });
+}
 
 interface InstanceConfig {
   layout: 2;
@@ -116,10 +178,6 @@ function readInstanceConfig(home: string): InstanceConfig | undefined {
   };
 }
 
-function expandHome(value: string): string {
-  return value === '~' || value.startsWith('~/') ? path.join(homedir(), value.slice(1)) : value;
-}
-
 export function resolveFarmPaths(
   options: ResolveFarmPathsOptions & { role: 'gateway' },
 ): GatewayFarmPaths;
@@ -133,8 +191,9 @@ export function resolveFarmPaths(options: ResolveFarmPathsOptions): FarmPaths;
  */
 export function resolveFarmPaths(options: ResolveFarmPathsOptions): FarmPaths {
   const env = options.env ?? process.env;
-  const selectedHome =
-    options.home === undefined ? farmslotHome(env) : farmslotHome({ FARMSLOT_HOME: options.home });
+  const selectedHome = expandHome(
+    (options.home ?? env.FARMSLOT_HOME)?.trim() || path.join(homedir(), '.farmslot'),
+  );
   const config = readInstanceConfig(selectedHome);
   const home = config ? path.resolve(selectedHome) : selectedHome;
   const instance = config?.name ?? path.basename(home).replace(/^\./u, '');
@@ -158,9 +217,16 @@ export function resolveFarmPaths(options: ResolveFarmPathsOptions): FarmPaths {
       home,
       envOverrides,
       config: atHome('config'),
+      configFiles: { sources: atHome('config', 'sources.json') },
       pool: atHome('pool'),
       projects: atHome('projects'),
+      templateProjects: atHome('projects'),
       code: {
+        checkout: atHome('code', 'node'),
+        agentRuntimeScripts:
+          options.agentRuntimeScripts ??
+          atHome('code', 'node', 'packages', 'agent-runtime', 'scripts'),
+        templateNode: atHome('code', 'node'),
         node: atHome('code', 'node'),
         cli: atHome('code', 'cli'),
         bin: atHome('code', 'bin'),
@@ -187,6 +253,16 @@ export function resolveFarmPaths(options: ResolveFarmPathsOptions): FarmPaths {
       tmp: atHome('state', 'tmp'),
       cache: atHome('state', 'cache'),
       gatewayLock: atHome('state', 'gateway.lock'),
+      sessionArchives: atHome('state', 'runs', 'session-archives'),
+      episodes: atHome('state', 'episodes'),
+      reviewWorkspaceSupport: atHome('state', 'review-workspace-support'),
+      browserCache: atHome('state', 'browser-cache'),
+      copilotRuntime: atHome('state', 'copilot-runtime'),
+      assessmentArtifacts: atHome('state', 'assessment-artifacts'),
+      pressureHistory: atHome('state', 'pressure-history.json'),
+      intelligenceAudit: atHome('state', 'logs', 'intelligence-actions'),
+      feedbackLedger: atHome('state', 'feedback-ledger.json'),
+      extraLogDirs: [],
     };
     return options.role === 'gateway'
       ? {
@@ -195,11 +271,21 @@ export function resolveFarmPaths(options: ResolveFarmPathsOptions): FarmPaths {
           state: {
             ...state,
             backlog: atHome('state', 'backlog'),
+            backlogFile: atHome('state', 'backlog', 'backlog.json'),
             roadmap: atHome('state', 'roadmap'),
             workGraphs: atHome('state', 'work-graphs'),
             copilot: atHome('state', 'copilot'),
             assessments: atHome('state', 'assessments'),
             analytics: atHome('state', 'analytics'),
+            backlogSpecs: atHome('state', 'backlog', 'specs'),
+            refinementPrompts: atHome('state', 'roadmap', 'refinement-prompts'),
+            dispatchQueue: atHome('state', 'dispatch-queue.json'),
+            statusFile: atHome('state', 'status.json'),
+            evalCaps: atHome('state', 'eval-suite-caps.json'),
+            observabilityAgreement: atHome('state', 'observability-agreement'),
+            backlogRefinementPrompts: atHome('state', 'backlog', 'refinement-prompts'),
+            resourceWatchState: atHome('state', 'cache', 'resource-watch-state.json'),
+            capabilityStore: atHome('state', 'runtime-capabilities.json'),
           },
         }
       : { ...shared, role: 'node', state };
@@ -207,10 +293,9 @@ export function resolveFarmPaths(options: ResolveFarmPathsOptions): FarmPaths {
 
   // Source and dist have the same depth. No marker scans or workspace-state reads.
   const checkout =
-    options.checkoutRoot ??
-    env.FARMSLOT_ROOT ??
-    fileURLToPath(new URL('../../../../', import.meta.url));
+    options.checkoutRoot ?? (env.FARMSLOT_ROOT || undefined) ?? defaultCheckoutRoot();
   const root = path.resolve(checkout);
+  const userHome = options.userHome ?? homedir();
   const pool = override('FARMSLOT_POOL_DIR', path.join(root, 'pool'));
   if (env.FARMSLOT_PROJECTS_DIR) envOverrides.push('FARMSLOT_PROJECTS_DIR');
   const runs = override('FARMSLOT_RUNS_DIR', path.join(root, '.runs'));
@@ -223,25 +308,41 @@ export function resolveFarmPaths(options: ResolveFarmPathsOptions): FarmPaths {
     home,
     envOverrides,
     config: home,
+    configFiles: { sources: override('FARMSLOT_SOURCES_CONFIG', atHome('sources.json'), true) },
     pool: env.FARMSLOT_POOL_DIR ? path.resolve(pool) : pool,
-    projects: resolveProjectsDir(root, env),
+    projects: env.FARMSLOT_PROJECTS_DIR
+      ? path.resolve(env.FARMSLOT_PROJECTS_DIR)
+      : path.join(root, 'projects'),
+    templateProjects: path.join(root, 'projects'),
     code: {
+      checkout: root,
+      agentRuntimeScripts:
+        options.agentRuntimeScripts ??
+        path.join(
+          root,
+          installedProtocol()
+            ? 'node_modules/@farmslot/agent-runtime/scripts'
+            : 'packages/agent-runtime/scripts',
+        ),
+      templateNode: env.FARMSLOT_WORKSPACE
+        ? path.resolve(expandHome(env.FARMSLOT_WORKSPACE))
+        : root,
       node: env.FARMSLOT_WORKSPACE ? path.resolve(expandHome(env.FARMSLOT_WORKSPACE)) : root,
-      cli: path.join(homedir(), '.local', 'share', 'farmslot-cli'),
-      bin: path.join(homedir(), '.local', 'bin'),
+      cli: path.join(userHome, '.local', 'share', 'farmslot-cli'),
+      bin: path.join(userHome, '.local', 'bin'),
       support: path.join(homedir(), 'farmslot-node', 'support'),
     },
     backups: path.join(root, '.backups'),
     data: {
       root: home,
-      // This reports the candidate only. Existing bundle-store.json bindings and retention
-      // config can select another store; reading them would violate the resolver's I/O contract.
-      runBundles: path.join(
-        options.home !== undefined || env.FARMSLOT_HOME || !env.FARMSLOT_RUNS_DIR
-          ? home
-          : path.join(runs, 'bundle-home'),
-        'run-bundles',
-      ),
+      runBundles:
+        options.legacyFacts?.runBundles ??
+        path.join(
+          options.home !== undefined || env.FARMSLOT_HOME || !env.FARMSLOT_RUNS_DIR
+            ? home
+            : path.join(runs, 'bundle-home'),
+          'run-bundles',
+        ),
       runArchive: override('FARMSLOT_RUN_ARCHIVE_ROOT', atHome('run-archive'), true),
       taskPinsArchive: atHome('task-pins-archive'),
       canary: override('CANARY_HOME', path.join(homedir(), 'farmslot-canary')),
@@ -261,6 +362,32 @@ export function resolveFarmPaths(options: ResolveFarmPathsOptions): FarmPaths {
     tmp: '/tmp/farmslot-prepare',
     cache: path.join(override('FARMSLOT_DIR', root), '.farm-cache'),
     gatewayLock: path.resolve(root, '.runs', `gateway-${Number(env.GATEWAY_PORT) || 7777}.pid`),
+    sessionArchives: path.join(runs, 'session-archives'),
+    episodes: path.join(runs, 'episodes'),
+    reviewWorkspaceSupport: path.join(runs, 'review-workspace-support'),
+    browserCache: env.RECIPE_HARNESS_BROWSER_CACHE
+      ? path.resolve(override('RECIPE_HARNESS_BROWSER_CACHE', ''))
+      : path.join(
+          env.XDG_CACHE_HOME || path.join(homedir(), '.cache'),
+          'farmslot',
+          'browser-probe.json',
+        ),
+    copilotRuntime: atHome('copilot-runtime'),
+    assessmentArtifacts: home,
+    pressureHistory: atHome('state', 'pressure-history.json'),
+    intelligenceAudit: override(
+      'FARMSLOT_INTELLIGENCE_AUDIT_DIR',
+      atHome('logs', 'intelligence-actions'),
+      true,
+    ),
+    feedbackLedger: env.FARMSLOT_FEEDBACK_LEDGER?.trim()
+      ? override('FARMSLOT_FEEDBACK_LEDGER', '').trim()
+      : atHome('state', 'feedback-ledger.json'),
+    extraLogDirs: override('FARMSLOT_EXTRA_LOG_DIRS', '')
+      .split(path.delimiter)
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((entry) => path.resolve(entry)),
   };
   return options.role === 'gateway'
     ? {
@@ -269,12 +396,235 @@ export function resolveFarmPaths(options: ResolveFarmPathsOptions): FarmPaths {
         state: {
           ...state,
           backlog: override('FARMSLOT_BACKLOG_FILE', path.join(root, '.backlog.json')),
+          backlogFile: env.FARMSLOT_BACKLOG_FILE || path.join(root, '.backlog.json'),
           roadmap: override('FARMSLOT_ROADMAP_DIR', path.join(root, '.roadmap'), true),
           workGraphs: override('FARMSLOT_WORK_GRAPH_DIR', path.join(root, '.work-graphs')),
           copilot: override('FARMSLOT_COPILOT_DIR', path.join(root, 'copilot'), true),
           assessments: atHome('assessments'),
           analytics: override('FARMSLOT_ANALYTICS_DIR', path.join(root, '.runs', 'analytics')),
+          backlogSpecs: override(
+            'FARMSLOT_BACKLOG_SPEC_DIR',
+            path.join(root, '.backlog', 'specs'),
+            true,
+          ),
+          refinementPrompts: override(
+            'FARMSLOT_ROADMAP_REFINEMENT_PROMPT_DIR',
+            path.join(
+              env.FARMSLOT_ROADMAP_DIR ?? path.join(root, '.roadmap'),
+              'refinement-prompts',
+            ),
+            true,
+          ),
+          dispatchQueue: override(
+            'FARMSLOT_DISPATCH_QUEUE_FILE',
+            path.join(root, '.dispatch-queue.json'),
+          ),
+          statusFile: path.join(root, '.farm-status.json'),
+          evalCaps: override(
+            'FARMSLOT_EVAL_SUITE_CAP_FILE',
+            path.join(root, '.eval-suite-caps.json'),
+          ),
+          observabilityAgreement: override(
+            'FARMSLOT_OBSERVABILITY_AGREEMENT_DIR',
+            path.join(root, '.runs', 'observability-agreement'),
+          ),
+          backlogRefinementPrompts: override(
+            'FARMSLOT_BACKLOG_REFINEMENT_PROMPT_DIR',
+            path.join(root, '.backlog', 'refinement-prompts'),
+            true,
+          ),
+          resourceWatchState: override(
+            'FARMSLOT_RESOURCE_WATCH_STATE_FILE',
+            path.join(root, '.farm-cache', 'resource-watch-state.json'),
+            true,
+          ),
+          capabilityStore: override(
+            'FARMSLOT_CAPABILITY_STORE_FILE',
+            path.join(
+              env.FARMSLOT_ROOT?.trim() || process.cwd(),
+              '.runs',
+              `runtime-capabilities-${env.GATEWAY_PORT?.trim() || '7777'}.json`,
+            ),
+          ),
         },
       }
     : { ...shared, role: 'node', state };
+}
+
+// A process may switch homes during a test or CLI invocation. Include the marker timestamp
+// and environment in the key so neither a migration nor a changed override leaves stale roots.
+const processPaths = new Map<string, FarmPaths>();
+const warnedOverrides = new Set<string>();
+
+export function currentFarmPaths(
+  role: 'gateway',
+  env?: NodeJS.ProcessEnv,
+  checkoutRoot?: string,
+): GatewayFarmPaths;
+export function currentFarmPaths(
+  role: 'node',
+  env?: NodeJS.ProcessEnv,
+  checkoutRoot?: string,
+): NodeFarmPaths;
+export function currentFarmPaths(
+  role: FarmRole,
+  env: NodeJS.ProcessEnv = process.env,
+  checkoutRoot?: string,
+): FarmPaths {
+  const home = expandHome(env.FARMSLOT_HOME?.trim() || path.join(homedir(), '.farmslot'));
+  let marker = 'absent';
+  try {
+    const info = statSync(path.join(home, 'config', 'instance.json'));
+    marker = `${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
+  } catch (error) {
+    // A missing marker selects legacy; permission and other filesystem errors must surface.
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  const selectedEnv = Object.entries(env).filter(
+    ([name]) =>
+      name.startsWith('FARMSLOT_') ||
+      name === 'GATEWAY_PORT' ||
+      name === 'CANARY_HOME' ||
+      name === 'RECIPE_HARNESS_BROWSER_CACHE' ||
+      name === 'XDG_CACHE_HOME',
+  );
+  const key = JSON.stringify([
+    role,
+    home,
+    homedir(),
+    marker,
+    checkoutRoot,
+    process.cwd(),
+    selectedEnv,
+  ]);
+  let paths = processPaths.get(key);
+  if (!paths) {
+    paths = resolveFarmPaths({ role, env, checkoutRoot });
+    processPaths.set(key, paths);
+  }
+  for (const name of paths.envOverrides) {
+    if (warnedOverrides.has(name)) continue;
+    warnedOverrides.add(name);
+    console.warn(
+      `[farm-paths] ${name} is deprecated; configure instance.json before migrating to layout 2`,
+    );
+  }
+  return paths;
+}
+
+/** Older nodes have no report. Keep their shell-expanded legacy paths in one place.
+ * Template expansion historically honors WORKSPACE; helper execution does not.
+ */
+export function legacyRemoteFarmPaths(
+  env: NodeJS.ProcessEnv = {},
+  discoveredCheckout?: string,
+): {
+  home: string;
+  pool: string;
+  projects: string;
+  code: FarmCodePaths;
+  state: { runs: string; tmp: string };
+} {
+  const node = discoveredCheckout ?? path.posix.join(env.HOME?.trim() || '~', 'farmslot-node');
+  return {
+    home: env.FARMSLOT_HOME?.trim() || '~/.farmslot',
+    pool: path.posix.join(node, 'pool'),
+    projects: path.posix.join(node, 'projects'),
+    code: {
+      checkout: node,
+      agentRuntimeScripts: path.posix.join(node, 'node_modules/@farmslot/agent-runtime/scripts'),
+      node,
+      templateNode: env.FARMSLOT_WORKSPACE?.trim() || node,
+      cli: '~/.local/share/farmslot-cli',
+      bin: '~/.local/bin',
+      support: path.posix.join(node, 'support'),
+    },
+    state: { runs: path.posix.join(node, '.runs'), tmp: '/tmp/farmslot-prepare' },
+  };
+}
+
+/** Validate the optional wire report without trusting a cast at the RPC boundary. */
+export function isNodeFarmPaths(value: unknown): value is NodeFarmPaths {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const fields: Record<string, unknown> = Object.fromEntries(Object.entries(value));
+  const stringFields = (item: unknown, names: string[]): boolean => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+    return names.every((name) => {
+      const field: unknown = Reflect.get(item, name);
+      return typeof field === 'string' && !field.includes('\0');
+    });
+  };
+  const strings = (item: unknown): boolean =>
+    Array.isArray(item) && item.every((entry) => typeof entry === 'string');
+  return (
+    fields.role === 'node' &&
+    (fields.layout === 'legacy' || fields.layout === 2) &&
+    stringFields(value, [
+      'instance',
+      'home',
+      'config',
+      'pool',
+      'projects',
+      'templateProjects',
+      'backups',
+    ]) &&
+    stringFields(fields.configFiles, ['sources']) &&
+    stringFields(fields.code, [
+      'checkout',
+      'agentRuntimeScripts',
+      'templateNode',
+      'node',
+      'cli',
+      'bin',
+      'support',
+    ]) &&
+    stringFields(fields.data, [
+      'root',
+      'runBundles',
+      'runArchive',
+      'taskPinsArchive',
+      'canary',
+      'datasets',
+    ]) &&
+    stringFields(fields.state, [
+      'runs',
+      'taskPins',
+      'nativeSessions',
+      'reviewWorkspaces',
+      'sources',
+      'nodeLink',
+      'logs',
+      'tmp',
+      'cache',
+      'gatewayLock',
+      'sessionArchives',
+      'episodes',
+      'reviewWorkspaceSupport',
+      'browserCache',
+      'copilotRuntime',
+      'assessmentArtifacts',
+      'pressureHistory',
+      'intelligenceAudit',
+      'feedbackLedger',
+    ]) &&
+    strings(fields.envOverrides) &&
+    fields.state !== null &&
+    typeof fields.state === 'object' &&
+    strings(Reflect.get(fields.state, 'extraLogDirs'))
+  );
+}
+
+// A standalone service installs the protocol as a scoped dependency. Its package
+// location tells us the installation root without reading a second marker or package.
+function installedProtocol(): boolean {
+  const packageRoot = path.resolve(fileURLToPath(new URL('../../', import.meta.url)));
+  return (
+    path.basename(path.dirname(packageRoot)) === '@farmslot' &&
+    path.basename(path.dirname(path.dirname(packageRoot))) === 'node_modules'
+  );
+}
+function defaultCheckoutRoot(): string {
+  return fileURLToPath(
+    new URL(installedProtocol() ? '../../../../../' : '../../../../', import.meta.url),
+  );
 }

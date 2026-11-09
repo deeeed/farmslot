@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // Backlog item refinement sessions — tighten an existing work contract without
 // mutating lifecycle, source identity, or run/work-graph linkage.
 
@@ -29,9 +30,9 @@ import { getBacklogItemSnapshot, getBacklogSpec } from './store.js';
 
 const SAFETY_TIERS = new Set<SafetyTier>(['sandboxed', 'full-auto', 'dangerous']);
 
-const REFINEMENT_PROMPT_ROOT =
-  process.env.FARMSLOT_BACKLOG_REFINEMENT_PROMPT_DIR ??
-  path.join(farmslotRoot, '.backlog', 'refinement-prompts');
+function REFINEMENT_PROMPT_ROOT(): string {
+  return currentFarmPaths('gateway').state.backlogRefinementPrompts;
+}
 
 function slugify(value: string): string {
   const slug = value
@@ -54,10 +55,10 @@ export function backlogRefinementSessionName(item: Pick<BacklogItem, 'id'>): str
 }
 
 async function allocateRefinementPromptPath(item: BacklogItem): Promise<string> {
-  await mkdir(REFINEMENT_PROMPT_ROOT, { recursive: true });
+  await mkdir(REFINEMENT_PROMPT_ROOT(), { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   return path.join(
-    REFINEMENT_PROMPT_ROOT,
+    REFINEMENT_PROMPT_ROOT(),
     `${stamp}-${slugify(item.sourceRef || item.id)}-${slugify(item.title)}.md`,
   );
 }

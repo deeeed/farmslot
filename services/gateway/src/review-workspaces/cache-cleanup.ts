@@ -12,6 +12,7 @@ import { REVIEW_WORKSPACE_SCRIPT } from './workspace-node.js';
 interface CleanupStorage {
   runs: () => Promise<Run[]>;
   runsDir: string;
+  supportRoot?: string;
   nativeRoot: string;
 }
 
@@ -108,7 +109,7 @@ export function cleanupReviewWorkspaceCaches(
       [...retainedPaths].some(
         (file) => file === directory || file.startsWith(directory + path.sep),
       );
-    const cacheRoot = path.join(storage.runsDir, 'review-workspace-support');
+    const cacheRoot = storage.supportRoot ?? path.join(storage.runsDir, 'review-workspace-support');
     if (await directory(cacheRoot)) {
       // Interrupted admission can precede publication of reviewWorkspace.support.
       for (const name of await entries(path.join(cacheRoot, 'admissions'))) {

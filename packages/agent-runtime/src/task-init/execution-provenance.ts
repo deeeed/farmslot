@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -8,7 +9,6 @@ import {
   type RecipeConformanceIdentity,
   type RecipeConformanceSource,
 } from '@farmslot/protocol';
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import {
   retainTaskInput,
@@ -143,7 +143,7 @@ const pinPaths = new WeakMap<TaskExecutionInput, Map<string, string>>();
 // The shared machine home expands `~`; a raw FARMSLOT_HOME would resolve
 // against the task checkout and retain the tooling inside the product source.
 function taskPinRoot(): string {
-  return path.resolve(farmslotHome(), 'task-pins');
+  return currentFarmPaths('node').state.taskPins;
 }
 /** Producer-owned pin identity, allocated before rendering but written only after validation. */
 export function taskExecutionPin(taskDir: string, input: TaskExecutionInput): string {

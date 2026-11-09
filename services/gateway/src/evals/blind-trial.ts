@@ -1,3 +1,5 @@
+import { legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
+import { reportedFarmPaths } from '@farmslot/slot-config';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -150,7 +152,7 @@ export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal):
   await executeGit('isolate', vars, spec, signal);
   // The worker sandbox denies the node's other slot checkouts, resolved as each slot's own launch resolves them.
   const siblingRepos = await resolvedSiblingRepos(vars);
-  const farmConfigRoots = [path.join(await farmslotDirectoryForSlot(vars), 'pool')];
+  const farmConfigRoots = [(await blindFarmPaths(vars)).pool];
   await executeGit('boundary', vars, { ...spec, siblingRepos, farmConfigRoots }, signal);
   await ownedEpoch(run, epoch);
   await persistRunNow(
@@ -217,15 +219,15 @@ export async function verifyBlindTrialForDispatch(run: Run, retained = false): P
     await executeGit('boundary', vars, {
       ...gitSpec(run, vars, blind, blind.isolation.slotEpoch, blind.isolation.capsulePath),
       siblingRepos: await resolvedSiblingRepos(vars),
-      farmConfigRoots: [path.join(await farmslotDirectoryForSlot(vars), 'pool')],
+      farmConfigRoots: [(await blindFarmPaths(vars)).pool],
       proofBoundary: {
         taskRoot,
         currentTask,
         runtimeRoots: [path.join(vars.remoteRepo, await resolveProjectRuntimeDir(run.project))],
         deniedRoots: [
           getOrchestratorTaskRoot(run.project, project.projectJson),
-          path.join(await farmslotDirectoryForSlot(vars), 'projects', run.project, 'tasks'),
-          path.join(await farmslotDirectoryForSlot(vars), '.runs'),
+          path.join((await blindFarmPaths(vars)).projects, run.project, 'tasks'),
+          (await blindFarmPaths(vars)).state.runs,
         ],
       },
     });
@@ -449,4 +451,11 @@ export async function restoreFinishedBlindTrialGit(run: Run): Promise<string | n
   } catch (error) {
     return `Blind trial Git was not restored: ${(error as Error).message}`;
   }
+}
+
+async function blindFarmPaths(vars: SlotVars) {
+  return (
+    reportedFarmPaths(vars.machine) ??
+    legacyRemoteFarmPaths({}, await farmslotDirectoryForSlot(vars))
+  );
 }

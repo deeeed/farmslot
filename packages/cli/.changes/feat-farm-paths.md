@@ -1,1 +1,1 @@
-- Add `farmslot paths [--json] [--home <dir>] [--role gateway|node]` and `paths get <key>` to inspect an instance's paths.
+- Resolve CLI state and slot context through FarmPaths, report active bundle stores, and print plain path lookups as values.

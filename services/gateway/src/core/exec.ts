@@ -1,3 +1,5 @@
+import { farmPathsForSlot } from '../fleet/farm-paths.js';
+import { commandIncludesRemotePath } from './remote-paths.js';
 // core/exec.ts — Local/remote command execution
 // TypeScript port of lib/slot-common.sh: is_local, run_on, remote
 // Uses node-rpc.ts for remote execution via connected nodes.
@@ -305,7 +307,7 @@ export async function execOnSlot(
   // bundle matching this gateway's config, never from the node's last deploy
   // (ledger F15). Loaded lazily: node-support itself executes through here.
   const timeout = opts.timeout;
-  if (cmd.includes('~/farmslot-node')) {
+  if (commandIncludesRemotePath(cmd, farmPathsForSlot(slotVars).code.node)) {
     const { NodeSupportPendingError, resolveRemoteFarmCommand } =
       await import('../node-support/remote-command.js');
     try {

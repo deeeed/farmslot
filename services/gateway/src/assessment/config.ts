@@ -1,7 +1,6 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 export interface AssessmentConfig {
   enabled: boolean;
@@ -54,7 +53,9 @@ export function getAssessmentConfig(): AssessmentConfig {
   let file: Partial<AssessmentConfig> = {};
   try {
     file = validate(
-      JSON.parse(readFileSync(path.join(farmslotHome(), 'assessment-config.json'), 'utf8')),
+      JSON.parse(
+        readFileSync(path.join(currentFarmPaths('node').config, 'assessment-config.json'), 'utf8'),
+      ),
     );
   } catch (error) {
     // An absent optional configuration means disabled; corrupt configuration is an error.

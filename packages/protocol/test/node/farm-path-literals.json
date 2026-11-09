@@ -1,0 +1,224 @@
+[
+  {
+    "file": "services/gateway/src/backlog/dispatch-queue.ts",
+    "literal": "../review-workspaces/pool-policy.js",
+    "reason": "Module or schema import specifier, not a farm storage root.",
+    "count": 1
+  },
+  {
+    "file": "services/gateway/src/backlog/pr-execution.ts",
+    "literal": "../review-workspaces/pool-policy.js",
+    "reason": "Module or schema import specifier, not a farm storage root.",
+    "count": 1
+  },
+  {
+    "file": "services/gateway/src/core/file-transfer.ts",
+    "literal": ".farmslot-partial",
+    "reason": "Transfer staging suffix appended to the caller-supplied artifact destination.",
+    "count": 1
+  },
+  {
+    "file": "services/gateway/src/evals/blind-git.py",
+    "literal": ".farmslot-blind-evals",
+    "reason": "Blind Git capsule leaf inside the explicitly supplied product checkout, not an instance root.",
+    "count": 2
+  },
+  {
+    "file": "services/gateway/src/node-support/activation.ts",
+    "literal": ": farmslot-node-support-activate\npython3 -c ",
+    "reason": "Support activation command identification marker, not a path.",
+    "count": 1
+  },
+  {
+    "file": "services/gateway/src/pr-rules/intents.ts",
+    "literal": "../review-workspaces/pool-policy.js",
+    "reason": "Module or schema import specifier, not a farm storage root.",
+    "count": 1
+  },
+  {
+    "file": "services/gateway/src/review-workspaces/admission.ts",
+    "literal": "./pool.js",
+    "reason": "Module or schema import specifier, not a farm storage root.",
+    "count": 1
+  },
+  {
+    "file": "services/gateway/src/review-workspaces/direct-defaults.ts",
+    "literal": "./pool-policy.js",
+    "reason": "Module or schema import specifier, not a farm storage root.",
+    "count": 1
+  },
+  {
+    "file": "services/gateway/src/review-workspaces/support.ts",
+    "literal": "./pool.js",
+    "reason": "Module or schema import specifier, not a farm storage root.",
+    "count": 1
+  },
+  {
+    "file": "services/gateway/src/review-workspaces/task.ts",
+    "literal": "./pool.js",
+    "reason": "Module or schema import specifier, not a farm storage root.",
+    "count": 1
+  },
+  {
+    "file": "services/gateway/src/runners/launch-command.ts",
+    "literal": "/.farmslot-provider-auth",
+    "reason": "Provider authentication marker leaf under the selected provider home.",
+    "count": 1
+  },
+  {
+    "file": "services/gateway/src/runners/launch-command.ts",
+    "literal": "farm=\"$1\"; support=\"$2\"; shift 2; export FARMSLOT_POOL_DIR=\"${FARMSLOT_POOL_DIR:-$farm/pool}\"; export FARMSLOT_ROOT=\"$support\"; source \"$support/scripts/lib/resolve-farmslot-cli.sh\" && exec \"$FARMSLOT_CLI\" \"$@\"",
+    "reason": "Shell command receives farm/support roots as arguments; pool and projects are context-selected leaves. Shell transport migration is deferred to Pass 3.",
+    "count": 1
+  },
+  {
+    "file": "services/gateway/src/runs/store.ts",
+    "literal": " to production .runs/",
+    "reason": "Diagnostic text names the legacy persistence directory; it does not select a path.",
+    "count": 1
+  },
+  {
+    "file": "services/gateway/src/runs/store.ts",
+    "literal": "Refusing to create gateway test fixture run in production .runs/ — run tests via run-tsx-tests.mjs or set NODE_TEST_CONTEXT=1",
+    "reason": "Diagnostic text names the legacy persistence directory; it does not select a path.",
+    "count": 1
+  },
+  {
+    "file": "services/gateway/src/runtime/workspace-terminal.ts",
+    "literal": "../review-workspaces/pool.js",
+    "reason": "Module or schema import specifier, not a farm storage root.",
+    "count": 1
+  },
+  {
+    "file": "services/gateway/src/security/origin.ts",
+    "literal": "https://www.farmslot.io",
+    "reason": "Web origin, not a filesystem path.",
+    "count": 1
+  },
+  {
+    "file": "services/gateway/src/tasks/hosted-task-init.ts",
+    "literal": "farm=\"$1\"; support=\"$2\"; shift 2; unset FARMSLOT_ROOT; export FARMSLOT_POOL_DIR=\"${FARMSLOT_POOL_DIR:-$farm/pool}\" FARMSLOT_PROJECTS_DIR=\"${FARMSLOT_PROJECTS_DIR:-$support/projects}\" FARMSLOT_CLI=\"${FARMSLOT_CLI:-$HOME/.local/bin/farmslot}\"; source \"$support/scripts/lib/resolve-farmslot-cli.sh\" && exec \"$FARMSLOT_CLI\" --json \"$@\"",
+    "reason": "Shell command receives farm/support roots as arguments; pool and projects are context-selected leaves. Shell transport migration is deferred to Pass 3.",
+    "count": 1
+  },
+  {
+    "file": "services/node/src/index.ts",
+    "literal": "For farmdev use $HOME/.farmslot-automation/",
+    "reason": "Operator diagnostic names an existing credential wrapper; provisioning is outside this selector switch.",
+    "count": 1
+  },
+  {
+    "file": "packages/adapter-web/src/chrome-args.cjs",
+    "literal": ".farmslot-detached-launch-unproven",
+    "reason": "Browser launcher sentinel filename under the caller-supplied runtime directory.",
+    "count": 1
+  },
+  {
+    "file": "packages/adapter-web/src/web-dapp/lib/signers.mjs",
+    "literal": "io.farmslot.strict-wallet",
+    "reason": "Wallet identifier, not a filesystem path.",
+    "count": 1
+  },
+  {
+    "file": "packages/cli/src/commands/credential.ts",
+    "literal": "For farmdev, use $HOME/.farmslot-automation/<machine>-node-automation.secret and restart farmdev.\n",
+    "reason": "Operator diagnostic names an existing credential wrapper; provisioning is outside this selector switch.",
+    "count": 1
+  },
+  {
+    "file": "packages/cli/src/commands/paths.ts",
+    "literal": "Farm instance home (default: FARMSLOT_HOME or ~/.farmslot)",
+    "reason": "CLI help documents the unchanged legacy default; path selection is delegated to FarmPaths.",
+    "count": 1
+  },
+  {
+    "file": "packages/cli/src/commands/recipe-project.ts",
+    "literal": "farmslot-node",
+    "reason": "Legacy pool-selection source discriminator, not a filesystem path.",
+    "count": 1
+  },
+  {
+    "file": "packages/cli/src/commands/workspace.ts",
+    "literal": "../onboarding/pool-config.js",
+    "reason": "Module or schema import specifier, not a farm storage root.",
+    "count": 1
+  },
+  {
+    "file": "packages/cli/src/onboarding/add.ts",
+    "literal": "./pool-config.js",
+    "reason": "Module or schema import specifier, not a farm storage root.",
+    "count": 1
+  },
+  {
+    "file": "packages/cli/src/onboarding/doctor.ts",
+    "literal": "./pool-config.js",
+    "reason": "Module or schema import specifier, not a farm storage root.",
+    "count": 1
+  },
+  {
+    "file": "packages/cli/src/onboarding/migrations.ts",
+    "literal": "./pool-config.js",
+    "reason": "Module or schema import specifier, not a farm storage root.",
+    "count": 1
+  },
+  {
+    "file": "packages/cli/src/onboarding/pool-config.ts",
+    "literal": "../schemas/pool.schema.json",
+    "reason": "Module or schema import specifier, not a farm storage root.",
+    "count": 1
+  },
+  {
+    "file": "packages/cli/src/onboarding/uninstall.ts",
+    "literal": "./pool-config.js",
+    "reason": "Module or schema import specifier, not a farm storage root.",
+    "count": 1
+  },
+  {
+    "file": "packages/cli/src/onboarding/update.ts",
+    "literal": "./pool-config.js",
+    "reason": "Module or schema import specifier, not a farm storage root.",
+    "count": 1
+  },
+  {
+    "file": "packages/handoff/src/closeout/index.ts",
+    "literal": ".farmslot",
+    "reason": "Handoff closeout metadata leaf under the product repository, not Farmslot machine home.",
+    "count": 1
+  },
+  {
+    "file": "packages/protocol/src/contracts/interactive-operator-packets.ts",
+    "literal": "application/vnd.farmslot.operator-packet+json",
+    "reason": "MIME type, not a filesystem path.",
+    "count": 1
+  },
+  {
+    "file": "packages/protocol/src/node/slot-by-repo.ts",
+    "literal": "farmslot-node",
+    "reason": "Legacy pool-selection source discriminator, not a filesystem path.",
+    "count": 2
+  },
+  {
+    "file": "packages/recipe-cli/src/harness/context-state.ts",
+    "literal": "slot-config (~/farmslot-node/pool)",
+    "reason": "Diagnostic provenance label for legacy external pool discovery, not a selector.",
+    "count": 1
+  },
+  {
+    "file": "packages/recipe-cli/src/harness/context.ts",
+    "literal": "farmslot-node",
+    "reason": "Legacy pool-selection source discriminator, not a filesystem path.",
+    "count": 1
+  },
+  {
+    "file": "packages/recipe-cli/src/harness/context.ts",
+    "literal": "slot-config (~/farmslot-node/pool)",
+    "reason": "Diagnostic provenance label for legacy external pool discovery, not a selector.",
+    "count": 1
+  },
+  {
+    "file": "packages/slot-config/src/config.ts",
+    "literal": ": roadmap.farmslot_command must be a string",
+    "reason": "Configuration validation error names a field, not a filesystem path.",
+    "count": 1
+  }
+]

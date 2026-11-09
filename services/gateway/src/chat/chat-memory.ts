@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // chat/chat-memory.ts — Copilot workspace: MEMORY.md + session summaries
 
 import { existsSync, realpathSync, watch } from 'node:fs';
@@ -7,7 +8,6 @@ import path from 'node:path';
 import { type ChatMessage, Events } from '@farmslot/protocol';
 
 import { assertStorageVolumePresent } from '../core/storage-volume.js';
-import { farmslotRoot } from '../fleet/state.js';
 import { callLLM } from '../llm/index.js';
 import { resourceRevisions } from '../resources/revisions.js';
 
@@ -53,7 +53,7 @@ const INITIAL_MEMORY = `# Farmslot Co-Pilot Memory
 export function getCopilotDir(): string {
   // Dev default: {farmslotRoot}/copilot (local to repo, gitignored)
   // Prod: set FARMSLOT_COPILOT_DIR=~/.farmslot/copilot in .env
-  return process.env.FARMSLOT_COPILOT_DIR ?? path.join(farmslotRoot, 'copilot');
+  return currentFarmPaths('gateway').state.copilot;
 }
 
 export async function ensureCopilotDirs(): Promise<void> {

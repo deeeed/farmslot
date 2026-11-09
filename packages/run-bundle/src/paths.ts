@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
@@ -29,8 +30,7 @@ export function resolveFarmslotRoot(
 }
 
 export function resolveRunsDir(farmslotRoot: string, env: NodeJS.ProcessEnv = process.env): string {
-  if (env.FARMSLOT_RUNS_DIR) return path.resolve(env.FARMSLOT_RUNS_DIR);
-  return path.join(farmslotRoot, '.runs');
+  return currentFarmPaths('gateway', env, farmslotRoot).state.runs;
 }
 
 export function sanitizeBundleRunId(runId: string): string {

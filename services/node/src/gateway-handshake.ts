@@ -1,3 +1,4 @@
+import type { NodeFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import WebSocket from 'ws';
 
 import { MINIMUM_RUNTIME_VERSION, RUNTIME_VERSION } from '@farmslot/agent-runtime/version';
@@ -193,6 +194,7 @@ export function authenticateNode(
 }
 
 export interface NodeRegisterOptions {
+  farmPaths?: NodeFarmPaths;
   machine: string;
   pid: number;
   capabilities: RecipeRuntimeCapabilityDeclaration[];
@@ -234,6 +236,7 @@ export async function registerNode(
       pid: options.pid,
       ...nodePeerVersions,
       capabilities: options.capabilities,
+      ...(options.farmPaths ? { farmPaths: options.farmPaths } : {}),
       ...(options.nodeLink ? { nodeLink: options.nodeLink } : {}),
       ...(options.observationCapabilities
         ? { observationCapabilities: options.observationCapabilities }

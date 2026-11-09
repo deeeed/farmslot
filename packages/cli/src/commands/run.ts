@@ -1,6 +1,6 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import type { Command } from 'commander';
 
@@ -367,13 +367,15 @@ const SUBDIR_TO_FLOW: Record<string, string> = {
   'update-branch': 'update-branch',
 };
 
-const FARMSLOT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
+function farmslotRoot(): string {
+  return currentFarmPaths('gateway').code.checkout;
+}
 
 function resolveReadableTaskFile(taskFile: string): string {
   if (path.isAbsolute(taskFile)) return taskFile;
   const cwdPath = path.resolve(taskFile);
   if (existsSync(cwdPath)) return cwdPath;
-  const rootPath = path.join(FARMSLOT_ROOT, taskFile);
+  const rootPath = path.join(farmslotRoot(), taskFile);
   if (existsSync(rootPath)) return rootPath;
   return taskFile;
 }

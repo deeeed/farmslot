@@ -1,9 +1,11 @@
+import { legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { farmPathsForSlot } from '../fleet/farm-paths.js';
 
 import { hasUnsettledRunExecution, resolveRunSlotId, type Run } from '@farmslot/protocol';
 import { isRecord } from '@farmslot/protocol/recipe';
@@ -46,15 +48,20 @@ function isHistoricalRun(record: unknown): boolean {
 }
 
 /** Historical outputs can refer to an older bundle than the slot now selects. */
-function supportHashes(values: readonly unknown[]): string[] {
+function supportHashes(values: readonly unknown[], supportRoot?: string): string[] {
   const hashes = new Set<string>();
   const visit = (value: unknown): void => {
     if (typeof value === 'string') {
       if (/^[a-f0-9]{64}$/.test(value)) hashes.add(value);
-      for (const match of value.matchAll(
-        /\/farmslot-node\/support\/([a-f0-9]{64})(?=$|[\s/"'\\])/g,
-      ))
-        hashes.add(match[1]);
+      const roots = [
+        legacyRemoteFarmPaths().code.support.slice(1),
+        ...(supportRoot ? [supportRoot] : []),
+      ];
+      const pattern = new RegExp(
+        `(?:${roots.map((root) => root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})/([a-f0-9]{64})(?=$|[\\s/"'\\\\])`,
+        'g',
+      );
+      for (const match of value.matchAll(pattern)) hashes.add(match[1]);
     } else if (Array.isArray(value)) value.forEach(visit);
     else if (value && typeof value === 'object') Object.values(value).forEach(visit);
   };
@@ -62,8 +69,11 @@ function supportHashes(values: readonly unknown[]): string[] {
   return [...hashes];
 }
 
-export function referencedNodeSupportHashes(runs: readonly Run[]): string[] {
-  return supportHashes(runs.filter((run) => !run.archivedAt && !isHistoricalRun(run)));
+export function referencedNodeSupportHashes(runs: readonly Run[], supportRoot?: string): string[] {
+  return supportHashes(
+    runs.filter((run) => !run.archivedAt && !isHistoricalRun(run)),
+    supportRoot,
+  );
 }
 
 /** One-shot activators do not have the gateway's run store loaded in memory. */
@@ -192,7 +202,7 @@ export async function nodeSupportRetentionReferences(
     endedRunIds: runs
       .filter((run) => run.archivedAt || !hasUnsettledRunExecution(run))
       .map((run) => run.id),
-    runHashes: referencedNodeSupportHashes(runs),
+    runHashes: referencedNodeSupportHashes(runs, farmPathsForSlot(vars).code.support),
   };
 }
 
@@ -209,7 +219,11 @@ export interface NodeSupportActivationParams {
 
 /** Publish, verify, select and prune under one node-owned lock, including other gateways. */
 export function buildNodeSupportActivationCommand(params: NodeSupportActivationParams): string {
-  const payload = { ...params, supportRoot: path.posix.dirname(params.supportDir) };
+  const payload = {
+    ...params,
+    supportRoot: path.posix.dirname(params.supportDir),
+    legacySupportSuffix: legacyRemoteFarmPaths().code.support.slice(1),
+  };
   const script = `import fcntl,hashlib,json,os,re,shutil,subprocess,sys,time
 from pathlib import Path
 d=json.load(sys.stdin);root=Path(d['supportRoot']);root.mkdir(parents=True,exist_ok=True)
@@ -246,7 +260,7 @@ with (root/'.activation.lock').open('a') as lock:
  keep=set(d['references']['runHashes']);keep.add(d['supportHash'])
  active=root/'.active-run-references';active.mkdir(exist_ok=True)
  inventory=d['references'].get('runInventory',{})
- pattern=re.compile(rb'/farmslot-node/support/([a-f0-9]{64})(?=$|[\\s/"\\x27\\x5c])')
+ pattern=re.compile(b'(?:'+re.escape(os.fsencode(root))+b'|'+re.escape(os.fsencode(d['legacySupportSuffix']))+rb')/([a-f0-9]{64})(?=$|[\\s/"\\x27\\x5c])')
  def inspect(reference,hashes):
   try:
    if reference.is_symlink():

@@ -1,1 +1,1 @@
-- Add an instance-aware farm path resolver that reports legacy locations and the layout 2 paths without creating or moving files.
+- Centralize instance paths, legacy store overrides and remote-node path reports in FarmPaths.

@@ -1,3 +1,4 @@
+import { projectsDirectory } from '@farmslot/slot-config';
 // methods/config.ts — config.pools, config.pool, config.projects, config.project,
 // config.templates, config.templatePreview, config.templateOptions, config.slot.update, config.pool.update
 import { existsSync } from 'node:fs';
@@ -42,7 +43,6 @@ import {
   invalidateProjectVarsCache,
   loadMachinePoolFile,
   loadProjectVars,
-  projectsDir,
   resolveSlot,
   validateAutoRecoveryConfig,
   validateBacklogConfig,
@@ -117,7 +117,7 @@ function isNodeFsError(err: unknown, code: string): err is NodeJS.ErrnoException
 
 async function readProjectLearnings(project: string): Promise<ConfigProjectResult['learnings']> {
   const relativePath = `projects/${project}/learnings/LEARNINGS.md`;
-  const learningsPath = path.join(projectsDir, project, 'learnings', 'LEARNINGS.md');
+  const learningsPath = path.join(projectsDirectory(), project, 'learnings', 'LEARNINGS.md');
   try {
     const [content, info] = await Promise.all([
       readFile(learningsPath, 'utf-8'),
@@ -157,7 +157,7 @@ export async function configProjectBacklogUpdate(
 ): Promise<ConfigProjectBacklogUpdateResult> {
   const runtimeSettings = await usesRuntimeSettings(params.project);
   const projectFilePath = path.join(
-    await projectPackRoot(params.project, path.join(projectsDir, params.project)),
+    await projectPackRoot(params.project, path.join(projectsDirectory(), params.project)),
     'project.json',
   );
   if (!existsSync(projectFilePath)) throw new Error(`Project file not found: ${params.project}`);
@@ -503,7 +503,7 @@ export async function configProjectAutoRecoveryUpdate(
 ): Promise<ConfigProjectAutoRecoveryUpdateResult> {
   const runtimeSettings = await usesRuntimeSettings(params.project);
   const projectFilePath = path.join(
-    await projectPackRoot(params.project, path.join(projectsDir, params.project)),
+    await projectPackRoot(params.project, path.join(projectsDirectory(), params.project)),
     'project.json',
   );
   if (!existsSync(projectFilePath)) throw new Error(`Project file not found: ${params.project}`);

@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { rebindRecipeLibraryPath } from '@farmslot/recipe-runner';
 import { withSourceEnvironment } from '@farmslot/slot-config';
 
@@ -134,7 +135,20 @@ export function machineShellEnv(vars: {
     vars.machine && vars.host && !isLocal(vars.host, vars.machine)
       ? getNode(vars.machine)?.gatewayUrl
       : undefined;
-  return { ...(gatewayUrl ? { GW_URL: gatewayUrl } : {}), ...vars.machineEnv };
+  const paths = vars.machine ? getNode(vars.machine)?.farmPaths : undefined;
+  const roots: Record<string, string> =
+    paths?.layout === 2
+      ? {
+          FARMSLOT_HOME: paths.home,
+          FARMSLOT_POOL_DIR: paths.pool,
+          FARMSLOT_PROJECTS_DIR: paths.projects,
+          FARMSLOT_RUNS_DIR: paths.state.runs,
+          FARMSLOT_NATIVE_STATE_DIR: paths.state.nativeSessions,
+          FARMSLOT_LOG_DIR: paths.state.logs,
+          FARMSLOT_CLI: path.posix.join(paths.code.bin, 'farmslot'),
+        }
+      : {};
+  return { ...(gatewayUrl ? { GW_URL: gatewayUrl } : {}), ...vars.machineEnv, ...roots };
 }
 
 /** `&&`-joined so a guard before the command (for example `cd repo &&`) still gates it. */

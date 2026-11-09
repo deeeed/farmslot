@@ -1,17 +1,16 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, existsSync, renameSync } from 'node:fs';
 import { cp, lstat, mkdir, open, readdir, readFile, readlink, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
-
 import { writeAtomicJSON } from '../core/atomic-json.js';
 import { assertHeavyWriteRoom } from '../core/heavy-write-room.js';
 import { assertStorageVolumePresent } from '../core/storage-volume.js';
 
 export function runArchiveRoot(): string {
-  return process.env.FARMSLOT_RUN_ARCHIVE_ROOT ?? path.join(farmslotHome(), 'run-archive');
+  return currentFarmPaths('gateway').data.runArchive;
 }
 
 export interface StorageArchiveEntry {

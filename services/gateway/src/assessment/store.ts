@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -13,7 +14,6 @@ import {
   type AssessmentSubject,
   type ReviewIntakeAdvisory,
 } from '@farmslot/protocol';
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
 import { resourceRevisions } from '../resources/revisions.js';
@@ -54,7 +54,7 @@ function assessmentChanged(): void {
 let tail: Promise<unknown> = Promise.resolve();
 
 function root(): string {
-  return path.join(farmslotHome(), 'assessments');
+  return currentFarmPaths('gateway').state.assessments;
 }
 function location(id: string): string {
   if (!ID.test(id)) throw new Error('Invalid assessment ID');

@@ -1,13 +1,14 @@
+import { legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
+import { reportedFarmPaths } from '@farmslot/slot-config';
 import os from 'node:os';
 import path from 'node:path';
+import { currentFarmPaths, farmPathsForSlot } from '../fleet/farm-paths.js';
 
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import type { loadSlotVars } from '../core/config.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
-import { farmslotRoot } from '../projects/repo-root.js';
 
-const REMOTE_AGENT_DIR = '~/farmslot-node';
 export const INSTALLER_RELATIVE_PATH = 'scripts/install-runner-observability.mjs';
 export const RUNNER_OBSERVABILITY_COPY_PATHS = [
   'scripts/runners/hook-progress.mjs',
@@ -29,7 +30,8 @@ export const RUNNER_OBSERVABILITY_SUPPORT_PATHS = [
 export const NODE_SUPPORT_HASH_FILENAME = 'node-support-hash';
 
 /** Where nodes keep content-addressed support bundles (ADR-035). */
-export const NODE_SUPPORT_ROOT = '~/farmslot-node/support';
+// Compatibility export consumed by the unchanged legacy-equivalence suite.
+export const NODE_SUPPORT_ROOT = legacyRemoteFarmPaths().code.support;
 
 /** The slot's node-support bundle selection, outside the checkout (ADR-035). */
 export function nodeSupportHashPath(repo: string, runtimeDir: string): string {
@@ -44,9 +46,13 @@ export function nodeSupportHashPath(repo: string, runtimeDir: string): string {
  * Shell printing the slot's selected bundle directory; non-zero without a valid
  * selection. Case patterns carry a leading `(` so bash 3.2 parses them inside `$(...)`.
  */
-export function nodeSupportSelectionCommand(repo: string, runtimeDir: string): string {
+export function nodeSupportSelectionCommand(
+  repo: string,
+  runtimeDir: string,
+  supportRoot = legacyRemoteFarmPaths().code.support,
+): string {
   const pointer = shellExpressionForRemotePath(nodeSupportHashPath(repo, runtimeDir));
-  const root = shellExpressionForRemotePath(NODE_SUPPORT_ROOT);
+  const root = shellExpressionForRemotePath(supportRoot);
   return `hash="$(cat ${pointer} 2>/dev/null)"; case "$hash" in (''|*[!0-9a-f]*) false ;; (*) [ \${#hash} -eq 64 ] && printf '%s\\n' ${root}/"$hash" ;; esac`;
 }
 const localHostname = os.hostname().replace(/\.local$/, '');
@@ -72,7 +78,9 @@ function farmslotDirForSlot(vars: Awaited<ReturnType<typeof loadSlotVars>>): str
   const slotHost = vars.host.replace(/\.local$/, '');
   const isLocal =
     slotHost === 'localhost' || slotHost === '127.0.0.1' || slotHost === localHostname;
-  return isLocal ? farmslotRoot : REMOTE_AGENT_DIR;
+  return isLocal && !reportedFarmPaths(vars.machine)
+    ? currentFarmPaths('gateway').code.checkout
+    : farmPathsForSlot(vars).code.node;
 }
 
 export function buildRunnerObservabilityInstallCommand(
@@ -108,17 +116,20 @@ export function buildRunnerObservabilityInstallCommand(
     const installer = path.posix.join(options.supportDir, INSTALLER_RELATIVE_PATH);
     return `node ${shellExpressionForRemotePath(installer)} ${parts.join(' ')}`;
   }
-  if (farmslotDir !== REMOTE_AGENT_DIR) {
+  if (
+    farmslotDir === currentFarmPaths('gateway').code.checkout &&
+    !reportedFarmPaths(vars.machine)
+  ) {
     return `node ${shellExpressionForRemotePath(localInstaller)} ${parts.join(' ')}`;
   }
 
-  const fallbackInstaller = '${HOME}/farmslot-node/' + INSTALLER_RELATIVE_PATH;
+  const fallbackInstaller = shellExpressionForRemotePath(localInstaller);
   const supportReady = RUNNER_OBSERVABILITY_SUPPORT_PATHS.map(
     (relativePath) => `[ -f "$support_dir/${relativePath}" ]`,
   ).join(' && ');
   return [
-    `support_dir="$(${nodeSupportSelectionCommand(repo, runtimeDir)})" || support_dir=''`,
-    `installer="${fallbackInstaller}"`,
+    `support_dir="$(${nodeSupportSelectionCommand(repo, runtimeDir, farmPathsForSlot(vars).code.support)})" || support_dir=''`,
+    `installer=${fallbackInstaller}`,
     `if [ -n "$support_dir" ] && ${supportReady}; then installer="$support_dir/${INSTALLER_RELATIVE_PATH}"; fi`,
     `node "$installer" ${parts.join(' ')}`,
   ].join('; ');
@@ -145,7 +156,7 @@ export function buildPiAuthCheckCommand(
   );
   // Preserve the literal remote-root prefix consumed by execOnSlot's immutable
   // support-bundle resolver. Expanding it to HOME here would bypass that owner.
-  const selectedHelper = helper.startsWith(`${REMOTE_AGENT_DIR}/`)
+  const selectedHelper = helper.startsWith(`${legacyRemoteFarmPaths().code.node}/`)
     ? helper
     : shellExpressionForRemotePath(helper);
   return `cd ${shellExpressionForRemotePath(vars.remoteRepo)} && node ${selectedHelper} ${shellExpressionForRemotePath(binary)} ${shellQuote(model)}`;

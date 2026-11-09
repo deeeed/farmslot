@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // llm/config.ts — Gateway-level LLM provider configuration
 // Persisted to <FARMSLOT_HOME>/llm-config.json (default ~/.farmslot).
 // Cascade: config file → env vars → hardcoded defaults.
@@ -6,8 +7,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import type { ThinkingLevel } from '@earendil-works/pi-ai';
-
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { publishConfigurationResources } from '../resources/configuration-changes.js';
 
@@ -25,7 +24,7 @@ export interface LLMConfig {
 // Resolve at call time, not import time: the gateway loads its .env (which may set
 // FARMSLOT_HOME) AFTER this module is imported, so a captured const would miss it.
 function configPath(): string {
-  return path.join(farmslotHome(), 'llm-config.json');
+  return path.join(currentFarmPaths('node').config, 'llm-config.json');
 }
 
 const DEFAULTS: LLMConfig = {

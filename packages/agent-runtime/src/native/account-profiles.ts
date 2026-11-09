@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -5,7 +6,6 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
 import type { NativeProfileAddParams, NativeProfileInfo } from '@farmslot/protocol';
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { nativeRunnerDefinitions } from './registry.js';
 import { durableWrite } from './storage.js';
@@ -33,7 +33,7 @@ function canonicalDirectory(directory: string): string {
   }
   return join(realpathSync(existing), ...suffix);
 }
-export function providerAccountsConfigPath(home = farmslotHome()): string {
+export function providerAccountsConfigPath(home = currentFarmPaths('node').config): string {
   return join(home, 'provider-accounts.json');
 }
 function readConfig(home: string): AccountConfig {
@@ -73,10 +73,12 @@ function writeConfig(home: string, config: AccountConfig): void {
   durableWrite(providerAccountsConfigPath(home), config);
 }
 
-export function listNativeProfiles(home = farmslotHome()): NativeProfileInfo[] {
+export function listNativeProfiles(home = currentFarmPaths('node').config): NativeProfileInfo[] {
   return Object.values(readConfig(home).nativeProfiles ?? {});
 }
-export async function listNativeProfilesAsync(home = farmslotHome()): Promise<NativeProfileInfo[]> {
+export async function listNativeProfilesAsync(
+  home = currentFarmPaths('node').config,
+): Promise<NativeProfileInfo[]> {
   let contents: string;
   try {
     contents = await readFile(providerAccountsConfigPath(home), 'utf8');
@@ -89,7 +91,7 @@ export async function listNativeProfilesAsync(home = farmslotHome()): Promise<Na
 }
 export function findNativeProfile(
   id: string,
-  home = farmslotHome(),
+  home = currentFarmPaths('node').config,
 ): NativeProfileInfo | undefined {
   profileId(id);
   return listNativeProfiles(home).find((profile) => profile.id === id);
@@ -97,7 +99,7 @@ export function findNativeProfile(
 export function requireNativeProfile(
   id: string,
   runner?: string,
-  home = farmslotHome(),
+  home = currentFarmPaths('node').config,
 ): NativeProfileInfo {
   const profile = findNativeProfile(id, home);
   if (!profile || profile.state !== 'active')
@@ -110,7 +112,7 @@ export function requireNativeProfile(
 }
 export function assertNativeProfileCurrent(
   profile: NativeProfileInfo,
-  home = farmslotHome(),
+  home = currentFarmPaths('node').config,
 ): void {
   const current = requireNativeProfile(profile.id, profile.runner, home);
   if (
@@ -129,7 +131,7 @@ export function nativeProfileEnvironment(
   for (const key of definition.account.unset) delete env[key];
   return {
     ...env,
-    FARMSLOT_HOME: base.FARMSLOT_HOME ?? farmslotHome(),
+    FARMSLOT_HOME: base.FARMSLOT_HOME ?? currentFarmPaths('node').home,
     ...definition.account.environment(profile.directory, base),
   };
 }
@@ -156,14 +158,14 @@ async function mutate<T>(home: string, operation: () => Promise<T> | T): Promise
 export function inspectNativeProfile<T>(
   id: string,
   inspect: (profile: NativeProfileInfo) => Promise<T>,
-  home = farmslotHome(),
+  home = currentFarmPaths('node').config,
 ): Promise<T> {
   return mutate(home, () => inspect(requireNativeProfile(id, undefined, home)));
 }
 
 export function addNativeProfile(
   params: NativeProfileAddParams,
-  home = farmslotHome(),
+  home = currentFarmPaths('node').config,
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<NativeProfileInfo> {
   profileId(params.profileId);
@@ -221,7 +223,7 @@ export function removeNativeProfile(
   id: string,
   accountContextId: string,
   stopSessions: (profile: NativeProfileInfo) => Promise<void>,
-  home = farmslotHome(),
+  home = currentFarmPaths('node').config,
 ): Promise<void> {
   profileId(id);
   return mutate(home, async () => {

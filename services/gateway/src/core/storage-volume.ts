@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { lstatSync, readlinkSync, realpathSync, statSync, unwatchFile, watchFile } from 'node:fs';
 import path from 'node:path';
 
@@ -104,9 +105,9 @@ export function gatewayStorageRoots(): string[] {
   const home = farmslotHome();
   return [
     home,
-    runBundleRetentionSettings(home).storeRoot ?? path.join(home, 'run-bundles'),
+    runBundleRetentionSettings(home).storeRoot ?? currentFarmPaths('gateway').data.runBundles,
     resolveRunsDir(farmslotRoot),
-    process.env.FARMSLOT_RUN_ARCHIVE_ROOT ?? path.join(home, 'run-archive'),
+    currentFarmPaths('gateway').data.runArchive,
   ];
 }
 

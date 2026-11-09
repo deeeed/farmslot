@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -17,7 +18,6 @@ import {
   type SourcesPinResult,
   type SourcesUnpinParams,
 } from '@farmslot/protocol';
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import {
   configureProjectSources,
   currentProjectSources,
@@ -112,25 +112,28 @@ class ObservedSourceMaterializer extends SourceMaterializer {
 
 /** The private farm declaration file is outside every pack it bootstraps. */
 export async function initializeSources(): Promise<void> {
-  const home = farmslotHome();
-  const configFile = process.env.FARMSLOT_SOURCES_CONFIG ?? path.join(home, 'sources.json');
+  const paths = currentFarmPaths('gateway');
+  const configFile = paths.configFiles.sources;
   let configuration: SourceConfiguration;
   try {
     configuration = JSON.parse(await readFile(configFile, 'utf8'));
   } catch (error) {
     // Before staged cut-over, legacy runs remain on their original inputs. Explicit opt-in
     // or prior authority state can never fall back when the declaration file disappears.
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || process.env.FARMSLOT_SOURCES_CONFIG)
+    if (
+      (error as NodeJS.ErrnoException).code !== 'ENOENT' ||
+      (paths.envOverrides.includes('FARMSLOT_SOURCES_CONFIG') && !!configFile)
+    )
       throw error;
     try {
-      await readFile(path.join(home, 'sources', 'authority.json'));
+      await readFile(path.join(paths.state.sources, 'authority.json'));
     } catch (stateError) {
       if ((stateError as NodeJS.ErrnoException).code !== 'ENOENT') throw stateError;
       return;
     }
     throw new Error('Source declarations disappeared after cut-over');
   }
-  authority = await SourceAuthority.open(configuration, path.join(home, 'sources'));
+  authority = await SourceAuthority.open(configuration, paths.state.sources);
   const opened = authority;
   announceSourceChanges();
   // Restored runs need a baseline too, or their first update after a restart is never compared.
@@ -140,7 +143,7 @@ export async function initializeSources(): Promise<void> {
   await authority.recoverRunCreations((runId) =>
     Boolean(getRun(runId)?.sourcePlan || getRun(runId)?.sourceProvenance),
   );
-  gateway = new ObservedSourceMaterializer('gateway', path.join(home, 'sources', 'gateway'));
+  gateway = new ObservedSourceMaterializer('gateway', path.join(paths.state.sources, 'gateway'));
   // Configure fail-closed reads immediately; each closure becomes available as
   // its own sources finish, without waiting for an unrelated repository.
   configureProjectSources(projectContext, () => Object.keys(configuration.packs));

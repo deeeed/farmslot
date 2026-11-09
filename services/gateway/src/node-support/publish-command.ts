@@ -1,3 +1,4 @@
+import { legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import path from 'node:path';
 
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
@@ -7,6 +8,7 @@ export interface NodeSupportPublishCommandParams {
   manifestPath: string;
   supportDir: string;
   supportHash: string;
+  supportRoot?: string;
 }
 
 export interface NodeSupportVerifyFile {
@@ -27,13 +29,14 @@ export function buildNodeSupportPublishCommand({
   manifestPath,
   supportDir,
   supportHash,
+  supportRoot = legacyRemoteFarmPaths().code.support,
 }: NodeSupportPublishCommandParams): string {
   return [
-    `mkdir -p ${shellExpressionForRemotePath('~/farmslot-node/support/.locks')}`,
+    `mkdir -p ${shellExpressionForRemotePath(path.posix.join(supportRoot, '.locks'))}`,
     `mkdir -p ${shellExpressionForRemotePath(path.posix.dirname(supportDir))}`,
     [
       `lock=${shellExpressionForRemotePath(
-        path.posix.join('~/farmslot-node/support/.locks', `${supportHash}.lock`),
+        path.posix.join(path.posix.join(supportRoot, '.locks'), `${supportHash}.lock`),
       )};`,
       'waited=0;',
       `while ! mkdir "$lock" 2>/dev/null; do`,

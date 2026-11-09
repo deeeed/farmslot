@@ -1,8 +1,7 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { createHash } from 'node:crypto';
 import { mkdir, readdir, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
-
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
 import { resourceRevisions } from '../resources/revisions.js';
@@ -18,7 +17,7 @@ let tail: Promise<unknown> = Promise.resolve();
 // Generation zero keeps its original directory; a reused id gets a separate one.
 function directory(owner: string, kind: 'reports' | 'evaluations' | 'inputs') {
   return path.join(
-    farmslotHome(),
+    currentFarmPaths('gateway').state.assessmentArtifacts,
     `assessment-${kind}`,
     createHash('sha256').update(principalIdentityKey(owner)).digest('hex'),
   );

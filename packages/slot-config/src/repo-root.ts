@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // repo-root.ts — locate the farmslot checkout from any consumer (gateway,
 // CLI verb, test) without configuration. FARMSLOT_ROOT overrides discovery.
 
@@ -13,18 +14,21 @@ function hasFarmslotRootMarkers(candidate: string): boolean {
 }
 
 export function resolveFarmslotRoot(startDir = import.meta.dirname): string {
+  const paths = currentFarmPaths('node');
+  if (paths.layout === 2) return paths.code.checkout;
   const envRoot = process.env.FARMSLOT_ROOT;
   if (envRoot) {
     const resolvedEnvRoot = path.resolve(envRoot);
     if (!hasFarmslotRootMarkers(resolvedEnvRoot)) {
       throw new Error(`FARMSLOT_ROOT does not point to a Farmslot repo root: ${resolvedEnvRoot}`);
     }
-    return resolvedEnvRoot;
+    return currentFarmPaths('node', process.env, resolvedEnvRoot).code.checkout;
   }
 
   let current = path.resolve(startDir);
   while (true) {
-    if (hasFarmslotRootMarkers(current)) return current;
+    if (hasFarmslotRootMarkers(current))
+      return currentFarmPaths('node', process.env, current).code.checkout;
     const parent = path.dirname(current);
     if (parent === current) break;
     current = parent;

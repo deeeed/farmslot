@@ -1,3 +1,5 @@
+import type { NodeFarmPaths } from '@farmslot/protocol/node/farm-paths';
+import { setNodeFarmPathsLookup } from '@farmslot/slot-config';
 import type { WebSocket } from 'ws';
 
 import {
@@ -19,6 +21,7 @@ import { gatewayPeerVersions } from './peer-versions.js';
 
 export interface ConnectedNode extends PeerVersionDeclaration {
   machine: string;
+  farmPaths?: NodeFarmPaths;
   pid: number;
   nodeLink?: NodeLinkCapabilities;
   nodePrincipal?: NodeLinkPrincipal;
@@ -41,6 +44,7 @@ export interface ConnectedNode extends PeerVersionDeclaration {
 }
 
 const nodes = new Map<string, ConnectedNode>();
+setNodeFarmPathsLookup((machine) => nodes.get(machine)?.farmPaths);
 const nodeConnectListeners = new Set<() => void>();
 
 export function onNodeConnected(listener: () => void): () => void {
@@ -83,6 +87,7 @@ export function registerNode(
     nodeLink?: NodeLinkCapabilities;
     nodePrincipal?: NodeLinkPrincipal;
     taskRuntime?: 1;
+    farmPaths?: NodeFarmPaths;
   },
 ): void {
   const declaration = { ...versions?.node, protocolVersion };
@@ -100,6 +105,7 @@ export function registerNode(
     ...(versions?.nodeLink ? { nodeLink: versions.nodeLink } : {}),
     ...(versions?.nodePrincipal ? { nodePrincipal: versions.nodePrincipal } : {}),
     ...(versions?.taskRuntime === 1 ? { taskRuntime: 1 } : {}),
+    ...(versions?.farmPaths ? { farmPaths: versions.farmPaths } : {}),
     connectedAt: new Date().toISOString(),
     ...declaration,
     versionMatch: compatibility.compatible,
@@ -145,6 +151,7 @@ export function getNode(machine: string): ConnectedNode | undefined {
 export function getAllNodes(): NodeInfo[] {
   return Array.from(nodes.values()).map((node) => ({
     machine: node.machine,
+    ...(node.farmPaths ? { farmPaths: node.farmPaths } : {}),
     pid: node.pid,
     ...(node.nodeLink ? { nodeLink: node.nodeLink } : {}),
     connectedAt: node.connectedAt,

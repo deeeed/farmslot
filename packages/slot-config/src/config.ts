@@ -1,3 +1,4 @@
+import { currentFarmPaths, type NodeFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // core/config.ts — Slot/pool/project config loading
 // TypeScript port of lib/slot-common.sh: resolve_slot, load_slot_vars, load_project_config, get_project_field
 import { readdir, readFile, realpath } from 'node:fs/promises';
@@ -44,7 +45,6 @@ import {
   listProjectTaskRoots,
   orchestratorTaskRoot,
   type ProjectTaskRoot,
-  resolveProjectsDir,
 } from '@farmslot/protocol/node/farm-layout';
 import {
   findSlotByRepo,
@@ -68,15 +68,15 @@ import {
 } from './source-binding.js';
 import { readSourceRuntimeSettings, usesRuntimeSettings } from './source-runtime-settings.js';
 
-// FARMSLOT_POOL_DIR / FARMSLOT_PROJECTS_DIR are the historical script-level
-// overrides (session-usage.sh tests, fixture harnesses); default to the
-// checkout layout. Captured at module load — long-lived consumers (gateway)
-// read them once at boot, per-invocation CLI verbs read them fresh.
-const poolDir = process.env.FARMSLOT_POOL_DIR
-  ? path.resolve(process.env.FARMSLOT_POOL_DIR)
-  : path.join(farmslotRoot, 'pool');
-const projectsDir = resolveProjectsDir(farmslotRoot);
-const farmLayout: FarmLayout = { farmslotRoot, projectsDir };
+function currentPoolDir(): string {
+  return currentFarmPaths('gateway').pool;
+}
+function currentProjectsDir(): string {
+  return currentFarmPaths('gateway').projects;
+}
+function currentFarmLayout(): FarmLayout {
+  return { farmslotRoot, projectsDir: currentProjectsDir() };
+}
 const PROJECT_CONFIG_NOT_FOUND_PREFIX = 'Project config not found:';
 
 export function isMissingProjectConfigError(err: unknown): boolean {
@@ -189,6 +189,14 @@ export interface RawPoolSlot {
 }
 
 // ─── Resolved slot config (mirrors bash load_slot_vars globals) ───
+
+let nodeFarmPathsLookup: (machine: string) => NodeFarmPaths | undefined = () => undefined;
+export function setNodeFarmPathsLookup(lookup: typeof nodeFarmPathsLookup): void {
+  nodeFarmPathsLookup = lookup;
+}
+export function reportedFarmPaths(machine: string): NodeFarmPaths | undefined {
+  return nodeFarmPathsLookup(machine);
+}
 
 export interface SlotVars {
   slotId: string;
@@ -561,12 +569,16 @@ const MAX_AVAILABLE_SLOT_IDS = 20;
 export async function resolveSlot(slotId: string): Promise<ResolvedSlot> {
   let pools: ReturnType<typeof readPoolFiles<RawPoolJson>>;
   try {
-    pools = readPoolFiles<RawPoolJson>(poolDir);
+    pools = readPoolFiles<RawPoolJson>(currentPoolDir());
   } catch {
-    throw new SlotConfigError('POOL_DIR_NOT_FOUND', `Pool directory not found: ${poolDir}`, {
-      userAction:
-        'No pools are configured. Run `farmslot project add <pack>` to register one, then `farmslot fleet refresh`. Diagnose with `farmslot doctor`.',
-    });
+    throw new SlotConfigError(
+      'POOL_DIR_NOT_FOUND',
+      `Pool directory not found: ${currentPoolDir()}`,
+      {
+        userAction:
+          'No pools are configured. Run `farmslot project add <pack>` to register one, then `farmslot fleet refresh`. Diagnose with `farmslot doctor`.',
+      },
+    );
   }
 
   const availableSlotIds: string[] = [];
@@ -585,7 +597,7 @@ export async function resolveSlot(slotId: string): Promise<ResolvedSlot> {
 
   throw new SlotConfigError(
     'SLOT_NOT_FOUND',
-    `Slot '${slotId}' not found in any pool JSON under ${poolDir}/`,
+    `Slot '${slotId}' not found in any pool JSON under ${currentPoolDir()}/`,
     {
       userAction:
         availableSlotIds.length > 0
@@ -615,7 +627,7 @@ export async function loadMachinePool(machine: string): Promise<RawPoolJson> {
 
 /** Source file for the machine configuration editor, using the same authority as launch settings. */
 export async function loadMachinePoolFile(machine: string): Promise<string> {
-  return path.join(poolDir, (await loadMachinePoolEntry(machine)).file);
+  return path.join(currentPoolDir(), (await loadMachinePoolEntry(machine)).file);
 }
 
 async function loadMachinePoolEntry(machine: string): Promise<PoolFileEntry<RawPoolJson>> {
@@ -636,18 +648,22 @@ async function loadMachinePoolEntry(machine: string): Promise<PoolFileEntry<RawP
 function missingMachinePool(machine: string): SlotConfigError {
   return new SlotConfigError(
     'SLOT_NOT_FOUND',
-    `No pool JSON declares machine '${machine}' under ${poolDir}/`,
+    `No pool JSON declares machine '${machine}' under ${currentPoolDir()}/`,
     { userAction: 'Run `farmslot fleet refresh` and diagnose with `farmslot doctor`.' },
   );
 }
 
 async function readMachinePoolNames(): Promise<string[]> {
   try {
-    return await readdir(poolDir);
+    return await readdir(currentPoolDir());
   } catch {
-    throw new SlotConfigError('POOL_DIR_NOT_FOUND', `Pool directory not found: ${poolDir}`, {
-      userAction: 'No pools are configured. Diagnose with `farmslot doctor`.',
-    });
+    throw new SlotConfigError(
+      'POOL_DIR_NOT_FOUND',
+      `Pool directory not found: ${currentPoolDir()}`,
+      {
+        userAction: 'No pools are configured. Diagnose with `farmslot doctor`.',
+      },
+    );
   }
 }
 
@@ -657,7 +673,7 @@ async function readMachinePoolFiles(files?: string[]): Promise<PoolFileEntry<Raw
   for (const file of names) {
     if (isIgnoredPoolFile(file)) continue;
     try {
-      const content = await readFile(path.join(poolDir, file), 'utf-8');
+      const content = await readFile(path.join(currentPoolDir(), file), 'utf-8');
       const pool: RawPoolJson = JSON.parse(content);
       if (!pool || typeof pool !== 'object' || Array.isArray(pool)) continue;
       entries.push({ file, pool });
@@ -689,19 +705,23 @@ export async function resolveSlotByRepo(targetDir: string): Promise<ResolvedSlot
   }
   let found: ResolvedSlot | null;
   try {
-    found = await findSlotByRepo<RawPoolJson>(poolDir, resolvedTarget);
+    found = await findSlotByRepo<RawPoolJson>(currentPoolDir(), resolvedTarget);
   } catch (err) {
     // The pool directory itself: a missing one is a configuration error.
     if ((err as NodeJS.ErrnoException).syscall !== 'scandir') throw err;
-    throw new SlotConfigError('POOL_DIR_NOT_FOUND', `Pool directory not found: ${poolDir}`, {
-      userAction:
-        'No pools are configured. Run `farmslot project add <pack>` to register one, then `farmslot fleet refresh`. Diagnose with `farmslot doctor`.',
-    });
+    throw new SlotConfigError(
+      'POOL_DIR_NOT_FOUND',
+      `Pool directory not found: ${currentPoolDir()}`,
+      {
+        userAction:
+          'No pools are configured. Run `farmslot project add <pack>` to register one, then `farmslot fleet refresh`. Diagnose with `farmslot doctor`.',
+      },
+    );
   }
   if (found) return found;
   throw new SlotConfigError(
     'SLOT_NOT_FOUND',
-    `No slot found with repo '${resolvedTarget}' in ${poolDir}/`,
+    `No slot found with repo '${resolvedTarget}' in ${currentPoolDir()}/`,
     {
       userAction:
         'Run from inside a registered slot checkout, or pass the slot id explicitly. List slots with `farmslot fleet status`.',
@@ -866,7 +886,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   const sourceContext = await projectSourceContext(projectName);
   const packRoot = sourceContext
     ? resolveSourceBinding(sourceContext.pack, sourceContext.materialization).root
-    : path.join(projectsDir, projectName);
+    : path.join(currentProjectsDir(), projectName);
   const cacheKey = `${projectName}\0${sourceContext?.materialization.lock.digest ?? 'legacy'}`;
   const cached = projectVarsCache.get(cacheKey);
   if (cached && Date.now() - cached.at < PROJECT_VARS_CACHE_TTL_MS)
@@ -2467,12 +2487,12 @@ export function getOrchestratorTaskRoot(
   projectName: string,
   projectJson?: RawProjectJson | null,
 ): string {
-  return orchestratorTaskRoot(farmLayout, projectName, isMockModeProject(projectJson));
+  return orchestratorTaskRoot(currentFarmLayout(), projectName, isMockModeProject(projectJson));
 }
 
 /** The non-mock task root of every project dir (see listProjectTaskRoots), for gateway scans. */
 export function projectTaskRoots(): Promise<ProjectTaskRoot[]> {
-  return listProjectTaskRoots(farmLayout);
+  return listProjectTaskRoots(currentFarmLayout());
 }
 
 export function resolveTaskRelDir(
@@ -2541,4 +2561,7 @@ export async function resolveTaskPaths(slotId: string, taskFile: string): Promis
 
 // ─── Re-export paths for external use ───
 
-export { farmslotRoot, poolDir, projectsDir };
+export { farmslotRoot, currentPoolDir as poolDirectory, currentProjectsDir as projectsDirectory };
+// Compatibility exports for existing consumers; runtime selectors above resolve at call time.
+export const poolDir = currentPoolDir();
+export const projectsDir = currentProjectsDir();

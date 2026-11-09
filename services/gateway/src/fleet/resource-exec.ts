@@ -1,3 +1,5 @@
+import { legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
+import { commandIncludesRemotePath } from '../core/remote-paths.js';
 /**
  * One command, on the machine a slot lives on.
  *
@@ -37,7 +39,12 @@ export async function execResourceCommand(
     const node = getNode(machine);
     if (node) {
       let remoteCmd = cmd;
-      if (cmd.includes('~/farmslot-node')) {
+      if (
+        commandIncludesRemotePath(
+          cmd,
+          node.farmPaths?.code.node ?? legacyRemoteFarmPaths().code.node,
+        )
+      ) {
         // Resource hooks call farm scripts too; run them from the bundle that
         // matches this config, not the node's last deploy (ledger F15). A
         // delivery still pending or failed means the command could not run:

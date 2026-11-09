@@ -1,3 +1,5 @@
+import { poolDirectory, projectsDirectory } from '@farmslot/slot-config';
+import { farmPathsForSlot } from '../fleet/farm-paths.js';
 // node-support/ensure.ts — keep a slot's node support bundle current with the
 // gateway's own tree.
 //
@@ -25,8 +27,6 @@ import {
   farmslotRoot,
   isLocal,
   loadProjectVars,
-  poolDir,
-  projectsDir,
   type ProjectVars,
   type RawProjectJson,
   slotFileExists,
@@ -38,7 +38,6 @@ import {
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { usesNodeLink } from '../fleet/node-link-policy.js';
 import {
-  NODE_SUPPORT_ROOT,
   nodeSupportHashPath,
   nodeSupportSelectionCommand,
   RUNNER_OBSERVABILITY_SUPPORT_PATHS,
@@ -154,9 +153,9 @@ export async function collectNodeSupportBundle(projectName: string, supportPaths
     projectName,
     ...supportPaths.filter((p) => p.startsWith('projects/')).map((p) => p.split('/')[1]),
   ]);
-  const machines = packMachineNames(poolDir);
+  const machines = packMachineNames(poolDirectory());
   const portabilityErrors = [...projects].flatMap((name) =>
-    validatePackPortability(path.join(projectsDir, name), `projects/${name}`, machines),
+    validatePackPortability(path.join(projectsDirectory(), name), `projects/${name}`, machines),
   );
   if (portabilityErrors.length)
     throw new Error(`Project pack is not portable:\n${portabilityErrors.join('\n')}`);
@@ -200,8 +199,8 @@ export async function collectNodeSupportBundle(projectName: string, supportPaths
 }
 
 /** Where a bundle lives on a node. */
-function nodeSupportDir(hash: string): string {
-  return path.posix.join(NODE_SUPPORT_ROOT, hash);
+function nodeSupportDir(vars: SlotVars, hash: string): string {
+  return path.posix.join(farmPathsForSlot(vars).code.support, hash);
 }
 
 /**
@@ -234,7 +233,7 @@ export async function ensureNodeSupportBundle(
       supportDir:
         isLocal(vars.host, vars.machine) && !usesNodeLink(vars.machine)
           ? farmslotRoot
-          : '~/farmslot-node',
+          : farmPathsForSlot(vars).code.node,
       hash: null,
       published: false,
       paths: ['scripts'],
@@ -259,7 +258,7 @@ export async function ensureNodeSupportBundle(
   // suppresses shell expansion, and the gateway's home belongs to another host.
   const resolved = await io.exec(
     vars,
-    `printf '%s\\n' ${shellExpressionForRemotePath(nodeSupportDir(manifest.hash))}`,
+    `printf '%s\\n' ${shellExpressionForRemotePath(nodeSupportDir(vars, manifest.hash))}`,
   );
   const supportDir = resolved.stdout.trim();
   if (resolved.exitCode !== 0 || !path.posix.isAbsolute(supportDir)) {
@@ -383,9 +382,13 @@ export async function ensureNodeSupportBundle(
   const incomingResult = await io.exec(
     vars,
     [
-      `mkdir -p ${shellExpressionForRemotePath(`${NODE_SUPPORT_ROOT}/.incoming`)}`,
+      `mkdir -p ${shellExpressionForRemotePath(`${farmPathsForSlot(vars).code.support}/.incoming`)}`,
       `mktemp -d ${shellExpressionForRemotePath(
-        path.posix.join(NODE_SUPPORT_ROOT, '.incoming', `${manifest.hash}.XXXXXX`),
+        path.posix.join(
+          farmPathsForSlot(vars).code.support,
+          '.incoming',
+          `${manifest.hash}.XXXXXX`,
+        ),
       )}`,
     ].join(' && '),
   );
@@ -421,6 +424,7 @@ export async function ensureNodeSupportBundle(
     throw new Error(`Node support incoming verification failed for ${manifest.hash}`);
   }
   const publishCommand = buildNodeSupportPublishCommand({
+    supportRoot: farmPathsForSlot(vars).code.support,
     incomingDir,
     manifestPath,
     supportDir,
@@ -460,10 +464,11 @@ export async function selectedNodeSupportDir(
   timeout?: number,
 ): Promise<string | undefined> {
   if (isLocal(vars.host, vars.machine) && !usesNodeLink(vars.machine)) return farmslotRoot;
-  if (currentProjectSources() ?? projectVars?.sourceContext) return '~/farmslot-node';
+  if (currentProjectSources() ?? projectVars?.sourceContext)
+    return farmPathsForSlot(vars).code.node;
   const result = await io.exec(
     vars,
-    nodeSupportSelectionCommand(vars.remoteRepo, runtimeDir),
+    nodeSupportSelectionCommand(vars.remoteRepo, runtimeDir, farmPathsForSlot(vars).code.support),
     timeout ? { timeout } : undefined,
   );
   const directory = result.stdout.trim();

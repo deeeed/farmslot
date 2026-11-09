@@ -1,3 +1,4 @@
+import { type FarmPaths, resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants, createWriteStream, existsSync, readFileSync, type Stats } from 'node:fs';
 import {
@@ -84,7 +85,10 @@ function absoluteStoreRoot(root: string): string {
 function retentionDocument(home: string): Record<string, unknown> {
   let raw: string;
   try {
-    raw = readFileSync(path.join(home, 'run-bundle-retention.json'), 'utf8');
+    raw = readFileSync(
+      path.join(resolveFarmPaths({ home, role: 'node' }).config, 'run-bundle-retention.json'),
+      'utf8',
+    );
   } catch (error) {
     if (hasCode(error, 'ENOENT')) return { runBundleRetention: {} };
     throw error;
@@ -283,6 +287,7 @@ async function atomicJson(file: string, value: unknown): Promise<void> {
 
 /** The Run store, rather than the caller's auth home, owns this durable pairing. */
 export async function openRunBundleStore(input: {
+  paths?: FarmPaths;
   runsDir: string;
   home: string;
   storeRoot?: string;
@@ -301,7 +306,9 @@ export async function openRunBundleStore(input: {
     if (!input.create)
       throw new Error('Run bundle store pairing is missing; start the owning gateway.');
     if (configured) await assertStoreRootParent(configured);
-    const root = configured ?? path.resolve(input.home, 'run-bundles');
+    const root =
+      configured ??
+      (input.paths ?? resolveFarmPaths({ role: 'node', home: input.home })).data.runBundles;
     await mkdir(root, { recursive: true });
     const binding: RunBundleStore = {
       version: 1,

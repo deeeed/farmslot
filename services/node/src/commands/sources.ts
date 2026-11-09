@@ -1,14 +1,14 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import path from 'node:path';
 
 import type { SourceLock, SourceMaterialization, SourceNodeStatus } from '@farmslot/protocol';
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import { SourceMaterializer } from '@farmslot/slot-config/sources';
 
 /** No ref resolver here: nodes receive exact authoritative locks only. */
 export class NodeSources {
   private materializer: SourceMaterializer;
 
-  constructor(nodeId: string, root = path.join(farmslotHome(), 'sources', 'node')) {
+  constructor(nodeId: string, root = path.join(currentFarmPaths('node').state.sources, 'node')) {
     this.materializer = new SourceMaterializer(nodeId, root);
   }
 

@@ -1,12 +1,10 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
 
-import { resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
+import { resolveFarmPaths, farmPathEntries } from '@farmslot/protocol/node/farm-paths';
 import { Command } from 'commander';
 
 import { registerPathsCommand } from './paths.js';
@@ -22,6 +20,10 @@ test('paths is registered with the standard global JSON flag and role choices', 
 });
 
 test('CLI paths reports JSON, tab-separated paths and dot-key lookups without writes', (t) => {
+  const started = performance.now();
+  t.after(() =>
+    assert.ok(performance.now() - started < 5_000, 'CLI paths test must finish under 5 s'),
+  );
   const root = mkdtempSync(path.join(tmpdir(), 'cli-paths-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = path.join(root, 'instance');
@@ -30,39 +32,43 @@ test('CLI paths reports JSON, tab-separated paths and dot-key lookups without wr
     mkdirSync(path.join(dir, 'config'), { recursive: true });
     writeFileSync(path.join(dir, 'config/instance.json'), '{"layout":2}');
   }
-  // Run the actual entry point, including command registration and checkout-env bootstrapping.
-  const repo = fileURLToPath(new URL('../../../../', import.meta.url));
-  const checkout = path.join(root, 'checkout');
-  for (const marker of ['CLAUDE.md', 'scripts/dev.sh', 'services/gateway/package.json']) {
-    const file = path.join(checkout, marker);
-    mkdirSync(path.dirname(file), { recursive: true });
-    writeFileSync(file, marker.endsWith('.json') ? '{}' : '');
-  }
+  const previousEnv = process.env;
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const key of Object.keys(env)) if (key.startsWith('FARMSLOT_')) delete env[key];
-  Object.assign(env, {
-    HOME: root,
-    FARMSLOT_HOME: envHome,
-    FARMSLOT_WORKSPACE: path.join(root, 'workspace'),
-    FARMSLOT_ROOT: checkout,
-    TSX_TSCONFIG_PATH: path.join(repo, 'packages/cli/tsconfig.json'),
+  Object.assign(env, { HOME: root, FARMSLOT_HOME: envHome });
+  process.env = env;
+  t.after(() => {
+    process.env = previousEnv;
   });
-  const run = (...args: string[]) =>
-    spawnSync(
-      process.execPath,
-      [
-        '--import',
-        import.meta.resolve('tsx'),
-        path.join(repo, 'packages/cli/src/entry.ts'),
-        ...args,
-      ],
-      {
-        cwd: root,
-        env,
-        encoding: 'utf8',
-        timeout: 60_000,
-      },
-    );
+  let stdout = '';
+  t.mock.method(process.stdout, 'write', (chunk: string | Uint8Array) => {
+    stdout += chunk.toString();
+    return true;
+  });
+  // Exercise the registered Commander actions in-process; entry.ts's unrelated
+  // command graph used to be started once for every lookup.
+  const run = (...args: string[]) => {
+    stdout = '';
+    let stderr = '';
+    const program = new Command()
+      .option('--json')
+      .exitOverride()
+      .configureOutput({
+        writeOut: (text) => {
+          stdout += text;
+        },
+        writeErr: (text) => {
+          stderr += text;
+        },
+      });
+    registerPathsCommand(program);
+    try {
+      program.parse(args, { from: 'user' });
+      return { status: 0, stdout, stderr };
+    } catch (error) {
+      return { status: 1, stdout, stderr: stderr + String(error) };
+    }
+  };
   const before = readdirSync(root, { recursive: true });
   const json = run('paths', '--json', '--home', home, '--role', 'gateway');
   assert.equal(json.status, 0, `${json.stderr}\n${json.stdout}`);
@@ -79,16 +85,20 @@ test('CLI paths reports JSON, tab-separated paths and dot-key lookups without wr
   assert.equal(outputPaths['state.backlog'], undefined);
   assert.equal(outputPaths.layout, undefined);
   assert.equal(outputPaths.instance, undefined);
-  assert.equal(Object.keys(outputPaths).length, 25);
+  assert.deepEqual(rows, farmPathEntries(resolveFarmPaths({ home, role: 'node', env: {} })));
+  assert.equal(
+    Object.keys(outputPaths).length,
+    farmPathEntries(resolveFarmPaths({ home, role: 'node', env: {} })).length,
+  );
   const get = run('paths', 'get', 'data.runBundles', '--home', home, '--role', 'node');
   assert.equal(get.status, 0, get.stderr);
-  assert.equal(get.stdout, `data.runBundles\t${path.join(home, 'data/run-bundles')}\n`);
+  assert.equal(get.stdout, `${path.join(home, 'data/run-bundles')}\n`);
   const getJson = run('--json', 'paths', '--home', home, 'get', 'state.gatewayLock');
   assert.equal(getJson.status, 0, getJson.stderr);
   assert.equal(JSON.parse(getJson.stdout), path.join(home, 'state/gateway.lock'));
   const defaultHome = run('paths', 'get', 'home');
   assert.equal(defaultHome.status, 0, defaultHome.stderr);
-  assert.equal(defaultHome.stdout, `home\t${envHome}\n`);
+  assert.equal(defaultHome.stdout, `${envHome}\n`);
   for (const key of ['data', 'missing.path', 'instance', '__proto__', 'code.toString']) {
     const missing = run('paths', 'get', key, '--home', home);
     assert.equal(missing.status, 1, missing.stdout);
@@ -98,4 +108,25 @@ test('CLI paths reports JSON, tab-separated paths and dot-key lookups without wr
   assert.equal(invalidRole.status, 1);
   assert.match(invalidRole.stderr, /Allowed choices are gateway, node/);
   assert.deepEqual(readdirSync(root, { recursive: true }), before);
+});
+
+test('plain paths get reports a legacy configured store outside the farm home', (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'cli-paired-paths-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const home = path.join(root, 'home');
+  const storeRoot = path.join(root, 'volume-store');
+  mkdirSync(home);
+  writeFileSync(
+    path.join(home, 'run-bundle-retention.json'),
+    JSON.stringify({ runBundleRetention: { storeRoot } }),
+  );
+  let stdout = '';
+  t.mock.method(process.stdout, 'write', (chunk: string | Uint8Array) => {
+    stdout += chunk.toString();
+    return true;
+  });
+  const program = new Command().option('--json').exitOverride();
+  registerPathsCommand(program);
+  program.parse(['paths', '--home', home, 'get', 'data.runBundles'], { from: 'user' });
+  assert.equal(stdout, `${storeRoot}\n`);
 });

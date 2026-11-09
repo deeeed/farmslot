@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 /**
  * Persisted provider usage exhaustion ledger — survives gateway restarts.
  * Session tier (default 5h) escalates to extended (default 7d) on immediate re-exhaustion.
@@ -5,8 +6,6 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import {
   coolingDurations,
@@ -33,11 +32,11 @@ export interface ExhaustionLedgerFile {
 
 export type Clock = () => number;
 
-export function exhaustionLedgerPath(home = farmslotHome()): string {
+export function exhaustionLedgerPath(home = currentFarmPaths('node').config): string {
   return path.join(home, 'provider-usage-exhaustion.json');
 }
 
-export function loadExhaustionLedger(home = farmslotHome()): ExhaustionLedgerFile {
+export function loadExhaustionLedger(home = currentFarmPaths('node').config): ExhaustionLedgerFile {
   const filePath = exhaustionLedgerPath(home);
   if (!existsSync(filePath)) return { version: 1, entries: {} };
   try {
@@ -54,7 +53,10 @@ export function loadExhaustionLedger(home = farmslotHome()): ExhaustionLedgerFil
   }
 }
 
-export function saveExhaustionLedger(ledger: ExhaustionLedgerFile, home = farmslotHome()): void {
+export function saveExhaustionLedger(
+  ledger: ExhaustionLedgerFile,
+  home = currentFarmPaths('node').config,
+): void {
   const filePath = exhaustionLedgerPath(home);
   mkdirSync(path.dirname(filePath), { recursive: true });
   writeFileSync(filePath, `${JSON.stringify(ledger, null, 2)}\n`, 'utf8');
@@ -103,7 +105,7 @@ export function markAccountExhausted(options: {
   config?: ProviderAccountsConfig | null;
   ledger?: ExhaustionLedgerFile;
 }): ExhaustionEntry {
-  const home = options.home ?? farmslotHome();
+  const home = options.home ?? currentFarmPaths('node').config;
   const nowMs = (options.now ?? Date.now)();
   const config = options.config === undefined ? loadProviderAccountsConfig(home) : options.config;
   const { sessionMs, extendedMs } = coolingDurations(config);
@@ -143,7 +145,7 @@ export function recordAccountSuccess(options: {
   now?: Clock;
   ledger?: ExhaustionLedgerFile;
 }): void {
-  const home = options.home ?? farmslotHome();
+  const home = options.home ?? currentFarmPaths('node').config;
   const ledger = options.ledger ?? loadExhaustionLedger(home);
   const prev = ledger.entries[options.label];
   if (!prev) return;

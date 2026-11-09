@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // pressure-history-store.ts — persisted bounded pressure history (MANUAL-000109).
 //
 // The gateway keeps the normalized node-pressure sample ring in memory; a
@@ -11,7 +12,6 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import path from 'node:path';
 
 import type { NodePressureHistorySample } from '@farmslot/protocol';
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 export const PRESSURE_HISTORY_STORE_VERSION = 1;
 
@@ -29,7 +29,7 @@ export interface PressureHistoryLoadResult {
 
 function storePath(): string {
   // Resolve lazily — FARMSLOT_HOME can be set after module import.
-  return path.join(farmslotHome(), 'state', 'pressure-history.json');
+  return currentFarmPaths('gateway').state.pressureHistory;
 }
 
 const SAMPLE_NUMBER_FIELDS = [

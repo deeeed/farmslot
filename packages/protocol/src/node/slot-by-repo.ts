@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import path from 'node:path';
+import { currentFarmPaths, legacyRemoteFarmPaths } from './farm-paths.js';
 
 /** The fields of a pool file the reverse lookup reads; the rest pass through. */
 export interface SlotPoolFile {
@@ -74,10 +75,18 @@ export function resolveSlotPoolDir(
   env: NodeJS.ProcessEnv = process.env,
 ): { dir: string; source: SlotPoolDirSource } | undefined {
   const poolDir = env.FARMSLOT_POOL_DIR?.trim();
-  if (poolDir) return { dir: path.resolve(poolDir), source: 'FARMSLOT_POOL_DIR' };
+  const selectedEnv = { ...env, FARMSLOT_POOL_DIR: poolDir || undefined };
+  if (poolDir)
+    return { dir: currentFarmPaths('node', selectedEnv).pool, source: 'FARMSLOT_POOL_DIR' };
   const root = env.FARMSLOT_ROOT?.trim();
-  if (root) return { dir: path.join(path.resolve(root), 'pool'), source: 'FARMSLOT_ROOT' };
-  const nodePool = path.join(env.HOME?.trim() || homedir(), 'farmslot-node', 'pool');
+  if (root)
+    return {
+      dir: currentFarmPaths('node', selectedEnv, path.resolve(root)).pool,
+      source: 'FARMSLOT_ROOT',
+    };
+  const paths = currentFarmPaths('node', selectedEnv);
+  if (paths.layout === 2) return { dir: paths.pool, source: 'FARMSLOT_ROOT' };
+  const nodePool = legacyRemoteFarmPaths({ ...env, HOME: env.HOME?.trim() || homedir() }).pool;
   return existsSync(nodePool) ? { dir: nodePool, source: 'farmslot-node' } : undefined;
 }
 

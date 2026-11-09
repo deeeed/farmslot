@@ -1,6 +1,8 @@
+import { nodeReportedFarmPaths } from './farm-paths.js';
 import { readFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import WebSocket from 'ws';
 
@@ -16,12 +18,11 @@ import {
   type RequestFrame,
   type ResponseFrame,
 } from '@farmslot/protocol';
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import { configuredNodeLinkEnabled } from '@farmslot/protocol/node/slot-by-repo';
 
 import { captureHelperPath } from './commands/capture-helper-path.js';
-import { exec, resolveExecPoolDir } from './commands/exec.js';
 import { ExecRequests } from './commands/exec-requests.js';
+import { exec, resolveExecPoolDir } from './commands/exec.js';
 import {
   fsCheckIgnore,
   fsDelete,
@@ -51,13 +52,13 @@ import {
   stopResourceWatch,
   type WatchInstruction,
 } from './commands/resource-watch.js';
+import { startScreenControlServer, stopScreenControlServer } from './commands/screen-control.js';
 import {
   type ScreenCaptureConfig,
   startCapture,
   stopAllCaptures,
   stopCapture,
 } from './commands/screen.js';
-import { startScreenControlServer, stopScreenControlServer } from './commands/screen-control.js';
 import { NodeSources } from './commands/sources.js';
 import {
   collectMetrics,
@@ -70,20 +71,13 @@ import {
   requireInputSequence,
   tmuxKeepsPaneOptions,
 } from './commands/terminal-input.js';
-import * as tmux from './commands/tmux.js';
 import { startTmuxWorkerWatch, stopTmuxWorkerWatch } from './commands/tmux-worker-watch.js';
+import * as tmux from './commands/tmux.js';
 import {
   startWorkspaceWatch,
   stopAllWorkspaceWatches,
   stopWorkspaceWatch,
 } from './commands/workspace-watch.js';
-import { NodeLinkAgent } from './link/agent.js';
-import { NODE_LINK_OPERATIONS } from './link/operations.js';
-import {
-  AUTH_RETRY_DELAY,
-  MAX_TRANSPORT_BACKOFF,
-  nodeLinkReconnectDelay,
-} from './link/reconnect.js';
 import { resolveGatewayCredential } from './gateway-credential.js';
 import {
   authenticateNode,
@@ -92,9 +86,20 @@ import {
   isDeterministicHandshakeRejection,
   registerNode,
 } from './gateway-handshake.js';
+import { NodeLinkAgent } from './link/agent.js';
+import { NODE_LINK_OPERATIONS } from './link/operations.js';
+import {
+  AUTH_RETRY_DELAY,
+  MAX_TRANSPORT_BACKOFF,
+  nodeLinkReconnectDelay,
+} from './link/reconnect.js';
 
 const GATEWAY_URL = process.env.GATEWAY_URL ?? 'ws://localhost:7777';
 const MACHINE_NAME = process.env.MACHINE_NAME ?? hostname();
+const farmPaths = nodeReportedFarmPaths(
+  fileURLToPath(new URL('../', import.meta.url)),
+  fileURLToPath(new URL('../../scripts/', import.meta.resolve('@farmslot/agent-runtime/native'))),
+);
 const nativeSessions = new NativeNodeSessions(MACHINE_NAME);
 const sources = new NodeSources(MACHINE_NAME);
 const sendTerminalInputOnce = createTerminalInputWriter(tmux.tmuxOutput);
@@ -220,6 +225,7 @@ async function handshake(socket: WebSocket): Promise<void> {
       machine: MACHINE_NAME,
       pid: process.pid,
       capabilities,
+      farmPaths,
       nativeSessions: nativeSessions.declaration,
       gatewayUrl: GATEWAY_URL,
       execCancellation: true,
@@ -252,7 +258,7 @@ async function handshake(socket: WebSocket): Promise<void> {
       nodeLinks.set(
         socket,
         new NodeLinkAgent(
-          path.join(farmslotHome(), 'node-link', encodeURIComponent(MACHINE_NAME)),
+          path.join(farmPaths.state.nodeLink, encodeURIComponent(MACHINE_NAME)),
           MACHINE_NAME,
           { principalId: principal.id, generation: principal.generation },
           () => ws === socket && socket.readyState === WebSocket.OPEN && !disposed,

@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // index.ts — Gateway daemon entry point
 // Starts HTTP + WebSocket server on port 7777
 import {
@@ -91,8 +92,8 @@ import { setFeedbackMonitorSource } from './intelligence/feedback-candidates.js'
 import { initImprovementEngine } from './intelligence/improvement-engine.js';
 import { reconcileMachineParking } from './machine-parking/recovery.js';
 import { refreshBranches } from './methods/dispatch.js';
-import { assertPressureAdmissionConfigValid } from './methods/dispatch/pressure-admission.js';
 import { assertDispatchPressureAdmissionEnvValid } from './methods/dispatch/pressure-admission-control.js';
+import { assertPressureAdmissionConfigValid } from './methods/dispatch/pressure-admission.js';
 import { isFreeSlot } from './methods/dispatch/slot-scoring.js';
 import { serveFile, serveRunArtifact } from './methods/filesystem.js';
 import { fleetHealthRefresh, isFleetCheckedAtStale } from './methods/fleet.js';
@@ -100,6 +101,9 @@ import {
   startGatewayUpdateObservation,
   wakeGatewayUpdateObservation,
 } from './methods/gateway-status.js';
+import { initPRPush } from './methods/pr-push.js';
+import { initPRRuleDispatch, initPRRules } from './methods/pr-rules.js';
+import { initPRMonitorDispatch, initPRMonitoring, monitorsSnapshot } from './methods/pr-watch.js';
 import { fetchPRList } from './methods/pr.js';
 import {
   startPRDetailObservations,
@@ -110,9 +114,6 @@ import {
   notifyPRListInterest,
   startPRListRefresher,
 } from './methods/pr/list-cache.js';
-import { initPRPush } from './methods/pr-push.js';
-import { initPRRuleDispatch, initPRRules } from './methods/pr-rules.js';
-import { initPRMonitorDispatch, initPRMonitoring, monitorsSnapshot } from './methods/pr-watch.js';
 import {
   startProviderAccountsObservation,
   wakeProviderAccountsObservation,
@@ -168,10 +169,6 @@ import { registerGatewayPresence } from './security/gateway-presence.js';
 import { requireNativeProfileOwner } from './security/native-worker-owner.js';
 import { applyGatewayCors } from './security/origin.js';
 import { runWithSessionOriginator } from './security/work-originator.js';
-import { initializeSources, stopSourceReconciliation } from './sources/runtime.js';
-import { onTaskProgress, onWorkerSignal, startWatchingActiveSlots } from './tasks/watcher.js';
-import { applyRunningWorkerSignalToContext } from './tasks/worker-signal-context.js';
-import { initWorkGraphStore, loadWorkGraphs, schedulerTick } from './work-graph/store.js';
 import {
   broadcast,
   broadcastEvent,
@@ -181,7 +178,11 @@ import {
   hasConnectedViewers,
   initServerGlobals,
 } from './server.js';
+import { initializeSources, stopSourceReconciliation } from './sources/runtime.js';
+import { onTaskProgress, onWorkerSignal, startWatchingActiveSlots } from './tasks/watcher.js';
+import { applyRunningWorkerSignalToContext } from './tasks/worker-signal-context.js';
 import { handleGitHubWebhook, handleJiraWebhook, setGitHubRuleEventRouter } from './webhook.js';
+import { initWorkGraphStore, loadWorkGraphs, schedulerTick } from './work-graph/store.js';
 
 const PORT = Number(process.env.GATEWAY_PORT) || 7777;
 
@@ -196,7 +197,7 @@ function processIsAlive(pid: number): boolean {
 }
 
 function acquireGatewaySingletonLock(): () => void {
-  const lockPath = resolve(farmslotRoot, '.runs', `gateway-${PORT}.pid`);
+  const lockPath = currentFarmPaths('gateway').state.gatewayLock;
   mkdirSync(dirname(lockPath), { recursive: true });
 
   for (;;) {

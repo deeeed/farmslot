@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // commands/up.ts — start/stop the local gateway as a background service.
 //
 // `farmslot up` runs the gateway daemon detached with token auth and an
@@ -18,7 +19,7 @@ import {
 } from 'node:fs';
 import http from 'node:http';
 import { hostname, networkInterfaces } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import type { Command } from 'commander';
@@ -147,19 +148,19 @@ function openUrl(url: string): boolean {
 }
 
 function pidFilePath(): string {
-  return join(farmslotHome(), 'gateway.pid');
+  return pathForStartupFile('gateway.pid');
 }
 
 function logFilePath(): string {
-  return join(farmslotHome(), 'gateway.log');
+  return pathForStartupFile('gateway.log');
 }
 
 function nodePidFilePath(): string {
-  return join(farmslotHome(), 'node.pid');
+  return pathForStartupFile('node.pid');
 }
 
 function nodeLogFilePath(): string {
-  return join(farmslotHome(), 'node.log');
+  return pathForStartupFile('node.log');
 }
 
 function readNodePid(): number | null {
@@ -283,7 +284,7 @@ export function ensureLocalCredential(port: number): GatewayCredential {
 /** The local node has its own machine-bound credential, never the CLI's identity. */
 async function localNodeCredential(port: number, credential: GatewayCredential): Promise<string> {
   const machine = hostname().replace(/\.local$/, '');
-  const secretPath = join(farmslotHome(), 'node.secret');
+  const secretPath = join(currentFarmPaths('gateway').config, 'node.secret');
   // Use the node's own install/reconnect resolution before the startup cache.
   // A verified rotation must also survive a later up without the inherited env.
   const { resolveGatewayCredential } = await import(
@@ -560,6 +561,8 @@ async function startLocalNode(port: number, token: string, output: OutputContext
   }
 
   const machine = hostname().replace(/\.local$/, '');
+  mkdirSync(dirname(nodeLogFilePath()), { recursive: true, mode: 0o700 });
+  mkdirSync(dirname(nodePidFilePath()), { recursive: true, mode: 0o700 });
   const logFd = openSync(nodeLogFilePath(), 'a');
   const child = spawn(tsx, [entry], {
     cwd: repoRoot,
@@ -673,6 +676,8 @@ async function up(
 
   const credential = ensureLocalCredential(port);
   mkdirSync(farmslotHome(), { recursive: true, mode: 0o700 });
+  mkdirSync(dirname(logFilePath()), { recursive: true, mode: 0o700 });
+  mkdirSync(dirname(pidFilePath()), { recursive: true, mode: 0o700 });
   const logFd = openSync(logFilePath(), 'a');
   const child = spawn(tsx, [entry], {
     cwd: repoRoot,
@@ -824,4 +829,15 @@ async function startupBrowserInvitation(
     }
     throw error;
   }
+}
+
+function pathForStartupFile(name: string): string {
+  const paths = currentFarmPaths('gateway');
+  const root =
+    paths.layout === 'legacy'
+      ? paths.home
+      : name.endsWith('.log')
+        ? paths.state.logs
+        : paths.state.nodeLink;
+  return join(root, name);
 }

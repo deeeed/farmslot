@@ -1,3 +1,4 @@
+import { reportedFarmPaths } from '@farmslot/slot-config';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -227,7 +228,9 @@ export async function allocateReviewWorkspace(
     const root = originalBinding
       ? path.posix.resolve(originalBinding.checkoutPath, '../../..')
       : path.posix.join(
-          configuredRoot ?? path.posix.join(path.posix.dirname(nativeRoot), 'review-workspaces'),
+          configuredRoot ??
+            reportedFarmPaths(admission.pool.machine)?.state.reviewWorkspaces ??
+            path.posix.join(path.posix.dirname(nativeRoot), 'review-workspaces'),
           ownerHash,
         );
     const workspace = path.posix.join(root, 'runs', workspaceId);

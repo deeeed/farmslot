@@ -1,3 +1,4 @@
+import { poolDirectory, projectsDirectory } from '@farmslot/slot-config';
 // state.ts — Read/watch .farm-status.json, pool/*.json, projects/*/project.json
 // Transforms raw JSON into protocol types
 
@@ -45,9 +46,7 @@ import {
   normalizeRawRuntimeCapabilities,
   normalizeRawSlotSelection,
   normalizeRawStaticReview,
-  poolDir,
   projectPackRoot,
-  projectsDir,
   readSourceRuntimeSettings,
   usesRuntimeSettings,
 } from '../core/config.js';
@@ -835,16 +834,17 @@ export function startFileWatcher() {
 
   // Watch pool config changes — hot-reload without gateway restart
   let poolDebounce: ReturnType<typeof setTimeout> | undefined;
-  const poolWatcher = watch(poolDir, {
+  const poolWatcher = watch(poolDirectory(), {
     persistent: true,
     ignoreInitial: true,
     depth: 0,
     ignored: (file) =>
-      file !== poolDir && (!file.endsWith('.json') || isIgnoredPoolFile(path.basename(file))),
+      file !== poolDirectory() &&
+      (!file.endsWith('.json') || isIgnoredPoolFile(path.basename(file))),
   });
   const poolChanged = (file: string) => {
     if (
-      path.dirname(file) !== poolDir ||
+      path.dirname(file) !== poolDirectory() ||
       !file.endsWith('.json') ||
       isIgnoredPoolFile(path.basename(file))
     )
@@ -914,18 +914,18 @@ export function startFileWatcher() {
     if (watchedEventPath(filename, details) === getOpenClawStorePath())
       publishConfigurationResources();
   });
-  const projectWatcher = watch([projectsDir, selectedHome], {
+  const projectWatcher = watch([projectsDirectory(), selectedHome], {
     persistent: true,
     ignoreInitial: true,
     depth: 4,
     ignored: (file, stats) => {
       if (assessmentFiles.includes(file)) return false;
       if (registrationFiles.includes(file) || file === registrationParent) return false;
-      if (file === projectsDir || file === selectedHome || file === runtimeSettingsDir)
+      if (file === projectsDirectory() || file === selectedHome || file === runtimeSettingsDir)
         return false;
       // Chokidar follows existing ancestors until a missing settings directory appears.
       if (runtimeSettingsDir.startsWith(`${file}${path.sep}`)) return false;
-      const projectParts = path.relative(projectsDir, file).split(path.sep);
+      const projectParts = path.relative(projectsDirectory(), file).split(path.sep);
       if (!projectParts[0].startsWith('..') && !path.isAbsolute(projectParts[0])) {
         if (projectParts.length === 1) return stats?.isFile() ?? false;
         if (projectParts.length === 2 && projectParts[1] === 'project.json') return false;
@@ -960,7 +960,7 @@ export function startFileWatcher() {
       publishWorkerResources();
       return;
     }
-    const projectRelative = path.relative(projectsDir, file).split(path.sep);
+    const projectRelative = path.relative(projectsDirectory(), file).split(path.sep);
     if (projectRelative[0] === '..' || path.isAbsolute(projectRelative[0])) return;
     if (
       (projectRelative.length >= 3 && projectRelative[1] === 'templates' && file.endsWith('.md')) ||
@@ -1046,7 +1046,7 @@ export function startFileWatcher() {
 
 // ─── Pool configs ───
 
-export async function loadPoolConfigs(directory = poolDir): Promise<PoolConfig[]> {
+export async function loadPoolConfigs(directory = poolDirectory()): Promise<PoolConfig[]> {
   const pools: PoolConfig[] = [];
   try {
     const files = await readdir(directory);
@@ -1124,11 +1124,11 @@ export async function loadPoolConfig(machine: string): Promise<PoolConfig | null
 export async function loadProjectConfigs(strictRead = false): Promise<ProjectConfig[]> {
   const projects: ProjectConfig[] = [];
   try {
-    const dirs = declaredProjectNames() ?? (await readdir(projectsDir));
+    const dirs = declaredProjectNames() ?? (await readdir(projectsDirectory()));
     for (const dir of dirs) {
       try {
         const configPath = path.join(
-          await projectPackRoot(dir, path.join(projectsDir, dir)),
+          await projectPackRoot(dir, path.join(projectsDirectory(), dir)),
           'project.json',
         );
         const content = await readFile(configPath, 'utf-8');

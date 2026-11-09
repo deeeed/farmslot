@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { open as fsOpen, stat as fsStat } from 'node:fs/promises';
 import path from 'node:path';
+import { farmPathsForSlot } from '../../fleet/farm-paths.js';
 
-import { type FSWatcher, watch as chokidarWatch } from 'chokidar';
+import { watch as chokidarWatch, type FSWatcher } from 'chokidar';
 
 import {
   DEFAULT_BRANCH,
@@ -56,11 +57,11 @@ import {
 } from '../../projects/start-ref-resolution.js';
 import { executeEvalHarnessLifecycle } from '../../run-engine/eval-harness-lifecycle.js';
 import { restoreParkedBranch } from '../../run-lifecycle/validation-run-commits.js';
+import { NativeWorkerOperationUncertainError } from '../../runners/native/worker-error.js';
 import {
   assertNativeSlotReplacementOwner,
   retireNativeWorkersForSlot,
 } from '../../runners/native/worker.js';
-import { NativeWorkerOperationUncertainError } from '../../runners/native/worker-error.js';
 import { getRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { withSlotSources } from '../../sources/runtime.js';
@@ -134,7 +135,7 @@ import {
   assertPublishedPrepareBranchContained,
 } from './unmerged-work.js';
 
-export { type PrepareHealthCommands, verifyPrepareHealth } from './prepare-health.js';
+export { verifyPrepareHealth, type PrepareHealthCommands } from './prepare-health.js';
 export { isLinkedGitWorktreeMarker, worktreeBaseResetRef } from './slot-tracking.js';
 
 /**
@@ -467,8 +468,8 @@ async function slotPrepareInner(
       .replaceAll('{{NODE_SUPPORT_DIR}}', hookSupportDir)
       .replaceAll(`${farmslotRoot}/projects/`, `${hookSupportDir}/projects/`)
       .replaceAll(`${farmslotRoot}/scripts/`, `${hookSupportDir}/scripts/`)
-      .replaceAll('~/farmslot-node/projects/', `${hookSupportDir}/projects/`)
-      .replaceAll('~/farmslot-node/scripts/', `${hookSupportDir}/scripts/`);
+      .replaceAll(`${farmPathsForSlot(vars).code.node}/projects/`, `${hookSupportDir}/projects/`)
+      .replaceAll(`${farmPathsForSlot(vars).code.node}/scripts/`, `${hookSupportDir}/scripts/`);
   };
 
   // Selected prepare profile (ADR-037). Assigned right after the connection

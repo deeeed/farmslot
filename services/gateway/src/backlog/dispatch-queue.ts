@@ -1,9 +1,9 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // dispatch-queue.ts — In-memory queue + JSON file persistence
 // Items persist across gateway restarts. Auto-dispatches when slots free up.
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile, rename, writeFile } from 'node:fs/promises';
-import path from 'node:path';
 
 import {
   assertPRExecutionProfile,
@@ -44,7 +44,7 @@ import {
   isNodeTransportUnavailableError,
   type NodeTransportUnavailableError,
 } from '../fleet/node-rpc.js';
-import { farmslotRoot, loadFleetStatus, loadProjectConfig } from '../fleet/state.js';
+import { loadFleetStatus, loadProjectConfig } from '../fleet/state.js';
 import {
   capturePressureAdmissionDecisionsLightweight,
   findAffinitySlot,
@@ -115,14 +115,20 @@ function shouldUseIsolatedQueueFile(env: NodeJS.ProcessEnv, argv: readonly strin
 }
 
 function resolveQueueFile(): string {
-  if (process.env.FARMSLOT_DISPATCH_QUEUE_FILE) return process.env.FARMSLOT_DISPATCH_QUEUE_FILE;
-  if (shouldUseIsolatedQueueFile(process.env, process.argv)) {
+  const paths = currentFarmPaths('gateway');
+  if (
+    paths.layout === 'legacy' &&
+    !paths.envOverrides.includes('FARMSLOT_DISPATCH_QUEUE_FILE') &&
+    shouldUseIsolatedQueueFile(process.env, process.argv)
+  ) {
     return isolatedTestPath('farmslot-test-dispatch-queue', '.json');
   }
-  return path.join(farmslotRoot, '.dispatch-queue.json');
+  return paths.state.dispatchQueue;
 }
 
-const QUEUE_FILE = resolveQueueFile();
+function QUEUE_FILE(): string {
+  return resolveQueueFile();
+}
 const queue: QueueRecord[] = [];
 const unadmittedRestoredReviews = new Set<string>();
 let queuePersistChain: Promise<void> = Promise.resolve();
@@ -280,13 +286,13 @@ function runMatchesEvalQueueCell(runTrialId: string | undefined, cellTrialId: st
 async function persist(): Promise<void> {
   // Atomic write: tmp + rename so a crash mid-write cannot leave a truncated
   // queue file that drops items on restart.
-  const tmpPath = `${QUEUE_FILE}.tmp.${process.pid}.${randomUUID().slice(0, 8)}`;
+  const tmpPath = `${QUEUE_FILE()}.tmp.${process.pid}.${randomUUID().slice(0, 8)}`;
   const storedQueue = queue.map((item) => ({
     ...item,
     ...(item.originator ? { originator: item.originator } : {}),
   }));
   await writeFile(tmpPath, JSON.stringify(storedQueue, null, 2), 'utf-8');
-  await rename(tmpPath, QUEUE_FILE);
+  await rename(tmpPath, QUEUE_FILE());
 }
 
 function enqueuePersist(reason: string): Promise<void> {
@@ -363,7 +369,7 @@ export async function loadQueue(): Promise<void> {
   queue.length = 0;
   unadmittedRestoredReviews.clear();
   try {
-    const raw = await readFile(QUEUE_FILE, 'utf-8');
+    const raw = await readFile(QUEUE_FILE(), 'utf-8');
     const items: QueueRecord[] = JSON.parse(raw);
     for (const item of items) {
       assertCurrentReviewConfiguration(item, 'queued dispatch');

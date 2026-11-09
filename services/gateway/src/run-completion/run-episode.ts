@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 // run-episode.ts — one small episode record per finished run (ADR-039 Amendment 4).
 //
 // An episode names what a run consumed and produced, as input, trajectory and
@@ -350,7 +351,9 @@ export function episodeProvenance(
 }
 
 export function runEpisodeDir(): string {
-  return path.join(runsDirectory(), 'episodes');
+  return currentFarmPaths('gateway').layout === 2
+    ? currentFarmPaths('gateway').state.episodes
+    : path.join(runsDirectory(), 'episodes');
 }
 
 function episodeFile(runId: string): string {

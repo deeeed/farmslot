@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { createHash } from 'node:crypto';
 // gateway-profiles.ts — kubeconfig-style gateway profiles for the CLI (ADR-036).
 //
@@ -14,11 +15,10 @@ import {
   type PersonSessionAuth,
   PersonSessionChangedError,
 } from '@farmslot/protocol';
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import { isLoopbackHost } from '@farmslot/protocol/node/loopback-host';
 
-import { isCheckoutGatewayUrl } from './onboarding/env-file.js';
 import type { GatewayCredential } from './gateway-client.js';
+import { isCheckoutGatewayUrl } from './onboarding/env-file.js';
 
 export type { GatewayAuthMode };
 
@@ -42,7 +42,7 @@ export const DEFAULT_GATEWAY_PORT = 7777;
 export const DEFAULT_GATEWAY_URL = `ws://localhost:${DEFAULT_GATEWAY_PORT}`;
 
 export function profilesPath(env: NodeJS.ProcessEnv = process.env): string {
-  return join(farmslotHome(env), 'gateways.json');
+  return join(currentFarmPaths('node', env).config, 'gateways.json');
 }
 
 // Names the file (and the profile) but never echoes its contents: the store

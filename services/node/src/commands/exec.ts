@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { platform } from 'node:os';
@@ -89,11 +90,12 @@ export function resolveExecPoolDir(
   moduleUrl = import.meta.url,
   configured = process.env.FARMSLOT_POOL_DIR,
 ): string {
-  if (configured) return path.resolve(configured);
+  if (configured)
+    return currentFarmPaths('node', { ...process.env, FARMSLOT_POOL_DIR: configured }).pool;
   const nodeRoot = fileURLToPath(new URL('../../', moduleUrl));
   const metadata = JSON.parse(readFileSync(path.join(nodeRoot, 'package.json'), 'utf8'));
   const root = metadata.name === '@farmslot/node' ? path.resolve(nodeRoot, '../..') : nodeRoot;
-  return path.join(root, 'pool');
+  return currentFarmPaths('node', { ...process.env, FARMSLOT_POOL_DIR: configured }, root).pool;
 }
 
 export async function exec(

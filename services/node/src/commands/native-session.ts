@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import path from 'node:path';
 
 import { NATIVE_WORKER_METHODS, NativeSessionClient } from '@farmslot/agent-runtime/native';
@@ -16,7 +17,6 @@ import type {
   NativeConversationUpdate,
   NativeExecutionNodeDeclaration,
 } from '@farmslot/protocol';
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 /** The daemon owns routing; its detached native host survives daemon/gateway disconnects. */
 export class NativeNodeSessions {
@@ -26,7 +26,7 @@ export class NativeNodeSessions {
   constructor(
     machine: string,
     owner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID,
-    root = process.env.FARMSLOT_NATIVE_STATE_DIR ?? path.join(farmslotHome(), 'native-sessions'),
+    root = currentFarmPaths('node').state.nativeSessions,
   ) {
     if (owner?.trim()) {
       if (!machine || machine === 'local')

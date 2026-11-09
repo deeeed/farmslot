@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { createHash } from 'node:crypto';
 import { lstatSync, readdirSync, readlinkSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rename, rm } from 'node:fs/promises';
@@ -126,7 +127,10 @@ const defaults: ReviewWorkspaceSupportDependencies = {
   loadProjectVars,
   loadPoolConfigs,
   collect: collectReviewWorkspaceSupport,
-  cacheRoot: () => path.join(runsDirectory(), 'review-workspace-support'),
+  cacheRoot: () =>
+    currentFarmPaths('gateway').layout === 2
+      ? currentFarmPaths('gateway').state.reviewWorkspaceSupport
+      : path.join(runsDirectory(), 'review-workspace-support'),
   env: () => process.env,
   writeFiles: slotWriteFiles,
   writeBuffer: slotWriteFileBuffer,

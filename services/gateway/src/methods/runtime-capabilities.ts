@@ -1,4 +1,4 @@
-import path from 'node:path';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import {
   Events,
@@ -77,15 +77,15 @@ function testStorePath(): string {
 }
 
 function runtimeCapabilityStorePath(): string {
-  if (process.env.FARMSLOT_CAPABILITY_STORE_FILE) {
-    return process.env.FARMSLOT_CAPABILITY_STORE_FILE;
-  }
-  if (process.env.FARMSLOT_TEST_TMP === '1' || process.env.NODE_TEST_CONTEXT) {
+  const paths = currentFarmPaths('gateway');
+  if (
+    paths.layout === 'legacy' &&
+    !paths.envOverrides.includes('FARMSLOT_CAPABILITY_STORE_FILE') &&
+    (process.env.FARMSLOT_TEST_TMP === '1' || process.env.NODE_TEST_CONTEXT)
+  ) {
     return testStorePath();
   }
-  const gatewayPort = process.env.GATEWAY_PORT?.trim() || '7777';
-  const root = process.env.FARMSLOT_ROOT?.trim() || process.cwd();
-  return path.join(root, '.runs', `runtime-capabilities-${gatewayPort}.json`);
+  return paths.state.capabilityStore;
 }
 
 function normalizeActionId(

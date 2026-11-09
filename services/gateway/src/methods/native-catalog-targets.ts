@@ -1,3 +1,4 @@
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { isAbsolute, join } from 'node:path';
 
 import type {
@@ -6,7 +7,7 @@ import type {
   Principal,
 } from '@farmslot/protocol';
 
-import { loadSlotVars, poolDir } from '../core/config.js';
+import { loadSlotVars } from '../core/config.js';
 import { isLocal } from '../core/index.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { resolveMachinePoolConfigs } from '../fleet/machine-pool.js';
@@ -31,7 +32,7 @@ export async function standaloneCatalogTargets(
   reader: Principal,
 ): Promise<StandaloneCatalogTargets> {
   const assigned = standaloneOwners(reader);
-  const pools = await loadPoolConfigs(poolDir);
+  const pools = await loadPoolConfigs(currentFarmPaths('gateway').pool);
   // Pools describe fleet workspaces; only issued native targets belong in this catalog.
   const machines = new Set(assigned.keys());
   // Independent target probes run together so one slow node cannot serialize the whole catalog.
