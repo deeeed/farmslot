@@ -1020,6 +1020,7 @@ export async function resolveProjectContext(
     ...(app ? { app } : {}),
     domain: recipe.domain,
     template: recipe.template,
+    ...(recipe.viewer ? { viewer: recipe.viewer } : {}),
     checks: recipe.checks?.map((check) => ({ ...check, recipe: check.recipe.trim() })),
     ...(recipe.manifest ? { manifest: path.resolve(root, recipe.manifest) } : {}),
     provider,

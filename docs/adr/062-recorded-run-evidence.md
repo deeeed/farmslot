@@ -1212,3 +1212,70 @@ No new CLI command, flag, RPC or SDK export. The existing publication review
 snapshot binds the comparison's base and head. Review templates consume that
 same identity; project harnesses, including mm-harness, inherit admission without
 a project-specific exception. Existing package formats and stability remain.
+
+## Amendment 23 (2026-11-09): Local run evidence viewer
+
+**Status:** Proposed.
+**Idea:** Run evidence viewer (`MANUAL-000187`).
+
+### Decision
+
+A finished Recipe v1 run folder is enough to review it: each criterion in order
+with its verdict and evidence, the recording from each claim's moment, and the
+step timeline with intents. One generic viewer serves that page locally. It adds
+no evidence format and no second evidence model.
+
+**View-model.** `runEvidenceView(model, run?)` in `@farmslot/adapter-sdk/evidence`
+projects the shared `createEvidenceReviewModel` into plain JSON (`RunEvidenceView`,
+version 1): run facts, summary, criteria in the run's order (verdict, padded
+clip cue, files, selected before/after pair, proving steps), steps in trace order
+with marker cues, step groups, recordings, errors and warnings. It only reads the
+model; it never moves its selection. A folder reads through
+`readRecordedEvidencePackage`; a gateway client passes the model it already has.
+
+**Template contract.** The page is a list of sections over that view-model:
+header, issues, player, criteria, timeline, history. A template is a module whose
+default export has optional `sections(defaults)`, `page(view, context)` and
+`styles`. It may reorder, drop, replace or add sections, or render the whole
+body. The page shell keeps the player script: any element with
+`data-seek-video`/`data-seek-ms` (`context.seekAttributes(cue)`) seeks the
+player. A project selects its template with `project.json`
+`recipe.viewer.template`; `--template` overrides it. A project without one gets
+the default page.
+
+**CLI.** `farmslot recipe view <run-dir>` serves the page on `127.0.0.1` only,
+GET/HEAD only, and serves files contained in the run folders. Video supports byte
+ranges so seeking works. A run's human `run` output ends with
+`view: <viewCommand> <run-dir>` by default. `recipe.viewer.link: false` turns the
+line off. A host sets `viewCommand`; it defaults to `farmslot recipe view`. The
+line is a command, not a URL: no server outlives the run.
+
+**Live mode and history.** A folder without `summary.json` is running. Its page
+lists the recipe's declared criteria, unjudged, and polls a folder signature every
+2 s. It reloads when files change, until the summary lands. History lists the run
+folders beside the one viewed, newest first; a folder of runs opens on the index,
+which also polls.
+
+**Command Center.** Its acceptance panel renders proof steps from
+`runEvidenceView(model).stepGroups`, the same projection the viewer reads.
+Criterion rows already come from the same model's claims.
+
+### Rationale and consequences
+
+Engineers and agents can review a run without a gateway, and the page stays
+honest: pruned media, an unqualified recording and untimed claims show their
+errors with no seekable cue. The projection is experimental until a harness
+template adopts it. mm-harness ships its MetaMask template and the
+`status --watch` shortcut separately, over the same contract, without changing
+generic code. Hosting, uploading, editing evidence and gate decisions stay out of
+scope.
+
+### Public surface
+
+New: `runEvidenceView` and `RunEvidenceView` types (adapter-sdk evidence);
+`serveRunEvidence`, `readRunEvidenceView`, `listRunEvidenceHistory`,
+`runEvidenceSignature`, `runEvidenceViewHint`, `loadRunEvidenceTemplate`,
+`renderRunEvidencePage`, `DEFAULT_RUN_EVIDENCE_SECTIONS` and template types
+(`@farmslot/recipe-cli/harness`); `HarnessHost.viewCommand`; the
+`farmslot recipe view` command; `project.json` `recipe.viewer`. Existing package
+formats are unchanged.

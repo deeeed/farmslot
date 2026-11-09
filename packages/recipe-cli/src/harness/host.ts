@@ -49,6 +49,8 @@ export interface HarnessHost {
   supportsLast?: boolean;
   /** Non-secret gateway selector arguments inherited by the task lifecycle CLI reader. */
   taskRunCliArgs?: readonly string[];
+  /** The command a run's end prints to open its evidence page. Default `farmslot recipe view`. */
+  viewCommand?: string;
 }
 
 const defaultHost: HarnessHost = {

@@ -103,6 +103,8 @@ export interface ResolvedProjectBinding {
   domain?: string;
   template?: string;
   manifest?: string;
+  /** project.json `recipe.viewer`: the run-end view link and the page template. */
+  viewer?: { link?: boolean; template?: string };
   runtimeDir: string;
   farmRuntimeDir: string;
   artifactDir: string;

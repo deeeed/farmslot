@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { type Command, Option } from 'commander';
 
 import {
@@ -246,6 +248,49 @@ export function registerRecipeCommand(program: Command): void {
           if (validation) output.write(formatArtifactValidationResult(validation));
         }
         if (validation?.status === 'fail') process.exitCode = 1;
+      } catch (error) {
+        emit.fail(error);
+      }
+    });
+
+  recipe
+    .command('view')
+    .description("Serve a read-only local page of a recipe run's evidence, live while it runs")
+    .argument('<run-dir>', 'Recipe run folder, or a folder of runs for the run history')
+    .option('--port <port>', 'Port on 127.0.0.1; 0 picks a free one', '0')
+    .option('--template <module>', "Page template module; default: the project's recipe.viewer")
+    .option('--project <name>', 'Select a registered project for its page template')
+    .action(async (runDir: string, _options: unknown, cmd: Command) => {
+      const output = new OutputContext(Boolean(cmd.optsWithGlobals().json));
+      const emit = createEmitter(output, cmd);
+      try {
+        const shared = await import('@farmslot/recipe-cli/harness');
+        const options = cmd.opts();
+        const port = Number(options.port);
+        if (!Number.isInteger(port) || port < 0 || port > 65_535)
+          throw new Error(`--port must be a port number: ${options.port}`);
+        let templatePath = typeof options.template === 'string' ? options.template : undefined;
+        if (!templatePath) {
+          // A checkout outside any project gets the default page.
+          const context = await shared
+            .resolveProjectContext(await projectRecipeHostOptions('view', undefined, options))
+            .catch(() => undefined);
+          const project = context?.project;
+          if (project?.viewer?.template)
+            templatePath = path.resolve(project.root, project.viewer.template);
+        }
+        const server = await shared.serveRunEvidence({
+          dir: resolveRecipeCliPath(runDir),
+          port,
+          ...(templatePath ? { template: await shared.loadRunEvidenceTemplate(templatePath) } : {}),
+        });
+        if (output.json) output.writeJson({ url: server.url });
+        else output.write(`Run evidence: ${server.url}\nRead-only; Ctrl-C stops the server.\n`);
+        await new Promise<void>((resolve) => {
+          process.once('SIGINT', resolve);
+          process.once('SIGTERM', resolve);
+        });
+        await server.close();
       } catch (error) {
         emit.fail(error);
       }

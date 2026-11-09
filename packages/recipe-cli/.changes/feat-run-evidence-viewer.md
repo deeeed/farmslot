@@ -1,0 +1,1 @@
+- The harness serves a read-only local run evidence page (`serveRunEvidence`) from a Recipe v1 run folder, with a default layout, project templates (`loadRunEvidenceTemplate`), live reload while a run is in progress and the run history beside it. A run's human output ends with a `view:` command unless `project.json` `recipe.viewer.link` is false; hosts name it with `viewCommand`.

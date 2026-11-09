@@ -107,6 +107,8 @@ Its [selected-evidence amendment 5](062-recorded-run-evidence.md#amendment-5-202
 
 Its [authenticated-visual-review amendment 6](062-recorded-run-evidence.md#amendment-6-2026-10-14-authenticated-visual-review-and-qa-binding) is accepted and implemented in [#1037](https://github.com/deeeed/farmslot/pull/1037). Its [delegated-review and Compare by AC amendment 7](062-recorded-run-evidence.md#amendment-7-2026-10-14-delegated-visual-judgments-and-compare-by-ac) is accepted on 2026-10-14; delegated judgments ship first, then comparison. Implementation and live gate acceptance are pending.
 
+Its [local run evidence viewer amendment 23](062-recorded-run-evidence.md#amendment-23-2026-11-09-local-run-evidence-viewer) is Proposed: `farmslot recipe view` serves one run's evidence from its folder over the shared review model, with project templates, live mode and run history.
+
 Its [retained-link amendment 8](062-recorded-run-evidence.md#amendment-8-2026-10-14-retained-criterion-link-snapshots) is Proposed for the #1044 cutover. Import and rollout remain pending.
 
 ADR-040 has a [Accepted retained-run attachment amendment](040-work-graph-orchestration.md#amendment-3-retained-run-stack-attachment) and [normative specification](../reference/stacked-work.md). The base decision remains Accepted.

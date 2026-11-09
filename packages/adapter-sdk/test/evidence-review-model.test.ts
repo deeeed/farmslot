@@ -24,6 +24,7 @@ import {
   type EvidenceReviewRecordingInput,
   readEvidenceReviewReport,
   runEvidencePending,
+  runEvidenceView,
 } from '../src/evidence.js';
 
 import { untimedRecordingFixture } from './untimed-fixture.js';
@@ -1823,4 +1824,84 @@ test('a gate package the worker re-recorded reads as replaced, with no details f
   );
   // Validity is unchanged: the mismatch still refuses measured proof.
   assert.ok(replaced.errors.includes('The task ledger belongs to another recipe execution.'));
+});
+
+test('the run evidence view keeps criteria in run order with each claim and step cue', () => {
+  const model = createEvidenceReviewModel({ package: qaPackage(2), artifactPrefix: 'run/' });
+  assert.deepEqual(model.errors, []);
+  const view = runEvidenceView(model, { id: 'qa', status: 'pass' });
+  assert.equal(view.version, 1);
+  assert.deepEqual(view.run, { id: 'qa', status: 'pass' });
+  assert.deepEqual(
+    view.criteria.map(({ id, parentId, verdict }) => [id, parentId, verdict]),
+    [
+      ['case-1', undefined, 'proven'],
+      ['check-1', 'case-1', 'proven'],
+      ['case-2', undefined, 'proven'],
+      ['check-2', 'case-2', 'proven'],
+    ],
+  );
+  // The claim plays from its padded measured clip; the step from its marker start.
+  const check2 = view.criteria.find((criterion) => criterion.id === 'check-2')!;
+  assert.deepEqual(check2.cue, { videoPath: 'run/video.mp4', startMs: 400, endMs: 2_700 });
+  assert.deepEqual(check2.traceIndexes, [3]);
+  assert.deepEqual(
+    check2.files.map((file) => [file.path, file.mediaType]),
+    [['run/stills/2.png', 'image']],
+  );
+  assert.deepEqual(
+    view.steps.map(({ traceIndex, ok, cue }) => [traceIndex, ok, cue?.startMs ?? null]),
+    [
+      [0, true, 200],
+      [1, true, 400],
+      [2, true, 1_200],
+      [3, true, 1_400],
+      [4, true, 2_800],
+    ],
+  );
+  assert.equal(view.steps[1]!.intent, 'Verify value 1.');
+  assert.deepEqual(view.steps[1]!.cue, { videoPath: 'run/video.mp4', startMs: 400, endMs: 700 });
+  assert.deepEqual(
+    view.stepGroups.map(({ label, steps }) => [label, steps.map((step) => step.traceIndex)]),
+    [
+      ['check-1', [1]],
+      ['check-2', [3]],
+      ['Other steps', [0, 2, 4]],
+    ],
+  );
+  assert.deepEqual(view.videos, [{ path: 'run/video.mp4', durationMs: 4_000 }]);
+  // Plain JSON a page or a template can embed as is.
+  assert.deepEqual(JSON.parse(JSON.stringify(view)), view);
+});
+
+test('the run evidence view pairs selected before and after captures beside their criterion', () => {
+  const baseSha = '1'.repeat(40),
+    headSha = '2'.repeat(40);
+  const model = createEvidenceReviewModel({
+    package: withComparison(
+      boundComparisonPackage('head', 'after', headSha),
+      boundComparisonPackage('baseline', 'before', baseSha),
+    ),
+    comparisonSnapshot: { baseSha, headSha },
+  });
+  const view = runEvidenceView(model);
+  assert.equal(view.run, null);
+  const check = view.criteria.find((criterion) => criterion.id === 'check-1')!;
+  assert.deepEqual(check.pair && [check.pair.before.path, check.pair.after.path], [
+    'comparison-dependencies/baseline/stills/1.png',
+    'stills/1.png',
+  ]);
+  assert.equal(view.criteria.find((criterion) => criterion.id === 'case-1')!.pair, null);
+});
+
+test('an unqualified recording keeps every row visible without a seekable cue', () => {
+  const model = createEvidenceReviewModel({
+    package: qaPackage(1),
+    readErrors: ['Retained recording could not be qualified.'],
+  });
+  const view = runEvidenceView(model);
+  assert.ok(view.errors.includes('Retained recording could not be qualified.'));
+  assert.equal(view.criteria.length, 2);
+  assert.ok(view.criteria.every((criterion) => criterion.cue === null));
+  assert.ok(view.steps.every((step) => step.cue === null));
 });

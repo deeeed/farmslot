@@ -25,6 +25,7 @@ import { acquireCheckoutLock } from '../checkout-lock.js';
 import { color } from '../cli-color.js';
 import { recordCommandEvidence } from '../command-journal.js';
 import { harnessContextField } from '../context-state.js';
+import { runEvidenceViewHint } from '../evidence-view.js';
 import { ProvenanceDriftError } from '../execution-provenance.js';
 import { recipeRunning, recipeRunningRefusal } from '../heal-bounds.js';
 import { harnessDoctorHint, harnessHost } from '../host.js';
@@ -801,6 +802,8 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
             `  ${out('dim', `${artifact.label}:`)} ${out('path', artifact.absolutePath)}${fallback}`,
           );
         }
+        const viewHint = runEvidenceViewHint(path.dirname(result.artifactManifestPath));
+        if (viewHint) console.log(`  ${out('dim', 'view:')} ${viewHint}`);
         if (result.status === 'fail') {
           console.error(`  Next: ${failureUserAction}`);
         }
