@@ -6,8 +6,15 @@ import type {
   NativeSessionEvent,
   NativeSessionReadResult,
 } from '@farmslot/protocol';
+import { nativeTimeline, nativeTimelineRows } from '@farmslot/protocol/client-cache';
 
-import { nativeConversationWritable, nativeRetryAvailable } from './native-conversation';
+import {
+  nativeConversationWritable,
+  nativeRetryAvailable,
+  nativeTranscriptItemKey,
+  nativeTranscriptItemType,
+  nativeTranscriptList,
+} from './native-conversation';
 
 function event(
   sequence: number,
@@ -140,4 +147,52 @@ test('a queued message waits for its turn instead of offering a retry', () => {
   assert.equal(nativeRetryAvailable(receipt('pending', true)), false);
   assert.equal(nativeRetryAvailable(receipt('accepted')), false);
   assert.equal(nativeRetryAvailable(receipt('completed')), false);
+});
+
+test("the conversation list drops a closed fold's tools and keeps its keys", () => {
+  const tool = (sequence: number, type: NativeSessionEvent['type']): NativeSessionEvent => ({
+    ...event(sequence, type),
+    nativeId: 'tool-1',
+    tool: {
+      name: 'Bash',
+      kind: 'command',
+      command: 'ls',
+      status: type === 'tool.completed' ? 'completed' : 'running',
+    },
+  });
+  const events: NativeSessionEvent[] = [
+    event(1, 'command.submitted', 'hello'),
+    tool(2, 'tool.started'),
+    tool(3, 'tool.completed'),
+    event(4, 'text.delta', 'done'),
+    event(5, 'turn.completed'),
+  ];
+  const rows = nativeTimelineRows(nativeTimeline(events));
+  const work = rows.find((row) => row.kind === 'work');
+  assert.ok(work);
+  const toolRow = rows.find((row) => row.kind === 'entry' && row.entry.kind === 'tool');
+  assert.ok(toolRow?.kind === 'entry' && toolRow.fold === work.key);
+  const request: NativeSessionEvent = {
+    ...event(6, 'question.requested'),
+    request: { id: 'q1', title: 'Which one?' },
+  };
+
+  const closed = nativeTranscriptList(rows, () => false, 'command-2', [request]);
+  assert.equal(closed.items.includes(toolRow), false);
+  assert.equal(closed.openFolds.has(work.key), false);
+  assert.deepEqual(closed.items.map(nativeTranscriptItemKey), [
+    ...rows
+      .filter((row) => row !== toolRow)
+      .map((row) => (row.kind === 'work' ? `work:${row.key}` : String(row.key))),
+    'command-2',
+    'generation:q1',
+  ]);
+
+  const open = nativeTranscriptList(rows, (key) => key === work.key, undefined, []);
+  assert.equal(open.openFolds.has(work.key), true);
+  // Rows are the items themselves, so a kept row is the same cell item.
+  assert.deepEqual(open.items, rows);
+  assert.equal(open.items[1], rows[1]);
+  assert.equal(nativeTranscriptItemType(toolRow), 'tool');
+  assert.equal(nativeTranscriptItemType(work), 'work');
 });
