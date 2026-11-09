@@ -4,7 +4,11 @@
 // plugin loader.
 import path from 'node:path';
 
-import type { ProjectRecipeCheck, RecipeConformanceSource } from '@farmslot/protocol';
+import type {
+  ProjectRecipeCheck,
+  ProjectRecipeViewerConfig,
+  RecipeConformanceSource,
+} from '@farmslot/protocol';
 import type { RecipeLibrarySource } from '@farmslot/recipe-runner';
 
 import { CliError } from './cli-error.js';
@@ -103,6 +107,8 @@ export interface ResolvedProjectBinding {
   domain?: string;
   template?: string;
   manifest?: string;
+  /** project.json `recipe.viewer`: the run-end view link and the page template. */
+  viewer?: ProjectRecipeViewerConfig;
   runtimeDir: string;
   farmRuntimeDir: string;
   artifactDir: string;

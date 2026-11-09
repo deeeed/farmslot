@@ -178,6 +178,11 @@ export {
   type TaskInitCommandOptions,
 } from './commands/task-init.js';
 export {
+  type RunEvidenceServer,
+  type RunEvidenceServerOptions,
+  serveRunEvidence,
+} from './commands/view.js';
+export {
   assertConformanceReportCurrent,
   checkRecipeConformance,
   conformanceChecksPass,
@@ -198,6 +203,7 @@ export {
   type ResolveHarnessContextOptions,
   resolveProjectContext,
   type ResolveProjectContextOptions,
+  resolveProjectViewer,
   runtimeContextOwned,
 } from './context.js';
 export {
@@ -228,6 +234,25 @@ export {
   runnerProvenance,
   type RunnerProvenanceOptions,
 } from './doctor-report.js';
+export {
+  isRecipeRunFolder,
+  listRunEvidenceHistory,
+  readRunEvidenceView,
+  type RunEvidenceHistoryEntry,
+  runEvidenceSignature,
+  runEvidenceViewHint,
+} from './evidence-view.js';
+export {
+  DEFAULT_RUN_EVIDENCE_SECTIONS,
+  escapeHtml,
+  loadRunEvidenceTemplate,
+  renderRunEvidencePage,
+  renderRunHistoryPage,
+  type RunEvidencePageContext,
+  type RunEvidencePageOptions,
+  type RunEvidenceSection,
+  type RunEvidenceTemplate,
+} from './evidence-view-page.js';
 export {
   captureExecutionProvenance,
   type ExecutionProvenanceDrift,

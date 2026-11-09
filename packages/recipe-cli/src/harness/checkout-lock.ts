@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { ensureRuntimeDirectory, processIdentity } from '@farmslot/recipe-runner/runtime/operation';
+import {
+  ensureRuntimeDirectory,
+  processAlive,
+  processIdentity,
+  processStillRunning,
+} from '@farmslot/recipe-runner/runtime/operation';
 
 import { hostEnvName } from './host.js';
 import { recipeRuntimeDir } from './paths.js';
@@ -33,14 +38,14 @@ export function acquireCheckoutLock(
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
       const identity = processIdentity(process.pid);
-      if (!identity) throw new Error('Cannot identify checkout lock owner process');
+      if (identity === undefined) throw new Error('Cannot identify checkout lock owner process');
       const fd = fs.openSync(lockPath, 'wx', 0o600);
       fs.fchmodSync(fd, 0o600);
       const token = randomUUID();
       const owner = {
         schemaVersion: 1,
         pid: process.pid,
-        processStartedAt: identity,
+        ...(identity ? { processStartedAt: identity } : {}),
         operation,
         repoRoot,
         token,
@@ -165,9 +170,10 @@ function readOwner(lockPath: string): Record<string, unknown> | null {
 
 function ownerAlive(owner: Record<string, unknown>): boolean {
   if (typeof owner.pid !== 'number') return true;
-  if (typeof owner.processStartedAt === 'string')
-    return processIdentity(owner.pid) === owner.processStartedAt;
-  return processAlive(owner.pid);
+  return processStillRunning(
+    owner.pid,
+    typeof owner.processStartedAt === 'string' ? owner.processStartedAt : undefined,
+  );
 }
 
 function childrenAlive(owner: Record<string, unknown>): boolean {
@@ -186,12 +192,15 @@ function childrenAlive(owner: Record<string, unknown>): boolean {
       const child = readOwner(path.join(directory, name));
       if (child && typeof child.processGroupId === 'number' && child.processGroupId > 0)
         return processAlive(-child.processGroupId);
+      // A member recorded where `ps` was refused has a null identity: only liveness is known.
+      if (child && typeof child.pid === 'number' && child.processStartedAt === null)
+        return child.pid !== owner.pid && processAlive(child.pid);
       // An incomplete membership write is uncertain ownership, never permission to reclaim.
       return (
         !child ||
         typeof child.pid !== 'number' ||
         typeof child.processStartedAt !== 'string' ||
-        (child.pid !== owner.pid && processIdentity(child.pid) === child.processStartedAt)
+        (child.pid !== owner.pid && processStillRunning(child.pid, child.processStartedAt))
       );
     });
 }
@@ -213,7 +222,7 @@ export function trackCheckoutChild(
   )
     return () => undefined;
   const identity = processIdentity(pid);
-  if (!identity && !ownsProcessGroup) return () => undefined;
+  if (identity === undefined && !ownsProcessGroup) return () => undefined;
   const directory = path.join(repoRoot, recipeRuntimeDir(), 'lock-members', owner.token);
   ensureRuntimeDirectory(directory);
   const file = path.join(directory, `${pid}.json`);
@@ -234,13 +243,4 @@ export function trackCheckoutChild(
     if (current?.pid === pid && current.processStartedAt === identity)
       fs.rmSync(file, { force: true });
   };
-}
-
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
-  }
 }

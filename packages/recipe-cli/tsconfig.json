@@ -4,6 +4,7 @@
     "outDir": "dist",
     "paths": {
       "@farmslot/adapter-sdk": ["../adapter-sdk/src/index.ts"],
+      "@farmslot/adapter-sdk/evidence": ["../adapter-sdk/src/evidence.ts"],
       "@farmslot/agent-runtime": ["../agent-runtime/src/index.ts"],
       "@farmslot/protocol": ["../protocol/src/index.ts"],
       "@farmslot/protocol/*": ["../protocol/src/*"],

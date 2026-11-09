@@ -47,3 +47,16 @@ test('recording capability is an explicit runtime capability identifier', () => 
       /recordingCapability/,
     );
 });
+
+test('the run evidence viewer config accepts its link switch and a template module', () => {
+  const provider = { module: './provider.mjs' };
+  validateProjectRecipeConfig({ provider, viewer: { link: false, template: './viewer.mjs' } });
+  validateProjectRecipeConfig({ provider, viewer: {} });
+  for (const [viewer, field] of [
+    [null, 'recipe.viewer'],
+    [{ link: 'no' }, 'recipe.viewer.link'],
+    [{ template: '' }, 'recipe.viewer.template'],
+    [{ open: true }, 'recipe.viewer'],
+  ] as const)
+    assert.throws(() => validateProjectRecipeConfig({ provider, viewer }), new RegExp(field));
+});

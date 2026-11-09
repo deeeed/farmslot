@@ -6,7 +6,12 @@ import path from 'node:path';
 
 import { type TaskOperation, validateOperationRecord } from '@farmslot/protocol';
 
-export function processIdentity(pid: number): string | undefined {
+/**
+ * The start time `ps` reports for `pid`; undefined when no such process exists.
+ * null when this process may not run `ps` at all: macOS refuses to exec the
+ * setuid /bin/ps inside any sandbox (EPERM). The identity is then unknown, not absent.
+ */
+export function processIdentity(pid: number): string | null | undefined {
   try {
     const value = execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
       encoding: 'utf8',
@@ -15,8 +20,28 @@ export function processIdentity(pid: number): string | undefined {
     return value || undefined;
   } catch (error) {
     if ((error as { status?: number }).status === 1) return undefined;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'EPERM' || code === 'EACCES') return null;
     throw error;
   }
+}
+
+export function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/**
+ * Whether `pid` is still the process that recorded `startedAt`. When either
+ * identity is unknown, only liveness can be checked, so a live pid counts as the owner.
+ */
+export function processStillRunning(pid: number, startedAt: string | undefined): boolean {
+  const identity = startedAt === undefined ? null : processIdentity(pid);
+  return identity === null ? processAlive(pid) : identity === startedAt;
 }
 
 export class OperationRecord {
@@ -49,7 +74,7 @@ export class OperationRecord {
     fs.writeFileSync(logPath, '', { flag: 'wx', mode: 0o600 });
     fs.chmodSync(logPath, 0o600);
     const identity = processIdentity(process.pid);
-    if (!identity) throw new Error('Cannot identify the operation owner process');
+    if (identity === undefined) throw new Error('Cannot identify the operation owner process');
     this.value = {
       schemaVersion: 1,
       id,
@@ -57,7 +82,7 @@ export class OperationRecord {
       command,
       target,
       pid: process.pid,
-      processStartedAt: identity,
+      ...(identity ? { processStartedAt: identity } : {}),
       startedAt: now,
       updatedAt: now,
       status: 'running',

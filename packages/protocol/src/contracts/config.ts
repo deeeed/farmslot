@@ -214,6 +214,15 @@ export interface ProjectRecipeConfig {
   domain?: string;
   template?: string;
   manifest?: string;
+  viewer?: ProjectRecipeViewerConfig;
+}
+
+/** The local run evidence viewer (ADR-062 Amendment 23). */
+export interface ProjectRecipeViewerConfig {
+  /** False turns off the view link a run prints when it ends. Default true. */
+  link?: boolean;
+  /** Project-relative module exporting a run evidence page template. */
+  template?: string;
 }
 
 /**
@@ -261,6 +270,17 @@ export function validateProjectRecipeConfig(value: unknown): asserts value is Pr
       !/^[a-z][a-z0-9.-]*$/.test(value.recordingCapability))
   )
     fail('recordingCapability');
+  if (value.viewer !== undefined) {
+    if (
+      !record(value.viewer) ||
+      Object.keys(value.viewer).some((key) => key !== 'link' && key !== 'template')
+    )
+      fail('viewer');
+    else if (value.viewer.link !== undefined && typeof value.viewer.link !== 'boolean')
+      fail('viewer.link');
+    else if (value.viewer.template !== undefined && !string(value.viewer.template))
+      fail('viewer.template');
+  }
   if (value.checks !== undefined) {
     if (!Array.isArray(value.checks) || value.checks.length === 0) return fail('checks');
     const refs = new Set<string>();

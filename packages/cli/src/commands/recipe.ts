@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { type Command, Option } from 'commander';
 
 import {
@@ -251,6 +253,48 @@ export function registerRecipeCommand(program: Command): void {
       }
     });
 
+  recipe
+    .command('view')
+    .description("Serve a read-only local page of a recipe run's evidence, live while it runs")
+    .argument('<run-dir>', 'Recipe run folder, or a folder of runs for the run history')
+    .option('--port <port>', 'Port on 127.0.0.1; 0 picks a free one', '0')
+    .option('--template <module>', "Page template module; default: the project's recipe.viewer")
+    .option('--project <name>', 'Select a registered project for its page template')
+    .action(async (runDir: string, _options: unknown, cmd: Command) => {
+      const output = new OutputContext(Boolean(cmd.optsWithGlobals().json));
+      const emit = createEmitter(output, cmd);
+      try {
+        const shared = await import('@farmslot/recipe-cli/harness');
+        const options = cmd.opts();
+        const port = Number(options.port);
+        if (!Number.isInteger(port) || port < 0 || port > 65_535)
+          throw new Error(`--port must be a port number: ${options.port}`);
+        let templatePath = typeof options.template === 'string' ? options.template : undefined;
+        if (!templatePath) {
+          // A checkout outside any project gets the default page; a selection that fails throws.
+          const project = await shared.resolveProjectViewer(
+            await projectRecipeHostOptions('view', undefined, options),
+          );
+          if (project?.viewer?.template)
+            templatePath = path.resolve(project.root, project.viewer.template);
+        }
+        const server = await shared.serveRunEvidence({
+          dir: resolveRecipeCliPath(runDir),
+          port,
+          ...(templatePath ? { template: await shared.loadRunEvidenceTemplate(templatePath) } : {}),
+        });
+        if (output.json) output.writeJson({ url: server.url });
+        else output.write(`Run evidence: ${server.url}\nRead-only; Ctrl-C stops the server.\n`);
+        await new Promise<void>((resolve) => {
+          process.once('SIGINT', resolve);
+          process.once('SIGTERM', resolve);
+        });
+        await server.close();
+      } catch (error) {
+        emit.fail(error);
+      }
+    });
+
   artifacts
     .command('validate')
     .description('Validate a Recipe v1 artifact package directory')
@@ -413,7 +457,7 @@ export function registerRecipeCommand(program: Command): void {
         recipePath: resolveRecipeCliPath(recipePath),
       });
       const librarySources = applyTaskLocalInvocationTrust(sources, invocationTrust);
-      const { withRecipeSignals } = await import('@farmslot/recipe-cli/harness');
+      const shared = await import('@farmslot/recipe-cli/harness');
       const request: RecipeRunRequest = {
         recipePath: match ? match.recipe.path : resolveRecipeCliPath(recipePath),
         ...(selection ? { selection } : {}),
@@ -428,12 +472,13 @@ export function registerRecipeCommand(program: Command): void {
         // A library recipe keeps its library's trust unless the caller sets one.
         ...(!trust.source && match ? { source: match.recipe.provenance } : {}),
       };
-      const result = await withRecipeSignals((signal) => runner.run({ ...request, signal }));
+      const result = await shared.withRecipeSignals((signal) => runner.run({ ...request, signal }));
       if (emit.machine) {
         emit.ok(result);
       } else {
+        const viewHint = shared.runEvidenceViewHint(path.dirname(result.artifactManifestPath));
         output.write(
-          `Recipe run: ${runStatusLabel(result.status)}\nArtifacts: ${result.artifactManifestPath}\n`,
+          `Recipe run: ${runStatusLabel(result.status)}\nArtifacts: ${result.artifactManifestPath}\n${viewHint ? `View: ${viewHint}\n` : ''}`,
         );
       }
       if (result.status !== 'pass') process.exitCode = 1;
