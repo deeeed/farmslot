@@ -142,6 +142,8 @@ async function hostedTaskRuntime(
 
 export interface HostedTaskInput {
   runner?: string;
+  /** An artifact-only scripted command run: the node resolves the command-result contract. */
+  scriptedCommand?: true;
   binding: 'project' | 'static';
   task: Omit<TaskInitSpec, 'execution' | 'markCommand' | 'template'>;
   template: SelectedExecutionTemplate;
@@ -166,6 +168,7 @@ export function hostedTaskRequest(slotId: string, input: HostedTaskInput): strin
     version: 1,
     slotId,
     ...(input.runner === 'scripted' ? { runner: 'scripted' } : {}),
+    ...(input.scriptedCommand ? { scriptedCommand: true } : {}),
     binding: input.binding,
     task: input.task,
     template: {

@@ -3195,6 +3195,19 @@ export function isLightweightInteractiveDevRun(
   return isInteractiveDevRun(run) && run.devInteractiveProfile === DEFAULT_DEV_INTERACTIVE_PROFILE;
 }
 
+/** A scripted command run has no worker; with artifact-only completion, its command's result is its proof. */
+export function isArtifactOnlyScriptedCommandRun<
+  T extends Pick<Run, 'scripted' | 'completionPolicy'> & {
+    metrics?: Pick<Run['metrics'], 'runner'>;
+  },
+>(run: T): run is T & { scripted: Extract<ScriptedRunnerConfig, { mode: 'command' }> } {
+  return (
+    run.metrics?.runner === 'scripted' &&
+    run.scripted?.mode === 'command' &&
+    run.completionPolicy === 'artifact-only'
+  );
+}
+
 export function isInteractiveDevRun(run: Pick<Run, 'flowType' | 'mode'>): boolean {
   return run.flowType === 'dev' && run.mode === 'interactive';
 }

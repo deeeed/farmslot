@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
+
+import type { WorkerTerminalContractDocument } from '@farmslot/protocol';
 
 import { taskInit, type TaskInitSpec } from './index.js';
 
@@ -146,4 +149,58 @@ test('an authored task without a frozen set receives the node-selected one; a fr
   });
   assert.deepEqual(reimported.handoffMetadata.requiredSkills, requiredSkills);
   assert.equal(await readFile(reimported.taskDocument, 'utf8'), document);
+});
+
+test('a scripted-command task gets no worker checklist and freezes no checklist gates', async (t) => {
+  const input = await spec(t);
+  await writeFile(
+    path.join(input.template.sources[0]!.root, 'dev', 'default.md'),
+    '---\nid: hosted-dev\nflow: dev\n---\n# Worker\n- [ ] 1. Changed-file CI [DETERMINISTIC: ci.local_check]. Call `<task>/mark 1`.\n',
+  );
+  const { resolveWorkerTerminalContract } = createRequire(import.meta.url)(
+    '../../scripts/worker-terminal-contract.cjs',
+  ) as {
+    resolveWorkerTerminalContract: (
+      config: unknown,
+      flow: string,
+      options: { scriptedCommand?: true },
+    ) => WorkerTerminalContractDocument;
+  };
+  const result = await taskInit({
+    ...input,
+    vars: { 'ci.local_check': 'bash temp/farmslot/ci-parity' },
+    terminalContract: resolveWorkerTerminalContract({ acceptance: { require: true } }, 'dev', {
+      scriptedCommand: true,
+    }),
+  });
+  assert.equal(result.checklist, null, 'no CHECKLIST.md for a run without a worker');
+  await assert.rejects(readFile(path.join(input.taskDir, 'CHECKLIST.md'), 'utf8'), /ENOENT/);
+  const contract = JSON.parse(await readFile(result.terminalContract, 'utf8'));
+  assert.equal(contract.deterministicChecks, undefined, 'no ci.local_check receipt is required');
+  assert.deepEqual(contract.scriptedCommand, { result: 'artifacts/scripted-command-result.json' });
+  assert.match(await readFile(result.taskDocument, 'utf8'), /Hosted proof/);
+});
+
+test('an interactive operator plan is a worker checklist too: a scripted-command task takes none', async (t) => {
+  const input = await spec(t);
+  const { resolveWorkerTerminalContract } = createRequire(import.meta.url)(
+    '../../scripts/worker-terminal-contract.cjs',
+  ) as {
+    resolveWorkerTerminalContract: (
+      config: unknown,
+      flow: string,
+      options: { scriptedCommand?: true },
+    ) => WorkerTerminalContractDocument;
+  };
+  const result = await taskInit({
+    ...input,
+    vars: { 'ci.local_check': 'bash temp/farmslot/ci-parity' },
+    operatorPlan:
+      '# Plan\n- [ ] 1. Changed-file CI [DETERMINISTIC: ci.local_check]. Call `<task>/mark 1`.\n',
+    terminalContract: resolveWorkerTerminalContract(null, 'dev', { scriptedCommand: true }),
+  });
+  assert.equal(result.checklist, null);
+  const contract = JSON.parse(await readFile(result.terminalContract, 'utf8'));
+  assert.equal(contract.deterministicChecks, undefined, 'no gate frozen from the operator plan');
+  assert.doesNotMatch(await readFile(result.taskDocument, 'utf8'), /DETERMINISTIC/);
 });
