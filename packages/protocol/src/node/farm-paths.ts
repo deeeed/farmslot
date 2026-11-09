@@ -96,7 +96,7 @@ interface SharedFarmPaths {
   layout: 'legacy' | 2;
   instance: string;
   home: string;
-  /** Per-store environment variable names actually honoured, for migration warnings. */
+  /** Per-store environment variable names actually honoured, for path reports. */
   envOverrides: string[];
   config: string;
   configFiles: {
@@ -492,7 +492,6 @@ export function resolveFarmPaths(options: ResolveFarmPathsOptions): FarmPaths {
 // A process may switch homes during a test or CLI invocation. Include the marker timestamp
 // and environment in the key so neither a migration nor a changed override leaves stale roots.
 const processPaths = new Map<string, FarmPaths>();
-const warnedOverrides = new Set<string>();
 
 export function currentFarmPaths(
   role: 'gateway',
@@ -539,13 +538,6 @@ export function currentFarmPaths(
   if (!paths) {
     paths = resolveFarmPaths({ role, env, checkoutRoot });
     processPaths.set(key, paths);
-  }
-  for (const name of paths.envOverrides) {
-    if (warnedOverrides.has(name)) continue;
-    warnedOverrides.add(name);
-    console.warn(
-      `[farm-paths] ${name} is deprecated; configure instance.json before migrating to layout 2`,
-    );
   }
   return paths;
 }

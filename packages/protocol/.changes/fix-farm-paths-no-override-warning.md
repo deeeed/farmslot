@@ -1,0 +1,1 @@
+- Keep farm path resolution silent for supported legacy environment overrides so JSON consumers can parse output; override names remain available in `farmslot paths --json`.
