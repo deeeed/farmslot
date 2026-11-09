@@ -447,6 +447,48 @@ test('an active run retains an old fixture bundle until it ends, across later se
   );
 });
 
+test('a failed run keeps the bundle it captured while active, but not later bundles on its slot', async (t) => {
+  const f = await fixture(t);
+  for (const id of ['a', 'b']) await f.bundle(hash(id));
+  const parity = path.join(f.home, 'slot/temp/farmslot/ci-parity');
+  await mkdir(path.dirname(parity), { recursive: true });
+  const point = (id: string) =>
+    writeFile(parity, `PROJECT_ROOT="${f.root}/${hash(id)}/projects/fixture"\n`);
+  await point('a');
+  const selected = await f.pointer('slot', hash('b'));
+  const activate = (id: string, activeRuns: { runId: string; paths: string[] }[]) =>
+    exec('/bin/sh', [
+      '-c',
+      buildNodeSupportActivationCommand({
+        supportDir: path.join(f.root, hash(id)),
+        supportHash: hash(id),
+        selectionPath: selected,
+        references: { selectionPaths: [selected], runHashes: [], activeRuns, endedRunIds: [] },
+        verifyCommand: 'true',
+      }),
+    ]);
+  // While it runs, the run's fixtures name bundle a.
+  await activate('b', [{ runId: 'failed-run', paths: [parity, selected] }]);
+  // It fails and its slot is reused: the next run's fixtures name c, then d. The failed run is
+  // neither scanned nor ended, so its captured record stays as it was.
+  await f.bundle(hash('c'));
+  await point('c');
+  await activate('c', []);
+  await f.bundle(hash('d'));
+  await point('d');
+  await activate('d', []);
+  assert.equal(
+    await present(path.join(f.root, hash('a'))),
+    true,
+    'the failed run keeps its bundle',
+  );
+  assert.equal(
+    await present(path.join(f.root, hash('c'))),
+    false,
+    'a later bundle on the slot is not acquired by the failed run',
+  );
+});
+
 test('only the owning run inventory releases a deleted run journal', async (t) => {
   const f = await fixture(t);
   for (const id of ['a', 'b']) await f.bundle(hash(id));

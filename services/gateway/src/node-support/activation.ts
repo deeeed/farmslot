@@ -74,9 +74,13 @@ function supportHashes(values: readonly unknown[], supportRoot?: string): string
   return [...hashes];
 }
 
-/** A failed run stays replayable until archived, so the bundles its fixtures name stay too. */
+/**
+ * A failed run stays replayable until archived, so the references captured while it ran stay
+ * retained. Only unsettled runs are rescanned: a released failure must not acquire the bundles
+ * of later runs on its slot.
+ */
 function retainsNodeSupport(run: Run): boolean {
-  return !run.archivedAt && (hasUnsettledRunExecution(run) || isActiveListRun(run));
+  return !run.archivedAt && isActiveListRun(run);
 }
 
 export function referencedNodeSupportHashes(runs: readonly Run[], supportRoot?: string): string[] {
@@ -171,7 +175,8 @@ export async function nodeSupportRetentionReferences(
     const selection = nodeSupportHashPath(selected.remoteRepo, project.runtimeDir);
     selectionPaths.push(selection);
     for (const run of runs) {
-      if (!retainsNodeSupport(run) || resolveRunSlotId(run) !== slot.id) continue;
+      if (run.archivedAt || !hasUnsettledRunExecution(run) || resolveRunSlotId(run) !== slot.id)
+        continue;
       const paths = [selection];
       const fixtures = project.projectJson.fixtures;
       if (isRecord(fixtures)) {
