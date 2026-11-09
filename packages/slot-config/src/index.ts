@@ -13,6 +13,7 @@ export {
 export type {
   IncrementalSessionUsageResult,
   IncrementalSessionUsageState,
+  PiModelCostMetadata,
   SessionAction,
 } from './session-usage.js';
 export {

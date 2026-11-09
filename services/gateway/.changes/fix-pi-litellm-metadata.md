@@ -1,0 +1,1 @@
+- Read Pi compatible-provider token prices and LiteLLM thinking-level declarations from model metadata; keep unreported prices unknown and preserve requested supported effort.

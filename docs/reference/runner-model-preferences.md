@@ -103,3 +103,24 @@ The same `_MODEL_LIMITS` suffix works for router and Ollama sources. A model-spe
 budget caps reported limits; it cannot enlarge them. When metadata is unavailable,
 these values supply the missing limits without affecting other models. Reasoning
 requests on LiteLLM use the same wire check and session record as router requests.
+
+LiteLLM's `/v1/model/info` supplies token prices and declared thinking levels.
+Per-token prices become USD per million tokens for Pi, including reported
+context-price tiers. An unreported price stays null; an explicit zero stays free.
+Missing cache prices make cost unavailable only when those cache tokens are used.
+
+Pi requires numeric SDK price fields. The extension keeps their nullable provenance
+in the existing `farmslot-model-request` journal entry, so accounting never treats
+an unpriced SDK placeholder as a quote. Provider-reported charges remain
+authoritative. Without a recorded native cost, accounting does not estimate one.
+An SDK counter must agree with the used reported token prices. A reasoning-token
+rate without a token split or an unreported long-cache price leaves it unknown.
+The quote validates a recorded counter; it never fills a missing native charge.
+An SDK zero without recorded token usage stays unknown; a provider-reported zero
+remains an authoritative charge.
+Earlier request entries without prices make an unproven zero unknown; existing
+nonzero recorded charges and transcripts without extension metadata are preserved.
+
+Reported `reasoning_effort_levels` and per-level support flags populate the thinking
+map. Explicitly unsupported levels map to null; unreported extended levels remain
+unavailable. No model-name guesses or image detection are used.

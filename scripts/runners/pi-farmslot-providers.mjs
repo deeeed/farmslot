@@ -4,6 +4,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DEFAULT_OLLAMA = '127.0.0.1:11434';
+const PI_REASONING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+const PRICE_TIER =
+  /^(input_cost_per_token|output_cost_per_token|cache_read_input_token_cost|cache_creation_input_token_cost)_above_(\d+)k_tokens$/;
+
+/** @typedef {import('@farmslot/slot-config').PiModelCostMetadata} PiModelCostMetadata */
 
 /** Bound worker HTTP requests through the final response byte. Pi owns retries. */
 export function deadlinePiFetch(fetchImpl, timeoutMs = 5 * 60_000, onExhausted) {
@@ -192,6 +197,85 @@ function modelLimit(reported, cap, fallback, name) {
   return cap === undefined ? (real ?? fallback) : Math.min(real ?? cap, cap);
 }
 
+/** @returns {PiModelCostMetadata | null} */
+function modelCost(info, reasoning) {
+  const fields = {
+    input_cost_per_token: 'input',
+    output_cost_per_token: 'output',
+    cache_read_input_token_cost: 'cacheRead',
+    cache_creation_input_token_cost: 'cacheWrite',
+  };
+  const rate = (value) =>
+    typeof value === 'number' && Number.isFinite(value) ? value * 1_000_000 : null;
+  const cost = {
+    input: rate(info.input_cost_per_token),
+    output: rate(info.output_cost_per_token),
+    cacheRead: rate(info.cache_read_input_token_cost),
+    cacheWrite: rate(info.cache_creation_input_token_cost),
+    ...(info.cache_creation_input_token_cost_above_1hr != null
+      ? { cacheWrite1h: rate(info.cache_creation_input_token_cost_above_1hr) }
+      : {}),
+    ...(reasoning && info.output_cost_per_reasoning_token != null
+      ? { reasoningOutput: rate(info.output_cost_per_reasoning_token) }
+      : {}),
+  };
+  const tiers = new Map();
+  for (const [key, value] of Object.entries(info)) {
+    const match = PRICE_TIER.exec(key);
+    if (!match || value === null || value === undefined) continue;
+    const threshold = Number(match[2]) * 1000;
+    const tier = tiers.get(threshold) ?? { ...cost, inputTokensAbove: threshold };
+    tier[fields[match[1]]] = rate(value);
+    tiers.set(threshold, tier);
+  }
+  if (tiers.size)
+    return {
+      ...cost,
+      tiers: [...tiers.values()].sort((a, b) => a.inputTokensAbove - b.inputTokensAbove),
+    };
+  return Object.values(cost).some((value) => value !== null) ? cost : null;
+}
+
+/** @returns {Record<string, string | null> | undefined} */
+function reportedThinkingMap(info) {
+  /** @type {Record<string, string | null>} */
+  const map = {};
+  for (const level of PI_REASONING_LEVELS) {
+    if (Array.isArray(info.reasoning_effort_levels)) {
+      map[level] = info.reasoning_effort_levels.includes(level) ? level : null;
+    } else {
+      const key = `supports_${level}_reasoning_effort`;
+      const supported = reasoningSetting(info[key], key);
+      if (supported !== undefined) map[level] = supported ? level : null;
+    }
+  }
+  return Object.keys(map).length ? map : undefined;
+}
+
+/** Pi requires numeric SDK rates; nullable request metadata owns their accounting validity. */
+export function piSdkModels(models) {
+  const rates = (cost) => ({
+    input: cost?.input ?? 0,
+    output: cost?.output ?? 0,
+    cacheRead: cost?.cacheRead ?? 0,
+    cacheWrite: cost?.cacheWrite ?? 0,
+  });
+  return models.map((model) => ({
+    ...model,
+    cost: {
+      ...rates(model.cost),
+      ...(model.cost?.tiers
+        ? {
+            tiers: model.cost.tiers.map((tier) => ({
+              ...rates(tier),
+              inputTokensAbove: tier.inputTokensAbove,
+            })),
+          }
+        : {}),
+    },
+  }));
+}
+
 function modelEntry(row, source, defaults, info = {}, configured = {}) {
   const context =
     row.context_length ??
@@ -221,19 +305,12 @@ function modelEntry(row, source, defaults, info = {}, configured = {}) {
     name: row.id,
     reasoning,
     ...(source === 'router'
-      ? {
-          thinkingLevelMap: {
-            minimal: 'minimal',
-            low: 'low',
-            medium: 'medium',
-            high: 'high',
-            xhigh: 'xhigh',
-            max: 'max',
-          },
-        }
-      : {}),
+      ? { thinkingLevelMap: Object.fromEntries(PI_REASONING_LEVELS.map((level) => [level, level])) }
+      : reasoning && source === 'litellm'
+        ? { thinkingLevelMap: reportedThinkingMap(info) }
+        : {}),
     input: ['text', 'image'],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    cost: modelCost(info, reasoning),
     contextWindow: modelLimit(
       context,
       configured.contextWindow,
@@ -289,7 +366,7 @@ export async function resolvePiProviderCatalog(env = process.env, opts = {}) {
   return resolved.filter(Boolean);
 }
 
-/** @typedef {{ provider: string, model: string, contextWindow: number, maxTokens: number, reasoning: boolean, effort: string, requestedMaxTokens?: number }} PiModelRequestConfiguration */
+/** @typedef {{ provider: string, model: string, contextWindow: number, maxTokens: number, reasoning: boolean, effort?: string, requestedMaxTokens?: number, cost: PiModelCostMetadata | null }} PiModelRequestConfiguration */
 
 /**
  * Refuse undeclared effort changes before sending; record actual wire effort.
@@ -326,14 +403,17 @@ export function providerReasoningFetch(fetchImpl, providers = [], onRequest, req
           throw new PiProviderConfigurationError(
             `Model ${provider.id}/${model.id} requires a reasoning effort; refusing a non-reasoning request`,
           );
+      }
+      if (model) {
         onRequest?.({
           provider: provider.id,
           model: model.id,
           contextWindow: model.contextWindow,
           maxTokens: model.maxTokens,
           requestedMaxTokens: payload.max_completion_tokens ?? payload.max_tokens,
-          reasoning: true,
+          reasoning: model.reasoning,
           effort,
+          cost: model.cost ?? null,
         });
       }
     }
