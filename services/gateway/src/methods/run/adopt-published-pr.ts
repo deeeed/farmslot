@@ -47,7 +47,7 @@ interface PublishedPrFacts {
   state: 'open' | 'closed';
   merged_at: string | null;
   draft: boolean;
-  base: { repo: { full_name: string } };
+  base: { sha: string; repo: { full_name: string } };
   head: { sha: string; ref: string; repo: { full_name: string } | null };
 }
 
@@ -222,6 +222,7 @@ export async function runAdoptPublishedPr(
       typeof facts.head.ref !== 'string' ||
       !facts.head.ref ||
       !/^[a-f0-9]{40}$/i.test(facts.head.sha) ||
+      !/^[a-f0-9]{40}$/i.test(facts.base?.sha ?? '') ||
       typeof facts.draft !== 'boolean' ||
       !['open', 'closed'].includes(facts.state)
     )
@@ -258,20 +259,14 @@ export async function runAdoptPublishedPr(
           candidate.payload?.kind === 'ready',
       );
     const prepared = decision?.payload?.kind === 'ready' ? decision.payload.prPackage : undefined;
-    let content: PublishedContentComparison;
-    try {
-      content = await (dependencies.compareContent ?? comparePublishedContent)(
-        initial,
-        prepared,
-        repository,
-        ref.number,
-        github,
-      );
-    } catch (error) {
-      // A diff GitHub cannot serve proves nothing: it refuses a content match and is recorded on an
-      // attested adoption, never treated as a match.
-      content = { unavailable: `the PR diff could not be read: ${(error as Error).message}` };
-    }
+    // Pinned to the SHAs just read: a push after this cannot change what is compared or recorded.
+    const compared = { baseSha: facts.base.sha.toLowerCase(), headSha: observedHead };
+    const content = await (dependencies.compareContent ?? comparePublishedContent)(
+      initial,
+      prepared,
+      { repository, ...compared },
+      github,
+    );
     const contentMatch = !('unavailable' in content) && content.differingFiles.length === 0;
     const prUrl = githubPullUrl({ repo: repository, number: ref.number });
     if (!attested && !contentMatch)
@@ -283,6 +278,7 @@ export async function runAdoptPublishedPr(
       runBranch: initial.branch!,
       prBranch: facts.head.ref,
       differingFiles: content.differingFiles ?? [],
+      compared,
       ...('unavailable' in content ? { unavailable: content.unavailable } : {}),
     };
     let unmetPrerequisites: RunGatePrerequisiteReason[] = [];

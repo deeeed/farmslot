@@ -106,6 +106,10 @@ export function buildCIWatchChainedRunParams(
     // task (for example on Example App unlock actionability flakes). Prefer
     // warmSessionReuse so DISPATCH hands the task to the still-alive parent
     // worker; fall back to fresh launch when the session is gone.
-    engineFlags: current.slotId ? { skipPrepare: true, warmSessionReuse: true } : {},
+    // An adopted PR on another branch is not the slot's checkout: prepare the PR instead of reusing it.
+    engineFlags:
+      current.slotId && publishedBranchOf(current) === current.branch
+        ? { skipPrepare: true, warmSessionReuse: true }
+        : {},
   };
 }

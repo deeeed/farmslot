@@ -23,6 +23,7 @@ type Dependencies = import('./adopt-published-pr.js').PublicationAdoptionDepende
 
 const reviewedHead = 'a'.repeat(40);
 const prHead = 'b'.repeat(40);
+const prBase = 'e'.repeat(40);
 const approver = {
   principalId: 'human',
   credentialId: 'human-credential',
@@ -69,14 +70,17 @@ interface Fixture {
   taskDir: string;
 }
 
-async function fixture(
-  t: test.TestContext,
-  options: {
-    reviewed?: string;
-    untracked?: ReviewDiffSnapshot['untrackedFiles'];
-    tamper?: boolean;
-  } = {},
-): Promise<Fixture> {
+interface FixtureOptions {
+  reviewed?: string;
+  untracked?: ReviewDiffSnapshot['untrackedFiles'];
+  tamper?: boolean;
+  /** Whether a passing review covers the package's snapshot, covers another patch, or is absent. */
+  review?: 'covers' | 'other-patch' | 'none';
+  /** The gate points at another package than the ready decision's. */
+  stalePackage?: boolean;
+}
+
+async function fixture(t: test.TestContext, options: FixtureOptions = {}): Promise<Fixture> {
   const taskDir = await mkdtemp(path.join(os.tmpdir(), 'adopt-content-'));
   t.after(() => rm(taskDir, { recursive: true, force: true }));
   const diff = options.reviewed ?? reviewedDiff;
@@ -91,21 +95,23 @@ async function fixture(
     branch: 'fix/manual-000183-fix-perps-configure-order-shee',
   });
   t.after(() => deleteTestRunIfPresent(run.id));
+  const snapshot: ReviewDiffSnapshot = {
+    source: 'local-git',
+    baseRef: 'origin/main',
+    baseSha: 'c'.repeat(40),
+    headSha: reviewedHead,
+    diffHash: reviewDiffHash(reviewSnapshotIdentityText(diff, options.untracked ?? [])),
+    diffStat: { files: 2, additions: 2, deletions: 1 },
+    ...(options.untracked ? { untrackedFiles: options.untracked } : {}),
+    diffPath,
+    capturedAt: '2026-11-08T22:37:56.755Z',
+  };
   const prepared = makeReadyGatePackage({
     headSha: reviewedHead,
     branch: 'fix/manual-000183-fix-perps-configure-order-shee',
-    reviewSnapshot: {
-      source: 'local-git',
-      baseRef: 'origin/main',
-      baseSha: 'c'.repeat(40),
-      headSha: reviewedHead,
-      diffHash: reviewDiffHash(reviewSnapshotIdentityText(diff, options.untracked ?? [])),
-      diffStat: { files: 2, additions: 2, deletions: 1 },
-      ...(options.untracked ? { untrackedFiles: options.untracked } : {}),
-      diffPath,
-      capturedAt: '2026-11-08T22:37:56.755Z',
-    },
+    reviewSnapshot: snapshot,
   });
+  const review = options.review ?? 'covers';
   return {
     taskDir,
     run: updateRun(run.id, {
@@ -114,9 +120,24 @@ async function fixture(
       engineState: {
         generation: 1,
         publishGate: {
-          packageId: prepared.id,
+          packageId: options.stalePackage ? 'pkg-newer' : prepared.id,
           packageHash: prepared.packageHash,
           publicationStatus: 'not_published',
+          reviews:
+            review === 'none'
+              ? []
+              : [
+                  {
+                    id: 'review-4',
+                    source: 'human-gate',
+                    mode: 'cold',
+                    loopNumber: 4,
+                    verdict: 'pass',
+                    unresolvedCount: 0,
+                    reviewSnapshot:
+                      review === 'covers' ? snapshot : { ...snapshot, diffHash: 'f'.repeat(64) },
+                  },
+                ],
         },
       },
       decisions: [
@@ -142,13 +163,21 @@ async function fixture(
   };
 }
 
+interface GithubOverrides {
+  headRepo?: string;
+  prBranch?: string;
+  /** Records every compare path read, to prove the comparison is pinned. */
+  compares?: string[];
+}
+
 function dependencies(
   published: string,
-  overrides: Partial<Dependencies> & { headRepo?: string; prBranch?: string } = {},
+  overrides: Partial<Dependencies> & GithubOverrides = {},
 ): Dependencies {
   const {
     headRepo = 'owner/repo',
     prBranch = 'fix/mobile-perps-configure-order-sheet',
+    compares,
     ...rest
   } = overrides;
   return {
@@ -158,8 +187,12 @@ function dependencies(
     github: async (args) => {
       if (args.some((arg) => arg.endsWith('/commits')))
         return { stdout: `${reviewedHead}\n${prHead}\n`, stderr: '' };
-      if (args.includes('Accept: application/vnd.github.diff'))
+      if (args.includes('Accept: application/vnd.github.diff')) {
+        const target = args.find((arg) => arg.includes('/compare/'));
+        if (!target) throw new Error('the PR diff must be read for a pinned range');
+        compares?.push(target);
         return { stdout: published, stderr: '' };
+      }
       return {
         stdout: JSON.stringify({
           number: 541,
@@ -167,7 +200,7 @@ function dependencies(
           state: 'closed',
           merged_at: '2026-11-09T00:10:00Z',
           draft: false,
-          base: { repo: { full_name: 'owner/repo' } },
+          base: { sha: prBase, repo: { full_name: 'owner/repo' } },
           head: { sha: prHead, ref: prBranch, repo: { full_name: headRepo } },
         }),
         stderr: '',
@@ -209,6 +242,7 @@ test('a same-repository PR on another branch is adopted when its change matches 
   assert.equal(result.receipt.match?.runBranch, 'fix/manual-000183-fix-perps-configure-order-shee');
   assert.equal(result.receipt.match?.prBranch, 'fix/mobile-perps-configure-order-sheet');
   assert.deepEqual(result.receipt.match?.differingFiles, []);
+  assert.deepEqual(result.receipt.match?.compared, { baseSha: prBase, headSha: prHead });
   assert.equal(result.receipt.headSha, prHead, 'content match adopts the observed PR head');
   assert.equal(result.receipt.observedBranch, 'fix/mobile-perps-configure-order-sheet');
   assert.match(result.receipt.reason, /content matches the reviewed patch/);
@@ -293,18 +327,41 @@ test('a reviewed diff that no longer verifies, or untracked reviewed files, cann
 
 test('a head without the attestation is refused; content mode adopts the observed head only', async (t) => {
   const { run } = await fixture(t);
+  const invalid = { ...contentRequest(run), headSha: prHead };
   await assert.rejects(
-    runAdoptPublishedPr(
-      { ...contentRequest(run), headSha: prHead } as RunAdoptPublishedPrParams,
-      noop,
-      dependencies(republishedDiff),
-    ),
+    // @ts-expect-error A head belongs to the attested request only; the gateway refuses it at runtime too.
+    runAdoptPublishedPr(invalid, noop, dependencies(republishedDiff)),
     /--head is only accepted with --attest-reviewed-publication/,
   );
 });
 
-test('chained CI work follows the adopted PR branch', async (t) => {
+test('the comparison reads the PR range pinned to the SHAs read with the facts', async (t) => {
   const { run } = await fixture(t);
+  const compares: string[] = [];
+  await runAdoptPublishedPr(contentRequest(run), noop, dependencies(republishedDiff, { compares }));
+  assert.deepEqual(compares, [`repos/owner/repo/compare/${prBase}...${prHead}`]);
+});
+
+test('only a patch a passing review covered, on the gate package, can prove a content match', async (t) => {
+  const cases: Array<[FixtureOptions, RegExp]> = [
+    [{ review: 'none' }, /no passing review covers the recorded patch/],
+    [{ review: 'other-patch' }, /no passing review covers the recorded patch/],
+    [{ stalePackage: true }, /not the gate's current package/],
+  ];
+  for (const [options, reason] of cases) {
+    const { run } = await fixture(t, options);
+    const before = structuredClone(getRun(run.id));
+    await assert.rejects(
+      runAdoptPublishedPr(contentRequest(run), noop, dependencies(republishedDiff)),
+      reason,
+    );
+    assert.deepEqual(getRun(run.id), before);
+  }
+});
+
+test('chained CI work follows the adopted PR branch and prepares it instead of reusing the slot checkout', async (t) => {
+  const { run } = await fixture(t);
+  updateRun(run.id, { slotId: 'slot-1' });
   const result = await runAdoptPublishedPr(
     contentRequest(run),
     noop,
@@ -313,13 +370,42 @@ test('chained CI work follows the adopted PR branch', async (t) => {
   const chain = buildCIWatchChainedRunParams(result.run, 'dispatch-pr-complete', 'owner/repo');
   assert.equal(chain?.createParams.branch, 'fix/mobile-perps-configure-order-sheet');
   assert.equal(chain?.createParams.ticketOrPr, 'owner/repo#541');
+  assert.deepEqual(
+    chain?.engineFlags,
+    {},
+    'the retained checkout is on the run branch, not the PR',
+  );
+  const sameBranch = buildCIWatchChainedRunParams(
+    { ...result.run, branch: 'fix/mobile-perps-configure-order-sheet' },
+    'dispatch-pr-complete',
+    'owner/repo',
+  );
+  assert.deepEqual(sameBranch?.engineFlags, { skipPrepare: true, warmSessionReuse: true });
 });
 
-test('per-file comparison ignores line offsets and blob ids, and reports renames, deletions and binaries', async () => {
-  assert.deepEqual(await differingPatchFiles(reviewedDiff, republishedDiff), []);
-  assert.deepEqual(await differingPatchFiles(reviewedDiff, resolvedDiff), ['CHANGELOG.md']);
+test('whitespace and file modes are part of the change', () => {
+  const reindented = reviewedDiff.replace(
+    '+const sheet = configured();',
+    '+const sheet =  configured();',
+  );
+  assert.deepEqual(differingPatchFiles(reviewedDiff, reindented), ['src/order.ts']);
+  const spaced = reviewedDiff.replace(
+    '+- Configure the order sheet',
+    '+-  Configure the order sheet',
+  );
+  assert.deepEqual(differingPatchFiles(reviewedDiff, spaced), ['CHANGELOG.md']);
+  const executable = reviewedDiff.replace(
+    'index 1111111..2222222 100644',
+    'old mode 100644\nnew mode 100755\nindex 1111111..2222222',
+  );
+  assert.deepEqual(differingPatchFiles(reviewedDiff, executable), ['src/order.ts']);
+});
+
+test('per-file comparison ignores line offsets and blob ids, and reports renames, deletions and binaries', () => {
+  assert.deepEqual(differingPatchFiles(reviewedDiff, republishedDiff), []);
+  assert.deepEqual(differingPatchFiles(reviewedDiff, resolvedDiff), ['CHANGELOG.md']);
   const onlyOrder = reviewedDiff.slice(0, reviewedDiff.indexOf('diff --git a/CHANGELOG.md'));
-  assert.deepEqual(await differingPatchFiles(reviewedDiff, onlyOrder), ['CHANGELOG.md']);
+  assert.deepEqual(differingPatchFiles(reviewedDiff, onlyOrder), ['CHANGELOG.md']);
   const binary = (blob: string) =>
     [
       'diff --git a/logo.png b/logo.png',
@@ -327,8 +413,8 @@ test('per-file comparison ignores line offsets and blob ids, and reports renames
       'Binary files a/logo.png and b/logo.png differ',
       '',
     ].join('\n');
-  assert.deepEqual(await differingPatchFiles(binary('1234567'), binary('1234567')), []);
-  assert.deepEqual(await differingPatchFiles(binary('1234567'), binary('7654321')), ['logo.png']);
+  assert.deepEqual(differingPatchFiles(binary('1234567'), binary('1234567')), []);
+  assert.deepEqual(differingPatchFiles(binary('1234567'), binary('7654321')), ['logo.png']);
   const rename = [
     'diff --git a/old.ts b/new.ts',
     'similarity index 100%',
@@ -336,6 +422,6 @@ test('per-file comparison ignores line offsets and blob ids, and reports renames
     'rename to new.ts',
     '',
   ].join('\n');
-  assert.deepEqual(await differingPatchFiles(rename, rename), []);
-  assert.deepEqual(await differingPatchFiles(rename, ''), ['old.ts -> new.ts']);
+  assert.deepEqual(differingPatchFiles(rename, rename), []);
+  assert.deepEqual(differingPatchFiles(rename, ''), ['old.ts -> new.ts']);
 });

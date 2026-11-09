@@ -11,6 +11,8 @@ export interface PublicationAdoptionMatch {
   prBranch: string;
   /** Files whose change differs from the reviewed patch; empty for a content match. */
   differingFiles: string[];
+  /** The PR range compared (base...head), pinned to the SHAs read with the PR facts. */
+  compared: { baseSha: string; headSha: string };
   /** Why the content could not be compared (attested adoptions only). */
   unavailable?: string;
 }

@@ -436,13 +436,16 @@ approved, including any external review used after the pipeline's round cap.
 The gateway MUST verify the PR's base and head against the run's declared
 repository, using retained project/source context without requiring its old slot.
 The PR's branch may differ from the run's. Without an attestation, the PR's change
-against its base MUST match the run's reviewed patch file by file (stable patch-id
-for text hunks), read from the frozen review snapshot and verified against its
-recorded diff hash; a mismatch or an unverifiable patch refuses, naming the PR
-branch, the differing files and the attested command. With an attestation the
+between the base and head SHAs read with its facts MUST match the run's reviewed
+patch file by file, byte for byte apart from display-only blob ids and hunk line
+numbers. The reviewed patch is the gate's current package, whose review snapshot a
+passing review covered exactly; it is read from the frozen snapshot and verified
+against its recorded diff hash. A mismatch, an uncovered or unverifiable patch
+refuses, naming the PR branch, the differing files (or the reason) and the attested
+command. With an attestation the
 comparison is recorded, not required. The receipt's `match` records the type
-(`content-match` or `attested`), both branch names and the differing files, and
-the resolved gate decision carries it with the reason. The full
+(`content-match` or `attested`), both branch names, the differing files and the
+compared range, and the resolved gate decision carries it with the reason. The full
 supplied commit of an attested adoption MUST equal the observed PR head or be
 verifiably in that PR's history; a content match adopts the observed head. In the historical case, record the newer observed head separately;
 ancestry does not transfer approval to it. Unavailable or inconsistent GitHub

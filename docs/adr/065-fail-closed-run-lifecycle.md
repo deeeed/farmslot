@@ -859,12 +859,16 @@ fix can be republished from another branch of the same repository (for example
 after the repository owner merges main in). Two paths remain, and both refuse a
 PR whose base or head is in another repository:
 
-- **Content match (automatic).** Without an attestation, the gateway reads the
-  run's reviewed patch from its frozen review snapshot, verifies it against the
-  recorded diff hash, and compares it file by file with the PR's change against
-  its base on GitHub. Text hunks compare by stable patch-id, so line offsets and
-  blob ids do not matter. Every file must match. The adopted head is the
-  observed PR head.
+- **Content match (automatic).** Without an attestation, the gateway takes the
+  run's reviewed patch: the gate's current package, whose review snapshot a
+  passing review covered exactly (same head SHA, same diff hash). It reads that
+  diff from the frozen snapshot, verifies it against the recorded hash, and
+  compares it file by file with the PR's change on GitHub between the base and
+  head SHAs read with the PR facts (`compare/<base>...<head>`), so a later push
+  cannot change what is compared. Every byte counts, whitespace and file modes
+  included; only display data is ignored (abbreviated blob ids on text
+  sections, hunk line numbers and function context). Every file must match. The
+  adopted head is the observed PR head; the receipt records the compared range.
 - **Attested head (override).** The attestation flags keep their Amendment 2
   meaning (`--attest-reviewed-publication`, `--head <sha>`, `--reason`) and are
   the human override for a mismatch or an unverifiable patch.
@@ -877,7 +881,9 @@ The receipt records `match`: `content-match` or `attested`, the run and PR
 branch names and the differing files. The resolved gate decision carries the
 same match and the reason. A same-branch, attested adoption behaves as before.
 Consumers that compared the PR branch with the run's branch (published-evidence
-refresh, chained CI work) follow the adopted PR's branch.
+refresh, chained CI work) follow the adopted PR's branch. A chained CI follow-up
+for a PR on another branch prepares that PR instead of reusing the run's warm
+checkout.
 
 ### Public surface
 

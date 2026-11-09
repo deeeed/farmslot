@@ -2,25 +2,33 @@ import { createHash } from 'node:crypto';
 
 import type { ReadyGatePrPackage, Run } from '@farmslot/protocol';
 
-import { stablePatchId } from '../../evals/blind-inputs.js';
 import type { ghRequest } from '../../integrations/github-client.js';
 import { readVerifiedSnapshotDiff } from '../../run-engine/review-diff-refresh.js';
 
-/** Beyond this many files the comparison refuses rather than spawning git per file. */
+/** Beyond this many files the comparison refuses rather than hashing an unbounded diff. */
 const MAX_COMPARED_FILES = 300;
+
+type PublishGate = NonNullable<NonNullable<Run['engineState']>['publishGate']>;
+
+/** The PR side of the comparison, pinned to the SHAs read with the PR facts. */
+export interface PublishedRange {
+  repository: string;
+  baseSha: string;
+  headSha: string;
+}
 
 export type PublishedContentComparison =
   | { differingFiles: string[] }
   | { unavailable: string; differingFiles?: string[] };
 
-/** `a -> b` for a rename or copy, otherwise the one path the section changes. */
+/** `a -> b` for a rename or copy, otherwise the path the section changes. */
 function sectionKey(section: string): string {
   const from = /^rename from (.+)$/m.exec(section)?.[1] ?? /^copy from (.+)$/m.exec(section)?.[1];
   const to = /^rename to (.+)$/m.exec(section)?.[1] ?? /^copy to (.+)$/m.exec(section)?.[1];
   if (from && to) return `${from} -> ${to}`;
   const header = /^diff --git a\/(.+) b\/(.+)$/m.exec(section);
   if (!header) throw new Error('Unrecognised diff section header');
-  return header[2] === '/dev/null' ? header[1]! : header[2]!;
+  return header[2]!;
 }
 
 function splitDiff(diff: string): Map<string, string> {
@@ -34,57 +42,92 @@ function splitDiff(diff: string): Map<string, string> {
   return files;
 }
 
-/** Text hunks compare by stable patch-id (line offsets and blob ids ignored); a section with no hunk
- * (binary, mode-only, pure rename) compares by its header with the display-only index line dropped,
- * except for binaries, whose blob ids are their content. */
-async function sectionIdentity(section: string): Promise<string> {
-  if (/^@@ /m.test(section)) return `patch:${await stablePatchId(section)}`;
+/** Every byte of the change counts, whitespace and file modes included. Only display data is dropped:
+ * a text section's `index` line (abbreviated blob ids) and the hunk header's line numbers and function
+ * context. A binary section keeps its index line, whose blob ids are its content. */
+function sectionIdentity(section: string): string {
   const binary = /^(GIT binary patch|Binary files .* differ)$/m.test(section);
-  const header = binary ? section : section.replace(/^index [^\n]*\n/gm, '');
-  return `header:${createHash('sha256').update(header).digest('hex')}`;
+  const canonical = (binary ? section : section.replace(/^index [^\n]*\n/gm, '')).replace(
+    /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@[^\n]*$/gm,
+    '@@',
+  );
+  return createHash('sha256').update(canonical).digest('hex');
 }
 
 /** Files whose change differs between two unified diffs, sorted; empty when they carry the same patch. */
-export async function differingPatchFiles(reviewed: string, published: string): Promise<string[]> {
+export function differingPatchFiles(reviewed: string, published: string): string[] {
   const left = splitDiff(reviewed);
   const right = splitDiff(published);
   const keys = [...new Set([...left.keys(), ...right.keys()])].sort();
   if (keys.length > MAX_COMPARED_FILES)
     throw new Error(`the patches touch ${keys.length} files (limit ${MAX_COMPARED_FILES})`);
-  const differing: string[] = [];
-  for (const key of keys) {
+  return keys.filter((key) => {
     const a = left.get(key);
     const b = right.get(key);
-    if (!a || !b || (await sectionIdentity(a)) !== (await sectionIdentity(b))) differing.push(key);
-  }
-  return differing;
+    return !a || !b || sectionIdentity(a) !== sectionIdentity(b);
+  });
 }
 
-/** Compare the run's reviewed, hash-verified patch with the PR's change vs its base on GitHub. */
+/** A content match needs a reviewed patch: the gate's current package, whose snapshot a passing review
+ * covered exactly (same head, same diff hash). A captured package alone certifies nothing. */
+function reviewedSnapshotOf(
+  prepared: ReadyGatePrPackage | undefined,
+  gate: PublishGate | undefined,
+): { snapshot: NonNullable<ReadyGatePrPackage['reviewSnapshot']> } | { unavailable: string } {
+  const snapshot = prepared?.reviewSnapshot;
+  if (!prepared || !snapshot?.diffHash || !snapshot.diffPath || !snapshot.headSha)
+    return { unavailable: 'the run has no recorded reviewed patch' };
+  if (gate?.packageId !== prepared.id)
+    return { unavailable: "the recorded patch is not the gate's current package" };
+  const covered = (gate.reviews ?? []).some(
+    (review) =>
+      review.verdict === 'pass' &&
+      review.reviewSnapshot?.headSha === snapshot.headSha &&
+      review.reviewSnapshot?.diffHash === snapshot.diffHash,
+  );
+  if (!covered) return { unavailable: 'no passing review covers the recorded patch' };
+  return { snapshot };
+}
+
+/** Compare the run's reviewed, hash-verified patch with the PR's change between the pinned SHAs. */
 export async function comparePublishedContent(
   run: Run,
   prepared: ReadyGatePrPackage | undefined,
-  repository: string,
-  prNumber: number,
+  range: PublishedRange,
   github: typeof ghRequest,
 ): Promise<PublishedContentComparison> {
-  const snapshot = prepared?.reviewSnapshot;
-  if (!snapshot?.diffHash || !snapshot.diffPath)
-    return { unavailable: 'the run has no recorded reviewed patch' };
-  const reviewed = await readVerifiedSnapshotDiff(run, snapshot);
-  if (reviewed === undefined)
+  const reviewed = reviewedSnapshotOf(prepared, run.engineState?.publishGate);
+  if ('unavailable' in reviewed) return reviewed;
+  const { snapshot } = reviewed;
+  let reviewedDiff: string | undefined;
+  try {
+    reviewedDiff = await readVerifiedSnapshotDiff(run, snapshot);
+  } catch (error) {
+    // A slot or file read failure proves nothing: report it, never a match.
+    return { unavailable: `the reviewed patch could not be read: ${(error as Error).message}` };
+  }
+  if (reviewedDiff === undefined)
     return { unavailable: 'the reviewed patch could not be verified against its recorded hash' };
-  const published = (
-    await github(
-      ['api', `repos/${repository}/pulls/${prNumber}`, '-H', 'Accept: application/vnd.github.diff'],
-      { force: true },
-    )
-  ).stdout;
+  let publishedDiff: string;
+  try {
+    publishedDiff = (
+      await github(
+        [
+          'api',
+          `repos/${range.repository}/compare/${range.baseSha}...${range.headSha}`,
+          '-H',
+          'Accept: application/vnd.github.diff',
+        ],
+        { force: true },
+      )
+    ).stdout;
+  } catch (error) {
+    return { unavailable: `the PR diff could not be read: ${(error as Error).message}` };
+  }
   let differingFiles: string[];
   try {
-    differingFiles = await differingPatchFiles(reviewed, published);
+    differingFiles = differingPatchFiles(reviewedDiff, publishedDiff);
   } catch (error) {
-    // An unparseable or oversized diff proves nothing either way: report it, never a match.
     return { unavailable: `the patches could not be compared: ${(error as Error).message}` };
   }
   // Untracked reviewed files are outside the diff text, so the PR cannot be shown to carry them.
