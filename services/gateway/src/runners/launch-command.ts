@@ -488,8 +488,9 @@ export function buildInteractiveRefinementRunnerCommand(options: {
     })} ${promptArg}`;
   }
   const flags = safetyFlags ? ` ${safetyFlags}` : '';
+  const effortFlag = runnerId === 'claude' ? claudeEffortFlag(options.effort) : '';
   // Claude's list-valued switch goes ahead of the review and safety options, never before the prompt.
-  return `${shellQuote(binary || runnerId)}${questionsArgs}${reviewFlags ? ` ${reviewFlags}` : ''}${flags}${modelFlag} ${promptArg}`;
+  return `${shellQuote(binary || runnerId)}${questionsArgs}${reviewFlags ? ` ${reviewFlags}` : ''}${flags}${modelFlag}${effortFlag} ${promptArg}`;
 }
 
 /** Runners whose persisted sessions can be resumed via buildRunnerSessionReloadCommand. */
@@ -563,6 +564,7 @@ export function buildRunnerSessionReloadCommand(
       opts.runtimeDir,
     );
     const modelFlag = runnerModelFlag(model);
+    const effortFlag = claudeEffortFlag(opts.effort);
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
     const claudePath = resolveClaudeBinary(vars.claudePath);
@@ -576,7 +578,7 @@ export function buildRunnerSessionReloadCommand(
       withTaskRecipeTrustEnvironment(
         blind(
           withRunnerObservabilityInstall(
-            `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags}${modelFlag}${modelQuestionsArgs(runner, opts.modelQuestions)}${settingsFlag} --resume ${quotedSessionId}${initialPrompt}`,
+            `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags}${modelFlag}${effortFlag}${modelQuestionsArgs(runner, opts.modelQuestions)}${settingsFlag} --resume ${quotedSessionId}${initialPrompt}`,
             installCommand,
             settingsFallback,
           ),
@@ -717,6 +719,13 @@ export function buildCodexExecLaunch(options: {
   const prompt = options.prompt?.trim() ? ` ${shellQuote(options.prompt)}` : '';
   const codexHomeSetup = buildCodexHomeSetup(options.repo, options.runtimeDir ?? '.agent');
   return `unset CLAUDECODE && cd ${shellQuote(options.repo)} && ${codexHomeSetup} && ${options.binary}${CODEX_PLUGIN_HOOK_ARGS}${flagFragment}${effortFlag}${workerConfigFlags}${modelFlag}${prompt}`;
+}
+
+function claudeEffortFlag(effort?: string | null): string {
+  const effective = resolveRunnerEffort('claude', effort);
+  if (!effective) return '';
+  assertSafeRunnerArgumentValue('effort', effective);
+  return ` --effort ${quoteRunnerArgValue(effective)}`;
 }
 
 function codexReasoningEffortFlag(effort?: string | null, model?: string | null): string {
@@ -1058,6 +1067,7 @@ export function buildLaunchCommand(
   // Claude: either route through dispatch_cmd (production dispatch) or launch
   // inline via its configured binary + inline flags (relaunch paths).
   if (runner === 'claude') {
+    const effortFlag = claudeEffortFlag(resolvedEffort);
     const installCommand = buildRunnerObservabilityInstallCommand(
       vars,
       runner,
@@ -1084,6 +1094,7 @@ export function buildLaunchCommand(
       }
       const runnerArgs = [
         cmdHasModelPlaceholder ? '' : modelFlag.trim(),
+        cmdHasEffortPlaceholder ? '' : effortFlag.trim(),
         questionsArgs.trim(),
         settingsFlag.trim(),
       ]
@@ -1111,7 +1122,7 @@ export function buildLaunchCommand(
     const flags = flagList.join(' ');
     return withRecipeTrust(
       withRunnerObservabilityInstall(
-        `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}${questionsArgs}${settingsFlag}${launchPrompt ? ` ${shellQuote(launchPrompt)}` : ''}`,
+        `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}${effortFlag}${questionsArgs}${settingsFlag}${launchPrompt ? ` ${shellQuote(launchPrompt)}` : ''}`,
         installCommand,
         settingsFallback,
       ),

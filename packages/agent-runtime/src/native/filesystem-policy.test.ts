@@ -4,12 +4,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { DEFAULT_CODEX_EFFORT } from '@farmslot/protocol';
+
 import { claudeNativeAdapter } from './claude.js';
 import { codexNativeAdapter } from './codex.js';
 import { NativeSessionManager } from './manager.js';
+import { nativeRunnerDefinitions } from './registry.js';
 
 // A protocol contract regression fixture. Production sandbox enforcement has a separate live gate.
-async function fixture(confirm: boolean) {
+export async function fixture(confirm: boolean) {
   const root = await mkdtemp(join(tmpdir(), 'native-filesystem-contract-'));
   const executable = join(root, 'runner');
   const requests = join(root, 'requests.jsonl');
@@ -89,6 +92,10 @@ test('source policy omits legacy writable cwd, pins exact output roots and refus
       await rm(f.root, { recursive: true, force: true });
     }
   }
+});
+
+test('native coding runner declares the framework default effort', () => {
+  assert.equal(nativeRunnerDefinitions.codex.defaultEffort, DEFAULT_CODEX_EFFORT);
 });
 
 test('ordinary app-server conversations preserve hook configuration', async () => {

@@ -124,3 +124,15 @@ nonzero recorded charges and transcripts without extension metadata are preserve
 Reported `reasoning_effort_levels` and per-level support flags populate the thinking
 map. Explicitly unsupported levels map to null; unreported extended levels remain
 unavailable. No model-name guesses or image detection are used.
+
+Selected Claude terminal effort reaches the runner once across initial launch,
+pool dispatch, session reload and interactive refinement. A pool template may
+provide its own `{effort}` placeholder; otherwise the launch adapter adds the
+flag. An unset or explicit `auto` terminal choice leaves the runner's own
+configuration in effect.
+
+New native Codex sessions and turns use `DEFAULT_CODEX_EFFORT` when effort is
+unspecified, matching the terminal default. Explicit supported levels are
+preserved. The adapter checks `codexReasoningEfforts` against the resolved model
+and refuses unsupported levels before any turn is sent. Retained sessions keep
+their previously recorded effort.

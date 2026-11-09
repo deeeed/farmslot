@@ -4,6 +4,8 @@ import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 
 import {
+  codexReasoningEfforts,
+  DEFAULT_CODEX_EFFORT,
   nativeResultJsonSchema,
   type NativeSessionResponse,
   type NativeSessionTool,
@@ -158,6 +160,7 @@ export const codexNativeAdapter: NativeAdapter = {
     steer: true,
   },
   async start(options, emit) {
+    const effort = options.effort?.trim().toLowerCase() || DEFAULT_CODEX_EFFORT;
     let approvalMode = options.approvalMode ?? 'ask';
     let gitRoot: string | undefined;
     let nativeSessionId = '';
@@ -398,6 +401,10 @@ export const codexNativeAdapter: NativeAdapter = {
         throw new Error('Native runner did not confirm the read-only source permissions profile');
       nativeSessionId = wireString(wireObject(result.thread).id);
       resolvedModel = optionalString(result.model) ?? options.model;
+      if (!codexReasoningEfforts(resolvedModel).some((level) => level === effort))
+        throw new NativeRequestRefused(
+          `Invalid Codex reasoning effort: ${effort} for ${resolvedModel ?? 'default model'}`,
+        );
       if (options.mode === 'plan' && !resolvedModel)
         throw new Error('Native planning mode requires the resolved model');
       if (options.resumeSessionId && nativeSessionId !== options.resumeSessionId)
@@ -442,14 +449,14 @@ export const codexNativeAdapter: NativeAdapter = {
             ...(options.resultSchema
               ? { outputSchema: nativeResultJsonSchema(options.resultSchema) }
               : {}),
-            ...(options.effort ? { effort: options.effort } : {}),
+            effort,
             ...(options.mode === 'plan'
               ? {
                   collaborationMode: {
                     mode: 'plan',
                     settings: {
                       model: resolvedModel,
-                      reasoning_effort: options.effort ?? 'low',
+                      reasoning_effort: effort,
                       developer_instructions: null,
                     },
                   },

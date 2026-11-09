@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { DEFAULT_PI_THINKING } from '@farmslot/protocol';
+import { DEFAULT_CODEX_EFFORT, DEFAULT_PI_THINKING } from '@farmslot/protocol';
 
 import { claudeProfileEnvironment, observeClaudeAccount } from './account-claude.js';
 import { observeCodexAccount } from './account-codex.js';
@@ -123,7 +123,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     supportsWorkers: true,
     supportsReadOnlyWorkspace: true,
     reviewRuntimeRoots: workspaceTrust.reviewRuntimeRootsByRunner.codex,
-    defaultEffort: 'low',
+    defaultEffort: DEFAULT_CODEX_EFFORT,
     account: {
       standardDirectory: workspaceTrust.codexHome,
       environment: (directory) => ({ CODEX_HOME: directory }),
