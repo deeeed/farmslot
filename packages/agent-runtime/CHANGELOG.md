@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.45.6 - 2026-11-09
+
+- Republish against adapter-sdk 0.27.0 so installed consumers use one copy of each Farmslot dependency.
+
 ## 0.45.5 - 2026-11-09
 
 - Use FarmPaths for instance storage and execution paths while retaining legacy locations.

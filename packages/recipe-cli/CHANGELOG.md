@@ -6,6 +6,11 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.0 - 2026-11-09
+
+- The harness serves a read-only local run evidence page (`serveRunEvidence`) from a Recipe v1 run folder, with a default layout, project templates (`loadRunEvidenceTemplate`), live reload while a run is in progress and the run history beside it. A run's human output ends with a `view:` command unless `project.json` `recipe.viewer.link` is false; hosts name it with `viewCommand`.
+- `status --watch` takes `v` to serve and open the live evidence page of the current recipe run; the footer shows the key and the page URL.
+
 ## 0.34.4 - 2026-11-09
 
 - The command journal, task view and checkout lock work inside the worker sandbox, where `ps` fails with EPERM: an unknown owner identity falls back to a liveness check, so a live owner is never reclaimed.

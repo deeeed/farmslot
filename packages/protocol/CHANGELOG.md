@@ -8,6 +8,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## 0.83.0 - 2026-11-09
 
+- `project.json` `recipe.viewer` accepts `link` (false turns off the run-end view command) and `template` (a project page template module) for the local run evidence viewer.
+
 - Resolve and report instance paths, including validated remote deployment markers and legacy machine overrides.
 - `TaskOperation.processStartedAt` is optional: a sandboxed owner that cannot run `ps` records no start time.
 - `LinkedTicket.fromPrBody` marks a ticket fetched only because the PR body links it, so a later fetch derives it again from the current body instead of keeping it.
