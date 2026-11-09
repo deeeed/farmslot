@@ -217,7 +217,7 @@ describe('wallet fixture accounts', () => {
     );
   });
 
-  it('names an index the fixture already lists once, and refuses two accounts with one name', async () => {
+  it('keeps one account per name, keeps aliases, and refuses two accounts with one name', async () => {
     const { dir, env } = await fixtureEnv([
       { name: 'dev1', type: 'mnemonic', value: MNEMONIC, count: 3 },
     ]);
@@ -231,15 +231,20 @@ describe('wallet fixture accounts', () => {
       ),
       /Available: dev1, dev2, dev3\./,
     );
-    // The registry name wins at an index the fixture already lists.
-    assert.equal(
-      (await fixtureAccount(dir, 'smoke', derived([{ name: 'smoke', secret: 'dev1', index: 1 }])))
-        .address,
-      ADDRESSES[1],
-    );
+    // Another name for a listed index is an alias: both names select the same account.
+    const alias = derived([{ name: 'smoke', secret: 'dev1', index: 1 }]);
+    assert.equal((await fixtureAccount(dir, 'smoke', alias)).address, ADDRESSES[1]);
+    assert.equal((await fixtureAccount(dir, 'dev2', alias)).address, ADDRESSES[1]);
+    // Two aliases for one index both stay selectable.
+    const twoAliases = derived([
+      { name: 'smoke', secret: 'dev1', index: 1 },
+      { name: 'qa', secret: 'dev1', index: 1 },
+    ]);
+    assert.equal((await fixtureAccount(dir, 'smoke', twoAliases)).address, ADDRESSES[1]);
+    assert.equal((await fixtureAccount(dir, 'qa', twoAliases)).address, ADDRESSES[1]);
     await assert.rejects(
       fixtureAccount(dir, 'dev1', derived([{ name: 'dev2', secret: 'dev1', index: 0 }])),
-      /two accounts named "dev2": "dev1" index 0 and "dev1" index 1; rename one/,
+      /wallet fixture has 2 accounts named "dev2": "dev1" index 1 and "dev1" index 0; rename one/,
     );
   });
 });

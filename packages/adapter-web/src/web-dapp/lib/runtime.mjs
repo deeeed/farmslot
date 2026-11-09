@@ -266,14 +266,11 @@ export function walletAccounts(fixture, projectRoot, env = process.env) {
         `wallet account "${item.name}" derives to ${account.address} from "${item.secret}" index ${item.index}, not the declared ${item.address}.`,
       );
     }
-    // An index the fixture already lists is the same account: the host's name wins there.
-    const listed = accounts.find(
-      (candidate) => candidate.secret === item.secret && candidate.index === item.index,
-    );
-    if (listed) {
-      listed.name = item.name;
-      continue;
-    }
+    // The same name for an index the fixture already lists is that account, not a second one.
+    const listed = (candidate) =>
+      candidate.name === item.name &&
+      candidate.address.toLowerCase() === account.address.toLowerCase();
+    if (accounts.some(listed)) continue;
     accounts.push({
       name: item.name,
       address: account.address,
@@ -287,7 +284,7 @@ export function walletAccounts(fixture, projectRoot, env = process.env) {
     const other = byName.get(account.name);
     if (other) {
       throw new Error(
-        `wallet fixture has two accounts named "${account.name}": "${other.secret}" index ${other.index} and "${account.secret}" index ${account.index}; rename one.`,
+        `wallet fixture has 2 accounts named "${account.name}": "${other.secret}" index ${other.index} and "${account.secret}" index ${account.index}; rename one.`,
       );
     }
     byName.set(account.name, account);
