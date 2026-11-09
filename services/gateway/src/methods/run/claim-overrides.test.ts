@@ -475,3 +475,19 @@ test('an output override changes confirmation identity and preserves the frozen 
     /snapshot changed/,
   );
 });
+
+test('different stored claim text refuses override authority', async (t) => {
+  const f = await fixture(t);
+  const read = await f.dependencies.acceptance();
+  await assert.rejects(
+    () =>
+      runOverrideClaim(f.params, () => {}, {
+        ...f.dependencies,
+        acceptance: async () => ({
+          ...read,
+          criteria: read.criteria.map((row) => ({ ...row, text: `- [ ] ${row.text}` })),
+        }),
+      }),
+    /does not match the registered task execution/,
+  );
+});

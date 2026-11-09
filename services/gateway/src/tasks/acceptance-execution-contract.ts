@@ -7,8 +7,8 @@ import {
   ACCEPTANCE_CONTRACT_INPUT,
   type AcceptanceExecutionContract,
   isRecord,
-  registeredAcceptanceCriteria,
   type Run,
+  ticketCriteriaAsRegistered,
   WORKER_TERMINAL_CONTRACT_INPUT,
 } from '@farmslot/protocol';
 
@@ -37,7 +37,7 @@ export async function syncAcceptanceExecutionContract(
   const base: unknown = JSON.parse(baseBytes);
   if (!isRecord(base) || base.acceptanceContractVersion !== 1)
     throw new Error('Frozen worker contract does not support acceptance revisions');
-  const criteria = registeredAcceptanceCriteria(
+  const criteria = ticketCriteriaAsRegistered(
     run.ticketData?.acceptanceCriteria ?? [],
     run.acceptanceRegistration,
   );

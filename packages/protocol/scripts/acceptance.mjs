@@ -28,6 +28,38 @@ function filterWorkerAcceptanceCriteria(criteria, registration, flow) {
   return criteria.filter((row) => derived.has(row.id));
 }
 
+/** Preserve task-init text, including continuation lines, without list/check markers. */
+function normalizeAcceptanceCriteria(items) {
+  return items
+    .map((item) =>
+      item
+        .split('\n')
+        .map((line) =>
+          line
+            .trim()
+            .replace(/^[-*]\s+/, '')
+            .replace(/^\[(?: |x|X)\]\s*/, '')
+            .trim(),
+        )
+        .filter(Boolean)
+        .join('\n'),
+    )
+    .filter(Boolean);
+}
+
+/** Convert only raw ticket originals to the representation written by task init. */
+function ticketCriteriaAsRegistered(rawTicketCriteria, registration) {
+  const normalized = normalizeAcceptanceCriteria(rawTicketCriteria);
+  // Older registrations may have frozen raw originals. Validate those against
+  // the raw ticket; otherwise validate the task-init representation exactly.
+  const criteria =
+    isRecord(registration) &&
+    acceptanceCriteriaMatch(registeredAcceptanceCriteria(rawTicketCriteria), registration.original)
+      ? rawTicketCriteria
+      : normalized;
+  return registeredAcceptanceCriteria(criteria, registration);
+}
+
 function registeredAcceptanceCriteria(criteria, registration) {
   const original = criteria
     .filter((text) => String(text).trim().length > 0)
@@ -323,8 +355,10 @@ export {
   acceptanceVerdictLabel,
   filterWorkerAcceptanceCriteria,
   INHERITED_ACCEPTANCE_INPUT,
+  normalizeAcceptanceCriteria,
   registeredAcceptanceCriteria,
   renderAcceptanceCoverage,
   summarizeAcceptanceStatus,
+  ticketCriteriaAsRegistered,
   validateAcceptanceStatusLedger,
 };
