@@ -107,6 +107,7 @@ import {
   assertPublicationEvidenceSelection,
   defaultSelectedEvidenceKeysForPublication,
 } from './publication-evidence-policy.js';
+import { withPublicationPackageStorageWait } from './publication-package-wait.js';
 import {
   assertPublicationRemoteHead,
   BRANCH_PUBLICATION_FLOWS,
@@ -786,7 +787,16 @@ export function prepareCompletionPackage(
 }
 
 /** Package refresh already owns the lifecycle coordinator through its decision rewrite. */
-export async function prepareCompletionPackageTransitionLocked(
+export function prepareCompletionPackageTransitionLocked(
+  runId: string,
+  options?: PrepareCompletionPackageOptions,
+): Promise<PrepareCompletionPackageResult> {
+  return withPublicationPackageStorageWait(() =>
+    prepareCompletionPackageWithStorageBudget(runId, options),
+  );
+}
+
+async function prepareCompletionPackageWithStorageBudget(
   runId: string,
   options?: PrepareCompletionPackageOptions,
 ): Promise<PrepareCompletionPackageResult> {
