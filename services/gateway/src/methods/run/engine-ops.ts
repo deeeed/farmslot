@@ -1,5 +1,8 @@
+import path from 'node:path';
+
 import {
   canActivateRunOnSlot,
+  DEFAULT_TASK_DIR,
   Events,
   FLOW_STEPS,
   PipelineSteps,
@@ -18,12 +21,16 @@ import {
 } from '@farmslot/protocol';
 
 import { pokeCIPoll } from '../../ci-monitor/service.js';
+import { loadSlotVars, resolveProjectTaskDirName } from '../../core/config.js';
 import { claimSlotStatusIf, updateSlotStatusIf } from '../../core/index.js';
+import { slotFileExists } from '../../core/slot-io.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 import { captureRunOutput, failRunOutputCapture } from '../../run-completion/output.js';
 import { refreshResultDecisionAfterCapture } from '../../run-completion/result-decision.js';
+import { loadProjectVarsOrNull } from '../../run-engine/project-vars.js';
 import { refreshPublishPackage } from '../../run-engine/publish-package-refresh.js';
 import { refreshReviewGate } from '../../run-engine/review-gate.js';
+import { copyTaskFilesToSlot } from '../../run-engine/task-sync.js';
 import { getRun, updateRun } from '../../runs/store.js';
 import {
   capturePressureAdmissionDecisionsLightweight,
@@ -239,6 +246,24 @@ export async function runActivateOnSlot(
   // back the operator re-bind so a failed activate never strands the slot assigned to a
   // run that never re-drove.
   try {
+    if (run.taskFile) {
+      const vars = await loadSlotVars(targetSlot);
+      const project = await loadProjectVarsOrNull(run.project, 'run activation', run.id);
+      const taskDir = path.dirname(run.taskFile);
+      const workerTaskDir = path.join(
+        vars.remoteRepo,
+        project ? resolveProjectTaskDirName(project.projectJson) : DEFAULT_TASK_DIR,
+        path.basename(path.dirname(taskDir)),
+        path.basename(taskDir),
+      );
+      // Initialized tasks skip prepare's copy. Restore a missing allocation even
+      // if already rebound, but preserve documents on an intact worker task.
+      if (
+        !(await slotFileExists(vars, path.join(workerTaskDir, 'TASK.md'))) ||
+        !(await slotFileExists(vars, path.join(workerTaskDir, 'artifacts/harness-provenance.json')))
+      )
+        await copyTaskFilesToSlot(run.id, { slotId: targetSlot });
+    }
     return await runReplayStep(
       {
         runId: params.runId,

@@ -1,0 +1,1 @@
+- Restore missing retained task files before slot activation replays prepare, preserving existing worker documents and rolling back the slot binding if staging fails.
