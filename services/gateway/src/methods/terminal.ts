@@ -66,7 +66,7 @@ import {
   workspaceTerminalOperation,
 } from '../runtime/workspace-terminal.js';
 
-import { terminalDataPayload } from './terminal-frame.js';
+import { seedJoinedScreen, terminalDataPayload } from './terminal-frame.js';
 
 type EventEmitter = (event: string, payload: unknown) => void;
 type HasPtyFn = (key: string) => boolean;
@@ -294,7 +294,7 @@ export async function terminalSubscribe(
     const payload = terminalDataPayload(identity);
     const ptyHandler: PtyDataHandler = (data) => emit('terminal.data', payload(data, Date.now()));
     const machine = run.reviewWorkspace!.machine;
-    await subscribePty(
+    const { joined } = await subscribePty(
       key,
       session,
       ptyHandler,
@@ -318,6 +318,13 @@ export async function terminalSubscribe(
         : { sshTarget },
     );
     emit('terminal.mode', { ...identity, mode: 'pty' });
+    if (joined)
+      await seedJoinedScreen(
+        emit,
+        payload,
+        async () => (await terminalSnapshot({ ...params, lines: params.rows ?? 50 })).lines,
+        key,
+      );
     return { key, handler: (_data: TerminalData) => {}, ptyHandler, identity };
   }
   // Bare-session mode skips agent-context resolution so a postmortem viewer can attach
@@ -377,8 +384,22 @@ export async function terminalSubscribe(
       };
     } else if (sshTarget) ptyOpts.sshTarget = sshTarget;
     if (target !== resolved.session) ptyOpts.selectTarget = target;
-    await subscribePty(key, resolved.session, ptyHandler, params.cols, params.rows, ptyOpts);
+    const { joined } = await subscribePty(
+      key,
+      resolved.session,
+      ptyHandler,
+      params.cols,
+      params.rows,
+      ptyOpts,
+    );
     emit('terminal.mode', { ...eventIdentity, mode: 'pty' });
+    if (joined)
+      await seedJoinedScreen(
+        emit,
+        payload,
+        async () => (await terminalSnapshot({ ...params, lines: params.rows ?? 50 })).lines,
+        key,
+      );
 
     const handler = (_data: TerminalData) => {};
     return { key, handler, ptyHandler, identity: eventIdentity };

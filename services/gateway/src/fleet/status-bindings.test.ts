@@ -681,3 +681,23 @@ test('fleet reads after a gateway commit read neither the status file nor unchan
   assert.equal(await owner(), 'gateway-4');
   assert.equal(statusReads, 0);
 });
+
+test('an unreadable pool file is skipped without hiding the other pools', async () => {
+  const directory = await fs.mkdtemp(path.join(root, 'pool-isolation-'));
+  await fs.writeFile(
+    path.join(directory, 'healthy.json'),
+    JSON.stringify({ machine: 'healthy', host: 'healthy.example', slots: [{ id: 'healthy-1' }] }),
+  );
+  const broken = path.join(directory, 'broken.json');
+  await fs.writeFile(broken, JSON.stringify({ machine: 'broken', slots: [{ id: 'broken-1' }] }));
+  await fs.chmod(broken, 0o000);
+  try {
+    const pools = await overlays.loadPoolConfigs(directory);
+    assert.deepEqual(
+      pools.map((pool) => pool.machine),
+      ['healthy'],
+    );
+  } finally {
+    await fs.chmod(broken, 0o600);
+  }
+});

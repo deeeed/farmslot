@@ -165,8 +165,10 @@ export async function subscribePty(
   cols?: number,
   rows?: number,
   opts?: PtyAttachOptions,
-): Promise<void> {
+): Promise<{ joined: boolean }> {
   let ps = ptySessions.get(key);
+  // Joining a PTY that is already running gets no redraw from tmux; the caller seeds the screen.
+  const joined = ps !== undefined;
   const lingering = pendingDetaches.get(key);
   if (lingering) {
     clearTimeout(lingering);
@@ -176,7 +178,7 @@ export async function subscribePty(
   if (!ps) {
     if (opts?.nodeId) {
       await attachLinkedPty(key, session, handler, cols ?? 120, rows ?? 40, opts);
-      return;
+      return { joined };
     }
     ps = attachPty(key, session, cols, rows, opts);
   }
@@ -186,6 +188,7 @@ export async function subscribePty(
     key,
     `session=${session} cols=${cols} rows=${rows} ssh=${opts?.sshTarget || 'local'}`,
   );
+  return { joined };
 }
 
 export function unsubscribePty(key: string, handler: PtyDataHandler): void {

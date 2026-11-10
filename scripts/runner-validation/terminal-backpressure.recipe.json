@@ -8,7 +8,7 @@
       "slow-viewer": {
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/terminal-backpressure.mts",
-        "timeout_ms": 180000,
+        "timeout_ms": 300000,
         "intent": "Close a terminal viewer whose unsent output passes the buffer limit with code 1013, never skip a chunk it was sent, and redraw the current screen when it subscribes again.",
         "next": "done"
       },

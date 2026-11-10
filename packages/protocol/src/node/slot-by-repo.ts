@@ -116,12 +116,15 @@ interface PoolDirCache {
   dirMtimeMs: number;
   /** The directory had settled when it was listed (see CachedPoolFile.trusted). */
   listingTrusted: boolean;
+  /** Every directory entry; which ones are pools is decided on each call (it reads the env). */
+  listing: string[];
   files: string[];
-  byFile: Map<string, CachedPoolFile>;
   result: PoolFileEntry<unknown>[];
 }
 /** Parsed pool files per directory. Slot lookups read pools on every call (several per check). */
 const poolDirCache = new Map<string, PoolDirCache>();
+/** Parsed pool files by path, shared by directory scans and single-file reads. */
+const poolFileCache = new Map<string, CachedPoolFile>();
 
 const stampOf = (stats: Stats): PoolFileStamp => ({
   mtimeMs: stats.mtimeMs,
@@ -161,46 +164,65 @@ export function readPoolFiles<P = SlotPoolFile>(poolDir: string): PoolFileEntry<
   const now = Date.now();
   const dirMtimeMs = statSync(poolDir).mtimeMs;
   const cached = poolDirCache.get(poolDir);
-  const files =
+  const listing =
     cached && cached.listingTrusted && cached.dirMtimeMs === dirMtimeMs
+      ? cached.listing
+      : readdirSync(poolDir).sort();
+  const pools = listing.filter((file) => !isIgnoredPoolFile(file));
+  const files =
+    cached && cached.files.length === pools.length && cached.files.every((f, i) => f === pools[i])
       ? cached.files
-      : readdirSync(poolDir)
-          .filter((file) => !isIgnoredPoolFile(file))
-          .sort();
-  const byFile = new Map<string, CachedPoolFile>();
-  let changed = !cached || cached.files !== files;
-  for (const file of files) {
-    const fullPath = path.join(poolDir, file);
-    let stats: Stats;
-    try {
-      stats = statSync(fullPath);
-    } catch (error) {
-      // Removed between listing and stat: the same as a pool file that vanished mid-read.
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        changed = true;
-        continue;
-      }
-      throw error;
-    }
-    const stamp = stampOf(stats);
-    const previous = cached?.byFile.get(fullPath);
-    if (previous?.trusted && sameStamp(previous.stamp, stamp)) {
-      byFile.set(fullPath, previous);
-      continue;
-    }
-    changed = true;
-    byFile.set(fullPath, {
-      stamp,
-      trusted: !isRacyStamp(Math.max(stamp.mtimeMs, stamp.ctimeMs), now),
-      entry: readPoolFile(fullPath),
-    });
-  }
-  if (cached && !changed) return cached.result as PoolFileEntry<P>[];
-  const result = deepFreeze([...byFile.values()].flatMap(({ entry }) => (entry ? [entry] : [])));
+      : pools;
+  const entries = files.flatMap((file) => {
+    const entry = cachedPoolFile(path.join(poolDir, file), now)?.entry;
+    return entry ? [entry] : [];
+  });
+  if (
+    cached &&
+    cached.result.length === entries.length &&
+    cached.result.every((entry, index) => entry === entries[index])
+  )
+    return cached.result as PoolFileEntry<P>[];
+  const result = deepFreeze(entries);
   const listingTrusted =
-    cached?.files === files ? cached.listingTrusted : !isRacyStamp(dirMtimeMs, now);
-  poolDirCache.set(poolDir, { dirMtimeMs, listingTrusted, files, byFile, result });
+    cached?.listing === listing ? cached.listingTrusted : !isRacyStamp(dirMtimeMs, now);
+  poolDirCache.set(poolDir, { dirMtimeMs, listingTrusted, listing, files, result });
   return result as PoolFileEntry<P>[];
+}
+
+/** A pool file from the cache, read again only when its stat changed; undefined once it is gone. */
+function cachedPoolFile(fullPath: string, now: number): CachedPoolFile | undefined {
+  let stats: Stats;
+  try {
+    stats = statSync(fullPath);
+  } catch (error) {
+    // Removed between listing and stat: the same as a pool file that vanished mid-read.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      poolFileCache.delete(fullPath);
+      return undefined;
+    }
+    throw error;
+  }
+  const stamp = stampOf(stats);
+  const previous = poolFileCache.get(fullPath);
+  if (previous?.trusted && sameStamp(previous.stamp, stamp)) return previous;
+  const file: CachedPoolFile = {
+    stamp,
+    trusted: !isRacyStamp(Math.max(stamp.mtimeMs, stamp.ctimeMs), now),
+    entry: readPoolFile(fullPath),
+  };
+  poolFileCache.set(fullPath, file);
+  return file;
+}
+
+/**
+ * One pool file through the same stat-checked cache, without scanning its directory, so no other
+ * pool file's failure affects it. Undefined when the file is absent, unparsable or not an object.
+ */
+export function readCachedPoolFile<P = SlotPoolFile>(
+  fullPath: string,
+): PoolFileEntry<P> | undefined {
+  return cachedPoolFile(fullPath, Date.now())?.entry as PoolFileEntry<P> | undefined;
 }
 
 /**
@@ -256,15 +278,11 @@ export function configuredNodeLinkEnabled(machine: string, poolDirectory: string
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(machine))
     throw new Error('Invalid node machine identity');
   const file = path.join(poolDirectory, `${machine}.json`);
-  // Every remote exec asks this, so the parsed pool comes from the shared stat-checked cache.
-  let pool: unknown;
-  if (!isIgnoredPoolFile(`${machine}.json`))
-    try {
-      pool = readPoolFiles(poolDirectory).find((entry) => entry.file === file)?.pool;
-    } catch (error) {
-      // No pool directory yet: the file read below answers that as an absent machine pool.
-      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
-    }
+  // Every remote exec asks this, so the parsed pool comes from the stat-checked cache. Only its own
+  // file is read: another machine's broken pool must not switch this one off or fail it.
+  let pool: unknown = isIgnoredPoolFile(`${machine}.json`)
+    ? undefined
+    : readCachedPoolFile(file)?.pool;
   if (pool === undefined) {
     let content: string;
     try {

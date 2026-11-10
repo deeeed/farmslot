@@ -71,7 +71,9 @@ const grant = auth.writer.exchangePersonCredential(secret.secret, {
   deviceKind: 'cli',
 });
 const { createWebSocketServer } = await load('services/gateway/src/server.ts');
-const { TERMINAL_BUFFER_LIMIT } = await load('services/gateway/src/methods/terminal-frame.ts');
+const { JOINED_SCREEN_PREFIX, TERMINAL_BUFFER_LIMIT } = await load(
+  'services/gateway/src/methods/terminal-frame.ts',
+);
 
 interface Viewer {
   ws: WebSocket;
@@ -203,11 +205,15 @@ try {
   await new Promise((resolve) => setTimeout(resolve, 500));
   // Both viewers get each PTY chunk in the same pass, but the healthy one subscribed first: the
   // slow viewer's chunks must be one unbroken run of the healthy viewer's chunks.
+  // A screen seed on joining is sent to the joining viewer only, so it is not part of the stream.
+  const stream = (v: Viewer) => v.data.filter((chunk) => !chunk.startsWith(JOINED_SCREEN_PREFIX));
+  const healthyStream = stream(healthy);
+  const slowStream = stream(slow);
   const contiguous =
-    slow.data.length > 0 &&
-    healthy.data.some(
+    slowStream.length > 0 &&
+    healthyStream.some(
       (chunk, start) =>
-        chunk === slow.data[0] && slow.data.every((next, k) => healthy.data[start + k] === next),
+        chunk === slowStream[0] && slowStream.every((next, k) => healthyStream[start + k] === next),
     );
   Object.assign(evidence, {
     slowClose: close,
@@ -221,16 +227,20 @@ try {
   assert.ok(slow.bytes < healthy.bytes, 'the slow viewer was cut off before the flood ended');
   assert.equal(healthy.ws.readyState, WebSocket.OPEN, 'the healthy viewer keeps streaming');
 
-  // Re-attach and redraw: a new connection subscribes again and reads the current screen.
+  // Re-attach and redraw: the healthy viewer keeps the PTY alive, so the slow viewer's new
+  // connection joins it and must be sent the current screen as terminal output, unasked.
   const again = await viewer();
   await subscribe(again);
-  const screen = await again.call<{ lines: string[] }>('terminal.snapshot', {
-    slotId,
-    bareSession: true,
-    lines: 50,
-  });
-  evidence.reattachedScreenHasMarker = screen.lines.some((line) => line.includes('PRESSURE-DONE'));
-  assert.equal(evidence.reattachedScreenHasMarker, true);
+  // Required from the gateway itself: tmux may or may not redraw a client that joins a session.
+  await until(
+    () =>
+      again.data.some(
+        (chunk) => chunk.startsWith(JOINED_SCREEN_PREFIX) && chunk.includes('PRESSURE-DONE'),
+      ),
+    'the re-attached viewer to be sent the current screen',
+    10_000,
+  );
+  evidence.reattachedScreenHasMarker = true;
   evidence.result = 'pass';
 } finally {
   await writeFile(

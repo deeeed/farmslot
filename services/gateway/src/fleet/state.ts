@@ -31,7 +31,7 @@ import {
 } from '@farmslot/protocol';
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
-import { readPoolFiles } from '@farmslot/protocol/node/slot-by-repo';
+import { readCachedPoolFile } from '@farmslot/protocol/node/slot-by-repo';
 import { poolDirectory, projectsDirectory } from '@farmslot/slot-config';
 
 import {
@@ -1068,10 +1068,13 @@ type RawPoolFile = RawPoolJson & { tmux_workers?: unknown; tmuxWorkers?: unknown
 export async function loadPoolConfigs(directory = poolDirectory()): Promise<PoolConfig[]> {
   const pools: PoolConfig[] = [];
   try {
-    // Unchanged pool files come from the stat-checked cache; malformed ones are skipped there.
-    for (const entry of readPoolFiles<RawPoolFile>(directory)) {
-      const file = path.basename(entry.file);
+    const files = await readdir(directory);
+    for (const file of files) {
+      if (isIgnoredPoolFile(file)) continue;
       try {
+        // Unchanged pool files come from the stat-checked cache, one file at a time.
+        const entry = readCachedPoolFile<RawPoolFile>(path.join(directory, file));
+        if (!entry) throw new Error('it is missing, not valid JSON or not a JSON object');
         const raw = entry.pool;
         const tmuxWorkers = normalizeTmuxWorkerFilters(raw.tmux_workers ?? raw.tmuxWorkers);
         const reviewWorkspaces = normalizeRawReviewWorkspaces(

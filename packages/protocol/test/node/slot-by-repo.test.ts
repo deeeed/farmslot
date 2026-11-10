@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs, {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
@@ -19,6 +20,7 @@ import {
   findSlotByRepo,
   isIgnoredPoolFile,
   NODE_LINK_FLAG,
+  readCachedPoolFile,
   readPoolFiles,
   resolveSlotPoolDir,
   SlotByRepoError,
@@ -286,4 +288,53 @@ test('node-link policy reads the cached machine pool and still refuses a malform
   assert.throws(() => configuredNodeLinkEnabled('m1', dir), SyntaxError);
   pool(dir, 'm1.json', { machine: 'other', env: {} });
   assert.throws(() => configuredNodeLinkEnabled('m1', dir), /canonical machine pool/);
+});
+
+test('the pool filter follows the environment of each call, not the cached listing', (t) => {
+  const dir = tempDir(t);
+  pool(dir, 'a.json', { machine: 'a', slots: [] });
+  pool(dir, 'farmslot-demo.json', { machine: 'demo', slots: [] });
+  const machines = () => readPoolFiles<{ machine: string }>(dir).map(({ pool }) => pool.machine);
+  const previous = process.env.FARMSLOT_DEMO_POOL;
+  t.after(() => {
+    if (previous === undefined) delete process.env.FARMSLOT_DEMO_POOL;
+    else process.env.FARMSLOT_DEMO_POOL = previous;
+  });
+  delete process.env.FARMSLOT_DEMO_POOL;
+  const settledAt = Date.now() + 10_000;
+  t.mock.method(Date, 'now', () => settledAt);
+  assert.deepEqual(machines(), ['a']);
+  assert.deepEqual(machines(), ['a']);
+  process.env.FARMSLOT_DEMO_POOL = '1';
+  assert.deepEqual(machines(), ['a', 'demo'], 'the demo pool appears without a directory change');
+});
+
+test('one unreadable pool file does not switch off or fail another machine', (t) => {
+  const dir = tempDir(t);
+  pool(dir, 'm1.json', { machine: 'm1', env: { [NODE_LINK_FLAG]: '1' } });
+  pool(dir, 'm2.json', { machine: 'm2', env: { [NODE_LINK_FLAG]: '1' } });
+  chmodSync(join(dir, 'm2.json'), 0o000);
+  try {
+    assert.equal(configuredNodeLinkEnabled('m1', dir), true);
+    assert.throws(() => configuredNodeLinkEnabled('m2', dir), { code: 'EACCES' });
+  } finally {
+    chmodSync(join(dir, 'm2.json'), 0o600);
+  }
+});
+
+test('a pool file read again by itself is seen by the next directory read', (t) => {
+  const dir = tempDir(t);
+  pool(dir, 'a.json', { machine: 'a', slots: [] });
+  let now = Date.now() + 10_000;
+  t.mock.method(Date, 'now', () => now);
+  const before = readPoolFiles<{ machine: string }>(dir);
+  pool(dir, 'a.json', { machine: 'a2', slots: [] });
+  now += 10_000;
+  assert.equal(readCachedPoolFile<{ machine: string }>(join(dir, 'a.json'))?.pool.machine, 'a2');
+  const after = readPoolFiles<{ machine: string }>(dir);
+  assert.notEqual(after, before);
+  assert.deepEqual(
+    after.map(({ pool }) => pool.machine),
+    ['a2'],
+  );
 });

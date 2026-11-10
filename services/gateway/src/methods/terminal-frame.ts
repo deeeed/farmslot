@@ -31,6 +31,34 @@ export function terminalDataPayload(
     new SerializedPayload(`${head}"data":${chunkJson(data)},"timestamp":${timestamp}}`);
 }
 
+/** Clears the viewer's screen and draws `lines`: what a viewer joining a running PTY is sent. */
+export const JOINED_SCREEN_PREFIX = '\u001b[H\u001b[2J';
+export function joinedScreen(lines: readonly string[]): string {
+  return `${JOINED_SCREEN_PREFIX}${lines.join('\r\n')}`;
+}
+
+/**
+ * Sends a viewer that joined a running PTY its current screen, since tmux only redraws a new attach.
+ * This is also how a viewer closed for a resync gets its screen back while others keep the PTY.
+ */
+export async function seedJoinedScreen(
+  emit: EventEmitter,
+  payload: ReturnType<typeof terminalDataPayload>,
+  capture: () => Promise<readonly string[]>,
+  key: string,
+): Promise<void> {
+  let lines: readonly string[];
+  try {
+    lines = await capture();
+  } catch (error) {
+    // The live stream continues and the client still seeds an empty viewport from its own
+    // snapshot, so a failed capture costs only this redraw.
+    console.warn(`[terminal] joined-screen seed failed key=${key}: ${(error as Error).message}`);
+    return;
+  }
+  if (lines.length) emit(Events.TERMINAL_DATA, payload(joinedScreen(lines), Date.now()));
+}
+
 /**
  * Terminal output is never dropped. A viewer whose socket already holds more than the limit is
  * closed instead; the client reconnects, subscribes again and gets a full redraw.

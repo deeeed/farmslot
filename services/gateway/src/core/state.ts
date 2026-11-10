@@ -66,11 +66,17 @@ async function atomicWriteStatus(data: unknown): Promise<void> {
   try {
     handle = await open(tmp, 'w');
     await handle.writeFile(text);
+    const written = await handle.stat();
     assertCleanupCurrent();
     await rename(tmp, statusFile);
-    // Stat the inode this write renamed into place, not the path: an outside replace that lands
-    // after the rename must not be mistaken for this commit.
-    committedStatus = { text, stamp: statusFileStamp(await handle.stat()) };
+    // Stat the inode this write renamed into place, not the path, so an outside replace after the
+    // rename is not mistaken for this commit. An outside edit of this inode in between shows as a
+    // new size or mtime: then nothing is cached and readers read the file.
+    const committed = await handle.stat();
+    committedStatus =
+      committed.size === written.size && committed.mtimeMs === written.mtimeMs
+        ? { text, stamp: statusFileStamp(committed) }
+        : undefined;
   } catch (error) {
     try {
       await handle?.close();

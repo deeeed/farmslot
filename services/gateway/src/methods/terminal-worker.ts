@@ -36,7 +36,7 @@ import {
   workerNodeTypesInputOnce,
 } from '../runtime/worker-terminal-stream.js';
 
-import { terminalDataPayload } from './terminal-frame.js';
+import { seedJoinedScreen, terminalDataPayload } from './terminal-frame.js';
 import { assertTmuxWorkerControlAllowed } from './tmux-workers.js';
 
 type EventEmitter = (event: string, payload: unknown) => void;
@@ -68,11 +68,22 @@ export async function terminalWorkerSubscribe(
   const ptyHandler: PtyDataHandler = (data: string) => {
     emit('terminal.data', payload(data, Date.now()));
   };
-  await subscribePty(key, params.worker.session, ptyHandler, params.cols, params.rows, {
-    ...ptyOptions,
-    selectTarget: params.worker.target,
-  });
+  const { joined } = await subscribePty(
+    key,
+    params.worker.session,
+    ptyHandler,
+    params.cols,
+    params.rows,
+    { ...ptyOptions, selectTarget: params.worker.target },
+  );
   emit('terminal.mode', { worker: params.worker, mode: 'pty' });
+  if (joined)
+    await seedJoinedScreen(
+      emit,
+      payload,
+      () => captureWorkerTerminal(params.worker, params.rows ?? 50),
+      key,
+    );
   return { key, ptyHandler };
 }
 
