@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import fsSync, { readFileSync } from 'node:fs';
 import * as fs from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
@@ -25,12 +26,18 @@ after(() => fs.rm(root, { recursive: true, force: true }));
 
 // Pause a real file read after it captured bytes, without altering the writer.
 let holdNextRead: (() => Promise<void>) | undefined;
+let statusReads = 0;
+let poolReads = 0;
+const isPoolFile = (file: unknown) =>
+  typeof file === 'string' && file.startsWith(`${process.env.FARMSLOT_POOL_DIR}${path.sep}`);
 const readFile = fs.readFile;
 mock.module('node:fs/promises', {
   namedExports: {
     ...fs,
     readFile: async (...args: Parameters<typeof fs.readFile>) => {
       const bytes = await readFile(...args);
+      if (args[0] === process.env.FARMSLOT_TEST_STATUS_FILE) statusReads++;
+      if (isPoolFile(args[0])) poolReads++;
       if (args[0] === process.env.FARMSLOT_TEST_STATUS_FILE && holdNextRead) {
         const hold = holdNextRead;
         holdNextRead = undefined;
@@ -187,7 +194,12 @@ test('PR overlay comparisons retain scalar facts when the caller reuses its obje
 });
 
 test('an overlay write fences an older in-flight status-file observation', async () => {
-  await state.rewriteStatusFile(() => ({ slots: [{ slot: 'proof', branch: 'disk' }] }));
+  // An outside version, so the fleet load below reads the file (a gateway commit is served
+  // from memory).
+  await fs.writeFile(
+    state.statusFile,
+    JSON.stringify({ slots: [{ slot: 'proof', branch: 'disk' }] }),
+  );
   await loadFleetStatus(false, true);
   let captured!: () => void;
   let release!: () => void;
@@ -506,7 +518,8 @@ test('committed slot facts advance detail and collection reads while retaining t
 });
 
 test('a slow pre-commit read cannot restore an old cached binding or advance it again', async () => {
-  await state.rewriteStatusFile(() => rows('before'));
+  // An outside version, so the slow load reads the file (a gateway commit is served from memory).
+  await fs.writeFile(state.statusFile, JSON.stringify(rows('before')));
   let captured!: () => void;
   let release!: () => void;
   const ready = new Promise<void>((resolve) => {
@@ -615,3 +628,56 @@ test(
     resources.setCachedResourceStatus('proof', 'watch-resource', 'unknown', { broadcast: false });
   },
 );
+
+test('fleet reads after a gateway commit read neither the status file nor unchanged pools; an outside write wins', async (t) => {
+  const poolFile = path.join(process.env.FARMSLOT_POOL_DIR!, 'commit-proof.json');
+  await fs.writeFile(
+    poolFile,
+    JSON.stringify({
+      machine: 'commit-proof',
+      host: 'commit-proof.example',
+      slots: [{ id: 'proof' }],
+    }),
+  );
+  t.after(() => fs.rm(poolFile, { force: true }));
+  // Settle the new pool file's stamp so the cache may trust it (see isRacyStamp).
+  const settledAt = Date.now() + 10_000;
+  t.mock.method(Date, 'now', () => settledAt);
+  const readFileSyncReal = fsSync.readFileSync;
+  t.mock.method(fsSync, 'readFileSync', (...args: Parameters<typeof fsSync.readFileSync>) => {
+    if (isPoolFile(args[0])) poolReads++;
+    return readFileSyncReal(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  const owner = async () => (await loadFleetStatus(true, true)).slots[0]?.currentRunId ?? null;
+
+  await state.rewriteStatusFile(() => rows('gateway-1'));
+  assert.equal(await owner(), 'gateway-1');
+  // The writer's own read-modify-write still reads the file; the fleet read after it must not.
+  await state.updateSlotStatus('proof', { current_run_id: 'gateway-2' });
+  statusReads = 0;
+  poolReads = 0;
+  assert.equal(await owner(), 'gateway-2');
+  assert.equal(poolReads, 0, 'unchanged pools come from the stat-checked cache');
+  assert.equal(statusReads, 0, 'the gateway commit is served from memory');
+
+  // An outside replace after the commit is newer: it is read, never shadowed by the snapshot.
+  const outside = `${state.statusFile}.outside`;
+  await fs.writeFile(outside, JSON.stringify(rows('outside-replace')));
+  await fs.rename(outside, state.statusFile);
+  assert.equal(await owner(), 'outside-replace');
+  assert.equal(statusReads, 1);
+  // So is an in-place edit, which keeps the inode.
+  await state.updateSlotStatus('proof', { current_run_id: 'gateway-3' });
+  await fs.writeFile(state.statusFile, JSON.stringify(rows('outside-edit')));
+  assert.equal(await owner(), 'outside-edit');
+  // A later gateway commit is again the newest version.
+  await state.updateSlotStatus('proof', { current_run_id: 'gateway-4' });
+  statusReads = 0;
+  assert.equal(await owner(), 'gateway-4');
+  assert.equal(statusReads, 0);
+});
