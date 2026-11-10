@@ -501,3 +501,33 @@ test('snapshot projection copies only selected rule data and preserves store iso
   assert.equal(store.team(team.id, 'owner').config.name, teamConfig.name);
   assert.equal(store.snapshot().teams.length, 1);
 });
+
+test('a reload of the store own write is not decoded again; an external edit still applies', async (t) => {
+  const { store, file } = await fixture(t);
+  const team = await store.saveTeam('owner', teamConfig);
+  const parse = t.mock.method(JSON, 'parse');
+  const echoed = await store.reloadFromFile();
+  const parses = parse.mock.callCount();
+  parse.mock.restore();
+  assert.equal(echoed, false);
+  assert.equal(parses, 0, 'the committed text is not parsed again');
+
+  const external = store.snapshot();
+  external.teams[0].config.name = 'External edit';
+  await writeFile(file, JSON.stringify(external, null, 2));
+  assert.equal(await store.reloadFromFile(), true);
+  assert.equal(store.team(team.id, 'owner').config.name, 'External edit');
+  assert.equal(await store.reloadFromFile(), false);
+
+  const current = store.team(team.id, 'owner');
+  const renamed = await store.saveTeam(
+    'owner',
+    { ...current.config, name: 'After reload' },
+    team.id,
+    current.revision,
+  );
+  assert.equal(
+    (await PRRuleStore.load(file)).team(renamed.id, 'owner').config.name,
+    'After reload',
+  );
+});

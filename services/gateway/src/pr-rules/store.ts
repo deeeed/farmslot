@@ -21,7 +21,7 @@ import {
   type PRTriggerRuleConfig,
 } from '@farmslot/protocol';
 
-import { writeAtomicJSON } from '../core/atomic-json.js';
+import { writeAtomicText } from '../core/atomic-json.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { cloneStoreSnapshot } from '../core/store-snapshot.js';
 import { publishPRAutomationResources } from '../resources/pr-automation-changes.js';
@@ -95,10 +95,14 @@ export class PRRuleStore {
   get admissionPending(): boolean {
     return this.writesPending > 0;
   }
+  /** JSON text of `data`, as written to the file. Drafts and whole-store copies parse it. */
+  private text: string;
   private constructor(
     private readonly file: string,
     private data: PRRuleStoreData,
-  ) {}
+  ) {
+    this.text = JSON.stringify(data);
+  }
 
   static async load(file: string): Promise<PRRuleStore> {
     let contents: string;
@@ -149,7 +153,10 @@ export class PRRuleStore {
           // Decode under the mutation queue. Only unreadable or invalid source latches unavailable.
           let data: PRRuleStoreData;
           try {
-            data = decodePRRuleStore(JSON.parse(await readFile(this.file, 'utf8')));
+            const text = await readFile(this.file, 'utf8');
+            // The watcher also reports this store's own writes. Text equal to the committed state
+            // was validated before it was written, so it is not parsed and compared again.
+            data = text === this.text ? this.data : decodePRRuleStore(JSON.parse(text));
           } catch (error) {
             this.validatedRetirementReload = false;
             this.sourceFailure = error instanceof Error ? error.message : String(error);
@@ -174,8 +181,11 @@ export class PRRuleStore {
           const changed =
             this.sourceUnavailable ||
             this.validatedRetirementReload ||
-            !isDeepStrictEqual(data, this.data);
-          this.data = data;
+            (data !== this.data && !isDeepStrictEqual(data, this.data));
+          if (data !== this.data) {
+            this.data = data;
+            this.text = JSON.stringify(data);
+          }
           this.sourceUnavailable = false;
           this.sourceFailure = undefined;
           this.validatedRetirementReload = false;
@@ -198,7 +208,7 @@ export class PRRuleStore {
   /** Recovery bookkeeping may use accepted data while a validated replacement remains unadmitted. */
   snapshotForRetention(): PRRuleStoreData {
     if (!this.validatedRetirementReload) this.assertReadable();
-    return structuredClone(this.data);
+    return JSON.parse(this.text);
   }
 
   private assertReadable(): void {
@@ -218,7 +228,7 @@ export class PRRuleStore {
   snapshot<Result>(select: (data: Readonly<PRRuleStoreData>) => Result): Result;
   snapshot<Result>(select?: (data: Readonly<PRRuleStoreData>) => Result): PRRuleStoreData | Result {
     this.assertReadable();
-    return cloneStoreSnapshot(this.data, select);
+    return cloneStoreSnapshot(this.data, this.text, select);
   }
 
   /** Other authority loss keeps a contribution held so restored authority admits it unchanged. */
@@ -958,15 +968,20 @@ export class PRRuleStore {
     const operation = async () =>
       useReviewWorkspaceStorage(async () => {
         this.assertReadable();
-        const draft = structuredClone(this.data);
+        // Parsing the committed text is several times cheaper than cloning the store, and
+        // comparing texts says whether the transaction changed what the file holds.
+        const draft: PRRuleStoreData = JSON.parse(this.text);
         const result = await mutate(draft);
         decodePRRuleStore(draft);
         for (const intent of draft.intents)
           if (['held', 'needs-configuration', 'queued', 'running'].includes(intent.status))
             assertReviewWorkspaceAdmissionOpen(intent.pr);
-        const changed = !isDeepStrictEqual(draft, this.data);
-        await writeAtomicJSON(this.file, draft);
-        this.data = draft;
+        const text = JSON.stringify(draft);
+        const changed = text !== this.text;
+        await writeAtomicText(this.file, text);
+        // Committed state is exactly what a restart would load: no keys the file drops.
+        this.data = JSON.parse(text);
+        this.text = text;
         if (changed) publishPRAutomationResources();
         return structuredClone(result);
       });

@@ -1,2 +1,3 @@
 - Check a slot's fixtures with one remote command instead of one or two per fixture file and directory, cutting process spawns (and ssh connections for remote slots) on every slot check.
 - Answer native ownership and node-assignment checks from a credential store snapshot that is re-read only when the file changes, instead of reading and validating the whole store on each native request. A revocation is still seen on the next check.
+- Copy and compare the PR monitor and PR rule stores through their saved JSON text instead of cloning and deep-comparing the whole store on every transaction and snapshot, and stop re-reading the rule store when the file watcher reports the gateway's own write.

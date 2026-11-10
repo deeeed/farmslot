@@ -14,7 +14,7 @@ import {
   type PRProjectMonitorPolicy,
 } from '@farmslot/protocol';
 
-import { writeAtomicJSON } from '../core/atomic-json.js';
+import { writeAtomicText } from '../core/atomic-json.js';
 import { cloneStoreSnapshot } from '../core/store-snapshot.js';
 import { publishPRAutomationResources } from '../resources/pr-automation-changes.js';
 import { resourceRevisions } from '../resources/revisions.js';
@@ -62,6 +62,8 @@ function subscriptionKey(
 /** One instance per gateway. No state is published until its atomic write succeeds. */
 export class PRMonitorStore {
   private data: PRMonitorStoreData;
+  /** JSON text of `data`, as written to the file. Drafts and whole-store copies parse it. */
+  private text: string;
   private pending: Promise<unknown> = Promise.resolve();
 
   private constructor(
@@ -69,6 +71,7 @@ export class PRMonitorStore {
     data: PRMonitorStoreData,
   ) {
     this.data = data;
+    this.text = JSON.stringify(data);
   }
 
   static async load(file: string): Promise<PRMonitorStore> {
@@ -192,7 +195,7 @@ export class PRMonitorStore {
   snapshot<Result>(
     select?: (data: Readonly<PRMonitorStoreData>) => Result,
   ): PRMonitorStoreData | Result {
-    return cloneStoreSnapshot(this.data, select);
+    return cloneStoreSnapshot(this.data, this.text, select);
   }
 
   get(id: string, ownerId: string): PRMonitor {
@@ -632,13 +635,18 @@ export class PRMonitorStore {
 
   private change<T>(mutate: (data: PRMonitorStoreData) => T): Promise<T> {
     const operation = async () => {
-      const draft = structuredClone(this.data);
+      // Parsing the committed text is several times cheaper than cloning the store, and
+      // comparing texts says whether the transaction changed what the file would hold.
+      const draft: PRMonitorStoreData = JSON.parse(this.text);
       const result = mutate(draft);
-      if (isDeepStrictEqual(draft, this.data)) return structuredClone(result);
+      if (JSON.stringify(draft) === this.text) return structuredClone(result);
       draft.revision += 1;
       decodeMonitorStore(draft);
-      await writeAtomicJSON(this.file, draft);
-      this.data = draft;
+      const text = JSON.stringify(draft);
+      await writeAtomicText(this.file, text);
+      // Committed state is exactly what a restart would load: no keys the file drops.
+      this.data = JSON.parse(text);
+      this.text = text;
       publishPRAutomationResources();
       // Retrospective inbox and family projections consume the current observations/incidents.
       resourceRevisions.advance({ family: 'decisions', scope: 'farm' });

@@ -225,3 +225,26 @@ test('snapshot projection filters before copying and keeps monitor state private
   assert.equal(store.get(wanted.id, 'owner').config.project, config.project);
   assert.equal(store.snapshot().monitors.length, 2);
 });
+
+test('a transaction that changes nothing neither clones the store nor rewrites its file', async (t) => {
+  const { file, store } = await fixture(t);
+  const monitor = await store.subscribe('owner', config);
+  const persisted = await readFile(file, 'utf8');
+  const clone = t.mock.method(globalThis, 'structuredClone');
+  const stale = await store.observe(monitor.id, 'owner', monitor.revision + 1, {
+    error: 'stale read',
+    checkedAt: new Date().toISOString(),
+  });
+  const cloned = clone.mock.calls.map((call) => call.arguments[0]);
+  clone.mock.restore();
+  assert.equal(stale, null);
+  assert.equal(
+    cloned.some((value) => typeof value === 'object' && value !== null && 'monitors' in value),
+    false,
+    'the whole store is not cloned',
+  );
+  assert.equal(await readFile(file, 'utf8'), persisted);
+
+  const paused = await store.setLifecycle(monitor.id, 'owner', monitor.revision, 'paused');
+  assert.deepEqual((await PRMonitorStore.load(file)).get(monitor.id, 'owner'), paused);
+});
