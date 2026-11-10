@@ -547,6 +547,7 @@ export async function ensureReviewWorkspaceSupport(
     const pool = resolveReviewWorkspacePool(
       await deps.loadPoolConfigs(),
       initial.reviewWorkspace!.machine,
+      initial.project,
     );
     if (
       initial.reviewWorkspace.executionNodeId !==
