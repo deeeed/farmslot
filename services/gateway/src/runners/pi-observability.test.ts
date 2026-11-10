@@ -167,3 +167,77 @@ test('released Pi sessions bind to their first native task prompt after pane sna
   assert.deepEqual(read({ ...scope, taskDir: undefined }), []);
   assert.deepEqual(read({ ...scope, taskDir: '.' }), []);
 });
+
+test('slotless review discovery requires its exact first task prompt and launch interval', (t) => {
+  const home = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'pi-review-task-')));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const repo = path.join(home, 'workspace/source');
+  const taskDir = path.join(home, 'workspace/task');
+  const sessions = path.join(home, '.pi/agent/sessions/review');
+  mkdirSync(sessions, { recursive: true });
+  function session(id: string, prompt: string, timestamp = '2026-11-10T14:52:50Z', cwd = repo) {
+    const file = path.join(sessions, `${id}.jsonl`);
+    writeFileSync(
+      file,
+      [
+        { type: 'session', id, timestamp, cwd },
+        { type: 'message', message: { role: 'user', content: [{ type: 'text', text: prompt }] } },
+        {
+          type: 'message',
+          message: { role: 'user', content: [{ type: 'text', text: `Read ${taskDir}/TASK.md` }] },
+        },
+      ]
+        .map((row) => JSON.stringify(row))
+        .join('\n') + '\n',
+    );
+    return file;
+  }
+  const owned = session('owned', `Read ${taskDir}/TASK.md`);
+  const native = JSON.parse(readFileSync(owned, 'utf8').split('\n')[0]);
+  native.id = 'native-conversation';
+  const records = readFileSync(owned, 'utf8').split('\n');
+  records[0] = JSON.stringify(native);
+  writeFileSync(owned, records.join('\n'));
+  session('foreign-task', 'Read /other/task/TASK.md');
+  session('prefix', `Read ${taskDir}-other/TASK.md`);
+  session('before-launch', `Read ${taskDir}/TASK.md`, '2026-11-10T14:00:00Z');
+  session('after-completion', `Read ${taskDir}/TASK.md`, '2026-11-10T16:00:00Z');
+  session('foreign-cwd', `Read ${taskDir}/TASK.md`, undefined, '/other/source');
+  assert.deepEqual(
+    JSON.parse(
+      execFileSync(
+        'bash',
+        [
+          '-c',
+          buildPiSessionDiscoveryCommand(repo, {
+            homeRoot: home,
+            taskDir,
+            startedAt: Date.parse('2026-11-10T14:52:46Z'),
+            endedAt: Date.parse('2026-11-10T15:01:00Z'),
+          }),
+        ],
+        { encoding: 'utf8' },
+      ),
+    ),
+    [owned],
+  );
+  assert.deepEqual(
+    JSON.parse(
+      execFileSync(
+        'bash',
+        [
+          '-c',
+          buildPiSessionDiscoveryCommand(repo, {
+            homeRoot: home,
+            taskDir,
+            startedAt: Date.parse('2026-11-10T14:52:46Z'),
+            endedAt: Date.parse('2026-11-10T15:01:00Z'),
+            bindings: true,
+          }),
+        ],
+        { encoding: 'utf8' },
+      ),
+    ),
+    [{ runnerSessionId: 'native-conversation', runnerSessionPath: owned }],
+  );
+});

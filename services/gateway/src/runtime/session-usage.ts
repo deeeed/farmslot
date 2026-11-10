@@ -13,14 +13,18 @@ import {
   registerContextSessionUsage,
   upsertSessionUsage,
 } from './agent-session-rows.js';
-import { parseSessionUsageOutput, unavailableRunnerSessionUsage } from './session-usage-result.js';
-export { parseSessionUsageOutput, unavailableRunnerSessionUsage } from './session-usage-result.js';
-
-/** A retained transcript spans review generations, so its total is not a per-run metric. */
-export function usesReviewChainSessionTotal(run: Pick<Run, 'repeatReviewContext'>): boolean {
-  const continuity = run.repeatReviewContext?.session?.continuity;
-  return continuity === 'resumed' || continuity === 'resume-unconfirmed';
-}
+import {
+  parseSessionUsageOutput,
+  runnerUsageMetrics,
+  unavailableRunnerSessionUsage,
+  usesReviewChainSessionTotal,
+} from './session-usage-result.js';
+export {
+  parseSessionUsageOutput,
+  runnerUsageMetrics,
+  unavailableRunnerSessionUsage,
+  usesReviewChainSessionTotal,
+} from './session-usage-result.js';
 
 export async function extractRunnerSessionUsage({
   slotId,
@@ -76,20 +80,6 @@ export async function extractRunnerSessionUsage({
       error: (err as Error).message,
     });
   }
-}
-
-/** The same metric mapping feeds completion capture and historical read projection. */
-export function runnerUsageMetrics(usage: RunnerSessionUsage): Partial<Run['metrics']> {
-  return {
-    ...(usage.actualModel ? { actualModel: usage.actualModel } : {}),
-    ...(usage.turns != null ? { sessionTurns: usage.turns } : {}),
-    ...(usage.inputTokens != null ? { sessionInputTokens: usage.inputTokens } : {}),
-    ...(usage.outputTokens != null ? { sessionOutputTokens: usage.outputTokens } : {}),
-    ...(usage.totalTokens != null ? { sessionTotalTokens: usage.totalTokens } : {}),
-    ...(usage.cacheCreation != null ? { sessionCacheCreation: usage.cacheCreation } : {}),
-    ...(usage.cacheRead != null ? { sessionCacheRead: usage.cacheRead } : {}),
-    ...(usage.costUsd != null ? { costEstimate: usage.costUsd } : {}),
-  };
 }
 
 async function archivedSessionUsage(

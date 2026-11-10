@@ -50,6 +50,7 @@ import {
   reviewTmuxStartupState,
 } from '../runners/review-tmux.js';
 import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
+import { captureRunSessionUsage } from '../runtime/agent-session-usage.js';
 import { workspaceTerminalOperation } from '../runtime/workspace-terminal.js';
 import { runPrincipalOwner, samePrincipalOwner } from '../security/work-originator.js';
 import { withSubtaskMetrics } from '../tasks/subtask-metrics.js';
@@ -201,7 +202,7 @@ export async function recordWorkspaceReviewCompletion(
   const reviewer = currentWorkspaceRun(runId, generation).agentContexts?.find(
     (context) => context.id === 'review',
   );
-  if (reviewResult.session?.sessionId && reviewer) {
+  if (reviewer) {
     await upsertAgentContext(runId, 'review', {
       id: reviewer.id,
       status: 'complete',
@@ -347,6 +348,9 @@ export async function teardownReviewWorkspace(runId: string): Promise<void> {
         completedAt: reviewer.completedAt,
       });
   }
+  // Failed/cancelled runs may already have a terminal context before teardown.
+  await captureRunSessionUsage(runId);
+  check();
   if (run.status === 'cancelled')
     await cancelReviewWorkspaceAllocation(runId, {
       assertCurrent: () => {

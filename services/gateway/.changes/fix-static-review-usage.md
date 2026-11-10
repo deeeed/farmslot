@@ -1,0 +1,1 @@
+- Capture terminal static-review session usage and estimated cost, including failed reviews, through the shared receipt collector; recover exact workspace transcripts during offline backfill.
