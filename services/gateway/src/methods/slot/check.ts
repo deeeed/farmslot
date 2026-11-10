@@ -418,8 +418,28 @@ export async function checkFixtureSteps(
   }
 
   const templates = projectJson.fixtures.templates ?? [];
+  const directories = projectJson.fixtures.directories ?? [];
   let mismatches = 0;
   const extraVars = await fixtureCheckVars(vars, projectVars, timeoutMs);
+  // One remote command for every hash and directory test this check needs: per-item calls cost a
+  // process (an ssh for remote slots) each, and macOS pays two per file (md5sum, then md5).
+  const facts = await remoteFixtureFacts(
+    vars,
+    [
+      ...templates.flatMap((tpl) =>
+        tpl.src ? [`${vars.remoteRepo}/${expandTemplate(tpl.dst, vars, projectVars)}`] : [],
+      ),
+      ...directories.flatMap((dir) =>
+        dir.sentinel
+          ? [`${vars.remoteRepo}/${expandTemplate(dir.dst, vars, projectVars)}/${dir.sentinel}`]
+          : [],
+      ),
+    ],
+    directories.map((dir) => `${vars.remoteRepo}/${expandTemplate(dir.dst, vars, projectVars)}`),
+    timeoutMs,
+  );
+  const remoteMd5 = (remotePath: string) =>
+    facts ? (facts.md5.get(remotePath) ?? null) : getRemoteMd5(vars, remotePath, timeoutMs);
 
   // Check templates (skip compose entries without src)
   for (const tpl of templates) {
@@ -446,9 +466,9 @@ export async function checkFixtureSteps(
     }
     const rendered = await renderFixtureTemplate(localPath, vars, projectVars, extraVars);
     const localMd5 = md5(rendered);
-    const remoteMd5 = await getRemoteMd5(vars, `${vars.remoteRepo}/${dst}`, timeoutMs);
-    let matches = localMd5 === remoteMd5;
-    if (!matches && remoteMd5 && (dst === '.skills.local' || dst === '.git/info/exclude')) {
+    const remoteHash = await remoteMd5(`${vars.remoteRepo}/${dst}`);
+    let matches = localMd5 === remoteHash;
+    if (!matches && remoteHash && (dst === '.skills.local' || dst === '.git/info/exclude')) {
       let content: ExecResult;
       try {
         content = await execOnSlot(vars, `cat ${shellQuote(`${vars.remoteRepo}/${dst}`)}`, {
@@ -475,7 +495,7 @@ export async function checkFixtureSteps(
               getProjectField(projectJson, 'repo_url'),
             ));
     }
-    if (!remoteMd5) {
+    if (!remoteHash) {
       steps.push({
         name: `fixture:${dst}`,
         status: 'warn',
@@ -487,7 +507,7 @@ export async function checkFixtureSteps(
         name: `fixture:${dst}`,
         status: 'pass',
         detail:
-          localMd5 === remoteMd5
+          localMd5 === remoteHash
             ? `${dst} — ${localMd5.slice(0, 8)}`
             : `${dst} preserves required seed settings and installer additions`,
       });
@@ -495,22 +515,22 @@ export async function checkFixtureSteps(
       steps.push({
         name: `fixture:${dst}`,
         status: 'warn',
-        detail: `${dst} mismatch (expected ${localMd5.slice(0, 8)}, got ${remoteMd5.slice(0, 8)})`,
+        detail: `${dst} mismatch (expected ${localMd5.slice(0, 8)}, got ${remoteHash.slice(0, 8)})`,
       });
       mismatches++;
     }
   }
 
   // Check directories (sentinel-based)
-  const directories = projectJson.fixtures.directories ?? [];
   for (const dir of directories) {
     const dst = expandTemplate(dir.dst, vars, projectVars);
     const remoteDirPath = `${vars.remoteRepo}/${dst}`;
     try {
-      const dirExists = await execOnSlot(vars, `test -d ${shellQuote(remoteDirPath)}`, {
-        timeout: timeoutMs,
-      });
-      if (dirExists.exitCode !== 0) {
+      const dirExists = facts
+        ? facts.directories.get(remoteDirPath) === true
+        : (await execOnSlot(vars, `test -d ${shellQuote(remoteDirPath)}`, { timeout: timeoutMs }))
+            .exitCode === 0;
+      if (!dirExists) {
         steps.push({
           name: `fixture:${dst}/`,
           status: 'warn',
@@ -524,15 +544,15 @@ export async function checkFixtureSteps(
         if (existsSync(localSentinel)) {
           const localContent = await readFile(localSentinel, 'utf-8');
           const localMd5 = md5(localContent);
-          const remoteMd5 = await getRemoteMd5(vars, `${remoteDirPath}/${dir.sentinel}`, timeoutMs);
-          if (!remoteMd5) {
+          const sentinelMd5 = await remoteMd5(`${remoteDirPath}/${dir.sentinel}`);
+          if (!sentinelMd5) {
             steps.push({
               name: `fixture:${dst}/`,
               status: 'warn',
               detail: `${dst}/${dir.sentinel} missing on worker`,
             });
             mismatches++;
-          } else if (localMd5 === remoteMd5) {
+          } else if (localMd5 === sentinelMd5) {
             steps.push({
               name: `fixture:${dst}/`,
               status: 'pass',
@@ -542,7 +562,7 @@ export async function checkFixtureSteps(
             steps.push({
               name: `fixture:${dst}/`,
               status: 'warn',
-              detail: `${dst}/ sentinel mismatch (${localMd5.slice(0, 8)} vs ${remoteMd5.slice(0, 8)})`,
+              detail: `${dst}/ sentinel mismatch (${localMd5.slice(0, 8)} vs ${sentinelMd5.slice(0, 8)})`,
             });
             mismatches++;
           }
@@ -869,6 +889,50 @@ async function checkTmux(vars: SlotVars): Promise<CheckStep> {
 
 function md5(content: string): string {
   return createHash('md5').update(content).digest('hex');
+}
+
+/** Hashes and directory tests a fixture check needs, read in one remote command. */
+interface RemoteFixtureFacts {
+  /** File path to md5, or null when the file is missing or unreadable. */
+  md5: Map<string, string | null>;
+  directories: Map<string, boolean>;
+}
+
+/**
+ * One command answers every fixture question for a slot: a line per file (its md5, or empty) and
+ * then a line per directory (1 or 0). Undefined when the batch itself fails, so the caller falls
+ * back to the per-item reads and their existing failure handling.
+ */
+async function remoteFixtureFacts(
+  vars: SlotVars,
+  files: string[],
+  directories: string[],
+  timeoutMs?: number,
+): Promise<RemoteFixtureFacts | undefined> {
+  if (!files.length && !directories.length) return { md5: new Map(), directories: new Map() };
+  const hash = (file: string) =>
+    `printf '%s\\n' "$( (md5sum ${shellQuote(file)} 2>/dev/null || md5 -q ${shellQuote(file)} 2>/dev/null) | awk '{print $1}')"`;
+  const test = (dir: string) => `if test -d ${shellQuote(dir)}; then echo 1; else echo 0; fi`;
+  let result: ExecResult;
+  try {
+    result = await execOnSlot(vars, [...files.map(hash), ...directories.map(test)].join('; '), {
+      timeout: timeoutMs,
+    });
+  } catch (error) {
+    // The per-item fallback reports each fixture's own failure, as before batching.
+    console.warn(
+      `[slot-check] batched fixture read failed for ${vars.slotId}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return undefined;
+  }
+  const lines = result.stdout.split('\n');
+  if (result.exitCode !== 0 || lines.length < files.length + directories.length) return undefined;
+  return {
+    md5: new Map(files.map((file, index) => [file, lines[index].trim() || null])),
+    directories: new Map(
+      directories.map((dir, index) => [dir, lines[files.length + index].trim() === '1']),
+    ),
+  };
 }
 
 async function getRemoteMd5(

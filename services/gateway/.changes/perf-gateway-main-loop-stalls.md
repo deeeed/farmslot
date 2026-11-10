@@ -1,0 +1,1 @@
+- Check a slot's fixtures with one remote command instead of one or two per fixture file and directory, cutting process spawns (and ssh connections for remote slots) on every slot check.
