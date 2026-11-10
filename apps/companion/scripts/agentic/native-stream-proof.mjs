@@ -4,6 +4,9 @@
 //
 //   NATIVE_STREAM_CONTROL=http://127.0.0.1:8863 NATIVE_STREAM_STATE=<file> METRO_PORT=<port> \
 //   IOS_SIMULATOR=<udid> node scripts/agentic/native-stream-proof.mjs <phase>
+//
+// `setup` seeds NATIVE_STREAM_SEED_TURNS earlier turns (default 4), so the reader has history to
+// scroll away into; 0 is allowed and opens an empty conversation.
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -83,6 +86,15 @@ async function answerAlert(title, button, timeout = 30000) {
 
 /** Within this distance of the end the reader follows (NATIVE_FOLLOW_SLACK_PX). */
 const SLACK = 80;
+/**
+ * While a turn streams, the frame may be read between a delta's layout and the screen's jump to
+ * the end: a few lines at most. A sample beyond this is read again after SETTLE_MS, and must then
+ * be within it.
+ */
+const STREAM_ALLOWANCE = 120;
+const SETTLE_MS = 300;
+/** A 200-delta turn at 50 ms streams for about 10 s: enough samples to see it follow throughout. */
+const MIN_STREAM_SAMPLES = 20;
 /** DURATION_BUCKETS from @farmslot/protocol/performance, in seconds. */
 const DURATION_BOUNDS = [
   0.001, 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 180,
@@ -134,7 +146,8 @@ const lastAssistant = (value) =>
 
 if (phase === 'setup') {
   const { sessionId } = await call('POST', '/session');
-  const seedTurns = Number(process.env.NATIVE_STREAM_SEED_TURNS ?? '0');
+  const seedTurns = Number(process.env.NATIVE_STREAM_SEED_TURNS ?? '4');
+  assert(Number.isSafeInteger(seedTurns) && seedTurns >= 0, 'NATIVE_STREAM_SEED_TURNS: 0 or more');
   if (seedTurns) await call('POST', `/seed?turns=${seedTurns}`);
   const read = await call('GET', '/read');
   writeState({ sessionId, completedTurns: read.completedTurns });
@@ -158,10 +171,8 @@ if (phase === 'setup') {
     simulator,
     `farmslot-development:///native?sessionId=${encodeURIComponent(sessionId)}&executionNodeId=local`,
   ]);
-  const value = await until(
-    (sample) => sample.caughtUp && sample.timeline.length > 0,
-    'the conversation history',
-  );
+  // An empty conversation is caught up too: the composer is ready either way.
+  const value = await until((sample) => sample.caughtUp, 'the conversation history');
   report({ entries: value.timeline.length, eventCount: value.eventCount, follow: value.follow });
 } else if (phase === 'at-end') {
   // Rows rendered and the reader is at the end of them.
@@ -171,22 +182,39 @@ if (phase === 'setup') {
   );
   report({ follow: value.follow });
 } else if (phase === 'streams-following') {
-  // The composer just sent a prompt: every sample while it streams follows the end.
+  // The composer just sent a prompt: while it streams, every sample follows and sits at the end.
   const before = readState().completedTurns;
   assert(Number.isSafeInteger(before), 'Run setup first');
   const samples = [];
   const deadline = Date.now() + 120000;
   for (;;) {
     assert(Date.now() < deadline, 'Timed out waiting for the streamed turn');
-    const value = await frame();
-    if (value) samples.push(value.follow);
     const { completedTurns } = await call('GET', '/read');
-    if (completedTurns > before && value?.caughtUp) {
+    const done = completedTurns > before;
+    let value = await frame();
+    if (value && !done) {
+      if (value.follow.distanceFromEnd > STREAM_ALLOWANCE) {
+        await delay(SETTLE_MS);
+        value = (await frame()) ?? value;
+      }
+      samples.push(value.follow);
+    }
+    if (done && value?.caughtUp) {
       // Let the last delta's layout settle before reading the final position.
       await delay(1000);
       const settled = await frame();
-      const left = samples.filter((follow) => !follow.following);
-      assert.equal(left.length, 0, `Left the end while streaming: ${JSON.stringify(left[0])}`);
+      const off = samples.filter(
+        (follow) => !follow.following || follow.distanceFromEnd > STREAM_ALLOWANCE,
+      );
+      assert.equal(
+        off.length,
+        0,
+        `Away from the end while streaming (${off.length}/${samples.length}): ${JSON.stringify(off[0])}`,
+      );
+      assert(
+        samples.length >= MIN_STREAM_SAMPLES,
+        `Only ${samples.length} samples while streaming; need ${MIN_STREAM_SAMPLES}`,
+      );
       assert(
         settled.follow.following,
         `Not following after the stream: ${JSON.stringify(settled.follow)}`,
@@ -196,7 +224,12 @@ if (phase === 'setup') {
         `Not at the end after the stream: ${JSON.stringify(settled.follow)}`,
       );
       writeState({ ...readState(), completedTurns });
-      report({ samples: samples.length, final: settled.follow, completedTurns });
+      report({
+        samples: samples.length,
+        maxDistance: Math.max(...samples.map((follow) => follow.distanceFromEnd)),
+        final: settled.follow,
+        completedTurns,
+      });
       break;
     }
     await delay(150);

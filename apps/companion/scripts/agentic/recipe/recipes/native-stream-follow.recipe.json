@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion native stream follow",
-  "description": "Start native-stream-stack.mts (isolated gateway, synthetic Claude runner) pair the app once with `native-stream-proof.mjs pair`, and set NATIVE_STREAM_CONTROL, NATIVE_STREAM_STATE (a new file), METRO_PORT and IOS_SIMULATOR. Proves through the real composer, scroll and Latest controls that the virtualized conversation follows a 200-delta stream, stops following when the reader scrolls away, counts unseen output, jumps back with Latest, and keeps the reader's place when they open a message.",
+  "description": "Start native-stream-stack.mts (isolated gateway, synthetic Claude runner streaming a delta every 50 ms), pair the app once with `native-stream-proof.mjs pair`, and set NATIVE_STREAM_CONTROL, NATIVE_STREAM_STATE (a new file), METRO_PORT and IOS_SIMULATOR; NATIVE_STREAM_SEED_TURNS (default 4) seeds earlier turns. Proves through the real composer, scroll and Latest controls that the virtualized conversation follows a 200-delta stream, stops following when the reader scrolls away, counts unseen output, jumps back with Latest, and keeps the reader's place when they open a message.",
   "proofTargets": [
     {
       "id": "rows-render",
@@ -90,7 +90,7 @@
       "streams-following": {
         "action": "command",
         "cmd": "node scripts/agentic/native-stream-proof.mjs streams-following",
-        "intent": "Every sample while 200 deltas stream follows the end, and the turn ends there.",
+        "intent": "Every sample of the 200-delta stream follows within 120 px of the end.",
         "next": "assert-streams-following"
       },
       "assert-streams-following": {
