@@ -1,5 +1,5 @@
 // Live proof of terminal fan-out backpressure on a private authenticated gateway.
-// Two viewers attach to one interactive terminal on a private tmux server. One stops reading its
+// Two viewers attach to one worker terminal on a private tmux server. One stops reading its
 // socket while the pane floods output. The gateway must close that viewer for a resync (1013)
 // without dropping bytes from what it did send, keep the healthy viewer streaming, and let the
 // slow viewer re-attach to the current screen. Only owned processes and the private tmux socket
@@ -71,9 +71,7 @@ const grant = auth.writer.exchangePersonCredential(secret.secret, {
   deviceKind: 'cli',
 });
 const { createWebSocketServer } = await load('services/gateway/src/server.ts');
-const { JOINED_SCREEN_PREFIX, TERMINAL_BUFFER_LIMIT } = await load(
-  'services/gateway/src/methods/terminal-frame.ts',
-);
+const { TERMINAL_BUFFER_LIMIT } = await load('services/gateway/src/methods/terminal-frame.ts');
 
 interface Viewer {
   ws: WebSocket;
@@ -150,14 +148,31 @@ try {
     viewers.push(self);
     return self;
   }
+  // Worker terminals attach to an existing tmux pane without re-applying session options, which
+  // would make tmux repaint every client and hide a missing redraw.
+  tmux(
+    'new-session',
+    '-d',
+    '-s',
+    slotId,
+    '-x',
+    '200',
+    '-y',
+    '50',
+    '-c',
+    path.join(home, 'checkout'),
+  );
+  // The pane's real address: a user tmux.conf may number windows and panes from 1.
+  const target = tmux(
+    'display-message',
+    '-p',
+    '-t',
+    slotId,
+    '#{session_name}:#{window_index}.#{pane_index}',
+  ).trim();
+  const worker = { nodeId: 'local', session: slotId, target };
   const subscribe = (v: Viewer) =>
-    v.call('terminal.subscribe', {
-      slotId,
-      bareSession: true,
-      interactive: true,
-      cols: 200,
-      rows: 50,
-    });
+    v.call('terminal.worker.subscribe', { worker, cols: 200, rows: 50 });
 
   const healthy = await viewer();
   await subscribe(healthy);
@@ -205,10 +220,8 @@ try {
   await new Promise((resolve) => setTimeout(resolve, 500));
   // Both viewers get each PTY chunk in the same pass, but the healthy one subscribed first: the
   // slow viewer's chunks must be one unbroken run of the healthy viewer's chunks.
-  // A screen seed on joining is sent to the joining viewer only, so it is not part of the stream.
-  const stream = (v: Viewer) => v.data.filter((chunk) => !chunk.startsWith(JOINED_SCREEN_PREFIX));
-  const healthyStream = stream(healthy);
-  const slowStream = stream(slow);
+  const healthyStream = healthy.data;
+  const slowStream = slow.data;
   const contiguous =
     slowStream.length > 0 &&
     healthyStream.some(
@@ -228,16 +241,14 @@ try {
   assert.equal(healthy.ws.readyState, WebSocket.OPEN, 'the healthy viewer keeps streaming');
 
   // Re-attach and redraw: the healthy viewer keeps the PTY alive, so the slow viewer's new
-  // connection joins it and must be sent the current screen as terminal output, unasked.
+  // connection joins it. tmux must repaint the screen after the subscribe response, when the
+  // client is listening; the pane is idle, so only a redraw can deliver the marker.
   const again = await viewer();
   await subscribe(again);
-  // Required from the gateway itself: tmux may or may not redraw a client that joins a session.
+  const afterResponse = again.data.length;
   await until(
-    () =>
-      again.data.some(
-        (chunk) => chunk.startsWith(JOINED_SCREEN_PREFIX) && chunk.includes('PRESSURE-DONE'),
-      ),
-    'the re-attached viewer to be sent the current screen',
+    () => again.data.slice(afterResponse).join('').includes('PRESSURE-DONE'),
+    'the re-attached viewer to be redrawn after its subscribe response',
     10_000,
   );
   evidence.reattachedScreenHasMarker = true;

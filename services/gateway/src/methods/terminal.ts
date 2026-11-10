@@ -66,7 +66,7 @@ import {
   workspaceTerminalOperation,
 } from '../runtime/workspace-terminal.js';
 
-import { seedJoinedScreen, terminalDataPayload } from './terminal-frame.js';
+import { terminalDataPayload } from './terminal-frame.js';
 
 type EventEmitter = (event: string, payload: unknown) => void;
 type HasPtyFn = (key: string) => boolean;
@@ -286,6 +286,8 @@ export async function terminalSubscribe(
   handler: (data: TerminalData) => void;
   ptyHandler?: PtyDataHandler;
   identity: ReturnType<typeof terminalEventIdentity>;
+  /** The viewer joined a running PTY, which tmux will not redraw for it (see redrawPty). */
+  joined?: boolean;
 }> {
   if (isWorkspaceTerminal(params)) {
     const { run, key, session, sshTarget } = await resolveWorkspaceTerminal(params);
@@ -318,14 +320,7 @@ export async function terminalSubscribe(
         : { sshTarget },
     );
     emit('terminal.mode', { ...identity, mode: 'pty' });
-    if (joined)
-      await seedJoinedScreen(
-        emit,
-        payload,
-        async () => (await terminalSnapshot({ ...params, lines: params.rows ?? 50 })).lines,
-        key,
-      );
-    return { key, handler: (_data: TerminalData) => {}, ptyHandler, identity };
+    return { key, handler: (_data: TerminalData) => {}, ptyHandler, identity, joined };
   }
   // Bare-session mode skips agent-context resolution so a postmortem viewer can attach
   // to the slot's tmux session even after a blocked run's role pane is gone.
@@ -393,16 +388,9 @@ export async function terminalSubscribe(
       ptyOpts,
     );
     emit('terminal.mode', { ...eventIdentity, mode: 'pty' });
-    if (joined)
-      await seedJoinedScreen(
-        emit,
-        payload,
-        async () => (await terminalSnapshot({ ...params, lines: params.rows ?? 50 })).lines,
-        key,
-      );
 
     const handler = (_data: TerminalData) => {};
-    return { key, handler, ptyHandler, identity: eventIdentity };
+    return { key, handler, ptyHandler, identity: eventIdentity, joined };
   }
 
   // Polling fallback (non-interactive only)

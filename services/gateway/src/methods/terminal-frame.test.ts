@@ -6,8 +6,6 @@ import { WebSocket } from 'ws';
 import { eventFrameText } from '../server/event-frame.js';
 
 import {
-  JOINED_SCREEN_PREFIX,
-  seedJoinedScreen,
   TERMINAL_BUFFER_LIMIT,
   TERMINAL_RESYNC_CLOSE,
   terminalDataPayload,
@@ -74,34 +72,4 @@ test('a terminal viewer over the buffer limit is closed for a resync instead of 
   t.mock.method(healthy, 'close', () => assert.fail('a viewer at the limit keeps its socket'));
   withTerminalBackpressure(healthy, emit)('terminal.data', {});
   assert.deepEqual(emitted, ['terminal.mode', 'terminal.data']);
-});
-
-test('a viewer joining a running terminal is sent its current screen', async (t) => {
-  const sent: Array<{ event: string; payload: unknown }> = [];
-  const emit = (event: string, payload: unknown) => sent.push({ event, payload });
-  const payload = terminalDataPayload({ slotId: 'slot-1' });
-  await seedJoinedScreen(emit, payload, async () => ['$ echo hi', 'hi'], 'key');
-  assert.deepEqual(
-    sent.map(({ event, payload }) => [
-      event,
-      JSON.parse(eventFrameText(event, payload, 1)).payload.data,
-    ]),
-    [['terminal.data', `${JOINED_SCREEN_PREFIX}$ echo hi\r\nhi`]],
-  );
-
-  sent.length = 0;
-  await seedJoinedScreen(emit, payload, async () => [], 'key');
-  assert.deepEqual(sent, [], 'an empty screen sends nothing');
-
-  const warn = t.mock.method(console, 'warn', () => undefined);
-  await seedJoinedScreen(
-    emit,
-    payload,
-    async () => {
-      throw new Error('capture failed');
-    },
-    'key',
-  );
-  assert.deepEqual(sent, [], 'a failed capture leaves the live stream to the client');
-  assert.match(String(warn.mock.calls[0]?.arguments[0]), /joined-screen seed failed key=key/);
 });

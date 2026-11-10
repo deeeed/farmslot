@@ -581,7 +581,7 @@ import { nativeConversations } from '../resources/native-conversations.js';
 import { nativeObservations } from '../resources/native-observations.js';
 import { upstreamObservers } from '../resources/upstream-observers.js';
 import { rememberNativeExecutionNode } from '../runners/native/execution-nodes.js';
-import { unsubscribePty } from '../runtime/pty-stream.js';
+import { redrawPty, unsubscribePty } from '../runtime/pty-stream.js';
 import { withRunSessionUsageContext } from '../runtime/run-session-usage-context.js';
 import { resubscribeAgentScreenSessions } from '../runtime/screen-session.js';
 import { unsubscribe as unsubscribeTerminalPoll } from '../runtime/tmux-stream.js';
@@ -642,6 +642,19 @@ export interface RouteMethodContext {
   isActiveClient: (state: ClientState) => boolean;
   broadcast: (frame: EventFrame) => void;
   nextEventSeq: () => number;
+}
+
+/**
+ * A viewer joining a running PTY gets no redraw from tmux, so one is requested. It starts after
+ * this subscribe's response is sent, when the client is listening for terminal output.
+ */
+function redrawAfterResponse(key: string): void {
+  setImmediate(() => {
+    redrawPty(key).catch((error: unknown) => {
+      // The live stream continues; this viewer's screen fills in with the next output.
+      console.warn(`[terminal] redraw for a joining viewer failed key=${key}: ${String(error)}`);
+    });
+  });
 }
 
 export async function routeMethod(
@@ -1117,6 +1130,7 @@ async function routeAuthorizedMethod(
         handler,
         ptyHandler,
         identity,
+        joined,
       } = await terminalSubscribe(sub, withTerminalBackpressure(state.ws, emit));
       // Late-completer check: if a newer subscribe ran during the await above,
       // discard ours. terminalSubscribe already registered the PTY handler in
@@ -1136,6 +1150,7 @@ async function routeAuthorizedMethod(
         state.ptyHandlers.set(subscribedKey, ptyHandler);
       }
       state.terminalIdentities.set(subscribedKey, identity);
+      if (joined) redrawAfterResponse(subscribedKey);
       return { subscribed: true };
     }
     case Methods.TERMINAL_UNSUBSCRIBE: {
@@ -1194,19 +1209,20 @@ async function routeAuthorizedMethod(
         unsubscribeWorkerTerminalPty(key, oldHandler);
         state.workerTerminalHandlers.delete(key);
       }
-      const { ptyHandler } = await terminalWorkerSubscribe(
-        sub,
-        withTerminalBackpressure(state.ws, emit),
+      const {
+        key: ptyKey,
+        ptyHandler,
+        joined,
+      } = await terminalWorkerSubscribe(sub, withTerminalBackpressure(state.ws, emit));
+      const subscribed = adoptWorkerTerminalSubscription(
+        state,
+        key,
+        mySeq,
+        ptyHandler,
+        isActiveClient(state),
       );
-      return {
-        subscribed: adoptWorkerTerminalSubscription(
-          state,
-          key,
-          mySeq,
-          ptyHandler,
-          isActiveClient(state),
-        ),
-      };
+      if (subscribed && joined) redrawAfterResponse(ptyKey);
+      return { subscribed };
     }
     case Methods.TERMINAL_WORKER_UNSUBSCRIBE: {
       const key = terminalWorkerUnsubscribeKey(p as TerminalWorkerUnsubscribeParams);
