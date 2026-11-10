@@ -6,6 +6,7 @@ import { execOnSlot } from '../core/exec.js';
 import { claudeHookObservability } from './claude-observability.js';
 import { runnerObservabilityDirForSlot } from './observability-files.js';
 import type { RunnerObservability } from './observability-types.js';
+import { reviewWorkspaceRunnerVars } from './review-workspace-context.js';
 import { runnerSessionIdForPath } from './session-path-resolution.js';
 import { resolveRunRetainedSessionBinding } from './session-process.js';
 import { contextPaneId } from './session-record.js';
@@ -17,6 +18,7 @@ import {
 
 interface PiSessionScope {
   homeRoot?: string;
+  bindings?: boolean;
   observabilityDir?: string;
   paneId?: string;
   slotId?: string;
@@ -43,15 +45,15 @@ for file in (home / '.pi' / 'agent' / 'sessions').glob('*/*.jsonl'):
             header = json.loads(stream.readline())
         if header.get('type') != 'session' or os.path.realpath(header.get('cwd', '')) != os.path.realpath(repo):
             continue
-        if scope.get('observabilityDir'):
+        if scope.get('observabilityDir') or scope.get('taskDir'):
             started = datetime.datetime.fromisoformat(header['timestamp'].replace('Z', '+00:00')).timestamp() * 1000
             if started < scope['startedAt'] or started >= scope['endedAt']:
                 continue
             if any(interval['startedAt'] <= started < interval['endedAt'] for interval in scope.get('reviewerIntervals', [])):
                 continue
             session = file.stem
-            snapshot_file = Path(scope['observabilityDir']) / 'sessions' / (quote(session, safe='') + '.json')
-            if snapshot_file.exists():
+            snapshot_file = Path(scope['observabilityDir']) / 'sessions' / (quote(session, safe='') + '.json') if scope.get('observabilityDir') else None
+            if snapshot_file and snapshot_file.exists():
                 snapshot = json.loads(snapshot_file.read_text())
                 if snapshot.get('session_id') != session or snapshot.get('runner') != 'pi' or snapshot.get('tmuxPane') != scope['paneId'] or snapshot.get('slotId') != scope['slotId']:
                     continue
@@ -69,13 +71,18 @@ for file in (home / '.pi' / 'agent' / 'sessions').glob('*/*.jsonl'):
                             content = message.get('content')
                             text = prompt_text(content)
                             break
-                if not task_prompt_matches(text, scope['taskDir']):
+                if not task_prompt_matches(text, scope['taskDir'], ('mark', 'TASK.md')):
                     continue
-        paths.append(os.path.realpath(file))
+        if scope.get('bindings'):
+            if not isinstance(header.get('id'), str) or not header['id']:
+                continue
+            paths.append({'runnerSessionId': header['id'], 'runnerSessionPath': os.path.realpath(file)})
+        else:
+            paths.append(os.path.realpath(file))
     except (OSError, ValueError, TypeError, KeyError):
         # Partial or unavailable runner-owned metadata cannot establish a binding.
         continue
-print(json.dumps(sorted(paths)))
+print(json.dumps(sorted(paths, key=lambda entry: entry['runnerSessionPath'] if isinstance(entry, dict) else entry)))
 PY`;
 }
 
@@ -95,10 +102,11 @@ export function createPiHookObservability(): RunnerObservability {
 
 /** A reused fix context can own several Pi sessions. Reviewers never enter its rollup. */
 export async function recoverPiUsageSessions(run: Run): Promise<RecoveredUsageSession[]> {
-  if (!run.slotId) return [];
+  if (!run.slotId && !run.reviewWorkspace) return [];
   const scope = workerUsageScope(run, 'pi');
   const sessions = new Map<string, RecoveredUsageSession>();
-  const vars = await loadSlotVars(run.slotId);
+  const vars = run.slotId ? await loadSlotVars(run.slotId) : await reviewWorkspaceRunnerVars(run);
+  if (!vars) return [];
   for (const { context, startedAt, endedAt, taskDir } of scope.contexts) {
     const retained = resolveRunRetainedSessionBinding(run, context);
     if (retained.binding) {
@@ -108,28 +116,40 @@ export async function recoverPiUsageSessions(run: Run): Promise<RecoveredUsageSe
       });
     }
     const paneId = context.target && contextPaneId(context.target);
-    if (retained.incompleteBinding || !paneId || !Number.isFinite(startedAt)) continue;
+    if (
+      retained.incompleteBinding ||
+      (!run.reviewWorkspace && !paneId) ||
+      !Number.isFinite(startedAt)
+    )
+      continue;
     const result = await execOnSlot(
       vars,
       buildPiSessionDiscoveryCommand(vars.remoteRepo, {
-        observabilityDir: await runnerObservabilityDirForSlot(vars),
-        paneId,
-        slotId: run.slotId,
+        ...(run.slotId
+          ? {
+              observabilityDir: await runnerObservabilityDirForSlot(vars),
+              paneId: paneId ?? undefined,
+              slotId: run.slotId,
+            }
+          : {}),
         startedAt,
         endedAt,
         reviewerIntervals: scope.reviewerIntervals,
-        taskDir,
+        taskDir: run.reviewWorkspace?.taskPath ?? taskDir,
+        bindings: !run.slotId,
       }),
       { timeout: 10_000, selectNodeSupport: false },
     );
     if (result.exitCode !== 0) throw new Error('Pi usage session recovery failed');
-    const paths: string[] = JSON.parse(result.stdout);
-    for (const runnerSessionPath of paths) {
-      sessions.set(runnerSessionPath, {
-        contextId: context.id,
-        runnerSessionId: runnerSessionIdForPath(runnerSessionPath),
-        runnerSessionPath,
-      });
+    const discovered: Array<
+      string | Pick<RecoveredUsageSession, 'runnerSessionId' | 'runnerSessionPath'>
+    > = JSON.parse(result.stdout);
+    for (const entry of discovered) {
+      const binding =
+        typeof entry === 'string'
+          ? { runnerSessionId: runnerSessionIdForPath(entry), runnerSessionPath: entry }
+          : entry;
+      sessions.set(binding.runnerSessionPath, { contextId: context.id, ...binding });
     }
   }
   return [...sessions.values()];

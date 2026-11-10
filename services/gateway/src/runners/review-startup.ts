@@ -2,45 +2,13 @@ import path from 'node:path';
 
 import type { Run, RunnerPromptAcceptance } from '@farmslot/protocol';
 
-import { loadMachinePool, type SlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 
 import { getRunnerObservability } from './registry.js';
-
-/** The admitted workspace's runner context, shared by startup and progress reads. */
-export async function reviewWorkspaceRunnerVars(run: Run): Promise<SlotVars | null> {
-  assertNativeRunOwner(run);
-  const workspace = run.reviewWorkspace;
-  const context = run.agentContexts?.find((entry) => entry.id === 'review');
-  if (!workspace || !context?.target?.session) return null;
-  const pool = await loadMachinePool(workspace.machine);
-  return {
-    slotId: `review-${workspace.workspaceId}`,
-    machine: workspace.machine,
-    platform: pool.platform,
-    host: pool.host,
-    sshUser: pool.ssh_user,
-    osType: pool.os || 'darwin',
-    claudePath: pool.claude_path || 'claude',
-    codexPath: pool.codex_path || 'codex',
-    cursorPath: pool.cursor_path || 'cursor-agent',
-    grokPath: pool.grok_path || 'grok',
-    opencodePath: pool.opencode_path || 'opencode',
-    piPath: pool.pi_path,
-    dispatchCmd: '',
-    recycleCmd: '',
-    repo: workspace.checkoutPath,
-    remoteRepo: workspace.checkoutPath,
-    session: context.target.session,
-    slotMode: 'dispatch',
-    slotEnabled: true,
-    sshTarget: `${pool.ssh_user}@${pool.host}`,
-    projectName: run.project,
-    resourceVars: {},
-  };
-}
+import { reviewWorkspaceRunnerVars } from './review-workspace-context.js';
+export { reviewWorkspaceRunnerVars } from './review-workspace-context.js';
 
 /** Reuse the runner protocol used by slot delivery, with the exact review cwd. */
 export async function observeReviewPromptAcceptance(

@@ -5,13 +5,21 @@ import { createHash } from 'node:crypto';
 import { link, open, readFile, readdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 
+import { isLocal } from '../services/gateway/src/core/exec.js';
+
+import { parseRunRecordFile } from '../packages/run-bundle/src/index.js';
+import { recoverWorkspaceUsageBindings } from '../services/gateway/src/runners/session-usage-recovery.js';
 import type { RunnerSessionUsage } from '../packages/protocol/src/index.js';
 import {
   nativeSessionUsageArgv,
   type NativeSessionUsageRequest,
 } from '../services/gateway/src/runners/native-session-usage-command.js';
-import { parseSessionUsageOutput } from '../services/gateway/src/runtime/session-usage-result.js';
+import {
+  parseSessionUsageOutput,
+  workspaceUsageMetrics,
+} from '../services/gateway/src/runtime/session-usage-result.js';
 import {
   backfillDocument,
   agentSessionRequests,
@@ -31,11 +39,13 @@ const farm = option('--gateway-root');
 const runs = option('--runs-dir');
 assert(
   farm && runs,
-  'Usage: backfill-native-reviewer-usage.mts --gateway-root <checkout> --runs-dir <data> [--pool-dir <pool>] [--report <file>] [--apply]',
+  'Usage: backfill-native-reviewer-usage.mts --gateway-root <checkout> --runs-dir <data> [--pool-dir <pool>] [--report <file>] [--run-ids <id,id>] [--apply]',
 );
 const gatewayRoot = path.resolve(farm);
 const runsDir = path.resolve(runs);
 const apply = flags.includes('--apply');
+const runIds = option('--run-ids')?.split(',');
+process.env.FARMSLOT_POOL_DIR = option('--pool-dir') ?? path.join(gatewayRoot, 'pool');
 const digest = (bytes: string) => createHash('sha256').update(bytes).digest('hex');
 const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 const live = (pid: number) => {
@@ -81,6 +91,12 @@ for (const name of await readdir(option('--pool-dir') ?? path.join(gatewayRoot, 
       slotNodes.set(slot.id, pool.machine);
     }
 }
+const captureGaps: Array<{
+  runId: string;
+  role: string;
+  sessionId: string | null;
+  reason: string;
+}> = [];
 const files = new Map<string, { file: string; bytes: string; document: unknown }>();
 for (const directory of [path.join(runsDir, 'archive'), runsDir]) {
   let names: string[];
@@ -91,10 +107,24 @@ for (const directory of [path.join(runsDir, 'archive'), runsDir]) {
     throw error;
   }
   for (const name of names)
-    if (name.endsWith('.json')) {
+    if (name.endsWith('.json') && (!runIds || runIds.includes(name.slice(0, -5)))) {
       const file = path.join(directory, name);
       const bytes = await readFile(file, 'utf8');
-      const document: unknown = JSON.parse(bytes);
+      const parsed = parseRunRecordFile(name, bytes);
+      let document: unknown = parsed ?? JSON.parse(bytes);
+      if (parsed) {
+        try {
+          document = await recoverWorkspaceUsageBindings(parsed);
+        } catch (error) {
+          // Offline/unavailable source discovery leaves the document intact and reports its gap.
+          captureGaps.push({
+            runId: parsed.id,
+            role: 'review',
+            sessionId: null,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
       if (object(document) && typeof document.id === 'string' && name === document.id + '.json')
         files.set(document.id, { file, bytes, document });
     }
@@ -109,7 +139,11 @@ for (const [id, item] of files) {
   const repo =
     object(item.document) && typeof item.document.slotId === 'string'
       ? (repos.get(item.document.slotId) ?? '')
-      : '';
+      : object(item.document) &&
+          object(item.document.reviewWorkspace) &&
+          typeof item.document.reviewWorkspace.checkoutPath === 'string'
+        ? item.document.reviewWorkspace.checkoutPath
+        : '';
   const requests = agentSessionRequests(
     item.document,
     repo,
@@ -140,9 +174,15 @@ for (const [node, requests] of jobs) {
   const entries = [...requests.values()];
   for (let offset = 0; offset < entries.length; offset += 32) {
     const chunk = entries.slice(offset, offset + 32);
-    const argv = nativeSessionUsageArgv(chunk);
-    const host = node === 'local' ? undefined : peers.get(node);
-    if (node !== 'local' && !host) {
+    const local = node === 'local' || isLocal(peers.get(node) ?? '', node);
+    const host = local ? undefined : peers.get(node);
+    const argv = nativeSessionUsageArgv(
+      chunk,
+      local
+        ? fileURLToPath(new URL('../packages/slot-config/src/session-usage.ts', import.meta.url))
+        : undefined,
+    );
+    if (!local && !host) {
       for (const request of chunk)
         failures.push({
           node,
@@ -208,12 +248,6 @@ const changes: Array<{
   backup?: string;
 }> = [];
 const unrepresented: Array<{ runId: string; runner: string; sessionId: string }> = [];
-const captureGaps: Array<{
-  runId: string;
-  role: string;
-  sessionId: string | null;
-  reason: string;
-}> = [];
 let lock;
 try {
   if (apply)
@@ -231,6 +265,11 @@ try {
       if (result) usages.set(request.key, result);
     }
     const patched = backfillDocument(item.document, usages);
+    const run = parseRunRecordFile(path.basename(item.file), JSON.stringify(patched.document));
+    if (run?.reviewWorkspace) {
+      run.metrics = workspaceUsageMetrics(run);
+      patched.document = run;
+    }
     for (const gap of sessionCaptureGaps(patched.document)) captureGaps.push({ runId: id, ...gap });
     const written = new Set(patched.sessionKeys);
     for (const request of fileJobs.get(id) ?? [])

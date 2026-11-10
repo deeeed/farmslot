@@ -1,4 +1,4 @@
-import { normalizeFlowType, type RunnerSessionUsage } from '@farmslot/protocol';
+import { normalizeFlowType, type RunnerSessionUsage, workerRoleForFlow } from '@farmslot/protocol';
 
 import type {
   NativeSessionUsageIdentity,
@@ -170,7 +170,15 @@ function sources(document: Record<string, unknown>): Record<string, unknown>[] {
         });
     }
   }
-  if (object(document.metrics)) entries.push({ ...document.metrics, role: 'worker' });
+  const metrics = object(document.metrics) ? document.metrics : undefined;
+  if (
+    metrics &&
+    !entries.some(
+      (entry) =>
+        entry.runner === metrics.runner && entry.runnerSessionId === metrics.runnerSessionId,
+    )
+  )
+    entries.push({ ...metrics, role: workerRoleForFlow(string(document.flowType)) ?? 'worker' });
   return entries;
 }
 
@@ -212,7 +220,8 @@ export function agentSessionRequests(
       continue;
     const path = matches.map((item) => string(item.runnerSessionPath)).find(Boolean);
     const slotId = string(entry.slotId) ?? string(document.slotId) ?? document.id;
-    const node = binding?.executionNodeId ?? nodeForSlot(slotId);
+    const workspace = object(document.reviewWorkspace) ? document.reviewWorkspace : undefined;
+    const node = binding?.executionNodeId ?? nodeForSlot(slotId) ?? string(workspace?.machine);
     if (!node || (!binding && !path)) continue;
     requests.set(key, {
       key,
