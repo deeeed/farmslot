@@ -6,10 +6,11 @@ import {
   readSqliteStoreDiagnostics,
   type ResourceSqliteDatabase,
 } from './sqlite-store.js';
-import type {
-  BrowserStoreDiagnostics,
-  StoreWorkerRequest,
-  StoreWorkerResponse,
+import {
+  type BrowserStoreDiagnostics,
+  storeWorkerFailure,
+  type StoreWorkerRequest,
+  type StoreWorkerResponse,
 } from './worker-protocol.js';
 
 export interface WorkerDatabase {
@@ -125,11 +126,7 @@ export function createStoreWorkerHandler(
       }
       send({ id: request.id, ok: true, value });
     } catch (error) {
-      send({
-        id: request.id,
-        ok: false,
-        message: error instanceof Error ? error.message : String(error),
-      });
+      send(storeWorkerFailure(request.id, error));
     }
   };
 }

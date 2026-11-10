@@ -3,7 +3,11 @@ import sqlite3InitModule, { type Database } from '@sqlite.org/sqlite-wasm';
 import type { ResourceSqliteDatabase } from './sqlite-store.js';
 import { createWasmSqliteDriver } from './wasm-driver.js';
 import { createStoreWorkerHandler, type WorkerDatabase } from './worker-handler.js';
-import type { StoreWorkerRequest, StoreWorkerResponse } from './worker-protocol.js';
+import {
+  storeWorkerFailure,
+  type StoreWorkerRequest,
+  type StoreWorkerResponse,
+} from './worker-protocol.js';
 
 declare const self: DedicatedWorkerGlobalScope;
 const worker = self;
@@ -75,10 +79,7 @@ worker.onmessage = async (event: MessageEvent<StoreWorkerRequest>) => {
     );
     for (const response of responses) worker.postMessage(response);
   } catch (error) {
-    worker.postMessage({
-      id: request.id,
-      ok: false,
-      message: error instanceof Error ? error.message : String(error),
-    } satisfies StoreWorkerResponse);
+    // Failed pool acquisition/closing can leave the VFS unusable. Reopen in a new worker.
+    worker.postMessage(storeWorkerFailure(request.id, error, true));
   }
 };

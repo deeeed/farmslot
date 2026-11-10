@@ -306,6 +306,23 @@ first paint. Devices hold farm metadata and the diffs and base files of runs
 they prefetched, not whole repositories. Backup exclusion, deletion when
 authority changes, and operating system encryption limit that exposure.
 
+### Browser recovery and sync status
+
+A failed OPFS I/O or corrupt-file response retires the browser storage worker.
+The cache attempts one immediate reopen per connection, retaining visible values
+as stale. If storage is still unavailable, it keeps the memory fallback and
+retries on the next connection lifecycle. It never deletes another scope or
+editor drafts to recover the rebuildable cache.
+
+Recovery discards the persisted run collection and reads gateway versions again.
+Every reconnect verifies held rows before calling them current; absent rows are
+removed. SQLite handles check the schema and logical scope before touching rows,
+so a schema rebuild cannot reuse an old handle for another scope.
+
+The protocol derives `synced`, `syncing`, or timestamped `cached` status from the
+observed reads and connection. Command Center shows that status for the visible view's
+primary data in a fixed status slot. A connected socket alone never means synced.
+
 ### Public surface
 
 All names are proposed and unshipped. The ADR-071 specification stays the single

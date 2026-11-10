@@ -43,6 +43,67 @@ const scope = (profileId: string) => ({
   principalGeneration: 0,
 });
 
+for (const nextProfile of ['other', 'first']) {
+  test(`an independent connection rebuilding the schema fences old handles for ${nextProfile}`, async () => {
+    const first = database();
+    const second = database(first.sqlite);
+    const old = await createSqliteResourceStore({ database: first.adapter, scope: scope('first') });
+    await old.putQuery({ id: 'query', data: { value: 'old' }, observedAt: 1, bytes: 15 });
+    const replacement = await createSqliteResourceStore({
+      database: second.adapter,
+      scope: scope(nextProfile),
+      schemaVersion: RESOURCE_STORE_SCHEMA_VERSION + 1,
+    });
+    try {
+      await replacement.putQuery({
+        id: 'query',
+        data: { value: 'replacement' },
+        observedAt: 2,
+        bytes: 23,
+      });
+      assert.equal(await old.getQuery('query'), undefined);
+      assert.equal(old.deleted, true);
+      await old.deleteAll();
+      assert.deepEqual((await replacement.getQuery('query'))?.data, { value: 'replacement' });
+    } finally {
+      await old.close();
+      await replacement.close();
+      first.sqlite.close();
+    }
+  });
+}
+
+for (const operation of ['putQuery', 'mergeRows', 'deleteAll'] as const) {
+  test(`a stale handle cannot ${operation} on a replacement scope without a prior read`, async () => {
+    const first = database();
+    const second = database(first.sqlite);
+    const old = await createSqliteResourceStore({ database: first.adapter, scope: scope('first') });
+    const replacement = await createSqliteResourceStore({
+      database: second.adapter,
+      scope: scope('other'),
+      schemaVersion: RESOURCE_STORE_SCHEMA_VERSION + 1,
+    });
+    try {
+      await replacement.putQuery({ id: 'query', data: 'replacement', observedAt: 2, bytes: 13 });
+      if (operation === 'putQuery')
+        await old.putQuery({ id: 'query', data: 'late', observedAt: 3, bytes: 4 });
+      else if (operation === 'mergeRows')
+        await old.mergeRows!('query', {
+          entry: { id: 'query', data: 'late', observedAt: 3, bytes: 4 },
+          upserts: [],
+          deletes: [],
+        });
+      else await old.deleteAll();
+      assert.deepEqual((await replacement.getQuery('query'))?.data, 'replacement');
+      assert.equal(old.deleted, true);
+    } finally {
+      await old.close();
+      await replacement.close();
+      first.sqlite.close();
+    }
+  });
+}
+
 test('query metadata inspection waits behind a writer and reads only its exact store scope', async () => {
   const { sqlite, adapter } = database();
   const store = await createSqliteResourceStore({ database: adapter, scope: scope('first') });

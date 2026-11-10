@@ -5,14 +5,22 @@ import {
   browserResourceStoreDiagnostics,
   createBrowserSqliteResourceStore,
 } from '@farmslot/local-store/browser';
-import type { StoredResourceQueryInfo } from '@farmslot/protocol/client-cache';
+import {
+  type GatewayResourceCache,
+  resourceSyncLabel,
+  type ResourceSyncState,
+  type StoredResourceQueryInfo,
+} from '@farmslot/protocol/client-cache';
 
 import {
+  getResourceCache,
   getResourceStoreMetadata,
   getResourceStoreNotice,
   getResourceWorkspaceKey,
   subscribeResourceCache,
 } from '../resource-cache.js';
+import { resourceViewMatches } from '../utils/resource-view-sync.js';
+import { hashRoute } from '../utils/url-state.js';
 
 @customElement('farm-resource-store-notice')
 export class ResourceStoreNotice extends LitElement {
@@ -34,7 +42,27 @@ export class ResourceStoreNotice extends LitElement {
     }
   }
   @state() private notice = getResourceStoreNotice();
+  @state() private syncState: ResourceSyncState = { status: 'syncing' };
+  private cache?: GatewayResourceCache;
+  private route?: string;
+  private readonly routeChanged = () => this.bindSync();
+  private stopSync?: () => void;
   private stop?: () => void;
+  private bindSync(): void {
+    const cache = getResourceCache();
+    const route = hashRoute();
+    if (cache === this.cache && route === this.route) return;
+    this.stopSync?.();
+    this.cache = cache;
+    this.route = route;
+    this.syncState = { status: 'syncing' };
+    this.stopSync = cache?.observeSync?.(
+      (state) => {
+        this.syncState = state;
+      },
+      (query) => resourceViewMatches(route, query),
+    );
+  }
   static styles = css`
     :host {
       position: fixed;
@@ -43,6 +71,11 @@ export class ResourceStoreNotice extends LitElement {
       z-index: 200;
       pointer-events: none;
       max-width: calc(100vw - 24px);
+    }
+    .sync {
+      color: #999;
+      background: #12121a;
+      border-color: transparent;
     }
     div {
       padding: 4px 8px;
@@ -59,18 +92,27 @@ export class ResourceStoreNotice extends LitElement {
   `;
   connectedCallback() {
     super.connectedCallback();
+    window.addEventListener('hashchange', this.routeChanged);
     this.stop = subscribeResourceCache(() => {
       this.notice = getResourceStoreNotice();
+      this.bindSync();
     });
     this.notice = getResourceStoreNotice();
+    this.bindSync();
   }
   disconnectedCallback() {
+    window.removeEventListener('hashchange', this.routeChanged);
     this.stop?.();
+    this.stopSync?.();
+    this.cache = undefined;
     super.disconnectedCallback();
   }
   render() {
-    return this.notice
-      ? html`<div role="status" data-testid="resource-store-notice">${this.notice}</div>`
-      : nothing;
+    return html` <div class="sync" role="status" data-testid="resource-sync-status">
+        ${resourceSyncLabel(this.syncState)}
+      </div>
+      ${this.notice
+        ? html`<div role="status" data-testid="resource-store-notice">${this.notice}</div>`
+        : nothing}`;
   }
 }
