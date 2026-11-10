@@ -108,7 +108,7 @@ export async function restoreRetainedTaskArtifacts(run: Run): Promise<number> {
   const { bundle, ref } = await sourceBundle(run);
   const availability = await readRunBundleAvailability(await runBundleStore(), ref, run.id);
   const unavailableMedia = new Set([
-    ...(bundle.manifest.missingData ?? []).map(
+    ...[...(bundle.manifest.missingData ?? []), ...(run.output?.retentionMissingData ?? [])].map(
       (value) => `tasks/${ref.taskKey}/${parseRunBundleMissingData(value).path}`,
     ),
     ...availability.prunedPaths,

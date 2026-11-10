@@ -198,6 +198,7 @@ export function failRunOutputCapture(runId: string, error: unknown, workerFinish
     manifestDigest: run.output?.manifestDigest ?? '',
     reportPath: run.output?.reportPath,
     ...(run.output?.artifactBundle ? { artifactBundle: run.output.artifactBundle } : {}),
+    retentionMissingData: run.output?.retentionMissingData,
     captureError: error instanceof Error ? error.message : String(error),
   };
   return updateRun(runId, { output, decisions: outputReviewDecisions(run, output) });
