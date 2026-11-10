@@ -38,6 +38,7 @@ import {
 } from '../security/work-originator.js';
 
 import { admitRuleAction, withdrawRuleActions } from './actions.js';
+import { appendIntentArchive, intentArchiveFile, slimTerminalIntents } from './intent-archive.js';
 import {
   contributionBlockedReason,
   reconcileReviewIntent,
@@ -971,19 +972,25 @@ export class PRRuleStore {
         // Parsing the committed text is several times cheaper than cloning the store, and
         // comparing texts says whether the transaction changed what the file holds.
         const draft: PRRuleStoreData = JSON.parse(this.text);
-        const result = await mutate(draft);
+        const result = structuredClone(await mutate(draft));
+        const now = Date.now();
+        const archived = slimTerminalIntents(draft.intents, now);
         decodePRRuleStore(draft);
         for (const intent of draft.intents)
           if (['held', 'needs-configuration', 'queued', 'running'].includes(intent.status))
             assertReviewWorkspaceAdmissionOpen(intent.pr);
         const text = JSON.stringify(draft);
-        const changed = text !== this.text;
+        // An unchanged store is not rewritten.
+        if (text === this.text) return result;
+        // Full records reach the archive before the store keeps only their stubs: a failure in
+        // between leaves a duplicate there, never a loss.
+        await appendIntentArchive(intentArchiveFile(this.file), archived, now);
         await writeAtomicText(this.file, text);
         // Committed state is exactly what a restart would load: no keys the file drops.
         this.data = JSON.parse(text);
         this.text = text;
-        if (changed) publishPRAutomationResources();
-        return structuredClone(result);
+        publishPRAutomationResources();
+        return result;
       });
     // Each failure reaches its caller without publishing a partial transaction; later calls can retry.
     const result = this.pending.then(operation, operation).finally(() => {

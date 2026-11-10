@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -14,6 +14,7 @@ import type {
 
 import { reclaimReviewWorkspaceStorage } from '../review-workspaces/storage-use.js';
 
+import { INTENT_ARCHIVE_AGE_MS, intentArchiveFile } from './intent-archive.js';
 import { reviewIntentAuthorized, reviewIntentId } from './intents.js';
 import { resolvePreviewQaPreset } from './qa-preset.js';
 import { PRRuleStore } from './store.js';
@@ -530,4 +531,85 @@ test('a reload of the store own write is not decoded again; an external edit sti
     (await PRRuleStore.load(file)).team(renamed.id, 'owner').config.name,
     'After reload',
   );
+});
+
+test('an unchanged transaction leaves the store file untouched', async (t) => {
+  const { store, file } = await fixture(t);
+  const { team, rule } = await ruleFor(store, 'owner', true);
+  await store.applyPreview('owner', preview(team, rule));
+  const before = await stat(file);
+  // A preview for an older rule revision changes nothing.
+  assert.equal(
+    await store.applyPreview('owner', { ...preview(team, rule), ruleRevision: 0 }),
+    false,
+  );
+  const after = await stat(file);
+  assert.deepEqual([after.ino, after.mtimeMs], [before.ino, before.mtimeMs]);
+});
+
+test('day-old withdrawn intents move to the archive and keep stubs that still dedupe', async (t) => {
+  const { store, file } = await fixture(t);
+  const { team, rule } = await ruleFor(store, 'owner', true);
+  await store.applyPreview('owner', preview(team, rule, 'head-failed'));
+  const failed = store.snapshot().intents.find((i) => i.headSha === 'head-failed')!;
+  await store.updateDispatch(failed.id, { status: 'failed', reviewedSha: failed.headSha });
+  await store.applyPreview('owner', preview(team, rule, 'head-withdrawn'));
+  const disabled = await store.setEnabled('owner', rule.id, rule.revision, false, false);
+  const enabled = await store.setEnabled('owner', rule.id, disabled.revision, true, false);
+  await store.applyPreview('owner', preview(team, enabled, 'head-withdrawn'));
+  await store.applyPreview('owner', preview(team, enabled, 'head-withdrawn'));
+  const full = store.snapshot().intents;
+  const withdrawn = full.find((i) => i.headSha === 'head-withdrawn')!;
+  assert.equal(withdrawn.status, 'withdrawn');
+  assert.ok(withdrawn.title);
+
+  const later = Date.now() + INTENT_ARCHIVE_AGE_MS + 60_000;
+  t.mock.method(Date, 'now', () => later);
+  await store.saveTeam('owner', { ...team.config, name: 'Renamed' }, team.id, team.revision);
+  const archive = intentArchiveFile(file);
+  const lines = (await readFile(archive, 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  // The failed intent's contributions are still eligible (a retry reads them), so it stays whole.
+  assert.deepEqual(
+    lines.map((line) => line.intent),
+    [withdrawn],
+    'the archive holds the full record',
+  );
+  const restarted = await PRRuleStore.load(file);
+  const stub = restarted.intent(withdrawn.id)!;
+  assert.equal(stub.title, undefined);
+  assert.deepEqual(
+    stub.contributions.map((source) => [
+      source.ruleId,
+      source.eligible,
+      source.reasons,
+      source.execution,
+    ]),
+    [[rule.id, false, [], undefined]],
+  );
+  assert.deepEqual(
+    restarted.intent(failed.id),
+    full.find((i) => i.id === failed.id),
+  );
+
+  // The failed intent still stops a re-review of its head; nothing is archived twice.
+  const current = restarted.snapshot().rules[0];
+  await restarted.applyPreview('owner', preview(team, current, 'head-failed'));
+  assert.deepEqual(
+    restarted
+      .snapshot()
+      .intents.filter((i) => i.headSha === 'head-failed')
+      .map((i) => i.status),
+    ['failed'],
+  );
+  const renamed = restarted.team(team.id, 'owner');
+  await restarted.saveTeam(
+    'owner',
+    { ...renamed.config, name: 'Again' },
+    team.id,
+    renamed.revision,
+  );
+  assert.equal((await readFile(archive, 'utf8')).trim().split('\n').length, lines.length);
 });
