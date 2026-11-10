@@ -602,6 +602,7 @@ import { startWatchingActiveSlots } from '../tasks/watcher.js';
 
 import type { ClientState } from './client-state.js';
 import { routeRunMethod } from './run-route.js';
+import { createTerminalRedraws } from './terminal-redraw.js';
 import {
   adoptWorkerTerminalSubscription,
   removeTerminalSubscriptionForKey,
@@ -644,46 +645,17 @@ export interface RouteMethodContext {
   nextEventSeq: () => number;
 }
 
-/** Viewers that joined a running PTY and still need their redraw, per client and PTY key. */
-const pendingRedraws = new WeakMap<
-  ClientState,
-  Map<string, { fallback: ReturnType<typeof setTimeout>; expiresAt: number }>
->();
-/** A client that never resizes still gets its redraw after this delay. */
-const REDRAW_FALLBACK_MS = 1_500;
-/** A resize this long after the join no longer asks for a redraw. */
-const REDRAW_PENDING_MS = 10_000;
-
-function redrawLogged(key: string): void {
+/** Repaints for viewers that joined a running PTY (see createTerminalRedraws). */
+const terminalRedraws = createTerminalRedraws<ClientState>((key) => {
   redrawPty(key).catch((error: unknown) => {
     // The live stream continues; this viewer's screen fills in with the next output.
     console.warn(`[terminal] redraw for a joining viewer failed key=${key}: ${String(error)}`);
   });
-}
+});
 
-/**
- * tmux does not redraw for a viewer joining a running PTY, so a redraw is requested once the
- * viewer can show it: right after its own first resize is answered (Command Center drops PTY
- * output until then), or after a fallback delay for a client that does not resize.
- */
-function expectRedraw(state: ClientState, key: string): void {
-  const pending = pendingRedraws.get(state) ?? new Map();
-  pendingRedraws.set(state, pending);
-  clearTimeout(pending.get(key)?.fallback);
-  const fallback = setTimeout(() => redrawLogged(key), REDRAW_FALLBACK_MS);
-  fallback.unref?.();
-  pending.set(key, { fallback, expiresAt: Date.now() + REDRAW_PENDING_MS });
-}
-
-function redrawAfterResize(state: ClientState, key: string | undefined): void {
-  const pending = key === undefined ? undefined : pendingRedraws.get(state);
-  const entry = key === undefined ? undefined : pending?.get(key);
-  if (key === undefined || !pending || !entry) return;
-  pending.delete(key);
-  clearTimeout(entry.fallback);
-  if (Date.now() > entry.expiresAt) return;
-  // Starts after this resize's response is sent, so the output reaches a ready client.
-  setImmediate(() => redrawLogged(key));
+/** A disconnected client's pending repaints are dropped with its terminal subscriptions. */
+export function forgetTerminalRedraws(state: ClientState): void {
+  terminalRedraws.cancelAll(state);
 }
 
 export async function routeMethod(
@@ -1153,6 +1125,7 @@ async function routeAuthorizedMethod(
       const keysToRemove = sub.interactive ? terminalKeysForSlot(state, registration) : [key];
       for (const oldKey of keysToRemove) {
         removeTerminalSubscriptionForKey(state, registration, oldKey);
+        terminalRedraws.cancel(state, oldKey);
       }
       const {
         key: subscribedKey,
@@ -1179,7 +1152,7 @@ async function routeAuthorizedMethod(
         state.ptyHandlers.set(subscribedKey, ptyHandler);
       }
       state.terminalIdentities.set(subscribedKey, identity);
-      if (joined) expectRedraw(state, subscribedKey);
+      if (joined) terminalRedraws.expect(state, subscribedKey);
       return { subscribed: true };
     }
     case Methods.TERMINAL_UNSUBSCRIBE: {
@@ -1202,6 +1175,7 @@ async function routeAuthorizedMethod(
         rawKey,
       )) {
         removeTerminalSubscriptionForKey(state, unsub.slotId, keyToRemove);
+        terminalRedraws.cancel(state, keyToRemove);
       }
       return { unsubscribed: true };
     }
@@ -1210,7 +1184,7 @@ async function routeAuthorizedMethod(
       return { sent: true, ...delivery };
     }
     case Methods.TERMINAL_RESIZE:
-      redrawAfterResize(state, await terminalResize(p as TerminalResizeParams));
+      terminalRedraws.afterResize(state, await terminalResize(p as TerminalResizeParams));
       return { resized: true };
     case Methods.TERMINAL_REINIT:
       return terminalReinit(p as TerminalReinitParams);
@@ -1238,6 +1212,7 @@ async function routeAuthorizedMethod(
         unsubscribeWorkerTerminalPty(key, oldHandler);
         state.workerTerminalHandlers.delete(key);
       }
+      terminalRedraws.cancel(state, key);
       const {
         key: ptyKey,
         ptyHandler,
@@ -1250,7 +1225,7 @@ async function routeAuthorizedMethod(
         ptyHandler,
         isActiveClient(state),
       );
-      if (subscribed && joined) expectRedraw(state, ptyKey);
+      if (subscribed && joined) terminalRedraws.expect(state, ptyKey);
       return { subscribed };
     }
     case Methods.TERMINAL_WORKER_UNSUBSCRIBE: {
@@ -1265,13 +1240,17 @@ async function routeAuthorizedMethod(
         unsubscribeWorkerTerminalPty(key, handler);
         state.workerTerminalHandlers.delete(key);
       }
+      terminalRedraws.cancel(state, key);
       return { unsubscribed: true };
     }
     case Methods.TERMINAL_WORKER_INPUT:
       await terminalWorkerInput(p as TerminalWorkerInputParams);
       return { sent: true };
     case Methods.TERMINAL_WORKER_RESIZE:
-      redrawAfterResize(state, await terminalWorkerResize(p as TerminalWorkerResizeParams));
+      terminalRedraws.afterResize(
+        state,
+        await terminalWorkerResize(p as TerminalWorkerResizeParams),
+      );
       return { resized: true };
     case Methods.TERMINAL_WORKER_SNAPSHOT:
       return terminalWorkerSnapshot(p as TerminalWorkerSnapshotParams);

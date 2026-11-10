@@ -134,7 +134,7 @@ import { personSessionMethods, routePersonSessionMethod } from './security/perso
 import { principalOwnerGeneration } from './security/work-originator.js';
 import type { ClientState } from './server/client-state.js';
 import { eventFrameText } from './server/event-frame.js';
-import { routeMethod } from './server/route-method.js';
+import { forgetTerminalRedraws, routeMethod } from './server/route-method.js';
 import { currentSourceResourceChanges, noteRunEvent } from './sources/change-signal.js';
 import { handleAgentFsChanged, invalidateTaskProgressForMachine } from './tasks/watcher.js';
 
@@ -499,6 +499,7 @@ export function createWebSocketServer(
       for (const [key, handler] of state.workerTerminalHandlers) {
         unsubscribeWorkerTerminalPty(key, handler);
       }
+      forgetTerminalRedraws(state);
       for (const key of new Set([
         ...state.workerSessionHistorySubscribeSeq.keys(),
         ...state.workerSessionHistoryHandlers.keys(),
