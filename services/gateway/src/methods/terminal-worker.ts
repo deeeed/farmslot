@@ -36,6 +36,7 @@ import {
   workerNodeTypesInputOnce,
 } from '../runtime/worker-terminal-stream.js';
 
+import { terminalDataPayload } from './terminal-frame.js';
 import { assertTmuxWorkerControlAllowed } from './tmux-workers.js';
 
 type EventEmitter = (event: string, payload: unknown) => void;
@@ -63,8 +64,9 @@ export async function terminalWorkerSubscribe(
   await assertTmuxWorkerControlAllowed(params.worker);
   const key = terminalWorkerSubscriptionKey(params);
   const ptyOptions = await resolveWorkerPtyOptions(params.worker);
+  const payload = terminalDataPayload({ worker: params.worker });
   const ptyHandler: PtyDataHandler = (data: string) => {
-    emit('terminal.data', { worker: params.worker, data, timestamp: Date.now() });
+    emit('terminal.data', payload(data, Date.now()));
   };
   await subscribePty(key, params.worker.session, ptyHandler, params.cols, params.rows, {
     ...ptyOptions,

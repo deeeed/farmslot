@@ -43,6 +43,12 @@ percentiles and event-loop delay, and fails on a lost or reordered delta or a p9
 the isolated stack runs without orchestration timers, so it does not show operator stalls; read
 those from `farmslot_event_loop_lag_seconds` on the operator gateway.
 
+For terminal fan-out, run the
+[terminal backpressure recipe](../../scripts/runner-validation/terminal-backpressure.recipe.json).
+One viewer stops reading while a pane floods on an isolated gateway. It fails unless the gateway
+closes that viewer for a resync (1013), the viewer's stream has no gap, and it re-attaches to the
+current screen.
+
 The nightly canary saves a dated snapshot and budget verdict using the versioned
 [normal workload](../reference/performance-diagnostics.md). Injected faults stay
 outside that window. Missing class/source coverage fails visibly. Keep snapshots

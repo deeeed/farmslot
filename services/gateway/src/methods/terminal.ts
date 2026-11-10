@@ -66,6 +66,8 @@ import {
   workspaceTerminalOperation,
 } from '../runtime/workspace-terminal.js';
 
+import { terminalDataPayload } from './terminal-frame.js';
+
 type EventEmitter = (event: string, payload: unknown) => void;
 type HasPtyFn = (key: string) => boolean;
 
@@ -289,8 +291,8 @@ export async function terminalSubscribe(
     const { run, key, session, sshTarget } = await resolveWorkspaceTerminal(params);
     await workspaceTerminalOperation(run, 'ensure');
     const identity = terminalEventIdentity({ slotId: '', runId: run.id });
-    const ptyHandler: PtyDataHandler = (data) =>
-      emit('terminal.data', { ...identity, data, timestamp: Date.now() });
+    const payload = terminalDataPayload(identity);
+    const ptyHandler: PtyDataHandler = (data) => emit('terminal.data', payload(data, Date.now()));
     const machine = run.reviewWorkspace!.machine;
     await subscribePty(
       key,
@@ -349,12 +351,9 @@ export async function terminalSubscribe(
     else await reinitTmuxSession(resolved.session, repoDir, sshTarget);
     await assertInteractiveTargetReady(params.slotId, target, resolved.session, role, params);
 
+    const payload = terminalDataPayload(eventIdentity);
     const ptyHandler: PtyDataHandler = (data: string) => {
-      emit('terminal.data', {
-        ...eventIdentity,
-        data,
-        timestamp: Date.now(),
-      });
+      emit('terminal.data', payload(data, Date.now()));
     };
     const ptyOpts: PtyAttachOptions = {};
     if (usesNodeLink(machine)) {

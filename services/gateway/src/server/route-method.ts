@@ -528,6 +528,7 @@ import {
   terminalAttachmentDeliver,
   terminalAttachmentUpload,
 } from '../methods/terminal-attachment.js';
+import { withTerminalBackpressure } from '../methods/terminal-frame.js';
 import {
   terminalWorkerInput,
   terminalWorkerResize,
@@ -1116,7 +1117,7 @@ async function routeAuthorizedMethod(
         handler,
         ptyHandler,
         identity,
-      } = await terminalSubscribe(sub, emit);
+      } = await terminalSubscribe(sub, withTerminalBackpressure(state.ws, emit));
       // Late-completer check: if a newer subscribe ran during the await above,
       // discard ours. terminalSubscribe already registered the PTY handler in
       // pty-stream and (for poll mode) the poll subscriber; we must release
@@ -1193,7 +1194,10 @@ async function routeAuthorizedMethod(
         unsubscribeWorkerTerminalPty(key, oldHandler);
         state.workerTerminalHandlers.delete(key);
       }
-      const { ptyHandler } = await terminalWorkerSubscribe(sub, emit);
+      const { ptyHandler } = await terminalWorkerSubscribe(
+        sub,
+        withTerminalBackpressure(state.ws, emit),
+      );
       return {
         subscribed: adoptWorkerTerminalSubscription(
           state,
