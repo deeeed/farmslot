@@ -2192,6 +2192,8 @@ class FakeElement extends FakeParent {
   id = '';
   disabled = false;
   shadowRoot: FakeShadowRoot | null = null;
+  rect: typeof RECT | undefined;
+  computed: Record<string, string> = {};
   readonly style: Record<string, unknown> = {
     setProperty() {},
     removeProperty() {},
@@ -2253,7 +2255,7 @@ class FakeElement extends FakeParent {
     return [RECT];
   }
   getBoundingClientRect(): typeof RECT {
-    return RECT;
+    return this.rect ?? RECT;
   }
   scrollIntoView(): void {}
   focus(): void {}
@@ -2314,13 +2316,14 @@ function fakeDomPage(document: FakeDocument): { page: CdpWebPage; mouse: string[
     setTimeout,
     clearTimeout,
     requestAnimationFrame: (callback: () => void) => callback(),
-    getComputedStyle: () => ({
+    getComputedStyle: (node?: FakeElement) => ({
       display: 'block',
       visibility: 'visible',
       opacity: '1',
       overflow: 'visible',
       overflowX: 'visible',
       overflowY: 'visible',
+      ...node?.computed,
     }),
   });
   const page = new CdpWebPage({
@@ -5634,6 +5637,56 @@ test('CDP visible waits use viewport visibility and presses validate hit targets
   assert.match(expressions[1] ?? '', /elementFromPoint/u);
   assert.match(expressions[1] ?? '', /Target is disabled/u);
   assert.match(expressions[1] ?? '', /Target is obscured/u);
+});
+
+function box(top: number, bottom: number): typeof RECT {
+  return { x: 0, y: top, left: 0, top, right: 100, bottom, width: 100, height: bottom - top };
+}
+
+// The Extension order form: a scroll container that ends above a fixed footer holding the
+// submit button, as when the docked recipe HUD reserves the bottom of the page.
+function fixedFooterPage(
+  footerStyle: Record<string, string>,
+  containerStyle: Record<string, string> = {},
+) {
+  const document = new FakeDocument();
+  const container = element(document, 'div');
+  container.rect = box(0, 900);
+  container.computed = { overflow: 'auto', overflowY: 'auto', ...containerStyle };
+  const footer = element(document, 'div');
+  footer.rect = box(890, 1000);
+  footer.computed = footerStyle;
+  const button = element(document, 'button', 'Submit');
+  button.id = 'submit';
+  button.rect = box(920, 970);
+  footer.append(button);
+  container.append(footer);
+  document.body.append(container);
+  return fakeDomPage(document).page;
+}
+
+test('CDP visible waits ignore overflow ancestors above a fixed element', async () => {
+  await fixedFooterPage({ position: 'fixed' }).waitFor({
+    selector: '#submit',
+    expected: 'visible',
+    timeoutMs: 100,
+  });
+  await assert.rejects(
+    fixedFooterPage({ position: 'static' }).waitFor({
+      selector: '#submit',
+      expected: 'visible',
+      timeoutMs: 100,
+    }),
+    /ui\.wait_for timed out/u,
+  );
+  await assert.rejects(
+    fixedFooterPage({ position: 'fixed' }, { transform: 'translateZ(0)' }).waitFor({
+      selector: '#submit',
+      expected: 'visible',
+      timeoutMs: 100,
+    }),
+    /ui\.wait_for timed out/u,
+  );
 });
 
 test('extracts browser extension ids from CDP targets', () => {

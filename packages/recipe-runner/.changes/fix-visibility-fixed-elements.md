@@ -1,0 +1,1 @@
+- `ui.wait_for` visibility and presses no longer clip a `position: fixed` element to overflow ancestors that do not contain it. With the docked recipe HUD reserving the page bottom, the Extension order form's fixed submit footer was reported not visible and `release-live-order` timed out at `wait-submit`.

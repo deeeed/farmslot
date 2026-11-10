@@ -2061,16 +2061,21 @@ function deepQueryHelpersExpression(): string {
       if (!isRenderedDeep(element)) return false;
       let rect = element.getBoundingClientRect();
       let current = element;
+      // A fixed element is placed against the viewport, so overflow ancestors above it do not
+      // clip it unless one is its containing block (transform, filter, perspective, contain).
+      let escaped = getComputedStyle(element).position === 'fixed';
       while (current) {
         const root = current.getRootNode();
         const parent = current.parentElement || shadowHostFor(root);
         if (!parent) break;
         const style = getComputedStyle(parent);
-        if (/(hidden|clip|scroll|auto)/.test(style.overflow + style.overflowX + style.overflowY)) {
+        if (escaped && ((style.transform || 'none') !== 'none' || (style.filter || 'none') !== 'none' || (style.perspective || 'none') !== 'none' || /paint|layout|strict|content/.test(style.contain || '') || /transform|filter|perspective/.test(style.willChange || ''))) escaped = false;
+        if (!escaped && /(hidden|clip|scroll|auto)/.test(style.overflow + style.overflowX + style.overflowY)) {
           const parentRect = parent.getBoundingClientRect();
           rect = { left: Math.max(rect.left, parentRect.left), top: Math.max(rect.top, parentRect.top), right: Math.min(rect.right, parentRect.right), bottom: Math.min(rect.bottom, parentRect.bottom) };
           if (rect.right <= rect.left || rect.bottom <= rect.top) return false;
         }
+        if (style.position === 'fixed') escaped = true;
         current = parent;
       }
       return rect.right > 0 && rect.bottom > 0 && rect.left < window.innerWidth && rect.top < window.innerHeight;
