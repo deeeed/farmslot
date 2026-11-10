@@ -1,11 +1,14 @@
 import type { Run, RunnerSessionUsage } from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';
+import { reviewWorkspaceRunnerVars } from '../runners/review-workspace-context.js';
+import { recoverWorkspaceUsageBindings } from '../runners/session-usage-recovery.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 
 import { recoveredWorkerSessionReceipt, upsertSessionUsage } from './agent-session-rows.js';
 import { extractNativeAgentSessionUsage } from './native-session-usage.js';
 import { extractRunnerSessionUsage, unavailableRunnerSessionUsage } from './session-usage.js';
+import { workspaceUsageMetrics } from './session-usage-result.js';
 
 export function recordRunSessionUsage(runId: string, receipt: RunnerSessionUsage): void {
   const run = getRun(runId);
@@ -78,7 +81,11 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
         }),
       );
     }
-    const vars = row.runnerSessionPath && row.slotId ? await loadSlotVars(row.slotId) : undefined;
+    const vars = row.slotId
+      ? await loadSlotVars(row.slotId)
+      : run.reviewWorkspace
+        ? ((await reviewWorkspaceRunnerVars(run)) ?? undefined)
+        : undefined;
     return completedMeasurement(
       row,
       await extractRunnerSessionUsage({
@@ -109,8 +116,13 @@ export function captureRunSessionUsage(runId: string): Promise<void> {
   const operation = previous
     .catch(() => {})
     .then(async () => {
-      const run = getRun(runId);
-      if (!run) return;
+      const current = getRun(runId);
+      if (!current) return;
+      const recovered = await recoverWorkspaceUsageBindings(current);
+      const run =
+        recovered === current
+          ? current
+          : updateRun(runId, { agentContexts: recovered.agentContexts });
       for (const row of run.sessionUsage ?? []) {
         if (row.identityKind === 'request') continue;
         // A terminal receipt already measured after settlement needs no second read.
@@ -125,7 +137,11 @@ export function captureRunSessionUsage(runId: string): Promise<void> {
         recordRunSessionUsage(runId, measured);
       }
       const latest = getRun(runId);
-      if (latest) await persistRunNow(latest, 'agent session usage captured');
+      if (latest)
+        await persistRunNow(
+          updateRun(runId, { metrics: workspaceUsageMetrics(latest) }),
+          'agent session usage captured',
+        );
     })
     .catch(() => {
       console.warn('[agent-usage] Session capture could not be persisted');

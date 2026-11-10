@@ -11,6 +11,7 @@ const repo = process.cwd();
 const reviewRunner = process.env.FARMSLOT_REVIEW_PROOF_RUNNER ?? 'codex';
 const proveReadOnly = process.env.FARMSLOT_REVIEW_PROOF_READ_ONLY === '1';
 const proveReferences = process.env.FARMSLOT_REVIEW_PROOF_REFERENCES === '1';
+const proveUsage = process.env.FARMSLOT_REVIEW_PROOF_USAGE === '1';
 assert(!proveReadOnly || ['pi', 'cursor', 'opencode', 'grok', 'claude'].includes(reviewRunner));
 const reviewModel = process.env.FARMSLOT_REVIEW_PROOF_MODEL ?? 'gpt-6.1-sol';
 const reviewTransport = process.env.FARMSLOT_REVIEW_PROOF_TRANSPORT ?? 'tmux';
@@ -367,6 +368,27 @@ try {
     assert(finished.reviewResult);
     if (expectSession) assert(finished.reviewResult.session);
     assert(finished.agentContexts?.length);
+    if (proveUsage) {
+      const context = finished.agentContexts.find((entry) => entry.id === 'review');
+      assert(context?.runnerSessionId, 'Static review binds its native conversation');
+      const usage = finished.sessionUsage?.find(
+        (entry) =>
+          entry.runner === reviewRunner && entry.runnerSessionId === context.runnerSessionId,
+      );
+      assert(
+        usage && usage.totalTokens != null && usage.totalTokens > 0,
+        'run.get returns measured review tokens',
+      );
+      assert(
+        usage.costUsd != null && usage.costUsd > 0,
+        'run.get returns the priced fixture review cost',
+      );
+      assert.equal(usage.role, 'review');
+      assert.equal(usage.source, 'runner-transcript');
+      assert.equal(finished.metrics.runnerSessionId, context.runnerSessionId);
+      assert.equal(finished.metrics.costEstimate, usage.costUsd);
+      summary.usage = usage;
+    }
     if (proveReadOnly) {
       const readonly = JSON.parse(
         fs.readFileSync(path.join(finished.reviewWorkspace.artifactPath, 'read-only.json'), 'utf8'),
