@@ -1,4 +1,4 @@
-import { normalizeFlowType, type RunnerSessionUsage } from '@farmslot/protocol';
+import { normalizeFlowType, type RunnerSessionUsage, workerRoleForFlow } from '@farmslot/protocol';
 
 import type {
   NativeSessionUsageIdentity,
@@ -170,7 +170,15 @@ function sources(document: Record<string, unknown>): Record<string, unknown>[] {
         });
     }
   }
-  if (object(document.metrics)) entries.push({ ...document.metrics, role: 'worker' });
+  const metrics = object(document.metrics) ? document.metrics : undefined;
+  if (
+    metrics &&
+    !entries.some(
+      (entry) =>
+        entry.runner === metrics.runner && entry.runnerSessionId === metrics.runnerSessionId,
+    )
+  )
+    entries.push({ ...metrics, role: workerRoleForFlow(string(document.flowType)) ?? 'worker' });
   return entries;
 }
 
@@ -193,7 +201,9 @@ export function agentSessionRequests(
       continue;
     const kind = provider(entry.runner);
     if (!kind || requests.has(key)) continue;
-    const matches = entries.filter(
+    // Legacy metrics may hold the only path for an already represented context.
+    const candidates = object(document.metrics) ? [...entries, document.metrics] : entries;
+    const matches = candidates.filter(
       (item) => item.runner === entry.runner && item.runnerSessionId === entry.runnerSessionId,
     );
     const bindings = matches.flatMap((item) => {
@@ -212,7 +222,8 @@ export function agentSessionRequests(
       continue;
     const path = matches.map((item) => string(item.runnerSessionPath)).find(Boolean);
     const slotId = string(entry.slotId) ?? string(document.slotId) ?? document.id;
-    const node = binding?.executionNodeId ?? nodeForSlot(slotId);
+    const workspace = object(document.reviewWorkspace) ? document.reviewWorkspace : undefined;
+    const node = binding?.executionNodeId ?? nodeForSlot(slotId) ?? string(workspace?.machine);
     if (!node || (!binding && !path)) continue;
     requests.set(key, {
       key,
@@ -243,7 +254,20 @@ export function sessionCaptureGaps(
       runnerSessionId: string(entry.runnerSessionId),
       nativeSession: identity(entry.nativeSession),
     });
-    if (!key || seen.has(key)) continue;
+    if (!key) {
+      if (
+        Array.isArray(document.agentContexts) &&
+        document.agentContexts.includes(entry) &&
+        !entry.nativeSessionOwner
+      )
+        gaps.push({
+          role: string(entry.role) ?? 'worker',
+          sessionId: null,
+          reason: 'No unique verified conversation could be recovered for this context',
+        });
+      continue;
+    }
+    if (seen.has(key)) continue;
     seen.add(key);
     const usage = known.get(key);
     if (usage?.source !== 'unavailable' && usage?.totalTokens != null) continue;

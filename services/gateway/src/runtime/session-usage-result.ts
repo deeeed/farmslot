@@ -1,4 +1,4 @@
-import type { RunnerSessionUsage } from '@farmslot/protocol';
+import { primaryRoleForFlow, type Run, type RunnerSessionUsage } from '@farmslot/protocol';
 
 function parseNumberLine(lines: string[], prefix: string): number | null {
   const line = lines.find((candidate) => candidate.startsWith(prefix));
@@ -55,4 +55,47 @@ export function unavailableRunnerSessionUsage({
     source: 'unavailable',
     error,
   };
+}
+
+/** The same metric mapping feeds completion capture and historical read projection. */
+export function runnerUsageMetrics(usage: RunnerSessionUsage): Partial<Run['metrics']> {
+  return {
+    ...(usage.actualModel ? { actualModel: usage.actualModel } : {}),
+    ...(usage.turns != null ? { sessionTurns: usage.turns } : {}),
+    ...(usage.inputTokens != null ? { sessionInputTokens: usage.inputTokens } : {}),
+    ...(usage.outputTokens != null ? { sessionOutputTokens: usage.outputTokens } : {}),
+    ...(usage.totalTokens != null ? { sessionTotalTokens: usage.totalTokens } : {}),
+    ...(usage.cacheCreation != null ? { sessionCacheCreation: usage.cacheCreation } : {}),
+    ...(usage.cacheRead != null ? { sessionCacheRead: usage.cacheRead } : {}),
+    ...(usage.costUsd != null ? { costEstimate: usage.costUsd } : {}),
+  };
+}
+
+/** Static reviews have one primary session; resumed chain totals stay in deduplicated receipts. */
+export function workspaceUsageMetrics(run: Run): Run['metrics'] {
+  if (!run.reviewWorkspace || run.slotId || usesReviewChainSessionTotal(run)) return run.metrics;
+  const context = run.agentContexts?.find(
+    (entry) => entry.role === primaryRoleForFlow(run.flowType),
+  );
+  if (!context) return run.metrics;
+  const receipt = run.sessionUsage?.find(
+    (row) =>
+      row.runner === context.runner &&
+      row.runnerSessionId &&
+      row.runnerSessionId === context.runnerSessionId,
+  );
+  if (!receipt) return run.metrics;
+  return {
+    ...run.metrics,
+    runnerSessionId: receipt.runnerSessionId ?? null,
+    runnerSessionPath: receipt.runnerSessionPath ?? null,
+    ...runnerUsageMetrics(receipt),
+    sessionUsageError: receipt.error,
+  };
+}
+
+/** A retained transcript spans review generations, so its total is not a per-run metric. */
+export function usesReviewChainSessionTotal(run: Pick<Run, 'repeatReviewContext'>): boolean {
+  const continuity = run.repeatReviewContext?.session?.continuity;
+  return continuity === 'resumed' || continuity === 'resume-unconfirmed';
 }
