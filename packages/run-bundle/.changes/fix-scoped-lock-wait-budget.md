@@ -1,0 +1,1 @@
+- Allow publication preparation to bound cumulative bundle-store queue waits without interrupting lock holders or executing expired queued writes.

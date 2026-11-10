@@ -30,7 +30,7 @@ mock.module('../methods/fleet.js', {
       }),
   },
 });
-const { detectFleetMonitorViolations, startMonitor, stopMonitor } =
+const { detectFleetMonitorViolations, detectPublicationGateViolations, startMonitor, stopMonitor } =
   await import('./fleet-monitor.js');
 
 function slot(overrides: Partial<SlotStatus>): SlotStatus {
@@ -260,4 +260,97 @@ test('the periodic monitor does not inspect workspaces when nobody requests them
     0,
     'Background health monitoring launched viewer-only Git inspection',
   );
+});
+
+test('stuck publication gates use the fleet violation feed, dedupe, and clear on operator wait', async () => {
+  const { makeRun } = await import('../run-engine/test-fixtures.js');
+  const now = Date.parse('2026-01-01T00:11:00Z');
+  const run = makeRun({
+    id: 'example-gate',
+    status: 'human-gating',
+    slotId: 'runner-browser-2',
+    decisions: [],
+    steps: [{ name: 'human-gate', status: 'running', startedAt: '2026-01-01T00:00:00Z' }],
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            id: 'example-review',
+            source: 'dispatch',
+            mode: 'warm',
+            runner: 'codex',
+            model: null,
+            reviewerSessionId: 'example-session',
+            loopNumber: 1,
+            verdict: 'pass',
+            unresolvedCount: 0,
+          },
+        ],
+      },
+    },
+  });
+  const current = fleet([slot({ currentRunId: run.id, phase: 'review-gate' })]);
+  const notified = new Set<string>();
+  const before = structuredClone(run);
+  const detect = () => detectPublicationGateViolations(current, notified, now, () => run);
+  const [violation] = await detect();
+  assert.equal(violation.type, 'waiting');
+  assert.equal(violation.target, run.id);
+  assert.equal(violation.slotId, run.slotId);
+  assert.match(violation.message, /human-gate.*more than 10 minutes.*verdict is recorded/);
+  assert.equal(violation.nudgeSent, null);
+  assert.deepEqual(await detect(), []);
+  assert.deepEqual(run, before);
+  run.decisions.push({
+    id: 'operator',
+    type: 'engine_human_gate',
+    title: 'Gate',
+    description: '',
+    actions: [],
+    createdAt: new Date(now).toISOString(),
+  });
+  assert.deepEqual(await detect(), []);
+  assert.equal(notified.size, 0);
+  run.decisions = [];
+  assert.equal((await detect()).length, 1);
+});
+
+test('a decision presented during the reviewer probe suppresses obsolete stall evidence', async () => {
+  const { makeRun } = await import('../run-engine/test-fixtures.js');
+  const now = Date.parse('2026-01-01T00:11:00Z');
+  const run = makeRun({
+    id: 'example-gate-race',
+    status: 'human-gating',
+    decisions: [],
+    steps: [{ name: 'human-gate', status: 'running', startedAt: '2026-01-01T00:00:00Z' }],
+    agentContexts: [
+      {
+        id: 'reviewer',
+        role: 'review',
+        label: 'Review',
+        status: 'working',
+        runId: 'example-gate-race',
+        slotId: 'runner-browser-2',
+      },
+    ],
+  });
+  const current = fleet([slot({ currentRunId: run.id })]);
+  const violations = await detectPublicationGateViolations(
+    current,
+    new Set(),
+    now,
+    () => run,
+    async () => {
+      run.decisions.push({
+        id: 'operator',
+        type: 'engine_human_gate',
+        title: 'Gate',
+        description: '',
+        actions: [],
+        createdAt: new Date(now).toISOString(),
+      });
+      return 'absent';
+    },
+  );
+  assert.deepEqual(violations, []);
 });

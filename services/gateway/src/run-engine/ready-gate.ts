@@ -88,6 +88,7 @@ import {
   renderCurrentDescription,
   scanArtifacts,
 } from '../run-completion/orchestrator.js';
+import { withPublicationPackageStorageWait } from '../run-completion/publication-package-wait.js';
 import { rebindUnownedPublicationSlot } from '../run-completion/publication-source.js';
 import {
   readReadyGatePreparedPackage,
@@ -1002,7 +1003,9 @@ export async function executeReadyGate(
           console.log(
             `[ready-gate] run ${runId.slice(0, 8)} — re-bound its unowned slot ${getRun(runId)?.slotId} on ${getRun(runId)?.branch}`,
           );
-        preparedPackage = await (dependencies.ensurePackage ?? ensureCurrentPublishPackage)(runId);
+        preparedPackage = await withPublicationPackageStorageWait(() =>
+          (dependencies.ensurePackage ?? ensureCurrentPublishPackage)(runId),
+        );
         break;
       } catch (error) {
         if (error instanceof OwnedWorkerBusyError && !workerIdleWaited) {

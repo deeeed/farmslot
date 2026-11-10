@@ -8,7 +8,11 @@ import { setImmediate } from 'node:timers/promises';
 
 import lockfile, { type LockOptions } from 'proper-lockfile';
 
-import { openRunBundleStore, withRunBundleStoreLock } from './retained.js';
+import {
+  openRunBundleStore,
+  withRunBundleLockWaitBudget,
+  withRunBundleStoreLock,
+} from './retained.js';
 
 test('capture, GC and admission in one process wait without exhausting filesystem lock retries', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'retained-lock-'));
@@ -154,3 +158,73 @@ test(
     assert.equal(await withRunBundleStoreLock(store, async () => 'next'), 'next');
   },
 );
+
+test('a compound wait budget covers successive locks and nested work without poisoning unrelated captures', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'retained-lock-budget-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = await openRunBundleStore({
+    runsDir: path.join(root, 'runs'),
+    home: path.join(root, 'home'),
+    create: true,
+  });
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  let acquisitions = 0;
+  let releases = 0;
+  let writes = 0;
+  t.mock.method(lockfile, 'lock', async () => {
+    acquisitions++;
+    now += acquisitions === 1 ? 40_000 : 30_000;
+    return async () => {
+      releases++;
+    };
+  });
+  await assert.rejects(
+    withRunBundleLockWaitBudget(60_000, async () => {
+      await withRunBundleStoreLock(store, async () => {
+        writes++;
+      });
+      await withRunBundleLockWaitBudget(60_000, () =>
+        withRunBundleStoreLock(store, async () => {
+          writes++;
+        }),
+      );
+    }),
+    /bundle.*wait budget exhausted/i,
+  );
+  assert.equal(writes, 1, 'the second lock never admits an expired writer');
+  assert.equal(releases, 2, 'a late external acquisition is released before refusing');
+  await withRunBundleStoreLock(store, async () => {
+    writes++;
+  });
+  assert.equal(writes, 2, 'other captures inherit no expired budget');
+});
+
+test('failed external lock acquisitions also consume the shared wait budget', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'retained-lock-failed-budget-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = await openRunBundleStore({
+    runsDir: path.join(root, 'runs'),
+    home: path.join(root, 'home'),
+    create: true,
+  });
+  let now = Date.now();
+  let calls = 0;
+  t.mock.method(Date, 'now', () => now);
+  t.mock.method(lockfile, 'lock', async () => {
+    calls++;
+    now += 60_001;
+    throw Object.assign(new Error('Another process holds the store'), { code: 'ELOCKED' });
+  });
+  await withRunBundleLockWaitBudget(60_000, async () => {
+    await assert.rejects(
+      withRunBundleStoreLock(store, async () => assert.fail('not acquired')),
+      /retries exhausted/,
+    );
+    await assert.rejects(
+      withRunBundleStoreLock(store, async () => assert.fail('expired writer')),
+      /wait budget exhausted/,
+    );
+  });
+  assert.equal(calls, 1, 'retrying a failed acquisition cannot reset its caller budget');
+});

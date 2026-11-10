@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   constants,
@@ -402,6 +403,31 @@ export interface BundleLockHold {
   holdLimitMs?: number;
 }
 
+interface BundleLockWaitBudget {
+  remainingMs: number;
+}
+
+const lockWaitBudgets = new AsyncLocalStorage<BundleLockWaitBudget>();
+
+/** Bound cumulative queue waits without interrupting a holder or admitting a timed-out writer. */
+export function withRunBundleLockWaitBudget<T>(
+  waitMs: number,
+  operation: () => Promise<T>,
+): Promise<T> {
+  // A nested package operation shares its caller's remaining allowance.
+  if (lockWaitBudgets.getStore()) return operation();
+  return lockWaitBudgets.run({ remainingMs: waitMs }, operation);
+}
+
+function lockWaitExpired(name: string, lockfilePath: string): Error {
+  return Object.assign(
+    new Error(
+      `Run bundle lock ${name} wait budget exhausted; storage is busy. Retry once queued captures finish.`,
+    ),
+    { code: 'ELOCKED', file: lockfilePath },
+  );
+}
+
 const bundleLockQueues = new Map<string, Promise<void>>();
 const bundleLockHolders = new Map<string, { label: string; since: number; holdLimitMs: number }>();
 // A healthy store-lock holder finishes in minutes even on a loaded gateway; a repair
@@ -430,17 +456,31 @@ async function waitForBundleLockTurn(
   enqueuedAt: number,
 ): Promise<void> {
   const turn = previous.then(() => true as const);
-  for (;;) {
-    const holder = bundleLockHolders.get(lockfilePath);
-    const untilStalled = holder
-      ? holder.since + holder.holdLimitMs - Date.now() + 1
-      : STALL_CHECK_MS;
-    if (await resolvedWithin(turn, Math.max(1, Math.min(untilStalled, STALL_CHECK_MS)))) return;
-    const current = bundleLockHolders.get(lockfilePath);
-    if (!current || Date.now() - current.since <= current.holdLimitMs) continue;
-    const message = `Run bundle lock ${name} has been held by ${current.label} for ${Math.round((Date.now() - current.since) / 1000)}s, past its ${Math.round(current.holdLimitMs / 1000)}s limit; gave up after waiting ${Math.round((Date.now() - enqueuedAt) / 1000)}s. Retry once it finishes.`;
-    console.warn(`[run-bundle] ${message}`);
-    throw Object.assign(new Error(message), { code: 'ELOCKED', file: lockfilePath });
+  const budget = lockWaitBudgets.getStore();
+  const startedAt = Date.now();
+  const deadline = budget ? startedAt + budget.remainingMs : Infinity;
+  try {
+    for (;;) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw lockWaitExpired(name, lockfilePath);
+      const holder = bundleLockHolders.get(lockfilePath);
+      const untilStalled = holder
+        ? holder.since + holder.holdLimitMs - Date.now() + 1
+        : STALL_CHECK_MS;
+      if (
+        await resolvedWithin(turn, Math.max(1, Math.min(untilStalled, STALL_CHECK_MS, remaining)))
+      ) {
+        if (Date.now() >= deadline) throw lockWaitExpired(name, lockfilePath);
+        return;
+      }
+      const current = bundleLockHolders.get(lockfilePath);
+      if (!current || Date.now() - current.since <= current.holdLimitMs) continue;
+      const message = `Run bundle lock ${name} has been held by ${current.label} for ${Math.round((Date.now() - current.since) / 1000)}s, past its ${Math.round(current.holdLimitMs / 1000)}s limit; gave up after waiting ${Math.round((Date.now() - enqueuedAt) / 1000)}s. Retry once it finishes.`;
+      console.warn(`[run-bundle] ${message}`);
+      throw Object.assign(new Error(message), { code: 'ELOCKED', file: lockfilePath });
+    }
+  } finally {
+    if (budget) budget.remainingMs -= Date.now() - startedAt;
   }
 }
 
@@ -455,11 +495,19 @@ async function withBundleLock<T>(
   const enqueuedAt = Date.now();
   const execute = async () => {
     let release: () => Promise<void>;
+    const budget = lockWaitBudgets.getStore();
+    const startedAt = Date.now();
+    if (budget && budget.remainingMs <= 0) throw lockWaitExpired(name, options.lockfilePath);
     try {
       release = await lockfile.lock(options.lockfilePath, {
         ...options,
         update: 2_000,
-        retries: { retries: 1500, factor: 1, minTimeout: 20, maxTimeout: 50 },
+        retries: {
+          retries: budget ? Math.min(1500, Math.floor(budget.remainingMs / 50)) : 1500,
+          factor: 1,
+          minTimeout: 20,
+          maxTimeout: 50,
+        },
       });
     } catch (error) {
       if (!hasCode(error, 'ELOCKED')) throw error;
@@ -470,6 +518,14 @@ async function withBundleLock<T>(
         ),
         { code: 'ELOCKED', file: options.lockfilePath },
       );
+    } finally {
+      if (budget) budget.remainingMs -= Date.now() - startedAt;
+    }
+    if (budget) {
+      if (budget.remainingMs <= 0) {
+        await release();
+        throw lockWaitExpired(name, options.lockfilePath);
+      }
     }
     const holder = {
       label: hold.label ?? name,

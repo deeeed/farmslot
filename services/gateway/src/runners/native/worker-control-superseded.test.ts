@@ -389,3 +389,22 @@ test('a slotless workspace reviewer receives its instruction through the same le
   assert.equal(instructionReceipts.length, before + 1);
   idleSessions.delete(relaunchSession);
 });
+
+test('the publication stall probe observes a stopped failed native reviewer without mutating the run', async () => {
+  const { readReviewerLiveness } = await import('../../observability/publication-gate-stall.js');
+  const context = reviewer('example-stopped-review-session', {
+    id: 'example-reviewer',
+    runId: 'example-observation',
+    slotId: 'example-slot',
+    reviewId: 'example-review',
+    error: undefined,
+  });
+  current = { ...makeRun({ id: context.runId, status: 'human-gating' }), agentContexts: [context] };
+  const before = structuredClone(current);
+  assert.equal(await readReviewerLiveness(current, context), 'absent');
+  assert.deepEqual(
+    current,
+    before,
+    'observing a failed native session records no error or context mutation',
+  );
+});
