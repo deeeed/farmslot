@@ -21,7 +21,7 @@ import {
 } from '@farmslot/protocol';
 
 import { pokeCIPoll } from '../../ci-monitor/service.js';
-import { loadSlotVars, resolveProjectTaskDirName } from '../../core/config.js';
+import { loadSlotVars, resolveProjectTaskDirName, type SlotVars } from '../../core/config.js';
 import { claimSlotStatusIf, updateSlotStatusIf } from '../../core/index.js';
 import { slotFileExists } from '../../core/slot-io.js';
 import { loadFleetStatus } from '../../fleet/state.js';
@@ -31,7 +31,9 @@ import { loadProjectVarsOrNull } from '../../run-engine/project-vars.js';
 import { refreshPublishPackage } from '../../run-engine/publish-package-refresh.js';
 import { refreshReviewGate } from '../../run-engine/review-gate.js';
 import { copyTaskFilesToSlot } from '../../run-engine/task-sync.js';
+import { workerTaskDirectory } from '../../run-engine/worker-task-dir.js';
 import { getRun, updateRun } from '../../runs/store.js';
+import { assertRetainedTaskCheckout } from '../../tasks/retained-checkout.js';
 import {
   capturePressureAdmissionDecisionsLightweight,
   PressureAdmissionRejectedError,
@@ -46,6 +48,11 @@ import {
 import { runReplayStep } from './replay-step.js';
 
 type Emit = (event: string, payload: unknown) => void;
+
+interface ActivationTaskAllocation {
+  vars: SlotVars;
+  workerTaskDir: string;
+}
 
 export function runAutoRecoveryStop(
   params: RunAutoRecoveryStopParams,
@@ -186,6 +193,21 @@ export async function runActivateOnSlot(
     );
   }
 
+  let taskAllocation: ActivationTaskAllocation | undefined;
+  if (run.taskFile) {
+    const vars = await loadSlotVars(targetSlot);
+    const project = await loadProjectVarsOrNull(run.project, 'run activation', run.id);
+    const workerTaskDir = workerTaskDirectory(
+      run.taskFile,
+      vars.remoteRepo,
+      project ? resolveProjectTaskDirName(project.projectJson) : DEFAULT_TASK_DIR,
+    );
+    // A stale run.slotId cannot authorize moving a producer-pinned task.
+    // Refuse before claiming the slot or staging any retained files.
+    await assertRetainedTaskCheckout(run, vars, workerTaskDir);
+    taskAllocation = { vars, workerTaskDir };
+  }
+
   // Operator-authorized re-bind: claim the slot for this run so the replay re-claim
   // (replaySlotReclaimCheck owner===runId) passes. The prior run is left untouched —
   // its monitor owns its own lifecycle (ADR-024 §7 nudge precedent).
@@ -246,16 +268,8 @@ export async function runActivateOnSlot(
   // back the operator re-bind so a failed activate never strands the slot assigned to a
   // run that never re-drove.
   try {
-    if (run.taskFile) {
-      const vars = await loadSlotVars(targetSlot);
-      const project = await loadProjectVarsOrNull(run.project, 'run activation', run.id);
-      const taskDir = path.dirname(run.taskFile);
-      const workerTaskDir = path.join(
-        vars.remoteRepo,
-        project ? resolveProjectTaskDirName(project.projectJson) : DEFAULT_TASK_DIR,
-        path.basename(path.dirname(taskDir)),
-        path.basename(taskDir),
-      );
+    if (taskAllocation) {
+      const { vars, workerTaskDir } = taskAllocation;
       // Initialized tasks skip prepare's copy. Restore a missing allocation even
       // if already rebound, but preserve documents on an intact worker task.
       if (

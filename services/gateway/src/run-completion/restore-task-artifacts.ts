@@ -88,6 +88,21 @@ async function sourceBundle(run: Run): Promise<TaskArtifactSource> {
   return latest!;
 }
 
+/** Read the same frozen receipt restoration would stage, without writing task files. */
+export async function readRetainedTaskReceipt(run: Run): Promise<string | null> {
+  if (!run.taskFile) return null;
+  try {
+    return await readFile(path.join(path.dirname(run.taskFile), PROVENANCE), 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  if (!run.artifactBundle && !run.output?.artifactBundle) return null;
+  const { bundle, ref } = await sourceBundle(run);
+  if (!bundle.manifest.entries[`tasks/${ref.taskKey}/${PROVENANCE}`]) return null;
+  const source = await bundle.resolveEntry(PROVENANCE);
+  return readFile(source.path, 'utf8');
+}
+
 /** Make each directory without traversing a symlink in the mutable task tree. */
 async function destinationDirectory(root: string, relative: string): Promise<string> {
   let directory = root;

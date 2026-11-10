@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, mock, test, type TestContext } from 'node:test';
 
+import { verifyTaskExecutionProvenance } from '@farmslot/agent-runtime';
+
 import '../../runtime/mock-pty.test-support.js';
 
-const root = mkdtempSync(path.join(tmpdir(), 'activate-retained-'));
+import { retainTaskExecution } from '../../../../../packages/agent-runtime/src/task-init/execution-provenance.js';
+
+const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'activate-retained-')));
 Object.assign(process.env, {
   FARMSLOT_ROOT: root,
   FARMSLOT_HOME: path.join(root, 'home'),
@@ -48,10 +52,14 @@ const fleet = await import('../../fleet/state.js');
 const replayStep = await import('./replay-step.js');
 let replay: typeof replayStep.runReplayStep;
 const rollbacks: Array<Record<string, unknown>> = [];
+const claims: string[] = [];
 mock.module('../../core/index.js', {
   namedExports: {
     ...core,
-    claimSlotStatusIf: async () => ({ claimed: true, epoch: 1 }),
+    claimSlotStatusIf: async (id: string) => {
+      claims.push(id);
+      return { claimed: true, epoch: 1 };
+    },
     updateSlotStatusIf: async (
       _id: string,
       _predicate: unknown,
@@ -66,7 +74,12 @@ mock.module('../../fleet/state.js', {
   namedExports: {
     ...fleet,
     loadFleetStatus: async () => ({
-      slots: [{ slot: 'move-b', machine: 'move-node', agent: 'idle', currentRunId: null }],
+      slots: ['move-a', 'move-b'].map((slot) => ({
+        slot,
+        machine: 'move-node',
+        agent: 'idle',
+        currentRunId: null,
+      })),
     }),
   },
 });
@@ -133,22 +146,43 @@ for (const fails of [false, true]) {
   });
 }
 
-async function retainedTask(t: TestContext, slotId = 'move-a') {
+async function retainedTask(t: TestContext, slotId = 'move-b', originSlot = 'move-b') {
   const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: 'RESTORE-1' });
   t.after(() => cleanupRun(run.id));
   const dir = path.join(root, 'gateway-tasks/dev', run.id);
-  const files = {
+  const origin = path.join(root, originSlot, 'work-items/dev', run.id);
+  const files: Record<string, string> = {
     'TASK.md': '# Original task\n',
     'CHECKLIST.md': '- [ ] Original check\n',
     mark: '#!/usr/bin/env bash\n',
     'inputs/handoff.json': JSON.stringify({ attemptId: run.id, project: 'demo', flow: 'dev' }),
-    'artifacts/harness-provenance.json': '{"pin":"original"}\n',
     'artifacts/report.md': 'Original worker report\n',
   };
   for (const [file, content] of Object.entries(files)) {
-    await mkdir(path.dirname(path.join(dir, file)), { recursive: true });
-    await writeFile(path.join(dir, file), content);
+    await mkdir(path.dirname(path.join(origin, file)), { recursive: true });
+    await writeFile(path.join(origin, file), content);
   }
+  const distributionRoot = path.join(root, 'installed', run.id);
+  const executable = path.join(distributionRoot, 'bin/farmslot.mjs');
+  await mkdir(path.dirname(executable), { recursive: true });
+  await writeFile(executable, '#!/usr/bin/env node\nconsole.log("1.0.0");\n');
+  await writeFile(
+    path.join(distributionRoot, 'package.json'),
+    JSON.stringify({ name: '@farmslot/cli', version: '1.0.0' }),
+  );
+  const receipt = retainTaskExecution(origin, {
+    executable,
+    packageRoot: distributionRoot,
+    distributionRoot,
+    bindingIdentity: null,
+    inputs: [],
+  });
+  assert.deepEqual(verifyTaskExecutionProvenance(origin, null), receipt);
+  files['artifacts/harness-provenance.json'] = await readFile(
+    path.join(origin, 'artifacts/harness-provenance.json'),
+    'utf8',
+  );
+  await cp(origin, dir, { recursive: true });
   const taskFile = path.join(dir, 'TASK.md');
   const baseline = 'a'.repeat(40);
   updateRun(run.id, {
@@ -163,13 +197,17 @@ async function retainedTask(t: TestContext, slotId = 'move-a') {
   await captureRunOutput(run.id, false, true);
   assert.ok(getRun(run.id)?.artifactBundle, 'fixture must have a retained bundle');
   await rm(path.join(dir, 'artifacts'), { recursive: true });
+  await rm(origin, { recursive: true });
   rollbacks.length = 0;
+  claims.length = 0;
   return {
     run,
     dir,
     files,
     taskFile,
     baseline,
+    receipt,
+    origin,
     destination: path.join(root, 'move-b/work-items/dev', run.id),
   };
 }
@@ -193,6 +231,7 @@ for (const destination of ['empty', 'already-rebound', 'missing-receipt'] as con
       assert.equal(current.worktreeHeadAtDispatch, f.baseline);
       for (const [file, content] of Object.entries(f.files))
         assert.equal(await readFile(path.join(f.destination, file), 'utf8'), content);
+      assert.deepEqual(verifyTaskExecutionProvenance(f.destination, null), f.receipt);
       return { run: current };
     };
     await runActivateOnSlot({ runId: f.run.id, slotId: 'move-b' }, () => {});
@@ -217,6 +256,7 @@ test('same-slot activation preserves newer worker documents when the task receip
       await readFile(path.join(f.destination, 'CHECKLIST.md'), 'utf8'),
       '- [x] Worker progress\n',
     );
+    assert.deepEqual(verifyTaskExecutionProvenance(f.destination, null), f.receipt);
     return { run: getRun(f.run.id)! };
   };
   await runActivateOnSlot({ runId: f.run.id }, () => {});
@@ -224,16 +264,38 @@ test('same-slot activation preserves newer worker documents when the task receip
 });
 
 test('activation rolls back the binding and claim when retained task staging fails', async (t) => {
-  const f = await retainedTask(t);
-  await writeFile(path.join(f.dir, 'inputs/handoff.json'), '{"attemptId":"replacement"}\n');
+  const f = await retainedTask(t, 'move-a');
+  await mkdir(path.dirname(f.destination), { recursive: true });
+  await writeFile(f.destination, 'blocked task directory');
   replay = async () => {
     assert.fail('prepare replay must not start after staging fails');
   };
   await assert.rejects(
     runActivateOnSlot({ runId: f.run.id, slotId: 'move-b' }, () => {}),
-    /task file copy to slot failed: Retained task inputs differ/,
+    /task file copy to slot failed:/,
   );
   assert.equal(getRun(f.run.id)?.slotId, 'move-a');
   assert.equal(getRun(f.run.id)?.requestedSlotId, 'move-a');
   assert.deepEqual(rollbacks, [{ current_run_id: null }]);
 });
+
+for (const binding of ['move-a', 'move-b']) {
+  test(`activation refuses a different pinned checkout before mutation when bound to ${binding}`, async (t) => {
+    const f = await retainedTask(t, binding, 'move-a');
+    const before = structuredClone(getRun(f.run.id));
+    replay = async () => assert.fail('prepare must not start on a foreign checkout');
+    await assert.rejects(
+      runActivateOnSlot({ runId: f.run.id, slotId: 'move-b' }, () => {}),
+      {
+        message: `Run ${f.run.id} has an initialized task bound to ${f.origin}; it can only be re-activated on that checkout.`,
+      },
+    );
+    assert.deepEqual(getRun(f.run.id), before);
+    assert.deepEqual(claims, []);
+    assert.deepEqual(rollbacks, []);
+    await assert.rejects(readFile(path.join(f.destination, 'TASK.md')), { code: 'ENOENT' });
+    await assert.rejects(readFile(path.join(f.dir, 'artifacts/harness-provenance.json')), {
+      code: 'ENOENT',
+    });
+  });
+}

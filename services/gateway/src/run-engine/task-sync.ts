@@ -27,6 +27,7 @@ import {
 import { initializeWrittenTask, TASK_INIT_INPUT } from '../tasks/writer.js';
 
 import { loadProjectVarsOrNull } from './project-vars.js';
+import { workerTaskDirectory } from './worker-task-dir.js';
 
 interface TaskCopyOptions {
   slotId?: string;
@@ -50,9 +51,7 @@ export async function copyTaskFilesToSlot(
 
     const taskDir = path.dirname(run.taskFile);
     await auditBlindTrialTask(run, taskDir);
-    const taskFolderId = path.basename(taskDir);
-    const flowSubdir = path.basename(path.dirname(taskDir));
-    const workerTaskAbs = path.join(vars.remoteRepo, taskDirName, flowSubdir, taskFolderId);
+    const workerTaskAbs = workerTaskDirectory(run.taskFile, vars.remoteRepo, taskDirName);
 
     const linked = usesNodeLink(vars.machine);
     if (linked) {

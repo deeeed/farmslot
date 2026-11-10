@@ -16,6 +16,7 @@ import {
 import { resolveProjectTaskDirName } from '@farmslot/slot-config';
 
 import { loadProjectVars, loadSlotVars, type SlotVars } from '../core/config.js';
+import { workerTaskDirectory } from '../run-engine/worker-task-dir.js';
 
 import { resolveConfiguredExecutionTemplateForSlot } from './execution-template-catalog.js';
 import { initializeHostedTaskOnSlot, verifyHostedTaskOnSlot } from './hosted-task-init.js';
@@ -62,11 +63,10 @@ export async function initializeAuthoredTaskOnSlot(
   const retained = existsSync(
     path.join(path.dirname(run.taskFile), 'artifacts/harness-provenance.json'),
   );
-  const workerTaskDir = path.posix.join(
+  const workerTaskDir = workerTaskDirectory(
+    run.taskFile,
     slot.remoteRepo,
     resolveProjectTaskDirName(project.projectJson),
-    path.basename(path.dirname(path.dirname(run.taskFile))),
-    path.basename(path.dirname(run.taskFile)),
   );
   const task = await readFile(run.taskFile, 'utf8');
   let authored: HandoffMetadata | undefined;
