@@ -324,10 +324,13 @@ async function freezeSubject(
   return subject;
 }
 
-export async function teardownReviewWorkspace(runId: string): Promise<void> {
+export async function teardownReviewWorkspace(
+  runId: string,
+  options: { preserveInvalidOutput?: boolean } = {},
+): Promise<void> {
   const run = getRun(runId);
   if (!run?.reviewWorkspace) return;
-  if (retainsInvalidReviewOutput(run)) return;
+  if (options.preserveInvalidOutput && retainsInvalidReviewOutput(run)) return;
   if (run.reviewWorkspace.cleanedAt || run.reviewWorkspace.executionStoppedAt) return;
   const generation = run.engineState?.generation ?? 0;
   const check = () => currentWorkspaceRun(runId, generation, true);
@@ -606,6 +609,34 @@ export async function executeReviewWorkspaceStep(
     // native operation may still be running its reviewer, so its round counts.
     const run = getRun(runId);
     if (
+      step === PipelineSteps.MONITOR &&
+      error instanceof GatewayMethodError &&
+      error.code === 'REVIEW_OUTPUT_INVALID'
+    ) {
+      const current = currentWorkspaceRun(runId, generation);
+      const monitor = current.steps.find((entry) => entry.name === PipelineSteps.MONITOR);
+      const failedAt = new Date().toISOString();
+      updateRunStep(runId, PipelineSteps.MONITOR, {
+        outputs: {
+          ...monitor?.outputs,
+          reviewOutputValidationFailure: { at: failedAt, reason: error.message },
+        },
+      });
+      if (current.reviewWorkspace && !current.reviewWorkspace.retainedAt)
+        updateRun(runId, {
+          reviewWorkspace: {
+            ...current.reviewWorkspace,
+            retainedAt: failedAt,
+            retainedUntil: new Date(
+              Date.parse(failedAt) +
+                (current.reviewWorkspace.retentionDays ?? DEFAULT_REVIEW_WORKSPACE_RETENTION_DAYS) *
+                  86400000,
+            ).toISOString(),
+          },
+        });
+      await persistRunNow(currentWorkspaceRun(runId, generation), 'retain invalid review output');
+    }
+    if (
       run &&
       roundId &&
       step === PipelineSteps.MONITOR &&
@@ -810,45 +841,7 @@ async function executeOwnedReviewWorkspaceStep(
       };
     }
     case PipelineSteps.MONITOR: {
-      const readSavedCompletion = async () => {
-        try {
-          return await readReviewWorkspaceCompletion(runId);
-        } catch (error) {
-          if (isUncertainReviewerOperation(error) || isNodeTransportUnavailableError(error))
-            throw error;
-          const current = currentWorkspaceRun(runId, generation);
-          const monitor = current.steps.find((entry) => entry.name === PipelineSteps.MONITOR);
-          const failedAt = new Date().toISOString();
-          updateRunStep(runId, PipelineSteps.MONITOR, {
-            outputs: {
-              ...monitor?.outputs,
-              reviewOutputValidationFailure: {
-                at: failedAt,
-                reason: error instanceof Error ? error.message : String(error),
-              },
-            },
-          });
-          if (current.reviewWorkspace && !current.reviewWorkspace.retainedAt) {
-            updateRun(runId, {
-              reviewWorkspace: {
-                ...current.reviewWorkspace,
-                retainedAt: failedAt,
-                retainedUntil: new Date(
-                  Date.parse(failedAt) +
-                    (current.reviewWorkspace.retentionDays ??
-                      DEFAULT_REVIEW_WORKSPACE_RETENTION_DAYS) *
-                      86400000,
-                ).toISOString(),
-              },
-            });
-          }
-          await persistRunNow(
-            currentWorkspaceRun(runId, generation),
-            'retain invalid review output',
-          );
-          throw error;
-        }
-      };
+      const readSavedCompletion = () => readReviewWorkspaceCompletion(runId);
       if (
         run.reviewWorkspace?.cleanedAt ||
         run.reviewWorkspace?.executionStoppedAt ||

@@ -218,7 +218,7 @@ test(
     const generation = observed.engineState?.generation;
     await call('run.replayStep', { runId: run.id, stepName: 'monitor' });
     const invalidDeadline = Date.now() + 10000;
-    do {
+    while (true) {
       observed = (await call<RunGetResult>('run.get', { runId: run.id })).run;
       if (observed.status === 'reconciling') break;
       assert(
@@ -226,7 +226,7 @@ test(
         'Invalid saved output did not settle: ' + observed.status,
       );
       await new Promise((resolve) => setTimeout(resolve, 20));
-    } while (observed.status !== 'reconciling');
+    }
     assert.equal(observed.status, 'reconciling');
     assert.match(observed.error ?? '', /No complete saved review is available/);
     assert.equal(observed.reviewResult, undefined);
@@ -264,15 +264,15 @@ test(
     });
     assert((replay.run.engineState?.generation ?? 0) > (generation ?? 0));
     const completedDeadline = Date.now() + 10000;
-    do {
+    while (true) {
       observed = (await call<RunGetResult>('run.get', { runId: run.id })).run;
       if (observed.status === 'done') break;
       assert(
         Date.now() < completedDeadline,
         'Repaired review did not complete: ' + observed.status,
       );
-      if (observed.status !== 'done') await new Promise((resolve) => setTimeout(resolve, 20));
-    } while (observed.status !== 'done');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
     assert.equal(observed.reviewResult?.recommendation, 'REQUEST_CHANGES');
     assert(observed.reviewResult?.reviewMd.includes('Retained issue must survive recovery.'));
     assert.equal(observed.reviewWorkspace?.workspaceId, 'fixture-workspace');

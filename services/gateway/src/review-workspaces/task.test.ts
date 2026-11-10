@@ -278,94 +278,6 @@ test('tmux startup requires a fresh signal belonging to its reviewer attempt', a
   });
 });
 
-test('static completion derives inline findings without a second model-authored copy', async () => {
-  await withFixture(async (f) => {
-    await materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps);
-    const acceptedAt = new Date().toISOString();
-    f.run.agentContexts = [
-      {
-        id: 'review',
-        role: 'review',
-        label: 'Review',
-        slotId: null,
-        runId: f.run.id,
-        status: 'working',
-        nativeSession: {
-          sessionId: 'session',
-          leaseId: 'lease',
-          commandId: 'command',
-          ownerPrincipalId: 'fixture-owner',
-          executionNodeId: 'local',
-          generation: 'generation',
-          acceptedAt,
-          launchRequestedAt: acceptedAt,
-        },
-      },
-    ];
-    const mark = (...args: string[]) =>
-      exec(path.join(f.task, 'mark'), args, {
-        cwd: f.task,
-        env: { ...process.env, FARMSLOT_MARK_CMD: '' },
-      });
-    await mark('start');
-    const signal = JSON.parse(await readFile(path.join(f.task, 'SIGNAL.json'), 'utf8'));
-    f.run.agentContexts[0].signalAttemptId = signal.attemptId;
-    const report = `VERDICT: REQUEST_CHANGES\nCOMMIT: ${f.subject.headSha}\nReview findings.\n`;
-    const issue = {
-      file: 'src/file.ts',
-      line: 1,
-      description: 'The margin-mode sheet title hardcodes the market name.',
-      severity: 'major',
-    };
-    const outside = { ...issue, line: 42, description: 'A related context line is incorrect.' };
-    await writeFile(path.join(f.task, 'artifacts/review.md'), report);
-    await writeFile(
-      path.join(f.task, 'artifacts/review-result.json'),
-      JSON.stringify({
-        schemaVersion: 1,
-        verdict: 'issues',
-        recommendation: 'REQUEST_CHANGES',
-        issues: [issue, outside],
-        runId: f.run.id,
-        workspaceId: f.run.reviewWorkspace!.workspaceId,
-        headSha: f.subject.headSha,
-        baseSha: f.subject.baseSha,
-        attemptId: signal.attemptId,
-        reportSha256: digest(report),
-      }),
-    );
-    const sidecar = path.join(f.task, 'artifacts/line-comments.json');
-    await writeFile(
-      sidecar,
-      JSON.stringify({
-        comments: [
-          {
-            path: issue.file,
-            line: issue.line,
-            body: 'Margin-mode sheet title hardcodes the market name.',
-            severity: issue.severity,
-          },
-        ],
-      }),
-    );
-    await writeFile(path.join(f.task, 'artifacts/learnings.md'), '- None\n');
-    await mark('1');
-    await mark('complete', '--mark-last');
-    const expected = [
-      { path: issue.file, line: issue.line, body: issue.description, severity: issue.severity },
-    ];
-    const completion = await readReviewWorkspaceCompletion(f.run.id, f.deps);
-    assert.equal(completion?.result?.recommendation, 'REQUEST_CHANGES');
-    assert.deepEqual(completion?.result?.lineComments, expected);
-    assert(completion?.result?.reviewMd.includes(outside.description));
-    await rm(sidecar);
-    assert.deepEqual(
-      (await readReviewWorkspaceCompletion(f.run.id, f.deps))?.result?.lineComments,
-      expected,
-    );
-  });
-});
-
 test('the copied shared marker works offline; completion rejects wrong SHA, stale attempts and missing required evidence', async () => {
   await withFixture(async (f) => {
     await materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps);
@@ -486,6 +398,19 @@ test('the copied shared marker works offline; completion rejects wrong SHA, stal
     await writeFile(
       path.join(f.task, 'artifacts/review-result.json'),
       JSON.stringify(findingsResult),
+    );
+    await writeFile(
+      path.join(f.task, 'artifacts/line-comments.json'),
+      JSON.stringify({
+        comments: [
+          {
+            path: finding.file,
+            line: finding.line,
+            body: 'A richer paraphrase of this finding.',
+            severity: finding.severity,
+          },
+        ],
+      }),
     );
     const bodyFallback = await readReviewWorkspaceCompletion(f.run.id, f.deps);
     assert.deepEqual(bodyFallback?.result?.lineComments, [

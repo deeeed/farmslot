@@ -2560,6 +2560,9 @@ async function replayRunStep(
       });
     }
     if (existing.reviewWorkspace && replayStepName === PS.DISPATCH) {
+      updateRun(params.runId, {
+        reviewWorkspace: { ...existing.reviewWorkspace, executionStoppedAt: undefined },
+      });
       const dispatch = getRun(params.runId)?.steps.find((step) => step.name === PS.DISPATCH);
       updateRunStep(params.runId, PS.DISPATCH, {
         outputs: {

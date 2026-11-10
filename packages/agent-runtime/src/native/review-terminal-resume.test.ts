@@ -158,3 +158,17 @@ test('unknown conversation or a foreign cancellation cannot mutate the retained 
     assert.equal(creations(), 0);
   });
 });
+
+test('a newer cancellation fences its own continuation before old receipts can be archived', async () => {
+  await fixture(async (invoke, root, creations) => {
+    const marker = path.join(root, '.terminal-launch.json');
+    const original = readFileSync(marker, 'utf8');
+    const stopped = await invoke({ action: 'stop' });
+    assert.equal(stopped.code, 0, stopped.error);
+    const resumed = await invoke();
+    assert.notEqual(resumed.code, 0);
+    assert.match(resumed.error, /continuation was cancelled/);
+    assert.equal(readFileSync(marker, 'utf8'), original);
+    assert.equal(creations(), 0);
+  });
+});

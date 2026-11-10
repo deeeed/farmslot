@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { nativeRunnerDefinitions } from '@farmslot/agent-runtime/native/registry';
 import {
+  isRecord,
   isTerminalRunStatus,
   parseGitHubRef,
   type Run,
@@ -227,6 +228,9 @@ export async function reviewTmuxOperation(
     runner,
     model: run.metrics.model,
   };
+  const continuation = run.steps.find((step) => step.name === 'dispatch')?.outputs
+    ?.retainedReviewResume;
+  if (action === 'stop' && isRecord(continuation)) input.resumeCommandId = continuation.commandId;
   if (action === 'launch' || action === 'resume') {
     const resumeSessionId = run.agentContexts?.find(
       (context) => context.id === 'review',
@@ -293,7 +297,20 @@ export async function reviewTmuxOperation(
     w.taskPath,
     'inputs/runtime/node_modules/@farmslot/agent-runtime/scripts/review-terminal.cjs',
   );
-  const argv = ['node', script, JSON.stringify(input)];
+  // Control code comes from the owning gateway, even for a pre-change retained task.
+  // Resolve its unchanged runtime dependencies beside that task without rewriting it.
+  const control = await readFile(
+    new URL('../../../../packages/agent-runtime/scripts/review-terminal.cjs', import.meta.url),
+    'utf8',
+  );
+  const argv = [
+    'node',
+    '-e',
+    'const [code,file,input]=process.argv.slice(1);process.argv=[process.execPath,file,input];new Function("require",code)(require("node:module").createRequire(file));',
+    control,
+    script,
+    JSON.stringify(input),
+  ];
   const result =
     w.executionNodeId === 'local'
       ? await execFileArgv([process.execPath, ...argv.slice(1)], { timeout: 30000 })

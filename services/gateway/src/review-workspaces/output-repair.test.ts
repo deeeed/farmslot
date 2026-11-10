@@ -89,6 +89,10 @@ mock.module('../runners/review-tmux.js', {
   namedExports: {
     ...terminal,
     reviewTmuxOperation: async (_run: Run, action: string) => {
+      if (action === 'stop') {
+        reviewerExists = false;
+        return { stopped: true };
+      }
       assert.equal(action, 'inspect');
       return { exists: reviewerExists };
     },
@@ -505,14 +509,18 @@ test('contract failure retains the worker and monitor replay validates repaired 
     attemptId: 'original-attempt',
     timestamp: new Date(clock).toISOString(),
   };
-  terminalFailure = new Error('Static review report digest changed');
+  updateRunStep(run.id, PipelineSteps.MONITOR, { outputs: { reviewArtifactReplay: true } });
+  terminalFailure = new GatewayMethodError(
+    'REVIEW_OUTPUT_INVALID',
+    'Static review report digest changed',
+  );
   await assert.rejects(
     executeReviewWorkspaceStep(run.id, PipelineSteps.MONITOR, 0, () => {}),
     /digest changed/,
   );
   updateRun(run.id, { status: 'failed' });
   assert(retainsInvalidReviewOutput(getRun(run.id)!));
-  await teardownReviewWorkspace(run.id);
+  await teardownReviewWorkspace(run.id, { preserveInvalidOutput: true });
   assert.equal(getRun(run.id)?.reviewWorkspace?.executionStoppedAt, undefined);
   assert.equal(getRun(run.id)?.agentContexts?.[0].runnerSessionId, 'original-session');
   assert.equal(instructions.length, 0);
@@ -538,6 +546,26 @@ test('invalid artifact-only replay does not spend a repair model turn', async (t
   assert(retainsInvalidReviewOutput(getRun(run.id)!));
   assert.equal(instructions.length, 0);
   assert.equal(launches, 0);
+});
+
+test('operator cancel releases a failed contract review and its machine capacity', async (t) => {
+  const { run } = await fixture(t);
+  updateRun(run.id, { status: 'monitoring' });
+  updateRunStep(run.id, PipelineSteps.MONITOR, { outputs: { reviewArtifactReplay: true } });
+  terminalFailure = invalidReview();
+  await assert.rejects(
+    executeReviewWorkspaceStep(run.id, PipelineSteps.MONITOR, 0, () => {}),
+    { code: 'REVIEW_OUTPUT_INVALID' },
+  );
+  updateRun(run.id, { status: 'failed' });
+  const { activeWorkspaceReviews } = await import('./admission.js');
+  assert.equal(activeWorkspaceReviews('review-node', [getRun(run.id)!]), 1);
+  const { runCancel } = await import('../methods/run/lifecycle-control.js');
+  const cancelled = await runCancel({ runId: run.id });
+  assert(cancelled.run.reviewWorkspace?.executionStoppedAt);
+  assert.equal(reviewerExists, false);
+  assert.equal(activeWorkspaceReviews('review-node', [getRun(run.id)!]), 0);
+  assert.equal(instructions.length, 0);
 });
 
 test('dispatch continuation uses the same live reviewer without rematerializing or admitting a new round', async (t) => {

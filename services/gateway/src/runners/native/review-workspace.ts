@@ -3,7 +3,6 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import {
-  NATIVE_WORKER_CANCEL,
   NATIVE_WORKER_ENSURE,
   NATIVE_WORKER_READ,
   NATIVE_WORKER_RESUME,
@@ -48,6 +47,7 @@ import { runnerSupportsEffort } from '../registry.js';
 
 import { validateNativeRunner } from './manager.js';
 import { routeNativeExecution } from './node.js';
+import { cancelNativeWorkerContext } from './worker.js';
 import { assertNativeWorkerSnapshot } from './worker-control.js';
 import { NativeWorkerOperationUncertainError } from './worker-error.js';
 import { inspectNativeWorkerProfile } from './worker-profile.js';
@@ -560,7 +560,7 @@ export function assertReviewWorkspaceCancellation(
     !result.cancelled ||
     result.sessionId !== binding.sessionId ||
     result.leaseId !== binding.leaseId ||
-    (binding.generation && !binding.recovery && result.generation !== binding.generation)
+    (binding.generation && result.generation !== binding.generation)
   )
     throw new Error('Static review worker cancellation is unconfirmed');
   if (binding.generation && !result.session)
@@ -569,9 +569,7 @@ export function assertReviewWorkspaceCancellation(
     assertNativeWorkerSnapshot(
       {
         ...binding,
-        generation: binding.recovery
-          ? result.generation
-          : (binding.generation ?? result.session.generation),
+        generation: binding.generation ?? result.session.generation,
       },
       { session: result.session } as NativeSessionReadResult,
     );
@@ -585,28 +583,7 @@ export function assertReviewWorkspaceCancellation(
 
 export async function cancelReviewWorkspaceWorker(runId: string): Promise<void> {
   const run = ownedRun(runId);
-  if (!contextFor(run)?.nativeSession) return;
-  const binding = structuredClone(currentBinding(run));
-  if (binding.closedAt && !binding.recovery) return;
-  // Persist a host tombstone even before ensure arrives, fencing a delayed launch.
-  const result = (await routeNativeExecution(binding.ownerPrincipalId, NATIVE_WORKER_CANCEL, {
-    ...target(binding),
-    generation: binding.generation,
-    ...(binding.recovery ? { resumeCommandId: binding.recovery.commandId } : {}),
-  })) as NativeWorkerCancelResult;
-  assertReviewWorkspaceCancellation(binding, result);
-  await saveContext(
-    runId,
-    {
-      status: 'idle',
-      nativeSession: {
-        ...binding,
-        generation: result.generation ?? binding.generation,
-        recovery: undefined,
-        closedAt: new Date().toISOString(),
-      },
-    },
-    binding,
-    executionFence(run, true),
-  );
+  const context = contextFor(run);
+  if (!context?.nativeSession) return;
+  await cancelNativeWorkerContext(runId, context);
 }

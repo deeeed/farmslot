@@ -72,6 +72,11 @@ async function main() {
     throw Error('Invalid review terminal identity');
   const marker = path.join(input.task, '.terminal-launch.json');
   const cancelled = path.join(input.task, '.terminal-cancelled');
+  if (input.resumeCommandId !== undefined && !/^[a-zA-Z0-9_-]+$/.test(input.resumeCommandId))
+    throw Error('Invalid review continuation command');
+  const cancelledCommand = input.resumeCommandId
+    ? path.join(input.task, `.terminal-cancelled-${input.resumeCommandId}`)
+    : undefined;
   const claim = path.join(input.task, '.terminal-folder-access-claim');
   let existing = fs.existsSync(marker) ? JSON.parse(fs.readFileSync(marker, 'utf8')) : undefined;
   if (
@@ -90,6 +95,7 @@ async function main() {
   )
     throw Error('Review terminal belongs to another workspace');
   if (input.action === 'stop') {
+    if (cancelledCommand) fs.writeFileSync(cancelledCommand, input.runId, { mode: 0o600 });
     fs.writeFileSync(cancelled, input.runId, { mode: 0o600 });
     if (has.status === 0) check(tmux(['kill-session', '-t', target]));
     process.stdout.write(JSON.stringify({ stopped: true }));
@@ -101,6 +107,8 @@ async function main() {
   }
   let previousAttempt;
   if (input.action === 'resume') {
+    if (cancelledCommand && fs.existsSync(cancelledCommand))
+      throw new Error('Review terminal continuation was cancelled');
     if (
       typeof input.resumeSessionId !== 'string' ||
       !input.resumeSessionId.trim() ||
@@ -142,7 +150,8 @@ async function main() {
     }
     existing = undefined;
   }
-  if (fs.existsSync(cancelled)) throw new Error('Review terminal launch was cancelled');
+  if (fs.existsSync(cancelled) || (cancelledCommand && fs.existsSync(cancelledCommand)))
+    throw new Error('Review terminal launch was cancelled');
   if (existing) {
     if (existing.runner !== input.runner || existing.model !== input.model)
       throw Error(
@@ -251,7 +260,7 @@ async function main() {
       input.workspaceId,
     ]),
   );
-  if (fs.existsSync(cancelled)) {
+  if (fs.existsSync(cancelled) || (cancelledCommand && fs.existsSync(cancelledCommand))) {
     check(tmux(['kill-session', '-t', target]));
     throw new Error('Review terminal launch was cancelled');
   }
