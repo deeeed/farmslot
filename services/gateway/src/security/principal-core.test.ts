@@ -173,7 +173,7 @@ test('credential store writes are atomic, locked, permission-safe, and temp-clea
   );
 });
 
-test('read-only credential snapshots are shared until the store file changes', () => {
+test('read-only credential snapshots are shared until the store file changes', (t) => {
   const env = isolatedEnv();
   const runtime = new CredentialStoreRuntime(env);
   const writer = new CredentialStoreWriter(runtime);
@@ -181,6 +181,10 @@ test('read-only credential snapshots are shared until the store file changes', (
   const principal = writer.createPrincipal({ type: 'person', displayName: 'reader' }, []);
   const issued = writer.issueCredential(principal.id, 'reader');
 
+  // Just written: a coarse-timestamp filesystem could hide the next write, so it is reread.
+  assert.notEqual(readCredentialStoreSnapshot(path), readCredentialStoreSnapshot(path));
+  const settledAt = Date.now() + 10_000;
+  const clock = t.mock.method(Date, 'now', () => settledAt);
   const snapshot = readCredentialStoreSnapshot(path);
   assert.equal(readCredentialStoreSnapshot(path), snapshot, 'an unchanged file is not re-read');
   assert.equal(
@@ -193,7 +197,9 @@ test('read-only credential snapshots are shared until the store file changes', (
     'the shared snapshot is frozen',
   );
 
+  clock.mock.restore();
   writer.revokeCredential(issued.record.id);
+  t.mock.method(Date, 'now', () => settledAt);
   const afterRevoke = readCredentialStoreSnapshot(path);
   assert.notEqual(afterRevoke, snapshot);
   assert.notEqual(

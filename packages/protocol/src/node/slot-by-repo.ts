@@ -4,6 +4,7 @@ import { homedir, hostname } from 'node:os';
 import path from 'node:path';
 
 import { deepFreeze } from '../deep-freeze.js';
+import { isRacyStamp } from '../file-stamp.js';
 
 import { currentFarmPaths, legacyRemoteFarmPaths } from './farm-paths.js';
 
@@ -107,10 +108,14 @@ interface PoolFileStamp {
 }
 interface CachedPoolFile {
   stamp: PoolFileStamp;
+  /** The file had settled when it was read, so an equal stamp later means equal content. */
+  trusted: boolean;
   entry: PoolFileEntry<unknown> | undefined;
 }
 interface PoolDirCache {
   dirMtimeMs: number;
+  /** The directory had settled when it was listed (see CachedPoolFile.trusted). */
+  listingTrusted: boolean;
   files: string[];
   byFile: Map<string, CachedPoolFile>;
   result: PoolFileEntry<unknown>[];
@@ -148,14 +153,16 @@ function readPoolFile(fullPath: string): PoolFileEntry<unknown> | undefined {
  * Configured pool readers skip malformed files without echoing parser input.
  *
  * Results are cached per directory and checked against the directory's and each file's stat on
- * every call, so an edited, added, renamed or removed pool file is seen at once. Unchanged pools
+ * every call, so an edited, added, renamed or removed pool file is seen at once. A file or listing
+ * changed too recently for its stamp to be trusted is read again (isRacyStamp). Unchanged pools
  * are returned as the same frozen objects; callers must not mutate them.
  */
 export function readPoolFiles<P = SlotPoolFile>(poolDir: string): PoolFileEntry<P>[] {
+  const now = Date.now();
   const dirMtimeMs = statSync(poolDir).mtimeMs;
   const cached = poolDirCache.get(poolDir);
   const files =
-    cached && cached.dirMtimeMs === dirMtimeMs
+    cached && cached.listingTrusted && cached.dirMtimeMs === dirMtimeMs
       ? cached.files
       : readdirSync(poolDir)
           .filter((file) => !isIgnoredPoolFile(file))
@@ -177,16 +184,22 @@ export function readPoolFiles<P = SlotPoolFile>(poolDir: string): PoolFileEntry<
     }
     const stamp = stampOf(stats);
     const previous = cached?.byFile.get(fullPath);
-    if (previous && sameStamp(previous.stamp, stamp)) {
+    if (previous?.trusted && sameStamp(previous.stamp, stamp)) {
       byFile.set(fullPath, previous);
       continue;
     }
     changed = true;
-    byFile.set(fullPath, { stamp, entry: readPoolFile(fullPath) });
+    byFile.set(fullPath, {
+      stamp,
+      trusted: !isRacyStamp(Math.max(stamp.mtimeMs, stamp.ctimeMs), now),
+      entry: readPoolFile(fullPath),
+    });
   }
   if (cached && !changed) return cached.result as PoolFileEntry<P>[];
   const result = deepFreeze([...byFile.values()].flatMap(({ entry }) => (entry ? [entry] : [])));
-  poolDirCache.set(poolDir, { dirMtimeMs, files, byFile, result });
+  const listingTrusted =
+    cached?.files === files ? cached.listingTrusted : !isRacyStamp(dirMtimeMs, now);
+  poolDirCache.set(poolDir, { dirMtimeMs, listingTrusted, files, byFile, result });
   return result as PoolFileEntry<P>[];
 }
 

@@ -3,6 +3,7 @@ export * from './agents/roles.js';
 export * from './checklist-target.js';
 export * from './contracts/index.js';
 export { deepFreeze } from './deep-freeze.js';
+export { isRacyStamp, RACY_STAMP_MS } from './file-stamp.js';
 export * from './integrations/github-ref.js';
 export * from './integrations/pr-monitoring.js';
 export * from './integrations/pr-project-import.js';

@@ -1,1 +1,1 @@
-- Add `readCredentialStoreSnapshot`, a frozen read-only view of the credential store that is re-read only when the file changes, for callers that check ownership or assignments on every request.
+- Add `readCredentialStoreSnapshot`, a frozen read-only view of the credential store that is re-read only when the file changes (or changed too recently to trust its stamp), for callers that check ownership or assignments on every request.

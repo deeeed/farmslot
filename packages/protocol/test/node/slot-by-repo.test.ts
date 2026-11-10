@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {
+import fs, {
   mkdirSync,
   mkdtempSync,
   realpathSync,
@@ -208,13 +208,49 @@ test('pool reads are cached until a pool file or the directory changes', (t) => 
   pool(dir, 'b.json', { machine: 'b', slots: [] });
   pool(dir, 'b.json.bak.2026-11-10', { machine: 'ignored' });
 
+  const readFileSync = fs.readFileSync;
+  let reads = 0;
+  t.mock.method(fs, 'readFileSync', (...args: Parameters<typeof readFileSync>) => {
+    if (String(args[0]) === join(dir, 'a.json')) reads += 1;
+    return readFileSync(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  const readsOf = (read: () => unknown) => {
+    reads = 0;
+    read();
+    return reads;
+  };
+
   const first = readPoolFiles(dir);
   assert.deepEqual(machines(), ['a', 'b']);
-  assert.equal(readPoolFiles(dir), first, 'unchanged pools are the same result, not re-read');
+  // Just written: a coarse-timestamp filesystem could hide the next write, so they are reread.
+  assert.equal(
+    readsOf(() => readPoolFiles(dir)),
+    1,
+    'a racy pool file is read again',
+  );
+  const settledAt = Date.now() + 10_000;
+  t.mock.method(Date, 'now', () => settledAt);
+  // Read once more, since every earlier read was racy; then trusted.
+  assert.equal(
+    readsOf(() => readPoolFiles(dir)),
+    1,
+  );
+  const settled = readPoolFiles(dir);
+  assert.notEqual(settled, first);
+  assert.equal(
+    readsOf(() => readPoolFiles(dir)),
+    0,
+  );
+  assert.equal(readPoolFiles(dir), settled, 'unchanged pools are the same result, not re-read');
   assert.throws(() => {
-    (first[0].pool as { machine: string }).machine = 'mutated';
+    (settled[0].pool as { machine: string }).machine = 'mutated';
   }, TypeError);
-  assert.throws(() => (first as unknown[]).push({}), TypeError);
+  assert.throws(() => (settled as unknown[]).push({}), TypeError);
 
   // Edited in place (same directory entry), with a different size.
   pool(dir, 'a.json', { machine: 'a-edited', slots: [] });

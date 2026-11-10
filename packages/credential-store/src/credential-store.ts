@@ -11,6 +11,7 @@ import { dirname, join } from 'node:path';
 
 import {
   deepFreeze,
+  isRacyStamp,
   parsePersonDeviceDescription,
   type Principal,
   type PrincipalSubject,
@@ -168,13 +169,18 @@ export function isGlobalAdminBinding(binding: RoleBinding): boolean {
 /** Read-only snapshots per store path, keyed by the file's stamp at the time they were read. */
 const readOnlySnapshots = new Map<
   string,
-  { stamp: FreshnessStamp | null; store: Readonly<CredentialStore> }
+  {
+    stamp: FreshnessStamp | null;
+    /** The file had settled when it was read, so an equal stamp later means equal content. */
+    trusted: boolean;
+    store: Readonly<CredentialStore>;
+  }
 >();
 
 /**
  * The credential store for callers that only read it, such as ownership and assignment checks on
- * every native request. It is re-read only when the file's stamp changes (an atomic save always
- * changes the inode), so a revocation is seen on the next call. The snapshot is deep-frozen and
+ * every native request. It is re-read when the file's stamp changes, and while the file changed
+ * too recently for its stamp to be trusted (isRacyStamp), so a revocation is seen on the next call. The snapshot is deep-frozen and
  * shared: writers must use loadCredentialStore and saveCredentialStore.
  */
 export function readCredentialStoreSnapshot(
@@ -183,9 +189,9 @@ export function readCredentialStoreSnapshot(
   // The stamp is taken before reading, so a write landing mid-read is picked up next call.
   const stamp = readStamp(path);
   const cached = readOnlySnapshots.get(path);
-  if (cached && stampsEqual(cached.stamp, stamp)) return cached.store;
+  if (cached?.trusted && stampsEqual(cached.stamp, stamp)) return cached.store;
   const store = deepFreeze(loadCredentialStore(path));
-  readOnlySnapshots.set(path, { stamp, store });
+  readOnlySnapshots.set(path, { stamp, trusted: !(stamp && isRacyStamp(stamp.mtimeMs)), store });
   return store;
 }
 
