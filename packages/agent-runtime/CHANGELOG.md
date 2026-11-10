@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.45.8 - 2026-11-10
+
+- Republish against recipe-runner 0.46.12 so consumers load one copy of it, with the fixed-element visibility fix.
+
 ## 0.45.7 - 2026-11-09
 
 - Match raw ticket criteria to task-init definitions without changing stored criteria or derived proof identity.
