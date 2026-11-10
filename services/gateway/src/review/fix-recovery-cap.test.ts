@@ -125,7 +125,17 @@ test('the real review owner honors an explicit interactive opt-in when automatic
   );
 });
 
-async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, string>, atCap = true) {
+async function recoveredFixAtCap(
+  t: TestContext,
+  fixSignal: Record<string, string>,
+  atCap = true,
+  changedArtifact:
+    | false
+    | 'pr-description.md'
+    | 'report.md'
+    | 'previous-attempt'
+    | 'previous-context' = false,
+) {
   const run = createRun({
     project,
     flowType: 'dev',
@@ -222,6 +232,7 @@ async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, strin
       {
         id: 'review-fix',
         role: 'review-fix',
+        reviewFixAttempt: changedArtifact === 'previous-context' ? 1 : 2,
         label: 'Fix',
         status: 'working',
         runId: run.id,
@@ -260,8 +271,19 @@ async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, strin
       engineState: {
         ...getRun(run.id)!.engineState,
         reviewInputsAtLaunch: fingerprint.fingerprint,
+        reviewFullInputsAtLaunch: fingerprint.fixFingerprint,
+        reviewFixAttempt: 2,
+        reviewFixInputsAtLaunch: {
+          attempt: changedArtifact === 'previous-attempt' ? 1 : 2,
+          fingerprint: fingerprint.fixFingerprint,
+        },
       },
     });
+  }
+  if (changedArtifact === 'pr-description.md' || changedArtifact === 'report.md') {
+    const description = path.join(repo, taskDir, 'artifacts', changedArtifact);
+    await mkdir(path.dirname(description), { recursive: true });
+    await writeFile(description, 'Corrected test-count claim\n');
   }
   const retainedScope = {
     runId: run.id,
@@ -371,6 +393,38 @@ for (const sourceLinesChanged of [0, 50]) {
       );
     if (sourceLinesChanged === 0) assert.throws(publication, /requires passing reviews/);
     else assert.doesNotThrow(publication);
+  });
+}
+
+for (const artifact of [
+  'pr-description.md',
+  'report.md',
+  'previous-attempt',
+  'previous-context',
+] as const) {
+  test(`a recovered ${artifact} fix gets a real re-review`, async (t) => {
+    capturedFixOverride = {
+      snapshot: {
+        source: 'local-git',
+        capturedAt: new Date().toISOString(),
+        fixBaseSha: 'a'.repeat(40),
+        fixHeadSha: 'a'.repeat(40),
+        diffStat: { files: 0, additions: 0, deletions: 0 },
+      },
+      artifactPaths: ['artifacts/fix-delta.diff'],
+      sourceLinesChanged: 0,
+    };
+    const { result, launches } = await recoveredFixAtCap(
+      t,
+      { status: 'complete', outcome: 'success', disposition: 'fixed' },
+      false,
+      artifact,
+    );
+    assert.equal(launches, 1);
+    assert.equal(result.verdict, 'pass');
+    assert.deepEqual(result.issues, []);
+    assert.equal(result.retryCount, 1);
+    assert.equal(result.attempts?.at(-1)?.loopNumber, 2);
   });
 }
 

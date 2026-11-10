@@ -11,6 +11,7 @@ import {
   registeredAcceptanceCriteria,
   type Run,
   type TaskInheritedAcceptanceReference,
+  ticketCriteriaAsRegistered,
   WORKER_TERMINAL_CONTRACT_INPUT,
 } from '@farmslot/protocol';
 
@@ -142,7 +143,7 @@ export async function readInheritedAcceptanceSource(
     // The parent's recorded reviews at its approved package head.
     codeReviewCertified: codeReviewCertifiesPackage(source.run, source.prPackage),
   });
-  const expected = registeredAcceptanceCriteria(run.ticketData?.acceptanceCriteria ?? []);
+  const expected = ticketCriteriaAsRegistered(run.ticketData?.acceptanceCriteria ?? []);
   if (
     acceptance.error ||
     acceptance.issues.length ||

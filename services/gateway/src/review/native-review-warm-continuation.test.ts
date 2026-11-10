@@ -251,6 +251,7 @@ mock.module('./review-agent.js', {
 });
 mock.module('./reviewed-inputs.js', {
   namedExports: {
+    noteReviewFixInputsAtLaunch: noop,
     noteReviewInputsAtLaunch: noop,
     recordReviewedInputs: noop,
     readReviewedInputs: async () => null,

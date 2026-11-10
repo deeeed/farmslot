@@ -55,6 +55,8 @@ import {
   buildClaudeObservabilityFallbackCommand,
   buildRunnerObservabilityInstallCommand,
   claudeObservabilitySettingsPath,
+  gatewayRunnerObservabilityInstallCommand,
+  piObservabilityVerificationCommand,
   withRequiredRunnerInstall,
   withRunnerObservabilityInstall,
 } from './runner-observability.js';
@@ -294,7 +296,7 @@ export function buildPiLaunch(options: {
     `FARMSLOT_MODEL=${shellQuote(cliModel)}`,
     ...(taskFile ? [`FARMSLOT_TASK_FILE=${shellQuote(taskFile)}`] : []),
   ].join(' ');
-  return `cd ${shellQuote(options.repo)} && ${envPrefix} ${options.binary}${flagFragment}${thinkingFlag} --approve -e ${shellExpressionForRemotePath(extension)} --model ${quoteRunnerArgValue(assertedModel(cliModel))}`;
+  return `${piObservabilityVerificationCommand(obsDir)} && cd ${shellQuote(options.repo)} && ${envPrefix} ${options.binary}${flagFragment}${thinkingFlag} --approve -e ${shellExpressionForRemotePath(extension)} --model ${quoteRunnerArgValue(assertedModel(cliModel))}`;
 }
 
 /**
@@ -479,13 +481,17 @@ export function buildInteractiveRefinementRunnerCommand(options: {
       ]
         .filter(Boolean)
         .join(' ');
-    return `${buildPiLaunch({
+    const launch = `${buildPiLaunch({
       binary,
       model: options.model,
       repo: options.repo,
       safetyTier: options.safetyTier,
       effort: options.effort,
     })} ${promptArg}`;
+    return withRequiredRunnerInstall(
+      launch,
+      gatewayRunnerObservabilityInstallCommand('pi', options.repo),
+    );
   }
   const flags = safetyFlags ? ` ${safetyFlags}` : '';
   const effortFlag = runnerId === 'claude' ? runnerEffortFlag('claude', options.effort) : '';
@@ -596,7 +602,10 @@ export function buildRunnerSessionReloadCommand(
       runner,
       repo,
       opts.runtimeDir,
-      { accountLabel: opts.codexAccountLabel, authSource: opts.codexAuthSource },
+      {
+        accountLabel: opts.codexAccountLabel,
+        authSource: opts.codexAuthSource,
+      },
     );
     const modelFlag = runnerModelFlag(model);
     const effortFlag = codexReasoningEffortFlag(opts.effort, model);
@@ -894,8 +903,8 @@ export interface BuildLaunchOptions {
   scripted?: ScriptedRunnerConfig;
   /** Resolved project-owned command for scripted.command mode. */
   scriptedCommand?: ScriptedCommandLaunchConfig;
-  /** Verified project support for scripted command mode; scenario mode stays checkout-local. */
-  scriptedSupportDir?: string;
+  /** Verified installer/project support selected by ensureNodeSupportBundle. */
+  supportDir?: string;
   /**
    * When true, the Claude runner routes through `expandDispatchCmd` and
    * requires a pool `dispatch_cmd` (production dispatch flow).
@@ -996,7 +1005,7 @@ export function buildLaunchCommand(
         taskDir: opts.taskDir,
         scripted: opts.scripted,
         command: opts.scriptedCommand,
-        supportDir: opts.scriptedSupportDir ?? expandTemplate('{{farmslot_dir}}', vars),
+        supportDir: opts.supportDir ?? expandTemplate('{{farmslot_dir}}', vars),
         farmDir: expandTemplate('{{farmslot_dir}}', vars),
       }),
     );
@@ -1061,6 +1070,7 @@ export function buildLaunchCommand(
       runner,
       repo,
       opts.runtimeDir,
+      { supportDir: opts.supportDir },
     );
     const settingsFlag = ` --settings ${shellExpressionForRemotePath(
       claudeObservabilitySettingsPath(repo, opts.runtimeDir ?? '.agent'),
@@ -1126,7 +1136,11 @@ export function buildLaunchCommand(
       runner,
       repo,
       opts.runtimeDir,
-      { accountLabel: opts.codexAccountLabel, authSource: opts.codexAuthSource },
+      {
+        accountLabel: opts.codexAccountLabel,
+        authSource: opts.codexAuthSource,
+        supportDir: opts.supportDir,
+      },
     );
     if (cmdIsRunnerAware) {
       return withRecipeTrust(
@@ -1165,6 +1179,7 @@ export function buildLaunchCommand(
       runner,
       repo,
       opts.runtimeDir,
+      { supportDir: opts.supportDir },
     );
     return withRecipeTrust(
       withRequiredRunnerInstall(
@@ -1192,6 +1207,7 @@ export function buildLaunchCommand(
       runner,
       repo,
       opts.runtimeDir,
+      { supportDir: opts.supportDir },
     );
     if (cmdIsRunnerAware) {
       return withRecipeTrust(withRequiredRunnerInstall(expanded, installCommand));
@@ -1217,6 +1233,7 @@ export function buildLaunchCommand(
       runner,
       repo,
       opts.runtimeDir,
+      { supportDir: opts.supportDir },
     );
     return withRecipeTrust(
       withRequiredRunnerInstall(

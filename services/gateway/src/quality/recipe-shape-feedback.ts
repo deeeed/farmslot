@@ -9,7 +9,7 @@ import {
 } from '@farmslot/protocol/recipe-shape.mjs';
 import {
   filterWorkerAcceptanceCriteria,
-  registeredAcceptanceCriteria,
+  ticketCriteriaAsRegistered,
 } from '@farmslot/protocol/scripts/acceptance.mjs';
 
 export interface RecipeShapeContext {
@@ -121,7 +121,7 @@ export async function readRecipeShapeFeedback(
     return undefined;
   if (input.context) return scoreRecipeShape({ recipe, ...input.context });
   const registered = input.run.ticketData?.acceptanceCriteria
-    ? registeredAcceptanceCriteria(
+    ? ticketCriteriaAsRegistered(
         input.run.ticketData.acceptanceCriteria,
         input.run.acceptanceRegistration,
       )

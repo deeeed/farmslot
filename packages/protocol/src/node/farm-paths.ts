@@ -8,6 +8,13 @@ import { expandHome } from './farmslot-home.js';
 
 export const FARM_INSTANCE_CLAIM = '.farmslot-instance';
 
+// Refresh always installs the first directory and updates existing entries in the rest.
+const LEGACY_CLI_BIN_DIRS = ['.local/bin', '.npm-global/bin'] as const;
+
+export function legacyCliBinDirs(userHome = homedir()): string[] {
+  return LEGACY_CLI_BIN_DIRS.map((directory) => path.join(userHome, directory));
+}
+
 export type FarmRole = 'gateway' | 'node';
 
 export type FarmPathEnv = Readonly<Record<string, string | undefined>>;
@@ -96,7 +103,7 @@ interface SharedFarmPaths {
   layout: 'legacy' | 2;
   instance: string;
   home: string;
-  /** Per-store environment variable names actually honoured, for migration warnings. */
+  /** Per-store environment variable names actually honoured, for path reports. */
   envOverrides: string[];
   config: string;
   configFiles: {
@@ -367,7 +374,7 @@ export function resolveFarmPaths(options: ResolveFarmPathsOptions): FarmPaths {
         : root,
       node: env.FARMSLOT_WORKSPACE ? path.resolve(expandHome(env.FARMSLOT_WORKSPACE)) : root,
       cli: path.join(userHome, '.local', 'share', 'farmslot-cli'),
-      bin: path.join(userHome, '.local', 'bin'),
+      bin: path.join(userHome, LEGACY_CLI_BIN_DIRS[0]),
       support: path.join(homedir(), 'farmslot-node', 'support'),
     },
     backups: path.join(root, '.backups'),
@@ -492,7 +499,6 @@ export function resolveFarmPaths(options: ResolveFarmPathsOptions): FarmPaths {
 // A process may switch homes during a test or CLI invocation. Include the marker timestamp
 // and environment in the key so neither a migration nor a changed override leaves stale roots.
 const processPaths = new Map<string, FarmPaths>();
-const warnedOverrides = new Set<string>();
 
 export function currentFarmPaths(
   role: 'gateway',
@@ -539,13 +545,6 @@ export function currentFarmPaths(
   if (!paths) {
     paths = resolveFarmPaths({ role, env, checkoutRoot });
     processPaths.set(key, paths);
-  }
-  for (const name of paths.envOverrides) {
-    if (warnedOverrides.has(name)) continue;
-    warnedOverrides.add(name);
-    console.warn(
-      `[farm-paths] ${name} is deprecated; configure instance.json before migrating to layout 2`,
-    );
   }
   return paths;
 }

@@ -419,7 +419,12 @@ test('a closed prepare pane stops a command that ignores SIGHUP and SIGTERM at o
     // The trap's own grace is about 2s; the bound only has to sit well below
     // the command's 300s and leave room for a loaded host.
     assert.ok(
-      await waitFor(() => existsSync(sentinel), 20_000),
+      await waitFor(
+        () =>
+          existsSync(sentinel) &&
+          parsePrepareSentinel(readFileSync(sentinel, 'utf8'), nonce) !== null,
+        20_000,
+      ),
       'the trap must run without waiting for the command',
     );
     assert.equal(readFileSync(sentinel, 'utf8').trim(), `129 ${nonce}`);

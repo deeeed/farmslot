@@ -1,0 +1,1 @@
+- Migration preserves references in farm-owned configuration and recovery documents, including native profiles, backlog specs, review workspaces and retained sidecars. It discovers historical media from availability records and refuses staged archive entries when merging into an existing destination. Evidence, payloads and nested manifests retain their bytes.

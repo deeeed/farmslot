@@ -402,3 +402,22 @@ test('a fixture check whose node drops renders without a selection instead of fa
   };
   assert.equal(await fixtureCheckVars(remoteVars(), projectVars, 5_000, dropped), undefined);
 });
+
+test('gateway source drift refuses a collected bundle before selection or publication', async () => {
+  const collected = await collectNodeSupportBundle(
+    'ensure-test',
+    nodeSupportBundlePaths('ensure-test', {}),
+  );
+  const installer = collected.files.find(
+    (file) => file.relativePath === 'scripts/install-runner-observability.mjs',
+  );
+  assert(installer);
+  installer.contentBase64 = Buffer.from('stale installer').toString('base64');
+  const { io, rec } = fakeIo({ remoteManifestHash: 'a'.repeat(64) });
+  await assert.rejects(
+    ensureNodeSupportBundle(remoteVars(), '.agent', { projectVars, io, collected }),
+    /RUNNER_OBSERVABILITY_BUNDLE_MISMATCH.*Restart the gateway/,
+  );
+  assert.deepEqual(rec.execs, []);
+  assert.deepEqual(rec.written, []);
+});

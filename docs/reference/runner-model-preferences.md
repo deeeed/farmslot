@@ -138,3 +138,32 @@ preserved. The terminal and native adapters use `resolveCodexReasoningEffort` fr
 `@farmslot/protocol` to validate the resolved model's supported levels. Native
 refusals close the owned process before any turn is sent. Retained sessions keep
 their previously recorded effort.
+
+## Runner observability identity
+
+Under [ADR-035](../adr/035-node-support-bundles.md), a terminal worker's installer
+and its dependency closure MUST match the gateway deployment by content, relative
+path and mode. The code preflight checks the selected immutable support bundle or
+the verified service deployment for a source-bound project, before task-source
+legacy handling. Missing or changed bytes refuse with
+`RUNNER_OBSERVABILITY_BUNDLE_MISMATCH`; they cannot become an unverified pass.
+
+The launch adapter repeats that check at the installer boundary. It computes the
+gateway identity once, asynchronously at startup. The execution node reads a fixed
+file list in one process. The installer receives those verified bytes directly;
+it does not rescan them. The existing node-support manifest hash format is unchanged.
+
+Pi MUST NOT fall back from a missing selection to a global node installer. Its
+existing required-install boundary remains fatal. The private `install.json`
+records `bundleHash`; every Pi launch checks that identity and the actual copied
+extension/provider bytes and modes before starting the runner. Source identity
+errors remain fatal through other runners' optional hook wrappers too.
+
+### Public surface
+
+No public package, RPC, model admission or provider capability changes. Private
+consumers are gateway worker preflight, the shared launch adapter and
+`installRunnerObservability` in the installer. Existing scripted command support
+uses the generalized private `supportDir` launch option. Native RPC observation
+retains its existing source contract. Harnesses inherit these checks through
+normal prepare and dispatch, with no new flag or configuration.

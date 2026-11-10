@@ -513,6 +513,10 @@ function unquotedHistoryHazards(command: string): { indexes: number[]; balanced:
   let inSingle = false;
   for (let i = 0; i < command.length; i++) {
     const ch = command[i];
+    if (!inSingle && ch === '\\') {
+      i++;
+      continue;
+    }
     if (ch === "'") {
       inSingle = !inSingle;
       continue;
@@ -528,6 +532,10 @@ test('the scanner catches an unquoted history-expansion hazard', () => {
   const raw = `case "$h" in ''|*[!0-9a-f]*) ;; *) ok ;; esac`;
   assert.equal(unquotedHistoryHazards(raw).indexes.length, 1);
   assert.equal(unquotedHistoryHazards("bash -lc 'echo hi'").indexes.length, 0);
+  assert.deepEqual(unquotedHistoryHazards(String.raw`bash -lc 'echo can'\''t!'`), {
+    indexes: [],
+    balanced: true,
+  });
 });
 
 test('the operator reopen command is one bash -lc invocation with no unquoted !', () => {

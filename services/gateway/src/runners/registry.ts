@@ -211,6 +211,8 @@ export interface NativeRunnerChoices {
 }
 
 export interface RunnerDefinition {
+  /** Tmux launches install and verify the copied runner observability bundle. */
+  usesObservabilityBundle?: boolean;
   /** Stop only structured, slot-isolated managed processes after the workers are stopped. */
   cleanupSlotRuntime?: (
     vars: SlotVars,
@@ -388,6 +390,7 @@ const CLAUDE_MODEL_PREFIXES = /^(claude|opus|sonnet|haiku|fable)\b/i;
 
 export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   claude: {
+    usesObservabilityBundle: true,
     supportsInitialPromptArg: true,
     id: 'claude',
     nativeTransport: 'claude-stream-json',
@@ -436,6 +439,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     mobileKeyProfile: RUNNER_MOBILE_KEY_PROFILES.claude,
   },
   codex: {
+    usesObservabilityBundle: true,
     id: 'codex',
     cleanupSlotRuntime: async (vars, options) =>
       (await import('./codex-daemon.js')).cleanupCodexSlotRuntime(vars, options),
@@ -499,6 +503,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     mobileKeyProfile: RUNNER_MOBILE_KEY_PROFILES.codex,
   },
   cursor: {
+    usesObservabilityBundle: true,
     id: 'cursor',
     modelCatalog: {
       command: 'cursor-agent',
@@ -568,6 +573,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     mobileKeyProfile: RUNNER_MOBILE_KEY_PROFILES.cursor,
   },
   grok: {
+    usesObservabilityBundle: true,
     id: 'grok',
     nativeTransport: 'grok-acp',
     supportsNativeTaskReuse: true,
@@ -617,6 +623,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     mobileKeyProfile: RUNNER_MOBILE_KEY_PROFILES.grok,
   },
   pi: {
+    usesObservabilityBundle: true,
     id: 'pi',
     nativeTransport: 'pi-rpc',
     supportsNativeTaskReuse: true,

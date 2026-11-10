@@ -14,6 +14,7 @@ import {
   DEFAULT_BRANCH,
   EXECUTION_CHECKLIST_DOCUMENT,
   type ExecutionTemplateReference,
+  normalizeAcceptanceCriteria,
   type RequiredSkillSet,
   type TemplateProvenance,
   type WorkerTerminalContractDocument,
@@ -129,29 +130,7 @@ const TASK_BLOCK_KEYS: ReadonlyArray<{ key: string; required?: boolean; label?: 
   { key: 'ADB_SERIAL' },
 ];
 
-/**
- * Acceptance criteria arrive as plain strings, but ticket adapters keep the
- * author's list markers. Strip them and drop empty entries, so one input entry
- * is one criterion — the position that gives it its `AC-<N>` ledger id (ADR-060)
- * and its bullet in TASK.md. Continuation lines stay with their criterion.
- */
-export function normalizeAcceptanceCriteria(items: ReadonlyArray<string>): string[] {
-  return items
-    .map((item) =>
-      item
-        .split('\n')
-        .map((line) =>
-          line
-            .trim()
-            .replace(/^[-*]\s+/, '')
-            .replace(/^\[(?: |x|X)\]\s*/, '')
-            .trim(),
-        )
-        .filter(Boolean)
-        .join('\n'),
-    )
-    .filter(Boolean);
-}
+export { normalizeAcceptanceCriteria } from '@farmslot/protocol';
 
 /**
  * The acceptance criteria as TASK.md renders them: one bullet per criterion, so

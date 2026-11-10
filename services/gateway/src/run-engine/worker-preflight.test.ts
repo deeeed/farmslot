@@ -211,3 +211,43 @@ test('each probe receives its measured budget without a total ten-second cutoff'
   assert.deepEqual(budgets, [12_000, 16_000, 41_000]);
   assert.deepEqual(f.waits, []);
 });
+
+for (const failure of ['exception', 'deadline'] as const) {
+  test(`required source observation refuses after retrying ${failure}`, async () => {
+    const f = fixture();
+    let attempts = 0;
+    const probe: LaunchProbe = {
+      name: 'code',
+      requireVerified: true,
+      inspect: async () => {
+        attempts++;
+        if (failure === 'exception') throw new Error('runtime helper unavailable');
+        return new Promise(() => {});
+      },
+    };
+    await assert.rejects(runLaunchPreflight([probe], f.options), LaunchPreflightRefusal);
+    assert.equal(attempts, 2);
+    assert.deepEqual(f.waits, [5609]);
+    assert.equal(f.records.at(-1)?.result.status, 'unverified');
+  });
+}
+
+test('a required source observation recovers from one transport failure', async () => {
+  const f = fixture();
+  let attempts = 0;
+  await runLaunchPreflight(
+    [
+      {
+        name: 'code',
+        requireVerified: true,
+        inspect: async () => {
+          if (++attempts === 1) throw new Error('temporary transport failure');
+          return { status: 'verified', detail: 'bundle identity observed' };
+        },
+      },
+    ],
+    f.options,
+  );
+  assert.equal(attempts, 2);
+  assert.equal(f.records.at(-1)?.result.status, 'verified');
+});

@@ -15,6 +15,13 @@ import {
 import { trustGrokFolders } from '../packages/agent-runtime/scripts/workspace-trust.cjs';
 
 import { expandTilde, resolveProviderAccountForSlot } from './lib/provider-accounts.mjs';
+import {
+  RUNNER_OBSERVABILITY_COPY_FILES,
+  RUNNER_OBSERVABILITY_COPY_PATHS,
+  RUNNER_OBSERVABILITY_SOURCE_FILES,
+  supportHash,
+  verifySupportBundle,
+} from './lib/runner-observability-bundle.mjs';
 import { runnerRuntimeDir } from './lib/runner-runtime.cjs';
 import { deriveLastToolProgressAt } from './runners/hook-progress.mjs';
 
@@ -1185,13 +1192,9 @@ function removeCompatObservabilityLink(repoPath, runtimeDir = '.agent') {
     fs.unlinkSync(compatObsDir);
 }
 
-const PI_OBSERVABILITY_FILES = [
-  'hook-progress.mjs',
-  'pi-farmslot-observability.ts',
-  'pi-farmslot-hook-writer.mjs',
-  'pi-farmslot-providers.mjs',
-  'pi-farmslot-task.mjs',
-];
+const PI_OBSERVABILITY_FILES = RUNNER_OBSERVABILITY_COPY_PATHS.map((relative) =>
+  path.basename(relative),
+);
 
 function ensureObservabilityBin(obsDir) {
   fs.mkdirSync(obsDir, { recursive: true });
@@ -1377,20 +1380,27 @@ function seedPiXaiFromGrokCli() {
   }
 }
 
-function installPi({ repo, runtimeDir, slotId }) {
+async function installPi({ repo, runtimeDir, slotId, bundleFiles, bundleHash }) {
   if (!repo) throw new Error('missing --repo');
   const repoPath = path.resolve(repo);
   const obsDir = path.join(runnerRuntimeDir(repoPath, runtimeDir), '.observability');
-  const binDir = ensureObservabilityBin(obsDir);
-  const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'runners');
-  for (const name of PI_OBSERVABILITY_FILES) {
-    const source = path.join(srcDir, name);
-    if (!fs.existsSync(source)) throw new Error(`missing PI observability file: ${source}`);
-    fs.copyFileSync(source, path.join(binDir, name));
+  ensureObservabilityBin(obsDir);
+  const copied = bundleFiles.filter((file) =>
+    RUNNER_OBSERVABILITY_COPY_PATHS.includes(file.relativePath),
+  );
+  for (const file of copied) {
+    const entry = RUNNER_OBSERVABILITY_COPY_FILES.find(
+      (entry) => entry.relativePath === file.relativePath,
+    );
+    const destination = path.join(obsDir, entry.sourcePath);
+    fs.writeFileSync(destination, Buffer.from(file.contentBase64, 'base64'));
+    fs.chmodSync(destination, file.mode);
   }
+  await verifySupportBundle(obsDir, supportHash(copied), RUNNER_OBSERVABILITY_COPY_FILES);
   const xaiSeed = seedPiXaiFromGrokCli();
   writeObservabilityInstallManifest(obsDir, {
     runner: 'pi',
+    bundleHash,
     slotId: slotId || null,
     events: ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop'],
     xaiSeed: xaiSeed.seeded ? 'grok-cli' : xaiSeed.reason,
@@ -1471,18 +1481,44 @@ function relocateRunnerState(repo, runtimeDir = '.agent') {
 async function install(args) {
   args = { ...args, repo: expandTilde(args.repo), runtimeDir: expandTilde(args.runtimeDir) };
   const runner = args.runner || 'claude';
+  if (runner === 'pi' && !args.bundleFiles) {
+    const bundle = await verifySupportBundle(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
+      undefined,
+      RUNNER_OBSERVABILITY_SOURCE_FILES,
+    );
+    args.bundleFiles = bundle.files;
+    args.bundleHash = bundle.hash;
+  }
+
   if (['claude', 'codex', 'pi'].includes(runner)) relocateRunnerState(args.repo, args.runtimeDir);
   if (runner === 'claude') installClaude(args);
   else if (runner === 'codex') await installCodex(args);
   else if (runner === 'grok') installGrok(args);
   else if (runner === 'cursor') installCursor();
-  else if (runner === 'pi') installPi(args);
+  else if (runner === 'pi') await installPi(args);
   else throw new Error(`unsupported runner for observability install: ${runner}`);
 }
 
-try {
-  await install(parseArgs(process.argv.slice(2)));
-} catch (error) {
-  console.error(`[farmslot-observability] install failed: ${error?.message || String(error)}`);
-  process.exitCode = 1;
+/** Internal consumer: the gateway verifies source once, then installs those exact cached bytes. */
+export async function installRunnerObservability(argv, verifiedBundle) {
+  await install({
+    ...parseArgs(argv),
+    ...(verifiedBundle
+      ? { bundleFiles: verifiedBundle.files, bundleHash: verifiedBundle.hash }
+      : {}),
+  });
+}
+
+if (
+  process.argv[1] &&
+  fs.existsSync(process.argv[1]) &&
+  fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  try {
+    await installRunnerObservability(process.argv.slice(2));
+  } catch (error) {
+    console.error(`[farmslot-observability] install failed: ${error?.message || String(error)}`);
+    process.exitCode = error?.code === 'RUNNER_OBSERVABILITY_BUNDLE_MISMATCH' ? 78 : 1;
+  }
 }

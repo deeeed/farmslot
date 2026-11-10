@@ -57,9 +57,7 @@ if (config && Number(process.env.FARMSLOT_NATIVE_SETTLEMENT_PID) === process.pid
         command.includes("--runner 'codex'") &&
         command.includes('--runtime-dir')
       ) {
-        const installer = command.match(
-          /farmslot-node\/support\/([a-f0-9]{64})\/scripts\/install-runner-observability\.mjs/,
-        );
+        const installer = command.match(/farmslot-node\/support\/([a-f0-9]{64})['\"]?\s+--runner/);
         fs.appendFileSync(
           `${config}.installers`,
           JSON.stringify({ supportHash: installer?.[1] ?? null }) + '\n',

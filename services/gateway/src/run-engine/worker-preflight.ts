@@ -5,6 +5,8 @@ export type LaunchProbeName = 'code' | 'toolchain' | 'leftovers';
 export interface LaunchProbeResult {
   status: 'verified' | 'mismatch' | 'unverified';
   detail: string;
+  /** A required identity was observed even when an independent legacy receipt is unverified. */
+  requiredFactsVerified?: true;
   /** A stable absent declaration or receipt cannot be recovered by retrying the read. */
   retry?: false;
 }
@@ -23,6 +25,8 @@ export const LAUNCH_PROBE_TIMING: Readonly<Record<LaunchProbeName, LaunchProbeTi
 
 export interface LaunchProbe {
   name: LaunchProbeName;
+  /** Required facts must be observed after the existing bounded retry. */
+  requireVerified?: boolean;
   inspect(signal: AbortSignal, budgetMs: number): Promise<LaunchProbeResult>;
 }
 
@@ -109,7 +113,11 @@ export async function runLaunchPreflight(
       await options.assertCurrent();
     }
     options.record(probe.name, result, attempts, now() - started);
-    if (result.status === 'mismatch') throw new LaunchPreflightRefusal(probe.name, result.detail);
+    if (
+      result.status === 'mismatch' ||
+      (probe.requireVerified && result.status !== 'verified' && !result.requiredFactsVerified)
+    )
+      throw new LaunchPreflightRefusal(probe.name, result.detail);
   }
   await options.assertCurrent();
 }

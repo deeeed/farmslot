@@ -8,6 +8,7 @@ import {
   type PRCompletionIntakeIdentity,
   registeredAcceptanceCriteria,
   type Run,
+  ticketCriteriaAsRegistered,
 } from '@farmslot/protocol';
 
 import { ghRequest } from '../integrations/github-client.js';
@@ -53,10 +54,12 @@ async function originalPRCompletionAcceptance(
       );
     if (parent.ticketData && Array.isArray(parent.ticketData.acceptanceCriteria))
       return {
-        criteria: registeredAcceptanceCriteria(
-          parent.ticketData.acceptanceCriteria,
-          parent.acceptanceRegistration,
-        ),
+        criteria: parent.acceptanceRegistration
+          ? ticketCriteriaAsRegistered(
+              parent.ticketData.acceptanceCriteria,
+              parent.acceptanceRegistration,
+            )
+          : registeredAcceptanceCriteria(parent.ticketData.acceptanceCriteria),
         fromRunId: parent.id,
       };
     if (parent.ticketData)

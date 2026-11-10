@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
@@ -28,7 +30,7 @@ import {
   makeRun,
 } from '../run-engine/test-fixtures.js';
 import { runnerPromptDigest } from '../runners/observability-prompt-digest.js';
-import { createRun, getRun } from '../runs/store.js';
+import { createRun, getRun, updateRun } from '../runs/store.js';
 
 import { parseReviewIssueBullets } from './issues.js';
 import {
@@ -50,6 +52,12 @@ import {
 } from './orchestrator.js';
 import type { ReReviewContinuation, ReviewAgentResult } from './review-agent.js';
 import { admitReviewRound, settleReviewRoundNoVerdict } from './review-round-budget.js';
+import {
+  fingerprintReviewedInputs,
+  noteReviewInputsAtLaunch,
+  readReviewedInputs,
+} from './reviewed-inputs.js';
+import { slotWithTask } from './reviewed-inputs.test-support.js';
 import { UncommittedReviewFixError } from './uncommitted-fix-error.js';
 
 test('deferred handoffs name a missing prior-task receipt instead of claiming worker activity', async (t) => {
@@ -1984,8 +1992,20 @@ test('runReviewRetryLoop: an empty completed fix re-reviews a head changed since
     fixDeltaFiles: 0,
     fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
   });
-  deps.getRun = () => makeRun({ engineState: { reviewInputsAtLaunch: 'unchanged' } });
-  deps.readFixedInputs = async () => ({ fingerprint: 'unchanged', legacyFingerprint: 'unchanged' });
+  const unchanged = fingerprintReviewedInputs(
+    `base-head\n${baseArgs.taskDir}/artifacts/pr-description.md unchanged\n`,
+    baseArgs.taskDir,
+  );
+  deps.getRun = () =>
+    makeRun({
+      engineState: {
+        reviewInputsAtLaunch: unchanged.fingerprint,
+        reviewFullInputsAtLaunch: unchanged.fixFingerprint,
+        reviewFixAttempt: 1,
+        reviewFixInputsAtLaunch: { attempt: 1, fingerprint: unchanged.fixFingerprint },
+      },
+    });
+  deps.readFixedInputs = async () => unchanged;
   deps.captureHeadSha = async () => fixedHead;
   const reviewAgent = deps.runReviewAgent;
   deps.runReviewAgent = async (...args) => ({
@@ -2028,6 +2048,160 @@ test('runReviewRetryLoop: an empty completed fix re-reviews a head changed since
   assert.equal(gateReview.unresolvedCount, 0);
 });
 
+for (const artifact of ['pr-description.md', 'report.md']) {
+  test(`runReviewRetryLoop: a ${artifact}-only completed fix gets a loop-2 re-review`, async () => {
+    const taskDir = baseArgs.taskDir;
+    const listing = (description: string) =>
+      `base-head\n${taskDir}/artifacts/${artifact} ${description}\n${taskDir}/artifacts/evidence-manifest.json evidence-hash\n`;
+    const before = fingerprintReviewedInputs(listing('unsupported-test-count'), taskDir);
+    const after = fingerprintReviewedInputs(listing('corrected-test-count'), taskDir);
+    assert.equal(
+      before.fingerprint,
+      after.fingerprint,
+      'passing approval ignores review text artifacts',
+    );
+    assert.notEqual(before.fixFingerprint, after.fixFingerprint);
+    const issues: ReviewIssue[] = [
+      { file: `artifacts/${artifact}`, line: 1, description: 'Unsupported test-count claim' },
+    ];
+    const { deps, calls } = buildDeps({
+      reviewVerdicts: ['pass'],
+      fixDeltaFiles: 0,
+      sourceLinesChanged: 0,
+      fixSignals: [
+        {
+          status: 'complete',
+          outcome: 'success',
+          disposition: 'fixed',
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    });
+    deps.getRun = () =>
+      makeRun({
+        engineState: {
+          reviewInputsAtLaunch: before.fingerprint,
+          reviewFullInputsAtLaunch: before.fixFingerprint,
+          reviewFixAttempt: 1,
+          reviewFixInputsAtLaunch: { attempt: 1, fingerprint: before.fixFingerprint },
+        },
+      });
+    deps.readFixedInputs = async () => after;
+    const result = await runReviewRetryLoop({
+      ...baseArgs,
+      maxRetries: 2,
+      retryCount: 0,
+      deps,
+      reviewResult: {
+        verdict: 'issues',
+        issues,
+        reviewSnapshot: {
+          source: 'local-git',
+          baseSha: 'main-base',
+          headSha: 'base-head',
+          capturedAt: new Date().toISOString(),
+        },
+      },
+    });
+    assert.equal(calls.reviewAgent, 1);
+    assert.equal(result.verdict, 'pass');
+    assert.deepEqual(result.issues, []);
+    assert.equal(result.retryCount, 1);
+    assert.equal(calls.sendFeedback, 1);
+    assert.equal(result.attempts?.at(-1)?.loopNumber, 2);
+  });
+}
+
+for (const [scenario, label] of [
+  ['restored', 're-reviews an edit during review restored by the fix'],
+  ['corrected', 're-reviews a correction during review followed by a no-op fix'],
+  ['noop', 'stops a true no-op with no edits anywhere at the gate'],
+  ['legacy', 're-reviews when the full review-launch fingerprint is missing'],
+] as const) {
+  test(`runReviewRetryLoop: production fix launch ${label}`, async (t) => {
+    const rereview = scenario !== 'noop';
+    const { run, artifacts } = await slotWithTask(t);
+    const description = path.join(artifacts, 'pr-description.md');
+    if (scenario === 'corrected') await writeFile(description, 'All 999 tests passed\n');
+    const original = await readFile(description, 'utf8');
+    await noteReviewInputsAtLaunch(run.id);
+    const reviewLaunch = await readReviewedInputs(getRun(run.id)!);
+    assert.ok(reviewLaunch);
+    if (scenario === 'restored') {
+      // The reviewer flags an intervening edit that the fix then restores.
+      await writeFile(description, 'All 999 tests passed\n');
+    } else if (scenario === 'corrected') {
+      // The reviewer read the original claim before the operator corrected it.
+      await writeFile(description, 'Corrected test-count claim\n');
+    } else if (scenario === 'legacy') {
+      // Older runs have approval inputs, but no full review-launch identity.
+      updateRun(run.id, {
+        engineState: { ...getRun(run.id)!.engineState, reviewFullInputsAtLaunch: undefined },
+      });
+    }
+    const fixLaunch = await readReviewedInputs(getRun(run.id)!);
+    assert.ok(fixLaunch);
+    const { deps, calls } = buildDeps({
+      reviewVerdicts: ['pass'],
+      fixDeltaFiles: 0,
+      sourceLinesChanged: 0,
+      fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+    });
+    deps.getRun = getRun;
+    deps.readFixedInputs = readReviewedInputs;
+    const send = deps.sendFeedbackToWorker;
+    deps.sendFeedbackToWorker = async (...args) => {
+      // The transport creates the fix context for the handoff whose inputs were just captured.
+      updateRun(run.id, {
+        agentContexts: [
+          {
+            id: 'review-fix',
+            role: 'review-fix',
+            label: 'Fix',
+            status: 'complete',
+            runId: run.id,
+            slotId: getRun(run.id)!.slotId,
+            reviewFixAttempt: getRun(run.id)!.engineState?.reviewFixAttempt,
+          },
+        ],
+      });
+      if (scenario === 'restored') await writeFile(description, original);
+      return send(...args);
+    };
+    const result = await runReviewRetryLoop({
+      ...baseArgs,
+      runId: run.id,
+      maxRetries: 2,
+      retryCount: 0,
+      deps,
+      reviewResult: {
+        verdict: 'issues',
+        issues: [
+          {
+            file: 'artifacts/pr-description.md',
+            line: 1,
+            description: 'Unsupported test-count claim',
+          },
+        ],
+        reviewSnapshot: {
+          source: 'local-git',
+          headSha: 'base-head',
+          capturedAt: new Date().toISOString(),
+        },
+      },
+    });
+    assert.equal(calls.reviewAgent, rereview ? 1 : 0);
+    assert.equal(result.verdict, rereview ? 'pass' : 'issues');
+    if (rereview) assert.equal(result.attempts?.at(-1)?.loopNumber, 2);
+    const state = getRun(run.id)!.engineState!;
+    assert.deepEqual(state.reviewFixInputsAtLaunch, {
+      attempt: state.reviewFixAttempt,
+      fingerprint: fixLaunch.fixFingerprint,
+    });
+    assert.equal(state.reviewInputsAtLaunch, reviewLaunch.fingerprint);
+  });
+}
+
 test('runReviewRetryLoop: an empty completed fix returns unchanged findings to the gate', async () => {
   const { deps, calls } = buildDeps({
     reviewVerdicts: ['issues', 'issues', 'issues'],
@@ -2037,8 +2211,32 @@ test('runReviewRetryLoop: an empty completed fix returns unchanged findings to t
       timestamp: new Date().toISOString(),
     })),
   });
-  deps.getRun = () => makeRun({ engineState: { reviewInputsAtLaunch: 'unchanged' } });
-  deps.readFixedInputs = async () => ({ fingerprint: 'unchanged', legacyFingerprint: 'unchanged' });
+  const unchanged = fingerprintReviewedInputs(
+    `base-head\n${baseArgs.taskDir}/artifacts/pr-description.md unchanged\n`,
+    baseArgs.taskDir,
+  );
+  deps.getRun = () => ({
+    ...makeRun({
+      engineState: {
+        reviewInputsAtLaunch: unchanged.fingerprint,
+        reviewFullInputsAtLaunch: unchanged.fixFingerprint,
+        reviewFixAttempt: 1,
+        reviewFixInputsAtLaunch: { attempt: 1, fingerprint: unchanged.fixFingerprint },
+      },
+    }),
+    agentContexts: [
+      {
+        id: 'review-fix',
+        role: 'review-fix',
+        label: 'Fix',
+        status: 'complete',
+        runId: baseArgs.runId,
+        slotId: baseArgs.slotId,
+        reviewFixAttempt: 1,
+      },
+    ],
+  });
+  deps.readFixedInputs = async () => unchanged;
   const result = await runReviewRetryLoop({
     ...baseArgs,
     maxRetries: 3,
@@ -2075,7 +2273,7 @@ test('runReviewRetryLoop: an empty completed fix returns unchanged findings to t
   assert.equal(pendingReviewContinuation([gateReview]), undefined);
 });
 
-for (const missing of ['baseline', 'probe'] as const) {
+for (const missing of ['baseline', 'full baseline', 'probe'] as const) {
   test(`runReviewRetryLoop: an empty source delta with missing ${missing} still gets reviewed`, async () => {
     const { deps, calls } = buildDeps({
       reviewVerdicts: ['pass'],
@@ -2084,8 +2282,11 @@ for (const missing of ['baseline', 'probe'] as const) {
       fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
     });
     deps.getRun = () =>
-      makeRun({ engineState: missing === 'probe' ? { reviewInputsAtLaunch: 'before' } : {} });
-    deps.readFixedInputs = async () => null;
+      makeRun({ engineState: missing === 'baseline' ? {} : { reviewInputsAtLaunch: 'before' } });
+    deps.readFixedInputs = async () =>
+      missing === 'probe'
+        ? null
+        : { fingerprint: 'before', legacyFingerprint: 'before-full', fixFingerprint: 'before-fix' };
     const result = await runReviewRetryLoop({
       ...baseArgs,
       maxRetries: 1,
@@ -2238,7 +2439,11 @@ test('runReviewRetryLoop: changed evidence at the same head is accepted and reco
   });
   const run = makeRun({ engineState: { reviewInputsAtLaunch: 'before' } });
   deps.getRun = () => run;
-  deps.readFixedInputs = async () => ({ fingerprint: 'after', legacyFingerprint: 'after' });
+  deps.readFixedInputs = async () => ({
+    fingerprint: 'after',
+    legacyFingerprint: 'after',
+    fixFingerprint: 'after-fix',
+  });
   deps.noteFixedInputs = async () => {
     run.engineState = { ...run.engineState, reviewInputsAtLaunch: 'after' };
   };

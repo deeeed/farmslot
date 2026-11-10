@@ -5,6 +5,7 @@ import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { parse } from 'shell-quote';
 import { WebSocket, WebSocketServer } from 'ws';
 
 import { resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
@@ -218,10 +219,7 @@ for (const ipHost of [false, true])
       ),
     );
     const install = buildRunnerObservabilityInstallCommand(local, 'codex', '/repo');
-    assert.ok(
-      install.startsWith(`node '${checkout}/scripts/install-runner-observability.mjs'`),
-      install,
-    );
+    assert.deepEqual(parse(install).slice(4, 7), [checkout, '--runner', 'codex']);
   });
 
 test('IP host on gateway machine uses checkout for both helpers without a node report', (t) => {
@@ -244,9 +242,6 @@ test('IP host on gateway machine uses checkout for both helpers without a node r
       `${checkout}/scripts/provider-account-cli.mjs`,
     ),
   );
-  assert.ok(
-    buildRunnerObservabilityInstallCommand(local, 'codex', '/repo').startsWith(
-      `node '${checkout}/scripts/install-runner-observability.mjs'`,
-    ),
-  );
+  const install = buildRunnerObservabilityInstallCommand(local, 'codex', '/repo');
+  assert.deepEqual(parse(install).slice(4, 7), [checkout, '--runner', 'codex']);
 });

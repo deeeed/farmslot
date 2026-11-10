@@ -26,7 +26,6 @@ import {
   type ReadyGatePrPackage,
   reasonWithoutRemedy,
   RecordedEvidenceReadError,
-  registeredAcceptanceCriteria,
   reviewFindingIsSettled,
   type ReviewStatus,
   type Run,
@@ -34,6 +33,7 @@ import {
   type RunGatePrerequisiteReason,
   type RunGateReadiness,
   runOutputReviewEnabled,
+  ticketCriteriaAsRegistered,
 } from '@farmslot/protocol';
 import { reviewFindingEntries, reviewFixInProgress } from '@farmslot/review-dispatch';
 
@@ -162,7 +162,7 @@ export async function readGateAcceptance(run: Run): Promise<GateAcceptanceRead> 
   // A scripted command run has no worker to record verdicts; its command result is its
   // whole proof (ADR-043 Amendment 2), so it carries no acceptance obligation.
   if (isArtifactOnlyScriptedCommandRun(run)) return { criteria: [], ledger: null, issues: [] };
-  const expected = registeredAcceptanceCriteria(
+  const expected = ticketCriteriaAsRegistered(
     run.ticketData?.acceptanceCriteria ?? [],
     run.acceptanceRegistration,
   );

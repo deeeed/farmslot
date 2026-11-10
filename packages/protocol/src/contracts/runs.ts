@@ -3256,6 +3256,12 @@ export interface RunEngineState {
   reviewedInputs?: { fingerprint: string; recordedAt: string; rerunFor?: string };
   /** The same fingerprint, taken when the latest review document was written. */
   reviewInputsAtLaunch?: string;
+  /** Full inputs at the latest review launch, including description and report, for empty-fix detection. */
+  reviewFullInputsAtLaunch?: string;
+  /** Monotonic fix handoff number; recovery retains it, a new handoff increments it. */
+  reviewFixAttempt?: number;
+  /** Full input listing immediately before this fix attempt, used only to detect empty fixes. */
+  reviewFixInputsAtLaunch?: { attempt: number; fingerprint: string };
   /** The exact review-mode obligations included in the generated request. */
   /** Persisted before branch mutations. A matching false value proves an early
    * prepare failure never reached branch setup; absent historical state is unknown. */

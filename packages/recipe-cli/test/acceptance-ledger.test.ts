@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { buildHandoffMetadata, builtinTerminalContract } from '@farmslot/agent-runtime';
 import {
   RECIPE_ACTION_MANIFEST_SCHEMA_URL,
   type RecipeActionManifestDocument,
@@ -23,6 +24,7 @@ import {
 import {
   acceptanceIdForProofTarget,
   recordRecipeAcceptance,
+  registeredTaskClaims,
 } from '../src/harness/acceptance-ledger.js';
 
 const require = createRequire(import.meta.url);
@@ -74,15 +76,27 @@ const manifest: RecipeActionManifestDocument = {
   },
 };
 
-async function execute(t: test.TestContext, expected = 'one') {
+async function execute(
+  t: test.TestContext,
+  expected = 'one',
+  rawCriteria = criteria,
+  recipeCriteria = criteria,
+) {
   const target = fs.mkdtempSync(path.join(os.tmpdir(), 'claim-task-'));
   t.after(() => fs.rmSync(target, { recursive: true, force: true }));
   const taskDir = path.join(target, 'task');
   fs.mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
-  fs.writeFileSync(
-    path.join(taskDir, 'inputs/handoff.json'),
-    JSON.stringify({ task: { acceptanceCriteria: criteria } }),
-  );
+  const handoff = buildHandoffMetadata({
+    attemptId: 'marker-run',
+    surface: 'test',
+    project: 'example',
+    flow: 'dev',
+    title: 'Marker example',
+    sourceKind: 'text',
+    acceptanceCriteria: rawCriteria,
+    terminalContract: builtinTerminalContract('dev'),
+  });
+  fs.writeFileSync(path.join(taskDir, 'inputs/handoff.json'), JSON.stringify(handoff));
   const runner = createRecipeRunner({
     actionManifest: manifest,
     adapters: createStandardCoreAdapters({ actions: ['command', 'assert_output', 'end'] }),
@@ -91,10 +105,10 @@ async function execute(t: test.TestContext, expected = 'one') {
   const result = await runner.run({
     projectRoot: target,
     artifactsDir: path.join(taskDir, 'artifacts/recipe'),
-    claims: criteria.map((claim, index) => ({ id: `AC-${index + 1}`, claim })),
+    claims: registeredTaskClaims(taskDir),
     recipeDocument: {
       $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-      proofTargets: [{ id: 'AC1', claim: criteria[0], proofMode: 'state' }],
+      proofTargets: [{ id: 'AC1', claim: recipeCriteria[0], proofMode: 'state' }],
       workflow: {
         entry: 'observe',
         nodes: {
@@ -525,4 +539,106 @@ test('an absent engine package fails clearly rather than deriving action success
   );
   assert.equal(acceptanceIdForProofTarget('ac1'), 'AC-1');
   assert.equal(acceptanceIdForProofTarget('case-one'), null);
+});
+
+test('task init handoff bytes remain compatible with an existing marker recipe', async (t) => {
+  const run = await execute(t, 'one', ['- - Keep one marker'], ['- Keep one marker']);
+  assert.deepEqual(registeredTaskClaims(run.taskDir), [{ id: 'AC-1', claim: '- Keep one marker' }]);
+  assert.equal(run.result.claims.criteria[0]?.text, '- Keep one marker');
+  assert.equal(run.result.claims.criteria[0]?.verdict, 'proven');
+});
+
+test('retained standalone claims with reversed derived checkbox defaults cannot transfer', async (t) => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'checkbox-task-'));
+  t.after(() => fs.rmSync(target, { recursive: true, force: true }));
+  const taskDir = path.join(target, 'task');
+  fs.mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
+  const text = 'Default selection:\n- [x] Active\n- [ ] Archived';
+  const reversed = 'Default selection:\n- [ ] Active\n- [x] Archived';
+  fs.writeFileSync(
+    path.join(taskDir, 'inputs/handoff.json'),
+    JSON.stringify({
+      attemptId: 'checkbox-run',
+      task: { acceptanceCriteria: ['Original'] },
+    }),
+  );
+  fs.writeFileSync(
+    path.join(taskDir, 'inputs/acceptance-registration.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      registration: {
+        schemaVersion: 1,
+        runId: 'checkbox-run',
+        revision: 1,
+        original: [{ id: 'AC-1', text: 'Original' }],
+        units: [],
+        derived: [
+          {
+            id: 'AC-2',
+            text,
+            proofMode: 'state',
+            source: {
+              kind: 'instruction',
+              sourceId: 'message:1',
+              sourceVersion: 'v1',
+              obligationIndex: 0,
+            },
+          },
+        ],
+      },
+    }),
+  );
+  const runner = createRecipeRunner({
+    actionManifest: manifest,
+    adapters: createStandardCoreAdapters({ actions: ['command', 'assert_output', 'end'] }),
+    defaultSource: { kind: 'operator', trust: 'trusted', name: 'test' },
+  });
+  const artifactsDir = path.join(taskDir, 'artifacts/recipe-runs/reversed');
+  const result = await runner.run({
+    projectRoot: target,
+    artifactsDir,
+    claims: [
+      { id: 'AC-1', claim: 'Original' },
+      { id: 'AC-2', claim: reversed },
+    ],
+    recipeDocument: {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      proofTargets: [{ id: 'AC-2', claim: reversed, proofMode: 'state' }],
+      workflow: {
+        entry: 'observe',
+        nodes: {
+          observe: {
+            action: 'command',
+            cmd: 'printf one',
+            intent: 'Read the output.',
+            next: 'check',
+          },
+          check: {
+            action: 'assert_output',
+            source: 'observe',
+            contains: 'one',
+            proves: ['AC-2'],
+            intent: 'Check the output.',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  });
+  assert.equal(result.claims.criteria[1]?.verdict, 'proven');
+  assert.equal(
+    JSON.parse(fs.readFileSync(path.join(artifactsDir, 'summary.json'), 'utf8')).status,
+    'pass',
+  );
+  assert.deepEqual(
+    registeredTaskClaims(taskDir)?.map(({ claim }) => claim),
+    ['Original', text],
+  );
+  await assert.rejects(
+    () => attemptSelection.selectRecipeAttempt(taskDir, artifactsDir),
+    /Engine claim AC-2 does not match the registered task/,
+  );
+  assert.equal(fs.existsSync(path.join(taskDir, 'artifacts/acceptance-status.json')), false);
+  assert.equal(fs.existsSync(path.join(taskDir, 'artifacts/latest-valid-recipe-run.json')), false);
 });

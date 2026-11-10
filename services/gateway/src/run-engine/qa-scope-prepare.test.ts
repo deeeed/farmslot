@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import type { ExecResult, QaProfileSelection } from '@farmslot/protocol';
 
 import type { SlotVars } from '../core/config.js';
+import { seedRunnerObservabilityFixture } from '../node-support/support-test-fixtures.js';
 
 const executeFile = promisify(execFile);
 const root = mkdtempSync(path.join(tmpdir(), 'qa-scope-prepare-'));
@@ -32,6 +33,7 @@ for (const dir of ['scripts', 'services/gateway', 'pool', `projects/${project}`,
 writeFileSync(path.join(root, 'CLAUDE.md'), '# Disposable QA scope fixture\n');
 writeFileSync(path.join(root, 'scripts/dev.sh'), '');
 writeFileSync(path.join(root, 'services/gateway/package.json'), '{}');
+await seedRunnerObservabilityFixture(root);
 
 function git(directory: string, ...args: string[]): string {
   return execFileSync('git', ['-C', directory, '-c', 'core.hooksPath=/dev/null', ...args], {

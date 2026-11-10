@@ -6,11 +6,22 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { buildSync } from 'esbuild';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const protocolTemp = fs.mkdtempSync(path.join(os.tmpdir(), 'node-deploy-protocol-'));
+after(() => fs.rmSync(protocolTemp, { recursive: true, force: true }));
+const farmPathsModule = path.join(protocolTemp, 'farm-paths.mjs');
+buildSync({
+  entryPoints: [path.join(repo, 'packages/protocol/src/node/farm-paths.ts')],
+  outfile: farmPathsModule,
+  bundle: true,
+  platform: 'node',
+  format: 'esm',
+});
+const { legacyCliBinDirs } = await import(pathToFileURL(farmPathsModule).href);
 
 // Both the platform matrix and owner cases read generated plists on Linux CI.
 const readRenderedPlist = (file) =>
@@ -1384,6 +1395,7 @@ test('node CLI refreshes started together over a stale lock never overlap', asyn
           path.join(home, '.farmslot'),
           path.join(home, '.local/bin'),
           'legacy',
+          ...legacyCliBinDirs(home),
         ],
         {
           env: { PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: home },

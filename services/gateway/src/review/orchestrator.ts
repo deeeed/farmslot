@@ -129,6 +129,7 @@ import {
 } from './review-agent.js';
 import { reviewNoVerdictCapReason, runReviewRoundBudget } from './review-round-budget.js';
 import {
+  noteReviewFixInputsAtLaunch,
   noteReviewInputsAtLaunch,
   readReviewedInputs,
   recordReviewedInputs,
@@ -995,7 +996,20 @@ async function completeReviewFix(
   if (noSourceChanges && delta.fixHeadSha === delta.fixBaseSha && (!before || !after))
     return undefined;
   if (noSourceChanges && delta.fixHeadSha === delta.fixBaseSha && !evidenceChanged) {
-    // No changed source or reviewed inputs means these findings are unchanged by construction.
+    // Approval ignores review text artifacts, but fixes to them need a real re-review.
+    // Both review and attempt-bound fix inputs must match, including edits during review.
+    const beforeFixInputs = run?.engineState?.reviewFixInputsAtLaunch;
+    if (
+      !run ||
+      !beforeFixInputs ||
+      !run.engineState?.reviewFullInputsAtLaunch ||
+      after?.fixFingerprint !== run.engineState.reviewFullInputsAtLaunch ||
+      beforeFixInputs.attempt !== run?.engineState?.reviewFixAttempt ||
+      beforeFixInputs.attempt !==
+        selectAgentContext(run, { role: 'review-fix' })?.reviewFixAttempt ||
+      after?.fixFingerprint !== beforeFixInputs.fingerprint
+    )
+      return undefined;
     return stopReviewFixAtGate(
       result,
       attempts,
@@ -1289,6 +1303,7 @@ export async function runReviewRetryLoop({
     let fixTurnToken: string | undefined;
     let fixDeliveryDeferred = false;
     try {
+      await withNativeReviewMutation(() => noteReviewFixInputsAtLaunch(runId));
       const delivery = await deps.sendFeedbackToWorker(
         vars,
         result.issues,
@@ -3014,6 +3029,7 @@ async function sendOwnedFeedbackToWorker(
     const fixContext = await upsertAgentContext(runId, 'review-fix', {
       status: 'working',
       attemptStartedAt: fixAttemptStartedAt,
+      reviewFixAttempt: getRun(runId)?.engineState?.reviewFixAttempt,
       artifactScope: findingsArtifactScope,
       signalAttemptId: undefined,
       promptDeliveryStartedAt: undefined,
@@ -3403,10 +3419,13 @@ export async function relaunchWorkerForFix(
   const roleWindowName =
     parentRun?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(parentRun?.flowType))
       ?.target?.window ?? null;
+  const runtimeDir = await resolveProjectRuntimeDir(parentRun?.project);
+  const nodeSupport = await ensureNodeSupportBundle(vars, runtimeDir);
   const { admitWorkerLaunch } = await import('../run-engine/worker-launch-preflight.js');
   const assertPreflightCurrent = await admitWorkerLaunch({
     runId,
     vars,
+    supportDir: nodeSupport?.supportDir,
     wrapCommand: (command) => `${WORKER_ENV_PREFIX} && ${withMachineEnv(command, vars)}`,
   });
   const workerTarget = await ensureTmuxTargetReadyForRelaunch(
@@ -3446,8 +3465,6 @@ export async function relaunchWorkerForFix(
       : 'Continue working on the current TASK.md and review fix feedback.';
   // Inherit parent run's safety tier (ADR-023) so the relaunch stays on the same posture.
   const parentSafetyTier = parentRun?.safetyTier;
-  const runtimeDir = await resolveProjectRuntimeDir(parentRun?.project);
-  const nodeSupport = await ensureNodeSupportBundle(vars, runtimeDir);
   const taskDir = parentRun
     ? await resolveWorkerTaskDir(vars, parentRun.project, parentRun.taskFile)
     : null;
@@ -3458,7 +3475,7 @@ export async function relaunchWorkerForFix(
     taskDir: taskDir ?? undefined,
     taskFile: fixContext?.taskFile ?? parentRun?.activeTaskFile ?? parentRun?.taskFile ?? undefined,
     ...(await scriptedRelaunchOptions(runner, parentRun)),
-    scriptedSupportDir: nodeSupport?.supportDir,
+    supportDir: nodeSupport?.supportDir,
     modelQuestions: modelQuestionsForRun(parentRun),
   });
   // In the respawned command, so the replaced worker is gone: its signal cannot confirm this one,

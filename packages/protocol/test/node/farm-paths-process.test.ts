@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import {
   mkdirSync,
   mkdtempSync,
@@ -29,6 +30,46 @@ function fixture(t: TestContext) {
   return root;
 }
 
+test('legacy process paths keep stdout and stderr clean while reporting overrides', (t) => {
+  const root = fixture(t);
+  const moduleUrl = new URL('../../src/node/farm-paths.ts', import.meta.url).href;
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      '--input-type=module',
+      '--eval',
+      `import { currentFarmPaths } from ${JSON.stringify(moduleUrl)};
+      const paths = [currentFarmPaths('gateway'), currentFarmPaths('node')];
+      console.log(JSON.stringify(paths.map(({ role, layout, envOverrides }) => ({
+        role, layout, envOverrides: envOverrides.sort(),
+      }))));`,
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        HOME: root,
+        TMPDIR: process.env.TMPDIR,
+        FARMSLOT_HOME: path.join(root, 'home'),
+        FARMSLOT_ROOT: root,
+        FARMSLOT_POOL_DIR: path.join(root, 'pool'),
+        FARMSLOT_RUN_ARCHIVE_ROOT: path.join(root, 'archive'),
+        FARMSLOT_DIR: path.join(root, 'native'),
+      },
+    },
+  );
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  const expected = ['gateway', 'node'].map((role) => ({
+    role,
+    layout: 'legacy',
+    envOverrides: ['FARMSLOT_DIR', 'FARMSLOT_POOL_DIR', 'FARMSLOT_RUN_ARCHIVE_ROOT'],
+  }));
+  assert.equal(result.stdout, `${JSON.stringify(expected)}\n`);
+  assert.equal(result.stderr, '');
+});
+
 test('process paths cache each home and refresh when its instance marker changes', (t) => {
   const root = fixture(t);
   const envA = { FARMSLOT_HOME: path.join(root, 'a'), FARMSLOT_ROOT: root };
@@ -50,10 +91,8 @@ test('process paths cache each home and refresh when its instance marker changes
   assert.equal(currentFarmPaths('gateway', envA).layout, 'legacy');
 });
 
-test('legacy file overrides retain raw handling, warn once per variable, and layout 2 ignores them', (t) => {
+test('legacy file overrides retain raw handling and layout 2 ignores them', (t) => {
   const root = fixture(t);
-  const warnings: string[] = [];
-  t.mock.method(console, 'warn', (message: string) => warnings.push(message));
   const env = {
     FARMSLOT_HOME: path.join(root, 'home'),
     FARMSLOT_ROOT: root,
@@ -77,18 +116,10 @@ test('legacy file overrides retain raw handling, warn once per variable, and lay
   assert.deepEqual(paths.state.extraLogDirs, [path.resolve('logs'), path.resolve('other')]);
   currentFarmPaths('gateway', env);
   currentFarmPaths('node', env);
-  for (const name of paths.envOverrides)
-    assert.equal(
-      warnings.filter((message) => message.includes(`${name} is deprecated`)).length,
-      1,
-      name,
-    );
-  const count = warnings.length;
   mkdirSync(path.join(env.FARMSLOT_HOME, 'config'), { recursive: true });
   writeFileSync(path.join(env.FARMSLOT_HOME, 'config', 'instance.json'), '{"layout":2}');
   const migrated = currentFarmPaths('gateway', env);
   assert.deepEqual(migrated.envOverrides, []);
-  assert.equal(warnings.length, count);
   assert.equal(migrated.configFiles.sources, path.join(env.FARMSLOT_HOME, 'config/sources.json'));
   assert.equal(
     migrated.state.dispatchQueue,

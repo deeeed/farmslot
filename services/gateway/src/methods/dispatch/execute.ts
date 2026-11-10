@@ -1153,11 +1153,17 @@ export async function dispatchExecute(
     options.assertCurrent?.();
   };
   await runPressureGate();
+  // Refresh stale prepared selections before admission observes the bundle.
+  const nodeSupport =
+    transport === 'native'
+      ? null
+      : await ensureNodeSupportBundle(vars, projectVars?.runtimeDir ?? '.agent', { projectVars });
   if (transport !== 'native')
     assertPreflightCurrent = await admitWorkerLaunch({
       runId: params.runId,
       vars,
       projectVars,
+      supportDir: nodeSupport?.supportDir,
       assertCurrent: options.assertCurrent,
       record: step,
     });
@@ -1836,16 +1842,12 @@ export async function dispatchExecute(
     );
   }
 
-  // Launch from the bundle that matches this gateway's tree (hooks + runner installer).
-  const nodeSupport = await ensureNodeSupportBundle(vars, projectVars?.runtimeDir ?? '.agent', {
-    projectVars,
-  });
   let agentLaunch = buildLaunchCommand(vars, runner, model, taskPrompt, {
     taskFile: `${workerTaskDir}/TASK.md`,
     taskDir: workerTaskDir,
     scripted,
     scriptedCommand,
-    scriptedSupportDir: nodeSupport?.supportDir,
+    supportDir: nodeSupport?.supportDir,
     claudeUsesDispatchCmd: true,
     effort,
     safetyTier,

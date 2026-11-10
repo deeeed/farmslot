@@ -83,7 +83,7 @@ export function registerPathsCommand(program: Command): void {
               `${step.source} -> ${step.target}\t${step.bytes} bytes\t${step.method === 'rename' ? 'same-volume rename' : 'cross-volume copy + sha256 verify'}\n`,
             );
           else {
-            output.write(`write ${step.target}\n`);
+            output.write(`${step.kind === 'symlink' ? 'symlink' : 'write'} ${step.target}\n`);
             for (const entry of step.rewrites)
               output.write(`  ${entry.source} -> ${entry.target}\n`);
           }

@@ -449,10 +449,13 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
   const roleWindowName =
     run.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(run.flowType))?.target
       ?.window ?? null;
+  const runtimeDir = await resolveProjectRuntimeDir(run.project);
+  const nodeSupport = await ensureNodeSupportBundle(vars, runtimeDir);
   const { admitWorkerLaunch } = await import('../run-engine/worker-launch-preflight.js');
   const assertPreflightCurrent = await admitWorkerLaunch({
     runId,
     vars,
+    supportDir: nodeSupport?.supportDir,
     wrapCommand: (command) => `${WORKER_ENV_PREFIX} && ${withMachineEnv(command, vars)}`,
   });
   const workerTarget = await ensureTmuxTargetReadyForRelaunch(
@@ -465,16 +468,14 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
 
   const prompt = 'Continue working on the current TASK.md and CI follow-up fixes.';
   // Inherit parent run's safety tier (ADR-023) so CI-watch relaunch keeps the posture.
-  const runtimeDir = await resolveProjectRuntimeDir(run.project);
   const taskDir = await resolveSlotTaskDir(runId, run.project);
-  const nodeSupport = await ensureNodeSupportBundle(vars, runtimeDir);
   let launchCmd = buildLaunchCommand(vars, runner, model, prompt, {
     effort: run.effort,
     safetyTier: run.safetyTier,
     runtimeDir,
     taskDir: taskDir ?? undefined,
     ...(await scriptedRelaunchOptions(runner, run)),
-    scriptedSupportDir: nodeSupport?.supportDir,
+    supportDir: nodeSupport?.supportDir,
     modelQuestions: modelQuestionsForRun(run),
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;

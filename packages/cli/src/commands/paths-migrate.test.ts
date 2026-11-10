@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, fork } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import fs, {
   mkdir,
@@ -18,6 +19,7 @@ import path from 'node:path';
 import test, { mock, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import type { FleetStatus } from '@farmslot/protocol';
 import { resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { openRunBundleStore } from '@farmslot/run-bundle';
 
@@ -87,7 +89,7 @@ async function fixture(t: TestContext) {
     links: [{ label: 'Storage archive', url: manifest }],
   });
   await put(path.join(runs, 'run-b.json'), { id: 'run-b', status: 'cancelled' });
-  await put(path.join(home, 'run-bundles/sha256/digest/availability.json'), {
+  await put(path.join(home, 'run-bundles/availability/digest.json'), {
     archivedPaths: { 'proof.png': payload },
   });
   await put(path.join(home, 'task-pins/pin/provenance.json'), {
@@ -95,9 +97,9 @@ async function fixture(t: TestContext) {
       pin: path.join(home, 'task-pins/pin'),
       source: { packageRoot: path.join(home, 'task-pins/pin/package') },
     },
-    taskDir: path.join(checkout, 'tasks/run-a'),
+    taskDir: path.join(home, 'task-pins/pin/task'),
   });
-  await put(path.join(checkout, 'tasks/run-a/artifacts/harness-provenance.json'), {
+  await put(path.join(home, 'task-pins/pin/task/artifacts/harness-provenance.json'), {
     pin: path.join(home, 'task-pins/pin'),
   });
   await put(path.join(checkout, 'slot/.farmslot-runtime/context.json'), { checkout });
@@ -145,7 +147,7 @@ async function assertMigrated(f: Awaited<ReturnType<typeof fixture>>, plan: Migr
   assert.equal(run.links[0].url, path.join(paths.data.runArchive, 'run-a/manifest.json'));
   await readFile(run.links[0].url);
   const availability = (await json(
-    path.join(paths.data.runBundles, 'sha256/digest/availability.json'),
+    path.join(paths.data.runBundles, 'availability/digest.json'),
   )) as { archivedPaths: Record<string, string> };
   assert.equal(
     availability.archivedPaths['proof.png'],
@@ -156,7 +158,7 @@ async function assertMigrated(f: Awaited<ReturnType<typeof fixture>>, plan: Migr
   };
   assert.equal(provenance.receipt.pin, path.join(paths.state.taskPins, 'pin'));
   const receipt = (await json(
-    path.join(f.checkout, 'tasks/run-a/artifacts/harness-provenance.json'),
+    path.join(paths.state.taskPins, 'pin/task/artifacts/harness-provenance.json'),
   )) as { pin: string };
   assert.equal(receipt.pin, provenance.receipt.pin);
   await readFile(path.join(receipt.pin, 'provenance.json'));
@@ -188,7 +190,7 @@ test('plan is read-only; apply rewrites all owners and rollback restores legacy 
     'bundle-store.json',
     'store.json',
     'run-bundle-retention.json',
-    'availability.json',
+    'digest.json',
     'provenance.json',
     'harness-provenance.json',
   ])
@@ -204,6 +206,859 @@ test('plan is read-only; apply rewrites all owners and rollback restores legacy 
   await migratePaths(f.options, 'rollback');
   await assertLegacy(f);
   assert.equal((await migratePaths(f.options, 'rollback')).status, 'rolled-back');
+});
+
+for (const originalKind of ['absolute', 'relative'] as const)
+  test(`legacy bin links follow moved CLI distribution and roll back: ${originalKind}`, async (t) => {
+    const f = await fixture(t);
+    const cli = path.join(
+      f.root,
+      '.local/share/farmslot-cli/revision/packages/cli/bin/farmslot.mjs',
+    );
+    await put(cli, 'synthetic CLI entrypoint');
+    const links = [];
+    for (const directory of ['.local/bin', '.npm-global/bin']) {
+      const bin = path.join(f.root, directory);
+      await mkdir(bin, { recursive: true });
+      const link = path.join(bin, 'farmslot');
+      const original = originalKind === 'relative' ? path.relative(bin, cli) : cli;
+      await symlink(original, link);
+      const unrelated = path.join(bin, 'other');
+      const otherTarget = path.join(f.checkout, 'slot/.farmslot-runtime/context.json');
+      await symlink(otherTarget, unrelated);
+      const dangling = path.join(bin, 'dangling');
+      const missing = path.join(path.dirname(cli), 'missing.mjs');
+      await symlink(missing, dangling);
+      links.push({ link, original, unrelated, otherTarget, dangling, missing });
+    }
+    const plan = await planMigration(f.options);
+    assert.deepEqual(plan.conflicts, []);
+    for (const { link, unrelated, dangling } of links) {
+      assert.ok(
+        plan.steps.some((step) => step.kind === 'symlink' && step.target === link),
+        `missing relink for ${link}`,
+      );
+      assert.ok(!plan.steps.some((step) => step.target === unrelated || step.target === dangling));
+    }
+    const markerIndex = plan.steps.findIndex(
+      (step) => step.target === path.join(f.home, 'config/instance.json'),
+    );
+    assert.ok(plan.steps.every((step, index) => step.kind !== 'symlink' || index < markerIndex));
+    await put(plan.journal, plan);
+    await migratePaths(f.options, 'apply');
+    for (const { link, unrelated, otherTarget, dangling, missing } of links) {
+      const moved = path.join(f.home, 'code/cli/revision/packages/cli/bin/farmslot.mjs');
+      assert.equal(await fs.readlink(link), moved);
+      assert.equal(await realpath(link), moved);
+      assert.equal(await readFile(link, 'utf8'), 'synthetic CLI entrypoint');
+      assert.equal(await fs.readlink(unrelated), otherTarget);
+      assert.equal(await fs.readlink(dangling), missing);
+    }
+    await migratePaths(f.options, 'rollback');
+    for (const { link, original, unrelated, otherTarget, dangling, missing } of links) {
+      assert.equal(await fs.readlink(link), original);
+      assert.equal(await realpath(link), cli);
+      assert.equal(await readFile(link, 'utf8'), 'synthetic CLI entrypoint');
+      assert.equal(await fs.readlink(unrelated), otherTarget);
+      assert.equal(await fs.readlink(dangling), missing);
+    }
+  });
+
+for (const resume of ['apply', 'rollback'] as const)
+  for (const replaced of [false, true])
+    test(`bin link rewrite recovers an interrupted rename: ${resume}, replaced=${replaced}`, async (t) => {
+      const f = await fixture(t);
+      const cli = path.join(f.root, '.local/share/farmslot-cli/revision/cli.mjs');
+      const link = path.join(f.root, '.npm-global/bin/farmslot');
+      await put(cli, 'synthetic CLI entrypoint');
+      await mkdir(path.dirname(link), { recursive: true });
+      await symlink(cli, link);
+      const original = fs.rename;
+      const patched = mock.method(fs, 'rename', async (...args: Parameters<typeof fs.rename>) => {
+        if (args[1] === link) {
+          if (replaced) await original(...args);
+          throw new Error('interrupted link replacement');
+        }
+        return original(...args);
+      });
+      syncBuiltinESMExports();
+      try {
+        await assert.rejects(migratePaths(f.options, 'apply'), /interrupted link replacement/);
+      } finally {
+        patched.mock.restore();
+        syncBuiltinESMExports();
+      }
+      await migratePaths(f.options, resume);
+      assert.equal(await readFile(link, 'utf8'), 'synthetic CLI entrypoint');
+      assert.equal(
+        await fs.readlink(link),
+        resume === 'apply' ? path.join(f.home, 'code/cli/revision/cli.mjs') : cli,
+      );
+      if (resume === 'apply') await migratePaths(f.options, 'rollback');
+      assert.equal(await fs.readlink(link), cli);
+    });
+
+interface OriginalBinLink {
+  link: string;
+  before: string;
+}
+
+for (const replaced of [false, true])
+  test(`interrupted rollback mid-relink resumes with exact link text: replaced=${replaced}`, async (t) => {
+    const f = await fixture(t);
+    const cli = path.join(f.root, '.local/share/farmslot-cli/revision/cli.mjs');
+    await put(cli, 'synthetic CLI entrypoint');
+    const links: OriginalBinLink[] = [];
+    for (const directory of ['.local/bin', '.npm-global/bin']) {
+      const link = path.join(f.root, directory, 'farmslot');
+      await mkdir(path.dirname(link), { recursive: true });
+      const before = path.relative(path.dirname(link), cli);
+      await symlink(before, link);
+      links.push({ link, before });
+    }
+    await migratePaths(f.options, 'apply');
+    const original = fs.rename;
+    // Rollback visits npm-global first, then interrupts on the remaining local link.
+    const patched = mock.method(fs, 'rename', async (...args: Parameters<typeof fs.rename>) => {
+      if (args[1] === links[0].link) {
+        if (replaced) await original(...args);
+        throw new Error('interrupted rollback relink');
+      }
+      return original(...args);
+    });
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(migratePaths(f.options, 'rollback'), /interrupted rollback relink/);
+    } finally {
+      patched.mock.restore();
+      syncBuiltinESMExports();
+    }
+    assert.equal(await fs.readlink(links[1].link), links[1].before);
+    assert.equal(
+      await fs.readlink(links[0].link),
+      replaced ? links[0].before : path.join(f.home, 'code/cli/revision/cli.mjs'),
+    );
+    await migratePaths(f.options, 'rollback');
+    for (const { link, before } of links) {
+      assert.equal(await fs.readlink(link), before);
+      assert.equal(await realpath(link), cli);
+      assert.equal(await readFile(link, 'utf8'), 'synthetic CLI entrypoint');
+    }
+    await assertLegacy(f);
+  });
+
+test('changed legacy bin link refuses before migration mutation', async (t) => {
+  const f = await fixture(t);
+  const cli = path.join(f.root, '.local/share/farmslot-cli/revision/cli.mjs');
+  const link = path.join(f.root, '.local/bin/farmslot');
+  await put(cli, 'synthetic CLI entrypoint');
+  await mkdir(path.dirname(link), { recursive: true });
+  await symlink(cli, link);
+  const plan = await planMigration(f.options);
+  await put(plan.journal, plan);
+  await rm(link);
+  await symlink(f.payload, link);
+  const before = await inventory(f.root);
+  await assert.rejects(migratePaths(f.options, 'apply'), /Migration link changed/);
+  assert.deepEqual(await inventory(f.root), before);
+});
+
+for (const location of ['slot', 'slot-under-home', 'other-lane'] as const)
+  test(`historical task receipt outside farm roots is retained: ${location}`, async (t) => {
+    const f = await fixture(t);
+    const parent =
+      location === 'slot' ? f.checkout : location === 'slot-under-home' ? f.home : f.root;
+    const repo = path.join(parent, location);
+    const taskDir = path.join(repo, '.agent/task');
+    const receipt = path.join(taskDir, 'artifacts/harness-provenance.json');
+    const raw = JSON.stringify({ pin: path.join(f.home, 'task-pins/pin') }) + '\n';
+    await put(receipt, raw);
+    await put(path.join(f.home, 'task-pins/pin/provenance.json'), {
+      taskDir,
+      pin: path.join(f.home, 'task-pins/pin'),
+    });
+    if (location !== 'other-lane')
+      await put(path.join(f.checkout, 'pool/machine.json'), {
+        slots: [{ repo }],
+      });
+    const plan = await planMigration(f.options);
+    assert.deepEqual(plan.conflicts, []);
+    assert.ok(
+      plan.stays.some(
+        (entry) =>
+          entry.path === receipt && entry.reason === 'historical receipt outside farm roots',
+      ),
+    );
+    assert.ok(!plan.steps.some((step) => step.kind === 'write' && step.source === receipt));
+    await migratePaths(f.options, 'apply');
+    assert.equal(await readFile(receipt, 'utf8'), raw);
+    assert.deepEqual(await json(path.join(f.home, 'state/task-pins/pin/provenance.json')), {
+      taskDir,
+      pin: path.join(f.home, 'state/task-pins/pin'),
+    });
+  });
+
+test('moved review task receipt rewrites while checkout content stays byte-identical', async (t) => {
+  const f = await fixture(t);
+  const workspace = path.join(f.home, 'review-workspaces/owner/runs/review');
+  const taskDir = path.join(workspace, 'task');
+  const receipt = path.join(taskDir, 'artifacts/harness-provenance.json');
+  const checkoutFile = path.join(workspace, 'source/config.json');
+  const raw = `{ "pin" : "${f.home}/task-pins/pin" }\n`;
+  await put(receipt, raw);
+  await put(checkoutFile, raw);
+  await put(path.join(f.home, 'task-pins/pin/provenance.json'), { taskDir });
+  await put(path.join(f.runs, 'review.json'), {
+    id: 'review',
+    status: 'done',
+    reviewWorkspace: { checkoutPath: path.join(workspace, 'source'), taskPath: taskDir },
+  });
+  const plan = await planMigration(f.options);
+  assert.deepEqual(plan.conflicts, []);
+  assert.ok(plan.steps.some((step) => step.kind === 'write' && step.source === receipt));
+  assert.ok(!plan.steps.some((step) => step.kind === 'write' && step.source === checkoutFile));
+  await migratePaths(f.options, 'apply');
+  const moved = path.join(f.home, 'state/review-workspaces/owner/runs/review');
+  assert.deepEqual(await json(path.join(moved, 'task/artifacts/harness-provenance.json')), {
+    pin: path.join(f.home, 'state/task-pins/pin'),
+  });
+  assert.equal(await readFile(path.join(moved, 'source/config.json'), 'utf8'), raw);
+  await migratePaths(f.options, 'rollback');
+  assert.equal(await readFile(receipt, 'utf8'), raw);
+  assert.equal(await readFile(checkoutFile, 'utf8'), raw);
+});
+
+test('plan ignores checkout JSONC and arbitrary task artifacts', async (t) => {
+  const f = await fixture(t);
+  const evidenceManifest = path.join(
+    f.checkout,
+    'projects/pack/tasks/fix/task/artifacts/manifest.json',
+  );
+  const ignored = [
+    [path.join(f.home, 'task-pins/pin/cli/.vscode/settings.json'), '// checkout settings\n{}'],
+    [path.join(f.checkout, 'projects/pack/tasks/fix/task/artifacts/empty.json'), ''],
+    [
+      path.join(f.checkout, 'projects/pack/tasks/fix/task/artifacts/failure.json'),
+      'Recipe artifact failure',
+    ],
+    [path.join(f.home, 'review-workspaces/review/node_modules/pkg/data.json'), '{invalid'],
+    [path.join(f.checkout, '.backups/old.json'), '{invalid'],
+    [evidenceManifest, 'Recipe artifact manifest'],
+    [path.join(f.home, 'sources.json'), '{opaque declaration}'],
+    [
+      path.join(f.checkout, 'projects/pack/tasks/fix/task/artifacts/proof.json'),
+      JSON.stringify({ path: f.home + '/task-pins/pin' }),
+    ],
+    [path.join(f.home, 'task-pins/pin/cli/node_modules/pkg/data.json'), '{invalid'],
+  ];
+  for (const [file, body] of ignored) await put(file, body);
+  const run = await json(path.join(f.runs, 'run-a.json'));
+  assert.ok(run && typeof run === 'object' && 'links' in run && Array.isArray(run.links));
+  run.links.push({ label: 'Evidence', url: evidenceManifest });
+  await put(path.join(f.runs, 'run-a.json'), run);
+  const opened: string[] = [];
+  const original = fs.readFile;
+  t.mock.method(fs, 'readFile', async (...args: Parameters<typeof readFile>) => {
+    opened.push(String(args[0]));
+    return original(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  const plan = await planMigration(f.options);
+  assert.deepEqual(plan.conflicts, []);
+  for (const [file] of ignored) {
+    assert.ok(!plan.steps.some((step) => step.kind === 'write' && step.source === file), file);
+    // Move inventories hash bytes through streams; document discovery must not open these.
+    assert.ok(!opened.includes(file), file);
+  }
+});
+
+test('archived evidence keeps its bytes and manifest digest after apply', async (t) => {
+  const f = await fixture(t);
+  const evidence = path.join(f.archive, 'run-a/old-generation/evidence.json');
+  const raw = `{ "path": "${f.home}/task-pins/pin", "proof": true }\n`;
+  await put(evidence, raw);
+  const sha256 = createHash('sha256').update(raw).digest('hex');
+  const identity = (await inventory(evidence))[''];
+  const verifiedCopy = { '': `${identity.mode}:${sha256}` };
+  const manifest = await json(f.manifest);
+  assert.ok(manifest && typeof manifest === 'object' && 'entries' in manifest);
+  assert.ok(Array.isArray(manifest.entries));
+  manifest.entries.push({
+    destination: evidence,
+    verifiedCopy,
+    state: 'archived',
+    completedAt: '2026-01-01',
+  });
+  await put(f.manifest, manifest);
+  // Nested manifests are evidence too, even when they look like storage manifests.
+  const nested = path.join(f.archive, 'run-a/old-generation/task/manifest.json');
+  await put(nested, { runId: 'task', entries: [{ destination: evidence }], path: f.home });
+  const nestedBytes = await readFile(nested);
+  const opaque = path.join(f.archive, 'run-a/old-generation/task/artifacts/manifest.json');
+  await put(opaque, 'Recipe artifact ' + f.home);
+  const opaqueBytes = await readFile(opaque);
+  const plan = await migratePaths(f.options, 'apply');
+  const moved = path.join(plan.dataRoot, 'run-archive/run-a/old-generation/evidence.json');
+  assert.equal(await readFile(moved, 'utf8'), raw);
+  assert.deepEqual(
+    await readFile(
+      path.join(plan.dataRoot, 'run-archive/run-a/old-generation/task/artifacts/manifest.json'),
+    ),
+    opaqueBytes,
+  );
+  const migrated = await json(path.join(plan.dataRoot, 'run-archive/run-a/manifest.json'));
+  assert.ok(migrated && typeof migrated === 'object' && 'entries' in migrated);
+  assert.ok(Array.isArray(migrated.entries));
+  const entry = migrated.entries.find(
+    (entry: { destination: string }) => entry.destination === moved,
+  );
+  assert.equal(
+    createHash('sha256')
+      .update(await readFile(moved))
+      .digest('hex'),
+    entry.verifiedCopy[''].split(':')[1],
+  );
+  assert.deepEqual(
+    await readFile(path.join(plan.dataRoot, 'run-archive/run-a/old-generation/task/manifest.json')),
+    nestedBytes,
+  );
+});
+
+for (const relative of [
+  'checkout/pool/local.json',
+  'checkout/projects/pack/project.json',
+  'home/run-bundle-retention.json',
+  'checkout/.runs/bundle-store.json',
+  'home/run-bundles/store.json',
+  'home/git-identity.json',
+  'home/provider-accounts.json',
+  'checkout/.backlog.json',
+  'checkout/.dispatch-queue.json',
+  'checkout/.farm-status.json',
+  'checkout/.work-graphs/graph.json',
+  'checkout/.runs/review-workspace-tasks/run-a/snapshot.json',
+  'checkout/.runs/review-workspace-support/admissions/run-a.json',
+  'checkout/.runs/machine-parking-batches/operation.json',
+  'home/review-workspaces/owner/operations/operation/operation.json',
+  'home/native-sessions/sessions/session.journal',
+  'home/native-sessions/nodes/node-a/sessions/session.journal',
+  'checkout/.runs/retained-acceptance-links/task.json',
+  'home/sources/runtime-settings/pack.json',
+  'home/sources/gateway/receipts/digest.json',
+  'home/sources/node/receipts/digest.json',
+  'checkout/.runs/run-a.json',
+  'checkout/.runs/archive/run-c.json',
+  'checkout/.runs/run-a.decisions.jsonl',
+  'home/run-bundles/availability/digest.json',
+  'old-archive/run-a/manifest.json',
+  'home/task-pins/pin/provenance.json',
+  'home/task-pins/pin/task/artifacts/harness-provenance.json',
+])
+  test(`malformed owned document is a named conflict before mutation: ${relative}`, async (t) => {
+    const f = await fixture(t);
+    const file = path.join(f.root, relative);
+    await put(file, '{invalid owned document');
+    const before = await inventory(f.root);
+    const plan = await migratePaths(f.options, 'plan');
+    assert.ok(plan.conflicts.some((conflict) => conflict.includes(file)));
+    await assert.rejects(migratePaths(f.options, 'apply'), /Migration conflicts/);
+    assert.deepEqual(await inventory(f.root), before);
+  });
+
+test('owned configuration, source receipts and run history references still rewrite', async (t) => {
+  const f = await fixture(t);
+  const old = path.join(f.home, 'task-pins/pin');
+  const owners = [
+    [path.join(f.checkout, 'pool/local.json'), { slots: [], runtime_dir: old }],
+    [path.join(f.checkout, 'projects/pack/project.json'), { repo: old }],
+    [path.join(f.home, 'git-identity.json'), { 'user.signingkey': old }],
+    [path.join(f.checkout, '.work-graphs/graph.json'), { reference: { ref: old } }],
+    [
+      path.join(f.home, 'sources/runtime-settings/pack.json'),
+      { values: { backlog: { root: old } } },
+    ],
+    [path.join(f.home, 'sources/gateway/receipts/digest.json'), { roots: { source: old } }],
+    [path.join(f.home, 'sources/node/receipts/digest.json'), { receiptPath: old }],
+    [path.join(f.runs, 'archive/run-c.json'), { id: 'run-c', status: 'done', taskFile: old }],
+    [
+      path.join(f.runs, 'run-a.decisions.jsonl'),
+      JSON.stringify({ artifacts: [{ path: old }] }) + '\n',
+    ],
+    [
+      path.join(f.runs, 'archive/run-c.decisions.jsonl'),
+      JSON.stringify({ artifacts: [{ path: old }] }) + '\n',
+    ],
+  ] as const;
+  for (const [file, value] of owners) await put(file, value);
+  const plan = await migratePaths(f.options, 'plan');
+  assert.deepEqual(plan.conflicts, []);
+  for (const [file] of owners) {
+    const step = plan.steps.find((step) => step.kind === 'write' && step.source === file);
+    assert.ok(step?.kind === 'write', file);
+    assert.ok(step.body.includes(path.join(f.home, 'state/task-pins/pin')), file);
+    assert.ok(!step.body.includes(old), file);
+  }
+});
+
+test('pass 2: native provider profiles retain their moved runner directory', async (t) => {
+  const f = await fixture(t);
+  const directory = path.join(f.home, 'runner-profiles/codex/work');
+  await put(path.join(directory, 'auth.json'), '{ opaque native credentials }');
+  await put(path.join(f.home, 'provider-accounts.json'), {
+    version: 1,
+    accounts: {},
+    nativeProfiles: {
+      work: {
+        id: 'work',
+        runner: 'codex',
+        directory,
+        accountContextId: '12345678-1234-1234-1234-123456789abc',
+        state: 'active',
+      },
+    },
+  });
+  await migratePaths(f.options, 'apply');
+  const config = await json(path.join(f.home, 'config/provider-accounts.json'));
+  assert.ok(config && typeof config === 'object' && 'nativeProfiles' in config);
+  assert.deepEqual(config.nativeProfiles, {
+    work: {
+      id: 'work',
+      runner: 'codex',
+      directory: path.join(f.home, 'config/runner-profiles/codex/work'),
+      accountContextId: '12345678-1234-1234-1234-123456789abc',
+      state: 'active',
+    },
+  });
+  await readFile(path.join(f.home, 'config/runner-profiles/codex/work/auth.json'));
+});
+
+test('pass 2: backlog specPath stays inside the migrated spec directory', async (t) => {
+  const f = await fixture(t);
+  const specPath = path.join(f.checkout, '.backlog/specs/x.md');
+  await put(specPath, '# Acceptance criteria\n- Works\n');
+  await put(path.join(f.checkout, '.backlog.json'), [{ id: 'item', specPath }]);
+  await migratePaths(f.options, 'apply');
+  const paths = resolveFarmPaths({ home: f.home, role: 'gateway', env: {} });
+  assert.deepEqual(await json(paths.state.backlogFile), [
+    { id: 'item', specPath: path.join(paths.state.backlogSpecs, 'x.md') },
+  ]);
+  await readFile(path.join(paths.state.backlogSpecs, 'x.md'));
+});
+
+test('pass 3: relative backlog specPath reads, enqueues and rolls back its original bytes', async (t) => {
+  const started = performance.now();
+  t.after(() =>
+    assert.ok(performance.now() - started < 5000, 'spec migration must stay under 5 s'),
+  );
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'farm-migrate-spec-')));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const home = path.join(root, 'home');
+  const checkout = path.join(root, 'checkout');
+  await mkdir(home);
+  const options: MigrationOptions = {
+    home,
+    checkoutRoot: checkout,
+    userHome: root,
+    env: {
+      HOME: root,
+      FARMSLOT_HOME: home,
+      GATEWAY_PORT: '65419',
+      CANARY_HOME: path.join(root, 'canary'),
+    },
+  };
+  const f = { root, home, checkout, options };
+  await put(path.join(f.checkout, 'projects/test/project.json'), { name: 'test' });
+  const specPath = '.backlog/specs/x.md';
+  const markdown = '# Spec\n\n## Acceptance Criteria\n- Works\n';
+  await put(path.join(f.checkout, specPath), markdown);
+  const backlogFile = path.join(f.checkout, '.backlog.json');
+  await put(backlogFile, [
+    {
+      id: 'item',
+      project: 'test',
+      title: 'Relative spec',
+      sourceKind: 'manual',
+      sourceRef: 'MANUAL-000001',
+      flowType: 'dev',
+      status: 'ready',
+      priority: 10,
+      createdAt: '2026-01-01',
+      updatedAt: '2026-01-01',
+      specPath,
+      notes: specPath,
+    },
+    { id: 'outside', specPath: 'tasks/unmoved.md' },
+  ]);
+  const before = await readFile(backlogFile);
+  await migratePaths(f.options, 'apply');
+  const paths = resolveFarmPaths({ home: f.home, role: 'gateway', env: {} });
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (key.startsWith('FARMSLOT_')) delete env[key];
+  delete env.TMUX;
+  Object.assign(env, {
+    HOME: f.root,
+    FARMSLOT_HOME: f.home,
+    FARMSLOT_ROOT: f.checkout,
+    TMUX_TMPDIR: f.root,
+    FARMSLOT_DISABLE_ORCHESTRATION: '1',
+    NODE_TEST_CONTEXT: '1',
+    TSX_TSCONFIG_PATH: fileURLToPath(
+      new URL('../../../../services/gateway/tsconfig.json', import.meta.url),
+    ),
+  });
+  const migratedBytes = await readFile(paths.state.backlogFile);
+  const migrated = await json(paths.state.backlogFile);
+  assert.ok(Array.isArray(migrated));
+  assert.equal(migrated[0].notes, specPath);
+  assert.deepEqual(migrated[1], { id: 'outside', specPath: 'tasks/unmoved.md' });
+  const fleet = {
+    checkedAt: new Date().toISOString(),
+    slots: [],
+    summary: {
+      total: 0,
+      ready: 0,
+      busy: 0,
+      held: 0,
+      manual: 0,
+      disabled: 0,
+      blocked: 0,
+      warmCount: 0,
+    },
+  } satisfies FleetStatus;
+  execFileSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      '--input-type=module',
+      '-e',
+      `
+    import assert from 'node:assert/strict';
+    import * as backlog from './services/gateway/src/backlog/store.ts';
+    import * as queue from './services/gateway/src/backlog/dispatch-queue.ts';
+    import { setCachedFleetForTests } from './services/gateway/src/fleet/state.ts';
+    setCachedFleetForTests(${JSON.stringify(fleet)});
+    queue.initDispatchQueue(() => {}, async () => {});
+    await backlog.loadBacklog();
+    const spec = await backlog.getBacklogSpec({ itemId: 'item' });
+    assert.equal(spec.content, ${JSON.stringify(markdown)});
+    assert.equal(spec.path, ${JSON.stringify(path.join(paths.state.backlogSpecs, 'x.md'))});
+    const result = await backlog.enqueueBacklogItem(
+      { itemId: 'item' }, { dispatchOriginator: { kind: 'system' } }, { kind: 'system' },
+    );
+    assert.equal(result.item.status, 'queued');
+    assert.deepEqual(result.queueItem.ticketData.acceptanceCriteria, ['Works']);
+    await backlog.flushBacklogForTests();
+    await queue.persistQueueNow();
+  `,
+    ],
+    {
+      cwd: fileURLToPath(new URL('../../../../', import.meta.url)),
+      env,
+      encoding: 'utf8',
+    },
+  );
+  // Enqueue mutates the backlog; restore the applied bytes before testing migration rollback.
+  await writeFile(paths.state.backlogFile, migratedBytes);
+  await migratePaths(f.options, 'rollback');
+  assert.deepEqual(await readFile(backlogFile), before);
+  assert.equal(await readFile(path.join(f.checkout, specPath), 'utf8'), markdown);
+});
+
+test('pass 2: review task snapshot matches the migrated Run workspace identity', async (t) => {
+  const f = await fixture(t);
+  const workspace = {
+    workspaceId: 'review',
+    checkoutPath: path.join(f.home, 'review-workspaces/review/repo'),
+    taskPath: path.join(f.home, 'review-workspaces/review/task'),
+    artifactPath: path.join(f.home, 'review-workspaces/review/task/artifacts'),
+  };
+  await put(path.join(f.runs, 'review.json'), {
+    id: 'review',
+    status: 'done',
+    reviewWorkspace: workspace,
+  });
+  await put(path.join(f.runs, 'review-workspace-tasks/review/snapshot.json'), {
+    version: 1,
+    runId: 'review',
+    workspace,
+    prompt: `Read '${workspace.taskPath}/TASK.md'. Run '${workspace.taskPath}/mark' start before reviewing.`,
+    files: [{ path: 'inputs/review-subject.json', sha256: 'frozen' }],
+  });
+  const frozen = path.join(
+    f.runs,
+    'review-workspace-tasks/review/bundle/inputs/review-subject.json',
+  );
+  const bytes = JSON.stringify({ checkoutPath: workspace.checkoutPath });
+  await put(frozen, bytes);
+  await migratePaths(f.options, 'apply');
+  const paths = resolveFarmPaths({ home: f.home, role: 'gateway', env: {} });
+  const run = await json(path.join(paths.state.runs, 'review.json'));
+  const snapshot = await json(
+    path.join(paths.state.runs, 'review-workspace-tasks/review/snapshot.json'),
+  );
+  assert.ok(run && typeof run === 'object' && 'reviewWorkspace' in run);
+  assert.ok(snapshot && typeof snapshot === 'object' && 'workspace' in snapshot);
+  assert.deepEqual(snapshot.workspace, run.reviewWorkspace);
+  assert.ok('prompt' in snapshot);
+  assert.equal(
+    snapshot.prompt,
+    `Read '${f.home}/state/review-workspaces/review/task/TASK.md'. Run '${f.home}/state/review-workspaces/review/task/mark' start before reviewing.`,
+  );
+  assert.equal(
+    await readFile(
+      path.join(
+        paths.state.runs,
+        'review-workspace-tasks/review/bundle/inputs/review-subject.json',
+      ),
+      'utf8',
+    ),
+    bytes,
+  );
+});
+
+for (const stagedExists of [false, true])
+  test(`pass 2: merged manifest already at destination refuses staged entry, staged file ${stagedExists}`, async (t) => {
+    const f = await fixture(t);
+    await rm(f.current, { recursive: true });
+    const data = path.join(f.root, 'external-data');
+    const archive = path.join(data, 'run-archive');
+    const target = path.join(archive, 'run-a/manifest.json');
+    const staged = path.join(f.root, 'staged-payload');
+    if (stagedExists) await put(staged, 'staged bytes');
+    await put(target, {
+      runId: 'run-a',
+      entries: [
+        {
+          state: stagedExists ? 'archived' : 'staged',
+          staged,
+          destination: path.join(archive, 'run-a/payload'),
+        },
+      ],
+    });
+    const options = {
+      ...f.options,
+      data,
+      env: { ...f.options.env, FARMSLOT_RUN_ARCHIVE_ROOT: archive },
+    };
+    const plan = await planMigration(options);
+    assert.deepEqual(plan.conflicts, []);
+    assert.ok(
+      plan.steps.some(
+        (step) => step.kind === 'write' && step.target === target && step.source?.includes(', '),
+      ),
+    );
+    const before = await inventory(f.root);
+    await assert.rejects(migratePaths(options, 'apply'), /Staged storage-archive entry/);
+    assert.deepEqual(await inventory(f.root), before);
+  });
+
+test('pass 2: availability sidecar alone discovers historical media archive root', async (t) => {
+  const f = await fixture(t);
+  const archive = path.join(f.root, 'historical-media');
+  const payload = path.join(archive, 'run-bundle-media/digest/proof.png');
+  await put(payload, 'historical image bytes');
+  await put(path.join(f.home, 'run-bundles/availability/only-sidecar.json'), {
+    archivedPaths: { 'proof.png': payload },
+  });
+  const plan = await migratePaths(f.options, 'apply');
+  const moved = path.join(plan.dataRoot, 'run-archive/run-bundle-media/digest/proof.png');
+  assert.deepEqual(
+    await json(path.join(plan.dataRoot, 'run-bundles/availability/only-sidecar.json')),
+    {
+      archivedPaths: { 'proof.png': moved },
+    },
+  );
+  assert.equal(await readFile(moved, 'utf8'), 'historical image bytes');
+});
+
+for (const relative of [
+  'checkout/.dispatch-queue.json',
+  'checkout/.farm-status.json',
+  'checkout/.runs/machine-parking-batches/operation.json',
+  'home/review-workspaces/operations/operation/operation.json',
+  'home/review-workspaces/owner/operations/operation/operation.json',
+  'home/native-sessions/nodes/review-workspaces/owner/operations/operation/operation.json',
+])
+  test(`pass 2 producer audit: recovery metadata rewrites ${relative}`, async (t) => {
+    const f = await fixture(t);
+    const file = path.join(f.root, relative);
+    if (relative.includes('/nodes/review-workspaces/'))
+      await put(path.join(f.runs, 'node-review.json'), {
+        id: 'node-review',
+        status: 'done',
+        reviewWorkspace: {
+          checkoutPath: path.join(
+            f.home,
+            'native-sessions/nodes/review-workspaces/owner/runs/review/source',
+          ),
+        },
+      });
+    const source = path.join(f.home, 'review-workspaces/operations/previous');
+    await put(path.join(f.home, 'runner-profiles/codex/work/auth.json'), 'opaque credentials');
+    await put(file, {
+      previousPath: source,
+      records: [
+        {
+          recoveryHandle: {
+            sessionPath: path.join(f.home, 'runner-profiles/codex/work/session.jsonl'),
+          },
+        },
+      ],
+      evalCell: { experimentManifestPath: path.join(f.runs, 'experiment.json') },
+    });
+    const plan = await planMigration(f.options);
+    assert.deepEqual(plan.conflicts, []);
+    const step = plan.steps.find((step) => step.kind === 'write' && step.source === file);
+    assert.ok(step?.kind === 'write', file);
+    assert.equal(
+      JSON.parse(step.body).previousPath,
+      path.join(f.home, 'state/review-workspaces/operations/previous'),
+    );
+    assert.equal(
+      JSON.parse(step.body).records[0].recoveryHandle.sessionPath,
+      path.join(f.home, 'config/runner-profiles/codex/work/session.jsonl'),
+    );
+  });
+
+test('pass 2 producer audit: encoded support admission identity matches the migrated Run', async (t) => {
+  const f = await fixture(t);
+  const workspace = {
+    workspaceId: 'review',
+    taskPath: path.join(f.home, 'review-workspaces/review/task'),
+  };
+  const run = { id: 'review', status: 'done', reviewWorkspace: workspace };
+  await put(path.join(f.runs, 'review.json'), run);
+  const file = path.join(f.runs, 'review-workspace-support/admissions/review.json');
+  await put(file, {
+    identity: JSON.stringify({ workspace }),
+    fingerprint: 'frozen',
+    digest: 'digest',
+  });
+  const frozen = path.join(f.runs, 'review-workspace-support/bundles/digest/manifest.json');
+  const bytes = JSON.stringify({ path: workspace.taskPath });
+  await put(frozen, bytes);
+  await migratePaths(f.options, 'apply');
+  const paths = resolveFarmPaths({ home: f.home, role: 'gateway', env: {} });
+  const admitted = await json(
+    path.join(paths.state.reviewWorkspaceSupport, 'admissions/review.json'),
+  );
+  assert.ok(admitted && typeof admitted === 'object' && 'identity' in admitted);
+  assert.equal(
+    admitted.identity,
+    JSON.stringify({
+      workspace: {
+        ...workspace,
+        taskPath: path.join(f.home, 'state/review-workspaces/review/task'),
+      },
+    }),
+  );
+  assert.equal(
+    await readFile(
+      path.join(paths.state.reviewWorkspaceSupport, 'bundles/digest/manifest.json'),
+      'utf8',
+    ),
+    bytes,
+  );
+});
+
+for (const scope of ['sessions', 'nodes/node-a/sessions'])
+  test(`pass 2 producer audit: native ${scope} journal relocates metadata and preserves events`, async (t) => {
+    const f = await fixture(t);
+    const directory = path.join(f.home, 'runner-profiles/codex/work');
+    await put(path.join(directory, 'auth.json'), 'opaque credentials');
+    const file = path.join(f.home, 'native-sessions', scope, 'session.journal');
+    const event = { type: 'tool.completed', path: directory, text: directory };
+    const commands = [{ text: directory, commandId: 'command' }];
+    await put(
+      file,
+      JSON.stringify({
+        info: { cwd: directory },
+        context: { profileDirectory: directory },
+        event,
+        commands,
+      }) + '\n',
+    );
+    const plan = await planMigration(f.options);
+    assert.deepEqual(plan.conflicts, []);
+    const step = plan.steps.find((step) => step.kind === 'write' && step.source === file);
+    assert.ok(step?.kind === 'write', file);
+    const row = JSON.parse(step.body);
+    assert.equal(
+      row.context.profileDirectory,
+      path.join(f.home, 'config/runner-profiles/codex/work'),
+    );
+    assert.equal(row.info.cwd, path.join(f.home, 'config/runner-profiles/codex/work'));
+    assert.deepEqual(row.event, event);
+    assert.deepEqual(row.commands, commands);
+    assert.ok(step.body.includes(JSON.stringify(event)));
+    assert.ok(step.body.includes(JSON.stringify(commands)));
+    const original = await readFile(file);
+    await migratePaths(f.options, 'apply');
+    const paths = resolveFarmPaths({ home: f.home, role: 'gateway', env: {} });
+    const migrated = await readFile(
+      path.join(paths.state.nativeSessions, scope, 'session.journal'),
+      'utf8',
+    );
+    assert.equal(migrated, step.body);
+    await migratePaths(f.options, 'rollback');
+    assert.deepEqual(await readFile(file), original);
+  });
+
+test('pass 2 producer audit: retained acceptance sidecar rekeys its moved task directory', async (t) => {
+  const f = await fixture(t);
+  const taskDir = path.join(f.home, 'review-workspaces/owner/runs/review/task');
+  const relative = 'artifacts/evidence-manifest.json';
+  const evidence = JSON.stringify({ taskDir });
+  await put(path.join(taskDir, relative), evidence);
+  const oldKey = createHash('sha256').update(taskDir).digest('hex');
+  await put(path.join(f.runs, 'retained-acceptance-links', oldKey + '.json'), {
+    version: 1,
+    taskDir,
+    artifacts: [{ path: relative, sha256: createHash('sha256').update(evidence).digest('hex') }],
+  });
+  await migratePaths(f.options, 'apply');
+  const paths = resolveFarmPaths({ home: f.home, role: 'gateway', env: {} });
+  const moved = path.join(paths.state.reviewWorkspaces, 'owner/runs/review/task');
+  const newKey = createHash('sha256').update(moved).digest('hex');
+  const snapshot = await json(
+    path.join(paths.state.runs, 'retained-acceptance-links', newKey + '.json'),
+  );
+  assert.ok(snapshot && typeof snapshot === 'object' && 'taskDir' in snapshot);
+  assert.equal(snapshot.taskDir, moved);
+  assert.equal(await readFile(path.join(moved, relative), 'utf8'), evidence);
+  await migratePaths(f.options, 'rollback');
+  assert.equal(await readFile(path.join(taskDir, relative), 'utf8'), evidence);
+  await readFile(path.join(f.runs, 'retained-acceptance-links', oldKey + '.json'));
+});
+
+test('pass 2 producer audit: native journal preserves raw evidence rows and fields', async (t) => {
+  const f = await fixture(t);
+  const directory = path.join(f.home, 'runner-profiles/codex/work');
+  await put(path.join(directory, 'auth.json'), 'opaque credentials');
+  const file = path.join(f.home, 'native-sessions/sessions/session.journal');
+  const event = `{ "text" : "${directory}", "escaped": "\\u0061", "nested": { "context": "${directory}" } }`;
+  const history = `{ "event": ${event}, "processesAdded" : [ { "pid": 1 } ] }\n\n`;
+  const metadata = `{ "event": ${event}, "context" : {"profileDirectory":"${directory}"}, "commands": [{ "text" : "${directory}" }] }\n`;
+  await put(file, history + metadata);
+  const plan = await planMigration(f.options);
+  assert.deepEqual(plan.conflicts, []);
+  const step = plan.steps.find((step) => step.kind === 'write' && step.source === file);
+  assert.ok(step?.kind === 'write');
+  assert.equal(
+    step.body,
+    history +
+      metadata.replace(
+        `{"profileDirectory":"${directory}"}`,
+        JSON.stringify({
+          profileDirectory: path.join(f.home, 'config/runner-profiles/codex/work'),
+        }),
+      ),
+  );
 });
 
 test('two archive roots merge the same run and never drop duplicate entries', async (t) => {
@@ -616,7 +1471,9 @@ for (const partial of [false, true])
     const plan = await planMigration(f.options);
     // Reproduce a journal accepted by the previous implementation.
     plan.conflicts = [];
-    const alias = plan.steps.find((step) => step.source === path.join(f.archive, 'alias'));
+    const alias = plan.steps.find(
+      (step) => step.kind === 'move' && step.source === path.join(f.archive, 'alias'),
+    );
     assert.ok(alias && alias.kind === 'move');
     if (partial) {
       await mkdir(path.dirname(alias.target), { recursive: true });
@@ -654,7 +1511,8 @@ for (const copy of [false, true])
     await assert.rejects(
       migratePaths(f.options, 'apply', {
         async checkpoint(saved, index) {
-          if (saved.steps[index].source === sibling && saved.steps[index].status === 'done')
+          const step = saved.steps[index];
+          if (step.kind === 'move' && step.source === sibling && step.status === 'done')
             throw new Error('interrupted between siblings');
         },
       }),

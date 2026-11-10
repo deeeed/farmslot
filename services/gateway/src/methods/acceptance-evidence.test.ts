@@ -495,3 +495,19 @@ test('two bounded text artifacts can exceed 4 KiB together without a false previ
   assert.equal(calls, 1);
   assert.equal(readFileSync(ledger, 'utf8'), originalLedger);
 });
+
+test('stored evidence text must match task text exactly', async (t) => {
+  const { dir, ledger, body, params } = fixture(t);
+  writeFileSync(
+    path.join(dir, 'inputs/handoff.json'),
+    JSON.stringify({ task: { acceptanceCriteria: ['The output reads ready\nNested example'] } }),
+  );
+  const recorded = JSON.parse(body());
+  recorded.criteria[0].text = 'The output reads ready\n- Nested example';
+  writeFileSync(ledger, JSON.stringify(recorded));
+  const result = await withPrincipal(() => acceptanceEvidenceGet(params));
+  assert.equal(result.reason, 'not-found');
+  recorded.criteria[0].text = 'The output reads ready\n- Changed example';
+  writeFileSync(ledger, JSON.stringify(recorded));
+  assert.equal((await withPrincipal(() => acceptanceEvidenceGet(params))).reason, 'not-found');
+});

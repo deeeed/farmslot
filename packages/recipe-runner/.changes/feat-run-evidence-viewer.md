@@ -1,1 +1,0 @@
-- The runner republishes `trace.json` after each step, whole through a temporary file and a rename, so a live viewer can follow the run.
