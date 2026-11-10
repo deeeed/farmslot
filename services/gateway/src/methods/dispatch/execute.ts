@@ -56,6 +56,7 @@ import {
   shellQuote,
   tmuxShellSnippet,
 } from '../../core/tmux.js';
+import { writeTmuxLaunchScript } from '../../core/tmux-launch-script.js';
 import { auditBlindTrialTask, verifyBlindTrialForDispatch } from '../../evals/blind-trial.js';
 import { usesNodeLink } from '../../fleet/node-link-policy.js';
 import { ensureRunRuntimeReady } from '../../fleet/runtime-ready.js';
@@ -714,7 +715,11 @@ async function respawnRoleWindowWithCommand(
   target: string,
   command: string,
 ): Promise<void> {
-  const launchCommand = buildRoleLaunchCommandWithDiagnosticHold(command, vars.remoteRepo);
+  const launchCommand = await writeTmuxLaunchScript(
+    vars,
+    target,
+    buildRoleLaunchCommandWithDiagnosticHold(command, vars.remoteRepo),
+  );
   const respawned = await execOnSlot(
     vars,
     tmuxShellSnippet(
@@ -2016,7 +2021,7 @@ export async function dispatchExecute(
         runner,
         target: workerTarget,
         session,
-        launchCommand: agentLaunch,
+        launchCommand: await writeTmuxLaunchScript(vars, workerTarget, agentLaunch),
         waits: {
           daWaitMs: LAUNCH_PRELUDE_DA_WAIT_MS,
           settleMs: LAUNCH_PRELUDE_SETTLE_MS,

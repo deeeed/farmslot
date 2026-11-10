@@ -8,6 +8,7 @@ import { loadPoolConfigs } from '../fleet/state.js';
 
 import { loadSlotVars } from './config.js';
 import { execOnSlot } from './exec.js';
+import { writeTmuxLaunchScript } from './tmux-launch-script.js';
 
 // Remote node RPC under load often exceeds 3s. Discovery is runner-agnostic
 // (Claude/Codex/Grok/Cursor all call resolveTmuxSession). A timeout must miss
@@ -367,10 +368,10 @@ export async function respawnTmuxWindowWithCommand(
   command: string,
   options?: { preserveWindowAfterExit?: boolean; noRetry?: boolean },
 ): Promise<void> {
-  const launchCommand = buildTmuxRespawnLaunchCommand(
-    command,
-    vars.remoteRepo,
-    options?.preserveWindowAfterExit,
+  const launchCommand = await writeTmuxLaunchScript(
+    vars,
+    target,
+    buildTmuxRespawnLaunchCommand(command, vars.remoteRepo, options?.preserveWindowAfterExit),
   );
   const respawned = await execOnSlot(
     vars,
@@ -404,10 +405,10 @@ export async function respawnTmuxPaneWithCommand(
   options?: { preservePaneAfterExit?: boolean },
 ): Promise<void> {
   if (!/^%\d+$/.test(paneId)) throw new Error(`Invalid exact tmux pane id: ${paneId}`);
-  const launchCommand = buildTmuxRespawnLaunchCommand(
-    command,
-    vars.remoteRepo,
-    options?.preservePaneAfterExit,
+  const launchCommand = await writeTmuxLaunchScript(
+    vars,
+    paneId,
+    buildTmuxRespawnLaunchCommand(command, vars.remoteRepo, options?.preservePaneAfterExit),
   );
   const respawned = await execOnSlot(
     vars,
