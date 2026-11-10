@@ -11,19 +11,21 @@ const nodePrincipal = 'node-f303-remote';
 let credentials: Array<{ principalId: string; revokedAt?: string }> = [];
 
 const credentialStore = await import('../../security/credential-store.js');
+const fixtureStore = () => ({
+  principals: [
+    { id: owner, subject: { type: 'person' } },
+    {
+      id: nodePrincipal,
+      subject: { type: 'node', machine, nativeOwnerPrincipalId: owner },
+    },
+  ],
+  credentials,
+});
 mock.module('../../security/credential-store.js', {
   namedExports: {
     ...credentialStore,
-    loadCredentialStore: () => ({
-      principals: [
-        { id: owner, subject: { type: 'person' } },
-        {
-          id: nodePrincipal,
-          subject: { type: 'node', machine, nativeOwnerPrincipalId: owner },
-        },
-      ],
-      credentials,
-    }),
+    loadCredentialStore: fixtureStore,
+    readCredentialStoreSnapshot: fixtureStore,
   },
 });
 const nativeNode = await import('../../security/native-node.js');

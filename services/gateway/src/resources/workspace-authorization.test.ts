@@ -29,7 +29,10 @@ mock.module('../security/authorization.js', {
   },
 });
 mock.module('../security/credential-store.js', {
-  namedExports: { loadCredentialStore: () => ({ principals: [] }) },
+  namedExports: {
+    loadCredentialStore: () => ({ principals: [] }),
+    readCredentialStoreSnapshot: () => ({ principals: [] }),
+  },
 });
 mock.module('../security/native-standalone.js', {
   namedExports: {
