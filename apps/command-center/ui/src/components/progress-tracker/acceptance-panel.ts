@@ -19,7 +19,7 @@ import {
   type EvidenceReviewClaimOffers,
   type EvidenceReviewJudgmentRow,
   type EvidenceReviewModel,
-  proofStepGroups,
+  runEvidenceView,
 } from '@farmslot/adapter-sdk/evidence';
 import type {
   AcceptanceCriterionRef,
@@ -757,7 +757,7 @@ export function renderAcceptancePanel(
         : nothing}
       ${options.showOccurrences && model?.currentOccurrences.length
         ? html`<div class="ac-step-groups" data-testid="recipe-proof-steps">
-            ${proofStepGroups(model.currentOccurrences).map(
+            ${runEvidenceView(model).stepGroups.map(
               (group) =>
                 html`<details
                   class="ac-step-group"

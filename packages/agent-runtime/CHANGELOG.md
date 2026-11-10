@@ -4,6 +4,11 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.45.5 - 2026-11-09
+
+- Use FarmPaths for instance storage and execution paths while retaining legacy locations.
+- Use the shared reasoning default for new native coding sessions and validate supported effort levels before starting a turn.
+
 ## 0.45.4 - 2026-11-09
 
 - `resolveWorkerTerminalContract(..., { scriptedCommand: true })` resolves a scripted-command contract (no acceptance ledger, recipe rules or project artifacts; the command result is the proof), and task init writes no `CHECKLIST.md` for it. New `isScriptedCommandContract` and `SCRIPTED_COMMAND_RESULT`.

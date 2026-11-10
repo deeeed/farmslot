@@ -128,6 +128,8 @@ export interface EvidenceReviewInput {
   readErrors?: readonly string[];
   /** From `runEvidencePending`: nothing is retained yet, so a missing package is not an error. */
   evidencePending?: boolean;
+  /** A pending run's trace so far, before any package exists: its steps and their own files. */
+  pendingTrace?: unknown;
   /** Transport namespace; contract references stay relative to their recipe package. */
   artifactPrefix?: string;
   /** Display path relative to the run's artifacts; never used to resolve media. */
@@ -209,6 +211,8 @@ export interface EvidenceReviewOccurrence {
   intent: string;
   ok: boolean;
   proves: readonly string[];
+  /** When the step started, from its trace entry. */
+  startedAt?: string;
   /** Authored checked expectation from the retained input closure, not a fabricated result. */
   expectation?: Readonly<Record<string, unknown>>;
   artifacts: readonly EvidenceReviewArtifact[];
@@ -333,6 +337,9 @@ export interface EvidenceReviewModel {
   /** `occurrences` for panel-level evidence details: empty when the package was replaced. */
   readonly currentOccurrences: readonly EvidenceReviewOccurrence[];
   readonly recordings: readonly RecipeRecordingTimelineDocument[];
+  /** The measured recordings of the execution `currentOccurrences` belong to; never a
+   * comparison baseline's or a retained original's, whose trace indexes are their own. */
+  readonly currentRecordings: readonly RecipeRecordingTimelineDocument[];
   readonly errors: readonly string[];
   readonly warnings: readonly string[];
   readonly displayWarnings: readonly string[];
@@ -512,7 +519,12 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     : (packageRecording ?? ledgerRecording)
       ? { label: (packageRecording ?? ledgerRecording)! }
       : null;
-  const trace = recipeTraceEntries(pkg?.trace ?? input.recordings?.[0]?.trace) ?? [];
+  const trace =
+    recipeTraceEntries(
+      pkg?.trace ??
+        input.recordings?.[0]?.trace ??
+        (input.evidencePending ? input.pendingTrace : undefined),
+    ) ?? [];
   const recordings: EvidenceReviewRecordingInput[] = pkg
     ? Object.values(pkg.timelines).map((timeline) => ({
         timeline,
@@ -541,10 +553,17 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     pkg && isRecord(pkg.summary) && typeof pkg.summary.recipeRunId === 'string'
       ? pkg.summary.recipeRunId
       : undefined;
+  // A pending trace has no manifest yet: each step's own artifact records stand in for it.
   const manifest =
     pkg && isRecord(pkg.manifest) && Array.isArray(pkg.manifest.artifacts)
       ? pkg.manifest.artifacts.filter(isRecord)
-      : [];
+      : pkg || !input.evidencePending || input.pendingTrace === undefined
+        ? []
+        : trace.flatMap((entry) =>
+            isRecord(entry) && Array.isArray(entry.artifacts)
+              ? entry.artifacts.filter(isRecord)
+              : [],
+          );
   const links = new Map((input.evidenceLinks ?? []).map((link) => [link.id, link.evidence]));
   const judgments =
     pkg && input.visualReviewAuthority && !errors.length
@@ -687,6 +706,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
         proves: Array.isArray(entry.proves)
           ? entry.proves.filter((id): id is string => typeof id === 'string')
           : [],
+        ...(typeof entry.startedAt === 'string' ? { startedAt: entry.startedAt } : {}),
         ...(Object.keys(expectation).length ? { expectation } : {}),
         artifacts: artifacts(
           files.map((artifact) => String(artifact.path)),
@@ -1402,6 +1422,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     // Panel-level evidence details describe the current recording only, never a replaced one.
     currentOccurrences: replaced ? [] : occurrences,
     recordings: [...timelines.values()],
+    currentRecordings: replaced ? [] : [...headTimelines.values()],
     errors,
     warnings,
     displayWarnings: replaced

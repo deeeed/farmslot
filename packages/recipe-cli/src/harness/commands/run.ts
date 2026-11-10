@@ -25,6 +25,7 @@ import { acquireCheckoutLock } from '../checkout-lock.js';
 import { color } from '../cli-color.js';
 import { recordCommandEvidence } from '../command-journal.js';
 import { harnessContextField } from '../context-state.js';
+import { runEvidenceViewHint } from '../evidence-view.js';
 import { ProvenanceDriftError } from '../execution-provenance.js';
 import { recipeRunning, recipeRunningRefusal } from '../heal-bounds.js';
 import { harnessDoctorHint, harnessHost } from '../host.js';
@@ -487,10 +488,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
     artifactContext = resolveRecipeExecutionArtifacts(
       target,
       optionString(options, 'artifactsDir'),
-      {
-        fresh: path.join('runs', attempt),
-        taskSubdir: path.join('recipe-runs', attempt),
-      },
+      runAttemptLayout(attempt),
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -801,6 +799,8 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
             `  ${out('dim', `${artifact.label}:`)} ${out('path', artifact.absolutePath)}${fallback}`,
           );
         }
+        const viewHint = runEvidenceViewHint(path.dirname(result.artifactManifestPath));
+        if (viewHint) console.log(`  ${out('dim', 'view:')} ${viewHint}`);
         if (result.status === 'fail') {
           console.error(`  Next: ${failureUserAction}`);
         }
@@ -876,14 +876,38 @@ export function resolveRecipeExecutionArtifacts(
   const taskDir = runTaskDir(target, explicit !== undefined);
   return {
     artifactsDir:
-      explicit !== undefined
-        ? path.resolve(explicit)
-        : taskDir
-          ? path.join(taskDir, 'artifacts', layout.taskSubdir ?? layout.fresh)
-          : path.join(target, 'temp', 'recipe', layout.fresh),
+      explicit !== undefined ? path.resolve(explicit) : layoutArtifactsDir(target, taskDir, layout),
     taskDir,
     claims: registeredTaskClaims(taskDir),
   };
+}
+
+function layoutArtifactsDir(
+  target: string,
+  taskDir: string | null,
+  layout: RecipeArtifactsLayout,
+): string {
+  return taskDir
+    ? path.join(taskDir, 'artifacts', layout.taskSubdir ?? layout.fresh)
+    : path.join(target, 'temp', 'recipe', layout.fresh);
+}
+
+/** One `run` attempt's directory: under the bound task's artifacts, else the checkout's. */
+function runAttemptLayout(attempt: string): RecipeArtifactsLayout {
+  return { fresh: path.join('runs', attempt), taskSubdir: path.join('recipe-runs', attempt) };
+}
+
+/**
+ * The folder a task's or this checkout's `run` attempts go to, laid out as the writer lays them
+ * out. A task the caller named wins, then the writer's own task binding, then a task the caller
+ * sees in progress (its worker binds it in another shell); otherwise the checkout's.
+ */
+export function recipeRunAttemptsRoot(
+  target: string,
+  task: { explicit?: string; active?: string } = {},
+): string {
+  const taskDir = task.explicit ?? runTaskDir(target) ?? task.active ?? null;
+  return path.dirname(layoutArtifactsDir(target, taskDir, runAttemptLayout('attempt')));
 }
 
 // The task's acceptance ledger from the recipe's proof targets. The run's result

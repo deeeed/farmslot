@@ -6,6 +6,14 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.19.4 - 2026-11-09
+
+- Republish against protocol 0.83.0 and the matching worker package set so consumers load one copy of each Farmslot dependency.
+
+## 0.19.3 - 2026-11-09
+
+- Wallet accounts: a `RECIPE_WALLET_DERIVED_ACCOUNTS` entry with the same name, secret and index as a fixture account is that account, not a second one; another name for a listed index stays an alias. Two different accounts with one name are refused at load (`wallet fixture has 2 accounts named …`), naming both sources. A recipe-library registry entry for `dev1` no longer gives Core Perps actions two `dev1` accounts.
+
 ## 0.19.2 - 2026-11-09
 
 - Republish against protocol 0.82.3 and the matching runtime package set so consumers load one copy of each Farmslot package.

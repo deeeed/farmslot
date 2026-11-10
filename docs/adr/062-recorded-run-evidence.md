@@ -1212,3 +1212,107 @@ No new CLI command, flag, RPC or SDK export. The existing publication review
 snapshot binds the comparison's base and head. Review templates consume that
 same identity; project harnesses, including mm-harness, inherit admission without
 a project-specific exception. Existing package formats and stability remain.
+
+## Amendment 23 (2026-11-09): Local run evidence viewer
+
+**Status:** Proposed.
+**Idea:** Run evidence viewer (`MANUAL-000187`).
+
+### Decision
+
+A finished Recipe v1 run folder is enough to review it: the story of what the run
+did, each criterion in order with its verdict and evidence, the recording from
+each claim's moment, and the step timeline with intents. One generic viewer serves
+that page locally. It adds no evidence format and no second evidence model.
+
+**View-model.** `runEvidenceView(model, run?)` in `@farmslot/adapter-sdk/evidence`
+projects the shared `createEvidenceReviewModel` into plain JSON (`RunEvidenceView`,
+version 1): run facts, summary, criteria in the run's order (verdict, padded
+clip cue, files, selected before/after pair, proving steps), every executed step
+in trace order (repeats included) with its time from the run start and a cue into
+its own execution's recording only, step groups, recordings, errors and warnings.
+A recording without a measured timeline is listed as untimed: it plays, and
+nothing seeks into it. It only reads the model; it never moves its selection. A
+folder reads through `readRecordedEvidencePackage`; a gateway client passes the
+model it already has. The runner keeps no copy of the host's frozen review
+revision, but it writes a before/after pair only when both captures match it, so
+the folder reader takes the revision from the engine's pair.
+
+**Story and Evidence.** The page has two views over the same view-model. Story
+lists every executed intent in run order, one line each with pass/fail and time
+from the run start, the step's own screenshots inline; a measured step seeks the
+recording to its moment. It has no criteria or grouping. Evidence lists the
+criteria, then the step timeline. `#story` selects Story and is restored on
+reload and Back/Forward; Evidence is the default and leaves no hash.
+
+**Template contract.** The page is a list of sections over that view-model:
+header (with the view switch), issues, player, criteria, story, timeline,
+history. A template is a module whose default export has optional
+`sections(defaults)`, `page(view, context)` and `styles`. It may reorder, drop,
+replace or add sections, or render the whole body. The page shell keeps the
+player and view scripts: any element with `data-seek-video`/`data-seek-ms`
+(`context.seekAttributes(cue)`) seeks the player. A project selects its template
+with `project.json` `recipe.viewer.template`; `--template` overrides it. A project
+without one gets the default page.
+
+**Components.** Command Center keeps its Lit evidence reviewer; the local page
+renders the same view-model to static HTML with no browser bundle. Sharing the Lit
+components would make `recipe-cli` build and ship them. This narrows the idea's
+"view-model and components" to the view-model and needs acceptance.
+
+**CLI.** `farmslot recipe view <run-dir>` serves the page on `127.0.0.1` only,
+GET/HEAD only, and serves files contained in the run folders. Video supports byte
+ranges so seeking works. The template comes from the project the command selects, by
+the same rules as execution (`--project`, runtime binding, slot, detection,
+default) but without its provider, app or checkout-origin checks; a selection
+that fails is an error, and a checkout no project matches gets the default page.
+Both `run` routes, the project harness and the standalone
+`--action-manifest` run, end their human output with
+`view: <viewCommand> <run-dir>`. The host sets `viewCommand`; the Farmslot CLI
+sets `farmslot recipe view`, and a host without one prints no line.
+`recipe.viewer.link: false` turns the line off. The line is a command, not a URL:
+no server outlives the run.
+
+**Live mode and history.** The runner republishes `trace.json` after each step,
+whole through a temporary file and a rename, so a reader never sees a partial
+trace. A folder without `summary.json`, or with a summary whose artifact manifest
+does not read whole yet, is running: the runner writes the summary before both
+manifests, and the manifest file exists before its bytes land. Its page lists the
+recipe's declared criteria, unjudged, and the steps so far through the same
+review model (`pendingTrace`), each with its own files, and polls a folder
+signature every 2 s. It reloads when files change, until the package is complete.
+An unreadable summary is reported as an error, never read as running; the page
+keeps polling in case it caught a write. A lost server or failed playback shows
+on the page. History lists the run folders beside the one viewed, newest first; a
+folder of runs opens on the index, which also polls.
+
+**Status watch.** The generic `status --watch` view, which every host's TUI
+uses, takes `v`: it serves the folder of runs the checkout's `run` writes to,
+live, and opens the newest run's Story page; the footer shows the key and the
+URL, and the server stops with the watch.
+
+**Command Center.** Its acceptance panel renders proof steps from
+`runEvidenceView(model).stepGroups`, the same projection the viewer reads.
+Criterion rows already come from the same model's claims.
+
+### Rationale and consequences
+
+Engineers and agents can review a run without a gateway, and the page stays
+honest: pruned media, an unqualified recording and untimed claims show their
+errors with no seekable cue. The projection is experimental until a harness
+template adopts it. mm-harness ships its MetaMask template and its `viewCommand`
+separately, over the same contract. Hosting,
+uploading, editing evidence and gate decisions stay out of scope.
+
+### Public surface
+
+New: `runEvidenceView`, `RUN_EVIDENCE_VIEW_VERSION` and the `RunEvidenceView`
+types (adapter-sdk evidence); `EvidenceReviewModel.currentRecordings`,
+`EvidenceReviewOccurrence.startedAt` and `EvidenceReviewInput.pendingTrace`; `serveRunEvidence`, `readRunEvidenceView`,
+`listRunEvidenceHistory`, `isRecipeRunFolder`, `runEvidenceSignature`,
+`runEvidenceViewHint`, `resolveProjectViewer`, `loadRunEvidenceTemplate`,
+`renderRunEvidencePage`, `renderRunHistoryPage`, `escapeHtml`,
+`DEFAULT_RUN_EVIDENCE_SECTIONS` and the template, page-option and history types
+(`@farmslot/recipe-cli/harness`); `HarnessHost.viewCommand`; the
+`farmslot recipe view` command; `project.json` `recipe.viewer`. Existing package
+formats are unchanged.

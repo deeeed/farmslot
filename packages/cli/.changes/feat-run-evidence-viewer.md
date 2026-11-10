@@ -1,0 +1,1 @@
+- `farmslot recipe view <run-dir>` serves a read-only page of a recipe run's evidence on 127.0.0.1: criteria in order with verdicts, the recording from each claim's moment, the step timeline and the run history; it follows a run in progress. `--template` or `project.json` `recipe.viewer.template` selects a project page template.

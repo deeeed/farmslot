@@ -474,17 +474,19 @@ export function startLocalCollection(
     if (collecting) return;
     collecting = true;
     void collectLocalMetrics()
-      .then((metrics) => {
-        updateMachineMetrics(localMachine, metrics);
-        if (onLocalUpdate) onLocalUpdate(localMachine);
-      })
-      .catch((error: unknown) => {
-        // One missed sample is recoverable: the next tick collects again, and readers keep the
-        // previous metrics. Report it so a persistent failure is visible.
-        console.warn(
-          `[node-health] local metrics collection failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      })
+      .then(
+        (metrics) => {
+          updateMachineMetrics(localMachine, metrics);
+          if (onLocalUpdate) onLocalUpdate(localMachine);
+        },
+        (error: unknown) => {
+          // Only collection is recovered: one missed sample keeps the previous metrics and the
+          // next tick collects again. Publication errors above are not caught here.
+          console.warn(
+            `[node-health] local metrics collection failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        },
+      )
       .finally(() => {
         collecting = false;
       });

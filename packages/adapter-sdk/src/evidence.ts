@@ -44,6 +44,17 @@ export {
   OTHER_PROOF_STEPS,
   proofStepGroups,
 } from './evidence-review-toc.js';
+export type {
+  RunEvidenceCriterion,
+  RunEvidenceCue,
+  RunEvidenceFile,
+  RunEvidenceStep,
+  RunEvidenceStepGroup,
+  RunEvidenceVideo,
+  RunEvidenceView,
+  RunEvidenceViewRun,
+} from './run-evidence-view.js';
+export { RUN_EVIDENCE_VIEW_VERSION, runEvidenceView } from './run-evidence-view.js';
 export type { RecipeValidationResult, RecordedEvidencePackageInput } from '@farmslot/protocol';
 export type { RecordedClaimSource } from '@farmslot/recipe-runner/evidence';
 export {

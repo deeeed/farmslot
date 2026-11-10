@@ -390,3 +390,55 @@ test('queued updates drain in order under one authorization pass', async () => {
     f.close();
   }
 });
+
+test('a reader change seen mid-batch stops the rest of that batch', async () => {
+  const f = fixture();
+  const c = client();
+  const received: { kind: string; reason?: string; cursor?: { sequence: number } }[] = [];
+  const step = (sequence: number): NativeConversationUpdate => ({
+    kind: 'delta',
+    cursor: { ...cursor, sequence },
+    page: {
+      ...page,
+      cursor: sequence,
+      events: [
+        {
+          sessionId: 'session',
+          generation: 'process',
+          sequence,
+          at: '2026-11-07T00:00:00Z',
+          type: 'text.delta',
+          text: `chunk ${sequence}`,
+        },
+      ],
+    },
+  });
+  const broker = new NativeConversations(async (_node, method, value) => {
+    if (method.endsWith('unsubscribe')) return { ok: true };
+    const params = value as { subscriptionId: string };
+    for (let sequence = 1; sequence <= 5; sequence++)
+      broker.accept(f.ws, { ...step(sequence), subscriptionId: params.subscriptionId });
+    return initial;
+  });
+  // After the second update the reader's principal changes (for example a role was removed).
+  const changed = { ...f.reader, displayName: 'Changed reader' };
+  try {
+    const result = await broker.subscribe(
+      c,
+      target,
+      () =>
+        received.filter((payload) => payload.kind === 'delta').length >= 2 ? changed : f.reader,
+      (_event, payload) => received.push(payload as (typeof received)[number]),
+    );
+    broker.activate(c, result.subscriptionId);
+    await settle();
+    await settle();
+    assert.deepEqual(
+      received.map((payload) => payload.cursor?.sequence ?? payload.reason),
+      [1, 2, 'access-denied'],
+    );
+  } finally {
+    broker.disconnect(c);
+    f.close();
+  }
+});

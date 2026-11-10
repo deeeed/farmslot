@@ -7,19 +7,22 @@
     "nodes": {
       "idle": {
         "action": "command",
-        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/native-stream-latency.mts --out \"${FARMSLOT_LATENCY_PROOF_OUTPUT:-/tmp/native-stream-latency-proof}\" --label idle --deltas 200 --interval 20 --max-p95-ms 150",
-        "intent": "Every delta reaches a subscribed client in order, p95 under 150 ms.",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/native-stream-latency.mts --out \"${FARMSLOT_LATENCY_PROOF_OUTPUT:-${TMPDIR:-/tmp}/native-stream-latency-proof}\" --label idle --deltas 200 --interval 20 --max-p95-ms 110 --max-loop-p99-ms 60",
+        "intent": "Every delta reaches the client in order; p95 under 110 ms, loop p99 under 60 ms.",
         "timeout_ms": 240000,
         "next": "load"
       },
       "load": {
         "action": "command",
-        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/native-stream-latency.mts --out \"${FARMSLOT_LATENCY_PROOF_OUTPUT:-/tmp/native-stream-latency-proof}\" --label load --deltas 200 --interval 20 --viewers 3 --load --max-p95-ms 200",
-        "intent": "Same ordered delivery, p95 under 200 ms, with fleet writes and four viewers.",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/native-stream-latency.mts --out \"${FARMSLOT_LATENCY_PROOF_OUTPUT:-${TMPDIR:-/tmp}/native-stream-latency-proof}\" --label load --deltas 200 --interval 20 --viewers 3 --load --max-p95-ms 130 --max-loop-p99-ms 80",
+        "intent": "All four viewers get every delta in order; fleet broadcasts stay steady.",
         "timeout_ms": 240000,
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
     }
   }
 }

@@ -7,15 +7,16 @@
  *
  * node --import tsx scripts/runner-validation/gateway/native-stream-latency.mts \
  *   --out <dir> [--deltas 200] [--interval 20] [--viewers 3] [--load] [--status-file <json>]
- *   [--max-p95-ms <n>]
- * Exits non-zero when a delta is lost or reordered, or when runner→client p95 exceeds the budget.
+ *   [--max-p95-ms <n>] [--max-loop-p99-ms <n>]
+ * Exits non-zero when any viewer loses or reorders a delta, when runner→client p95 or event-loop
+ * p99 exceeds its budget, or (with --load) when fleet broadcasts stop or exceed one per 250 ms.
  * Without --status-file, --load uses 60 synthetic slot rows; pass a copy of a real
  * `.farm-status.json` for a production-sized fleet (keep it out of git).
  */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import { copyFile, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -56,6 +57,7 @@ const { values } = parseArgs({
     load: { type: 'boolean', default: false },
     'status-file': { type: 'string' },
     'max-p95-ms': { type: 'string' },
+    'max-loop-p99-ms': { type: 'string' },
     label: { type: 'string', default: 'run' },
   },
 });
@@ -147,28 +149,6 @@ const person = auth.writer.createPrincipal(
 );
 const credential = auth.writer.issueCredential(person.id, 'Latency browser');
 process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = owner.id;
-await new NativeSessionClient(path.join(root, 'native')).warm();
-
-const server = createServer();
-const wss = createWebSocketServer(server, auth);
-initServerGlobals();
-await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-const address = server.address();
-assert(address && typeof address !== 'string');
-const connect = async () => {
-  const grant = auth.writer.exchangePersonCredential(credential.secret, {
-    deviceName: 'Latency RPC',
-    deviceKind: 'cli',
-  });
-  return new GatewayClient({
-    url: `ws://127.0.0.1:${address.port}/ws`,
-    credential: { token: grant.accessToken },
-    timeout: 60_000,
-  }).connect();
-};
-const connection = await connect();
-const viewers = await Promise.all(Array.from({ length: Number(values.viewers) }, () => connect()));
-
 const samples: StreamSamples = {
   runnerToClient: [],
   hostToClient: [],
@@ -176,9 +156,24 @@ const samples: StreamSamples = {
   frames: 0,
   bytes: 0,
 };
+/** Fixture line numbers each extra viewer received, by its subscription. */
+const viewerLines = new Map<string, number[]>();
+const onViewerFrame = (frame: { event: string; payload: unknown }) => {
+  if (frame.event !== 'native.session.delta') return;
+  const payload = frame.payload as NativeSessionDeltaPayload;
+  const lines = viewerLines.get(payload.subscriptionId);
+  if (!lines || (payload.kind !== 'delta' && payload.kind !== 'replay')) return;
+  for (const event of payload.page.events)
+    if (event.type === 'text.delta' && event.text)
+      for (const match of event.text.matchAll(/\[t=\d+\] line (\d+) /g))
+        lines.push(Number(match[1]));
+};
+/** `fleet.updated` arrival times, to prove slot writes still reach clients under load. */
+const fleetBroadcasts: number[] = [];
 let completed = false;
 let subscriptionId: string | undefined;
-const stopEvents = connection.onEvent((frame) => {
+const onFrame = (frame: { event: string; payload: unknown }) => {
+  if (frame.event === 'fleet.updated') fleetBroadcasts.push(Date.now());
   if (frame.event !== 'native.session.delta') return;
   const received = Date.now();
   const payload = frame.payload as NativeSessionDeltaPayload;
@@ -195,7 +190,7 @@ const stopEvents = connection.onEvent((frame) => {
       samples.lines.push(Number(match[2]));
     }
   }
-});
+};
 
 const percentiles = (list: number[]): Percentiles => {
   const sorted = [...list].sort((a, b) => a - b);
@@ -212,9 +207,36 @@ const until = async (check: () => boolean, description: string, timeout = 120_00
 
 let session: NativeSessionInfo | undefined;
 let load: ReturnType<typeof setInterval> | undefined;
+let server: ReturnType<typeof createServer> | undefined;
+let wss: ReturnType<typeof createWebSocketServer> | undefined;
+let connection: Awaited<ReturnType<InstanceType<typeof GatewayClient>['connect']>> | undefined;
+let stopEvents: (() => void) | undefined;
+const viewers: NonNullable<typeof connection>[] = [];
 const loop = monitorEventLoopDelay({ resolution: 10 });
 const result: Record<string, unknown> = { label: values.label, root, args: values };
 try {
+  await new NativeSessionClient(path.join(root, 'native')).warm();
+  server = createServer();
+  wss = createWebSocketServer(server, auth);
+  initServerGlobals();
+  const listening = server;
+  await new Promise<void>((resolve) => listening.listen(0, '127.0.0.1', resolve));
+  const address = listening.address();
+  assert(address && typeof address !== 'string');
+  const connect = async () => {
+    const grant = auth.writer.exchangePersonCredential(credential.secret, {
+      deviceName: 'Latency RPC',
+      deviceKind: 'cli',
+    });
+    return new GatewayClient({
+      url: `ws://127.0.0.1:${address.port}/ws`,
+      credential: { token: grant.accessToken },
+      timeout: 60_000,
+    }).connect();
+  };
+  connection = await connect();
+  for (let index = 0; index < Number(values.viewers); index++) viewers.push(await connect());
+  stopEvents = connection.onEvent(onFrame);
   session = (
     (await connection.call('native.session.create', {
       runner: 'claude',
@@ -229,11 +251,20 @@ try {
   subscriptionId = (
     (await connection.call('native.session.subscribe', selection)) as NativeSessionSubscribeResult
   ).subscriptionId;
-  for (const viewer of viewers) await viewer.call('native.session.subscribe', selection);
+  const stopViewerEvents = viewers.map((viewer) => viewer.onEvent(onViewerFrame));
+  for (const viewer of viewers) {
+    const subscribed = (await viewer.call(
+      'native.session.subscribe',
+      selection,
+    )) as NativeSessionSubscribeResult;
+    viewerLines.set(subscribed.subscriptionId, []);
+  }
+  let lastWriteAt = 0;
   if (values.load) {
     const slot = status.slots[0].slot;
     let tick = 0;
     load = setInterval(() => {
+      lastWriteAt = Date.now();
       void updateSlotStatus(slot, { latency_probe_tick: ++tick });
     }, 100);
   }
@@ -246,6 +277,13 @@ try {
   });
   await until(() => completed, 'turn completion');
   loop.disable();
+  if (load) {
+    clearInterval(load);
+    load = undefined;
+    // The last write's broadcast is due within one rate-limit window.
+    const lastWrite = lastWriteAt;
+    await until(() => fleetBroadcasts.some((at) => at > lastWrite), 'final fleet broadcast', 5_000);
+  }
   result.wallMs = Date.now() - started;
   result.runnerToClientMs = percentiles(samples.runnerToClient);
   result.hostToClientMs = percentiles(samples.hostToClient);
@@ -258,27 +296,47 @@ try {
   result.bytes = samples.bytes;
   result.gatewayPerformance = await connection.call('gateway.performance.get', {});
   const runnerToClient = result.runnerToClientMs as Percentiles;
-  const inOrder =
-    samples.lines.length === Number(values.deltas) &&
-    samples.lines.every((line, index) => line === index);
+  for (const stop of stopViewerEvents) stop();
+  const complete = (lines: number[]) =>
+    lines.length === Number(values.deltas) && lines.every((line, index) => line === index);
+  const inOrder = complete(samples.lines) && [...viewerLines.values()].every(complete);
   const budget = values['max-p95-ms'] === undefined ? Infinity : Number(values['max-p95-ms']);
+  const loopBudget =
+    values['max-loop-p99-ms'] === undefined ? Infinity : Number(values['max-loop-p99-ms']);
+  // Writes every 100 ms broadcast at most once per 250 ms: a steady stream, never one per write.
+  // Counting is robust to receive jitter; the slack covers load starting before the stream and
+  // the final broadcast. The old 50 ms debounce sent about one per write (about 2x this cap).
+  const wallMs = result.wallMs as number;
+  const minimumBroadcasts = values.load ? Math.floor(wallMs / 1000) : 0;
+  const maximumBroadcasts = Math.floor(wallMs / 250) + 4;
+  result.fleetBroadcasts = fleetBroadcasts.length;
+  result.fleetBroadcastRange = values.load ? [minimumBroadcasts, maximumBroadcasts] : null;
   result.inOrder = inOrder;
-  result.withinBudget = runnerToClient.p95 <= budget;
-  result.pass = inOrder && runnerToClient.p95 <= budget;
+  result.viewersChecked = viewerLines.size;
+  result.withinBudget =
+    runnerToClient.p95 <= budget && (result.eventLoopDelayMs as { p99: number }).p99 <= loopBudget;
+  result.fleetDelivered =
+    !values.load ||
+    (fleetBroadcasts.length >= minimumBroadcasts && fleetBroadcasts.length <= maximumBroadcasts);
+  result.pass = inOrder && result.withinBudget && result.fleetDelivered;
 } finally {
   if (load) clearInterval(load);
-  stopEvents();
-  if (session)
+  stopEvents?.();
+  if (session && connection)
     await connection.call('native.session.close', {
       sessionId: session.id,
       executionNodeId: 'local',
     });
   for (const viewer of viewers) viewer.close();
-  connection.close();
+  connection?.close();
   resetServerGlobalsForTests();
-  for (const socket of wss.clients) socket.terminate();
-  await new Promise<void>((resolve) => wss.close(() => resolve()));
-  await new Promise<void>((resolve) => server.close(() => resolve()));
+  const sockets = wss;
+  if (sockets) {
+    for (const socket of sockets.clients) socket.terminate();
+    await new Promise<void>((resolve) => sockets.close(() => resolve()));
+  }
+  const listening = server;
+  if (listening?.listening) await new Promise<void>((resolve) => listening.close(() => resolve()));
   const lock = path.join(root, 'native/lock/owner.json');
   if (fs.existsSync(lock)) {
     const supervisor = JSON.parse(fs.readFileSync(lock, 'utf8')) as { pid: number };
@@ -300,4 +358,6 @@ try {
   const { gatewayPerformance: _omitted, ...summary } = result;
   console.log(JSON.stringify(summary, null, 2));
   if (result.pass !== true) process.exitCode = 1;
+  // Keep the private root (credentials, native journals) only when a failure needs inspecting.
+  else await rm(root, { recursive: true, force: true });
 }

@@ -38,9 +38,10 @@ For native chat streaming latency, run the
 A synthetic Claude peer streams timestamped deltas through the real native host and an
 isolated in-process gateway. The recipe reports runner-to-client and host-to-client
 percentiles and event-loop delay, and fails on a lost or reordered delta or a p95 over budget.
-`--load` adds slot writes and viewers. It never touches the operator gateway, whose
-timers are off in this isolated stack. Read operator loop lag from
-`farmslot_event_loop_lag_seconds` instead.
+`--load` adds slot writes every 100 ms and fails if `fleet.updated` broadcasts stop arriving;
+`--viewers <n>` adds subscribers to the same session. It never touches the operator gateway, and
+the isolated stack runs without orchestration timers, so it does not show operator stalls; read
+those from `farmslot_event_loop_lag_seconds` on the operator gateway.
 
 The nightly canary saves a dated snapshot and budget verdict using the versioned
 [normal workload](../reference/performance-diagnostics.md). Injected faults stay

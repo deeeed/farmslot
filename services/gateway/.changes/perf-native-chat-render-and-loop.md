@@ -1,1 +1,1 @@
-- Relay native conversation updates with one serialization and one authorization pass per batch, rate-limit fleet broadcasts during steady slot writes, and collect gateway host metrics without blocking the event loop.
+- Measure each native conversation update once for all viewers, authorize relay delivery once per synchronous pass with the per-emit reader check kept, rate-limit fleet broadcasts during steady slot writes without starving them, and collect gateway host metrics without blocking the event loop.

@@ -1,1 +1,0 @@
-- `TaskOperation.processStartedAt` is optional: a sandboxed owner that cannot run `ps` records no start time.

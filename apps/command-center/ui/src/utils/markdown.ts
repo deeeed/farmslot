@@ -1,5 +1,5 @@
 import DOMPurify from 'dompurify';
-import { Marked, marked, Renderer, type Token } from 'marked';
+import { Marked, marked, Renderer, type Token, type TokensList } from 'marked';
 
 marked.setOptions({ breaks: true, gfm: true });
 
@@ -63,8 +63,40 @@ export function chatMarkdownHtml(md: string): string {
   return chatMarked.parse(md, { async: false }) as string;
 }
 
+const sanitizeChat = (html: string) => DOMPurify.sanitize(html, { ADD_ATTR: ['target'] });
+
+/** Rendered, sanitized top-level blocks by link definitions, type and source; least recent out. */
+const chatBlocks = new Map<string, string>();
+const CHAT_BLOCK_LIMIT = 500;
+
+/**
+ * Chat message markdown, sanitized. The message is still lexed whole on every call (cheap next to
+ * rendering), so every block is split where a full parse splits it. Each finished top-level block
+ * is then rendered and sanitized once: a streamed delta re-renders only the last block. A block's key carries the message's link
+ * definitions, so a definition arriving later re-renders the reference links that use it.
+ */
 export function renderChatMarkdown(md: string): string {
-  return DOMPurify.sanitize(chatMarkdownHtml(md), { ADD_ATTR: ['target'] });
+  const tokens: TokensList = chatMarked.lexer(md);
+  // The parser joins adjacent top-level text tokens into one paragraph; those cannot be split.
+  if (tokens.some((token) => token.type === 'text')) return sanitizeChat(chatMarkdownHtml(md));
+  const links = Object.keys(tokens.links).length ? JSON.stringify(tokens.links) : '';
+  const walk = chatMarked.defaults.walkTokens;
+  let html = '';
+  for (const [index, token] of tokens.entries()) {
+    // The last block may still be streaming: caching each of its prefixes would fill the cache
+    // with near-duplicates, so it is rendered every time and only finished blocks are kept.
+    const tail = index === tokens.length - 1;
+    const key = `${links}\0${token.type}\0${token.raw}`;
+    let block = tail ? undefined : chatBlocks.get(key);
+    if (block === undefined) {
+      if (walk) chatMarked.walkTokens([token], walk);
+      const rendered = chatMarked.parser([token]);
+      block = rendered && sanitizeChat(rendered);
+    } else chatBlocks.delete(key);
+    if (!tail) putCapped(chatBlocks, key, block, CHAT_BLOCK_LIMIT);
+    html += block;
+  }
+  return html;
 }
 
 export type MdFetchEntry<T> =

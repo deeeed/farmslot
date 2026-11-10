@@ -1,8 +1,13 @@
 import { strict as assert } from 'node:assert';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
-import type { AcceptanceCriterionStatus, AcceptanceStatusLedger } from '@farmslot/protocol';
+import { createEvidenceReviewModel, runEvidenceView } from '@farmslot/adapter-sdk/evidence';
+import type {
+  AcceptanceCriterionStatus,
+  AcceptanceStatusLedger,
+  RecordedEvidencePackageInput,
+} from '@farmslot/protocol';
 import { acceptancePanelPresentation } from '@farmslot/review-dispatch';
 
 import { litBindings, litText } from '../../testing/lit-text.js';
@@ -432,4 +437,30 @@ test('each AC row names the recording its verdict comes from', () => {
   const time = new Date('2026-11-01T07:26:00Z');
   const pad = (value: number) => String(value).padStart(2, '0');
   assert.ok(text.includes(`Recording ${pad(time.getHours())}:${pad(time.getMinutes())}`));
+});
+
+test('proof steps render the shared run evidence view, the same groups the local viewer reads', () => {
+  const { input } = JSON.parse(
+    readFileSync(
+      new URL(
+        '../../../../../../packages/recipe-runner/test/fixtures/visual-review-package.json',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  ) as { input: RecordedEvidencePackageInput };
+  const model = createEvidenceReviewModel({ context: 'run-detail', package: input });
+  const text = litText(
+    renderAcceptancePanel(ledger([]), { evidenceModel: model, showOccurrences: true }),
+  );
+  const groups = runEvidenceView(model).stepGroups;
+  assert.deepEqual(
+    groups.map(({ label, steps }) => [label, steps.map((step) => step.traceIndex)]),
+    [
+      ['check-1', [1]],
+      ['Other steps', [0, 2]],
+    ],
+  );
+  for (const { label } of groups) assert.match(text, new RegExp(`>${label}</span>`, 'u'));
+  assert.match(text, /Verify value 1\./u);
 });

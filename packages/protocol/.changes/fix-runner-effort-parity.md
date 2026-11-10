@@ -1,1 +1,0 @@
-- Share Codex effort resolution across terminal and native callers, preserving automatic defaults and refusing unsupported model levels.

@@ -49,6 +49,8 @@ export interface HarnessHost {
   supportsLast?: boolean;
   /** Non-secret gateway selector arguments inherited by the task lifecycle CLI reader. */
   taskRunCliArgs?: readonly string[];
+  /** The command a run's end prints to open its evidence page; none is printed without one. */
+  viewCommand?: string;
 }
 
 const defaultHost: HarnessHost = {
@@ -60,6 +62,7 @@ const defaultHost: HarnessHost = {
   packageRoot: fileURLToPath(new URL('../..', import.meta.url)),
   // The default host journals nothing; a host lists the commands it journals.
   journaledCommands: [],
+  viewCommand: 'farmslot recipe view',
 };
 
 let current: HarnessHost = defaultHost;

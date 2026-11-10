@@ -9,6 +9,7 @@ test('slot updates coalesce, rate-limit and never starve under steady writes', (
   const trigger = createSlotUpdateScheduler(() => fired.push(Date.now()), {
     coalesceMs: 50,
     minIntervalMs: 250,
+    now: () => Date.now(),
   });
 
   // A burst of writes becomes one broadcast after the coalescing wait.
@@ -36,4 +37,18 @@ test('slot updates coalesce, rate-limit and never starve under steady writes', (
   trigger();
   t.mock.timers.tick(50);
   assert.equal(fired.at(-1), before + 50);
+});
+
+test('a wall-clock step back does not stall slot update broadcasts', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 10 * 3_600_000 });
+  let fired = 0;
+  // The default clock: monotonic, so a wall-clock step cannot move the next deadline.
+  const trigger = createSlotUpdateScheduler(() => fired++, { coalesceMs: 50, minIntervalMs: 250 });
+  trigger();
+  t.mock.timers.tick(50);
+  assert.equal(fired, 1);
+  t.mock.timers.setTime(Date.now() - 3_600_000);
+  trigger();
+  t.mock.timers.tick(300);
+  assert.equal(fired, 2, 'the next write still broadcasts within one rate-limit window');
 });

@@ -1,0 +1,1 @@
+- Node support retention keeps the bundles a failed, unarchived run named while it ran. That run can be replayed, and a replay used to find its pinned support bundle deleted by another launch on the same node. A failed run is frozen at those references and does not acquire later bundles on its slot. Archiving the run ends that retention.

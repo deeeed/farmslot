@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.46.10 - 2026-11-09
+
+- `processIdentity` returns `null` when the sandbox refuses to run the setuid `ps` (EPERM/EACCES). New `processStillRunning` and `processAlive` fall back to a liveness check when the identity is unknown, and an operation record then omits `processStartedAt`.
+
 ## 0.46.9 - 2026-11-09
 
 - Republish against protocol 0.82.3 and the matching runtime package set so consumers load one copy of each Farmslot package.
