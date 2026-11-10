@@ -5688,6 +5688,8 @@ test('CDP visible waits ignore overflow ancestors above a fixed element', async 
     { willChange: 'opacity, transform' },
     { willChange: 'backdrop-filter' },
     { containerType: 'inline-size' },
+    { transformStyle: 'preserve-3d' },
+    { willChange: 'transform-style' },
   ]) {
     await assert.rejects(
       fixedFooterPage({ position: 'fixed' }, containingBlock).waitFor({
@@ -5698,6 +5700,11 @@ test('CDP visible waits ignore overflow ancestors above a fixed element', async 
       /ui\.wait_for timed out/u,
     );
   }
+  await fixedFooterPage({ position: 'fixed' }, { containerType: 'scroll-state' }).waitFor({
+    selector: '#submit',
+    expected: 'visible',
+    timeoutMs: 100,
+  });
   await fixedFooterPage({ position: 'fixed' }, { willChange: 'transform-origin, opacity' }).waitFor(
     {
       selector: '#submit',

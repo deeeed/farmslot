@@ -2062,8 +2062,9 @@ function deepQueryHelpersExpression(): string {
       ['transform', 'translate', 'rotate', 'scale', 'filter', 'backdropFilter', 'perspective', 'offsetPath'].some((name) => (style[name] || 'none') !== 'none') ||
       /paint|layout|strict|content/.test(style.contain || '') ||
       style.contentVisibility === 'auto' ||
-      (style.containerType || 'normal') !== 'normal' ||
-      (style.willChange || '').split(',').some((name) => ['transform', 'translate', 'rotate', 'scale', 'filter', 'backdrop-filter', 'perspective', 'offset-path', 'contain', 'content-visibility', 'container-type'].includes(name.trim()));
+      style.transformStyle === 'preserve-3d' ||
+      /(^|\s)(size|inline-size)(\s|$)/.test(style.containerType || '') ||
+      (style.willChange || '').split(',').some((name) => ['transform', 'translate', 'rotate', 'scale', 'filter', 'backdrop-filter', 'perspective', 'offset-path', 'contain', 'content-visibility', 'container-type', 'transform-style'].includes(name.trim()));
     const isVisibleDeep = (element) => {
       if (!isRenderedDeep(element)) return false;
       let rect = element.getBoundingClientRect();
