@@ -273,6 +273,7 @@ export function createGatewayResourceCache(
   let deletionRequired = false;
   let recoveryAttempted = false;
   let barrier: Promise<void> = Promise.resolve();
+  let storeOpening: Promise<void> = Promise.resolve();
   const entries = new Map<string, QueryEntry>();
   const revisions = new Map<string, number>();
   const syncListeners = new Map<
@@ -543,14 +544,21 @@ export function createGatewayResourceCache(
     nextConnection: ResourceCacheConnection,
     hydrate = true,
   ): Promise<void> {
-    const previous = store;
-    const recoveringMemory = metadata !== undefined && !previous.persistent;
-    metadata = next;
-    try {
+    // Hydration/content failures can recover outside the write barrier. Serialize
+    // every opener with connection-lifecycle opens, without recursively holding it on failure.
+    const opening = storeOpening.then(async () => {
+      if (disposed) return;
+      const previous = store;
+      const recoveringMemory = metadata !== undefined && !previous.persistent;
+      metadata = next;
       const opened =
         options.openStore && canPersist(nextConnection)
           ? await options.openStore(next)
           : createMemoryResourceStore();
+      if (disposed) {
+        await opened.close();
+        return;
+      }
       if (opened !== previous) {
         if (recoveringMemory && !opened.persistent) {
           // A failed retry must not discard the active fallback's cached bodies.
@@ -586,14 +594,23 @@ export function createGatewayResourceCache(
         storageNotice = 'Offline data will not survive a restart with this gateway version.';
         options.onStorageNotice?.(storageNotice);
       }
+      needsStore =
+        options.openStore !== undefined && !store.persistent && canPersist(nextConnection);
+      // Same-owner recovery must not replace a newer visible reply with older disk data.
+      if (hydrate)
+        for (const entry of entries.values())
+          if (entry.state.data === undefined && entry.state.status !== 'ready') hydrateEntry(entry);
+    });
+    // The caller handles failures; a later opener still gets a usable queue.
+    storeOpening = opening.then(
+      () => undefined,
+      () => undefined,
+    );
+    try {
+      await opening;
     } catch (error) {
       await recoverStore(error);
     }
-    needsStore = options.openStore !== undefined && !store.persistent && canPersist(nextConnection);
-    // Same-owner recovery must not replace a newer visible reply with older disk data.
-    if (hydrate)
-      for (const entry of entries.values())
-        if (entry.state.data === undefined && entry.state.status !== 'ready') hydrateEntry(entry);
   }
 
   async function warmStoredQueries(): Promise<void> {
@@ -1966,6 +1983,7 @@ export function createGatewayResourceCache(
       await flushingConversations;
       conversationFlush = false;
       await barrier;
+      await storeOpening;
       try {
         if (reason && deletionReasons.has(reason)) await store.deleteAll();
         await withdrawing;

@@ -58,6 +58,12 @@ export class ResourceStoreNotice extends LitElement {
     this.syncState = { status: 'syncing' };
     this.stopSync = cache?.observeSync?.(
       (state) => {
+        if (
+          state.status === this.syncState.status &&
+          (state.status !== 'cached' ||
+            (this.syncState.status === 'cached' && state.observedAt === this.syncState.observedAt))
+        )
+          return;
         this.syncState = state;
       },
       (query) => resourceViewMatches(route, query),

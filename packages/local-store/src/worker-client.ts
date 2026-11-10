@@ -241,8 +241,8 @@ export class ResourceStoreWorkerClient {
       },
       deleteAll: () => {
         if (deleted) return Promise.resolve();
-        seal();
-        this.onScopeDeleted?.(scopeId);
+        this.sealScope(scopeId);
+        // Only the worker's validated scope-deleted event may broadcast physical deletion.
         return request<void>({ operation: 'deleteAll', handle });
       },
       close: async () => {

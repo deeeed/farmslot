@@ -317,7 +317,9 @@ editor drafts to recover the rebuildable cache.
 Recovery discards the persisted run collection and reads gateway versions again.
 Every reconnect verifies held rows before calling them current; absent rows are
 removed. SQLite handles check the schema and logical scope before touching rows,
-so a schema rebuild cannot reuse an old handle for another scope.
+so a schema rebuild cannot reuse an old handle for another scope. Tabs running
+different schema versions can rebuild the cache repeatedly until the older tab
+refreshes. This affects rebuildable resource data, not the separate editor drafts.
 
 The protocol derives `synced`, `syncing`, or timestamped `cached` status from the
 observed reads and connection. Command Center shows that status for the visible view's

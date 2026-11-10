@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const origin = process.env.FARMSLOT_PROOF_UI_ORIGIN;
 const source = process.env.FARMSLOT_PROOF_SOURCE_ORIGIN;
@@ -13,6 +13,7 @@ assert.equal(new URL(endpoint).hostname, '127.0.0.1');
 const { chromium } = await import(pathToFileURL(browserModule).href);
 const browser = await chromium.connectOverCDP(endpoint);
 const page = await browser.contexts()[0].newPage();
+const cacheModule = `/@fs${fileURLToPath(new URL('../../../../packages/protocol/src/client-cache/index.ts', import.meta.url))}`;
 const errors = [];
 let stopRouting;
 let offline = false;
@@ -36,13 +37,30 @@ async function until(read) {
   throw new Error('Offline-cache browser proof deadline');
 }
 async function receipt() {
-  return page.evaluate(async () => {
+  return page.evaluate(async (cacheModule) => {
+    const { resourceQuery, nativeObservationQuery } = await import(cacheModule);
     const { getState, runHistoryQuery } = await import('/src/state.ts');
-    const { getResourceCache } = await import('/src/resource-cache.ts');
+    const { getResourceCache, getResourceNativeOwnerId } = await import('/src/resource-cache.ts');
     const { gateway } = await import('/src/gateway-client.ts');
     const notice = document.querySelector('farm-resource-store-notice');
     const state = getResourceCache()?.read(runHistoryQuery);
+    const route = location.hash.split('?')[0];
+    const params = new URLSearchParams(location.hash.split('?')[1] ?? '');
+    const owner = getResourceNativeOwnerId();
+    const primary =
+      route === '#native' && owner
+        ? ['native.session.list', 'native.session.catalog'].map((method) =>
+            nativeObservationQuery(method, {}, owner),
+          )
+        : route === '#runs/compare'
+          ? [params.get('a'), params.get('b')].map((runId) => resourceQuery('run.get', { runId }))
+          : [runHistoryQuery];
     return {
+      route,
+      primary: primary.map((query) => ({
+        method: query.method,
+        status: getResourceCache()?.read(query).status,
+      })),
       connection: gateway.connectionState,
       sync: notice?.shadowRoot
         ?.querySelector('[data-testid=resource-sync-status]')
@@ -59,7 +77,7 @@ async function receipt() {
         .sort(),
       fault: window.__offlineProof,
     };
-  });
+  }, cacheModule);
 }
 try {
   // Source-only proxy keeps the existing agent-owned login on its original origin.
@@ -205,7 +223,64 @@ try {
     );
   });
   await page.screenshot({ path: path.join(output, 'refreshed.png') });
-  const result = { recovered, cached, reconnected, current, refreshed, consoleErrors: errors };
+  await page.evaluate(() => {
+    location.hash = '#native';
+  });
+  const native = await until(async () => {
+    const state = await receipt();
+    return (
+      state.sync === 'Synced' && state.primary.every((read) => read.status === 'ready') && state
+    );
+  });
+  await page
+    .locator('farm-resource-store-notice')
+    .screenshot({ path: path.join(output, 'native-synced.png') });
+  offline = true;
+  for (const [client, server] of sockets) {
+    client.close({ code: 1001, reason: 'Offline native proof' });
+    server.close({ code: 1001, reason: 'Offline native proof' });
+  }
+  const nativeCached = await until(async () => {
+    const state = await receipt();
+    return state.connection !== 'connected' && state.sync?.startsWith('Cached from ') && state;
+  });
+  await page
+    .locator('farm-resource-store-notice')
+    .screenshot({ path: path.join(output, 'native-cached.png') });
+  offline = false;
+  await page.evaluate(async () => (await import('/src/gateway-client.ts')).gateway.reconnect());
+  await until(async () => {
+    const state = await receipt();
+    return state.connection === 'connected' && state.sync === 'Synced';
+  });
+  assert(refreshed.runIds.length >= 2, 'Comparison proof requires two retained gateway runs');
+  await page.evaluate(
+    ([a, b]) => {
+      location.hash = `#runs/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`;
+    },
+    refreshed.runIds.slice(0, 2),
+  );
+  const compare = await until(async () => {
+    const state = await receipt();
+    return (
+      state.sync === 'Synced' && state.primary.every((read) => read.status === 'ready') && state
+    );
+  });
+  await page
+    .locator('farm-resource-store-notice')
+    .screenshot({ path: path.join(output, 'compare-synced.png') });
+  const result = {
+    recovered,
+    cached,
+    reconnected,
+    current,
+    refreshed,
+    native,
+    nativeCached,
+    compare,
+    consoleErrors: errors,
+  };
+
   await writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2));
   assert.equal(errors.length, 0, errors.join('\n'));
 } catch (error) {

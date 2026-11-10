@@ -24,6 +24,9 @@ import {
   type ResourceSqliteDatabase,
   type SqliteValue,
 } from '../src/sqlite-store.js';
+import { ResourceStoreWorkerClient } from '../src/worker-client.js';
+import { createStoreWorkerHandler } from '../src/worker-handler.js';
+import type { StoreWorkerPort, StoreWorkerResponse } from '../src/worker-protocol.js';
 
 function database(sqlite = new DatabaseSync(':memory:')) {
   const adapter: ResourceSqliteDatabase = {
@@ -103,6 +106,56 @@ for (const operation of ['putQuery', 'mergeRows', 'deleteAll'] as const) {
     }
   });
 }
+
+test('a stale browser proxy cannot broadcast deletion of the rebuilt same scope', async () => {
+  const sqlite = new DatabaseSync(':memory:');
+  const clients: ResourceStoreWorkerClient[] = [];
+  const broadcasts: Promise<void>[] = [];
+  function connect() {
+    const { adapter } = database(sqlite);
+    let receive: ((response: StoreWorkerResponse) => void) | undefined;
+    const handle = createStoreWorkerHandler(
+      async () => ({ database: adapter, storage: 'memory-test' }),
+      (response) => receive?.(response),
+    );
+    const port: StoreWorkerPort = {
+      postMessage(request) {
+        void handle(request);
+      },
+      onMessage(listener) {
+        receive = listener;
+        return () => {
+          receive = undefined;
+        };
+      },
+      onError() {
+        return () => {};
+      },
+      terminate() {},
+    };
+    const client = new ResourceStoreWorkerClient(port, (scopeId) => {
+      for (const other of clients)
+        if (other !== client) broadcasts.push(other.deleteScope(scopeId));
+    });
+    clients.push(client);
+    return client;
+  }
+  const old = await connect().open(scope('same-profile'), undefined, 73);
+  const replacement = await connect().open(scope('same-profile'), undefined, 74);
+  try {
+    await replacement.putQuery({ id: 'query', data: 'replacement', observedAt: 2, bytes: 13 });
+    // No preceding read may seal the old proxy before deleteAll performs validation.
+    await old.deleteAll();
+    await Promise.all(broadcasts);
+    assert.equal(replacement.deleted, false);
+    assert.deepEqual((await replacement.getQuery('query'))?.data, 'replacement');
+  } finally {
+    await old.close();
+    await replacement.close();
+    for (const client of clients) client.close();
+    sqlite.close();
+  }
+});
 
 test('query metadata inspection waits behind a writer and reads only its exact store scope', async () => {
   const { sqlite, adapter } = database();

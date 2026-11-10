@@ -24,8 +24,22 @@ await fs.mkdir(output, { recursive: true });
 async function tab(principal = scope.principalId, databaseName, schemaVersion) {
   const page = await browser.contexts()[0].newPage();
   pages.push(page);
+  await page.route(`${origin}/`, (route) =>
+    route.fulfill({ contentType: 'text/html', body: '<p>Isolated schema recovery proof</p>' }),
+  );
+  await page.addInitScript((databaseName) => {
+    const NativeWorker = window.Worker;
+    window.Worker = class extends NativeWorker {
+      postMessage(request, ...args) {
+        // Broadcast deletion normally targets the default database. Keep it in this fixture's file.
+        if (request.operation === 'deleteScope' && !request.databaseName)
+          request = { ...request, databaseName };
+        return super.postMessage(request, ...args);
+      }
+    };
+  }, databaseName);
   await page.bringToFront();
-  await page.goto(`${origin}/#fleet`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${origin}/`, { waitUntil: 'domcontentloaded' });
   const handle = await page.evaluateHandle(
     async ({ moduleUrl, scope, databaseName, schemaVersion }) => {
       const api = await import(moduleUrl);
@@ -126,43 +140,57 @@ try {
     console.log(JSON.stringify(result));
   } else if (process.env.FARMSLOT_PROOF_SCENARIO === 'schema-fence') {
     const databaseName = '/offline-cache-schema-proof.sqlite';
-    const first = await tab(`${scope.principalId}-old`, databaseName, 73);
-    await first.handle.evaluate(
-      ({ store }, entry) => store.putQuery(entry),
-      query('same-key', 'old'),
-    );
-    const second = await tab(`${scope.principalId}-new`, databaseName, 74);
-    await second.handle.evaluate(
-      ({ store }, entry) => store.putQuery(entry),
-      query('same-key', 'foreign'),
-    );
-    try {
-      const stale = await first.handle.evaluate(async ({ store }) => ({
-        data: (await store.getQuery('same-key'))?.data,
-        deleted: store.deleted,
-      }));
-      assert.equal(stale.data, undefined, 'An old OPFS handle must not read a replacement scope');
-      assert.equal(stale.deleted, true);
-      await first.handle.evaluate(({ store }) => store.deleteAll());
-      const kept = await second.handle.evaluate(
-        async ({ store }) => (await store.getQuery('same-key'))?.data,
+    const cases = [];
+    for (const sameScope of [false, true]) {
+      const principal = `${scope.principalId}-${sameScope}`;
+      const first = await tab(principal, databaseName, 73);
+      await first.handle.evaluate(
+        ({ store }, entry) => store.putQuery(entry),
+        query('same-key', 'old'),
       );
-      assert.deepEqual(kept, { value: 'foreign' });
-      const result = {
-        status: 'PASS',
-        scenario: 'schema-fence',
-        isolatedDatabase: databaseName,
-        moduleUrl,
-      };
-      await fs.writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2));
-      console.log(JSON.stringify(result));
-    } finally {
-      await first.handle.evaluate(({ store }) => store.close());
-      await second.handle.evaluate(async ({ store }) => {
-        await store.deleteAll();
-        await store.close();
-      });
+      const second = await tab(sameScope ? principal : `${principal}-new`, databaseName, 74);
+      await second.handle.evaluate(
+        ({ store }, entry) => store.putQuery(entry),
+        query('same-key', 'foreign'),
+      );
+      try {
+        if (!sameScope) {
+          const stale = await first.handle.evaluate(async ({ store }) => ({
+            data: (await store.getQuery('same-key'))?.data,
+            deleted: store.deleted,
+          }));
+          assert.equal(
+            stale.data,
+            undefined,
+            'An old OPFS handle must not read a replacement scope',
+          );
+          assert.equal(stale.deleted, true);
+        }
+        // Same-scope deletion must validate before broadcasting, without a prior read.
+        await first.handle.evaluate(({ store }) => store.deleteAll());
+        const kept = await second.handle.evaluate(async ({ store }) => ({
+          data: (await store.getQuery('same-key'))?.data,
+          deleted: store.deleted,
+        }));
+        assert.deepEqual(kept, { data: { value: 'foreign' }, deleted: false });
+        cases.push({ sameScope, priorRead: !sameScope, replacementRetained: true });
+      } finally {
+        await first.handle.evaluate(({ store }) => store.close());
+        await second.handle.evaluate(async ({ store }) => {
+          await store.deleteAll();
+          await store.close();
+        });
+      }
     }
+    const result = {
+      status: 'PASS',
+      scenario: 'schema-fence',
+      isolatedDatabase: databaseName,
+      moduleUrl,
+      cases,
+    };
+    await fs.writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2));
+    console.log(JSON.stringify(result));
   } else {
     throw new Error('Set FARMSLOT_PROOF_SCENARIO to schema-fence or vfs-io');
   }
