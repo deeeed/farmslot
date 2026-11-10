@@ -87,6 +87,8 @@ import {
   retireNativeWorkersForSlot,
 } from '../../runners/native/worker.js';
 import { NativeWorkerOperationUncertainError } from '../../runners/native/worker-error.js';
+import { readSlotClockMs } from '../../runners/observability-clock.js';
+import { waitForRunnerLaunchAck } from '../../runners/prompt-delivery-evidence.js';
 import {
   assertSupportedRunnerSpelling,
   captureRunnerPromptAcceptanceBaseline,
@@ -1916,6 +1918,9 @@ export async function dispatchExecute(
   };
   const launchCarriesPrompt = !runnerNeedsPostLaunchPrompt(runner);
 
+  const launchAckSinceMs = getRunnerDefinition(runner).requiresInitialPromptAck
+    ? await readSlotClockMs(vars)
+    : undefined;
   try {
     const roleWindowName = agentDispatchWindow(workerRole);
     const usesRoleWindow = Boolean(roleWindowName);
@@ -2151,6 +2156,15 @@ export async function dispatchExecute(
         promptAcceptedSinceMs: promptAcceptanceBaselineMs,
       };
       step('task', 'Task prompt delivered and verified');
+    }
+    if (!resumedReviewSession && launchAckSinceMs !== undefined) {
+      if (!workerPaneId)
+        throw new Error('Runner launch pane unavailable for prompt acknowledgement');
+      await waitForRunnerLaunchAck(vars, workerTarget, taskPrompt, launchAckSinceMs, {
+        paneId: workerPaneId,
+        isAlive: () => isRunnerAliveInAnyPane(vars, workerTarget, runner),
+        timeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
+      });
     }
     await markPromptDeliveryVerified();
     if (!resumedReviewSession) {
