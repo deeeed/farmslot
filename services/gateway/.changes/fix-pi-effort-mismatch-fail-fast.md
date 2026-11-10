@@ -1,1 +1,1 @@
-- Stop Pi workers before inference when the selected model cannot honor requested thinking, and report configuration errors directly instead of retrying hidden connection errors.
+- Stop Pi workers cleanly when their model cannot honor requested thinking, restore the terminal, and fail dispatch with the configuration error before accepting the task.

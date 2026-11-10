@@ -270,6 +270,8 @@ export interface RunnerDefinition {
   fileBackedDispatchPrompt?: boolean;
   /** Use the terminal's paste framing instead of a stream of literal keystrokes. */
   postLaunchPromptTransport?: 'bracketed-paste';
+  /** Initial argv/extension task delivery must emit structured acceptance. */
+  requiresInitialPromptAck?: boolean;
   /** Supports an explicit opt-in first instruction as a CLI argument. */
   supportsInitialPromptArg?: boolean;
   /** Runner starts with the task in argv and must clear safe launch blockers before dispatch can trust task execution. */
@@ -625,6 +627,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   pi: {
     usesObservabilityBundle: true,
     id: 'pi',
+    requiresInitialPromptAck: true,
     nativeTransport: 'pi-rpc',
     supportsNativeTaskReuse: true,
     // Native sessions name Pi's own provider-qualified model IDs. No seed: each

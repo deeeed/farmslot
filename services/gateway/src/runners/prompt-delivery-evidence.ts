@@ -154,6 +154,18 @@ export async function probeRunnerHandoffAck(
   if (paneId !== null) {
     const { hooksRaw } = await readRunnerObservabilityFiles(vars);
     hooks = parseHookJsonl(hooksRaw);
+    // A terminal runner hook is authoritative even before any prompt was accepted.
+    // Scope strictly to this pane and launch; old/foreign failures cannot reject it.
+    const failure = [...hooks]
+      .reverse()
+      .find(
+        (hook) =>
+          hook.tmuxPane === paneId &&
+          (hook.observedAt ?? hook.timestamp ?? 0) >= sinceMs &&
+          (hook.hook_event_name ?? hook.event) === 'StopFailure' &&
+          hook.failure,
+      );
+    if (failure) throw new Error(failure.failure);
     const digest = runnerPromptDigest(message);
     digestMatched = promptDigestMatchedFromHooks(hooks, digest, sinceMs, paneId);
     digestReading = promptAcceptedFromHooks(hooks, digest, sinceMs, 500, Date.now(), paneId);
@@ -246,4 +258,48 @@ export async function probeRunnerHandoffAck(
   }
 
   return { accepted: false, reason: 'no hook or launch-signal handoff evidence' };
+}
+
+interface RunnerLaunchAckOptions {
+  paneId: string;
+  isAlive: () => Promise<boolean>;
+  timeoutMs: number;
+  probe?: typeof probeRunnerHandoffAck;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/** Initial argv/extension delivery must be acknowledged before dispatch can succeed. */
+export async function waitForRunnerLaunchAck(
+  vars: SlotVars,
+  target: string,
+  message: string,
+  sinceMs: number,
+  options: RunnerLaunchAckOptions,
+): Promise<void> {
+  const now = options.now ?? Date.now;
+  const sleep = options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const deadline = now() + options.timeoutMs;
+  while (now() < deadline) {
+    const ack = await (options.probe ?? probeRunnerHandoffAck)(vars, target, message, sinceMs, {
+      paneId: options.paneId,
+    });
+    if (ack.accepted) return;
+    if (!(await options.isAlive())) {
+      // Re-read after process exit so a last synchronous failure hook wins the race.
+      const finalAck = await (options.probe ?? probeRunnerHandoffAck)(
+        vars,
+        target,
+        message,
+        sinceMs,
+        {
+          paneId: options.paneId,
+        },
+      );
+      if (finalAck.accepted) return;
+      throw new Error('Runner exited before accepting the launch prompt');
+    }
+    await sleep(100);
+  }
+  throw new Error('Runner did not acknowledge the launch prompt before the startup deadline');
 }

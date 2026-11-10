@@ -426,15 +426,15 @@ export function providerReasoningFetch(
           );
           if (!mismatchReported) {
             mismatchReported = true;
-            // The worker exits synchronously here; SDKs otherwise hide fetch exceptions
-            // behind a retryable "Connection error." Direct users still get the throw.
+            // The worker requests orderly shutdown here; SDKs otherwise hide fetch
+            // exceptions behind a retryable "Connection error."
             if (onMismatch) onMismatch(error);
             else console.error(error.message);
           }
           throw error;
         }
       }
-      if (model && (provider.id === 'router' || model.reasoning)) {
+      if (model && effort !== undefined && (provider.id === 'router' || model.reasoning)) {
         if (
           !model.reasoning ||
           typeof effort !== 'string' ||
