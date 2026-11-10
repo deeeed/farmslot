@@ -112,7 +112,10 @@ try {
     }
     const server = route.connectToServer();
     sockets.set(route, server);
-    server.onClose(() => sockets.delete(route));
+    server.onClose((code, reason) => {
+      sockets.delete(route);
+      route.close({ code, reason });
+    });
   });
   await page.addInitScript(() => {
     const NativeWorker = window.Worker;
@@ -170,10 +173,8 @@ try {
   assert.equal(recovered.fault.workers, 2, 'Persistence recovery reused the failed worker');
   await page.screenshot({ path: path.join(output, 'recovered.png') });
   offline = true;
-  for (const [client, server] of sockets) {
-    client.close({ code: 1001, reason: 'Offline proof' });
-    server.close({ code: 1001, reason: 'Offline proof' });
-  }
+  // Drop the server side only: the proxy must forward the transport close to the client.
+  for (const server of sockets.values()) server.close({ code: 1001, reason: 'Offline proof' });
   const cached = await until(async () => {
     const state = await receipt();
     return state.connection !== 'connected' && state.sync?.startsWith('Cached from ') && state;
