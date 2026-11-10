@@ -35,7 +35,7 @@ import {
   resolveAfterNodeReconnect,
   sendNodeRequest,
 } from '../../fleet/node-rpc.js';
-import { loadCredentialStore } from '../../security/credential-store.js';
+import { readCredentialStoreSnapshot } from '../../security/credential-store.js';
 import {
   nativeOwnerAssignedMachines,
   requireGenerationZeroOwner,
@@ -52,7 +52,7 @@ type AuthorizedNativeNode = ConnectedNode & {
 
 /** A machine's single node principal and its owner, while that assignment stays issued. */
 function issuedOfflineNode(machine: string): { owner: string; principalId: string } | undefined {
-  const store = loadCredentialStore();
+  const store = readCredentialStoreSnapshot();
   const nodes = store.principals.filter(
     (principal) => principal.subject.type === 'node' && principal.subject.machine === machine,
   );
@@ -445,7 +445,7 @@ export async function routeNativeExecution(
 }
 
 export async function listNativeExecutions(owner: string): Promise<NativeSessionListResult> {
-  const assigned = nativeOwnerAssignedMachines(loadCredentialStore().principals, owner);
+  const assigned = nativeOwnerAssignedMachines(readCredentialStoreSnapshot().principals, owner);
   const nodes = [
     ...new Set([
       ...(ownsLocalNativeProfile(owner) ? ['local'] : []),

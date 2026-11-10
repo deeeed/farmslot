@@ -3,6 +3,8 @@ import { realpath } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import path from 'node:path';
 
+import { deepFreeze } from '../deep-freeze.js';
+
 import { currentFarmPaths, legacyRemoteFarmPaths } from './farm-paths.js';
 
 /** The fields of a pool file the reverse lookup reads; the rest pass through. */
@@ -124,15 +126,6 @@ const stampOf = (stats: Stats): PoolFileStamp => ({
 });
 const sameStamp = (a: PoolFileStamp, b: PoolFileStamp) =>
   a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs && a.size === b.size && a.ino === b.ino;
-
-/** Cached pools are shared by every caller: freezing makes any mutation throw, not corrupt it. */
-function deepFreeze<T>(value: T): T {
-  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const child of Object.values(value)) deepFreeze(child);
-  }
-  return value;
-}
 
 function readPoolFile(fullPath: string): PoolFileEntry<unknown> | undefined {
   let parsed: unknown;

@@ -22,7 +22,7 @@ import {
   observeVisibleModelPreferences,
   visibleModelPreferenceChanges,
 } from '../runners/visible-models.js';
-import { loadCredentialStore } from '../security/credential-store.js';
+import { readCredentialStoreSnapshot } from '../security/credential-store.js';
 import { isGenerationZeroPrincipal, nativeOwnerAssignedMachines } from '../security/native-node.js';
 import {
   hasNativeWorkspaceAccess,
@@ -85,7 +85,7 @@ function collectionMetadata(
   nodes: readonly string[],
   owners?: Readonly<Record<string, string>>,
 ): NativeCollectionMetadata {
-  const store = loadCredentialStore();
+  const store = readCredentialStoreSnapshot();
   const issued = store.principals.filter(
     (p) =>
       p.subject.type === 'node' &&
@@ -159,7 +159,10 @@ function supportsNativeSource(authority: NativeReadAuthority, node: string): boo
   const registered = node === 'local' ? undefined : getNode(node);
   const validOwner =
     !authority.owners ||
-    isGenerationZeroPrincipal(loadCredentialStore().principals, sourceOwner(authority, node));
+    isGenerationZeroPrincipal(
+      readCredentialStoreSnapshot().principals,
+      sourceOwner(authority, node),
+    );
   return (
     validOwner &&
     (node === 'local' ||
@@ -191,9 +194,11 @@ export async function authorizeNativeObservation(
         return { ownerId: reader.id, nodes: Object.keys(owners), owners };
       }
       const ownerId = requireNativeSessionOwner();
-      if (!hasNativeWorkspaceAccess(reader, loadCredentialStore().principals))
+      if (!hasNativeWorkspaceAccess(reader, readCredentialStoreSnapshot().principals))
         throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native owner view is unavailable');
-      const nodes = [...nativeOwnerAssignedMachines(loadCredentialStore().principals, ownerId)];
+      const nodes = [
+        ...nativeOwnerAssignedMachines(readCredentialStoreSnapshot().principals, ownerId),
+      ];
       if (ownsLocalNativeProfile(ownerId)) nodes.push('local');
       return { ownerId, nodes: [...new Set(nodes)] };
     }
@@ -532,7 +537,10 @@ export class GatewayNativeObservations {
         if (
           partialList &&
           authority.owners &&
-          !isGenerationZeroPrincipal(loadCredentialStore().principals, sourceOwner(authority, node))
+          !isGenerationZeroPrincipal(
+            readCredentialStoreSnapshot().principals,
+            sourceOwner(authority, node),
+          )
         ) {
           skipped.add(node);
           skippedReceipts.set(

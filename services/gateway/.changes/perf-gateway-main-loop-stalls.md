@@ -1,1 +1,2 @@
 - Check a slot's fixtures with one remote command instead of one or two per fixture file and directory, cutting process spawns (and ssh connections for remote slots) on every slot check.
+- Answer native ownership and node-assignment checks from a credential store snapshot that is re-read only when the file changes, instead of reading and validating the whole store on each native request. A revocation is still seen on the next check.

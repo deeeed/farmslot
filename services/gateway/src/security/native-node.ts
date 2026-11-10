@@ -2,7 +2,7 @@ import type { NativeExecutionNodeDeclaration, Principal } from '@farmslot/protoc
 
 import { GatewayMethodError } from '../core/method-error.js';
 
-import { loadCredentialStore } from './credential-store.js';
+import { readCredentialStoreSnapshot } from './credential-store.js';
 
 export function nativeNodeDeclaration(
   value: unknown,
@@ -87,7 +87,7 @@ export function isGenerationZeroPrincipal(
 
 export function requireGenerationZeroOwner(
   owner: string,
-  principals: readonly Principal[] = loadCredentialStore().principals,
+  principals: readonly Principal[] = readCredentialStoreSnapshot().principals,
 ): string {
   if (!isGenerationZeroPrincipal(principals, owner))
     throw new GatewayMethodError(

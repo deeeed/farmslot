@@ -3,7 +3,7 @@ import type { Principal } from '@farmslot/protocol';
 import { GatewayMethodError } from '../core/method-error.js';
 import { resolveNativeExecutionNode } from '../runners/native/node.js';
 
-import { loadCredentialStore, VIRTUAL_PRINCIPAL_IDS } from './credential-store.js';
+import { readCredentialStoreSnapshot, VIRTUAL_PRINCIPAL_IDS } from './credential-store.js';
 import { requireGenerationZeroOwner } from './native-node.js';
 
 /** Standalone supervision is an explicit person-admin capability, never node ownership. */
@@ -16,7 +16,7 @@ export function isStandaloneAdmin(principal: Principal): boolean {
 }
 
 export function assertStandaloneAdmin(principal: Principal): void {
-  const current = loadCredentialStore().principals.find((p) => p.id === principal.id);
+  const current = readCredentialStoreSnapshot().principals.find((p) => p.id === principal.id);
   if (
     !current ||
     (current.generation ?? 0) !== (principal.generation ?? 0) ||
@@ -29,7 +29,7 @@ export function assertStandaloneAdmin(principal: Principal): void {
 export function standaloneOwners(principal: Principal): Map<string, string> {
   assertStandaloneAdmin(principal);
   const owners = new Map<string, string>(
-    loadCredentialStore().principals.flatMap((p) =>
+    readCredentialStoreSnapshot().principals.flatMap((p) =>
       p.subject.type === 'node' && p.subject.nativeOwnerPrincipalId
         ? [[p.subject.machine, p.subject.nativeOwnerPrincipalId] as const]
         : [],
@@ -46,7 +46,7 @@ export function standaloneOwner(principal: Principal, executionNodeId: string): 
     executionNodeId === 'local'
       ? process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID
       : standaloneOwners(principal).get(executionNodeId);
-  const configured = loadCredentialStore().principals.find((p) => p.id === owner);
+  const configured = readCredentialStoreSnapshot().principals.find((p) => p.id === owner);
   if (!owner || !configured || configured.subject.type === 'node')
     throw new GatewayMethodError(
       'NATIVE_SOURCE_UNAVAILABLE',

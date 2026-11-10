@@ -3,7 +3,7 @@ import { isTerminalRunStatus, type Run } from '@farmslot/protocol';
 import { GatewayMethodError } from '../core/method-error.js';
 
 import { isAdminPrincipal } from './authorization.js';
-import { loadCredentialStore } from './credential-store.js';
+import { readCredentialStoreSnapshot } from './credential-store.js';
 import { nativeOwnerAssignedMachines, requireGenerationZeroOwner } from './native-node.js';
 import { currentSessionOriginator, currentSessionPrincipal } from './work-originator.js';
 
@@ -48,7 +48,7 @@ export function resolveReviewWorkspaceOwner(expectedOwner?: string): string {
   }
   requireGenerationZeroOwner(owner);
   if (process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID === owner) return owner;
-  if (!nativeOwnerAssignedMachines(loadCredentialStore().principals, owner).size) {
+  if (!nativeOwnerAssignedMachines(readCredentialStoreSnapshot().principals, owner).size) {
     throw new GatewayMethodError(
       'AUTH_FORBIDDEN',
       'Workspace review requires an owned execution node',
@@ -124,7 +124,7 @@ export function inheritableParentOwner(
 ): string | undefined {
   const owner = parent?.nativeOwnerPrincipalId;
   if (!owner || !isTerminalRunStatus(parent.status)) return owner;
-  return loadCredentialStore().retiredPrincipalIds?.includes(owner) ? undefined : owner;
+  return readCredentialStoreSnapshot().retiredPrincipalIds?.includes(owner) ? undefined : owner;
 }
 
 export function assertNativeRunOwner(
