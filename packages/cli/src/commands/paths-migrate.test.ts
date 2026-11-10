@@ -97,9 +97,9 @@ async function fixture(t: TestContext) {
       pin: path.join(home, 'task-pins/pin'),
       source: { packageRoot: path.join(home, 'task-pins/pin/package') },
     },
-    taskDir: path.join(checkout, 'tasks/run-a'),
+    taskDir: path.join(home, 'task-pins/pin/task'),
   });
-  await put(path.join(checkout, 'tasks/run-a/artifacts/harness-provenance.json'), {
+  await put(path.join(home, 'task-pins/pin/task/artifacts/harness-provenance.json'), {
     pin: path.join(home, 'task-pins/pin'),
   });
   await put(path.join(checkout, 'slot/.farmslot-runtime/context.json'), { checkout });
@@ -158,7 +158,7 @@ async function assertMigrated(f: Awaited<ReturnType<typeof fixture>>, plan: Migr
   };
   assert.equal(provenance.receipt.pin, path.join(paths.state.taskPins, 'pin'));
   const receipt = (await json(
-    path.join(f.checkout, 'tasks/run-a/artifacts/harness-provenance.json'),
+    path.join(paths.state.taskPins, 'pin/task/artifacts/harness-provenance.json'),
   )) as { pin: string };
   assert.equal(receipt.pin, provenance.receipt.pin);
   await readFile(path.join(receipt.pin, 'provenance.json'));
@@ -206,6 +206,226 @@ test('plan is read-only; apply rewrites all owners and rollback restores legacy 
   await migratePaths(f.options, 'rollback');
   await assertLegacy(f);
   assert.equal((await migratePaths(f.options, 'rollback')).status, 'rolled-back');
+});
+
+for (const originalKind of ['absolute', 'relative'] as const)
+  test(`legacy bin links follow moved CLI distribution and roll back: ${originalKind}`, async (t) => {
+    const f = await fixture(t);
+    const cli = path.join(
+      f.root,
+      '.local/share/farmslot-cli/revision/packages/cli/bin/farmslot.mjs',
+    );
+    await put(cli, 'synthetic CLI entrypoint');
+    const links = [];
+    for (const directory of ['.local/bin', '.npm-global/bin']) {
+      const bin = path.join(f.root, directory);
+      await mkdir(bin, { recursive: true });
+      const link = path.join(bin, 'farmslot');
+      const original = originalKind === 'relative' ? path.relative(bin, cli) : cli;
+      await symlink(original, link);
+      const unrelated = path.join(bin, 'other');
+      const otherTarget = path.join(f.checkout, 'slot/.farmslot-runtime/context.json');
+      await symlink(otherTarget, unrelated);
+      const dangling = path.join(bin, 'dangling');
+      const missing = path.join(path.dirname(cli), 'missing.mjs');
+      await symlink(missing, dangling);
+      links.push({ link, original, unrelated, otherTarget, dangling, missing });
+    }
+    const plan = await planMigration(f.options);
+    assert.deepEqual(plan.conflicts, []);
+    for (const { link, unrelated, dangling } of links) {
+      assert.ok(
+        plan.steps.some((step) => step.kind === 'symlink' && step.target === link),
+        `missing relink for ${link}`,
+      );
+      assert.ok(!plan.steps.some((step) => step.target === unrelated || step.target === dangling));
+    }
+    const markerIndex = plan.steps.findIndex(
+      (step) => step.target === path.join(f.home, 'config/instance.json'),
+    );
+    assert.ok(plan.steps.every((step, index) => step.kind !== 'symlink' || index < markerIndex));
+    await put(plan.journal, plan);
+    await migratePaths(f.options, 'apply');
+    for (const { link, unrelated, otherTarget, dangling, missing } of links) {
+      const moved = path.join(f.home, 'code/cli/revision/packages/cli/bin/farmslot.mjs');
+      assert.equal(await fs.readlink(link), moved);
+      assert.equal(await realpath(link), moved);
+      assert.equal(await readFile(link, 'utf8'), 'synthetic CLI entrypoint');
+      assert.equal(await fs.readlink(unrelated), otherTarget);
+      assert.equal(await fs.readlink(dangling), missing);
+    }
+    await migratePaths(f.options, 'rollback');
+    for (const { link, original, unrelated, otherTarget, dangling, missing } of links) {
+      assert.equal(await fs.readlink(link), original);
+      assert.equal(await realpath(link), cli);
+      assert.equal(await readFile(link, 'utf8'), 'synthetic CLI entrypoint');
+      assert.equal(await fs.readlink(unrelated), otherTarget);
+      assert.equal(await fs.readlink(dangling), missing);
+    }
+  });
+
+for (const resume of ['apply', 'rollback'] as const)
+  for (const replaced of [false, true])
+    test(`bin link rewrite recovers an interrupted rename: ${resume}, replaced=${replaced}`, async (t) => {
+      const f = await fixture(t);
+      const cli = path.join(f.root, '.local/share/farmslot-cli/revision/cli.mjs');
+      const link = path.join(f.root, '.npm-global/bin/farmslot');
+      await put(cli, 'synthetic CLI entrypoint');
+      await mkdir(path.dirname(link), { recursive: true });
+      await symlink(cli, link);
+      const original = fs.rename;
+      const patched = mock.method(fs, 'rename', async (...args: Parameters<typeof fs.rename>) => {
+        if (args[1] === link) {
+          if (replaced) await original(...args);
+          throw new Error('interrupted link replacement');
+        }
+        return original(...args);
+      });
+      syncBuiltinESMExports();
+      try {
+        await assert.rejects(migratePaths(f.options, 'apply'), /interrupted link replacement/);
+      } finally {
+        patched.mock.restore();
+        syncBuiltinESMExports();
+      }
+      await migratePaths(f.options, resume);
+      assert.equal(await readFile(link, 'utf8'), 'synthetic CLI entrypoint');
+      assert.equal(
+        await fs.readlink(link),
+        resume === 'apply' ? path.join(f.home, 'code/cli/revision/cli.mjs') : cli,
+      );
+      if (resume === 'apply') await migratePaths(f.options, 'rollback');
+      assert.equal(await fs.readlink(link), cli);
+    });
+
+interface OriginalBinLink {
+  link: string;
+  before: string;
+}
+
+for (const replaced of [false, true])
+  test(`interrupted rollback mid-relink resumes with exact link text: replaced=${replaced}`, async (t) => {
+    const f = await fixture(t);
+    const cli = path.join(f.root, '.local/share/farmslot-cli/revision/cli.mjs');
+    await put(cli, 'synthetic CLI entrypoint');
+    const links: OriginalBinLink[] = [];
+    for (const directory of ['.local/bin', '.npm-global/bin']) {
+      const link = path.join(f.root, directory, 'farmslot');
+      await mkdir(path.dirname(link), { recursive: true });
+      const before = path.relative(path.dirname(link), cli);
+      await symlink(before, link);
+      links.push({ link, before });
+    }
+    await migratePaths(f.options, 'apply');
+    const original = fs.rename;
+    // Rollback visits npm-global first, then interrupts on the remaining local link.
+    const patched = mock.method(fs, 'rename', async (...args: Parameters<typeof fs.rename>) => {
+      if (args[1] === links[0].link) {
+        if (replaced) await original(...args);
+        throw new Error('interrupted rollback relink');
+      }
+      return original(...args);
+    });
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(migratePaths(f.options, 'rollback'), /interrupted rollback relink/);
+    } finally {
+      patched.mock.restore();
+      syncBuiltinESMExports();
+    }
+    assert.equal(await fs.readlink(links[1].link), links[1].before);
+    assert.equal(
+      await fs.readlink(links[0].link),
+      replaced ? links[0].before : path.join(f.home, 'code/cli/revision/cli.mjs'),
+    );
+    await migratePaths(f.options, 'rollback');
+    for (const { link, before } of links) {
+      assert.equal(await fs.readlink(link), before);
+      assert.equal(await realpath(link), cli);
+      assert.equal(await readFile(link, 'utf8'), 'synthetic CLI entrypoint');
+    }
+    await assertLegacy(f);
+  });
+
+test('changed legacy bin link refuses before migration mutation', async (t) => {
+  const f = await fixture(t);
+  const cli = path.join(f.root, '.local/share/farmslot-cli/revision/cli.mjs');
+  const link = path.join(f.root, '.local/bin/farmslot');
+  await put(cli, 'synthetic CLI entrypoint');
+  await mkdir(path.dirname(link), { recursive: true });
+  await symlink(cli, link);
+  const plan = await planMigration(f.options);
+  await put(plan.journal, plan);
+  await rm(link);
+  await symlink(f.payload, link);
+  const before = await inventory(f.root);
+  await assert.rejects(migratePaths(f.options, 'apply'), /Migration link changed/);
+  assert.deepEqual(await inventory(f.root), before);
+});
+
+for (const location of ['slot', 'slot-under-home', 'other-lane'] as const)
+  test(`historical task receipt outside farm roots is retained: ${location}`, async (t) => {
+    const f = await fixture(t);
+    const parent =
+      location === 'slot' ? f.checkout : location === 'slot-under-home' ? f.home : f.root;
+    const repo = path.join(parent, location);
+    const taskDir = path.join(repo, '.agent/task');
+    const receipt = path.join(taskDir, 'artifacts/harness-provenance.json');
+    const raw = JSON.stringify({ pin: path.join(f.home, 'task-pins/pin') }) + '\n';
+    await put(receipt, raw);
+    await put(path.join(f.home, 'task-pins/pin/provenance.json'), {
+      taskDir,
+      pin: path.join(f.home, 'task-pins/pin'),
+    });
+    if (location !== 'other-lane')
+      await put(path.join(f.checkout, 'pool/machine.json'), {
+        slots: [{ repo }],
+      });
+    const plan = await planMigration(f.options);
+    assert.deepEqual(plan.conflicts, []);
+    assert.ok(
+      plan.stays.some(
+        (entry) =>
+          entry.path === receipt && entry.reason === 'historical receipt outside farm roots',
+      ),
+    );
+    assert.ok(!plan.steps.some((step) => step.kind === 'write' && step.source === receipt));
+    await migratePaths(f.options, 'apply');
+    assert.equal(await readFile(receipt, 'utf8'), raw);
+    assert.deepEqual(await json(path.join(f.home, 'state/task-pins/pin/provenance.json')), {
+      taskDir,
+      pin: path.join(f.home, 'state/task-pins/pin'),
+    });
+  });
+
+test('moved review task receipt rewrites while checkout content stays byte-identical', async (t) => {
+  const f = await fixture(t);
+  const workspace = path.join(f.home, 'review-workspaces/owner/runs/review');
+  const taskDir = path.join(workspace, 'task');
+  const receipt = path.join(taskDir, 'artifacts/harness-provenance.json');
+  const checkoutFile = path.join(workspace, 'source/config.json');
+  const raw = `{ "pin" : "${f.home}/task-pins/pin" }\n`;
+  await put(receipt, raw);
+  await put(checkoutFile, raw);
+  await put(path.join(f.home, 'task-pins/pin/provenance.json'), { taskDir });
+  await put(path.join(f.runs, 'review.json'), {
+    id: 'review',
+    status: 'done',
+    reviewWorkspace: { checkoutPath: path.join(workspace, 'source'), taskPath: taskDir },
+  });
+  const plan = await planMigration(f.options);
+  assert.deepEqual(plan.conflicts, []);
+  assert.ok(plan.steps.some((step) => step.kind === 'write' && step.source === receipt));
+  assert.ok(!plan.steps.some((step) => step.kind === 'write' && step.source === checkoutFile));
+  await migratePaths(f.options, 'apply');
+  const moved = path.join(f.home, 'state/review-workspaces/owner/runs/review');
+  assert.deepEqual(await json(path.join(moved, 'task/artifacts/harness-provenance.json')), {
+    pin: path.join(f.home, 'state/task-pins/pin'),
+  });
+  assert.equal(await readFile(path.join(moved, 'source/config.json'), 'utf8'), raw);
+  await migratePaths(f.options, 'rollback');
+  assert.equal(await readFile(receipt, 'utf8'), raw);
+  assert.equal(await readFile(checkoutFile, 'utf8'), raw);
 });
 
 test('plan ignores checkout JSONC and arbitrary task artifacts', async (t) => {
@@ -336,7 +556,7 @@ for (const relative of [
   'home/run-bundles/availability/digest.json',
   'old-archive/run-a/manifest.json',
   'home/task-pins/pin/provenance.json',
-  'checkout/tasks/run-a/artifacts/harness-provenance.json',
+  'home/task-pins/pin/task/artifacts/harness-provenance.json',
 ])
   test(`malformed owned document is a named conflict before mutation: ${relative}`, async (t) => {
     const f = await fixture(t);
@@ -478,11 +698,11 @@ test('pass 3: relative backlog specPath reads, enqueues and rolls back its origi
   const paths = resolveFarmPaths({ home: f.home, role: 'gateway', env: {} });
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (key.startsWith('FARMSLOT_')) delete env[key];
+  delete env.TMUX;
   Object.assign(env, {
     HOME: f.root,
     FARMSLOT_HOME: f.home,
     FARMSLOT_ROOT: f.checkout,
-    TMUX: '',
     TMUX_TMPDIR: f.root,
     FARMSLOT_DISABLE_ORCHESTRATION: '1',
     NODE_TEST_CONTEXT: '1',
@@ -1251,7 +1471,9 @@ for (const partial of [false, true])
     const plan = await planMigration(f.options);
     // Reproduce a journal accepted by the previous implementation.
     plan.conflicts = [];
-    const alias = plan.steps.find((step) => step.source === path.join(f.archive, 'alias'));
+    const alias = plan.steps.find(
+      (step) => step.kind === 'move' && step.source === path.join(f.archive, 'alias'),
+    );
     assert.ok(alias && alias.kind === 'move');
     if (partial) {
       await mkdir(path.dirname(alias.target), { recursive: true });
@@ -1289,7 +1511,8 @@ for (const copy of [false, true])
     await assert.rejects(
       migratePaths(f.options, 'apply', {
         async checkpoint(saved, index) {
-          if (saved.steps[index].source === sibling && saved.steps[index].status === 'done')
+          const step = saved.steps[index];
+          if (step.kind === 'move' && step.source === sibling && step.status === 'done')
             throw new Error('interrupted between siblings');
         },
       }),

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Sourced by deploy-node.sh, never run on its own: it reads the deploy's MACHINE,
 # INSTANCE, IS_LOCAL, REFRESH_CLI, REPO_ROOT, SCRIPT_DIR, REMOTE_HOME, NODE_PATH,
-# NODE_DIR, NODE_GATEWAY_URL and resolved CLI_ROOT/CLI_BIN/TARGET_HOME/FARM_LAYOUT.
+# NODE_DIR, NODE_GATEWAY_URL and resolved CLI_ROOT/CLI_BIN/CLI_USER_BINS/TARGET_HOME/FARM_LAYOUT.
 # It runs node commands through the deploy's run().
 
 # --- Refresh the farmslot CLI slot workers run on this machine ---
@@ -24,7 +24,7 @@ else
   if [[ -n "$(git -C "$REPO_ROOT" status --porcelain -- packages)" ]]; then
     echo "[deploy] WARNING: uncommitted changes under packages/ reach the node service but not the CLI snapshot of $CLI_SHA" >&2
   fi
-  # deploy-paths.ts supplies code.cli/code.bin for the selected target.
+  # deploy-paths.mts supplies code.cli/code.bin and the shared user bin directories.
   : "${CLI_ROOT:?missing resolved code.cli}" "${CLI_BIN:?missing resolved code.bin}"
   : "${TARGET_HOME:?missing resolved FARMSLOT_HOME}" "${FARM_LAYOUT:?missing target layout}"
   CLI_SNAPSHOT="$CLI_ROOT/$CLI_SHA"
@@ -59,6 +59,9 @@ else
 set -euo pipefail
 root=$1 sha=$2 sha256=$3 node_dir=$4 lock_wait=$5
 instance_home=$6 instance_bin=$7 layout=$8
+shift 8
+user_bins=("$@")
+: "${user_bins[0]:?missing resolved user bin directories}"
 snapshot="$root/$sha"
 entry="$snapshot/packages/cli/bin/farmslot.mjs"
 lock="$root/.lock"
@@ -203,8 +206,9 @@ shared="$HOME/.local/share/farmslot-cli"
 shim="$shared/farmslot-shim"
 if [[ "$layout" != 2 && ! -f "$shim" ]]; then
   # Unmigrated machines keep their original direct snapshot links byte for byte.
-  for link in "$HOME/.local/bin/farmslot" "$HOME/.npm-global/bin/farmslot"; do
-    if [[ "$link" != "$HOME/.local/bin/farmslot" && ! -L "$link" && ! -e "$link" ]]; then continue; fi
+  for bin in "${user_bins[@]}"; do
+    link="$bin/farmslot"
+    if [[ "$bin" != "${user_bins[0]}" && ! -L "$link" && ! -e "$link" ]]; then continue; fi
     link_entry "$link" "$entry"
   done
 else
@@ -216,7 +220,8 @@ else
   link_entry "$shared/legacy" "$entry"
 fi
 # A first layout-2 deploy preserves any previously installed legacy snapshot.
-for legacy_link in "$HOME/.local/bin/farmslot" "$HOME/.npm-global/bin/farmslot"; do
+for bin in "${user_bins[@]}"; do
+  legacy_link="$bin/farmslot"
   [[ ! -e "$shared/legacy" && -L "$legacy_link" ]] || continue
   previous=$(readlink "$legacy_link")
   if [[ "$previous" != "$shim" ]]; then
@@ -239,8 +244,9 @@ exec "$HOME/.local/share/farmslot-cli/legacy" "$@"
 SHIM
 chmod 755 "$shim.tmp.$$"
 mv -f "$shim.tmp.$$" "$shim"
-for link in "$HOME/.local/bin/farmslot" "$HOME/.npm-global/bin/farmslot"; do
-  if [[ "$link" != "$HOME/.local/bin/farmslot" && ! -L "$link" && ! -e "$link" ]]; then continue; fi
+for bin in "${user_bins[@]}"; do
+  link="$bin/farmslot"
+  if [[ "$bin" != "${user_bins[0]}" && ! -L "$link" && ! -e "$link" ]]; then continue; fi
   link_entry "$link" "$shim"
 done
 fi
@@ -254,7 +260,7 @@ for dir in "$root"/*/; do
 done
 REFRESH
 )
-  if ! run "bash -c $(printf '%q ' "$CLI_REFRESH" _ "$CLI_ROOT" "$CLI_SHA" "$CLI_ARCHIVE_SHA256" "$NODE_DIR" "${CLI_LOCK_WAIT_SECONDS:-600}" "$TARGET_HOME" "$CLI_BIN" "$FARM_LAYOUT")" < "$CLI_ARCHIVE"; then
+  if ! run "bash -c $(printf '%q ' "$CLI_REFRESH" _ "$CLI_ROOT" "$CLI_SHA" "$CLI_ARCHIVE_SHA256" "$NODE_DIR" "${CLI_LOCK_WAIT_SECONDS:-600}" "$TARGET_HOME" "$CLI_BIN" "$FARM_LAYOUT" "${CLI_USER_BINS[@]}")" < "$CLI_ARCHIVE"; then
     echo "[deploy] ERROR: could not refresh the node CLI on $MACHINE; see the fix above" >&2
     exit 1
   fi

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -141,19 +141,37 @@ test('migrate CLI requires one mode and returns reviewable JSON without file con
   t.after(() => rmSync(root, { recursive: true, force: true }));
   // The resolver rejects redirected migration paths, including macOS /var aliases.
   const { realpathSync } = await import('node:fs');
-  const home = realpathSync(root);
+  const userHome = realpathSync(root);
+  const home = path.join(userHome, 'instance');
+  mkdirSync(home);
+  const cli = path.join(userHome, '.local/share/farmslot-cli/revision/cli.mjs');
+  const link = path.join(userHome, '.local/bin/farmslot');
+  mkdirSync(path.dirname(cli), { recursive: true });
+  mkdirSync(path.dirname(link), { recursive: true });
+  writeFileSync(cli, 'synthetic CLI entrypoint');
+  symlinkSync(cli, link);
+  const taskDir = path.join(userHome, 'outside-task');
+  mkdirSync(path.join(home, 'task-pins/pin'), { recursive: true });
+  writeFileSync(path.join(home, 'task-pins/pin/provenance.json'), JSON.stringify({ taskDir }));
+  const receipt = path.join(taskDir, 'artifacts/harness-provenance.json');
+  mkdirSync(path.dirname(receipt), { recursive: true });
+  writeFileSync(receipt, JSON.stringify({ pin: path.join(home, 'task-pins/pin') }));
   writeFileSync(
     path.join(home, 'git-identity.json'),
     JSON.stringify({ 'user.signingkey': path.join(home, 'sources/signing.key') }),
   );
-  const prior = process.env;
-  process.env = {
-    HOME: home,
+  const prior = { ...process.env };
+  for (const key of Object.keys(process.env))
+    if (key.startsWith('FARMSLOT_')) delete process.env[key];
+  delete process.env.TMUX;
+  Object.assign(process.env, {
+    HOME: userHome,
     FARMSLOT_ROOT: path.join(home, 'checkout'),
     CANARY_HOME: path.join(home, 'canary'),
-  };
+  });
   t.after(() => {
-    process.env = prior;
+    for (const key of Object.keys(process.env)) if (!(key in prior)) delete process.env[key];
+    Object.assign(process.env, prior);
   });
   let stdout = '';
   t.mock.method(OutputContext.prototype, 'writeJson', (value: unknown) => {
@@ -167,12 +185,27 @@ test('migrate CLI requires one mode and returns reviewable JSON without file con
   await program().parseAsync(['paths', 'migrate', '--home', home, '--plan', '--json'], {
     from: 'user',
   });
-  const result: { steps: { kind: string; body?: string; before?: string; target: string }[] } =
-    JSON.parse(stdout);
+  const result: {
+    steps: { kind: string; body?: string; before?: string; target: string }[];
+    stays: { path: string; reason: string }[];
+  } = JSON.parse(stdout);
   assert.ok(
     result.steps.some((step) => step.kind === 'write' && step.target.endsWith('git-identity.json')),
   );
   assert.ok(result.steps.every((step) => step.body === undefined && step.before === undefined));
+  assert.ok(result.steps.some((step) => step.kind === 'symlink' && step.target === link));
+  assert.ok(
+    result.stays.some(
+      (entry) => entry.path === receipt && entry.reason === 'historical receipt outside farm roots',
+    ),
+  );
+  t.mock.method(OutputContext.prototype, 'write', (value: string) => {
+    stdout += value;
+  });
+  stdout = '';
+  await program().parseAsync(['paths', 'migrate', '--home', home, '--plan'], { from: 'user' });
+  assert.ok(stdout.includes(`symlink ${link}\n`));
+  assert.ok(stdout.includes(`stays ${receipt}: historical receipt outside farm roots\n`));
   await assert.rejects(
     program().parseAsync(['paths', 'migrate', '--home', home, '--plan', '--apply'], {
       from: 'user',
