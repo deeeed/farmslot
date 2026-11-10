@@ -4,13 +4,14 @@ import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 
 import { buildClaudeSessionDiscoveryCommand } from './claude-observability.js';
+import { reviewWorkspaceRunnerVars } from './review-workspace-context.js';
 import { verifiedRunnerSessionArchivePath } from './session-archive.js';
 import { runnerSessionIdForPath } from './session-path-resolution.js';
 import { type RecoveredUsageSession, workerUsageScope } from './session-usage-provider.js';
 
 /** Reused worker contexts can replace their session identity during a fix round. */
 export async function recoverClaudeUsageSessions(run: Run): Promise<RecoveredUsageSession[]> {
-  if (!run.slotId) return [];
+  if (!run.slotId && !run.reviewWorkspace) return [];
   const scope = workerUsageScope(run, 'claude');
   const sessions = new Map<string, RecoveredUsageSession>();
   const add = (contextId: string, runnerSessionPath?: string | null) => {
@@ -27,13 +28,15 @@ export async function recoverClaudeUsageSessions(run: Run): Promise<RecoveredUsa
     add(context.id, context.runnerSessionPath);
     add(context.id, context.runnerSessionArchive?.originalPath);
   }
-  const vars = await loadSlotVars(run.slotId);
+  const vars = run.slotId ? await loadSlotVars(run.slotId) : await reviewWorkspaceRunnerVars(run);
+  if (!vars) return [];
   for (const { context, startedAt, endedAt, taskDir } of scope.contexts) {
-    if (!Number.isFinite(startedAt) || !taskDir) continue;
+    const ownedTaskDir = run.reviewWorkspace?.taskPath ?? taskDir;
+    if (!Number.isFinite(startedAt) || !ownedTaskDir) continue;
     const result = await execOnSlot(
       vars,
       buildClaudeSessionDiscoveryCommand(vars.remoteRepo, undefined, {
-        taskDir,
+        taskDir: ownedTaskDir,
         startedAt,
         endedAt,
         reviewerIntervals: scope.reviewerIntervals,

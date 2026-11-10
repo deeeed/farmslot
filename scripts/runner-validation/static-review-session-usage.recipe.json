@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Static review session accounting",
+  "description": "Opt-in, one real Pi review of a tiny local Git fixture through an isolated production gateway. Requires an authenticated Pi LiteLLM provider and a new private output directory. No live farm or publication writes.",
+  "workflow": {
+    "entry": "review-usage",
+    "nodes": {
+      "review-usage": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json FARMSLOT_REVIEW_PROOF_USAGE=1 FARMSLOT_REVIEW_PROOF_ROUNDS=1 FARMSLOT_REVIEW_PROOF_RUNNER=pi FARMSLOT_REVIEW_PROOF_MODEL=litellm/glm-5p3-flash FARMSLOT_REVIEW_PROOF_EFFORT=none node --import tsx scripts/runner-validation/gateway/slotless-review-retention.mts \"$FARMSLOT_REVIEW_USAGE_PROOF_OUTPUT\"",
+        "timeout_ms": 300000,
+        "intent": "A new slotless Pi review returns its exact conversation, tokens and estimated cost through authenticated run.get.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
