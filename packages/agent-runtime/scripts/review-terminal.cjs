@@ -54,10 +54,10 @@ async function codexHandshake(marker, claim, record, folders) {
 }
 
 async function main() {
-  if (!['launch', 'inspect', 'stop'].includes(input.action))
+  if (!['launch', 'resume', 'inspect', 'stop'].includes(input.action))
     throw Error('Unknown review terminal action');
   if (
-    input.action === 'launch' &&
+    ['launch', 'resume'].includes(input.action) &&
     (typeof input.runner !== 'string' ||
       !input.runner ||
       typeof input.model !== 'string' ||
@@ -73,7 +73,7 @@ async function main() {
   const marker = path.join(input.task, '.terminal-launch.json');
   const cancelled = path.join(input.task, '.terminal-cancelled');
   const claim = path.join(input.task, '.terminal-folder-access-claim');
-  const existing = fs.existsSync(marker) ? JSON.parse(fs.readFileSync(marker, 'utf8')) : undefined;
+  let existing = fs.existsSync(marker) ? JSON.parse(fs.readFileSync(marker, 'utf8')) : undefined;
   if (
     existing &&
     (existing.runId !== input.runId ||
@@ -98,6 +98,49 @@ async function main() {
   if (input.action === 'inspect') {
     process.stdout.write(JSON.stringify({ exists: has.status === 0, launch: existing }));
     return;
+  }
+  let previousAttempt;
+  if (input.action === 'resume') {
+    if (
+      typeof input.resumeSessionId !== 'string' ||
+      !input.resumeSessionId.trim() ||
+      typeof input.resumeCommandId !== 'string' ||
+      !/^[a-zA-Z0-9_-]+$/.test(input.resumeCommandId)
+    )
+      throw new Error('Review terminal continuation requires its saved conversation and command');
+    if (
+      existing?.resumeCommandId === input.resumeCommandId &&
+      existing.resumeSessionId !== input.resumeSessionId
+    )
+      throw new Error('Review terminal continuation conversation changed');
+  }
+  if (input.action === 'resume' && existing?.resumeCommandId !== input.resumeCommandId) {
+    if (has.status === 0)
+      throw new Error('The retained reviewer is live; continue it without relaunching');
+    const prior = path.join(input.task, `.terminal-launch.before-${input.resumeCommandId}.json`);
+    previousAttempt =
+      existing ?? (fs.existsSync(prior) ? JSON.parse(fs.readFileSync(prior, 'utf8')) : undefined);
+    if (
+      !previousAttempt ||
+      previousAttempt.runId !== input.runId ||
+      previousAttempt.workspaceId !== input.workspaceId ||
+      previousAttempt.session !== input.session ||
+      previousAttempt.runner !== input.runner ||
+      previousAttempt.model !== input.model ||
+      typeof previousAttempt.signalAttemptId !== 'string' ||
+      !previousAttempt.signalAttemptId
+    )
+      throw new Error('Retained review terminal identity is unavailable or changed');
+    if (fs.existsSync(cancelled) && fs.readFileSync(cancelled, 'utf8') !== input.runId)
+      throw new Error('Retained review cancellation belongs to another run');
+    if (!fs.existsSync(prior))
+      fs.writeFileSync(prior, JSON.stringify(previousAttempt), { mode: 0o600, flag: 'wx' });
+    if (fs.existsSync(marker)) fs.unlinkSync(marker);
+    for (const file of [cancelled, claim]) {
+      if (!fs.existsSync(file)) continue;
+      fs.renameSync(file, `${file}.before-${input.resumeCommandId}`);
+    }
+    existing = undefined;
   }
   if (fs.existsSync(cancelled)) throw new Error('Review terminal launch was cancelled');
   if (existing) {
@@ -162,7 +205,8 @@ async function main() {
     reviewConfigurationRootsByRunner[input.runner]?.(cwd) ?? [],
   );
   environment.TMPDIR = guard.temporaryDirectory;
-  environment.FARMSLOT_SIGNAL_ATTEMPT_ID = require('node:crypto').randomUUID();
+  environment.FARMSLOT_SIGNAL_ATTEMPT_ID =
+    previousAttempt?.signalAttemptId ?? require('node:crypto').randomUUID();
   // This helper accepts only the gateway's farm review launch, after identity and source-policy checks.
   workspaceTrustByRunner[input.runner]?.(cwd, environment, undefined, {
     executable: input.executable,
@@ -178,6 +222,9 @@ async function main() {
     model: input.model,
     startedAt: new Date().toISOString(),
     signalAttemptId: environment.FARMSLOT_SIGNAL_ATTEMPT_ID,
+    ...(input.action === 'resume'
+      ? { resumeCommandId: input.resumeCommandId, resumeSessionId: input.resumeSessionId }
+      : {}),
     ...(input.runner === 'codex' ? { codexHandshake: 'watching' } : {}),
   };
   const launch = `const cp=require('node:child_process');const env={...process.env};for(const key of ['FARMSLOT_NODE_TOKEN','FARMSLOT_GATEWAY_TOKEN','FARMSLOT_GATEWAY_PASSWORD','CLAUDECODE'])delete env[key];const r=cp.spawnSync(${JSON.stringify(guard.sandbox.executable)},${JSON.stringify([...guard.sandbox.args, '/bin/sh', '-c', input.command])},{cwd:${JSON.stringify(cwd)},env,stdio:'inherit'});process.exit(r.status??1);`;

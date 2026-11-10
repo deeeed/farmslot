@@ -217,7 +217,8 @@ mock.module('../runners/native/review-workspace.js', {
     }),
   },
 });
-const { executeReviewWorkspaceStep } = await import('./pipeline.js');
+const { executeReviewWorkspaceStep, teardownReviewWorkspace, retainsInvalidReviewOutput } =
+  await import('./pipeline.js');
 
 beforeEach(() => {
   nativeRepairCommand = undefined;
@@ -494,3 +495,82 @@ for (const transport of ['tmux', 'native'] as const) {
       assert(nativeRepairReads >= 2, 'Observe the restored correction command');
   });
 }
+
+test('contract failure retains the worker and monitor replay validates repaired artifacts without a new prompt', async (t) => {
+  const { run } = await fixture(t);
+  updateRun(run.id, { status: 'monitoring' });
+  signal = {
+    status: 'complete',
+    outcome: 'success',
+    attemptId: 'original-attempt',
+    timestamp: new Date(clock).toISOString(),
+  };
+  terminalFailure = new Error('Static review report digest changed');
+  await assert.rejects(
+    executeReviewWorkspaceStep(run.id, PipelineSteps.MONITOR, 0, () => {}),
+    /digest changed/,
+  );
+  updateRun(run.id, { status: 'failed' });
+  assert(retainsInvalidReviewOutput(getRun(run.id)!));
+  await teardownReviewWorkspace(run.id);
+  assert.equal(getRun(run.id)?.reviewWorkspace?.executionStoppedAt, undefined);
+  assert.equal(getRun(run.id)?.agentContexts?.[0].runnerSessionId, 'original-session');
+  assert.equal(instructions.length, 0);
+  terminalFailure = undefined;
+  updateRun(run.id, { status: 'monitoring' });
+  updateRunStep(run.id, PipelineSteps.MONITOR, { outputs: { reviewArtifactReplay: true } });
+  await executeReviewWorkspaceStep(run.id, PipelineSteps.MONITOR, 0, () => {});
+  assert.deepEqual(getRun(run.id)?.reviewResult, result);
+  assert.equal(instructions.length, 0);
+  assert.equal(launches, 0);
+});
+
+test('invalid artifact-only replay does not spend a repair model turn', async (t) => {
+  const { run } = await fixture(t);
+  updateRun(run.id, { status: 'monitoring' });
+  updateRunStep(run.id, PipelineSteps.MONITOR, { outputs: { reviewArtifactReplay: true } });
+  terminalFailure = invalidReview();
+  await assert.rejects(
+    executeReviewWorkspaceStep(run.id, PipelineSteps.MONITOR, 0, () => {}),
+    /at least one finding/,
+  );
+  updateRun(run.id, { status: 'failed' });
+  assert(retainsInvalidReviewOutput(getRun(run.id)!));
+  assert.equal(instructions.length, 0);
+  assert.equal(launches, 0);
+});
+
+test('dispatch continuation uses the same live reviewer without rematerializing or admitting a new round', async (t) => {
+  const { run } = await fixture(t);
+  const original = getRun(run.id)!;
+  const rounds = structuredClone(original.reviewRoundAdmissions);
+  updateRun(run.id, {
+    status: 'dispatching',
+    reviewWorkspaceSubject: {
+      repository: 'example/mobile',
+      repositoryUrl: 'https://github.com/example/mobile',
+      headSha: 'a'.repeat(40),
+      baseSha: 'b'.repeat(40),
+      branch: 'same',
+      title: 'Same review',
+      body: '',
+      capturedAt: run.createdAt,
+    },
+  });
+  updateRunStep(run.id, PipelineSteps.DISPATCH, {
+    outputs: {
+      retainedReviewResume: {
+        requestedAt: new Date(clock).toISOString(),
+        commandId: 'operator-command',
+        reason: 'Repair missing output',
+      },
+    },
+  });
+  await executeReviewWorkspaceStep(run.id, PipelineSteps.DISPATCH, 0, () => {});
+  assert.equal(instructions.length, 1);
+  assert.equal(instructions[0].sessionId, 'original-session');
+  assert.match(instructions[0].text ?? '', /Repair missing output/);
+  assert.equal(getRun(run.id)?.reviewWorkspace?.workspaceId, original.reviewWorkspace?.workspaceId);
+  assert.deepEqual(getRun(run.id)?.reviewRoundAdmissions, rounds);
+  assert.equal(launches, 0);
+});

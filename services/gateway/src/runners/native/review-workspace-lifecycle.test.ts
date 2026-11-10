@@ -5,6 +5,7 @@ import {
   NATIVE_WORKER_CANCEL,
   NATIVE_WORKER_ENSURE,
   NATIVE_WORKER_READ,
+  NATIVE_WORKER_RESUME,
   NATIVE_WORKER_SEND,
   NATIVE_WORKER_STATE,
 } from '@farmslot/agent-runtime/native';
@@ -200,6 +201,20 @@ mock.module('./node.js', {
         assert.equal(host.id, params.sessionId);
         assert.equal(host.workerLeaseId, params.leaseId);
         if (createdSessionPatch) Object.assign(host, createdSessionPatch);
+        result = { session: structuredClone(host) };
+      } else if (method === NATIVE_WORKER_RESUME) {
+        assert(host);
+        assert.equal(params.resumeSessionId, host.nativeSessionId);
+        assert.equal(params.leaseId, host.workerLeaseId);
+        if (host.generation === params.generation) {
+          assert.equal(host.processStopped, true);
+          host = {
+            ...host,
+            generation: 'resumed-generation',
+            state: 'idle',
+            processStopped: false,
+          };
+        } else assert.equal(host.generation, 'resumed-generation');
         result = { session: structuredClone(host) };
       } else if (method === NATIVE_WORKER_READ) {
         assert(host);
@@ -555,4 +570,90 @@ test('native review names the actual and required checkout when its reservation 
     calls.some((call) => call.method === NATIVE_WORKER_SEND),
     false,
   );
+});
+
+test('retained native continuation keeps the live process and sends its operator command once', async () => {
+  reset();
+  await launch();
+  assert(host);
+  host.processStopped = false;
+  const original = structuredClone(run.agentContexts![0].nativeSession!);
+  const continueReview = () =>
+    launchReviewWorkspaceWorker({
+      runId: run.id,
+      project: {},
+      prompt: 'Repair the retained output.',
+      resumeCommandId: 'operator-continuation',
+      deadline: Date.now() + 10000,
+      assertCurrent: () => {},
+    });
+  await continueReview();
+  await continueReview();
+  assert.equal(creations, 1);
+  assert.equal(turns, 2);
+  assert.equal(calls.filter((call) => call.method === NATIVE_WORKER_RESUME).length, 0);
+  assert.equal(run.agentContexts![0].nativeSession!.sessionId, original.sessionId);
+  assert.equal(run.agentContexts![0].nativeSession!.leaseId, original.leaseId);
+  assert.equal(run.agentContexts![0].runnerSessionId, 'saved-conversation');
+});
+
+test('stopped native continuation resumes its exact saved conversation through the shared API', async () => {
+  reset();
+  await launch();
+  assert(host);
+  host.state = 'closed';
+  host.processStopped = true;
+  run.agentContexts![0].nativeSession!.closedAt = '2026-11-10T00:00:00Z';
+  const original = structuredClone(run.agentContexts![0].nativeSession!);
+  faultOnce(NATIVE_WORKER_RESUME);
+  await launchReviewWorkspaceWorker({
+    runId: run.id,
+    project: {},
+    prompt: 'Repair the retained output.',
+    resumeCommandId: 'operator-resume',
+    deadline: Date.now() + 10000,
+    assertCurrent: () => {},
+  });
+  const resumes = calls.filter((call) => call.method === NATIVE_WORKER_RESUME);
+  assert.equal(resumes.length, 2);
+  assert.deepEqual(resumes[0].params, resumes[1].params);
+  assert.equal(resumes[0].params.resumeSessionId, 'saved-conversation');
+  assert.equal(run.agentContexts![0].nativeSession!.sessionId, original.sessionId);
+  assert.equal(run.agentContexts![0].nativeSession!.leaseId, original.leaseId);
+  assert.equal(run.agentContexts![0].nativeSession!.generation, 'resumed-generation');
+  assert.equal(run.agentContexts![0].nativeSession!.closedAt, undefined);
+  assert.equal(turns, 2);
+  assert.equal(creations, 1);
+});
+
+test('cancellation fences a stopped reviewer resume whose successful host reply was lost', async () => {
+  reset();
+  await launch();
+  assert(host);
+  host.state = 'closed';
+  host.processStopped = true;
+  run.agentContexts![0].nativeSession!.closedAt = '2026-11-10T00:00:00Z';
+  transportFault = (call) => {
+    if (call.method === NATIVE_WORKER_RESUME) {
+      run.status = 'cancelled';
+      throw new NodeTransportUnavailableError('host', 'timeout', 'lost resume reply');
+    }
+  };
+  await assert.rejects(
+    launchReviewWorkspaceWorker({
+      runId: run.id,
+      project: {},
+      prompt: 'Continue.',
+      resumeCommandId: 'cancel-pending',
+      deadline: Date.now() + 10000,
+      assertCurrent: () => {},
+    }),
+    /no longer admitted/,
+  );
+  transportFault = undefined;
+  await cancelReviewWorkspaceWorker(run.id);
+  const cancel = calls.filter((call) => call.method === NATIVE_WORKER_CANCEL).at(-1);
+  assert.equal(cancel?.params.resumeCommandId, 'cancel-pending');
+  assert.equal(run.agentContexts![0].nativeSession!.recovery, undefined);
+  assert.equal(host.processStopped, true);
 });

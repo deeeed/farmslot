@@ -54,7 +54,6 @@ import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
 import { pipelineReviewSelection, resolveReviewRunnerModel } from '../../review/orchestrator.js';
 import { getReviewConfig } from '../../review/templates.js';
-import { readReviewWorkspaceCompletion } from '../../review-workspaces/task.js';
 import { captureRunOutput } from '../../run-completion/output.js';
 import { markPreparedPackageStale } from '../../run-completion/prepared-package-stale.js';
 import { readRetainedRunText } from '../../run-completion/retained-artifacts.js';
@@ -1136,21 +1135,7 @@ async function replayRunStep(
   const superseded = supersededMultiPrRunReplayRefusal(existing);
   if (superseded) throw new Error(superseded);
   if (existing.reviewWorkspaceTarget) assertNativeRunOwner(existing);
-  let reviewBlock = staticReviewReplayBlock(existing, params);
-  if (
-    !reviewBlock &&
-    params.stepName === PS.MONITOR &&
-    (existing.reviewWorkspace?.cleanedAt || existing.reviewWorkspace?.executionStoppedAt)
-  ) {
-    try {
-      const completion = await readReviewWorkspaceCompletion(existing.id);
-      if (!completion?.result)
-        reviewBlock =
-          'No complete saved review remains after workspace stop or cleanup. Request another review.';
-    } catch (error) {
-      reviewBlock = `The saved review cannot be replayed after workspace stop or cleanup: ${error instanceof Error ? error.message : String(error)}. Request another review.`;
-    }
-  }
+  const reviewBlock = staticReviewReplayBlock(existing, params);
   if (reviewBlock)
     throw new GatewayMethodError('REVIEW_RESTART_REQUIRED', reviewBlock, {
       userAction:
@@ -2568,6 +2553,29 @@ async function replayRunStep(
       },
       recoveryAttempts: [...(existing.recoveryAttempts ?? []), attempt],
     });
+    if (existing.reviewWorkspace && replayStepName === PS.MONITOR) {
+      const monitor = getRun(params.runId)?.steps.find((step) => step.name === PS.MONITOR);
+      updateRunStep(params.runId, PS.MONITOR, {
+        outputs: { ...monitor?.outputs, reviewArtifactReplay: true },
+      });
+    }
+    if (existing.reviewWorkspace && replayStepName === PS.DISPATCH) {
+      const dispatch = getRun(params.runId)?.steps.find((step) => step.name === PS.DISPATCH);
+      updateRunStep(params.runId, PS.DISPATCH, {
+        outputs: {
+          ...dispatch?.outputs,
+          retainedReviewResume: {
+            commandId: randomUUID(),
+            requestedAt: new Date().toISOString(),
+            reason: existing.error ?? 'Operator requested continuation of this retained review.',
+          },
+        },
+      });
+      const monitor = getRun(params.runId)?.steps.find((step) => step.name === PS.MONITOR);
+      updateRunStep(params.runId, PS.MONITOR, {
+        outputs: { ...monitor?.outputs, reviewArtifactReplay: undefined },
+      });
+    }
     // Durable revive before dropping replacement work — crash between these two
     // leaves a live owner on disk; loadQueue drops any same-candidate row even when
     // launchAttempt differs (N vs N+1 requeue).

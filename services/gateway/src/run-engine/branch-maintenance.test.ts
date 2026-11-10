@@ -461,3 +461,21 @@ test('monitor reset retains only its admitted review correction', () => {
     undefined,
   );
 });
+
+test('step re-entry preserves explicit static-review replay intent without stale worker output', () => {
+  const retainedReviewResume = { commandId: 'continue-original', requestedAt: 'now' };
+  assert.deepEqual(
+    maintenance.retainedMaintenanceStepOutputs(PipelineSteps.DISPATCH, {
+      retainedReviewResume,
+      oldTelemetry: true,
+    }),
+    { retainedReviewResume },
+  );
+  assert.deepEqual(
+    maintenance.retainedMaintenanceStepOutputs(PipelineSteps.MONITOR, {
+      reviewArtifactReplay: true,
+      workerSignal: { status: 'complete' },
+    }),
+    { reviewArtifactReplay: true },
+  );
+});

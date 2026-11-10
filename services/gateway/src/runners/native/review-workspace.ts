@@ -6,6 +6,7 @@ import {
   NATIVE_WORKER_CANCEL,
   NATIVE_WORKER_ENSURE,
   NATIVE_WORKER_READ,
+  NATIVE_WORKER_RESUME,
   NATIVE_WORKER_SEND,
   NATIVE_WORKER_STATE,
   type NativeWorkerCancelResult,
@@ -181,7 +182,7 @@ async function saveContext(
           (existing?.nativeSession?.sessionId !== expected.sessionId ||
             existing.nativeSession.leaseId !== expected.leaseId ||
             existing.nativeSession.generation !== expected.generation ||
-            existing.nativeSession.closedAt ||
+            existing.nativeSession.closedAt !== expected.closedAt ||
             existing.nativeSession.releasedAt)
         )
           throw new Error('Static review worker changed before persistence');
@@ -203,6 +204,8 @@ export async function launchReviewWorkspaceWorker(input: {
   machineEnv?: Record<string, string>;
   executable?: string;
   prompt: string;
+  /** Explicit operator continuation, never a new review/session admission. */
+  resumeCommandId?: string;
   deadline: number;
   assertCurrent: () => void | Promise<void>;
 }): Promise<NativeSessionReadResult> {
@@ -245,6 +248,8 @@ export async function launchReviewWorkspaceWorker(input: {
     );
   await check();
   let context = contextFor(ownedRun(run.id));
+  if (input.resumeCommandId && !context?.nativeSession)
+    throw new Error('Static review continuation requires its original native session');
   if (!context?.nativeSession) {
     context = await saveContext(
       run.id,
@@ -275,7 +280,13 @@ export async function launchReviewWorkspaceWorker(input: {
   }
   await check();
   let binding = structuredClone(currentBinding(ownedRun(run.id)));
-  if (binding.closedAt || binding.recovery || context.nativeCommandText !== input.prompt)
+  if (
+    (!input.resumeCommandId &&
+      (binding.closedAt || binding.recovery || context.nativeCommandText !== input.prompt)) ||
+    (input.resumeCommandId &&
+      binding.recovery &&
+      binding.recovery.commandId !== input.resumeCommandId)
+  )
     throw new Error('Static review requires explicit recovery or its original materialized prompt');
   if (!binding.stateDirectory) {
     const state = (await route(binding.ownerPrincipalId, NATIVE_WORKER_STATE, target(binding))) as {
@@ -367,18 +378,69 @@ export async function launchReviewWorkspaceWorker(input: {
   );
   binding = structuredClone(context.nativeSession!);
   await check();
-  const created = (await route(binding.ownerPrincipalId, NATIVE_WORKER_ENSURE, {
-    ...target(binding),
-    ...nativeProfileSessionParams(binding.profile),
-    runner,
-    model,
-    cwd: workspace.checkoutPath,
-    launch,
-  })) as { session: NativeSessionInfo };
+  let resumeSessionId: string | undefined;
+  let continueLive: NativeSessionInfo | undefined;
+  if (input.resumeCommandId) {
+    const saved = (await route(
+      binding.ownerPrincipalId,
+      NATIVE_WORKER_READ,
+      target(binding),
+    )) as NativeSessionReadResult;
+    resumeSessionId = context.runnerSessionId ?? saved.session.nativeSessionId;
+    if (!resumeSessionId || !binding.generation)
+      throw new Error('The exact retained native conversation is unavailable');
+    if (!binding.recovery) {
+      assertNativeWorkerSnapshot(binding, saved);
+      if (!saved.session.processStopped) continueLive = saved.session;
+      else {
+        context = await saveContext(
+          run.id,
+          {
+            nativeSession: {
+              ...binding,
+              recovery: {
+                fromGeneration: binding.generation,
+                commandId: input.resumeCommandId,
+                requestedAt: new Date().toISOString(),
+              },
+            },
+          },
+          binding,
+          assertCurrent,
+        );
+        binding = structuredClone(context.nativeSession!);
+      }
+    }
+  }
+  const created = continueLive
+    ? { session: continueLive }
+    : ((await route(
+        binding.ownerPrincipalId,
+        input.resumeCommandId ? NATIVE_WORKER_RESUME : NATIVE_WORKER_ENSURE,
+        {
+          ...target(binding),
+          ...nativeProfileSessionParams(binding.profile),
+          runner,
+          model,
+          cwd: workspace.checkoutPath,
+          launch,
+          ...(input.resumeCommandId
+            ? {
+                generation: binding.recovery?.fromGeneration ?? binding.generation,
+                commandId: input.resumeCommandId,
+                resumeSessionId,
+              }
+            : {}),
+        },
+      )) as { session: NativeSessionInfo });
   assertNativeWorkerSnapshot({ ...binding, generation: created.session.generation }, {
     session: created.session,
   } as NativeSessionReadResult);
-  if (binding.generation && binding.generation !== created.session.generation)
+  if (
+    !input.resumeCommandId &&
+    binding.generation &&
+    binding.generation !== created.session.generation
+  )
     throw new Error('Static review worker generation changed during creation');
   if (['closed', 'failed'].includes(created.session.state))
     throw new Error(
@@ -388,11 +450,24 @@ export async function launchReviewWorkspaceWorker(input: {
     throw new Error(
       `Static review workspace mismatch: session uses ${JSON.stringify(created.session.cwd)}, expected ${JSON.stringify(workspace.checkoutPath)}`,
     );
+  if (input.resumeCommandId && created.session.nativeSessionId !== resumeSessionId)
+    throw new Error('Static review continuation changed its retained conversation');
   context = await saveContext(
     run.id,
     {
       runnerSessionId: created.session.nativeSessionId,
-      nativeSession: { ...binding, generation: created.session.generation },
+      nativeSession: {
+        ...binding,
+        generation: created.session.generation,
+        ...(input.resumeCommandId
+          ? {
+              commandId: input.resumeCommandId,
+              acceptedAt: undefined,
+              closedAt: undefined,
+              recovery: undefined,
+            }
+          : {}),
+      },
     },
     binding,
     assertCurrent,
@@ -485,14 +560,19 @@ export function assertReviewWorkspaceCancellation(
     !result.cancelled ||
     result.sessionId !== binding.sessionId ||
     result.leaseId !== binding.leaseId ||
-    (binding.generation && result.generation !== binding.generation)
+    (binding.generation && !binding.recovery && result.generation !== binding.generation)
   )
     throw new Error('Static review worker cancellation is unconfirmed');
   if (binding.generation && !result.session)
     throw new Error('Static review worker process cleanup requires its current session');
   if (result.session) {
     assertNativeWorkerSnapshot(
-      { ...binding, generation: binding.generation ?? result.session.generation },
+      {
+        ...binding,
+        generation: binding.recovery
+          ? result.generation
+          : (binding.generation ?? result.session.generation),
+      },
       { session: result.session } as NativeSessionReadResult,
     );
     if (
@@ -507,16 +587,25 @@ export async function cancelReviewWorkspaceWorker(runId: string): Promise<void> 
   const run = ownedRun(runId);
   if (!contextFor(run)?.nativeSession) return;
   const binding = structuredClone(currentBinding(run));
-  if (binding.closedAt) return;
+  if (binding.closedAt && !binding.recovery) return;
   // Persist a host tombstone even before ensure arrives, fencing a delayed launch.
   const result = (await routeNativeExecution(binding.ownerPrincipalId, NATIVE_WORKER_CANCEL, {
     ...target(binding),
     generation: binding.generation,
+    ...(binding.recovery ? { resumeCommandId: binding.recovery.commandId } : {}),
   })) as NativeWorkerCancelResult;
   assertReviewWorkspaceCancellation(binding, result);
   await saveContext(
     runId,
-    { status: 'idle', nativeSession: { ...binding, closedAt: new Date().toISOString() } },
+    {
+      status: 'idle',
+      nativeSession: {
+        ...binding,
+        generation: result.generation ?? binding.generation,
+        recovery: undefined,
+        closedAt: new Date().toISOString(),
+      },
+    },
     binding,
     executionFence(run, true),
   );

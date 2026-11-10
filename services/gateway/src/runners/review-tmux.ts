@@ -210,8 +210,9 @@ export function reviewTmuxSession(run: Run) {
 
 export async function reviewTmuxOperation(
   run: Run,
-  action: 'launch' | 'inspect' | 'stop',
+  action: 'launch' | 'resume' | 'inspect' | 'stop',
   prompt?: string,
+  resumeCommandId?: string,
 ): Promise<ReviewTmuxOperationResult> {
   assertNativeRunOwner(run);
   const w = run.reviewWorkspace!;
@@ -226,7 +227,14 @@ export async function reviewTmuxOperation(
     runner,
     model: run.metrics.model,
   };
-  if (action === 'launch') {
+  if (action === 'launch' || action === 'resume') {
+    const resumeSessionId = run.agentContexts?.find(
+      (context) => context.id === 'review',
+    )?.runnerSessionId;
+    if (action === 'resume' && (!resumeSessionId || !resumeCommandId))
+      throw new Error(
+        'Terminal reviewer continuation requires its exact saved session and command',
+      );
     const pool = await loadMachinePool(w.machine);
     const environment = await reviewEnvironment(run);
     const modelQuestions = modelQuestionsForRun(run);
@@ -263,8 +271,7 @@ export async function reviewTmuxOperation(
         'DISABLE_OMC',
         'FARMSLOT_SIGNAL_ATTEMPT_ID',
       ],
-      resumeSessionId:
-        run.agentContexts?.find((context) => context.id === 'review')?.runnerSessionId ?? undefined,
+      resumeSessionId: resumeSessionId ?? undefined,
       safetyTier: 'dangerous',
       modelQuestions,
     });
@@ -279,6 +286,7 @@ export async function reviewTmuxOperation(
       runtimeRoots: nativeRunnerDefinitions[runner]?.reviewRuntimeRoots?.({ HOME: '~' }) ?? [
         '~/.codex',
       ],
+      ...(action === 'resume' ? { resumeSessionId, resumeCommandId } : {}),
     });
   }
   const script = path.posix.join(
@@ -292,7 +300,10 @@ export async function reviewTmuxOperation(
       : await execNativeNodeArgv(run.nativeOwnerPrincipalId!, w.machine, argv, 30000);
   if (result.exitCode !== 0) throw new Error(result.stderr || 'Review terminal operation failed');
   const receipt = JSON.parse(result.stdout);
-  if (action === 'launch' && (receipt.runner !== runner || receipt.model !== run.metrics.model))
+  if (
+    (action === 'launch' || action === 'resume') &&
+    (receipt.runner !== runner || receipt.model !== run.metrics.model)
+  )
     throw new Error('Review terminal did not confirm the requested runner and model');
   return receipt;
 }
