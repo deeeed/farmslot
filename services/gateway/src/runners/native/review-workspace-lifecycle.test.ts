@@ -287,6 +287,8 @@ mock.module('./node.js', {
 });
 
 const { NodeTransportUnavailableError } = await import('../../fleet/node-rpc.js');
+// Install transport mocks before loading the shared worker and review adapters.
+await import('./worker.js');
 const { launchReviewWorkspaceWorker, readReviewWorkspaceWorker, cancelReviewWorkspaceWorker } =
   await import('./review-workspace.js');
 

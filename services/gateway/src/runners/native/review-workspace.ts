@@ -47,7 +47,6 @@ import { runnerSupportsEffort } from '../registry.js';
 
 import { validateNativeRunner } from './manager.js';
 import { routeNativeExecution } from './node.js';
-import { cancelNativeWorkerContext } from './worker.js';
 import { assertNativeWorkerSnapshot } from './worker-control.js';
 import { NativeWorkerOperationUncertainError } from './worker-error.js';
 import { inspectNativeWorkerProfile } from './worker-profile.js';
@@ -585,5 +584,6 @@ export async function cancelReviewWorkspaceWorker(runId: string): Promise<void> 
   const run = ownedRun(runId);
   const context = contextFor(run);
   if (!context?.nativeSession) return;
+  const { cancelNativeWorkerContext } = await import('./worker.js');
   await cancelNativeWorkerContext(runId, context);
 }
