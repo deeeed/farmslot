@@ -1,1 +1,1 @@
-- Allow publication preparation to bound cumulative bundle-store queue waits without interrupting lock holders or executing expired queued writes.
+- Bound cumulative publication capture and storage queue waits, refuse expired writes, and release temporary payloads and reservations after expiry.

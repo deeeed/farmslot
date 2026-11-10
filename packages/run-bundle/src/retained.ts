@@ -484,6 +484,17 @@ async function waitForBundleLockTurn(
   }
 }
 
+/** Charge a capture predecessor to the same budget as its subsequent storage locks. */
+export function waitForRunBundleQueueTurn(previous: Promise<void>, name: string): Promise<void> {
+  if (!lockWaitBudgets.getStore()) return previous;
+  return waitForBundleLockTurn(previous, name, name, Date.now());
+}
+
+/** Rollback releases charged bytes even after publication has exhausted its allowance. */
+function withRunBundleCleanupLock<T>(store: RunBundleStore, cleanup: () => Promise<T>): Promise<T> {
+  return lockWaitBudgets.exit(() => withRunBundleStoreLock(store, cleanup));
+}
+
 async function withBundleLock<T>(
   store: RunBundleStore,
   name: string,
@@ -1620,7 +1631,7 @@ async function completeRetainedPayloads(
           await consumeReservation(meta.bytes);
         });
       } catch (error) {
-        await withRunBundleStoreLock(request.store, async () => {
+        await withRunBundleCleanupLock(request.store, async () => {
           await rm(temp, { force: true });
           await consumeReservation(meta.bytes);
         });
@@ -1646,7 +1657,7 @@ async function completeRetainedPayloads(
     });
     return missing;
   } finally {
-    await withRunBundleStoreLock(request.store, () =>
+    await withRunBundleCleanupLock(request.store, () =>
       rm(repairStage, { recursive: true, force: true }),
     );
   }

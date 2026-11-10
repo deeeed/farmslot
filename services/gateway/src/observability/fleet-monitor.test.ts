@@ -229,6 +229,7 @@ test('the periodic monitor refreshes stale machine probes and publishes the fres
   const published: FleetStatus[] = [];
   t.mock.timers.enable({ apis: ['setInterval'] });
   startMonitor({
+    onPublicationGateStall() {},
     onFleetUpdated: (value) => published.push(value),
     onDecisionNew() {},
     onViolation() {},
@@ -249,7 +250,12 @@ test('the periodic monitor does not inspect workspaces when nobody requests them
   cachedFleet = { ...fleet([slot({ lifecycle: 'ready' })]), checkedAt: new Date().toISOString() };
   workspaceRefreshes = 0;
   t.mock.timers.enable({ apis: ['setInterval'] });
-  startMonitor({ onFleetUpdated() {}, onDecisionNew() {}, onViolation() {} });
+  startMonitor({
+    onPublicationGateStall() {},
+    onFleetUpdated() {},
+    onDecisionNew() {},
+    onViolation() {},
+  });
   t.after(stopMonitor);
   for (let interval = 0; interval < 3; interval++) {
     t.mock.timers.tick(30000);
@@ -353,4 +359,67 @@ test('a decision presented during the reviewer probe suppresses obsolete stall e
     },
   );
   assert.deepEqual(violations, []);
+});
+
+test('the production monitor routes gate stalls only to its notification callback', async (t) => {
+  const { createRun, updateRun, deleteRun } = await import('../runs/store.js');
+  const run = createRun({
+    flowType: 'dev',
+    project: 'generic-project',
+    ticketOrPr: 'synthetic-stall',
+  });
+  updateRun(run.id, {
+    status: 'human-gating',
+    slotId: 'runner-browser-2',
+    steps: [
+      {
+        name: 'human-gate',
+        status: 'running',
+        startedAt: new Date(Date.now() - 11 * 60_000).toISOString(),
+      },
+    ],
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            id: 'synthetic-review',
+            source: 'dispatch',
+            mode: 'cold',
+            runner: 'codex',
+            model: null,
+            reviewerSessionId: 'synthetic-session',
+            loopNumber: 1,
+            verdict: 'pass',
+            unresolvedCount: 0,
+          },
+        ],
+      },
+    },
+  });
+  t.after(async () => {
+    stopMonitor();
+    updateRun(run.id, { status: 'done' });
+    await deleteRun(run.id);
+  });
+  cachedFleet = {
+    ...fleet([slot({ currentRunId: run.id, lifecycle: 'ready', agent: 'working' })]),
+    checkedAt: new Date().toISOString(),
+  };
+  let flags = 0;
+  const recoverable: unknown[] = [];
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  startMonitor({
+    onFleetUpdated() {},
+    onDecisionNew() {},
+    onViolation: (violation) => recoverable.push(violation),
+    onPublicationGateStall: (violation) => {
+      assert.equal(violation.target, run.id);
+      flags++;
+    },
+  });
+  t.mock.timers.tick(30_000);
+  for (let tick = 0; tick < 20 && !flags; tick++)
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(flags, 1);
+  assert.deepEqual(recoverable, [], 'stuck-gate flags never reach the recovery callback');
 });

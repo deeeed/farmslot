@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { buildRunResolveDecisionParams, type RunOutput } from '@farmslot/protocol';
+import { withRunBundleLockWaitBudget } from '@farmslot/run-bundle';
 
 import type { RunArtifactAcquisition } from './retained-artifacts.js';
 
@@ -832,4 +833,66 @@ test('artifact-only output retains the working diff bytes independently of the w
   await writeFile(path.join(dir, 'artifacts/diff.txt'), 'later worker changes');
   const retained = path.join(await retainedRunTaskDirectory(captured), 'artifacts/diff.txt');
   assert.equal(await fsPromises.readFile(retained, 'utf8'), patch);
+});
+
+test('publication capture expires behind an unbudgeted predecessor without running or breaking capture order', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'output-capture-budget-'));
+  await mkdir(path.join(dir, 'artifacts'));
+  await writeFile(path.join(dir, 'artifacts/report.md'), '# Synthetic report\n');
+  await writeFile(path.join(dir, 'artifacts/capture.png'), 'synthetic image');
+  const run = createRun({
+    flowType: 'dev',
+    project: 'generic-project',
+    ticketOrPr: 'capture-budget',
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done' });
+    await deleteRun(run.id);
+    await rm(dir, { recursive: true, force: true });
+  });
+  updateRun(run.id, { status: 'human-gating', taskFile: path.join(dir, 'TASK.md') });
+  const gated = gatedAcquisition(run.id);
+  const first = captureRunOutput(run.id, false, false, { acquisition: gated.acquisition });
+  await gated.reached;
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const inner = createRunArtifactAcquisition(getRun(run.id)!);
+  let expiredCaptureReads = 0;
+  const acquisition: RunArtifactAcquisition = {
+    ...inner,
+    get media() {
+      expiredCaptureReads++;
+      return inner.media;
+    },
+  };
+  let expired = false;
+  const publication = withRunBundleLockWaitBudget(60_000, () =>
+    captureRunOutput(run.id, false, false, { acquisition, forPublication: true }),
+  );
+  const outcome = publication.then(
+    () => assert.fail('expired capture was admitted'),
+    (error: Error) => {
+      assert.match(error.message, /wait budget exhausted/);
+      expired = true;
+    },
+  );
+  let laterSettled = false;
+  let later: Promise<number> | undefined;
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(60_001);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(expired, true, 'publication refuses while the predecessor is still active');
+    later = captureRunOutput(run.id, false).then((value) => {
+      laterSettled = true;
+      return value;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(laterSettled, false, 'the expired queue tail still orders later captures');
+  } finally {
+    t.mock.timers.reset();
+    gated.release();
+    await Promise.all([first, outcome, later]);
+  }
+  assert.equal(expiredCaptureReads, 0, 'the refused capture never executes after release');
+  assert.equal(laterSettled, true, 'unscoped capture succeeds after the original holder');
 });

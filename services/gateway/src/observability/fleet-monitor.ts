@@ -31,6 +31,7 @@ export type MonitorEventHandler = {
   onFleetUpdated: (fleet: FleetStatus) => void;
   onDecisionNew: (decision: PendingDecision) => void;
   onViolation: (violation: MonitorViolation) => void;
+  onPublicationGateStall: (violation: MonitorViolation) => void;
 };
 
 const FLEET_POLL_MS = readIntervalMs('FARMSLOT_MONITOR_FLEET_POLL_MS', 30_000);
@@ -449,11 +450,10 @@ export async function detectPublicationGateViolations(
 }
 
 async function checkForViolations(fleet: FleetStatus): Promise<void> {
-  const violations = [
-    ...detectFleetMonitorViolations(fleet),
-    ...(await detectPublicationGateViolations(fleet)),
-  ];
-  for (const violation of violations) {
+  for (const violation of detectFleetMonitorViolations(fleet)) {
     handler?.onViolation(violation);
   }
+  // Gate stalls are flags, never auto-recovery or intelligence-audit inputs.
+  for (const violation of await detectPublicationGateViolations(fleet))
+    handler?.onPublicationGateStall(violation);
 }

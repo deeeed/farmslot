@@ -134,6 +134,7 @@ import { reconcileStalePrepareLocks } from './methods/slot.js';
 import { serveStaticUi } from './methods/static-ui.js';
 import { startMonitor } from './observability/fleet-monitor.js';
 import { servePerformanceMetrics } from './observability/performance-http.js';
+import { notifyPublicationGateStall } from './observability/publication-gate-notification.js';
 import { resourceRevisions } from './resources/revisions.js';
 import { upstreamObservers } from './resources/upstream-observers.js';
 import { initReview } from './review/orchestrator.js';
@@ -828,6 +829,7 @@ async function main(): Promise<void> {
 
   // Start server-side monitoring
   startMonitor({
+    onPublicationGateStall: notifyPublicationGateStall,
     onFleetUpdated(fleet) {
       broadcast({
         type: 'event',

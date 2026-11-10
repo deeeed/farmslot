@@ -1,1 +1,1 @@
-- Present Retry Gate when publication preparation exceeds its bundle-store queue wait budget, retain settled review verdicts, and flag publication gates stuck beyond ten minutes in the existing fleet health feed.
+- Present Retry Gate when publication preparation exceeds its storage and output-capture queue wait budget, retain settled review verdicts, and flag gates stuck beyond ten minutes in the fleet health feed without triggering recovery.

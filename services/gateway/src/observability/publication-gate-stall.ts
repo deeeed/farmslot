@@ -2,6 +2,7 @@ import { type AgentContext, isTerminalRunStatus, type Run } from '@farmslot/prot
 
 import { loadSlotVars } from '../core/config.js';
 import { resolveExactTmuxWindowPane } from '../core/tmux.js';
+import { reviewerContextMatchesLineage, reviewLineageId } from '../review/session-mode.js';
 import {
   nativeWorkerLiveStatus,
   readNativeWorkerSnapshot,
@@ -79,9 +80,8 @@ export async function publicationGateStallReason(
           review.completedAt ?? review.attempts?.at(-1)?.completedAt ?? '',
         );
         const launched = Date.parse(context.startedAt ?? '');
-        const lineage = review.session?.reviewId ?? review.id;
         return (
-          (context.artifactScope === review.id || context.reviewId === lineage) &&
+          reviewerContextMatchesLineage(context, reviewLineageId(review), review.id) &&
           Number.isFinite(completed) &&
           Number.isFinite(launched) &&
           completed >= launched

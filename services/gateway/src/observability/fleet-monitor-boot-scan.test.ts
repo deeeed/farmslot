@@ -61,6 +61,7 @@ async function until(check: () => boolean): Promise<void> {
 
 function monitor(decisions: PendingDecision[]) {
   startMonitor({
+    onPublicationGateStall() {},
     onFleetUpdated: () => {},
     onDecisionNew: (decision) => decisions.push(decision),
     onViolation: () => {},
