@@ -320,3 +320,121 @@ test('quota-deferred optional media does not block restoring the runtime receipt
   await copyTaskFilesToSlot(f.run.id, { artifactsOnly: true });
   assert.deepEqual(await readFile(path.join(f.dir, 'artifacts/optional.mp4')), media);
 });
+
+async function timedOutMediaCapture(t: TestContext) {
+  const f = await retainedFixture(t);
+  const { captureRunOutput, failRunOutputCapture } = await import('../run-completion/output.js');
+  const media = Buffer.from(`synthetic baseline image ${f.run.id}`);
+  const artifact = {
+    path: 'artifacts/recipe-baseline/page/capture.png',
+    purpose: 'screenshot',
+    sizeBytes: media.length,
+    sha256: createHash('sha256').update(media).digest('hex'),
+  };
+  await mkdir(path.join(f.dir, 'artifacts'));
+  await writeFile(path.join(f.dir, 'artifacts/harness-provenance.json'), '{}\n');
+  let acquisitions = 0;
+  await assert.rejects(
+    captureRunOutput(f.run.id, false, true, {
+      acquisition: {
+        media: [artifact],
+        beforeCopy: () => {
+          throw new Error('This capture must not refresh the artifact mirror');
+        },
+        acquireMedia: async () => {
+          acquisitions += 1;
+          throw new Error('Node macpro timeout after 60000ms');
+        },
+      },
+    }),
+    /Node macpro timeout after 60000ms/,
+  );
+  assert.equal(acquisitions, 1);
+  assert.deepEqual(realRunStore.getRun(f.run.id)!.output?.retentionMissingData, [
+    `missing:${artifact.path}`,
+  ]);
+  const run = failRunOutputCapture(f.run.id, new Error('Node macpro timeout after 60000ms'), true);
+  await rm(path.join(f.dir, 'artifacts'), { recursive: true });
+  return { ...f, run, artifact, media };
+}
+
+test('a capture timeout leaves optional media unavailable without blocking task copy', async (t) => {
+  const f = await timedOutMediaCapture(t);
+  const { readRetainedRunBundle } = await import('@farmslot/run-bundle');
+  const { runBundleStore } = await import('../run-completion/retained-artifacts.js');
+  const bundle = await readRetainedRunBundle(
+    await runBundleStore(),
+    f.run.artifactBundle!,
+    f.run.id,
+  );
+  const key = `tasks/${f.run.artifactBundle!.taskKey}/${f.artifact.path}`;
+  assert.equal(bundle.manifest.entries[key].sha256, f.artifact.sha256);
+  assert.equal(bundle.manifest.entries[key].bytes, f.media.length);
+  assert.deepEqual(bundle.manifest.missingData ?? [], []);
+
+  await copyTaskFilesToSlot(f.run.id);
+
+  assert.equal(
+    await readFile(path.join(f.dir, 'artifacts/harness-provenance.json'), 'utf8'),
+    '{}\n',
+  );
+  assert.equal(await readFile(path.join(f.dir, 'inputs/handoff.json'), 'utf8'), '{}\n');
+  await assert.rejects(readFile(path.join(f.dir, f.artifact.path)), /ENOENT/);
+  const output = realRunStore.getRun(f.run.id)!.output!;
+  assert.deepEqual(output.retentionMissingData, [`missing:${f.artifact.path}`]);
+  assert.equal(output.captureError, 'Node macpro timeout after 60000ms');
+  assert.equal(output.workerFinished, true);
+});
+
+test('a declared missing required artifact still blocks task copy', async (t) => {
+  const f = await retainedFixture(t);
+  const { retainedRunTaskDirectory } = await import('../run-completion/retained-artifacts.js');
+  const relative = 'artifacts/harness-provenance.json';
+  await rm(path.join(await retainedRunTaskDirectory(f.run), relative));
+  realRunStore.updateRun(f.run.id, {
+    output: { ...f.run.output!, retentionMissingData: [`missing:${relative}`] },
+  });
+  await assert.rejects(
+    copyTaskFilesToSlot(f.run.id),
+    /Retained artifact is missing, pruned or changed/,
+  );
+  await assert.rejects(readFile(path.join(f.dir, relative)), /ENOENT/);
+});
+
+test('a successful capture repair clears missing media and restores the PNG', async (t) => {
+  const f = await timedOutMediaCapture(t);
+  const { captureRunOutput } = await import('../run-completion/output.js');
+  const { readRunBundleAvailability } = await import('@farmslot/run-bundle');
+  const { runBundleStore } = await import('../run-completion/retained-artifacts.js');
+  await copyTaskFilesToSlot(f.run.id, { artifactsOnly: true });
+  let acquisitions = 0;
+  await captureRunOutput(f.run.id, false, true, {
+    acquisition: {
+      media: [f.artifact],
+      beforeCopy: () => {
+        throw new Error('This capture must not refresh the artifact mirror');
+      },
+      acquireMedia: async (artifact, destination) => {
+        assert.equal(artifact.path, f.artifact.path);
+        acquisitions += 1;
+        await writeFile(destination, f.media);
+        return { sha256: f.artifact.sha256, bytes: f.media.length };
+      },
+    },
+  });
+  assert.equal(acquisitions, 1);
+  const repaired = realRunStore.getRun(f.run.id)!;
+  assert.deepEqual(repaired.output?.retentionMissingData, []);
+  assert.equal(repaired.output?.captureError, undefined);
+  assert.equal(repaired.artifactBundle?.bundleDigest, f.run.artifactBundle?.bundleDigest);
+  const availability = await readRunBundleAvailability(
+    await runBundleStore(),
+    repaired.artifactBundle!,
+    f.run.id,
+  );
+  assert.equal(availability.revision, 1);
+  assert.deepEqual(availability.prunedPaths, []);
+  await assert.rejects(readFile(path.join(f.dir, f.artifact.path)), /ENOENT/);
+  await copyTaskFilesToSlot(f.run.id, { artifactsOnly: true });
+  assert.deepEqual(await readFile(path.join(f.dir, f.artifact.path)), f.media);
+});

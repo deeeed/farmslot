@@ -297,6 +297,24 @@ test('running output, eval packages and publication flows do not acquire an outp
   );
 });
 
+test('a failed capture preserves the retained missing-data declaration and error', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'generic-project',
+    ticketOrPr: 'capture-timeout',
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'failed' });
+    await deleteRun(run.id);
+  });
+  const missing = ['missing:artifacts/recipe-baseline/page/capture.png'];
+  updateRun(run.id, { output: { ...output, retentionMissingData: missing } });
+  const failed = failRunOutputCapture(run.id, new Error('Node macpro timeout after 60000ms'), true);
+  assert.deepEqual(failed.output?.retentionMissingData, missing);
+  assert.equal(failed.output?.captureError, 'Node macpro timeout after 60000ms');
+  assert.equal(failed.output?.workerFinished, true);
+});
+
 test('a failed manual refresh does not mark an active worker finished', async (t) => {
   const run = createRun({
     flowType: 'dev',
