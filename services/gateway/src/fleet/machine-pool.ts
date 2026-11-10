@@ -9,6 +9,10 @@ export function rememberPoolFile(pool: PoolConfig, file: string): void {
   sourceFiles.set(pool, file);
 }
 
+export function poolConfigId(pool: PoolConfig): string {
+  return sourceFiles.get(pool) ?? `${pool.machine}/${pool.project}`;
+}
+
 export function resolveMachinePoolConfig(
   pools: readonly PoolConfig[],
   machine: string,

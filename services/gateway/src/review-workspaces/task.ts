@@ -175,6 +175,7 @@ async function locality(run: Run, deps: Dependencies): Promise<SlotLocality> {
   const pool = resolveReviewWorkspacePool(
     await deps.loadPoolConfigs(),
     run.reviewWorkspace!.machine,
+    run.project,
   );
   if (
     run.reviewWorkspace!.executionNodeId !==
