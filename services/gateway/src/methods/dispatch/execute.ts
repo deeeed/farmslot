@@ -1991,10 +1991,12 @@ export async function dispatchExecute(
     }
     if (!resumedReviewSession && usesRoleWindow) {
       workerTarget = await ensureWorkerRoleTarget(vars, session, runner, workerRole);
-      await respawnRoleWindowWithCommand(vars, workerTarget, agentLaunch, async () => {
+      // Runs after the launch script is published, immediately before respawn.
+      const beforeRoleRespawn = async () => {
         await runPressureGate();
         if (launchCarriesPrompt) await markPromptDeliveryStarted();
-      });
+      };
+      await respawnRoleWindowWithCommand(vars, workerTarget, agentLaunch, beforeRoleRespawn);
       await settleFreshRoleWindow();
     } else if (!resumedReviewSession) {
       // Some shell init paths (e.g. anaconda's `(base)` prompt activation) query
