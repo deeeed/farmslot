@@ -2059,10 +2059,11 @@ function deepQueryHelpersExpression(): string {
     };
     // Properties that make an element the containing block of its fixed descendants.
     const containsFixed = (style) =>
-      ['transform', 'translate', 'rotate', 'scale', 'filter', 'backdropFilter', 'perspective'].some((name) => (style[name] || 'none') !== 'none') ||
+      ['transform', 'translate', 'rotate', 'scale', 'filter', 'backdropFilter', 'perspective', 'offsetPath'].some((name) => (style[name] || 'none') !== 'none') ||
       /paint|layout|strict|content/.test(style.contain || '') ||
       style.contentVisibility === 'auto' ||
-      (style.willChange || '').split(',').some((name) => ['transform', 'translate', 'rotate', 'scale', 'filter', 'perspective', 'contain'].includes(name.trim()));
+      (style.containerType || 'normal') !== 'normal' ||
+      (style.willChange || '').split(',').some((name) => ['transform', 'translate', 'rotate', 'scale', 'filter', 'backdrop-filter', 'perspective', 'offset-path', 'contain', 'content-visibility', 'container-type'].includes(name.trim()));
     const isVisibleDeep = (element) => {
       if (!isRenderedDeep(element)) return false;
       let rect = element.getBoundingClientRect();
