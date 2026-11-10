@@ -63,6 +63,28 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({ error: 'Inference is forbidden in this fixture' }));
   }
 });
+// Ctrl-C or a kill skips `finally`; every exit path must stop the private tmux server.
+let tornDown = false;
+function teardown() {
+  if (tornDown) return;
+  tornDown = true;
+  releaseDiscovery();
+  if (ownsServer) tmux('kill-server');
+  server.closeAllConnections();
+  server.close();
+  rmSync(dir, { recursive: true, force: true });
+}
+for (const [signal, code] of [
+  ['SIGINT', 130],
+  ['SIGTERM', 143],
+  ['SIGHUP', 129],
+]) {
+  process.once(signal, () => {
+    teardown();
+    process.exit(code);
+  });
+}
+
 try {
   // Never touch an existing private test server or the default tmux server.
   assert.notEqual(
@@ -197,9 +219,5 @@ try {
     }),
   );
 } finally {
-  releaseDiscovery();
-  if (ownsServer) tmux('kill-server');
-  server.closeAllConnections();
-  await new Promise((resolve) => server.close(resolve));
-  rmSync(dir, { recursive: true, force: true });
+  teardown();
 }
