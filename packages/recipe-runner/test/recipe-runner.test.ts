@@ -5688,6 +5688,8 @@ test('CDP visible waits ignore overflow ancestors above a fixed element', async 
     { willChange: 'opacity, transform' },
     { willChange: 'backdrop-filter' },
     { containerType: 'inline-size' },
+    { containerType: 'size scroll-state' },
+    { containerType: 'inline-size scroll-state' },
     { transformStyle: 'preserve-3d' },
     { willChange: 'transform-style' },
   ]) {

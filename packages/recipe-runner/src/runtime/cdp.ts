@@ -2063,7 +2063,7 @@ function deepQueryHelpersExpression(): string {
       /paint|layout|strict|content/.test(style.contain || '') ||
       style.contentVisibility === 'auto' ||
       style.transformStyle === 'preserve-3d' ||
-      /(^|\s)(size|inline-size)(\s|$)/.test(style.containerType || '') ||
+      (style.containerType || '').split(' ').some((name) => name === 'size' || name === 'inline-size') ||
       (style.willChange || '').split(',').some((name) => ['transform', 'translate', 'rotate', 'scale', 'filter', 'backdrop-filter', 'perspective', 'offset-path', 'contain', 'content-visibility', 'container-type', 'transform-style'].includes(name.trim()));
     const isVisibleDeep = (element) => {
       if (!isRenderedDeep(element)) return false;
