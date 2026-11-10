@@ -150,9 +150,13 @@ async function teardown() {
 }
 
 let stopping: Promise<void> | undefined;
+/** Startup in flight. A stop waits for it to settle, so a signal mid-startup (before the detached
+ * native supervisor has published its lock, say) cannot race it; its failure reaches `finish`. */
+let startup: Promise<void> | undefined;
 /** The one exit path. `cause` is the failure that ended the stack, if any. */
 function finish(cause?: unknown) {
-  stopping ??= teardown()
+  stopping ??= Promise.allSettled([startup])
+    .then(() => teardown())
     .then(
       () => {
         if (cause !== undefined) throw cause;
@@ -352,4 +356,5 @@ async function start() {
   console.log(JSON.stringify({ ready: true, pid: process.pid, ...state }));
 }
 
-await start().catch((cause: unknown) => finish(cause));
+startup = start();
+await startup.catch((cause: unknown) => finish(cause));
