@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 import {
   mkdir,
   mkdtemp,
@@ -12,6 +13,7 @@ import {
   utimes,
   writeFile,
 } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -1625,4 +1627,61 @@ test('a measurement whose token changed during its walk is not kept', async (t) 
     'nothing was kept from the spanning walk',
   );
   assert.equal((await materializeRunBundle(request)).acquisitionScan.settledDirs, 1);
+});
+
+test('housekeeping parses a settled run record once, and again only after it changes', async (t) => {
+  const f = await fixture(t);
+  const recordPath = path.join(f.store.runsDir, `${f.run.id}.json`);
+  f.run.status = 'human-gating';
+  const commit: MaterializeRunBundleRequest['commit'] = async (ref) => {
+    f.run.artifactBundle = ref;
+    await writeFile(recordPath, JSON.stringify(f.run));
+  };
+  const capture = (key: string) =>
+    materializeRunBundle({ ...f.request, captureKey: key, manifestDigest: key, commit });
+  const legacy = await capture('legacy:package');
+  f.run.engineState = { generation: 1 };
+  const first = await capture('generation-1:package');
+
+  const readFileSync = fs.readFileSync;
+  let reads = 0;
+  const mocked = t.mock.method(fs, 'readFileSync', (...args: Parameters<typeof readFileSync>) => {
+    if (String(args[0]) === recordPath) reads += 1;
+    return readFileSync(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    mocked.mock.restore();
+    syncBuiltinESMExports();
+  });
+  const pass = async () => {
+    reads = 0;
+    const selected = (await runBundleHousekeepingPaths(f.store))
+      .filter((entry) => entry.store === 'run-bundles')
+      .map((entry) => path.basename(entry.path))
+      .sort();
+    return { reads, selected };
+  };
+  const settle = () => {
+    const settledAt = Date.now() + 10_000;
+    return t.mock.method(Date, 'now', () => settledAt);
+  };
+
+  // Just written: a coarse-timestamp filesystem could hide the next write, so every pass parses.
+  assert.deepEqual(await pass(), { reads: 1, selected: [legacy.ref.bundleDigest] });
+  assert.equal((await pass()).reads, 1);
+  // Settled: parsed once more, since the earlier reads were racy, then served from the cache.
+  let clock = settle();
+  assert.deepEqual(await pass(), { reads: 1, selected: [legacy.ref.bundleDigest] });
+  assert.deepEqual(await pass(), { reads: 0, selected: [legacy.ref.bundleDigest] });
+  clock.mock.restore();
+
+  // A changed record is parsed again and its references count at once.
+  f.run.engineState = { generation: 2 };
+  await capture('generation-2:package');
+  clock = settle();
+  const superseded = [legacy.ref.bundleDigest, first.ref.bundleDigest].sort();
+  assert.deepEqual(await pass(), { reads: 1, selected: superseded });
+  assert.deepEqual(await pass(), { reads: 0, selected: superseded });
+  clock.mock.restore();
 });

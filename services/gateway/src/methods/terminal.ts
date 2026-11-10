@@ -66,6 +66,8 @@ import {
   workspaceTerminalOperation,
 } from '../runtime/workspace-terminal.js';
 
+import { terminalDataPayload } from './terminal-frame.js';
+
 type EventEmitter = (event: string, payload: unknown) => void;
 type HasPtyFn = (key: string) => boolean;
 
@@ -284,15 +286,17 @@ export async function terminalSubscribe(
   handler: (data: TerminalData) => void;
   ptyHandler?: PtyDataHandler;
   identity: ReturnType<typeof terminalEventIdentity>;
+  /** The viewer joined a running PTY, which tmux will not redraw for it (see redrawPty). */
+  joined?: boolean;
 }> {
   if (isWorkspaceTerminal(params)) {
     const { run, key, session, sshTarget } = await resolveWorkspaceTerminal(params);
     await workspaceTerminalOperation(run, 'ensure');
     const identity = terminalEventIdentity({ slotId: '', runId: run.id });
-    const ptyHandler: PtyDataHandler = (data) =>
-      emit('terminal.data', { ...identity, data, timestamp: Date.now() });
+    const payload = terminalDataPayload(identity);
+    const ptyHandler: PtyDataHandler = (data) => emit('terminal.data', payload(data, Date.now()));
     const machine = run.reviewWorkspace!.machine;
-    await subscribePty(
+    const { joined } = await subscribePty(
       key,
       session,
       ptyHandler,
@@ -316,7 +320,7 @@ export async function terminalSubscribe(
         : { sshTarget },
     );
     emit('terminal.mode', { ...identity, mode: 'pty' });
-    return { key, handler: (_data: TerminalData) => {}, ptyHandler, identity };
+    return { key, handler: (_data: TerminalData) => {}, ptyHandler, identity, joined };
   }
   // Bare-session mode skips agent-context resolution so a postmortem viewer can attach
   // to the slot's tmux session even after a blocked run's role pane is gone.
@@ -349,12 +353,9 @@ export async function terminalSubscribe(
     else await reinitTmuxSession(resolved.session, repoDir, sshTarget);
     await assertInteractiveTargetReady(params.slotId, target, resolved.session, role, params);
 
+    const payload = terminalDataPayload(eventIdentity);
     const ptyHandler: PtyDataHandler = (data: string) => {
-      emit('terminal.data', {
-        ...eventIdentity,
-        data,
-        timestamp: Date.now(),
-      });
+      emit('terminal.data', payload(data, Date.now()));
     };
     const ptyOpts: PtyAttachOptions = {};
     if (usesNodeLink(machine)) {
@@ -378,11 +379,18 @@ export async function terminalSubscribe(
       };
     } else if (sshTarget) ptyOpts.sshTarget = sshTarget;
     if (target !== resolved.session) ptyOpts.selectTarget = target;
-    await subscribePty(key, resolved.session, ptyHandler, params.cols, params.rows, ptyOpts);
+    const { joined } = await subscribePty(
+      key,
+      resolved.session,
+      ptyHandler,
+      params.cols,
+      params.rows,
+      ptyOpts,
+    );
     emit('terminal.mode', { ...eventIdentity, mode: 'pty' });
 
     const handler = (_data: TerminalData) => {};
-    return { key, handler, ptyHandler, identity: eventIdentity };
+    return { key, handler, ptyHandler, identity: eventIdentity, joined };
   }
 
   // Polling fallback (non-interactive only)
@@ -543,16 +551,19 @@ async function terminalInputLanding(params: TerminalInputParams): Promise<InputL
 
 const NOT_RECORDED = 'typed but not recorded on the pane';
 
-export async function terminalResize(params: TerminalResizeParams): Promise<void> {
+/** Resizes the viewer's PTY and returns its key, or undefined when no PTY is attached. */
+export async function terminalResize(params: TerminalResizeParams): Promise<string | undefined> {
   if (isWorkspaceTerminal(params)) {
     const { key } = await resolveWorkspaceTerminal(params);
-    if (hasPty(key)) await resizePty(key, params.cols, params.rows);
-    return;
+    if (!hasPty(key)) return undefined;
+    await resizePty(key, params.cols, params.rows);
+    return key;
   }
   const resolved = await resolveAgentOrBareTarget(params.slotId, params);
   const key = terminalKey({ ...params, role: resolved.role, contextId: resolved.contextId });
   const ptyKey = selectPtyKey(params.slotId, key, hasPty);
   if (ptyKey) await resizePty(ptyKey, params.cols, params.rows);
+  return ptyKey ?? undefined;
 }
 
 export async function terminalReinit(

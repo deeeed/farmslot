@@ -2,8 +2,8 @@
 // TypeScript port of lib/slot-common.sh: update_farm_status
 
 import { randomBytes } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { existsSync, type Stats } from 'node:fs';
+import { type FileHandle, open, readFile, rename, rm } from 'node:fs/promises';
 
 import { assertStatusFileWritable, resolveStatusFilePath } from '../projects/repo-root.js';
 
@@ -28,16 +28,58 @@ export function onStatusCommit(listener: (snapshot: unknown) => void): void {
   statusCommitListeners.push(listener);
 }
 
+/** The stat of a status file version; any outside replace or edit changes it. */
+export interface StatusFileStamp {
+  ino: number;
+  size: number;
+  mtimeMs: number;
+  ctimeMs: number;
+}
+export function statusFileStamp(stats: Stats): StatusFileStamp {
+  return { ino: stats.ino, size: stats.size, mtimeMs: stats.mtimeMs, ctimeMs: stats.ctimeMs };
+}
+/** The last status text this gateway committed, and the stamp of the file it renamed into place. */
+let committedStatus: { text: string; stamp: StatusFileStamp } | undefined;
+/**
+ * The committed status text while the status file is still that commit, else undefined. A file
+ * replaced or edited after the commit has another stamp, so readers read it rather than serve an
+ * older snapshot.
+ */
+export function committedStatusText(current: StatusFileStamp): string | undefined {
+  const committed = committedStatus;
+  if (!committed) return undefined;
+  const { stamp } = committed;
+  return stamp.ino === current.ino &&
+    stamp.size === current.size &&
+    stamp.mtimeMs === current.mtimeMs &&
+    stamp.ctimeMs === current.ctimeMs
+    ? committed.text
+    : undefined;
+}
+
 async function atomicWriteStatus(data: unknown): Promise<void> {
   assertCleanupCurrent();
   assertStatusFileWritable(statusFile);
   const tmp = `${statusFile}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+  const text = JSON.stringify(data, null, 2) + '\n';
+  let handle: FileHandle | undefined;
   try {
-    await writeFile(tmp, JSON.stringify(data, null, 2) + '\n');
+    handle = await open(tmp, 'w');
+    await handle.writeFile(text);
+    const written = await handle.stat();
     assertCleanupCurrent();
     await rename(tmp, statusFile);
+    // Stat the inode this write renamed into place, not the path, so an outside replace after the
+    // rename is not mistaken for this commit. An outside edit of this inode in between shows as a
+    // new size or mtime: then nothing is cached and readers read the file.
+    const committed = await handle.stat();
+    committedStatus =
+      committed.size === written.size && committed.mtimeMs === written.mtimeMs
+        ? { text, stamp: statusFileStamp(committed) }
+        : undefined;
   } catch (error) {
     try {
+      await handle?.close();
       await rm(tmp, { force: true });
     } catch (cleanupError) {
       throw new AggregateError(
@@ -47,6 +89,7 @@ async function atomicWriteStatus(data: unknown): Promise<void> {
     }
     throw error;
   }
+  await handle.close();
   for (const listener of statusCommitListeners) withoutCleanupSignal(() => listener(data));
 }
 

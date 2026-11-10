@@ -2,7 +2,7 @@ import type { Principal } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
 
-import { loadCredentialStore } from './credential-store.js';
+import { readCredentialStoreSnapshot } from './credential-store.js';
 import {
   isGenerationZeroPrincipal,
   nativeOwnerAssignedMachines,
@@ -14,7 +14,7 @@ export function ownsLocalNativeProfile(owner: string): boolean {
   return Boolean(
     owner &&
     process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID === owner &&
-    isGenerationZeroPrincipal(loadCredentialStore().principals, owner),
+    isGenerationZeroPrincipal(readCredentialStoreSnapshot().principals, owner),
   );
 }
 

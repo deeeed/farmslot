@@ -1,0 +1,2 @@
+- Cache parsed pool files and re-read only a file whose stat changed, so slot lookups and node-link policy checks stop re-reading every pool on each call. A file changed less than two seconds before it was read is read again until it settles, since coarse filesystem timestamps can hide a quick second write.
+- Add `deepFreeze` and `isRacyStamp` for stat-stamp caches.

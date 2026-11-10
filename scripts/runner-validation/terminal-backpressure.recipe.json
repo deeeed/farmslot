@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "A slow terminal viewer resyncs without losing output",
+  "description": "Use a disposable authenticated gateway, a local slot and a private tmux socket. One viewer stops reading while the pane floods; the gateway must close it for a resync, deliver everything it sent without a gap, keep the healthy viewer streaming, and let the slow viewer re-attach to the current screen. No product slot or shared tmux server.",
+  "workflow": {
+    "entry": "slow-viewer",
+    "nodes": {
+      "slow-viewer": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/terminal-backpressure.mts",
+        "timeout_ms": 300000,
+        "intent": "Close a terminal viewer whose unsent output passes the buffer limit with code 1013, never skip a chunk it was sent, and redraw the current screen when it subscribes again.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

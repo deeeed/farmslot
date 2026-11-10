@@ -11,6 +11,7 @@ import type { NativeConversationUpdate, NativeSessionReadResult } from '@farmslo
 import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import { createGatewayAuthRuntime } from '../security/auth.js';
 import type { ClientState } from '../server/client-state.js';
+import { eventFrameText, SerializedPayload } from '../server/event-frame.js';
 
 import { NativeConversations } from './native-conversations.js';
 
@@ -100,6 +101,10 @@ function client(): ClientState {
 }
 const target = { sessionId: 'session', executionNodeId: 'stream-node' };
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+/** Relay payloads reach the socket already serialized; tests read them back as objects. */
+function decoded(payload: unknown): unknown {
+  return payload instanceof SerializedPayload ? JSON.parse(payload.json) : payload;
+}
 
 function fixture() {
   const home = mkdtempSync(join(tmpdir(), 'native-stream-'));
@@ -173,7 +178,7 @@ test('remote events arriving with the initial response wait for client activatio
       a,
       target,
       () => f.reader,
-      (_event, payload) => received.push(payload),
+      (_event, payload) => received.push(decoded(payload)),
     );
     assert.equal(first.kind, 'reset');
     assert.deepEqual(received, []);
@@ -201,6 +206,59 @@ test('remote events arriving with the initial response wait for client activatio
   }
 });
 
+test('each relayed update is serialized once for every viewer of its source', async (t) => {
+  const f = fixture();
+  const a = client(),
+    b = client();
+  const frames: string[] = [];
+  let seq = 0;
+  // The server writes each emitted payload into its event frame the same way.
+  const emit = (event: string, payload: unknown) =>
+    frames.push(eventFrameText(event, payload, ++seq));
+  let tap = '';
+  const broker = new NativeConversations(async (_node, method, value) => {
+    if (method.endsWith('unsubscribe')) return { ok: true };
+    tap = (value as { subscriptionId: string }).subscriptionId;
+    return initial;
+  });
+  const stringify = JSON.stringify;
+  const carriesDelta = (value: unknown): boolean =>
+    !!value &&
+    typeof value === 'object' &&
+    (('kind' in value && value.kind === 'delta') ||
+      ('payload' in value && carriesDelta(value.payload)));
+  let serializations = 0;
+  t.mock.method(JSON, 'stringify', (...args: Parameters<typeof JSON.stringify>) => {
+    if (carriesDelta(args[0])) serializations++;
+    return stringify(...args);
+  });
+  try {
+    const first = await broker.subscribe(a, target, () => f.reader, emit);
+    const second = await broker.subscribe(b, target, () => f.reader, emit);
+    broker.activate(a, first.subscriptionId);
+    broker.activate(b, second.subscriptionId);
+    await settle();
+    broker.accept(f.ws, { ...delta, subscriptionId: tap });
+    await settle();
+    t.mock.restoreAll();
+    assert.equal(serializations, 1, 'one serialization of the update, none per viewer frame');
+    const { subscriptionId: _node, ...update } = { ...delta, subscriptionId: 'node' };
+    assert.deepEqual(
+      frames.map((frame) => JSON.parse(frame)),
+      [first, second].map(({ subscriptionId }, index) => ({
+        type: 'event',
+        event: 'native.session.delta',
+        payload: { ...update, subscriptionId },
+        seq: index + 1,
+      })),
+    );
+  } finally {
+    t.mock.restoreAll();
+    broker.disconnect(a);
+    broker.disconnect(b);
+    f.close();
+  }
+});
 test('invalid cursor opens no tap; current node revocation terminates an idle subscription', async () => {
   const f = fixture();
   const c = client();
@@ -230,7 +288,7 @@ test('invalid cursor opens no tap; current node revocation terminates an idle su
       c,
       target,
       () => f.reader,
-      (_event, payload) => received.push(payload),
+      (_event, payload) => received.push(decoded(payload)),
     );
     broker.activate(c, result.subscriptionId);
     f.revoke();
@@ -373,7 +431,7 @@ test('queued updates drain in order under one authorization pass', async () => {
         principalReads++;
         return f.reader;
       },
-      (_event, payload) => received.push(payload as (typeof received)[number]),
+      (_event, payload) => received.push(decoded(payload) as (typeof received)[number]),
     );
     principalReads = 0;
     broker.activate(c, result.subscriptionId);
@@ -428,7 +486,7 @@ test('a reader change seen mid-batch stops the rest of that batch', async () => 
       target,
       () =>
         received.filter((payload) => payload.kind === 'delta').length >= 2 ? changed : f.reader,
-      (_event, payload) => received.push(payload as (typeof received)[number]),
+      (_event, payload) => received.push(decoded(payload) as (typeof received)[number]),
     );
     broker.activate(c, result.subscriptionId);
     await settle();

@@ -20,7 +20,7 @@ import {
   runnerSupportsNativeTaskReuse,
 } from '../runners/registry.js';
 import { describeVisibleModels } from '../runners/visible-models.js';
-import { loadCredentialStore } from '../security/credential-store.js';
+import { readCredentialStoreSnapshot } from '../security/credential-store.js';
 import { nativeOwnerAssignedMachines } from '../security/native-node.js';
 import { ownsLocalNativeProfile } from '../security/native-owner.js';
 
@@ -37,7 +37,7 @@ export async function nativeCatalog(
   allowWorkers = true,
   delegatedReader?: Principal,
 ): Promise<NativeSessionCatalogResult> {
-  const assigned = nativeOwnerAssignedMachines(loadCredentialStore().principals, owner);
+  const assigned = nativeOwnerAssignedMachines(readCredentialStoreSnapshot().principals, owner);
   let contexts: NativeSessionCatalogResult['contexts'] = [
     ...(ownsLocalNativeProfile(owner)
       ? [{ cwd: farmslotRoot(), label: 'Farmslot checkout', supportsProfiles: true }]

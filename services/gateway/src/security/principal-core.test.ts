@@ -45,6 +45,7 @@ import {
   credentialStorePath,
   CredentialStoreRuntime,
   loadCredentialStore,
+  readCredentialStoreSnapshot,
   saveCredentialStore,
 } from './credential-store.js';
 import { withCredentialLock } from './credential-store-lock.js';
@@ -169,6 +170,42 @@ test('credential store writes are atomic, locked, permission-safe, and temp-clea
   assert.throws(
     () => saveCredentialStore(loadCredentialStore(path), path),
     /without credentials\.lock/u,
+  );
+});
+
+test('read-only credential snapshots are shared until the store file changes', (t) => {
+  const env = isolatedEnv();
+  const runtime = new CredentialStoreRuntime(env);
+  const writer = new CredentialStoreWriter(runtime);
+  const path = runtime.path;
+  const principal = writer.createPrincipal({ type: 'person', displayName: 'reader' }, []);
+  const issued = writer.issueCredential(principal.id, 'reader');
+
+  // Just written: a coarse-timestamp filesystem could hide the next write, so it is reread.
+  assert.notEqual(readCredentialStoreSnapshot(path), readCredentialStoreSnapshot(path));
+  const settledAt = Date.now() + 10_000;
+  const clock = t.mock.method(Date, 'now', () => settledAt);
+  const snapshot = readCredentialStoreSnapshot(path);
+  assert.equal(readCredentialStoreSnapshot(path), snapshot, 'an unchanged file is not re-read');
+  assert.equal(
+    snapshot.credentials.find((record) => record.id === issued.record.id)?.revokedAt,
+    null,
+  );
+  assert.throws(
+    () => snapshot.principals.push({ id: 'intruder', subject: principal.subject, roles: [] }),
+    TypeError,
+    'the shared snapshot is frozen',
+  );
+
+  clock.mock.restore();
+  writer.revokeCredential(issued.record.id);
+  t.mock.method(Date, 'now', () => settledAt);
+  const afterRevoke = readCredentialStoreSnapshot(path);
+  assert.notEqual(afterRevoke, snapshot);
+  assert.notEqual(
+    afterRevoke.credentials.find((record) => record.id === issued.record.id)?.revokedAt,
+    null,
+    'a revocation is seen on the next read',
   );
 });
 

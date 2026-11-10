@@ -2,7 +2,7 @@
 // Transforms raw JSON into protocol types
 import { once } from 'node:events';
 import { statSync } from 'node:fs';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { watch } from 'chokidar';
@@ -31,6 +31,7 @@ import {
 } from '@farmslot/protocol';
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { readCachedPoolFile } from '@farmslot/protocol/node/slot-by-repo';
 import { poolDirectory, projectsDirectory } from '@farmslot/slot-config';
 
 import {
@@ -46,12 +47,13 @@ import {
   normalizeRawSlotSelection,
   normalizeRawStaticReview,
   projectPackRoot,
+  type RawPoolJson,
   readSourceRuntimeSettings,
   usesRuntimeSettings,
 } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
 import { watchedEventPath } from '../core/file-observation.js';
-import { onStatusCommit } from '../core/state.js';
+import { committedStatusText, onStatusCommit, statusFileStamp } from '../core/state.js';
 import {
   gatewayStorageRoots,
   gatewayStorageVolumeErrors,
@@ -710,7 +712,11 @@ export async function loadFleetStatus(
   const version = ++fleetReadVersion;
   let next: FleetStatus;
   try {
-    const content = await readFile(statusFile, 'utf-8');
+    // The gateway's own last commit is served from memory; a version written by anyone else is
+    // read from disk, so a newer outside write is never replaced by an older snapshot.
+    const content =
+      committedStatusText(statusFileStamp(await stat(statusFile))) ??
+      (await readFile(statusFile, 'utf-8'));
     const raw: RawStatus = JSON.parse(content);
     const resources = statusSlotResources(raw);
     const pools = await loadPoolConfigs();
@@ -1056,6 +1062,9 @@ export function startFileWatcher() {
 
 // ─── Pool configs ───
 
+/** A pool file as written, including the legacy camel-case tmux worker key. */
+type RawPoolFile = RawPoolJson & { tmux_workers?: unknown; tmuxWorkers?: unknown };
+
 export async function loadPoolConfigs(directory = poolDirectory()): Promise<PoolConfig[]> {
   const pools: PoolConfig[] = [];
   try {
@@ -1063,8 +1072,10 @@ export async function loadPoolConfigs(directory = poolDirectory()): Promise<Pool
     for (const file of files) {
       if (isIgnoredPoolFile(file)) continue;
       try {
-        const content = await readFile(path.join(directory, file), 'utf-8');
-        const raw = JSON.parse(content);
+        // Unchanged pool files come from the stat-checked cache, one file at a time.
+        const entry = readCachedPoolFile<RawPoolFile>(path.join(directory, file));
+        if (!entry) throw new Error('it is missing, not valid JSON or not a JSON object');
+        const raw = entry.pool;
         const tmuxWorkers = normalizeTmuxWorkerFilters(raw.tmux_workers ?? raw.tmuxWorkers);
         const reviewWorkspaces = normalizeRawReviewWorkspaces(
           raw.review_workspaces,
@@ -1087,7 +1098,8 @@ export async function loadPoolConfigs(directory = poolDirectory()): Promise<Pool
             repo: s.repo,
             session: s.session,
             ...(typeof s.app === 'string' && s.app ? { app: s.app } : {}),
-            resources: s.resources,
+            // The cached pool is frozen and shared; each config gets its own copy.
+            resources: structuredClone(s.resources),
           })),
         };
         rememberPoolFile(pool, file);

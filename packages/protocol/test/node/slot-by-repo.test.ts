@@ -1,5 +1,14 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import fs, {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { hostname, tmpdir } from 'node:os';
@@ -7,8 +16,12 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import {
+  configuredNodeLinkEnabled,
   findSlotByRepo,
   isIgnoredPoolFile,
+  NODE_LINK_FLAG,
+  readCachedPoolFile,
+  readPoolFiles,
   resolveSlotPoolDir,
   SlotByRepoError,
 } from '../../src/node/slot-by-repo.js';
@@ -188,4 +201,140 @@ test('resolveSlotPoolDir: FARMSLOT_POOL_DIR, else FARMSLOT_ROOT/pool, else ~/far
     dir: join(home, 'farmslot-node', 'pool'),
     source: 'farmslot-node',
   });
+});
+
+test('pool reads are cached until a pool file or the directory changes', (t) => {
+  const dir = tempDir(t);
+  const machines = () => readPoolFiles<{ machine: string }>(dir).map(({ pool }) => pool.machine);
+  pool(dir, 'a.json', { machine: 'a', slots: [] });
+  pool(dir, 'b.json', { machine: 'b', slots: [] });
+  pool(dir, 'b.json.bak.2026-11-10', { machine: 'ignored' });
+
+  const readFileSync = fs.readFileSync;
+  let reads = 0;
+  t.mock.method(fs, 'readFileSync', (...args: Parameters<typeof readFileSync>) => {
+    if (String(args[0]) === join(dir, 'a.json')) reads += 1;
+    return readFileSync(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  const readsOf = (read: () => unknown) => {
+    reads = 0;
+    read();
+    return reads;
+  };
+
+  const first = readPoolFiles(dir);
+  assert.deepEqual(machines(), ['a', 'b']);
+  // Just written: a coarse-timestamp filesystem could hide the next write, so they are reread.
+  assert.equal(
+    readsOf(() => readPoolFiles(dir)),
+    1,
+    'a racy pool file is read again',
+  );
+  const settledAt = Date.now() + 10_000;
+  t.mock.method(Date, 'now', () => settledAt);
+  // Read once more, since every earlier read was racy; then trusted.
+  assert.equal(
+    readsOf(() => readPoolFiles(dir)),
+    1,
+  );
+  const settled = readPoolFiles(dir);
+  assert.notEqual(settled, first);
+  assert.equal(
+    readsOf(() => readPoolFiles(dir)),
+    0,
+  );
+  assert.equal(readPoolFiles(dir), settled, 'unchanged pools are the same result, not re-read');
+  assert.throws(() => {
+    (settled[0].pool as { machine: string }).machine = 'mutated';
+  }, TypeError);
+  assert.throws(() => (settled as unknown[]).push({}), TypeError);
+
+  // Edited in place (same directory entry), with a different size.
+  pool(dir, 'a.json', { machine: 'a-edited', slots: [] });
+  assert.deepEqual(machines(), ['a-edited', 'b']);
+  // Replaced atomically, as config writers do.
+  pool(dir, 'b.json.tmp', { machine: 'b2', slots: [] });
+  renameSync(join(dir, 'b.json.tmp'), join(dir, 'b.json'));
+  assert.deepEqual(machines(), ['a-edited', 'b2']);
+  // Added, made unparsable, removed.
+  pool(dir, 'c.json', { machine: 'c', slots: [] });
+  assert.deepEqual(machines(), ['a-edited', 'b2', 'c']);
+  pool(dir, 'c.json', '{ not json');
+  assert.deepEqual(machines(), ['a-edited', 'b2']);
+  rmSync(join(dir, 'c.json'));
+  assert.deepEqual(machines(), ['a-edited', 'b2']);
+  rmSync(join(dir, 'a.json'));
+  assert.deepEqual(machines(), ['b2']);
+});
+
+test('node-link policy reads the cached machine pool and still refuses a malformed one', (t) => {
+  const dir = tempDir(t);
+  assert.equal(
+    configuredNodeLinkEnabled('m1', join(dir, 'missing')),
+    false,
+    'no pool directory: the pilot stays off',
+  );
+  assert.equal(configuredNodeLinkEnabled('m1', dir), false, 'no machine pool: the pilot stays off');
+  pool(dir, 'm1.json', { machine: 'm1', env: { [NODE_LINK_FLAG]: '1' } });
+  assert.equal(configuredNodeLinkEnabled('m1', dir), true);
+  pool(dir, 'm1.json', { machine: 'm1', env: { [NODE_LINK_FLAG]: '0' } });
+  assert.equal(configuredNodeLinkEnabled('m1', dir), false);
+  pool(dir, 'm1.json', '{ not json');
+  assert.throws(() => configuredNodeLinkEnabled('m1', dir), SyntaxError);
+  pool(dir, 'm1.json', { machine: 'other', env: {} });
+  assert.throws(() => configuredNodeLinkEnabled('m1', dir), /canonical machine pool/);
+});
+
+test('the pool filter follows the environment of each call, not the cached listing', (t) => {
+  const dir = tempDir(t);
+  pool(dir, 'a.json', { machine: 'a', slots: [] });
+  pool(dir, 'farmslot-demo.json', { machine: 'demo', slots: [] });
+  const machines = () => readPoolFiles<{ machine: string }>(dir).map(({ pool }) => pool.machine);
+  const previous = process.env.FARMSLOT_DEMO_POOL;
+  t.after(() => {
+    if (previous === undefined) delete process.env.FARMSLOT_DEMO_POOL;
+    else process.env.FARMSLOT_DEMO_POOL = previous;
+  });
+  delete process.env.FARMSLOT_DEMO_POOL;
+  const settledAt = Date.now() + 10_000;
+  t.mock.method(Date, 'now', () => settledAt);
+  assert.deepEqual(machines(), ['a']);
+  assert.deepEqual(machines(), ['a']);
+  process.env.FARMSLOT_DEMO_POOL = '1';
+  assert.deepEqual(machines(), ['a', 'demo'], 'the demo pool appears without a directory change');
+});
+
+test('one unreadable pool file does not switch off or fail another machine', (t) => {
+  const dir = tempDir(t);
+  pool(dir, 'm1.json', { machine: 'm1', env: { [NODE_LINK_FLAG]: '1' } });
+  pool(dir, 'm2.json', { machine: 'm2', env: { [NODE_LINK_FLAG]: '1' } });
+  chmodSync(join(dir, 'm2.json'), 0o000);
+  try {
+    assert.equal(configuredNodeLinkEnabled('m1', dir), true);
+    assert.throws(() => configuredNodeLinkEnabled('m2', dir), { code: 'EACCES' });
+  } finally {
+    chmodSync(join(dir, 'm2.json'), 0o600);
+  }
+});
+
+test('a pool file read again by itself is seen by the next directory read', (t) => {
+  const dir = tempDir(t);
+  pool(dir, 'a.json', { machine: 'a', slots: [] });
+  let now = Date.now() + 10_000;
+  t.mock.method(Date, 'now', () => now);
+  const before = readPoolFiles<{ machine: string }>(dir);
+  pool(dir, 'a.json', { machine: 'a2', slots: [] });
+  now += 10_000;
+  assert.equal(readCachedPoolFile<{ machine: string }>(join(dir, 'a.json'))?.pool.machine, 'a2');
+  const after = readPoolFiles<{ machine: string }>(dir);
+  assert.notEqual(after, before);
+  assert.deepEqual(
+    after.map(({ pool }) => pool.machine),
+    ['a2'],
+  );
 });

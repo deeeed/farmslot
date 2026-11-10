@@ -6,7 +6,7 @@ import { nativeWorkerHistoryBinding } from '../runners/native/worker-history.js'
 import { getRun } from '../runs/store.js';
 import type { GatewayAuthRuntime } from '../security/auth.js';
 import { authorizeGatewayMethod } from '../security/authorization.js';
-import { loadCredentialStore } from '../security/credential-store.js';
+import { readCredentialStoreSnapshot } from '../security/credential-store.js';
 import {
   nativeOwnerAssignedMachines,
   requireGenerationZeroOwner,
@@ -81,9 +81,10 @@ export async function canReadWorkspaceResourceKey(
       if (identity.nodeId === 'local') {
         if (!ownsLocalNativeProfile(identity.ownerId)) return false;
       } else if (
-        !nativeOwnerAssignedMachines(loadCredentialStore().principals, identity.ownerId).has(
-          identity.nodeId,
-        )
+        !nativeOwnerAssignedMachines(
+          readCredentialStoreSnapshot().principals,
+          identity.ownerId,
+        ).has(identity.nodeId)
       )
         return false;
       if (alias.worker) {

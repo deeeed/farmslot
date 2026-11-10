@@ -1,0 +1,1 @@
+- Keep what housekeeping needs from each run record and decision journal, and parse a record again only when its file changes, instead of reading and parsing every run record on every run start, capture and retention pass.

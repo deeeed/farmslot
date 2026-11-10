@@ -23,6 +23,9 @@ interface PtySession {
   attachSession: string;
   handlers: Set<PtyDataHandler>;
   id: number; // monotonic ID for debug tracing
+  /** The size the viewers asked for; a redraw returns the PTY to it. */
+  cols: number;
+  rows: number;
 }
 
 const ptySessions = new Map<string, PtySession>();
@@ -165,8 +168,10 @@ export async function subscribePty(
   cols?: number,
   rows?: number,
   opts?: PtyAttachOptions,
-): Promise<void> {
+): Promise<{ joined: boolean }> {
   let ps = ptySessions.get(key);
+  // tmux does not redraw for a viewer joining a running PTY; the caller asks for one (redrawPty).
+  const joined = ps !== undefined;
   const lingering = pendingDetaches.get(key);
   if (lingering) {
     clearTimeout(lingering);
@@ -176,7 +181,7 @@ export async function subscribePty(
   if (!ps) {
     if (opts?.nodeId) {
       await attachLinkedPty(key, session, handler, cols ?? 120, rows ?? 40, opts);
-      return;
+      return { joined };
     }
     ps = attachPty(key, session, cols, rows, opts);
   }
@@ -186,6 +191,7 @@ export async function subscribePty(
     key,
     `session=${session} cols=${cols} rows=${rows} ssh=${opts?.sshTarget || 'local'}`,
   );
+  return { joined };
 }
 
 export function unsubscribePty(key: string, handler: PtyDataHandler): void {
@@ -235,7 +241,26 @@ export function resizePty(key: string, cols: number, rows: number): void | Promi
   const ps = ptySessions.get(key);
   if (!ps) return;
   log('resize', key, `cols=${cols} rows=${rows}`);
+  ps.cols = cols;
+  ps.rows = rows;
   return ps.ptyProcess.resize(cols, rows);
+}
+
+/** Time for tmux to handle one size change before the next, so the two do not cancel out. */
+const REDRAW_SIZE_STEP_MS = 60;
+/**
+ * Makes tmux repaint every viewer of a running PTY, with its own cursor and screen state. tmux
+ * redraws a client only when it attaches or its size changes, so a viewer joining a running PTY
+ * would otherwise see nothing until the next output. The PTY steps one column narrower and back.
+ */
+export async function redrawPty(key: string): Promise<void> {
+  const ps = ptySessions.get(key);
+  if (!ps) return;
+  log('redraw', key, `cols=${ps.cols} rows=${ps.rows}`);
+  await ps.ptyProcess.resize(Math.max(1, ps.cols - 1), ps.rows);
+  await new Promise((resolve) => setTimeout(resolve, REDRAW_SIZE_STEP_MS));
+  // A viewer may have resized meanwhile; the PTY returns to the size last asked for.
+  if (ptySessions.get(key) === ps) await ps.ptyProcess.resize(ps.cols, ps.rows);
 }
 
 export function hasPty(key: string): boolean {
@@ -350,6 +375,8 @@ function attachPty(
     attachSession,
     handlers: new Set(),
     id,
+    cols: Math.max(1, c - 1),
+    rows: r,
   };
 
   ptyProcess.onData((data: string) => {
@@ -456,6 +483,8 @@ async function attachLinkedPty(
       attachSession: session,
       handlers,
       id: ++nextPtyId,
+      cols,
+      rows,
     });
   };
   const pending = attach();

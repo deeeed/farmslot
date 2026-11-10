@@ -24,6 +24,7 @@ mock.module('../runtime/pty-stream.js', {
       sent.push(data);
     },
     resizePty: unexpectedPty,
+    redrawPty: unexpectedPty,
     reinitTmuxSession: unexpectedPty,
     hasPty: (key: string) => key.startsWith('workspace:'),
   },

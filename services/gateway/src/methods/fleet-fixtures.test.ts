@@ -8,10 +8,18 @@ import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
 
 await import('../runtime/mock-pty.test-support.js');
 let disconnectedRepo: string | undefined;
+/** Remote fixture reads (hashes and directory tests), counted per test. */
+const fixtureReads: string[] = [];
+let failBatchedRead = false;
 const execution = await import('../core/exec.js');
 const executeOnSlot: typeof execution.execOnSlot = async (...args) => {
   if (args[0].remoteRepo === disconnectedRepo && args[1].startsWith('cat '))
     throw new Error('Node disconnected during fixture content read');
+  if (/md5|test -d/.test(args[1])) {
+    fixtureReads.push(args[1]);
+    if (failBatchedRead && args[1].includes('; '))
+      throw new Error('Node disconnected during the batched fixture read');
+  }
   return execution.execOnSlot(...args);
 };
 mock.module('../core/exec.js', {
@@ -149,4 +157,67 @@ test('installer read failure remains a fixture warning while sibling slots verif
     status: 'warn',
     detail: '.git/info/exclude read failed: Node disconnected during fixture content read',
   });
+});
+
+test('one remote command reads every fixture hash and directory of a check', async (t) => {
+  const f = await fixture(t, {
+    fixtures: {
+      templates: [
+        { src: 'a', dst: 'a.txt' },
+        { src: 'b', dst: 'nested/b.txt' },
+        { src: 'c', dst: "c with 'quote'.txt" },
+      ],
+      directories: [{ src: 'tree', dst: 'tree', sentinel: 'stamp' }],
+    },
+  });
+  for (const [name, content] of [
+    ['a', 'one\n'],
+    ['b', 'two\n'],
+    ['c', 'three\n'],
+    ['tree/stamp', 'current\n'],
+  ])
+    await f.file(f.sources, name, content);
+  for (const [name, content] of [
+    ['a.txt', 'one\n'],
+    ['nested/b.txt', 'two\n'],
+    ["c with 'quote'.txt", 'three\n'],
+    ['tree/stamp', 'current\n'],
+  ])
+    await f.file(f.repo, name, content);
+  fixtureReads.length = 0;
+  assert.equal(await f.check(), 'OK');
+  assert.equal(fixtureReads.length, 1, 'every hash and directory test in one command');
+
+  // A drifted file, a missing file and a missing directory are still each reported.
+  await f.file(f.repo, 'a.txt', 'changed\n');
+  await rm(path.join(f.repo, 'nested/b.txt'));
+  await rm(path.join(f.repo, 'tree'), { recursive: true });
+  const steps = await checkFixtureSteps(f.vars, f.project, f.project.projectJson);
+  const status = Object.fromEntries(steps.map((step) => [step.name, step.status]));
+  assert.equal(status['fixture:a.txt'], 'warn');
+  assert.equal(status['fixture:nested/b.txt'], 'warn');
+  assert.equal(status["fixture:c with 'quote'.txt"], 'pass');
+  assert.equal(status['fixture:tree/'], 'warn');
+});
+
+test('a failed batched fixture read falls back to per-fixture reads', async (t) => {
+  const f = await fixture(t, {
+    fixtures: {
+      templates: [
+        { src: 'a', dst: 'a.txt' },
+        { src: 'b', dst: 'b.txt' },
+      ],
+    },
+  });
+  await f.file(f.sources, 'a', 'one\n');
+  await f.file(f.sources, 'b', 'two\n');
+  await f.file(f.repo, 'a.txt', 'one\n');
+  await f.file(f.repo, 'b.txt', 'two\n');
+  failBatchedRead = true;
+  t.after(() => {
+    failBatchedRead = false;
+  });
+  fixtureReads.length = 0;
+  assert.equal(await f.check(), 'OK');
+  assert.ok(fixtureReads.length > 1, 'the per-fixture reads ran after the batch failed');
 });

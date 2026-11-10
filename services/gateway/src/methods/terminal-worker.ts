@@ -36,6 +36,7 @@ import {
   workerNodeTypesInputOnce,
 } from '../runtime/worker-terminal-stream.js';
 
+import { terminalDataPayload } from './terminal-frame.js';
 import { assertTmuxWorkerControlAllowed } from './tmux-workers.js';
 
 type EventEmitter = (event: string, payload: unknown) => void;
@@ -59,19 +60,24 @@ async function resolveWorkerPtyOptions(worker: TmuxWorkerRef): Promise<PtyAttach
 export async function terminalWorkerSubscribe(
   params: TerminalWorkerSubscribeParams,
   emit: EventEmitter,
-): Promise<{ key: string; ptyHandler: PtyDataHandler }> {
+): Promise<{ key: string; ptyHandler: PtyDataHandler; joined: boolean }> {
   await assertTmuxWorkerControlAllowed(params.worker);
   const key = terminalWorkerSubscriptionKey(params);
   const ptyOptions = await resolveWorkerPtyOptions(params.worker);
+  const payload = terminalDataPayload({ worker: params.worker });
   const ptyHandler: PtyDataHandler = (data: string) => {
-    emit('terminal.data', { worker: params.worker, data, timestamp: Date.now() });
+    emit('terminal.data', payload(data, Date.now()));
   };
-  await subscribePty(key, params.worker.session, ptyHandler, params.cols, params.rows, {
-    ...ptyOptions,
-    selectTarget: params.worker.target,
-  });
+  const { joined } = await subscribePty(
+    key,
+    params.worker.session,
+    ptyHandler,
+    params.cols,
+    params.rows,
+    { ...ptyOptions, selectTarget: params.worker.target },
+  );
   emit('terminal.mode', { worker: params.worker, mode: 'pty' });
-  return { key, ptyHandler };
+  return { key, ptyHandler, joined };
 }
 
 export function terminalWorkerUnsubscribeKey(params: {
@@ -110,14 +116,18 @@ async function workerInputLanding(
   };
 }
 
-export async function terminalWorkerResize(params: TerminalWorkerResizeParams): Promise<void> {
+/** Resizes the worker's PTY and returns its key, or undefined when no PTY is attached. */
+export async function terminalWorkerResize(
+  params: TerminalWorkerResizeParams,
+): Promise<string | undefined> {
   await assertTmuxWorkerControlAllowed(params.worker);
   const key = terminalWorkerSubscriptionKey(params);
   if (hasPty(key)) {
     await resizePty(key, params.cols, params.rows);
-    return;
+    return key;
   }
   await resizeWorkerTerminal(params.worker, params.cols, params.rows);
+  return undefined;
 }
 
 export async function terminalWorkerSnapshot(

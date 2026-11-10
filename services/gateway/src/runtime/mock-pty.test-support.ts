@@ -17,6 +17,7 @@ mock.module('./pty-stream.js', {
     unsubscribeAllPty: forbidden,
     writePty: forbidden,
     resizePty: forbidden,
+    redrawPty: forbidden,
     hasPty: forbidden,
     reinitTmuxSession: forbidden,
   },
