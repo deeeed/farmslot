@@ -1944,10 +1944,7 @@ export async function dispatchExecute(
         taskDir: workerTaskDir,
         launchAckSignalPath: `${workerTaskDir}/SIGNAL.json`,
         acceptExistingLaunchAck: false,
-        onPromptMutationStart: async () => {
-          await runPressureGate();
-          await markPromptDeliveryStarted();
-        },
+        onPromptMutationStart: markPromptDeliveryStarted,
         onPromptMutationConfirmedUntouched: clearPromptDeliveryStarted,
         sendLogPrefix: '[repeat-review-resume]',
       });
