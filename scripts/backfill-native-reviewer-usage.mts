@@ -7,8 +7,9 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
-import { isLocal } from '../services/gateway/src/core/exec.js';
+import { execFileArgv, isLocal } from '../services/gateway/src/core/exec.js';
 
+import { withSlotCommandExecutor } from '../services/gateway/src/core/exec-scope.js';
 import { parseRunRecordFile } from '../packages/run-bundle/src/index.js';
 import { recoverWorkspaceUsageBindings } from '../services/gateway/src/runners/session-usage-recovery.js';
 import type { RunnerSessionUsage } from '../packages/protocol/src/index.js';
@@ -114,7 +115,19 @@ for (const directory of [path.join(runsDir, 'archive'), runsDir]) {
       let document: unknown = parsed ?? JSON.parse(bytes);
       if (parsed) {
         try {
-          document = await recoverWorkspaceUsageBindings(parsed);
+          document = await withSlotCommandExecutor(
+            async (vars, command, options) => {
+              const body = `cd ${quote(options.cwd ?? vars.remoteRepo)} && ${command}`;
+              const argv = ['bash', '-c', body];
+              return execFileArgv(
+                isLocal(vars.host, vars.machine)
+                  ? argv
+                  : ['ssh', '--', vars.sshTarget, argv.map(quote).join(' ')],
+                { timeout: options.timeout ?? 10000, maxBuffer: options.maxBuffer },
+              );
+            },
+            () => recoverWorkspaceUsageBindings(parsed),
+          );
         } catch (error) {
           // Offline/unavailable source discovery leaves the document intact and reports its gap.
           captureGaps.push({

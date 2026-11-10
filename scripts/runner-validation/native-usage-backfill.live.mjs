@@ -121,6 +121,29 @@ test('offline backfill defaults to read-only, refuses the live owner, preserves 
     status: 'failed',
     usage: { ...legacy, customReceiptNote: 'separate context note' },
   });
+  const metricOnlyPath = transcript.replace(
+    'review-conversation.jsonl',
+    'metric-only-conversation.jsonl',
+  );
+  await writeFile(
+    metricOnlyPath,
+    (await readFile(transcript, 'utf8')).replaceAll(
+      'review-conversation',
+      'metric-only-conversation',
+    ),
+  );
+  document.flowType = 'dev';
+  document.metrics = {
+    runner: 'claude',
+    runnerSessionId: 'metric-only-conversation',
+    runnerSessionPath: metricOnlyPath,
+  };
+  document.agentContexts.splice(3, 0, {
+    role: 'dev',
+    runner: 'claude',
+    status: 'complete',
+    runnerSessionId: 'metric-only-conversation',
+  });
   document.agentContexts.push({
     role: 'dev',
     runner: 'claude',
@@ -170,8 +193,8 @@ test('offline backfill defaults to read-only, refuses the live owner, preserves 
     metrics: { nudgeCount: 0, runner: 'pi', model: 'litellm/glm-5p3-flash' },
     reviewWorkspace: {
       workspaceId: 'review',
-      machine: 'fixture',
-      executionNodeId: 'local',
+      machine: 'remote-fixture',
+      executionNodeId: 'remote-fixture',
       checkoutPath: staticRepo,
       taskPath: staticTask,
       artifactPath: path.join(staticTask, 'artifacts'),
@@ -194,6 +217,61 @@ test('offline backfill defaults to read-only, refuses the live owner, preserves 
     ],
     learning: { retained: 'do not change' },
   };
+  await writeFile(
+    path.join(farm, 'pool/remote.json'),
+    JSON.stringify({
+      machine: 'remote-fixture',
+      host: 'offline-review.invalid',
+      ssh_user: 'tester',
+      platform: 'cli',
+      os: process.platform,
+      project: 'fixture',
+      slots: [],
+    }),
+  );
+  const sshMarker = path.join(f, 'offline-ssh');
+  await writeFile(
+    path.join(cli, 'bin/ssh'),
+    `#!/bin/sh
+[ "$1" = -- ] || exit 71
+case "$2" in offline-review.invalid|tester@offline-review.invalid) shift 2;; *) exit 72;; esac
+printf x >> '${sshMarker}'
+exec bash -c "$1"
+`,
+    { mode: 0o755 },
+  );
+  const gapDocuments = [];
+  for (const kind of ['missing', 'ambiguous']) {
+    const gapRepo = path.join(repo, kind, 'source');
+    const gapTask = path.join(repo, kind, 'task');
+    await mkdir(gapRepo, { recursive: true });
+    const gap = {
+      ...staticReview,
+      id: kind,
+      reviewWorkspace: {
+        ...staticReview.reviewWorkspace,
+        checkoutPath: gapRepo,
+        taskPath: gapTask,
+      },
+      agentContexts: staticReview.agentContexts.map((context) => ({ ...context, runId: kind })),
+    };
+    const bytes = JSON.stringify(gap);
+    const file = path.join(runs, kind + '.json');
+    await writeFile(file, bytes);
+    gapDocuments.push({ file, bytes });
+    if (kind === 'ambiguous')
+      for (const id of ['first', 'second']) {
+        await writeFile(
+          path.join(home, '.pi/agent/sessions/review', id + '.jsonl'),
+          [
+            { type: 'session', id, timestamp: '2026-11-10T00:00:01Z', cwd: gapRepo },
+            { type: 'message', message: { role: 'user', content: `Read ${gapTask}/TASK.md` } },
+          ]
+            .map((row) => JSON.stringify(row))
+            .join('\n') + '\n',
+        );
+      }
+  }
   const staticFile = path.join(runs, 'static-run.json');
   const staticOriginal = JSON.stringify(staticReview, null, 2);
   await writeFile(staticFile, staticOriginal);
@@ -233,6 +311,11 @@ test('offline backfill defaults to read-only, refuses the live owner, preserves 
   run();
   assert.equal(await readFile(file, 'utf8'), original);
   assert.equal(await readFile(staticFile, 'utf8'), staticOriginal);
+  const gaps = JSON.parse(await readFile(report, 'utf8')).captureGaps;
+  for (const kind of ['missing', 'ambiguous'])
+    assert(
+      gaps.some((gap) => gap.runId === kind && gap.role === 'review' && gap.sessionId === null),
+    );
   assert.equal(JSON.parse(await readFile(report, 'utf8')).runsChanged, 2);
   assert.throws(() => run(true), /gateway pid.*running/);
   await rm(pid);
@@ -248,8 +331,19 @@ test('offline backfill defaults to read-only, refuses the live owner, preserves 
   assert.deepEqual(staticChanged.learning, staticReview.learning);
   assert.equal(staticChanged.status, 'failed');
   await assert.rejects(readFile(tmuxMarker), { code: 'ENOENT' });
+  assert(
+    (await readFile(sshMarker, 'utf8')).length > 0,
+    'Offline discovery and capture use SSH without gateway RPC',
+  );
+  for (const { file, bytes } of gapDocuments) assert.equal(await readFile(file, 'utf8'), bytes);
   for (const context of changed.agentContexts.filter((row) => row.runnerSessionId))
     assert.equal(context.usage?.outputTokens, 20);
+  assert.equal(
+    changed.sessionUsage.find((row) => row.runnerSessionId === 'metric-only-conversation')
+      .outputTokens,
+    20,
+    'Legacy metrics-only paths remain accounting sources',
+  );
   assert.equal(changed.agentContexts.at(-1).usage.runnerSessionId, null);
   assert.equal(changed.agentContexts.at(-1).usage.costStatus, 'unpriced');
   assert.equal(changed.agentContexts[2].customContextField, 'preserve');

@@ -2,13 +2,19 @@ import path from 'node:path';
 
 import type { Run, RunnerPromptAcceptance } from '@farmslot/protocol';
 
+import type { SlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 
 import { getRunnerObservability } from './registry.js';
-import { reviewWorkspaceRunnerVars } from './review-workspace-context.js';
-export { reviewWorkspaceRunnerVars } from './review-workspace-context.js';
+import { reviewWorkspaceRunnerVars as workspaceRunnerVars } from './review-workspace-context.js';
+
+/** Existing progress/control readers retain their owner authorization check. */
+export async function reviewWorkspaceRunnerVars(run: Run): Promise<SlotVars | null> {
+  assertNativeRunOwner(run);
+  return workspaceRunnerVars(run);
+}
 
 /** Reuse the runner protocol used by slot delivery, with the exact review cwd. */
 export async function observeReviewPromptAcceptance(
