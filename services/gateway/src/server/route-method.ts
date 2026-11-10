@@ -644,17 +644,46 @@ export interface RouteMethodContext {
   nextEventSeq: () => number;
 }
 
-/**
- * A viewer joining a running PTY gets no redraw from tmux, so one is requested. It starts after
- * this subscribe's response is sent, when the client is listening for terminal output.
- */
-function redrawAfterResponse(key: string): void {
-  setImmediate(() => {
-    redrawPty(key).catch((error: unknown) => {
-      // The live stream continues; this viewer's screen fills in with the next output.
-      console.warn(`[terminal] redraw for a joining viewer failed key=${key}: ${String(error)}`);
-    });
+/** Viewers that joined a running PTY and still need their redraw, per client and PTY key. */
+const pendingRedraws = new WeakMap<
+  ClientState,
+  Map<string, { fallback: ReturnType<typeof setTimeout>; expiresAt: number }>
+>();
+/** A client that never resizes still gets its redraw after this delay. */
+const REDRAW_FALLBACK_MS = 1_500;
+/** A resize this long after the join no longer asks for a redraw. */
+const REDRAW_PENDING_MS = 10_000;
+
+function redrawLogged(key: string): void {
+  redrawPty(key).catch((error: unknown) => {
+    // The live stream continues; this viewer's screen fills in with the next output.
+    console.warn(`[terminal] redraw for a joining viewer failed key=${key}: ${String(error)}`);
   });
+}
+
+/**
+ * tmux does not redraw for a viewer joining a running PTY, so a redraw is requested once the
+ * viewer can show it: right after its own first resize is answered (Command Center drops PTY
+ * output until then), or after a fallback delay for a client that does not resize.
+ */
+function expectRedraw(state: ClientState, key: string): void {
+  const pending = pendingRedraws.get(state) ?? new Map();
+  pendingRedraws.set(state, pending);
+  clearTimeout(pending.get(key)?.fallback);
+  const fallback = setTimeout(() => redrawLogged(key), REDRAW_FALLBACK_MS);
+  fallback.unref?.();
+  pending.set(key, { fallback, expiresAt: Date.now() + REDRAW_PENDING_MS });
+}
+
+function redrawAfterResize(state: ClientState, key: string | undefined): void {
+  const pending = key === undefined ? undefined : pendingRedraws.get(state);
+  const entry = key === undefined ? undefined : pending?.get(key);
+  if (key === undefined || !pending || !entry) return;
+  pending.delete(key);
+  clearTimeout(entry.fallback);
+  if (Date.now() > entry.expiresAt) return;
+  // Starts after this resize's response is sent, so the output reaches a ready client.
+  setImmediate(() => redrawLogged(key));
 }
 
 export async function routeMethod(
@@ -1150,7 +1179,7 @@ async function routeAuthorizedMethod(
         state.ptyHandlers.set(subscribedKey, ptyHandler);
       }
       state.terminalIdentities.set(subscribedKey, identity);
-      if (joined) redrawAfterResponse(subscribedKey);
+      if (joined) expectRedraw(state, subscribedKey);
       return { subscribed: true };
     }
     case Methods.TERMINAL_UNSUBSCRIBE: {
@@ -1181,7 +1210,7 @@ async function routeAuthorizedMethod(
       return { sent: true, ...delivery };
     }
     case Methods.TERMINAL_RESIZE:
-      await terminalResize(p as TerminalResizeParams);
+      redrawAfterResize(state, await terminalResize(p as TerminalResizeParams));
       return { resized: true };
     case Methods.TERMINAL_REINIT:
       return terminalReinit(p as TerminalReinitParams);
@@ -1221,7 +1250,7 @@ async function routeAuthorizedMethod(
         ptyHandler,
         isActiveClient(state),
       );
-      if (subscribed && joined) redrawAfterResponse(ptyKey);
+      if (subscribed && joined) expectRedraw(state, ptyKey);
       return { subscribed };
     }
     case Methods.TERMINAL_WORKER_UNSUBSCRIBE: {
@@ -1242,7 +1271,7 @@ async function routeAuthorizedMethod(
       await terminalWorkerInput(p as TerminalWorkerInputParams);
       return { sent: true };
     case Methods.TERMINAL_WORKER_RESIZE:
-      await terminalWorkerResize(p as TerminalWorkerResizeParams);
+      redrawAfterResize(state, await terminalWorkerResize(p as TerminalWorkerResizeParams));
       return { resized: true };
     case Methods.TERMINAL_WORKER_SNAPSHOT:
       return terminalWorkerSnapshot(p as TerminalWorkerSnapshotParams);

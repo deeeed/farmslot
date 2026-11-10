@@ -551,16 +551,19 @@ async function terminalInputLanding(params: TerminalInputParams): Promise<InputL
 
 const NOT_RECORDED = 'typed but not recorded on the pane';
 
-export async function terminalResize(params: TerminalResizeParams): Promise<void> {
+/** Resizes the viewer's PTY and returns its key, or undefined when no PTY is attached. */
+export async function terminalResize(params: TerminalResizeParams): Promise<string | undefined> {
   if (isWorkspaceTerminal(params)) {
     const { key } = await resolveWorkspaceTerminal(params);
-    if (hasPty(key)) await resizePty(key, params.cols, params.rows);
-    return;
+    if (!hasPty(key)) return undefined;
+    await resizePty(key, params.cols, params.rows);
+    return key;
   }
   const resolved = await resolveAgentOrBareTarget(params.slotId, params);
   const key = terminalKey({ ...params, role: resolved.role, contextId: resolved.contextId });
   const ptyKey = selectPtyKey(params.slotId, key, hasPty);
   if (ptyKey) await resizePty(ptyKey, params.cols, params.rows);
+  return ptyKey ?? undefined;
 }
 
 export async function terminalReinit(

@@ -116,14 +116,18 @@ async function workerInputLanding(
   };
 }
 
-export async function terminalWorkerResize(params: TerminalWorkerResizeParams): Promise<void> {
+/** Resizes the worker's PTY and returns its key, or undefined when no PTY is attached. */
+export async function terminalWorkerResize(
+  params: TerminalWorkerResizeParams,
+): Promise<string | undefined> {
   await assertTmuxWorkerControlAllowed(params.worker);
   const key = terminalWorkerSubscriptionKey(params);
   if (hasPty(key)) {
     await resizePty(key, params.cols, params.rows);
-    return;
+    return key;
   }
   await resizeWorkerTerminal(params.worker, params.cols, params.rows);
+  return undefined;
 }
 
 export async function terminalWorkerSnapshot(

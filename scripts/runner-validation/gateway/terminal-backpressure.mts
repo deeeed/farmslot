@@ -176,6 +176,8 @@ try {
 
   const healthy = await viewer();
   await subscribe(healthy);
+  // Like Command Center, the first viewer sizes the PTY; a later same-size resize changes nothing.
+  await healthy.call('terminal.worker.resize', { worker, cols: 200, rows: 50 });
   const slow = await viewer();
   await subscribe(slow);
   // The slow viewer stops reading: its unsent frames pile up in the gateway's socket buffer.
@@ -241,14 +243,17 @@ try {
   assert.equal(healthy.ws.readyState, WebSocket.OPEN, 'the healthy viewer keeps streaming');
 
   // Re-attach and redraw: the healthy viewer keeps the PTY alive, so the slow viewer's new
-  // connection joins it. tmux must repaint the screen after the subscribe response, when the
-  // client is listening; the pane is idle, so only a redraw can deliver the marker.
+  // connection joins it. Like Command Center, it ignores terminal output until its first resize is
+  // answered, and that resize comes a slow round trip after subscribing. The pane is idle, so only
+  // a redraw that tmux makes after that resize can deliver the marker.
   const again = await viewer();
   await subscribe(again);
-  const afterResponse = again.data.length;
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  await again.call('terminal.worker.resize', { worker, cols: 200, rows: 50 });
+  const ready = again.data.length;
   await until(
-    () => again.data.slice(afterResponse).join('').includes('PRESSURE-DONE'),
-    'the re-attached viewer to be redrawn after its subscribe response',
+    () => again.data.slice(ready).join('').includes('PRESSURE-DONE'),
+    'the re-attached viewer to be redrawn once it is ready',
     10_000,
   );
   evidence.reattachedScreenHasMarker = true;

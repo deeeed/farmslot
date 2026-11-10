@@ -55,6 +55,7 @@ mock.module('../runtime/pty-stream.js', {
       throw new Error('No terminal in monitor fixture');
     },
     resizePty: () => {},
+    redrawPty: async () => {},
     hasPty: () => false,
     reinitTmuxSession: async () => {
       throw new Error('No terminal in monitor fixture');
