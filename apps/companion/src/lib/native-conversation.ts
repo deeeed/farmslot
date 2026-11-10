@@ -5,6 +5,8 @@ import type {
 } from '@farmslot/protocol';
 import {
   canActOn,
+  NATIVE_FOLLOW_LATEST,
+  nativeFollowScrolled,
   nativeHistoryCanAct,
   type NativeTimelineRow,
   type ResourceQueryState,
@@ -97,4 +99,12 @@ export function nativeTranscriptItemKey(item: NativeTranscriptItem): string {
 /** Cells recycle within a type: a tool reuses a tool's cell, a message a message's. */
 export function nativeTranscriptItemType(item: NativeTranscriptItem): string {
   return item.kind === 'entry' ? item.entry.kind : item.kind;
+}
+
+/**
+ * The reader is farther from the conversation's end than the follow slack. A jump to the end from
+ * here moves, so it sends scroll events; from nearer, it may send none.
+ */
+export function nativeAwayFromEnd(distanceFromEnd: number): boolean {
+  return !nativeFollowScrolled(NATIVE_FOLLOW_LATEST, distanceFromEnd).following;
 }

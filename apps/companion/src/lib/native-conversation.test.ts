@@ -9,6 +9,7 @@ import type {
 import { nativeTimeline, nativeTimelineRows } from '@farmslot/protocol/client-cache';
 
 import {
+  nativeAwayFromEnd,
   nativeConversationWritable,
   nativeRetryAvailable,
   nativeTranscriptItemKey,
@@ -195,4 +196,13 @@ test("the conversation list drops a closed fold's tools and keeps its keys", () 
   assert.equal(open.items[1], rows[1]);
   assert.equal(nativeTranscriptItemType(toolRow), 'tool');
   assert.equal(nativeTranscriptItemType(work), 'work');
+});
+
+test('only a jump from beyond the follow slack counts as the screen scrolling itself', () => {
+  // At or near the end a jump may move nothing and send no scroll event to end it.
+  assert.equal(nativeAwayFromEnd(0), false);
+  assert.equal(nativeAwayFromEnd(-0.5), false);
+  assert.equal(nativeAwayFromEnd(79), false);
+  assert.equal(nativeAwayFromEnd(80), true);
+  assert.equal(nativeAwayFromEnd(5000), true);
 });

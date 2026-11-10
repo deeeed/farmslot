@@ -1,0 +1,259 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion native stream follow",
+  "description": "Start native-stream-stack.mts (isolated gateway, synthetic Claude runner) pair the app once with `native-stream-proof.mjs pair`, and set NATIVE_STREAM_CONTROL, NATIVE_STREAM_STATE (a new file), METRO_PORT and IOS_SIMULATOR. Proves through the real composer, scroll and Latest controls that the virtualized conversation follows a 200-delta stream, stops following when the reader scrolls away, counts unseen output, jumps back with Latest, and keeps the reader's place when they open a message.",
+  "proofTargets": [
+    {
+      "id": "rows-render",
+      "claim": "The selected conversation renders its rows.",
+      "proofMode": "state"
+    },
+    {
+      "id": "follow-stream",
+      "claim": "A reader at the end stays at the end while a turn streams.",
+      "proofMode": "state"
+    },
+    {
+      "id": "scroll-away",
+      "claim": "Scrolling away stops following and new entries count as unseen.",
+      "proofMode": "state"
+    },
+    {
+      "id": "latest-jump",
+      "claim": "Latest returns to the end and follows again.",
+      "proofMode": "state"
+    },
+    {
+      "id": "disclosure-exception",
+      "claim": "Opening a message does not scroll the conversation to its end.",
+      "proofMode": "state"
+    },
+    {
+      "id": "non-drag-scroll",
+      "claim": "A scroll that is not a drag, such as a status bar tap, stops following and new output does not undo it.",
+      "proofMode": "state"
+    }
+  ],
+  "workflow": {
+    "entry": "setup",
+    "nodes": {
+      "setup": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-stream-proof.mjs setup",
+        "intent": "Create a synthetic Claude session and seed its earlier turns.",
+        "next": "open"
+      },
+      "open": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-stream-proof.mjs open",
+        "intent": "Open the session by deep link and wait for its history.",
+        "next": "assert-open"
+      },
+      "assert-open": {
+        "action": "assert_output",
+        "source": "open",
+        "stream": "stdout",
+        "match": "\"phase\":\"open\"",
+        "proves": ["rows-render"],
+        "intent": "The open phase passed its checks.",
+        "next": "at-end"
+      },
+      "at-end": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-stream-proof.mjs at-end",
+        "intent": "The rows render and the reader starts at their end.",
+        "next": "assert-at-end"
+      },
+      "assert-at-end": {
+        "action": "assert_output",
+        "source": "at-end",
+        "stream": "stdout",
+        "match": "\"phase\":\"at-end\"",
+        "proves": ["rows-render", "follow-stream"],
+        "intent": "The at-end phase passed its checks.",
+        "next": "type-prompt"
+      },
+      "type-prompt": {
+        "action": "ui.set_input",
+        "test_id": "companion-native-draft",
+        "value": "Stream the synthetic answer.",
+        "intent": "Write the prompt in the composer.",
+        "next": "send"
+      },
+      "send": {
+        "action": "ui.press",
+        "test_id": "companion-native-send",
+        "intent": "Send it from the composer.",
+        "next": "streams-following",
+        "settle": false
+      },
+      "streams-following": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-stream-proof.mjs streams-following",
+        "intent": "Every sample while 200 deltas stream follows the end, and the turn ends there.",
+        "next": "assert-streams-following"
+      },
+      "assert-streams-following": {
+        "action": "assert_output",
+        "source": "streams-following",
+        "stream": "stdout",
+        "match": "\"phase\":\"streams-following\"",
+        "proves": ["follow-stream"],
+        "intent": "The streams-following phase passed its checks.",
+        "next": "scrolled-away"
+      },
+      "scrolled-away": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-stream-proof.mjs scrolled-away",
+        "intent": "A flick back toward the start stops following.",
+        "next": "assert-scrolled-away"
+      },
+      "assert-scrolled-away": {
+        "action": "assert_output",
+        "source": "scrolled-away",
+        "stream": "stdout",
+        "match": "\"phase\":\"scrolled-away\"",
+        "proves": ["scroll-away"],
+        "intent": "The scrolled-away phase passed its checks.",
+        "next": "more-output"
+      },
+      "more-output": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-stream-proof.mjs more-output",
+        "intent": "Turns from another client arrive while away and count as unseen.",
+        "next": "assert-more-output"
+      },
+      "assert-more-output": {
+        "action": "assert_output",
+        "source": "more-output",
+        "stream": "stdout",
+        "match": "\"phase\":\"more-output\"",
+        "proves": ["scroll-away"],
+        "intent": "The more-output phase passed its checks.",
+        "next": "wait-latest"
+      },
+      "wait-latest": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-jump-latest",
+        "timeout_ms": 15000,
+        "intent": "The Latest control shows the unseen count.",
+        "next": "press-latest"
+      },
+      "press-latest": {
+        "action": "ui.press",
+        "test_id": "companion-native-jump-latest",
+        "intent": "Jump to the latest output.",
+        "next": "latest"
+      },
+      "latest": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-stream-proof.mjs latest",
+        "intent": "Latest lands at the end, follows again and clears unseen.",
+        "next": "assert-latest"
+      },
+      "assert-latest": {
+        "action": "assert_output",
+        "source": "latest",
+        "stream": "stdout",
+        "match": "\"phase\":\"latest\"",
+        "proves": ["latest-jump"],
+        "intent": "The latest phase passed its checks.",
+        "next": "type-long-prompt"
+      },
+      "type-long-prompt": {
+        "action": "ui.set_input",
+        "test_id": "companion-native-draft",
+        "value": "[short] Keep this prompt in view.\nLine 1 of a long prompt the conversation folds.\nLine 2 of a long prompt the conversation folds.\nLine 3 of a long prompt the conversation folds.\nLine 4 of a long prompt the conversation folds.\nLine 5 of a long prompt the conversation folds.\nLine 6 of a long prompt the conversation folds.\nLine 7 of a long prompt the conversation folds.\nLine 8 of a long prompt the conversation folds.\nLine 9 of a long prompt the conversation folds.\nLine 10 of a long prompt the conversation folds.\nLine 11 of a long prompt the conversation folds.\nLine 12 of a long prompt the conversation folds.\nLine 13 of a long prompt the conversation folds.\nLine 14 of a long prompt the conversation folds.\nLine 15 of a long prompt the conversation folds.\nLine 16 of a long prompt the conversation folds.\nLine 17 of a long prompt the conversation folds.\nLine 18 of a long prompt the conversation folds.\nLine 19 of a long prompt the conversation folds.\nLine 20 of a long prompt the conversation folds.\nLine 21 of a long prompt the conversation folds.\nLine 22 of a long prompt the conversation folds.\nLine 23 of a long prompt the conversation folds.\nLine 24 of a long prompt the conversation folds.\nLine 25 of a long prompt the conversation folds.\nLine 26 of a long prompt the conversation folds.\nLine 27 of a long prompt the conversation folds.\nLine 28 of a long prompt the conversation folds.\nLine 29 of a long prompt the conversation folds.",
+        "intent": "Write a long prompt the conversation shows folded.",
+        "next": "send-long-prompt"
+      },
+      "send-long-prompt": {
+        "action": "ui.press",
+        "test_id": "companion-native-send",
+        "settle": false,
+        "intent": "Send it from the composer.",
+        "next": "turn-done"
+      },
+      "turn-done": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-stream-proof.mjs turn-done",
+        "intent": "The short turn ends with the reader still at the end.",
+        "next": "open-message"
+      },
+      "open-message": {
+        "action": "ui.press",
+        "test_id": "companion-native-message-toggle",
+        "intent": "Open a collapsed message at the end of the conversation.",
+        "next": "disclosure-kept-place"
+      },
+      "disclosure-kept-place": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-stream-proof.mjs disclosure-kept-place",
+        "intent": "Opening the message keeps the reader's place, not the end.",
+        "next": "assert-disclosure-kept-place"
+      },
+      "assert-disclosure-kept-place": {
+        "action": "assert_output",
+        "source": "disclosure-kept-place",
+        "stream": "stdout",
+        "match": "\"phase\":\"disclosure-kept-place\"",
+        "proves": ["disclosure-exception"],
+        "intent": "The disclosure-kept-place phase passed its checks.",
+        "next": "wait-latest-again"
+      },
+      "wait-latest-again": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-jump-latest",
+        "timeout_ms": 15000,
+        "intent": "Latest shows again after the reader kept their place.",
+        "next": "press-latest-again"
+      },
+      "press-latest-again": {
+        "action": "ui.press",
+        "test_id": "companion-native-jump-latest",
+        "intent": "Jump back to the end.",
+        "next": "latest-again"
+      },
+      "latest-again": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-stream-proof.mjs latest",
+        "intent": "The jump lands at the end and follows.",
+        "next": "status-bar-top"
+      },
+      "status-bar-top": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-stream-proof.mjs status-bar-top",
+        "intent": "A status bar tap scrolls to the top and stops following.",
+        "next": "assert-status-bar-top"
+      },
+      "assert-status-bar-top": {
+        "action": "assert_output",
+        "source": "status-bar-top",
+        "stream": "stdout",
+        "match": "\"phase\":\"status-bar-top\"",
+        "proves": ["non-drag-scroll"],
+        "intent": "The status-bar-top phase passed its checks.",
+        "next": "stays-away"
+      },
+      "stays-away": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-stream-proof.mjs stays-away",
+        "intent": "New output does not pull that reader back to the end.",
+        "next": "assert-stays-away"
+      },
+      "assert-stays-away": {
+        "action": "assert_output",
+        "source": "stays-away",
+        "stream": "stdout",
+        "match": "\"phase\":\"stays-away\"",
+        "proves": ["non-drag-scroll"],
+        "intent": "The stays-away phase passed its checks.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

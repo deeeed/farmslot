@@ -33,6 +33,8 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   }
   if (message.type !== 'user') return;
   send({ type: 'user', message: message.message });
+  // A prompt marked [short] gets a two-line answer, so a proof can keep the prompt in view.
+  const count = JSON.stringify(message.message).includes('[short]') ? 2 : deltas;
   const id = `msg-${Date.now()}`;
   send({ type: 'stream_event', event: { type: 'message_start', message: { id } } });
   let index = 0;
@@ -44,7 +46,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       type: 'stream_event',
       event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: chunk } },
     });
-    if (++index < deltas) return;
+    if (++index < count) return;
     clearInterval(timer);
     send({ type: 'assistant', message: { id, content: [{ type: 'text', text }] } });
     send({ type: 'result', subtype: 'success', is_error: false });
