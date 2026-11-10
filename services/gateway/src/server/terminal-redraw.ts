@@ -4,7 +4,8 @@ export const REDRAW_FALLBACK_MS = 1_500;
 export const REDRAW_PENDING_MS = 10_000;
 
 interface PendingRedraw {
-  timer: ReturnType<typeof setTimeout>;
+  /** Stops whichever timer the entry currently holds. */
+  stop: () => void;
   expiresAt: number;
 }
 
@@ -21,37 +22,33 @@ export function createTerminalRedraws<Client extends object>(redraw: (key: strin
     if (!keys) pending.set(client, (keys = new Map()));
     return keys;
   };
-  const unref = (timer: ReturnType<typeof setTimeout>) => {
+  const timeout = (run: () => void, ms: number) => {
+    const timer = setTimeout(run, ms);
     timer.unref?.();
-    return timer;
+    return () => clearTimeout(timer);
   };
   /** Forgets a viewer's pending redraw: it left, sized up, or its window ended. */
   function cancel(client: Client, key: string): void {
     const keys = pending.get(client);
     const entry = keys?.get(key);
     if (!keys || !entry) return;
-    clearTimeout(entry.timer);
+    entry.stop();
     keys.delete(key);
   }
   return {
     /** The viewer joined a running PTY. */
     expect(client: Client, key: string): void {
       cancel(client, key);
-      const keys = forClient(client);
       const expiresAt = Date.now() + REDRAW_PENDING_MS;
       const entry: PendingRedraw = {
         expiresAt,
-        timer: unref(
-          setTimeout(() => {
-            redraw(key);
-            // Kept only until the window ends, for a resize that arrives late.
-            entry.timer = unref(
-              setTimeout(() => cancel(client, key), Math.max(0, expiresAt - Date.now())),
-            );
-          }, REDRAW_FALLBACK_MS),
-        ),
+        stop: timeout(() => {
+          redraw(key);
+          // Kept only until the window ends, for a resize that arrives late.
+          entry.stop = timeout(() => cancel(client, key), Math.max(0, expiresAt - Date.now()));
+        }, REDRAW_FALLBACK_MS),
       };
-      keys.set(key, entry);
+      forClient(client).set(key, entry);
     },
     /** The viewer's resize for `key` was answered; undefined when no PTY was resized. */
     afterResize(client: Client, key: string | undefined): void {
@@ -60,9 +57,22 @@ export function createTerminalRedraws<Client extends object>(redraw: (key: strin
       cancel(client, key);
       if (Date.now() > entry.expiresAt) return;
       // Starts after this resize's response is sent, so the output reaches a ready client.
-      setImmediate(() => redraw(key));
+      // Queued as an entry, so a viewer that leaves before it runs still cancels it.
+      const immediate = setImmediate(() => {
+        pending.get(client)?.delete(key);
+        redraw(key);
+      });
+      forClient(client).set(key, {
+        expiresAt: entry.expiresAt,
+        stop: () => clearImmediate(immediate),
+      });
     },
     cancel,
+    /** The client disconnected: every redraw it still waits for is dropped. */
+    cancelAll(client: Client): void {
+      for (const entry of pending.get(client)?.values() ?? []) entry.stop();
+      pending.delete(client);
+    },
     /** Redraws still pending for a client; an expired one is not kept. */
     pendingCount(client: Client): number {
       return pending.get(client)?.size ?? 0;

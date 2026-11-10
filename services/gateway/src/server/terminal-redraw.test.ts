@@ -19,6 +19,28 @@ test('a viewer that leaves before its redraw cancels it', (t) => {
   assert.deepEqual(redrawn, []);
 });
 
+test('a viewer that leaves after its resize, before the queued redraw runs, cancels it', (t) => {
+  const { redraws, redrawn, client, tick } = fixture(t);
+  redraws.expect(client, 'pty');
+  redraws.afterResize(client, 'pty');
+  redraws.cancel(client, 'pty');
+  tick(REDRAW_PENDING_MS);
+  assert.deepEqual(redrawn, []);
+});
+
+test('a disconnect drops every redraw the client still waits for', (t) => {
+  const { redraws, redrawn, client, tick } = fixture(t);
+  const other = {};
+  redraws.expect(client, 'waiting');
+  redraws.expect(client, 'queued');
+  redraws.afterResize(client, 'queued');
+  redraws.expect(other, 'waiting');
+  redraws.cancelAll(client);
+  assert.equal(redraws.pendingCount(client), 0);
+  tick(REDRAW_PENDING_MS);
+  assert.deepEqual(redrawn, ['waiting'], 'only the other client is redrawn');
+});
+
 test('a resize before the fallback redraws once, after its response', (t) => {
   const { redraws, redrawn, client, tick } = fixture(t);
   redraws.expect(client, 'pty');

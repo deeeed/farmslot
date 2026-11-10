@@ -653,6 +653,11 @@ const terminalRedraws = createTerminalRedraws<ClientState>((key) => {
   });
 });
 
+/** A disconnected client's pending repaints are dropped with its terminal subscriptions. */
+export function forgetTerminalRedraws(state: ClientState): void {
+  terminalRedraws.cancelAll(state);
+}
+
 export async function routeMethod(
   method: string,
   params: unknown,
@@ -1120,6 +1125,7 @@ async function routeAuthorizedMethod(
       const keysToRemove = sub.interactive ? terminalKeysForSlot(state, registration) : [key];
       for (const oldKey of keysToRemove) {
         removeTerminalSubscriptionForKey(state, registration, oldKey);
+        terminalRedraws.cancel(state, oldKey);
       }
       const {
         key: subscribedKey,
@@ -1206,6 +1212,7 @@ async function routeAuthorizedMethod(
         unsubscribeWorkerTerminalPty(key, oldHandler);
         state.workerTerminalHandlers.delete(key);
       }
+      terminalRedraws.cancel(state, key);
       const {
         key: ptyKey,
         ptyHandler,

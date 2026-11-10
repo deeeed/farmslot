@@ -1,2 +1,2 @@
-- Cancel a terminal repaint that is still pending when its viewer unsubscribes, and stop keeping it once its window ends.
-- Stop rewriting the PR rule store when a transaction leaves it unchanged, and move the full records of withdrawn PR review intents untouched for a day to an append-only `.pr-rules.archive.jsonl` beside it. The store keeps a stub with what deduplication and review identity read.
+- Cancel a terminal repaint that is still pending when its viewer unsubscribes, switches terminals or disconnects, and stop keeping it once its window ends.
+- Stop rewriting the PR rule store when a transaction leaves it unchanged, and move the full records of withdrawn PR review intents untouched for a day to an append-only `.pr-rules.archive.jsonl` beside it, synced to disk before the store is replaced. The store keeps the intent with its title and author; only the details of rules that no longer apply move out.

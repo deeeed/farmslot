@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -579,7 +579,8 @@ test('day-old withdrawn intents move to the archive and keep stubs that still de
   );
   const restarted = await PRRuleStore.load(file);
   const stub = restarted.intent(withdrawn.id)!;
-  assert.equal(stub.title, undefined);
+  // History still shows the stub and its author still puts it under Mine.
+  assert.deepEqual([stub.title, stub.author], [withdrawn.title, withdrawn.author]);
   assert.deepEqual(
     stub.contributions.map((source) => [
       source.ruleId,
@@ -612,4 +613,23 @@ test('day-old withdrawn intents move to the archive and keep stubs that still de
     renamed.revision,
   );
   assert.equal((await readFile(archive, 'utf8')).trim().split('\n').length, lines.length);
+});
+
+test('an archive that cannot be written leaves the store as it was', async (t) => {
+  const { store, file } = await fixture(t);
+  const { team, rule } = await ruleFor(store, 'owner', true);
+  await store.applyPreview('owner', preview(team, rule, 'head-withdrawn'));
+  const disabled = await store.setEnabled('owner', rule.id, rule.revision, false, false);
+  const enabled = await store.setEnabled('owner', rule.id, disabled.revision, true, false);
+  await store.applyPreview('owner', preview(team, enabled, 'head-withdrawn'));
+  const before = await readFile(file, 'utf8');
+  // A directory in the archive's place makes the append fail.
+  await mkdir(intentArchiveFile(file));
+
+  const later = Date.now() + INTENT_ARCHIVE_AGE_MS + 60_000;
+  t.mock.method(Date, 'now', () => later);
+  await assert.rejects(
+    store.saveTeam('owner', { ...team.config, name: 'Renamed' }, team.id, team.revision),
+  );
+  assert.equal(await readFile(file, 'utf8'), before, 'no stub without its archived record');
 });
