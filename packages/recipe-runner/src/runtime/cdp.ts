@@ -2057,6 +2057,12 @@ function deepQueryHelpersExpression(): string {
       }
       return true;
     };
+    // Properties that make an element the containing block of its fixed descendants.
+    const containsFixed = (style) =>
+      ['transform', 'translate', 'rotate', 'scale', 'filter', 'backdropFilter', 'perspective'].some((name) => (style[name] || 'none') !== 'none') ||
+      /paint|layout|strict|content/.test(style.contain || '') ||
+      style.contentVisibility === 'auto' ||
+      (style.willChange || '').split(',').some((name) => ['transform', 'translate', 'rotate', 'scale', 'filter', 'perspective', 'contain'].includes(name.trim()));
     const isVisibleDeep = (element) => {
       if (!isRenderedDeep(element)) return false;
       let rect = element.getBoundingClientRect();
@@ -2069,7 +2075,7 @@ function deepQueryHelpersExpression(): string {
         const parent = current.parentElement || shadowHostFor(root);
         if (!parent) break;
         const style = getComputedStyle(parent);
-        if (escaped && ((style.transform || 'none') !== 'none' || (style.filter || 'none') !== 'none' || (style.perspective || 'none') !== 'none' || /paint|layout|strict|content/.test(style.contain || '') || /transform|filter|perspective/.test(style.willChange || ''))) escaped = false;
+        if (escaped && containsFixed(style)) escaped = false;
         if (!escaped && /(hidden|clip|scroll|auto)/.test(style.overflow + style.overflowX + style.overflowY)) {
           const parentRect = parent.getBoundingClientRect();
           rect = { left: Math.max(rect.left, parentRect.left), top: Math.max(rect.top, parentRect.top), right: Math.min(rect.right, parentRect.right), bottom: Math.min(rect.bottom, parentRect.bottom) };

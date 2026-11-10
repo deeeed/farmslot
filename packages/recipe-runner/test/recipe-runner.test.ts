@@ -5648,17 +5648,20 @@ function box(top: number, bottom: number): typeof RECT {
 function fixedFooterPage(
   footerStyle: Record<string, string>,
   containerStyle: Record<string, string> = {},
+  buttonStyle: Record<string, string> = {},
+  footerRect = box(890, 1000),
 ) {
   const document = new FakeDocument();
   const container = element(document, 'div');
   container.rect = box(0, 900);
   container.computed = { overflow: 'auto', overflowY: 'auto', ...containerStyle };
   const footer = element(document, 'div');
-  footer.rect = box(890, 1000);
+  footer.rect = footerRect;
   footer.computed = footerStyle;
   const button = element(document, 'button', 'Submit');
   button.id = 'submit';
   button.rect = box(920, 970);
+  button.computed = buttonStyle;
   footer.append(button);
   container.append(footer);
   document.body.append(container);
@@ -5679,8 +5682,35 @@ test('CDP visible waits ignore overflow ancestors above a fixed element', async 
     }),
     /ui\.wait_for timed out/u,
   );
+  for (const containingBlock of [
+    { transform: 'translateZ(0)' },
+    { translate: '10px 0' },
+    { willChange: 'opacity, transform' },
+  ]) {
+    await assert.rejects(
+      fixedFooterPage({ position: 'fixed' }, containingBlock).waitFor({
+        selector: '#submit',
+        expected: 'visible',
+        timeoutMs: 100,
+      }),
+      /ui\.wait_for timed out/u,
+    );
+  }
+  await fixedFooterPage({ position: 'fixed' }, { willChange: 'transform-origin, opacity' }).waitFor(
+    {
+      selector: '#submit',
+      expected: 'visible',
+      timeoutMs: 100,
+    },
+  );
+  // The element itself fixed escapes the container; a fixed ancestor with overflow still clips it.
+  await fixedFooterPage({}, {}, { position: 'fixed' }).waitFor({
+    selector: '#submit',
+    expected: 'visible',
+    timeoutMs: 100,
+  });
   await assert.rejects(
-    fixedFooterPage({ position: 'fixed' }, { transform: 'translateZ(0)' }).waitFor({
+    fixedFooterPage({ position: 'fixed', overflow: 'hidden' }, {}, {}, box(890, 910)).waitFor({
       selector: '#submit',
       expected: 'visible',
       timeoutMs: 100,
