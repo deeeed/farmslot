@@ -2057,20 +2057,33 @@ function deepQueryHelpersExpression(): string {
       }
       return true;
     };
+    // Properties that make an element the containing block of its fixed descendants.
+    const containsFixed = (style) =>
+      ['transform', 'translate', 'rotate', 'scale', 'filter', 'backdropFilter', 'perspective', 'offsetPath'].some((name) => (style[name] || 'none') !== 'none') ||
+      /paint|layout|strict|content/.test(style.contain || '') ||
+      style.contentVisibility === 'auto' ||
+      style.transformStyle === 'preserve-3d' ||
+      (style.containerType || '').split(' ').some((name) => name === 'size' || name === 'inline-size') ||
+      (style.willChange || '').split(',').some((name) => ['transform', 'translate', 'rotate', 'scale', 'filter', 'backdrop-filter', 'perspective', 'offset-path', 'contain', 'content-visibility', 'container-type', 'transform-style'].includes(name.trim()));
     const isVisibleDeep = (element) => {
       if (!isRenderedDeep(element)) return false;
       let rect = element.getBoundingClientRect();
       let current = element;
+      // A fixed element is placed against the viewport, so overflow ancestors above it do not
+      // clip it unless one is its containing block (transform, filter, perspective, contain).
+      let escaped = getComputedStyle(element).position === 'fixed';
       while (current) {
         const root = current.getRootNode();
         const parent = current.parentElement || shadowHostFor(root);
         if (!parent) break;
         const style = getComputedStyle(parent);
-        if (/(hidden|clip|scroll|auto)/.test(style.overflow + style.overflowX + style.overflowY)) {
+        if (escaped && containsFixed(style)) escaped = false;
+        if (!escaped && /(hidden|clip|scroll|auto)/.test(style.overflow + style.overflowX + style.overflowY)) {
           const parentRect = parent.getBoundingClientRect();
           rect = { left: Math.max(rect.left, parentRect.left), top: Math.max(rect.top, parentRect.top), right: Math.min(rect.right, parentRect.right), bottom: Math.min(rect.bottom, parentRect.bottom) };
           if (rect.right <= rect.left || rect.bottom <= rect.top) return false;
         }
+        if (style.position === 'fixed') escaped = true;
         current = parent;
       }
       return rect.right > 0 && rect.bottom > 0 && rect.left < window.innerWidth && rect.top < window.innerHeight;
