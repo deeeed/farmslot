@@ -1,0 +1,1 @@
+- Cache parsed pool files and re-read only a file whose stat changed, so slot lookups and node-link policy checks stop re-reading every pool on each call.

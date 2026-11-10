@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { hostname, tmpdir } from 'node:os';
@@ -7,8 +15,11 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import {
+  configuredNodeLinkEnabled,
   findSlotByRepo,
   isIgnoredPoolFile,
+  NODE_LINK_FLAG,
+  readPoolFiles,
   resolveSlotPoolDir,
   SlotByRepoError,
 } from '../../src/node/slot-by-repo.js';
@@ -188,4 +199,50 @@ test('resolveSlotPoolDir: FARMSLOT_POOL_DIR, else FARMSLOT_ROOT/pool, else ~/far
     dir: join(home, 'farmslot-node', 'pool'),
     source: 'farmslot-node',
   });
+});
+
+test('pool reads are cached until a pool file or the directory changes', (t) => {
+  const dir = tempDir(t);
+  const machines = () => readPoolFiles<{ machine: string }>(dir).map(({ pool }) => pool.machine);
+  pool(dir, 'a.json', { machine: 'a', slots: [] });
+  pool(dir, 'b.json', { machine: 'b', slots: [] });
+  pool(dir, 'b.json.bak.2026-11-10', { machine: 'ignored' });
+
+  const first = readPoolFiles(dir);
+  assert.deepEqual(machines(), ['a', 'b']);
+  assert.equal(readPoolFiles(dir), first, 'unchanged pools are the same result, not re-read');
+  assert.throws(() => {
+    (first[0].pool as { machine: string }).machine = 'mutated';
+  }, TypeError);
+  assert.throws(() => (first as unknown[]).push({}), TypeError);
+
+  // Edited in place (same directory entry), with a different size.
+  pool(dir, 'a.json', { machine: 'a-edited', slots: [] });
+  assert.deepEqual(machines(), ['a-edited', 'b']);
+  // Replaced atomically, as config writers do.
+  pool(dir, 'b.json.tmp', { machine: 'b2', slots: [] });
+  renameSync(join(dir, 'b.json.tmp'), join(dir, 'b.json'));
+  assert.deepEqual(machines(), ['a-edited', 'b2']);
+  // Added, made unparsable, removed.
+  pool(dir, 'c.json', { machine: 'c', slots: [] });
+  assert.deepEqual(machines(), ['a-edited', 'b2', 'c']);
+  pool(dir, 'c.json', '{ not json');
+  assert.deepEqual(machines(), ['a-edited', 'b2']);
+  rmSync(join(dir, 'c.json'));
+  assert.deepEqual(machines(), ['a-edited', 'b2']);
+  rmSync(join(dir, 'a.json'));
+  assert.deepEqual(machines(), ['b2']);
+});
+
+test('node-link policy reads the cached machine pool and still refuses a malformed one', (t) => {
+  const dir = tempDir(t);
+  assert.equal(configuredNodeLinkEnabled('m1', dir), false, 'no machine pool: the pilot stays off');
+  pool(dir, 'm1.json', { machine: 'm1', env: { [NODE_LINK_FLAG]: '1' } });
+  assert.equal(configuredNodeLinkEnabled('m1', dir), true);
+  pool(dir, 'm1.json', { machine: 'm1', env: { [NODE_LINK_FLAG]: '0' } });
+  assert.equal(configuredNodeLinkEnabled('m1', dir), false);
+  pool(dir, 'm1.json', '{ not json');
+  assert.throws(() => configuredNodeLinkEnabled('m1', dir), SyntaxError);
+  pool(dir, 'm1.json', { machine: 'other', env: {} });
+  assert.throws(() => configuredNodeLinkEnabled('m1', dir), /canonical machine pool/);
 });

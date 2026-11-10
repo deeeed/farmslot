@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, type Stats, statSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import path from 'node:path';
@@ -96,28 +96,105 @@ export interface PoolFileEntry<P> {
   pool: P;
 }
 
-/** Configured pool readers skip malformed files without echoing parser input. */
+/** What a pool file looked like when it was last read; any change means read it again. */
+interface PoolFileStamp {
+  mtimeMs: number;
+  ctimeMs: number;
+  size: number;
+  ino: number;
+}
+interface CachedPoolFile {
+  stamp: PoolFileStamp;
+  entry: PoolFileEntry<unknown> | undefined;
+}
+interface PoolDirCache {
+  dirMtimeMs: number;
+  files: string[];
+  byFile: Map<string, CachedPoolFile>;
+  result: PoolFileEntry<unknown>[];
+}
+/** Parsed pool files per directory. Slot lookups read pools on every call (several per check). */
+const poolDirCache = new Map<string, PoolDirCache>();
+
+const stampOf = (stats: Stats): PoolFileStamp => ({
+  mtimeMs: stats.mtimeMs,
+  ctimeMs: stats.ctimeMs,
+  size: stats.size,
+  ino: stats.ino,
+});
+const sameStamp = (a: PoolFileStamp, b: PoolFileStamp) =>
+  a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs && a.size === b.size && a.ino === b.ino;
+
+/** Cached pools are shared by every caller: freezing makes any mutation throw, not corrupt it. */
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value)) deepFreeze(child);
+  }
+  return value;
+}
+
+function readPoolFile(fullPath: string): PoolFileEntry<unknown> | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(fullPath, 'utf8'));
+  } catch (error) {
+    // A half-written/removed pool file is not authority. Other I/O failures are actionable.
+    if (
+      error instanceof SyntaxError ||
+      ['ENOENT', 'EISDIR'].includes((error as NodeJS.ErrnoException).code ?? '')
+    )
+      return undefined;
+    throw error;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+  return { file: fullPath, pool: deepFreeze(parsed) };
+}
+
+/**
+ * Configured pool readers skip malformed files without echoing parser input.
+ *
+ * Results are cached per directory and checked against the directory's and each file's stat on
+ * every call, so an edited, added, renamed or removed pool file is seen at once. Unchanged pools
+ * are returned as the same frozen objects; callers must not mutate them.
+ */
 export function readPoolFiles<P = SlotPoolFile>(poolDir: string): PoolFileEntry<P>[] {
-  return readdirSync(poolDir)
-    .filter((file) => !isIgnoredPoolFile(file))
-    .sort()
-    .flatMap((file) => {
-      const fullPath = path.join(poolDir, file);
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(readFileSync(fullPath, 'utf8'));
-      } catch (error) {
-        // A half-written/removed pool file is not authority. Other I/O failures are actionable.
-        if (
-          error instanceof SyntaxError ||
-          ['ENOENT', 'EISDIR'].includes((error as NodeJS.ErrnoException).code ?? '')
-        )
-          return [];
-        throw error;
+  const dirMtimeMs = statSync(poolDir).mtimeMs;
+  const cached = poolDirCache.get(poolDir);
+  const files =
+    cached && cached.dirMtimeMs === dirMtimeMs
+      ? cached.files
+      : readdirSync(poolDir)
+          .filter((file) => !isIgnoredPoolFile(file))
+          .sort();
+  const byFile = new Map<string, CachedPoolFile>();
+  let changed = !cached || cached.files !== files;
+  for (const file of files) {
+    const fullPath = path.join(poolDir, file);
+    let stats: Stats;
+    try {
+      stats = statSync(fullPath);
+    } catch (error) {
+      // Removed between listing and stat: the same as a pool file that vanished mid-read.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        changed = true;
+        continue;
       }
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
-      return [{ file: fullPath, pool: parsed as P }];
-    });
+      throw error;
+    }
+    const stamp = stampOf(stats);
+    const previous = cached?.byFile.get(fullPath);
+    if (previous && sameStamp(previous.stamp, stamp)) {
+      byFile.set(fullPath, previous);
+      continue;
+    }
+    changed = true;
+    byFile.set(fullPath, { stamp, entry: readPoolFile(fullPath) });
+  }
+  if (cached && !changed) return cached.result as PoolFileEntry<P>[];
+  const result = deepFreeze([...byFile.values()].flatMap(({ entry }) => (entry ? [entry] : [])));
+  poolDirCache.set(poolDir, { dirMtimeMs, files, byFile, result });
+  return result as PoolFileEntry<P>[];
 }
 
 /**
@@ -172,15 +249,23 @@ export const NODE_LINK_FLAG = 'FARMSLOT_NODE_LINK_ENABLED';
 export function configuredNodeLinkEnabled(machine: string, poolDirectory: string): boolean {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(machine))
     throw new Error('Invalid node machine identity');
-  let content: string;
-  try {
-    content = readFileSync(path.join(poolDirectory, `${machine}.json`), 'utf8');
-  } catch (error) {
-    // Older/private installations may have no canonical machine pool yet: the pilot stays off.
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
-    throw error;
+  const file = path.join(poolDirectory, `${machine}.json`);
+  // Every remote exec asks this, so the parsed pool comes from the shared stat-checked cache.
+  let pool: unknown = isIgnoredPoolFile(`${machine}.json`)
+    ? undefined
+    : readPoolFiles(poolDirectory).find((entry) => entry.file === file)?.pool;
+  if (pool === undefined) {
+    let content: string;
+    try {
+      content = readFileSync(file, 'utf8');
+    } catch (error) {
+      // Older/private installations may have no canonical machine pool yet: the pilot stays off.
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+      throw error;
+    }
+    // The cache skips an unparsable pool; this policy must still refuse it, so parse to throw.
+    pool = JSON.parse(content);
   }
-  const pool: unknown = JSON.parse(content);
   if (!pool || typeof pool !== 'object' || !('machine' in pool) || pool.machine !== machine)
     throw new Error('Node-link policy requires its canonical machine pool');
   const env = 'env' in pool ? pool.env : undefined;
