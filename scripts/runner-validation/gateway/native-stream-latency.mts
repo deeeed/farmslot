@@ -210,9 +210,29 @@ const percentiles = (list: number[]): Percentiles => {
   const at = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? 0;
   return { count: sorted.length, p50: at(0.5), p95: at(0.95), p99: at(0.99), max: at(1) };
 };
-const until = async (check: () => boolean, description: string, timeout = 120_000) => {
+// A recipe timeout or Ctrl-C stops the run at its next checkpoint; the run then settles and the
+// same teardown as a failure stops everything it acquired.
+let interruptedBy: NodeJS.Signals | undefined;
+for (const signal of ['SIGINT', 'SIGTERM'] as const)
+  process.on(signal, () => {
+    interruptedBy ??= signal;
+  });
+const checkpoint = () => {
+  if (interruptedBy) throw new Error(`Interrupted by ${interruptedBy}`);
+};
+interface UntilOptions {
+  timeout?: number;
+  /** Teardown waits must finish even after a signal. */
+  interruptible?: boolean;
+}
+const until = async (
+  check: () => boolean,
+  description: string,
+  { timeout = 120_000, interruptible = true }: UntilOptions = {},
+) => {
   const end = Date.now() + timeout;
   while (!check()) {
+    if (interruptible) checkpoint();
     assert.ok(Date.now() < end, 'Timed out: ' + description);
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
@@ -227,19 +247,16 @@ let stopEvents: (() => void) | undefined;
 const viewers: NonNullable<typeof connection>[] = [];
 const loop = monitorEventLoopDelay({ resolution: 10 });
 const result: Record<string, unknown> = { label: values.label, root, args: values };
-// A recipe timeout or Ctrl-C ends the run through the same teardown as a failure.
-const interrupted = new Promise<never>((_, reject) => {
-  for (const signal of ['SIGINT', 'SIGTERM'] as const)
-    process.on(signal, () => reject(new Error(`Interrupted by ${signal}`)));
-});
 let runError: unknown;
 const run = async () => {
   await new NativeSessionClient(path.join(root, 'native')).warm();
+  checkpoint();
   server = createServer();
   wss = createWebSocketServer(server, auth);
   initServerGlobals();
   const listening = server;
   await new Promise<void>((resolve) => listening.listen(0, '127.0.0.1', resolve));
+  checkpoint();
   const address = listening.address();
   assert(address && typeof address !== 'string');
   const connect = async () => {
@@ -254,7 +271,11 @@ const run = async () => {
     }).connect();
   };
   connection = await connect();
-  for (let index = 0; index < Number(values.viewers); index++) viewers.push(await connect());
+  checkpoint();
+  for (let index = 0; index < Number(values.viewers); index++) {
+    viewers.push(await connect());
+    checkpoint();
+  }
   stopEvents = connection.onEvent(onFrame);
   session = (
     (await connection.call('native.session.create', {
@@ -307,7 +328,7 @@ const run = async () => {
     await until(
       () => fleetBroadcasts.some((broadcast) => broadcast.branch === finalBranch),
       'final committed fleet state',
-      5_000,
+      { timeout: 5_000 },
     );
   }
   result.wallMs = Date.now() - started;
@@ -363,7 +384,8 @@ const run = async () => {
   result.pass = inOrder && result.withinBudget && result.fleetDelivered;
 };
 try {
-  await Promise.race([run(), interrupted]);
+  // Awaited in full, never raced: teardown must see everything the run acquired.
+  await run();
 } catch (error) {
   runError = error;
 } finally {
@@ -408,11 +430,10 @@ try {
     });
     assert(argv.includes(path.join(root, 'native')));
     process.kill(supervisor.pid, 'SIGTERM');
-    await until(
-      () => !fs.existsSync(path.join(root, 'native/lock')),
-      'private host cleanup',
-      30_000,
-    );
+    await until(() => !fs.existsSync(path.join(root, 'native/lock')), 'private host cleanup', {
+      timeout: 30_000,
+      interruptible: false,
+    });
   });
   await writeFile(
     path.join(output, `${values.label}.json`),

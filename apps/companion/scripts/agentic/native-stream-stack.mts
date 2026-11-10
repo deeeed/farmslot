@@ -157,7 +157,11 @@ let startup: Promise<void> | undefined;
 /** The one exit path. `cause` is the failure that ended the stack, if any. */
 function finish(cause?: unknown) {
   stopping ??= Promise.allSettled([startup])
-    .then(() => teardown())
+    .then(([settled]) => {
+      // A startup that failed after a signal began the stop is still reported, never dropped.
+      if (cause === undefined && settled?.status === 'rejected') cause = settled.reason;
+      return teardown();
+    })
     .then(
       () => {
         if (cause !== undefined) throw cause;
