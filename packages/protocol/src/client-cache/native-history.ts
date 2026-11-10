@@ -29,8 +29,25 @@ export interface NativeTimelineEntry {
   text: string;
 }
 
-export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntry[] {
+/** The events each entry was built from, compared by identity to reuse an unchanged entry. */
+const entrySources = new WeakMap<NativeTimelineEntry, NativeSessionEvent[]>();
+
+/**
+ * `previous` is the caller's last result. An entry whose kind, text and source events are
+ * unchanged is returned as the same object, so a renderer can skip it: a streamed delta then
+ * changes only the entry it extends.
+ */
+export function nativeTimeline(
+  events: NativeSessionEvent[],
+  previous?: readonly NativeTimelineEntry[],
+): NativeTimelineEntry[] {
   const entries: NativeTimelineEntry[] = [];
+  const sources = new Map<NativeTimelineEntry, NativeSessionEvent[]>();
+  const add = (entry: NativeTimelineEntry, ...from: NativeSessionEvent[]) => {
+    entries.push(entry);
+    sources.set(entry, from);
+    return entry;
+  };
   const userCommands = new Set<string>();
   const tools = new Map<string, NativeTimelineEntry>();
   const plans = new Map<string, NativeTimelineEntry>();
@@ -43,7 +60,7 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
       const prompt = prompts.get(event.commandId);
       if (prompt) {
         userCommands.add(event.commandId);
-        entries.push({ key: prompt.sequence, kind: 'user', event: prompt, text: prompt.text! });
+        add({ key: prompt.sequence, kind: 'user', event: prompt, text: prompt.text! }, prompt);
       }
     }
     if (event.type === 'text.delta') {
@@ -54,8 +71,8 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
         last.event.generation === event.generation
       ) {
         last.text += event.text ?? '';
-      } else
-        entries.push({ key: event.sequence, kind: 'assistant', event, text: event.text ?? '' });
+        sources.get(last)!.push(event);
+      } else add({ key: event.sequence, kind: 'assistant', event, text: event.text ?? '' }, event);
     } else if (event.type === 'tool.started' || event.type === 'tool.completed') {
       const identity =
         event.nativeId && JSON.stringify([event.generation, event.commandId, event.nativeId]);
@@ -76,6 +93,7 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
         };
         // A runner can name the command or files only after the call started (Cursor does).
         previous.text = nativeToolLabel(previous.event.tool);
+        sources.get(previous)!.push(event);
       } else {
         const entry: NativeTimelineEntry = {
           key: event.sequence,
@@ -83,7 +101,7 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
           event,
           text: nativeToolLabel(event.tool),
         };
-        entries.push(entry);
+        add(entry, event);
         if (identity) tools.set(identity, entry);
       }
     } else if (event.type === 'plan.updated' && event.plan) {
@@ -94,6 +112,7 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
       if (previous) {
         previous.event = { ...event, sequence: previous.key };
         previous.text = nativePlanText(event.plan);
+        sources.get(previous)!.push(event);
       } else {
         const entry: NativeTimelineEntry = {
           key: event.sequence,
@@ -101,7 +120,7 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
           event,
           text: nativePlanText(event.plan),
         };
-        entries.push(entry);
+        add(entry, event);
         plans.set(identity, entry);
       }
     } else if (
@@ -110,38 +129,58 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
       // A turn that changed nothing adds no row; one whose changes are unavailable says why.
       (event.changes.files.length || event.changes.unavailable)
     ) {
-      entries.push({
-        key: event.sequence,
-        kind: 'changes',
+      add(
+        { key: event.sequence, kind: 'changes', event, text: nativeTurnChangesText(event.changes) },
         event,
-        text: nativeTurnChangesText(event.changes),
-      });
+      );
     } else if (event.type === 'approval.resolved' && event.request) {
-      entries.push({
-        key: event.sequence,
-        kind: 'resolution',
+      add(
+        {
+          key: event.sequence,
+          kind: 'resolution',
+          event,
+          text:
+            event.data?.automatic === true && event.data?.decision === 'approve'
+              ? `Automatically approved${event.data.approvalMode === 'bypass' ? ' (bypass)' : ''}: ${event.request.title}`
+              : nativeResolutionText(event.request, event.response),
+        },
         event,
-        text:
-          event.data?.automatic === true && event.data?.decision === 'approve'
-            ? `Automatically approved${event.data.approvalMode === 'bypass' ? ' (bypass)' : ''}: ${event.request.title}`
-            : nativeResolutionText(event.request, event.response),
-      });
+      );
     } else if (['turn.completed', 'session.closed', 'error'].includes(event.type)) {
-      entries.push({
-        key: event.sequence,
-        kind: 'status',
+      add(
+        {
+          key: event.sequence,
+          kind: 'status',
+          event,
+          text:
+            event.text ??
+            (event.type === 'session.closed'
+              ? `Session ${event.status ?? 'closed'}`
+              : event.type === 'error'
+                ? 'Runner error'
+                : `Turn ${event.status ?? 'completed'}`),
+        },
         event,
-        text:
-          event.text ??
-          (event.type === 'session.closed'
-            ? `Session ${event.status ?? 'closed'}`
-            : event.type === 'error'
-              ? 'Runner error'
-              : `Turn ${event.status ?? 'completed'}`),
-      });
+      );
     }
   }
-  return entries;
+  const before = new Map(previous?.map((entry) => [entry.key, entry]));
+  return entries.map((entry) => {
+    const from = sources.get(entry)!;
+    const kept = before.get(entry.key);
+    const keptFrom = kept && entrySources.get(kept);
+    if (
+      kept &&
+      keptFrom &&
+      kept.kind === entry.kind &&
+      kept.text === entry.text &&
+      keptFrom.length === from.length &&
+      keptFrom.every((event, index) => event === from[index])
+    )
+      return kept;
+    entrySources.set(entry, from);
+    return entry;
+  });
 }
 
 /** A checklist's progress, "3 of 5 steps"; a proposal's markdown. */
@@ -980,7 +1019,32 @@ export type NativeTimelineRow =
  * A turn ends at `turn.completed`, or at `session.closed` when its host stopped mid-turn.
  * Messages and statuses stay; a running turn has no summary.
  */
-export function nativeTimelineRows(entries: NativeTimelineEntry[]): NativeTimelineRow[] {
+export function nativeTimelineRows(
+  entries: NativeTimelineEntry[],
+  previous?: readonly NativeTimelineRow[],
+): NativeTimelineRow[] {
+  const rows = timelineRows(entries);
+  if (!previous?.length) return rows;
+  const before = new Map(previous.map((row) => [`${row.kind}:${row.key}`, row]));
+  return rows.map((row) => {
+    const kept = before.get(`${row.kind}:${row.key}`);
+    return kept && sameRow(kept, row) ? kept : row;
+  });
+}
+
+function sameRow(a: NativeTimelineRow, b: NativeTimelineRow): boolean {
+  if (a.kind === 'work' || b.kind === 'work')
+    return (
+      a.kind === 'work' &&
+      b.kind === 'work' &&
+      a.label === b.label &&
+      a.tools.length === b.tools.length &&
+      a.tools.every((key, index) => key === b.tools[index])
+    );
+  return a.entry === b.entry && a.fold === b.fold && a.ended === b.ended;
+}
+
+function timelineRows(entries: NativeTimelineEntry[]): NativeTimelineRow[] {
   const rows: NativeTimelineRow[] = [];
   let turn: NativeTimelineEntry[] = [];
   for (const entry of entries) {

@@ -20,6 +20,7 @@ import type {
   TaskProgressStructured,
 } from '@farmslot/protocol';
 import {
+  type NativeFollow,
   type NativeHistorySnapshot,
   nativeHistoryStorageId,
   type NativeTimelineEntry,
@@ -82,6 +83,11 @@ interface ConversationProofFrame {
   resumeAvailable: boolean;
   resumeReady: boolean;
   busy: boolean;
+  /** The transcript's follow state and the reader's distance from its end, from the screen. */
+  follow?: NativeFollowProof;
+}
+export interface NativeFollowProof extends NativeFollow {
+  distanceFromEnd: number;
 }
 const conversationFrames = new Map<string, Set<() => ConversationProofFrame>>();
 /** Inspect the actual pinned conversation, without writing controls or query data. */
@@ -392,6 +398,7 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
                 resumeAvailable: conversation.resumeAvailable,
                 resumeReady: conversation.resumeReady,
                 busy: conversation.busy,
+                follow: conversation.follow,
               },
             }
           : {}),

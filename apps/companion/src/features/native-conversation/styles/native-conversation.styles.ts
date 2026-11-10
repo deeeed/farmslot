@@ -37,6 +37,10 @@ export const nativeStyles = StyleSheet.create({
     justifyContent: 'center',
   },
   content: { padding: spacing.lg, gap: spacing.md },
+  // FlashList takes padding only; cells are spaced by `gap` separators.
+  list: { padding: spacing.lg },
+  listHeader: { gap: spacing.md, paddingBottom: spacing.md },
+  gap: { height: spacing.md },
   row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: spacing.sm },
   heading: { color: colors.textPrimary, fontSize: fonts.sizeLg, fontWeight: '800' },
   text: { color: colors.textPrimary, fontSize: fonts.sizeSm, lineHeight: 21 },
@@ -66,7 +70,6 @@ export const nativeStyles = StyleSheet.create({
   buttonText: { color: colors.accent, fontWeight: '700', fontSize: fonts.sizeSm },
   disabled: { opacity: 0.45 },
   messageToggle: { minHeight: 44, justifyContent: 'center' },
-  hidden: { display: 'none' },
   input: {
     color: colors.textPrimary,
     backgroundColor: colors.bgCard,

@@ -4,7 +4,13 @@ import type { DocumentBlock } from '../lib/document-format';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 
 /** Markdown as `formatDocument` blocks; code, JSON and tables scroll sideways instead of wrapping. */
-export function FormattedDocument({ blocks, empty }: { blocks: DocumentBlock[]; empty?: string }) {
+export function FormattedDocument({
+  blocks,
+  empty,
+}: {
+  blocks: readonly DocumentBlock[];
+  empty?: string;
+}) {
   const { width } = useWindowDimensions();
   const minCodeWidth = Math.max(320, width - spacing.xl * 2);
   if (!blocks.length) return empty ? <Text style={styles.documentText}>{empty}</Text> : null;

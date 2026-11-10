@@ -1,0 +1,35 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native stream latency through the gateway",
+  "description": "Isolated: a synthetic Claude stream-json peer streams 200 timestamped deltas through the real native host and an in-process gateway (temp FARMSLOT_HOME/root, never the operator gateway). Each node fails when a delta is lost or reordered, or when runner-to-client p95 exceeds its budget. Results and gateway performance snapshots are written under FARMSLOT_LATENCY_PROOF_OUTPUT.",
+  "workflow": {
+    "entry": "idle",
+    "nodes": {
+      "idle": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/native-stream-latency.mts --out \"${FARMSLOT_LATENCY_PROOF_OUTPUT:-${TMPDIR:-/tmp}/native-stream-latency-proof}\" --label idle --deltas 200 --interval 20 --max-p95-ms 110 --max-loop-p99-ms 60",
+        "intent": "Every delta reaches the client in order; p95 under 110 ms, loop p99 under 60 ms.",
+        "timeout_ms": 240000,
+        "next": "load"
+      },
+      "load": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/native-stream-latency.mts --out \"${FARMSLOT_LATENCY_PROOF_OUTPUT:-${TMPDIR:-/tmp}/native-stream-latency-proof}\" --label load --deltas 200 --interval 20 --viewers 3 --load --max-p95-ms 130 --max-loop-p99-ms 80",
+        "intent": "All four viewers get every delta in order; fleet broadcasts stay steady.",
+        "timeout_ms": 240000,
+        "next": "starve"
+      },
+      "starve": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/native-stream-latency.mts --out \"${FARMSLOT_LATENCY_PROOF_OUTPUT:-${TMPDIR:-/tmp}/native-stream-latency-proof}\" --label starve --deltas 200 --interval 20 --viewers 1 --load --write-interval 20 --max-p95-ms 130 --max-loop-p99-ms 80",
+        "intent": "Writes every 20 ms still broadcast steadily; a debounce would wait for them to stop.",
+        "timeout_ms": 240000,
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

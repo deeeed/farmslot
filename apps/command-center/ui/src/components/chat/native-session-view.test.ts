@@ -12,6 +12,7 @@ import {
   createMemoryResourceStore,
   type GatewayResourceCache,
   nativeObservationQuery,
+  type NativeTimelineRow,
 } from '@farmslot/protocol/client-cache';
 import { catalogForNativeRunners, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
@@ -922,4 +923,74 @@ test('an unconfirmed approval mode has an explicit retry for that same selection
       },
     },
   ]);
+});
+
+test('a streamed delta computes rows once per render and re-renders only its own message', () => {
+  const snapshot = page(receipt(true));
+  snapshot.session.state = 'running';
+  const event = (
+    sequence: number,
+    fields: Partial<NativeSessionReadResult['events'][number]>,
+  ): NativeSessionReadResult['events'][number] => ({
+    sessionId: 'session',
+    generation: 'generation',
+    sequence,
+    at: '2026-09-12T08:00:00Z',
+    type: 'text.delta',
+    ...fields,
+  });
+  const events = [
+    event(1, { type: 'command.submitted', commandId: 'first', text: 'First?' }),
+    event(2, { commandId: 'first', text: '**Earlier** answer' }),
+    event(3, { type: 'turn.completed', commandId: 'first', status: 'completed' }),
+    event(4, { type: 'command.submitted', commandId: 'live', text: 'Second?' }),
+    event(5, { commandId: 'live', text: 'Streaming' }),
+  ];
+  const view = new NativeSessionView();
+  Object.assign(view, {
+    session: snapshot.session,
+    selectedId: 'session',
+    creating: false,
+    caughtUp: true,
+    connected: true,
+    transcript: { events, cursor: 5 },
+    // A caught-up preview may act, so Implement reads the rows in the same render.
+    fixture: {
+      catalog: async () => ({ runners: [], contexts: [] }),
+      list: async () => ({ sessions: [] }),
+      read: async () => snapshot,
+    },
+  });
+  assert.equal(Reflect.get(view, 'inputAllowed'), true);
+  let rowReads = 0;
+  const timelineRows = Reflect.get(view, 'timelineRows');
+  Reflect.set(view, 'timelineRows', () => {
+    rowReads++;
+    return timelineRows.call(view);
+  });
+  // The timeline's rows sit inside repeat(), which the template helpers do not open: render, then
+  // render each row the timeline shows.
+  const messages = () => {
+    Reflect.get(view, 'render').call(view);
+    const rows: NativeTimelineRow[] = Reflect.get(view, 'rows');
+    return rows.flatMap((row) =>
+      row.kind === 'entry'
+        ? litBindings(
+            Reflect.get(view, 'renderEntry').call(view, row.entry, snapshot.session),
+            '.message=',
+          )
+        : [],
+    );
+  };
+  const before = messages();
+  assert.equal(rowReads, 1);
+  assert.equal(before.length, 2);
+  // The conversation cache merges a delta into the last event, as a new object.
+  const merged = { ...events[4], text: 'Streaming more' };
+  Reflect.set(view, 'transcript', { events: [...events.slice(0, 4), merged], cursor: 6 });
+  const after = messages();
+  assert.equal(rowReads, 2);
+  assert.equal(after[0], before[0], 'the unchanged answer passes the same message object');
+  assert.notEqual(after[1], before[1]);
+  assert.match(JSON.stringify(after[1]), /Streaming more/);
 });

@@ -33,6 +33,16 @@ To investigate and improve:
 
 Run `node --import tsx scripts/runner-validation/canary/canary.mts --profile nightly --target isolated --only performance` for the same isolated check used nightly. It saves `performance/snapshot.json` under the dated canary evidence directory.
 
+For native chat streaming latency, run the
+[native stream latency recipe](../../scripts/runner-validation/native-stream-latency.recipe.json).
+A synthetic Claude peer streams timestamped deltas through the real native host and an
+isolated in-process gateway. The recipe reports runner-to-client and host-to-client
+percentiles and event-loop delay, and fails on a lost or reordered delta or a p95 over budget.
+`--load` adds slot writes every 100 ms and fails if `fleet.updated` broadcasts stop arriving;
+`--viewers <n>` adds subscribers to the same session. It never touches the operator gateway, and
+the isolated stack runs without orchestration timers, so it does not show operator stalls; read
+those from `farmslot_event_loop_lag_seconds` on the operator gateway.
+
 The nightly canary saves a dated snapshot and budget verdict using the versioned
 [normal workload](../reference/performance-diagnostics.md). Injected faults stay
 outside that window. Missing class/source coverage fails visibly. Keep snapshots
