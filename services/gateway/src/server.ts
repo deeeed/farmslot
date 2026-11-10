@@ -133,6 +133,7 @@ import { isGatewayOriginAllowed } from './security/origin.js';
 import { personSessionMethods, routePersonSessionMethod } from './security/person-sessions.js';
 import { principalOwnerGeneration } from './security/work-originator.js';
 import type { ClientState } from './server/client-state.js';
+import { eventFrameText } from './server/event-frame.js';
 import { routeMethod } from './server/route-method.js';
 import { currentSourceResourceChanges, noteRunEvent } from './sources/change-signal.js';
 import { handleAgentFsChanged, invalidateTaskProgressForMachine } from './tasks/watcher.js';
@@ -1137,13 +1138,7 @@ function sendResponse(
 
 function sendEvent(ws: WebSocket, event: string, payload: unknown): void {
   if (ws.readyState !== WebSocket.OPEN) return;
-  const frame: EventFrame = {
-    type: 'event',
-    event,
-    payload,
-    seq: ++eventSeq,
-  };
-  ws.send(JSON.stringify(frame));
+  ws.send(eventFrameText(event, payload, ++eventSeq));
 }
 
 let resourcePublicationTail: Promise<void> = Promise.resolve();

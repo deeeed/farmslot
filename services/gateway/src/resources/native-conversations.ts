@@ -25,6 +25,7 @@ import {
 } from '../runners/native/worker-history.js';
 import { getRun } from '../runs/store.js';
 import type { ClientState } from '../server/client-state.js';
+import { SerializedPayload } from '../server/event-frame.js';
 
 import {
   assertNativeObservationAuthority,
@@ -34,15 +35,27 @@ import {
 import { resourceRevisions } from './revisions.js';
 
 const MAX_BYTES = 1024 * 1024;
-/** Serialized size of each update, measured once and shared by every viewer of its source. */
-const updateBytes = new WeakMap<NativeConversationUpdate, number>();
-function serializedBytes(update: NativeConversationUpdate): number {
-  let bytes = updateBytes.get(update);
-  if (bytes === undefined) {
-    bytes = Buffer.byteLength(JSON.stringify(update));
-    updateBytes.set(update, bytes);
+interface SerializedUpdate {
+  json: string;
+  bytes: number;
+}
+/** Each update's JSON and size, serialized once and shared by every viewer of its source. */
+const updateJson = new WeakMap<NativeConversationUpdate, SerializedUpdate>();
+function serialized(update: NativeConversationUpdate): SerializedUpdate {
+  let entry = updateJson.get(update);
+  if (!entry) {
+    const json = JSON.stringify(update);
+    entry = { json, bytes: Buffer.byteLength(json) };
+    updateJson.set(update, entry);
   }
-  return bytes;
+  return entry;
+}
+function serializedBytes(update: NativeConversationUpdate): number {
+  return serialized(update).bytes;
+}
+/** A viewer's payload, `{...update, subscriptionId}`, spliced onto the shared update JSON. */
+function viewerPayload(updateJson: string, subscriptionId: string): string {
+  return `${updateJson.slice(0, -1)},"subscriptionId":${JSON.stringify(subscriptionId)}}`;
 }
 /** Event frame bytes around a payload of `{...update, subscriptionId}`, plus the prior margin. */
 function frameOverhead(subscriptionId: string): number {
@@ -318,7 +331,9 @@ export class NativeConversations {
       remote.deliver({ kind: 'terminal', reason: 'access-denied' });
       return;
     }
-    remote.deliver(payload);
+    // The node's subscription id is not part of the update; each viewer frame carries its own.
+    const { subscriptionId: _nodeSubscription, ...update } = payload;
+    remote.deliver(update);
   }
   assertCurrent(client: ClientState, id: string): void {
     const viewer = this.clients.get(client)?.get(id);
@@ -601,18 +616,19 @@ export class NativeConversations {
         const overhead = frameOverhead(viewer.id);
         while (viewer.queue.length && !viewer.closed) {
           const update = viewer.queue.shift()!;
-          const bytes = serializedBytes(update);
+          const { json, bytes } = serialized(update);
           viewer.bytes -= bytes;
-          const payload = { ...this.pin(update, viewer), subscriptionId: viewer.id };
-          // Only a worker view rewrites the session; otherwise the payload is the update itself.
-          const frameBytes =
-            (viewer.worker ? Buffer.byteLength(JSON.stringify(payload)) : bytes) + overhead;
+          // Only a worker view rewrites the session; every other viewer shares the update's JSON.
+          const payload = viewer.worker
+            ? JSON.stringify({ ...this.pin(update, viewer), subscriptionId: viewer.id })
+            : viewerPayload(json, viewer.id);
+          const frameBytes = (viewer.worker ? Buffer.byteLength(payload) : bytes) + overhead;
           if (viewer.client.ws.bufferedAmount + frameBytes > MAX_BYTES) {
             this.terminate(viewer, 'resync-required');
             return;
           }
           check();
-          viewer.emit(Events.NATIVE_SESSION_DELTA, payload);
+          viewer.emit(Events.NATIVE_SESSION_DELTA, new SerializedPayload(payload));
           if (update.kind === 'terminal') this.unsubscribe(viewer.client, viewer.id);
         }
       }
