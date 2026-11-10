@@ -17,6 +17,13 @@
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/native-stream-latency.mts --out \"${FARMSLOT_LATENCY_PROOF_OUTPUT:-${TMPDIR:-/tmp}/native-stream-latency-proof}\" --label load --deltas 200 --interval 20 --viewers 3 --load --max-p95-ms 130 --max-loop-p99-ms 80",
         "intent": "All four viewers get every delta in order; fleet broadcasts stay steady.",
         "timeout_ms": 240000,
+        "next": "starve"
+      },
+      "starve": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/native-stream-latency.mts --out \"${FARMSLOT_LATENCY_PROOF_OUTPUT:-${TMPDIR:-/tmp}/native-stream-latency-proof}\" --label starve --deltas 200 --interval 20 --viewers 1 --load --write-interval 20 --max-p95-ms 130 --max-loop-p99-ms 80",
+        "intent": "Writes every 20 ms still broadcast steadily; a debounce would wait for them to stop.",
+        "timeout_ms": 240000,
         "next": "done"
       },
       "done": {

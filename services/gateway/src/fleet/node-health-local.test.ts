@@ -50,8 +50,13 @@ test('a slow collection is not stacked behind by the next tick', async (t) => {
     release();
   });
   startLocalCollection('local-test', 10);
-  const first = await new Promise<number>((resolve) => setTimeout(() => resolve(calls.length), 25));
-  await new Promise((resolve) => setTimeout(resolve, 60));
+  // Poll for the first tick with a ceiling instead of assuming when it lands.
+  const deadline = Date.now() + 2_000;
+  while (calls.length === 0 && Date.now() < deadline)
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  const first = calls.length;
   assert.ok(first > 0, 'the first tick started a collection');
+  // Several more 10 ms ticks pass while that collection is still pending.
+  await new Promise((resolve) => setTimeout(resolve, 60));
   assert.equal(calls.length, first, 'later ticks waited for the pending collection');
 });

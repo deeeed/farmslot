@@ -7,9 +7,10 @@
  *
  * node --import tsx scripts/runner-validation/gateway/native-stream-latency.mts \
  *   --out <dir> [--deltas 200] [--interval 20] [--viewers 3] [--load] [--status-file <json>]
- *   [--max-p95-ms <n>] [--max-loop-p99-ms <n>]
+ *   [--write-interval <ms>] [--max-p95-ms <n>] [--max-loop-p99-ms <n>]
  * Exits non-zero when any viewer loses or reorders a delta, when runner→client p95 or event-loop
- * p99 exceeds its budget, or (with --load) when fleet broadcasts stop or exceed one per 250 ms.
+ * p99 exceeds its budget, or (with --load) when fleet broadcasts stall, burst past the 250 ms rate
+ * limit, or never carry the final committed slot state.
  * Without --status-file, --load uses 60 synthetic slot rows; pass a copy of a real
  * `.farm-status.json` for a production-sized fleet (keep it out of git).
  */
@@ -55,6 +56,7 @@ const { values } = parseArgs({
     interval: { type: 'string', default: '20' },
     viewers: { type: 'string', default: '0' },
     load: { type: 'boolean', default: false },
+    'write-interval': { type: 'string', default: '100' },
     'status-file': { type: 'string' },
     'max-p95-ms': { type: 'string' },
     'max-loop-p99-ms': { type: 'string' },
@@ -168,12 +170,23 @@ const onViewerFrame = (frame: { event: string; payload: unknown }) => {
       for (const match of event.text.matchAll(/\[t=\d+\] line (\d+) /g))
         lines.push(Number(match[1]));
 };
-/** `fleet.updated` arrival times, to prove slot writes still reach clients under load. */
-const fleetBroadcasts: number[] = [];
+/** `fleet.updated` arrivals and the load slot's branch in each, to prove writes reach clients. */
+interface FleetBroadcast {
+  at: number;
+  branch?: string;
+}
+const fleetBroadcasts: FleetBroadcast[] = [];
+const loadSlot = status.slots[0]?.slot;
 let completed = false;
 let subscriptionId: string | undefined;
 const onFrame = (frame: { event: string; payload: unknown }) => {
-  if (frame.event === 'fleet.updated') fleetBroadcasts.push(Date.now());
+  if (frame.event === 'fleet.updated') {
+    const { fleet } = frame.payload as { fleet: { slots: { slot: string; branch: string }[] } };
+    fleetBroadcasts.push({
+      at: Date.now(),
+      branch: fleet.slots.find((row) => row.slot === loadSlot)?.branch,
+    });
+  }
   if (frame.event !== 'native.session.delta') return;
   const received = Date.now();
   const payload = frame.payload as NativeSessionDeltaPayload;
@@ -259,14 +272,17 @@ try {
     )) as NativeSessionSubscribeResult;
     viewerLines.set(subscribed.subscriptionId, []);
   }
+  let lastBranch = '';
+  let firstWriteAt = 0;
   let lastWriteAt = 0;
   if (values.load) {
-    const slot = status.slots[0].slot;
     let tick = 0;
+    firstWriteAt = Date.now();
     load = setInterval(() => {
       lastWriteAt = Date.now();
-      void updateSlotStatus(slot, { latency_probe_tick: ++tick });
-    }, 100);
+      lastBranch = `perf/latency-tick-${++tick}`;
+      void updateSlotStatus(loadSlot, { branch: lastBranch });
+    }, Number(values['write-interval']));
   }
   loop.enable();
   const started = Date.now();
@@ -280,9 +296,13 @@ try {
   if (load) {
     clearInterval(load);
     load = undefined;
-    // The last write's broadcast is due within one rate-limit window.
-    const lastWrite = lastWriteAt;
-    await until(() => fleetBroadcasts.some((at) => at > lastWrite), 'final fleet broadcast', 5_000);
+    // The last write's broadcast is due within one rate-limit window and carries its state.
+    const finalBranch = lastBranch;
+    await until(
+      () => fleetBroadcasts.some((broadcast) => broadcast.branch === finalBranch),
+      'final committed fleet state',
+      5_000,
+    );
   }
   result.wallMs = Date.now() - started;
   result.runnerToClientMs = percentiles(samples.runnerToClient);
@@ -304,41 +324,71 @@ try {
   const loopBudget =
     values['max-loop-p99-ms'] === undefined ? Infinity : Number(values['max-loop-p99-ms']);
   // Writes every 100 ms broadcast at most once per 250 ms: a steady stream, never one per write.
-  // Counting is robust to receive jitter; the slack covers load starting before the stream and
-  // the final broadcast. The old 50 ms debounce sent about one per write (about 2x this cap).
-  const wallMs = result.wallMs as number;
-  const minimumBroadcasts = values.load ? Math.floor(wallMs / 1000) : 0;
-  const maximumBroadcasts = Math.floor(wallMs / 250) + 4;
+  // Receive jitter can move one arrival, so cadence is checked per 1 s window (at most 6: four at the rate
+  // limit plus jitter, where the old 50 ms debounce sent about 10) and as the longest silence while writes ran (at most 1 s).
+  const during = fleetBroadcasts
+    .map((broadcast) => broadcast.at)
+    .filter((at) => at >= firstWriteAt && at <= lastWriteAt + 300);
+  const busiestSecond = Math.max(
+    0,
+    ...during.map((start) => during.filter((at) => at >= start && at < start + 1000).length),
+  );
+  const longestSilence = Math.max(
+    0,
+    ...[firstWriteAt, ...during, lastWriteAt].slice(1).map((at, index, list) => {
+      const previous = index === 0 ? firstWriteAt : list[index - 1];
+      return at - previous;
+    }),
+  );
   result.fleetBroadcasts = fleetBroadcasts.length;
-  result.fleetBroadcastRange = values.load ? [minimumBroadcasts, maximumBroadcasts] : null;
+  result.fleetBusiestSecond = values.load ? busiestSecond : null;
+  result.fleetLongestSilenceMs = values.load ? longestSilence : null;
   result.inOrder = inOrder;
   result.viewersChecked = viewerLines.size;
   result.withinBudget =
     runnerToClient.p95 <= budget && (result.eventLoopDelayMs as { p99: number }).p99 <= loopBudget;
   result.fleetDelivered =
     !values.load ||
-    (fleetBroadcasts.length >= minimumBroadcasts && fleetBroadcasts.length <= maximumBroadcasts);
+    (fleetBroadcasts.some((broadcast) => broadcast.branch === lastBranch) &&
+      busiestSecond <= 6 &&
+      longestSilence <= 1000);
   result.pass = inOrder && result.withinBudget && result.fleetDelivered;
 } finally {
+  // Every step runs even when an earlier one fails; failures are rethrown together below.
+  const teardownErrors: unknown[] = [];
+  const step = async (action: () => unknown) => {
+    try {
+      await action();
+    } catch (error) {
+      teardownErrors.push(error);
+    }
+  };
   if (load) clearInterval(load);
   stopEvents?.();
-  if (session && connection)
-    await connection.call('native.session.close', {
-      sessionId: session.id,
-      executionNodeId: 'local',
-    });
-  for (const viewer of viewers) viewer.close();
-  connection?.close();
-  resetServerGlobalsForTests();
-  const sockets = wss;
-  if (sockets) {
+  await step(async () => {
+    if (session && connection)
+      await connection.call('native.session.close', {
+        sessionId: session.id,
+        executionNodeId: 'local',
+      });
+  });
+  for (const viewer of viewers) await step(() => viewer.close());
+  await step(() => connection?.close());
+  await step(() => resetServerGlobalsForTests());
+  await step(async () => {
+    const sockets = wss;
+    if (!sockets) return;
     for (const socket of sockets.clients) socket.terminate();
     await new Promise<void>((resolve) => sockets.close(() => resolve()));
-  }
-  const listening = server;
-  if (listening?.listening) await new Promise<void>((resolve) => listening.close(() => resolve()));
-  const lock = path.join(root, 'native/lock/owner.json');
-  if (fs.existsSync(lock)) {
+  });
+  await step(async () => {
+    const listening = server;
+    if (listening?.listening)
+      await new Promise<void>((resolve) => listening.close(() => resolve()));
+  });
+  await step(async () => {
+    const lock = path.join(root, 'native/lock/owner.json');
+    if (!fs.existsSync(lock)) return;
     const supervisor = JSON.parse(fs.readFileSync(lock, 'utf8')) as { pid: number };
     const argv = execFileSync('ps', ['-p', String(supervisor.pid), '-o', 'command='], {
       encoding: 'utf8',
@@ -350,14 +400,15 @@ try {
       'private host cleanup',
       30_000,
     );
-  }
+  });
   await writeFile(
     path.join(output, `${values.label}.json`),
     JSON.stringify(result, null, 2) + '\n',
   );
   const { gatewayPerformance: _omitted, ...summary } = result;
   console.log(JSON.stringify(summary, null, 2));
-  if (result.pass !== true) process.exitCode = 1;
+  if (result.pass !== true || teardownErrors.length) process.exitCode = 1;
   // Keep the private root (credentials, native journals) only when a failure needs inspecting.
   else await rm(root, { recursive: true, force: true });
+  if (teardownErrors.length) throw new AggregateError(teardownErrors, 'Probe teardown failed');
 }

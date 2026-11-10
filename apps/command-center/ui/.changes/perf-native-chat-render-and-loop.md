@@ -1,1 +1,1 @@
-- Streaming native chat stays smooth in long conversations: a delta re-renders and re-parses only the message block it extends.
+- Streaming native chat stays smooth in long conversations: a delta renders and sanitizes only the message block it extends, and unchanged messages are not drawn again.
