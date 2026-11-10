@@ -333,6 +333,11 @@ test("a stopped tmux worker reloads with its run mode's question tool", async (t
     const run = store.updateRun((await fixture(t, false)).id, { mode });
     tmuxStopped = true;
     await assert.rejects(deliverOperatorInstruction(run, 'unit', 'Instruction'), /Reload/);
-    assert.equal(reloads.at(-1)?.modelQuestions, mode === 'autonomous' ? 'off' : undefined);
+    const reload = reloads.at(-1);
+    assert.equal(reload?.modelQuestions, mode === 'autonomous' ? 'off' : undefined);
+    assert.ok(reload?.beforeRespawn);
+    await reload.beforeRespawn();
+    store.updateRun(run.id, { slotId: null });
+    assert.throws(() => reload.beforeRespawn?.(), /worker generation changed/);
   }
 });

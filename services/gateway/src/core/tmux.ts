@@ -356,6 +356,18 @@ export function buildTmuxRespawnLaunchCommand(
   )}`;
 }
 
+export interface TmuxWindowRespawnOptions {
+  preserveWindowAfterExit?: boolean;
+  noRetry?: boolean;
+  /** Recheck ownership after publication, immediately before replacing the runner. */
+  beforeRespawn?: () => void | Promise<void>;
+}
+
+export interface TmuxPaneRespawnOptions {
+  preservePaneAfterExit?: boolean;
+  beforeRespawn?: () => void | Promise<void>;
+}
+
 /**
  * Launch a shell command in an existing tmux window by replacing its pane via
  * `respawn-window`. Avoids `send-keys -l` for long runner launch lines, which
@@ -366,13 +378,14 @@ export async function respawnTmuxWindowWithCommand(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
   command: string,
-  options?: { preserveWindowAfterExit?: boolean; noRetry?: boolean },
+  options?: TmuxWindowRespawnOptions,
 ): Promise<void> {
   const launchCommand = await writeTmuxLaunchScript(
     vars,
     target,
     buildTmuxRespawnLaunchCommand(command, vars.remoteRepo, options?.preserveWindowAfterExit),
   );
+  await options?.beforeRespawn?.();
   const respawned = await execOnSlot(
     vars,
     tmuxShellSnippet(
@@ -402,7 +415,7 @@ export async function respawnTmuxPaneWithCommand(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   paneId: string,
   command: string,
-  options?: { preservePaneAfterExit?: boolean },
+  options?: TmuxPaneRespawnOptions,
 ): Promise<void> {
   if (!/^%\d+$/.test(paneId)) throw new Error(`Invalid exact tmux pane id: ${paneId}`);
   const launchCommand = await writeTmuxLaunchScript(
@@ -410,6 +423,7 @@ export async function respawnTmuxPaneWithCommand(
     paneId,
     buildTmuxRespawnLaunchCommand(command, vars.remoteRepo, options?.preservePaneAfterExit),
   );
+  await options?.beforeRespawn?.();
   const respawned = await execOnSlot(
     vars,
     tmuxShellSnippet(

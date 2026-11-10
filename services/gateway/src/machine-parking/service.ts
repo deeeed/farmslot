@@ -499,16 +499,20 @@ export async function defaultReloadRunner(
   if (handle.version === 2) return reloadNativeWorkerForPark(run, handle, continuationPrompt);
   if (!run.slotId) throw new Error('run has no slot');
   const vars = await loadSlotVars(run.slotId);
-  const session = await resolveTmuxSession(run.slotId, vars, { strict: true });
-  if (session !== handle.target.session) {
-    throw new Error(
-      `slot session changed from '${handle.target.session}' to '${session}'; refusing session reload`,
-    );
-  }
+  const slotId = run.slotId;
+  const assertSessionCurrent = async () => {
+    const session = await resolveTmuxSession(slotId, vars, { strict: true });
+    if (session !== handle.target.session) {
+      throw new Error(
+        `slot session changed from '${handle.target.session}' to '${session}'; refusing session reload`,
+      );
+    }
+  };
   const result = await reloadRunnerForPark({
     vars,
     recoveryHandle: handle,
     initialPrompt: continuationPrompt,
+    beforeRespawn: assertSessionCurrent,
     blindTrialCapsule: blindTrialWorkerCapsule(
       run,
       run.agentContexts?.find((context) => context.id === handle.contextId)?.role,

@@ -261,12 +261,11 @@ async function relaunchRunnerWithArgvPrompt(
     },
   );
   try {
-    await options.onPromptMutationStart?.();
     await respawnTmuxWindowWithCommand(
       options.vars,
       owningWindowId,
       `${WORKER_ENV_PREFIX} && ${launchCommand}`,
-      { preserveWindowAfterExit: true },
+      { preserveWindowAfterExit: true, beforeRespawn: options.onPromptMutationStart },
     );
   } catch (error) {
     return {
@@ -452,10 +451,12 @@ async function reactivateRunnerSessionWithPrompt(
         initialPrompt: options.prompt,
       },
     )}`;
-    paneMutationStarted = true;
-    await options.onPromptMutationStart?.();
     await respawnTmuxWindowWithCommand(options.vars, options.target, command, {
       preserveWindowAfterExit: true,
+      beforeRespawn: async () => {
+        paneMutationStarted = true;
+        await options.onPromptMutationStart?.();
+      },
     });
     let trustPromptConfirmed = false;
     let acknowledgedWithoutTurnTokenAt: number | null = null;

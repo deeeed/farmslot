@@ -234,3 +234,36 @@ test('remote farm references resolve before script publication, using the existi
   await withSlotCommandExecutor(capture, () => writeTmuxLaunchScript(io, 'fixture:dev', original));
   assert.equal(resolutions, 1, 'owned executors keep their existing support selection contract');
 });
+
+test('window and pane ownership fences run after remote publication and before respawn', async () => {
+  for (const target of ['fixture:dev', '%12']) {
+    const calls: string[] = [];
+    const vars = {
+      ...makeVars({
+        host: 'remote.invalid',
+        machine: 'synthetic-remote',
+        remoteRepo: '/slots/repo',
+      }),
+      nodeRequest: async (method: string) => {
+        calls.push(method);
+        return { ok: true };
+      },
+    };
+    await withSlotCommandExecutor(
+      async (_vars, command) => {
+        calls.push(command.includes('respawn-') ? 'respawn' : 'collapse');
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+      async () => {
+        const beforeRespawn = () => {
+          assert.deepEqual(calls, ['fs.mkdir', 'fs.writeChunk', 'fs.rename']);
+          calls.push('fence');
+        };
+        if (target.startsWith('%'))
+          await respawnTmuxPaneWithCommand(vars, target, 'exit 0', { beforeRespawn });
+        else await respawnTmuxWindowWithCommand(vars, target, 'exit 0', { beforeRespawn });
+      },
+    );
+    assert.deepEqual(calls.slice(3, 5), ['fence', 'respawn']);
+  }
+});

@@ -743,6 +743,7 @@ export interface ReloadRunnerForParkOptions {
   vars: SlotVars;
   recoveryHandle: MachinePauseRecoveryHandle;
   initialPrompt: string;
+  beforeRespawn?: () => void | Promise<void>;
   timeoutMs?: number;
   /** Capsule of a blind eval trial whose worker this reload resumes. */
   blindTrialCapsule?: string;
@@ -829,7 +830,10 @@ export async function reloadRunnerForPark(
         modelQuestions: options.modelQuestions,
       },
     )}`;
-    await deps.respawnPane(options.vars, target, command, { preservePaneAfterExit: true });
+    await deps.respawnPane(options.vars, target, command, {
+      preservePaneAfterExit: true,
+      beforeRespawn: options.beforeRespawn,
+    });
   } catch (error) {
     return reloadFailure('failed', runnerId, target, handle.sessionId, (error as Error).message);
   }
