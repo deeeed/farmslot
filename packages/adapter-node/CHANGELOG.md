@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-node` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.8.12 - 2026-11-10
+
+- Republish against recipe-runner 0.46.12 so consumers load one copy of it, with the fixed-element visibility fix.
+
 ## 0.8.11 - 2026-11-09
 
 - Align protocol 0.83.1 and its matching dependency set so legacy path tools keep JSON output clean with one protocol instance.
