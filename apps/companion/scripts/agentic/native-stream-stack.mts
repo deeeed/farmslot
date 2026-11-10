@@ -122,7 +122,8 @@ async function stopHost() {
   );
 }
 
-/** Stops everything that started, each step even if an earlier one failed; reports every failure. */
+/** Stops everything that started, each step even if an earlier one failed; reports every
+ * failure. */
 async function teardown() {
   const failures: unknown[] = [];
   const step = async (run: () => unknown) => {
@@ -314,7 +315,8 @@ async function start() {
   running.hostWarmed = true;
   await new NativeSessionClient(path.join(root, 'native')).warm();
 
-  // The WebSocket server takes upgrades; plain requests get the health probe prepare-profile.sh uses.
+  // The WebSocket server takes upgrades; plain requests get the health probe that
+  // prepare-profile.sh uses.
   running.server = createServer((request, response) => {
     response.writeHead(request.url === '/health' ? 200 : 404, {
       'content-type': 'application/json',

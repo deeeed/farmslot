@@ -227,7 +227,13 @@ let stopEvents: (() => void) | undefined;
 const viewers: NonNullable<typeof connection>[] = [];
 const loop = monitorEventLoopDelay({ resolution: 10 });
 const result: Record<string, unknown> = { label: values.label, root, args: values };
-try {
+// A recipe timeout or Ctrl-C ends the run through the same teardown as a failure.
+const interrupted = new Promise<never>((_, reject) => {
+  for (const signal of ['SIGINT', 'SIGTERM'] as const)
+    process.on(signal, () => reject(new Error(`Interrupted by ${signal}`)));
+});
+let runError: unknown;
+const run = async () => {
   await new NativeSessionClient(path.join(root, 'native')).warm();
   server = createServer();
   wss = createWebSocketServer(server, auth);
@@ -323,9 +329,11 @@ try {
   const budget = values['max-p95-ms'] === undefined ? Infinity : Number(values['max-p95-ms']);
   const loopBudget =
     values['max-loop-p99-ms'] === undefined ? Infinity : Number(values['max-loop-p99-ms']);
-  // Writes every 100 ms broadcast at most once per 250 ms: a steady stream, never one per write.
-  // Receive jitter can move one arrival, so cadence is checked per 1 s window (at most 6: four at the rate
-  // limit plus jitter, where the old 50 ms debounce sent about 10) and as the longest silence while writes ran (at most 1 s).
+  // However often slots are written, broadcasts go out at most once per 250 ms and never stop
+  // while writes continue. Receive jitter can move one arrival, so cadence is checked per 1 s
+  // window (at most 6: four at the rate limit plus jitter; the old 50 ms debounce sent about 10
+  // under 100 ms writes) and as the longest silence while writes ran (at most 1 s; the debounce
+  // sent nothing at all under 20 ms writes).
   const during = fleetBroadcasts
     .map((broadcast) => broadcast.at)
     .filter((at) => at >= firstWriteAt && at <= lastWriteAt + 300);
@@ -353,6 +361,11 @@ try {
       busiestSecond <= 6 &&
       longestSilence <= 1000);
   result.pass = inOrder && result.withinBudget && result.fleetDelivered;
+};
+try {
+  await Promise.race([run(), interrupted]);
+} catch (error) {
+  runError = error;
 } finally {
   // Every step runs even when an earlier one fails; failures are rethrown together below.
   const teardownErrors: unknown[] = [];
@@ -407,8 +420,14 @@ try {
   );
   const { gatewayPerformance: _omitted, ...summary } = result;
   console.log(JSON.stringify(summary, null, 2));
-  if (result.pass !== true || teardownErrors.length) process.exitCode = 1;
+  if (result.pass !== true || teardownErrors.length || runError !== undefined) process.exitCode = 1;
   // Keep the private root (credentials, native journals) only when a failure needs inspecting.
   else await rm(root, { recursive: true, force: true });
-  if (teardownErrors.length) throw new AggregateError(teardownErrors, 'Probe teardown failed');
+  // The run's own failure stays first; teardown failures are added, never substituted.
+  if (teardownErrors.length)
+    throw new AggregateError(
+      runError === undefined ? teardownErrors : [runError, ...teardownErrors],
+      'Probe teardown failed',
+    );
+  if (runError !== undefined) throw runError;
 }
