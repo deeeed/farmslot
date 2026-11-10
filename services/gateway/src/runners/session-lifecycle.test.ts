@@ -795,12 +795,16 @@ test('stopRunnerForPark fails closed when the intended pane is gone despite a li
 test('reloadRunnerForPark respawns only the exact pane when its window may have siblings', async () => {
   let respawned = '';
   let runnerProbes = 0;
+  let fenced = false;
   const inspectionCommands: string[] = [];
   const result = await reloadRunnerForPark(
     {
       vars,
       recoveryHandle: handle,
       initialPrompt: 'Continue the parked run',
+      beforeRespawn: () => {
+        fenced = true;
+      },
       timeoutMs: 100,
       modelQuestions: 'off',
     },
@@ -816,7 +820,9 @@ test('reloadRunnerForPark respawns only the exact pane when its window may have 
       findRunnerPid: async () => (runnerProbes++ === 0 ? '' : '202'),
       probeRunnerPid: paneStopped,
       verifyLiveBinding: verifyPersistedLiveBinding,
-      respawnPane: async (_vars, target, command) => {
+      respawnPane: async (_vars, target, command, options) => {
+        await options?.beforeRespawn?.();
+        assert.equal(fenced, true);
         assert.equal(target, '%1');
         respawned = command;
       },

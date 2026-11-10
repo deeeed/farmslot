@@ -3485,7 +3485,6 @@ export async function relaunchWorkerForFix(
       ? `rm -f ${shellQuote(fixContext.signalFile)} && `
       : '';
   launchCmd = `${WORKER_ENV_PREFIX} && ${clearReplacedSignal}${launchCmd}`;
-  await assertPreflightCurrent();
   // Restart recovery reads this to tell what the worker holds: a send reaches disk before the
   // respawn, and the old worker's stays until the respawn has replaced it. The old worker's mark
   // start can have moved the attempt since the snapshot above.
@@ -3499,9 +3498,12 @@ export async function relaunchWorkerForFix(
         parentRun?.engineState?.generation ?? 0,
       );
   };
-  if (launchDeliveryStartedAt) await recordLaunchBoundary();
   await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd, {
     preserveWindowAfterExit: true,
+    beforeRespawn: async () => {
+      await assertPreflightCurrent();
+      if (launchDeliveryStartedAt) await recordLaunchBoundary();
+    },
   });
   if (!launchDeliveryStartedAt) await recordLaunchBoundary();
   const settleMs =

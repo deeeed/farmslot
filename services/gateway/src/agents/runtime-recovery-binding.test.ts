@@ -3,6 +3,7 @@ import { mock, test } from 'node:test';
 
 import type { AgentContext, Run } from '@farmslot/protocol';
 
+import { withSlotCommandExecutor } from '../core/exec-scope.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
@@ -29,6 +30,8 @@ let normalizeBinding:
 const launches: string[] = [];
 const lookups: (string | null | undefined)[] = [];
 const commands: string[] = [];
+let slotEpoch = 1;
+let publishLaunch: (() => Promise<void>) | undefined;
 
 const execModule = await import('../core/exec.js');
 mock.module('../core/exec.js', {
@@ -56,7 +59,19 @@ const config = await import('../core/config.js');
 mock.module('../core/config.js', {
   namedExports: {
     ...config,
-    loadSlotVars: async () => makeVars({ slotId: 'slot-1', codexPath: '/bin/codex' }),
+    loadSlotVars: async () => ({
+      ...makeVars({ slotId: 'slot-1', codexPath: '/bin/codex' }),
+      ...(publishLaunch
+        ? {
+            host: 'remote.invalid',
+            machine: 'synthetic-remote',
+            nodeRequest: async (method: string) => {
+              if (method === 'fs.rename') await publishLaunch?.();
+              return { ok: true };
+            },
+          }
+        : {}),
+    }),
     loadProjectVars: async () => ({ projectJson: {} }),
     resolveProjectRuntimeDir: async () => 'runtime',
   },
@@ -66,8 +81,12 @@ mock.module('../core/tmux.js', {
   namedExports: {
     ...tmux,
     resolveTmuxSession: async () => 'slot-1',
-    respawnTmuxWindowWithCommand: async (_vars: unknown, _target: unknown, command: string) => {
-      launches.push(command);
+    respawnTmuxWindowWithCommand: async (
+      ...args: Parameters<typeof tmux.respawnTmuxWindowWithCommand>
+    ) => {
+      if (publishLaunch) return tmux.respawnTmuxWindowWithCommand(...args);
+      await args[3]?.beforeRespawn?.();
+      launches.push(args[2]);
       runnerAlive = true;
     },
   },
@@ -111,7 +130,10 @@ mock.module('../node-support/ensure.js', {
 });
 const index = await import('../core/index.js');
 mock.module('../core/index.js', {
-  namedExports: { ...index, readSlotRow: async () => ({ current_run_id: run.id, slot_epoch: 1 }) },
+  namedExports: {
+    ...index,
+    readSlotRow: async () => ({ current_run_id: run.id, slot_epoch: slotEpoch }),
+  },
 });
 const store = await import('../runs/store.js');
 mock.module('../runs/store.js', {
@@ -131,6 +153,8 @@ mock.module('../runs/store.js', {
 const { reconcileRunAgentRuntime, restoreTmuxWorker } = await import('./runtime-recovery.js');
 
 function fixture(corrupt = false): void {
+  slotEpoch = 1;
+  publishLaunch = undefined;
   lookups.length = 0;
   commands.length = 0;
   launches.length = 0;
@@ -430,4 +454,41 @@ test('a dead worker reload passes the normalized native ID instead of its rollou
   assert.match(launches[0], /native-session/);
   assert.doesNotMatch(launches[0], /resume[^\n]*rollout-original/);
   assert.equal(run.agentContexts![0].runnerSessionId, 'native-session');
+});
+
+function deferred(): { promise: Promise<void>; resolve(): void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+test('reload refuses to respawn when slot ownership advances during script publication', async () => {
+  legacyCodexFixture();
+  observed = null;
+  runnerAlive = false;
+  const publishing = deferred();
+  const release = deferred();
+  publishLaunch = async () => {
+    publishing.resolve();
+    return release.promise;
+  };
+  const reload = withSlotCommandExecutor(
+    async (_vars, command) => {
+      commands.push(command);
+      assert.fail('ownership changed during publication; no tmux mutation is allowed');
+    },
+    () => restoreTmuxWorker({ slotId: 'slot-1', runId: run.id, mode: 'reload-session' }),
+  );
+  const rejected = assert.rejects(reload, /no longer belongs to run/);
+  try {
+    await publishing.promise;
+    slotEpoch += 1;
+  } finally {
+    release.resolve();
+  }
+  await rejected;
+  assert.equal(launches.length, 0);
+  assert.ok(commands.every((command) => !command.includes('respawn')));
 });

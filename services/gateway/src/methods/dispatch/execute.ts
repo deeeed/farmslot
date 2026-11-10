@@ -56,6 +56,7 @@ import {
   shellQuote,
   tmuxShellSnippet,
 } from '../../core/tmux.js';
+import { writeTmuxLaunchScript } from '../../core/tmux-launch-script.js';
 import { auditBlindTrialTask, verifyBlindTrialForDispatch } from '../../evals/blind-trial.js';
 import { usesNodeLink } from '../../fleet/node-link-policy.js';
 import { ensureRunRuntimeReady } from '../../fleet/runtime-ready.js';
@@ -713,8 +714,14 @@ async function respawnRoleWindowWithCommand(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
   command: string,
+  beforeRespawn: () => Promise<void>,
 ): Promise<void> {
-  const launchCommand = buildRoleLaunchCommandWithDiagnosticHold(command, vars.remoteRepo);
+  const launchCommand = await writeTmuxLaunchScript(
+    vars,
+    target,
+    buildRoleLaunchCommandWithDiagnosticHold(command, vars.remoteRepo),
+  );
+  await beforeRespawn();
   const respawned = await execOnSlot(
     vars,
     tmuxShellSnippet(
@@ -1984,9 +1991,12 @@ export async function dispatchExecute(
     }
     if (!resumedReviewSession && usesRoleWindow) {
       workerTarget = await ensureWorkerRoleTarget(vars, session, runner, workerRole);
-      await runPressureGate();
-      if (launchCarriesPrompt) await markPromptDeliveryStarted();
-      await respawnRoleWindowWithCommand(vars, workerTarget, agentLaunch);
+      // Runs after the launch script is published, immediately before respawn.
+      const beforeRoleRespawn = async () => {
+        await runPressureGate();
+        if (launchCarriesPrompt) await markPromptDeliveryStarted();
+      };
+      await respawnRoleWindowWithCommand(vars, workerTarget, agentLaunch, beforeRoleRespawn);
       await settleFreshRoleWindow();
     } else if (!resumedReviewSession) {
       // Some shell init paths (e.g. anaconda's `(base)` prompt activation) query
@@ -2010,13 +2020,14 @@ export async function dispatchExecute(
       // still owns the slot — a cancel/recycle marks the run terminal BEFORE
       // killing tmux, and resurrecting the session then would revive a worker
       // on a deliberately torn-down slot.
-      await runPressureGate();
+      const launchCommand = await writeTmuxLaunchScript(vars, workerTarget, agentLaunch);
       if (launchCarriesPrompt) await markPromptDeliveryStarted();
+      await runPressureGate();
       const launched = await runLaunchPreludeAndSend({
         runner,
         target: workerTarget,
         session,
-        launchCommand: agentLaunch,
+        launchCommand,
         waits: {
           daWaitMs: LAUNCH_PRELUDE_DA_WAIT_MS,
           settleMs: LAUNCH_PRELUDE_SETTLE_MS,

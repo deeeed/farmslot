@@ -480,9 +480,9 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
 
-  await assertPreflightCurrent();
   await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd, {
     preserveWindowAfterExit: true,
+    beforeRespawn: assertPreflightCurrent,
   });
   await new Promise((resolve) =>
     setTimeout(

@@ -6,6 +6,15 @@ import type { SlotVars } from '../core/config.js';
 import type { ObservabilityReading, RunnerSessionDeliveryState } from './observability-types.js';
 
 const commands: string[] = [];
+const launchScripts: string[] = [];
+mock.module('../core/tmux-launch-script.js', {
+  namedExports: {
+    writeTmuxLaunchScript: async (_vars: SlotVars, _target: string, command: string) => {
+      launchScripts.push(command);
+      return "bash '/tmp/synthetic-launch.sh'";
+    },
+  },
+});
 let paneCount = 1;
 let sessionPathExists = true;
 let promptAccepted = true;
@@ -276,7 +285,7 @@ test('Cursor retained handoff relaunches with argv and waits for the scoped task
   }
   assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
   assert.equal(mutationStarts, 1);
-  const command = commands.find((candidate) => candidate.includes('respawn-window')) ?? '';
+  const command = launchScripts.at(-1) ?? '';
   assert.match(command, /cursor-agent/);
   assert.match(command, /Read and execute REVIEW-FIX[.]md/);
   assert.equal(
@@ -304,7 +313,7 @@ test('Pi fix handoff launches its task file without typing into the prior sessio
     timeoutMs: 1_000,
   });
   assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
-  const command = commands.find((candidate) => candidate.includes('respawn-window')) ?? '';
+  const command = launchScripts.at(-1) ?? '';
   assert.match(command, /FARMSLOT_TASK_FILE=/);
   assert.match(command, /tasks\/run-1\/REVIEW-FIX[.]md/);
   assert.equal(
@@ -362,7 +371,7 @@ test('Cursor argv relaunch preserves dispatch templates that require task_file',
   });
 
   assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
-  const command = commands.find((candidate) => candidate.includes('respawn-window')) ?? '';
+  const command = launchScripts.at(-1) ?? '';
   assert.match(command, /tasks\/run-1\/REVIEW-FIX[.]md/);
 });
 
@@ -775,7 +784,7 @@ test('retained resume accepts a slot-clock prompt hook emitted before respawn-wi
     turnToken: 'session-123:test-turn',
   });
 
-  const command = commands.join('\n');
+  const command = `${commands.join('\n')}\n${launchScripts.at(-1) ?? ''}`;
   const resumeIndex = command.indexOf('--resume');
   const sessionIndex = command.indexOf('session-123', resumeIndex);
   const promptIndex = command.indexOf('Read and execute TASK.md', sessionIndex);

@@ -741,12 +741,12 @@ export async function restoreTmuxWorker(
         blindTrialCapsule: blindTrialWorkerCapsule(run, selected.role),
       },
     )}`;
-    await assertReloadStillOwnsSlot(run.id, params.slotId, entrySlotEpoch);
     await respawnTmuxWindowWithCommand(vars, nextTarget.target, launchCommand, {
       // Retained review panes preserve the exact runner transcript just like a
       // freshly launched review pane; later cleanup owns their teardown.
       preserveWindowAfterExit: true,
-      // A blind resend after a lost reply would skip the ownership check above
+      beforeRespawn: () => assertReloadStillOwnsSlot(run.id, params.slotId, entrySlotEpoch),
+      // A blind resend after a lost reply would skip the ownership check
       // and could kill the worker of a run that took the slot meanwhile.
       noRetry: true,
     });

@@ -279,10 +279,12 @@ export async function slotWriteFileAtomic(
   ctx: SlotLocality,
   targetPath: string,
   content: string,
+  options: { mode?: number } = {},
 ): Promise<void> {
   const stagedPath = `${targetPath}.tmp.${process.pid}.${randomUUID()}`;
   try {
-    await slotWriteFile(ctx, stagedPath, content);
+    if (options.mode === undefined) await slotWriteFile(ctx, stagedPath, content);
+    else await slotWriteFileBuffer(ctx, stagedPath, Buffer.from(content), options);
     await slotRenameFile(ctx, stagedPath, targetPath);
   } catch (err) {
     await slotDeletePath(ctx, stagedPath).catch(() => undefined);

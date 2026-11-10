@@ -13,8 +13,9 @@ mock.module('../core/config.js', {
   namedExports: { ...config, loadSlotVars: async () => makeVars({ slotId: 'slot' }) },
 });
 mock.module('../core/tmux.js', {
-  namedExports: { ...tmux, resolveTmuxSession: async () => 'slot' },
+  namedExports: { ...tmux, resolveTmuxSession: async () => slotSession },
 });
+let slotSession = 'slot';
 const reloads: Parameters<typeof lifecycle.reloadRunnerForPark>[0][] = [];
 mock.module('../runners/session-lifecycle.js', {
   namedExports: {
@@ -49,6 +50,12 @@ test("a parked tmux worker reloads with its run mode's question tool", async () 
   for (const mode of ['autonomous', 'interactive'] as const) {
     const run = makeRun({ id: 'parked', slotId: 'slot', mode, agentContexts: [] });
     await assert.rejects(defaultReloadRunner(run, handle, 'Continue'), /fixture stops/);
-    assert.equal(reloads.at(-1)?.modelQuestions, mode === 'autonomous' ? 'off' : undefined);
+    const reload = reloads.at(-1);
+    assert.equal(reload?.modelQuestions, mode === 'autonomous' ? 'off' : undefined);
+    assert.ok(reload?.beforeRespawn);
+    await reload.beforeRespawn();
+    slotSession = 'successor';
+    await assert.rejects(async () => reload.beforeRespawn?.(), /slot session changed/);
+    slotSession = 'slot';
   }
 });

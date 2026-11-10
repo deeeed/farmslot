@@ -132,6 +132,7 @@ export async function deliverOperatorInstruction(
         vars,
         recoveryHandle: handle,
         initialPrompt: text,
+        beforeRespawn: assertCurrent,
         blindTrialCapsule: blindTrialWorkerCapsule(run, context.role),
         modelQuestions: modelQuestionsForRun(run),
       });

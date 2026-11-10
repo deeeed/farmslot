@@ -47,6 +47,15 @@ let signalRemovals = 0;
 const tmuxInput: string[] = [];
 let onRespawn = (_command: string) => {};
 let checklistRestores = 0;
+let stagedLaunch = '';
+mock.module('../core/tmux-launch-script.js', {
+  namedExports: {
+    writeTmuxLaunchScript: async (_vars: unknown, _target: string, command: string) => {
+      stagedLaunch = command;
+      return "bash '/tmp/synthetic-review-launch.sh'";
+    },
+  },
+});
 
 const config = await import('../core/config.js');
 mock.module('../core/config.js', {
@@ -64,8 +73,8 @@ mock.module('../core/exec.js', {
       if (/send-keys|paste-buffer|respawn-window/u.test(command)) tmuxInput.push(command);
       if (command.includes('respawn-window')) {
         // What the replaced worker wrote up to here, then what the respawned command runs.
-        onRespawn(command);
-        if (/rm -f [^&]*REVIEW-FIX-SIGNAL/u.test(command)) {
+        onRespawn(stagedLaunch);
+        if (/rm -f [^&]*REVIEW-FIX-SIGNAL/u.test(stagedLaunch)) {
           signalRemovals += 1;
           fixSignal = {};
         }
