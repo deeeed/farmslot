@@ -74,11 +74,16 @@ export function nativeWorkerLiveStatus(
   return 'unknown';
 }
 
+interface NativeWorkerSnapshotReadOptions extends Pick<NativeSessionReadParams, 'after' | 'limit'> {
+  /** Monitoring can inspect failure evidence without recording it as a run mutation. */
+  failurePolicy?: 'record' | 'observe';
+}
+
 export async function readNativeWorkerSnapshot(
   runId: string,
   role?: AgentRole,
   contextId?: string,
-  history: Pick<NativeSessionReadParams, 'after' | 'limit'> = {},
+  history: NativeWorkerSnapshotReadOptions = {},
 ) {
   const { binding } = workerBinding(runId, role, contextId, true);
   const snapshot = (await routeNativeExecution(
@@ -100,6 +105,7 @@ export async function readNativeWorkerSnapshot(
     snapshot,
   );
   if (
+    history.failurePolicy !== 'observe' &&
     snapshot.session.state === 'failed' &&
     snapshot.session.error &&
     !isTerminalRunStatus(getRun(runId)!.status)

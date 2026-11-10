@@ -1,0 +1,1 @@
+- Bound cumulative publication capture and storage queue waits, refuse expired writes, and release temporary payloads and reservations after expiry.

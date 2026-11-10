@@ -74,6 +74,7 @@ import {
   runCompletionPipeline,
 } from '../run-completion/orchestrator.js';
 import { captureRunOutput, failRunOutputCapture } from '../run-completion/output.js';
+import { withPublicationPackageStorageWait } from '../run-completion/publication-package-wait.js';
 import {
   computeReadyGateReviewSubjectHash,
   readReadyGatePreparedPackage,
@@ -353,6 +354,9 @@ export async function reconcilePublishGateReviewPlanResult(
     },
   });
   getRun(runId)!;
+  updateRunStep(runId, S.HUMAN_GATE, {
+    detail: 'Preparing operator decision: checking publication package',
+  });
   // A package states the diff at its own HEAD; the durable capture predates any fix since.
   const diffStat = await context.getDiffStat(getRun(runId)!, { fresh: true });
   const prepared = await prepareGatePackageAfterReviews(runId, () =>
@@ -388,7 +392,10 @@ async function prepareGatePackageAfterReviews(
   prepare: () => ReturnType<typeof prepareCompletionPackage>,
 ): Promise<Awaited<ReturnType<typeof prepareCompletionPackage>> | undefined> {
   try {
-    return await prepare();
+    updateRunStep(runId, S.HUMAN_GATE, {
+      detail: 'Preparing operator decision: checking publication package',
+    });
+    return await withPublicationPackageStorageWait(prepare);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(

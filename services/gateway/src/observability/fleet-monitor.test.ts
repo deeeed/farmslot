@@ -30,7 +30,7 @@ mock.module('../methods/fleet.js', {
       }),
   },
 });
-const { detectFleetMonitorViolations, startMonitor, stopMonitor } =
+const { detectFleetMonitorViolations, detectPublicationGateViolations, startMonitor, stopMonitor } =
   await import('./fleet-monitor.js');
 
 function slot(overrides: Partial<SlotStatus>): SlotStatus {
@@ -229,6 +229,7 @@ test('the periodic monitor refreshes stale machine probes and publishes the fres
   const published: FleetStatus[] = [];
   t.mock.timers.enable({ apis: ['setInterval'] });
   startMonitor({
+    onPublicationGateStall() {},
     onFleetUpdated: (value) => published.push(value),
     onDecisionNew() {},
     onViolation() {},
@@ -249,7 +250,12 @@ test('the periodic monitor does not inspect workspaces when nobody requests them
   cachedFleet = { ...fleet([slot({ lifecycle: 'ready' })]), checkedAt: new Date().toISOString() };
   workspaceRefreshes = 0;
   t.mock.timers.enable({ apis: ['setInterval'] });
-  startMonitor({ onFleetUpdated() {}, onDecisionNew() {}, onViolation() {} });
+  startMonitor({
+    onPublicationGateStall() {},
+    onFleetUpdated() {},
+    onDecisionNew() {},
+    onViolation() {},
+  });
   t.after(stopMonitor);
   for (let interval = 0; interval < 3; interval++) {
     t.mock.timers.tick(30000);
@@ -260,4 +266,160 @@ test('the periodic monitor does not inspect workspaces when nobody requests them
     0,
     'Background health monitoring launched viewer-only Git inspection',
   );
+});
+
+test('stuck publication gates use the fleet violation feed, dedupe, and clear on operator wait', async () => {
+  const { makeRun } = await import('../run-engine/test-fixtures.js');
+  const now = Date.parse('2026-01-01T00:11:00Z');
+  const run = makeRun({
+    id: 'example-gate',
+    status: 'human-gating',
+    slotId: 'runner-browser-2',
+    decisions: [],
+    steps: [{ name: 'human-gate', status: 'running', startedAt: '2026-01-01T00:00:00Z' }],
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            id: 'example-review',
+            source: 'dispatch',
+            mode: 'warm',
+            runner: 'codex',
+            model: null,
+            reviewerSessionId: 'example-session',
+            loopNumber: 1,
+            verdict: 'pass',
+            unresolvedCount: 0,
+          },
+        ],
+      },
+    },
+  });
+  const current = fleet([slot({ currentRunId: run.id, phase: 'review-gate' })]);
+  const notified = new Set<string>();
+  const before = structuredClone(run);
+  const detect = () => detectPublicationGateViolations(current, notified, now, () => run);
+  const [violation] = await detect();
+  assert.equal(violation.type, 'waiting');
+  assert.equal(violation.target, run.id);
+  assert.equal(violation.slotId, run.slotId);
+  assert.match(violation.message, /human-gate.*more than 10 minutes.*verdict is recorded/);
+  assert.equal(violation.nudgeSent, null);
+  assert.deepEqual(await detect(), []);
+  assert.deepEqual(run, before);
+  run.decisions.push({
+    id: 'operator',
+    type: 'engine_human_gate',
+    title: 'Gate',
+    description: '',
+    actions: [],
+    createdAt: new Date(now).toISOString(),
+  });
+  assert.deepEqual(await detect(), []);
+  assert.equal(notified.size, 0);
+  run.decisions = [];
+  assert.equal((await detect()).length, 1);
+});
+
+test('a decision presented during the reviewer probe suppresses obsolete stall evidence', async () => {
+  const { makeRun } = await import('../run-engine/test-fixtures.js');
+  const now = Date.parse('2026-01-01T00:11:00Z');
+  const run = makeRun({
+    id: 'example-gate-race',
+    status: 'human-gating',
+    decisions: [],
+    steps: [{ name: 'human-gate', status: 'running', startedAt: '2026-01-01T00:00:00Z' }],
+    agentContexts: [
+      {
+        id: 'reviewer',
+        role: 'review',
+        label: 'Review',
+        status: 'working',
+        runId: 'example-gate-race',
+        slotId: 'runner-browser-2',
+      },
+    ],
+  });
+  const current = fleet([slot({ currentRunId: run.id })]);
+  const violations = await detectPublicationGateViolations(
+    current,
+    new Set(),
+    now,
+    () => run,
+    async () => {
+      run.decisions.push({
+        id: 'operator',
+        type: 'engine_human_gate',
+        title: 'Gate',
+        description: '',
+        actions: [],
+        createdAt: new Date(now).toISOString(),
+      });
+      return 'absent';
+    },
+  );
+  assert.deepEqual(violations, []);
+});
+
+test('the production monitor routes gate stalls only to its notification callback', async (t) => {
+  const { createRun, updateRun, deleteRun } = await import('../runs/store.js');
+  const run = createRun({
+    flowType: 'dev',
+    project: 'generic-project',
+    ticketOrPr: 'synthetic-stall',
+  });
+  updateRun(run.id, {
+    status: 'human-gating',
+    slotId: 'runner-browser-2',
+    steps: [
+      {
+        name: 'human-gate',
+        status: 'running',
+        startedAt: new Date(Date.now() - 11 * 60_000).toISOString(),
+      },
+    ],
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            id: 'synthetic-review',
+            source: 'dispatch',
+            mode: 'cold',
+            runner: 'codex',
+            model: null,
+            reviewerSessionId: 'synthetic-session',
+            loopNumber: 1,
+            verdict: 'pass',
+            unresolvedCount: 0,
+          },
+        ],
+      },
+    },
+  });
+  t.after(async () => {
+    stopMonitor();
+    updateRun(run.id, { status: 'done' });
+    await deleteRun(run.id);
+  });
+  cachedFleet = {
+    ...fleet([slot({ currentRunId: run.id, lifecycle: 'ready', agent: 'working' })]),
+    checkedAt: new Date().toISOString(),
+  };
+  let flags = 0;
+  const recoverable: unknown[] = [];
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  startMonitor({
+    onFleetUpdated() {},
+    onDecisionNew() {},
+    onViolation: (violation) => recoverable.push(violation),
+    onPublicationGateStall: (violation) => {
+      assert.equal(violation.target, run.id);
+      flags++;
+    },
+  });
+  t.mock.timers.tick(30_000);
+  for (let tick = 0; tick < 20 && !flags; tick++)
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(flags, 1);
+  assert.deepEqual(recoverable, [], 'stuck-gate flags never reach the recovery callback');
 });

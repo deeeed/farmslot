@@ -17,6 +17,13 @@ import { projectTaskRoots } from '../core/config.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { fleetMonitorStatus } from '../methods/fleet.js';
 import { resourceRevisions } from '../resources/revisions.js';
+import { getRun } from '../runs/store.js';
+
+import {
+  publicationGateIsOverdue,
+  publicationGateStallReason,
+  type ReadReviewerLiveness,
+} from './publication-gate-stall.js';
 
 const MONITOR_STATE_FILE = path.join(farmslotRoot(), '.monitor_state.json');
 
@@ -24,6 +31,7 @@ export type MonitorEventHandler = {
   onFleetUpdated: (fleet: FleetStatus) => void;
   onDecisionNew: (decision: PendingDecision) => void;
   onViolation: (violation: MonitorViolation) => void;
+  onPublicationGateStall: (violation: MonitorViolation) => void;
 };
 
 const FLEET_POLL_MS = readIntervalMs('FARMSLOT_MONITOR_FLEET_POLL_MS', 30_000);
@@ -111,7 +119,7 @@ export function startMonitor(eventHandler: MonitorEventHandler): void {
     try {
       const { fleet } = await fleetMonitorStatus();
       handler?.onFleetUpdated(fleet);
-      checkForViolations(fleet);
+      await checkForViolations(fleet);
     } catch {
       /* ignore refresh errors */
     } finally {
@@ -395,8 +403,57 @@ export function detectFleetMonitorViolations(
   return violations;
 }
 
-function checkForViolations(fleet: FleetStatus): void {
+export async function detectPublicationGateViolations(
+  fleet: FleetStatus,
+  notified = notifiedSlots,
+  now = Date.now(),
+  readRun = getRun,
+  readReviewer?: ReadReviewerLiveness,
+): Promise<MonitorViolation[]> {
+  const violations: MonitorViolation[] = [];
+  for (const slot of fleet.slots) {
+    const run = slot.currentRunId ? readRun(slot.currentRunId) : undefined;
+    const generation = run?.engineState?.generation;
+    const contexts = run?.agentContexts;
+    const reviews = run?.engineState?.publishGate?.reviews;
+    const reason = run && (await publicationGateStallReason(run, now, readReviewer));
+    // A replay or decision that landed during a liveness probe supersedes its evidence.
+    const current = slot.currentRunId ? readRun(slot.currentRunId) : undefined;
+    const key = `${slot.slot}:publication-gate:${run?.id}:${generation ?? 0}`;
+    for (const previous of notified)
+      if (previous.startsWith(`${slot.slot}:publication-gate:`) && previous !== key)
+        notified.delete(previous);
+    if (
+      !run ||
+      current !== run ||
+      current.engineState?.generation !== generation ||
+      current.agentContexts !== contexts ||
+      current.engineState?.publishGate?.reviews !== reviews ||
+      !publicationGateIsOverdue(current, now) ||
+      !reason
+    ) {
+      notified.delete(key);
+      continue;
+    }
+    if (notified.has(key)) continue;
+    notified.add(key);
+    violations.push({
+      slotId: slot.slot,
+      target: run.id,
+      type: 'waiting',
+      message: `Run ${run.id.slice(0, 8)} human-gate has been running for more than 10 minutes: ${reason}.`,
+      nudgeSent: null,
+      timestamp: new Date(now).toISOString(),
+    });
+  }
+  return violations;
+}
+
+async function checkForViolations(fleet: FleetStatus): Promise<void> {
   for (const violation of detectFleetMonitorViolations(fleet)) {
     handler?.onViolation(violation);
   }
+  // Gate stalls are flags, never auto-recovery or intelligence-audit inputs.
+  for (const violation of await detectPublicationGateViolations(fleet))
+    handler?.onPublicationGateStall(violation);
 }
