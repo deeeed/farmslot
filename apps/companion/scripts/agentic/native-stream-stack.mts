@@ -338,6 +338,9 @@ async function start() {
       response.writeHead(status, { 'content-type': 'application/json' });
       response.end(`${JSON.stringify(body)}\n`);
     };
+    // Loopback alone does not stop a DNS-rebinding page from reaching this unauthenticated port,
+    // which can mint a pairing for an admin principal; only the exact loopback host is served.
+    if (request.headers.host !== `127.0.0.1:${controlPort}`) return reply(403, { error: 'host' });
     if (!route) return reply(404, { error: 'unknown route' });
     route(url).then(
       (body) => reply(200, body),
