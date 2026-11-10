@@ -257,9 +257,14 @@ export function configuredNodeLinkEnabled(machine: string, poolDirectory: string
     throw new Error('Invalid node machine identity');
   const file = path.join(poolDirectory, `${machine}.json`);
   // Every remote exec asks this, so the parsed pool comes from the shared stat-checked cache.
-  let pool: unknown = isIgnoredPoolFile(`${machine}.json`)
-    ? undefined
-    : readPoolFiles(poolDirectory).find((entry) => entry.file === file)?.pool;
+  let pool: unknown;
+  if (!isIgnoredPoolFile(`${machine}.json`))
+    try {
+      pool = readPoolFiles(poolDirectory).find((entry) => entry.file === file)?.pool;
+    } catch (error) {
+      // No pool directory yet: the file read below answers that as an absent machine pool.
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    }
   if (pool === undefined) {
     let content: string;
     try {

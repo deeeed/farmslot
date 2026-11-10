@@ -272,6 +272,11 @@ test('pool reads are cached until a pool file or the directory changes', (t) => 
 
 test('node-link policy reads the cached machine pool and still refuses a malformed one', (t) => {
   const dir = tempDir(t);
+  assert.equal(
+    configuredNodeLinkEnabled('m1', join(dir, 'missing')),
+    false,
+    'no pool directory: the pilot stays off',
+  );
   assert.equal(configuredNodeLinkEnabled('m1', dir), false, 'no machine pool: the pilot stays off');
   pool(dir, 'm1.json', { machine: 'm1', env: { [NODE_LINK_FLAG]: '1' } });
   assert.equal(configuredNodeLinkEnabled('m1', dir), true);
