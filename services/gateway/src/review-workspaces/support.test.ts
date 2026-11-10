@@ -517,7 +517,7 @@ test('reference checkouts resolve beside a project slot on the execution machine
       machine: 'local',
       host: 'localhost',
       sshUser: 'fixture',
-      project: 'other',
+      project: 'fixture',
       slots: [],
     }),
   ];

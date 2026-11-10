@@ -101,20 +101,11 @@ export async function inspectReviewWorkspaceTarget(
   excludingRunId?: string,
 ): Promise<ReviewWorkspaceAdmission> {
   const [pools, project] = await Promise.all([loadPoolConfigs(), loadProjectConfig(input.project)]);
-  const pool = resolveReviewWorkspacePool(pools, input.machine);
+  const pool = resolveReviewWorkspacePool(pools, input.machine, input.project);
   if (!project?.repoUrl || !project.staticReview?.templateId || !project.executionTemplates) {
     throw new GatewayMethodError(
       'REVIEW_WORKSPACE_NEEDS_CONFIGURATION',
       'Configure the project repository and canonical static-review template',
-    );
-  }
-  if (
-    pool.project !== input.project &&
-    !pool.slots.some((slot) => slot.project === input.project)
-  ) {
-    throw new GatewayMethodError(
-      'REVIEW_WORKSPACE_NEEDS_CONFIGURATION',
-      'Review machine is not configured for this project',
     );
   }
   const terminalRefusal =
