@@ -103,8 +103,9 @@ try {
     });
   };
   await page.route(`${origin}/**`, proxy);
-  await browser.contexts()[0].route(`${origin}/@fs/**`, proxy);
-  stopRouting = () => browser.contexts()[0].unroute(`${origin}/@fs/**`, proxy);
+  const workerSourcePattern = `${origin}/@fs${new URL('../../../../', import.meta.url).pathname}**`;
+  await browser.contexts()[0].route(workerSourcePattern, proxy);
+  stopRouting = () => browser.contexts()[0].unroute(workerSourcePattern, proxy);
   await page.routeWebSocket('**/ws', (route) => {
     if (offline) {
       route.close();
@@ -173,8 +174,10 @@ try {
   assert.equal(recovered.fault.workers, 2, 'Persistence recovery reused the failed worker');
   await page.screenshot({ path: path.join(output, 'recovered.png') });
   offline = true;
-  // Drop the server side only: the proxy must forward the transport close to the client.
-  for (const server of sockets.values()) server.close({ code: 1001, reason: 'Offline proof' });
+  for (const [client, server] of sockets) {
+    client.close({ code: 1001, reason: 'Offline proof' });
+    server.close({ code: 1001, reason: 'Offline proof' });
+  }
   const cached = await until(async () => {
     const state = await receipt();
     return state.connection !== 'connected' && state.sync?.startsWith('Cached from ') && state;
@@ -254,12 +257,41 @@ try {
     const state = await receipt();
     return state.connection === 'connected' && state.sync === 'Synced';
   });
-  assert(refreshed.runIds.length >= 2, 'Comparison proof requires two retained gateway runs');
+  // Compare current, complete runs without artifact previews; this proof is for read status.
+  const comparisonFixture = await page.evaluate(async (cacheModule) => {
+    const { resourceQuery } = await import(cacheModule);
+    const { getState } = await import('/src/state.ts');
+    const { getResourceCache } = await import('/src/resource-cache.ts');
+    const noArtifacts = (run) =>
+      !run.artifacts?.length && !(run.steps ?? []).some((step) => step.artifacts?.length);
+    const candidates = getState()
+      .runs.filter((run) => !run.summary && noArtifacts(run))
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+      .slice(0, 12);
+    const chosen = [],
+      skipped = [];
+    for (const candidate of candidates) {
+      const state = await getResourceCache().retryAfterPending(
+        resourceQuery('run.get', { runId: candidate.id }),
+      );
+      const run = state.data?.run;
+      if (state.status !== 'ready' || !run || !noArtifacts(run)) {
+        skipped.push({ id: candidate.id, status: state.status, error: state.error?.code });
+        continue;
+      }
+      if (chosen.some((item) => item.familyId === run.familyId)) continue;
+      chosen.push({ id: run.id, familyId: run.familyId });
+      if (chosen.length === 2) break;
+    }
+    if (chosen.length !== 2)
+      throw new Error('Two current, artifact-free comparison fixtures are unavailable');
+    return { chosen, skipped };
+  }, cacheModule);
   await page.evaluate(
     ([a, b]) => {
       location.hash = `#runs/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`;
     },
-    refreshed.runIds.slice(0, 2),
+    comparisonFixture.chosen.map((run) => run.id),
   );
   const compare = await until(async () => {
     const state = await receipt();
@@ -279,6 +311,7 @@ try {
     native,
     nativeCached,
     compare,
+    comparisonFixture,
     consoleErrors: errors,
   };
 
