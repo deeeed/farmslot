@@ -152,6 +152,8 @@ function positiveInteger(value, name) {
 
 function reasoningSetting(value, name) {
   if (value === undefined || value === null) return undefined;
+  if (typeof value === 'object' && typeof value.default_enabled === 'boolean')
+    return value.default_enabled;
   if (value === true || value === 'true' || value === '1') return true;
   if (value === false || value === 'false' || value === '0') return false;
   throw new PiProviderConfigurationError(`${name} must be true, false, 1 or 0`);

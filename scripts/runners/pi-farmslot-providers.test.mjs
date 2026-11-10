@@ -310,6 +310,53 @@ test('id-only router discovery uses configured limits and defaults reasoning on'
 const routerEnv = { FARMSLOT_PI_OLLAMA: '0', FARMSLOT_PI_ROUTER_URL: 'http://router.test/v1' };
 const modelsFetch = (row) => async () => ({ ok: true, json: async () => ({ data: [row] }) });
 
+test('router reasoning object with default_enabled true registers a reasoning model', async () => {
+  const [provider] = await resolvePiProviderCatalog(routerEnv, {
+    fetchImpl: modelsFetch({
+      id: 'model',
+      reasoning: { default_enabled: true, effort_levels: ['low', 'medium', 'high'] },
+    }),
+  });
+  assert.equal(provider.id, 'router');
+  assert.equal(provider.models[0].id, 'model');
+  assert.equal(provider.models[0].reasoning, true);
+});
+
+test('router reasoning object with default_enabled false requires reasoning like false', async () => {
+  for (const reasoning of [false, { default_enabled: false }])
+    await assert.rejects(
+      resolvePiProviderCatalog(routerEnv, {
+        fetchImpl: modelsFetch({ id: 'model', reasoning }),
+      }),
+      {
+        name: 'Error',
+        message: 'Model router/model requires reasoning for code work',
+      },
+    );
+});
+
+test('router reasoning object without a boolean default_enabled keeps the existing error', async () => {
+  for (const reasoning of [
+    {},
+    { effort_levels: ['low', 'high'] },
+    { default_enabled: 'true' },
+    { default_enabled: 'false' },
+    { default_enabled: 1 },
+    { default_enabled: 0 },
+    { default_enabled: null },
+    [],
+  ])
+    await assert.rejects(
+      resolvePiProviderCatalog(routerEnv, {
+        fetchImpl: modelsFetch({ id: 'model', reasoning }),
+      }),
+      {
+        name: 'Error',
+        message: 'router/model reasoning must be true, false, 1 or 0',
+      },
+    );
+});
+
 test('endpoint metadata takes precedence and source configuration only fills missing fields', async () => {
   for (const contextField of [
     'context_length',
