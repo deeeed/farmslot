@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
@@ -514,9 +514,19 @@ test('wire guard honors the model thinking map rather than requiring identical l
   assert.equal(sent.length, 1);
 });
 
-test('wire guard refuses selected reasoning on a model that sends none', async () => {
-  const { request, sent } = guardedRequest({ model: { reasoning: false } });
+test('wire guard logs a selected effort mismatch once before refusing to send', async (t) => {
+  const stderr = t.mock.method(console, 'error', () => {});
+  const { request, sent } = guardedRequest({ thinking: 'medium', model: { reasoning: false } });
+  await assert.rejects(
+    request({ messages: ['fixture-private-body'] }),
+    /PI_REASONING_EFFORT_MISMATCH/,
+  );
   await assert.rejects(request({}), /PI_REASONING_EFFORT_MISMATCH/);
+  assert.equal(stderr.mock.callCount(), 1);
+  const message = stderr.mock.calls[0].arguments.join(' ');
+  assert.match(message, /litellm\/model requested medium/);
+  assert.match(message, /FARMSLOT_PI_LITELLM_MODEL_LIMITS/);
+  assert.doesNotMatch(message, /fixture-private-body/);
   assert.equal(sent.length, 0);
   const disabled = guardedRequest({ thinking: 'off', model: { reasoning: false } });
   await disabled.request({});
@@ -793,32 +803,46 @@ test('reasoning-enabled LiteLLM requests have the same wire guard and record as 
   assert.equal(records[0].requestedMaxTokens, 32768);
 });
 
-async function checkExtensionReload(extensionUrl) {
+async function checkExtension(extensionUrl, scenario, obsDir) {
   const assert = (await import('node:assert/strict')).default;
   const { default: install } = await import(extensionUrl);
   const originalEnv = process.env;
   const originalFetch = globalThis.fetch;
   process.env = {
-    ...originalEnv,
     FARMSLOT_PI_OLLAMA: '0',
+    FARMSLOT_OBS_DIR: obsDir,
     FARMSLOT_PI_REQUEST_TIMEOUT_MS: '300000',
-    FARMSLOT_THINKING: 'medium',
+    ...(scenario !== 'no-thinking'
+      ? { FARMSLOT_THINKING: scenario === 'off' ? 'off' : 'medium' }
+      : {}),
   };
-  for (const key of Object.keys(process.env))
-    if (
-      key.startsWith('FARMSLOT_PI_ROUTER_') ||
-      key === 'LITELLM_URL' ||
-      key === 'LITELLM_BASE_URL'
-    )
-      delete process.env[key];
-  process.env.FARMSLOT_PI_ROUTER_URL = 'http://router.test/v1';
-  console.error = () => {};
+  const providerId = scenario === 'reload' ? 'router' : 'litellm';
+  const baseUrl = `http://${providerId}.test/v1`;
+  process.env[providerId === 'router' ? 'FARMSLOT_PI_ROUTER_URL' : 'LITELLM_URL'] = baseUrl;
+  if (scenario === 'reload') console.error = () => {};
   let sent = 0;
   const baseFetch = async (input) => {
+    if (String(input).endsWith('/model/info'))
+      return Response.json({
+        data:
+          scenario === 'unsupported-level'
+            ? [{ model_name: 'model', model_info: { reasoning_effort_levels: ['low'] } }]
+            : [],
+      });
     if (String(input).endsWith('/models'))
       return Response.json({
-        data: [{ id: 'model', context_length: 1048576, max_output_tokens: 32768 }],
+        data: [
+          {
+            id: 'model',
+            context_length: 1048576,
+            max_output_tokens: 32768,
+            ...(providerId === 'litellm'
+              ? { reasoning: ['reasoning', 'unsupported-level'].includes(scenario) }
+              : {}),
+          },
+        ],
       });
+    console.error('fixture inference attempted');
     sent++;
     return new Response('OK');
   };
@@ -839,15 +863,48 @@ async function checkExtensionReload(extensionUrl) {
     return { events, records, runtime, providers };
   };
   const request = () =>
-    globalThis.fetch('http://router.test/v1/chat/completions', {
+    globalThis.fetch(`${baseUrl}/chat/completions`, {
       body: JSON.stringify({
         model: 'model',
-        reasoning_effort: 'medium',
+        ...(['no-thinking', 'off', 'wire-mismatch'].includes(scenario)
+          ? {}
+          : { reasoning_effort: 'medium' }),
         max_completion_tokens: 32768,
       }),
     });
   try {
     const before = await load();
+    if (scenario === 'wire-mismatch') {
+      const { default: OpenAI } = await import('openai');
+      const sdk = new OpenAI({
+        apiKey: 'fixture-key',
+        baseURL: baseUrl,
+        fetch: globalThis.fetch,
+        maxRetries: 0,
+      });
+      // A fatal guard must exit before the SDK can mask its exception.
+      await assert.rejects(
+        sdk.chat.completions.create({ model: 'model', messages: [] }),
+        /Connection error/,
+      );
+      console.error('fixture SDK caught Connection error');
+      return;
+    }
+    if (scenario !== 'reload') {
+      const model = { ...before.providers.get(providerId).models[0], provider: providerId };
+      const ctx = { model, hasUI: false };
+      if (scenario === 'model-select') await before.events.get('model_select')?.({ model }, ctx);
+      else await before.events.get('session_start')?.({}, ctx);
+      // A fatal lifecycle/guard failure must exit before returning or sending a request.
+      assert.equal(await (await request()).text(), 'OK');
+      assert.equal(sent, 1);
+      assert.equal(
+        before.records[0].effort,
+        ['no-thinking', 'off'].includes(scenario) ? undefined : 'medium',
+      );
+      await before.events.get('session_shutdown')?.({ reason: 'exit' });
+      return;
+    }
     assert.equal(await (await request()).text(), 'OK');
     const sdkCost = before.providers.get('router').models[0].cost;
     assert.ok(
@@ -858,12 +915,6 @@ async function checkExtensionReload(extensionUrl) {
       before.records[0].cost,
       null,
       'SDK placeholders never become quoted request prices',
-    );
-    await assert.rejects(
-      globalThis.fetch('http://router.test/v1/chat/completions', {
-        body: JSON.stringify({ model: 'model', reasoning_effort: 'high' }),
-      }),
-      /PI_REASONING_EFFORT_MISMATCH/,
     );
     const previousFetch = globalThis.fetch;
     await before.events.get('session_shutdown')?.({ reason: 'reload' });
@@ -892,18 +943,53 @@ async function checkExtensionReload(extensionUrl) {
   }
 }
 
-test('extension reload retires the old fetch recorder before its runtime is invalidated', () => {
+function runExtensionCheck(scenario) {
   // The supported Node floor needs explicit type stripping; a fresh process also
   // isolates the extension's fetch and environment ownership from other tests.
   const extensionUrl = new URL('./pi-farmslot-observability.ts', import.meta.url).href;
-  execFileSync(
-    process.execPath,
-    [
-      '--experimental-strip-types',
-      '--input-type=module',
-      '--eval',
-      `await (${checkExtensionReload.toString()})(${JSON.stringify(extensionUrl)});`,
-    ],
-    { stdio: 'pipe', timeout: 4000 },
-  );
+  const obsDir = mkdtempSync(join(tmpdir(), 'pi-extension-'));
+  try {
+    return spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--input-type=module',
+        '--eval',
+        `await (${checkExtension.toString()})(${JSON.stringify(extensionUrl)}, ${JSON.stringify(scenario)}, ${JSON.stringify(obsDir)});`,
+      ],
+      { encoding: 'utf8', timeout: 4000 },
+    );
+  } finally {
+    rmSync(obsDir, { recursive: true, force: true });
+  }
+}
+
+test('extension reload retires the old fetch recorder before its runtime is invalidated', () => {
+  const result = runExtensionCheck('reload');
+  assert.equal(result.status, 0, result.stderr);
 });
+
+for (const scenario of ['session-start', 'model-select', 'unsupported-level', 'wire-mismatch'])
+  test(`extension stops on ${scenario} effort mismatch before inference or retries`, () => {
+    const result = runExtensionCheck(scenario);
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(
+      result.stderr,
+      /PI_REASONING_EFFORT_MISMATCH: Model litellm\/model requested medium/,
+    );
+    assert.match(result.stderr, /FARMSLOT_PI_LITELLM_MODEL_LIMITS/);
+    assert.match(result.stderr, /reasoning.*model.*thinking/i);
+    assert.equal(result.stderr.match(/PI_REASONING_EFFORT_MISMATCH/g)?.length, 1);
+    assert.doesNotMatch(
+      result.stderr,
+      /fixture inference attempted|fixture SDK caught|Connection error/,
+    );
+  });
+
+for (const scenario of ['reasoning', 'no-thinking', 'off'])
+  test(`extension allows ${scenario} model requests`, () => {
+    const result = runExtensionCheck(scenario);
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stderr, /PI_REASONING_EFFORT_MISMATCH/);
+  });

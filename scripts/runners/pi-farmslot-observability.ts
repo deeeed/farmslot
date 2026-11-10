@@ -1,11 +1,13 @@
 // Farmslot PI extension: hooks, task delivery, mark/signal tools, HUD, slash cmds.
 // Do not import @earendil-works/pi-coding-agent — PI's jiti provides `pi` at load.
+import { writeSync } from 'node:fs';
 import path from 'node:path';
 
 import { Type } from 'typebox';
 
 import { piMessageTokenUsage, piTurnFailure, writePiHook } from './pi-farmslot-hook-writer.mjs';
 import {
+  assertPiModelThinking,
   deadlinePiFetch,
   PiProviderConfigurationError,
   piSdkModels,
@@ -43,6 +45,29 @@ function toolResult(text: string, isError = false) {
     details: {},
     isError,
   };
+}
+
+interface PiThinkingModel {
+  provider: string;
+  id: string;
+  reasoning: boolean;
+  thinkingLevelMap?: Record<string, string | null>;
+}
+
+function stopPiConfiguration(error: PiProviderConfigurationError): never {
+  // Flush before exiting even when stderr is piped. Hook throws are caught by Pi,
+  // and fetch throws are wrapped by the SDK, so neither can stop this worker.
+  writeSync(2, `[farmslot-pi] configuration error: ${error.message}\n`);
+  process.exit(1);
+}
+
+function checkThinking(model?: PiThinkingModel) {
+  try {
+    assertPiModelThinking(model, process.env.FARMSLOT_THINKING);
+  } catch (error) {
+    if (error instanceof PiProviderConfigurationError) stopPiConfiguration(error);
+    throw error;
+  }
 }
 
 export default async function (pi: {
@@ -84,6 +109,7 @@ export default async function (pi: {
         pi.appendEntry?.('farmslot-model-request', configuration);
       },
       process.env.FARMSLOT_THINKING,
+      stopPiConfiguration,
     );
     for (const source of catalog) {
       pi.registerProvider?.(source.id, {
@@ -177,6 +203,10 @@ export default async function (pi: {
   // so launch is not blocked on a TUI prompt. Do not persist (`remember`).
   pi.on('project_trust', async () => ({ trusted: 'yes' as const }));
 
+  pi.on('model_select', (event: { model: PiThinkingModel }) => {
+    checkThinking(event.model);
+  });
+
   pi.on(
     'session_start',
     async (
@@ -184,10 +214,12 @@ export default async function (pi: {
       ctx: {
         cwd?: string;
         hasUI?: boolean;
+        model?: PiThinkingModel;
         sessionManager?: { getSessionFile?: () => string | null };
         ui?: { setStatus?: (key: string, text: string) => void };
       },
     ) => {
+      checkThinking(ctx.model);
       writePiHook({
         obsDir: obsDir(),
         event: 'SessionStart',
