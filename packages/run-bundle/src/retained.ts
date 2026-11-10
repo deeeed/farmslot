@@ -1,5 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { constants, createWriteStream, existsSync, readFileSync, type Stats } from 'node:fs';
+import {
+  constants,
+  createWriteStream,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  type Stats,
+  statSync,
+} from 'node:fs';
 import {
   chmod,
   copyFile,
@@ -25,6 +33,7 @@ import {
   type ArtifactRef,
   decisionArtifactBundleRef,
   isActiveListRun,
+  isRacyStamp,
   isRecord,
   type Run,
   RUN_BUNDLE_VERSION,
@@ -44,7 +53,7 @@ import {
   strictTaskRelativePathFromFarmslotRoot,
 } from '@farmslot/protocol/runs/portable-bundle';
 
-import { loadAllRunRecords } from './collect.js';
+import { parseRunRecordFile } from './collect.js';
 import {
   isRunBundleMedia,
   shouldSkipBundleFile,
@@ -1738,6 +1747,97 @@ export interface RunBundleHousekeepingPath {
   store: 'bundle-reservations' | 'bundle-intents' | 'bundle-staging' | 'run-bundles';
 }
 
+/** What the housekeeping inventory takes from one run record and its decision journal. */
+interface RunInventoryEntry {
+  runId: string;
+  active: boolean;
+  generation: number | undefined;
+  refs: { ref: RunArtifactBundleRef; pin: boolean }[];
+}
+
+/**
+ * Inventory entries per run record path, derived again only when the record or its journal
+ * changes. Every run start and capture takes an inventory, and reading and parsing every record
+ * each time blocked the gateway for seconds once hundreds of runs had accumulated.
+ */
+const runInventoryCache = new Map<
+  string,
+  {
+    stamp: string;
+    /** Record and journal had settled when read, so an equal stamp later means equal content. */
+    trusted: boolean;
+    entry: RunInventoryEntry | null;
+  }
+>();
+
+/** A file's stat stamp, and whether it changed too recently for the stamp to be trusted. */
+function fileStamp(file: string, now: number): { key: string; racy: boolean } {
+  const stats = statSync(file, { throwIfNoEntry: false });
+  if (!stats) return { key: 'missing', racy: false };
+  const changedAtMs = Math.max(stats.mtimeMs, stats.ctimeMs);
+  return {
+    key: `${stats.ino}:${stats.mtimeMs}:${stats.ctimeMs}:${stats.size}`,
+    racy: isRacyStamp(changedAtMs, now),
+  };
+}
+
+function runInventoryEntry(file: string, journal: string): RunInventoryEntry | null {
+  const run = parseRunRecordFile(path.basename(file), readFileSync(file, 'utf-8'));
+  if (!run) return null;
+  const active = isActiveListRun(run);
+  const refs = runBundleRefs(run).map(({ ref, decision }) => ({
+    ref: resolveRetainedRunBundleRef(run, ref),
+    pin:
+      active ||
+      (decision
+        ? !decision.resolvedAt ||
+          (decision.payload?.kind === 'ready' &&
+            ['published_draft', 'published_ready'].includes(
+              decision.payload.prPackage?.publicationStatus ?? '',
+            ))
+        : false),
+  }));
+  // Retired approvals/attestations remain audit dependencies after replay removes the card.
+  for (const decision of readDecisionHistoryFile(journal)) {
+    const ref =
+      decision.publicationApproval || decision.evidenceAttestation
+        ? decisionArtifactBundleRef(run, decision.payload)
+        : undefined;
+    if (ref) refs.push({ ref: resolveRetainedRunBundleRef(run, ref), pin: true });
+  }
+  return { runId: run.id, active, generation: run.engineState?.generation, refs };
+}
+
+function runInventoryEntries(runsDir: string): RunInventoryEntry[] {
+  if (!existsSync(runsDir)) return [];
+  const now = Date.now();
+  const seen = new Set<string>();
+  const entries: RunInventoryEntry[] = [];
+  for (const name of readdirSync(runsDir)) {
+    if (!name.endsWith('.json')) continue;
+    const file = path.join(runsDir, name);
+    const journal = decisionHistoryFile(file);
+    // Stamp before reading: a write landing mid-read changes the stamp, so the next pass rereads.
+    const record = fileStamp(file, now);
+    const history = fileStamp(journal, now);
+    const stamp = `${record.key}|${history.key}`;
+    seen.add(file);
+    let cached = runInventoryCache.get(file);
+    if (!cached?.trusted || cached.stamp !== stamp) {
+      cached = {
+        stamp,
+        trusted: !record.racy && !history.racy,
+        entry: runInventoryEntry(file, journal),
+      };
+      runInventoryCache.set(file, cached);
+    }
+    if (cached.entry) entries.push(cached.entry);
+  }
+  for (const file of runInventoryCache.keys())
+    if (path.dirname(file) === runsDir && !seen.has(file)) runInventoryCache.delete(file);
+  return entries;
+}
+
 /** Metadata/staging selection shared by the standalone collector and archive-only gateway. Caller holds the bundle lock. */
 async function runBundleHousekeepingInventory(store: RunBundleStore, now: number) {
   const cleanup: RunBundleHousekeepingPath[] = [];
@@ -1750,30 +1850,9 @@ async function runBundleHousekeepingInventory(store: RunBundleStore, now: number
     if (pin) pinned.add(ref.bundleDigest);
   };
   for (const runsDir of [store.runsDir, path.join(store.runsDir, 'archive')]) {
-    for (const run of loadAllRunRecords(runsDir)) {
-      const retain = (ref: RunArtifactBundleRef | undefined, pin: boolean) =>
-        retainReference(ref ? resolveRetainedRunBundleRef(run, ref) : undefined, pin);
-      const active = isActiveListRun(run);
-      if (active) activeRuns.set(run.id, run.engineState?.generation);
-      for (const { ref, decision } of runBundleRefs(run))
-        retain(
-          ref,
-          active ||
-            (decision
-              ? !decision.resolvedAt ||
-                (decision.payload?.kind === 'ready' &&
-                  ['published_draft', 'published_ready'].includes(
-                    decision.payload.prPackage?.publicationStatus ?? '',
-                  ))
-              : false),
-        );
-      // Retired approvals/attestations remain audit dependencies after replay removes the card.
-      for (const decision of readDecisionHistoryFile(
-        decisionHistoryFile(path.join(runsDir, `${run.id}.json`)),
-      )) {
-        if (decision.publicationApproval || decision.evidenceAttestation)
-          retain(decisionArtifactBundleRef(run, decision.payload), true);
-      }
+    for (const run of runInventoryEntries(runsDir)) {
+      if (run.active) activeRuns.set(run.runId, run.generation);
+      for (const { ref, pin } of run.refs) retainReference(ref, pin);
     }
   }
   const intentsDir = path.join(store.runsDir, 'bundle-intents');
