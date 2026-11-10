@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
@@ -128,7 +128,62 @@ test('workspace admission requires machine opt-in and valid explicit runner/mode
     }),
   );
   t.after(() => rmSync(duplicate));
-  await assert.rejects(inspectReviewWorkspaceTarget(admissionInput, 'review-owner'), /exactly one/);
+  await assert.rejects(inspectReviewWorkspaceTarget(admissionInput, 'review-owner'), {
+    code: 'REVIEW_WORKSPACE_NEEDS_CONFIGURATION',
+    message:
+      'Review machine review-node must resolve to exactly one pool configuration for project review; matching pools: duplicate.json, review.json',
+  });
+});
+
+for (const membership of ['pool', 'slot']) {
+  test(`workspace admission selects the project's ${membership} among review-enabled pools`, async (t) => {
+    const primary = path.join(root, 'pool/review.json');
+    const original = readFileSync(primary, 'utf8');
+    const other = path.join(root, 'pool/other-review.json');
+    t.after(() => {
+      writeFileSync(primary, original);
+      rmSync(other);
+    });
+    writeFileSync(
+      other,
+      JSON.stringify({
+        machine: 'review-node',
+        project: 'other',
+        host: 'localhost',
+        slots: [],
+        review_workspaces: { max_concurrent: 9 },
+      }),
+    );
+    if (membership === 'slot') {
+      writeFileSync(
+        primary,
+        JSON.stringify({
+          machine: 'review-node',
+          project: 'mixed',
+          host: 'localhost',
+          slots: [
+            { id: 'review-slot', project: 'review', repo: '/fixture', session: 'review-slot' },
+          ],
+          review_workspaces: { max_concurrent: 2 },
+        }),
+      );
+    }
+    const selected = await inspectReviewWorkspaceTarget(admissionInput, 'review-owner');
+    assert.equal(selected.pool.project, membership === 'slot' ? 'mixed' : 'review');
+    assert.equal(selected.limit, 2);
+    assert.equal(selected.executionNodeId, 'local');
+  });
+}
+
+test('workspace admission refuses a project unserved by the machine', async () => {
+  await assert.rejects(
+    inspectReviewWorkspaceTarget({ ...admissionInput, project: 'unserved' }, 'review-owner'),
+    {
+      code: 'REVIEW_WORKSPACE_NEEDS_CONFIGURATION',
+      message:
+        'Machine review-node has no pool with review workspace capacity configured for project unserved',
+    },
+  );
 });
 
 for (const project of ['farmslot-canary', 'review']) {

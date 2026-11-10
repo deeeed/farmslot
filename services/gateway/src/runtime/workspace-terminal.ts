@@ -41,7 +41,7 @@ export async function resolveWorkspaceTerminal(params: SlotAgentTargetParams) {
     throw new Error('The review worktree is being reclaimed after retention expiry');
   assertNativeRunOwner(run);
   const pools = await loadPoolConfigs();
-  const pool = resolveReviewWorkspacePool(pools, run.reviewWorkspace.machine);
+  const pool = resolveReviewWorkspacePool(pools, run.reviewWorkspace.machine, run.project);
   const local = isLocal(pool.host, pool.machine);
   if ((local ? 'local' : pool.machine) !== run.reviewWorkspace.executionNodeId)
     throw new Error('Review worktree execution node changed');
