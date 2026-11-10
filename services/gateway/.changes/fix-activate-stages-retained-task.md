@@ -1,0 +1,1 @@
+- Restore missing retained task files before slot activation replays prepare on the original checkout; refuse a different pinned checkout before rebinding, preserve existing worker documents, and roll back the slot binding if staging fails.
