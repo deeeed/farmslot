@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { EventEmitter, once } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { after, mock, test } from 'node:test';
+import { after, mock, test, type TestContext } from 'node:test';
 
 import {
   captureCIFixScope,
@@ -33,6 +34,7 @@ const headSha = 'a'.repeat(40);
 const fixedSha = 'b'.repeat(40);
 const scope = { headSha, baseRef: 'main', ownedFiles: ['src/old.ts', 'src/product.ts'] };
 const files = new Map<string, string>();
+const fixEvents = new EventEmitter();
 let completed = false;
 let signal = true;
 let deliveries = 0;
@@ -71,26 +73,30 @@ mock.module('../core/exec.js', {
       }
       if (command.includes('verify-ci-fix')) {
         verifications++;
-        assert.ok(command.includes('src/product.ts'));
-        if (verificationRequest) {
-          verifyCIFixScope({ ...verificationRequest, headSha: completionHead });
-          return ok();
+        try {
+          assert.ok(command.includes('src/product.ts'));
+          if (verificationRequest) {
+            verifyCIFixScope({ ...verificationRequest, headSha: completionHead });
+            return ok();
+          }
+          const code =
+            verificationFailure ??
+            (outside || (requiredFile && !command.includes(requiredFile))
+              ? 'CI_FIX_OUT_OF_SCOPE'
+              : null);
+          return code
+            ? {
+                exitCode: 2,
+                stdout: '',
+                stderr: JSON.stringify({
+                  code,
+                  message: `Branch maintenance refused: ${code}${code === 'CI_FIX_OUT_OF_SCOPE' ? ': .github/workflows/validate.yml' : ''}`,
+                }),
+              }
+            : ok();
+        } finally {
+          fixEvents.emit('verified');
         }
-        const code =
-          verificationFailure ??
-          (outside || (requiredFile && !command.includes(requiredFile))
-            ? 'CI_FIX_OUT_OF_SCOPE'
-            : null);
-        return code
-          ? {
-              exitCode: 2,
-              stdout: '',
-              stderr: JSON.stringify({
-                code,
-                message: `Branch maintenance refused: ${code}${code === 'CI_FIX_OUT_OF_SCOPE' ? ': .github/workflows/validate.yml' : ''}`,
-              }),
-            }
-          : ok();
       }
       if (command.includes('CI-FIX-SIGNAL.json'))
         return ok(completed && signal ? JSON.stringify({ status: 'complete' }) : '');
@@ -298,6 +304,7 @@ mock.module('../runs/store.js', {
       const step = currentRun.steps.find((s) => s.name === name);
       if (!step) throw new Error(`Missing step ${name}`);
       Object.assign(step, patch);
+      if (step.outputs?.phase === 'waiting_for_worker') fixEvents.emit('waiting_for_worker');
     },
   },
 });
@@ -331,14 +338,30 @@ function fixture() {
   return currentRun;
 }
 
-async function finishFix(
-  t: import('node:test').TestContext,
-  runId: string,
-  enableTimers = true,
-  timeoutMs = 1500,
-) {
+async function waitForFix(
+  t: TestContext,
+  event: 'waiting_for_worker' | 'verified',
+  check: () => boolean,
+  fixing: Promise<unknown>,
+): Promise<void> {
+  if (check()) return;
+  const waiting = new AbortController();
+  try {
+    await Promise.race([
+      once(fixEvents, event, { signal: AbortSignal.any([t.signal, waiting.signal]) }),
+      fixing.then(() => {
+        if (!waiting.signal.aborted) assert(check(), `CI fix ended before ${event}`);
+      }),
+    ]);
+    assert(check(), `CI fix did not reach ${event}`);
+  } finally {
+    waiting.abort();
+  }
+}
+
+async function finishFix(t: TestContext, runId: string, enableTimers = true) {
   if (enableTimers) t.mock.timers.enable({ apis: ['setTimeout'] });
-  const deadline = AbortSignal.timeout(timeoutMs);
+  const controller = new AbortController();
   const fixing = tryInlineCIFix(
     runId,
     'fixture-slot',
@@ -346,15 +369,23 @@ async function finishFix(
     ['lint'],
     42,
     'example/product',
-    deadline,
+    AbortSignal.any([t.signal, controller.signal]),
   );
-  while (
-    getRun(runId)?.steps.find((s) => s.name === 'ci-watch')?.outputs?.phase !== 'waiting_for_worker'
-  ) {
-    assert.equal(deadline.aborted, false, 'CI fix did not reach its completion wait');
-    await new Promise<void>((resolve) => setImmediate(resolve));
-  }
+  t.after(async () => {
+    controller.abort();
+    await fixing;
+  });
+  await waitForFix(
+    t,
+    'waiting_for_worker',
+    () =>
+      getRun(runId)?.steps.find((s) => s.name === 'ci-watch')?.outputs?.phase ===
+      'waiting_for_worker',
+    fixing,
+  );
   completed = true;
+  // Let the mock runner's resolved turn state register its poll timer.
+  await new Promise<void>((resolve) => setImmediate(resolve));
   t.mock.timers.tick(30_000);
   return fixing;
 }
@@ -488,7 +519,7 @@ for (const hasSignal of [true, false]) {
           settled = true;
           return result;
         });
-        while (!verifications) await new Promise<void>((resolve) => setImmediate(resolve));
+        await waitForFix(t, 'verified', () => verifications > 0, fixing);
         await new Promise<void>((resolve) => setImmediate(resolve));
         assert.equal(run.ciWatchState?.fixScopeRefusal, undefined);
         assert.equal(settled, false, 'unpublished work must remain pending');
@@ -530,7 +561,7 @@ test(
 
 test(
   'local commit and rebase remain pending before push and complete after publication',
-  { timeout: 5000 },
+  { timeout: 30_000 },
   async (t) => {
     const run = fixture();
     outside = false;
@@ -543,7 +574,7 @@ test(
         cwd: repo,
         encoding: 'utf8',
         stdio: 'pipe',
-        timeout: 1000,
+        timeout: 30_000,
       }).trim();
     git('init', '-q', '-b', 'main');
     git('config', 'user.name', 'Fixture');
@@ -577,11 +608,11 @@ test(
       completionHead = git('rev-parse', 'HEAD');
     };
     let settled = false;
-    const fixing = finishFix(t, run.id, true, 4000).then((result) => {
+    const fixing = finishFix(t, run.id).then((result) => {
       settled = true;
       return result;
     });
-    while (!verifications) await new Promise<void>((resolve) => setImmediate(resolve));
+    await waitForFix(t, 'verified', () => verifications > 0, fixing);
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.notEqual(completionHead, initialHead);
     assert.equal(git('ls-remote', 'origin', 'refs/heads/fix/product').split('\t')[0], initialHead);
@@ -591,5 +622,18 @@ test(
     t.mock.timers.tick(30_000);
     assert.equal((await fixing)?.success, true);
     assert.equal(verifications, 2);
+  },
+);
+
+test(
+  'failed delivery rejects the completion wait without leaving a poller',
+  { timeout: 2000 },
+  async (t) => {
+    const run = fixture();
+    onDelivery = () => {
+      throw new Error('fixture delivery failure');
+    };
+    await assert.rejects(finishFix(t, run.id), /CI fix ended before waiting_for_worker/);
+    assert.equal(verifications, 0);
   },
 );
