@@ -340,6 +340,8 @@ export interface EvalBlindTrial {
     slotId: string;
     slotEpoch: number;
     capsulePath: string;
+    /** Separate endpoint for the browser spawned inside the worker seatbelt. */
+    browserCdpPort?: number;
     verifiedAt?: string;
   };
   firstOutput?: {

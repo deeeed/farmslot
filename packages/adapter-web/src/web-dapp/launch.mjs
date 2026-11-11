@@ -430,7 +430,9 @@ export async function launchWebDappBrowser(
     );
   }
   const target = path.resolve(args.target);
-  const cdpPort = Number(args['cdp-port']);
+  const cdpPort = Number(blindBrowser.direct ? env.RECIPE_CDP_PORT : args['cdp-port']);
+  if (!Number.isInteger(cdpPort) || cdpPort < 1 || cdpPort > 65535)
+    throw new Error('A valid browser CDP port is required; blind trials use RECIPE_CDP_PORT.');
   const appPort = Number(args['app-port']);
   const signer = args.signer;
   // Mainnet needs the real-funds confirmation. Testnet is enforced inside the

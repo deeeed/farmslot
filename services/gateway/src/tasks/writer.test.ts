@@ -902,6 +902,33 @@ test('formatPrTitleSuffix normalizes the configured human gate suffix', () => {
   assert.equal(formatPrTitleSuffix(undefined), '');
 });
 
+test('blind task generation publishes the contained browser CDP port', async (t) => {
+  const run = makeRun('BLIND-CDP', 'contained-browser');
+  run.project = legacyProject;
+  run.engineState = makeArtifactOnlyReplayRun().engineState;
+  run.engineState!.evalExperiment!.blind = {
+    version: 1,
+    baseSha: 'a'.repeat(40),
+    problemDigest: 'problem',
+    referenceCommits: [],
+    referencePatchId: 'reference',
+    forbiddenInputs: [],
+    isolation: {
+      slotId: run.slotId!,
+      slotEpoch: 1,
+      capsulePath: '/synthetic/capsule',
+      browserCdpPort: 19444,
+      verifiedAt: '2026-11-12T00:00:00Z',
+    },
+  };
+  let taskPath = '';
+  t.after(async () => {
+    if (taskPath) await rm(path.dirname(taskPath), { recursive: true, force: true });
+  });
+  taskPath = await writeTaskFixture(run, { skipCollisionCheck: true });
+  assert.match(await readFile(taskPath, 'utf8'), /^CDP_PORT: 19444$/mu);
+});
+
 test('writeTaskFile renders selected template variant and leaves source template unchanged', async (t) => {
   const workerDir = path.join(legacyPack, 'templates', 'worker');
   const sourcePath = path.join(workerDir, 'dev.md');
