@@ -1,0 +1,1 @@
+- Export the canonical machine pool filename helper so catalog slot selection uses the shared naming rule.
