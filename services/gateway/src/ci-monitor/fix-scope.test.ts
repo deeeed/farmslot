@@ -159,7 +159,11 @@ mock.module('../tasks/watcher.js', {
   namedExports: { watchContext: async () => {}, unwatchContext: async () => {} },
 });
 mock.module('../runners/prompt-delivery-evidence.js', {
-  namedExports: { readLaunchAckSignalSnapshot: async () => null },
+  namedExports: {
+    readRunnerPromptAcceptance: (await import('../runners/prompt-delivery-evidence.js'))
+      .readRunnerPromptAcceptance,
+    readLaunchAckSignalSnapshot: async () => null,
+  },
 });
 mock.module('../runners/worker-prompt.js', {
   namedExports: { resolveWorkerDispatchPrompt: async () => 'Read CI-FIX.md' },

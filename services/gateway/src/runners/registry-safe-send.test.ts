@@ -306,6 +306,8 @@ mock.module('../core/exec.js', {
 
 mock.module('./prompt-delivery-evidence.js', {
   namedExports: {
+    readRunnerPromptAcceptance: (await import('./prompt-delivery-evidence.js'))
+      .readRunnerPromptAcceptance,
     readLaunchAckSignalSnapshot: async () => {
       launchAckSnapshotReads += 1;
       return { raw: null, status: null, mtimeNs: '0' };

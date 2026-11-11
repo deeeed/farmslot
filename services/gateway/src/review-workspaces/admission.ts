@@ -22,6 +22,7 @@ import {
   runnerSupportsReadonlyReviewWorkspace,
   runnerTerminalReviewRefusal,
 } from '../runners/native/review-workspace.js';
+import { readRunnerPromptAcceptance } from '../runners/prompt-delivery-evidence.js';
 import {
   getRunnerObservability,
   isKnownRunner,
@@ -60,7 +61,7 @@ export interface ReviewWorkspaceAdmission {
 export interface ReviewWorkspaceTerminalFollowup {
   sessionId: string;
   sessionPath: string;
-  message: string;
+  message?: string;
   since: number;
 }
 
@@ -168,7 +169,7 @@ async function reviewFollowupIsIdle(
       !isRecord(terminal) ||
       typeof terminal.sessionId !== 'string' ||
       typeof terminal.sessionPath !== 'string' ||
-      typeof terminal.message !== 'string' ||
+      (terminal.message !== undefined && typeof terminal.message !== 'string') ||
       typeof terminal.since !== 'number' ||
       context?.runnerSessionId !== terminal.sessionId ||
       context.runnerSessionPath !== terminal.sessionPath
@@ -176,18 +177,27 @@ async function reviewFollowupIsIdle(
       return false;
     const vars = await reviewWorkspaceRunnerVars(run);
     const observer = getRunnerObservability(context.runner);
-    if (!vars || !observer?.promptAcceptedInSession || !observer.getSessionDeliveryState)
-      return false;
-    const accepted = await observer.promptAcceptedInSession(
-      vars,
-      vars.session,
-      terminal.sessionId,
-      terminal.sessionPath,
-      terminal.message,
-      terminal.since,
-    );
-    if (accepted?.value !== true || !accepted.exactPromptMatch || accepted.confidence !== 'high')
-      return false;
+    if (!vars || !observer) return false;
+    let completedAfter = terminal.since;
+    if (typeof terminal.message === 'string') {
+      // Use the same native-or-digest capability choice as the shared submitter.
+      const accepted = await readRunnerPromptAcceptance(
+        observer,
+        vars,
+        vars.session,
+        terminal.message,
+        terminal.since,
+        { sessionId: terminal.sessionId, sessionPath: terminal.sessionPath },
+      );
+      if (
+        accepted?.value !== true ||
+        !accepted.exactPromptMatch ||
+        accepted.confidence !== 'high' ||
+        !['hook', 'signal'].includes(accepted.source)
+      )
+        return false;
+      completedAfter = accepted.observedAt;
+    }
     const state = await observer.getSessionDeliveryState(
       vars,
       vars.session,
@@ -198,7 +208,8 @@ async function reviewFollowupIsIdle(
       state?.value === 'idle' &&
       state.confidence === 'high' &&
       ['hook', 'signal'].includes(state.source) &&
-      state.observedAt >= accepted.observedAt
+      state.observedAt >= completedAfter &&
+      (typeof terminal.message === 'string' || state.observedAt > terminal.since)
     );
   });
 }

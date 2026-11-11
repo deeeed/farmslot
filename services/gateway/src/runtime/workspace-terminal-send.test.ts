@@ -11,6 +11,7 @@ const actualExec = await import('../core/exec.js');
 const actualRegistry = await import('../runners/registry.js');
 const observer = actualRegistry.getRunnerObservability('codex');
 assert(observer);
+let runnerObserver = observer;
 const { registerNode, unregisterByWs } = await import('../fleet/machine-registry.js');
 const { handleNodeResponse } = await import('../fleet/node-rpc.js');
 const session = 'review-submission-proof';
@@ -111,7 +112,7 @@ mock.module('../runners/registry.js', {
       return outcome;
     },
     captureRunnerPromptAcceptanceBaseline: async () => 1000,
-    getRunnerObservability: () => observer,
+    getRunnerObservability: () => runnerObserver,
   },
 });
 mock.module('../review-workspaces/admission.js', {
@@ -127,9 +128,10 @@ mock.module('../core/exec.js', {
     },
   },
 });
-const { workspaceTerminalOperation, resolveWorkspaceTerminal } =
+const { workspaceTerminalOperation, resolveWorkspaceTerminal, writeWorkspaceTerminalInput } =
   await import('./workspace-terminal.js');
 beforeEach(() => {
+  runnerObserver = observer;
   pools = [];
   operations.length = 0;
   submit.mock.resetCalls();
@@ -147,49 +149,89 @@ beforeEach(() => {
   rawCommands = 0;
 });
 
-test('retained terminal follow-ups reserve shared capacity before submission', async () => {
-  currentRun = {
-    ...run,
-    nativeOwnerPrincipalId: 'owner',
-    reviewWorkspace: { ...run.reviewWorkspace!, retainedAt: '2026-11-11T00:00:00Z' },
-    reviewResult: {
-      recommendation: 'APPROVE',
-      reviewMd: 'Saved review',
-      lineComments: [],
-      artifactManifest: [],
-    },
-    agentContexts: [
-      {
-        ...run.agentContexts![0],
-        runnerSessionId: 'saved-session',
-        runnerSessionPath: '/proof/session.jsonl',
+for (const runner of ['codex', 'claude', 'pi']) {
+  test(`retained ${runner} terminal follow-ups reserve shared capacity before submission`, async () => {
+    const candidateObserver = actualRegistry.getRunnerObservability(runner);
+    assert(candidateObserver);
+    runnerObserver = candidateObserver;
+    currentRun = {
+      ...run,
+      nativeOwnerPrincipalId: 'owner',
+      reviewWorkspace: { ...run.reviewWorkspace!, retainedAt: '2026-11-11T00:00:00Z' },
+      reviewResult: {
+        recommendation: 'APPROVE',
+        reviewMd: 'Saved review',
+        lineComments: [],
+        artifactManifest: [],
       },
-    ],
-  };
-  submit.mock.mockImplementationOnce(async () => {
-    assert.equal(admit.mock.callCount(), 1);
+      agentContexts: [
+        {
+          ...run.agentContexts![0],
+          runner,
+          runnerSessionId: 'saved-session',
+          runnerSessionPath: '/proof/session.jsonl',
+        },
+      ],
+    };
+    submit.mock.mockImplementationOnce(async () => {
+      assert.equal(admit.mock.callCount(), 1);
+    });
+    await workspaceTerminalOperation(currentRun, 'send', {
+      text: 'Explain the prior finding',
+      enter: true,
+    });
+    const args = admit.mock.calls[0].arguments;
+    assert.equal(args[0], run.id);
+    assert.equal(typeof args[1], 'string');
+    assert.deepEqual(args[2], {
+      sessionId: 'saved-session',
+      sessionPath: '/proof/session.jsonl',
+      message: 'Explain the prior finding',
+      since: 1000,
+    });
+    full = true;
+    submit.mock.resetCalls();
+    await assert.rejects(
+      workspaceTerminalOperation(currentRun, 'send', { text: 'Another follow-up' }),
+      /capacity is full/,
+    );
+    assert.equal(submit.mock.callCount(), 0);
+    admit.mock.resetCalls();
+    let typed = 0;
+    await writeWorkspaceTerminalInput(currentRun, 'draft', () => {
+      typed++;
+    });
+    assert.equal(admit.mock.callCount(), 0, 'draft keys do not consume admission');
+    await assert.rejects(
+      writeWorkspaceTerminalInput(currentRun, '\r', () => {
+        typed++;
+      }),
+      /capacity is full/,
+    );
+    assert.equal(typed, 1, 'refused Enter is not typed');
+    full = false;
+    await writeWorkspaceTerminalInput(currentRun, '\r', () => {
+      typed++;
+    });
+    assert.equal(typed, 2);
+    const raw = admit.mock.calls.at(-1)!.arguments[2];
+    assert.deepEqual(raw, {
+      sessionId: 'saved-session',
+      sessionPath: '/proof/session.jsonl',
+      since: 1000,
+    });
+    admit.mock.mockImplementationOnce(async () => {
+      ownerAvailable = false;
+    });
+    await assert.rejects(
+      writeWorkspaceTerminalInput(currentRun, '\r', () => {
+        typed++;
+      }),
+      /authority changed/,
+    );
+    assert.equal(typed, 2, 'revoked ownership refuses raw input after admission');
   });
-  await workspaceTerminalOperation(currentRun, 'send', {
-    text: 'Explain the prior finding',
-    enter: true,
-  });
-  const args = admit.mock.calls[0].arguments;
-  assert.equal(args[0], run.id);
-  assert.equal(typeof args[1], 'string');
-  assert.deepEqual(args[2], {
-    sessionId: 'saved-session',
-    sessionPath: '/proof/session.jsonl',
-    message: 'Explain the prior finding',
-    since: 1000,
-  });
-  full = true;
-  submit.mock.resetCalls();
-  await assert.rejects(
-    workspaceTerminalOperation(currentRun, 'send', { text: 'Another follow-up' }),
-    /capacity is full/,
-  );
-  assert.equal(submit.mock.callCount(), 0);
-});
+}
 
 test('an untouched terminal refusal releases its reservation; unconfirmed typing keeps it', async () => {
   currentRun = {

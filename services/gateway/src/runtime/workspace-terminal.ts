@@ -107,14 +107,17 @@ export function workspacePaneInputRecord(run: Run, session: string): PaneInputRe
 }
 
 /** Keep shared runner observations and input on the review owner's transport. */
-export function withReviewWorkspaceExecutor<T>(run: Run, operation: () => Promise<T>): Promise<T> {
+export function withReviewWorkspaceExecutor<T>(
+  run: Run,
+  operation: (assertCurrent: () => void) => Promise<T>,
+): Promise<T> {
   assertNativeRunOwner(run);
   const workspace = structuredClone(run.reviewWorkspace);
   if (!workspace) throw new Error('Review workspace is unavailable');
   const { workspaceId, machine, executionNodeId } = workspace;
   const owner = run.nativeOwnerPrincipalId;
   const generation = run.engineState?.generation ?? 0;
-  return withSlotCommandExecutor(async (target, command, options) => {
+  const assertCurrent = () => {
     const current = getRun(run.id);
     if (
       !current?.reviewWorkspace ||
@@ -125,16 +128,71 @@ export function withReviewWorkspaceExecutor<T>(run: Run, operation: () => Promis
       current.nativeOwnerPrincipalId !== owner ||
       (current.engineState?.generation ?? 0) !== generation ||
       current.reviewWorkspace.checkoutPath !== workspace.checkoutPath ||
-      current.reviewWorkspace.taskPath !== workspace.taskPath ||
-      target.machine !== machine
+      current.reviewWorkspace.taskPath !== workspace.taskPath
     )
       throw new Error('Review workspace authority changed before runner input');
     assertNativeRunOwner(current);
-    if (executionNodeId === 'local') return execFileArgv(['bash', '-c', command], options);
-    const body = `cd ${shellQuote(options.cwd ?? target.remoteRepo)} && ${command}`;
-    if (!owner) throw new Error('Remote review workspace has no owner');
-    return execNativeNodeArgv(owner, machine, ['bash', '-c', body], options.timeout ?? 10000);
-  }, operation);
+  };
+  return withSlotCommandExecutor(
+    async (target, command, options) => {
+      assertCurrent();
+      if (target.machine !== machine) throw new Error('Review workspace execution target changed');
+      if (executionNodeId === 'local') return execFileArgv(['bash', '-c', command], options);
+      const body = `cd ${shellQuote(options.cwd ?? target.remoteRepo)} && ${command}`;
+      if (!owner) throw new Error('Remote review workspace has no owner');
+      return execNativeNodeArgv(owner, machine, ['bash', '-c', body], options.timeout ?? 10000);
+    },
+    () => operation(assertCurrent),
+  );
+}
+
+/** Reserve before a terminal command can start more work in a retained conversation. */
+async function admitWorkspaceTerminalFollowup(run: Run, message?: string): Promise<string> {
+  const vars = await reviewWorkspaceRunnerVars(run);
+  const context = run.agentContexts?.find((entry) => entry.id === 'review');
+  if (
+    !vars ||
+    vars.session !== reviewTmuxSession(run) ||
+    !run.nativeOwnerPrincipalId ||
+    !context?.runner ||
+    !context.runnerSessionId ||
+    !context.runnerSessionPath ||
+    !getRunnerObservability(context.runner)?.getSessionDeliveryState
+  )
+    throw new Error('Retained reviewer input requires its exact observable conversation');
+  const since = await captureRunnerPromptAcceptanceBaseline(vars, vars.session, context.runner);
+  if (since === null) throw new Error('Retained reviewer input has no acceptance baseline');
+  const { admitReviewWorkspaceFollowup } = await import('../review-workspaces/admission.js');
+  const commandId = randomUUID();
+  await admitReviewWorkspaceFollowup(run.id, commandId, {
+    sessionId: context.runnerSessionId,
+    sessionPath: context.runnerSessionPath,
+    since,
+    ...(message === undefined ? {} : { message }),
+  });
+  return commandId;
+}
+
+/** Enter/newline may submit; draft keys remain raw and do not reserve admission. */
+export async function writeWorkspaceTerminalInput(
+  run: Run,
+  data: string,
+  write: () => Promise<void> | void,
+): Promise<void> {
+  if (
+    run.transport !== 'tmux' ||
+    !run.reviewWorkspace?.retainedAt ||
+    !run.reviewResult ||
+    !(data.includes('\r') || data.includes('\n'))
+  ) {
+    await write();
+    return;
+  }
+  await withReviewWorkspaceExecutor(run, async (assertCurrent) => {
+    await admitWorkspaceTerminalFollowup(run);
+    assertCurrent();
+    await write();
+  });
 }
 
 export async function workspaceTerminalOperation(
@@ -184,24 +242,10 @@ export async function workspaceTerminalOperation(
         : undefined;
     await withReviewWorkspaceExecutor(run, async () => {
       if (run.reviewWorkspace?.retainedAt && run.reviewResult) {
-        const observer = getRunnerObservability(runner);
-        if (
-          !retainedSession ||
-          !observer?.promptAcceptedInSession ||
-          !observer.getSessionDeliveryState
-        )
-          throw new Error('Retained reviewer input requires its exact observable conversation');
-        const since = await captureRunnerPromptAcceptanceBaseline(vars, vars.session, runner);
-        if (since === null) throw new Error('Retained reviewer input has no acceptance baseline');
-        if (!owner) throw new Error('Retained reviewer input has no owner');
-        const { admitReviewWorkspaceFollowup, settleReviewWorkspaceFollowups } =
+        const { settleReviewWorkspaceFollowups } =
           await import('../review-workspaces/admission.js');
-        const commandId = randomUUID();
-        await admitReviewWorkspaceFollowup(run.id, commandId, {
-          ...retainedSession,
-          message: input.text ?? '',
-          since,
-        });
+        if (!owner) throw new Error('Retained reviewer input has no owner');
+        const commandId = await admitWorkspaceTerminalFollowup(run, input.text ?? '');
         const outcome = await submitRunnerPrompt(vars, vars.session, runner, input.text ?? '', {
           retainedSession,
         });

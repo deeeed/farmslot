@@ -10,6 +10,8 @@ const registry = await import('../runners/registry.js');
 const observer = registry.getRunnerObservability('codex');
 assert(observer);
 let terminalState: 'active' | 'idle' = 'active';
+let nativeText = true;
+let terminalAt = 20;
 const runs = new Map<string, Run>();
 const readWorker = mock.fn(async () => {
   throw new Error('Native source unavailable');
@@ -30,18 +32,27 @@ mock.module('../runners/registry.js', {
     ...registry,
     getRunnerObservability: () => ({
       ...observer,
-      promptAcceptedInSession: async () => ({
+      promptAccepted: async () => ({
         value: true,
         source: 'signal' as const,
         confidence: 'high' as const,
         observedAt: 10,
         exactPromptMatch: true,
       }),
+      promptAcceptedInSession: nativeText
+        ? async () => ({
+            value: true,
+            source: 'signal' as const,
+            confidence: 'high' as const,
+            observedAt: 10,
+            exactPromptMatch: true,
+          })
+        : undefined,
       getSessionDeliveryState: async () => ({
         value: terminalState,
         source: 'signal' as const,
         confidence: 'high' as const,
-        observedAt: 20,
+        observedAt: terminalAt,
       }),
     }),
   },
@@ -138,6 +149,8 @@ beforeEach(() => {
   runs.clear();
   readWorker.mock.resetCalls();
   terminalState = 'active';
+  terminalAt = 20;
+  nativeText = true;
 });
 
 test('a stopped review clears a stale follow-up without reading its unavailable host', async () => {
@@ -175,4 +188,32 @@ test('terminal follow-up capacity clears only after exact acceptance and structu
   assert.equal(run.steps[0].outputs?.reviewFollowupCommandId, undefined);
   assert.equal(activeWorkspaceReviews('node', [...runs.values()]), 0);
   assert.equal(readWorker.mock.callCount(), 0);
+});
+
+test('digest-only observers release a completed retained terminal turn', async () => {
+  const run = retained('tmux');
+  nativeText = false;
+  terminalState = 'idle';
+  await settleReviewWorkspaceFollowups('node', 'owner');
+  assert.equal(run.steps[0].outputs?.reviewFollowupCommandId, undefined);
+  assert.equal(activeWorkspaceReviews('node', [...runs.values()]), 0);
+});
+
+test('raw terminal input keeps capacity until that exact session ends a newer turn', async () => {
+  const run = retained('tmux');
+  run.steps[0].outputs!.reviewFollowupTerminal = {
+    sessionId: 'conversation',
+    sessionPath: '/owned/conversation.jsonl',
+    since: 21,
+  };
+  terminalState = 'idle';
+  await settleReviewWorkspaceFollowups('node', 'owner');
+  assert.equal(
+    activeWorkspaceReviews('node', [...runs.values()]),
+    1,
+    'old idle cannot release raw input',
+  );
+  terminalAt = 30;
+  await settleReviewWorkspaceFollowups('node', 'owner');
+  assert.equal(activeWorkspaceReviews('node', [...runs.values()]), 0);
 });
