@@ -168,6 +168,11 @@ test('materialization ignores an execution-only pool and preserves frozen guidan
     };
     const first = await materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps);
     const task = await readFile(first.taskFile, 'utf8');
+    assert.match(
+      task,
+      /Mark completed checklist steps with .*mark' N, using the visible 1-based number/,
+    );
+    assert.match(task, /Child checklist completion marks its parent step/);
     assert.equal((task.match(/complete --mark-last/g) ?? []).length, 1);
     assert.doesNotMatch(
       task,
