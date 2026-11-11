@@ -352,17 +352,28 @@ export async function queryNodeModelCatalog(
 ): Promise<RunnerModelCatalogResult> {
   await Promise.all(
     nodes.map(async (node) => {
-      try {
-        store.record(runner, node.machine, source.parse(await node.list(source)));
-      } catch (error) {
-        store.unavailable(runner, node.machine);
-        console.warn(
-          `[runner-models] ${runner} model list on ${node.machine} failed; keeping its last listing: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
+      const ids = await listNodeModels(runner, source, node);
+      if (ids) store.record(runner, node.machine, ids);
+      else store.unavailable(runner, node.machine);
     }),
   );
   return store.result(runner);
+}
+
+/** A failed command or parse leaves the node's last good listing intact. */
+export async function listNodeModels(
+  runner: string,
+  source: RunnerModelCatalogNodeSource,
+  node: ModelCatalogNode,
+): Promise<string[] | undefined> {
+  try {
+    return source.parse(await node.list(source));
+  } catch (error) {
+    console.warn(
+      `[runner-models] ${runner} model list on ${node.machine} failed; keeping its last listing: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return undefined;
+  }
 }
 
 function arrayField(data: unknown, key: string): unknown[] {
