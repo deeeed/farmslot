@@ -1,0 +1,1 @@
+- Add a live-run browser proof for checklist step detail.

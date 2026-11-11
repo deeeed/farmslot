@@ -1,0 +1,1 @@
+- Expand checklist step titles to read their instructions, collapsed by default.

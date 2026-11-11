@@ -31,6 +31,7 @@ import {
   type SlotStatus,
   sortRunsForFamilyView,
   type TaskProgressResult,
+  taskProgressWithStepDetails,
   validVisualJudgmentReason,
 } from '@farmslot/protocol';
 import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
@@ -1250,7 +1251,7 @@ export class RunDetail extends RunDetailState {
     const query = this.progressQuery.belongsToWorkspace ? this.progressQuery : undefined;
     const data = query?.state.data;
     const ledger = acceptanceLedgerRead(query, this._now);
-    this.taskProgress = data?.structured ?? null;
+    this.taskProgress = taskProgressWithStepDetails(data?.structured, data?.markdown) ?? null;
     this.acceptanceStatus = data?.acceptanceStatus ?? null;
     this.acceptanceCriteria = data?.acceptanceCriteria ?? null;
     this.acceptanceStatusError = ledger.error;
