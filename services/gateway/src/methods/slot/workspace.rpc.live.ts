@@ -11,14 +11,17 @@ import { promisify } from 'node:util';
 
 import {
   type FleetStatusResult,
+  isRecord,
   type SlotRefreshResult,
   slotWorkspaceIdentity,
 } from '@farmslot/protocol';
 
+import { testGatewayIdentity } from '../../../../../scripts/lib/test-gateway-identity-source.mjs';
 import { createNativeProofFixture } from '../../runtime/native-proof-fixture.live-support.js';
 
 const uiProof = process.env.FARMSLOT_WORKSPACE_UI_PROOF === '1';
 const layoutProof = process.env.FARMSLOT_WORKSPACE_LAYOUT_PROOF === '1';
+const cliRecoveryOnly = process.env.FARMSLOT_WORKSPACE_CLI_RECOVERY_PROOF === '1';
 const coldFailureOnly = process.env.FARMSLOT_WORKSPACE_COLD_FAILURE_PROOF === '1';
 const cancellationOnly = process.env.FARMSLOT_WORKSPACE_CANCEL_FAILURE_PROOF === '1';
 const source = fileURLToPath(new URL('../../../../../', import.meta.url));
@@ -501,6 +504,86 @@ touch "$FARMSLOT_ROOT/recycle-entered"
       coldHeld,
       'Refused prepare preserves the recovery marker and identity',
     );
+    if (cliRecoveryOnly) {
+      const dirtyPath = path.join(repo, '.agents/skills/recovery-proof/owned.txt');
+      await mkdir(path.dirname(dirtyPath), { recursive: true });
+      await writeFile(dirtyPath, 'disposable generated fixture\n');
+      const cliHome = path.join(root, 'auth');
+      testGatewayIdentity(cliHome, fixture.url);
+      const cli = await promisify(execFile)(
+        process.execPath,
+        [
+          '--import',
+          'tsx',
+          path.join(source, 'packages/cli/src/entry.ts'),
+          '--url',
+          fixture.url,
+          '--json',
+          'slot',
+          'refresh',
+          'proof-slot',
+          '--recover',
+          '--force',
+        ],
+        {
+          cwd: source,
+          env: {
+            ...process.env,
+            FARMSLOT_HOME: cliHome,
+            FARMSLOT_GATEWAY_PROFILE: 'proof',
+            TSX_TSCONFIG_PATH: path.join(source, 'packages/cli/tsconfig.json'),
+          },
+          timeout: 60000,
+        },
+      ).catch(async (error: unknown) => {
+        if (isRecord(error) && typeof error.stdout === 'string') {
+          assert.equal(await readFile(dirtyPath, 'utf8'), 'disposable generated fixture\n');
+          await writeFile(
+            path.join(output, 'cli-refusal.json'),
+            JSON.stringify(
+              {
+                stdout: error.stdout,
+                branch: git(repo, 'branch', '--show-current'),
+                dirty: git(repo, 'status', '--porcelain'),
+                dirtyFixturePreserved: true,
+              },
+              null,
+              2,
+            ) + '\n',
+          );
+        }
+        throw error;
+      });
+      const result: unknown = JSON.parse(cli.stdout);
+      assert.ok(isRecord(result) && isRecord(result.data));
+      assert.equal(result.status, 'ok', cli.stdout);
+      assert.equal(result.data.refreshed, true, cli.stdout);
+      assert.equal(git(repo, 'status', '--porcelain'), '');
+      assert.equal(git(repo, 'branch', '--show-current'), 'main');
+      assert.equal(git(repo, 'rev-parse', 'HEAD'), git(repo, 'rev-parse', 'origin/main'));
+      const ready = await core.readSlotRow('proof-slot');
+      assert.equal(ready?.lifecycle, 'ready');
+      assert.equal(ready?.workspace_recovery, null);
+      await writeFile(
+        path.join(output, 'cli-recovery.json'),
+        JSON.stringify(
+          {
+            pass: true,
+            sourceHead: git(source, 'rev-parse', 'HEAD'),
+            sourceChanges: git(source, 'status', '--porcelain'),
+            cli: result,
+            branch: 'main',
+            dirtyCount: 0,
+            recoveryCleared: true,
+            proof:
+              'authenticated CLI and gateway, real Git and fixture recovery; disposable checkout only',
+          },
+          null,
+          2,
+        ) + '\n',
+      );
+      return;
+    }
     const retryCold = await inspectSlotWorkspace('proof-slot');
     const recovered = await call<SlotRefreshResult>('slot.refresh', {
       slotId: 'proof-slot',

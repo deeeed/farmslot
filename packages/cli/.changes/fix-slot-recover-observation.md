@@ -1,0 +1,1 @@
+- Await a current workspace observation for forced recovery so a cold fleet cache does not lose the discard confirmation.
