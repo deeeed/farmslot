@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, beforeEach, mock, test } from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 
 import type { Run } from '@farmslot/protocol';
 import type { RawPoolJson } from '@farmslot/slot-config';
@@ -178,12 +179,31 @@ test('slotless Pi correction confirms its real task-scoped input hook without wo
 });
 
 for (const rejected of ['missing', 'foreign-pane', 'stale', 'wrong-prompt'] as const) {
-  test(`slotless Pi correction rejects a ${rejected} acceptance receipt without retyping`, async () => {
+  test(`slotless Pi correction rejects a ${rejected} acceptance receipt without retyping`, async (t) => {
     receipt = rejected;
-    await assert.rejects(
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+    t.after(() => t.mock.timers.reset());
+    let settled = false;
+    const rejection = assert.rejects(
       workspaceTerminalOperation(run, 'send', { text: message, enter: true }),
       /Runner submission was not confirmed; text may be buffered/,
     );
+    void rejection.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    // Advance the deadline while allowing the real hook-file reads to complete.
+    const deadline = performance.now() + 1_000;
+    while (!settled && performance.now() < deadline) {
+      t.mock.timers.tick(1);
+      await setImmediate();
+    }
+    assert.equal(settled, true, 'receipt observation must finish under the mocked clock');
+    await rejection;
     assert.equal(submitted, 1);
     assert.equal(pasted, message);
   });
