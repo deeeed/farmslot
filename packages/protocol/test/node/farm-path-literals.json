@@ -24,6 +24,18 @@
     "count": 2
   },
   {
+    "file": "services/gateway/src/evals/blind-git.py",
+    "literal": "farmslot-node",
+    "reason": "Blind worker security denials cover both legacy node installations, independently of the selected instance, and guard their ancestors against renames.",
+    "count": 2
+  },
+  {
+    "file": "services/gateway/src/evals/blind-git.py",
+    "literal": "farmslot-node-dev",
+    "reason": "Blind worker security denials cover both legacy node installations, independently of the selected instance, and guard their ancestors against renames.",
+    "count": 2
+  },
+  {
     "file": "services/gateway/src/node-support/activation.ts",
     "literal": ": farmslot-node-support-activate\npython3 -c ",
     "reason": "Support activation command identification marker, not a path.",
