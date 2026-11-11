@@ -6,17 +6,19 @@ import { mock, test } from 'node:test';
 
 import { WebSocket, WebSocketServer } from 'ws';
 
-import type { Run } from '@farmslot/protocol';
+import type { NodeFsReadTextParams, Run } from '@farmslot/protocol';
 
 await import('../runtime/mock-pty.test-support.js');
 const config = await import('../core/config.js');
 const execution = await import('../core/exec.js');
-const { NodeExecUnconfirmedError } = await import('../fleet/node-rpc.js');
+const { NodeExecUnconfirmedError, handleNodeResponse } = await import('../fleet/node-rpc.js');
+const nodeFs = await import('../../../node/src/commands/fs.js');
 const { registerNode, unregisterByWs } = await import('../fleet/machine-registry.js');
 const templates = await import('./templates.js');
 const { makeVars } = await import('../runners/test-fixtures.js');
 const vars = makeVars({ projectName: 'read-probes', remoteRepo: '/fixture/terminal' });
-// Remote slots read runner files through the node's shell; local slots read them in-process.
+// Remote slots whose node declares no text reads read runner files through the node's shell;
+// local slots read them in-process.
 const remoteVars = { ...vars, host: 'remote-fixture', machine: 'remote-fixture-node' };
 let execute: typeof execution.execOnSlot = async () => ({ stdout: '', stderr: '', exitCode: 0 });
 mock.module('../core/config.js', {
@@ -42,6 +44,26 @@ const probes: typeof import('../core/read-probes.js') = await import(probeModule
 mock.module('../core/read-probes.js', { namedExports: { ...probes } });
 const reviewedModule: string = './reviewed-inputs.js?bounded-read-probes';
 const { readReviewedInputs }: typeof import('./reviewed-inputs.js') = await import(reviewedModule);
+// slot-files.ts uses execOnSlot from exec.js and readSlotProbe from read-probes.js. Load it fresh
+// with the mocked execution boundary (same pattern as observability-files below) so its shell-read
+// path goes through the test's execute stub rather than the real node-exec layer.
+const slotFilesModule: string = '../host-services/slot-files.js?bounded-read-probes';
+const freshSlotFiles: typeof import('../host-services/slot-files.js') = await import(
+  slotFilesModule
+);
+// Use a mutable impl so the EPERM test can swap in an fs-mocked version without re-mocking the
+// module (Node.js rejects a second mock.module on a module already mocked at the outer level).
+let _slotFilesImpl = freshSlotFiles.default;
+mock.module('../host-services/slot-files.js', {
+  namedExports: {
+    ...freshSlotFiles,
+    default: {
+      read: (...args: Parameters<typeof _slotFilesImpl.read>) => _slotFilesImpl.read(...args),
+      tail: (...args: Parameters<typeof _slotFilesImpl.tail>) => _slotFilesImpl.tail(...args),
+      isFile: (...args: Parameters<typeof _slotFilesImpl.isFile>) => _slotFilesImpl.isFile(...args),
+    },
+  },
+});
 const observabilityModule: string = '../runners/observability-files.js?bounded-read-probes';
 const {
   readRunnerObservabilityFiles,
@@ -225,7 +247,7 @@ test('concurrent progress consumers share the same slow hooks and statusline rea
   let hooks = 0;
   let statuslines = 0;
   execute = async (_slot, command) => {
-    if (command.includes('install.json')) return { stdout: 'external', stderr: '', exitCode: 0 };
+    if (command.includes('install.json')) return { stdout: '1', stderr: '', exitCode: 0 };
     if (command.includes('tail -c')) hooks++;
     else statuslines++;
     await hold.promise;
@@ -255,7 +277,7 @@ for (const snapshot of [
     const hold = latch();
     let reads = 0;
     execute = async (_slot, command) => {
-      if (command.includes('install.json')) return { stdout: 'external', stderr: '', exitCode: 0 };
+      if (command.includes('install.json')) return { stdout: '1', stderr: '', exitCode: 0 };
       reads++;
       await hold.promise;
       return { stdout: '{"event":"Stop"}', stderr: '', exitCode: 0 };
@@ -315,6 +337,17 @@ test('a local runner file the OS refuses (EPERM) reads as empty, as the shell re
     namedExports: { ...fs, open: refuse, readFile: refuse, stat: refuse },
   });
   t.after(() => refused.restore());
+  // slot-files.ts owns the in-process fs calls; load it fresh after the fs mock so it picks up
+  // the EPERM functions rather than the real fs captured when the top-level mock was set up.
+  // Swap the mutable impl behind the top-level proxy rather than re-mocking the module.
+  const slotFilesEperm: string = '../host-services/slot-files.js?eperm';
+  const freshSlotFilesEperm: typeof import('../host-services/slot-files.js') = await import(
+    slotFilesEperm
+  );
+  _slotFilesImpl = freshSlotFilesEperm.default;
+  t.after(() => {
+    _slotFilesImpl = freshSlotFiles.default;
+  });
   const eperm: string = '../runners/observability-files.js?eperm';
   const files: typeof import('../runners/observability-files.js') = await import(eperm);
   let commands = 0;
@@ -435,8 +468,14 @@ test('a late closeout from the node admits the next probe on the same connection
   assert.equal(launches, 2);
 });
 
-/** A node-side socket of a real local WebSocket connection, torn down after the test. */
-async function connectedSocket(t: test.TestContext): Promise<WebSocket> {
+/** Node requests the far end answers; `undefined` leaves the request unanswered. */
+type NodeAnswer = (method: string, params: unknown) => Promise<unknown> | undefined;
+
+/**
+ * A node-side socket of a real local WebSocket connection, torn down after the test. With
+ * `answer`, the far end replies to gateway requests as services/node does.
+ */
+async function connectedSocket(t: test.TestContext, answer?: NodeAnswer): Promise<WebSocket> {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
   let client: WebSocket | undefined;
   t.after(async () => {
@@ -461,7 +500,82 @@ async function connectedSocket(t: test.TestContext): Promise<WebSocket> {
     connection.once('open', resolve).once('error', reject),
   );
   const socket = await peer;
+  if (answer) {
+    connection.on('message', (raw) => {
+      const frame = JSON.parse(String(raw)) as { id: string; method: string; params: unknown };
+      void answer(frame.method, frame.params)?.then(
+        (payload) =>
+          connection.send(JSON.stringify({ type: 'res', id: frame.id, ok: true, payload })),
+        (error: NodeJS.ErrnoException) =>
+          connection.send(
+            JSON.stringify({
+              type: 'res',
+              id: frame.id,
+              ok: false,
+              error: { code: error.code, message: error.message },
+            }),
+          ),
+      );
+    });
+    socket.on('message', (raw) => {
+      const frame = JSON.parse(String(raw)) as {
+        id: string;
+        ok: boolean;
+        payload?: unknown;
+        error?: { code?: string; message: string };
+      };
+      handleNodeResponse(
+        frame.id,
+        frame.ok,
+        frame.payload,
+        frame.error?.message,
+        frame.error?.code,
+        socket,
+      );
+    });
+  }
   return socket;
+}
+
+const nodeFileReads: Record<string, (params: NodeFsReadTextParams) => Promise<unknown>> = {
+  'fs.readText': nodeFs.fsReadText,
+  'fs.isFile': nodeFs.fsIsFile,
+};
+
+/** A remote slot on a temp repo whose connected node answers with the real node file reads. */
+async function remoteSlotWithNode(
+  t: test.TestContext,
+  options: { textReads: boolean; hold?: Promise<void> },
+) {
+  const parent = mkdtempSync(path.join(os.tmpdir(), 'read-probes-remote-'));
+  t.after(() => rmSync(parent, { recursive: true, force: true }));
+  const repo = path.join(parent, 'repo');
+  mkdirSync(repo);
+  // A repo-relative runtime dir is kept beside the repo: <parent>/.farmslot-runtime/<repo>/…
+  const runtime = path.join(parent, '.farmslot-runtime', 'repo');
+  const methods: string[] = [];
+  const socket = await connectedSocket(t, (method, params) => {
+    methods.push(method);
+    const read = nodeFileReads[method];
+    if (!read) return Promise.reject(new Error(`Unexpected ${method}`));
+    return (options.hold ?? Promise.resolve()).then(() => read(params as NodeFsReadTextParams));
+  });
+  const machine = `read-probes-node-${path.basename(parent)}`;
+  registerNode(
+    machine,
+    1,
+    socket,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    options.textReads ? { textReads: 1 } : {},
+  );
+  const slot = { ...vars, host: '203.0.113.20', machine, remoteRepo: repo };
+  const external = path.join(runtime, 'temp/farmslot/.observability');
+  return { slot, methods, external };
 }
 
 test('a late closeout from a replaced connection leaves the replacement probe in flight', async (t) => {
@@ -521,4 +635,71 @@ test('a probe that waits for reconnect retains the connection that actually exec
     1,
     'socket B must not be mistaken for a replacement of an undefined socket',
   );
+});
+
+test('a node that declares text reads answers remote runner file reads without a shell', async (t) => {
+  const { slot, methods, external } = await remoteSlotWithNode(t, { textReads: true });
+  mkdirSync(path.join(external, 'sessions'), { recursive: true });
+  writeFileSync(path.join(external, 'install.json'), '{}');
+  const hooks = `${'x'.repeat(70_000)}\n{"event":"Stop"}\n`;
+  writeFileSync(path.join(external, 'hooks.jsonl'), hooks);
+  writeFileSync(path.join(external, 'statusline.json'), '{"ctx":1}');
+  writeFileSync(path.join(external, 'sessions', 'fixture-session.json'), '{"event":"Stop"}');
+  let commands = 0;
+  execute = async () => {
+    commands++;
+    return { stdout: '', stderr: '', exitCode: 0 };
+  };
+  const files = await readRunnerObservabilityFiles(slot);
+  assert.equal(
+    files.hooksRaw,
+    hooks.slice(-65536),
+    'the node keeps the last 64 KiB, as tail -c did',
+  );
+  assert.equal(
+    files.statuslineRaw,
+    '{"ctx":1}',
+    'the install marker selects the external directory',
+  );
+  assert.equal((await readRunnerSessionObservabilityState(slot, 'fixture-session'))?.event, 'Stop');
+  assert.equal(await readRunnerPaneObservabilityState(slot, '%missing'), null);
+  assert.equal(commands, 0, 'no shell starts on the node');
+  assert.ok(methods.includes('fs.isFile') && methods.includes('fs.readText'));
+});
+
+test('concurrent remote readers share one node read per file', async (t) => {
+  const hold = latch();
+  const { slot, methods, external } = await remoteSlotWithNode(t, {
+    textReads: true,
+    hold: hold.promise,
+  });
+  mkdirSync(external, { recursive: true });
+  writeFileSync(path.join(external, 'install.json'), '{}');
+  writeFileSync(path.join(external, 'hooks.jsonl'), '{"event":"Stop"}\n');
+  const readers = Array.from({ length: 100 }, () => readRunnerObservabilityFiles(slot));
+  const settled = Promise.all(readers);
+  try {
+    for (let i = 0; i < 50 && methods.length < 1; i++) await flush();
+    assert.deepEqual(methods, ['fs.isFile'], 'one marker read for every reader');
+    hold.release();
+    await settled;
+  } finally {
+    hold.release();
+  }
+  assert.deepEqual(methods.sort(), ['fs.isFile', 'fs.readText', 'fs.readText']);
+  await readRunnerObservabilityFiles(slot);
+  assert.equal(methods.length, 6, 'a settled read does not mask later changes');
+});
+
+test('a node that does not declare text reads keeps the shell read', async (t) => {
+  const { slot, methods } = await remoteSlotWithNode(t, { textReads: false });
+  const commands: string[] = [];
+  execute = async (_slot, command) => {
+    commands.push(command);
+    return { stdout: command.includes('install.json') ? '' : '{}', stderr: '', exitCode: 0 };
+  };
+  await readRunnerObservabilityFiles(slot);
+  assert.equal(methods.length, 0);
+  assert.ok(commands.some((command) => command.includes('tail -c 65536')));
+  assert.ok(commands.some((command) => command.startsWith('if [ -f ')));
 });

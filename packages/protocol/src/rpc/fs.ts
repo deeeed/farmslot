@@ -184,6 +184,28 @@ export interface NodeFsReadChunkResult {
   encoding?: 'base64' | 'binary';
 }
 
+/** Largest file `fs.readText` returns whole; a tail read may not ask for more. */
+export const NODE_FS_READ_TEXT_MAX_BYTES = 8 * 1024 * 1024;
+
+/**
+ * A polled slot file read, without a shell. Nodes declare it as the `textReads` observation
+ * capability. A file that is missing, unreadable, not a regular file, or a final-component
+ * symlink reads as empty, as `cat … 2>/dev/null || true` did.
+ */
+export interface NodeFsReadTextParams extends NodeFsPathParams {
+  /** Return only the last `tailBytes` bytes, like `tail -c`. */
+  tailBytes?: number;
+}
+
+export interface NodeFsReadTextResult {
+  content: string;
+}
+
+/** `[ -f path ]` without a shell: false for anything missing, unreadable or not a regular file. */
+export interface NodeFsIsFileResult {
+  isFile: boolean;
+}
+
 export interface NodeFsWriteChunkParams extends NodeFsPathParams {
   offset: number;
   content: string;
