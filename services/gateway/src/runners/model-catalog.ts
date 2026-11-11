@@ -33,12 +33,19 @@ export interface NodeModelCatalogListing {
   configuredProviders: string[];
 }
 
+export interface RunnerModelCatalogNodeCommandContext {
+  repo: string;
+  runtimeDir: string;
+}
+
 /** A listing command every execution node runs itself, through its slots' exec path. */
 export interface RunnerModelCatalogNodeSource {
   nodeCommand: string;
   /** Slot var naming the pool's configured executable; `nodeCommand` when unset. */
   slotPathKey: 'piPath' | 'opencodePath';
   args: string[];
+  /** Runner-owned additions using the listing slot's installed runtime. */
+  prepareCommand?: (command: string, context: RunnerModelCatalogNodeCommandContext) => string;
   /** Model ids, `provider/model`. */
   parse: (output: string) => string[] | NodeModelCatalogListing;
   /** The listed id a requested model launches as, such as Pi's bare `grok-*` as `xai/grok-*`. */

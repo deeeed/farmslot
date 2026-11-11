@@ -1,1 +1,1 @@
-- Retry incomplete node model catalogs after provider discovery failures, retain the last good models, and confirm large configured-provider removals before publishing them.
+- List pi models with the slot's installed provider extension, retry incomplete catalogs after discovery failures, retain the last good models, and confirm large configured-provider removals before publishing them. Slots without an installed extension retain legacy listings.
