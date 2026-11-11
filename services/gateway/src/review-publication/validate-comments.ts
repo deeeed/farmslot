@@ -66,6 +66,35 @@ export async function assertReviewCommentLines(
   );
 }
 
+/** One finding source; only locations in the frozen diff become inline comments. */
+export async function deriveReviewLineComments(
+  run: Run,
+  issues: ReviewIssue[],
+  snapshot: ReviewDiffSnapshot,
+  readDiff = readReviewCommentDiff,
+): Promise<ReviewLineComment[]> {
+  const comments = issues.flatMap((issue) =>
+    issue.line === undefined
+      ? []
+      : [
+          {
+            path: issue.file,
+            line: issue.line,
+            body: issue.description,
+            severity: normalizeReviewSeverity(issue.severity),
+          },
+        ],
+  );
+  const locations = new Map(
+    await Promise.all(
+      [...new Set(comments.map((comment) => comment.path))].map(
+        async (file) => [file, rightDiffLines(await readDiff(run, snapshot, file))] as const,
+      ),
+    ),
+  );
+  return comments.filter((comment) => locations.get(comment.path)?.has(comment.line));
+}
+
 /** Carry authoritative findings into publication when the report only paraphrases them. */
 export function appendReviewFindingBodies(
   issues: ReviewIssue[],
