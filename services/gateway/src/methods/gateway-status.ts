@@ -17,6 +17,7 @@ import type {
   UpstreamObservation,
 } from '@farmslot/protocol';
 
+import { openGitCheckout, readSymbolicRefShort } from '../core/git-files.js';
 import { farmslotRoot } from '../core/index.js';
 import { getGatewayListenSnapshot } from '../core/listen-address.js';
 import { githubQueryBudget } from '../integrations/github-query-budget.js';
@@ -140,16 +141,28 @@ async function git(args: string[], timeout = GIT_TIMEOUT_MS): Promise<GitResult>
   }
 }
 
+/** `git symbolic-ref --quiet --short refs/remotes/origin/HEAD`, from the checkout's files when they answer. */
+async function originHead(): Promise<GitResult> {
+  const checkout = await openGitCheckout(farmslotRoot());
+  const target = checkout && (await readSymbolicRefShort(checkout, 'refs/remotes/origin/HEAD'));
+  if (target === undefined)
+    return git(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+  // --quiet: a missing or non-symbolic ref exits 1 with no output.
+  return target === null
+    ? { exitCode: 1, stdout: '', stderr: '' }
+    : { exitCode: 0, stdout: `${target}\n`, stderr: '' };
+}
+
 async function resolveDefaultBranch(): Promise<string> {
   // origin/HEAD records the remote default branch once `git remote set-head` ran.
-  const head = await git(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+  const head = await originHead();
   if (head.exitCode === 0 && head.stdout.trim()) {
     return head.stdout.trim().replace(/^origin\//, '');
   }
   // A `curl | bash` clone may never have set origin/HEAD — ask the remote once.
   const auto = await git(['remote', 'set-head', 'origin', '--auto']);
   if (auto.exitCode === 0) {
-    const retry = await git(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+    const retry = await originHead();
     if (retry.exitCode === 0 && retry.stdout.trim()) {
       return retry.stdout.trim().replace(/^origin\//, '');
     }
@@ -203,7 +216,7 @@ async function runGitFreshness(): Promise<GatewayUpdateStatus> {
 
 async function readInstalledCheckout(): Promise<Partial<GatewayUpdateStatus>> {
   const current = updateObservation.snapshot();
-  const tracked = await git(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+  const tracked = await originHead();
   const branch =
     tracked.exitCode === 0 && tracked.stdout.trim()
       ? tracked.stdout.trim().replace(/^origin\//, '')

@@ -12,7 +12,8 @@ import { type FileWatchHandle, watchFile } from '@farmslot/capabilities/fs-watch
 import type { NodeFsChangedPayload } from '@farmslot/protocol';
 
 import { loadSlotVars, type SlotVars } from '../core/config.js';
-import { execOnSlot, isLocal as checkIsLocal } from '../core/exec.js';
+import { execOnSlot, isLocal as checkIsLocal, slotFilesReadInProcess } from '../core/exec.js';
+import { openGitCheckout, readGitHead, shortenRefName } from '../core/git-files.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { slotReadFile } from '../core/slot-io.js';
 import { getNode } from '../fleet/machine-registry.js';
@@ -87,6 +88,10 @@ export function normalizeGitHeadPath(repoPath: string, gitPath: string): string 
 }
 
 async function resolveGitHeadPath(repoPath: string, vars: SlotVars): Promise<string> {
+  const checkout = slotFilesReadInProcess(vars) ? await openGitCheckout(repoPath) : undefined;
+  // `rev-parse --git-path HEAD`: relative `.git/HEAD` in a primary clone, the gitfile's real
+  // directory in a linked worktree.
+  if (checkout) return path.join(checkout.gitDir, 'HEAD');
   const result = await execOnSlot(
     vars,
     `git -C '${repoPath}' rev-parse --git-path HEAD 2>/dev/null`,
@@ -244,14 +249,18 @@ async function readAndEmit(slotId: string, content?: string): Promise<void> {
 
   bw.reading = true;
   try {
-    let branch = '';
     const vars = await loadSlotVars(slotId);
-    const gitResult = await execOnSlot(
-      vars,
-      `git -C '${bw.repoPath}' symbolic-ref --short HEAD 2>/dev/null || git -C '${bw.repoPath}' rev-parse --short HEAD 2>/dev/null`,
-      { timeout: GIT_HEAD_TIMEOUT_MS },
-    );
-    branch = gitResult.stdout.trim();
+    const symbolic = `git -C '${bw.repoPath}' symbolic-ref --short HEAD 2>/dev/null`;
+    const detached = `git -C '${bw.repoPath}' rev-parse --short HEAD 2>/dev/null`;
+    let command = `${symbolic} || ${detached}`;
+    let branch: string | undefined;
+    const checkout = slotFilesReadInProcess(vars) ? await openGitCheckout(bw.repoPath) : undefined;
+    const head = checkout && (await readGitHead(checkout));
+    if (checkout && head?.kind === 'branch')
+      branch = await shortenRefName(checkout, head.ref, false);
+    // An abbreviated commit needs git's object database.
+    else if (head?.kind === 'detached') command = detached;
+    branch ??= (await execOnSlot(vars, command, { timeout: GIT_HEAD_TIMEOUT_MS })).stdout.trim();
     if (!branch) {
       const raw = content ?? (await slotReadFile(bw, bw.gitHeadPath));
       branch = parseBranch(raw);
