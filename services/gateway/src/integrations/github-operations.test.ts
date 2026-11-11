@@ -393,6 +393,24 @@ describe('in-process gh client', { concurrency: 1 }, () => {
     assert.equal(fixture.requests.length - start, 1);
   });
 
+  test('a keyring token is read again once its minute is over', async (t) => {
+    const origin = fixture.origin;
+    delete process.env.FARMSLOT_GITHUB_API_URL;
+    t.mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
+    try {
+      keyring.push('before-switch', 'after-switch');
+      assert.equal(await transport.resolveGitHubToken('github.com'), 'before-switch');
+      t.mock.timers.tick(59_999);
+      assert.equal(await transport.resolveGitHubToken('github.com'), 'before-switch');
+      assert.equal(processes.length, 1, 'a read inside the minute starts no process');
+      t.mock.timers.tick(1);
+      assert.equal(await transport.resolveGitHubToken('github.com'), 'after-switch');
+      assert.equal(processes.length, 2, 'one new read after the minute');
+    } finally {
+      process.env.FARMSLOT_GITHUB_API_URL = origin;
+    }
+  });
+
   test('prView export maps scalar fields and author through the pr export shape', async () => {
     keyring.push('view-export-token');
     route = (request) => {

@@ -1,7 +1,8 @@
 // github-transport.ts — one in-process HTTP client for GitHub REST and GraphQL.
 // Endpoints follow gh's ghinstance rules (github.com, *.ghe.com tenancy, GitHub
-// Enterprise Server). Tokens come from the gh keyring once per host/account and
-// are cached in memory; they are never logged, persisted, or used as cache keys.
+// Enterprise Server). Tokens come from the gh keyring at most once a minute per
+// host/account and are cached in memory; they are never logged, persisted, or used
+// as cache keys.
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
@@ -82,15 +83,18 @@ export function defaultGitHubHost(): string {
 interface TokenEntry {
   promise: Promise<string>;
   token?: string;
+  readAt: number;
 }
 const tokens = new Map<string, TokenEntry>();
+/** `gh auth switch` or a refreshed token reaches the gateway within this window. */
+const TOKEN_TTL_MS = 60_000;
 
 function tokenKey(host: string, login?: string): string {
   return JSON.stringify([host.toLowerCase(), login?.toLowerCase() ?? null]);
 }
 
 /**
- * Token gh would use for this host (and named keyring account), read once and cached.
+ * Token gh would use for this host (and named keyring account), cached for TOKEN_TTL_MS.
  * The environment mirrors the previous `gh` spawns: GH_TOKEN is ignored so the keyring
  * wins; a named account also ignores the other token variables.
  *
@@ -104,8 +108,8 @@ export function resolveGitHubToken(host: string, login?: string): Promise<string
 
   const key = tokenKey(host, login);
   const existing = tokens.get(key);
-  if (existing) return existing.promise;
-  const entry: TokenEntry = { promise: readKeyringToken(host, login) };
+  if (existing && Date.now() - existing.readAt < TOKEN_TTL_MS) return existing.promise;
+  const entry: TokenEntry = { promise: readKeyringToken(host, login), readAt: Date.now() };
   tokens.set(key, entry);
   entry.promise.then(
     (token) => {
