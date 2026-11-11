@@ -1,8 +1,6 @@
 // methods/pr/raw-cache.ts — raw GitHub PR snapshot cache and GraphQL batch prefetch.
 
-import type { CommandOutput } from '@farmslot/protocol';
-
-import { ghRequest } from '../../integrations/github-client.js';
+import { github } from '../../integrations/github-client.js';
 import {
   githubQueryBudget,
   GitHubQueryBudgetError,
@@ -15,7 +13,7 @@ import {
 // re-derived fresh from the run store on every PRStatus build, so cache reuse
 // does not stale-read run-side signals.
 //
-// force=true bypasses both this cache and ghRequest's own ETag/neg cache —
+// force=true bypasses both this cache and the github service cache —
 // used by explicit refresh flows (ciWatch.poke, UI manual refresh).
 
 export interface PRRawSnapshot {
@@ -155,17 +153,7 @@ export function isUsablePRRawSnapshot(
   return true;
 }
 
-function swallowGh(label: string) {
-  return (err: unknown): CommandOutput & { observationError: string } => {
-    // A paused GraphQL read is not empty PR data. Fail the refresh without replacing the cache.
-    if (err instanceof GitHubQueryBudgetError) throw err;
-    const message = err instanceof Error ? err.message : String(err);
-    if (/rate limit|API rate limit exceeded|secondary rate limit/i.test(message)) {
-      console.error(`[gh-rate-limit] ${label}: ${message.slice(0, 400)}`);
-    }
-    return { stdout: '', stderr: message, observationError: `${label}: ${message}` };
-  };
-}
+// swallowGh removed — getPRRawData migrated to github.graphql single-query path.
 
 export function buildPRChecksArgs(prNum: number, ghRepo: string): string[] {
   // Plain `gh pr checks` exits with code 8 whenever any check is still pending.
@@ -198,125 +186,29 @@ export async function getPRRawData(
     if (inflight) return inflight;
   }
   const fetchPromise = (async (): Promise<PRRawSnapshot> => {
-    // A malformed slug must fail visibly in the per-repo GraphQL calls, not send
-    // `name=undefined` and have swallowGh turn the rejection into empty data.
     const [owner, name] = ghRepo.split('/');
-    const badSlug = !owner || !name;
-    const [checks, prState, comments, reviewComments, latestCommit, reviewMeta] = await Promise.all(
-      [
-        ghRequest(buildPRChecksArgs(prNum, ghRepo), { force }).catch(
-          swallowGh(`pr.checks#${prNum}`),
-        ),
-        ghRequest(
-          [
-            'pr',
-            'view',
-            String(prNum),
-            '--repo',
-            ghRepo,
-            '--json',
-            'state,mergeable,mergeStateStatus,title,reviewDecision,headRefName,createdAt,updatedAt,closedAt,mergedAt,author',
-            '--jq',
-            '([.state, .mergeable, .mergeStateStatus, .reviewDecision, .headRefName, (.createdAt // ""), (.updatedAt // ""), (.closedAt // ""), (.mergedAt // ""), .title] | @tsv), (.author.login // "")',
-          ],
-          { force },
-        ).catch(swallowGh(`pr.view#${prNum}`)),
-        ghRequest(
-          [
-            'api',
-            '--paginate',
-            `repos/${ghRepo}/issues/${prNum}/comments`,
-            '--jq',
-            '.[] | {id: .id, author: .user.login, user_type: .user.type, body: .body[0:300], created_at: .created_at, html_url: .html_url}',
-          ],
-          { force },
-        ).catch(swallowGh(`issues.comments#${prNum}`)),
-        // Inline review comments via GraphQL — filters out resolved + outdated threads
-        // server-side so ci-watch / pr-complete don't waste cycles re-triaging the same
-        // findings the worker already addressed. REST `/pulls/N/comments` would return
-        // every comment regardless of thread resolution state, defaulting to 30 per page.
-        // `--paginate` walks the reviewThreads cursor so PRs with >100 threads (long
-        // review cycles on example-browser PRs) don't regress to the same data-loss
-        // mode this PR is fixing. Output shape matches the prior REST jq exactly so
-        // downstream consumers (matchBotComments, task-writer.buildPRCompleteContext)
-        // need no changes.
-        (async () => {
-          if (badSlug) return { stdout: '', stderr: `malformed repo slug ${ghRepo}` };
-          return ghRequest(
-            [
-              'api',
-              'graphql',
-              '--paginate',
-              '-f',
-              `query=query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { reviewThreads(first: 100, after: $endCursor) { pageInfo { hasNextPage endCursor } nodes { isResolved isOutdated comments(first: 50) { nodes { databaseId author { login __typename } body path line createdAt url replyTo { databaseId } } } } } } } }`,
-              '-F',
-              `owner=${owner}`,
-              '-F',
-              `name=${name}`,
-              '-F',
-              `pr=${prNum}`,
-              // GraphQL author.login is the bare handle ("cursor"), REST returns "cursor[bot]".
-              // Append [bot] suffix when __typename === Bot so existing botPatterns regex
-              // (e.g. `cursor\[bot\]`) keep matching without a config sweep.
-              // Note the doubled backslash before `(`: JS strips lone backslashes from
-              // unknown escape sequences, so `'\('` becomes `'('`. We need jq to receive
-              // a literal `\(...)` for its string interpolation, hence `'\\('`.
-              '--jq',
-              '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false) | .comments.nodes[] | {id: .databaseId, author: (if .author.__typename == "Bot" then "\\(.author.login)[bot]" else .author.login end), user_type: .author.__typename, body: (.body[0:300] // ""), path: .path, line: .line, created_at: .createdAt, in_reply_to_id: .replyTo.databaseId, html_url: .url}',
-            ],
-            { force, caller: 'pr.raw:threads' },
-          );
-        })().catch(swallowGh(`pulls.reviewThreads#${prNum}`)),
-        ghRequest(
-          ['api', `repos/${ghRepo}/pulls/${prNum}/commits`, '--jq', '.[-1].commit.committer.date'],
-          { force },
-        ).catch(swallowGh(`pulls.commits#${prNum}`)),
-        // Each reviewer's standing verdict plus whom GitHub still waits on; drives
-        // the "fix pushed, awaiting re-review" and "waiting on <team>" signals.
-        // `latestOpinionatedReviews`, not `latestReviews`: a reviewer who
-        // requested changes and then left comments shows COMMENTED in the latter
-        // while their CHANGES_REQUESTED still blocks the PR.
-        (badSlug
-          ? Promise.resolve({ stdout: '', stderr: `malformed repo slug ${ghRepo}` })
-          : ghRequest(
-              [
-                'api',
-                'graphql',
-                '-f',
-                'query=query($owner: String!, $name: String!, $pr: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { latestOpinionatedReviews(first: 20) { nodes { author { login } state submittedAt } } reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } } } } } }',
-                '-f',
-                `owner=${owner}`,
-                '-f',
-                `name=${name}`,
-                '-F',
-                `pr=${prNum}`,
-                '--jq',
-                '.data.repository.pullRequest | (.latestOpinionatedReviews.nodes[]? | {t: "review", author: (.author.login // ""), state: .state, submittedAt: (.submittedAt // null)}), (.reviewRequests.nodes[]? | .requestedReviewer | select(. != null) | {t: "request", kind: (if .__typename == "Team" then "team" else "user" end), name: (.slug // .login // "")})',
-              ],
-              { force, caller: 'pr.raw:verdicts' },
-            )
-        ).catch(swallowGh(`pr.reviews#${prNum}`)),
-      ],
-    );
-    const [stateLine, author] = prState.stdout.trimEnd().split('\n');
-    const snap: PRRawSnapshot = {
-      author: author || undefined,
-      checksStdout: checks.stdout,
-      checksAvailable: !checks.stderr,
-      prStateStdout: stateLine ?? '',
-      prStateError: stateLine ? undefined : prState.stderr || 'empty response',
-      commentsStdout: comments.stdout,
-      reviewCommentsStdout: reviewComments.stdout,
-      latestCommitStdout: latestCommit.stdout,
-      reviewMetaStdout: reviewMeta.stdout,
-      errors: [checks, prState, comments, reviewComments, latestCommit, reviewMeta].flatMap(
-        (result) =>
-          'observationError' in result && typeof result.observationError === 'string'
-            ? [result.observationError]
-            : [],
-      ),
-      fetchedAt: Date.now(),
+    if (!owner || !name) {
+      const snap = { ...EMPTY_PR_RAW_SNAPSHOT, fetchedAt: Date.now() };
+      recordPRRawData(ghRepo, prNum, snap);
+      return snap;
+    }
+    type SingleRepoData = {
+      repository?: Record<string, GqlPullRequestNode | null | undefined> | null;
     };
+    let prNode: GqlPullRequestNode | null | undefined;
+    try {
+      const data = await github.graphql<SingleRepoData>(
+        buildBatchQuery(1),
+        { owner, name, pr_0: prNum },
+        { force: force ?? false },
+      );
+      prNode = data.repository?.pr_0;
+    } catch (err) {
+      if (err instanceof GitHubQueryBudgetError) throw err;
+      prNode = null;
+    }
+    const snap = synthesizeRawSnapshotFromGraphQL(prNode);
+    if (prNode && isPRBatchTruncated(prNode)) snap.partial = true;
     recordPRRawData(ghRepo, prNum, snap);
     return snap;
   })();
@@ -737,44 +629,28 @@ export function synthesizeRawSnapshotFromGraphQL(
 
 // One GraphQL request per repo chunk. Quota holds fail the refresh; other failures log and continue —
 // `prList` falls through to the per-PR REST path for whichever PRs aren't in cache.
-// Relies on `ghRequest`'s 10MB stdout buffer; an 8-PR chunk with 100 contexts × 100
-// review threads × 50 comments could in principle approach that ceiling on monster
-// PRs. JSON.parse failure is caught below and falls back cleanly.
+// An 8-PR chunk with 100 contexts × 100 review threads × 50 comments could in
+// principle produce a large response on monster PRs; github.rest handles the parse.
 async function runBatchChunk(chunk: BatchedRepoChunk, seeded: Set<string>): Promise<void> {
   const query = buildBatchQuery(chunk.prs.length).replace(
     /}\s*$/,
     ' rateLimit { cost remaining resetAt } }',
   );
-  const args = [
-    'api',
-    'graphql',
-    '-f',
-    `query=${query}`,
-    '-f',
-    `owner=${chunk.owner}`,
-    '-f',
-    `name=${chunk.name}`,
-  ];
-  for (let i = 0; i < chunk.prs.length; i++) args.push('-F', `pr_${i}=${chunk.prs[i]}`);
+  const variables: Record<string, string | number> = { owner: chunk.owner, name: chunk.name };
+  for (let i = 0; i < chunk.prs.length; i++) variables[`pr_${i}`] = chunk.prs[i];
 
-  let stdout = '';
+  let parsed: GqlBatchResponse;
   try {
-    const res = await ghRequest(args, { caller: 'pr.list:prefetch' });
-    stdout = res.stdout;
+    parsed = await github.rest<GqlBatchResponse>('POST', 'graphql', {
+      body: { query, variables },
+      force: true,
+    });
   } catch (err) {
     if (err instanceof GitHubQueryBudgetError) throw err;
     // Per-PR fallback engages — see function-level comment.
     console.warn(
       `[pr.batch] graphql_failed repo=${chunk.repo} prs=${chunk.prs.length} err=${fmtBatchErr(err)}`,
     );
-    return;
-  }
-
-  let parsed: GqlBatchResponse;
-  try {
-    parsed = JSON.parse(stdout) as GqlBatchResponse;
-  } catch (err) {
-    console.warn(`[pr.batch] graphql_parse_failed repo=${chunk.repo} err=${fmtBatchErr(err, 120)}`);
     return;
   }
 

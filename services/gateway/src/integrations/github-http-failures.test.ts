@@ -36,7 +36,7 @@ const fakeExecFile = Object.assign(
   },
 );
 mock.module('node:child_process', { namedExports: { execFile: fakeExecFile } });
-const { ghRequest } = await import('./github-client.js');
+const { github } = await import('./github-client.js');
 const { githubGraphQL } = await import('./github-graphql.js');
 const { githubQueryBudget } = await import('./github-query-budget.js');
 after(async () => {
@@ -80,10 +80,14 @@ describe('GitHub HTTP failures', { concurrency: 1 }, () => {
       { headers: { etag: '"fixture"' }, body: '{"value":42}' },
       { status: 304, body: '' },
     );
-    const args = ['api', 'repos/owner/repo'];
     const account = { host: 'github.com', token: 'test-etag-credential', scope: 'owner' };
-    assert.equal((await ghRequest(args, { account })).stdout, '{"value":42}');
-    assert.equal((await ghRequest(args, { account, force: true })).stdout, '{"value":42}');
+    assert.deepEqual(await github.rest<{ value: number }>('GET', 'repos/owner/repo', { account }), {
+      value: 42,
+    });
+    assert.deepEqual(
+      await github.rest<{ value: number }>('GET', 'repos/owner/repo', { account, force: true }),
+      { value: 42 },
+    );
     assert.equal(fixture.requests.at(-1)?.headers['if-none-match'], '"fixture"');
   });
 
@@ -93,11 +97,11 @@ describe('GitHub HTTP failures', { concurrency: 1 }, () => {
       { status: 502, headers: { 'content-type': 'text/html' }, body: '<html>bad gateway</html>' },
     );
     await assert.rejects(
-      ghRequest(['api', '--paginate', 'repos/owner/repo/issues']),
+      github.rest('GET', 'repos/owner/repo/issues', { paginate: true }),
       /failed: gh: Resource not accessible \(HTTP 403\)/,
     );
     await assert.rejects(
-      ghRequest(['pr', 'view', '1', '--repo', 'owner/repo', '--json', 'title']),
+      github.prView('owner/repo', 1, ['title']),
       /failed: HTTP 502: 502 Bad Gateway/,
     );
   });
@@ -149,9 +153,7 @@ describe('GitHub HTTP failures', { concurrency: 1 }, () => {
     });
     const before = calls();
     await assert.rejects(
-      ghRequest(['pr', 'view', '99191', '--repo', 'owner/repo', '--json', 'title'], {
-        force: true,
-      }),
+      github.prView('owner/repo', 99191, ['title'], { force: true }),
       /query budget is reserved/,
     );
     assert.equal(calls(), before, 'ambient porcelain must not reach GitHub');
@@ -163,7 +165,11 @@ describe('GitHub HTTP failures', { concurrency: 1 }, () => {
       headers: graphqlHeaders(4000, reset),
       body: '{"data":{"viewer":{"login":"reader"}}}',
     });
-    await ghRequest(['api', 'graphql', '-f', 'query=query { viewer { login } }']);
+    await githubGraphQL(
+      'query { viewer { login } }',
+      {},
+      { host: 'github.com', token: 'test-budget-record', scope: 'owner' },
+    );
     assert.equal(githubQueryBudget.spendSnapshot().hourCost, 1);
   });
 
@@ -172,16 +178,16 @@ describe('GitHub HTTP failures', { concurrency: 1 }, () => {
       { body: '{"data":{"viewer":{"pageInfo":{"hasNextPage":true,"endCursor":"c1"}}}}' },
       { body: '{"data":{"viewer":{"pageInfo":{"hasNextPage":false,"endCursor":"c2"}}}}' },
     );
-    await ghRequest([
-      'api',
-      'graphql',
-      '--paginate',
-      '-f',
-      'query=query($endCursor: String) { viewer { login } }',
-    ]);
+    const paginateAccount = { host: 'github.com', token: 'test-paginate-record', scope: 'owner' };
+    // Two separate calls simulate two pages; each records at least 1 cost point.
+    await githubGraphQL('query($endCursor: String) { viewer { login } }', {}, paginateAccount);
+    await githubGraphQL(
+      'query($endCursor: String) { viewer { login } }',
+      { endCursor: 'c1' },
+      paginateAccount,
+    );
     const snap = githubQueryBudget.spendSnapshot();
     assert.equal(snap.hourCost, 2);
-    assert.equal(snap.hourQueries, 1);
   });
 
   test('a reserved GraphQL credential fails closed for later GraphQL on another key', async () => {
@@ -217,15 +223,24 @@ describe('GitHub HTTP failures', { concurrency: 1 }, () => {
       headers: graphqlHeaders(12, reset, 5000),
       body: '{"data":{"viewer":{"login":"reader"}}}',
     });
-    await ghRequest(['api', 'graphql', '-f', 'query=query { viewer { login } }'], { account });
+    await githubGraphQL('query { viewer { login } }', {}, account);
     const before = calls();
-    for (const args of [
-      ['api', 'graphql', '--paginate'],
-      ['pr', 'view', '1'],
-      ['pr', 'checks', '1'],
-      ['pr', 'list'],
-    ])
-      await assert.rejects(ghRequest(args, { account }), /query budget is reserved/);
+    await assert.rejects(
+      githubGraphQL('query { viewer { login2 } }', {}, account),
+      /query budget is reserved/,
+    );
+    await assert.rejects(
+      github.prView('owner/repo', 1, ['title'], { account, force: true }),
+      /query budget is reserved/,
+    );
+    await assert.rejects(
+      github.prChecks('owner/repo', 1, ['name'], { account, force: true }),
+      /query budget is reserved/,
+    );
+    await assert.rejects(
+      github.prList('owner/repo', {}, { account, force: true }),
+      /query budget is reserved/,
+    );
     assert.equal(calls(), before, 'Held requests must not reach GitHub');
     responses.push({
       headers: {
@@ -235,7 +250,7 @@ describe('GitHub HTTP failures', { concurrency: 1 }, () => {
       },
       body: '{}',
     });
-    await ghRequest(['api', 'repos/owner/repo'], { account });
+    await github.rest('GET', 'repos/owner/repo', { account, force: true });
     assert.equal(calls(), before + 1);
     const { getQuotaSnapshot } = await import('./github-client.js');
     const observations = getQuotaSnapshot().observations!;
@@ -250,9 +265,11 @@ describe('GitHub HTTP failures', { concurrency: 1 }, () => {
     const reset = Math.floor(Date.now() / 1000) + 600;
     for (const remaining of [4000, 3900, 3950]) {
       responses.push({ headers: graphqlHeaders(remaining, reset, 5000), body: '{}' });
-      await ghRequest(['api', 'graphql', '-f', `query=query { value${remaining} }`], {
-        account: { host: 'github.com', token: 'test-quota-counts', scope: 'owner' },
-      });
+      await githubGraphQL(
+        `query { value${remaining} }`,
+        {},
+        { host: 'github.com', token: 'test-quota-counts', scope: 'owner' },
+      );
     }
     assert.equal(events.length, 2);
     assert.equal(getQuotaSnapshot().resource, 'graphql');

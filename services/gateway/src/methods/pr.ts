@@ -1,5 +1,5 @@
 // methods/pr.ts — pr.status, pr.list, pr.monitor, pr.forSlot
-// All gh calls route through github-client.ghRequest (concurrency + ETag + quota).
+// All gh calls route through github-client.github (typed service, concurrency + ETag + quota).
 
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -54,7 +54,7 @@ import {
   invalidateBinding,
   setBinding,
 } from '../integrations/github-bindings-cache.js';
-import { ghRequest } from '../integrations/github-client.js';
+import { github } from '../integrations/github-client.js';
 import {
   githubQueryBudget,
   GitHubQueryBudgetError,
@@ -475,8 +475,8 @@ async function loadPRList(
   );
 
   // 1. Active slots on feature branches (worker is active).
-  //    Resolve all slot→PR lookups in parallel; ghRequest's own concurrency gate
-  //    (8 by default) keeps github load bounded while we avoid an N-slot serial wait.
+  //    Resolve all slot→PR lookups in parallel; github service concurrency gate
+  //    keeps github load bounded while we avoid an N-slot serial wait.
   const activeSlots = fleet.slots.filter(
     (s) =>
       s.enabled &&
@@ -1325,14 +1325,11 @@ async function findPRForBranch(
     // Branch names are deterministic (buildSmartBranch), so a reused branch can
     // keep pointing at an old merged/closed PR. Verify state+head before trust.
     try {
-      const verify = await ghRequest([
-        'api',
+      const verify = await github.rest<{ state?: string; head?: { ref?: string } }>(
+        'GET',
         `repos/${repo}/pulls/${cached}`,
-        '--jq',
-        '{state:.state,head:.head.ref}',
-      ]);
-      const parsed = JSON.parse(verify.stdout || '{}') as { state?: string; head?: string };
-      if (parsed.state === 'open' && parsed.head === branch) return { pr: cached, repo };
+      );
+      if (verify.state === 'open' && verify.head?.ref === branch) return { pr: cached, repo };
       invalidateBinding(branch, repo);
     } catch (error) {
       if (error instanceof GitHubQueryBudgetError) throw error;
@@ -1340,20 +1337,9 @@ async function findPRForBranch(
       invalidateBinding(branch, repo);
     }
   }
-  const { stdout } = await ghRequest([
-    'pr',
-    'list',
-    '--repo',
-    repo,
-    '--head',
-    branch,
-    '--json',
-    'number',
-    '--jq',
-    '.[0].number',
-  ]);
-  const num = parseInt(stdout.trim(), 10);
-  if (isNaN(num)) return null;
+  const prs = await github.prListFields(repo, ['number'], { head: branch, limit: 1 });
+  const num = prs[0]?.number as number | undefined;
+  if (!num) return null;
   setBinding(branch, repo, num);
   return { pr: num, repo };
 }
@@ -1407,9 +1393,8 @@ async function resolveSlotRepoSlug(slotId: string): Promise<string | null> {
 }
 
 // Runs `gh pr list` inside the slot's local repo so projects without ci.repo
-// still resolve their PR. Bypasses ghRequest (no --repo flag, cwd-scoped) and
-// pairs the result with the remote-derived slug so callers can skip a second
-// resolveProjectRepo lookup.
+// still resolve their PR. Uses git-remote-derived slug so callers can skip
+// a second resolveProjectRepo lookup.
 async function findPRViaSlotRepo(
   slotId: string,
   branch: string,
@@ -1420,22 +1405,11 @@ async function findPRViaSlotRepo(
     const repo = resolvedRepo === undefined ? await resolveSlotRepoSlug(slotId) : resolvedRepo;
     if (!repo) throw new Error(`Cannot resolve repository for upstream discovery on ${slotId}`);
     // Passive discovery uses the same concurrency, request sharing and rate-limit owner as PR data.
-    const { stdout } = await ghRequest(
-      [
-        'pr',
-        'list',
-        '--repo',
-        repo,
-        '--head',
-        branch,
-        '--json',
-        'number,baseRefName',
-        '--jq',
-        '.[0]',
-      ],
-      { caller: 'pr.list:discovery' },
-    );
-    const found = JSON.parse(stdout || 'null') as { number?: number; baseRefName?: string } | null;
+    const prs = (await github.prListFields(repo, ['number', 'baseRefName'], {
+      head: branch,
+      limit: 1,
+    })) as Array<{ number?: number; baseRefName?: string }>;
+    const found = prs[0] ?? null;
     return found?.number
       ? { pr: found.number, repo, ...(found.baseRefName ? { baseRef: found.baseRefName } : {}) }
       : null;
@@ -1552,19 +1526,13 @@ async function lookupSlotPR(lookup: SlotPRLookup, collected: boolean): Promise<P
     // Reused branch names can keep pointing at a merged/closed PR. Verify
     // state+head before trusting the cache; mirrors `findPRForBranch`.
     try {
-      const verify = await ghRequest([
-        'api',
-        `repos/${repo}/pulls/${cached}`,
-        '--jq',
-        '{state:.state,head:.head.ref,base:.base.ref}',
-      ]);
-      const parsed = JSON.parse(verify.stdout || '{}') as {
+      const verify = await github.rest<{
         state?: string;
-        head?: string;
-        base?: string;
-      };
-      if (parsed.state === 'open' && parsed.head === branch) {
-        return { pr: cached, repo, baseRef: parsed.base || defaultBranch };
+        head?: { ref?: string };
+        base?: { ref?: string };
+      }>('GET', `repos/${repo}/pulls/${cached}`);
+      if (verify.state === 'open' && verify.head?.ref === branch) {
+        return { pr: cached, repo, baseRef: verify.base?.ref || defaultBranch };
       }
       invalidateBinding(branch, repo);
     } catch (error) {
@@ -1574,22 +1542,14 @@ async function lookupSlotPR(lookup: SlotPRLookup, collected: boolean): Promise<P
   }
 
   try {
-    const { stdout } = await ghRequest([
-      'pr',
-      'list',
-      '--repo',
-      repo,
-      '--head',
-      branch,
-      '--json',
-      'number,baseRefName',
-      '--jq',
-      '.[0] | {pr:.number,baseRef:.baseRefName}',
-    ]);
-    const result = JSON.parse(stdout || '{}') as { pr?: number; baseRef?: string };
-    if (!result.pr) return { pr: null, repo, baseRef: defaultBranch };
-    setBinding(branch, repo, result.pr);
-    return { pr: result.pr, repo, baseRef: result.baseRef || defaultBranch };
+    const prs = (await github.prListFields(repo, ['number', 'baseRefName'], {
+      head: branch,
+      limit: 1,
+    })) as Array<{ number?: number; baseRefName?: string }>;
+    const found = prs[0];
+    if (!found?.number) return { pr: null, repo, baseRef: defaultBranch };
+    setBinding(branch, repo, found.number);
+    return { pr: found.number, repo, baseRef: found.baseRefName || defaultBranch };
   } catch (error) {
     if (collected) throw error;
     return { pr: null, repo, baseRef: defaultBranch };

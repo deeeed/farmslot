@@ -143,8 +143,8 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
     head?: { sha?: string } | null;
   };
   const endpoint = `repos/${pr.repo}/pulls/${pr.number}`;
-  const get = async (suffix: string, paginate = false) =>
-    github.rest<unknown>('GET', suffix.startsWith('repos/') ? suffix : `${endpoint}${suffix}`, {
+  const get = async <T = LivePR>(suffix: string, paginate = false) =>
+    github.rest<T>('GET', suffix.startsWith('repos/') ? suffix : `${endpoint}${suffix}`, {
       host: pr.host,
       account: binding,
       force: true,
@@ -240,7 +240,7 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
         throw new Error('Provider review body differs from the gated report');
       if (typeof review.id !== 'number' || !Number.isSafeInteger(review.id) || review.id <= 0)
         throw new Error('Provider review identity is invalid');
-      const pages = await get(`/reviews/${review.id}/comments?per_page=100`, true);
+      const pages = await get<unknown>(`/reviews/${review.id}/comments?per_page=100`, true);
       if (!Array.isArray(pages)) throw new Error('Provider inline findings are incomplete');
       const actual: string[] = [];
       for (const comment of pages) {
@@ -252,7 +252,7 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
         )
           throw new Error('Provider inline findings have an invalid identity');
         // The review-comments collection omits line fields; individual comments retain them.
-        const detail = await get(`repos/${pr.repo}/pulls/comments/${comment.id}`);
+        const detail = await get<unknown>(`repos/${pr.repo}/pulls/comments/${comment.id}`);
         if (
           !record(detail) ||
           detail.pull_request_review_id !== review.id ||
@@ -269,7 +269,7 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
       );
       if (JSON.stringify(actual.sort()) !== JSON.stringify(expected.sort()))
         throw new Error('Provider inline findings differ from the gated review');
-      const live = (await get('')) as LivePR;
+      const live = await get('');
       const event =
         live.user?.login?.toLowerCase() === account.login.toLowerCase()
           ? 'COMMENT'
@@ -311,7 +311,7 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
     throw new Error(
       'Publication outcome is uncertain; no duplicate was sent. Retry reconciliation after checking GitHub.',
     );
-  const live = (await get('')) as LivePR;
+  const live = await get('');
   if (
     live.number !== pr.number ||
     live.base?.repo?.full_name?.toLowerCase() !== pr.repo.toLowerCase() ||

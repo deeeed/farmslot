@@ -11,7 +11,7 @@ import {
   ticketCriteriaAsRegistered,
 } from '@farmslot/protocol';
 
-import { ghRequest } from '../integrations/github-client.js';
+import { github, type GitHubService } from '../integrations/github-client.js';
 import { getRunWithArchived } from '../runs/store.js';
 
 export interface PRCompletionIntake {
@@ -114,17 +114,6 @@ function text(value: unknown, field: string): string {
   return value;
 }
 
-function records(stdout: string): Record<string, unknown>[] {
-  return stdout
-    .split('\n')
-    .filter((line) => line.trim())
-    .map((line) => {
-      const value: unknown = JSON.parse(line);
-      if (!isRecord(value)) throw new Error('PR completion intake: invalid provider response');
-      return value;
-    });
-}
-
 export function completionCommentSource(
   repository: string,
   prNumber: number,
@@ -165,7 +154,7 @@ export function completionCommentSource(
 export async function fetchPRCompletionIntake(
   repository: string,
   prNumber: number,
-  request = ghRequest,
+  request: GitHubService = github,
 ): Promise<PRCompletionIntake> {
   const [owner, name, extra] = repository.split('/');
   if (!owner || !name || extra || !Number.isSafeInteger(prNumber) || prNumber < 1)
@@ -179,51 +168,47 @@ export async function fetchPRCompletionIntake(
       }}
     }}
   }`;
-  const [threads, issues, reviews] = await Promise.all([
-    request(
-      [
-        'api',
-        'graphql',
-        '--paginate',
-        '-f',
-        `query=${query}`,
-        '-f',
-        `owner=${owner}`,
-        '-f',
-        `name=${name}`,
-        '-F',
-        `pr=${prNumber}`,
-        '--jq',
-        '.data.repository.pullRequest | @json',
-      ],
-      { force: true, caller: 'pr-complete:acceptance-intake' },
-    ),
-    request(
-      [
-        'api',
-        '--paginate',
-        `repos/${repository}/issues/${prNumber}/comments`,
-        '--jq',
-        '.[] | {id,body,updatedAt:.updated_at,url:.html_url,author:.user.login} | @json',
-      ],
-      { force: true, caller: 'pr-complete:acceptance-intake' },
-    ),
-    request(
-      [
-        'api',
-        '--paginate',
-        `repos/${repository}/pulls/${prNumber}/reviews`,
-        '--jq',
-        '.[] | {id,body,state,updatedAt:.submitted_at,url:.html_url,author:.user.login} | @json',
-      ],
-      { force: true, caller: 'pr-complete:acceptance-intake' },
-    ),
+  const [threadPages, issueItems, reviewItems] = await Promise.all([
+    (async () => {
+      const pages: Record<string, unknown>[] = [];
+      let endCursor: string | null = null;
+      for (;;) {
+        const data: unknown = await request.graphql<unknown>(
+          query,
+          { owner, name, pr: prNumber, endCursor },
+          { force: true, caller: 'pr-complete:acceptance-intake' },
+        );
+        const repo = isRecord(data) ? data.repository : undefined;
+        const pullRequest = isRecord(repo) ? repo.pullRequest : undefined;
+        if (!isRecord(pullRequest))
+          throw new Error('PR completion intake: provider returned no PR snapshot');
+        pages.push(pullRequest);
+        const reviewThreads = isRecord(pullRequest.reviewThreads)
+          ? pullRequest.reviewThreads
+          : null;
+        const pageInfo =
+          isRecord(reviewThreads) && isRecord(reviewThreads.pageInfo)
+            ? reviewThreads.pageInfo
+            : null;
+        if (!pageInfo?.hasNextPage) break;
+        endCursor = typeof pageInfo.endCursor === 'string' ? pageInfo.endCursor : null;
+      }
+      return pages;
+    })(),
+    request.rest<unknown[]>('GET', `repos/${repository}/issues/${prNumber}/comments`, {
+      paginate: true,
+      force: true,
+      caller: 'pr-complete:acceptance-intake',
+    }),
+    request.rest<unknown[]>('GET', `repos/${repository}/pulls/${prNumber}/reviews`, {
+      paginate: true,
+      force: true,
+      caller: 'pr-complete:acceptance-intake',
+    }),
   ]);
   const sources: AcceptanceDerivationSource[] = [];
   let headSha: string | undefined;
-  const pages = records(threads.stdout);
-  if (!pages.length) throw new Error('PR completion intake: provider returned no PR snapshot');
-  for (const page of pages) {
+  for (const page of threadPages) {
     const head = text(page.headRefOid, 'PR head');
     if (!/^[a-f0-9]{40}$/i.test(head) || (headSha && headSha !== head))
       throw new Error('PR completion intake: PR head changed during capture');
@@ -265,15 +250,33 @@ export async function fetchPRCompletionIntake(
       }
     }
   }
-  for (const [kind, response] of [
-    ['issue', issues],
-    ['review', reviews],
-  ] as const)
-    for (const row of records(response.stdout)) {
-      // An unsubmitted draft is not a published obligation and has no submitted_at.
-      if (kind === 'review' && row.state === 'PENDING') continue;
-      sources.push(completionCommentSource(repository, prNumber, kind, row));
-    }
+  for (const item of issueItems) {
+    if (!isRecord(item)) throw new Error('PR completion intake: invalid provider response');
+    sources.push(
+      completionCommentSource(repository, prNumber, 'issue', {
+        id: item.id,
+        body: item.body,
+        updatedAt: item.updated_at,
+        url: item.html_url,
+        author: isRecord(item.user) ? item.user.login : undefined,
+      }),
+    );
+  }
+  for (const item of reviewItems) {
+    if (!isRecord(item)) throw new Error('PR completion intake: invalid provider response');
+    // An unsubmitted draft is not a published obligation and has no submitted_at.
+    if (item.state === 'PENDING') continue;
+    sources.push(
+      completionCommentSource(repository, prNumber, 'review', {
+        id: item.id,
+        body: item.body,
+        state: item.state,
+        updatedAt: item.submitted_at,
+        url: item.html_url,
+        author: isRecord(item.user) ? item.user.login : undefined,
+      }),
+    );
+  }
   if (!headSha) throw new Error('PR completion intake: missing captured head');
   return {
     identity: {

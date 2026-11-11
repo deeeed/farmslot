@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { after, beforeEach, describe, mock, test } from 'node:test';
@@ -38,7 +38,7 @@ const fakeExecFile = Object.assign(
 );
 mock.module('node:child_process', { namedExports: { execFile: fakeExecFile } });
 
-const { ghRequest } = await import('./github-client.js');
+const { github } = await import('./github-client.js');
 const { GitHubHttpError } = await import('./github-errors.js');
 const { ConditionalCache, resetGitHubConditionalCacheForTests } =
   await import('./github-gh-command.js');
@@ -73,15 +73,12 @@ describe('in-process gh client', { concurrency: 1 }, () => {
       return { body: { login: 'octo' } };
     };
     const start = fixture.requests.length;
-    const first = ghRequest(['api', 'dedup/user']);
-    const second = ghRequest(['api', 'dedup/user']);
+    const first = github.rest<{ login: string }>('GET', 'dedup/user');
+    const second = github.rest<{ login: string }>('GET', 'dedup/user');
     for (let i = 0; i < 200 && fixture.requests.length === start; i++)
       await new Promise((resolve) => setTimeout(resolve, 5));
     release();
-    assert.deepEqual(
-      (await Promise.all([first, second])).map((result) => result.stdout),
-      ['{"login":"octo"}', '{"login":"octo"}'],
-    );
+    assert.deepEqual(await Promise.all([first, second]), [{ login: 'octo' }, { login: 'octo' }]);
     assert.equal(requestsSince(start).length, 1);
   });
 
@@ -89,10 +86,10 @@ describe('in-process gh client', { concurrency: 1 }, () => {
     keyring.push('negative-token');
     route = () => ({ status: 500, body: { message: 'boom' } });
     const start = fixture.requests.length;
-    await assert.rejects(ghRequest(['api', 'negative/thing']), GitHubHttpError);
-    await assert.rejects(ghRequest(['api', 'negative/thing']), GitHubHttpError);
+    await assert.rejects(github.rest('GET', 'negative/thing'), GitHubHttpError);
+    await assert.rejects(github.rest('GET', 'negative/thing'), GitHubHttpError);
     assert.equal(requestsSince(start).length, 1);
-    await assert.rejects(ghRequest(['api', 'negative/thing'], { force: true }), GitHubHttpError);
+    await assert.rejects(github.rest('GET', 'negative/thing', { force: true }), GitHubHttpError);
     assert.equal(requestsSince(start).length, 2);
   });
 
@@ -111,10 +108,24 @@ describe('in-process gh client', { concurrency: 1 }, () => {
       if (request.headers['if-none-match'] === etag) return { status: 304, headers: link };
       return { headers: { etag, ...link }, body: pages[page] };
     };
-    const args = ['api', '--paginate', 'repos/o/r/issues/1/comments', '--jq', '.[].id'];
+    const restPath = 'repos/o/r/issues/1/comments';
     const start = fixture.requests.length;
-    assert.equal((await ghRequest(args, { force: true })).stdout, '1\n2\n3\n');
-    assert.equal((await ghRequest(args, { force: true })).stdout, '1\n2\n3\n');
+    const result1 = await github.rest<Array<{ id: number }>>('GET', restPath, {
+      paginate: true,
+      force: true,
+    });
+    assert.deepEqual(
+      result1.map((r) => r.id),
+      [1, 2, 3],
+    );
+    const result2 = await github.rest<Array<{ id: number }>>('GET', restPath, {
+      paginate: true,
+      force: true,
+    });
+    assert.deepEqual(
+      result2.map((r) => r.id),
+      [1, 2, 3],
+    );
     const revalidated = requestsSince(start).slice(2);
     assert.deepEqual(
       revalidated.map((request) => request.headers['if-none-match']),
@@ -157,8 +168,8 @@ describe('in-process gh client', { concurrency: 1 }, () => {
         ? { body: { ok: true } }
         : { status: 401, body: { message: 'Bad credentials' } };
     const start = fixture.requests.length;
-    assert.equal((await ghRequest(['api', 'refresh/one'])).stdout, '{"ok":true}');
-    assert.equal((await ghRequest(['api', 'refresh/two'])).stdout, '{"ok":true}');
+    assert.deepEqual(await github.rest<{ ok: boolean }>('GET', 'refresh/one'), { ok: true });
+    assert.deepEqual(await github.rest<{ ok: boolean }>('GET', 'refresh/two'), { ok: true });
     assert.deepEqual(requestsSince(start).map(authOf), [
       'token stale-token',
       'token fresh-token',
@@ -173,7 +184,7 @@ describe('in-process gh client', { concurrency: 1 }, () => {
     route = () => ({ status: 401, body: { message: 'Bad credentials' } });
     const start = fixture.requests.length;
     await assert.rejects(
-      ghRequest(['api', 'account/user'], { account: { host: 'github.com', token, scope: 's' } }),
+      github.rest('GET', 'account/user', { account: { host: 'github.com', token, scope: 's' } }),
       (error: unknown) => error instanceof GitHubHttpError && error.status === 401,
     );
     assert.equal(requestsSince(start).length, 1);
@@ -189,14 +200,14 @@ describe('in-process gh client', { concurrency: 1 }, () => {
     };
     const controller = new AbortController();
     const start = fixture.requests.length;
-    const pending = ghRequest(['api', 'abort/thing'], { signal: controller.signal });
+    const pending = github.rest('GET', 'abort/thing', { signal: controller.signal });
     for (let i = 0; i < 200 && fixture.requests.length === start; i++)
       await new Promise((resolve) => setTimeout(resolve, 5));
     controller.abort();
     await assert.rejects(pending, /aborted/);
     release();
     route = () => ({ body: { fresh: true } });
-    assert.equal((await ghRequest(['api', 'abort/thing'])).stdout, '{"fresh":true}');
+    assert.deepEqual(await github.rest<{ fresh: boolean }>('GET', 'abort/thing'), { fresh: true });
   });
 
   test('pr create, edit, comment and ready map to the same GitHub writes', async () => {
@@ -219,30 +230,18 @@ describe('in-process gh client', { concurrency: 1 }, () => {
       return { status: 404, body: { message: 'Not Found' } };
     };
     const start = fixture.requests.length;
-    const created = await ghRequest(
-      [
-        'pr',
-        'create',
-        '--repo',
-        'o/r',
-        '--head',
-        'feat',
-        '--base',
-        'main',
-        '--title',
-        'T',
-        '--body-file',
-        bodyFile,
-        '--draft',
-      ],
+    const body = await readFile(bodyFile, 'utf-8');
+    const created = await github.prCreate(
+      'o/r',
+      { head: 'feat', base: 'main', title: 'T', body, draft: true },
       { force: true },
     );
-    assert.equal(created.stdout, `${html}\n`);
-    await ghRequest(['pr', 'edit', '7', '--repo', 'o/r', '--title', 'New'], { force: true });
-    await ghRequest(['pr', 'comment', '7', '--repo', 'o/r', '--body', 'hi'], { force: true });
-    await ghRequest(['pr', 'ready', '7', '--repo', 'o/r'], { force: true });
+    assert.equal(created, `${html}\n`);
+    await github.prEdit('o/r', 7, { title: 'New' }, { force: true });
+    await github.prComment('o/r', 7, 'hi', { force: true });
+    await github.prReady('o/r', 7, { force: true });
     draft = false;
-    await ghRequest(['pr', 'ready', '7', '--repo', 'o/r'], { force: true });
+    await github.prReady('o/r', 7, { force: true });
     const writes = requestsSince(start).map((request) => [
       request.method,
       request.path,
@@ -276,27 +275,8 @@ describe('in-process gh client', { concurrency: 1 }, () => {
       request.path === '/repos/Owner/Repo'
         ? { body: { full_name: 'owner/repo' } }
         : { status: 404, body: {} };
-    const result = await ghRequest(
-      ['repo', 'view', 'git@github.com:Owner/Repo.git', '--json', 'nameWithOwner'],
-      { force: true },
-    );
-    assert.equal(result.stdout, '{"nameWithOwner":"owner/repo"}\n');
-  });
-
-  test('unsupported gh arguments fail without reaching GitHub', async () => {
-    const start = fixture.requests.length;
-    for (const args of [
-      ['api', 'user', '--template', '{{.login}}'],
-      ['pr', 'merge', '1', '--repo', 'o/r'],
-      ['pr', 'view', '1', '--json', 'title'],
-      ['pr', 'view', '1', '--repo', 'o/r', '--json', 'files'],
-      ['issue', 'list'],
-    ])
-      await assert.rejects(
-        ghRequest(args, { force: true }),
-        /failed: (unsupported|--repo is required|Unknown JSON field)/,
-      );
-    assert.equal(requestsSince(start).length, 0);
+    const result = await github.repoView('git@github.com:Owner/Repo.git', { force: true });
+    assert.deepEqual(result, { nameWithOwner: 'owner/repo' });
   });
 
   test('a PR status refresh spawns one keyring read and no gh request processes', async () => {
@@ -343,14 +323,13 @@ describe('in-process gh client', { concurrency: 1 }, () => {
     };
     const refresh = () =>
       Promise.all([
-        ghRequest(['pr', 'checks', '1', '--repo', 'o/r', '--json', 'name,bucket'], { force: true }),
-        ghRequest(['pr', 'view', '1', '--repo', 'o/r', '--json', 'state,author'], { force: true }),
-        ghRequest(['api', '--paginate', 'repos/o/r/issues/1/comments', '--jq', '.[]'], {
+        github.prChecks('o/r', 1, ['name', 'bucket'], { force: true }),
+        github.prView('o/r', 1, ['state', 'author'], { force: true }),
+        github.rest<unknown[]>('GET', 'repos/o/r/issues/1/comments', {
+          paginate: true,
           force: true,
         }),
-        ghRequest(['api', 'repos/o/r/pulls/1/commits', '--jq', '.[-1].commit.committer.date'], {
-          force: true,
-        }),
+        github.rest<unknown>('GET', 'repos/o/r/pulls/1/commits', { force: true }),
       ]);
     for (let i = 0; i < 5; i++) await refresh();
     assert.deepEqual(processes, [['gh', 'auth', 'token', '--hostname', 'github.com']]);
