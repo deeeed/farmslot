@@ -3,7 +3,11 @@ import test from 'node:test';
 
 import type { TaskProgressStructured } from '@farmslot/protocol';
 
-import { ChecklistProgressReads, checklistProgressView } from '../src/checklist-progress.js';
+import {
+  ChecklistProgressReads,
+  checklistProgressView,
+  checklistStepDetailKey,
+} from '../src/checklist-progress.js';
 
 function progress(): TaskProgressStructured {
   const steps = [
@@ -155,4 +159,32 @@ test('an old attempt resolving after its replacement cannot hide the new progres
   finishOlder();
   await oldResponse;
   assert.deepEqual(snapshot, { key: 'B', completed: 4 });
+});
+
+test('detail survives structured progress and legacy markdown without mutating completion', () => {
+  const input = progress();
+  const before = JSON.stringify(input);
+  const view = checklistProgressView(input, {
+    markdown:
+      '## Work\n- [ ] Prepare\n  Read the actual source.\n- [ ] Inspect\n  Check the evidence.\n- [ ] Publish\n',
+  });
+  assert.equal(view?.phases[0].rows[0].step.detail, 'Read the actual source.');
+  assert.equal(view?.phases[0].rows[0].step.status, 'done');
+  assert.equal(view?.completedSteps, 1);
+  assert.equal(JSON.stringify(input), before);
+  input.phases[0].steps[0].detail = 'Gateway supplied detail';
+  assert.equal(
+    checklistProgressView(input)?.phases[0].rows[0].step.detail,
+    'Gateway supplied detail',
+  );
+});
+
+test('detail disclosure identity separates runs, role checklists and child units', () => {
+  const worker = { runId: 'run-a', checklist: '/task/CHECKLIST.md' };
+  const key = checklistStepDetailKey(1, worker);
+  assert.equal(key, checklistStepDetailKey(1, { ...worker, checklist: 'CHECKLIST.md' }));
+  assert.notEqual(key, checklistStepDetailKey(1, { ...worker, runId: 'run-b' }));
+  assert.notEqual(key, checklistStepDetailKey(1, { ...worker, checklist: 'REVIEW.md' }));
+  assert.notEqual(key, checklistStepDetailKey(1, { ...worker, subtaskId: 'root' }));
+  assert.notEqual(key, checklistStepDetailKey(2, worker));
 });

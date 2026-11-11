@@ -1,4 +1,4 @@
-import type { AgentRole, SubtaskSource } from './contracts/index.js';
+import type { AgentRole, SubtaskSource, TaskProgressStructured } from './contracts/index.js';
 import { WORKER_TERMINAL_CONTRACT_INPUT } from './contracts/worker-terminal.js';
 import type { WorkerSignalParentLink } from './transport/signal.js';
 
@@ -45,6 +45,8 @@ export interface ChecklistCheckboxItem {
   phaseIndex: number;
   /** Raw text after the checkbox marker, untrimmed of markdown. */
   rawLabel: string;
+  /** Following markdown instructions, with shared indentation removed. */
+  detail?: string;
 }
 
 /**
@@ -111,7 +113,48 @@ export function enumerateChecklistCheckboxes(markdown: string): ChecklistCheckbo
       rawLabel: match[2],
     });
   }
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    const end = items[index + 1]?.lineIndex ?? lines.length;
+    const body: string[] = [];
+    let fenced = false;
+    for (let line = item.lineIndex + 1; line < end; line += 1) {
+      const text = lines[line].replace(/\r$/, '');
+      const trimmed = text.trim();
+      if (trimmed.startsWith('```')) fenced = !fenced;
+      else if (!fenced && /^#{2,}\s+[^#]/.test(trimmed)) break;
+      body.push(text);
+    }
+    while (body.length && !body[0].trim()) body.shift();
+    while (body.length && !body[body.length - 1].trim()) body.pop();
+    if (!body.length) continue;
+    const indent = body
+      .filter((line) => line.trim())
+      .reduce((minimum, line) => Math.min(minimum, line.match(/^[ \t]*/)![0].length), Infinity);
+    item.detail = body.map((line) => (line.trim() ? line.slice(indent) : '')).join('\n');
+  }
   return items;
+}
+
+/** Existing raw progress can supply instructions while older gateways omit the new field. */
+export function taskProgressWithStepDetails(
+  progress: TaskProgressStructured | null | undefined,
+  markdown: string | undefined,
+): TaskProgressStructured | null | undefined {
+  if (!progress || !markdown) return progress;
+  const details = new Map(
+    enumerateChecklistCheckboxes(markdown).map((item) => [item.stepNumber, item.detail]),
+  );
+  return {
+    ...progress,
+    phases: progress.phases.map((phase) => ({
+      ...phase,
+      steps: phase.steps.map((step) => {
+        const detail = details.get(step.index);
+        return step.detail === undefined && detail ? { ...step, detail } : step;
+      }),
+    })),
+  };
 }
 
 /**

@@ -1,0 +1,1 @@
+- Tap checklist step titles to show or hide their instructions, collapsed by default.

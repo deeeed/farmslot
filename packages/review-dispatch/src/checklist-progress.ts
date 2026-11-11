@@ -9,11 +9,13 @@ import {
 import {
   nestedLoopProgressLabel,
   type PipelineProgressStep,
+  taskProgressWithStepDetails,
 } from '@farmslot/protocol/checklist-target';
 
 import { runActivityView } from './run-activity.js';
 
 export interface ChecklistProgressStep {
+  detail?: string;
   text: string;
   checked: boolean;
 }
@@ -178,19 +180,23 @@ export function taskProgressPercent(
     : 0;
 }
 
+/** Canonical markdown fallback used by both the shared view and slot observations. */
+export function checklistProgressSteps(markdown: string): ChecklistProgressStep[] {
+  return enumerateChecklistCheckboxes(markdown).map((row) => ({
+    text: row.rawLabel,
+    checked: row.checked,
+    ...(row.detail ? { detail: row.detail } : {}),
+  }));
+}
+
 /** One read-only presentation of engine progress and its existing markdown fallback. */
 export function checklistProgressView(
   progress: TaskProgressStructured | null | undefined,
   options: ChecklistProgressOptions = {},
 ): ChecklistProgressView | null {
   const title = nestedLoopProgressLabel(options.activeStep ?? null, options.activeTaskBasename);
-  const flat = progress
-    ? []
-    : (options.steps ??
-      enumerateChecklistCheckboxes(options.markdown ?? '').map((row) => ({
-        text: row.rawLabel,
-        checked: row.checked,
-      })));
+  progress = taskProgressWithStepDetails(progress, options.markdown);
+  const flat = progress ? [] : (options.steps ?? checklistProgressSteps(options.markdown ?? ''));
   const total = progress?.totalSteps ?? flat.length;
   const completed = progress?.completedSteps ?? flat.filter((row) => row.checked).length;
   if (!total && !options.fallback) return null;
@@ -207,6 +213,7 @@ export function checklistProgressView(
                 index: index + 1,
                 name: row.text,
                 status: row.checked ? 'done' : 'pending',
+                ...(row.detail ? { detail: row.detail } : {}),
               }),
             ),
           },
@@ -327,4 +334,19 @@ export function effectiveTaskProgressForRun(
     taskProgress ??
     ciFixTaskProgress(run?.steps.find((step) => step.name === 'ci-watch')?.outputs ?? {})
   );
+}
+
+export interface ChecklistStepDetailScope {
+  runId?: string;
+  checklist?: string | null;
+  subtaskId?: string;
+}
+
+/** One disclosure choice per run, role checklist and child unit on both clients. */
+export function checklistStepDetailKey(
+  index: number,
+  scope: ChecklistStepDetailScope = {},
+): string {
+  const file = scope.checklist?.split('/').pop() || 'checklist';
+  return `${scope.runId || 'no-run'}:${file}:${scope.subtaskId ? `child:${scope.subtaskId}` : 'root'}:${index}`;
 }
