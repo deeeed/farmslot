@@ -35,6 +35,7 @@ import {
   hostResolverRules,
   isBlockedUrl,
   launchWebDappBrowser,
+  ownedProcessIdentity,
   ownerMarker,
   ownsProcess,
   parseWebDappLauncherOutput,
@@ -486,14 +487,16 @@ describe('process ownership', () => {
   });
 
   it('kills the whole process group, including children that ignore SIGTERM', async () => {
+    const runtime = '/synthetic/group-test';
     const leader = nodeProcess(
       `require('child_process').spawn('/bin/sh', ['-c', 'trap "" TERM; while kill -0 ${process.pid} 2>/dev/null; do sleep 1; done'], { stdio: 'ignore' }); setInterval(() => {}, 1000)`,
+      [ownerMarker('browser', runtime)],
     );
     const group = () =>
       spawnSync('pgrep', ['-g', String(leader)], { encoding: 'utf8' }).stdout.trim();
     await waitUntil(() => group().split('\n').length > 1);
     assert.ok(group().split('\n').length > 1);
-    await terminate(leader, 500);
+    await terminate(leader, 500, ownedProcessIdentity('browser', leader, runtime));
     assert.equal(
       spawnSync('pgrep', ['-g', String(leader)], { encoding: 'utf8' }).stdout.trim(),
       '',
