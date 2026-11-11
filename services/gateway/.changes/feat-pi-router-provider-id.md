@@ -1,0 +1,1 @@
+- Configure Pi router provider names while preserving existing worker aliases and default catalogs; keep native pickers and placement checks faithful to the native registry.

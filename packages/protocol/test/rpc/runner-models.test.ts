@@ -202,3 +202,9 @@ test('node catalog picker shows labelled providers and current generations only'
     [{ id: 'litellm/glm-5p3', reasoningModes: [], listed: true, nodes: ['macpro'] }],
   );
 });
+
+test('localsparks is a picker provider while legacy router references stay hidden', () => {
+  assert.equal(isPickerCatalogModel('localsparks/GLM-5.3-Flash-s12'), true);
+  assert.equal(runnerModelProviderLabel('localsparks/GLM-5.3-Flash-s12'), 'Local');
+  assert.equal(isPickerCatalogModel('router/GLM-5.3-Flash-s12'), false);
+});
