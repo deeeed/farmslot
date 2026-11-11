@@ -78,6 +78,25 @@ test('interactive task documents teach the shared operator wait and resume comma
   );
 });
 
+test('a static reviewer can use its engine completion command without generic development guidance', () => {
+  const input = {
+    flowType: 'review-pr',
+    modePreamble: '',
+    vars: { TASK_DIR: '.task/review' },
+    description: 'Inspect a frozen change',
+    acceptanceCriteria: [],
+    hasTicketData: false,
+  };
+  const command =
+    'Finish with `.task/review/mark complete --mark-last`. Never hand-write `SIGNAL.json`.';
+  const document = buildTaskDocument({ ...input, completionInstructions: command });
+  assert(document.includes(command));
+  assert.equal((document.match(/mark complete --mark-last/g) ?? []).length, 1);
+  assert.doesNotMatch(document, /mark no-change|Recipe ACs/);
+  assert.equal((document.match(/^## Diff scope$/gm) ?? []).length, 1);
+  assert.match(buildTaskDocument(input), /mark no-change/);
+});
+
 test('task instructions consume supplied helper commands and leave verdicts to recipe execution', () => {
   const input = {
     flowType: 'dev',

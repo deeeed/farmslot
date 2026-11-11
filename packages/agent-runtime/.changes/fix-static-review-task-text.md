@@ -1,0 +1,1 @@
+- Let static-review producers supply their enforced completion command without generic development marker or recipe guidance.

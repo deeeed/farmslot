@@ -72,7 +72,7 @@ export type StoreWorkerRequest =
 
 export type StoreWorkerResponse =
   | { id: number; ok: true; value: unknown }
-  | { id: number; ok: false; message: string }
+  | { id: number; ok: false; message: string; fatal?: boolean; resultCode?: number }
   | { event: 'deleted'; handle: number }
   | { event: 'scope-deleted'; scopeId: string };
 
@@ -96,3 +96,16 @@ export type StoreWorkerOperation = StoreWorkerRequest extends infer Request
     ? Omit<Request, 'id'>
     : never
   : never;
+
+/** SQLite extended codes keep the primary code in the low byte. */
+export function storeWorkerFailure(id: number, error: unknown, fatal = false): StoreWorkerResponse {
+  const code = error && typeof error === 'object' ? Reflect.get(error, 'resultCode') : undefined;
+  const resultCode = typeof code === 'number' ? code : undefined;
+  return {
+    id,
+    ok: false,
+    message: error instanceof Error ? error.message : String(error),
+    ...(resultCode === undefined ? {} : { resultCode }),
+    fatal: fatal || (resultCode !== undefined && [10, 11, 26].includes(resultCode & 0xff)),
+  };
+}

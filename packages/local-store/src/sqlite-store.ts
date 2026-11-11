@@ -127,12 +127,13 @@ class DatabaseOwner {
   }
 
   async initialize(version: number): Promise<void> {
-    if (this.schemaVersion === version) return;
     if (!Number.isSafeInteger(version) || version < 1)
       throw new Error('Invalid resource store schema version');
     const db = this.database;
     await db.run('PRAGMA foreign_keys = ON');
     const current = (await db.all<VersionRow>('PRAGMA user_version'))[0]?.user_version ?? 0;
+    // Another worker may have rebuilt this file since this owner initialized it.
+    if (this.schemaVersion === version && current === version) return;
     await db.run('BEGIN IMMEDIATE');
     try {
       if (current !== version) {
@@ -280,8 +281,9 @@ export async function createSqliteResourceStore(
   owners.set(options.database, owner);
   const db = owner.database;
   const scopeId = resourceStoreScopeId(options.scope);
+  const schemaVersion = options.schemaVersion ?? RESOURCE_STORE_SCHEMA_VERSION;
   const row = await owner.serial(async () => {
-    await owner.initialize(options.schemaVersion ?? RESOURCE_STORE_SCHEMA_VERSION);
+    await owner.initialize(schemaVersion);
     await db.run(
       `INSERT INTO resource_stores (scope_id, last_used)
       VALUES (?, (SELECT COALESCE(MAX(last_used), 0) + 1 FROM resource_stores))
@@ -320,17 +322,24 @@ export async function createSqliteResourceStore(
   owner.attach(row.id, handle);
   const available = () => !closed && !deleted;
 
+  async function sameIncarnation(): Promise<boolean> {
+    const version = (await db.all<VersionRow>('PRAGMA user_version'))[0]?.user_version;
+    const present =
+      version === schemaVersion
+        ? await db.all<StoreRow>(
+            'SELECT id, scope_id FROM resource_stores WHERE id = ? AND scope_id = ?',
+            [row.id, scopeId],
+          )
+        : [];
+    if (present.length) return true;
+    owner.seal(row.id);
+    return false;
+  }
+
   async function read<T>(operation: () => Promise<T>, absent: T): Promise<T> {
     return owner.serial(async () => {
       if (!available()) return absent;
-      const present = await db.all<StoreRow>(
-        'SELECT id, scope_id FROM resource_stores WHERE id = ?',
-        [row.id],
-      );
-      if (!present.length) {
-        owner.seal(row.id);
-        return absent;
-      }
+      if (!(await sameIncarnation())) return absent;
       await db.run(
         `UPDATE resource_stores SET last_used =
         (SELECT COALESCE(MAX(last_used), 0) + 1 FROM resource_stores) WHERE id = ?`,
@@ -385,7 +394,7 @@ export async function createSqliteResourceStore(
 
   function write(sql: string, values: readonly SqliteValue[]): Promise<void> {
     return owner.serial(async () => {
-      if (available()) {
+      if (available() && (await sameIncarnation())) {
         await db.run(sql, values);
         await db.run(
           `UPDATE resource_stores SET last_used =
@@ -476,15 +485,7 @@ export async function createSqliteResourceStore(
       if (merge.entry.id !== queryId)
         return Promise.reject(new Error('A row merge writes its own entry'));
       return owner.serial(async () => {
-        if (!available()) return;
-        const present = await db.all<StoreRow>(
-          'SELECT id, scope_id FROM resource_stores WHERE id = ?',
-          [row.id],
-        );
-        if (!present.length) {
-          owner.seal(row.id);
-          return;
-        }
+        if (!available() || !(await sameIncarnation())) return;
         await db.run('BEGIN IMMEDIATE');
         try {
           await db.run(...upsertQuery(merge.entry));
@@ -664,8 +665,9 @@ export async function createSqliteResourceStore(
       if (deleted) return Promise.resolve();
       handle.seal();
       owner.seal(row.id);
-      options.onDeleted?.(scopeId);
       return owner.serial(async () => {
+        if (!(await sameIncarnation())) return;
+        options.onDeleted?.(scopeId);
         await options.deleteFiles?.(scopeId);
         await db.run('DELETE FROM resource_stores WHERE id = ?', [row.id]);
       });
