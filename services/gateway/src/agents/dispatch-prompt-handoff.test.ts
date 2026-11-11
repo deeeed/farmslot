@@ -17,6 +17,8 @@ const execution = await import('../core/exec.js');
 mock.module('../core/exec.js', {
   namedExports: {
     ...execution,
+    // Runner files come from the mocked shell below, as they would on a remote slot.
+    slotFilesReadInProcess: () => false,
     execOnSlot: async (_vars: unknown, command: string) => {
       const stdout = command.includes(SIGNAL_PATH)
         ? signal === undefined
