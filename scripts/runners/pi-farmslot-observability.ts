@@ -1,11 +1,13 @@
 // Farmslot PI extension: hooks, task delivery, mark/signal tools, HUD, slash cmds.
 // Do not import @earendil-works/pi-coding-agent — PI's jiti provides `pi` at load.
+import { writeSync } from 'node:fs';
 import path from 'node:path';
 
 import { Type } from 'typebox';
 
 import { piMessageTokenUsage, piTurnFailure, writePiHook } from './pi-farmslot-hook-writer.mjs';
 import {
+  assertPiModelThinking,
   deadlinePiFetch,
   PiProviderConfigurationError,
   piSdkModels,
@@ -45,6 +47,20 @@ function toolResult(text: string, isError = false) {
   };
 }
 
+interface PiThinkingModel {
+  provider: string;
+  id: string;
+  reasoning: boolean;
+  thinkingLevelMap?: Record<string, string | null>;
+}
+
+interface PiShutdownContext {
+  abort: () => void;
+  shutdown: () => void;
+  cwd?: string;
+  sessionManager?: { getSessionFile?: () => string | null };
+}
+
 export default async function (pi: {
   on: (event: string, handler: (...args: never[]) => unknown) => void;
   registerProvider?: (id: string, provider: Record<string, unknown>) => void;
@@ -53,6 +69,37 @@ export default async function (pi: {
   registerCommand?: (name: string, spec: Record<string, unknown>) => void;
   sendUserMessage?: (text: string) => void;
 }) {
+  let configurationFailure: string | null = null;
+  let shutdownContext: PiShutdownContext | undefined;
+  const stopPiConfiguration = (error: PiProviderConfigurationError) => {
+    if (configurationFailure) return;
+    configurationFailure = `[farmslot-pi] configuration error: ${error.message}`;
+    writePiHook({
+      obsDir: obsDir(),
+      event: 'StopFailure',
+      failure: configurationFailure,
+      ...sessionFrom(shutdownContext ?? {}),
+      cwd: shutdownContext?.cwd,
+    });
+    // Pi 1.4.0's orderly shutdown explicitly calls exit(0). An exit listener
+    // preserves failure after Pi restores its terminal and disposes extensions.
+    process.once('exit', () => {
+      process.exitCode = 1;
+    });
+    shutdownContext?.abort();
+    shutdownContext?.shutdown();
+  };
+  const checkThinking = (model: PiThinkingModel | undefined, ctx: PiShutdownContext) => {
+    shutdownContext = ctx;
+    try {
+      assertPiModelThinking(model, process.env.FARMSLOT_THINKING);
+      return true;
+    } catch (error) {
+      if (!(error instanceof PiProviderConfigurationError)) throw error;
+      stopPiConfiguration(error);
+      return false;
+    }
+  };
   const timeoutMs = Number(process.env.FARMSLOT_PI_REQUEST_TIMEOUT_MS ?? 300_000);
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)
     throw new Error('FARMSLOT_PI_REQUEST_TIMEOUT_MS must be a positive integer');
@@ -71,6 +118,7 @@ export default async function (pi: {
   pi.on('session_shutdown', async () => {
     // Cached SDK clients may retain this fetch function after Pi invalidates the
     // old extension runtime. Retire its recorder even when another wrapper owns global fetch.
+    if (configurationFailure) writeSync(2, `${configurationFailure}\n`);
     requestFetch = originalFetch;
     if (globalThis.fetch === ownedFetch) globalThis.fetch = originalFetch;
   });
@@ -84,6 +132,7 @@ export default async function (pi: {
         pi.appendEntry?.('farmslot-model-request', configuration);
       },
       process.env.FARMSLOT_THINKING,
+      stopPiConfiguration,
     );
     for (const source of catalog) {
       pi.registerProvider?.(source.id, {
@@ -177,17 +226,21 @@ export default async function (pi: {
   // so launch is not blocked on a TUI prompt. Do not persist (`remember`).
   pi.on('project_trust', async () => ({ trusted: 'yes' as const }));
 
+  pi.on('model_select', (event: { model: PiThinkingModel }, ctx: PiShutdownContext) => {
+    checkThinking(event.model, ctx);
+  });
+
   pi.on(
     'session_start',
     async (
       _event: unknown,
-      ctx: {
-        cwd?: string;
+      ctx: PiShutdownContext & {
         hasUI?: boolean;
-        sessionManager?: { getSessionFile?: () => string | null };
+        model?: PiThinkingModel;
         ui?: { setStatus?: (key: string, text: string) => void };
       },
     ) => {
+      if (!checkThinking(ctx.model, ctx)) return;
       writePiHook({
         obsDir: obsDir(),
         event: 'SessionStart',
@@ -301,7 +354,7 @@ export default async function (pi: {
       _event: unknown,
       ctx: { cwd?: string; sessionManager?: { getSessionFile?: () => string | null } },
     ) => {
-      const failure = timeoutFailure ?? terminalFailure;
+      const failure = configurationFailure ?? timeoutFailure ?? terminalFailure;
       writePiHook({
         obsDir: obsDir(),
         event: failure ? 'StopFailure' : 'Stop',

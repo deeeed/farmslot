@@ -370,16 +370,44 @@ export async function resolvePiProviderCatalog(env = process.env, opts = {}) {
   return resolved.filter(Boolean);
 }
 
+function piReasoningMismatch(model, requestedEffort, detail) {
+  return new PiProviderConfigurationError(
+    `PI_REASONING_EFFORT_MISMATCH: Model ${model.provider}/${model.id} requested ${requestedEffort}, ${detail}. ` +
+      `Declare reasoning=true for the model in FARMSLOT_PI_${model.provider.toUpperCase()}_MODEL_LIMITS, or choose a reasoning model / no thinking (--thinking off).`,
+  );
+}
+
+/** Check the selected model before Pi can clamp thinking and enter the SDK retry loop. */
+export function assertPiModelThinking(model, requestedEffort) {
+  if (!model || !requestedEffort || requestedEffort === 'off') return;
+  if (!model.reasoning)
+    throw piReasoningMismatch(model, requestedEffort, 'but the model declares reasoning=false');
+  if (model.thinkingLevelMap?.[requestedEffort] === null)
+    throw piReasoningMismatch(
+      model,
+      requestedEffort,
+      'but the model declares that level unsupported',
+    );
+}
+
 /** @typedef {{ provider: string, model: string, contextWindow: number, maxTokens: number, reasoning: boolean, effort?: string, requestedMaxTokens?: number, cost: PiModelCostMetadata | null }} PiModelRequestConfiguration */
 
 /**
  * Refuse undeclared effort changes before sending; record actual wire effort.
  * @param {(configuration: PiModelRequestConfiguration) => void} [onRequest]
  * @param {string} [requestedEffort]
+ * @param {(error: PiProviderConfigurationError) => void} [onMismatch] Fatal worker handler, outside SDK retries.
  */
-export function providerReasoningFetch(fetchImpl, providers = [], onRequest, requestedEffort) {
+export function providerReasoningFetch(
+  fetchImpl,
+  providers = [],
+  onRequest,
+  requestedEffort,
+  onMismatch,
+) {
   const byUrl = new Map(providers.map((source) => [`${source.baseUrl}/chat/completions`, source]));
   if (byUrl.size === 0) return fetchImpl;
+  let mismatchReported = false;
   return async (input, options = {}) => {
     const url = input instanceof Request ? input.url : String(input);
     const provider = byUrl.get(url);
@@ -392,12 +420,23 @@ export function providerReasoningFetch(fetchImpl, providers = [], onRequest, req
         const mapped = model.thinkingLevelMap?.[requestedEffort];
         const expected =
           mapped === undefined ? (requestedEffort === 'off' ? undefined : requestedEffort) : mapped;
-        if (effort !== expected)
-          throw new PiProviderConfigurationError(
-            `PI_REASONING_EFFORT_MISMATCH: Model ${provider.id}/${model.id} requested ${requestedEffort}, mapped to ${expected}, but wire effort was ${effort}`,
+        if (effort !== expected) {
+          const error = piReasoningMismatch(
+            { ...model, provider: provider.id },
+            requestedEffort,
+            `mapped to ${expected}, but wire effort was ${effort}`,
           );
+          if (!mismatchReported) {
+            mismatchReported = true;
+            // The worker requests orderly shutdown here; SDKs otherwise hide fetch
+            // exceptions behind a retryable "Connection error."
+            if (onMismatch) onMismatch(error);
+            else console.error(error.message);
+          }
+          throw error;
+        }
       }
-      if (model && (provider.id === 'router' || model.reasoning)) {
+      if (model && effort !== undefined && (provider.id === 'router' || model.reasoning)) {
         if (
           !model.reasoning ||
           typeof effort !== 'string' ||

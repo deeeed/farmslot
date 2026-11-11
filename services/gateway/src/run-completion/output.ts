@@ -15,7 +15,7 @@ import {
   runOutputReviewEnabled,
   type RunStatus,
 } from '@farmslot/protocol';
-import { parseRunBundleMissingData } from '@farmslot/run-bundle';
+import { parseRunBundleMissingData, waitForRunBundleQueueTurn } from '@farmslot/run-bundle';
 
 import { GATEWAY_OWNED_DIFF_ARTIFACTS } from '../core/artifact-copy-policy.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
@@ -209,7 +209,7 @@ export function failRunOutputCapture(runId: string, error: unknown, workerFinish
 // step with "A newer retained capture committed" (F305). A queued capture reads the run
 // after the previous one committed, so it builds on that capture, but it still belongs
 // to the attempt it was called for.
-const capturesInFlight = new Map<string, Promise<unknown>>();
+const capturesInFlight = new Map<string, Promise<void>>();
 
 interface CaptureAttempt {
   taskFile: string;
@@ -251,9 +251,10 @@ function queueOutputCapture(
   const attempt = { taskFile: run.taskFile, generation: run.engineState?.generation };
   const capture = () =>
     captureRunOutputNow(runId, mirror, workerFinished, options, attempt, purpose);
-  const previous = capturesInFlight.get(runId);
-  const next = previous ? previous.then(capture) : capture();
-  const settled = next.catch(() => undefined);
+  const previous = capturesInFlight.get(runId) ?? Promise.resolve();
+  const next = waitForRunBundleQueueTurn(previous, `output capture of run ${runId}`).then(capture);
+  // An expired capture refuses promptly, but its tail still orders followers behind the predecessor.
+  const settled = Promise.allSettled([previous, next]).then(() => undefined);
   capturesInFlight.set(runId, settled);
   void settled.then(() => {
     if (capturesInFlight.get(runId) === settled) capturesInFlight.delete(runId);

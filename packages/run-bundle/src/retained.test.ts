@@ -18,6 +18,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
+import lockfile, { type LockOptions } from 'proper-lockfile';
+
 import type { ArtifactRef, Run, RunArtifactBundleRef, RunDecision } from '@farmslot/protocol';
 
 import { appendDecisionHistoryFile, decisionHistoryFile } from './decision-history.js';
@@ -35,6 +37,7 @@ import {
   resolveRunBundleEntry,
   runBundleAdmissionUsage,
   runBundleHousekeepingPaths,
+  withRunBundleLockWaitBudget,
   withRunBundleStoreLock,
 } from './retained.js';
 
@@ -1684,4 +1687,48 @@ test('housekeeping parses a settled run record once, and again only after it cha
   assert.deepEqual(await pass(), { reads: 1, selected: superseded });
   assert.deepEqual(await pass(), { reads: 0, selected: superseded });
   clock.mock.restore();
+});
+
+test('expiry after media admission removes the copied payload and its charged reservation', async (t) => {
+  const f = await fixture(t);
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const acquire = lockfile.lock;
+  let expireCommit = false;
+  let stage: string | undefined;
+  let destination: string | undefined;
+  t.mock.method(lockfile, 'lock', async (file: string, options?: LockOptions) => {
+    const release = await acquire(file, options);
+    if (expireCommit) {
+      now += 60_001;
+      expireCommit = false;
+    }
+    return release;
+  });
+  await assert.rejects(
+    withRunBundleLockWaitBudget(60_000, () =>
+      materializeRunBundle({
+        ...f.request,
+        acquireMedia: async (artifact, temp) => {
+          destination = temp;
+          stage = path.dirname(temp);
+          assert.equal((await stat(path.join(stage, '.reservation'))).size, artifact.sizeBytes);
+          const bytes = Buffer.from('video bytes');
+          await writeFile(temp, bytes);
+          expireCommit = true;
+          return { sha256: createHash('sha256').update(bytes).digest('hex'), bytes: bytes.length };
+        },
+      }),
+    ),
+    /wait budget exhausted/,
+  );
+  assert.ok(stage);
+  assert.ok(destination);
+  await assert.rejects(stat(destination), { code: 'ENOENT' });
+  await assert.rejects(stat(path.join(stage, '.reservation')), { code: 'ENOENT' });
+  await assert.rejects(stat(stage), { code: 'ENOENT' });
+  assert.equal(f.refs.length, 1, 'only the report metadata committed before expiry');
+  const retained = await readRetainedRunBundle(f.store, f.refs[0]!, f.run.id);
+  await assert.rejects(retained.resolveEntry('artifacts/capture.mp4'), { code: 'ENOENT' });
+  assert.equal(await withRunBundleStoreLock(f.store, async () => 'available'), 'available');
 });
