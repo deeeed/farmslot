@@ -61,7 +61,42 @@ def require_sandbox():
         raise RuntimeError(SANDBOX_REQUIRED)
 
 
-def sandbox_profile(spec, capsule):
+def live_tmux_sockets():
+    # Read kernel metadata only; never connect to or issue commands to a server.
+    result = subprocess.run(['/usr/sbin/lsof', '-nP', '-a', '-U', '-u', str(os.getuid()),
+                             '-c', 'tmux', '-Fn'], capture_output=True, text=True, timeout=5)
+    if result.returncode not in (0, 1):
+        raise RuntimeError('Cannot discover tmux sockets for the blind boundary')
+    return [line[1:] for line in result.stdout.splitlines() if line.startswith('n/')]
+
+
+def path_aliases(value):
+    path = Path(value).absolute()
+    paths = {str(path), str(path.resolve())}
+    for item in list(paths):
+        if item.startswith('/private/tmp/'):
+            paths.add(item[len('/private'):])
+        elif item.startswith('/tmp/'):
+            paths.add('/private' + item)
+    return sorted(paths)
+
+
+def tmux_socket_rules(sockets):
+    directories = ['/tmp', '/private/tmp']
+    if os.environ.get('TMUX_TMPDIR'):
+        directories.append(os.environ['TMUX_TMPDIR'])
+    roots = {alias for directory in directories
+             for alias in path_aliases(Path(directory) / ('tmux-' + str(os.getuid())))}
+    inherited = os.environ.get('TMUX', '').rsplit(',', 2)[0]
+    paths = {alias for value in sockets + ([inherited] if inherited else [])
+             for alias in path_aliases(value)}
+    quote = lambda value: json.dumps(value, ensure_ascii=False)
+    filters = ['(remote unix-socket (subpath %s))' % quote(p) for p in sorted(roots)]
+    filters += ['(remote unix-socket (literal %s))' % quote(p) for p in sorted(paths)]
+    return '(deny network-outbound ' + ' '.join(filters) + ')'
+
+
+def sandbox_profile(spec, capsule, tmux_sockets=None):
     # Deny reads of other slot checkouts, the original checkout a linked worktree
     # shares objects with, every blind capsule except this boundary, and the
     # GitHub CLI login. Later rules take precedence.
@@ -89,6 +124,7 @@ def sandbox_profile(spec, capsule):
     # Instance pool, runs and projects stay read-only, even through worker-created links.
     rules += ['(deny file-write* (subpath %s))' % quote(Path(os.path.expanduser(p)).resolve())
               for p in spec.get('farmConfigRoots', [])]
+    rules += [tmux_socket_rules(tmux_sockets or [])]
     return '\n'.join(rules + [''])
 
 
@@ -181,7 +217,7 @@ def prepare_boundary(spec, capsule):
         (root / 'bin' / name).chmod(0o700)
     if spec.get('proofBoundary'):
         freeze_proof_inputs(spec)
-    (root / 'sandbox.sb').write_text(sandbox_profile(spec, capsule))
+    (root / 'sandbox.sb').write_text(sandbox_profile(spec, capsule, live_tmux_sockets()))
     checked = subprocess.run([SANDBOX, '-f', str(root / 'sandbox.sb'), '/usr/bin/true'], capture_output=True)
     if checked.returncode:
         raise RuntimeError(SANDBOX_REQUIRED + ': ' + checked.stderr.decode(errors='replace').strip())

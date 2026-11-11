@@ -10,6 +10,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 
+import { processInfo } from './process-info.mjs';
 import { webDappPolicy, webDappRuntimeDir } from './runtime.mjs';
 
 export function pidAlive(pid) {
@@ -37,19 +38,8 @@ function readPid(file) {
   return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
-function psField(pid, field) {
-  try {
-    return execFileSync('ps', ['-ww', '-o', `${field}=`, '-p', String(pid)], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-  } catch {
-    return '';
-  }
-}
-
 export function processCommand(pid) {
-  return pidAlive(pid) ? psField(pid, 'command') : '';
+  return processInfo(pid)?.argv.join(' ') ?? '';
 }
 
 // Each process the slot starts carries `--mm-harness-owner=<kind>-<id>`, where
@@ -66,9 +56,9 @@ export function ownerMarker(kind, runtimeDir) {
   return `${OWNER_FLAG}=${kind}-${id}`;
 }
 
-export function ownsProcess(kind, pid, runtimeDir, command = processCommand(pid)) {
-  if (!command) return false;
-  return command.split(/\s+/u).includes(ownerMarker(kind, runtimeDir));
+export function ownsProcess(kind, pid, runtimeDir, command) {
+  const argv = command === undefined ? processInfo(pid)?.argv : command.split(/\s+/u);
+  return argv?.includes(ownerMarker(kind, runtimeDir)) ?? false;
 }
 
 export function portFree(port) {
@@ -87,20 +77,26 @@ export function portFree(port) {
 // are killed too; otherwise only the pid.
 export async function terminate(pid, graceMs = 8000) {
   if (!pidAlive(pid)) return false;
-  const group = Number(psField(pid, 'pgid')) === pid;
+  const identity = processInfo(pid);
+  if (!identity || identity.state === 5 || String(identity.state).startsWith('Z')) return false;
+  const group = identity.pgid === pid;
   const alive = () => (group ? groupAlive(pid) : pidAlive(pid));
   const signal = (name) => {
+    const current = processInfo(pid);
+    // A group can outlive its leader, but a reused leader PID is never ours.
+    if (current ? current.startedAt !== identity.startedAt : pidAlive(pid)) return false;
     try {
       process.kill(group ? -pid : pid, name);
-    } catch {
-      // Already gone.
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error;
     }
+    return true;
   };
-  signal('SIGTERM');
+  if (!signal('SIGTERM')) return false;
   const deadline = Date.now() + graceMs;
   while (alive() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 200));
   if (alive()) {
-    signal('SIGKILL');
+    if (!signal('SIGKILL')) return false;
     const killDeadline = Date.now() + 5000;
     while (alive() && Date.now() < killDeadline)
       await new Promise((resolve) => setTimeout(resolve, 100));

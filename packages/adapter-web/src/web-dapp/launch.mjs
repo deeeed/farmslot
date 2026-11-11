@@ -48,6 +48,7 @@ import { fileURLToPath } from 'node:url';
 
 import { disableMacCodeSignClone } from '../chrome-args.cjs';
 
+import { blindBrowserOptions } from './lib/blind-browser.mjs';
 import { hostResolverRules } from './lib/blocked-hosts.mjs';
 import { browserWebSocketUrl, CdpClient } from './lib/cdp-client.mjs';
 import {
@@ -407,6 +408,7 @@ export async function launchWebDappBrowser(
   env = process.env,
   { timeouts = LAUNCH_TIMEOUTS, sessionLocked = macosSessionLocked } = {},
 ) {
+  const blindBrowser = blindBrowserOptions(env);
   const policy = webDappPolicy(env);
   const signerModule = args['signer-module'] ?? env[SIGNER_MODULE_ENV];
   const signerHooks = await loadSigners({
@@ -509,6 +511,7 @@ export async function launchWebDappBrowser(
     previous.account?.name === account.name &&
     previous.account?.address?.toLowerCase() === account.address.toLowerCase() &&
     previous.browser?.headless === headless &&
+    Boolean(previous.browser?.outerSeatbelt) === blindBrowser.direct &&
     (previous.network ?? 'testnet') === network &&
     previous.networkEnforcement?.fingerprint === enforcementFingerprint &&
     ownsProcess('browser', previous.browserPid, runtime) &&
@@ -540,6 +543,7 @@ export async function launchWebDappBrowser(
   writeProfileZoom(profile, placement?.zoom ?? 1);
 
   const browserArgs = [
+    ...blindBrowser.args,
     `--user-data-dir=${profile}`,
     '--remote-debugging-address=127.0.0.1',
     `--remote-debugging-port=${cdpPort}`,
@@ -564,7 +568,7 @@ export async function launchWebDappBrowser(
     return file;
   };
   let started = false;
-  const launchMethod = launchMethodFor(browser.bin);
+  const launchMethod = blindBrowser.direct ? SPAWN : launchMethodFor(browser.bin);
   // Focus is checked for a visible browser started in the background.
   const guardFocus = launchMethod === LAUNCH_SERVICES && !headless;
   // With no startup window, windows are created over CDP at these bounds; a
@@ -774,6 +778,7 @@ export async function launchWebDappBrowser(
         version: browser.version,
         source: browser.source,
         headless,
+        outerSeatbelt: blindBrowser.direct,
         launchMethod,
       },
       window: placement,
