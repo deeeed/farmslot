@@ -1,6 +1,6 @@
 import { assertMonitoredPRIdentity, type PRSourceAccount } from '@farmslot/protocol';
 
-import { ghRequest, type GhRequestOpts } from '../integrations/github-client.js';
+import { type GhRequestOpts, github } from '../integrations/github-client.js';
 import { resolveGitHubToken } from '../integrations/github-transport.js';
 import { principalOwnerGeneration } from '../security/work-originator.js';
 
@@ -37,12 +37,12 @@ async function resolveAccount(ownerId: string, account?: PRSourceAccount) {
       account?.login ?? 'default-publication',
     ]),
   };
-  const { stdout } = await ghRequest(['api', '--hostname', host, 'user'], {
+  const identity = await github.rest<unknown>('GET', 'user', {
+    host,
     account: binding,
     force: account !== undefined,
     signal,
   });
-  const identity: unknown = JSON.parse(stdout);
   if (
     !identity ||
     typeof identity !== 'object' ||

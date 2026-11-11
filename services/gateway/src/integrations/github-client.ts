@@ -396,6 +396,8 @@ export interface RestServiceOpts extends ServiceOpts {
   perPage?: number;
   headers?: Record<string, string>;
   body?: unknown;
+  /** Return the raw response body string instead of JSON-parsing it (e.g. diff/patch endpoints). */
+  raw?: boolean;
 }
 
 export interface GraphQLServiceOpts extends ServiceOpts {
@@ -711,6 +713,7 @@ export const github: GitHubService = {
       perPage: opts?.perPage,
       headers: opts?.headers,
       body: opts?.body,
+      raw: opts?.raw,
     };
     const key = typedOpKey(
       GH_OP_REST,

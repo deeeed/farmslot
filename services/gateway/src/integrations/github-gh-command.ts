@@ -1364,6 +1364,8 @@ export interface RestOpOpts {
   perPage?: number;
   headers?: Record<string, string>;
   body?: unknown;
+  /** Return the raw response body string instead of JSON-parsing it (e.g. diff/patch endpoints). */
+  raw?: boolean;
 }
 
 export async function githubPrViewOp(
@@ -1685,6 +1687,7 @@ export async function githubRestOp<T>(
   if (!opts.paginate) {
     const response = await send(host, { method: methodUpper, url, headers, body }, ctx);
     if (response.status > 299) throw new GhFailure(httpErrorMessage(response));
+    if (opts.raw) return { data: response.body as T, headers: response.headers };
     // 204 No Content: body is empty; return null so callers that check can handle it.
     return { data: JSON.parse(response.body || 'null') as T, headers: response.headers };
   }
