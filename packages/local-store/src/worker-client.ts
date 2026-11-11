@@ -53,6 +53,10 @@ export class ResourceStoreWorkerClient {
     }
     const request = this.pending.get(response.id);
     if (!request) return;
+    if (!response.ok && response.fatal) {
+      this.fail(new Error(response.message));
+      return;
+    }
     this.pending.delete(response.id);
     clearTimeout(request.timer);
     if (response.ok) request.resolve(response.value);
@@ -237,8 +241,8 @@ export class ResourceStoreWorkerClient {
       },
       deleteAll: () => {
         if (deleted) return Promise.resolve();
-        seal();
-        this.onScopeDeleted?.(scopeId);
+        this.sealScope(scopeId);
+        // Only the worker's validated scope-deleted event may broadcast physical deletion.
         return request<void>({ operation: 'deleteAll', handle });
       },
       close: async () => {
@@ -260,6 +264,7 @@ export class ResourceStoreWorkerClient {
   private fail(error: Error): void {
     if (this.failure) return;
     this.failure = error;
+    this.closed = true;
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
       pending.reject(error);

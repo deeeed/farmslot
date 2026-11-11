@@ -11,7 +11,7 @@ import {
 
 import { ResourceCacheConformanceTransport } from '../../protocol/src/client-cache/conformance.js';
 import { ResourceStoreWorkerClient } from '../src/worker-client.js';
-import type { StoreWorkerPort } from '../src/worker-protocol.js';
+import type { StoreWorkerPort, StoreWorkerResponse } from '../src/worker-protocol.js';
 
 function fixture() {
   const worker = new Worker(new URL('./sqlite-worker.fixture.ts', import.meta.url), {
@@ -169,5 +169,36 @@ test('cache retention evictions persist through the asynchronous SQLite worker a
     await cache.dispose();
     client.close();
     await worker.terminate();
+  }
+});
+
+test('a fatal storage response retires the worker and rejects all pending reads', async () => {
+  let receive: ((response: StoreWorkerResponse) => void) | undefined;
+  let terminated = false;
+  const port: StoreWorkerPort = {
+    postMessage() {},
+    onMessage(listener) {
+      receive = listener;
+      return () => {};
+    },
+    onError() {
+      return () => {};
+    },
+    terminate() {
+      terminated = true;
+    },
+  };
+  const client = new ResourceStoreWorkerClient(port);
+  try {
+    const first = assert.rejects(client.diagnostics(), /SQLITE_IOERR/);
+    const second = assert.rejects(client.diagnostics(), /SQLITE_IOERR/);
+    // Test the wire response before the client knows about fatal storage failures.
+    const response = { id: 1, ok: false as const, message: 'SQLITE_IOERR', fatal: true };
+    receive?.(response);
+    assert.equal(terminated, true);
+    await Promise.all([first, second]);
+    await assert.rejects(client.diagnostics(), /SQLITE_IOERR/);
+  } finally {
+    client.close();
   }
 });
