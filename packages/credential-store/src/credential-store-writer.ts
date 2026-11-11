@@ -319,10 +319,15 @@ export class CredentialStoreWriter {
     const parsed = parseCredentialWire(credential);
     const source =
       parsed &&
-      this.runtime.snapshot().credentials.find((record) => record.id === parsed.credentialId);
+      this.runtime
+        .snapshot()
+        .credentials.find(
+          (record) => record.id === parsed.credentialId && record.revokedAt === null,
+        );
+    // A credential the store would refuse unread costs no derivation.
     const secrets = await prepareSecretWork(
       parsed && source ? [[parsed.secret, source.secret]] : [],
-      2,
+      parsed && source ? 2 : 0,
     );
     return this.mutate((store) =>
       exchangePersonCredential(store, credential, device, this.now(), secrets),
@@ -346,7 +351,7 @@ export class CredentialStoreWriter {
       parsed && this.runtime.snapshot().personSessions.find((item) => item.id === parsed.id);
     const secrets = await prepareSecretWork(
       parsed && record ? [[parsed.secret, record.refreshSecret]] : [],
-      1,
+      parsed && record ? 1 : 0,
     );
     return this.mutate((store) => refreshPersonSession(store, refreshToken, this.now(), secrets));
   }

@@ -45,12 +45,15 @@ export async function prepareSecretWork(
       ok: await verifySecretAsync(presented, stored),
     })),
   );
-  const issued = await Promise.all(
-    Array.from({ length: issues }, async () => {
-      const raw = generateCredentialSecret();
-      return { raw, stored: await hashSecretAsync(raw) };
-    }),
-  );
+  // A failed check refuses the mutation before it issues anything: derive nothing for it.
+  const issued = verified.every((entry) => entry.ok)
+    ? await Promise.all(
+        Array.from({ length: issues }, async () => {
+          const raw = generateCredentialSecret();
+          return { raw, stored: await hashSecretAsync(raw) };
+        }),
+      )
+    : [];
   return {
     verify(presented, stored) {
       const check = verified.find(

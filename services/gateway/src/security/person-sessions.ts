@@ -33,6 +33,9 @@ export async function routePersonSessionMethod(
       'AUTH_RATE_LIMITED',
       'Too many sign-in attempts. Try again shortly.',
     );
+  // Count the attempt as failed in the turn that admitted it, so attempts still verifying count
+  // against the limit; a success clears the bucket.
+  if (limited) runtime.limiter.recordFailure(clientIp);
   try {
     let result: unknown;
     switch (method) {
@@ -69,7 +72,6 @@ export async function routePersonSessionMethod(
     if (limited) runtime.limiter.reset(clientIp);
     return result;
   } catch (error) {
-    if (limited) runtime.limiter.recordFailure(clientIp);
     if (error instanceof CredentialStoreRefusalError)
       throw new GatewayMethodError(error.diagnostic ?? 'AUTH_FAILED', error.message);
     throw error;

@@ -805,8 +805,38 @@ test('sign-in, refresh and token checks derive scrypt outside the caller turn', 
   const grant = await f.grant();
   const refreshed = await f.writer.refreshPersonSession(grant.refreshToken);
   const checked = await resolver.resolveSecret(refreshed.accessToken, 'token');
+  // The histogram records a stall only when its next timer fires: give it that turn.
+  await new Promise((resolve) => setTimeout(resolve, 5));
   delay.disable();
   assert.equal(checked.ok, true);
   const worstMs = delay.max / 1e6;
   assert.ok(worstMs < scryptMs / 2, `the loop stalled ${worstMs} ms; one scrypt is ${scryptMs} ms`);
+});
+
+test('concurrent sign-ins and refreshes count against the limit while they verify', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'person-session-limit-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const { GatewayAuthRateLimiter } = await import('./auth.js');
+  const { GatewayMethodError } = await import('../core/method-error.js');
+  const { routePersonSessionMethod } = await import('./person-sessions.js');
+  const runtime = {
+    ...createGatewayAuthRuntime({ FARMSLOT_HOME: home }),
+    limiter: new GatewayAuthRateLimiter(1, 60_000),
+  };
+  const attempt = (method: string, params: Record<string, string>) =>
+    routePersonSessionMethod(method, params, runtime, { authenticated: false }, '9.9.9.9');
+  const device = { deviceName: 'Test device', deviceKind: 'cli' };
+  const outcomes = await Promise.allSettled([
+    attempt(Methods.AUTH_SESSION_EXCHANGE, { credential: 'invalid', ...device }),
+    attempt(Methods.AUTH_SESSION_EXCHANGE, { credential: 'invalid', ...device }),
+    attempt(Methods.AUTH_SESSION_REFRESH, { refreshToken: 'invalid' }),
+  ]);
+  assert.deepEqual(
+    outcomes.map((outcome) =>
+      outcome.status === 'rejected' && outcome.reason instanceof GatewayMethodError
+        ? outcome.reason.code
+        : outcome.status,
+    ),
+    ['AUTH_FAILED', 'AUTH_RATE_LIMITED', 'AUTH_RATE_LIMITED'],
+  );
 });

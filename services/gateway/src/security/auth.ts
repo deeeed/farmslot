@@ -236,9 +236,11 @@ export async function authenticateGatewayClient(params: {
   const presented = params.connectParams.token;
   if (params.connectParams.password) return { ok: false, reason: 'credential_mismatch' };
   if (!presented) return { ok: false, reason: 'token_missing' };
+  // Count the attempt as failed in the turn that admitted it, so attempts still verifying count
+  // against the limit; a success clears the bucket.
+  if (rateLimitApplies) limiter.recordFailure(params.clientIp);
   const resolution = await params.runtime.resolver.resolveSecret(presented, 'token');
   if (!resolution.ok) {
-    if (rateLimitApplies) limiter.recordFailure(params.clientIp);
     return {
       ok: false,
       reason:

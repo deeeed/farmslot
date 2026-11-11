@@ -64,6 +64,23 @@ try {
   });
   assert.equal(rateLimited.rateLimited, true);
 
+  // Attempts still verifying count against the limit: of three concurrent bad tokens, only the
+  // first is admitted.
+  const concurrentLimited = { ...runtime, limiter: new GatewayAuthRateLimiter(1, 60_000) };
+  const concurrent = await Promise.all(
+    Array.from({ length: 3 }, () =>
+      authenticateGatewayClient({
+        runtime: concurrentLimited,
+        connectParams: { clientKind: 'ui', token: 'bad' },
+        clientIp: '9.9.9.9',
+      }),
+    ),
+  );
+  assert.deepEqual(
+    concurrent.map((result) => result.rateLimited === true),
+    [false, true, true],
+  );
+
   // Loopback clients bypass the rate limiter: a valid token authenticates even after a
   // prior failure that would lock out a remote IP (max=1). Covers the mapped IPv6 form.
   for (const ip of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) {
