@@ -110,11 +110,25 @@ export function bindSlotViewTaskProgress(view: SlotView): void {
   applySlotViewTaskProgress(view);
 }
 
-export function applySlotViewTaskProgress(view: SlotView): void {
+type SlotViewProgressTarget = Pick<
+  SlotView,
+  | '_structuredProgress'
+  | '_taskProgressSource'
+  | '_taskSteps'
+  | '_taskProgress'
+  | '_pinnedFolder'
+  | '_loadPinnedEntries'
+> & {
+  _progressQuery: Pick<SlotView['_progressQuery'], 'belongsToWorkspace' | 'ready' | 'state'>;
+};
+
+export function applySlotViewTaskProgress(view: SlotViewProgressTarget): void {
   const result = view._progressQuery.belongsToWorkspace
     ? view._progressQuery.state.data
     : undefined;
-  const previous = view._structuredProgress;
+  // Enrichment is a display copy; pin invalidation follows the observed payload.
+  const previous = view._structuredProgress ? view._taskProgressSource : undefined;
+  view._taskProgressSource = result?.structured;
   view._structuredProgress =
     taskProgressWithStepDetails(result?.structured, result?.markdown) ?? undefined;
   const steps = checklistProgressSteps(result?.markdown ?? '');
