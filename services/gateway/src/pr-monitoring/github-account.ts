@@ -1,12 +1,8 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-
 import { assertMonitoredPRIdentity, type PRSourceAccount } from '@farmslot/protocol';
 
 import { ghRequest, type GhRequestOpts } from '../integrations/github-client.js';
+import { resolveGitHubToken } from '../integrations/github-transport.js';
 import { principalOwnerGeneration } from '../security/work-originator.js';
-
-const execFileAsync = promisify(execFile);
 
 /** Resolve the named keyring account without changing gh's globally active account. */
 export async function resolvePRSourceAccount(
@@ -30,28 +26,8 @@ async function resolveAccount(ownerId: string, account?: PRSourceAccount) {
   }
   const host = account?.host ?? 'github.com';
   const signal = account ? undefined : AbortSignal.timeout(5000);
-  const env = { ...process.env };
-  delete env.GH_TOKEN;
-  if (account) {
-    delete env.GITHUB_TOKEN;
-    delete env.GH_ENTERPRISE_TOKEN;
-    delete env.GITHUB_ENTERPRISE_TOKEN;
-  }
-  let token: string;
-  try {
-    const result = await execFileAsync(
-      'gh',
-      ['auth', 'token', '--hostname', host, ...(account ? ['--user', account.login] : [])],
-      { env, timeout: 15_000, maxBuffer: 64 * 1024, signal },
-    );
-    token = result.stdout.trim();
-  } catch {
-    // Child errors can contain credential output. Return a fixed actionable error instead.
-    throw new Error(
-      `GitHub account ${account?.login ?? 'default'}@${host} is unavailable in the gateway keyring`,
-    );
-  }
-  if (!token) throw new Error('GitHub account has no credential');
+  // Read from the keyring once per host/account; a 401 drops the cached token.
+  const token = await resolveGitHubToken(host, account?.login);
   const binding = {
     host,
     token,

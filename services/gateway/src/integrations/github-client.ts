@@ -1,10 +1,9 @@
-// github-client.ts — Unified router for all `gh` CLI calls.
-// Adds ETag/If-None-Match caching, X-RateLimit parsing with threshold broadcasts,
-// concurrency limiting, and a 10s negative cache for failed requests.
-// Long-term replacement for per-caller ghExec/ghExecCached (roadmap F2.8).
-import { execFile } from 'node:child_process';
+// github-client.ts — Unified router for every GitHub call the gateway makes.
+// Callers keep passing `gh` argument lists; github-gh-command.ts runs them in-process
+// over HTTP (no `gh` child per request). Adds X-RateLimit parsing with threshold
+// broadcasts, concurrency limiting, in-flight de-duplication, and a 10s negative cache
+// for failed requests. Conditional GETs (ETag/304) live in the command layer.
 import { createHash } from 'node:crypto';
-import { promisify } from 'node:util';
 
 import { type CommandOutput, Events, type GitHubRateLimitPayload } from '@farmslot/protocol';
 
@@ -15,36 +14,29 @@ import {
   hasInvalidGitHubCursor,
   hasUnavailableGitHubPR,
 } from './github-errors.js';
+import { executeGhCommand } from './github-gh-command.js';
 import {
   githubQueryBudget,
   GitHubQueryBudgetError,
   resolveGitHubQueryCaller,
 } from './github-query-budget.js';
 
-const execFileAsync = promisify(execFile);
-
 // ─── Types ───
 
 export interface GitHubClientOpts {
-  concurrency?: number; // max in-flight gh calls (default 8)
+  concurrency?: number; // max in-flight GitHub requests (default 8)
   negativeCacheTtlMs?: number; // TTL for failed-call cache (default 10_000)
   warnThresholdPercent?: number; // broadcast when <= N% remaining (default 20)
   critThresholdPercent?: number; // broadcast when <= N% remaining (default 5)
 }
 
 export interface GhRequestOpts {
-  force?: boolean; // bypass ETag + negative cache for this call
-  signal?: AbortSignal; // cancel the underlying gh child process
+  force?: boolean; // bypass the negative cache and in-flight sharing for this call
+  signal?: AbortSignal; // cancel the underlying HTTP request(s)
   /** Explicit account binding. Tokens remain process-local and are never cache keys or log fields. */
   account?: { host: string; token: string; scope: string };
   /** Spend attribution for GraphQL / `gh pr` query-budget reads. */
   caller?: string;
-}
-
-interface CacheEntry {
-  etag: string;
-  body: string; // successful body (HTTP 200)
-  at: number;
 }
 
 interface NegativeCacheEntry {
@@ -62,7 +54,6 @@ let negativeTtlMs = 10_000;
 let warnPercent = 20;
 let critPercent = 5;
 
-const etagCache = new Map<string, CacheEntry>(); // key: args.join('\0') → ETag + body
 const negativeCache = new Map<string, NegativeCacheEntry>();
 
 interface InFlightEntry {
@@ -124,25 +115,10 @@ export function getQuotaSnapshot(): QuotaSnapshot {
   return { ...quota };
 }
 
-export function isGhPRChecksPendingExit(
-  args: string[],
-  err: { code?: unknown; stdout?: unknown },
-): boolean {
-  const code = typeof err.code === 'number' ? err.code : Number(err.code);
-  return (
-    args[0] === 'pr' &&
-    args[1] === 'checks' &&
-    code === 8 &&
-    typeof err.stdout === 'string' &&
-    err.stdout.trim().length > 0
-  );
-}
-
 /**
- * Run `gh <args>` with ETag caching, rate-limit observation, and negative caching.
- * For non-`api` calls (e.g., `gh pr list`, `gh pr checks`), ETag/304 are not used
- * because gh porcelain subcommands don't support `--include`; the request still
- * flows through concurrency + negative cache.
+ * Run a `gh <args>` request in-process with rate-limit observation, query-budget
+ * accounting, in-flight sharing and negative caching. GETs revalidate cached ETags,
+ * so unchanged data costs a 304 instead of rate limit.
  */
 export async function ghRequest(args: string[], opts?: GhRequestOpts): Promise<CommandOutput> {
   const key = githubRequestCacheKey(args, opts?.account);
@@ -161,18 +137,16 @@ export async function ghRequest(args: string[], opts?: GhRequestOpts): Promise<C
     const existing = inFlight.get(key);
     if (existing) return attachSharedAbortSignal(existing, signal);
     const controller = new AbortController();
-    const promise = runGh(args, key, force, controller.signal, opts?.account, caller).finally(
-      () => {
-        inFlight.delete(key);
-      },
-    );
+    const promise = runGh(args, key, controller.signal, opts?.account, caller).finally(() => {
+      inFlight.delete(key);
+    });
     const entry: InFlightEntry = { promise, controller, refCount: 0 };
     inFlight.set(key, entry);
     return attachSharedAbortSignal(entry, signal);
   }
 
-  // Forced calls bypass the in-flight share map; signal kills the child directly.
-  return runGh(args, key, force, signal, opts?.account, caller);
+  // Forced calls bypass the in-flight share map; the signal aborts the request directly.
+  return runGh(args, key, signal, opts?.account, caller);
 }
 
 export function githubRequestCacheKey(args: string[], account?: GhRequestOpts['account']): string {
@@ -278,7 +252,6 @@ function recordGraphQLSpend(args: string[], caller: string, cost: number): void 
 async function runGh(
   args: string[],
   key: string,
-  force: boolean,
   signal?: AbortSignal,
   account?: GhRequestOpts['account'],
   caller = 'graphql',
@@ -292,139 +265,71 @@ async function runGh(
       const retryAt = githubQueryBudget.anyReserved();
       if (retryAt) throw new GitHubQueryBudgetError(retryAt);
     }
-    const isApi = args[0] === 'api';
-    const isPaginated = args.includes('--paginate');
-    const useEtag = isApi && !isPaginated && !force;
-    const cached = useEtag ? etagCache.get(key) : undefined;
-
-    // Only `gh api --include` exposes headers. For porcelain subcommands and
-    // `--paginate` calls, fall back to a plain call (no ETag/304 path since
-    // paginated responses repeat status blocks per page).
-    if (isApi && !isPaginated) {
-      const ghArgs = cloneArgs(args);
-      if (!ghArgs.includes('--include') && !ghArgs.includes('-i')) ghArgs.splice(1, 0, '--include');
-      const headerFlags: string[] = [];
-      if (cached) {
-        headerFlags.push('-H', `If-None-Match: ${cached.etag}`);
-        ghArgs.splice(1, 0, ...headerFlags);
-      }
-      const raw = await spawnGh(ghArgs, signal, account);
-      const parsed = parseResponse(raw.stdout);
-      const quotaKey = githubRequestCacheKey(
-        [],
-        account ? { ...account, scope: 'query-budget' } : undefined,
-      );
-      const previousRemaining = githubQueryBudget.peek(quotaKey)?.remaining;
-      updateQuotaFromHeaders(parsed.headers, quotaKey);
-      githubQueryBudget.observeHeaders(quotaKey, parsed.headers);
-
-      if (parsed.status === 304 && cached) {
-        return { stdout: cached.body, stderr: '' };
-      }
-      if (!raw.failed && parsed.status >= 200 && parsed.status < 300) {
-        const remaining = Number(parsed.headers.get('x-ratelimit-remaining'));
-        const bodyCost = graphqlCostFromBody(parsed.body);
-        const delta =
-          Number.isFinite(remaining) &&
-          previousRemaining !== undefined &&
-          previousRemaining > remaining
-            ? previousRemaining - remaining
-            : 0;
-        recordGraphQLSpend(args, caller, bodyCost || delta || (isGraphQLBudgetArgs(args) ? 1 : 0));
-        const etag = parsed.headers.get('etag');
-        if (etag) {
-          etagCache.set(key, { etag, body: parsed.body, at: Date.now() });
-          if (etagCache.size > 512) {
-            const oldest = etagCache.keys().next().value;
-            if (oldest !== undefined) etagCache.delete(oldest);
-          }
-        }
-        return { stdout: parsed.body, stderr: raw.stderr };
-      }
-      let invalidCursor = false;
-      let unavailablePR = false;
-      if (isGraphQLBudgetArgs(args) && parsed.body.trim().startsWith('{')) {
-        try {
-          const errors = JSON.parse(parsed.body).errors;
-          invalidCursor = hasInvalidGitHubCursor(errors);
-          unavailablePR = hasUnavailableGitHubPR(errors);
-        } catch (error) {
-          if (!(error instanceof SyntaxError))
-            throw error; /* Non-JSON provider output remains the HTTP failure below. */
-        }
-      }
-      const err = invalidCursor
-        ? new GitHubCursorError()
-        : unavailablePR
-          ? new GitHubPRUnavailableError()
-          : new GitHubHttpError(
-              parsed.status,
-              `gh api ${args.slice(1).join(' ')} failed: HTTP ${parsed.status} ${parsed.body.slice(0, 400)}`,
-            );
-      cacheNegative(key, err);
-      throw err;
+    const quotaKey = githubRequestCacheKey(
+      [],
+      account ? { ...account, scope: 'query-budget' } : undefined,
+    );
+    const previousRemaining = githubQueryBudget.peek(quotaKey)?.remaining;
+    const result = await executeGhCommand(args, { signal, account });
+    if (result.headers) {
+      updateQuotaFromHeaders(result.headers, quotaKey);
+      githubQueryBudget.observeHeaders(quotaKey, result.headers);
     }
 
-    // Non-api / paginated: no headers. GraphQL still costs at least 1 point;
-    // parse rateLimit.cost when the body kept it (no --jq).
-    const raw = await spawnGh(args, signal, account);
-    if (isGraphQLBudgetArgs(args)) {
-      const bodyCost = graphqlCostFromBody(raw.stdout);
-      recordGraphQLSpend(args, caller, bodyCost > 0 ? bodyCost : 1);
+    // Paginated `gh api` and porcelain commands throw on failure. GraphQL still
+    // costs at least one point per page.
+    if (result.status === undefined) {
+      if (isGraphQLBudgetArgs(args))
+        recordGraphQLSpend(
+          args,
+          caller,
+          result.graphqlCost || graphqlCostFromBody(result.stdout) || 1,
+        );
+      return { stdout: result.stdout, stderr: result.stderr };
     }
-    return raw;
+
+    const status = result.status;
+    const rawBody = result.rawBody ?? '';
+    if (!result.failed && status >= 200 && status < 300) {
+      const remaining = Number(result.headers?.get('x-ratelimit-remaining'));
+      const bodyCost = graphqlCostFromBody(rawBody);
+      const delta =
+        Number.isFinite(remaining) &&
+        previousRemaining !== undefined &&
+        previousRemaining > remaining
+          ? previousRemaining - remaining
+          : 0;
+      recordGraphQLSpend(args, caller, bodyCost || delta || (isGraphQLBudgetArgs(args) ? 1 : 0));
+      return { stdout: result.stdout, stderr: result.stderr };
+    }
+    let invalidCursor = false;
+    let unavailablePR = false;
+    if (isGraphQLBudgetArgs(args) && rawBody.trim().startsWith('{')) {
+      try {
+        const errors = JSON.parse(rawBody).errors;
+        invalidCursor = hasInvalidGitHubCursor(errors);
+        unavailablePR = hasUnavailableGitHubPR(errors);
+      } catch (error) {
+        if (!(error instanceof SyntaxError))
+          throw error; /* Non-JSON provider output remains the HTTP failure below. */
+      }
+    }
+    const err = invalidCursor
+      ? new GitHubCursorError()
+      : unavailablePR
+        ? new GitHubPRUnavailableError()
+        : new GitHubHttpError(
+            status,
+            `gh api ${args.slice(1).join(' ')} failed: HTTP ${status} ${rawBody.slice(0, 400)}`,
+          );
+    cacheNegative(key, err);
+    throw err;
   } catch (err) {
     if (!(err instanceof Error)) throw err;
     if (!isAbortError(err)) cacheNegative(key, err);
     throw err;
   } finally {
     release();
-  }
-}
-
-async function spawnGh(
-  args: string[],
-  signal?: AbortSignal,
-  account?: GhRequestOpts['account'],
-): Promise<CommandOutput & { failed?: boolean }> {
-  // Unset GH_TOKEN so `gh` uses the keyring token (full repo scope).
-  const env = { ...process.env };
-  delete env.GH_TOKEN;
-  if (account) {
-    delete env.GITHUB_TOKEN;
-    delete env.GITHUB_ENTERPRISE_TOKEN;
-    env.GH_TOKEN = account.token;
-    env.GH_ENTERPRISE_TOKEN = account.token;
-    env.GH_HOST = account.host;
-  }
-  try {
-    const { stdout, stderr } = await execFileAsync('gh', args, {
-      env,
-      maxBuffer: 10 * 1024 * 1024,
-      signal,
-    });
-    return { stdout, stderr: stderr ?? '' };
-  } catch (err) {
-    if (isAbortError(err)) throw err;
-    const e = err as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
-    // Keep structured HTTP responses on failure so quota/reset headers remain observable.
-    // runGh still rejects failures, including GraphQL errors carried by HTTP 200.
-    if (
-      args[0] === 'api' &&
-      args.includes('--include') &&
-      !args.includes('--paginate') &&
-      typeof e.stdout === 'string' &&
-      /^HTTP\/[\d.]+\s+\d{3}/m.test(e.stdout)
-    ) {
-      return { stdout: e.stdout, stderr: e.stderr ?? '', failed: true };
-    }
-    // `gh pr checks` exits 8 when at least one check is pending, even though
-    // stdout still contains the requested JSON/JQ output. Preserve that data
-    // so PR status can show pending checks instead of an empty dashboard.
-    if (isGhPRChecksPendingExit(args, e)) {
-      return { stdout: e.stdout ?? '', stderr: e.stderr ?? '' };
-    }
-    throw new Error(`gh ${args.join(' ')} failed: ${e.stderr?.trim() || e.stderr || e.message}`);
   }
 }
 
@@ -442,53 +347,6 @@ function cacheNegative(key: string, err: Error): void {
     const oldest = negativeCache.keys().next().value;
     if (oldest !== undefined) negativeCache.delete(oldest);
   }
-}
-
-function cloneArgs(args: string[]): string[] {
-  return args.slice();
-}
-
-// ─── HTTP-ish response parsing (gh api --include) ───
-
-interface ParsedResponse {
-  status: number;
-  headers: Map<string, string>;
-  body: string;
-}
-
-function parseResponse(raw: string): ParsedResponse {
-  // gh api --include emits: "HTTP/2.0 200 OK\r\n<headers>\r\n\r\n<body>"
-  // It may prepend multiple status blocks on redirects; take the last one.
-  const blocks = raw.split(/\r?\n\r?\n/);
-  if (blocks.length < 2) {
-    return { status: 0, headers: new Map(), body: raw };
-  }
-  // Find last block that starts with "HTTP/".
-  let headerIdx = -1;
-  for (let i = blocks.length - 2; i >= 0; i--) {
-    if (/^HTTP\//.test(blocks[i])) {
-      headerIdx = i;
-      break;
-    }
-  }
-  if (headerIdx < 0) return { status: 0, headers: new Map(), body: raw };
-
-  const headerBlock = blocks[headerIdx];
-  const body = blocks.slice(headerIdx + 1).join('\n\n');
-
-  const lines = headerBlock.split(/\r?\n/);
-  const statusLine = lines[0] ?? '';
-  const statusMatch = statusLine.match(/^HTTP\/[\d.]+\s+(\d+)/);
-  const status = statusMatch ? Number(statusMatch[1]) : 0;
-
-  const headers = new Map<string, string>();
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i];
-    const colon = line.indexOf(':');
-    if (colon < 0) continue;
-    headers.set(line.slice(0, colon).trim().toLowerCase(), line.slice(colon + 1).trim());
-  }
-  return { status, headers, body };
 }
 
 function updateQuotaFromHeaders(headers: Map<string, string>, credentialKey: string): void {
