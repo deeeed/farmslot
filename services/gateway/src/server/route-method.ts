@@ -928,6 +928,11 @@ async function routeAuthorizedMethod(
     case Methods.FLEET_STATUS: {
       const raw: Record<string, unknown> =
         p != null && typeof p === 'object' ? (p as Record<string, unknown>) : {};
+      if (raw.versions !== undefined && raw.versions !== true)
+        throw new GatewayMethodError(
+          'INVALID_PARAMS',
+          'fleet.status versions must be true or absent',
+        );
       const ids = toStringArray(raw.ids, 'fleet.status ids must be a string array');
       const fp: FleetStatusParams = {
         ...(raw.versions === true ? { versions: true as const } : {}),

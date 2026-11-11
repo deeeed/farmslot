@@ -15,7 +15,7 @@ import { Methods } from '../rpc/registry.js';
 import type { UpstreamObservation } from '../rpc/resource-observers.js';
 import type { RunGetResult, RunListParams, RunListResult } from '../rpc/run.js';
 import { runListVersion } from '../runs/list-version.js';
-import { isSlotEntity, type ResourceChangedPayload } from '../transport/events.js';
+import { isPREntity, isSlotEntity, type ResourceChangedPayload } from '../transport/events.js';
 
 import { ResourceCollectorAdmission } from './collector-admission.js';
 import {
@@ -501,16 +501,34 @@ export function createGatewayResourceCache(
     prCollections.clear();
   }
 
+  /**
+   * Narrow query.params to PRListParams by validating the shape.
+   * Returns undefined when params is absent or structurally wrong.
+   */
+  function prListParamsOf(query: ResourceQuery): PRListParams | undefined {
+    if (query.method !== Methods.PR_LIST) return undefined;
+    const p = query.params;
+    if (p == null) return undefined;
+    if (typeof p !== 'object') return undefined;
+    const r = p as Record<string, unknown>;
+    return {
+      ...(typeof r.project === 'string' ? { project: r.project } : {}),
+      ...(r.versions === true ? { versions: true as const } : {}),
+      ...(Array.isArray(r.ids) ? { ids: r.ids as string[] } : {}),
+      ...(r.force === true ? { force: true as const } : {}),
+    };
+  }
+
   /** Extract the queryId from a plain pr.list view query. */
   function prQueryId(query: ResourceQuery): string {
-    const params = query.params as PRListParams | undefined;
+    const params = prListParamsOf(query);
     const project = params?.project;
     return resourceCollectorQuery(Methods.PR_LIST, project !== undefined ? { project } : {}).id;
   }
 
   /** True for plain pr.list reads (not versions read, not page reads). */
   function isPRListView(query: ResourceQuery): boolean {
-    const params = query.params as PRListParams | undefined;
+    const params = prListParamsOf(query);
     return (
       query.method === Methods.PR_LIST && params?.versions !== true && params?.ids === undefined
     );
@@ -518,7 +536,7 @@ export function createGatewayResourceCache(
 
   /** Entity-sync PR list view (ADR-071 Amendment 3): assemble from held PR entities. */
   async function readPRListView(entry: QueryEntry, signal: AbortSignal): Promise<ReadReply> {
-    const params = entry.query.params as PRListParams | undefined;
+    const params = prListParamsOf(entry.query);
     const project = params?.project;
     const queryId = resourceCollectorQuery(
       Methods.PR_LIST,
@@ -1191,13 +1209,14 @@ export function createGatewayResourceCache(
             prKey?: string;
           };
           if (upKey.integration === 'github') {
-            if (upKey.prKey && change.changedEntity) {
+            if (upKey.prKey && change.changedEntity && isPREntity(change.changedEntity)) {
               // Per-PR entity push: apply to the matching collection if held.
+              // isPREntity is the runtime guard from events.ts; it validates family + object shape.
               const colState = prCollections.get(upKey.queryId);
               if (colState) {
                 colState.collection.applyEntity(
                   upKey.prKey,
-                  change.changedEntity.entity as PRStatus,
+                  change.changedEntity.entity, // narrowed to PRStatus by isPREntity
                   change.changedEntity.version,
                 );
                 for (const entry of entries.values()) {
