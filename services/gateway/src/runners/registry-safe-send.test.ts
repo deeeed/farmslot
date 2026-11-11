@@ -209,6 +209,8 @@ mock.module('./grok-observability.js', {
 mock.module('../core/exec.js', {
   namedExports: {
     EXEC_TIMEOUT_EXIT_CODE: 124,
+    // Runner files come from the mocked shell below, as they would on a remote slot.
+    slotFilesReadInProcess: () => false,
     isLocal: () => true,
     execLocal: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     // Reached transitively via methods/git.ts; kept consistent with execLocal above.
