@@ -23,7 +23,7 @@ import {
 } from '../../evals/package-store.js';
 import { fetchGitHubPR, fetchPRDiffFiles } from '../../external/github.js';
 import { loadProjectConfig } from '../../fleet/state.js';
-import { ghRequest } from '../../integrations/github-client.js';
+import { github } from '../../integrations/github-client.js';
 import { getAllRuns, getRun } from '../../runs/store.js';
 import {
   assertTicketRefMatchesProjectRepo,
@@ -122,12 +122,10 @@ async function resolveMergedPrSource(project: string, ref: string): Promise<Reso
 
   const [diffFiles, rawDiff] = await Promise.all([
     fetchPRDiffFiles(parsed.repo, pr.number),
-    ghRequest([
-      'api',
-      `repos/${parsed.repo}/pulls/${pr.number}`,
-      '--header',
-      'Accept: application/vnd.github.diff',
-    ]),
+    github.rest<string>('GET', `repos/${parsed.repo}/pulls/${pr.number}`, {
+      headers: { Accept: 'application/vnd.github.diff' },
+      raw: true,
+    }),
   ]);
   const diff = buildDiffProvenance(
     parsed.repo,
@@ -158,7 +156,7 @@ async function resolveMergedPrSource(project: string, ref: string): Promise<Reso
     diff,
     contextArtifacts: [],
     packageArtifacts: [],
-    diffText: rawDiff.stdout,
+    diffText: rawDiff ?? '',
     mergedPr: {
       repo: parsed.repo,
       prNumber: pr.number,

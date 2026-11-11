@@ -4,7 +4,7 @@ import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.j
 import { execOnSlot } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { shellQuote } from '../core/tmux.js';
-import { ghRequest } from '../integrations/github-client.js';
+import { github } from '../integrations/github-client.js';
 import {
   readReadyGatePreparedPackage,
   verifyReadyGatePackageHash,
@@ -72,11 +72,14 @@ async function readAttachmentSource(
   const canonicalOrigin = origin.replace(/^(git@github\.com)-[^:/]+:/, '$1:');
   if (!/^(?:git@github\.com:|https:\/\/github\.com\/)/.test(canonicalOrigin))
     attachmentRefusal('REPOSITORY_MISMATCH', 'The retained origin is not the project repository.');
-  const remote = await ghRequest(['repo', 'view', canonicalOrigin, '--json', 'nameWithOwner'], {
+  const parsedRepo = canonicalOrigin
+    .replace(/^git@github\.com:/, '')
+    .replace(/^https:\/\/github\.com\//, '')
+    .replace(/\.git$/, '');
+  const identity: unknown = await github.repoView(parsedRepo, ['nameWithOwner'], {
     force: true,
     signal: AbortSignal.timeout(15_000),
   });
-  const identity: unknown = JSON.parse(remote.stdout);
   if (
     !isRecord(identity) ||
     typeof identity.nameWithOwner !== 'string' ||
@@ -99,11 +102,10 @@ async function readAttachmentSource(
     head: `${repo.split('/')[0]}:${run.branch}`,
     per_page: '1',
   });
-  const childPrs = await ghRequest(['api', `repos/${repo}/pulls?${query}`], {
+  const published: unknown = await github.rest<unknown>('GET', `repos/${repo}/pulls?${query}`, {
     force: true,
     signal: AbortSignal.timeout(15_000),
   });
-  const published: unknown = JSON.parse(childPrs.stdout);
   if (!Array.isArray(published) || published.length)
     attachmentRefusal('ALREADY_PUBLISHED', 'Attachment requires an unpublished child branch.');
   await git(`git check-ref-format --branch ${shellQuote(stack.baseBranch)}`);
