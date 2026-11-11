@@ -40,6 +40,17 @@ export function runListVersion(run: Run): string {
   return version;
 }
 
+/**
+ * Derive every live run's version after startup, one run per macrotask, so the first versions
+ * read after a restart finds them ready instead of deriving all of them in one turn.
+ */
+export async function warmRunListVersions(liveRuns: () => readonly Run[]): Promise<void> {
+  for (const run of liveRuns()) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    runListVersion(run);
+  }
+}
+
 /** Every live run's version, in the order the store holds them. */
 export function runListVersions(runs: readonly Run[]): RunListVersion[] {
   const listed = runs.map((run) => ({ id: run.id, version: runListVersion(run) }));

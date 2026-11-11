@@ -23,7 +23,7 @@ import {
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 
 await import('../../runtime/mock-pty.test-support.js');
-const { RUN_LIST_PAGE_MAX_BYTES } = await import('../../runs/list-version.js');
+const { RUN_LIST_PAGE_MAX_BYTES, warmRunListVersions } = await import('../../runs/list-version.js');
 const { archiveRun, createRun, deleteRun, getAllRuns, getRun, updateRun } =
   await import('../../runs/store.js');
 const { runList } = await import('./context.js');
@@ -186,6 +186,23 @@ test(
     const stamped = (await runList({ versions: true })).versions!.find(({ id }) => id === run.id);
     assert.deepEqual(stamped, servedVersion(run.id));
     assert.notEqual(stamped?.version, published?.version);
+  },
+);
+
+test(
+  'the startup warm-up derives every live row before the first versions read',
+  TEST_TIMEOUT,
+  async (t) => {
+    const run = fixtureRun(t, 'VERSIONS-WARMED', 'warmed');
+    updateRun(run.id, { summary: 'changed before the warm-up' });
+    const expected = servedVersion(run.id);
+    await warmRunListVersions(getAllRuns);
+    // An unpublished in-place write after the warm-up is invisible: the read used the warmed row.
+    const live = getRun(run.id)!;
+    live.summary = 'unpublished in-place write';
+    const listed = (await runList({ versions: true })).versions!.find(({ id }) => id === run.id);
+    live.summary = 'changed before the warm-up';
+    assert.deepEqual(listed, expected);
   },
 );
 
