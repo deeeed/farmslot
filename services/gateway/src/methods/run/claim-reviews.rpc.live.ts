@@ -50,7 +50,7 @@ test('authenticated public RPC records a text-free confirmation and refuses an e
     { role: 'admin', scope: { kind: 'global' } },
   ]);
   const credential = runtime.writer.issueCredential(person.id, 'Disposable proof');
-  const grant = runtime.writer.exchangePersonCredential(credential.secret, {
+  const grant = await runtime.writer.exchangePersonCredential(credential.secret, {
     deviceName: 'Loopback proof',
     deviceKind: 'cli',
   });

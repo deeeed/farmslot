@@ -573,11 +573,11 @@ test('farm review, publication and request-local identity stay unchanged', async
 
 test('delegated workspace aliases keep invalidations while offline and revoke on owner or role change', async () => {
   const credential = auth.writer.issueCredential(arthur.id, 'Private workspace alias fixture');
-  const grant = auth.writer.exchangePersonCredential(credential.secret, {
+  const grant = await auth.writer.exchangePersonCredential(credential.secret, {
     deviceName: 'Fixture',
     deviceKind: 'cli',
   });
-  const resolved = auth.resolver.resolveSecret(grant.accessToken, 'token');
+  const resolved = await auth.resolver.resolveSecret(grant.accessToken, 'token');
   assert(resolved.ok && resolved.authentication);
   const state = {
     authenticated: true,
@@ -827,7 +827,7 @@ test(
     for (const machine of machines)
       nativeObservations.acceptRemote(sockets.get(machine)!, receipts.get(machine)!, () => true);
     const credential = auth.writer.issueCredential(arthur.id, 'Disposable loopback proof');
-    const grant = auth.writer.exchangePersonCredential(credential.secret, {
+    const grant = await auth.writer.exchangePersonCredential(credential.secret, {
       deviceName: 'Standalone delegation proof',
       deviceKind: 'cli',
     });

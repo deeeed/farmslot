@@ -258,7 +258,7 @@ test('credential lock serializes concurrent writers, reclaims stale locks, and p
   unlinkSync(lockPath);
 });
 
-test('identity domains isolate homes while gateways in one home share activation and credentials', () => {
+test('identity domains isolate homes while gateways in one home share activation and credentials', async () => {
   const fakeUserHome = tempDir('farmslot-fake-user-home-');
   const firstEnv = isolatedEnv({ HOME: fakeUserHome });
   const secondEnv = isolatedEnv({ HOME: fakeUserHome });
@@ -272,7 +272,7 @@ test('identity domains isolate homes while gateways in one home share activation
   const sameDomain = createGatewayAuthRuntime(firstEnv);
   initializeGatewayIdentity(sameDomain, { host: '127.0.0.1' });
   assert.equal(sameDomain.resolver.isSoloMode(), false);
-  assert.equal(sameDomain.resolver.resolveSecret(issued.secret, 'token').ok, true);
+  assert.equal((await sameDomain.resolver.resolveSecret(issued.secret, 'token')).ok, true);
 
   const otherDomain = createGatewayAuthRuntime(secondEnv);
   initializeGatewayIdentity(otherDomain, { host: '127.0.0.1' });
@@ -442,7 +442,7 @@ test('first non-admin issuance dual-mints an admin and never stores recoverable 
   assert.equal(serialized.includes(issue.adminGrant!.secret), false);
 });
 
-test('verification cache never caches authority and rejects password transport', () => {
+test('verification cache never caches authority and rejects password transport', async () => {
   const env = isolatedEnv();
   const runtime = createGatewayAuthRuntime(env);
   initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
@@ -450,28 +450,28 @@ test('verification cache never caches authority and rejects password transport',
     { role: 'operator', scope: { kind: 'global' } },
   ]);
   const issued = runtime.writer.issueCredential(principal.id, 'sam-laptop');
-  const grant = runtime.writer.exchangePersonCredential(issued.secret, {
+  const grant = await runtime.writer.exchangePersonCredential(issued.secret, {
     deviceName: 'Cache fixture',
     deviceKind: 'cli',
   });
-  assert.equal(runtime.resolver.resolveSecret(grant.accessToken, 'token').ok, true);
-  assert.equal(runtime.resolver.resolveSecret(grant.accessToken, 'password').ok, false);
+  assert.equal((await runtime.resolver.resolveSecret(grant.accessToken, 'token')).ok, true);
+  assert.equal((await runtime.resolver.resolveSecret(grant.accessToken, 'password')).ok, false);
 
   runtime.writer.grantRole(principal.id, 'admin', { kind: 'global' });
-  const updated = runtime.resolver.resolveSecret(grant.accessToken, 'token');
+  const updated = await runtime.resolver.resolveSecret(grant.accessToken, 'token');
   assert.equal(updated.ok, true);
   assert.equal(
     updated.ok && updated.principal.roles.some((binding) => binding.role === 'admin'),
     true,
   );
   runtime.writer.revokeCredential(issued.record.id);
-  assert.deepEqual(runtime.resolver.resolveSecret(grant.accessToken, 'token'), {
+  assert.deepEqual(await runtime.resolver.resolveSecret(grant.accessToken, 'token'), {
     ok: false,
     reason: 'session_ended',
   });
 });
 
-test('environment secrets never create principals, activate a home or authenticate', () => {
+test('environment secrets never create principals, activate a home or authenticate', async () => {
   const env = isolatedEnv({
     FARMSLOT_GATEWAY_TOKEN: 'first-token',
     FARMSLOT_GATEWAY_PASSWORD: 'old-password',
@@ -482,8 +482,8 @@ test('environment secrets never create principals, activate a home or authentica
     assert.equal(runtime.store.snapshot().credentials.length, 0);
     assert.equal(runtime.store.snapshot().principals.length, 0);
     assert.equal(runtime.store.isActivated(), false);
-    assert.equal(runtime.resolver.resolveSecret('first-token', 'token').ok, false);
-    assert.equal(runtime.resolver.resolveSecret('old-password', 'password').ok, false);
+    assert.equal((await runtime.resolver.resolveSecret('first-token', 'token')).ok, false);
+    assert.equal((await runtime.resolver.resolveSecret('old-password', 'password')).ok, false);
     assert.equal(existsSync(runtime.store.path), false);
   }
 });
@@ -509,7 +509,7 @@ test('last-admin refusal lives in both writer revoke primitives; offline recover
   assert.ok(offline.revokeCredential(issue.record.id).revokedAt);
 });
 
-test('activated gateways without an admin teach the offline escape without revealing others', () => {
+test('activated gateways without an admin teach the offline escape without revealing others', async () => {
   const env = isolatedEnv();
   const offline = new CredentialStoreWriter(new CredentialStoreRuntime(env), true);
   const operator = offline.createPrincipal({ type: 'person', displayName: 'sam' }, [
@@ -518,11 +518,11 @@ test('activated gateways without an admin teach the offline escape without revea
   const issue = offline.issueCredential(operator.id, 'sam-laptop');
   const runtime = createGatewayAuthRuntime(env);
   initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
-  const grant = runtime.writer.exchangePersonCredential(issue.secret, {
+  const grant = await runtime.writer.exchangePersonCredential(issue.secret, {
     deviceName: 'Authorization fixture',
     deviceKind: 'cli',
   });
-  const resolved = runtime.resolver.resolveSecret(grant.accessToken, 'token');
+  const resolved = await runtime.resolver.resolveSecret(grant.accessToken, 'token');
   assert.ok(resolved.ok && resolved.authentication);
   const session = {
     authenticated: true,
@@ -584,10 +584,10 @@ test('solo activation is permanent for non-loopback bind and declared proxy trus
   }
 });
 
-test('authorization is exactly the eight operator methods and separates node subjects', () => {
+test('authorization is exactly the eight operator methods and separates node subjects', async () => {
   const env = isolatedEnv();
   const runtime = newRuntimeWithIdentity(env);
-  const operator = createCredentialSession(runtime, 'sam', [
+  const operator = await createCredentialSession(runtime, 'sam', [
     { role: 'operator', scope: { kind: 'global' } },
   ]);
   for (const method of operatorMethods) {
@@ -617,7 +617,7 @@ test('authorization is exactly the eight operator methods and separates node sub
     /not on the proven-conformant allowlist/u,
   );
 
-  const empty = createCredentialSession(runtime, 'empty', []);
+  const empty = await createCredentialSession(runtime, 'empty', []);
   assert.throws(() => authorizeGatewayMethod(runtime, empty.session, Methods.RUN_LIST));
 
   const node = runtime.writer.createPrincipal(
@@ -658,10 +658,10 @@ test('authorization is exactly the eight operator methods and separates node sub
   assert.throws(() => authorizeGatewayMethod(runtime, operator.session, Methods.RUN_LIST));
 });
 
-test('stored effects fail closed against live originator authority and name the item', () => {
+test('stored effects fail closed against live originator authority and name the item', async () => {
   const env = isolatedEnv();
   const runtime = newRuntimeWithIdentity(env);
-  const admin = createCredentialSession(runtime, 'queue-owner', [
+  const admin = await createCredentialSession(runtime, 'queue-owner', [
     { role: 'admin', scope: { kind: 'global' } },
   ]);
   const principal = runtime.resolver.resolvePrincipalId(admin.principalId);
@@ -674,7 +674,9 @@ test('stored effects fail closed against live originator authority and name the 
     ).id,
     admin.principalId,
   );
-  createCredentialSession(runtime, 'backup-owner', [{ role: 'admin', scope: { kind: 'global' } }]);
+  await createCredentialSession(runtime, 'backup-owner', [
+    { role: 'admin', scope: { kind: 'global' } },
+  ]);
   runtime.writer.revokeRole(admin.principalId, 'admin', { kind: 'global' });
   const demoted = runtime.resolver.resolvePrincipalId(admin.principalId);
   assert.throws(
@@ -699,7 +701,7 @@ function newRuntimeWithIdentity(env: NodeJS.ProcessEnv) {
   return runtime;
 }
 
-function createCredentialSession(
+async function createCredentialSession(
   runtime: ReturnType<typeof newRuntimeWithIdentity>,
   displayName: string,
   roles: Array<{
@@ -709,11 +711,11 @@ function createCredentialSession(
 ) {
   const principal = runtime.writer.createPrincipal({ type: 'person', displayName }, roles);
   const issue = runtime.writer.issueCredential(principal.id, `${displayName}-credential`);
-  const grant = runtime.writer.exchangePersonCredential(issue.secret, {
+  const grant = await runtime.writer.exchangePersonCredential(issue.secret, {
     deviceName: 'Authorization fixture',
     deviceKind: 'cli',
   });
-  const resolved = runtime.resolver.resolveSecret(grant.accessToken, 'token');
+  const resolved = await runtime.resolver.resolveSecret(grant.accessToken, 'token');
   assert.ok(resolved.ok && resolved.authentication);
   return {
     principalId: principal.id,
@@ -805,8 +807,8 @@ async function withProtectedHttpServer(
   runtime: ReturnType<typeof createGatewayAuthRuntime>,
   fn: (origin: string) => Promise<void>,
 ): Promise<void> {
-  const server = createServer((req, res) => {
-    if (!authorizeHttpRequest({ runtime, req, res, resource: 'run-artifact' })) return;
+  const server = createServer(async (req, res) => {
+    if (!(await authorizeHttpRequest({ runtime, req, res, resource: 'run-artifact' }))) return;
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('protected resource');
   });

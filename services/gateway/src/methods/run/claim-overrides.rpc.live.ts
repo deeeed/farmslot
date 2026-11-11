@@ -78,7 +78,7 @@ test('authenticated override RPC returns a refreshed gate without starting a rev
     [{ role: 'admin', scope: { kind: 'global' } }],
   );
   const credential = runtime.writer.issueCredential(person.id, 'Disposable fixture');
-  const grant = runtime.writer.exchangePersonCredential(credential.secret, {
+  const grant = await runtime.writer.exchangePersonCredential(credential.secret, {
     deviceName: 'Loopback fixture',
     deviceKind: 'cli',
   });

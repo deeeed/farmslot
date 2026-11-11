@@ -1,4 +1,4 @@
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, scrypt, scryptSync, timingSafeEqual } from 'node:crypto';
 
 import type { StoredSecret } from './credential-store.js';
 
@@ -35,23 +35,33 @@ export function parseCredentialWire(
 
 export function hashSecret(secret: string): StoredSecret {
   const salt = randomBytes(16);
-  const hash = derive(secret, salt);
-  return {
-    scheme: 'scrypt-v1',
-    salt: salt.toString('base64'),
-    hash: hash.toString('base64'),
-  };
+  return storedSecret(salt, derive(secret, salt));
 }
 
 export function verifySecret(presented: string, stored: StoredSecret): boolean {
-  if (stored.scheme !== 'scrypt-v1') return false;
-  const salt = decodeBase64(stored.salt);
-  const expected = decodeBase64(stored.hash);
-  if (!salt || salt.length !== 16 || !expected || expected.length !== SCRYPT_PARAMETERS.dkLen) {
-    return false;
-  }
-  const actual = derive(presented, salt);
-  return timingSafeEqual(actual, expected);
+  const parts = storedSecretParts(stored);
+  return parts !== null && timingSafeEqual(derive(presented, parts.salt), parts.expected);
+}
+
+/**
+ * scrypt takes tens to hundreds of milliseconds by design. These derive on the libuv pool, so a
+ * server's event loop keeps running; the synchronous forms remain for one-shot CLI commands.
+ */
+export async function hashSecretAsync(secret: string): Promise<StoredSecret> {
+  const salt = randomBytes(16);
+  return storedSecret(salt, await deriveAsync(secret, salt));
+}
+
+export async function verifySecretAsync(presented: string, stored: StoredSecret): Promise<boolean> {
+  const parts = storedSecretParts(stored);
+  return (
+    parts !== null && timingSafeEqual(await deriveAsync(presented, parts.salt), parts.expected)
+  );
+}
+
+/** One stored hash, compared by value: a record rewritten with a new hash is a different secret. */
+export function sameStoredSecret(a: StoredSecret, b: StoredSecret): boolean {
+  return a.scheme === b.scheme && a.salt === b.salt && a.hash === b.hash;
 }
 
 export function safeEqualSecret(actual: string, expected: string): boolean {
@@ -70,13 +80,36 @@ export function verificationCacheKey(presented: string): string {
   return createHash('sha256').update(presented).digest('base64');
 }
 
+const SCRYPT_OPTIONS = {
+  N: SCRYPT_PARAMETERS.N,
+  r: SCRYPT_PARAMETERS.r,
+  p: SCRYPT_PARAMETERS.p,
+  maxmem: SCRYPT_PARAMETERS.maxmem,
+};
+
 function derive(secret: string, salt: Buffer): Buffer {
-  return scryptSync(secret, salt, SCRYPT_PARAMETERS.dkLen, {
-    N: SCRYPT_PARAMETERS.N,
-    r: SCRYPT_PARAMETERS.r,
-    p: SCRYPT_PARAMETERS.p,
-    maxmem: SCRYPT_PARAMETERS.maxmem,
-  });
+  return scryptSync(secret, salt, SCRYPT_PARAMETERS.dkLen, SCRYPT_OPTIONS);
+}
+
+function deriveAsync(secret: string, salt: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) =>
+    scrypt(secret, salt, SCRYPT_PARAMETERS.dkLen, SCRYPT_OPTIONS, (error, key) =>
+      error ? reject(error) : resolve(key),
+    ),
+  );
+}
+
+function storedSecret(salt: Buffer, hash: Buffer): StoredSecret {
+  return { scheme: 'scrypt-v1', salt: salt.toString('base64'), hash: hash.toString('base64') };
+}
+
+function storedSecretParts(stored: StoredSecret): { salt: Buffer; expected: Buffer } | null {
+  if (stored.scheme !== 'scrypt-v1') return null;
+  const salt = decodeBase64(stored.salt);
+  const expected = decodeBase64(stored.hash);
+  if (!salt || salt.length !== 16 || !expected || expected.length !== SCRYPT_PARAMETERS.dkLen)
+    return null;
+  return { salt, expected };
 }
 
 function decodeBase64(value: string): Buffer | null {
