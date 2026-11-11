@@ -41,7 +41,7 @@ mock.module('node:child_process', { namedExports: { execFile: fakeExecFile } });
 const { github } = await import('./github-client.js');
 const { GitHubHttpError } = await import('./github-errors.js');
 const { ConditionalCache, resetGitHubConditionalCacheForTests } =
-  await import('./github-gh-command.js');
+  await import('./github-operations.js');
 const transport = await import('./github-transport.js');
 const { githubQueryBudget } = await import('./github-query-budget.js');
 

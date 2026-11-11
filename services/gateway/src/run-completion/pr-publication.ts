@@ -223,7 +223,7 @@ async function buildPRComment(
   } catch (err) {
     if (err instanceof PublicationSecretError) throw err;
     console.warn(
-      `[run-completion] LLM pr-comment failed, using hardcoded: ${(err as Error).message}`,
+      `[run-completion] LLM pr-comment failed, using hardcoded: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 
@@ -261,7 +261,7 @@ export async function postPRComment(
         } catch (err) {
           if (strict) throw err;
           console.warn(
-            `[run-completion] workflow diagram read failed: ${(err as Error).message.slice(0, 200)}`,
+            `[run-completion] workflow diagram read failed: ${err instanceof Error ? err.message : String(err).slice(0, 200)}`,
           );
         }
       }
@@ -317,7 +317,9 @@ export async function postPRComment(
       }
     } catch (err) {
       if (strict) throw err;
-      console.warn(`[run-completion] bot comment dedup check failed: ${(err as Error).message}`);
+      console.warn(
+        `[run-completion] bot comment dedup check failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     await github.prComment(ciRepo, prNumber, comment, { force: true });
@@ -326,7 +328,9 @@ export async function postPRComment(
   } catch (err) {
     if (err instanceof PublicationSecretError) throw err;
     if (strict) throw err;
-    console.warn(`[run-completion] PR comment failed: ${(err as Error).message}`);
+    console.warn(
+      `[run-completion] PR comment failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return false;
   }
 }
@@ -359,7 +363,9 @@ export async function updatePRTitle(run: Run, ciRepo: string, prNumber: number):
       console.log(`[run-completion] updated PR #${prNumber} title: ${newTitle}`);
     }
   } catch (err) {
-    console.warn(`[run-completion] PR title update failed: ${(err as Error).message}`);
+    console.warn(
+      `[run-completion] PR title update failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 
@@ -381,8 +387,10 @@ export function resolvePrReadyAction(pr: PrLifecycle): PrReadyResult | 'closed' 
 
 export async function markPRReady(ciRepo: string, prNumber: number): Promise<PrReadyResult> {
   const prData = await github.prView(ciRepo, prNumber, ['state', 'isDraft', 'mergedAt']);
+  const rawState = String(prData.state ?? '');
   const lifecycle: PrLifecycle = {
-    state: prData.state as PrLifecycle['state'],
+    state:
+      rawState === 'OPEN' || rawState === 'CLOSED' || rawState === 'MERGED' ? rawState : 'OPEN',
     isDraft: Boolean(prData.isDraft),
     mergedAt: prData.mergedAt != null ? String(prData.mergedAt) : null,
   };

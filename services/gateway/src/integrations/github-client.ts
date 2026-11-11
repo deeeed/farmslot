@@ -1,5 +1,5 @@
 // github-client.ts — Unified router for every GitHub call the gateway makes.
-// Callers keep passing `gh` argument lists; github-gh-command.ts runs them in-process
+// Callers keep passing `gh` argument lists; github-operations.ts runs them in-process
 // over HTTP (no `gh` child per request). Adds X-RateLimit parsing with threshold
 // broadcasts, concurrency limiting, in-flight de-duplication, and a 10s negative cache
 // for failed requests. Conditional GETs (ETag/304) live in the command layer.
@@ -25,7 +25,7 @@ import {
   type PREditParams,
   type PRListFilters,
   type RestOpOpts,
-} from './github-gh-command.js';
+} from './github-operations.js';
 import {
   githubQueryBudget,
   GitHubQueryBudgetError,

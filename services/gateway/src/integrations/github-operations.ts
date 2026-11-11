@@ -1,7 +1,8 @@
-// github-gh-command.ts — typed GitHub operations the gateway exposes via GitHubService.
+// github-operations.ts — typed GitHub operations the gateway exposes via GitHubService.
 // HTTP transport, credential management, conditional GETs, porcelain GraphQL/REST helpers,
 // and exported Op functions (prView, prList, prChecks, prCreate/Edit/Comment/Ready,
 // repoView, graphql, rest).
+import { GitHubHttpError } from './github-errors.js';
 import {
   credentialFingerprint,
   defaultGitHubHost,
@@ -14,11 +15,17 @@ import {
   restPrefix,
 } from './github-transport.js';
 
-export type JqValue = null | boolean | number | string | JqValue[] | { [key: string]: JqValue };
-type JqObject = { [key: string]: JqValue };
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+type JsonObject = { [key: string]: JsonValue };
 
 /** Identity wrapper: marks an object built from typed fields (no encoding side effect). */
-function goStruct<T extends JqObject>(value: T): T {
+function goStruct<T extends JsonObject>(value: T): T {
   return value;
 }
 
@@ -32,8 +39,6 @@ export interface GhCommandContext {
   signal?: AbortSignal;
   account?: GhAccount;
 }
-
-type JsonObject = { [key: string]: JqValue };
 
 const GH_DEFAULT_ACCEPT =
   'application/vnd.github.merge-info-preview+json, application/vnd.github.nebula-preview';
@@ -167,11 +172,11 @@ async function send(
   }
 }
 
-type Params = { [key: string]: JqValue };
+type Params = { [key: string]: JsonValue };
 
-function parseJson(text: string): JqValue {
+function parseJson(text: string): JsonValue {
   try {
-    return JSON.parse(text) as JqValue;
+    return JSON.parse(text) as JsonValue;
   } catch (error) {
     if (!(error instanceof SyntaxError)) throw error;
     throw new GhFailure(`invalid JSON response: ${error.message}`);
@@ -307,7 +312,7 @@ async function porcelainGraphQL<T>(
   );
   state.headers = response.headers;
   state.graphqlCost += graphqlCostOf(response.body) || 1;
-  if (response.status > 299) throw new GhFailure(httpErrorMessage(response));
+  if (response.status > 299) throw new GitHubHttpError(response.status, httpErrorMessage(response));
   const parsed = parseJson(response.body) as { data?: T; errors?: GraphQLErrorItem[] };
   if (parsed.errors?.length) throw new GhFailure(graphQLErrorMessage(parsed.errors));
   if (!parsed.data) throw new GhFailure('GraphQL response had no data');
@@ -333,7 +338,7 @@ async function porcelainRest(
     context,
   );
   state.headers = response.headers;
-  if (response.status > 299) throw new GhFailure(httpErrorMessage(response));
+  if (response.status > 299) throw new GitHubHttpError(response.status, httpErrorMessage(response));
   return response.status === 204 ? {} : (parseJson(response.body) as JsonObject);
 }
 
@@ -376,13 +381,13 @@ function prFieldQuery(fields: string[]): string {
     .join(',');
 }
 
-function asObject(value: JqValue | undefined): JsonObject | null {
+function asObject(value: JsonValue | undefined): JsonObject | null {
   return value !== null && value !== undefined && typeof value === 'object' && !Array.isArray(value)
     ? value
     : null;
 }
 
-function asString(value: JqValue | undefined): string {
+function asString(value: JsonValue | undefined): string {
   return typeof value === 'string' ? value : '';
 }
 
@@ -895,7 +900,8 @@ export async function githubRestOp<T>(
 
   if (!opts.paginate) {
     const response = await send(host, { method: methodUpper, url, headers, body }, ctx);
-    if (response.status > 299) throw new GhFailure(httpErrorMessage(response));
+    if (response.status > 299)
+      throw new GitHubHttpError(response.status, httpErrorMessage(response));
     if (opts.raw) return { data: response.body as T, headers: response.headers };
     // 204 No Content: body is empty; return null so callers that check can handle it.
     return { data: JSON.parse(response.body || 'null') as T, headers: response.headers };
@@ -912,7 +918,8 @@ export async function githubRestOp<T>(
       ctx,
     );
     lastHeaders = response.headers;
-    if (response.status > 299) throw new GhFailure(httpErrorMessage(response));
+    if (response.status > 299)
+      throw new GitHubHttpError(response.status, httpErrorMessage(response));
     const next = findNextPage(response.headers.get('link') ?? undefined);
     const isLastPage = !next;
     if (opts.slurp) {

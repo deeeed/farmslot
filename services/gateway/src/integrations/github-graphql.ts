@@ -7,7 +7,7 @@ import {
   hasInvalidGitHubCursor,
   hasUnavailableGitHubPR,
 } from './github-errors.js';
-import { type GhCommandContext, githubRestOp } from './github-gh-command.js';
+import { type GhCommandContext, githubRestOp } from './github-operations.js';
 import { githubQueryBudget as queryBudget, GitHubQueryBudgetError } from './github-query-budget.js';
 
 export interface GitHubPage<T> {

@@ -1,7 +1,7 @@
 // Private farm, fake GitHub/runner CLIs and their mutable sources for the upstream collector
 // browser proof. Never calls GitHub, a provider or a real runner CLI.
 import assert from 'node:assert/strict';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, readFileSync } from 'node:fs';
 import {
@@ -339,6 +339,203 @@ const TRANSITIONS = {
 
 if (process.argv[2] === 'fake') {
   await fake(process.argv.slice(3));
+} else if (process.argv[2] === 'serve') {
+  // Persistent HTTP server: routes all GitHub API calls that the migrated gateway sends over
+  // HTTP transport (FARMSLOT_GITHUB_API_URL) so the proof never reaches the real GitHub API.
+  const [, serveStateFile] = process.argv.slice(2);
+  const { createServer: httpCreateServer } = await import('node:http');
+  const readState = () => JSON.parse(readFileSync(serveStateFile, 'utf8'));
+  const makeGqlPR = (pr) => ({
+    id: `PR_${pr.number}`,
+    number: pr.number,
+    state: 'OPEN',
+    title: pr.title,
+    url: `https://github.com/${pr.repo}/pull/${pr.number}`,
+    body: '',
+    isDraft: false,
+    mergeable: 'MERGEABLE',
+    mergeStateStatus: 'CLEAN',
+    reviewDecision: 'REVIEW_REQUIRED',
+    headRefName: pr.head,
+    headRefOid: 'aaaa'.repeat(10),
+    baseRefName: 'main',
+    createdAt: pr.createdAt,
+    updatedAt: pr.updatedAt,
+    closedAt: null,
+    mergedAt: null,
+    author: { id: 'U_01', login: pr.author, name: pr.author },
+    headRepository: { id: 'REPO_1', name: pr.repo.split('/')[1], nameWithOwner: pr.repo },
+    reviews: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null }, totalCount: 0 },
+  });
+  const httpServer = httpCreateServer((req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      try {
+        const state = readState();
+        const bodyText = Buffer.concat(chunks).toString('utf8');
+        let bodyJson;
+        try {
+          bodyJson = JSON.parse(bodyText);
+        } catch {
+          /* non-JSON body — urlPath routing handles it */
+        }
+        const urlObj = new URL(req.url || '/', 'http://fixture');
+        const urlPath = urlObj.pathname;
+        const json = (status, body) => {
+          const payload = JSON.stringify(body);
+          res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
+          res.end(payload);
+        };
+        if (req.method === 'POST' && urlPath === '/graphql') {
+          const query = String(bodyJson?.query ?? '');
+          const variables = bodyJson?.variables ?? {};
+          if (query.includes('latestOpinionatedReviews')) {
+            json(200, {
+              data: {
+                repository: {
+                  pullRequest: {
+                    reviews: {
+                      nodes: [],
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                      totalCount: 0,
+                    },
+                  },
+                },
+              },
+              rateLimit: { cost: 1 },
+            });
+            return;
+          }
+          if (query.includes('reviewThreads')) {
+            json(200, {
+              data: {
+                repository: {
+                  pullRequest: { reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } } },
+                },
+              },
+              rateLimit: { cost: 1 },
+            });
+            return;
+          }
+          if (query.includes('statusCheckRollup')) {
+            const prNum = typeof variables.pr_number === 'number' ? variables.pr_number : null;
+            const pr =
+              prNum != null ? [state.pr, state.listPr].find((p) => p.number === prNum) : null;
+            if (!pr || pr.fail) {
+              json(200, { errors: [{ message: 'HTTP 404 Not Found' }] });
+              return;
+            }
+            json(200, {
+              data: {
+                repository: {
+                  pullRequest: {
+                    statusCheckRollup:
+                      pr.checks.length === 0
+                        ? null
+                        : {
+                            state: pr.checks.every((c) => c.bucket === 'pass')
+                              ? 'SUCCESS'
+                              : 'PENDING',
+                            contexts: {
+                              nodes: pr.checks.map((c) => ({
+                                __typename: 'CheckRun',
+                                name: c.name,
+                                status: c.state === 'IN_PROGRESS' ? 'IN_PROGRESS' : 'COMPLETED',
+                                conclusion:
+                                  c.bucket === 'pass'
+                                    ? 'SUCCESS'
+                                    : c.state === 'IN_PROGRESS'
+                                      ? null
+                                      : 'PENDING',
+                                startedAt: c.startedAt,
+                                completedAt: c.completedAt || null,
+                                detailsUrl: null,
+                                url: null,
+                                checkSuite: { workflowRun: { workflow: { name: c.name } } },
+                              })),
+                              pageInfo: { hasNextPage: false, endCursor: null },
+                            },
+                          },
+                  },
+                },
+                rateLimit: { cost: 1 },
+              },
+            });
+            return;
+          }
+          if (query.includes('PullRequestByNumber') || query.includes('pullRequest(number:')) {
+            const prNum = Number(variables.pr_number);
+            const pr = [state.pr, state.listPr].find((p) => p.number === prNum);
+            if (!pr || pr.fail) {
+              json(200, { errors: [{ message: 'HTTP 404 Not Found' }] });
+              return;
+            }
+            json(200, {
+              data: { repository: { pullRequest: makeGqlPR(pr) }, rateLimit: { cost: 1 } },
+            });
+            return;
+          }
+          if (query.includes('PullRequestList') || query.includes('pullRequests(')) {
+            const headBranch = variables.headBranch;
+            const prs = [state.pr, state.listPr].filter(
+              (p) => !headBranch || p.head === headBranch,
+            );
+            json(200, {
+              data: {
+                repository: {
+                  pullRequests: {
+                    totalCount: prs.length,
+                    nodes: prs.map(makeGqlPR),
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                  },
+                },
+                rateLimit: { cost: 1 },
+              },
+            });
+            return;
+          }
+          // Batch query (pr_0, pr_1, …) from raw-cache.ts
+          if (query.includes('pr_0')) {
+            const repoData = {};
+            for (const [key, num] of Object.entries(variables)) {
+              if (typeof num !== 'number') continue;
+              const pr = [state.pr, state.listPr].find((p) => p.number === num);
+              repoData[key] = pr ? makeGqlPR(pr) : null;
+            }
+            json(200, { data: { repository: repoData, rateLimit: { cost: 1 } } });
+            return;
+          }
+          json(200, { data: {} });
+          return;
+        }
+        // REST: comments
+        if (req.method === 'GET' && /\/issues\/\d+\/comments$/.test(urlPath)) {
+          json(200, []);
+          return;
+        }
+        // REST: commits
+        if (req.method === 'GET' && /\/pulls\/\d+\/commits$/.test(urlPath)) {
+          json(200, []);
+          return;
+        }
+        // REST: file contents (not found → triggers null-template path)
+        if (req.method === 'GET' && urlPath.includes('/contents/')) {
+          json(404, { message: 'Not Found' });
+          return;
+        }
+        json(404, { message: 'Not Found' });
+      } catch (err) {
+        res.writeHead(500);
+        res.end(String(err));
+      }
+    });
+  });
+  httpServer.listen(0, '127.0.0.1', () => {
+    const port = httpServer.address().port;
+    process.stdout.write(JSON.stringify({ port }) + '\n');
+  });
+  // Keep running until killed by cleanup mode.
 } else {
   assert.equal(process.env.FARMSLOT_OFFLINE_PROOF, '1');
   const [mode, configFile, transition] = process.argv.slice(2);
@@ -613,6 +810,31 @@ if (process.argv[2] === 'fake') {
     );
     await chmod(path.join(fakeBin, 'git'), 0o700);
     await symlink(node, path.join(fakeBin, 'node'));
+    // Start the GitHub API fixture HTTP server. Gateway uses it via FARMSLOT_GITHUB_API_URL
+    // so all PR GraphQL and REST calls go here instead of real GitHub.
+    const serveChild = spawn(node, [fixtureFile, 'serve', stateFile], {
+      detached: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    serveChild.unref();
+    const githubApiUrl = await new Promise((resolve, reject) => {
+      let buf = '';
+      serveChild.stdout.on('data', (chunk) => {
+        buf += chunk.toString();
+        const nl = buf.indexOf('\n');
+        if (nl >= 0) {
+          const { port } = JSON.parse(buf.slice(0, nl));
+          resolve(`http://127.0.0.1:${port}`);
+        }
+      });
+      serveChild.stdout.on('error', reject);
+      setTimeout(
+        () => reject(new Error('GitHub fixture server did not report port in time')),
+        8000,
+      );
+    });
+    // Write FARMSLOT_GITHUB_API_URL to farm/.env so the gateway picks it up at startup.
+    await put(path.join(farm, '.env'), `FARMSLOT_GITHUB_API_URL=${githubApiUrl}\n`);
     await save('fixture.json', {
       ...config,
       farm,
@@ -632,6 +854,8 @@ if (process.argv[2] === 'fake') {
       slotId: SLOT,
       actorId: actor.id,
       monitorId: monitor.id,
+      githubHttpPid: serveChild.pid,
+      githubApiUrl,
       setupComplete: true,
       fixtureOnly: true,
       providerExecution: false,
@@ -641,6 +865,14 @@ if (process.argv[2] === 'fake') {
     const fixture = JSON.parse(await readFile(path.join(root, 'fixture.json'), 'utf8'));
     assert(fixture.setupComplete && fixture.farm === farm && fixture.sourceRoot === source);
     if (mode === 'cleanup') {
+      // Stop the GitHub API fixture server started in setup mode.
+      if (fixture.githubHttpPid) {
+        try {
+          process.kill(fixture.githubHttpPid, 'SIGTERM');
+        } catch {
+          /* process may have already exited */
+        }
+      }
       const actor = JSON.parse(await readFile(path.join(root, 'actor.json'), 'utf8'));
       assert.equal(actor.profile.path, path.join(home, 'gateways.json'));
       const info = await lstat(actor.profile.path);

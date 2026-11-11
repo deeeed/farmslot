@@ -99,8 +99,9 @@ function tokenKey(host: string, login?: string): string {
  * returned verbatim (empty string when unset → no Authorization header sent).
  */
 export function resolveGitHubToken(host: string, login?: string): Promise<string> {
-  if (overrideOrigin()) {
-    return Promise.resolve(process.env.FARMSLOT_GITHUB_FIXTURE_TOKEN?.trim() ?? '');
+  if (overrideOrigin() && process.env.FARMSLOT_GITHUB_FIXTURE_TOKEN !== undefined) {
+    // A fixture token is explicitly provided: use it verbatim, skip the keyring.
+    return Promise.resolve(process.env.FARMSLOT_GITHUB_FIXTURE_TOKEN.trim());
   }
   const key = tokenKey(host, login);
   const existing = tokens.get(key);

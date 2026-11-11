@@ -5,7 +5,7 @@ import {
   PR_BOUND_FLOW_TYPES,
 } from '@farmslot/protocol';
 
-import { execFileArgv } from '../../core/index.js';
+import { github } from '../../integrations/github-client.js';
 
 /** Extract a standalone ticket key from Jira/GitHub URLs or clean up input. */
 export function normalizeTicketRef(input: string): string {
@@ -48,40 +48,27 @@ export const JIRA_KEY_RE = /^[A-Z][A-Z0-9]*-\d+$/;
  * Needs the project's `ci.repo` (e.g. "example-org/example-browser").
  * Returns the resolved ref, or the original input if resolution fails.
  */
-export async function resolvePrRef(
-  input: string,
-  repo: string,
-  runArgv = execFileArgv,
-): Promise<string> {
+export async function resolvePrRef(input: string, repo: string): Promise<string> {
   const trimmed = input.trim();
   // Already in canonical form
   if (parseGitHubRef(trimmed)) return trimmed;
   // Bare PR number: "41535" → "owner/repo#41535"
   if (/^\d+$/.test(trimmed)) return `${repo}#${trimmed}`;
-  // Branch name: look up the PR via gh CLI
+  // Branch name: look up the PR via GitHub service
   try {
-    const result = await runArgv([
-      'gh',
-      'pr',
-      'list',
-      '--head',
-      trimmed,
-      '--repo',
-      repo,
-      '--json',
-      'number',
-      '--jq',
-      '.[0].number',
-    ]);
-    const prNum = result.stdout.trim();
-    if (result.exitCode === 0 && /^\d+$/.test(prNum)) {
+    const prs = (await github.prListFields(repo, ['number'], {
+      head: trimmed,
+      limit: 1,
+    })) as Array<{ number?: number }>;
+    const prNum = prs[0]?.number;
+    if (prNum != null) {
       return `${repo}#${prNum}`;
     }
   } catch (err) {
-    // gh offline / auth missing / rate-limited: caller still gets the raw branch name
+    // Offline / auth missing / rate-limited: caller still gets the raw branch name
     // and downstream resolution will surface the lookup failure with more context.
     console.warn(
-      `[dispatch] pr lookup failed for branch ${trimmed} on ${repo}: ${(err as Error).message}`,
+      `[dispatch] pr lookup failed for branch ${trimmed} on ${repo}: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
   return trimmed;

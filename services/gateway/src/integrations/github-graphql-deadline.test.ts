@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, mock, test } from 'node:test';
 
-import type { GhCommandContext } from './github-gh-command.js';
+import type { GhCommandContext } from './github-operations.js';
 
 const observed: Array<AbortSignal | undefined> = [];
 mock.module('./github-client.js', {
@@ -9,7 +9,7 @@ mock.module('./github-client.js', {
     githubRequestCacheKey: () => 'deadline-fixture',
   },
 });
-mock.module('./github-gh-command.js', {
+mock.module('./github-operations.js', {
   namedExports: {
     githubRestOp: async <T>(
       _host: string,

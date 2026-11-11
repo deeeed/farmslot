@@ -1414,26 +1414,19 @@ async function findPRViaSlotRepo(
       ? { pr: found.number, repo, ...(found.baseRefName ? { baseRef: found.baseRefName } : {}) }
       : null;
   }
-  const repoPath = await findSlotRepoPath(slotId);
-  if (!repoPath) return null;
-
-  const env = { ...process.env };
-  delete env.GH_TOKEN;
+  // Non-collected path: resolve the repository from the git remote instead of spawning gh.
+  const repo = await resolveSlotRepoSlug(slotId);
+  if (!repo) return null;
   try {
-    const { stdout } = await execFileAsync(
-      'gh',
-      ['pr', 'list', '--head', branch, '--json', 'number,baseRefName', '--jq', '.[0]'],
-      { cwd: repoPath, env, maxBuffer: 1024 * 1024 },
-    );
-    const found = JSON.parse(stdout || 'null') as {
-      number?: number;
-      baseRefName?: string;
-    } | null;
+    const prs = (await github.prListFields(repo, ['number', 'baseRefName'], {
+      head: branch,
+      limit: 1,
+    })) as Array<{ number?: number; baseRefName?: string }>;
+    const found = prs[0] ?? null;
     if (!found?.number) return null;
-    const slug = await resolveSlotRepoSlug(slotId);
     return {
       pr: found.number,
-      repo: slug ?? '',
+      repo,
       ...(found.baseRefName ? { baseRef: found.baseRefName } : {}),
     };
   } catch {
