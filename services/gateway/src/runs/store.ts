@@ -1787,72 +1787,126 @@ function archivedRunsDirectory(): string {
  * Archived runs leave the live map but stay durable on disk, so any projection
  * that claims historical lineage must read them too — archiving is exactly the
  * "outside the current page" case. Cached because roadmap delivery reads this per
- * request; `archiveRun` invalidates it and `deleteArchivedRun` drops its one record.
+ * request; every archive write (`archiveRun`, a retained mutation, `deleteArchivedRun`) updates
+ * its one record.
  * `deleteRun` unlinks from `runsDirectory()` and never touches the archive directory.
  */
 let archivedRunsCache: Run[] | null = null;
 /**
- * Bumped on every invalidation so a scan that started before an `archiveRun` cannot
- * publish its pre-archive snapshot as the cache. Without this, a cold scan racing an
- * archive write would omit the newly archived run until the next archive or restart.
+ * Bumped on every archive write so a union of live and archived runs that awaited across one
+ * retries, instead of missing a run that moved between the two halves meanwhile.
  */
 let archivedRunsGeneration = 0;
+/** The one scan of the archive directory in flight; concurrent cold readers share it. */
+let archivedRunsScan: Promise<Run[]> | null = null;
+/**
+ * Archive records written while a scan is in flight (null: deleted). The scan may have read a
+ * file before or after its write, so the scan's result takes these on top when it lands.
+ */
+const archivedRunWrites = new Map<string, Run | null>();
 
-function invalidateArchivedRunsCache(): void {
-  archivedRunsCache = null;
-  archivedRunsGeneration++;
+/** An archive file's record as every reader sees it: parsed, then the live load's migrations. */
+function archivedRunRecord(file: string, raw: string): Run | null {
+  const archived = parseRunRecordFile(file, raw);
+  // Same migrations as the live load. Without them a pre-backfill archive keeps
+  // a missing familyId and every such run groups under one undefined family,
+  // merging lineage across unrelated backlog items.
+  if (archived) normalizePersistedRun(archived);
+  return archived;
+}
+
+function withArchivedRunWrite(cached: Run[], id: string, record: Run | null): Run[] {
+  const kept = cached.filter((run) => run.id !== id);
+  return record ? [...kept, record] : kept;
 }
 
 /**
- * Cold call reads and parses every file in the archive directory; subsequent calls are
- * served from the cache until the next archive. Callers on a request path should expect
- * the first read after startup (or after an archive) to scale with archive size.
+ * One archive file was written (its exact JSON) or deleted (null). The cache takes that one
+ * record instead of being dropped: the next read does not parse the whole archive again.
+ */
+function recordArchivedRunWrite(id: string, raw: string | null): void {
+  // A file that is not a run record is skipped by a scan, so it has no entry here either.
+  const record = raw === null ? null : archivedRunRecord(`${id}.json`, raw);
+  archivedRunsGeneration++;
+  if (archivedRunsCache) archivedRunsCache = withArchivedRunWrite(archivedRunsCache, id, record);
+  else if (archivedRunsScan) archivedRunWrites.set(id, record);
+  // With neither a cache nor a scan, the next scan reads the file itself.
+}
+
+/**
+ * Forget the cached archive so the next read scans the directory again. The store updates its
+ * cache on its own writes; this is for an archive directory changed by something else.
+ */
+export function forgetArchivedRuns(): void {
+  archivedRunsGeneration++;
+  archivedRunsCache = null;
+  // A scan already in flight may predate the outside change: let it finish for its waiters,
+  // but do not let it become the cache.
+  archivedRunsScan = null;
+  archivedRunWrites.clear();
+}
+
+/**
+ * The first call after startup reads and parses every file in the archive directory, once:
+ * concurrent callers share that scan. Later calls are served from the cache.
  */
 export async function getArchivedRuns(): Promise<Run[]> {
-  while (true) {
-    if (archivedRunsCache) return archivedRunsCache;
-    const generation = archivedRunsGeneration;
-    let files: string[];
-    try {
-      files = await readdir(archivedRunsDirectory());
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        if (generation !== archivedRunsGeneration) continue;
-        archivedRunsCache = [];
-        return archivedRunsCache;
+  if (archivedRunsCache) return archivedRunsCache;
+  if (archivedRunsScan) return archivedRunsScan;
+  const scan: Promise<Run[]> = scanArchivedRuns().then(
+    (loaded) => {
+      // A scan the store has since forgotten answers its waiters but is not the cache.
+      if (archivedRunsScan !== scan) return loaded;
+      let cached = loaded;
+      for (const [id, record] of archivedRunWrites)
+        cached = withArchivedRunWrite(cached, id, record);
+      archivedRunWrites.clear();
+      archivedRunsScan = null;
+      archivedRunsCache = cached;
+      return cached;
+    },
+    (error: unknown) => {
+      // A failed scan caches nothing; the next reader scans again and sees the same failure.
+      if (archivedRunsScan === scan) {
+        archivedRunWrites.clear();
+        archivedRunsScan = null;
       }
-      throw err;
-    }
-    const loaded: Run[] = [];
-    for (const file of files) {
-      if (!file.endsWith('.json') || file.includes('.tmp.')) continue;
-      const filePath = path.join(archivedRunsDirectory(), file);
-      try {
-        const archived = parseRunRecordFile(file, await readFile(filePath, 'utf-8'));
-        if (!archived) {
-          console.warn(`[run-store] skipping non-run archive file ${file}`);
-          continue;
-        }
-        // Same migrations as the live load. Without them a pre-backfill archive keeps
-        // a missing familyId and every such run groups under one undefined family,
-        // merging lineage across unrelated backlog items.
-        normalizePersistedRun(archived);
-        loaded.push(archived);
-      } catch (err) {
-        // One unreadable archive record must not blind every lineage read. Skipping
-        // it is explicit recovery: the file stays on disk for inspection.
-        console.warn(
-          `[run-store] skipping unreadable archived run ${file}: ${(err as Error).message.slice(0, 200)}`,
-        );
-      }
-    }
-    // An archive invalidated this scan after its directory listing was captured.
-    // Retry before returning: callers read the live map only after this resolves,
-    // and the moved run would otherwise be absent from both halves of the union.
-    if (generation !== archivedRunsGeneration) continue;
-    archivedRunsCache = loaded;
-    return archivedRunsCache;
+      throw error;
+    },
+  );
+  archivedRunsScan = scan;
+  return scan;
+}
+
+async function scanArchivedRuns(): Promise<Run[]> {
+  let files: string[];
+  try {
+    files = await readdir(archivedRunsDirectory());
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw err;
   }
+  const loaded: Run[] = [];
+  for (const file of files) {
+    if (!file.endsWith('.json') || file.includes('.tmp.')) continue;
+    const filePath = path.join(archivedRunsDirectory(), file);
+    try {
+      const archived = archivedRunRecord(file, await readFile(filePath, 'utf-8'));
+      if (!archived) {
+        console.warn(`[run-store] skipping non-run archive file ${file}`);
+        continue;
+      }
+      loaded.push(archived);
+    } catch (err) {
+      // One unreadable archive record must not blind every lineage read. Skipping
+      // it is explicit recovery: the file stays on disk for inspection. A file deleted
+      // between the listing and its read lands here too.
+      console.warn(
+        `[run-store] skipping unreadable archived run ${file}: ${(err as Error).message.slice(0, 200)}`,
+      );
+    }
+  }
+  return loaded;
 }
 
 /**
@@ -1998,11 +2052,10 @@ export async function updateQaFollowUp(
     } else {
       const file = path.join(archivedRunsDirectory(), `${run.id}.json`);
       const temporary = `${file}.tmp.${randomUUID()}`;
-      await writeFile(temporary, JSON.stringify({ ...run, qaAfterReview: next }, null, 2), {
-        mode: 0o600,
-      });
+      const raw = JSON.stringify({ ...run, qaAfterReview: next }, null, 2);
+      await writeFile(temporary, raw, { mode: 0o600 });
       await rename(temporary, file);
-      invalidateArchivedRunsCache();
+      recordArchivedRunWrite(run.id, raw);
       publishRunResources(captureRunResources(run));
     }
     changed = true;
@@ -2026,13 +2079,10 @@ export async function updateReviewPublication(
     } else {
       const file = path.join(archivedRunsDirectory(), `${run.id}.json`);
       const temporary = `${file}.tmp.${randomUUID()}`;
-      await writeFile(
-        temporary,
-        JSON.stringify({ ...run, reviewPublication: publication }, null, 2),
-        { mode: 0o600 },
-      );
+      const raw = JSON.stringify({ ...run, reviewPublication: publication }, null, 2);
+      await writeFile(temporary, raw, { mode: 0o600 });
       await rename(temporary, file);
-      invalidateArchivedRunsCache();
+      recordArchivedRunWrite(run.id, raw);
       publishRunResources(captureRunResources(run));
     }
   });
@@ -2094,7 +2144,8 @@ async function commitRetainedRunMutation(
       committed = live;
     } else {
       const temporary = `${file}.tmp.${randomUUID()}`;
-      await writeFile(temporary, JSON.stringify(snapshot, null, 2), { mode: 0o600 });
+      const raw = JSON.stringify(snapshot, null, 2);
+      await writeFile(temporary, raw, { mode: 0o600 });
       const handle = await open(temporary, 'r');
       try {
         await handle.sync();
@@ -2104,7 +2155,7 @@ async function commitRetainedRunMutation(
       assertCurrent(authority);
       if (getRun(id)) throw new Error('Archived publication run was restored during persistence');
       await rename(temporary, file);
-      invalidateArchivedRunsCache();
+      recordArchivedRunWrite(id, raw);
       publishRunResources(captureRunResources(snapshot), previousResources);
       const directory = await open(archivedRunsDirectory(), 'r');
       try {
@@ -2234,7 +2285,8 @@ async function archiveRunBody(id: string): Promise<boolean> {
   // pending background persist from the terminal status update may still be
   // racing on src; renaming src could move that stale pre-archive JSON and lose
   // archivedAt. Direct dst write makes the archived record authoritative.
-  fs.writeFileSync(dst, JSON.stringify(archivedRun, null, 2), { encoding: 'utf-8', flush: true });
+  const archivedRaw = JSON.stringify(archivedRun, null, 2);
+  fs.writeFileSync(dst, archivedRaw, { encoding: 'utf-8', flush: true });
   const archiveDirectory = fs.openSync(archivedRunsDirectory(), 'r');
   try {
     fs.fsyncSync(archiveDirectory);
@@ -2254,7 +2306,7 @@ async function archiveRunBody(id: string): Promise<boolean> {
   }
   fs.rmSync(decisionHistoryFile(src), { force: true });
   runs.delete(id);
-  invalidateArchivedRunsCache();
+  recordArchivedRunWrite(id, archivedRaw);
   publishRunResources(captureRunResources(archivedRun));
   try {
     await rm(runSessionArchiveDir(id), { recursive: true, force: true });
@@ -2310,11 +2362,7 @@ export async function deleteArchivedRun(id: string): Promise<boolean> {
     throw err;
   }
   await rm(decisionHistoryFile(path.join(archivedRunsDirectory(), `${id}.json`)), { force: true });
-  // Drop the one record rather than rescanning the whole archive on the next read.
-  if (archivedRunsCache) {
-    archivedRunsCache = archivedRunsCache.filter((run) => run.id !== id);
-    archivedRunsGeneration++;
-  } else invalidateArchivedRunsCache();
+  recordArchivedRunWrite(id, null);
   const current = getRun(id);
   publishRunResources(
     captureRunResources(current ?? previous ?? { id, familyId: id, decisions: [] }),
