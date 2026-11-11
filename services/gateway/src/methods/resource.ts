@@ -1028,6 +1028,14 @@ function buildPressureConcerns(
     if (!system) {
       concerns.push({ severity: 'warn', reason: 'No system metrics available yet.' });
     } else {
+      const tcp = system.tcp;
+      if (tcp?.severity === 'unknown')
+        concerns.push({ severity: 'warn', reason: `TCP census unavailable: ${tcp.error}` });
+      else if (tcp && tcp.severity !== 'ok')
+        concerns.push({
+          severity: tcp.severity === 'critical' ? 'critical' : 'warn',
+          reason: `TCP connections ${tcp.total} (${tcp.established} ESTABLISHED + ${tcp.timeWait} TIME_WAIT), ephemeral range ${tcp.ephemeralCapacity}; top owners: ${tcp.topProcesses.map((owner) => `${owner.command} pid ${owner.pid}: ${owner.connections}`).join(', ') || 'unavailable'}.`,
+        });
       addMetricConcern(concerns, 'CPU', system.cpuPercent, thresholds.cpuCriticalPercent, 70);
       addMetricConcern(
         concerns,

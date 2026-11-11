@@ -21,6 +21,15 @@ mock.module('../core/exec.js', {
     },
   },
 });
+mock.module('@farmslot/protocol/node/tcp-metrics', {
+  namedExports: {
+    collectTcpMetrics: async () => ({
+      severity: 'unknown',
+      error: 'fixture unavailable',
+      collectedAt: '2024-01-01T00:00:00Z',
+    }),
+  },
+});
 const { collectLocalMetrics, startLocalCollection, stopLocalCollection } =
   await import('./node-health.js');
 
