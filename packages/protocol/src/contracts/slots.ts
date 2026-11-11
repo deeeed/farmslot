@@ -150,6 +150,13 @@ export interface SlotStatus {
   };
 }
 
+/**
+ * Slot entity for entity-sync (ADR-071 Amendment 3).
+ * SlotStatus with hostLoad excluded — hostLoad is derived from MachineHealth
+ * and re-attached by the client cache from the machines array.
+ */
+export type SlotEntity = Omit<SlotStatus, 'hostLoad'>;
+
 export interface FleetSummary {
   total: number;
   ready: number;

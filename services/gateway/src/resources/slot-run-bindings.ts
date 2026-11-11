@@ -103,10 +103,7 @@ export class SlotResourceChanges {
     membershipChanged = false,
   ): void {
     for (const key of this.slotKeys(ids, current, previous)) {
-      const kind =
-        key.family === 'slot' && !current?.has((key as { slotId: string }).slotId)
-          ? 'deleted'
-          : 'updated';
+      const kind = key.family === 'slot' && !current?.has(key.slotId) ? 'deleted' : 'updated';
       if (membershipChanged && key.family !== 'slot') {
         this.revisions.advanceMembership(key, kind);
       } else {

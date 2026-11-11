@@ -4,3 +4,4 @@
 - Add `pr.list { versions: true }` and `pr.list { ids: [...] }` handlers for PR entity-sync
 - Advance per-PR entity keys on data and membership changes in the PR list collector
 - Remove local `computeSummary`; use shared implementation from `@farmslot/protocol`
+- Add `fleet.status { versions }` and `{ ids }` authorization test; cap ids page at 2 MB (export `FLEET_ENTITY_PAGE_MAX_BYTES`)

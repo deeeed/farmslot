@@ -17,6 +17,7 @@ import type {
   RuntimeCapabilityLifecycleEvent,
   ScriptComplete,
   ScriptOutput,
+  SlotEntity,
   SlotStatus,
   StreamFrame,
   StreamStatus,
@@ -163,19 +164,19 @@ export const Events = {
  * collection keys.
  */
 export type ChangedEntity =
-  | { family: 'slot'; entity: SlotStatus; version: string }
+  | { family: 'slot'; entity: SlotEntity; version: string }
   | { family: 'decision'; entity: PendingDecision; version: string }
   | { family: 'upstream'; entity: PRStatus; version: string };
 
 /** Runtime guard: narrow a pushed entity to a slot. */
 export function isSlotEntity(
   e: ChangedEntity,
-): e is { family: 'slot'; entity: SlotStatus; version: string } {
+): e is { family: 'slot'; entity: SlotEntity; version: string } {
   return (
     e.family === 'slot' &&
     typeof e.entity === 'object' &&
     e.entity !== null &&
-    typeof (e.entity as SlotStatus).slot === 'string'
+    typeof (e.entity as Record<string, unknown>).slot === 'string'
   );
 }
 

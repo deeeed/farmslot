@@ -911,7 +911,12 @@ async function routeAuthorizedMethod(
 
     // Fleet
     case Methods.FLEET_STATUS: {
-      const fp = p as FleetStatusParams;
+      const fp: FleetStatusParams =
+        p != null && typeof p === 'object' ? (p as FleetStatusParams) : {};
+      if (fp.ids !== undefined) {
+        if (!Array.isArray(fp.ids) || !fp.ids.every((id) => typeof id === 'string'))
+          throw new GatewayMethodError('INVALID_PARAMS', 'fleet.status ids must be a string array');
+      }
       if (fp.versions === true) return fleetStatusVersions();
       if (fp.ids !== undefined) return fleetStatusIds(fp.ids);
       return fleetStatus(fp, undefined, (fleet) =>

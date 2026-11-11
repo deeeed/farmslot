@@ -39,10 +39,10 @@ test('prPrKey formats repo/pr correctly', () => {
   assert.equal(prPrKey(pr), 'acme/widget/42');
 });
 
-test('prEntityVersion is 16 hex chars', () => {
+test('prEntityVersion is 64 hex chars (full sha256)', () => {
   const pr = makePR(1);
   const v = prEntityVersion(pr);
-  assert.match(v, /^[0-9a-f]{16}$/, 'version must be 16 lowercase hex chars');
+  assert.match(v, /^[0-9a-f]{64}$/, 'version must be 64 lowercase hex chars (full sha256)');
 });
 
 test('prEntityVersion is stable for same content', () => {

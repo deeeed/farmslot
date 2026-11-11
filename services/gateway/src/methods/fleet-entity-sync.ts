@@ -7,7 +7,7 @@ import type { FleetEntityPage, FleetVersionsResult } from '@farmslot/protocol';
 import { slotEntityBody, slotEntityVersion } from '../fleet/entity-version.js';
 import { getCachedFleet, loadFleetStatus } from '../fleet/state.js';
 
-const PAGE_MAX_BYTES = 2 * 1024 * 1024;
+export const FLEET_ENTITY_PAGE_MAX_BYTES = 2 * 1024 * 1024;
 
 /**
  * fleet.status { versions: true }
@@ -47,7 +47,7 @@ export async function fleetStatusIds(ids: string[]): Promise<FleetEntityPage> {
     const entity = slotEntityBody(slot);
     const version = slotEntityVersion(entity);
     const entryBytes = JSON.stringify(entity).length;
-    if (bytes + entryBytes > PAGE_MAX_BYTES && entities.length > 0) break;
+    if (bytes + entryBytes > FLEET_ENTITY_PAGE_MAX_BYTES && entities.length > 0) break;
     bytes += entryBytes;
     entities.push(entity);
     versions.push({ id, version });

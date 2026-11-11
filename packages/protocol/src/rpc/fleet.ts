@@ -3,9 +3,9 @@ import type {
   FleetStatus,
   FleetSummary,
   MachineHealth,
+  SlotEntity,
   SlotParkedCommits,
   SlotRecoveryRefusal,
-  SlotStatus,
   SlotWorkspaceIdentity,
 } from '../contracts/index.js';
 
@@ -46,7 +46,7 @@ export interface FleetVersionsResult {
 
 /** ids page for fleet.status { ids: string[] }. Only the requested entities plus their versions. */
 export interface FleetEntityPage {
-  entities: SlotStatus[];
+  entities: SlotEntity[];
   /** id/version pairs for each served entity (may differ from requested when entity changed during page). */
   versions: Array<{ id: string; version: string }>;
 }

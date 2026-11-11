@@ -17,7 +17,7 @@ export function prEntityKey(queryId: string, pr: PRStatus): ResourceKey {
   return { family: 'upstream', integration: 'github', queryId, prKey: prPrKey(pr) };
 }
 
-/** Content-hash version for a PR entity. Stable across gateway restarts. */
+/** Content-hash version for a PR entity. Full sha256 hex (64 chars). Stable across gateway restarts. */
 export function prEntityVersion(pr: PRStatus): string {
-  return createHash('sha256').update(canonicalResourceJson(pr)).digest('hex').slice(0, 16);
+  return createHash('sha256').update(canonicalResourceJson(pr)).digest('hex');
 }

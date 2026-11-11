@@ -452,7 +452,7 @@ Adding an exception means amending this table. Offline, commands stay disabled,
 so previews, searches and diagnostics are unavailable until the client
 reconnects.
 
-## Amendment 3 (2026-11-12): Entity sync
+## Amendment (2026-11-12): Entity sync
 
 ### Status
 

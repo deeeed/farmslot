@@ -604,8 +604,8 @@ export function initServerGlobals(): void {
     broadcastEvent(Events.RESOURCE_CHANGED, payload);
   });
   resourceRevisions.setEntityProvider('slot', (key) => {
-    if (key.family !== 'slot' || !('slotId' in key)) return undefined;
-    return slotEntityProvider((key as { family: 'slot'; slotId: string }).slotId);
+    if (key.family !== 'slot') return undefined;
+    return slotEntityProvider(key.slotId);
   });
   resourceRevisions.setEntityProvider('upstream', prEntityProvider());
 
@@ -836,6 +836,7 @@ async function dispatchMessage(
           version: 1,
           epoch: resourceRevisions.epoch,
           versionLists: true,
+          entitySync: true,
           observedReads: 1,
           workspaceReads: 1,
           ...(collectorMethods.length

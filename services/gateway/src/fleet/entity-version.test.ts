@@ -44,9 +44,9 @@ test('slotEntityBody returns slot unchanged when hostLoad is absent', () => {
   assert.equal(body, baseSlot);
 });
 
-test('slotEntityVersion is 16 hex chars', () => {
+test('slotEntityVersion is 64 hex chars (full sha256)', () => {
   const v = slotEntityVersion(baseSlot);
-  assert.match(v, /^[0-9a-f]{16}$/, 'version must be 16 lowercase hex chars');
+  assert.match(v, /^[0-9a-f]{64}$/, 'version must be 64 lowercase hex chars (full sha256)');
 });
 
 test('slotEntityVersion is stable across calls for the same input', () => {
@@ -57,7 +57,7 @@ test('slotEntityVersion is stable across calls for the same input', () => {
 
 test('slotEntityVersion differs for different content', () => {
   const a = slotEntityVersion(baseSlot);
-  const b = slotEntityVersion({ ...baseSlot, status: 'busy' } as SlotStatus);
+  const b = slotEntityVersion({ ...baseSlot, branch: 'feature-branch' });
   assert.notEqual(a, b, 'different content must produce different version');
 });
 

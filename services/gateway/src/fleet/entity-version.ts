@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type { SlotStatus } from '@farmslot/protocol';
+import type { SlotEntity, SlotStatus } from '@farmslot/protocol';
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 import type { ChangedEntity } from '@farmslot/protocol/transport/events';
 
@@ -25,13 +25,13 @@ export function slotEntityProvider(slotId: string): ChangedEntity | undefined {
 }
 
 /** Slot entity body: SlotStatus with hostLoad excluded. */
-export function slotEntityBody(slot: SlotStatus): SlotStatus {
+export function slotEntityBody(slot: SlotStatus): SlotEntity {
   if (!('hostLoad' in slot)) return slot;
   const { hostLoad: _excluded, ...rest } = slot;
-  return rest as SlotStatus;
+  return rest;
 }
 
-/** Content-hash version for a slot entity body. Stable across gateway restarts. */
-export function slotEntityVersion(entity: SlotStatus): string {
-  return createHash('sha256').update(canonicalResourceJson(entity)).digest('hex').slice(0, 16);
+/** Content-hash version for a slot entity body. Full sha256 hex (64 chars). Stable across gateway restarts. */
+export function slotEntityVersion(entity: SlotEntity): string {
+  return createHash('sha256').update(canonicalResourceJson(entity)).digest('hex');
 }

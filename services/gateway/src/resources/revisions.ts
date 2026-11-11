@@ -162,16 +162,15 @@ export class GatewayResourceRevisions {
     for (const [id, change] of this.pending) {
       if (change.key.family !== family) continue;
       // Attach entity for per-entity keys (not collection keys, not deletions).
-      if (provider && change.kind !== 'deleted') {
-        const pushed = provider(change.key);
-        if (pushed) (change as Change).changedEntity = pushed;
-      }
+      const pushed = provider && change.kind !== 'deleted' ? provider(change.key) : undefined;
       // Attach membershipRevision for collection keys that have one.
       const membershipRev = this.membershipRevisions.get(id);
-      if (membershipRev !== undefined) {
-        (change as Change).membershipRevision = membershipRev;
-      }
-      changes.push(change);
+      const entry: Change = {
+        ...change,
+        ...(pushed ? { changedEntity: pushed } : {}),
+        ...(membershipRev !== undefined ? { membershipRevision: membershipRev } : {}),
+      };
+      changes.push(entry);
       this.pending.delete(id);
     }
     // Before server initialization there are no client sockets to notify.
