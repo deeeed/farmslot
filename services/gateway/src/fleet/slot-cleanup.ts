@@ -62,7 +62,7 @@ const DRAIN_TIMEOUT_MS = 15_000;
 // the slot back to `ready` while shutdown hooks are still running.
 const cleanupInProgress = new Map<string, Promise<SlotCleanupResult>>();
 
-interface ResourceShutdownOutcome {
+export interface ResourceShutdownOutcome {
   resourceId: string;
   kind: 'cleaned' | 'skipped';
   reason?: string;
@@ -72,12 +72,18 @@ interface ResourceShutdownOutcome {
   torn: boolean;
 }
 
+function confirmedShutdown(resourceId: string, already: boolean): ResourceShutdownOutcome {
+  return already
+    ? { resourceId, kind: 'skipped', reason: 'already stopped', torn: true }
+    : { resourceId, kind: 'cleaned', torn: true };
+}
+
 export async function shutdownSlotResource(
   slotId: string,
   resourceId: string,
   hasShutdownHook: boolean,
   hasHealthHook: boolean,
-  pending: Promise<void>[],
+  pending: Promise<ResourceShutdownOutcome>[],
 ): Promise<ResourceShutdownOutcome> {
   if (!hasShutdownHook) {
     return { resourceId, kind: 'skipped', reason: 'no shutdown hook', torn: true };
@@ -136,9 +142,7 @@ export async function shutdownSlotResource(
       // branch. Without this, a slot whose cache still advertises running/stale
       // keeps getting flagged by the cleanup button + orphan sweep after teardown.
       setCachedResourceStatus(slotId, resourceId, 'stopped');
-      return already
-        ? { resourceId, kind: 'skipped', reason: 'already stopped', torn: true }
-        : { resourceId, kind: 'cleaned', torn: true };
+      return confirmedShutdown(resourceId, already);
     }
 
     // Timeout case: the hook is still running. Race returned, but letting
@@ -147,7 +151,7 @@ export async function shutdownSlotResource(
     // by process name) could then tear down the NEXT run's resource. Track
     // the promise so the caller can drain it (bounded) before returning.
     const late = ctrl.then(
-      async (r) => {
+      async (r): Promise<ResourceShutdownOutcome> => {
         const d = Date.now() - start;
         if (r.ok) {
           const already = r.detail === 'already stopped';
@@ -160,7 +164,7 @@ export async function shutdownSlotResource(
           console.log(
             `[teardown] slot=${slotId} resource=${resourceId} action=shutdown result=${label} duration=${d}ms`,
           );
-          if (skipped) return;
+          if (skipped) return { resourceId, kind: 'skipped', reason: r.detail, torn: false };
           // Mirror the primary path's post-verify: a zero exit on a slow
           // shutdown hook does NOT prove the process died. Re-run the health
           // hook before clearing the sticky pointer / flipping the cache.
@@ -176,7 +180,12 @@ export async function shutdownSlotResource(
                 `[teardown] slot=${slotId} resource=${resourceId} action=shutdown error=late-post-verify-still-running duration=${d}ms`,
               );
               setCachedResourceStatus(slotId, resourceId, 'running');
-              return;
+              return {
+                resourceId,
+                kind: 'skipped',
+                reason: 'post-verify still running',
+                torn: false,
+              };
             }
           }
           setCachedResourceStatus(slotId, resourceId, 'stopped');
@@ -188,17 +197,25 @@ export async function shutdownSlotResource(
           // at busy/releasing until the next reconcile pass — an artificial
           // 60s stall after teardown really finished.
           deleteActiveResource(slotId, resourceId);
+          return confirmedShutdown(resourceId, already);
         } else {
           console.warn(
             `[teardown] slot=${slotId} resource=${resourceId} action=shutdown error=late-${r.detail ?? 'unknown'} duration=${d}ms`,
           );
+          return {
+            resourceId,
+            kind: 'skipped',
+            reason: r.detail ?? 'shutdown failed',
+            torn: false,
+          };
         }
       },
-      (err) => {
+      (err): ResourceShutdownOutcome => {
         const d = Date.now() - start;
         console.warn(
           `[teardown] slot=${slotId} resource=${resourceId} action=shutdown error=late-${(err as Error).message} duration=${d}ms`,
         );
+        return { resourceId, kind: 'skipped', reason: (err as Error).message, torn: false };
       },
     );
     pending.push(late);
@@ -251,7 +268,7 @@ async function runCleanup(slotId: string, reason: string): Promise<SlotCleanupRe
   // get tracked here so we drain them (bounded) before returning. Without
   // this, a slow hook that eventually completes could tear down the NEXT
   // run's freshly started resource.
-  const pending: Promise<void>[] = [];
+  const pending: Promise<ResourceShutdownOutcome>[] = [];
 
   const outcomes: ResourceShutdownOutcome[] = [];
   for (const r of ordered) {
@@ -272,10 +289,18 @@ async function runCleanup(slotId: string, reason: string): Promise<SlotCleanupRe
   // block the slot forever — at that point the sticky pointer stays put
   // and orphan sweep takes over on the next tick.
   if (pending.length > 0) {
-    await Promise.race([
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const settled = await Promise.race([
       Promise.allSettled(pending),
-      new Promise((resolve) => setTimeout(resolve, DRAIN_TIMEOUT_MS)),
-    ]);
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), DRAIN_TIMEOUT_MS);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    for (const late of settled ?? []) {
+      if (late.status !== 'fulfilled') continue;
+      const index = outcomes.findIndex((outcome) => outcome.resourceId === late.value.resourceId);
+      if (index !== -1) outcomes[index] = late.value;
+    }
   }
 
   const cleaned: string[] = [];

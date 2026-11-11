@@ -82,6 +82,8 @@ let shutdownFailure: string | null = null;
 let shutdownSkipped = false;
 let resourceStillHealthy = false;
 let shutdownHookNeverSettles = false;
+let slowShutdown = false;
+let finishSlowShutdown: (() => void) | null = null;
 const retainedDevices: Promise<unknown>[] = [];
 let onResolveResources: (() => void) | null = null;
 
@@ -370,6 +372,10 @@ mock.module('../fleet/resource-manager.js', {
     executeResourceControl: async (_slotId: string, resourceId: string, action: string) => {
       assert.equal(action, 'shutdown');
       stoppedResources.push(resourceId);
+      if (slowShutdown)
+        return new Promise<{ ok: boolean; detail: string }>((resolve) => {
+          finishSlowShutdown = () => resolve({ ok: true, detail: 'stopped' });
+        });
       if (shutdownSkipped) return { ok: true, detail: 'skipped (port not configured)' };
       return {
         ok: resourceId !== shutdownFailure,
@@ -389,7 +395,9 @@ mock.module('../fleet/slot-cleanup.js', {
     ) => {
       if (!shutdownHookNeverSettles) return realSlotCleanup.shutdownSlotResource(...args);
       // The hook timed out and is still running: its late settle never lands.
-      args[4].push(new Promise<void>(() => {}));
+      args[4].push(
+        new Promise<Awaited<ReturnType<typeof realSlotCleanup.shutdownSlotResource>>>(() => {}),
+      );
       return { resourceId: args[1], kind: 'skipped', reason: 'timeout after 15000ms', torn: false };
     },
   },
@@ -519,6 +527,8 @@ beforeEach(() => {
   configuredResources = [];
   stoppedResources = [];
   shutdownFailure = null;
+  slowShutdown = false;
+  finishSlowShutdown = null;
   shutdownSkipped = false;
   resourceStillHealthy = false;
   shutdownHookNeverSettles = false;
@@ -629,6 +639,36 @@ test(
     assert.equal(retainedDevices.length, 1, 'the device stays fenced until the hook settles');
   },
 );
+
+for (const resourceId of ['browser', 'dev-server'])
+  for (const healthy of [false, true]) {
+    test(`a timed-out ${resourceId} shutdown settling during grace preserves verified health=${healthy}`, async (t) => {
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      run.status = 'done';
+      configuredResources = slotRuntimeResources().filter((resource) => resource.id === resourceId);
+      configuredResources[0].definition.hooks!.health = 'fixture-health';
+      resourceStillHealthy = healthy;
+      slowShutdown = true;
+      const unconfirmed: string[] = [];
+      const shutdown = shutdownRunSlotResources(run, unconfirmed);
+      for (let i = 0; i < 100 && !finishSlowShutdown; i++) await Promise.resolve();
+      assert(finishSlowShutdown, 'the shutdown hook started');
+      t.mock.timers.tick(15000);
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      finishSlowShutdown();
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      t.mock.timers.tick(500);
+      const reason = await shutdown;
+      if (healthy) {
+        assert(reason?.startsWith(resourceId + ':'));
+        assert.deepEqual(unconfirmed, [resourceId]);
+      } else {
+        assert.equal(reason, null, 'a confirmed late stop must not leave the done slot held');
+        assert.deepEqual(unconfirmed, []);
+      }
+      assert.deepEqual(stoppedResources, [resourceId], 'the hook runs once');
+    });
+  }
 
 test('a successor claiming the slot before runtime shutdown keeps all resources', async () => {
   run.status = 'done';
