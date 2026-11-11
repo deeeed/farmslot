@@ -44,6 +44,14 @@ const probes: typeof import('../core/read-probes.js') = await import(probeModule
 mock.module('../core/read-probes.js', { namedExports: { ...probes } });
 const reviewedModule: string = './reviewed-inputs.js?bounded-read-probes';
 const { readReviewedInputs }: typeof import('./reviewed-inputs.js') = await import(reviewedModule);
+// slot-files.ts uses execOnSlot from exec.js and readSlotProbe from read-probes.js. Load it fresh
+// with the mocked execution boundary (same pattern as observability-files below) so its shell-read
+// path goes through the test's execute stub rather than the real node-exec layer.
+const slotFilesModule: string = '../host-services/slot-files.js?bounded-read-probes';
+const freshSlotFiles: typeof import('../host-services/slot-files.js') = await import(
+  slotFilesModule
+);
+mock.module('../host-services/slot-files.js', { namedExports: { ...freshSlotFiles } });
 const observabilityModule: string = '../runners/observability-files.js?bounded-read-probes';
 const {
   readRunnerObservabilityFiles,
@@ -227,7 +235,7 @@ test('concurrent progress consumers share the same slow hooks and statusline rea
   let hooks = 0;
   let statuslines = 0;
   execute = async (_slot, command) => {
-    if (command.includes('install.json')) return { stdout: 'external', stderr: '', exitCode: 0 };
+    if (command.includes('install.json')) return { stdout: '1', stderr: '', exitCode: 0 };
     if (command.includes('tail -c')) hooks++;
     else statuslines++;
     await hold.promise;
@@ -257,7 +265,7 @@ for (const snapshot of [
     const hold = latch();
     let reads = 0;
     execute = async (_slot, command) => {
-      if (command.includes('install.json')) return { stdout: 'external', stderr: '', exitCode: 0 };
+      if (command.includes('install.json')) return { stdout: '1', stderr: '', exitCode: 0 };
       reads++;
       await hold.promise;
       return { stdout: '{"event":"Stop"}', stderr: '', exitCode: 0 };

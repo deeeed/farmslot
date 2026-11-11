@@ -1,22 +1,9 @@
-import { open, readFile, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { piFailureKind } from '../../../../scripts/runners/pi-farmslot-hook-writer.mjs';
 import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
-import { slotFilesReadInProcess } from '../core/exec.js';
-import {
-  readSlotTextThroughNode,
-  slotFilesReadThroughNode,
-  slotIsFileThroughNode,
-} from '../core/node-file-reads.js';
-import { readSlotProbe } from '../core/read-probes.js';
-import {
-  isShellHomePath,
-  normalizeRemotePath,
-  shellExpressionForRemotePath,
-} from '../core/remote-paths.js';
+import slotFiles from '../host-services/slot-files.js';
 
 import type {
   HookRecord,
@@ -363,72 +350,9 @@ export async function runnerObservabilityDirForSlot(vars: SlotVars): Promise<str
       : path.posix.join(vars.remoteRepo, runtimeDir);
   const legacy = path.posix.join(legacyRuntime, '.observability');
   const marker = path.posix.join(external, 'install.json');
-  if (slotFilesReadInProcess(vars))
-    return (await isLocalFile(localPath(vars, marker))) ? external : legacy;
-  if (slotFilesReadThroughNode(vars))
-    return (await slotIsFileThroughNode(vars, marker, 10_000)) ? external : legacy;
-  const probe = await readSlotProbe(
-    vars,
-    `if [ -f ${shellExpressionForRemotePath(marker)} ]; then printf external; fi`,
-    'runner-observability-directory',
-    10_000,
-  );
-  return probe.stdout.trim() === 'external' ? external : legacy;
-}
-
-/** A slot path as the slot's shell would resolve it: `~` is the home, relative is the repo. */
-function localPath(vars: SlotVars, file: string): string {
-  const normalized = normalizeRemotePath(file);
-  if (isShellHomePath(normalized)) return path.join(homedir(), normalized.slice(1));
-  return path.resolve(vars.remoteRepo, normalized);
-}
-
-// The shell reads below discard errors (`2>/dev/null || true`): a file that is missing or
-// unreadable reads as empty. The in-process reads keep that contract for the same failures.
-const UNREADABLE = new Set(['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'EISDIR']);
-const unreadable = (error: unknown) => UNREADABLE.has((error as NodeJS.ErrnoException).code ?? '');
-
-async function isLocalFile(file: string): Promise<boolean> {
-  try {
-    return (await stat(file)).isFile();
-  } catch (error) {
-    if (unreadable(error)) return false;
-    throw error;
-  }
-}
-
-/** A slot file's text, or its last `tailBytes` bytes; local slots read it without a shell. */
-async function readSlotText(
-  vars: SlotVars,
-  file: string,
-  key: string,
-  tailBytes?: number,
-): Promise<string> {
-  if (!slotFilesReadInProcess(vars)) {
-    if (slotFilesReadThroughNode(vars))
-      return readSlotTextThroughNode(vars, file, 10_000, tailBytes);
-    const expression = shellExpressionForRemotePath(file);
-    const command = tailBytes
-      ? `tail -c ${tailBytes} ${expression} 2>/dev/null || true`
-      : `cat ${expression} 2>/dev/null || true`;
-    return (await readSlotProbe(vars, command, key, 10_000)).stdout;
-  }
-  try {
-    if (!tailBytes) return await readFile(localPath(vars, file), 'utf8');
-    const handle = await open(localPath(vars, file), 'r');
-    try {
-      const { size } = await handle.stat();
-      const length = Math.min(size, tailBytes);
-      const buffer = Buffer.alloc(length);
-      await handle.read(buffer, 0, length, size - length);
-      return buffer.toString('utf8');
-    } finally {
-      await handle.close();
-    }
-  } catch (error) {
-    if (unreadable(error)) return '';
-    throw error;
-  }
+  return (await slotFiles.isFile(vars, marker, 'runner-observability-directory'))
+    ? external
+    : legacy;
 }
 
 export async function readRunnerObservabilityFiles(
@@ -437,8 +361,8 @@ export async function readRunnerObservabilityFiles(
 ): Promise<{ hooksRaw: string; statuslineRaw: string }> {
   const obsDir = await runnerObservabilityDirForSlot({ ...vars, remoteRepo: repoPath });
   const [hooksRaw, statuslineRaw] = await Promise.all([
-    readSlotText(vars, path.posix.join(obsDir, 'hooks.jsonl'), 'runner-hooks', 65536),
-    readSlotText(vars, path.posix.join(obsDir, 'statusline.json'), 'runner-statusline'),
+    slotFiles.tail(vars, path.posix.join(obsDir, 'hooks.jsonl'), 'runner-hooks', 65536),
+    slotFiles.read(vars, path.posix.join(obsDir, 'statusline.json'), 'runner-statusline'),
   ]);
   return { hooksRaw, statuslineRaw };
 }
@@ -450,7 +374,9 @@ export async function readRunnerSessionObservabilityState(
 ): Promise<HookRecord | null> {
   const obsDir = await runnerObservabilityDirForSlot(vars);
   const statePath = path.posix.join(obsDir, 'sessions', `${encodeURIComponent(sessionId)}.json`);
-  return parseHookJsonl(await readSlotText(vars, statePath, 'runner-session-snapshot'))[0] ?? null;
+  return (
+    parseHookJsonl(await slotFiles.read(vars, statePath, 'runner-session-snapshot'))[0] ?? null
+  );
 }
 
 /** Read the bounded last-event snapshot for the runner currently occupying one tmux pane. */
@@ -460,7 +386,7 @@ export async function readRunnerPaneObservabilityState(
 ): Promise<HookRecord | null> {
   const obsDir = await runnerObservabilityDirForSlot(vars);
   const statePath = path.posix.join(obsDir, 'panes', `${encodeURIComponent(paneId)}.json`);
-  return parseHookJsonl(await readSlotText(vars, statePath, 'runner-pane-snapshot'))[0] ?? null;
+  return parseHookJsonl(await slotFiles.read(vars, statePath, 'runner-pane-snapshot'))[0] ?? null;
 }
 
 export function hookRecordMatchesRunnerSession(
