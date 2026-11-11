@@ -43,7 +43,7 @@ function fixture(t: { after(fn: () => void): void }) {
 
 const person = { type: 'person', displayName: 'Arthur' } as const;
 
-test('a pending invitation cannot issue for a retired principal replacement', (t) => {
+test('a pending invitation cannot issue for a retired principal replacement', async (t) => {
   const f = fixture(t);
   f.writer.createPrincipal({ type: 'service', displayName: 'invited' }, []);
   const params = {
@@ -54,25 +54,24 @@ test('a pending invitation cannot issue for a retired principal replacement', (t
   f.writer.retirePrincipals(['invited']);
   f.writer.createPrincipal(person, [], 'invited', { reuseRetiredId: true });
   const before = readFileSync(f.runtime.path);
-  assert.throws(
-    () =>
-      pairingExchangePersonSession(
-        invitation.code,
-        { deviceName: 'Replacement fixture', deviceKind: 'cli' },
-        f.auth,
-      ),
+  await assert.rejects(
+    pairingExchangePersonSession(
+      invitation.code,
+      { deviceName: 'Replacement fixture', deviceKind: 'cli' },
+      f.auth,
+    ),
     {
       code: 'PAIRING_FAILED',
     },
   );
   assert.deepEqual(readFileSync(f.runtime.path), before);
   const fresh = pairingCreate(params, f.auth);
-  const exchanged = pairingExchangePersonSession(
+  const exchanged = await pairingExchangePersonSession(
     fresh.code,
     { deviceName: 'Replacement fixture', deviceKind: 'cli' },
     f.auth,
   );
-  const authenticated = f.auth.resolver.resolveSecret(exchanged.accessToken, 'token');
+  const authenticated = await f.auth.resolver.resolveSecret(exchanged.accessToken, 'token');
   assert.equal(authenticated.ok, true);
   if (authenticated.ok) assert.equal(authenticated.principal.generation, 1);
 });
@@ -187,7 +186,7 @@ test('offline reuse refuses while a gateway is live and succeeds after it stops'
   );
 });
 
-test('replacement credentials authorize fresh work while old secrets and originators remain invalid', (t) => {
+test('replacement credentials authorize fresh work while old secrets and originators remain invalid', async (t) => {
   const f = fixture(t);
   const oldOriginator = { kind: 'principal' as const, principalId: 'arthur' };
   const replacement = f.writer.createPrincipal(
@@ -197,7 +196,7 @@ test('replacement credentials authorize fresh work while old secrets and origina
     { reuseRetiredId: true },
   );
   const fresh = f.writer.issueCredential('arthur', 'new person device');
-  assert.equal(f.auth.resolver.resolveSecret(f.old.secret, 'token').ok, false);
+  assert.equal((await f.auth.resolver.resolveSecret(f.old.secret, 'token')).ok, false);
   assert.equal(
     f.auth.resolver.resolveSessionPrincipal({
       authenticated: true,
@@ -205,12 +204,12 @@ test('replacement credentials authorize fresh work while old secrets and origina
     }).ok,
     false,
   );
-  assert.equal(f.auth.resolver.resolveSecret(fresh.secret, 'token').ok, false);
-  const grant = f.writer.exchangePersonCredential(fresh.secret, {
+  assert.equal((await f.auth.resolver.resolveSecret(fresh.secret, 'token')).ok, false);
+  const grant = await f.writer.exchangePersonCredential(fresh.secret, {
     deviceName: 'Replacement fixture',
     deviceKind: 'cli',
   });
-  const authenticated = f.auth.resolver.resolveSecret(grant.accessToken, 'token');
+  const authenticated = await f.auth.resolver.resolveSecret(grant.accessToken, 'token');
   assert.ok(authenticated.ok && authenticated.authentication);
   assert.equal(f.auth.resolver.resolvePrincipalId('arthur').ok, false);
   assert.equal(resolveWorkOriginator(f.auth, oldOriginator), null);
@@ -228,7 +227,7 @@ test('replacement credentials authorize fresh work while old secrets and origina
   f.writer.retirePrincipals(['arthur']);
   f.writer.createPrincipal(person, [], 'arthur', { reuseRetiredId: true });
   assert.equal(resolveWorkOriginator(f.auth, current), null);
-  assert.equal(f.auth.resolver.resolveSecret(fresh.secret, 'token').ok, false);
+  assert.equal((await f.auth.resolver.resolveSecret(fresh.secret, 'token')).ok, false);
 });
 
 test('store validation refuses mismatched live generations and nonsequential reuse history', (t) => {

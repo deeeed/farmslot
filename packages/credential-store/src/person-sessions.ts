@@ -6,15 +6,10 @@ import {
   type PersonSessionGrant,
 } from '@farmslot/protocol';
 
-import {
-  generateCredentialId,
-  generateCredentialSecret,
-  hashSecret,
-  parseCredentialWire,
-  verifySecret,
-} from './credential-secret.js';
+import { generateCredentialId, parseCredentialWire } from './credential-secret.js';
 import type { CredentialStore, StoredSecret } from './credential-store.js';
 import { CredentialStoreRefusalError } from './credential-store-lock.js';
+import { inlineSecretWork, type SecretWork } from './secret-work.js';
 
 export const PERSON_ACCESS_LIFETIME_MS = 60 * 60 * 1000;
 export const PERSON_REFRESH_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
@@ -113,6 +108,7 @@ export function exchangePersonCredential(
   credential: string,
   device: PersonDeviceDescription,
   now: number,
+  secrets: SecretWork = inlineSecretWork,
 ): PersonSessionMutation<PersonSessionGrant> {
   const parsed = parseCredentialWire(credential);
   const source = parsed && store.credentials.find((record) => record.id === parsed.credentialId);
@@ -120,7 +116,7 @@ export function exchangePersonCredential(
     !source ||
     source.revokedAt !== null ||
     !parsed ||
-    !verifySecret(parsed.secret, source.secret)
+    !secrets.verify(parsed.secret, source.secret)
   )
     throw new CredentialStoreRefusalError('Person sign-in failed.', 'AUTH_FAILED');
   const principal = store.principals.find((candidate) => candidate.id === source.principalId);
@@ -129,7 +125,15 @@ export function exchangePersonCredential(
       'Use a person credential for this sign-in.',
       'AUTH_PERSON_REQUIRED',
     );
-  return issuePersonSession(store, principal.id, principal.generation ?? 0, device, now, source.id);
+  return issuePersonSession(
+    store,
+    principal.id,
+    principal.generation ?? 0,
+    device,
+    now,
+    source.id,
+    secrets,
+  );
 }
 
 /** Pairing supplies the identity generation captured by the invitation, never an RPC caller. */
@@ -140,6 +144,7 @@ export function issuePersonSession(
   device: PersonDeviceDescription,
   now: number,
   sourceCredentialId?: string,
+  secrets: SecretWork = inlineSecretWork,
 ): PersonSessionMutation<PersonSessionGrant> {
   const principal = store.principals.find((candidate) => candidate.id === principalId);
   if (principal?.subject.type !== 'person' || (principal.generation ?? 0) !== generation)
@@ -151,7 +156,7 @@ export function issuePersonSession(
       'INVALID_PARAMS',
     );
   const id = uniqueId(store.personSessions);
-  const secret = generateCredentialSecret();
+  const refresh = secrets.issue();
   const timestamp = new Date(now).toISOString();
   const session: PersonSessionRecord = {
     id,
@@ -162,14 +167,15 @@ export function issuePersonSession(
     lastRefreshedAt: timestamp,
     refreshExpiresAt: new Date(now + PERSON_REFRESH_LIFETIME_MS).toISOString(),
     revokedAt: null,
-    refreshSecret: hashSecret(secret),
+    refreshSecret: refresh.stored,
     ...(sourceCredentialId ? { sourceCredentialId } : {}),
   };
   return grantAccess(
     { ...store, personSessions: [...store.personSessions, session] },
     session,
-    'fsr_' + id + '_' + secret,
+    'fsr_' + id + '_' + refresh.raw,
     now,
+    secrets,
   );
 }
 
@@ -177,10 +183,11 @@ export function refreshPersonSession(
   store: CredentialStore,
   refreshToken: string,
   now: number,
+  secrets: SecretWork = inlineSecretWork,
 ): PersonSessionMutation<PersonSessionGrant> {
   const parsed = parsePersonSessionToken(refreshToken, 'fsr');
   const record = parsed && activePersonSession(store, parsed.id, now);
-  if (!record || !parsed || !verifySecret(parsed.secret, record.refreshSecret)) throw ended();
+  if (!record || !parsed || !secrets.verify(parsed.secret, record.refreshSecret)) throw ended();
   const session: PersonSessionRecord = {
     ...record,
     lastRefreshedAt: new Date(now).toISOString(),
@@ -194,6 +201,7 @@ export function refreshPersonSession(
     session,
     refreshToken,
     now,
+    secrets,
   );
 }
 
@@ -247,14 +255,15 @@ function grantAccess(
   session: PersonSessionRecord,
   refreshToken: string,
   now: number,
+  secrets: SecretWork,
 ): PersonSessionMutation<PersonSessionGrant> {
   const id = uniqueId(store.personAccessTokens);
-  const secret = generateCredentialSecret();
+  const access = secrets.issue();
   const expiresAt = new Date(now + PERSON_ACCESS_LIFETIME_MS).toISOString();
   const record: PersonAccessRecord = {
     id,
     sessionId: session.id,
-    secret: hashSecret(secret),
+    secret: access.stored,
     createdAt: new Date(now).toISOString(),
     expiresAt,
   };
@@ -269,7 +278,7 @@ function grantAccess(
     result: {
       session: personSessionInfo(session),
       refreshToken,
-      accessToken: 'fsa_' + id + '_' + secret,
+      accessToken: 'fsa_' + id + '_' + access.raw,
       accessExpiresAt: expiresAt,
     },
   };

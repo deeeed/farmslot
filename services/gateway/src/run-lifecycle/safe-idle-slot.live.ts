@@ -223,7 +223,7 @@ const person = auth.writer.createPrincipal(
   [{ role: 'admin', scope: { kind: 'global' } }],
 );
 const credential = auth.writer.issueCredential(person.id, 'Owned local smoke');
-const grant = auth.writer.exchangePersonCredential(credential.secret, {
+const grant = await auth.writer.exchangePersonCredential(credential.secret, {
   deviceName: 'Owned proof',
   deviceKind: 'cli',
 });

@@ -92,7 +92,7 @@ const person = auth.writer.createPrincipal(
   { reuseRetiredId: true },
 );
 const credential = auth.writer.issueCredential(person.id, 'Private browser');
-const grant = auth.writer.exchangePersonCredential(credential.secret, {
+const grant = await auth.writer.exchangePersonCredential(credential.secret, {
   deviceName: 'Proof RPC',
   deviceKind: 'cli',
 });

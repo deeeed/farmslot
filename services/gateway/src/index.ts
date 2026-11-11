@@ -736,6 +736,24 @@ async function main(): Promise<void> {
   const resolveWebhookPrincipal = (principalId: string) =>
     gatewayAuthRuntime.resolver.resolvePrincipalId(principalId);
 
+  // Authentication derives scrypt off the event loop, so it answers asynchronously.
+  const serveAuthorized = (
+    req: IncomingMessage,
+    res: ServerResponse,
+    resource: 'file' | 'run-artifact',
+    serve: (req: IncomingMessage, res: ServerResponse) => void,
+  ): void => {
+    authorizeHttpRequest({ runtime: gatewayAuthRuntime, req, res, resource })
+      .then((authorized) => {
+        if (authorized) serve(req, res);
+      })
+      .catch((err: unknown) => {
+        console.error(`[http] ${resource} request failed: ${(err as Error).message}`);
+        if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Internal error' }));
+      });
+  };
+
   const requestHandler = (req: IncomingMessage, res: ServerResponse): void => {
     if (!applyGatewayCors(req, res)) {
       res.writeHead(403);
@@ -760,23 +778,21 @@ async function main(): Promise<void> {
       return;
     }
     if (req.method === 'GET' && req.url === '/metrics') {
-      servePerformanceMetrics(req, res, gatewayAuthRuntime);
+      servePerformanceMetrics(req, res, gatewayAuthRuntime).catch((err: unknown) => {
+        console.error(`[metrics] request failed: ${(err as Error).message}`);
+        if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Internal error' }));
+      });
       return;
     }
     // Serve raw files: /api/file?slotId=X&path=Y
     if (req.url?.startsWith('/api/file?')) {
-      if (!authorizeHttpRequest({ runtime: gatewayAuthRuntime, req, res, resource: 'file' }))
-        return;
-      serveFile(req, res);
+      serveAuthorized(req, res, 'file', serveFile);
       return;
     }
     // Serve run artifacts: /api/run-artifact?runId=X&path=Y (relative to task artifacts dir)
     if (req.url?.startsWith('/api/run-artifact?')) {
-      if (
-        !authorizeHttpRequest({ runtime: gatewayAuthRuntime, req, res, resource: 'run-artifact' })
-      )
-        return;
-      serveRunArtifact(req, res);
+      serveAuthorized(req, res, 'run-artifact', serveRunArtifact);
       return;
     }
     // Webhook endpoints

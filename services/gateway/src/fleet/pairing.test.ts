@@ -101,7 +101,7 @@ test('pairing cannot become the first issuance and rejects malformed role bindin
   );
 });
 
-test('pairing exchange mints a separately revocable credential', () => {
+test('pairing exchange mints a separately revocable credential', async () => {
   const runtime = initializedRuntime();
   const issued = runtime.writer.issueCredential('test-automation', 'source-client');
   const code = pairingCreate(
@@ -122,11 +122,11 @@ test('pairing exchange mints a separately revocable credential', () => {
   const paired = runtime.store.findCredential(parsed.credentialId);
   assert.equal(paired?.origin, 'paired');
   assert.equal(paired?.principalId, issued.record.principalId);
-  assert.equal(runtime.resolver.resolveSecret(exchanged.profile.secret, 'token').ok, true);
+  assert.equal((await runtime.resolver.resolveSecret(exchanged.profile.secret, 'token')).ok, true);
 
   runtime.writer.revokeCredential(parsed.credentialId);
-  assert.equal(runtime.resolver.resolveSecret(exchanged.profile.secret, 'token').ok, false);
-  assert.equal(runtime.resolver.resolveSecret(issued.secret, 'token').ok, true);
+  assert.equal((await runtime.resolver.resolveSecret(exchanged.profile.secret, 'token')).ok, false);
+  assert.equal((await runtime.resolver.resolveSecret(issued.secret, 'token')).ok, true);
 });
 
 test('new service principal is provisioned only when its pairing code is redeemed', () => {

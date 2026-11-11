@@ -651,7 +651,7 @@ type PrincipalResolution =
   | { ok: false; reason: 'no_credential' | 'revoked' | 'missing_principal' | 'secret_mismatch' };
 ```
 
-**`resolveSecret(presented: string, transport: 'token' | 'password'): PrincipalResolution`**
+**`resolveSecret(presented: string, transport: 'token' | 'password'): Promise<PrincipalResolution>`**
 resolves only issued or paired token credentials. Password transport is always refused.
 
 1. Call `ensureFresh()`.

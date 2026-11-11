@@ -1,0 +1,1 @@
+- Add asynchronous secret hashing and verification. Person-session sign-in, pairing and refresh now do their scrypt work before taking the store lock.

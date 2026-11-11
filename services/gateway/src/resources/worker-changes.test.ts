@@ -108,11 +108,11 @@ test('worker notifications follow inventory read authority and disappear after r
       [],
     );
     const credential = runtime.writer.issueCredential(principal.id, 'worker-observer');
-    const grant = runtime.writer.exchangePersonCredential(credential.secret, {
+    const grant = await runtime.writer.exchangePersonCredential(credential.secret, {
       deviceName: 'Worker observer',
       deviceKind: 'cli',
     });
-    const resolution = runtime.resolver.resolveSecret(grant.accessToken, 'token');
+    const resolution = await runtime.resolver.resolveSecret(grant.accessToken, 'token');
     assert(resolution.ok && resolution.authentication);
     const state = {
       authenticated: true,
