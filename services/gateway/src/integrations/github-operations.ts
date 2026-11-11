@@ -602,7 +602,38 @@ export async function githubPrViewOp(
   );
   const pr = data.repository?.pullRequest;
   if (!pr) throw new GhFailure(`no pull requests found for number ${prNumber}`);
+  if (fields.includes('reviews')) pr.reviews = await preloadReviews(ref, prNumber, pr, ctx, state);
   return { data: exportPR(pr, fields), headers: state.headers, graphqlCost: state.graphqlCost };
+}
+
+const PR_REVIEWS_PAGE_QUERY = `query PullRequestReviews($owner: String!, $repo: String!, $pr_number: Int!, $endCursor: String) {repository(owner: $owner, name: $repo) {pullRequest(number: $pr_number) {${PR_REVIEWS_QUERY.replace('reviews(first: 100)', 'reviews(first: 100, after: $endCursor)')}}} rateLimit{cost}}`;
+
+/** gh preloadPrReviews: follow the reviews connection past its first 100 nodes. */
+async function preloadReviews(
+  ref: RepoRef,
+  prNumber: number,
+  pr: JsonObject,
+  ctx: GhCommandContext,
+  state: PorcelainState,
+): Promise<JsonObject> {
+  let page = asObject(pr.reviews);
+  const nodes: JsonValue[] = [];
+  for (;;) {
+    if (Array.isArray(page?.nodes)) nodes.push(...page.nodes);
+    const pageInfo = asObject(page?.pageInfo);
+    if (pageInfo?.hasNextPage !== true || typeof pageInfo.endCursor !== 'string') break;
+    const data = await porcelainGraphQL<{
+      repository?: { pullRequest?: { reviews?: JsonObject } | null };
+    }>(
+      ref.host,
+      PR_REVIEWS_PAGE_QUERY,
+      { owner: ref.owner, repo: ref.name, pr_number: prNumber, endCursor: pageInfo.endCursor },
+      ctx,
+      state,
+    );
+    page = asObject(data.repository?.pullRequest?.reviews);
+  }
+  return { nodes };
 }
 
 export async function githubPrListOp(

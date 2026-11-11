@@ -5,6 +5,8 @@ import path from 'node:path';
 import { after, beforeEach, describe, mock, test } from 'node:test';
 import { promisify } from 'node:util';
 
+import { isRecord } from '@farmslot/protocol';
+
 import {
   type GitHubFixtureRequest,
   type GitHubFixtureResponse,
@@ -439,6 +441,36 @@ describe('in-process gh client', { concurrency: 1 }, () => {
       headRefName: 'feat/export',
       author: { is_bot: false, login: 'octo', id: 'U_01', name: 'Octo Cat' },
     });
+  });
+
+  test('prView reviews follow every page of the reviews connection', async () => {
+    const review = (i: number) => ({
+      id: `R_${i}`,
+      author: { login: `r${i}` },
+      state: 'COMMENTED',
+    });
+    const pageOf = (start: number, count: number, hasNextPage: boolean) => ({
+      nodes: Array.from({ length: count }, (_, i) => review(start + i)),
+      pageInfo: { hasNextPage, endCursor: hasNextPage ? `after-${start + count}` : null },
+      totalCount: 130,
+    });
+    route = (request) => {
+      const body = isRecord(request.json) ? request.json : {};
+      const variables = isRecord(body.variables) ? body.variables : {};
+      const later = typeof body.query === 'string' && body.query.includes('PullRequestReviews');
+      if (later) assert.equal(variables.endCursor, 'after-100');
+      const reviews = later ? pageOf(100, 30, false) : pageOf(0, 100, true);
+      return { body: { data: { repository: { pullRequest: { id: 'PR_1', reviews } } } } };
+    };
+    const start = fixture.requests.length;
+    const pr = await github.prView('o/r', 1, ['reviews']);
+    assert.ok(Array.isArray(pr.reviews));
+    assert.equal(pr.reviews.length, 130);
+    assert.deepEqual(
+      [pr.reviews[0], pr.reviews[129]].map((r) => (isRecord(r) ? r.id : undefined)),
+      ['R_0', 'R_129'],
+    );
+    assert.equal(fixture.requests.length - start, 2);
   });
 
   test('prChecks maps GitHub states to buckets and deduplicates check runs', async () => {
