@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { constants } from 'node:fs';
+import fs, { constants } from 'node:fs';
 import {
   chmod,
   mkdir,
@@ -1183,25 +1183,37 @@ test('archiving, changing and deleting an archived run update its one record wit
 /**
  * Forgets the cached archive and holds the next scan open on a named pipe in the archive
  * directory. `release()` returns once that scan has read the pipe: opening a pipe for writing
- * waits for its reader, so nothing is written before the scan is there to read it. Call it after
- * registering the cleanup of anything that reads the archive: cleanups run last-registered first,
- * and this one must release the pipe before those wait on the scan.
+ * waits for its reader, so nothing is written before the scan is there to read it.
+ *
+ * `cleanup` removes what the test archived. It runs from this helper's one teardown, after the
+ * pipe is gone and any scan has finished: a cleanup that read the archive while a scan was still
+ * held would wait on it forever.
  */
-async function heldArchiveScan(t: test.TestContext): Promise<{ release: () => Promise<void> }> {
+async function heldArchiveScan(
+  t: test.TestContext,
+  cleanup: () => Promise<void>,
+): Promise<{ release: () => Promise<void> }> {
   const pipe = path.join(testArchiveDir(), `${randomUUID()}.json`);
   await mkdir(testArchiveDir(), { recursive: true });
   await execFileAsync('mkfifo', [pipe]);
   let released = false;
   t.after(async () => {
-    if (!released) {
-      // The test stopped early. A scan may be waiting on the pipe, or may never have reached it.
-      // Read-write never waits for the other end, and closing it ends a waiting scan's read.
+    if (released) await rm(pipe, { force: true });
+    else {
+      // The test stopped early. A scan may be waiting on the pipe, or may not have reached it.
+      // Read-write never waits for the other end. The path goes while this end is still open,
+      // so a scan that arrives late finds no file; closing ends a waiting scan's read.
       const handle = await open(pipe, constants.O_RDWR | constants.O_NONBLOCK);
-      await handle.write('not a run record');
-      await handle.close();
+      try {
+        await handle.write('not a run record');
+        await rm(pipe, { force: true });
+      } finally {
+        await handle.close();
+      }
     }
-    await rm(pipe, { force: true });
+    await getArchivedRuns();
     forgetArchivedRuns();
+    await cleanup();
   });
   forgetArchivedRuns();
   return {
@@ -1214,23 +1226,29 @@ async function heldArchiveScan(t: test.TestContext): Promise<{ release: () => Pr
   };
 }
 
+/** A finished live run, ready to archive; `remove` deletes it from the store and the archive. */
+function finishedRun(label: string): { id: string; remove: () => Promise<void> } {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${randomUUID()}-${label}`,
+  });
+  updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+  return {
+    id: run.id,
+    remove: async () => {
+      await cleanupRun(run.id);
+      await deleteArchivedRun(run.id);
+    },
+  };
+}
+
 test(
   'cold readers share one archive scan, and a run archived during it is in the result',
   { timeout: 20_000 },
   async (t) => {
-    // Registered before the held scan, so its cleanup runs after the pipe is released.
-    const during = createRun({
-      flowType: 'dev',
-      project: 'example-mobile-farm',
-      ticketOrPr: `PROJ-${randomUUID()}-archive-cache-during-scan`,
-    });
-    t.after(async () => {
-      await cleanupRun(during.id);
-      await deleteArchivedRun(during.id);
-    });
-    updateRun(during.id, { status: 'done', completedAt: new Date().toISOString() });
-
-    const scan = await heldArchiveScan(t);
+    const during = finishedRun('archive-cache-during-scan');
+    const scan = await heldArchiveScan(t, during.remove);
     const [one, two] = [getArchivedRuns(), getArchivedRuns()];
     assert.equal(await archiveRun(during.id), true);
     await scan.release();
@@ -1243,6 +1261,28 @@ test(
     assert.equal(await getArchivedRuns(), first, 'the scan became the cache');
   },
 );
+
+test('a read of live and archived runs that awaits across an archive still has the run', async (t) => {
+  const target = finishedRun('archive-union-retry');
+  t.after(target.remove);
+  await getArchivedRuns();
+  // The read starts from inside the archive's file write: it has taken the cached archive when
+  // the run then leaves the live map and joins a new cache array, all before the read resumes.
+  let read: ReturnType<typeof getAllRunsWithArchived> | undefined;
+  const write = fs.writeFileSync;
+  const intercepted = t.mock.method(fs, 'writeFileSync', (...args: Parameters<typeof write>) => {
+    if (String(args[0]).endsWith(`${path.sep}archive${path.sep}${target.id}.json`))
+      read = getAllRunsWithArchived();
+    return write(...args);
+  });
+  assert.equal(await archiveRun(target.id), true);
+  intercepted.mock.restore();
+  assert.ok(read, 'the archive wrote its record');
+  assert.ok(
+    (await read).some((run) => run.id === target.id),
+    'the run is in the archived half or the live half, never in neither',
+  );
+});
 
 test('getAllRunsWithArchived dedupes a run present in both the live map and the archive', async (t) => {
   // Codex round-7 P2: a background persist racing archiveRun can recreate runs/<id>.json
@@ -1299,20 +1339,11 @@ test(
   'a read racing an archive during a cold scan sees the run in its scan or its live snapshot',
   { timeout: 20_000 },
   async (t) => {
-    const target = createRun({
-      flowType: 'dev',
-      project: 'example-mobile-farm',
-      ticketOrPr: `PROJ-${randomUUID()}-archive-scan-target`,
-    });
-    t.after(async () => {
-      await cleanupRun(target.id);
-      await deleteArchivedRun(target.id);
-    });
-    updateRun(target.id, { status: 'done', completedAt: new Date().toISOString() });
-    await persistRunNow(target, 'archive-scan-race-test');
+    const target = finishedRun('archive-scan-target');
+    await persistRunNow(getRun(target.id)!, 'archive-scan-race-test');
 
     // The read's scan is held open while the run leaves the live map for the archive.
-    const scan = await heldArchiveScan(t);
+    const scan = await heldArchiveScan(t, target.remove);
     const pendingRead = getAllRunsWithArchived();
     assert.equal(await archiveRun(target.id), true);
     await scan.release();
