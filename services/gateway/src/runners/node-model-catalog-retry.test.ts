@@ -7,6 +7,7 @@ import {
   type RunnerModelCatalogNodeSource,
 } from './model-catalog.js';
 import { RunnerModelCatalogObservation } from './model-catalog-observation.js';
+import { getRunnerDefinition } from './registry.js';
 
 const source: RunnerModelCatalogNodeSource = {
   nodeCommand: 'fixture-pi',
@@ -39,13 +40,17 @@ class RetryClock {
   }
 }
 
-function fixture(runner: string, nodes: ModelCatalogNode[]) {
+function fixture(
+  runner: string,
+  nodes: ModelCatalogNode[],
+  catalogSource: RunnerModelCatalogNodeSource = source,
+) {
   const clock = new RetryClock();
   let changes = 0;
   let interested = false;
   const observation = new RunnerModelCatalogObservation({
     runners: () => [runner],
-    select: async () => source,
+    select: async () => catalogSource,
     nodes: async () => nodes,
     hasInterest: () => interested,
     changed: () => changes++,
@@ -426,3 +431,116 @@ for (const outcome of ['failing', 'recovered'] as const) {
     assert.ok(refreshed.models.some((model) => model.id === 'litellm/fixture-healthy-2'));
   });
 }
+
+function piListing(
+  ids: readonly string[],
+  status = 'ready',
+  count = ids.filter((id) => id.startsWith('litellm/')).length,
+) {
+  return `${JSON.stringify({ type: 'farmslot.pi-provider-discovery', sources: [{ provider: 'litellm', configured: true, status, modelCount: count }] })}\nprovider model\n${ids.map((id) => id.replace('/', ' ')).join('\n')}\n`;
+}
+const fullPiIds = [
+  'anthropic/claude-haiku-5-5',
+  ...Array.from({ length: 7 }, (_, i) => `litellm/fixture-${i}`),
+];
+const smallPiIds = fullPiIds.slice(0, 2);
+
+for (const failure of ['failed', 'missing'] as const) {
+  test(`partial Pi listing with ${failure} configured discovery retains models and retries without renewing healthy age`, async (t) => {
+    const runner = `partial-pi-${failure}`;
+    const piSource = getRunnerDefinition('pi').modelCatalog;
+    assert.ok(piSource && 'nodeCommand' in piSource);
+    let output = piListing(fullPiIds);
+    let healthyAttempts = 0;
+    const { observation, clock, interest } = fixture(
+      runner,
+      [
+        { machine: 'node-a', list: async () => output },
+        {
+          machine: 'node-b',
+          list: async () => {
+            healthyAttempts++;
+            return piListing(fullPiIds);
+          },
+        },
+      ],
+      piSource,
+    );
+    t.after(() => observation.stop());
+    interest();
+    const first = await observation.read(runner, managed);
+    output = piListing(fullPiIds.slice(0, 1), failure === 'failed' ? 'failed' : 'ready', 7);
+    await clock.advance(300_000);
+    await observation.tick();
+    const sampledAt = (await observation.read(runner, managed)).observation?.observedAt;
+    for (const delay of [15_000, 30_000, 60_000]) {
+      assert.deepEqual(nodeModelCatalogs.listing(runner, 'node-a'), fullPiIds);
+      assert.deepEqual((await observation.read(runner, managed)).models, first.models);
+      assert.equal(clock.delays.at(-1), delay);
+      await clock.advance(delay);
+      assert.equal(healthyAttempts, 2);
+      assert.equal((await observation.read(runner, managed)).observation?.observedAt, sampledAt);
+    }
+    output = piListing([...fullPiIds, 'litellm/fixture-recovered']);
+    await clock.advance(120_000);
+    assert.equal(clock.timers.size, 0);
+    assert.ok(
+      (await observation.read(runner, managed)).models.some(
+        (model) => model.id === 'litellm/fixture-recovered',
+      ),
+    );
+    assert.equal((await observation.read(runner, managed)).observation?.observedAt, sampledAt);
+    await clock.advance(74_999);
+    await observation.tick();
+    assert.equal(healthyAttempts, 2);
+    await clock.advance(1);
+    await observation.tick();
+    assert.equal(healthyAttempts, 3);
+  });
+}
+
+test('successful configured-provider shrink requires three identical listings; recovery resets confirmation', async (t) => {
+  const runner = 'partial-pi-shrink';
+  const piSource = getRunnerDefinition('pi').modelCatalog;
+  assert.ok(piSource && 'nodeCommand' in piSource);
+  let output = piListing(fullPiIds);
+  const { observation, clock } = fixture(
+    runner,
+    [{ machine: 'node-a', list: async () => output }],
+    piSource,
+  );
+  t.after(() => observation.stop());
+  await observation.read(runner);
+  output = piListing(smallPiIds);
+  await observation.read(runner);
+  assert.deepEqual(nodeModelCatalogs.listing(runner, 'node-a'), fullPiIds);
+  output = piListing(fullPiIds);
+  await clock.advance(15_000);
+  assert.equal(clock.timers.size, 0);
+  output = piListing(smallPiIds);
+  await observation.read(runner);
+  await clock.advance(15_000);
+  assert.deepEqual(nodeModelCatalogs.listing(runner, 'node-a'), fullPiIds);
+  await clock.advance(30_000);
+  assert.deepEqual(nodeModelCatalogs.listing(runner, 'node-a'), smallPiIds);
+  assert.equal(clock.timers.size, 0);
+});
+
+test('configured discovery failure on the first listing retries without publishing built-ins as complete', async (t) => {
+  const runner = 'partial-pi-cold';
+  const piSource = getRunnerDefinition('pi').modelCatalog;
+  assert.ok(piSource && 'nodeCommand' in piSource);
+  let output = piListing(fullPiIds.slice(0, 1), 'failed', 0);
+  const { observation, clock } = fixture(
+    runner,
+    [{ machine: 'node-a', list: async () => output }],
+    piSource,
+  );
+  t.after(() => observation.stop());
+  assert.equal((await observation.read(runner, managed)).status, 'unavailable');
+  assert.equal(nodeModelCatalogs.listing(runner, 'node-a'), undefined);
+  output = piListing(fullPiIds);
+  await clock.advance(15_000);
+  assert.deepEqual(nodeModelCatalogs.listing(runner, 'node-a'), fullPiIds);
+  assert.equal(clock.timers.size, 0);
+});

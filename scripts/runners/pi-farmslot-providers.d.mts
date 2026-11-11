@@ -1,14 +1,20 @@
 export class PiModelListFormatError extends Error {}
-export function parsePiModelList(output: string): string[];
+export function decodePiModelList(output: string): string[];
 
 export interface PiModelCatalog {
   ids: string[];
   aliases: Record<string, string>;
   nativeIds: string[];
+  configuredProviders: string[];
 }
 
 export function listPiModelCatalog(
   binary: string,
   env?: NodeJS.ProcessEnv,
-  opts?: { fetchImpl?: typeof fetch; timeoutMs?: number },
+  opts?: { fetchImpl?: typeof fetch; timeoutMs?: number; args?: string[] },
 ): Promise<PiModelCatalog>;
+
+export function parsePiProviderDiscovery(
+  output: string,
+  ids: readonly string[],
+): { configuredProviders: string[]; reported: boolean };

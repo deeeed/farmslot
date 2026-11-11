@@ -1,5 +1,7 @@
 // OpenAI-compatible Pi providers: optional discovery, validated model configuration.
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
@@ -141,7 +143,7 @@ export function piRouterProviderId(env = process.env) {
 export class PiModelListFormatError extends Error {}
 
 /** `pi --list-models`: preserve native membership and order, removing duplicates. */
-export function parsePiModelList(output) {
+export function decodePiModelList(output) {
   const rows = stripVTControlCharacters(output)
     .split(/\r?\n/)
     .map((line) => line.trim().split(/\s+/));
@@ -158,25 +160,101 @@ export function parsePiModelList(output) {
   return [...new Set(ids)];
 }
 
+/** Pi's extension reports discovery separately from the native model table. Older nodes omit it. */
+export function parsePiProviderDiscovery(output, ids) {
+  const configuredProviders = [];
+  let reported = false;
+  for (const line of output.split(/\r?\n/)) {
+    if (!line.startsWith('{')) continue;
+    let report;
+    try {
+      report = JSON.parse(line);
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      continue; // Unrelated CLI output is not a discovery report.
+    }
+    if (!report || report.type !== 'farmslot.pi-provider-discovery') continue;
+    reported = true;
+    if (!Array.isArray(report.sources))
+      throw new PiModelListFormatError('Invalid Pi provider discovery report.');
+    for (const source of report.sources) {
+      if (
+        !source ||
+        typeof source !== 'object' ||
+        typeof source.provider !== 'string' ||
+        !/^[a-z0-9][\w.-]*$/i.test(source.provider) ||
+        typeof source.configured !== 'boolean' ||
+        (source.status !== 'ready' && source.status !== 'failed') ||
+        typeof source.modelCount !== 'number' ||
+        !Number.isSafeInteger(source.modelCount) ||
+        source.modelCount < 0
+      )
+        throw new PiModelListFormatError('Invalid Pi provider discovery source.');
+      if (!source.configured) continue;
+      configuredProviders.push(source.provider);
+      if (
+        source.status === 'failed' ||
+        (source.modelCount > 0 && !ids.some((id) => id.startsWith(`${source.provider}/`)))
+      )
+        throw new PiModelListFormatError(
+          `Pi configured provider ${source.provider} discovery is incomplete.`,
+        );
+    }
+  }
+  return { configuredProviders, reported };
+}
+
 /** Run on the execution node. Only a renamed router needs worker discovery. */
 export async function listPiModelCatalog(binary, env = process.env, opts = {}) {
   const routerId = piRouterProviderId(env);
-  const result = spawnSync(binary, ['--list-models'], {
-    env,
-    encoding: 'utf8',
-    timeout: 15_000,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  if (result.status !== 0) throw new Error('Pi native model listing failed');
-  const native = parsePiModelList(result.stdout);
-  if (routerId === 'router') return { ids: native, aliases: {}, nativeIds: native };
+  const list = (args) => {
+    const result = spawnSync(binary, ['--list-models', ...args], {
+      env,
+      encoding: 'utf8',
+      timeout: 15_000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    if (result.status !== 0) throw new Error('Pi native model listing failed');
+    return result;
+  };
+  const output = list(opts.args ?? []).stdout;
+  const listed = decodePiModelList(output);
+  const discovery = parsePiProviderDiscovery(output, listed);
+  // Native RPC omits the worker extension, so its registry needs its own evidence.
+  // Reuse the table when no extension arguments were supplied.
+  let native = listed;
+  if (opts.args?.length) {
+    const result = list([]);
+    const nativeOutput = result.stdout.trim();
+    // Pi exits successfully without a table when its native registry is empty.
+    const empty =
+      !result.stderr.trim() &&
+      (nativeOutput === 'No models available' ||
+        /^No models available\. Use \/login to log into a provider via OAuth or API key\. See:\r?\n {2}([^\r\n]+[/\\]docs)[/\\]providers\.md\r?\n {2}\1[/\\]models\.md$/.test(
+          nativeOutput,
+        ));
+    native = empty ? [] : decodePiModelList(nativeOutput);
+  }
+  if (routerId === 'router' || discovery.reported) {
+    const aliases = {};
+    if (routerId !== 'router' && discovery.configuredProviders.includes(routerId))
+      for (const id of listed)
+        if (id.startsWith(`${routerId}/`)) aliases[`router/${id.slice(routerId.length + 1)}`] = id;
+    return {
+      ids: listed,
+      aliases,
+      nativeIds: native,
+      configuredProviders: discovery.configuredProviders,
+    };
+  }
+  const reports = [];
   const sources = await resolvePiSources(
     listPiProviderSources(env).filter((source) => source.kind === 'router'),
     env,
-    opts,
+    { ...opts, onDiscovery: (source) => reports.push(source) },
   );
   const aliases = {};
-  const ids = new Set(native);
+  const ids = new Set(listed);
   for (const source of sources) {
     // Provider registration replaces its entire model list, including legacy aliases.
     const replaced = new Set([source.id, ...(source.aliases ?? [])]);
@@ -192,7 +270,11 @@ export async function listPiModelCatalog(binary, env = process.env, opts = {}) {
     }
   }
   if (!ids.size) throw new Error('Pi listed no models');
-  return { ids: [...ids], aliases, nativeIds: native };
+  const { configuredProviders } = parsePiProviderDiscovery(
+    JSON.stringify({ type: 'farmslot.pi-provider-discovery', sources: reports }),
+    [...ids],
+  );
+  return { ids: [...ids], aliases, nativeIds: native, configuredProviders };
 }
 
 export function listPiProviderSources(env = process.env) {
@@ -236,9 +318,18 @@ export function listPiProviderSources(env = process.env) {
 export async function fetchOpenAiModels(
   baseUrl,
   apiKey,
-  { fetchImpl = globalThis.fetch, timeoutMs = 400, endpoint = 'models', idField = 'id' } = {},
+  {
+    fetchImpl = globalThis.fetch,
+    timeoutMs = 400,
+    endpoint = 'models',
+    idField = 'id',
+    onFailure,
+  } = {},
 ) {
-  if (typeof fetchImpl !== 'function') return [];
+  if (typeof fetchImpl !== 'function') {
+    onFailure?.();
+    return [];
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -248,11 +339,20 @@ export async function fetchOpenAiModels(
       headers,
       signal: controller.signal,
     });
-    if (!response.ok) return [];
+    if (!response.ok) {
+      onFailure?.();
+      return [];
+    }
     const body = await response.json();
-    const rows = Array.isArray(body?.data) ? body.data : [];
+    if (!Array.isArray(body?.data)) {
+      onFailure?.();
+      return [];
+    }
+    const rows = body.data;
     return rows.filter((row) => typeof row?.[idField] === 'string' && row[idField].trim());
   } catch {
+    // Optional discovery remains usable by workers; catalog reads receive a safe failure signal.
+    onFailure?.();
     return [];
   } finally {
     clearTimeout(timer);
@@ -260,6 +360,36 @@ export async function fetchOpenAiModels(
 }
 
 export class PiProviderConfigurationError extends Error {}
+
+/** Pi replaces extension model arrays; retain the statically composed models for workers too. */
+export async function preservePiStaticModels(catalog, loadStaticRuntime) {
+  if (catalog.length === 0) return catalog;
+  const configuredDir = process.env.PI_CODING_AGENT_DIR;
+  const agentDir = configuredDir
+    ? configuredDir.replace(/^~(?=\/|$)/, homedir())
+    : path.join(homedir(), '.pi', 'agent');
+  const modelsPath = path.join(agentDir, 'models.json');
+  if (!existsSync(modelsPath)) return catalog;
+  try {
+    // Pi's loader resolves its own SDK. Reuse its JSONC parsing, defaults and
+    // overrides without refreshing catalogs or looking up credentials.
+    const runtime = await loadStaticRuntime(modelsPath);
+    if (runtime.getError()) throw new PiProviderConfigurationError('Invalid pi static models');
+    return catalog.map((source) => ({
+      ...source,
+      models: [
+        ...new Map([
+          ...source.models.map((model) => [model.id, model]),
+          ...runtime.getModels(source.id).map((model) => [model.id, model]),
+        ]).values(),
+      ],
+    }));
+  } catch {
+    // Do not let optional discovery hide a failed static-model composition or
+    // include configuration contents in a public catalog error.
+    throw new PiProviderConfigurationError('Cannot preserve pi static models');
+  }
+}
 
 function positiveInteger(value, name) {
   if (value === undefined || value === null) return undefined;
@@ -474,8 +604,14 @@ async function resolvePiSources(sources, env, opts) {
         `${prefix}_MODEL_LIMITS`,
       );
       const fetchOptions = { timeoutMs: source.kind === 'litellm' ? 5000 : 400, ...opts };
+      let failed = false;
       const [rows, infos] = await Promise.all([
-        fetchOpenAiModels(source.baseUrl, source.apiKey, fetchOptions),
+        fetchOpenAiModels(source.baseUrl, source.apiKey, {
+          ...fetchOptions,
+          onFailure: () => {
+            failed = true;
+          },
+        }),
         source.kind === 'litellm'
           ? fetchOpenAiModels(source.baseUrl, source.apiKey, {
               ...fetchOptions,
@@ -484,6 +620,20 @@ async function resolvePiSources(sources, env, opts) {
             })
           : [],
       ]);
+      opts.onDiscovery?.({
+        provider: source.id,
+        // The default localhost probe is optional; explicit endpoints must be accounted for.
+        configured:
+          source.id !== 'ollama' ||
+          Boolean(
+            env.FARMSLOT_PI_OLLAMA === '1' ||
+            env.FARMSLOT_PI_OLLAMA_URL ||
+            env.OLLAMA_BASE_URL ||
+            env.OLLAMA_HOST,
+          ),
+        status: failed ? 'failed' : 'ready',
+        modelCount: rows.length,
+      });
       if (rows.length === 0) return null;
       const infoById = new Map(infos.map((entry) => [entry.model_name, entry.model_info]));
       return {
@@ -673,7 +823,7 @@ export async function checkPiProviderAuth(binary, model, env = process.env) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const listing = process.argv[2] === '--list-models';
   const result = listing
-    ? await listPiModelCatalog(process.argv[3])
+    ? await listPiModelCatalog(process.argv[3], process.env, { args: process.argv.slice(4) })
     : await checkPiProviderAuth(process.argv[2], process.argv[3]);
   process.stdout.write(`${JSON.stringify(result)}\n`);
   process.exitCode = listing || result.status === 'ready' ? 0 : 1;

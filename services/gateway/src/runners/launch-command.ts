@@ -38,6 +38,7 @@ import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
 import { withBlindTrialBoundary } from '../evals/blind-git.js';
 
+import type { RunnerModelCatalogNodeCommandContext } from './model-catalog.js';
 import {
   assertRunnerTransport,
   assertSafeRunnerArgumentValue,
@@ -263,6 +264,15 @@ export function piObservabilityExtensionPath(repo: string, runtimeDir = '.agent'
     'bin',
     'pi-farmslot-observability.ts',
   );
+}
+
+export function withPiModelCatalogExtension(
+  command: string,
+  { repo, runtimeDir }: RunnerModelCatalogNodeCommandContext,
+): string {
+  const extension = shellExpressionForRemotePath(piObservabilityExtensionPath(repo, runtimeDir));
+  // Nodes without a slot install retain their legacy, table-only listing.
+  return `if [ -f ${extension} ]; then ${command} -e ${extension}; else ${command}; fi`;
 }
 
 export function buildPiLaunch(options: {
