@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { EventEmitter, once } from 'node:events';
 import { beforeEach, mock, test } from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 
 import {
   cancelledRunHoldReason,
@@ -82,6 +84,9 @@ let shutdownFailure: string | null = null;
 let shutdownSkipped = false;
 let resourceStillHealthy = false;
 let shutdownHookNeverSettles = false;
+let slowShutdown = false;
+const slowShutdownStarted = new EventEmitter();
+const finishSlowShutdowns = new Map<string, () => void>();
 const retainedDevices: Promise<unknown>[] = [];
 let onResolveResources: (() => void) | null = null;
 
@@ -370,6 +375,11 @@ mock.module('../fleet/resource-manager.js', {
     executeResourceControl: async (_slotId: string, resourceId: string, action: string) => {
       assert.equal(action, 'shutdown');
       stoppedResources.push(resourceId);
+      if (slowShutdown)
+        return new Promise<{ ok: boolean; detail: string }>((resolve) => {
+          finishSlowShutdowns.set(resourceId, () => resolve({ ok: true, detail: 'stopped' }));
+          slowShutdownStarted.emit(resourceId);
+        });
       if (shutdownSkipped) return { ok: true, detail: 'skipped (port not configured)' };
       return {
         ok: resourceId !== shutdownFailure,
@@ -389,7 +399,9 @@ mock.module('../fleet/slot-cleanup.js', {
     ) => {
       if (!shutdownHookNeverSettles) return realSlotCleanup.shutdownSlotResource(...args);
       // The hook timed out and is still running: its late settle never lands.
-      args[4].push(new Promise<void>(() => {}));
+      args[4].push(
+        new Promise<Awaited<ReturnType<typeof realSlotCleanup.shutdownSlotResource>>>(() => {}),
+      );
       return { resourceId: args[1], kind: 'skipped', reason: 'timeout after 15000ms', torn: false };
     },
   },
@@ -519,6 +531,9 @@ beforeEach(() => {
   configuredResources = [];
   stoppedResources = [];
   shutdownFailure = null;
+  slowShutdown = false;
+  slowShutdownStarted.removeAllListeners();
+  finishSlowShutdowns.clear();
   shutdownSkipped = false;
   resourceStillHealthy = false;
   shutdownHookNeverSettles = false;
@@ -627,6 +642,78 @@ test(
     );
     assert.deepEqual(unconfirmed, ['ios-sim']);
     assert.equal(retainedDevices.length, 1, 'the device stays fenced until the hook settles');
+  },
+);
+
+for (const resourceId of ['browser', 'dev-server'])
+  for (const healthy of [false, true]) {
+    test(
+      `a timed-out ${resourceId} shutdown settling during grace preserves verified health=${healthy}`,
+      { timeout: 5000 },
+      async (t) => {
+        t.mock.timers.enable({ apis: ['setTimeout'] });
+        run.status = 'done';
+        configuredResources = slotRuntimeResources().filter(
+          (resource) => resource.id === resourceId,
+        );
+        configuredResources[0].definition.hooks!.health = 'fixture-health';
+        resourceStillHealthy = healthy;
+        slowShutdown = true;
+        const unconfirmed: string[] = [];
+        // Cold module loading can require I/O turns before the hook starts.
+        const started = once(slowShutdownStarted, resourceId);
+        const shutdown = shutdownRunSlotResources(run, unconfirmed);
+        await started;
+        const finishSlowShutdown = finishSlowShutdowns.get(resourceId);
+        assert(finishSlowShutdown, 'the shutdown hook started');
+        t.mock.timers.tick(15000);
+        await setImmediate();
+        finishSlowShutdown();
+        await setImmediate();
+        t.mock.timers.tick(500);
+        const reason = await shutdown;
+        if (healthy) {
+          assert(reason?.startsWith(resourceId + ':'));
+          assert.deepEqual(unconfirmed, [resourceId]);
+        } else {
+          assert.equal(reason, null, 'a confirmed late stop must not leave the done slot held');
+          assert.deepEqual(unconfirmed, []);
+        }
+        assert.deepEqual(stoppedResources, [resourceId], 'the hook runs once');
+      },
+    );
+  }
+
+test(
+  'explicit cleanup keeps a verified late stop while another resource remains pending',
+  { timeout: 5000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    configuredResources = slotRuntimeResources()
+      .filter((resource) => ['browser', 'dev-server'].includes(resource.id))
+      .reverse();
+    for (const resource of configuredResources)
+      resource.definition.hooks!.health = 'fixture-health';
+    slowShutdown = true;
+    const serverStarted = once(slowShutdownStarted, 'dev-server');
+    const browserStarted = once(slowShutdownStarted, 'browser');
+    const cleanup = realSlotCleanup.slotCleanup({ slotId: SLOT_ID, reason: 'manual' });
+    await serverStarted;
+    assert(finishSlowShutdowns.has('dev-server'));
+    t.mock.timers.tick(15000);
+    await browserStarted;
+    assert(finishSlowShutdowns.has('browser'));
+    t.mock.timers.tick(15000);
+    await setImmediate();
+    finishSlowShutdowns.get('dev-server')!();
+    await setImmediate();
+    t.mock.timers.tick(500);
+    await setImmediate();
+    t.mock.timers.tick(15000);
+    const result = await cleanup;
+    assert.deepEqual(result.cleaned, ['dev-server']);
+    assert.deepEqual(result.skipped, ['browser']);
+    assert.match(result.skippedReason?.browser ?? '', /timeout/);
   },
 );
 

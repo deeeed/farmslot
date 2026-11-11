@@ -30,6 +30,7 @@ import {
   shellQuote,
   tmuxShellSnippet,
 } from '../core/tmux.js';
+import type { ResourceShutdownOutcome } from '../fleet/slot-cleanup.js';
 import { isActiveSlotHolder, slotPinIsRequestOnly } from '../methods/dispatch/slot-scoring.js';
 import { reapSlotPrepareScope } from '../methods/slot/prepare-command.js';
 import { resolveDevServerLogPath } from '../methods/slot/prepare-devserver-log.js';
@@ -559,7 +560,7 @@ export async function shutdownRunSlotResources(
       async (retainDevice) => {
         if (!(await stillOwned()))
           throw new Error('Slot ownership changed before runtime shutdown');
-        const pending: Promise<void>[] = [];
+        const pending: Promise<ResourceShutdownOutcome>[] = [];
         const result = await shutdownSlotResource(
           slotId,
           resource.id,
@@ -578,7 +579,13 @@ export async function shutdownRunSlotResources(
           }),
         ]);
         clearTimeout(timer);
-        if (settled) return result;
+        if (settled) {
+          for (const late of await hooks) {
+            if (late.status === 'fulfilled' && late.value.resourceId === resource.id)
+              return late.value;
+          }
+          return result;
+        }
         retainDevice(hooks);
         return { ...result, torn: false, reason: 'shutdown hook still running after its timeout' };
       },

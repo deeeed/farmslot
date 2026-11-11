@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { monitorEventLoopDelay } from 'node:perf_hooks';
 import test from 'node:test';
 
 import { Command } from 'commander';
@@ -13,7 +14,6 @@ import {
   CredentialStoreRefusalError,
   CredentialStoreRuntime,
   CredentialStoreWriter,
-  hashSecret,
   loadCredentialStore,
   parsePersonSessionToken,
   type PersonSessionAuthority,
@@ -796,21 +796,25 @@ test('sign-in, refresh and token checks derive scrypt outside the caller turn', 
     trustProxyHeaders: false,
     machine: 'test',
   });
-  // One synchronous derivation on this machine, now: the bar the loop's worst delay stays under.
-  const started = performance.now();
-  hashSecret('calibration');
-  const scryptMs = performance.now() - started;
-  const delay = monitorEventLoopDelay({ resolution: 1 });
-  delay.enable();
+  // A derivation in the caller's turn is scryptSync; one on the libuv pool is the callback form.
+  // Both still derive (calls pass through); the spies only count them. Named imports of the
+  // built-in see the spies once its ESM exports are synced.
+  const inTurn = t.mock.method(crypto, 'scryptSync');
+  const pooled = t.mock.method(crypto, 'scrypt');
+  syncBuiltinESMExports();
+  t.after(() => {
+    inTurn.mock.restore();
+    pooled.mock.restore();
+    syncBuiltinESMExports();
+  });
   const grant = await f.grant();
   const refreshed = await f.writer.refreshPersonSession(grant.refreshToken);
   const checked = await resolver.resolveSecret(refreshed.accessToken, 'token');
-  // The histogram records a stall only when its next timer fires: give it that turn.
-  await new Promise((resolve) => setTimeout(resolve, 5));
-  delay.disable();
   assert.equal(checked.ok, true);
-  const worstMs = delay.max / 1e6;
-  assert.ok(worstMs < scryptMs / 2, `the loop stalled ${worstMs} ms; one scrypt is ${scryptMs} ms`);
+  assert.equal(inTurn.mock.callCount(), 0, 'no scrypt ran in a caller turn');
+  // Sign-in verifies one secret and issues two, refresh verifies one and issues one, and the
+  // token check verifies one.
+  assert.equal(pooled.mock.callCount(), 6);
 });
 
 test('concurrent sign-ins and refreshes count against the limit while they verify', async (t) => {
