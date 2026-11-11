@@ -4,6 +4,13 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.45.9 - 2026-11-11
+
+- Expose de-indented checklist step instructions while preserving mark step positions and completion behavior.
+- Resume an explicitly retained review terminal with its saved conversation and original signal attempt while preserving prior launch receipts.
+- Let static-review producers supply their enforced completion command without generic development marker or recipe guidance.
+- Starting a native session reads only its own runner process, which is still held at its launch gate, instead of a census of every process on the host; the shared background census adds descendants once it starts.
+
 ## 0.45.8 - 2026-11-10
 
 - Republish against recipe-runner 0.46.12 so consumers load one copy of it, with the fixed-element visibility fix.

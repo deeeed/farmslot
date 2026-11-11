@@ -165,7 +165,14 @@ export async function runArchive(
       fenced = true;
       await releaseBlockedRunSlot(run, emit, slot);
     }
-    const archive = () => storeArchiveRun(params.runId);
+    const archive = async () => {
+      if (getRun(params.runId)?.reviewWorkspace) {
+        const { cleanupReviewWorkspaceForArchive } =
+          await import('../../review-workspaces/pipeline.js');
+        await cleanupReviewWorkspaceForArchive(params.runId);
+      }
+      return storeArchiveRun(params.runId);
+    };
     const ok = await (fenced
       ? archive()
       : withTerminalRunSlotReleased(run, emit, slot, archive, true));

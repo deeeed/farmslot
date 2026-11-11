@@ -9,9 +9,15 @@ beforeEach(() => {
 });
 afterEach(() => restoreView());
 
-import type { TaskProgressStructured, TaskStepSubtaskProgress } from '@farmslot/protocol';
+import {
+  type TaskProgressStructured,
+  type TaskStepSubtaskProgress,
+  viewToggleField,
+} from '@farmslot/protocol';
+import { checklistStepDetailKey } from '@farmslot/review-dispatch';
 
 import { litBinding, litText } from '../../testing/lit-text.js';
+import { browserViewState } from '../../utils/view-state.js';
 
 import { renderChecklistProgress, renderTrackerStepRow } from './progress-tracker.js';
 import { SubtaskOpenState } from './subtask-block.js';
@@ -167,4 +173,55 @@ test('the panel reopens a unit by default when the run changes', () => {
     true,
     'run B must not inherit run A collapse',
   );
+});
+
+test('step detail starts collapsed and toggles only its run-scoped display choice', () => {
+  const step = Object.freeze({
+    index: 1,
+    name: '1. Inspect',
+    status: 'pending' as const,
+    detail: 'Read the actual source.\nKeep the proof.',
+  });
+  const scope = new SubtaskOpenState().scope('detail-run');
+  const render = () =>
+    renderTrackerStepRow(step, scope, false, undefined, undefined, undefined, {
+      runId: 'detail-run',
+      checklist: 'CHECKLIST.md',
+    });
+  assert.equal(litBinding(render(), 'aria-expanded='), false);
+  assert.match(litText(render()), /Read the actual source/);
+  const field = viewToggleField(
+    'stepDetails',
+    checklistStepDetailKey(1, { runId: 'detail-run', checklist: 'CHECKLIST.md' }),
+    false,
+  );
+  assert.equal(
+    litBinding(render(), '@toggle='),
+    undefined,
+    'shared viewDetails owns toggle persistence',
+  );
+  browserViewState.set(field, true);
+  assert.equal(litBinding(render(), 'aria-expanded='), true);
+  assert.equal(step.status, 'pending');
+  const other = renderTrackerStepRow(step, scope, false, undefined, undefined, undefined, {
+    runId: 'other-run',
+    checklist: 'CHECKLIST.md',
+  });
+  assert.equal(litBinding(other, 'aria-expanded='), false);
+  browserViewState.set(field, false);
+  assert.equal(litBinding(render(), 'aria-expanded='), false);
+  assert.equal(
+    location.hash.includes('stepDetails'),
+    false,
+    'collapsed default is omitted from URL',
+  );
+});
+
+test('steps without detail remain plain read-only rows', () => {
+  const view = renderTrackerStepRow(
+    { index: 1, name: 'No detail', status: 'pending' },
+    new SubtaskOpenState().scope('empty'),
+  );
+  assert.equal(litBinding(view, '.open='), undefined);
+  assert.doesNotMatch(litText(view), /step-instructions/);
 });

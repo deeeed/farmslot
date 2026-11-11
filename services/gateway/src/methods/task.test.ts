@@ -73,7 +73,10 @@ test('interactive CHECKLIST.md parses into structured monitor progress', () => {
   const structured = joinSchemaWithMarkdown(schema, markdown);
   assert.equal(structured.completedSteps, 1);
   assert.equal(structured.totalSteps, 4);
-  assert.equal(structured.currentStep, 'Implement the smallest useful change on the selected branch');
+  assert.equal(
+    structured.currentStep,
+    'Implement the smallest useful change on the selected branch',
+  );
 });
 
 test('reconcileFinalStepFromSignal leaves N-2/N task unchanged', () => {
@@ -86,4 +89,22 @@ test('reconcileFinalStepFromSignal leaves N-2/N task unchanged', () => {
   assert.equal(structured.phases[0].steps[2].status, 'pending');
   assert.equal(structured.currentPhase, 'Work');
   assert.equal(structured.currentStep, 'Step 2');
+});
+
+test('progress carries rendered step detail without changing names, statuses or indices', () => {
+  const markdown =
+    '## Work\n- [x] 1. Read\n  Inspect the actual source.\n- [ ] 2. Verify\n  Capture the result.\n';
+  const progress = joinSchemaWithMarkdown(generateTaskSchema(markdown, 'dev'), markdown);
+  assert.deepEqual(
+    progress.phases[0].steps.map(({ index, name, status, detail }) => ({
+      index,
+      name,
+      status,
+      detail,
+    })),
+    [
+      { index: 1, name: '1. Read', status: 'done', detail: 'Inspect the actual source.' },
+      { index: 2, name: '2. Verify', status: 'running', detail: 'Capture the result.' },
+    ],
+  );
 });

@@ -1,0 +1,1 @@
+- Release a terminal static review's source checkout through guarded cleanup before archiving, preserving its result, task artifacts and conversation files.

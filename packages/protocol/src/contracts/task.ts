@@ -62,6 +62,8 @@ export interface TaskPhaseProgress {
 }
 
 export interface TaskStepProgress {
+  /** Read-only markdown instructions beneath this checklist step. */
+  detail?: string;
   index: number;
   name: string;
   status: TaskStepStatus;

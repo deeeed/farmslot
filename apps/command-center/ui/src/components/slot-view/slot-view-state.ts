@@ -63,6 +63,7 @@ export abstract class SlotViewState extends LitElement {
   @state() _taskSteps: ChecklistProgressStep[] = [];
   @state() _taskProgress = 0;
   @state() _structuredProgress?: TaskProgressStructured;
+  _taskProgressSource?: TaskProgressStructured;
   @state() _progressObservation: ResourceQueryState<TaskProgressResult> = { status: 'loading' };
   @state() _selectedAgentContextId = 'primary';
   @state() _tmuxSessionSelection: string | null = null;

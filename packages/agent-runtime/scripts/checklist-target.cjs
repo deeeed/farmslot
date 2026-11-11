@@ -84,6 +84,26 @@ function enumerateChecklistCheckboxes(markdown) {
       rawLabel: match[2],
     });
   }
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    const end = items[index + 1]?.lineIndex ?? lines.length;
+    const body = [];
+    let fenced = false;
+    for (let line = item.lineIndex + 1; line < end; line += 1) {
+      const text = lines[line].replace(/\r$/, '');
+      const trimmed = text.trim();
+      if (trimmed.startsWith('```')) fenced = !fenced;
+      else if (!fenced && /^#{2,}\s+[^#]/.test(trimmed)) break;
+      body.push(text);
+    }
+    while (body.length && !body[0].trim()) body.shift();
+    while (body.length && !body[body.length - 1].trim()) body.pop();
+    if (!body.length) continue;
+    const indent = body
+      .filter((line) => line.trim())
+      .reduce((minimum, line) => Math.min(minimum, line.match(/^[ \t]*/)[0].length), Infinity);
+    item.detail = body.map((line) => (line.trim() ? line.slice(indent) : '')).join('\n');
+  }
   return items;
 }
 // Mirror of @farmslot/protocol/checklist-target checklistNumberingMismatches:

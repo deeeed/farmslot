@@ -1,0 +1,1 @@
+- Include each checklist step’s instructions in task progress.

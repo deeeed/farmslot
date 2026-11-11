@@ -10,6 +10,7 @@ import {
   CI_FIX_CHECKLIST,
   CI_FIX_CHECKLIST_TARGET,
   DEFAULT_CHECKLIST_TARGET_REGISTRY,
+  enumerateChecklistCheckboxes,
   nestedLoopProgressLabel,
   REVIEW_CHECKLIST,
   REVIEW_CHECKLIST_TARGET,
@@ -21,6 +22,7 @@ import {
   subtaskPaths,
   SUBTASKS_DIR,
   targetForChecklistBasename,
+  taskProgressWithStepDetails,
   terminalContractInputForChecklist,
 } from '../src/checklist-target.js';
 import { isSettledSubtaskStatus, isTerminalWorkerSignalStatus } from '../src/transport/signal.js';
@@ -208,4 +210,97 @@ test('shouldAcceptTaskProgressUpdate accepts a child only while its parent check
   // Every other role keeps today's behaviour.
   assert.equal(shouldAcceptTaskProgressUpdate(reviewRun, { contextId: 'review' }), true);
   assert.equal(shouldAcceptTaskProgressUpdate(reviewRun, { contextId: 'worker' }), false);
+});
+
+test('checkbox detail is de-indented and bounded by the next step or section', () => {
+  const rows = enumerateChecklistCheckboxes(
+    [
+      '## Work',
+      '- [ ] 1. Read the task',
+      '  Read the acceptance criteria.',
+      '    Keep nested indentation.',
+      '',
+      '- [x] 2. Verify',
+      '  Record the evidence.',
+      '## Rules',
+      'This section is not step detail.',
+    ].join('\n'),
+  );
+  assert.deepEqual(
+    rows.map(({ rawLabel, detail, checked }) => ({ rawLabel, detail, checked })),
+    [
+      {
+        rawLabel: '1. Read the task',
+        detail: 'Read the acceptance criteria.\n  Keep nested indentation.',
+        checked: false,
+      },
+      { rawLabel: '2. Verify', detail: 'Record the evidence.', checked: true },
+    ],
+  );
+  assert.deepEqual(
+    rows.map(({ stepNumber }) => stepNumber),
+    [1, 2],
+  );
+});
+
+test('fenced example checkboxes and headings stay inside detail without becoming steps', () => {
+  const rows = enumerateChecklistCheckboxes(
+    [
+      '## Work',
+      '- [ ] 1. Inspect',
+      '  Example:',
+      '  ```md',
+      '  - [ ] not a real step',
+      '  ## not a boundary',
+      '  ```',
+      '  Then inspect the actual source.',
+      '- [ ] 2. Finish',
+      '',
+    ].join('\n'),
+  );
+  assert.equal(rows.length, 2);
+  assert.equal(
+    rows[0].detail,
+    'Example:\n```md\n- [ ] not a real step\n## not a boundary\n```\nThen inspect the actual source.',
+  );
+  assert.equal(Object.hasOwn(rows[1], 'detail'), false);
+});
+
+test('detail trims only blank edges and normalizes CRLF without changing step targeting', () => {
+  const rows = enumerateChecklistCheckboxes(
+    '## Work\r\n- [ ] 1. Inspect\r\n\r\n  Keep trailing spaces.  \r\n\r\n- [ ] 2. Done\r\n',
+  );
+  assert.equal(rows[0].detail, 'Keep trailing spaces.  ');
+  assert.deepEqual(
+    rows.map(({ stepNumber, lineIndex }) => ({ stepNumber, lineIndex })),
+    [
+      { stepNumber: 1, lineIndex: 1 },
+      { stepNumber: 2, lineIndex: 5 },
+    ],
+  );
+});
+
+test('legacy progress detail enrichment leaves its original completion data untouched', () => {
+  const step = { index: 1, name: 'Inspect', status: 'done' as const };
+  const progress = {
+    schema: {
+      flowType: 'dev',
+      title: 'Task',
+      totalSteps: 1,
+      phases: [{ name: 'Work', steps: [step] }],
+    },
+    phases: [{ name: 'Work', steps: [step], completedSteps: 1, totalSteps: 1 }],
+    completedSteps: 1,
+    totalSteps: 1,
+    currentPhase: null,
+    currentStep: null,
+  };
+  const view = taskProgressWithStepDetails(
+    progress,
+    '## Work\n- [x] Inspect\n  Read the source.\n',
+  );
+  assert.equal(view?.phases[0].steps[0].detail, 'Read the source.');
+  assert.equal(view?.phases[0].steps[0].status, 'done');
+  assert.equal(Object.hasOwn(step, 'detail'), false);
+  assert.equal(view?.completedSteps, 1);
 });

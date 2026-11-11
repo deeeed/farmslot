@@ -1077,6 +1077,7 @@ export default function RunDetailScreen() {
               <TaskProgressPanel
                 run={run}
                 progress={activeTaskProgress}
+                markdown={progressObservation.data?.markdown}
                 error={taskProgressError}
                 compact
               />
