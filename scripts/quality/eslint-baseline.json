@@ -24,6 +24,642 @@
     {
       "key": "scripts/lib/gw.mjs:no-unused-vars",
       "count": 1
+    },
+    {
+      "key": "services/gateway/src/agents/runtime-recovery.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/automation/branch-watcher.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/backlog/pr-execution.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/ci-monitor/inline-fix.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/copilot-runtime/launcher.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/copilot-runtime/live-fix-policy.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/core/index.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/core/node-file-reads.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/core/project-env.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/core/read-probes.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/core/slot-io.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/core/tmux-launch-script.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/core/tmux.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/evals/blind-inputs.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/evals/blind-trial.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/fleet/farm-paths.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/fleet/node-health.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/fleet/pairing.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/fleet/resource-exec.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/fleet/resource-manager.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/fleet/resource-process.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/fleet/state.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/integrations/github-accounts.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/integrations/github-client.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/intelligence/improvement-engine.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/llm/index.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/machine-parking/service.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/diagnostics.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/dispatch/branch-checkout.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/dispatch/worktree-baseline.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/filesystem.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/fleet.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/gateway-doctor.ts:@typescript-eslint/no-restricted-imports",
+      "count": 2
+    },
+    {
+      "key": "services/gateway/src/methods/gateway-update.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/pr.ts:@typescript-eslint/no-restricted-imports",
+      "count": 2
+    },
+    {
+      "key": "services/gateway/src/methods/provider-accounts.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/recipe.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/run.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/run/lifecycle-control.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/run/replay-step.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/runner-models.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/runtime-capabilities.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/search.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/slot-actions.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/slot/check.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/slot/editor.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/slot/git-identity.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/slot/prepare-command.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/slot/slot-tracking.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/slot/workspace-version.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/stream-resolve.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/terminal-worker.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/terminal.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/tmux-control.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/methods/worker-session-history.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/node-support/activation.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/node-support/ensure.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/pr-monitoring/github-account.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/projects/start-ref-policy.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/qa/completion.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/refinement/session.ts:@typescript-eslint/no-restricted-imports",
+      "count": 2
+    },
+    {
+      "key": "services/gateway/src/resources/progress-observations.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/review-workspaces/account-preflight.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/review-workspaces/admission.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/review-workspaces/cache-cleanup.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/review-workspaces/git.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/review-workspaces/support.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/review-workspaces/task.ts:@typescript-eslint/no-restricted-imports",
+      "count": 2
+    },
+    {
+      "key": "services/gateway/src/review-workspaces/workspace.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/review/feedback.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/review/native-review-agent.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/review/orchestrator.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/review/progress.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/review/review-agent.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/review/snapshots.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/review/templates.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/review/worker-lifecycle.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-completion/artifact-mirror.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-completion/baseline-debug-marker.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-completion/commit-signatures.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-completion/multi-attempt-browser.live-support.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-completion/orchestrator.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-completion/pr-body-render.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-completion/pr-template.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-completion/publication-push.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-completion/publication-source.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-completion/publish-package-scope.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-engine/branch-freshness.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-engine/branch-maintenance.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-engine/budget-usage-sample.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-engine/diff-artifacts.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-engine/dispatch-lifecycle-steps.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-engine/eval-harness-lifecycle.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-engine/finalize-step.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-engine/orchestrator.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-engine/push-verification.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-engine/ready-gate.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-engine/recover-inflight-reviews.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-engine/remote-probes.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-engine/review-launch-gate.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-engine/run-monitor.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-engine/run-recovery-fixture.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-engine/task-sync.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-engine/worker-launch-preflight.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/run-lifecycle/idle-devserver-service.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/account-inventory.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/claude-auth-status.ts:@typescript-eslint/no-restricted-imports",
+      "count": 2
+    },
+    {
+      "key": "services/gateway/src/runners/claude-background-work.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/claude-observability.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/claude-pending-question.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/claude-process-observability.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/claude-usage-sessions.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/codex-auth-status.ts:@typescript-eslint/no-restricted-imports",
+      "count": 2
+    },
+    {
+      "key": "services/gateway/src/runners/codex-observability.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/codexbar-usage.ts:@typescript-eslint/no-restricted-imports",
+      "count": 2
+    },
+    {
+      "key": "services/gateway/src/runners/cursor-auth-status.ts:@typescript-eslint/no-restricted-imports",
+      "count": 2
+    },
+    {
+      "key": "services/gateway/src/runners/cursor-observability.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/grok-auth-status.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/grok-observability.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/model-catalog.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/native/worker-launch.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/native/worker-nudge.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/native/worker-parking-task.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/native/worker-parking.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/native/worker-profile.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/observability-clock.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/pi-observability.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/prompt-delivery-evidence.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/provider-account-host.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/quota-guard.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/registry.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/retained-worker-progress.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/review-startup.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/review-tmux.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/runner-auth.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/scripted-session.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/session-lifecycle.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/session-path-resolution.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/session-process.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/session-reactivation.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/session-rediscovery.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runners/status-provider.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runtime/native-proof-fixture.live-support.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runtime/native-session-usage.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runtime/pty-stream.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runtime/screen-session.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runtime/script-runner.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runtime/session-usage.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runtime/terminal-input-sequence.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runtime/tmux-stream.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/runtime/workspace-terminal.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/tasks/acceptance-status.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/tasks/agent-runtime-script.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/tasks/checklist-target.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/tasks/hosted-task-init.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/tasks/sidecars.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/tasks/watcher.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/tasks/worker-terminal-contract.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
+    },
+    {
+      "key": "services/gateway/src/work-graph/attach-run.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
     }
   ]
 }

@@ -150,5 +150,45 @@ export default [
       ],
     },
   },
+  {
+    // Host work (commands, processes, host file and git reads) goes through the typed services in
+    // services/gateway/src/host-services. Existing direct callers are grandfathered in the ESLint
+    // baseline; a new one fails the ratchet.
+    files: ['services/gateway/src/**/*.ts'],
+    ignores: [
+      'services/gateway/src/host-services/**',
+      'services/gateway/src/core/exec.ts',
+      'services/gateway/src/**/*.test.ts',
+      'services/gateway/src/**/*.live.ts',
+      'services/gateway/src/**/*.test-support.ts',
+      'services/gateway/src/**/*.fixture.ts',
+    ],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'node:child_process',
+              message: 'Start processes through a service in src/host-services.',
+              allowTypeImports: true,
+            },
+            {
+              name: 'child_process',
+              message: 'Start processes through a service in src/host-services.',
+              allowTypeImports: true,
+            },
+          ],
+          patterns: [
+            {
+              regex: '(^|/)core/exec(\\.js)?$|^\\./exec(\\.js)?$',
+              message: 'Run commands through a service in src/host-services, not core/exec.',
+              allowTypeImports: true,
+            },
+          ],
+        },
+      ],
+    },
+  },
   prettier,
 ];
