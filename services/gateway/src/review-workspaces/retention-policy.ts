@@ -43,20 +43,26 @@ export function sameReviewPR(
 export function retainedWorkspaceIsIdle(
   run: Pick<Run, 'status' | 'reviewWorkspace' | 'agentContexts' | 'reviewResult'>,
 ): boolean {
+  // The run's posting wait projects onto its reviewer context after completion.
+  if (
+    run.reviewWorkspace?.retainedAt &&
+    run.reviewResult &&
+    ['reconciling', 'human-gating', 'needs-decision', 'completing', 'done'].includes(run.status)
+  )
+    return true;
   return (
     !!run.reviewWorkspace?.retainedAt &&
+    !!run.reviewWorkspace.executionStoppedAt &&
+    !(run.agentContexts ?? []).some(
+      (context) =>
+        context.nativeSession &&
+        !context.nativeSession.closedAt &&
+        !context.nativeSession.releasedAt,
+    ) &&
+    ['done', 'failed', 'cancelled', 'blocked'].includes(run.status) &&
     !(run.agentContexts ?? []).some(
       (context) => !['complete', 'failed', 'idle'].includes(context.status),
-    ) &&
-    (Boolean(run.reviewResult) ||
-      (!!run.reviewWorkspace.executionStoppedAt &&
-        ['done', 'failed', 'cancelled', 'blocked'].includes(run.status) &&
-        !(run.agentContexts ?? []).some(
-          (context) =>
-            context.nativeSession &&
-            !context.nativeSession.closedAt &&
-            !context.nativeSession.releasedAt,
-        )))
+    )
   );
 }
 

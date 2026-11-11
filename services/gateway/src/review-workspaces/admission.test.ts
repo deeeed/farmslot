@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import { agentContextStatusFromRunStatus, type Run } from '@farmslot/protocol';
 
 import { makeRun } from '../methods/run/test-fixtures.js';
 
@@ -130,7 +130,8 @@ test('a retained finished review awaiting posting leaves capacity for another re
         label: 'Reviewer',
         runId: 'finished-review',
         slotId: null,
-        status: 'complete',
+        status: agentContextStatusFromRunStatus('reconciling'),
+        reviewResultValidatedAt: ended,
         nativeSession: {
           sessionId: 'retained-conversation',
           executionNodeId: 'node',
@@ -163,6 +164,7 @@ test('a retained finished review awaiting posting leaves capacity for another re
     activeWorkspaceReviews('node', [
       {
         ...run,
+        status: 'monitoring',
         agentContexts: [
           {
             id: 'review',
