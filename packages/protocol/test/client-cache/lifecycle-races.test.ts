@@ -149,7 +149,7 @@ test('storage write failure retains the current in-memory value and a visible no
     const done = cache.retry(query);
     (await transport.nextRead()).resolve({ value: 'still usable' });
     const state = await done;
-    assert.equal(state.status, 'ready');
+    assert.equal(state.status, 'stale');
     assert.equal(state.data?.value, 'still usable');
     assert.match(state.storageNotice!, /will not survive a restart: disk full/);
   } finally {
@@ -158,7 +158,7 @@ test('storage write failure retains the current in-memory value and a visible no
 });
 
 for (const failure of ['write', 'open', 'fallback'] as const) {
-  test(`a reconnect restores persistence after a temporary store ${failure} failure`, async () => {
+  test(`persistence recovers after a temporary store ${failure} failure`, async () => {
     const saved = createMemoryResourceStore();
     const healthy: ResourceStore = { ...saved, persistent: true };
     let opens = 0;
@@ -185,9 +185,12 @@ for (const failure of ['write', 'open', 'fallback'] as const) {
       const first = cache.retry(query);
       (await transport.nextRead()).resolve({ value: 'kept while storage is unavailable' });
       assert.equal((await first).data?.value, 'kept while storage is unavailable');
-      if (failure !== 'fallback')
-        assert.match(cache.read(query).storageNotice!, /temporary storage I\/O error/);
-      assert.equal(opens, 1, 'Storage failures must not create an immediate retry loop');
+      assert.equal(cache.read(query).storageNotice, undefined);
+      assert.equal(
+        opens,
+        failure === 'fallback' ? 1 : 2,
+        'I/O failures get one immediate recovery attempt',
+      );
 
       transport.setConnection({ connected: false }, 'network');
       assert.equal(cache.read(query).data?.value, 'kept while storage is unavailable');
@@ -241,7 +244,7 @@ test('reopening persistent storage keeps newer visible data through disconnect a
     await cache.retry(query);
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(cache.read(query).data?.value, 'newer visible value');
-    assert.equal(opens, 1, 'A disconnected cache must wait before reopening storage');
+    assert.equal(opens, 2, 'Disconnect must not add a reopen after the immediate recovery');
     transport.setConnection({ connected: true, id: 2 });
     const next = cache.retry(query);
     const read = await transport.nextRead();
