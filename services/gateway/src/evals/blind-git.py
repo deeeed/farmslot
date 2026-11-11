@@ -161,7 +161,7 @@ def gateway_network_rules(spec):
     # Read only URL fields before sandbox entry. Never return/log credential
     # fields or parser exceptions, which can include the original secret bytes.
     # Wildcard ports cover DNS aliases, LAN, IPv6 and mapped IPv4 without a
-    # resolution race. A provider sharing a control-plane port fails closed too.
+    # resolution race. Shared HTTP(S) ports must remain usable by providers.
     ports = {7777, 7778, 7801, 8808, 8809}  # CLI/server + TLS, desktop/worktree validation.
     urls = []
     homes = gateway_homes()
@@ -170,7 +170,8 @@ def gateway_network_rules(spec):
         file = root / 'gateways.json'
         try:
             profiles = json.loads(file.read_text())
-            urls += [profile['url'] for profile in profiles['gateways'].values()]
+            urls += [('profile ' + json.dumps(name), profile['url'])
+                     for name, profile in profiles['gateways'].items()]
         except FileNotFoundError:
             continue  # Absent homes/config layouts do not contribute endpoints.
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
@@ -179,21 +180,34 @@ def gateway_network_rules(spec):
         value = os.environ.get(name)
         # FARMSLOT_GATEWAY can also name a profile; every profile is read above.
         if value and (name != 'FARMSLOT_GATEWAY' or '://' in value):
-            urls.append(value)
-    for value in urls:
+            urls.append((name, value))
+    def add_gateway_port(source, port):
+        if port in (80, 443):
+            print('Blind boundary: %s uses shared port %s; relying on credential hiding. '
+                  'Use a dedicated gateway port for transport isolation.' % (source, port),
+                  file=sys.stderr)
+        else:
+            ports.add(port)
+    for source, value in urls:
         try:
             url = urlsplit(value)
             if url.scheme not in ['ws', 'wss', 'http', 'https'] or not url.hostname:
                 raise ValueError()
-            ports.add(boundary_port(url.port if url.port is not None
-                                    else (443 if url.scheme in ['wss', 'https'] else 80)))
+            add_gateway_port(source, boundary_port(url.port if url.port is not None
+                             else (443 if url.scheme in ['wss', 'https'] else 80)))
         except (ValueError, TypeError, AttributeError):
             raise RuntimeError('Invalid gateway endpoint for the blind boundary') from None
     for name in ['GATEWAY_PORT', 'GW_PORT', 'FARMSLOT_GATEWAY_TLS_PORT']:
         if os.environ.get(name):
-            ports.add(boundary_port(os.environ[name]))
-    # The slot's disposable recipe browser is independent of operator CDP.
-    # Never exempt its port if it is also a gateway endpoint.
+            add_gateway_port(name, boundary_port(os.environ[name]))
+    resources = spec.get('slotResourcePorts', {})
+    for name, port in resources.items():
+        if boundary_port(port) in ports:
+            print('Blind boundary: denied gateway port %s collides with slot resource %s; '
+                  'configure a distinct port.' % (port, json.dumps(name)), file=sys.stderr)
+    # Slot capability browsers can run outside the seatbelt via LaunchServices.
+    # Never exempt them. The blind harness spawns its own contained browser on
+    # a fresh port, independent of configured slot and operator CDP endpoints.
     cdp_ports = {9323}
     for profile in Path.home().glob('.chrome-farmslot-*'):
         suffix = profile.name.removeprefix('.chrome-farmslot-')
@@ -201,8 +215,10 @@ def gateway_network_rules(spec):
             cdp_ports.add(boundary_port(suffix))
     if os.environ.get('FARMSLOT_CDP_PORT'):
         cdp_ports.add(boundary_port(os.environ['FARMSLOT_CDP_PORT']))
-    cdp_ports.discard(spec.get('workerCdpPort'))
+    if resources.get('cdp_port'):
+        cdp_ports.add(boundary_port(resources['cdp_port']))
     ports |= cdp_ports
+    ports -= {80, 443}
     return '(deny network-outbound ' + ' '.join(
         '(remote tcp "*:%s")' % port for port in sorted(ports)) + ')'
 

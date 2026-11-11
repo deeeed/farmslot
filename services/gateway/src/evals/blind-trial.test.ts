@@ -46,6 +46,7 @@ let checkout = base;
 let verifyAllowed = true;
 let verifications = 0;
 let githubAttempt: string | null = null;
+let boundaryWarning = '';
 let marker: { exitCode: number; stdout: string; stderr: string } | undefined;
 let onRestore = () => {};
 const slotCommands: string[] = [];
@@ -95,7 +96,11 @@ mock.module('../core/exec.js', {
       return {
         exitCode: verifyAllowed ? 0 : 1,
         stdout: JSON.stringify({ status: 'isolated', runId: run.id, baseSha: base, githubAttempt }),
-        stderr: verifyAllowed ? '' : 'isolation changed',
+        stderr: verifyAllowed
+          ? command.includes('"action":"boundary"')
+            ? boundaryWarning
+            : ''
+          : 'isolation changed',
       };
     },
     execLocal: async () => ({ exitCode: 0, stdout: '{}', stderr: '' }),
@@ -202,6 +207,7 @@ async function fixture(t: TestContext) {
   verifyAllowed = true;
   verifications = 0;
   githubAttempt = null;
+  boundaryWarning = '';
   marker = undefined;
   onRestore = () => {};
   onCapture = () => {};
@@ -274,12 +280,22 @@ test('the worker boundary uses the pool-selected credential home and resolved si
   await fixture(t);
   vars.machineEnv = { FARMSLOT_HOME: '/synthetic/selected-profile' };
   vars.resourceVars.cdp_port = '19222';
+  vars.resourceVars.metro_port = '8081';
+  vars.resourceVars.port = '5174';
+  vars.resourceVars.optional_port = '';
+  boundaryWarning = 'Blind boundary: profile "secure" uses shared port 443';
+  const warn = t.mock.method(console, 'warn', () => {});
   t.after(() => {
     delete vars.machineEnv;
     delete vars.resourceVars.cdp_port;
+    delete vars.resourceVars.metro_port;
+    delete vars.resourceVars.port;
+    delete vars.resourceVars.optional_port;
   });
   slotCommands.length = 0;
   await prepareBlindTrialGit(run.id);
+  assert.equal(warn.mock.calls.length, 1);
+  assert.deepEqual(warn.mock.calls[0].arguments, [boundaryWarning]);
   const spec = (action: string) => {
     const command = slotCommands.find((entry) => entry.includes(`"action":"${action}"`));
     assert.ok(command, action);
@@ -288,7 +304,11 @@ test('the worker boundary uses the pool-selected credential home and resolved si
     );
   };
   assert.equal(spec('isolate').siblingRepos, undefined);
-  assert.equal(spec('boundary').workerCdpPort, 19222);
+  assert.deepEqual(spec('boundary').slotResourcePorts, {
+    cdp_port: 19222,
+    metro_port: 8081,
+    port: 5174,
+  });
   assert.deepEqual(spec('boundary').siblingRepos, ['/farm/slots/sibling']);
   assert.deepEqual(spec('boundary').farmConfigRoots, [
     '/farm/pool',

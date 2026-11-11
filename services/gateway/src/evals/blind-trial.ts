@@ -82,7 +82,11 @@ function gitSpec(
     branch: run.branch,
     baseSha: blind.baseSha,
     referenceCommits: blind.referenceCommits,
-    workerCdpPort: Number(vars.resourceVars.cdp_port) || undefined,
+    slotResourcePorts: Object.fromEntries(
+      Object.entries(vars.resourceVars)
+        .filter(([name, value]) => (name === 'port' || name.endsWith('_port')) && value.trim())
+        .map(([name, value]) => [name, Number(value)]),
+    ),
     ...(blind.proof ? { proof: blind.proof.source } : {}),
   };
 }
@@ -107,6 +111,7 @@ async function executeGit(
     throw new Error(
       `Blind trial Git ${action} failed: ${result.stderr.trim() || result.stdout.trim()}`,
     );
+  if (action === 'boundary' && result.stderr.trim()) console.warn(result.stderr.trim());
   const value: unknown = JSON.parse(result.stdout);
   if (!isRecord(value) || typeof value.status !== 'string')
     throw new Error('Invalid blind trial Git receipt.');

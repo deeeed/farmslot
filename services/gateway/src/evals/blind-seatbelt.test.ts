@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,7 +8,11 @@ import { fileURLToPath } from 'node:url';
 
 import { withBlindTrialBoundary } from './blind-git.js';
 
-function generatedProfile(t: TestContext, workerCdpPort?: number, invalidProfiles?: string) {
+function generatedProfile(
+  t: TestContext,
+  slotResourcePorts: Record<string, number> = {},
+  invalidProfiles?: string,
+) {
   const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'seatbelt-unit-')));
   t.after(() => rmSync(root, { recursive: true }));
   mkdirSync(path.join(root, 'boundary'));
@@ -83,7 +87,7 @@ function generatedProfile(t: TestContext, workerCdpPort?: number, invalidProfile
     );
   if (invalidProfiles !== undefined) writeFileSync(profileFiles[0], invalidProfiles);
   writeFileSync(path.join(root, 'state.json'), '{"originalIsDirectory":true}');
-  const profile = execFileSync(
+  const result = spawnSync(
     'python3',
     [
       '-c',
@@ -92,22 +96,22 @@ import json, os, pathlib, runpy, sys
 from unittest.mock import patch
 blind = runpy.run_path(sys.argv[1], run_name='fixture')
 with patch.dict(os.environ, {'HOME': sys.argv[2] + '/boundary/home', 'FARMSLOT_HOME': sys.argv[2] + '/boundary/selected-home', 'FARMSLOT_CONFIG_DIR': sys.argv[2] + '/boundary/selected-config', 'GATEWAY_URL': 'ws://[::1]:17901', 'GW_URL': 'ws://node.local:17902', 'FARMSLOT_GATEWAY': 'wss://node.local:17903', 'GATEWAY_PORT': '17904', 'FARMSLOT_GATEWAY_TLS_PORT': '17905', 'FARMSLOT_CDP_PORT': '19323', 'FARMSLOT_CDP_PROFILE': sys.argv[2] + '/operator-debug', 'TMUX_TMPDIR': '/tmp/fixture-tmux', 'TMUX': '/tmp/fixture-inherited/server,123,0'}, clear=True):
-    print(blind['sandbox_profile']({'repo': sys.argv[2], 'workerCdpPort': int(sys.argv[3])}, pathlib.Path(sys.argv[2]), ['/tmp/fixture-discovered/server']))
+    print(blind['sandbox_profile']({'repo': sys.argv[2], 'slotResourcePorts': json.loads(sys.argv[3])}, pathlib.Path(sys.argv[2]), ['/tmp/fixture-discovered/server']))
 `,
       fileURLToPath(new URL('./blind-git.py', import.meta.url)),
       root,
-      String(workerCdpPort ?? 0),
+      JSON.stringify(slotResourcePorts),
     ],
     { encoding: 'utf8', timeout: 4500 },
   );
-  return { root, home, profile, gatewayFiles, browserDirs };
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  return { root, home, profile: result.stdout, warnings: result.stderr, gatewayFiles, browserDirs };
 }
 
 test('blind profile denies every configured gateway port on every address and operator CDP', (t) => {
   const { profile, gatewayFiles } = generatedProfile(t);
   const ports = [
-    80,
-    443,
     7777,
     7778,
     7801,
@@ -141,11 +145,36 @@ test('blind profile protects operator browser stores and aliases after read exce
   }
 });
 
-test('slot CDP is excluded from operator CDP defaults, never from gateway denials', (t) => {
-  const { profile } = generatedProfile(t, 9323);
-  assert.ok(!profile.includes('(remote tcp "*:9323")'));
+test('slot CDP is denied even without an operator profile on that port', (t) => {
+  const { profile } = generatedProfile(t, { cdp_port: 19222 });
+  assert.ok(profile.includes('(remote tcp "*:9323")'));
   assert.ok(profile.includes('(remote tcp "*:19323")'));
-  assert.ok(generatedProfile(t, 7777).profile.includes('(remote tcp "*:7777")'));
+  assert.ok(profile.includes('(remote tcp "*:19222")'));
+});
+
+test('shared gateway ports stay open with actionable profile diagnostics and no credentials', (t) => {
+  const { profile, warnings } = generatedProfile(t);
+  for (const port of [80, 443]) {
+    assert.ok(!profile.includes('(remote tcp "*:' + port + '")'));
+    assert.match(
+      warnings,
+      new RegExp('profile "' + (port === 443 ? 'secure' : 'plain') + '".*' + port),
+    );
+  }
+  assert.match(warnings, /credential hiding.*dedicated gateway port/u);
+  assert.doesNotMatch(warnings, /synthetic-only|example.invalid/u);
+});
+
+test('denied gateway ports warn when they collide with any configured slot resource', (t) => {
+  const { profile, warnings } = generatedProfile(t, {
+    cdp_port: 7777,
+    metro_port: 17801,
+    port: 8081,
+  });
+  for (const port of [7777, 17801]) assert.ok(profile.includes('(remote tcp "*:' + port + '")'));
+  assert.match(warnings, /gateway port 7777.*slot resource "cdp_port".*distinct port/u);
+  assert.match(warnings, /gateway port 17801.*slot resource "metro_port".*distinct port/u);
+  assert.doesNotMatch(warnings, /slot resource "port"/u);
 });
 
 test('malformed gateway discovery fails closed without exposing credential bytes', (t) => {

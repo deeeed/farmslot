@@ -1,1 +1,1 @@
-- Blocked blind workers from gateway and operator debug-browser ports, browser session stores, SSH and control-plane credentials while preserving local task markers and disposable recipe browsers.
+- Blocked blind workers from dedicated gateway and configured debug-browser ports, browser session stores, SSH and control-plane credentials while preserving local task markers, shared provider HTTP(S) ports and contained recipe browsers. Boundary diagnostics identify shared gateway ports and slot resource collisions.

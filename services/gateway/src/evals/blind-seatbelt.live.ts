@@ -64,19 +64,24 @@ export function ownCleanup(parent, stop) {
   );
   return root;
 }
-function profile(root: string, launchEnv: NodeJS.ProcessEnv = env) {
+function profile(
+  root: string,
+  launchEnv: NodeJS.ProcessEnv = env,
+  slotResourcePorts: Record<string, number> = {},
+) {
   execFileSync(
     'python3',
     [
       '-c',
       `
-import pathlib, runpy, sys
+import json, pathlib, runpy, sys
 blind = runpy.run_path(sys.argv[1], run_name='fixture')
 root = pathlib.Path(sys.argv[2])
-blind['prepare_boundary']({'repo': str(root), 'siblingRepos': [str(root / 'hidden')]}, root)
+blind['prepare_boundary']({'repo': str(root), 'siblingRepos': [str(root / 'hidden')], 'slotResourcePorts': json.loads(sys.argv[3])}, root)
 `,
       python,
       root,
+      JSON.stringify(slotResourcePorts),
     ],
     { env: launchEnv, encoding: 'utf8', timeout: 10_000 },
   );
@@ -110,9 +115,14 @@ test(
   async (t) => {
     const root = fixture();
     let stopGateway = async () => {};
+    let stopSlotBrowser = async () => {};
     t.after(async () => {
       try {
-        await stopGateway();
+        try {
+          await stopSlotBrowser();
+        } finally {
+          await stopGateway();
+        }
       } finally {
         rmSync(root, { recursive: true });
       }
@@ -277,22 +287,75 @@ writeFileSync(${JSON.stringify(path.join(root, 'gateway-ready.json'))}, JSON.str
     const disposable = path.join(root, 'boundary/worker-chrome/Default/Local Storage/fixture');
     mkdirSync(path.dirname(disposable), { recursive: true });
     writeFileSync(disposable, 'worker-disposable-session');
-    const operatorCdp = net.createServer((socket) => socket.end('synthetic operator CDP'));
-    t.after(async () => {
-      if (operatorCdp.listening)
-        await new Promise<void>((resolve, reject) =>
-          operatorCdp.close((error) => (error ? reject(error) : resolve())),
-        );
-    });
-    operatorCdp.listen(0, '127.0.0.1');
-    await once(operatorCdp, 'listening');
-    const cdpAddress = operatorCdp.address();
-    assert.ok(cdpAddress && typeof cdpAddress !== 'string');
+    // The slot's debug-chrome capability calls this launcher outside the worker
+    // boundary. Substitute only its executable with a synthetic CDP listener.
+    const slotProfile = path.join(root, 'outside-slot-browser');
+    const chrome = path.join(root, 'synthetic-chrome.mjs');
+    const slotPid = path.join(root, 'outside-slot-browser.pid');
+    const slotReady = path.join(root, 'outside-slot-browser.json');
+    writeFileSync(
+      chrome,
+      `#!${process.execPath}
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { ownCleanup } from './owned-cleanup.mjs';
+writeFileSync(${JSON.stringify(slotPid)}, String(process.pid));
+assert.equal(execFileSync('python3', ['-c', 'import ctypes, os; print(ctypes.CDLL("/usr/lib/libsandbox.dylib").sandbox_check(os.getpid(), None, 0))'], { encoding: 'utf8' }).trim(), '0');
+const server = createServer((req, res) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ Browser: 'Synthetic capability Chrome' })); });
+ownCleanup(${process.pid}, () => new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+server.listen(0, '127.0.0.1', () => writeFileSync(${JSON.stringify(slotReady)}, JSON.stringify({ port: server.address().port })));
+`,
+      { mode: 0o700 },
+    );
+    stopSlotBrowser = async () => {
+      if (!existsSync(slotPid)) return;
+      const pid = Number(readFileSync(slotPid, 'utf8'));
+      const signal = (value: NodeJS.Signals | 0) => {
+        try {
+          process.kill(pid, value);
+          return true;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+          return false;
+        }
+      };
+      if (!signal('SIGTERM')) return;
+      const deadline = Date.now() + 2000;
+      while (signal(0) && Date.now() < deadline) await delay(25);
+      if (signal(0)) signal('SIGKILL');
+    };
+    execFileSync(
+      process.execPath,
+      [
+        fileURLToPath(
+          new URL(
+            '../../../../apps/command-center/scripts/chrome-profile-cleanup.cjs',
+            import.meta.url,
+          ),
+        ),
+        'launch',
+        slotProfile,
+        chrome,
+        '--user-data-dir=' + slotProfile,
+        '--remote-debugging-port=0',
+      ],
+      { env: launchEnv, encoding: 'utf8', timeout: 5000 },
+    );
+    const cdpDeadline = Date.now() + 3000;
+    while (!existsSync(slotReady) && Date.now() < cdpDeadline) await delay(25);
+    assert.ok(existsSync(slotReady), 'synthetic capability browser did not start');
+    const cdpAddress: { port: number } = JSON.parse(readFileSync(slotReady, 'utf8'));
+    assert.deepEqual(
+      await fetch(`http://127.0.0.1:${cdpAddress.port}/json/version`).then((r) => r.json()),
+      { Browser: 'Synthetic capability Chrome' },
+    );
     Object.assign(launchEnv, {
       FARMSLOT_CDP_PORT: String(cdpAddress.port),
       FARMSLOT_CDP_PROFILE: path.join(root, 'operator-debug'),
     });
-    profile(root, launchEnv);
+    profile(root, launchEnv, { cdp_port: cdpAddress.port });
     // A profile materialized after boundary generation still carries no authority.
     const late = path.join(root, 'late-config');
     mkdirSync(late);
@@ -721,6 +784,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { ownCleanup } from './owned-cleanup.mjs';
 import { launchWebDappBrowser } from ${JSON.stringify(path.join(adapter, 'src/web-dapp/launch.mjs'))};
+import { CdpClient } from ${JSON.stringify(path.join(adapter, 'src/web-dapp/lib/cdp-client.mjs'))};
 import { processInfo } from ${JSON.stringify(path.join(adapter, 'src/web-dapp/lib/process-info.mjs'))};
 import { ownsProcess, stopWebDappBrowser } from ${JSON.stringify(path.join(adapter, 'src/web-dapp/lib/processes.mjs'))};
 const root = ${JSON.stringify(root)};
@@ -762,6 +826,20 @@ try {
   assert.equal(state.browser.outerSeatbelt, true);
   const version = await fetch('http://127.0.0.1:' + cdpPort + '/json/version').then(r => r.json());
   assert.ok(version.webSocketDebuggerUrl);
+  const client = await CdpClient.connect(version.webSocketDebuggerUrl);
+  try {
+    const { targetId } = await client.send('Target.createTarget', { url: 'http://127.0.0.1:' + app.address().port });
+    const { sessionId } = await client.send('Target.attachToTarget', { targetId, flatten: true });
+    let title;
+    const deadline = Date.now() + 3000;
+    do {
+      title = (await client.send('Runtime.evaluate', { expression: 'document.title', returnByValue: true }, sessionId)).result.value;
+      if (title === 'Seatbelt fixture') break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    } while (Date.now() < deadline);
+    assert.equal(title, 'Seatbelt fixture');
+    await client.send('Target.closeTarget', { targetId });
+  } finally { client.close(); }
   assert.equal(ownsProcess('browser', state.browserPid, runtime), true);
   assert.equal(ownsProcess('browser', state.browserPid, runtime + '-foreign'), false);
   const info = processInfo(state.browserPid);
@@ -779,7 +857,7 @@ try {
   assert.equal(reused.browserPid, state.browserPid);
   const stopped = await stop();
   assert.equal(stopped.stopped.length, 2);
-  console.log('ps denied; ownership/group/state/start identity passed; harness launched and reused Chrome; Chrome CDP served; outer read denial retained');
+  console.log('ps denied; ownership/group/state/start identity passed; harness launched and reused Chrome; recipe-style CDP target/evaluation passed; Chrome CDP served; outer read denial retained');
 } finally {
   await cleanup();
 }
