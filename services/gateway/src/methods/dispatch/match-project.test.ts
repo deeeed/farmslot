@@ -9,12 +9,23 @@ mock.module('../../integrations/github-client.js', {
     ...githubClientMod,
     github: {
       ...githubClientMod.github,
+      prView: async (
+        _repo: string,
+        prNumber: number,
+        _fields: string[],
+        service?: { force?: boolean },
+      ) => {
+        viewForce = service?.force;
+        return { number: prNumber };
+      },
       prListFields: async (
         _repo: string,
         _fields: string[],
         opts?: { head?: string; limit?: number },
+        service?: { force?: boolean },
       ) => {
         capturedHead = opts?.head;
+        capturedForce = service?.force;
         return [{ number: 42 }];
       },
     },
@@ -22,6 +33,8 @@ mock.module('../../integrations/github-client.js', {
 });
 
 let capturedHead: string | undefined;
+let capturedForce: boolean | undefined;
+let viewForce: boolean | undefined;
 
 const { dispatchMatchProject } = await import('./match-project.js');
 
@@ -45,4 +58,22 @@ test('dispatchMatchProject passes a branch containing command substitution as on
   assert.equal(result.project, 'example');
   // The branch name must reach prListFields as the literal head filter — no shell execution.
   assert.equal(capturedHead, branch);
+  assert.equal(capturedForce, true, 'the negative cache never answers a dispatch lookup');
+});
+
+test('dispatchMatchProject looks a PR number up with a forced read', async () => {
+  const result = await dispatchMatchProject(
+    { ticketOrPr: '42' },
+    {
+      loadConfigs: async () =>
+        [
+          {
+            name: 'example',
+            ci: { repo: 'owner/repo' },
+          },
+        ] as any,
+    },
+  );
+  assert.equal(result.normalizedTicket, 'owner/repo#42');
+  assert.equal(viewForce, true, 'the negative cache never answers a dispatch lookup');
 });

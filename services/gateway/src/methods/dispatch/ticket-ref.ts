@@ -56,10 +56,13 @@ export async function resolvePrRef(input: string, repo: string): Promise<string>
   if (/^\d+$/.test(trimmed)) return `${repo}#${trimmed}`;
   // Branch name: look up the PR via GitHub service
   try {
-    const prs = (await github.prListFields(repo, ['number'], {
-      head: trimmed,
-      limit: 1,
-    })) as Array<{ number?: number }>;
+    // Forced like the former direct gh lookup: a cached failure must not answer a dispatch.
+    const prs = (await github.prListFields(
+      repo,
+      ['number'],
+      { head: trimmed, limit: 1 },
+      { force: true },
+    )) as Array<{ number?: number }>;
     const prNum = prs[0]?.number;
     if (prNum != null) {
       return `${repo}#${prNum}`;

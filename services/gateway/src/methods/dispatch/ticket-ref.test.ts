@@ -13,8 +13,10 @@ mock.module('../../integrations/github-client.js', {
         _repo: string,
         _fields: string[],
         opts?: { head?: string; limit?: number },
+        service?: { force?: boolean },
       ) => {
         capturedHead = opts?.head;
+        capturedForce = service?.force;
         return [{ number: 42 }];
       },
     },
@@ -22,6 +24,7 @@ mock.module('../../integrations/github-client.js', {
 });
 
 let capturedHead: string | undefined;
+let capturedForce: boolean | undefined;
 
 const { normalizeTicketRef, resolvePrRef, validateTicketRef } = await import('./ticket-ref.js');
 
@@ -54,4 +57,5 @@ test('resolvePrRef passes a branch containing command substitution as one litera
   assert.equal(resolved, 'owner/repo#42');
   // The branch name must reach prListFields as the literal head filter — no shell execution.
   assert.equal(capturedHead, branch);
+  assert.equal(capturedForce, true, 'the negative cache never answers a dispatch lookup');
 });

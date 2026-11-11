@@ -77,7 +77,10 @@ export async function dispatchMatchProject(
 
     for (const proj of withRepo) {
       try {
-        const prData = await github.prView(proj.ci.repo, Number(prNum), ['number']);
+        // Forced like the former direct gh lookups: a cached failure must not answer a dispatch.
+        const prData = await github.prView(proj.ci.repo, Number(prNum), ['number'], {
+          force: true,
+        });
         if (String(prData.number) === prNum) {
           return {
             project: proj.name,
@@ -101,10 +104,13 @@ export async function dispatchMatchProject(
     const withRepo = configs.filter((p) => p.ci?.repo);
     for (const proj of withRepo) {
       try {
-        const prs = (await github.prListFields(proj.ci.repo, ['number'], {
-          head: ticketOrPr,
-          limit: 1,
-        })) as Array<{ number?: number }>;
+        // Forced like the former direct gh lookups: a cached failure must not answer a dispatch.
+        const prs = (await github.prListFields(
+          proj.ci.repo,
+          ['number'],
+          { head: ticketOrPr, limit: 1 },
+          { force: true },
+        )) as Array<{ number?: number }>;
         const prNum = prs[0]?.number;
         if (prNum != null) {
           return {
