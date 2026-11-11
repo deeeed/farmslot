@@ -1,0 +1,1 @@
+- Retry incomplete node model catalogs after provider discovery failures, retain the last good models, and confirm large configured-provider removals before publishing them.

@@ -28,6 +28,11 @@ export interface RunnerModelCatalogCommandSource {
   parse: (output: string) => RunnerCatalogModel[];
 }
 
+export interface NodeModelCatalogListing {
+  ids: string[];
+  configuredProviders: string[];
+}
+
 /** A listing command every execution node runs itself, through its slots' exec path. */
 export interface RunnerModelCatalogNodeSource {
   nodeCommand: string;
@@ -35,7 +40,7 @@ export interface RunnerModelCatalogNodeSource {
   slotPathKey: 'piPath' | 'opencodePath';
   args: string[];
   /** Model ids, `provider/model`. */
-  parse: (output: string) => string[];
+  parse: (output: string) => string[] | NodeModelCatalogListing;
   /** The listed id a requested model launches as, such as Pi's bare `grok-*` as `xai/grok-*`. */
   resolveModel?: (model: string) => string;
 }
@@ -252,6 +257,48 @@ export function parsePiModelList(output: string): string[] {
   return [...new Set(ids)];
 }
 
+/** Pi's extension reports discovery separately from the native model table. Older nodes omit it. */
+export function parsePiModelCatalog(output: string): NodeModelCatalogListing {
+  const ids = parsePiModelList(output);
+  const configuredProviders: string[] = [];
+  for (const line of output.split(/\r?\n/)) {
+    if (!line.startsWith('{')) continue;
+    let report: unknown;
+    try {
+      report = JSON.parse(line);
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      continue; // Unrelated CLI output is not a discovery report.
+    }
+    if (!isRecord(report) || report.type !== 'farmslot.pi-provider-discovery') continue;
+    if (!Array.isArray(report.sources))
+      throw new ModelCatalogFormatError('Invalid Pi provider discovery report.');
+    for (const source of report.sources) {
+      if (
+        !isRecord(source) ||
+        typeof source.provider !== 'string' ||
+        !LISTED_PROVIDER.test(source.provider) ||
+        typeof source.configured !== 'boolean' ||
+        (source.status !== 'ready' && source.status !== 'failed') ||
+        typeof source.modelCount !== 'number' ||
+        !Number.isSafeInteger(source.modelCount) ||
+        source.modelCount < 0
+      )
+        throw new ModelCatalogFormatError('Invalid Pi provider discovery source.');
+      if (!source.configured) continue;
+      configuredProviders.push(source.provider);
+      if (
+        source.status === 'failed' ||
+        (source.modelCount > 0 && !ids.some((id) => id.startsWith(`${source.provider}/`)))
+      )
+        throw new ModelCatalogFormatError(
+          `Pi configured provider ${source.provider} discovery is incomplete.`,
+        );
+    }
+  }
+  return { ids, configuredProviders };
+}
+
 /** `opencode models`: one `provider/model` per line. */
 export function parseOpenCodeModelList(output: string): string[] {
   const ids = stripVTControlCharacters(output)
@@ -265,6 +312,7 @@ export function parseOpenCodeModelList(output: string): string[] {
 interface NodeModelListing {
   ids: readonly string[];
   observedAt?: number;
+  shrink?: { signature: string; repeats: number };
 }
 
 /** Last good listing per runner and execution node. Stale data guides placement only. */
@@ -275,6 +323,24 @@ export class NodeModelCatalogs {
     let byNode = this.listings.get(runner);
     if (!byNode) this.listings.set(runner, (byNode = new Map()));
     byNode.set(machine, { ids: [...ids], observedAt: Date.now() });
+  }
+
+  /** Confirm large drops from configured providers before replacing the last good listing. */
+  accept(runner: string, machine: string, listing: NodeModelCatalogListing): boolean {
+    const previous = this.listings.get(runner)?.get(machine);
+    const { ids, configuredProviders } = listing;
+    if (
+      previous &&
+      ids.length < previous.ids.length / 2 &&
+      previous.ids.some((id) => configuredProviders.includes(id.split('/')[0]) && !ids.includes(id))
+    ) {
+      const signature = JSON.stringify([...ids].sort());
+      const repeats = previous.shrink?.signature === signature ? previous.shrink.repeats + 1 : 1;
+      previous.shrink = { signature, repeats };
+      if (repeats < 3) return false;
+    }
+    this.record(runner, machine, ids);
+    return true;
   }
 
   unavailable(runner: string, machine: string): void {
@@ -352,9 +418,9 @@ export async function queryNodeModelCatalog(
 ): Promise<RunnerModelCatalogResult> {
   await Promise.all(
     nodes.map(async (node) => {
-      const ids = await listNodeModels(runner, source, node);
-      if (ids) store.record(runner, node.machine, ids);
-      else store.unavailable(runner, node.machine);
+      const listing = await listNodeModels(runner, source, node);
+      if (listing && store.accept(runner, node.machine, listing)) return;
+      store.unavailable(runner, node.machine);
     }),
   );
   return store.result(runner);
@@ -365,9 +431,10 @@ export async function listNodeModels(
   runner: string,
   source: RunnerModelCatalogNodeSource,
   node: ModelCatalogNode,
-): Promise<string[] | undefined> {
+): Promise<NodeModelCatalogListing | undefined> {
   try {
-    return source.parse(await node.list(source));
+    const listing = source.parse(await node.list(source));
+    return Array.isArray(listing) ? { ids: listing, configuredProviders: [] } : listing;
   } catch (error) {
     console.warn(
       `[runner-models] ${runner} model list on ${node.machine} failed; keeping its last listing: ${error instanceof Error ? error.message : String(error)}`,

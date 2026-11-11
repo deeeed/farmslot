@@ -879,6 +879,8 @@ async function checkExtension(extensionUrl, scenario, obsDir) {
             ? [{ model_name: 'model', model_info: { reasoning_effort_levels: ['low'] } }]
             : [],
       });
+    if (scenario === 'catalog-failed' && String(input).endsWith('/models'))
+      throw new Error('fixture discovery unavailable');
     if (String(input).endsWith('/models'))
       return Response.json({
         data: [
@@ -937,7 +939,12 @@ async function checkExtension(extensionUrl, scenario, obsDir) {
       }),
     });
   try {
+    if (scenario.startsWith('catalog-')) process.argv.push('--list-models');
     const before = await load();
+    if (scenario.startsWith('catalog-')) {
+      await before.events.get('session_shutdown')?.({ reason: 'exit' });
+      return;
+    }
     let shutdownRequested = false;
     let aborted = false;
     const model = { ...before.providers.get(providerId).models[0], provider: providerId };
@@ -1093,3 +1100,72 @@ for (const scenario of [
     assert.equal(result.status, 0, result.stderr);
     assert.doesNotMatch(result.stderr, /PI_REASONING_EFFORT_MISMATCH/);
   });
+
+for (const failure of ['http', 'timeout', 'json', 'empty']) {
+  test(`configured discovery reports ${failure} separately from optional discovery`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const reports = [];
+    const catalog = resolvePiProviderCatalog(
+      { FARMSLOT_PI_ROUTER_URL: 'http://router.test/v1' },
+      {
+        onDiscovery: (report) => reports.push(report),
+        fetchImpl: async (url, { signal }) => {
+          if (!String(url).includes('router.test')) throw new Error('optional offline');
+          if (failure === 'http') return { ok: false };
+          if (failure === 'json')
+            return {
+              ok: true,
+              json: async () => {
+                throw new SyntaxError('private error');
+              },
+            };
+          if (failure === 'timeout')
+            return new Promise((_resolve, reject) =>
+              signal.addEventListener('abort', () => reject(signal.reason), { once: true }),
+            );
+          return Response.json({ data: [] });
+        },
+      },
+    );
+    await Promise.resolve();
+    t.mock.timers.tick(400);
+    assert.deepEqual(await catalog, []);
+    assert.deepEqual(
+      reports.find((report) => report.provider === 'router'),
+      {
+        provider: 'router',
+        configured: true,
+        status: failure === 'empty' ? 'ready' : 'failed',
+        modelCount: 0,
+      },
+    );
+    assert.deepEqual(
+      reports.find((report) => report.provider === 'ollama'),
+      {
+        provider: 'ollama',
+        configured: false,
+        status: 'failed',
+        modelCount: 0,
+      },
+    );
+    assert.doesNotMatch(JSON.stringify(reports), /router.test|private error/);
+  });
+}
+
+for (const scenario of ['catalog-ready', 'catalog-failed']) {
+  test(`extension emits a structured discovery report during ${scenario} listing`, () => {
+    const result = runExtensionCheck(scenario);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      type: 'farmslot.pi-provider-discovery',
+      sources: [
+        {
+          provider: 'litellm',
+          configured: true,
+          status: scenario === 'catalog-ready' ? 'ready' : 'failed',
+          modelCount: scenario === 'catalog-ready' ? 1 : 0,
+        },
+      ],
+    });
+  });
+}

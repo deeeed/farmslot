@@ -67,7 +67,7 @@ import {
   parseCursorModelCatalog,
   parseGrokModelCatalog,
   parseOpenCodeModelList,
-  parsePiModelList,
+  parsePiModelCatalog,
   type RunnerModelCatalogSource,
 } from './model-catalog.js';
 import {
@@ -675,7 +675,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
       nodeCommand: 'pi',
       slotPathKey: 'piPath',
       args: ['--list-models'],
-      parse: parsePiModelList,
+      parse: parsePiModelCatalog,
       resolveModel: resolvePiModel,
     },
     acceptsEffort: (_model, effort) => isPiThinkingLevel(effort.trim().toLowerCase()),

@@ -113,9 +113,18 @@ export function listPiProviderSources(env = process.env) {
 export async function fetchOpenAiModels(
   baseUrl,
   apiKey,
-  { fetchImpl = globalThis.fetch, timeoutMs = 400, endpoint = 'models', idField = 'id' } = {},
+  {
+    fetchImpl = globalThis.fetch,
+    timeoutMs = 400,
+    endpoint = 'models',
+    idField = 'id',
+    onFailure,
+  } = {},
 ) {
-  if (typeof fetchImpl !== 'function') return [];
+  if (typeof fetchImpl !== 'function') {
+    onFailure?.();
+    return [];
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -125,11 +134,20 @@ export async function fetchOpenAiModels(
       headers,
       signal: controller.signal,
     });
-    if (!response.ok) return [];
+    if (!response.ok) {
+      onFailure?.();
+      return [];
+    }
     const body = await response.json();
-    const rows = Array.isArray(body?.data) ? body.data : [];
+    if (!Array.isArray(body?.data)) {
+      onFailure?.();
+      return [];
+    }
+    const rows = body.data;
     return rows.filter((row) => typeof row?.[idField] === 'string' && row[idField].trim());
   } catch {
+    // Optional discovery remains usable by workers; catalog reads receive a safe failure signal.
+    onFailure?.();
     return [];
   } finally {
     clearTimeout(timer);
@@ -347,8 +365,14 @@ export async function resolvePiProviderCatalog(env = process.env, opts = {}) {
         `${prefix}_MODEL_LIMITS`,
       );
       const fetchOptions = { timeoutMs: source.id === 'litellm' ? 5000 : 400, ...opts };
+      let failed = false;
       const [rows, infos] = await Promise.all([
-        fetchOpenAiModels(source.baseUrl, source.apiKey, fetchOptions),
+        fetchOpenAiModels(source.baseUrl, source.apiKey, {
+          ...fetchOptions,
+          onFailure: () => {
+            failed = true;
+          },
+        }),
         source.id === 'litellm'
           ? fetchOpenAiModels(source.baseUrl, source.apiKey, {
               ...fetchOptions,
@@ -357,6 +381,20 @@ export async function resolvePiProviderCatalog(env = process.env, opts = {}) {
             })
           : [],
       ]);
+      opts.onDiscovery?.({
+        provider: source.id,
+        // The default localhost probe is optional; explicit endpoints must be accounted for.
+        configured:
+          source.id !== 'ollama' ||
+          Boolean(
+            env.FARMSLOT_PI_OLLAMA === '1' ||
+            env.FARMSLOT_PI_OLLAMA_URL ||
+            env.OLLAMA_BASE_URL ||
+            env.OLLAMA_HOST,
+          ),
+        status: failed ? 'failed' : 'ready',
+        modelCount: rows.length,
+      });
       if (rows.length === 0) return null;
       const infoById = new Map(infos.map((entry) => [entry.model_name, entry.model_info]));
       return {

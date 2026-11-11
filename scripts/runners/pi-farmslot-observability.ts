@@ -47,6 +47,13 @@ function toolResult(text: string, isError = false) {
   };
 }
 
+interface PiProviderDiscoverySource {
+  provider: string;
+  configured: boolean;
+  status: 'ready' | 'failed';
+  modelCount: number;
+}
+
 interface PiThinkingModel {
   provider: string;
   id: string;
@@ -123,7 +130,13 @@ export default async function (pi: {
     if (globalThis.fetch === ownedFetch) globalThis.fetch = originalFetch;
   });
   try {
-    const catalog = await resolvePiProviderCatalog(process.env);
+    const sources: PiProviderDiscoverySource[] = [];
+    const catalog = await resolvePiProviderCatalog(process.env, {
+      onDiscovery: (source: PiProviderDiscoverySource) => sources.push(source),
+    });
+    // Structured catalog metadata only. Worker launches keep their normal stdout contract.
+    if (process.argv.includes('--list-models'))
+      writeSync(1, `${JSON.stringify({ type: 'farmslot.pi-provider-discovery', sources })}\n`);
     requestFetch = providerReasoningFetch(
       boundedFetch,
       catalog,

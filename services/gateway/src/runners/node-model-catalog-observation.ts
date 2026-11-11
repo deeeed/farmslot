@@ -90,10 +90,9 @@ export class NodeModelCatalogObservation {
     const current = state;
     current.pending ??= this.track(
       (async () => {
-        const ids = await listNodeModels(this.options.runner, this.options.source, node);
+        const listing = await listNodeModels(this.options.runner, this.options.source, node);
         if (this.stopped || this.states.get(node.machine) !== current) return;
-        if (ids) {
-          nodeModelCatalogs.record(this.options.runner, node.machine, ids);
+        if (listing && nodeModelCatalogs.accept(this.options.runner, node.machine, listing)) {
           current.cancel?.();
           current.cancel = undefined;
           current.delay = RETRY_DELAY_MS;
