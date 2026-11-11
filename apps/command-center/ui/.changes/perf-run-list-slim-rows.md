@@ -1,0 +1,1 @@
+- Run list rows served by the gateway are now slim (~9.5 KB each vs ~118 KB before), with pre-computed `evidenceSummary`; the UI automatically benefits from smaller `run.list` payloads and faster list load times.

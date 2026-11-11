@@ -1,0 +1,3 @@
+- Add `runListRow` projection function that reduces list row size ~92 % (118 KB → 9.5 KB average) by dropping `resourcePosture`, `sessionUsage`, `visualJudgmentReceipts`, and `templateProvenance`, and projecting `steps`, `decisions`, and `engineState` to only the fields list surfaces read.
+- Add `evidenceSummary` field to `Run` so the gateway can attach a pre-computed evidence count on slim rows, letting `summarizeRunEvidence` skip walking every step and decision on list rows.
+- `summarizeRunEvidence` returns `evidenceSummary` directly when present; falls back to full computation on old cached fat rows.

@@ -1,0 +1,1 @@
+- Run list rows are now slim; Companion's evidence signal computation uses the pre-computed `evidenceSummary` field when present, with fallback to full computation on old cached rows.
