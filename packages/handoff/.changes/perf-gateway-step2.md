@@ -1,0 +1,1 @@
+- `scanForFloorSecrets` tries keyword-anchored vendor rules only at offsets near a keyword match, with the same findings. Scans of large retained logs run 10 to 40 times faster.

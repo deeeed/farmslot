@@ -54,7 +54,7 @@ function fingerprint(match: string): string {
  * primary control is the producer-instruction in the closeout prompt; the human
  * approval gate is the reliability guarantee.
  */
-const FLOOR_PATTERNS: FloorPattern[] = [
+export const FLOOR_PATTERNS: FloorPattern[] = [
   { kind: 'private-key', pattern: /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/g },
   // Labeled-value separator: an actual assignment operator (: = >) with
   // UNBOUNDED quote/backslash/whitespace decoration on both sides - covers
@@ -201,7 +201,7 @@ function detectMnemonics(text: string): FloorHit[] {
     // Keep identifier runs separate before removing Markdown emphasis edges.
     .replace(/\b[a-z0-9]+(?:_[a-z0-9]+)+\b/g, '_')
     .split(/[^a-z_]+/)
-    .map((token) => token.replace(/^_+|_+$/g, ''));
+    .map((token) => (token.includes('_') ? token.replace(/^_+|_+$/g, '') : token));
   const hits: FloorHit[] = [];
   let runStart = -1;
   for (let i = 0; i <= tokens.length; i += 1) {
@@ -296,6 +296,187 @@ function hasValidMnemonicChecksum(words: readonly string[]): boolean {
 }
 
 /**
+ * Every match of a keyword-anchored pattern holds a match of one of its keyword
+ * groups at most `maxPrefix` characters after the match start. Most gitleaks
+ * vendor rules have this shape (`[\w.-]{0,50}?(?:okta)...`, the prefix sometimes
+ * nested twice). Searched as written, the engine walks that prefix from every
+ * offset of the text, which cost seconds per publication scan on large logs.
+ */
+interface KeywordAnchor {
+  /** The keyword groups alone, global, to find every offset one matches at. */
+  keyword: RegExp;
+  /** The whole pattern, sticky, to try one start offset at a time. */
+  sticky: RegExp;
+  maxPrefix: number;
+}
+
+/** The bounded atoms opening a regex body and the group that follows them. */
+interface LeadingGroup {
+  /** The most characters the atoms before the group can match. */
+  width: number;
+  open: number;
+  close: number;
+}
+
+/** The index just past the character class opened at `open`, or -1. */
+function classEnd(source: string, open: number): number {
+  for (let i = open + 1; i < source.length; i += 1) {
+    if (source[i] === '\\') i += 1;
+    else if (source[i] === ']') return i + 1;
+  }
+  return -1;
+}
+
+/**
+ * The index of the `)` closing the group opened at `open`, or with `open` -1,
+ * of the first top-level `|`; -1 when there is none.
+ */
+function structuralIndex(source: string, open: number): number {
+  let depth = 0;
+  for (let i = Math.max(open, 0); i < source.length; i += 1) {
+    const char = source[i];
+    if (char === '\\') i += 1;
+    else if (char === '[') {
+      i = classEnd(source, i) - 1;
+      if (i < 0) return -1;
+    } else if (char === '(') depth += 1;
+    else if (char === ')') {
+      depth -= 1;
+      if (open >= 0 && depth === 0) return i;
+    } else if (char === '|' && open < 0 && depth === 0) return i;
+  }
+  return -1;
+}
+
+function topLevelAlternatives(source: string): string[] {
+  const alternatives: string[] = [];
+  let rest = source;
+  for (let bar = structuralIndex(rest, -1); bar !== -1; bar = structuralIndex(rest, -1)) {
+    alternatives.push(rest.slice(0, bar));
+    rest = rest.slice(bar + 1);
+  }
+  return [...alternatives, rest];
+}
+
+/**
+ * The first group of `body` when only bounded single-character atoms precede it
+ * and the group is not quantified, so every match of `body` holds a match of
+ * that group starting within `width` characters. Null otherwise.
+ */
+function leadingGroup(body: string): LeadingGroup | null {
+  let width = 0;
+  for (let i = 0; i < body.length; ) {
+    const char = body[i];
+    if (char === '(') {
+      // A lookaround is not part of the matched text.
+      if (/^\(\?<?[=!]/.test(body.slice(i, i + 4))) return null;
+      const close = structuralIndex(body, i);
+      // A quantified group could match zero times.
+      if (close === -1 || /^[?*+{]/.test(body.slice(close + 1))) return null;
+      return { width, open: i, close };
+    }
+    let end = i + 1;
+    let atomWidth = 1;
+    if (char === '[') end = classEnd(body, i);
+    else if (char === '\\') {
+      // A backreference has no bounded width; a malformed escape reads as literals.
+      const escape = /^\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|c[A-Za-z]|[^1-9kxuc])/.exec(
+        body.slice(i),
+      );
+      if (!escape) return null;
+      end = i + escape[0].length;
+      if (escape[0] === '\\b' || escape[0] === '\\B') atomWidth = 0;
+    } else if (char === '^' || char === '$') atomWidth = 0;
+    else if ('|)*+?{'.includes(char)) return null;
+    if (end === -1) return null;
+    const quantifier = /^(?:([*+])|\?|\{(\d+)(?:(,)(\d*))?\})\??/.exec(body.slice(end));
+    if (quantifier?.[1] || (quantifier?.[3] && !quantifier[4])) return null;
+    width += atomWidth * (quantifier ? Number(quantifier[4] || quantifier[2] || 1) : 1);
+    i = end + (quantifier?.[0].length ?? 0);
+  }
+  return null;
+}
+
+/** One top-level alternative's keyword group, descending through nested prefixes. */
+function alternativeKeyword(alternative: string): { group: string; width: number } | null {
+  let body = alternative;
+  let width = 0;
+  for (;;) {
+    const lead = leadingGroup(body);
+    if (!lead) return null;
+    width += lead.width;
+    const group = body.slice(lead.open, lead.close + 1);
+    const inner = group.replace(/^\((?:\?:|\?<[^>]*>)?/, '').slice(0, -1);
+    const nested = structuralIndex(inner, -1) === -1 ? leadingGroup(inner) : null;
+    if (!nested?.width) return { group, width };
+    body = inner;
+  }
+}
+
+function keywordAnchor(pattern: RegExp): KeywordAnchor | null {
+  // Unicode modes read escapes differently, and a sticky pattern searches differently.
+  if (/[uvy]/.test(pattern.flags)) return null;
+  const groups: string[] = [];
+  let maxPrefix = 0;
+  for (const alternative of topLevelAlternatives(pattern.source)) {
+    // The engine already finds a literal-led alternative by its literal.
+    if (!/^[\\[(^.$]/.test(alternative)) return null;
+    const keyword = alternativeKeyword(alternative);
+    // A keyword group must stand alone (no backreference) and hold a literal
+    // word: finding a bare character class everywhere would cost more.
+    if (
+      !keyword ||
+      /\\[1-9]|\\k</.test(keyword.group) ||
+      !/[A-Za-z0-9_]{3}/.test(keyword.group.replace(/\[(?:\\.|[^\]])*\]|\\./g, ' '))
+    )
+      return null;
+    groups.push(keyword.group);
+    maxPrefix = Math.max(maxPrefix, keyword.width);
+  }
+  const flags = pattern.flags.replace('g', '');
+  return {
+    keyword: new RegExp(groups.join('|'), `${flags}g`),
+    sticky: new RegExp(pattern.source, `${flags}y`),
+    maxPrefix,
+  };
+}
+
+const keywordAnchors = new WeakMap<RegExp, KeywordAnchor | null>();
+
+/**
+ * The matched texts `text.matchAll(pattern)` yields, in order. A keyword-
+ * anchored pattern is tried only at the start offsets within its prefix bound
+ * before a keyword match, which are the only offsets a match can start at; each
+ * try is the same attempt the global search makes at that offset.
+ */
+export function patternMatches(pattern: RegExp, text: string): string[] {
+  let anchor = keywordAnchors.get(pattern);
+  if (anchor === undefined) {
+    anchor = keywordAnchor(pattern);
+    keywordAnchors.set(pattern, anchor);
+  }
+  if (!anchor) return Array.from(text.matchAll(pattern), (match) => match[0]);
+  const { keyword, sticky, maxPrefix } = anchor;
+  const matches: string[] = [];
+  let next = 0;
+  keyword.lastIndex = 0;
+  for (let hit = keyword.exec(text); hit; hit = keyword.exec(text)) {
+    const at = hit.index;
+    // Overlapping keyword matches each bound their own start offsets.
+    keyword.lastIndex = at + 1;
+    let start = Math.max(next, at - maxPrefix);
+    while (start <= at) {
+      sticky.lastIndex = start;
+      const match = sticky.exec(text);
+      if (match) matches.push(match[0]);
+      start += match ? Math.max(match[0].length, 1) : 1;
+    }
+    next = start;
+  }
+  return matches;
+}
+
+/**
  * Scan text for the crypto-secret floor. Returns one deduplicated hit per
  * distinct secret. A non-empty result means the file — and therefore the
  * package — MUST be blocked (fail-closed).
@@ -346,8 +527,8 @@ export function scanForFloorSecrets(text: string, extraPatterns: FloorPattern[] 
     // Gitleaks rules run through the SAME unescape variants and are UNION-only
     // additions - they widen coverage, never narrow the hand-authored floor.
     for (const { kind, pattern } of [...FLOOR_PATTERNS, ...normalizedExtras, ...GITLEAKS_RULES]) {
-      for (const match of variant.matchAll(pattern)) {
-        record({ kind, fingerprint: fingerprint(match[0]) });
+      for (const match of patternMatches(pattern, variant)) {
+        record({ kind, fingerprint: fingerprint(match) });
       }
     }
   }
