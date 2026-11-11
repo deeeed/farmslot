@@ -325,9 +325,13 @@ async function freezeSubject(
   return subject;
 }
 
-export async function teardownReviewWorkspace(runId: string): Promise<void> {
+export async function teardownReviewWorkspace(
+  runId: string,
+  options: { preserveInvalidOutput?: boolean } = {},
+): Promise<void> {
   const run = getRun(runId);
   if (!run?.reviewWorkspace) return;
+  if (options.preserveInvalidOutput && retainsInvalidReviewOutput(run)) return;
   if (run.reviewWorkspace.cleanedAt || run.reviewWorkspace.executionStoppedAt) return;
   const generation = run.engineState?.generation ?? 0;
   const check = () => currentWorkspaceRun(runId, generation, true);
@@ -377,6 +381,19 @@ export async function teardownReviewWorkspace(runId: string): Promise<void> {
       reviewWorkspaceCleanupError: undefined,
     }),
     'review workspace retained after confirmed execution stop',
+  );
+}
+
+/** Invalid output can be repaired in its original task and reviewer session. */
+export function retainsInvalidReviewOutput(run: Run): boolean {
+  return (
+    run.flowType === 'review-pr' &&
+    Boolean(run.reviewWorkspace && !run.reviewWorkspace.cleanedAt) &&
+    ['failed', 'blocked'].includes(run.status) &&
+    isRecord(
+      run.steps.find((step) => step.name === PipelineSteps.MONITOR)?.outputs
+        ?.reviewOutputValidationFailure,
+    )
   );
 }
 
@@ -524,6 +541,7 @@ export function reconcileReviewWorkspaceCleanup(
         run.reviewWorkspace.executionStoppedAt ||
         (run.reviewWorkspace.cleanedAt && !hasHeldReviewWorker(run)) ||
         hasUncertainReviewOperation(run) ||
+        retainsInvalidReviewOutput(run) ||
         workspaceReviewStartupNeedsRecovery(run) ||
         waitingAtReviewGate(run) ||
         !['done', 'failed', 'cancelled', 'blocked'].includes(run.status)
@@ -595,6 +613,34 @@ export async function executeReviewWorkspaceStep(
     // native operation may still be running its reviewer, so its round counts.
     const run = getRun(runId);
     if (
+      step === PipelineSteps.MONITOR &&
+      error instanceof GatewayMethodError &&
+      error.code === 'REVIEW_OUTPUT_INVALID'
+    ) {
+      const current = currentWorkspaceRun(runId, generation);
+      const monitor = current.steps.find((entry) => entry.name === PipelineSteps.MONITOR);
+      const failedAt = new Date().toISOString();
+      updateRunStep(runId, PipelineSteps.MONITOR, {
+        outputs: {
+          ...monitor?.outputs,
+          reviewOutputValidationFailure: { at: failedAt, reason: error.message },
+        },
+      });
+      if (current.reviewWorkspace && !current.reviewWorkspace.retainedAt)
+        updateRun(runId, {
+          reviewWorkspace: {
+            ...current.reviewWorkspace,
+            retainedAt: failedAt,
+            retainedUntil: new Date(
+              Date.parse(failedAt) +
+                (current.reviewWorkspace.retentionDays ?? DEFAULT_REVIEW_WORKSPACE_RETENTION_DAYS) *
+                  86400000,
+            ).toISOString(),
+          },
+        });
+      await persistRunNow(currentWorkspaceRun(runId, generation), 'retain invalid review output');
+    }
+    if (
       run &&
       roundId &&
       step === PipelineSteps.MONITOR &&
@@ -661,6 +707,88 @@ async function executeOwnedReviewWorkspaceStep(
       return { outputs: { skipped: true, reason: 'static-review-workspace', appPrepared: false } };
     case PipelineSteps.DISPATCH: {
       if (!run.reviewWorkspaceSubject) throw new Error('Workspace review subject is missing');
+      const retained = run.steps.find((entry) => entry.name === PipelineSteps.DISPATCH)?.outputs
+        ?.retainedReviewResume;
+      if (
+        isRecord(retained) &&
+        typeof retained.requestedAt === 'string' &&
+        typeof retained.commandId === 'string'
+      ) {
+        if (!run.reviewWorkspace || run.reviewWorkspace.cleanedAt)
+          throw new Error('The retained source workspace is unavailable for reviewer continuation');
+        const context = run.agentContexts?.find((entry) => entry.id === 'review');
+        if (!context) throw new Error('The retained review has no original reviewer context');
+        const text = [
+          `Operator replay of this retained review, generation ${generation}.`,
+          `Continue the original task at ${run.reviewWorkspace.taskPath}; do not start another review.`,
+          `Validation failure (data): ${JSON.stringify(retained.reason)}.`,
+          'Keep the existing findings and attempt identity. Repair the requested output, record findings once in review-result.json issues with the full problem, evidence and concrete ask, and finish through ./mark complete --mark-last.',
+        ].join('\n');
+        const binding = context.nativeSession;
+        const commandId = binding ? retained.commandId : undefined;
+        const monitor = run.steps.find((entry) => entry.name === PipelineSteps.MONITOR);
+        updateRunStep(runId, PipelineSteps.MONITOR, {
+          outputs: {
+            ...monitor?.outputs,
+            reviewOutputRepair: {
+              requestedAt: retained.requestedAt,
+              error: String(retained.reason),
+              ...(commandId ? { commandId } : {}),
+            },
+          },
+        });
+        await persistRunNow(
+          currentWorkspaceRun(runId, generation),
+          'retained reviewer continuation',
+        );
+        if (run.transport === 'tmux') {
+          const current = await reviewTmuxOperation(run, 'inspect');
+          check();
+          if (current.exists) await workspaceTerminalOperation(run, 'send', { text, enter: true });
+          else {
+            if (!context.runnerSessionId)
+              throw new Error(
+                'The original reviewer session identity is unavailable; use monitor replay to validate repaired output',
+              );
+            const resumed = await reviewTmuxOperation(run, 'resume', text, retained.commandId);
+            await upsertAgentContext(runId, 'review', {
+              id: context.id,
+              promptDeliveryStartedAt: resumed.startedAt,
+              ...(resumed.signalAttemptId ? { signalAttemptId: resumed.signalAttemptId } : {}),
+            });
+          }
+        } else {
+          if (!commandId) throw new Error('Retained native reviewer binding is unavailable');
+          const project = await loadProjectVars(run.project);
+          await launchReviewWorkspaceWorker({
+            runId,
+            project: project.projectJson,
+            domain: run.domain,
+            prompt: text,
+            resumeCommandId: commandId,
+            deadline: Date.now() + 300_000,
+            assertCurrent: check,
+          });
+        }
+        check();
+        await upsertAgentContext(runId, 'review', {
+          id: context.id,
+          status: 'working',
+          completedAt: undefined,
+        });
+        const current = currentWorkspaceRun(runId, generation);
+        if (current.reviewWorkspace?.executionStoppedAt)
+          updateRun(runId, {
+            reviewWorkspace: { ...current.reviewWorkspace, executionStoppedAt: undefined },
+          });
+        return {
+          outputs: {
+            retainedReviewResume: retained,
+            resumed: true,
+            workspaceId: run.reviewWorkspace.workspaceId,
+          },
+        };
+      }
       await ensureReviewWorkspaceSupport(runId, check);
       check();
       const task = await materializeReviewWorkspaceTask(runId, run.reviewWorkspaceSubject);
@@ -717,11 +845,17 @@ async function executeOwnedReviewWorkspaceStep(
       };
     }
     case PipelineSteps.MONITOR: {
-      if (run.reviewWorkspace?.cleanedAt) {
+      const readSavedCompletion = () => readReviewWorkspaceCompletion(runId);
+      if (
+        run.reviewWorkspace?.cleanedAt ||
+        run.reviewWorkspace?.executionStoppedAt ||
+        run.steps.find((entry) => entry.name === PipelineSteps.MONITOR)?.outputs
+          ?.reviewArtifactReplay === true
+      ) {
         // Recovery of a completed report needs its frozen task and artifacts,
         // not a checkout, skill installation or a new reviewer process.
         const completion = await observeReviewWorkspaceTransport(
-          () => readReviewWorkspaceCompletion(runId),
+          readSavedCompletion,
           check,
           Date.now() + 300_000,
           'observation',
@@ -729,7 +863,7 @@ async function executeOwnedReviewWorkspaceStep(
         check();
         if (!completion?.result || completion.signal.outcome !== 'success')
           throw new BlockedRunError(
-            'No complete saved review is available. Start a new review.',
+            'No complete saved review is available. Repair the retained artifacts and replay monitor, or replay dispatch to continue the original reviewer.',
             'review-incomplete',
           );
         await recordWorkspaceReviewCompletion(runId, generation, completion.result);
@@ -781,7 +915,7 @@ async function executeOwnedReviewWorkspaceStep(
       });
       const readCompletion = async () => {
         try {
-          return await observe(() => readReviewWorkspaceCompletion(runId));
+          return await observe(readSavedCompletion);
         } catch (error) {
           if (
             !(error instanceof GatewayMethodError) ||

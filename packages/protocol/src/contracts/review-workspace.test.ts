@@ -65,3 +65,32 @@ test('cleaned workspaces can recover reports from disk even before reviewResult 
   assert.equal(staticReviewReplayBlock(cleaned, { stepName: 'monitor' }), null);
   assert.equal(staticReviewReplayBlock(cleaned, { stepName: 'human-gate' }), null);
 });
+
+test('retained dispatch continues only the recorded reviewer in the same workspace', () => {
+  const retained = {
+    ...active,
+    agentContexts: [
+      {
+        id: 'review',
+        role: 'review' as const,
+        label: 'Review',
+        status: 'failed' as const,
+        slotId: null,
+        runId: 'retained',
+        runnerSessionId: 'same-session',
+      },
+    ],
+  };
+  assert.equal(staticReviewReplayBlock(retained, { stepName: 'dispatch' }), null);
+  assert.ok(staticReviewReplayBlock(retained, { stepName: 'dispatch', runner: 'pi' }));
+  assert.ok(staticReviewReplayBlock(retained, { stepName: 'dispatch', freshDispatch: true }));
+  assert.ok(
+    staticReviewReplayBlock(
+      {
+        ...retained,
+        reviewWorkspace: { ...active.reviewWorkspace, cleanedAt: '2026-11-10T00:00:00Z' },
+      },
+      { stepName: 'dispatch' },
+    ),
+  );
+});

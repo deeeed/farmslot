@@ -586,7 +586,7 @@ function terminalCollaborators(
     tickWorkGraph: (graphId) => schedulerTick({ graphId }),
     cleanupEvalHarness: (run) => cleanupEvalHarnessForTerminalRun(run),
     cleanupSlot,
-    cleanupWorkspace: (run) => teardownReviewWorkspace(run.id),
+    cleanupWorkspace: (run) => teardownReviewWorkspace(run.id, { preserveInvalidOutput: true }),
     emit: (run) => {
       // Not `broadcastFn`: that one also kicks off its own backlog settle and
       // scheduler tick, racing the awaited ones this transition is about to run.

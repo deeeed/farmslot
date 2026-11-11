@@ -8,6 +8,7 @@ import { makeRun } from '../run-completion/test-fixtures.js';
 import {
   appendReviewFindingBodies,
   assertReviewCommentLines,
+  deriveReviewLineComments,
   readReviewCommentDiff,
 } from './validate-comments.js';
 
@@ -129,4 +130,49 @@ test('only a matching inline finding replaces the authoritative description in t
     assert(body.includes(`${issue.file}:${issue.line}`));
     assert(body.includes(issue.description));
   }
+});
+
+test('inline comments derive canonical findings once, retaining all severities and omitting body-only locations', async () => {
+  const run = makeRun();
+  const severities = ['blocker', 'major', 'minor', 'nit'] as const;
+  const issues: ReviewIssue[] = severities.map((severity, index) => ({
+    file: 'src/file.ts',
+    line: index + 1,
+    description: `Finding ${index}`,
+    severity,
+  }));
+  issues.push({
+    file: 'src/file.ts',
+    line: 42,
+    description: 'Outside the diff',
+    severity: 'minor',
+  });
+  issues.push({ file: 'PR description', description: 'Body only', severity: 'nit' });
+  const original = structuredClone(issues);
+  let reads = 0;
+  const comments = await deriveReviewLineComments(
+    run,
+    issues,
+    snapshot,
+    async (_run, scope, file) => {
+      assert.deepEqual(scope, snapshot);
+      assert.equal(file, 'src/file.ts');
+      reads++;
+      return '@@ -0,0 +1,4 @@\n+a\n+b\n+c\n+d\n';
+    },
+  );
+  assert.equal(reads, 1);
+  assert.deepEqual(
+    comments,
+    issues.slice(0, 4).map((issue) => ({
+      path: issue.file,
+      line: issue.line,
+      body: issue.description,
+      severity: issue.severity,
+    })),
+  );
+  assert.deepEqual(issues, original);
+  const body = appendReviewFindingBodies(issues, comments, 'Summary.');
+  assert(body.includes('Outside the diff'));
+  assert(body.includes('Body only'));
 });

@@ -22,10 +22,15 @@ export function staticReviewReplayBlock(
     PipelineSteps.FIND_SLOT,
     PipelineSteps.WRITE_TASK,
     PipelineSteps.PREPARE,
-    PipelineSteps.DISPATCH,
   ];
   if (ownsAttempt && launchSteps.includes(params.stepName))
-    return 'This static review already owns a workspace. Request another review instead of replaying setup or dispatch.';
+    return 'This static review already owns a workspace. Request another review instead of replaying setup.';
+  if (ownsAttempt && params.stepName === PipelineSteps.DISPATCH) {
+    if (!run.reviewWorkspace || run.reviewWorkspace.cleanedAt)
+      return 'The static review source workspace is unavailable; only saved-artifact monitor replay is possible.';
+    if (!run.agentContexts?.some((context) => context.id === 'review'))
+      return 'The static review has no recorded reviewer session to resume.';
+  }
   if (params.stepName === 'monitor' && !run.reviewWorkspace)
     return 'This static review has no workspace to resume. Request another review.';
   return null;

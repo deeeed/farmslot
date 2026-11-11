@@ -14,12 +14,16 @@ import {
 
 import {
   type ModelCatalogNode,
-  queryNodeModelCatalog,
   queryRunnerModelCatalog,
   readRunnerModelCatalog,
   RUNNER_MODEL_CATALOG_TTL_MS,
   type RunnerModelCatalogSource,
 } from './model-catalog.js';
+import {
+  type CatalogRetryScheduler,
+  type NodeCatalogObservationSource,
+  NodeModelCatalogObservation,
+} from './node-model-catalog-observation.js';
 
 export { RUNNER_MODEL_CATALOG_TTL_MS } from './model-catalog.js';
 export const RUNNER_MODEL_CATALOG_TICK_MS = 60_000;
@@ -41,9 +45,11 @@ interface RunnerModelCatalogObservationOptions {
   nodes?(): Promise<ModelCatalogNode[]>;
   home?: string;
   now?: () => number;
+  scheduleRetry?: CatalogRetryScheduler;
 }
 
 interface CatalogSourceOwnerOptions {
+  node?: NodeCatalogObservationSource;
   sample(): Promise<RunnerModelCatalogResult>;
   /** Structured files only: every candidate the read merges, and that merged read. */
   file?: { paths: readonly string[]; read(): RunnerModelCatalogResult };
@@ -78,13 +84,21 @@ class CatalogSourceOwner {
   private watchers: NativeCatalogPreferenceSource[] = [];
   private published?: string;
   private stopped = false;
+  private readonly nodeCatalog?: NodeModelCatalogObservation;
 
   constructor(
     readonly runner: string,
     readonly key: string,
     private readonly kind: 'structured-file' | 'catalog-command',
     private readonly options: CatalogSourceOwnerOptions,
-  ) {}
+  ) {
+    if (options.node)
+      this.nodeCatalog = new NodeModelCatalogObservation({
+        ...options.node,
+        runner,
+        changed: (result) => this.record(result, false),
+      });
+  }
 
   get observation(): UpstreamObservation {
     return {
@@ -141,7 +155,7 @@ class CatalogSourceOwner {
   async stop(): Promise<void> {
     this.stopped = true;
     this.closeWatchers();
-    await this.pending;
+    await Promise.all([this.pending, this.nodeCatalog?.stop()]);
   }
 
   private closeWatchers(): void {
@@ -178,7 +192,7 @@ class CatalogSourceOwner {
     this.pending ??= (async () => {
       let result: RunnerModelCatalogResult;
       try {
-        result = await this.options.sample();
+        result = await (this.nodeCatalog?.sample() ?? this.options.sample());
       } catch (error) {
         // Raw failures can name catalog paths or carry runner output. Keep only an errno code.
         const code = (error as NodeJS.ErrnoException | undefined)?.code;
@@ -193,19 +207,25 @@ class CatalogSourceOwner {
           models: [],
         };
       }
-      // A stopped or superseded source never retains or publishes its late reply.
-      if (this.stopped) return;
-      this.attemptedAt = this.options.now();
-      if (result.status === 'ready') {
-        this.models = result.models.map(catalogModel);
-        this.observedAt = this.attemptedAt;
-        this.error = undefined;
-      } else this.error = result.detail || 'Runner model catalog is unavailable.';
-      this.publish();
+      this.record(result);
     })().finally(() => {
       this.pending = undefined;
     });
     return this.pending;
+  }
+
+  private record(result: RunnerModelCatalogResult, fullSample = true): void {
+    // A stopped or superseded source never retains or publishes its late reply.
+    if (this.stopped) return;
+    // A node retry publishes its models without postponing other nodes' refresh.
+    if (fullSample) this.attemptedAt = this.options.now();
+    if (result.status === 'ready') {
+      this.models = result.models.map(catalogModel);
+      // Retained nodes keep their age; only a full sample renews the aggregate clock.
+      if (fullSample || this.observedAt === undefined) this.observedAt = this.options.now();
+      this.error = undefined;
+    } else this.error = result.detail || 'Runner model catalog is unavailable.';
+    this.publish();
   }
 
   private publish(): void {
@@ -217,7 +237,7 @@ class CatalogSourceOwner {
   }
 }
 
-/** Bounded to one current owner per catalog runner. Only admitted demand selects or samples. */
+/** One current owner per catalog runner; failed node listings retry without picker demand. */
 export class RunnerModelCatalogObservation {
   private readonly owners = new Map<string, CatalogSourceOwner>();
   private readonly retired = new Set<Promise<void>>();
@@ -266,7 +286,7 @@ export class RunnerModelCatalogObservation {
     await Promise.all([...[...this.owners.values()].map((owner) => owner.stop()), ...this.retired]);
   }
 
-  /** Called by the slow scheduler or a changed observer set. No interest stops passive work. */
+  /** Called by the slow scheduler or a changed observer set. Interest controls periodic refresh. */
   async tick(): Promise<void> {
     if (this.stopped) return;
     await Promise.all(
@@ -330,9 +350,20 @@ export class RunnerModelCatalogObservation {
             ? sample(runner, source)
             : 'command' in source
               ? queryRunnerModelCatalog(runner, source)
-              : 'nodeCommand' in source
-                ? queryNodeModelCatalog(runner, source, (await this.options.nodes?.()) ?? [])
-                : readRunnerModelCatalog(runner, source, this.home),
+              : readRunnerModelCatalog(
+                  runner,
+                  'relativePath' in source ? source : undefined,
+                  this.home,
+                ),
+        ...('nodeCommand' in source && !sample
+          ? {
+              node: {
+                source,
+                nodes: this.options.nodes ?? (async () => []),
+                scheduleRetry: this.options.scheduleRetry,
+              },
+            }
+          : {}),
         ...('relativePath' in source
           ? {
               file: {
