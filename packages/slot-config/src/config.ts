@@ -220,6 +220,8 @@ export interface SlotVars {
   sshTarget: string;
   remoteRepo: string;
   projectName: string;
+  /** Owned runner hook directory when execution keeps observations outside the checkout. */
+  runnerObservabilityDir?: string;
   /** Pool-level domain default (slot.domain ?? pool.domain); task-level domain overrides. */
   domain?: string;
   /** Validated `pool.env`: exported into every shell the gateway runs on this machine. */
