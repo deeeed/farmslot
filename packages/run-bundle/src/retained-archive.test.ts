@@ -7,6 +7,7 @@ import fs, {
   readdir,
   readFile,
   realpath,
+  rename,
   rm,
   stat,
   writeFile,
@@ -512,3 +513,49 @@ test('publication waiting behind media archival keeps its budget when accounting
     syncBuiltinESMExports();
   }
 });
+
+for (const parent of ['sha256', 'staging']) {
+  test(`media pressure observes completed housekeeping from ${parent} during its pass`, async (t) => {
+    const f = await fixture(t);
+    const staged = path.join(f.store.root, parent, '.retention-fixture');
+    if (parent === 'sha256') {
+      const saved = await f.capture('superseded', 120000);
+      await rename(saved.bundle.directory, staged);
+      await rm(path.join(f.store.runsDir, `${saved.run.id}.json`));
+    } else {
+      await mkdir(staged, { recursive: true });
+      await writeFile(path.join(staged, 'abandoned.png'), Buffer.alloc(120000));
+    }
+    await f.capture('first', 10000);
+    await f.capture('second', 10000);
+    const usage = await bundles.runBundleAdmissionUsage(f.store, f.root);
+    let completed = false;
+    const result = await bundles.archiveRunBundleMedia({
+      store: f.store,
+      farmslotRoot: f.root,
+      archiveRoot: f.archiveRoot,
+      policy: {
+        maxStoreBytes: usage.total / 0.9,
+        maxBundleBytes: 1000000,
+        metadataReserveBytes: 1,
+        mediaRetentionDays: 30,
+      },
+      assertArchiveWriteRoom: async () => {
+        if (completed) return;
+        // finishStorageArchive renames/removes a charged stage outside the store lock.
+        await rename(staged, path.join(f.archiveRoot, 'completed-housekeeping'));
+        completed = true;
+      },
+    });
+    assert.equal(completed, true);
+    assert.equal(
+      result.archivedPaths.length,
+      1,
+      'do not copy more referenced proof after housekeeping freed capacity',
+    );
+    assert.equal(
+      result.chargedBytesAfter,
+      (await bundles.runBundleAdmissionUsage(f.store, f.root)).total,
+    );
+  });
+}

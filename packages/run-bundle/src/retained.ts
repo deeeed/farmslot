@@ -965,15 +965,22 @@ async function movedBundleBytes(store: RunBundleStore, directory: string): Promi
 }
 
 /** A transfer stage charges its reserved ceiling, including partially written bytes, once. */
-async function chargedStoreBytes(store: RunBundleStore): Promise<number> {
+async function chargedStoreBytes(
+  store: RunBundleStore,
+  stagedCharges?: Map<string, number>,
+): Promise<number> {
   let bytes = 0;
   for (const entry of await readdir(store.root, { withFileTypes: true })) {
     const file = path.join(store.root, entry.name);
     if (entry.name === 'sha256' && entry.isDirectory()) {
-      for (const name of await readdir(file))
-        bytes += BUNDLE_DIGEST.test(name)
+      for (const name of await readdir(file)) {
+        const directory = path.join(file, name);
+        const charged = BUNDLE_DIGEST.test(name)
           ? await recordedBundleBytes(store, name)
-          : await movedBundleBytes(store, path.join(file, name));
+          : await movedBundleBytes(store, directory);
+        bytes += charged;
+        if (name.startsWith('.retention-')) stagedCharges?.set(directory, charged);
+      }
       continue;
     }
     // Records (and the kept acquisition footprints) are bookkeeping, not stored payload.
@@ -991,7 +998,9 @@ async function chargedStoreBytes(store: RunBundleStore): Promise<number> {
       } catch (error) {
         if (!hasCode(error, 'ENOENT')) throw error;
       }
-      bytes += Math.max(reserved, actual - reserved);
+      const charged = Math.max(reserved, actual - reserved);
+      bytes += charged;
+      if (stage.startsWith('.retention-')) stagedCharges?.set(directory, charged);
     }
   }
   return bytes;
@@ -2019,8 +2028,11 @@ async function archiveRunBundleMediaLocked(
   let archiveRoot = input.archiveRoot;
   const policy = input.policy ?? DEFAULT_RUN_BUNDLE_RETENTION;
   const now = input.now ?? Date.now();
+  const stagedCharges = new Map<string, number>();
   const chargedBytesBefore =
-    (await chargedStoreBytes(store)) + (await reservedMetadataBytes(store)) + acquisitionSize;
+    (await chargedStoreBytes(store, stagedCharges)) +
+    (await reservedMetadataBytes(store)) +
+    acquisitionSize;
   const pressure =
     chargedBytesBefore >= policy.maxStoreBytes * RUN_BUNDLE_ARCHIVE_HIGH_RATIO ||
     chargedBytesBefore + requiredBytes > policy.maxStoreBytes;
@@ -2031,6 +2043,20 @@ async function archiveRunBundleMediaLocked(
     chargedBytesBefore,
     chargedBytesAfter: chargedBytesBefore,
   };
+  // Housekeeping finishes staged archives outside this lock. Only those known
+  // immutable paths can disappear; reconcile their charges without walking the store.
+  const reconcileCompletedStages = () =>
+    Promise.all(
+      [...stagedCharges].map(async ([directory, charged]) => {
+        try {
+          await lstat(directory);
+        } catch (error) {
+          if (!hasCode(error, 'ENOENT')) throw error;
+          result.chargedBytesAfter -= charged;
+          stagedCharges.delete(directory);
+        }
+      }),
+    );
   if (capturing && !pressure) return result;
   const { pinned, referenced } = await runBundleHousekeepingInventory(store, now);
   const candidates = [];
@@ -2069,6 +2095,7 @@ async function archiveRunBundleMediaLocked(
     }
     for (const [key, meta] of Object.entries(manifest.entries)) {
       if (!isRunBundleMedia(key)) continue;
+      await reconcileCompletedStages();
       if (
         !expired &&
         (!pressure ||
@@ -2143,7 +2170,7 @@ async function archiveRunBundleMediaLocked(
       bundleBytes -= meta.bytes;
       await recordBundleBytes(store, digest, bundleBytes);
       const nextAvailabilityBytes = (await stat(availabilityFile)).size;
-      // This lock owns all metadata changes; apply this move's delta instead of
+      // This lock owns bundle/journal changes; apply this move's delta instead of
       // walking every bundle and availability file again for each archived payload.
       result.chargedBytesAfter += nextAvailabilityBytes - availabilityBytes - meta.bytes;
       availabilityBytes = nextAvailabilityBytes;
@@ -2151,6 +2178,7 @@ async function archiveRunBundleMediaLocked(
       result.archivedPaths.push(key);
     }
   }
+  await reconcileCompletedStages();
   return result;
 }
 
