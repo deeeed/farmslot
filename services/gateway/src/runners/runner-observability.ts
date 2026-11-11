@@ -30,6 +30,25 @@ const gatewayBundle = await verifySupportBundle(
   RUNNER_OBSERVABILITY_SOURCE_FILES,
 );
 export const RUNNER_OBSERVABILITY_BUNDLE_HASH = gatewayBundle.hash;
+/** Freeze the gateway-owned extension beside a slotless task, never in PR source. */
+export function runnerObservabilitySnapshotFiles(prefix: string) {
+  return [
+    ...gatewayBundle.files
+      .filter((file) => RUNNER_OBSERVABILITY_COPY_PATHS.includes(file.relativePath))
+      .map((file) => ({
+        ...file,
+        relativePath: path.posix.join(prefix, 'bin', path.posix.basename(file.relativePath)),
+      })),
+    {
+      relativePath: path.posix.join(prefix, 'install.json'),
+      contentBase64: Buffer.from(JSON.stringify({ bundleHash: gatewayBundle.hash })).toString(
+        'base64',
+      ),
+      mode: 0o600,
+    },
+  ];
+}
+
 const piCopyHash = supportHash(
   gatewayBundle.files.filter((file) => RUNNER_OBSERVABILITY_COPY_PATHS.includes(file.relativePath)),
 );

@@ -299,8 +299,9 @@ export default async function (pi: {
   });
 
   // Operator-owned slot: this extension is copied per run. Auto-trust this checkout
-  // so launch is not blocked on a TUI prompt. Do not persist (`remember`).
-  pi.on('project_trust', async () => ({ trusted: 'yes' as const }));
+  // so launch is not blocked on a TUI prompt. Read-only reviews retain CLI trust policy.
+  const readOnlyReview = process.env.FARMSLOT_PI_WORKSPACE_TRUST === 'untrusted';
+  if (!readOnlyReview) pi.on('project_trust', async () => ({ trusted: 'yes' as const }));
 
   pi.on('model_select', (event: { model: PiThinkingModel }, ctx: PiShutdownContext) => {
     checkThinking(event.model, ctx);
@@ -324,9 +325,9 @@ export default async function (pi: {
         cwd: ctx.cwd,
       });
       ctx.ui?.setStatus?.('farmslot', farmslotStatusLine());
-      // Print/JSON modes already have the prompt on argv (`-p`). Interactive
-      // dispatch delivers TASK.md once so Farmslot does not tmux-type it.
-      if (ctx.hasUI === false) return;
+      // Print/JSON modes and read-only terminal reviews carry their prompt on argv.
+      // Slot workers deliver TASK.md once so Farmslot does not tmux-type it.
+      if (ctx.hasUI === false || readOnlyReview) return;
       await deliverTaskOnce({
         obsDir: obsDir(),
         sessionId: sessionFrom(ctx).sessionId,

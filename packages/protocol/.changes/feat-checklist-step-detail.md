@@ -1,0 +1,1 @@
+- Carry multiline checklist step detail in progress and shared display state.

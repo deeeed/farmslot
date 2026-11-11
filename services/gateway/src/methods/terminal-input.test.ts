@@ -10,6 +10,7 @@ import type { GatewayConnection } from '../../../../packages/cli/src/gateway-cli
 
 let workspaceBeforeResolve = async (_runId: string) => {};
 const sent: string[] = [];
+const admitInput = mock.fn(async () => {});
 const unexpectedPty = () => {
   throw new Error('Unexpected PTY operation in remote input test');
 };
@@ -147,6 +148,14 @@ const workspace = await import('../runtime/workspace-terminal.js');
 mock.module('../runtime/workspace-terminal.js', {
   namedExports: {
     ...workspace,
+    writeWorkspaceTerminalInput: async (
+      _run: unknown,
+      _data: string,
+      write: () => Promise<void> | void,
+    ) => {
+      await admitInput();
+      await write();
+    },
     resolveWorkspaceTerminal: async (params: TerminalInputParams) => {
       assert(params.runId);
       await workspaceBeforeResolve(params.runId);
@@ -400,5 +409,29 @@ test('pilot numbered input refuses a retired role instead of typing into the cur
   } finally {
     pilotInput = false;
     retiredRole = false;
+  }
+});
+
+test('raw worktree input enters shared admission before either PTY or node write', async () => {
+  for (const linked of [false, true]) {
+    pilotInput = linked;
+    sent.length = 0;
+    pilotWrites = 0;
+    admitInput.mock.resetCalls();
+    admitInput.mock.mockImplementationOnce(async () => {
+      throw new Error('Review capacity is full');
+    });
+    try {
+      await assert.rejects(
+        terminalInput({ slotId: '', runId: 'raw-review', data: '\r' }),
+        /capacity is full/,
+      );
+      assert.equal(sent.length + pilotWrites, 0);
+      await terminalInput({ slotId: '', runId: 'raw-review', data: '\r' });
+      assert.equal(sent.length + pilotWrites, 1);
+      assert.equal(admitInput.mock.callCount(), 2);
+    } finally {
+      pilotInput = false;
+    }
   }
 });

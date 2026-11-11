@@ -2,12 +2,17 @@ import type { Run } from '@farmslot/protocol';
 
 import { loadMachinePool, type SlotVars } from '../core/config.js';
 
+import { getRunnerDefinition } from './registry.js';
+
 /** Execution metadata only. Callers retain authorization for worker control operations. */
 export async function reviewWorkspaceRunnerVars(run: Run): Promise<SlotVars | null> {
   const workspace = run.reviewWorkspace;
   const context = run.agentContexts?.find((entry) => entry.id === 'review');
   if (!workspace || !context?.target?.session) return null;
   const pool = await loadMachinePool(workspace.machine);
+  const runnerObservabilityDir = getRunnerDefinition(context.runner).reviewObservabilityDir?.(
+    workspace.taskPath,
+  );
   return {
     slotId: `review-${workspace.workspaceId}`,
     machine: workspace.machine,
@@ -30,6 +35,7 @@ export async function reviewWorkspaceRunnerVars(run: Run): Promise<SlotVars | nu
     slotEnabled: true,
     sshTarget: `${pool.ssh_user}@${pool.host}`,
     projectName: run.project,
+    ...(runnerObservabilityDir ? { runnerObservabilityDir } : {}),
     resourceVars: {},
   };
 }

@@ -31,6 +31,7 @@ import {
 } from '../run-engine/engine-decisions.js';
 import { BlockedRunError } from '../run-engine/errors.js';
 import { resolveMonitorConfig } from '../run-engine/run-monitor.js';
+import { isRunArchiving } from '../run-lifecycle/archive-fence.js';
 import {
   cancelReviewWorkspaceWorker,
   launchReviewWorkspaceWorker,
@@ -49,9 +50,17 @@ import {
   reviewTmuxOperation,
   reviewTmuxStartupState,
 } from '../runners/review-tmux.js';
-import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
+import {
+  assertRunArchivable,
+  getAllRuns,
+  getRun,
+  persistRunNow,
+  updateRun,
+  updateRunStep,
+} from '../runs/store.js';
 import { captureRunSessionUsage } from '../runtime/agent-session-usage.js';
 import { workspaceTerminalOperation } from '../runtime/workspace-terminal.js';
+import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 import { runPrincipalOwner, samePrincipalOwner } from '../security/work-originator.js';
 import { withSubtaskMetrics } from '../tasks/subtask-metrics.js';
 import { artifactContractWorkerInstruction } from '../tasks/worker-terminal-contract.js';
@@ -72,7 +81,11 @@ import {
   readReviewWorkspaceCompletion,
   readReviewWorkspaceSignal,
 } from './task.js';
-import { allocateReviewWorkspace, cancelReviewWorkspaceAllocation } from './workspace.js';
+import {
+  allocateReviewWorkspace,
+  cancelReviewWorkspaceAllocation,
+  cleanupReviewWorkspace,
+} from './workspace.js';
 
 interface ReviewOutputRepair {
   requestedAt: string;
@@ -325,12 +338,50 @@ async function freezeSubject(
   return subject;
 }
 
+function reviewWorkspaceNeverLaunched(run: Run): boolean {
+  return (
+    ['failed', 'cancelled'].includes(run.status) &&
+    !run.reviewResult &&
+    run.engineState?.workspaceReviewDispatchGeneration === undefined &&
+    !(run.agentContexts ?? []).some(
+      (context) =>
+        context.nativeSession ||
+        context.target ||
+        context.runnerSessionId ||
+        context.promptDeliveryStartedAt,
+    )
+  );
+}
+
 export async function teardownReviewWorkspace(
   runId: string,
   options: { preserveInvalidOutput?: boolean } = {},
 ): Promise<void> {
   const run = getRun(runId);
   if (!run?.reviewWorkspace) return;
+  if (!run.reviewWorkspace.cleanedAt && reviewWorkspaceNeverLaunched(run)) {
+    const generation = run.engineState?.generation ?? 0;
+    const assertCurrent = () => {
+      currentWorkspaceRun(runId, generation, true);
+    };
+    if (run.status === 'cancelled') await cancelReviewWorkspaceAllocation(runId, { assertCurrent });
+    await cleanupReviewWorkspace(runId, { assertCurrent });
+    const current = currentWorkspaceRun(runId, generation, true);
+    if (!current.reviewWorkspace) throw new Error('Review workspace changed during cleanup');
+    const closedAt = new Date().toISOString();
+    await persistRunNow(
+      updateRun(runId, {
+        reviewWorkspace: {
+          ...current.reviewWorkspace,
+          cleanedAt: closedAt,
+          executionStoppedAt: closedAt,
+        },
+        reviewWorkspaceCleanupError: undefined,
+      }),
+      'release review workspace before reviewer launch',
+    );
+    return;
+  }
   if (options.preserveInvalidOutput && retainsInvalidReviewOutput(run)) return;
   if (run.reviewWorkspace.cleanedAt || run.reviewWorkspace.executionStoppedAt) return;
   const generation = run.engineState?.generation ?? 0;
@@ -381,6 +432,38 @@ export async function teardownReviewWorkspace(
       reviewWorkspaceCleanupError: undefined,
     }),
     'review workspace retained after confirmed execution stop',
+  );
+}
+
+/** Explicit archive releases the source checkout after the existing execution stop. */
+export async function cleanupReviewWorkspaceForArchive(runId: string): Promise<void> {
+  const run = getRun(runId);
+  const workspace = run?.reviewWorkspace;
+  if (!run || !workspace || workspace.cleanedAt) return;
+  const generation = run.engineState?.generation ?? 0;
+  const check = () => {
+    const current = currentWorkspaceRun(runId, generation, true);
+    assertRunArchivable(current);
+    assertNativeRunOwner(current);
+    if (!isRunArchiving(runId) || current.reviewWorkspace?.workspaceId !== workspace.workspaceId)
+      throw new Error('Review checkout cleanup no longer owns its archive request');
+    return current;
+  };
+  check();
+  await teardownReviewWorkspace(runId);
+  if (check().reviewWorkspace?.cleanedAt) return;
+  await cleanupReviewWorkspace(runId, {
+    assertCurrent: () => {
+      check();
+    },
+  });
+  const current = check();
+  await persistRunNow(
+    updateRun(runId, {
+      reviewWorkspace: { ...current.reviewWorkspace!, cleanedAt: new Date().toISOString() },
+      reviewWorkspaceCleanupError: undefined,
+    }),
+    'review checkout released for archive',
   );
 }
 
@@ -538,7 +621,7 @@ export function reconcileReviewWorkspaceCleanup(
     for (const run of getAllRuns()) {
       if (
         !run.reviewWorkspace ||
-        run.reviewWorkspace.executionStoppedAt ||
+        (run.reviewWorkspace.executionStoppedAt && !reviewWorkspaceNeverLaunched(run)) ||
         (run.reviewWorkspace.cleanedAt && !hasHeldReviewWorker(run)) ||
         hasUncertainReviewOperation(run) ||
         retainsInvalidReviewOutput(run) ||

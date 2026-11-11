@@ -350,6 +350,7 @@ export function runnerObservabilityDir(repoPath: string, runtimeDir = '.agent'):
 }
 
 export async function runnerObservabilityDirForSlot(vars: SlotVars): Promise<string> {
+  if (vars.runnerObservabilityDir) return vars.runnerObservabilityDir;
   const runtimeDir = await resolveProjectRuntimeDir(vars.projectName);
   const external = runnerObservabilityDir(vars.remoteRepo, runtimeDir);
   const legacyRuntime =

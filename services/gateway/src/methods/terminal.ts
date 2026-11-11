@@ -64,6 +64,7 @@ import {
   workspacePaneInputRecord,
   workspaceTerminalKey,
   workspaceTerminalOperation,
+  writeWorkspaceTerminalInput,
 } from '../runtime/workspace-terminal.js';
 
 import { terminalDataPayload } from './terminal-frame.js';
@@ -466,19 +467,23 @@ async function terminalInputLanding(params: TerminalInputParams): Promise<InputL
   if (isWorkspaceTerminal(params)) {
     const { key, run, session } = await resolveWorkspaceTerminal(params);
     const machine = run.reviewWorkspace!.machine;
-    if (usesNodeLink(machine)) {
-      const worker = { nodeId: machine, session, target: session };
-      return {
-        typesOnce: workerNodeTypesInputOnce(worker),
-        write: (dispatched, seq) => sendWorkerTerminalInput(worker, params.data, dispatched, seq),
-      };
-    }
+    const worker = { nodeId: machine, session, target: session };
+    const landing: InputLanding = usesNodeLink(machine)
+      ? {
+          typesOnce: workerNodeTypesInputOnce(worker),
+          write: (dispatched, seq) => sendWorkerTerminalInput(worker, params.data, dispatched, seq),
+        }
+      : {
+          record: workspacePaneInputRecord(run, session),
+          write: () => {
+            if (!hasPty(key)) throw new Error('Open the worktree terminal before typing');
+            writePty(key, params.data);
+          },
+        };
     return {
-      record: workspacePaneInputRecord(run, session),
-      write: () => {
-        if (!hasPty(key)) throw new Error('Open the worktree terminal before typing');
-        writePty(key, params.data);
-      },
+      ...landing,
+      write: (dispatched, seq) =>
+        writeWorkspaceTerminalInput(run, params.data, () => landing.write(dispatched, seq)),
     };
   }
   const resolved = await resolveAgentOrBareTarget(params.slotId, params);

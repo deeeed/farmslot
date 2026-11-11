@@ -113,6 +113,7 @@ import {
   type LaunchAckSignalSnapshot,
   probeRunnerHandoffAck,
   readLaunchAckSignalSnapshot,
+  readRunnerPromptAcceptance,
   type RunnerHandoffAckProbe,
 } from './prompt-delivery-evidence.js';
 import {
@@ -213,6 +214,8 @@ export interface NativeRunnerChoices {
 }
 
 export interface RunnerDefinition {
+  /** Hook destination for a read-only terminal review, shared by launch and observation. */
+  reviewObservabilityDir?: (taskDir: string) => string;
   /** Tmux launches install and verify the copied runner observability bundle. */
   usesObservabilityBundle?: boolean;
   /** Stop only structured, slot-isolated managed processes after the workers are stopped. */
@@ -628,6 +631,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   },
   pi: {
     usesObservabilityBundle: true,
+    reviewObservabilityDir: (taskDir) => path.posix.join(taskDir, '.observability'),
     id: 'pi',
     requiresInitialPromptAck: true,
     nativeTransport: 'pi-rpc',
@@ -2911,6 +2915,10 @@ export async function sendRunnerPrompt(
   ...args: Parameters<typeof submitRunnerPrompt>
 ): Promise<void> {
   const outcome = await submitRunnerPrompt(...args);
+  assertRunnerPromptSent(outcome);
+}
+
+export function assertRunnerPromptSent(outcome: RunnerInstructionOutcome): void {
   if (outcome !== 'sent')
     throw new Error(
       outcome === 'held-untouched'
@@ -3235,24 +3243,14 @@ export async function sendRunnerInstructionSafely(
     const observability = getRunnerObservability(runner);
     if (!observability) return false;
     do {
-      const reading =
-        opts.retainedSession && observability.promptAcceptedInSession
-          ? await observability.promptAcceptedInSession(
-              vars,
-              target,
-              opts.retainedSession.sessionId,
-              opts.retainedSession.sessionPath,
-              message,
-              opts.acceptanceSinceMs!,
-            )
-          : await observability.promptAccepted(
-              vars,
-              target,
-              runnerPromptDigest(message),
-              opts.acceptanceSinceMs!,
-              true,
-              message,
-            );
+      const reading = await readRunnerPromptAcceptance(
+        observability,
+        vars,
+        target,
+        message,
+        opts.acceptanceSinceMs!,
+        opts.retainedSession,
+      );
       if (
         reading?.value === true &&
         (reading.source === 'hook' || reading.source === 'signal') &&

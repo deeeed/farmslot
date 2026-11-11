@@ -124,6 +124,9 @@ export function writePiHook(params) {
       matchedDigest = matched.digest;
       sentAt = matched.sentAt;
     }
+    // Argv prompts and operator corrections have no worker sentinel. Pi's input
+    // event still supplies the exact text it accepted, scoped by pane and clock.
+    matchedDigest ??= runnerPromptDigest(params.promptText);
   }
   const sessionId = params.sessionId || undefined;
   const previousSession = sessionId ? readSnapshot(path.join(obsDir, 'sessions'), sessionId) : null;

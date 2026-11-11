@@ -55,6 +55,16 @@ test('Pi session hooks retain the native transcript path through prompt and stop
   assert.equal(session.session_id, sessionId);
 });
 
+test('argv and terminal input carry an exact digest without a worker sentinel', (t) => {
+  const obsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-review-hook-'));
+  t.after(() => fs.rmSync(obsDir, { recursive: true, force: true }));
+  const prompt = 'Review the frozen diff and write the report.';
+  const receipt = writePiHook({ obsDir, event: 'UserPromptSubmit', promptText: prompt });
+  assert.equal(receipt.runnerPromptDigest, runnerPromptDigest(prompt));
+  assert.equal(receipt.sentAt, undefined);
+  assert.equal(writePiHook({ obsDir, event: 'Stop' }).runnerPromptDigest, undefined);
+});
+
 test('UserPromptSubmit matches the gateway sentinel digest then Stop closes the turn', () => {
   const obsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-hook-writer-'));
   const prompt = 'Read TASK.md and execute.';
