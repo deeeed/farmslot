@@ -561,6 +561,11 @@ async function withBundleLock<T>(
       }
       return await fn();
     } finally {
+      const heldMs = Date.now() - holder.since;
+      if (heldMs >= SLOW_LOCK_WAIT_MS)
+        console.warn(
+          `[run-bundle] ${holder.label} held ${name} for ${(heldMs / 1000).toFixed(1)}s`,
+        );
       if (bundleLockHolders.get(options.lockfilePath) === holder)
         bundleLockHolders.delete(options.lockfilePath);
       await release();
@@ -864,8 +869,9 @@ function concurrencyLimit(max: number) {
 
 /** Lets a walk charge a dir from a kept size instead of entering it, and keep what it walked. */
 interface WalkHooks {
-  kept(directory: string, depth: number): number | undefined;
-  walked(directory: string, depth: number, bytes: number): void;
+  kept?(directory: string, depth: number): number | undefined;
+  walked?(directory: string, depth: number, bytes: number): void;
+  file?(file: string, depth: number, bytes: number): void;
 }
 
 async function physicalBytes(
@@ -875,10 +881,10 @@ async function physicalBytes(
 ): Promise<number> {
   const limit = concurrencyLimit(PHYSICAL_SCAN_CONCURRENCY);
   const walk = async (directory: string, depth = 0): Promise<number> => {
-    const kept = hooks?.kept(directory, depth);
+    const kept = hooks?.kept?.(directory, depth);
     if (kept !== undefined) return kept;
     const bytes = await walkEntries(directory, depth);
-    hooks?.walked(directory, depth, bytes);
+    hooks?.walked?.(directory, depth, bytes);
     return bytes;
   };
   const walkEntries = async (directory: string, depth: number): Promise<number> => {
@@ -895,12 +901,14 @@ async function physicalBytes(
         if (entry.isDirectory()) return walk(file, depth + 1);
         if (!entry.isFile()) return 0;
         try {
-          return (
+          const bytes = (
             await limit(() => {
               if (scan) scan.fileCount++;
               return stat(file);
             })
           ).size;
+          hooks?.file?.(file, depth, bytes);
+          return bytes;
         } catch (error) {
           if (!hasCode(error, 'ENOENT')) throw error;
           return 0;
@@ -960,21 +968,39 @@ async function movedBundleBytes(store: RunBundleStore, directory: string): Promi
 }
 
 /** A transfer stage charges its reserved ceiling, including partially written bytes, once. */
-async function chargedStoreBytes(store: RunBundleStore): Promise<number> {
+async function chargedStoreBytes(
+  store: RunBundleStore,
+  stagedCharges?: Map<string, number>,
+): Promise<number> {
   let bytes = 0;
   for (const entry of await readdir(store.root, { withFileTypes: true })) {
     const file = path.join(store.root, entry.name);
     if (entry.name === 'sha256' && entry.isDirectory()) {
-      for (const name of await readdir(file))
-        bytes += BUNDLE_DIGEST.test(name)
+      for (const name of await readdir(file)) {
+        const directory = path.join(file, name);
+        const charged = BUNDLE_DIGEST.test(name)
           ? await recordedBundleBytes(store, name)
-          : await movedBundleBytes(store, path.join(file, name));
+          : await movedBundleBytes(store, directory);
+        bytes += charged;
+        if (name.startsWith('.retention-')) stagedCharges?.set(directory, charged);
+      }
       continue;
     }
     // Records (and the kept acquisition footprints) are bookkeeping, not stored payload.
     if (entry.name === 'usage') continue;
     if (entry.name !== 'staging' || !entry.isDirectory()) {
-      bytes += entry.isDirectory() ? await physicalBytes(file) : (await stat(file)).size;
+      const hooks: WalkHooks | undefined =
+        entry.name === 'reservations' && stagedCharges
+          ? {
+              file: (source, depth, charged) => {
+                if (depth === 0 && path.basename(source).startsWith('.retention-'))
+                  stagedCharges.set(source, charged);
+              },
+            }
+          : undefined;
+      bytes += entry.isDirectory()
+        ? await physicalBytes(file, undefined, hooks)
+        : (await stat(file)).size;
       continue;
     }
     for (const stage of await readdir(file)) {
@@ -986,7 +1012,9 @@ async function chargedStoreBytes(store: RunBundleStore): Promise<number> {
       } catch (error) {
         if (!hasCode(error, 'ENOENT')) throw error;
       }
-      bytes += Math.max(reserved, actual - reserved);
+      const charged = Math.max(reserved, actual - reserved);
+      bytes += charged;
+      if (stage.startsWith('.retention-')) stagedCharges?.set(directory, charged);
     }
   }
   return bytes;
@@ -2014,9 +2042,11 @@ async function archiveRunBundleMediaLocked(
   let archiveRoot = input.archiveRoot;
   const policy = input.policy ?? DEFAULT_RUN_BUNDLE_RETENTION;
   const now = input.now ?? Date.now();
-  const charged = async () =>
-    (await chargedStoreBytes(store)) + (await reservedMetadataBytes(store)) + acquisitionSize;
-  const chargedBytesBefore = await charged();
+  const stagedCharges = new Map<string, number>();
+  const chargedBytesBefore =
+    (await chargedStoreBytes(store, stagedCharges)) +
+    (await reservedMetadataBytes(store)) +
+    acquisitionSize;
   const pressure =
     chargedBytesBefore >= policy.maxStoreBytes * RUN_BUNDLE_ARCHIVE_HIGH_RATIO ||
     chargedBytesBefore + requiredBytes > policy.maxStoreBytes;
@@ -2027,6 +2057,20 @@ async function archiveRunBundleMediaLocked(
     chargedBytesBefore,
     chargedBytesAfter: chargedBytesBefore,
   };
+  // Housekeeping finishes staged archives outside this lock. Only those known
+  // immutable paths can disappear; reconcile their charges without walking the store.
+  const reconcileCompletedStages = () =>
+    Promise.all(
+      [...stagedCharges].map(async ([directory, charged]) => {
+        try {
+          await lstat(directory);
+        } catch (error) {
+          if (!hasCode(error, 'ENOENT')) throw error;
+          result.chargedBytesAfter -= charged;
+          stagedCharges.delete(directory);
+        }
+      }),
+    );
   if (capturing && !pressure) return result;
   const { pinned, referenced } = await runBundleHousekeepingInventory(store, now);
   const candidates = [];
@@ -2054,11 +2098,18 @@ async function archiveRunBundleMediaLocked(
     const availability: RunBundleAvailability = raw
       ? JSON.parse(raw)
       : { revision: 0, prunedPaths: [] };
+    let availabilityBytes = Buffer.byteLength(raw ?? '');
+    let bundleBytes = await recordedBundleBytes(store, digest);
     // A crash after unlink but before accounting leaves an overcharge, never uncharged payload.
-    if (availability.archivedPaths)
-      await recordBundleBytes(store, digest, await physicalBytes(directory));
+    if (availability.archivedPaths) {
+      const measured = await physicalBytes(directory);
+      await recordBundleBytes(store, digest, measured);
+      result.chargedBytesAfter += measured - bundleBytes;
+      bundleBytes = measured;
+    }
     for (const [key, meta] of Object.entries(manifest.entries)) {
       if (!isRunBundleMedia(key)) continue;
+      await reconcileCompletedStages();
       if (
         !expired &&
         (!pressure ||
@@ -2130,13 +2181,18 @@ async function archiveRunBundleMediaLocked(
       await atomicJson(availabilityFile, availability);
       await rm(source);
       await syncPath(path.dirname(source));
-      await recordBundleBytes(store, digest, await physicalBytes(directory));
+      bundleBytes -= meta.bytes;
+      await recordBundleBytes(store, digest, bundleBytes);
+      const nextAvailabilityBytes = (await stat(availabilityFile)).size;
+      // This lock owns bundle/journal changes; apply this move's delta instead of
+      // walking every bundle and availability file again for each archived payload.
+      result.chargedBytesAfter += nextAvailabilityBytes - availabilityBytes - meta.bytes;
+      availabilityBytes = nextAvailabilityBytes;
       result.reclaimedBytes += meta.bytes;
       result.archivedPaths.push(key);
-      result.chargedBytesAfter = await charged();
     }
   }
-  result.chargedBytesAfter = await charged();
+  await reconcileCompletedStages();
   return result;
 }
 
