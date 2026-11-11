@@ -733,8 +733,8 @@ export function joinSchemaWithMarkdown(
   schema: TaskSchema,
   markdown: string,
 ): TaskProgressStructured {
-  // Parse checkbox states from markdown (sequential index)
-  const checkboxStates = parseCheckboxStates(markdown);
+  // The actual checklist supplies both completion and rendered instructions.
+  const checkboxes = enumerateChecklistCheckboxes(markdown);
 
   let completedSteps = 0;
   let foundFirstPending = false;
@@ -745,8 +745,9 @@ export function joinSchemaWithMarkdown(
     let phaseCompleted = 0;
 
     const steps: TaskStepProgress[] = phase.steps.map((step) => {
-      // step.index is 1-based, checkboxStates is 0-based
-      const isDone = checkboxStates[step.index - 1] ?? false;
+      // step.index is 1-based, the enumeration array is 0-based.
+      const checkbox = checkboxes[step.index - 1];
+      const isDone = checkbox?.checked ?? false;
 
       let status: TaskStepStatus;
       if (isDone) {
@@ -768,6 +769,7 @@ export function joinSchemaWithMarkdown(
         status,
       };
       if (step.artifacts) result.artifacts = step.artifacts;
+      if (checkbox?.detail) result.detail = checkbox.detail;
       return result;
     });
 
@@ -787,11 +789,4 @@ export function joinSchemaWithMarkdown(
     currentPhase,
     currentStep,
   };
-}
-
-// Shared enumeration from @farmslot/protocol — the same logic
-// generateTaskSchema and the agent-runtime `mark` helper use, so checkbox
-// states always align with schema indices and marked boxes.
-function parseCheckboxStates(markdown: string): boolean[] {
-  return enumerateChecklistCheckboxes(markdown).map((item) => item.checked);
 }

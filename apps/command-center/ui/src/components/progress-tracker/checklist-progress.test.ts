@@ -168,3 +168,47 @@ test('the panel reopens a unit by default when the run changes', () => {
     'run B must not inherit run A collapse',
   );
 });
+
+test('step detail starts collapsed and toggles only its run-scoped display choice', () => {
+  const step = Object.freeze({
+    index: 1,
+    name: '1. Inspect',
+    status: 'pending' as const,
+    detail: 'Read the actual source.\nKeep the proof.',
+  });
+  const scope = new SubtaskOpenState().scope('detail-run');
+  const render = () =>
+    renderTrackerStepRow(step, scope, false, undefined, undefined, undefined, {
+      runId: 'detail-run',
+      checklist: 'CHECKLIST.md',
+    });
+  assert.equal(litBinding(render(), '.open='), false);
+  assert.match(litText(render()), /Read the actual source/);
+  const toggle = litBinding(render(), '@toggle=');
+  assert.equal(typeof toggle, 'function');
+  if (typeof toggle !== 'function') throw new Error('Missing disclosure toggle');
+  toggle({ currentTarget: { open: true } });
+  assert.equal(litBinding(render(), '.open='), true);
+  assert.equal(step.status, 'pending');
+  const other = renderTrackerStepRow(step, scope, false, undefined, undefined, undefined, {
+    runId: 'other-run',
+    checklist: 'CHECKLIST.md',
+  });
+  assert.equal(litBinding(other, '.open='), false);
+  toggle({ currentTarget: { open: false } });
+  assert.equal(litBinding(render(), '.open='), false);
+  assert.equal(
+    location.hash.includes('stepDetails'),
+    false,
+    'collapsed default is omitted from URL',
+  );
+});
+
+test('steps without detail remain plain read-only rows', () => {
+  const view = renderTrackerStepRow(
+    { index: 1, name: 'No detail', status: 'pending' },
+    new SubtaskOpenState().scope('empty'),
+  );
+  assert.equal(litBinding(view, '.open='), undefined);
+  assert.doesNotMatch(litText(view), /step-instructions/);
+});

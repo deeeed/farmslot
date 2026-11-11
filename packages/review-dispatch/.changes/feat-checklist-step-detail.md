@@ -1,0 +1,1 @@
+- Preserve checklist step detail across structured and raw progress views with scoped disclosure choices.

@@ -159,3 +159,28 @@ test('checklist-target.cjs checklistNumberingMismatches matches protocol behavio
     );
   }
 });
+
+test('step detail parity preserves fenced examples and the mark step positions', () => {
+  const markdown = [
+    '## Work',
+    '- [ ] 1. Inspect',
+    '  Read the source.',
+    '  ```md',
+    '  - [ ] example only',
+    '  ## still an example',
+    '  ```',
+    '- [x] 2. Verify',
+    '  Save proof.',
+    '## Rules',
+    'Not step detail.',
+  ].join('\n');
+  const expected = 'Read the source.\n```md\n- [ ] example only\n## still an example\n```';
+  const rows = protocol.enumerateChecklistCheckboxes(markdown);
+  assert.equal(rows[0].detail, expected);
+  assert.deepEqual(cjs.enumerateChecklistCheckboxes(markdown), rows);
+  assert.deepEqual(
+    rows.map(({ stepNumber }) => stepNumber),
+    [1, 2],
+  );
+  assert.equal(rows[1].detail, 'Save proof.');
+});

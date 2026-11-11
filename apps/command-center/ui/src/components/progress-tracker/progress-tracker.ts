@@ -1,11 +1,12 @@
 import { css, html, LitElement, nothing, type TemplateResult, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
-import type {
-  Run,
-  TaskChecklistTiming,
-  TaskProgressStructured,
-  TaskStepProgress,
+import {
+  type Run,
+  type TaskChecklistTiming,
+  type TaskProgressStructured,
+  type TaskStepProgress,
+  viewToggleField,
 } from '@farmslot/protocol';
 import type { PipelineProgressStep } from '@farmslot/protocol/checklist-target';
 import {
@@ -17,9 +18,12 @@ import {
   checklistProgressRow,
   type ChecklistProgressStep,
   checklistProgressView,
+  checklistStepDetailKey,
+  type ChecklistStepDetailScope,
 } from '@farmslot/review-dispatch';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { browserViewState, viewStateUpdates } from '../../utils/view-state.js';
 
 import { OperationClock, operationPanelStyles, renderOperationPanel } from './operation-panel.js';
 import {
@@ -44,16 +48,38 @@ export function renderTrackerStepRow(
   timing?: TaskChecklistTiming,
   nowMs?: number,
   execution?: ChecklistProgressExecution,
+  detailScope: ChecklistStepDetailScope = {},
 ): TemplateResult {
   const row = checklistProgressRow(step, timing, nowMs, execution);
+  const content = html` <span class="substep-icon">${row.icon}</span>
+    <span class="substep-name">${step.name}</span>
+    ${row.duration
+      ? html`<span class="substep-duration" data-live=${row.live}>${row.duration}</span>`
+      : nothing}`;
+  const field = viewToggleField(
+    'stepDetails',
+    checklistStepDetailKey(step.index, detailScope),
+    false,
+  );
+  const open = step.detail ? browserViewState.get(field) : false;
   return html`
-    <div class="substep ${step.status}">
-      <span class="substep-icon">${row.icon}</span>
-      <span class="substep-name">${step.name}</span>
-      ${row.duration
-        ? html`<span class="substep-duration" data-live=${row.live}>${row.duration}</span>`
-        : nothing}
-    </div>
+    ${step.detail
+      ? html` <details
+          class="step-detail"
+          .open=${open}
+          @toggle=${(event: Event) =>
+            browserViewState.set(field, (event.currentTarget as HTMLDetailsElement).open)}
+        >
+          <summary
+            class="substep ${step.status}"
+            aria-expanded=${open}
+            @click=${(event: Event) => event.stopPropagation()}
+          >
+            <span class="step-caret" aria-hidden="true">${open ? '▾' : '▸'}</span>${content}
+          </summary>
+          <div class="step-instructions">${step.detail}</div>
+        </details>`
+      : html`<div class="substep ${step.status}">${content}</div>`}
     ${step.subtask && !nested
       ? renderSubtaskBlock(
           step.subtask,
@@ -65,6 +91,11 @@ export function renderTrackerStepRow(
               step.subtask?.progress.timing,
               nowMs,
               execution,
+              {
+                ...detailScope,
+                checklist: step.subtask?.progress.timing?.source,
+                subtaskId: step.subtask?.id,
+              },
             ),
           openScope,
         )
@@ -88,53 +119,58 @@ export function renderChecklistProgress(
 ) {
   const view = checklistProgressView(progress, options);
   if (!view) return nothing;
-  return html`<div class="monitor-detail" data-testid="checklist-progress">
-    <div class="monitor-detail-header">
-      <span>${view.heading}</span>
-      ${options.closable
-        ? html`<button
-            class="monitor-close"
-            aria-label="Close worker progress"
-            @click=${options.onClose}
-          >
-            x
-          </button>`
+  return html`${viewStateUpdates()}
+    <div class="monitor-detail" data-testid="checklist-progress">
+      <div class="monitor-detail-header">
+        <span>${view.heading}</span>
+        ${options.closable
+          ? html`<button
+              class="monitor-close"
+              aria-label="Close worker progress"
+              @click=${options.onClose}
+            >
+              x
+            </button>`
+          : nothing}
+      </div>
+      ${progress && !options.compact
+        ? renderOperationPanel(progress, options.runId, { runActive: options.runActive })
         : nothing}
-    </div>
-    ${progress && !options.compact
-      ? renderOperationPanel(progress, options.runId, { runActive: options.runActive })
-      : nothing}
-    ${view.waiting
-      ? html`<div class="waiting">${view.message}<br />Waiting for the worker checklist.</div>`
-      : nothing}
-    ${options.compact
-      ? nothing
-      : view.phases.map(
-          (phase) =>
-            html`<div class="phase">
-              <div class="phase-header">
-                <span
-                  style="color:${phase.running
-                    ? colors.accentHover
-                    : phase.complete
-                      ? colors.statusOk
-                      : colors.textPrimary}"
-                  >${phase.name}</span
-                ><span class="phase-count">${phase.counts}</span>
-              </div>
-              ${phase.rows.map(({ step }) =>
-                renderTrackerStepRow(
-                  step,
-                  options.openScope,
-                  false,
-                  progress?.timing,
-                  options.nowMs,
-                  checklistProgressExecution(progress, options.run),
-                ),
-              )}
-            </div>`,
-        )}
-  </div>`;
+      ${view.waiting
+        ? html`<div class="waiting">${view.message}<br />Waiting for the worker checklist.</div>`
+        : nothing}
+      ${options.compact
+        ? nothing
+        : view.phases.map(
+            (phase) =>
+              html`<div class="phase">
+                <div class="phase-header">
+                  <span
+                    style="color:${phase.running
+                      ? colors.accentHover
+                      : phase.complete
+                        ? colors.statusOk
+                        : colors.textPrimary}"
+                    >${phase.name}</span
+                  ><span class="phase-count">${phase.counts}</span>
+                </div>
+                ${phase.rows.map(({ step }) =>
+                  renderTrackerStepRow(
+                    step,
+                    options.openScope,
+                    false,
+                    progress?.timing,
+                    options.nowMs,
+                    checklistProgressExecution(progress, options.run),
+                    {
+                      runId: options.runId ?? options.run?.id,
+                      checklist: progress?.timing?.source ?? options.activeTaskBasename,
+                    },
+                  ),
+                )}
+              </div>`,
+          )}
+    </div>`;
 }
 
 @customElement('progress-tracker')
@@ -219,6 +255,26 @@ export class ProgressTracker extends LitElement {
         display: flex;
         align-items: flex-start;
         gap: ${unsafeCSS(spacing.sm)};
+      }
+      .step-detail > summary {
+        cursor: pointer;
+        list-style: none;
+      }
+      .step-detail > summary::-webkit-details-marker {
+        display: none;
+      }
+      .step-caret {
+        flex: none;
+        width: 10px;
+        color: ${unsafeCSS(colors.textSecondary)};
+      }
+      .step-instructions {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        color: ${unsafeCSS(colors.textSecondary)};
+        font-size: ${unsafeCSS(fonts.sizeSm)};
+        line-height: 1.5;
+        padding: 4px 12px 10px 40px;
       }
       .substep-icon {
         width: 12px;

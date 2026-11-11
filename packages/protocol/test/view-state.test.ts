@@ -4,6 +4,7 @@ import test from 'node:test';
 import { acceptanceClaimField, runDetailPanelField } from '../src/surfaces/run-view-state.js';
 import {
   createViewStateContext,
+  selectedViewStateParams,
   viewChoiceField,
   viewListField,
   viewScopedIntegerField,
@@ -160,4 +161,11 @@ test('matching run acceptance and claim disclosures share defaults and URL encod
   const linked = fixture(f.state.snapshot());
   assert.equal(linked.state.get(runDetailPanelField('run-acceptance')), false);
   assert.equal(linked.state.get(acceptanceClaimField('AC-1')), true);
+});
+
+test('checklist step disclosures travel with shared display state', () => {
+  const value = 'run-a:CHECKLIST.md:root:1';
+  assert.deepEqual(selectedViewStateParams({ stepDetails: value, unrelated: 'omitted' }), {
+    stepDetails: value,
+  });
 });

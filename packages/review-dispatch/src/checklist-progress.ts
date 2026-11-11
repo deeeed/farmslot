@@ -14,6 +14,7 @@ import {
 import { runActivityView } from './run-activity.js';
 
 export interface ChecklistProgressStep {
+  detail?: string;
   text: string;
   checked: boolean;
 }
@@ -184,13 +185,14 @@ export function checklistProgressView(
   options: ChecklistProgressOptions = {},
 ): ChecklistProgressView | null {
   const title = nestedLoopProgressLabel(options.activeStep ?? null, options.activeTaskBasename);
-  const flat = progress
-    ? []
-    : (options.steps ??
-      enumerateChecklistCheckboxes(options.markdown ?? '').map((row) => ({
-        text: row.rawLabel,
-        checked: row.checked,
-      })));
+  const sourceSteps =
+    options.steps ??
+    enumerateChecklistCheckboxes(options.markdown ?? '').map((row) => ({
+      text: row.rawLabel,
+      checked: row.checked,
+      ...(row.detail ? { detail: row.detail } : {}),
+    }));
+  const flat = progress ? [] : sourceSteps;
   const total = progress?.totalSteps ?? flat.length;
   const completed = progress?.completedSteps ?? flat.filter((row) => row.checked).length;
   if (!total && !options.fallback) return null;
@@ -207,6 +209,7 @@ export function checklistProgressView(
                 index: index + 1,
                 name: row.text,
                 status: row.checked ? 'done' : 'pending',
+                ...(row.detail ? { detail: row.detail } : {}),
               }),
             ),
           },
@@ -233,7 +236,9 @@ export function checklistProgressView(
       running: phase.steps.some((step) => step.status === 'running'),
       rows: phase.steps.map((step) =>
         checklistProgressRow(
-          step,
+          step.detail === undefined && sourceSteps[step.index - 1]?.detail
+            ? { ...step, detail: sourceSteps[step.index - 1].detail }
+            : step,
           progress?.timing,
           options.nowMs,
           options.execution ?? checklistProgressExecution(progress, options.run),
@@ -327,4 +332,19 @@ export function effectiveTaskProgressForRun(
     taskProgress ??
     ciFixTaskProgress(run?.steps.find((step) => step.name === 'ci-watch')?.outputs ?? {})
   );
+}
+
+export interface ChecklistStepDetailScope {
+  runId?: string;
+  checklist?: string | null;
+  subtaskId?: string;
+}
+
+/** One disclosure choice per run, role checklist and child unit on both clients. */
+export function checklistStepDetailKey(
+  index: number,
+  scope: ChecklistStepDetailScope = {},
+): string {
+  const file = scope.checklist?.split('/').pop() || 'checklist';
+  return `${scope.runId || 'no-run'}:${file}:${scope.subtaskId ? `child:${scope.subtaskId}` : 'root'}:${index}`;
 }
