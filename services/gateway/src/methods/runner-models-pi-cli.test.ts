@@ -53,12 +53,16 @@ const { modelCatalogNodes } = await import('./runner-models.js');
 const { getRunnerDefinition } = await import('../runners/registry.js');
 const { ModelCatalogFormatError, parsePiModelCatalog } =
   await import('../runners/model-catalog.js');
+const { RUNNER_OBSERVABILITY_COPY_PATHS } = await import('../runners/runner-observability.js');
+for (const relative of RUNNER_OBSERVABILITY_COPY_PATHS)
+  copyFileSync(path.join(checkout, relative), path.join(root, relative));
 const { piObservabilityExtensionPath } = await import('../runners/launch-command.js');
 const source = getRunnerDefinition('pi').modelCatalog;
 assert.ok(source && 'nodeCommand' in source);
 
 for (const scenario of [
   'healthy',
+  'support-only',
   'static-overrides',
   'http-500',
   'timeout',
@@ -79,6 +83,7 @@ for (const scenario of [
       const provider = renamed ? 'localsparks' : scenario === 'timeout' ? 'router' : 'litellm';
       const healthy =
         scenario === 'healthy' ||
+        scenario === 'support-only' ||
         scenario === 'static-overrides' ||
         scenario === 'renamed-router' ||
         emptyNative;
@@ -173,7 +178,7 @@ for (const scenario of [
         path.join(project, 'project.json'),
         JSON.stringify({ paths: { runtime_dir: runtimeDir } }),
       );
-      if (scenario !== 'legacy')
+      if (scenario !== 'legacy' && scenario !== 'support-only')
         await run(
           process.execPath,
           [
@@ -289,6 +294,13 @@ for (const scenario of [
         assert.throws(() => parsePiModelCatalog(stdout), ModelCatalogFormatError);
         return;
       }
+      if (scenario === 'legacy') {
+        const helper = path.join(root, 'scripts/runners/pi-farmslot-providers.mjs');
+        rmSync(helper);
+        t.after(() =>
+          copyFileSync(path.join(checkout, 'scripts/runners/pi-farmslot-providers.mjs'), helper),
+        );
+      }
       const output = await node.list(source);
       const listing = parsePiModelCatalog(output);
       if (emptyNative) {
@@ -301,14 +313,14 @@ for (const scenario of [
         });
         return;
       }
-      assert.ok(listing.nativeIds?.includes('baseline/control'));
-      assert.ok(listing.nativeIds?.includes(`${provider}/static-only`));
       if (scenario === 'legacy') {
         assert.equal(requests, 0);
         assert.deepEqual(listing.ids, ['baseline/control', 'litellm/static-only']);
         assert.deepEqual(listing.configuredProviders, []);
         return;
       }
+      assert.ok(listing.nativeIds?.includes('baseline/control'));
+      assert.ok(listing.nativeIds?.includes(`${provider}/static-only`));
       assert.ok(requests > 0, 'slot machine environment must reach provider discovery');
       assert.equal(
         requests,
