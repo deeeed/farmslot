@@ -90,6 +90,7 @@ const closedFakeGithub: GitHubService = {
   },
   rest: async <T>(_method: string, path: string) => {
     calls.push(['api', path]);
+    if (path.includes('/contents/')) throw new Error('HTTP 404 Not Found');
     return {} as unknown as T;
   },
 };

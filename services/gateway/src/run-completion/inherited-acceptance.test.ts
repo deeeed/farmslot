@@ -35,7 +35,8 @@ const inheritFakeGithub: GitHubService = {
   },
   rest: async <T>(_method: string, _path: string, opts?: RestServiceOpts) => {
     if (opts?.paginate) {
-      return (existingComment ? JSON.parse(existingComment) : []) as unknown as T;
+      const parsed = existingComment ? JSON.parse(existingComment) : [];
+      return (Array.isArray(parsed) ? parsed : [parsed]) as unknown as T;
     }
     if (_method === 'PATCH') {
       if (refuseCommentWrite) throw new Error('Comment permission denied');

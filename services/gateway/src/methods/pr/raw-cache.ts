@@ -196,6 +196,7 @@ export async function getPRRawData(
       repository?: Record<string, GqlPullRequestNode | null | undefined> | null;
     };
     let prNode: GqlPullRequestNode | null | undefined;
+    let prStateError: string | undefined;
     try {
       const data = await github.graphql<SingleRepoData>(
         buildBatchQuery(1),
@@ -206,8 +207,10 @@ export async function getPRRawData(
     } catch (err) {
       if (err instanceof GitHubQueryBudgetError) throw err;
       prNode = null;
+      prStateError = err instanceof Error ? err.message : String(err);
     }
     const snap = synthesizeRawSnapshotFromGraphQL(prNode);
+    if (prStateError) snap.prStateError = prStateError;
     if (prNode && isPRBatchTruncated(prNode)) snap.partial = true;
     recordPRRawData(ghRepo, prNum, snap);
     return snap;
