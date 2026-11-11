@@ -202,6 +202,14 @@ test('concurrent reviews publish once, and warm/restarted runs reuse verified ca
   const writes = f.counts.writes;
   f.runs.set(a.id, JSON.parse(await readFile(path.join(f.root, `${a.id}.json`), 'utf8')));
   assert.deepEqual(await ensureReviewWorkspaceSupport(a.id, () => {}, f.deps), first);
+  const retained = f.runs.get(a.id)!;
+  retained.reviewWorkspace = {
+    ...retained.reviewWorkspace!,
+    retainedAt: '2026-11-11T00:00:00Z',
+    retainedUntil: '2026-11-18T00:00:00Z',
+    executionStoppedAt: '2026-11-11T00:00:01Z',
+  };
+  assert.deepEqual(await ensureReviewWorkspaceSupport(a.id, () => {}, f.deps), first);
   const c = await f.addRun('review-c');
   assert.equal((await ensureReviewWorkspaceSupport(c.id, () => {}, f.deps))?.sha256, first.sha256);
   assert.equal(f.counts.collect, 1);
