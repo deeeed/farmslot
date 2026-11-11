@@ -1,1 +1,1 @@
-- Block blind workers from controlling tmux servers while preserving pane identity and enabling browser proofs inside the seatbelt.
+- Block blind workers from controlling existing or future tmux servers through Unix sockets while preserving pane identity and enabling browser proofs inside the seatbelt.

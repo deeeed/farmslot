@@ -1,6 +1,7 @@
 // Manual macOS proof only. Every tmux command selects a private fixture socket.
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import {
   existsSync,
   linkSync,
@@ -15,6 +16,7 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 import { shSingleQuote as q } from '../../../../scripts/lib/shell-quote.mjs';
@@ -23,6 +25,7 @@ import { withBlindTrialBoundary } from './blind-git.js';
 
 const python = fileURLToPath(new URL('./blind-git.py', import.meta.url));
 const adapter = fileURLToPath(new URL('../../../../packages/adapter-web/', import.meta.url));
+const { stopWebDappBrowser } = await import(path.join(adapter, 'src/web-dapp/lib/processes.mjs'));
 const env = {
   PATH: process.env.PATH,
   HOME: os.homedir(),
@@ -54,11 +57,21 @@ blind['prepare_boundary']({'repo': str(root), 'siblingRepos': [str(root / 'hidde
   );
 }
 function worker(root: string, command: string, launchEnv = env) {
-  return spawnSync('/bin/sh', ['-c', withBlindTrialBoundary(command, root)], {
-    env: launchEnv,
-    encoding: 'utf8',
-    timeout: 45_000,
-  });
+  return spawnSync(
+    '/bin/sh',
+    [
+      '-c',
+      withBlindTrialBoundary(command, root).replace(
+        '/usr/bin/sandbox-exec',
+        'exec /usr/bin/sandbox-exec',
+      ),
+    ],
+    {
+      env: launchEnv,
+      encoding: 'utf8',
+      timeout: 45_000,
+    },
+  );
 }
 
 test(
@@ -108,6 +121,20 @@ test(
     profile(root, launchEnv);
     const sandbox = readFileSync(path.join(root, 'boundary/sandbox.sb'), 'utf8');
     assert.ok(sandbox.includes(`(literal "${sockets[1]}")`), sandbox);
+    // These servers did not exist when lsof and profile generation ran.
+    const lateRoot = path.join(root, 'late');
+    mkdirSync(lateRoot);
+    const lateDirectory = path.join(lateRoot, `tmux-${process.getuid!()}`);
+    mkdirSync(lateDirectory, { mode: 0o700 });
+    const lateSockets = [path.join(lateDirectory, 'default'), path.join(lateRoot, 'explicit.sock')];
+    execFileSync('tmux', ['-f', '/dev/null', 'new-session', '-d', '-s', 'fixture', '/bin/cat'], {
+      env: { ...env, TMUX_TMPDIR: lateRoot },
+      encoding: 'utf8',
+      timeout: 3000,
+    });
+    started.push(lateSockets[0]);
+    tmux(lateSockets[1], 'new-session', '-d', '-s', 'fixture', '/bin/cat');
+    started.push(lateSockets[1]);
     const alias = path.join(root, 'alias.sock');
     symlinkSync(sockets[1], alias);
     const hardAlias = path.join(root, 'hard.sock');
@@ -115,7 +142,9 @@ test(
     const marker = path.join(root, 'escaped');
     for (const prefix of [
       `TMUX_TMPDIR=${q(root)} tmux`,
+      `TMUX_TMPDIR=${q(lateRoot)} tmux`,
       ...[
+        ...lateSockets,
         ...sockets,
         ...sockets.map((s) => s.replace('/private/tmp/', '/tmp/')),
         alias,
@@ -144,21 +173,34 @@ test(
     // The trusted caller outside the sandbox still controls its own private pane.
     tmux(sockets[0], 'send-keys', '-t', 'fixture', 'observable', 'Enter');
     assert.match(tmux(sockets[0], 'capture-pane', '-p', '-t', 'fixture'), /observable/u);
+    for (const socket of lateSockets)
+      assert.doesNotMatch(tmux(socket, 'capture-pane', '-p', '-t', 'fixture'), /injected/u);
     // Prove teardown still reaches the second server when the first is gone.
     tmux(sockets[0], 'kill-server');
     const cleanup = stopServers();
     assert.notEqual(cleanup[0].status, 0);
     assert.equal(cleanup[1].status, 0, cleanup[1].stderr);
-    t.diagnostic('cleanup attempted both private servers after the first was already absent');
+
+    t.diagnostic(
+      'new-session/run-shell/send-keys denied for existing and post-profile private servers; trusted control passed; cleanup attempted every server',
+    );
   },
 );
 
 test(
   'same-UID ownership and headless Chrome CDP work under the retained outer seatbelt',
   { skip: process.platform !== 'darwin' },
-  (t) => {
+  async (t) => {
     const root = fixture();
-    t.after(() => rmSync(root, { recursive: true }));
+    t.after(async () => {
+      try {
+        await stopWebDappBrowser(root, {
+          runtimeDir: path.join(root, 'temp/recipe/runtime/terminal'),
+        });
+      } finally {
+        rmSync(root, { recursive: true });
+      }
+    });
     profile(root);
     const probe = path.join(root, 'probe.mjs');
     const hidden = path.join(root, 'hidden');
@@ -207,24 +249,43 @@ if (${JSON.stringify(process.env.SEATBELT_TEST_CHROME ?? '')}) process.env.TERMI
 assert.notEqual(spawnSync('/bin/ps', ['-p', String(process.pid)]).status, 0);
 assert.throws(() => readFileSync(root + '/hidden/hidden'), { code: 'EPERM' });
 const app = http.createServer((req, res) => { res.setHeader('content-type', 'text/html'); res.end('<!doctype html><title>Seatbelt fixture</title><p>Synthetic app</p>'); });
-app.listen(0, '127.0.0.1');
-await once(app, 'listening');
 const portProbe = net.createServer();
-portProbe.listen(0, '127.0.0.1');
-await once(portProbe, 'listening');
-const cdpPort = portProbe.address().port;
-await new Promise(resolve => portProbe.close(resolve));
 const runtime = root + '/temp/recipe/runtime/terminal';
 const stop = () => stopWebDappBrowser(root, { runtimeDir: runtime });
-process.on('SIGTERM', () => { void stop(); });
-process.on('SIGINT', () => { void stop(); });
+const mode = process.argv[2] ?? 'normal';
+const parent = Number(process.argv[3] ?? ${process.pid});
+let launching;
+let cleanupPromise;
+const close = server => new Promise((resolve, reject) => {
+  if (!server.listening) return resolve();
+  server.close(error => error ? reject(error) : resolve());
+  server.closeAllConnections?.();
+});
+const cleanup = () => cleanupPromise ??= (async () => {
+  clearInterval(watchdog);
+  try { await launching; }
+  finally {
+    try { await stop(); }
+    finally { await Promise.all([close(app), close(portProbe)]); }
+  }
+})();
+const shutdown = () => { void cleanup().then(() => process.exit(0), error => { console.error(error); process.exit(1); }); };
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 const watchdog = setInterval(() => {
-  try { process.kill(${process.pid}, 0); }
-  catch (error) { if (error.code !== 'ESRCH') throw error; void stop(); }
+  try { process.kill(parent, 0); }
+  catch (error) { if (error.code !== 'ESRCH') throw error; shutdown(); }
 }, 100);
 try {
+  app.listen(0, '127.0.0.1');
+  await once(app, 'listening');
+  portProbe.listen(0, '127.0.0.1');
+  await once(portProbe, 'listening');
+  const cdpPort = portProbe.address().port;
+  await close(portProbe);
   const args = { target: root, 'cdp-port': cdpPort, 'app-port': app.address().port, signer: 'injected', account: 'dev1', headless: true, 'fresh-profile': true };
-  const state = await launchWebDappBrowser(args, process.env, { timeouts: { browserStartMs: 10000, hostReadyMs: 15000 } });
+  launching = launchWebDappBrowser(args, process.env, { timeouts: { browserStartMs: 10000, hostReadyMs: 15000 } });
+  const state = await launching;
   assert.equal(state.browser.launchMethod, 'spawn');
   assert.equal(state.browser.outerSeatbelt, true);
   const version = await fetch('http://127.0.0.1:' + cdpPort + '/json/version').then(r => r.json());
@@ -237,6 +298,10 @@ try {
   assert.equal(info.pgid, state.browserPid);
   assert.equal(info.startedAt, processInfo(state.browserPid).startedAt);
   assert.ok(info.argv.includes('--no-sandbox'));
+  if (mode !== 'normal') {
+    writeFileSync(root + '/ready-' + mode + '.json', JSON.stringify({ probePid: process.pid, browserPid: state.browserPid, hostPid: state.hostPid, appPort: app.address().port, cdpPort }));
+    await new Promise(() => {});
+  }
   const reused = await launchWebDappBrowser({ ...args, 'fresh-profile': false });
   assert.equal(reused.reused, true);
   assert.equal(reused.browserPid, state.browserPid);
@@ -244,9 +309,7 @@ try {
   assert.equal(stopped.stopped.length, 2);
   console.log('ps denied; ownership/group/state/start identity passed; harness launched and reused Chrome; Chrome CDP served; outer read denial retained');
 } finally {
-  clearInterval(watchdog);
-  try { await stop(); }
-  finally { await new Promise(resolve => app.close(resolve)); }
+  await cleanup();
 }
 `,
     );
@@ -255,5 +318,147 @@ try {
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /Chrome CDP served; outer read denial retained/u);
     t.diagnostic(result.stdout.trim());
+    for (const mode of ['SIGTERM', 'SIGINT', 'parent-death'] as const) {
+      await t.test(`full cleanup on ${mode}`, async (childTest) => {
+        const parent = spawn(process.execPath, ['-e', 'setInterval(() => {}, 100)'], {
+          env,
+          stdio: 'ignore',
+        });
+        childTest.after(async () => {
+          if (parent.exitCode === null && parent.signalCode === null) {
+            const exited = once(parent, 'exit');
+            parent.kill();
+            await exited;
+          }
+        });
+        await once(parent, 'spawn');
+        const child = spawn(
+          '/bin/sh',
+          [
+            '-c',
+            withBlindTrialBoundary(
+              `exec ${q(process.execPath)} ${q(probe)} ${q(mode)} ${parent.pid}`,
+              root,
+            ).replace('/usr/bin/sandbox-exec', 'exec /usr/bin/sandbox-exec'),
+          ],
+          { env, stdio: ['ignore', 'pipe', 'pipe'] },
+        );
+        const exited = once(child, 'exit');
+        let stderr = '';
+        child.stderr.on('data', (chunk) => {
+          stderr += chunk;
+        });
+        // SIGTERM invokes the same complete cleanup if an assertion fails.
+        childTest.after(async () => {
+          if (child.exitCode === null && child.signalCode === null) {
+            child.kill('SIGTERM');
+            const deadline = Date.now() + 3000;
+            while (child.exitCode === null && child.signalCode === null && Date.now() < deadline)
+              await delay(25);
+            if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+            await exited;
+          }
+          await stopWebDappBrowser(root, {
+            runtimeDir: path.join(root, 'temp/recipe/runtime/terminal'),
+          });
+        });
+        const ready = path.join(root, `ready-${mode}.json`);
+        const deadline = Date.now() + 20000;
+        while (!existsSync(ready) && child.exitCode === null && Date.now() < deadline)
+          await delay(25);
+        assert.ok(existsSync(ready), stderr);
+        const state = JSON.parse(readFileSync(ready, 'utf8'));
+        if (mode === 'parent-death') {
+          const parentExited = once(parent, 'exit');
+          parent.kill();
+          await parentExited;
+        } else process.kill(state.probePid, mode);
+        const exitDeadline = Date.now() + 3000;
+        while (child.exitCode === null && child.signalCode === null && Date.now() < exitDeadline)
+          await delay(25);
+        assert.ok(
+          child.exitCode !== null || child.signalCode !== null,
+          `${mode} did not exit after cleanup`,
+        );
+        const [code, signal] = await exited;
+        assert.equal(code, 0, stderr);
+        assert.equal(signal, null);
+        for (const pid of [state.browserPid, state.hostPid])
+          assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+        for (const port of [state.appPort, state.cdpPort]) {
+          await assert.rejects(
+            fetch(`http://127.0.0.1:${port}`, { signal: AbortSignal.timeout(500) }),
+          );
+        }
+      });
+    }
+  },
+);
+
+test(
+  'worker tools and DNS work with only the system resolver Unix socket allowed',
+  { skip: process.platform !== 'darwin' },
+  (t) => {
+    const root = fixture();
+    t.after(() => rmSync(root, { recursive: true }));
+    profile(root);
+    const pi = execFileSync('/usr/bin/which', ['pi'], { env, encoding: 'utf8' }).trim();
+    const piProbe = path.join(root, 'pi-probe.mjs');
+    writeFileSync(
+      piProbe,
+      String.raw`
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import http from 'node:http';
+const root = ${JSON.stringify(root)};
+const server = http.createServer((req, res) => {
+  req.resume();
+  res.writeHead(200, { 'content-type': 'text/event-stream' });
+  const chunk = { id: 'fixture', object: 'chat.completion.chunk', created: 0, model: 'fixture', choices: [{ index: 0, delta: { role: 'assistant', content: 'seatbelt-fixture-ok' }, finish_reason: null }] };
+  res.write('data: ' + JSON.stringify(chunk) + '\n\n');
+  res.write('data: ' + JSON.stringify({ ...chunk, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }) + '\n\n');
+  res.end('data: [DONE]\n\n');
+});
+let child;
+try {
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const agent = root + '/pi-agent';
+  mkdirSync(agent);
+  writeFileSync(agent + '/models.json', JSON.stringify({ providers: { 'seatbelt-fixture': {
+    baseUrl: 'http://127.0.0.1:' + server.address().port + '/v1', api: 'openai-completions', apiKey: 'fixture-only',
+    models: [{ id: 'fixture', name: 'Fixture', reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 4096, maxTokens: 128 }],
+  } } }));
+  child = spawn(${JSON.stringify(pi)}, ['--offline', '--print', '--no-session', '--no-tools', '--no-extensions', '--no-mcp', '--no-skills', '--no-prompt-templates', '--no-context-files', '--no-themes', '--provider', 'seatbelt-fixture', '--model', 'fixture', '--system-prompt', 'Synthetic fixture only.', 'Reply with seatbelt-fixture-ok'], { cwd: root, env: { ...process.env, PI_CODING_AGENT_DIR: agent }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = '', stderr = '';
+  child.stdout.on('data', chunk => { stdout += chunk; });
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  const [code] = await once(child, 'close');
+  assert.equal(code, 0, stderr);
+  assert.match(stdout, /seatbelt-fixture-ok/u);
+  console.log('pi completed a turn through a local synthetic provider');
+} finally {
+  if (child && child.exitCode === null && child.signalCode === null) { child.kill(); await once(child, 'close'); }
+  server.closeAllConnections();
+  await new Promise(resolve => server.close(resolve));
+}
+`,
+    );
+    for (const command of [
+      `${q(pi)} --version`,
+      `${q(pi)} --help`,
+      `${q(process.execPath)} ${q(piProbe)}`,
+      `git init -q ${q(path.join(root, 'tools'))} && git -C ${q(path.join(root, 'tools'))} status --porcelain && printf fixture | git hash-object --stdin`,
+      `${q(process.execPath)} --input-type=module -e ${q("import dns from 'node:dns/promises'; import { spawnSync } from 'node:child_process'; import assert from 'node:assert/strict'; assert.ok((await dns.lookup('example.com')).address); assert.equal(spawnSync('/usr/bin/true').status, 0); console.log('Node DNS and child spawning passed');")}`,
+    ]) {
+      const result = worker(root, command);
+      assert.ifError(result.error);
+      assert.equal(result.status, 0, result.stderr);
+    }
+    t.diagnostic(
+      'pi local-provider turn and version/help, Git repository/hash operations, Node DNS/child spawning passed with only mDNSResponder allowed; syslog needs no exception; Chrome/CDP covered separately',
+    );
   },
 );

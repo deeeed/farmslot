@@ -1,14 +1,22 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import childProcess, { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import { blindBrowserOptions } from '../src/web-dapp/lib/blind-browser.mjs';
+import { readNativeProcArgs } from '../src/web-dapp/lib/native-proc-args.mjs';
 import { processInfo } from '../src/web-dapp/lib/process-info.mjs';
 import {
+  ownedProcessIdentity,
   ownerMarker,
   ownsProcess,
   processCommand,
+  stopConsoleCollector,
+  stopWebDappBrowser,
   terminate,
 } from '../src/web-dapp/lib/processes.mjs';
 
@@ -29,6 +37,15 @@ test('process inspection preserves argv, group, state and start identity without
   const info = processInfo(child.pid);
   assert.ok(info);
   assert.ok(info.argv.includes(marker));
+  assert.equal('env' in info, false);
+  if (process.platform === 'darwin') {
+    const args = readNativeProcArgs(child.pid);
+    assert.deepEqual(args.argv, info.argv);
+    assert.equal('env' in args, false);
+    const withEnv = readNativeProcArgs(child.pid, { includeEnvironment: true });
+    assert.deepEqual(withEnv.argv, info.argv);
+    assert.ok(withEnv.env.some((entry) => entry.startsWith('PATH=')));
+  }
   assert.equal(info.pgid, child.pid);
   assert.ok(info.state);
   assert.ok(info.startedAt);
@@ -36,7 +53,7 @@ test('process inspection preserves argv, group, state and start identity without
   assert.ok(processCommand(child.pid).includes(marker));
   assert.equal(ownsProcess('browser', child.pid, runtime), true);
   assert.equal(ownsProcess('browser', child.pid, `${runtime}-other`), false);
-  await terminate(child.pid, 100);
+  await terminate(child.pid, 100, ownedProcessIdentity('browser', child.pid, runtime));
   assert.equal(processInfo(child.pid), null);
 });
 
@@ -90,3 +107,117 @@ test('ordinary browser mode and seatbelt validation are independent of the test 
     /invalid blind seatbelt/u,
   );
 });
+
+for (const kind of ['browser', 'wallet-host', 'console-collector']) {
+  for (const mismatch of ['startedAt', 'marker']) {
+    test(
+      `teardown keeps ${kind} ownership records when ${mismatch} changes after authorization`,
+      { skip: process.platform !== 'darwin' },
+      async (t) => {
+        const runtime = mkdtempSync(path.join(os.tmpdir(), 'process-identity-'));
+        t.after(() => rmSync(runtime, { recursive: true, force: true }));
+        mkdirSync(runtime, { recursive: true });
+        const pid = 60000001;
+        const pidFile = path.join(
+          runtime,
+          kind === 'console-collector' ? 'console-tail.pid' : `${kind}.pid`,
+        );
+        writeFileSync(pidFile, `${pid}\n`);
+        for (const file of ['browser.json', 'wallet-host.ready'])
+          writeFileSync(path.join(runtime, file), 'fixture');
+        const original = childProcess.execFileSync;
+        let inspections = 0;
+        t.mock.method(childProcess, 'execFileSync', (file, args, options) => {
+          if (args?.at(-1) !== String(pid)) return original(file, args, options);
+          inspections += 1;
+          return JSON.stringify({
+            argv: [
+              mismatch === 'marker' && inspections > 1 ? '--foreign' : ownerMarker(kind, runtime),
+            ],
+            pgid: pid,
+            state: 2,
+            startedAt: mismatch === 'startedAt' && inspections > 1 ? 'replacement' : 'authorized',
+          });
+        });
+        syncBuiltinESMExports();
+        t.after(() => {
+          t.mock.restoreAll();
+          syncBuiltinESMExports();
+        });
+        const signals = [];
+        const kill = process.kill;
+        t.mock.method(process, 'kill', (target, signal) => {
+          if (Math.abs(target) !== pid) return kill(target, signal);
+          if (signal !== 0) {
+            signals.push(signal);
+            assert.fail('signal sent after ownership changed');
+          }
+          return true;
+        });
+        const result =
+          kind !== 'console-collector'
+            ? await stopWebDappBrowser(runtime, { runtimeDir: runtime })
+            : await stopConsoleCollector(runtime, { runtimeDir: runtime });
+        assert.deepEqual(signals, []);
+        assert.deepEqual(
+          result.foreign,
+          kind === 'console-collector' ? pid : [{ name: kind, pid }],
+        );
+        assert.equal(readFileSync(pidFile, 'utf8'), `${pid}\n`);
+        if (kind !== 'console-collector') {
+          assert.equal(existsSync(path.join(runtime, 'browser.json')), true);
+          assert.equal(existsSync(path.join(runtime, 'wallet-host.ready')), true);
+        }
+      },
+    );
+  }
+}
+
+for (const mismatch of ['startedAt', 'marker']) {
+  test(
+    `termination revalidates ${mismatch} before escalating to SIGKILL`,
+    { skip: process.platform !== 'darwin' },
+    async (t) => {
+      const pid = 60000001;
+      const marker = ownerMarker('browser', '/synthetic/escalation');
+      const identity = {
+        pid,
+        marker,
+        argv: [marker],
+        pgid: pid,
+        state: 2,
+        startedAt: 'authorized',
+      };
+      let reads = 0;
+      const original = childProcess.execFileSync;
+      t.mock.method(childProcess, 'execFileSync', (file, args, options) => {
+        if (args?.at(-1) !== String(pid)) return original(file, args, options);
+        reads += 1;
+        return JSON.stringify(
+          reads === 1
+            ? identity
+            : {
+                ...identity,
+                startedAt: mismatch === 'startedAt' ? 'replacement' : identity.startedAt,
+                argv: mismatch === 'marker' ? ['--foreign'] : identity.argv,
+              },
+        );
+      });
+      syncBuiltinESMExports();
+      t.after(() => {
+        t.mock.restoreAll();
+        syncBuiltinESMExports();
+      });
+      const signals = [];
+      const kill = process.kill;
+      t.mock.method(process, 'kill', (target, signal) => {
+        if (Math.abs(target) !== pid) return kill(target, signal);
+        if (signal !== 0) signals.push(signal);
+        return true;
+      });
+      assert.equal(await terminate(pid, 0, identity), false);
+      assert.deepEqual(signals, ['SIGTERM']);
+      assert.equal(reads, 2);
+    },
+  );
+}

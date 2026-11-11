@@ -3,10 +3,10 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync, statSync } from 'node:fs';
 
-import { usablePython } from './python.mjs';
+import { NATIVE_PROC_ARGS, runNativeProcessProbe } from './native-proc-args.mjs';
 
-const MAC_PROCESS_INFO = String.raw`
-import ctypes, json, os, struct, sys
+const MAC_PROCESS_INFO = String.raw`${NATIVE_PROC_ARGS}
+import os
 class BsdInfo(ctypes.Structure):
     _fields_ = [(name, ctypes.c_uint32) for name in (
         'flags', 'status', 'xstatus', 'pid', 'ppid', 'uid', 'gid', 'ruid',
@@ -25,20 +25,7 @@ def info():
     return value
 try:
     before = info()
-    libc = ctypes.CDLL(None, use_errno=True)
-    argmax = ctypes.c_int()
-    size = ctypes.c_size_t(ctypes.sizeof(argmax))
-    if libc.sysctl((ctypes.c_int * 2)(1, 8), 2, ctypes.byref(argmax), ctypes.byref(size), None, 0):
-        raise OSError('cannot read argument limit')
-    buf = ctypes.create_string_buffer(argmax.value)
-    size = ctypes.c_size_t(argmax.value)
-    if libc.sysctl((ctypes.c_int * 3)(1, 49, pid), 3, buf, ctypes.byref(size), None, 0):
-        raise ProcessLookupError('process arguments are absent or unreadable')
-    raw = buf.raw[:size.value]
-    argc = struct.unpack('i', raw[:4])[0]
-    rest = raw[4:]
-    rest = rest[rest.index(b'\0') + 1:].lstrip(b'\0')
-    argv = [p.decode('utf-8', 'replace') for p in rest.split(b'\0')[:argc]]
+    argv = read_native_proc_args(pid)['argv']
     after = info()
     if (before.sec, before.usec) != (after.sec, after.usec):
         raise ProcessLookupError('process identity changed')
@@ -49,24 +36,9 @@ except (OSError, ValueError):
     print('null')
 `;
 
-export function processInfo(pid, { platform = process.platform, python = usablePython } = {}) {
+export function processInfo(pid, { platform = process.platform, python } = {}) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
-  if (platform === 'darwin') {
-    const interpreter = python();
-    if (!interpreter)
-      throw new Error(
-        'macOS process inspection requires a usable python3; install Python or Command Line Tools',
-      );
-    // Expected absent/denied identities are JSON null from the probe. Any
-    // interpreter failure must propagate, never masquerade as a foreign PID.
-    return JSON.parse(
-      execFileSync(interpreter, ['-c', MAC_PROCESS_INFO, String(pid)], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 2000,
-      }),
-    );
-  }
+  if (platform === 'darwin') return runNativeProcessProbe(MAC_PROCESS_INFO, pid, { python });
   try {
     if (platform === 'linux') {
       const root = `/proc/${pid}`;

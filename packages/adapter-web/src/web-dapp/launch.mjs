@@ -62,6 +62,7 @@ import { clearHudState } from './lib/hud.mjs';
 import {
   cdpListenerPids,
   ownedBrowserPids,
+  ownedProcessIdentity,
   ownerMarker,
   ownsProcess,
   pidAlive,
@@ -240,7 +241,8 @@ async function launchInBackground(
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  for (const pid of ownedBrowserPids(runtime)) await terminate(pid, 3000);
+  for (const pid of ownedBrowserPids(runtime))
+    await terminate(pid, 3000, ownedProcessIdentity('browser', pid, runtime));
   throw new Error(
     `${path.basename(application)} started but no browser on this slot's profile listened on CDP ${cdpPort} within ${timeoutMs}ms.`,
   );
@@ -798,7 +800,8 @@ export async function launchWebDappBrowser(
       await stopWebDappBrowser(target, { cdpPort, log }).catch((stopError) =>
         log(`rollback incomplete: ${stopError.message}`),
       );
-      for (const pid of ownedBrowserPids(runtime)) await terminate(pid, 3000);
+      for (const pid of ownedBrowserPids(runtime))
+        await terminate(pid, 3000, ownedProcessIdentity('browser', pid, runtime));
     }
     throw error;
   } finally {

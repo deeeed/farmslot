@@ -251,7 +251,12 @@ beforeEach(() => {
 });
 
 test('trusted fixture Git leaves real tmux execution guarded', () => {
-  assert.throws(() => execFileSync('tmux', ['-V']), /unexpected tmux invocation in isolated test/);
+  const tmuxSandbox = process.env.FARMSLOT_TMUX_SANDBOX;
+  assert.ok(tmuxSandbox, 'run with the private tmux test environment');
+  assert.throws(
+    () => execFileSync('tmux', ['-S', tmuxSandbox, '-V']),
+    /unexpected tmux invocation in isolated test/,
+  );
   assert.throws(
     () => spawnSync('bash', ['-c', 'tmux -V']),
     /unexpected tmux invocation in isolated test/,

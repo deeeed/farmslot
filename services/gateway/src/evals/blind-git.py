@@ -91,9 +91,16 @@ def tmux_socket_rules(sockets):
     paths = {alias for value in sockets + ([inherited] if inherited else [])
              for alias in path_aliases(value)}
     quote = lambda value: json.dumps(value, ensure_ascii=False)
-    filters = ['(remote unix-socket (subpath %s))' % quote(p) for p in sorted(roots)]
+    # Future servers can use arbitrary -S paths or fresh TMUX_TMPDIR roots.
+    # Only the root-owned macOS resolver endpoint is needed by worker IP DNS.
+    # Unnamed socketpairs remain available for Node and Chrome child processes.
+    filters = ['(remote unix-socket)']
+    filters += ['(remote unix-socket (subpath %s))' % quote(p) for p in sorted(roots)]
     filters += ['(remote unix-socket (literal %s))' % quote(p) for p in sorted(paths)]
-    return '(deny network-outbound ' + ' '.join(filters) + ')'
+    resolver = ['(remote unix-socket (literal %s))' % quote(p)
+                for p in path_aliases('/var/run/mDNSResponder')]
+    return ('(deny network-outbound ' + ' '.join(filters) + ')\n'
+            + '(allow network-outbound ' + ' '.join(resolver) + ')')
 
 
 def sandbox_profile(spec, capsule, tmux_sockets=None):

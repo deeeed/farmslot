@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { withBlindTrialBoundary } from './blind-git.js';
 
-test('blind profile denies tmux default, custom and discovered sockets through aliases', (t) => {
+test('blind profile denies outbound Unix sockets except the system DNS endpoint', (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'seatbelt-unit-'));
   t.after(() => rmSync(root, { recursive: true }));
   mkdirSync(path.join(root, 'boundary'));
@@ -43,7 +43,14 @@ with patch.dict(os.environ, {'TMUX_TMPDIR': '/tmp/fixture-tmux', 'TMUX': '/tmp/f
       assert.ok(profile.includes(`(remote unix-socket (literal "${prefix}/${socket}"))`), profile);
     }
   }
-  assert.match(profile, /\(deny network-outbound/u);
+  assert.ok(profile.includes('(deny network-outbound (remote unix-socket)'), profile);
+  for (const prefix of ['/var/run', '/private/var/run']) {
+    assert.ok(
+      profile.includes(`(remote unix-socket (literal "${prefix}/mDNSResponder"))`),
+      profile,
+    );
+  }
+  assert.equal(profile.split('(allow network-outbound').length, 2);
 });
 
 test('blind boundary strips tmux control variables, keeps pane identity, opts into outer-seatbelt Chrome', (t) => {

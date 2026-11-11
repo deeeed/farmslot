@@ -1,1 +1,1 @@
-- Inspect owned browser processes without setuid ps, reject unusable Python helpers without opening install dialogs, and launch blind-trial Chrome directly under the verified outer seatbelt.
+- Inspect owned browser processes without setuid ps, recheck authorized process identities before teardown, reject unusable Python helpers without opening install dialogs, and launch blind-trial Chrome directly under the verified outer seatbelt.
