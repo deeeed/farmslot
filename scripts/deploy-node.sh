@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy-node.sh — Deploy/update farmslot node to any fleet machine
-# Usage: bash scripts/deploy-node.sh <machine> [gateway-ip] [--home dir | --instance dev|prod] [--dry-run] [--node-token-file path] [--refresh-cli|--cli-only]
+# Usage: bash scripts/deploy-node.sh <machine> [gateway-ip] [--home dir | --instance dev|prod] [--dry-run] [--node-token-file path] [--refresh-cli|--cli-only|--packs-only]
 #
 # Supports:
 #   macOS local  (runner-local) — launchd LaunchAgent
@@ -15,7 +15,10 @@
 # A local deploy leaves the CLI as is unless --refresh-cli is passed: there it
 # is the operator's own CLI. --cli-only refreshes the CLI and nothing else: no
 # sync, no node token and no service restart, for a machine whose node runs
-# elsewhere (the dev stack's own node on the gateway machine). CLI_LOCK_WAIT_SECONDS (default 600) bounds the wait
+# elsewhere (the dev stack's own node on the gateway machine). --packs-only syncs
+# only the pool configs and pack files (project.json, setup/, scripts/, templates,
+# checklists): no node bundle, deps, node token, CLI or service restart, so it is
+# safe while the node has live runs. CLI_LOCK_WAIT_SECONDS (default 600) bounds the wait
 # for another deploy's CLI refresh on the same machine, and
 # CLI_VERIFY_TIMEOUT_SECONDS (default 120) the CLI body; each tmux client is
 # separately bounded to at most five seconds.
@@ -46,6 +49,7 @@ NODE_TOKEN_FILE=""
 NODE_TOKEN_FROM_FILE=false
 REFRESH_CLI=false
 CLI_ONLY=false
+PACKS_ONLY=false
 ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -76,6 +80,10 @@ while [[ $# -gt 0 ]]; do
       REFRESH_CLI=true
       shift
       ;;
+    --packs-only)
+      PACKS_ONLY=true
+      shift
+      ;;
     --node-token-file)
       NODE_TOKEN_FILE="${2:?--node-token-file requires a path}"
       shift 2
@@ -96,7 +104,12 @@ while [[ $# -gt 0 ]]; do
 done
 set -- "${ARGS[@]}"
 
-MACHINE="${1:?Usage: deploy-node.sh <machine> [gateway-ip] [--home dir | --instance dev|prod] [--dry-run] [--node-token-file path] [--refresh-cli|--cli-only]}"
+if [[ "$PACKS_ONLY" == true && "$REFRESH_CLI" == true ]]; then
+  echo '[deploy] ERROR: --packs-only cannot be combined with --cli-only or --refresh-cli' >&2
+  exit 1
+fi
+
+MACHINE="${1:?Usage: deploy-node.sh <machine> [gateway-ip] [--home dir | --instance dev|prod] [--dry-run] [--node-token-file path] [--refresh-cli|--cli-only|--packs-only]}"
 GATEWAY_IP="${2:-}"
 
 # --instance is the legacy deployment alias. An explicit --home selects the target marker.
@@ -232,6 +245,46 @@ build_node_dependencies() {
   fi
 }
 
+# Pool configs and pack files (project.json, hook scripts, task templates) that
+# hooks read on the node. --packs-only runs this alone: no restart, safe with live runs.
+sync_pack_files() {
+  # Pool configs needed by lib/slot-common.sh (load_slot_vars)
+  echo "[deploy] syncing pool configs..."
+  run "mkdir -p $(printf '%q' "$TARGET_POOL_DIR")"
+  # Release checkouts stage the gateway pool through symlinks. Copy their contents,
+  # never links that could resolve into a stale checkout on the execution node.
+  rsync -aL "$FARMSLOT_POOL_DIR/" "${RSYNC_PREFIX}$TARGET_POOL_DIR/"
+
+  # Project dirs referenced by hooks via {{farmslot_dir}}/projects/<name>/
+  # Syncs project.json, task templates and hook helper dirs used through {{farmslot_dir}}.
+  echo "[deploy] syncing project configs and hook scripts..."
+  for proj_dir in "$FARMSLOT_PROJECTS_DIR"/*/; do
+    proj_name=$(basename "$proj_dir")
+    # project.json
+    [[ -f "$proj_dir/project.json" ]] && {
+      run "mkdir -p $(printf '%q' "$TARGET_PROJECTS_DIR/$proj_name")"
+      rsync -a "$proj_dir/project.json" "${RSYNC_PREFIX}$TARGET_PROJECTS_DIR/$proj_name/project.json"
+    }
+    # setup/ dir
+    [[ -d "$proj_dir/setup" ]] && {
+      run "mkdir -p $(printf '%q' "$TARGET_PROJECTS_DIR/$proj_name/setup")"
+      rsync -a "$proj_dir/setup/" "${RSYNC_PREFIX}$TARGET_PROJECTS_DIR/$proj_name/setup/"
+    }
+    # scripts/ dir
+    [[ -d "$proj_dir/scripts" ]] && {
+      run "mkdir -p $(printf '%q' "$TARGET_PROJECTS_DIR/$proj_name/scripts")"
+      rsync -a "$proj_dir/scripts/" "${RSYNC_PREFIX}$TARGET_PROJECTS_DIR/$proj_name/scripts/"
+    }
+    # Mirror both task-template layouts, including removals from the source.
+    for template_dir in templates checklists; do
+      [[ -d "$proj_dir/$template_dir" ]] || continue
+      run "mkdir -p $(printf '%q' "$TARGET_PROJECTS_DIR/$proj_name/$template_dir")"
+      rsync -a --delete "${proj_dir}${template_dir}/" "${RSYNC_PREFIX}$TARGET_PROJECTS_DIR/$proj_name/$template_dir/"
+    done
+    echo "  → $proj_name"
+  done
+}
+
 # --- Detect local vs remote ---
 LOCAL_HOSTNAME=$(hostname -s)
 IS_LOCAL=false
@@ -247,7 +300,7 @@ else
   export RSYNC_RSH="ssh -o ConnectTimeout=10"
 fi
 
-if [[ "$IS_LOCAL" != true && "$NODE_TOKEN_FROM_FILE" != true && "$CLI_ONLY" != true && "$DRY_RUN" != true ]]; then
+if [[ "$IS_LOCAL" != true && "$NODE_TOKEN_FROM_FILE" != true && "$CLI_ONLY" != true && "$PACKS_ONLY" != true && "$DRY_RUN" != true ]]; then
   echo "[deploy] ERROR: remote deployment requires --node-token-file with a credential bound to $MACHINE" >&2
   exit 1
 fi
@@ -304,6 +357,18 @@ fi
 # The URL the node dials, and so the GW_URL its workers get from the gateway.
 NODE_GATEWAY_URL="ws://${GATEWAY_IP}:${GATEWAY_PORT}"
 echo "[deploy] target=$MACHINE instance=$INSTANCE os=$REMOTE_OS gateway=$NODE_GATEWAY_URL dir=$REMOTE_DIR"
+
+# Pack files only: the running node and its install are left as they are.
+if [[ "$PACKS_ONLY" == true ]]; then
+  if [[ "$DRY_RUN" == true ]]; then
+    printf '%s\n' "$DEPLOY_PATH_VALUES"
+    printf 'sync pool %q -> %q\nsync projects %q -> %q\n' "$FARMSLOT_POOL_DIR" "$TARGET_POOL_DIR" "$FARMSLOT_PROJECTS_DIR" "$TARGET_PROJECTS_DIR"
+    exit 0
+  fi
+  sync_pack_files
+  echo "[deploy] pack files synced; node service left running."
+  exit 0
+fi
 
 NODE_DETECT='
 source ~/.zshrc 2>/dev/null || true
@@ -505,41 +570,7 @@ echo "[deploy] syncing framework scripts..."
 run "mkdir -p $(printf '%q' "$REMOTE_DIR/scripts")"
 rsync -a --exclude='deploy-node.sh' "$REPO_ROOT/scripts/" "${RSYNC_PREFIX}$REMOTE_DIR/scripts/"
 
-# Pool configs needed by lib/slot-common.sh (load_slot_vars)
-echo "[deploy] syncing pool configs..."
-run "mkdir -p $(printf '%q' "$TARGET_POOL_DIR")"
-# Release checkouts stage the gateway pool through symlinks. Copy their contents,
-# never links that could resolve into a stale checkout on the execution node.
-rsync -aL "$FARMSLOT_POOL_DIR/" "${RSYNC_PREFIX}$TARGET_POOL_DIR/"
-
-# Project dirs referenced by hooks via {{farmslot_dir}}/projects/<name>/
-# Syncs project.json, task templates and hook helper dirs used through {{farmslot_dir}}.
-echo "[deploy] syncing project configs and hook scripts..."
-for proj_dir in "$FARMSLOT_PROJECTS_DIR"/*/; do
-  proj_name=$(basename "$proj_dir")
-  # project.json
-  [[ -f "$proj_dir/project.json" ]] && {
-    run "mkdir -p $(printf '%q' "$TARGET_PROJECTS_DIR/$proj_name")"
-    rsync -a "$proj_dir/project.json" "${RSYNC_PREFIX}$TARGET_PROJECTS_DIR/$proj_name/project.json"
-  }
-  # setup/ dir
-  [[ -d "$proj_dir/setup" ]] && {
-    run "mkdir -p $(printf '%q' "$TARGET_PROJECTS_DIR/$proj_name/setup")"
-    rsync -a "$proj_dir/setup/" "${RSYNC_PREFIX}$TARGET_PROJECTS_DIR/$proj_name/setup/"
-  }
-  # scripts/ dir
-  [[ -d "$proj_dir/scripts" ]] && {
-    run "mkdir -p $(printf '%q' "$TARGET_PROJECTS_DIR/$proj_name/scripts")"
-    rsync -a "$proj_dir/scripts/" "${RSYNC_PREFIX}$TARGET_PROJECTS_DIR/$proj_name/scripts/"
-  }
-  # Mirror both task-template layouts, including removals from the source.
-  for template_dir in templates checklists; do
-    [[ -d "$proj_dir/$template_dir" ]] || continue
-    run "mkdir -p $(printf '%q' "$TARGET_PROJECTS_DIR/$proj_name/$template_dir")"
-    rsync -a --delete "${proj_dir}${template_dir}/" "${RSYNC_PREFIX}$TARGET_PROJECTS_DIR/$proj_name/$template_dir/"
-  done
-  echo "  → $proj_name"
-done
+sync_pack_files
 
 # --- Install deps (before protocol rsync — yarn wipes unmanaged packages) ---
 # Bundled capture-helper floor: a deployed lockfile kept 0.2.1, which rejects the
