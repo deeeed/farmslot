@@ -561,6 +561,11 @@ async function withBundleLock<T>(
       }
       return await fn();
     } finally {
+      const heldMs = Date.now() - holder.since;
+      if (heldMs >= SLOW_LOCK_WAIT_MS)
+        console.warn(
+          `[run-bundle] ${holder.label} held ${name} for ${(heldMs / 1000).toFixed(1)}s`,
+        );
       if (bundleLockHolders.get(options.lockfilePath) === holder)
         bundleLockHolders.delete(options.lockfilePath);
       await release();
@@ -2014,9 +2019,8 @@ async function archiveRunBundleMediaLocked(
   let archiveRoot = input.archiveRoot;
   const policy = input.policy ?? DEFAULT_RUN_BUNDLE_RETENTION;
   const now = input.now ?? Date.now();
-  const charged = async () =>
+  const chargedBytesBefore =
     (await chargedStoreBytes(store)) + (await reservedMetadataBytes(store)) + acquisitionSize;
-  const chargedBytesBefore = await charged();
   const pressure =
     chargedBytesBefore >= policy.maxStoreBytes * RUN_BUNDLE_ARCHIVE_HIGH_RATIO ||
     chargedBytesBefore + requiredBytes > policy.maxStoreBytes;
@@ -2054,9 +2058,15 @@ async function archiveRunBundleMediaLocked(
     const availability: RunBundleAvailability = raw
       ? JSON.parse(raw)
       : { revision: 0, prunedPaths: [] };
+    let availabilityBytes = Buffer.byteLength(raw ?? '');
+    let bundleBytes = await recordedBundleBytes(store, digest);
     // A crash after unlink but before accounting leaves an overcharge, never uncharged payload.
-    if (availability.archivedPaths)
-      await recordBundleBytes(store, digest, await physicalBytes(directory));
+    if (availability.archivedPaths) {
+      const measured = await physicalBytes(directory);
+      await recordBundleBytes(store, digest, measured);
+      result.chargedBytesAfter += measured - bundleBytes;
+      bundleBytes = measured;
+    }
     for (const [key, meta] of Object.entries(manifest.entries)) {
       if (!isRunBundleMedia(key)) continue;
       if (
@@ -2130,13 +2140,17 @@ async function archiveRunBundleMediaLocked(
       await atomicJson(availabilityFile, availability);
       await rm(source);
       await syncPath(path.dirname(source));
-      await recordBundleBytes(store, digest, await physicalBytes(directory));
+      bundleBytes -= meta.bytes;
+      await recordBundleBytes(store, digest, bundleBytes);
+      const nextAvailabilityBytes = (await stat(availabilityFile)).size;
+      // This lock owns all metadata changes; apply this move's delta instead of
+      // walking every bundle and availability file again for each archived payload.
+      result.chargedBytesAfter += nextAvailabilityBytes - availabilityBytes - meta.bytes;
+      availabilityBytes = nextAvailabilityBytes;
       result.reclaimedBytes += meta.bytes;
       result.archivedPaths.push(key);
-      result.chargedBytesAfter = await charged();
     }
   }
-  result.chargedBytesAfter = await charged();
   return result;
 }
 
