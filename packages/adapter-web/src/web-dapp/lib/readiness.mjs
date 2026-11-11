@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { ownsProcess, pidAlive, portFree } from './processes.mjs';
+import { usablePython } from './python.mjs';
 import {
   canonicalPath,
   loadWalletFixture,
@@ -123,26 +124,7 @@ export const systemProbe = Object.freeze({
   },
 });
 
-// macOS's /usr/bin/python3 is a stub until the Command Line Tools are
-// installed, and running it opens an install dialog that takes keyboard
-// focus. Use it only when xcode-select reports a developer directory; any
-// other python3 on PATH is a real install.
-export function pythonFor({ found, platform = process.platform, developerDir }) {
-  if (!found) return null;
-  if (platform === 'darwin' && found === '/usr/bin/python3' && !developerDir()) return null;
-  return found;
-}
-
-let pythonChoice;
-function usablePython() {
-  if (pythonChoice === undefined) {
-    pythonChoice = pythonFor({
-      found: run('/usr/bin/which', ['python3']).trim(),
-      developerDir: () => run('/usr/bin/xcode-select', ['-p']).trim(),
-    });
-  }
-  return pythonChoice;
-}
+export { pythonFor } from './python.mjs';
 
 export function environmentValue(env, name) {
   const entry = env.find((item) => item.startsWith(`${name}=`));

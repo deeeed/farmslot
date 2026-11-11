@@ -3,6 +3,8 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync, statSync } from 'node:fs';
 
+import { usablePython } from './python.mjs';
+
 const MAC_PROCESS_INFO = String.raw`
 import ctypes, json, os, struct, sys
 class BsdInfo(ctypes.Structure):
@@ -47,19 +49,26 @@ except (OSError, ValueError):
     print('null')
 `;
 
-export function processInfo(pid) {
+export function processInfo(pid, { platform = process.platform, python = usablePython } = {}) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
-  try {
-    if (process.platform === 'darwin') {
-      return JSON.parse(
-        execFileSync('python3', ['-c', MAC_PROCESS_INFO, String(pid)], {
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'pipe'],
-          timeout: 2000,
-        }),
+  if (platform === 'darwin') {
+    const interpreter = python();
+    if (!interpreter)
+      throw new Error(
+        'macOS process inspection requires a usable python3; install Python or Command Line Tools',
       );
-    }
-    if (process.platform === 'linux') {
+    // Expected absent/denied identities are JSON null from the probe. Any
+    // interpreter failure must propagate, never masquerade as a foreign PID.
+    return JSON.parse(
+      execFileSync(interpreter, ['-c', MAC_PROCESS_INFO, String(pid)], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 2000,
+      }),
+    );
+  }
+  try {
+    if (platform === 'linux') {
       const root = `/proc/${pid}`;
       if (statSync(root).uid !== process.getuid()) return null;
       const before = readFileSync(`${root}/stat`, 'utf8').split(/.*\) /u)[1].split(' ');
@@ -83,12 +92,12 @@ export function processInfo(pid) {
         }
       : null;
   } catch (error) {
-    // Absent or unreadable processes cannot establish ownership. A missing
-    // macOS helper is a configuration error, not a vanished process.
+    // Absent or unreadable processes cannot establish ownership. Native macOS
+    // interpreter failures were deliberately handled outside this recovery.
     if (
       error.status === 1 ||
       ['ESRCH', 'EACCES', 'EPERM'].includes(error.code) ||
-      (process.platform === 'linux' && error.code === 'ENOENT')
+      (platform === 'linux' && error.code === 'ENOENT')
     )
       return null;
     throw error;

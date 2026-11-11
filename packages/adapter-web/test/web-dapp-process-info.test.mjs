@@ -57,11 +57,33 @@ test('foreign and embedded owner tokens never establish ownership', async (t) =>
   assert.equal(processInfo(99999999), null);
 });
 
-test('ordinary browser launches retain Chrome sandbox; a forged blind env outside seatbelt is refused', () => {
+test('macOS inspection rejects an unusable interpreter and never calls the install stub', () => {
+  assert.throws(
+    () => processInfo(process.pid, { platform: 'darwin', python: () => null }),
+    /usable python3/u,
+  );
+  assert.throws(
+    () => processInfo(process.pid, { platform: 'darwin', python: () => '/usr/bin/false' }),
+    /Command failed/u,
+  );
+});
+
+test('ordinary browser mode and seatbelt validation are independent of the test runner sandbox', () => {
   assert.deepEqual(blindBrowserOptions({}), { args: [], direct: false });
   assert.throws(
-    () => blindBrowserOptions({ FARMSLOT_BLIND_SEATBELT: '1' }),
+    () =>
+      blindBrowserOptions(
+        { FARMSLOT_BLIND_SEATBELT: '1' },
+        { platform: 'darwin', sandboxed: () => false },
+      ),
     /active macOS seatbelt/u,
+  );
+  assert.deepEqual(
+    blindBrowserOptions(
+      { FARMSLOT_BLIND_SEATBELT: '1' },
+      { platform: 'darwin', sandboxed: () => true },
+    ),
+    { args: ['--no-sandbox'], direct: true },
   );
   assert.throws(
     () => blindBrowserOptions({ FARMSLOT_BLIND_SEATBELT: 'yes' }),
