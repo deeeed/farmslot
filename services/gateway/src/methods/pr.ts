@@ -49,6 +49,7 @@ import {
   loadProjectConfig,
   loadProjectConfigs,
 } from '../fleet/state.js';
+import { type GitConfigEntries, gitService } from '../host-services/git.js';
 import {
   getBinding,
   invalidateBinding,
@@ -1392,6 +1393,77 @@ async function resolveSlotRepoSlug(slotId: string): Promise<string | null> {
   }
 }
 
+export interface GhRemoteRepo {
+  host: string;
+  owner: string;
+  name: string;
+}
+
+/** HOST/OWNER/REPO from a remote URL: scp-like, ssh:// or http(s)://, on any host. */
+function parseRemoteRepo(url: string): GhRemoteRepo | null {
+  let host: string;
+  let repoPath: string;
+  if (url.includes('://')) {
+    if (!URL.canParse(url)) return null;
+    const parsed = new URL(url);
+    host = parsed.hostname;
+    repoPath = parsed.pathname;
+  } else {
+    const scp = /^(?:[^@/]+@)?([^:/]+):(.+)$/.exec(url);
+    if (!scp) return null;
+    [, host, repoPath] = scp;
+  }
+  const parts = repoPath
+    .replace(/^\/+|\/+$/g, '')
+    .replace(/\.git$/, '')
+    .split('/');
+  if (!host || parts.length !== 2 || !parts[0] || !parts[1]) return null;
+  return { host: host.replace(/^www\./, '').toLowerCase(), owner: parts[0], name: parts[1] };
+}
+
+/**
+ * gh's base repository among a checkout's remotes: the one `gh repo set-default` marked
+ * (`remote.<name>.gh-resolved = base`), else `upstream`, `github`, `origin`, then the rest.
+ */
+export function ghBaseRemote(config: GitConfigEntries): GhRemoteRepo | null {
+  const remotes = new Map<string, { url?: string; resolved?: string }>();
+  for (const [key, value] of config) {
+    const match = /^remote\.(.+)\.(url|gh-resolved)$/.exec(key);
+    if (!match || value === null) continue;
+    const remote = remotes.get(match[1]) ?? {};
+    if (match[2] === 'url') remote.url ??= value;
+    else remote.resolved = value;
+    remotes.set(match[1], remote);
+  }
+  const rank = (name: string) => ['upstream', 'github', 'origin'].indexOf(name) + 1 || 4;
+  const candidates = [...remotes]
+    .flatMap(([name, { url, resolved }]) => {
+      const repo = url ? parseRemoteRepo(url) : null;
+      return repo ? [{ name, resolved, repo }] : [];
+    })
+    .sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name));
+  return (candidates.find((remote) => remote.resolved === 'base') ?? candidates[0])?.repo ?? null;
+}
+
+/** The checkout's remotes, read in process; git reads config the gateway cannot parse itself. */
+export async function resolveGhBaseRemote(repoPath: string): Promise<GhRemoteRepo | null> {
+  const checkout = await gitService.openCheckout(repoPath);
+  const config = checkout ? await gitService.readConfig(checkout) : undefined;
+  if (config) return ghBaseRemote(config);
+  const listed = await gitService.run(['config', '--get-regexp', '^remote\\.'], { cwd: repoPath });
+  // Exit 1 lists nothing: the checkout has no remotes.
+  if (listed.exitCode !== 0) return null;
+  return ghBaseRemote(
+    listed.stdout
+      .split('\n')
+      .filter(Boolean)
+      .map((line): readonly [string, string | null] => {
+        const space = line.indexOf(' ');
+        return space < 0 ? [line, null] : [line.slice(0, space), line.slice(space + 1)];
+      }),
+  );
+}
+
 // Runs `gh pr list` inside the slot's local repo so projects without ci.repo
 // still resolve their PR. Uses git-remote-derived slug so callers can skip
 // a second resolveProjectRepo lookup.
@@ -1405,20 +1477,24 @@ async function findPRViaSlotRepo(
     const repo = resolvedRepo === undefined ? await resolveSlotRepoSlug(slotId) : resolvedRepo;
     if (!repo) throw new Error(`Cannot resolve repository for upstream discovery on ${slotId}`);
     // Passive discovery uses the same concurrency, request sharing and rate-limit owner as PR data.
-    const prs = (await github.prListFields(repo, ['number', 'baseRefName'], {
-      head: branch,
-      limit: 1,
-    })) as Array<{ number?: number; baseRefName?: string }>;
+    const prs = (await github.prListFields(
+      repo,
+      ['number', 'baseRefName'],
+      { head: branch, limit: 1 },
+      { caller: 'pr.list:discovery' },
+    )) as Array<{ number?: number; baseRefName?: string }>;
     const found = prs[0] ?? null;
     return found?.number
       ? { pr: found.number, repo, ...(found.baseRefName ? { baseRef: found.baseRefName } : {}) }
       : null;
   }
-  // Non-collected path: resolve the repository from the git remote instead of spawning gh.
-  const repo = await resolveSlotRepoSlug(slotId);
-  if (!repo) return null;
+  // Non-collected path: the repository `gh pr list` would pick from the checkout's remotes.
+  const repoPath = await findSlotRepoPath(slotId);
+  const remote = repoPath ? await resolveGhBaseRemote(repoPath) : null;
+  if (!remote) return null;
+  const repo = `${remote.owner}/${remote.name}`;
   try {
-    const prs = (await github.prListFields(repo, ['number', 'baseRefName'], {
+    const prs = (await github.prListFields(`${remote.host}/${repo}`, ['number', 'baseRefName'], {
       head: branch,
       limit: 1,
     })) as Array<{ number?: number; baseRefName?: string }>;
