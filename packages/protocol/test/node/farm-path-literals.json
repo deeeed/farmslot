@@ -27,13 +27,13 @@
     "file": "services/gateway/src/evals/blind-git.py",
     "literal": "farmslot-node",
     "reason": "Blind worker security denials cover both legacy node installations, independently of the selected instance, and guard their ancestors against renames.",
-    "count": 2
+    "count": 1
   },
   {
     "file": "services/gateway/src/evals/blind-git.py",
     "literal": "farmslot-node-dev",
     "reason": "Blind worker security denials cover both legacy node installations, independently of the selected instance, and guard their ancestors against renames.",
-    "count": 2
+    "count": 1
   },
   {
     "file": "services/gateway/src/node-support/activation.ts",
@@ -237,6 +237,18 @@
     "file": "packages/cli/src/commands/paths-migrate-plan.ts",
     "literal": "Operator and slot checkouts, including their .farmslot-runtime, stay in place; deploy code separately",
     "reason": "Operator-facing plan explanation of retained slot directories; does not construct a storage path.",
+    "count": 1
+  },
+  {
+    "file": "services/gateway/src/evals/blind-git.py",
+    "literal": ".farmslot",
+    "reason": "Blind worker credential denials include default and inactive CLI homes, regardless of the selected instance; only path metadata is discovered.",
+    "count": 1
+  },
+  {
+    "file": "services/gateway/src/evals/blind-git.py",
+    "literal": ".farmslot*",
+    "reason": "Blind worker credential denials include default and inactive CLI homes, regardless of the selected instance; only path metadata is discovered.",
     "count": 1
   }
 ]

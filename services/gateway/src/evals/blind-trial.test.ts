@@ -49,6 +49,10 @@ let githubAttempt: string | null = null;
 let marker: { exitCode: number; stdout: string; stderr: string } | undefined;
 let onRestore = () => {};
 const slotCommands: string[] = [];
+// Boundary generation needs worker routing only; no live node/resource graph.
+mock.module('../fleet/machine-registry.js', {
+  namedExports: { getNode: () => undefined },
+});
 mock.module('../core/config.js', {
   namedExports: {
     // A localhost pool may name a sibling checkout relative to the farm root.
@@ -266,14 +270,20 @@ test('a completion recovery cannot relabel reviewed output as the first output',
   assert.equal(captures, 1);
 });
 
-test('the worker boundary denies sibling checkouts at the path their own slot resolves', async (t) => {
+test('the worker boundary uses the pool-selected credential home and resolved sibling checkouts', async (t) => {
   await fixture(t);
+  vars.machineEnv = { FARMSLOT_HOME: '/synthetic/selected-profile' };
+  t.after(() => {
+    delete vars.machineEnv;
+  });
   slotCommands.length = 0;
   await prepareBlindTrialGit(run.id);
   const spec = (action: string) => {
     const command = slotCommands.find((entry) => entry.includes(`"action":"${action}"`));
     assert.ok(command, action);
-    return JSON.parse(command.slice(command.indexOf("'") + 1, command.indexOf("' <<")));
+    return JSON.parse(
+      command.slice(command.indexOf("python3 - '") + "python3 - '".length, command.indexOf("' <<")),
+    );
   };
   assert.equal(spec('isolate').siblingRepos, undefined);
   assert.deepEqual(spec('boundary').siblingRepos, ['/farm/slots/sibling']);
@@ -282,6 +292,13 @@ test('the worker boundary denies sibling checkouts at the path their own slot re
     '/farm/.runs',
     '/farm/projects',
   ]);
+  assert.ok(
+    slotCommands.some(
+      (command) =>
+        command.startsWith("export FARMSLOT_HOME='/synthetic/selected-profile' && python3 - ") &&
+        command.includes('"action":"boundary"'),
+    ),
+  );
 });
 
 test('a recorded GitHub access attempt makes the frozen first output invalid', async (t) => {
@@ -358,7 +375,14 @@ test('proof dispatch preserves the sibling restrictions installed during prepare
   await verifyBlindTrialForDispatch(run);
   const boundaries = slotCommands
     .filter((command) => command.includes('"action":"boundary"'))
-    .map((command) => JSON.parse(command.slice(command.indexOf("'") + 1, command.indexOf("' <<"))));
+    .map((command) =>
+      JSON.parse(
+        command.slice(
+          command.indexOf("python3 - '") + "python3 - '".length,
+          command.indexOf("' <<"),
+        ),
+      ),
+    );
   assert.equal(boundaries.length, 2);
   for (const boundary of boundaries) {
     assert.deepEqual(boundary.siblingRepos, ['/farm/slots/sibling']);

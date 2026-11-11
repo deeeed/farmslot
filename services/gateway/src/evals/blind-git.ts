@@ -46,6 +46,18 @@ const GITHUB_TOKEN_NAMES = [
   'GITHUB_ENTERPRISE_TOKEN',
 ];
 
+// Blind task markers write CHECKLIST/SIGNAL files. They need no gateway RPC;
+// the ordinary automation profile can execute outside the worker's seatbelt.
+const GATEWAY_ENV_NAMES = [
+  'FARMSLOT_NODE_TOKEN',
+  'FARMSLOT_GATEWAY_TOKEN',
+  'FARMSLOT_GATEWAY_PASSWORD',
+  'GW_URL',
+  'GATEWAY_URL',
+  'FARMSLOT_GATEWAY',
+  'FARMSLOT_GATEWAY_PROFILE',
+];
+
 /**
  * Start a blind worker without GitHub credentials, under the capsule's sandbox
  * profile (blind-git.py). Its gh, credential-helper and SSH-transport calls
@@ -55,7 +67,7 @@ export function withBlindTrialBoundary(command: string, trial: BlindTrialWorkerB
   const boundary = `${trial.capsule}/boundary`;
   const deny = shSingleQuote(`${boundary}/bin/deny`);
   return [
-    `unset ${GITHUB_TOKEN_NAMES.join(' ')} TMUX TMUX_TMPDIR SSH_AUTH_SOCK SSH_AGENT_PID`,
+    `unset ${[...GITHUB_TOKEN_NAMES, ...GATEWAY_ENV_NAMES].join(' ')} TMUX TMUX_TMPDIR SSH_AUTH_SOCK SSH_AGENT_PID`,
     `export FARMSLOT_CI_BASE_REF=${shSingleQuote(trial.baseSha)}`,
     `export GH_CONFIG_DIR=${shSingleQuote(`${boundary}/gh-config`)}`,
     `export PATH=${shSingleQuote(`${boundary}/bin`)}:"$PATH"`,

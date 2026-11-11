@@ -54,6 +54,7 @@ exit 1
 '''
 SANDBOX = '/usr/bin/sandbox-exec'
 SANDBOX_REQUIRED = 'Blind eval trials need macOS sandbox-exec on the slot node; refusing an unsandboxed worker'
+NODE_INSTALLATIONS = ['farmslot-node', 'farmslot-node-dev']
 
 
 def require_sandbox():
@@ -125,7 +126,7 @@ def worker_access_rules(repo):
     # Deployed task helpers and support bundles must remain executable.
     # Hide the rest of both legacy node installations, including dev-stack and
     # pool/project sources. Preserve a task checkout nested inside either root.
-    for name in ['farmslot-node', 'farmslot-node-dev']:
+    for name in NODE_INSTALLATIONS:
         installation = Path.home() / name
         rules += ['(deny %s (subpath %s))' % (operation, quote(p))
                   for operation in ['file-read*', 'file-write*'] for p in path_aliases(installation)]
@@ -143,8 +144,40 @@ def worker_access_rules(repo):
                   for value in readable for p in path_aliases(value)]
         rules += ['(allow file-read* (literal %s))' % quote(p)
                   for p in path_aliases(installation / 'package.json')]
-    rules += rename_guard_rules([Path.home() / name for name in ['farmslot-node', 'farmslot-node-dev']])
+    rules += rename_guard_rules([Path.home() / name for name in NODE_INSTALLATIONS])
     return rules
+
+
+def gateway_credential_paths():
+    # Discover paths/aliases only, never parse credential contents. Protect both
+    # legacy and layout-2 profiles, including inactive homes and pool overrides.
+    home = Path.home()
+    homes = {home / '.farmslot', *home.glob('.farmslot*')}
+    homes.update(Path(os.path.expanduser(os.environ[name]))
+                 for name in ['FARMSLOT_HOME', 'FARMSLOT_CONFIG_DIR'] if os.environ.get(name))
+    configs = homes | {p / 'config' for p in homes}
+    names = ['gateways.json', 'credentials.json', 'provider-accounts.json',
+             'active-provider-accounts.json', 'node.secret', 'providers.env']
+    protected = [p / name for p in configs for name in names]
+    # Include existing atomic-write/backup files and individually symlinked secrets.
+    protected += [p for root in configs for name in names + ['*.secret']
+                  for p in root.glob(name + '*')]
+    protected += [p / relative for p in homes for relative in ['node-link', 'state/node-link']]
+    installations = {home / name for name in NODE_INSTALLATIONS}
+    installations.update(p / 'code/node' for p in homes)
+    installations.update(Path(os.path.expanduser(os.environ[name]))
+                         for name in ['FARMSLOT_ROOT', 'FARMSLOT_WORKSPACE'] if os.environ.get(name))
+    # Node reconnect reads .env at its install root and every ancestor. CLI/CDP
+    # also load checkout .env.ports. Product runtime files elsewhere stay usable.
+    control_roots = {Path(alias) for p in installations for alias in path_aliases(p)}
+    control_roots |= {parent for p in list(control_roots) for parent in p.parents}
+    protected += [p / name for p in control_roots for name in ['.env', '.env.ports']]
+    protected += [p for root in control_roots for p in root.glob('.env.*')]
+    # Deployed node-link authentication uses the node token in these declarations.
+    for directory, pattern in [('Library/LaunchAgents', '*farmslot*.plist*'),
+                               ('.config/systemd/user', '*farmslot*.service*')]:
+        protected += list((home / directory).glob(pattern))
+    return protected
 
 
 def worker_private_rules(capsule):
@@ -153,12 +186,15 @@ def worker_private_rules(capsule):
     # These denials come after every read exception, including the boundary and
     # node_modules. Resolve symlinks before entering the sandbox as well.
     protected = [Path.home() / '.ssh', Path.home() / '.pi/agent/settings.json',
-                 capsule / 'boundary/sandbox.sb']
+                 capsule / 'boundary/sandbox.sb'] + gateway_credential_paths()
     for value in protected:
         rules += ['(deny %s (subpath %s))' % (operation, quote(p))
                   for operation in ['file-read*', 'file-write*'] for p in path_aliases(value)]
     # The basename remains protected even when a checkout's parent is renamed.
     rules += ['(deny %s (regex #"/blind-git[.](py|ts|js)$"))' % operation
+              for operation in ['file-read*', 'file-write*']]
+    # A later-created profile or a custom CLI home must not bypass the boundary.
+    rules += ['(deny %s (regex #"/(gateways[.]json|credentials[.]json|provider-accounts[.]json|active-provider-accounts[.]json|node[.]secret|providers[.]env)([./]|$)"))' % operation
               for operation in ['file-read*', 'file-write*']]
     rules += rename_guard_rules(protected)
     # Pi loads extensions inside this same seatbelt. File rules cannot distinguish

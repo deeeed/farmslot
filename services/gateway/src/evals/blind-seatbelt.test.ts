@@ -16,6 +16,40 @@ function generatedProfile(t: TestContext) {
   mkdirSync(home);
   mkdirSync(path.join(root, 'credentials'));
   symlinkSync(path.join(root, 'credentials'), path.join(home, '.ssh'));
+  const store = path.join(home, 'farmslot-node/node_modules/fixture-private');
+  mkdirSync(store, { recursive: true });
+  symlinkSync(store, path.join(home, '.farmslot-automation'));
+  const installed = path.join(root, 'external-control/node');
+  mkdirSync(installed, { recursive: true });
+  symlinkSync(installed, path.join(home, 'farmslot-node-dev'));
+  const gatewayFiles = [
+    ...[
+      '.farmslot',
+      '.farmslot-dev/config',
+      '.farmslot-automation',
+      '../selected-home',
+      '../selected-config',
+    ].flatMap((directory) =>
+      [
+        'gateways.json',
+        'credentials.json',
+        'provider-accounts.json',
+        'active-provider-accounts.json',
+        'node.secret',
+        'providers.env',
+      ].map((name) => path.resolve(home, directory, name)),
+    ),
+    path.join(home, '.farmslot-automation/fixture-node-automation.secret'),
+    path.join(home, 'Library/LaunchAgents/com.farmslot.node.dev.plist'),
+    path.join(home, '.config/systemd/user/farmslot-node-dev.service'),
+    path.join(home, 'farmslot-node/.env'),
+    path.join(home, 'farmslot-node-dev/.env.ports'),
+    path.join(root, 'external-control/.env'),
+  ];
+  for (const file of gatewayFiles) {
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, 'synthetic credential only');
+  }
   writeFileSync(path.join(root, 'state.json'), '{"originalIsDirectory":true}');
   const profile = execFileSync(
     'python3',
@@ -25,7 +59,7 @@ function generatedProfile(t: TestContext) {
 import json, os, pathlib, runpy, sys
 from unittest.mock import patch
 blind = runpy.run_path(sys.argv[1], run_name='fixture')
-with patch.dict(os.environ, {'HOME': sys.argv[2] + '/boundary/home', 'TMUX_TMPDIR': '/tmp/fixture-tmux', 'TMUX': '/tmp/fixture-inherited/server,123,0'}, clear=True):
+with patch.dict(os.environ, {'HOME': sys.argv[2] + '/boundary/home', 'FARMSLOT_HOME': sys.argv[2] + '/boundary/selected-home', 'FARMSLOT_CONFIG_DIR': sys.argv[2] + '/boundary/selected-config', 'TMUX_TMPDIR': '/tmp/fixture-tmux', 'TMUX': '/tmp/fixture-inherited/server,123,0'}, clear=True):
     print(blind['sandbox_profile']({'repo': sys.argv[2]}, pathlib.Path(sys.argv[2]), ['/tmp/fixture-discovered/server']))
 `,
       fileURLToPath(new URL('./blind-git.py', import.meta.url)),
@@ -33,8 +67,22 @@ with patch.dict(os.environ, {'HOME': sys.argv[2] + '/boundary/home', 'TMUX_TMPDI
     ],
     { encoding: 'utf8', timeout: 4500 },
   );
-  return { root, home, profile };
+  return { root, home, profile, gatewayFiles };
 }
+
+test('blind profile denies gateway credentials after all runtime exceptions, including resolved aliases and rename guards', (t) => {
+  const { profile, gatewayFiles } = generatedProfile(t);
+  for (const file of gatewayFiles) {
+    for (const alias of new Set([file, realpathSync(file)])) {
+      for (const operation of ['file-read*', 'file-write*']) {
+        const rule = `(deny ${operation} (subpath ${JSON.stringify(alias)}))`;
+        assert.ok(profile.includes(rule), alias);
+        assert.ok(profile.indexOf(rule) > profile.lastIndexOf('(allow file-read*'));
+      }
+      assert.ok(profile.includes(`(literal ${JSON.stringify(path.dirname(alias))})`), alias);
+    }
+  }
+});
 
 test('blind profile denies outbound Unix sockets except the system DNS endpoint', (t) => {
   const { profile } = generatedProfile(t);
@@ -112,7 +160,7 @@ test('blind profile hides boundary and node internals after runtime read excepti
     assert.ok(profile.includes(`(deny file-write* (subpath ${JSON.stringify(file)}))`));
 });
 
-test('blind boundary strips tmux and SSH agent variables, keeps pane identity, opts into outer-seatbelt Chrome', (t) => {
+test('blind boundary strips gateway credentials, routing, tmux and SSH agent variables, keeps tools and pane identity', (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'seatbelt-env-'));
   t.after(() => rmSync(root, { recursive: true }));
   const command = withBlindTrialBoundary('env', { capsule: root, baseSha: 'a'.repeat(40) });
@@ -127,12 +175,29 @@ test('blind boundary strips tmux and SSH agent variables, keeps pane identity, o
       TMUX_PANE: '%42',
       SSH_AUTH_SOCK: '/fixture/agent.sock',
       SSH_AGENT_PID: '123',
+      FARMSLOT_NODE_TOKEN: 'synthetic-node',
+      FARMSLOT_GATEWAY_TOKEN: 'synthetic-admin',
+      FARMSLOT_GATEWAY_PASSWORD: 'synthetic-password',
+      GW_URL: 'ws://127.0.0.1:1',
+      GATEWAY_URL: 'ws://127.0.0.1:1',
+      FARMSLOT_GATEWAY: 'ws://127.0.0.1:1',
+      FARMSLOT_GATEWAY_PROFILE: 'synthetic-profile',
+      FARMSLOT_HOME: '/synthetic/tools-home',
+      FARMSLOT_TASK_DIR: '/synthetic/task',
+      OPENAI_API_KEY: 'synthetic-provider',
     },
     timeout: 4500,
   });
   assert.equal(worker.status, 0, worker.stderr);
   assert.doesNotMatch(worker.stdout, /^TMUX(?:_TMPDIR)?=/mu);
   assert.doesNotMatch(worker.stdout, /^SSH_(?:AUTH_SOCK|AGENT_PID)=/mu);
+  assert.doesNotMatch(
+    worker.stdout,
+    /^(?:FARMSLOT_(?:NODE_TOKEN|GATEWAY(?:_TOKEN|_PASSWORD|_PROFILE)?)|GW_URL|GATEWAY_URL)=/mu,
+  );
+  assert.match(worker.stdout, /^FARMSLOT_HOME=\/synthetic\/tools-home$/mu);
+  assert.match(worker.stdout, /^FARMSLOT_TASK_DIR=\/synthetic\/task$/mu);
+  assert.match(worker.stdout, /^OPENAI_API_KEY=synthetic-provider$/mu);
   assert.match(worker.stdout, /^TMUX_PANE=%42$/mu);
   assert.match(worker.stdout, /^FARMSLOT_BLIND_SEATBELT=1$/mu);
   assert.match(worker.stdout, /^FARMSLOT_CI_BASE_REF=a{40}$/mu);

@@ -1,1 +1,1 @@
-- Blocked SSH and remote-shell service ports, SSH tools and credential access in blind workers, and restricted reads of sandbox and node internals while preserving recipe runtime helpers.
+- Blocked SSH and remote-shell service ports, SSH tools, gateway credentials and inherited control-plane secrets in blind workers while preserving local task markers and recipe runtime helpers.

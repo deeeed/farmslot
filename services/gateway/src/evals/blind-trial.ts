@@ -22,6 +22,7 @@ import {
   type SlotVars,
 } from '../core/config.js';
 import { execLocal, execOnSlot, isLocal } from '../core/exec.js';
+import { withMachineEnv } from '../core/project-env.js';
 import { ownsRunSlotCleanup, readSlotRow } from '../core/state.js';
 import { atomicWriteTextFile } from '../run-engine/diff-artifact-utils.js';
 import { captureRunDiffSnapshot } from '../run-engine/diff-artifacts.js';
@@ -91,10 +92,16 @@ async function executeGit(
   spec: BlindGitSpec,
   signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
-  const result = await execOnSlot(vars, buildBlindGitCommand(action, spec), {
-    timeout: 15 * 60_000,
-    signal,
-  });
+  const command = buildBlindGitCommand(action, spec);
+  // Resolve credential denials under the same pool-selected home as the worker.
+  const result = await execOnSlot(
+    vars,
+    action === 'boundary' ? withMachineEnv(command, vars) : command,
+    {
+      timeout: 15 * 60_000,
+      signal,
+    },
+  );
   if (result.exitCode !== 0)
     throw new Error(
       `Blind trial Git ${action} failed: ${result.stderr.trim() || result.stdout.trim()}`,

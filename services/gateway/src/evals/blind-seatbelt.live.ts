@@ -64,7 +64,7 @@ export function ownCleanup(parent, stop) {
   );
   return root;
 }
-function profile(root: string, launchEnv = env) {
+function profile(root: string, launchEnv: NodeJS.ProcessEnv = env) {
   execFileSync(
     'python3',
     [
@@ -81,7 +81,12 @@ blind['prepare_boundary']({'repo': str(root), 'siblingRepos': [str(root / 'hidde
     { env: launchEnv, encoding: 'utf8', timeout: 10_000 },
   );
 }
-function worker(root: string, command: string, launchEnv = env, timeout = 45_000) {
+function worker(
+  root: string,
+  command: string,
+  launchEnv: NodeJS.ProcessEnv = env,
+  timeout = 45_000,
+) {
   return spawnSync(
     '/bin/sh',
     [
@@ -98,6 +103,214 @@ function worker(root: string, command: string, launchEnv = env, timeout = 45_000
     },
   );
 }
+
+test(
+  'gateway credentials cannot authenticate execution RPCs; task markers remain file-only',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const root = fixture();
+    let stopGateway = async () => {};
+    t.after(async () => {
+      try {
+        await stopGateway();
+      } finally {
+        rmSync(root, { recursive: true });
+      }
+    });
+    const home = path.join(root, 'home');
+    const config = path.join(root, 'boundary/private-config');
+    mkdirSync(home);
+    mkdirSync(config);
+    symlinkSync(config, path.join(home, '.farmslot-automation'));
+    const installed = path.join(root, 'external-control/node');
+    mkdirSync(installed, { recursive: true });
+    symlinkSync(installed, path.join(home, 'farmslot-node-dev'));
+    const launchEnv = {
+      ...env,
+      HOME: home,
+      FARMSLOT_HOME: path.join(home, '.farmslot-automation'),
+      FARMSLOT_CONFIG_DIR: config,
+      FARMSLOT_ROOT: path.join(home, 'farmslot-node'),
+    };
+    const credentialFiles = [
+      ...['.farmslot', '.farmslot-dev/config', '.farmslot-automation'].flatMap((directory) =>
+        [
+          'gateways.json',
+          'credentials.json',
+          'provider-accounts.json',
+          'active-provider-accounts.json',
+          'node.secret',
+          'providers.env',
+        ].map((name) => path.join(home, directory, name)),
+      ),
+      path.join(home, '.farmslot-automation/fixture-node-automation.secret'),
+      path.join(home, 'Library/LaunchAgents/com.farmslot.node.dev.plist'),
+      path.join(home, '.config/systemd/user/farmslot-node-dev.service'),
+      path.join(home, 'farmslot-node/.env'),
+      path.join(home, 'farmslot-node-dev/.env.ports'),
+      path.join(root, 'external-control/.env'),
+    ];
+    for (const file of credentialFiles) {
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, 'synthetic credential only', { mode: 0o600 });
+    }
+    for (const marker of ['CLAUDE.md', 'scripts/dev.sh', 'services/gateway/package.json']) {
+      const file = path.join(launchEnv.FARMSLOT_ROOT, marker);
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, marker.endsWith('.json') ? '{}' : 'synthetic root marker');
+    }
+    // Resolve an individual credential symlink outside the config directory too.
+    const target = path.join(root, 'boundary/opaque-credential');
+    writeFileSync(target, 'synthetic credential only');
+    rmSync(path.join(home, '.farmslot/gateways.json'));
+    symlinkSync(target, path.join(home, '.farmslot/gateways.json'));
+    credentialFiles.push(...credentialFiles.map((file) => realpathSync(file)), target);
+    credentialFiles.push(...credentialFiles.map((file) => file.replace('/private/tmp/', '/tmp/')));
+    for (const name of ['gateways.json', 'credentials.json']) rmSync(path.join(config, name));
+    const serverScript = path.join(root, 'gateway-fixture.mts');
+    writeFileSync(
+      serverScript,
+      `
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { writeFileSync } from 'node:fs';
+import { ownCleanup } from './owned-cleanup.mjs';
+import { testGatewayIdentity, testGatewayProfile } from ${JSON.stringify(new URL('../../../../scripts/lib/test-gateway-identity-source.mts', import.meta.url).href)};
+import { createGatewayAuthRuntime, initializeGatewayIdentity, authenticateGatewayClient } from ${JSON.stringify(new URL('../security/auth.ts', import.meta.url).href)};
+import { createWebSocketServer, disposeServerResourceObservations } from ${JSON.stringify(new URL('../server.ts', import.meta.url).href)};
+const home = process.env.FARMSLOT_HOME!;
+const token = testGatewayIdentity(home);
+const runtime = createGatewayAuthRuntime(process.env);
+initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
+assert.equal((await authenticateGatewayClient({ runtime, connectParams: { clientKind: 'ui', token }, clientIp: '127.0.0.1' })).ok, true);
+const server = createServer();
+const wss = createWebSocketServer(server, runtime);
+ownCleanup(${process.pid}, async () => {
+  for (const client of wss.clients) client.terminate();
+  await new Promise<void>((resolve, reject) => wss.close(error => error ? reject(error) : resolve()));
+  await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  disposeServerResourceObservations();
+});
+await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+const address = server.address();
+assert.ok(address && typeof address !== 'string');
+const url = 'ws://127.0.0.1:' + address.port;
+testGatewayProfile(home, url, token);
+writeFileSync(${JSON.stringify(path.join(root, 'gateway-ready.json'))}, JSON.stringify({ url }));
+`,
+    );
+    // Importing the production server configures tmux options at module load.
+    // Own its socket directory even without the outer test wrapper.
+    const gatewayTmux = path.join(root, 'gateway-tmux');
+    mkdirSync(gatewayTmux);
+    const gateway = spawn(
+      process.execPath,
+      ['--import', import.meta.resolve('tsx'), serverScript],
+      {
+        cwd: root,
+        env: {
+          ...launchEnv,
+          TMUX_TMPDIR: gatewayTmux,
+          NODE_TEST_CONTEXT: '1',
+          TSX_TSCONFIG_PATH: fileURLToPath(new URL('../../tsconfig.json', import.meta.url)),
+          FARMSLOT_POOL_DIR: path.join(root, 'pool'),
+          FARMSLOT_PROJECTS_DIR: path.join(root, 'projects'),
+          FARMSLOT_RUNS_DIR: path.join(root, 'runs'),
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    const exited = once(gateway, 'exit');
+    let stderr = '';
+    gateway.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+    gateway.stdout.resume();
+    stopGateway = async () => {
+      if (gateway.exitCode === null && gateway.signalCode === null) {
+        gateway.kill('SIGTERM');
+        const deadline = Date.now() + 3000;
+        while (gateway.exitCode === null && gateway.signalCode === null && Date.now() < deadline)
+          await delay(25);
+        if (gateway.exitCode === null && gateway.signalCode === null) gateway.kill('SIGKILL');
+      }
+      await exited;
+    };
+    const ready = path.join(root, 'gateway-ready.json');
+    const deadline = Date.now() + 20_000;
+    while (!existsSync(ready) && gateway.exitCode === null && Date.now() < deadline)
+      await delay(25);
+    assert.ok(existsSync(ready), stderr);
+    const { url } = JSON.parse(readFileSync(ready, 'utf8'));
+    const token = JSON.parse(readFileSync(path.join(config, 'gateways.json'), 'utf8')).gateways
+      .proof.secret;
+    profile(root, launchEnv);
+    // A profile materialized after boundary generation still carries no authority.
+    const late = path.join(root, 'late-config');
+    mkdirSync(late);
+    const lateProfile = path.join(late, 'gateways.json');
+    writeFileSync(lateProfile, JSON.stringify({ gateways: { proof: { url, secret: token } } }));
+    credentialFiles.push(lateProfile);
+    const alias = path.join(root, 'worker-profile-alias');
+    symlinkSync(path.join(config, 'gateways.json'), alias);
+    const task = path.join(root, 'task');
+    mkdirSync(task);
+    writeFileSync(path.join(task, 'CHECKLIST.md'), '# Synthetic task\n- [ ] Prove local marking\n');
+    const probe = path.join(root, 'gateway-probe.mjs');
+    writeFileSync(
+      probe,
+      `
+import assert from 'node:assert/strict';
+import { readFileSync, renameSync, linkSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import WebSocket from ${JSON.stringify(import.meta.resolve('ws'))};
+for (const name of ['FARMSLOT_NODE_TOKEN', 'FARMSLOT_GATEWAY_TOKEN', 'FARMSLOT_GATEWAY_PASSWORD', 'GW_URL', 'GATEWAY_URL', 'FARMSLOT_GATEWAY', 'FARMSLOT_GATEWAY_PROFILE']) assert.equal(process.env[name], undefined, name);
+for (const file of ${JSON.stringify([...new Set([...credentialFiles, alias])])}) {
+  assert.throws(() => readFileSync(file), { code: 'EPERM' });
+  if (file !== ${JSON.stringify(alias)}) assert.throws(() => renameSync(file, file + '-moved'), { code: 'EPERM' });
+  assert.throws(() => linkSync(file, file + '-linked'), { code: 'EPERM' });
+}
+for (const directory of ${JSON.stringify([home, config, path.dirname(config), path.join(home, '.farmslot'), path.join(home, '.farmslot-dev'), path.join(home, '.farmslot-automation')])}) assert.throws(() => renameSync(directory, directory + '-moved'), { code: 'EPERM' });
+renameSync(${JSON.stringify(late)}, ${JSON.stringify(late + '-moved')});
+assert.throws(() => readFileSync(${JSON.stringify(late + '-moved/gateways.json')}), { code: 'EPERM' });
+const marked = spawnSync(process.execPath, [${JSON.stringify(fileURLToPath(new URL('../../../../packages/agent-runtime/scripts/mark-checklist-step.cjs', import.meta.url)))}, ${JSON.stringify(task)}, '1'], { encoding: 'utf8' });
+assert.equal(marked.status, 0, marked.stderr);
+assert.ok(readFileSync(${JSON.stringify(path.join(task, 'CHECKLIST.md'))}, 'utf8').includes('- [x] Prove local marking'));
+assert.ok(JSON.parse(readFileSync(${JSON.stringify(path.join(task, 'SIGNAL.json'))}, 'utf8')));
+// The endpoint is deliberately known. Reachability must not grant execution authority.
+const socket = new WebSocket(${JSON.stringify(url)});
+const timeout = setTimeout(() => { socket.terminate(); throw new Error('synthetic gateway RPC timed out'); }, 2500);
+try {
+  await new Promise((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
+  const rpc = (id, method, params) => new Promise((resolve, reject) => {
+    const receive = raw => { const frame = JSON.parse(raw); if (frame.type === 'res' && frame.id === id) { socket.off('message', receive); resolve(frame); } };
+    socket.on('message', receive);
+    socket.send(JSON.stringify({ type: 'req', id, method, params }));
+  });
+  const auth = await rpc('auth', 'auth.connect', { clientKind: 'ui', token: process.env.FARMSLOT_GATEWAY_TOKEN });
+  assert.equal(auth.ok, false);
+  const execution = await rpc('execution', 'tmux.pasteText', { session: 'synthetic', text: 'synthetic no-op', submit: true });
+  assert.equal(execution.ok, false);
+  assert.equal(execution.error.code, 'AUTH_REQUIRED');
+  console.log('synthetic gateway reachable; authentication and tmux.pasteText refused; local marker updated CHECKLIST/SIGNAL');
+} finally { clearTimeout(timeout); socket.terminate(); }
+`,
+    );
+    const result = worker(root, `exec ${q(process.execPath)} ${q(probe)}`, {
+      ...launchEnv,
+      FARMSLOT_NODE_TOKEN: 'synthetic-node',
+      FARMSLOT_GATEWAY_TOKEN: token,
+      FARMSLOT_GATEWAY_PASSWORD: 'synthetic-password',
+      GW_URL: url,
+      GATEWAY_URL: url,
+      FARMSLOT_GATEWAY: url,
+      FARMSLOT_GATEWAY_PROFILE: 'proof',
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    t.diagnostic(result.stdout.trim());
+  },
+);
 
 test(
   'SSH execution, loopback remote shells, credentials and a known agent socket are denied',
