@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { type BigIntStats, existsSync } from 'node:fs';
+import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { DEFAULT_BRANCH, type SlotCheckParams, type SlotCheckResult } from '@farmslot/protocol';
 import { isMissingProjectConfigError } from '@farmslot/slot-config';
 
 import { assertCleanupCurrent } from '../../core/cleanup-scope.js';
+import { slotFilesReadInProcess } from '../../core/exec.js';
 import {
   execOnSlot,
   type ExecResult,
@@ -891,11 +892,80 @@ function md5(content: string): string {
   return createHash('md5').update(content).digest('hex');
 }
 
-/** Hashes and directory tests a fixture check needs, read in one remote command. */
+/** Hashes and directory tests a fixture check needs: one remote command, or in-process reads. */
 interface RemoteFixtureFacts {
   /** File path to md5, or null when the file is missing or unreadable. */
   md5: Map<string, string | null>;
   directories: Map<string, boolean>;
+}
+
+/** Read errors the shell hash prints as an empty line: the file is absent or unreadable. */
+const UNREADABLE_FIXTURE_CODES = new Set(['ENOENT', 'ENOTDIR', 'EISDIR', 'EACCES', 'ELOOP']);
+const LOCAL_FIXTURE_HASH_LIMIT = 4096;
+/** md5 of local fixture files, reused while the file keeps its size, mtime and inode. */
+const localFixtureHashes = new Map<string, { stamp: string; md5: string }>();
+
+function unreadableFixture(error: unknown): boolean {
+  return UNREADABLE_FIXTURE_CODES.has((error as NodeJS.ErrnoException).code ?? '');
+}
+
+async function localFixtureMd5(file: string): Promise<string | null> {
+  let stats: BigIntStats;
+  try {
+    stats = await stat(file, { bigint: true });
+  } catch (error) {
+    if (!unreadableFixture(error)) throw error;
+    localFixtureHashes.delete(file);
+    return null;
+  }
+  // md5sum prints nothing for a directory or other non-file.
+  if (!stats.isFile()) {
+    localFixtureHashes.delete(file);
+    return null;
+  }
+  const stamp = `${stats.size}:${stats.mtimeNs}:${stats.ino}`;
+  const cached = localFixtureHashes.get(file);
+  if (cached?.stamp === stamp) return cached.md5;
+  let content: Buffer;
+  try {
+    content = await readFile(file);
+  } catch (error) {
+    if (!unreadableFixture(error)) throw error;
+    localFixtureHashes.delete(file);
+    return null;
+  }
+  const digest = createHash('md5').update(content).digest('hex');
+  localFixtureHashes.delete(file);
+  if (localFixtureHashes.size >= LOCAL_FIXTURE_HASH_LIMIT) {
+    const oldest = localFixtureHashes.keys().next().value;
+    if (oldest !== undefined) localFixtureHashes.delete(oldest);
+  }
+  // A write between the stat and the read stores newer bytes under the older stamp; the next
+  // check sees the new stamp and hashes again, so a stale digest is never served.
+  localFixtureHashes.set(file, { stamp, md5: digest });
+  return digest;
+}
+
+async function localDirectoryExists(directory: string): Promise<boolean> {
+  try {
+    return (await stat(directory)).isDirectory();
+  } catch (error) {
+    // `test -d` is false for an absent or unreadable path.
+    if (unreadableFixture(error)) return false;
+    throw error;
+  }
+}
+
+/** The same facts as the batched shell read, for a slot whose files this process can read. */
+async function localFixtureFacts(
+  files: string[],
+  directories: string[],
+): Promise<RemoteFixtureFacts> {
+  const md5s = new Map<string, string | null>();
+  for (const file of files) md5s.set(file, await localFixtureMd5(file));
+  const found = new Map<string, boolean>();
+  for (const directory of directories) found.set(directory, await localDirectoryExists(directory));
+  return { md5: md5s, directories: found };
 }
 
 /**
@@ -910,6 +980,18 @@ async function remoteFixtureFacts(
   timeoutMs?: number,
 ): Promise<RemoteFixtureFacts | undefined> {
   if (!files.length && !directories.length) return { md5: new Map(), directories: new Map() };
+  if (slotFilesReadInProcess(vars)) {
+    try {
+      return await localFixtureFacts(files, directories);
+    } catch (error) {
+      // An unexpected file-system error (not an absent or unreadable fixture) leaves the
+      // per-item fallback to report each fixture's own failure, as a failed batch does.
+      console.warn(
+        `[slot-check] local fixture read failed for ${vars.slotId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return undefined;
+    }
+  }
   const hash = (file: string) =>
     `printf '%s\\n' "$( (md5sum ${shellQuote(file)} 2>/dev/null || md5 -q ${shellQuote(file)} 2>/dev/null) | awk '{print $1}')"`;
   const test = (dir: string) => `if test -d ${shellQuote(dir)}; then echo 1; else echo 0; fi`;

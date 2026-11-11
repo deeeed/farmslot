@@ -43,7 +43,10 @@ import {
 } from '../core/index.js';
 import { shellQuote, tmuxSessionCandidates, tmuxShellSnippet } from '../core/tmux.js';
 import { fleetStaleThresholdMs, isFleetCheckedAtStale } from '../fleet/freshness.js';
+import { usesNodeLink } from '../fleet/node-link-policy.js';
 import { loadFleetStatus, loadPoolConfigs } from '../fleet/state.js';
+import { backgroundHost } from '../host-services/background/client.js';
+import { BACKGROUND_OPERATIONS } from '../host-services/background/protocol.js';
 import { slotResourceChanges } from '../resources/slot-run-bindings.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
 import { isRunArchiving } from '../run-lifecycle/archive-fence.js';
@@ -202,7 +205,7 @@ export function fleetMonitorStatus(
 
 // ─── fleetRefresh — native TS port of farm-status.sh collect mode ───
 
-interface SlotCheckResult {
+export interface SlotCheckResult {
   slot: string;
   machine: string;
   platform: string;
@@ -948,30 +951,32 @@ async function checkAllSlots(
   const machinePromises = Array.from(byMachine.entries()).map(
     async ([_machine, machineEntries]) => {
       const pool = machineEntries[0].pool;
-      const local = isLocal(pool.host, pool.machine);
-      // Runs beside each slot's other checks; a slot awaits it only for its agent column.
-      const agents = checkMachineAgents(machineEntries, sshStatus).catch(
-        (error: unknown): Map<string, FleetAgentState> => {
-          console.warn(`[fleet] ${pool.machine}: agent check failed: ${(error as Error).message}`);
-          return new Map();
-        },
-      );
-
-      if (local) {
-        const results = await mapWithConcurrency(
-          machineEntries,
-          LOCAL_SLOT_CHECK_CONCURRENCY,
-          (e) => checkSingleSlot(e.pool, e.slotIdx, sshStatus, agents),
-        );
-        return results;
-      } else {
-        // Remote: run sequentially (node-rpc is per-machine)
-        const results: SlotCheckResult[] = [];
-        for (const e of machineEntries) {
-          results.push(await checkSingleSlot(e.pool, e.slotIdx, sshStatus, agents));
-        }
-        return results;
+      if (isLocal(pool.host, pool.machine)) {
+        // A local machine's probes are this host's processes, so the background process runs
+        // them off the request loop. Node-link machines route commands through this process.
+        if (backgroundHost.active() && !usesNodeLink(pool.machine))
+          return backgroundHost.request(
+            BACKGROUND_OPERATIONS.fleetProbeMachine,
+            { entries: machineEntries, ssh: [[pool.host, sshStatus.get(pool.host) ?? 'fail']] },
+            {
+              // Each slot runs at most three sequential command stages, each under its own
+              // timeout; the deadline only catches a background process that stopped answering.
+              deadlineMs:
+                Math.ceil(machineEntries.length / LOCAL_SLOT_CHECK_CONCURRENCY) *
+                  3 *
+                  SLOT_CHECK_TIMEOUT_MS +
+                10_000,
+            },
+          );
+        return checkLocalMachineSlots(machineEntries, sshStatus);
       }
+      const agents = machineAgents(machineEntries, sshStatus);
+      // Remote: run sequentially (node-rpc is per-machine)
+      const results: SlotCheckResult[] = [];
+      for (const e of machineEntries) {
+        results.push(await checkSingleSlot(e.pool, e.slotIdx, sshStatus, agents));
+      }
+      return results;
     },
   );
 
@@ -985,6 +990,38 @@ async function checkAllSlots(
   allResults.sort((a, b) => (orderMap.get(a.slot) ?? 0) - (orderMap.get(b.slot) ?? 0));
 
   return allResults;
+}
+
+/** Runs beside each slot's other checks; a slot awaits it only for its agent column. */
+function machineAgents(
+  entries: PoolSlotEntry[],
+  sshStatus: Map<string, HostCheck>,
+): Promise<Map<string, FleetAgentState>> {
+  return checkMachineAgents(entries, sshStatus).catch(
+    (error: unknown): Map<string, FleetAgentState> => {
+      console.warn(
+        `[fleet] ${entries[0].pool.machine}: agent check failed: ${(error as Error).message}`,
+      );
+      return new Map();
+    },
+  );
+}
+
+/** One pool slot, addressed by its pool and index. */
+export interface PoolSlotEntry {
+  pool: RawPoolJson;
+  slotIdx: number;
+}
+
+/** Every slot of one local machine, a few at a time (the background `fleet.probeMachine` body). */
+export function checkLocalMachineSlots(
+  entries: PoolSlotEntry[],
+  sshStatus: Map<string, HostCheck>,
+): Promise<SlotCheckResult[]> {
+  const agents = machineAgents(entries, sshStatus);
+  return mapWithConcurrency(entries, LOCAL_SLOT_CHECK_CONCURRENCY, (e) =>
+    checkSingleSlot(e.pool, e.slotIdx, sshStatus, agents),
+  );
 }
 
 // ─── Check a single slot ───
