@@ -25,6 +25,7 @@ import {
   claimSlotStatusIf,
   getProjectField,
   loadProjectVars,
+  nextSlotEpoch,
   readSlotRow,
   resetSlotIf,
   SLOT_PHASE_RELEASING,
@@ -625,7 +626,7 @@ export async function commitSlotClaim(
         slot.idle_devserver_epoch === slot.slot_epoch &&
         Array.isArray(slot.idle_devservers)
       )
-        fields.idle_devserver_epoch = (Number(slot.slot_epoch) || 0) + 1;
+        fields.idle_devserver_epoch = nextSlotEpoch(slot);
       return true;
     },
     fields,
