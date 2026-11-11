@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { readNativeProcArgs } from './native-proc-args.mjs';
 import { ownsProcess, pidAlive, portFree } from './processes.mjs';
 import {
   canonicalPath,
@@ -62,30 +63,6 @@ function run(command, args) {
   }
 }
 
-const PROCARGS_HELPER = `
-import ctypes, ctypes.util, json, struct, sys
-libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
-pid = int(sys.argv[1])
-argmax = ctypes.c_int(0)
-size = ctypes.c_size_t(ctypes.sizeof(argmax))
-if libc.sysctl((ctypes.c_int * 2)(1, 8), 2, ctypes.byref(argmax), ctypes.byref(size), None, 0) != 0:
-    print("null"); sys.exit(0)
-buf = ctypes.create_string_buffer(argmax.value)
-size = ctypes.c_size_t(argmax.value)
-if libc.sysctl((ctypes.c_int * 3)(1, 49, pid), 3, buf, ctypes.byref(size), None, 0) != 0:
-    print("null"); sys.exit(0)
-raw = buf.raw[:size.value]
-argc = struct.unpack("i", raw[:4])[0]
-rest = raw[4:]
-rest = rest[rest.index(b"\\0"):].lstrip(b"\\0")
-parts = rest.split(b"\\0")
-env = []
-for part in parts[argc:]:
-    if not part: break
-    env.append(part.decode("utf-8", "replace"))
-print(json.dumps({"argv": [p.decode("utf-8", "replace") for p in parts[:argc]], "env": env}))
-`;
-
 export const systemProbe = Object.freeze({
   listeners: (port) =>
     run('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'])
@@ -106,43 +83,10 @@ export const systemProbe = Object.freeze({
         .find((line) => line.startsWith('n')) ?? ''
     ).slice(1) || null,
   // { argv: string[], env: string[] } with exact element boundaries, or null.
-  procArgs: (pid) => {
-    const python = usablePython();
-    if (!python) return null;
-    try {
-      return JSON.parse(
-        execFileSync(python, ['-c', PROCARGS_HELPER, String(pid)], {
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'ignore'],
-          timeout: 15000,
-        }).trim(),
-      );
-    } catch {
-      return null;
-    }
-  },
+  procArgs: (pid) => readNativeProcArgs(pid, { includeEnvironment: true }),
 });
 
-// macOS's /usr/bin/python3 is a stub until the Command Line Tools are
-// installed, and running it opens an install dialog that takes keyboard
-// focus. Use it only when xcode-select reports a developer directory; any
-// other python3 on PATH is a real install.
-export function pythonFor({ found, platform = process.platform, developerDir }) {
-  if (!found) return null;
-  if (platform === 'darwin' && found === '/usr/bin/python3' && !developerDir()) return null;
-  return found;
-}
-
-let pythonChoice;
-function usablePython() {
-  if (pythonChoice === undefined) {
-    pythonChoice = pythonFor({
-      found: run('/usr/bin/which', ['python3']).trim(),
-      developerDir: () => run('/usr/bin/xcode-select', ['-p']).trim(),
-    });
-  }
-  return pythonChoice;
-}
+export { pythonFor } from './python.mjs';
 
 export function environmentValue(env, name) {
   const entry = env.find((item) => item.startsWith(`${name}=`));
