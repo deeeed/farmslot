@@ -63,7 +63,7 @@ test('dispatchMatchProject passes a branch containing command substitution as on
 
 test('dispatchMatchProject looks a PR number up with a forced read', async () => {
   const result = await dispatchMatchProject(
-    { ticketOrPr: '42' },
+    { ticketOrPr: '42', flowType: 'review-pr' },
     {
       loadConfigs: async () =>
         [
