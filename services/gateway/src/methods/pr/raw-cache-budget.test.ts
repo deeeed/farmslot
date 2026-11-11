@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, mock, test } from 'node:test';
 
-import type { GitHubService } from '../../integrations/github-client.js';
 import {
   githubQueryBudget,
   GitHubQueryBudgetError,
@@ -10,26 +9,38 @@ import {
 let paused = false;
 let calls = 0;
 const clientModule = await import('../../integrations/github-client.js');
-const budgetFakeGithub: GitHubService = {
+const quotaHeld = () => new GitHubQueryBudgetError(new Date(Date.now() + 60000).toISOString());
+// Every GraphQL-backed read is held while paused; plain REST reads still answer.
+const budgetFakeGithub = {
   ...clientModule.github,
-  graphql: async <T>() => {
+  prChecks: async () => {
     calls++;
-    if (paused) throw new GitHubQueryBudgetError(new Date(Date.now() + 60000).toISOString());
-    return {
-      repository: {
-        pr_0: {
-          state: 'OPEN',
-          mergeable: 'MERGEABLE',
-          mergeStateStatus: 'CLEAN',
-          headRefName: 'main',
-        },
-      },
-    } as unknown as T;
+    if (paused) throw quotaHeld();
+    return [{ name: 'unit', bucket: 'pass', startedAt: '', completedAt: '', state: 'SUCCESS' }];
   },
-  rest: async <T>() => {
+  prView: async () => {
     calls++;
-    if (paused) throw new GitHubQueryBudgetError(new Date(Date.now() + 60000).toISOString());
-    return { data: { repository: null } } as unknown as T;
+    if (paused) throw quotaHeld();
+    return { state: 'OPEN', mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' };
+  },
+  graphql: async (_doc: string, vars: Record<string, unknown>) => {
+    calls++;
+    if (paused) throw quotaHeld();
+    return 'endCursor' in vars
+      ? {
+          repository: {
+            pullRequest: {
+              reviewThreads: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+            },
+          },
+        }
+      : { repository: { pullRequest: {} } };
+  },
+  rest: async (_method: string, path: string) => {
+    calls++;
+    if (path !== 'graphql') return [];
+    if (paused) throw quotaHeld();
+    return { data: { repository: null } };
   },
 };
 mock.module('../../integrations/github-client.js', {

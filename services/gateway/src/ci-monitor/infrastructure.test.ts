@@ -6,26 +6,44 @@ import { after, mock, test } from 'node:test';
 
 import type { BotComment, ProjectCICheckGroup, PRStatus } from '@farmslot/protocol';
 
-import type { GitHubService } from '../integrations/github-client.js';
 import type { PRRawSnapshot } from '../methods/pr/raw-cache.js';
 import type { CIWatchStepContext } from '../run-engine/ci-watch-step.js';
 
 process.env.FARMSLOT_RUNS_DIR = mkdtempSync(path.join(tmpdir(), 'f415-infrastructure-'));
 const githubClient = await import('../integrations/github-client.js');
-const fakeGithub: GitHubService = {
+type ForcedRead = { force?: boolean };
+// The checks read fails; every other per-PR read answers empty, as on a real outage.
+const fakeGithub = {
   ...githubClient.github,
-  graphql: async <T>(_doc: string, _vars: Record<string, unknown>, opts?: { force?: boolean }) => {
+  prChecks: async (_repo: string, _pr: number, _fields: string[], opts?: ForcedRead) => {
+    assert.equal(opts?.force, true);
+    throw new Error('HTTP 503: checks unavailable');
+  },
+  prView: async (_repo: string, _pr: number, _fields: string[], opts?: ForcedRead) => {
     assert.equal(opts?.force, true);
     return {
-      repository: {
-        pr_0: {
-          state: 'OPEN',
-          mergeable: 'MERGEABLE',
-          mergeStateStatus: 'CLEAN',
-          headRefName: 'fix/product',
-        },
-      },
-    } as unknown as T;
+      state: 'OPEN',
+      mergeable: 'MERGEABLE',
+      mergeStateStatus: 'CLEAN',
+      reviewDecision: '',
+      headRefName: 'fix/product',
+    };
+  },
+  rest: async (_method: string, _path: string, opts?: ForcedRead) => {
+    assert.equal(opts?.force, true);
+    return [];
+  },
+  graphql: async (_doc: string, vars: Record<string, unknown>, opts?: ForcedRead) => {
+    assert.equal(opts?.force, true);
+    return 'endCursor' in vars
+      ? {
+          repository: {
+            pullRequest: {
+              reviewThreads: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+            },
+          },
+        }
+      : { repository: { pullRequest: {} } };
   },
 };
 mock.module('../integrations/github-client.js', {

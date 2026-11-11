@@ -1,6 +1,9 @@
 // methods/pr/raw-cache.ts — raw GitHub PR snapshot cache and GraphQL batch prefetch.
 
+import { type CommandOutput, isRecord } from '@farmslot/protocol';
+
 import { github } from '../../integrations/github-client.js';
+import { collectGitHubPages, type GitHubPage } from '../../integrations/github-graphql.js';
 import {
   githubQueryBudget,
   GitHubQueryBudgetError,
@@ -153,7 +156,145 @@ export function isUsablePRRawSnapshot(
   return true;
 }
 
-// swallowGh removed — getPRRawData migrated to github.graphql single-query path.
+function swallowGh(label: string) {
+  return (err: unknown): CommandOutput & { observationError: string } => {
+    // A paused GraphQL read is not empty PR data. Fail the refresh without replacing the cache.
+    if (err instanceof GitHubQueryBudgetError) throw err;
+    const message = err instanceof Error ? err.message : String(err);
+    if (/rate limit|API rate limit exceeded|secondary rate limit/i.test(message)) {
+      console.error(`[gh-rate-limit] ${label}: ${message.slice(0, 400)}`);
+    }
+    return { stdout: '', stderr: message, observationError: `${label}: ${message}` };
+  };
+}
+
+// ─── Per-PR line formats ───
+// Each `*Stdout` keeps the exact lines the former `gh … --jq` projections printed;
+// parsers downstream (projectPRData, matchBotComments, task-writer) read these lines.
+
+/** jq `@tsv` cell: strings escape `\`, tab, newline and CR; null is an empty cell. */
+function tsvCell(value: unknown): string {
+  if (typeof value === 'string') return value.replace(/[\\\t\n\r]/g, (c) => TSV_ESCAPES[c] ?? c);
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return '';
+}
+const TSV_ESCAPES: Record<string, string> = { '\\': '\\\\', '\t': '\\t', '\n': '\\n', '\r': '\\r' };
+
+/** jq `.key`: a missing key or a non-object reads as null. */
+function jqField(value: unknown, key: string): unknown {
+  return isRecord(value) ? (value[key] ?? null) : null;
+}
+
+/** jq `.body[0:300]`: slices by code point; null stays null. */
+function jqBodyPrefix(value: unknown): string | null {
+  return typeof value === 'string' ? Array.from(value).slice(0, 300).join('') : null;
+}
+
+const PR_CHECK_FIELDS = ['name', 'bucket', 'startedAt', 'completedAt', 'state', 'link'];
+
+/** `gh pr checks --json … --jq '.[] | [...] | @tsv'`. */
+function formatPRChecks(checks: Record<string, unknown>[]): string {
+  return joinLinesOrEmpty(
+    checks.map((check) => PR_CHECK_FIELDS.map((field) => tsvCell(check[field])).join('\t')),
+  );
+}
+
+const PR_VIEW_FIELDS = [
+  'state',
+  'mergeable',
+  'mergeStateStatus',
+  'title',
+  'reviewDecision',
+  'headRefName',
+  'createdAt',
+  'updatedAt',
+  'closedAt',
+  'mergedAt',
+  'author',
+];
+const PR_STATE_COLUMNS = [
+  'state',
+  'mergeable',
+  'mergeStateStatus',
+  'reviewDecision',
+  'headRefName',
+  'createdAt',
+  'updatedAt',
+  'closedAt',
+  'mergedAt',
+  'title',
+];
+
+/** `gh pr view --json … --jq '([...] | @tsv), (.author.login // "")'`. */
+function formatPRState(pr: Record<string, unknown>): string {
+  const login = jqField(pr.author, 'login');
+  return `${PR_STATE_COLUMNS.map((column) => tsvCell(pr[column])).join('\t')}\n${typeof login === 'string' ? login : ''}\n`;
+}
+
+/** `gh api --paginate repos/R/issues/N/comments --jq '.[] | {id, author, user_type, body, created_at, html_url}'`. */
+function formatIssueComments(comments: unknown): string {
+  if (!Array.isArray(comments)) throw new Error('GitHub returned no issue comment list');
+  return joinLinesOrEmpty(
+    comments.map((comment) =>
+      JSON.stringify({
+        id: jqField(comment, 'id'),
+        author: jqField(jqField(comment, 'user'), 'login'),
+        user_type: jqField(jqField(comment, 'user'), 'type'),
+        body: jqBodyPrefix(jqField(comment, 'body')),
+        created_at: jqField(comment, 'created_at'),
+        html_url: jqField(comment, 'html_url'),
+      }),
+    ),
+  );
+}
+
+/** Unresolved, current review-thread comments; Bot logins get REST's `[bot]` suffix. */
+function formatReviewThreadComments(threads: GqlReviewThread[]): string {
+  const lines: string[] = [];
+  for (const thread of threads) {
+    if (thread.isResolved !== false || thread.isOutdated !== false) continue;
+    for (const comment of thread.comments?.nodes ?? []) {
+      const login = comment.author?.login ?? null;
+      lines.push(
+        JSON.stringify({
+          id: comment.databaseId ?? null,
+          author: comment.author?.__typename === 'Bot' ? `${login}[bot]` : login,
+          user_type: comment.author?.__typename ?? null,
+          body: jqBodyPrefix(comment.body) ?? '',
+          path: comment.path ?? null,
+          line: comment.line ?? null,
+          created_at: comment.createdAt ?? null,
+          in_reply_to_id: comment.replyTo?.databaseId ?? null,
+          html_url: comment.url ?? null,
+        }),
+      );
+    }
+  }
+  return joinLinesOrEmpty(lines);
+}
+
+/** `gh api repos/R/pulls/N/commits --jq '.[-1].commit.committer.date'` (first page, as before). */
+function formatLatestCommit(commits: unknown): string {
+  if (!Array.isArray(commits)) throw new Error('GitHub returned no commit list');
+  const date = jqField(jqField(jqField(commits.at(-1), 'commit'), 'committer'), 'date');
+  return `${typeof date === 'string' ? date : ''}\n`;
+}
+
+const PR_REVIEW_THREADS_QUERY =
+  'query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { reviewThreads(first: 100, after: $endCursor) { pageInfo { hasNextPage endCursor } nodes { isResolved isOutdated comments(first: 50) { nodes { databaseId author { login __typename } body path line createdAt url replyTo { databaseId } } } } } } } }';
+
+const PR_REVIEW_META_QUERY =
+  'query($owner: String!, $name: String!, $pr: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { latestOpinionatedReviews(first: 20) { nodes { author { login } state submittedAt } } reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } } } } } }';
+
+interface ReviewThreadsData {
+  repository?: { pullRequest?: { reviewThreads?: GitHubPage<GqlReviewThread> } | null } | null;
+}
+
+interface ReviewMetaData {
+  repository?: {
+    pullRequest?: Pick<GqlPullRequestNode, 'latestOpinionatedReviews' | 'reviewRequests'> | null;
+  } | null;
+}
 
 export function buildPRChecksArgs(prNum: number, ghRepo: string): string[] {
   // Plain `gh pr checks` exits with code 8 whenever any check is still pending.
@@ -186,32 +327,91 @@ export async function getPRRawData(
     if (inflight) return inflight;
   }
   const fetchPromise = (async (): Promise<PRRawSnapshot> => {
+    // A malformed slug must fail visibly in the per-repo GraphQL calls, not send
+    // `name=undefined` and have swallowGh turn the rejection into empty data.
     const [owner, name] = ghRepo.split('/');
-    if (!owner || !name) {
-      const snap = { ...EMPTY_PR_RAW_SNAPSHOT, fetchedAt: Date.now() };
-      recordPRRawData(ghRepo, prNum, snap);
-      return snap;
-    }
-    type SingleRepoData = {
-      repository?: Record<string, GqlPullRequestNode | null | undefined> | null;
+    const badSlug = !owner || !name;
+    const [checks, prState, comments, reviewComments, latestCommit, reviewMeta] = await Promise.all(
+      [
+        github
+          .prChecks(ghRepo, prNum, PR_CHECK_FIELDS, { force })
+          .then((rows) => ({ stdout: formatPRChecks(rows), stderr: '' }))
+          .catch(swallowGh(`pr.checks#${prNum}`)),
+        github
+          .prView(ghRepo, prNum, PR_VIEW_FIELDS, { force })
+          .then((pr) => ({ stdout: formatPRState(pr), stderr: '' }))
+          .catch(swallowGh(`pr.view#${prNum}`)),
+        github
+          .rest<unknown>('GET', `repos/${ghRepo}/issues/${prNum}/comments`, {
+            paginate: true,
+            force,
+          })
+          .then((rows) => ({ stdout: formatIssueComments(rows), stderr: '' }))
+          .catch(swallowGh(`issues.comments#${prNum}`)),
+        // Inline review comments via GraphQL — filters out resolved + outdated threads
+        // so ci-watch / pr-complete don't waste cycles re-triaging the same findings the
+        // worker already addressed. REST `/pulls/N/comments` would return every comment
+        // regardless of thread resolution state. Every reviewThreads page is read so PRs
+        // with >100 threads (long review cycles) keep all of them. Output shape matches
+        // the prior REST projection so downstream consumers (matchBotComments,
+        // task-writer.buildPRCompleteContext) need no changes.
+        (async () => {
+          if (badSlug) return { stdout: '', stderr: `malformed repo slug ${ghRepo}` };
+          const threads = await collectGitHubPages<GqlReviewThread>(async (cursor) => {
+            const data = await github.graphql<ReviewThreadsData>(
+              PR_REVIEW_THREADS_QUERY,
+              { owner, name, pr: prNum, endCursor: cursor },
+              { force, caller: 'pr.raw:threads' },
+            );
+            const page = data.repository?.pullRequest?.reviewThreads;
+            if (!page) throw new Error(`GitHub returned no review threads for ${ghRepo}#${prNum}`);
+            return page;
+          });
+          return { stdout: formatReviewThreadComments(threads), stderr: '' };
+        })().catch(swallowGh(`pulls.reviewThreads#${prNum}`)),
+        github
+          .rest<unknown>('GET', `repos/${ghRepo}/pulls/${prNum}/commits`, { force })
+          .then((rows) => ({ stdout: formatLatestCommit(rows), stderr: '' }))
+          .catch(swallowGh(`pulls.commits#${prNum}`)),
+        // Each reviewer's standing verdict plus whom GitHub still waits on; drives
+        // the "fix pushed, awaiting re-review" and "waiting on <team>" signals.
+        // `latestOpinionatedReviews`, not `latestReviews`: a reviewer who
+        // requested changes and then left comments shows COMMENTED in the latter
+        // while their CHANGES_REQUESTED still blocks the PR.
+        (badSlug
+          ? Promise.resolve({ stdout: '', stderr: `malformed repo slug ${ghRepo}` })
+          : github
+              .graphql<ReviewMetaData>(
+                PR_REVIEW_META_QUERY,
+                { owner, name, pr: prNum },
+                { force, caller: 'pr.raw:verdicts' },
+              )
+              .then((data) => ({
+                stdout: formatReviewMeta(data.repository?.pullRequest),
+                stderr: '',
+              }))
+        ).catch(swallowGh(`pr.reviews#${prNum}`)),
+      ],
+    );
+    const [stateLine, author] = prState.stdout.trimEnd().split('\n');
+    const snap: PRRawSnapshot = {
+      author: author || undefined,
+      checksStdout: checks.stdout,
+      checksAvailable: !checks.stderr,
+      prStateStdout: stateLine ?? '',
+      prStateError: stateLine ? undefined : prState.stderr || 'empty response',
+      commentsStdout: comments.stdout,
+      reviewCommentsStdout: reviewComments.stdout,
+      latestCommitStdout: latestCommit.stdout,
+      reviewMetaStdout: reviewMeta.stdout,
+      errors: [checks, prState, comments, reviewComments, latestCommit, reviewMeta].flatMap(
+        (result) =>
+          'observationError' in result && typeof result.observationError === 'string'
+            ? [result.observationError]
+            : [],
+      ),
+      fetchedAt: Date.now(),
     };
-    let prNode: GqlPullRequestNode | null | undefined;
-    let prStateError: string | undefined;
-    try {
-      const data = await github.graphql<SingleRepoData>(
-        buildBatchQuery(1),
-        { owner, name, pr_0: prNum },
-        { force: force ?? false },
-      );
-      prNode = data.repository?.pr_0;
-    } catch (err) {
-      if (err instanceof GitHubQueryBudgetError) throw err;
-      prNode = null;
-      prStateError = err instanceof Error ? err.message : String(err);
-    }
-    const snap = synthesizeRawSnapshotFromGraphQL(prNode);
-    if (prStateError) snap.prStateError = prStateError;
-    if (prNode && isPRBatchTruncated(prNode)) snap.partial = true;
     recordPRRawData(ghRepo, prNum, snap);
     return snap;
   })();
@@ -482,6 +682,34 @@ function statusContextBucket(node: GqlStatusContext): string {
   }
 }
 
+/** reviewMetaStdout: the per-PR verdicts query and the batch query share this JSON-per-line shape. */
+function formatReviewMeta(
+  node: Pick<GqlPullRequestNode, 'latestOpinionatedReviews' | 'reviewRequests'> | null | undefined,
+): string {
+  const reviewMetaLines: string[] = [];
+  for (const review of node?.latestOpinionatedReviews?.nodes ?? [])
+    reviewMetaLines.push(
+      JSON.stringify({
+        t: 'review',
+        author: review.author?.login ?? '',
+        state: review.state ?? '',
+        submittedAt: review.submittedAt ?? null,
+      }),
+    );
+  for (const request of node?.reviewRequests?.nodes ?? []) {
+    const who = request.requestedReviewer;
+    if (!who) continue;
+    reviewMetaLines.push(
+      JSON.stringify({
+        t: 'request',
+        kind: who.__typename === 'Team' ? 'team' : 'user',
+        name: who.slug ?? who.login ?? '',
+      }),
+    );
+  }
+  return joinLinesOrEmpty(reviewMetaLines);
+}
+
 export function synthesizeRawSnapshotFromGraphQL(
   node: GqlPullRequestNode | null | undefined,
 ): PRRawSnapshot {
@@ -591,29 +819,7 @@ export function synthesizeRawSnapshotFromGraphQL(
   const lastDate = commitNodes[0]?.commit?.committedDate ?? '';
   const latestCommitStdout = lastDate ? lastDate + '\n' : '';
 
-  // reviewMetaStdout: same JSON-per-line shape as the REST `--jq` projection.
-  const reviewMetaLines: string[] = [];
-  for (const review of node.latestOpinionatedReviews?.nodes ?? [])
-    reviewMetaLines.push(
-      JSON.stringify({
-        t: 'review',
-        author: review.author?.login ?? '',
-        state: review.state ?? '',
-        submittedAt: review.submittedAt ?? null,
-      }),
-    );
-  for (const request of node.reviewRequests?.nodes ?? []) {
-    const who = request.requestedReviewer;
-    if (!who) continue;
-    reviewMetaLines.push(
-      JSON.stringify({
-        t: 'request',
-        kind: who.__typename === 'Team' ? 'team' : 'user',
-        name: who.slug ?? who.login ?? '',
-      }),
-    );
-  }
-  const reviewMetaStdout = joinLinesOrEmpty(reviewMetaLines);
+  const reviewMetaStdout = formatReviewMeta(node);
 
   return {
     author: node.author?.login || undefined,

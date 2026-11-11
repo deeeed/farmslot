@@ -19,7 +19,7 @@ import {
 
 import { GatewayMethodError } from '../../core/method-error.js';
 import * as fleet from '../../fleet/state.js';
-import type { GitHubService } from '../../integrations/github-client.js';
+import type { PRListFilters } from '../../integrations/github-client.js';
 import * as githubClient from '../../integrations/github-client.js';
 import { readWithResourceState, resourceRevisions } from '../../resources/revisions.js';
 import { readRunnerModelCatalog } from '../../runners/model-catalog.js';
@@ -74,9 +74,13 @@ const project = {
   ci: { repo: 'org/app', checkGroups: [], botPatterns: [] },
 };
 
-const fakeGithub: GitHubService = {
+const fakeGithub = {
   ...githubClient.github,
-  prView: async (_repo, number) => {
+  prChecks: async (_repo: string, number: number) => {
+    calls.push(['pr', 'checks', String(number)]);
+    return [];
+  },
+  prView: async (_repo: string, number: number) => {
     calls.push(['pr', 'view', String(number)]);
     if (github.prView === 'gone') throw new Error('HTTP 404: Not Found (https://api.github.com)');
     if (github.prView === 'down') throw new Error('connect ECONNREFUSED /tmp/gh.sock');
@@ -88,11 +92,13 @@ const fakeGithub: GitHubService = {
       headRefName: 'feat/a',
       createdAt: '2026-01-01',
       updatedAt: '2026-01-02',
+      closedAt: null,
+      mergedAt: null,
       title: github.title,
-      author: 'author',
+      author: { login: 'author' },
     };
   },
-  prListFields: async (_repo, _fields, params) => {
+  prListFields: async (_repo: string, _fields: string[], params: PRListFilters) => {
     calls.push(['pr', 'list', '--head', params.head ?? '']);
     if (github.discoveryDown) throw new Error('gh: connection reset');
     const found = params.head ? github.branches[params.head] : undefined;
@@ -107,43 +113,31 @@ const fakeGithub: GitHubService = {
         ]
       : [];
   },
-  graphql: async <T>(_doc: string, vars: Record<string, string | number | null>) => {
-    if ('pr_0' in vars) {
-      const prNum = vars.pr_0 as number;
-      calls.push(['pr', 'view', String(prNum)]);
-      if (github.prView === 'gone') throw new Error('HTTP 404: Not Found (https://api.github.com)');
-      if (github.prView === 'down') throw new Error('connect ECONNREFUSED /tmp/gh.sock');
-      const [, found] = Object.entries(github.branches).find(([, e]) => e.pr === prNum) ?? [];
-      return {
-        repository: {
-          pr_0: {
-            state: 'OPEN',
-            mergeable: 'MERGEABLE',
-            mergeStateStatus: 'CLEAN',
-            reviewDecision: 'APPROVED',
-            headRefName: 'feat/a',
-            createdAt: '2026-01-01',
-            updatedAt: '2026-01-02',
-            baseRefName: found?.baseRef ?? 'main',
-            title: github.title,
-          },
-        },
-      } as unknown as T;
-    }
-    if (_doc.includes('mutation')) {
+  graphql: async (doc: string, vars: Record<string, string | number | null>) => {
+    if (doc.includes('mutation')) {
       calls.push(['api', 'graphql', 'mutation']);
-      return {} as unknown as T;
+      return {};
     }
     calls.push(['api', 'graphql']);
+    // The pr.status thread and verdict reads answer empty; the review-threads method reads the threads.
+    if ('endCursor' in vars)
+      return {
+        repository: {
+          pullRequest: {
+            reviewThreads: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+          },
+        },
+      };
+    if (!doc.includes('updatedAt')) return { repository: { pullRequest: {} } };
     return {
       repository: {
         pullRequest: github.threadsMissing ? null : { reviewThreads: { nodes: github.threads } },
       },
-    } as unknown as T;
+    };
   },
-  rest: async <T>(_method: string, path: string) => {
+  rest: async (_method: string, path: string) => {
     calls.push(['api', path]);
-    if (path === 'user') return { login: 'reviewer' } as unknown as T;
+    if (path === 'user') return { login: 'reviewer' };
     const pull = /^repos\/org\/app\/pulls\/(\d+)$/.exec(path);
     if (pull) {
       const prNum = Number(pull[1]);
@@ -153,9 +147,10 @@ const fakeGithub: GitHubService = {
         state: 'open',
         head: { ref: headBranch ?? '' },
         base: { ref: found?.baseRef ?? '' },
-      } as unknown as T;
+      };
     }
-    return {} as unknown as T;
+    // Issue comments and the commit list answer empty.
+    return [];
   },
 };
 mock.module('../../integrations/github-client.js', {
