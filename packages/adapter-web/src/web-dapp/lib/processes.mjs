@@ -10,6 +10,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 
+import { processInfo } from './process-info.mjs';
 import { webDappPolicy, webDappRuntimeDir } from './runtime.mjs';
 
 export function pidAlive(pid) {
@@ -37,19 +38,8 @@ function readPid(file) {
   return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
-function psField(pid, field) {
-  try {
-    return execFileSync('ps', ['-ww', '-o', `${field}=`, '-p', String(pid)], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-  } catch {
-    return '';
-  }
-}
-
 export function processCommand(pid) {
-  return pidAlive(pid) ? psField(pid, 'command') : '';
+  return processInfo(pid)?.argv.join(' ') ?? '';
 }
 
 // Each process the slot starts carries `--mm-harness-owner=<kind>-<id>`, where
@@ -66,9 +56,17 @@ export function ownerMarker(kind, runtimeDir) {
   return `${OWNER_FLAG}=${kind}-${id}`;
 }
 
-export function ownsProcess(kind, pid, runtimeDir, command = processCommand(pid)) {
-  if (!command) return false;
+export function ownsProcess(kind, pid, runtimeDir, command) {
+  if (command === undefined) return ownedProcessIdentity(kind, pid, runtimeDir) !== null;
   return command.split(/\s+/u).includes(ownerMarker(kind, runtimeDir));
+}
+
+// Carry this authorization into termination. A later snapshot cannot authorize
+// a recycled PID, even if the replacement happens to carry the same marker.
+export function ownedProcessIdentity(kind, pid, runtimeDir) {
+  const identity = processInfo(pid);
+  const marker = ownerMarker(kind, runtimeDir);
+  return identity?.argv.includes(marker) ? { ...identity, pid, marker } : null;
 }
 
 export function portFree(port) {
@@ -84,23 +82,37 @@ export function portFree(port) {
 // Browsers and hosts are spawned detached, each leading its own process group.
 // When the pid leads its group the whole group is signalled and waited for,
 // so children that outlive the leader (renderers, a child ignoring SIGTERM)
-// are killed too; otherwise only the pid.
-export async function terminate(pid, graceMs = 8000) {
-  if (!pidAlive(pid)) return false;
-  const group = Number(psField(pid, 'pgid')) === pid;
+// are killed too; otherwise only the pid. The caller must pass the snapshot
+// returned by ownedProcessIdentity, never reacquire identity inside terminate.
+export async function terminate(pid, graceMs = 8000, identity) {
+  if (!identity || identity.pid !== pid || !identity.marker) return false;
+  if (identity.state === 5 || String(identity.state).startsWith('Z')) return false;
+  const group = identity.pgid === pid;
+  if (!pidAlive(pid) && (!group || !groupAlive(pid))) return true;
   const alive = () => (group ? groupAlive(pid) : pidAlive(pid));
   const signal = (name) => {
+    const current = processInfo(pid);
+    // A group can outlive its leader, but a reused leader PID is never ours.
+    if (current) {
+      if (
+        current.startedAt !== identity.startedAt ||
+        current.pgid !== identity.pgid ||
+        !current.argv.includes(identity.marker)
+      )
+        return false;
+    } else if (pidAlive(pid)) return false;
     try {
       process.kill(group ? -pid : pid, name);
-    } catch {
-      // Already gone.
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error;
     }
+    return true;
   };
-  signal('SIGTERM');
+  if (!signal('SIGTERM')) return false;
   const deadline = Date.now() + graceMs;
   while (alive() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 200));
   if (alive()) {
-    signal('SIGKILL');
+    if (!signal('SIGKILL')) return false;
     const killDeadline = Date.now() + 5000;
     while (alive() && Date.now() < killDeadline)
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -119,13 +131,13 @@ export async function stopConsoleCollector(target, { log = () => {}, runtimeDir 
   const pidFile = path.join(runtime, 'console-tail.pid');
   const pid = readPid(pidFile);
   if (!pid) return { stopped: null };
-  if (ownsProcess('console-collector', pid, runtime)) {
-    await terminate(pid, 3000);
+  const identity = ownedProcessIdentity('console-collector', pid, runtime);
+  if (identity && (await terminate(pid, 3000, identity))) {
     rmSync(pidFile, { force: true });
     log(`stopped console collector pid ${pid}`);
     return { stopped: pid };
   }
-  if (pidAlive(pid)) {
+  if (identity || pidAlive(pid)) {
     log(`console collector pid ${pid} is alive but is not this slot's collector; left it alone`);
     return { stopped: null, foreign: pid };
   }
@@ -180,13 +192,12 @@ export async function stopWebDappBrowser(target, { cdpPort, log = () => {}, runt
   for (const name of ['wallet-host', 'browser']) {
     const pidFile = path.join(runtime, `${name}.pid`);
     const pid = readPid(pidFile);
-    if (pid && ownsProcess(name, pid, runtime)) {
-      if (await terminate(pid)) {
-        stopped.push({ name, pid });
-        log(`stopped ${name} pid ${pid}`);
-      }
+    const identity = pid && ownedProcessIdentity(name, pid, runtime);
+    if (identity && (await terminate(pid, 8000, identity))) {
+      stopped.push({ name, pid });
+      log(`stopped ${name} pid ${pid}`);
       rmSync(pidFile, { force: true });
-    } else if (pid && pidAlive(pid)) {
+    } else if (pid && (identity || pidAlive(pid))) {
       foreign.push({ name, pid });
       log(
         `${name} pid ${pid} is alive but is not this slot's ${name}; left it and its pid file alone`,
@@ -196,8 +207,10 @@ export async function stopWebDappBrowser(target, { cdpPort, log = () => {}, runt
       rmSync(pidFile, { force: true });
     }
   }
-  rmSync(path.join(runtime, 'wallet-host.ready'), { force: true });
-  rmSync(path.join(runtime, 'browser.json'), { force: true });
+  if (foreign.length === 0) {
+    rmSync(path.join(runtime, 'wallet-host.ready'), { force: true });
+    rmSync(path.join(runtime, 'browser.json'), { force: true });
+  }
   let free = null;
   if (cdpPort) {
     const deadline = Date.now() + 10000;
