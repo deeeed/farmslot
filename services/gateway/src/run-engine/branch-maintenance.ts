@@ -129,8 +129,15 @@ export function retainedMaintenanceStepOutputs(
   stepName: string,
   outputs: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
-  if (stepName === PipelineSteps.MONITOR && outputs?.reviewOutputRepair)
-    return { reviewOutputRepair: outputs.reviewOutputRepair };
+  if (stepName === PipelineSteps.MONITOR) {
+    const retained = {
+      ...(outputs?.reviewOutputRepair ? { reviewOutputRepair: outputs.reviewOutputRepair } : {}),
+      ...(outputs?.reviewArtifactReplay === true ? { reviewArtifactReplay: true } : {}),
+    };
+    return Object.keys(retained).length ? retained : undefined;
+  }
+  if (stepName === PipelineSteps.DISPATCH && outputs?.retainedReviewResume)
+    return { retainedReviewResume: outputs.retainedReviewResume };
   if (stepName !== PipelineSteps.WRITE_TASK || !outputs?.branchMaintenanceOperation)
     return undefined;
   return {

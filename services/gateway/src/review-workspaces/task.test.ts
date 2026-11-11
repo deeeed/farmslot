@@ -23,7 +23,6 @@ import {
   materializeReviewWorkspaceTask,
   readReviewWorkspaceCompletion,
   readReviewWorkspaceSignal,
-  resolveStaticReviewLineComments,
 } from './task.js';
 
 const exec = promisify(execFile);
@@ -190,6 +189,13 @@ test('materialization ignores an execution-only pool and preserves frozen guidan
     assert.match(task, /CI results and CI receipts/);
     assert.match(task, /unverified/);
     assert.doesNotMatch(task, /Put probe tests|reviewer_recipe_replay\(/);
+    assert.match(task, /Write each finding once in review-result.json issues/);
+    assert.match(task, /full problem, evidence and concrete ask in description/);
+    assert.match(task, /gateway derives inline comments/);
+    const contract = JSON.parse(
+      await readFile(path.join(f.task, 'inputs/worker-terminal-contract.json'), 'utf8'),
+    );
+    assert(!contract.commands.complete.artifacts.includes('artifacts/line-comments.json'));
     assert(task.includes('minor requires COMMENT'));
     assert(task.includes('more than 3 nits requires COMMENT'));
     assert(task.includes('out-of-diff notes in the review body'));
@@ -346,6 +352,19 @@ test('the copied shared marker works offline; completion rejects wrong SHA, stal
     }
     await writeFile(
       path.join(f.task, 'artifacts/review-result.json'),
+      JSON.stringify({ ...result, reportSha256: 'wrong-digest' }),
+    );
+    await assert.rejects(
+      readReviewWorkspaceCompletion(f.run.id, f.deps),
+      (error: unknown) =>
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'REVIEW_OUTPUT_INVALID' &&
+        error.message.includes(digest(report)) &&
+        error.message.includes('wrong-digest'),
+    );
+    await writeFile(
+      path.join(f.task, 'artifacts/review-result.json'),
       JSON.stringify({ ...result, verdict: 'issues', issues: [] }),
     );
     await assert.rejects(readReviewWorkspaceCompletion(f.run.id, f.deps), {
@@ -380,9 +399,28 @@ test('the copied shared marker works offline; completion rejects wrong SHA, stal
       path.join(f.task, 'artifacts/review-result.json'),
       JSON.stringify(findingsResult),
     );
+    await writeFile(
+      path.join(f.task, 'artifacts/line-comments.json'),
+      JSON.stringify({
+        comments: [
+          {
+            path: finding.file,
+            line: finding.line,
+            body: 'A richer paraphrase of this finding.',
+            severity: finding.severity,
+          },
+        ],
+      }),
+    );
     const bodyFallback = await readReviewWorkspaceCompletion(f.run.id, f.deps);
-    assert(bodyFallback?.result?.reviewMd.includes(finding.description));
-    assert.deepEqual(bodyFallback?.result?.lineComments, []);
+    assert.deepEqual(bodyFallback?.result?.lineComments, [
+      {
+        path: finding.file,
+        line: finding.line,
+        body: finding.description,
+        severity: finding.severity,
+      },
+    ]);
     await writeFile(
       path.join(f.task, 'artifacts/line-comments.json'),
       JSON.stringify({
@@ -528,41 +566,6 @@ test('a blocked marker retains its reason only for the accepted reviewer attempt
       /accepted worker attempt/,
     );
   });
-});
-
-test('static inline comments retain canonical severities and permit body-only findings', () => {
-  const comments = Array.from({ length: 4 }, (_, index) => ({
-    path: 'src/file.ts',
-    line: index + 1,
-    body: `Optional improvement ${index + 1}`,
-    severity: ['blocker', 'major', 'minor', 'nit'][index],
-  }));
-  const original = structuredClone(comments);
-  assert.deepEqual(resolveStaticReviewLineComments('pass', [], comments), original);
-  assert.deepEqual(comments, original);
-
-  for (const invalid of [
-    { severity: 'suggestion' },
-    { severity: 'must_fix' },
-    { severity: 'unknown' },
-    { severity: ['nit'] },
-    { path: '../outside.ts' },
-    { path: '/outside.ts' },
-    { line: 0 },
-    { body: '' },
-  ]) {
-    assert.throws(
-      () => resolveStaticReviewLineComments('pass', [], [{ ...comments[0], ...invalid }]),
-      /line comments disagree/,
-    );
-  }
-  const blocking = [{ ...comments[0], severity: 'major' }];
-  assert.deepEqual(resolveStaticReviewLineComments('issues', blocking, blocking), blocking);
-  assert.deepEqual(resolveStaticReviewLineComments('issues', blocking, []), []);
-  assert.throws(
-    () => resolveStaticReviewLineComments('issues', blocking, comments),
-    /line comments disagree/,
-  );
 });
 
 test('retained task reads ignore closeout receipts while preserving immutable source identity', async () => {

@@ -1,19 +1,22 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
+import * as promiseTimers from 'node:timers/promises';
 
 import {
   NATIVE_WORKER_CANCEL,
   NATIVE_WORKER_ENSURE,
   NATIVE_WORKER_READ,
+  NATIVE_WORKER_RESUME,
   NATIVE_WORKER_SEND,
   NATIVE_WORKER_STATE,
 } from '@farmslot/agent-runtime/native';
-import type {
-  AgentContext,
-  NativeSessionInfo,
-  NativeSessionSendResult,
-  NativeWorkerSessionBinding,
-  Run,
+import {
+  type AgentContext,
+  Methods,
+  type NativeSessionInfo,
+  type NativeSessionSendResult,
+  type NativeWorkerSessionBinding,
+  type Run,
 } from '@farmslot/protocol';
 import type { RawPoolJson } from '@farmslot/slot-config';
 
@@ -24,7 +27,19 @@ import { NativeWorkerOperationUncertainError } from './worker-error.js';
 await import('../../runtime/mock-pty.test-support.js');
 const config = await import('../../core/config.js');
 // Loaded before the core mocks below; workspace review uses the real derivation.
-const { modelQuestionsForRun } = await import('../launch-command.js');
+const launchCommands = await import('../launch-command.js');
+const { modelQuestionsForRun } = launchCommands;
+let advanceDelay: ((ms: number) => void) | undefined;
+mock.module('node:timers/promises', {
+  namedExports: {
+    ...promiseTimers,
+    setTimeout: (...args: Parameters<typeof promiseTimers.setTimeout>) => {
+      if (!advanceDelay) return promiseTimers.setTimeout(...args);
+      advanceDelay(args[0] ?? 1);
+      return Promise.resolve();
+    },
+  },
+});
 const configuredPool = {
   machine: 'host',
   os: 'macos',
@@ -57,8 +72,10 @@ let metricWrites = 0;
 let profileReads = 0;
 
 // Keep the actual transport error/classifier; its core dependency is not part of these lifecycle tests.
+const core = await import('../../core/index.js');
 mock.module('../../core/index.js', {
   namedExports: {
+    ...core,
     isLocal: () => true,
     readSlotField: async () => {
       throw new Error('No slot exists in workspace tests');
@@ -68,8 +85,10 @@ mock.module('../../core/index.js', {
     },
   },
 });
+const contexts = await import('../../agents/contexts.js');
 mock.module('../../agents/contexts.js', {
   namedExports: {
+    ...contexts,
     upsertAgentContext: async (
       _runId: string,
       role: AgentContext['role'],
@@ -107,8 +126,10 @@ mock.module('../../agents/contexts.js', {
       value.agentContexts?.find((context) => context.id === (selection.contextId ?? 'review')),
   },
 });
+const store = await import('../../runs/store.js');
 mock.module('../../runs/store.js', {
   namedExports: {
+    ...store,
     getRun: () => run,
     updateRun: (_id: string, patch: Partial<Run>) => {
       if (patch.metrics) metricWrites++;
@@ -121,8 +142,10 @@ mock.module('../../runs/store.js', {
     },
   },
 });
+const ownership = await import('../../security/native-worker-owner.js');
 mock.module('../../security/native-worker-owner.js', {
   namedExports: {
+    ...ownership,
     assertNativeRunOwner: (value: Run) => {
       assert.equal(value.nativeOwnerPrincipalId, 'owner');
     },
@@ -130,6 +153,7 @@ mock.module('../../security/native-worker-owner.js', {
 });
 mock.module('../launch-command.js', {
   namedExports: {
+    ...launchCommands,
     modelQuestionsForRun,
     machineRunnerPath: (runner: string, machine?: RawPoolJson) => {
       executableSelections.push({ runner, machine });
@@ -139,10 +163,14 @@ mock.module('../launch-command.js', {
     taskRecipeTrustEnvironment: () => ({ set: {}, unset: [] }),
   },
 });
-mock.module('../registry.js', { namedExports: { runnerSupportsEffort: () => true } });
-mock.module('./manager.js', { namedExports: { validateNativeRunner: () => {} } });
+const registry = await import('../registry.js');
+mock.module('../registry.js', { namedExports: { ...registry, runnerSupportsEffort: () => true } });
+const manager = await import('./manager.js');
+mock.module('./manager.js', { namedExports: { ...manager, validateNativeRunner: () => {} } });
+const profile = await import('./worker-profile.js');
 mock.module('./worker-profile.js', {
   namedExports: {
+    ...profile,
     inspectNativeWorkerProfile: async () => {
       profileReads++;
       profileFault?.();
@@ -152,8 +180,10 @@ mock.module('./worker-profile.js', {
       (!binding.profile || info.accountContextId === binding.profile.accountContextId),
   },
 });
+const nativeNode = await import('./node.js');
 mock.module('./node.js', {
   namedExports: {
+    ...nativeNode,
     routeNativeExecution: async (
       owner: string,
       method: string,
@@ -201,7 +231,21 @@ mock.module('./node.js', {
         assert.equal(host.workerLeaseId, params.leaseId);
         if (createdSessionPatch) Object.assign(host, createdSessionPatch);
         result = { session: structuredClone(host) };
-      } else if (method === NATIVE_WORKER_READ) {
+      } else if (method === NATIVE_WORKER_RESUME) {
+        assert(host);
+        assert.equal(params.resumeSessionId, host.nativeSessionId);
+        assert.equal(params.leaseId, host.workerLeaseId);
+        if (host.generation === params.generation) {
+          assert.equal(host.processStopped, true);
+          host = {
+            ...host,
+            generation: 'resumed-generation',
+            state: 'idle',
+            processStopped: false,
+          };
+        } else assert.equal(host.generation, 'resumed-generation');
+        result = { session: structuredClone(host) };
+      } else if (method === NATIVE_WORKER_READ || method === Methods.NATIVE_SESSION_READ) {
         assert(host);
         result = {
           session: structuredClone(host),
@@ -224,9 +268,12 @@ mock.module('./node.js', {
         }
         result = commands.get(commandId);
       } else if (method === NATIVE_WORKER_CANCEL) {
-        if (host) Object.assign(host, { state: 'closed', processStopped: true });
+        const generationChanged = host && params.generation !== host.generation;
+        if (host && !generationChanged)
+          Object.assign(host, { state: 'closed', processStopped: true });
         result = {
-          cancelled: true,
+          cancelled: !generationChanged,
+          ...(generationChanged ? { reason: 'generation-changed' } : {}),
           sessionId: params.sessionId,
           leaseId: params.leaseId,
           ...(host ? { generation: host.generation, session: structuredClone(host) } : {}),
@@ -240,6 +287,8 @@ mock.module('./node.js', {
 });
 
 const { NodeTransportUnavailableError } = await import('../../fleet/node-rpc.js');
+// Install transport mocks before loading the shared worker and review adapters.
+await import('./worker.js');
 const { launchReviewWorkspaceWorker, readReviewWorkspaceWorker, cancelReviewWorkspaceWorker } =
   await import('./review-workspace.js');
 
@@ -327,10 +376,7 @@ test('cancellation after reservation persistence closes that lease and sends no 
   };
   await assert.rejects(launch(), /no longer admitted/);
   assert(run.agentContexts![0].nativeSession!.closedAt);
-  assert.deepEqual(
-    calls.map((call) => call.method),
-    [NATIVE_WORKER_CANCEL],
-  );
+  assert.equal(calls.length, 0, 'No host launch was admitted before cancellation');
 });
 
 test('acceptedAt checkpoint recovery repairs native metrics exactly once', async () => {
@@ -555,4 +601,98 @@ test('native review names the actual and required checkout when its reservation 
     calls.some((call) => call.method === NATIVE_WORKER_SEND),
     false,
   );
+});
+
+test('retained native continuation keeps the live process and sends its operator command once', async () => {
+  reset();
+  await launch();
+  assert(host);
+  host.processStopped = false;
+  const original = structuredClone(run.agentContexts![0].nativeSession!);
+  const continueReview = () =>
+    launchReviewWorkspaceWorker({
+      runId: run.id,
+      project: {},
+      prompt: 'Repair the retained output.',
+      resumeCommandId: 'operator-continuation',
+      deadline: Date.now() + 10000,
+      assertCurrent: () => {},
+    });
+  await continueReview();
+  await continueReview();
+  assert.equal(creations, 1);
+  assert.equal(turns, 2);
+  assert.equal(calls.filter((call) => call.method === NATIVE_WORKER_RESUME).length, 0);
+  assert.equal(run.agentContexts![0].nativeSession!.sessionId, original.sessionId);
+  assert.equal(run.agentContexts![0].nativeSession!.leaseId, original.leaseId);
+  assert.equal(run.agentContexts![0].runnerSessionId, 'saved-conversation');
+});
+
+test('stopped native continuation resumes its exact saved conversation through the shared API', async (t) => {
+  reset();
+  await launch();
+  assert(host);
+  host.state = 'closed';
+  host.processStopped = true;
+  run.agentContexts![0].nativeSession!.closedAt = '2026-11-10T00:00:00Z';
+  const original = structuredClone(run.agentContexts![0].nativeSession!);
+  faultOnce(NATIVE_WORKER_RESUME);
+  let clock = Date.now();
+  t.mock.method(Date, 'now', () => clock);
+  advanceDelay = (ms) => {
+    clock += ms;
+  };
+  t.after(() => {
+    advanceDelay = undefined;
+  });
+  await launchReviewWorkspaceWorker({
+    runId: run.id,
+    project: {},
+    prompt: 'Repair the retained output.',
+    resumeCommandId: 'operator-resume',
+    deadline: Date.now() + 10000,
+    assertCurrent: () => {},
+  });
+  const resumes = calls.filter((call) => call.method === NATIVE_WORKER_RESUME);
+  assert.equal(resumes.length, 2);
+  assert.deepEqual(resumes[0].params, resumes[1].params);
+  assert.equal(resumes[0].params.resumeSessionId, 'saved-conversation');
+  assert.equal(run.agentContexts![0].nativeSession!.sessionId, original.sessionId);
+  assert.equal(run.agentContexts![0].nativeSession!.leaseId, original.leaseId);
+  assert.equal(run.agentContexts![0].nativeSession!.generation, 'resumed-generation');
+  assert.equal(run.agentContexts![0].nativeSession!.closedAt, undefined);
+  assert.equal(turns, 2);
+  assert.equal(creations, 1);
+});
+
+test('cancellation fences a stopped reviewer resume whose successful host reply was lost', async () => {
+  reset();
+  await launch();
+  assert(host);
+  host.state = 'closed';
+  host.processStopped = true;
+  run.agentContexts![0].nativeSession!.closedAt = '2026-11-10T00:00:00Z';
+  transportFault = (call) => {
+    if (call.method === NATIVE_WORKER_RESUME) {
+      run.status = 'cancelled';
+      throw new NodeTransportUnavailableError('host', 'timeout', 'lost resume reply');
+    }
+  };
+  await assert.rejects(
+    launchReviewWorkspaceWorker({
+      runId: run.id,
+      project: {},
+      prompt: 'Continue.',
+      resumeCommandId: 'cancel-pending',
+      deadline: Date.now() + 10000,
+      assertCurrent: () => {},
+    }),
+    /no longer admitted/,
+  );
+  transportFault = undefined;
+  await cancelReviewWorkspaceWorker(run.id);
+  const cancel = calls.filter((call) => call.method === NATIVE_WORKER_CANCEL).at(-1);
+  assert.equal(cancel?.params.resumeCommandId, 'cancel-pending');
+  assert.equal(run.agentContexts![0].nativeSession!.recovery, undefined);
+  assert.equal(host.processStopped, true);
 });
