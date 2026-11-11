@@ -1,1 +1,0 @@
-- Migrate GitHub proof fixtures to HTTP transport; remove gh subprocess dependency from upstream-collector proofs.

@@ -1,1 +1,0 @@
-- Internal: update review-curation proof script to run against typed GitHubService transport.
