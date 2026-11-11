@@ -431,7 +431,7 @@ const mode = process.argv[2] ?? 'normal';
 const server = http.createServer((req, res) => {
   req.resume();
   if (mode !== 'normal') {
-    writeFileSync(root + '/pi-ready-' + mode + '.json', JSON.stringify({ probePid: process.pid, piPid: child.pid }));
+    if (mode !== 'readiness-timeout') writeFileSync(root + '/pi-ready-' + mode + '.json', JSON.stringify({ probePid: process.pid, piPid: child.pid }));
     return;
   }
   res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -465,6 +465,7 @@ try {
     models: [{ id: 'fixture', name: 'Fixture', reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 4096, maxTokens: 128 }],
   } } }));
   child = spawn(${JSON.stringify(pi)}, ['--offline', '--print', '--no-session', '--no-tools', '--no-extensions', '--no-mcp', '--no-skills', '--no-prompt-templates', '--no-context-files', '--no-themes', '--provider', 'seatbelt-fixture', '--model', 'fixture', '--system-prompt', 'Synthetic fixture only.', 'Reply with seatbelt-fixture-ok'], { cwd: root, env: { ...process.env, PI_CODING_AGENT_DIR: agent }, stdio: ['ignore', 'pipe', 'pipe'] });
+  writeFileSync(root + '/pi-spawned-' + mode + '.json', JSON.stringify({ piPid: child.pid }));
   let stdout = '', stderr = '';
   child.stdout.on('data', chunk => { stdout += chunk; });
   child.stderr.on('data', chunk => { stderr += chunk; });
@@ -492,18 +493,30 @@ try {
       assert.ifError(result.error);
       assert.equal(result.status, 0, result.stderr);
     }
-    for (const mode of ['timeout', 'SIGTERM', 'SIGINT', 'parent-death'] as const) {
+    for (const mode of [
+      'timeout',
+      'SIGTERM',
+      'SIGINT',
+      'parent-death',
+      'readiness-timeout',
+    ] as const) {
       await t.test(`interrupted pi fixture cleans up on ${mode}`, async (childTest) => {
         const ready = path.join(root, `pi-ready-${mode}.json`);
+        const spawned = path.join(root, `pi-spawned-${mode}.json`);
+        let cleanupProbe: (() => Promise<void>) | undefined;
         // A failed regression must still reap the owned fixture child.
-        childTest.after(() => {
-          if (!existsSync(ready)) return;
-          const { piPid } = JSON.parse(readFileSync(ready, 'utf8'));
-          try {
-            process.kill(piPid, 'SIGKILL');
-          } catch (error) {
-            if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
-          }
+        childTest.after(async () => {
+          await (cleanupProbe?.() ?? Promise.resolve()).finally(() => {
+            if (existsSync(spawned)) {
+              const { piPid } = JSON.parse(readFileSync(spawned, 'utf8'));
+              try {
+                process.kill(piPid, 'SIGKILL');
+              } catch (error) {
+                if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH'))
+                  throw error;
+              }
+            }
+          });
         });
         if (mode === 'timeout') {
           const result = worker(
@@ -541,11 +554,25 @@ try {
           child.stderr.on('data', (chunk) => {
             stderr += chunk;
           });
-          childTest.after(async () => {
-            child.kill('SIGKILL');
+          cleanupProbe = async () => {
+            if (child.exitCode === null && child.signalCode === null) {
+              child.kill('SIGTERM');
+              const deadline = Date.now() + 3000;
+              while (child.exitCode === null && child.signalCode === null && Date.now() < deadline)
+                await delay(25);
+              if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+            }
             await exited;
-          });
-          const deadline = Date.now() + 10000;
+          };
+          if (mode === 'readiness-timeout') {
+            const spawnDeadline = Date.now() + 10000;
+            while (!existsSync(spawned) && child.exitCode === null && Date.now() < spawnDeadline)
+              await delay(25);
+            assert.ok(existsSync(spawned), stderr);
+            const { piPid } = JSON.parse(readFileSync(spawned, 'utf8'));
+            process.kill(piPid, 0);
+          }
+          const deadline = Date.now() + (mode === 'readiness-timeout' ? 100 : 10000);
           while (
             !existsSync(ready) &&
             child.exitCode === null &&
@@ -553,8 +580,14 @@ try {
             Date.now() < deadline
           )
             await delay(25);
-          assert.ok(existsSync(ready), stderr);
-          if (mode === 'parent-death') {
+          if (mode !== 'readiness-timeout') assert.ok(existsSync(ready), stderr);
+          if (mode === 'readiness-timeout') {
+            assert.equal(existsSync(ready), false, 'Pi readiness must time out');
+            await cleanupProbe();
+            const { piPid } = JSON.parse(readFileSync(spawned, 'utf8'));
+            // Assert before the fallback hook can hide an orphaned Pi.
+            assert.throws(() => process.kill(piPid, 0), { code: 'ESRCH' });
+          } else if (mode === 'parent-death') {
             parent.kill();
             await parentExited;
           } else child.kill(mode);
@@ -569,8 +602,9 @@ try {
           assert.equal(code, 0, stderr);
           assert.equal(signal, null);
         }
-        assert.ok(existsSync(ready), 'Pi must reach the synthetic provider before interruption');
-        const { piPid } = JSON.parse(readFileSync(ready, 'utf8'));
+        if (mode !== 'readiness-timeout')
+          assert.ok(existsSync(ready), 'Pi must reach the synthetic provider before interruption');
+        const { piPid } = JSON.parse(readFileSync(spawned, 'utf8'));
         assert.throws(() => process.kill(piPid, 0), { code: 'ESRCH' });
       });
     }
