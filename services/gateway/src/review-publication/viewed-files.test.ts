@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { mock, test } from 'node:test';
+import { after, test } from 'node:test';
 
-import type { ReviewViewedFilesResult } from '@farmslot/protocol';
+import { isRecord, type ReviewViewedFilesResult } from '@farmslot/protocol';
 
-import type { GitHubQueryAccount } from '../integrations/github-graphql.js';
+import { rejectMutationRateLimit } from '../../../../scripts/runner-validation/review-provider-fixture.cjs';
+import { startGitHubFixture } from '../integrations/github-test-fixtures.js';
 
 const head = 'a'.repeat(40);
 const base = 'b'.repeat(40);
@@ -35,39 +36,39 @@ const reset = () => {
   calls.length = 0;
   saved = undefined;
 };
-const githubGraphqlModule = await import('../integrations/github-graphql.js');
-mock.module('../integrations/github-graphql.js', {
-  namedExports: {
-    ...githubGraphqlModule,
-    githubGraphQL: async <T>(
-      doc: string,
-      variables: Record<string, string | number | null>,
-      account: GitHubQueryAccount,
-    ): Promise<T> => {
-      assert.equal(
-        account.token,
-        binding.token,
-        'Every observation and mutation uses the posting token',
-      );
-      const args = [...Object.entries(variables).map(([k, v]) => `${k}=${String(v)}`), doc];
-      calls.push(args);
-      const pr = () => ({ id: 'PR_fixture', headRefOid: liveHead, baseRefOid: base });
-      if (doc.includes('markFileAsViewed')) {
-        mutationCount++;
-        const data: Record<string, unknown> = {};
-        let idx = 0;
-        for (const key of Object.keys(variables)) {
-          if (/^path\d+$/.test(key)) {
-            data[key.replace('path', 'file')] =
-              mutationErrors && idx === 1 ? null : { pullRequest: pr() };
-            idx++;
-          }
-        }
-        if (moveAfterFirstMutation && mutationCount === 1) liveHead = 'c'.repeat(40);
-        return data as unknown as T;
-      } else if (doc.includes('repository(')) {
-        const index = Number(variables.cursor ?? 0);
-        return {
+// GitHub GraphQL through the real githubGraphQL client; the fixture validates like GitHub.
+const fixture = await startGitHubFixture((request) => {
+  assert.equal(
+    request.headers.authorization,
+    `token ${binding.token}`,
+    'Every observation and mutation uses the posting token',
+  );
+  const body = isRecord(request.json) ? request.json : {};
+  const doc = typeof body.query === 'string' ? body.query : '';
+  const variables = isRecord(body.variables) ? body.variables : {};
+  const invalid = rejectMutationRateLimit(doc);
+  if (invalid) return { body: invalid };
+  const args = [...Object.entries(variables).map(([k, v]) => `${k}=${String(v)}`), doc];
+  calls.push(args);
+  const pr = () => ({ id: 'PR_fixture', headRefOid: liveHead, baseRefOid: base });
+  if (doc.includes('markFileAsViewed')) {
+    mutationCount++;
+    const data: Record<string, unknown> = {};
+    let idx = 0;
+    for (const key of Object.keys(variables)) {
+      if (/^path\d+$/.test(key)) {
+        data[key.replace('path', 'file')] =
+          mutationErrors && idx === 1 ? null : { pullRequest: pr() };
+        idx++;
+      }
+    }
+    if (moveAfterFirstMutation && mutationCount === 1) liveHead = 'c'.repeat(40);
+    return { body: { data } };
+  } else if (doc.includes('repository(')) {
+    const index = Number(variables.cursor ?? 0);
+    return {
+      body: {
+        data: {
           viewer: { login: actor },
           repository: {
             pullRequest: {
@@ -82,13 +83,18 @@ mock.module('../integrations/github-graphql.js', {
               },
             },
           },
-        } as unknown as T;
-      } else {
-        if (moveBeforeMutation) liveHead = 'c'.repeat(40);
-        return { node: pr() } as unknown as T;
-      }
-    },
-  },
+        },
+      },
+    };
+  } else {
+    if (moveBeforeMutation) liveHead = 'c'.repeat(40);
+    return { body: { data: { node: pr() } } };
+  }
+});
+process.env.FARMSLOT_GITHUB_API_URL = fixture.origin;
+after(async () => {
+  delete process.env.FARMSLOT_GITHUB_API_URL;
+  await fixture.close();
 });
 const { markReviewedFilesViewed } = await import('./viewed-files.js');
 const save = async (result: ReviewViewedFilesResult) => {

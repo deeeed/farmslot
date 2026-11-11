@@ -10,3 +10,6 @@ export function handleReviewProviderRequest(request: {
   pathname: string;
   payload: Record<string, unknown>;
 }): { status?: number; body?: unknown; destroy?: boolean };
+
+/** GitHub's HTTP 200 validation error for a mutation that selects `rateLimit`; undefined otherwise. */
+export function rejectMutationRateLimit(query: string): { errors: unknown[] } | undefined;

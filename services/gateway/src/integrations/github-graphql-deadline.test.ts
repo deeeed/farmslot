@@ -8,6 +8,13 @@ mock.module('./github-client.js', {
   namedExports: {
     githubRequestCacheKey: () => 'deadline-fixture',
     notifyRateLimitHeaders: () => {},
+    runGitHubGraphQLExchange: async <T>(
+      _host: string,
+      _document: string,
+      _variables: unknown,
+      exchange: (ctx: GhCommandContext) => Promise<{ data: T }>,
+      opts: GhCommandContext,
+    ): Promise<T> => (await exchange({ account: opts.account, signal: opts.signal })).data,
   },
 });
 mock.module('./github-operations.js', {

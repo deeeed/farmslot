@@ -1,6 +1,10 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-import { githubRequestCacheKey, notifyRateLimitHeaders } from './github-client.js';
+import {
+  githubRequestCacheKey,
+  notifyRateLimitHeaders,
+  runGitHubGraphQLExchange,
+} from './github-client.js';
 import {
   GitHubCursorError,
   GitHubPRUnavailableError,
@@ -8,11 +12,7 @@ import {
   hasUnavailableGitHubPR,
 } from './github-errors.js';
 import { type GhCommandContext, githubRestOp } from './github-operations.js';
-import {
-  githubQueryBudget as queryBudget,
-  GitHubQueryBudgetError,
-  resolveGitHubQueryCaller,
-} from './github-query-budget.js';
+import { githubQueryBudget as queryBudget, GitHubQueryBudgetError } from './github-query-budget.js';
 
 export interface GitHubPage<T> {
   nodes: T[];
@@ -34,34 +34,64 @@ export function gitHubQueryDeadlineExpired(): boolean {
   return queryDeadlines.getStore()?.aborted ?? false;
 }
 
+/** GitHub rejects `rateLimit` outside `Query`, so only query documents are metered. */
+function meteredDocument(document: string): string {
+  if (/^\s*mutation\b/.test(document)) return document;
+  return document.replace(/}\s*$/, ' rateLimit { cost remaining resetAt } }');
+}
+
+function rateLimitCost(rateLimit: unknown): number {
+  const cost =
+    rateLimit && typeof rateLimit === 'object' && 'cost' in rateLimit ? rateLimit.cost : 0;
+  return typeof cost === 'number' && Number.isFinite(cost) && cost > 0 ? cost : 0;
+}
+
 export async function githubGraphQL<T>(
   document: string,
   variables: Variables,
   account: GitHubQueryAccount,
-  _caller?: string,
+  caller?: string,
 ): Promise<T> {
   const quotaKey = githubRequestCacheKey([], { ...account, scope: 'query-budget' });
   const retryAt = queryBudget.anyReserved();
   if (retryAt) throw new GitHubQueryBudgetError(retryAt);
-  const metered = document.replace(/}\s*$/, ' rateLimit { cost remaining resetAt } }');
+  const metered = meteredDocument(document);
   const signal = queryDeadlines.getStore();
   type Envelope = {
     data?: T & { rateLimit?: unknown };
     errors?: { type?: string; path?: unknown[]; message?: string }[];
   };
-  let result: Envelope;
-  let responseHeaders: Map<string, string> | undefined;
   try {
     if (signal?.aborted) throw new Error('Source deadline reached');
-    const opResult = await githubRestOp<Envelope>(
+    // Rejections are classified inside the exchange so the client's negative cache keeps them.
+    return await runGitHubGraphQLExchange<T>(
       account.host,
-      'POST',
-      'graphql',
-      { body: { query: metered, variables } },
-      { account, signal },
+      metered,
+      variables,
+      async (ctx) => {
+        const { data: result, headers } = await githubRestOp<Envelope | null>(
+          account.host,
+          'POST',
+          'graphql',
+          { body: { query: metered, variables } },
+          ctx,
+        );
+        queryBudget.observe(quotaKey, result?.data?.rateLimit);
+        if (result?.errors?.length || !result?.data) {
+          if (headers) {
+            queryBudget.observeHeaders(quotaKey, headers);
+            notifyRateLimitHeaders(headers, quotaKey);
+          }
+          if (hasInvalidGitHubCursor(result?.errors)) throw new GitHubCursorError();
+          if (hasUnavailableGitHubPR(result?.errors)) throw new GitHubPRUnavailableError();
+          if (result?.errors?.length)
+            throw new Error(`HTTP 200: ${result.errors.map((error) => error.message).join('; ')}`);
+          throw new Error('GitHub observation incomplete: missing data');
+        }
+        return { data: result.data, headers, graphqlCost: rateLimitCost(result.data.rateLimit) };
+      },
+      { account, signal, caller },
     );
-    result = opResult.data;
-    responseHeaders = opResult.headers;
   } catch (error) {
     // Traversals persist each completed page. Cancellation is an expected partial
     // observation; callers report it and resume, rather than losing the UI request.
@@ -71,20 +101,6 @@ export async function githubGraphQL<T>(
       );
     throw error;
   }
-  // Observe quota from HTTP headers first (body rateLimit may be absent in some responses).
-  const headers = responseHeaders ?? new Map<string, string>();
-  queryBudget.observeHeaders(quotaKey, headers);
-  notifyRateLimitHeaders(headers, quotaKey);
-  // Observe from body rateLimit when present (more precise cost and remaining).
-  queryBudget.observe(quotaKey, result?.data?.rateLimit);
-  // Record at least one spend point per query regardless of whether the body has rateLimit.
-  queryBudget.record(resolveGitHubQueryCaller(_caller), 1, 1);
-  if (hasInvalidGitHubCursor(result?.errors)) throw new GitHubCursorError();
-  if (hasUnavailableGitHubPR(result?.errors)) throw new GitHubPRUnavailableError();
-  if (result?.errors?.length) {
-    throw new Error(`HTTP 200: ${result.errors.map((error) => error.message).join('; ')}`);
-  }
-  return (result?.data ?? result) as T;
 }
 
 /** Validate every cursor, including nested thread comments; truncated data cannot resolve incidents. */

@@ -19,10 +19,29 @@ function save(state) {
   fs.writeFileSync(stateFile(), JSON.stringify(state));
 }
 
+/**
+ * GitHub validates `rateLimit` as a field of Query only: a mutation that selects it is
+ * rejected with HTTP 200 and a validation error, and nothing is mutated.
+ */
+function rejectMutationRateLimit(query) {
+  if (!/^\s*mutation\b/.test(query) || !/\brateLimit\b/.test(query)) return undefined;
+  return {
+    errors: [
+      {
+        path: ['mutation', 'rateLimit'],
+        extensions: { code: 'undefinedField', typeName: 'Mutation', fieldName: 'rateLimit' },
+        message: "Field 'rateLimit' doesn't exist on type 'Mutation'",
+      },
+    ],
+  };
+}
+
 /** One GitHub API request against the fixture state: { status, body } or { destroy: true }. */
 function handleReviewProviderRequest({ method, pathname, payload }) {
   const state = load();
   if (pathname === '/graphql') {
+    const invalid = rejectMutationRateLimit(payload.query);
+    if (invalid) return { body: invalid };
     const fields = { query: payload.query, ...payload.variables };
     const pr = {
       id: 'PR_fixture42',
@@ -173,7 +192,11 @@ function startReviewProviderFixture() {
   });
 }
 
-module.exports = { handleReviewProviderRequest, startReviewProviderFixture };
+module.exports = {
+  handleReviewProviderRequest,
+  rejectMutationRateLimit,
+  startReviewProviderFixture,
+};
 
 if (require.main === module) {
   const args = process.argv.slice(2);

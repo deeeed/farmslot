@@ -515,6 +515,21 @@ export const github: GitHubService = {
   },
 };
 
+/**
+ * A GraphQL exchange whose envelope the caller classifies inside `exchange` (githubGraphQL),
+ * under the same concurrency limit, negative cache, in-flight sharing and spend recording.
+ */
+export function runGitHubGraphQLExchange<T>(
+  host: string,
+  document: string,
+  variables: Record<string, string | number | null>,
+  exchange: (ctx: GhCommandContext) => Promise<GitHubOpResult<T>>,
+  opts?: ServiceOpts,
+): Promise<T> {
+  const key = typedOpKey(GH_OP_GRAPHQL, [host, 'envelope', document, variables], opts?.account);
+  return runTypedOp<T>(key, GH_OP_GRAPHQL, false, exchange, opts);
+}
+
 function updateQuotaFromHeaders(headers: Map<string, string>, credentialKey: string): void {
   const remainingStr = headers.get('x-ratelimit-remaining');
   const limitStr = headers.get('x-ratelimit-limit');
@@ -565,7 +580,7 @@ function updateQuotaFromHeaders(headers: Map<string, string>, credentialKey: str
   }
 }
 
-/** Allow githubGraphQL (called outside execTypedOp) to fire the same quota broadcast. */
+/** Lets githubGraphQL observe quota headers on a response it rejects inside its exchange. */
 export function notifyRateLimitHeaders(headers: Map<string, string>, credentialKey: string): void {
   updateQuotaFromHeaders(headers, credentialKey);
 }
