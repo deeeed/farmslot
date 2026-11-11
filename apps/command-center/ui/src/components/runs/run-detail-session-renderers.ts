@@ -531,17 +531,16 @@ export function renderRunAgentSessions(
               data-testid="run-agent-session-id-${row.contextId}"
               >${row.sessionIdShort ?? 'no session captured'}</span
             >
-            ${row.reviewLocation
-              ? renderReviewExecutionLocation(row.reviewLocation)
-              : location
-                ? html`<span
-                    class="agent-session-location"
-                    title=${row.slotId ?? ''}
-                    data-slot=${row.slotId ?? ''}
-                    data-testid="run-agent-session-location-${row.contextId}"
-                    >${location}</span
-                  >`
-                : nothing}
+            ${row.reviewLocation ? renderReviewExecutionLocation(row.reviewLocation) : nothing}
+            ${location && (!row.reviewLocation || row.target)
+              ? html`<span
+                  class="agent-session-location"
+                  title=${row.slotId ?? ''}
+                  data-slot=${row.slotId ?? ''}
+                  data-testid="run-agent-session-location-${row.contextId}"
+                  >${location}</span
+                >`
+              : nothing}
             ${state?.liveness
               ? html`<span
                   class="agent-session-liveness"

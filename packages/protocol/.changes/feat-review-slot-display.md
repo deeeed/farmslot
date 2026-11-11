@@ -1,1 +1,1 @@
-- Show retained review machine, slot and checkout placement in run details and reviewer sessions.
+- Retain optional worker launch placement for historical review display.

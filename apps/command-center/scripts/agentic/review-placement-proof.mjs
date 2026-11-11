@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
 import { routeCandidateUiSource } from './candidate-ui-source.mjs';
+import { isRunningReview as running } from './review-placement-proof-state.mjs';
 
 const origin = process.env.FARMSLOT_PROOF_UI_ORIGIN;
 const source = process.env.FARMSLOT_PROOF_SOURCE_ORIGIN;
@@ -27,7 +28,6 @@ async function rpc(method, params) {
   );
   return JSON.parse(stdout);
 }
-const running = (run) => !['done', 'failed', 'cancelled'].includes(run.status);
 const { runs } = await rpc('run.list', { flowType: 'review-pr', limit: 100 });
 const selected = process.env.FARMSLOT_PROOF_RUN_ID
   ? runs.find((run) => run.id === process.env.FARMSLOT_PROOF_RUN_ID)
@@ -83,6 +83,11 @@ try {
   } else {
     assert.equal(await row.getByTestId('review-checkout-path').innerText(), workspace.checkoutPath);
     assert((await row.innerText()).includes(workspace.workspaceId));
+  }
+  const reviewer = selected.agentContexts?.find((context) => context.role === 'review');
+  if (!expectedMissing && reviewer?.target?.target) {
+    const targetLabel = row.getByTestId(`run-agent-session-location-${reviewer.id}`);
+    assert((await targetLabel.innerText()).includes(reviewer.target.target));
   }
   await row.scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(output, 'reviewer.png') });

@@ -5,8 +5,11 @@ import test from 'node:test';
 
 import type { AgentContext, Run, RunSessionCommandResult } from '@farmslot/protocol';
 
+import { litText } from '../../testing/lit-text.js';
+
 import {
   livenessLabel,
+  renderRunAgentSessions,
   runAgentSessionRows,
   runnerSessionOpenRefusal,
   runSessionCommandTextForKind,
@@ -316,4 +319,36 @@ test('review session rows show the same retained workspace after completion', ()
   assert.equal(row.reviewLocation?.workspaceId, 'workspace-one');
   assert.equal(row.reviewLocation?.slotId, undefined);
   assert.equal(runAgentSessionRows(run([context()]))[0].reviewLocation, undefined);
+});
+
+test('a static tmux reviewer keeps its attach target beside the review workspace', () => {
+  const review = context({
+    id: 'review',
+    role: 'review',
+    slotId: null,
+    target: { session: 'review-session', target: 'review-session:review' },
+  });
+  const workspaceRun = {
+    ...run([review]),
+    reviewWorkspace: {
+      workspaceId: 'workspace-one',
+      machine: 'macpro',
+      executionNodeId: 'macpro',
+      checkoutPath: '/review/source',
+      taskPath: '/review/task',
+      artifactPath: '/review/artifacts',
+    },
+  };
+  const text = litText(
+    renderRunAgentSessions(workspaceRun, {
+      nativeHistoryOpen: false,
+      onToggleNativeHistory: () => {},
+      states: {},
+      onCopy: () => {},
+    }),
+  );
+  assert.match(text, /data-testid="run-agent-session-location-review"/);
+  assert.match(text, />review-session:review<\/span/);
+  assert.match(text, />\/review\/source<\/code/);
+  assert.match(text, /Workspace <code>workspace-one/);
 });
