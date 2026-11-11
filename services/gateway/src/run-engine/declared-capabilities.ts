@@ -155,25 +155,35 @@ export async function prepareDispatchRunCapabilities(
   input: DispatchCapabilityInput,
 ): Promise<void> {
   const { run, project, slot, flow } = input;
-  if (!project || !projectUsesExecutionTemplateCatalog(project) || flow === 'review-pr') return;
-  const selected = run?.executionTemplate
-    ? readConfiguredExecutionTemplateSnapshot(project, { ...run.executionTemplate, flow })
-    : resolveConfiguredExecutionTemplateForSlot(project, {
-        flow,
-        platform: slot.platform,
-        runMode: input.mode,
-        explicitDomain: run?.domain,
-        slotDomain: slot.domain,
-      });
+  if (!project || flow === 'review-pr') return;
+  const initializedTemplate =
+    run?.taskFile &&
+    run.engineState?.taskInit?.taskFile === run.taskFile &&
+    run.engineState.taskInit.status === 'initialized'
+      ? run.executionTemplate
+      : undefined;
+  if (!initializedTemplate && !projectUsesExecutionTemplateCatalog(project)) return;
+  const selected =
+    initializedTemplate && run
+      ? { frontmatter: await authoredTemplateFrontmatter(run), sha256: initializedTemplate.sha256 }
+      : run?.executionTemplate
+        ? readConfiguredExecutionTemplateSnapshot(project, { ...run.executionTemplate, flow }).entry
+        : resolveConfiguredExecutionTemplateForSlot(project, {
+            flow,
+            platform: slot.platform,
+            runMode: input.mode,
+            explicitDomain: run?.domain,
+            slotDomain: slot.domain,
+          }).entry;
   assertRecipeDispatchRequirements(
-    await checkRecipeDispatchRequirements(project, slot, selected.entry, {
+    await checkRecipeDispatchRequirements(project, slot, selected, {
       app: input.app,
       domain: run?.domain ?? slot.domain,
       runId: run?.id,
     }),
   );
   input.assertCurrent?.();
-  const declared = recipeFlowRequirements(selected.entry.frontmatter);
+  const declared = recipeFlowRequirements(selected.frontmatter);
   const resources = declared.resources;
   if (resources.length) {
     if (!run) throw new Error('Declared resources require a persisted run owner.');
@@ -187,6 +197,17 @@ export async function prepareDispatchRunCapabilities(
     );
     input.assertCurrent?.();
   }
+}
+
+async function authoredTemplateFrontmatter(run: Run) {
+  if (!run.taskFile)
+    throw new BlockedRunError(
+      'Retained capability preparation requires the authored task snapshot.',
+    );
+  const document = isLightweightInteractiveDevRun(run)
+    ? run.taskFile
+    : path.join(path.dirname(run.taskFile), EXECUTION_CHECKLIST_DOCUMENT);
+  return parseMarkdownDocument(await readFile(document, 'utf8')).frontmatter;
 }
 
 /** A new warm/nudge task still consumes the same fresh-dispatch admission. */
@@ -222,15 +243,7 @@ export async function prepareRetainedRunCapabilities(
     throw new BlockedRunError('Declared capability preparation requires a run slot.');
   const status = await deps.status(run.slotId);
   if (!status.proofPlans[runId]?.requirements.length) return;
-  if (!run.taskFile)
-    throw new BlockedRunError(
-      'Retained capability preparation requires the authored task snapshot.',
-    );
-  const document = isLightweightInteractiveDevRun(run)
-    ? run.taskFile
-    : path.join(path.dirname(run.taskFile), EXECUTION_CHECKLIST_DOCUMENT);
-  const snapshot = await readFile(document, 'utf8');
-  const declared = recipeFlowRequirements(parseMarkdownDocument(snapshot).frontmatter);
+  const declared = recipeFlowRequirements(await authoredTemplateFrontmatter(run));
   assertDeclaredCapabilityPreparation(
     await prepareDeclaredRunCapabilities(
       runId,

@@ -1,0 +1,1 @@
+- Resume an initialized task after template changes using its frozen requirements and a verified original worker; refuse uncertain worker identity instead of replacing it.

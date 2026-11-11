@@ -1,0 +1,1 @@
+- Explain the supported write-task replay when a template changes before hosted task initialization.
