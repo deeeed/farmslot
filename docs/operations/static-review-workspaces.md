@@ -52,6 +52,8 @@ Select the project template and frozen skill sources in `project.json`:
 
 Replace the runner/model placeholders with a supported choice. Both listed machines need their own configured capacity. The template ID must exist in the project's execution-template catalog or its `templates/worker` directory. Template instructions invoke the configured skill and satisfy the gateway task's artifact contract. Workflow instructions remain in the skill.
 
+`CHECKLIST.md` owns skill activation and child-checklist execution. The gateway's `TASK.md` adds frozen input references, the enforced result shape and completion command, and the shared diff-scope rule once. An installed support skill or harness does not by itself instruct the reviewer to invoke it.
+
 Support may also declare libraries, an installed Node runtime and environment bindings. Environment values may use `{{support}}` and `{{<key>_repo}}` for each `reference_repos` key; the gateway resolves a reference beside a project slot on the review machine, records its HEAD and dirty state once per review, mounts it read-only and binds `''` when it is not cloned there. These are frozen files, not installation commands. Reports retain the reviewed commits, template digest and support provenance. Changes to the original support source do not retarget an admitted review.
 
 PR requests inherit complete policies in this order: request, rule, repository, team, farm. Explicit machine, runner, model and effort choices must remain within the selected policy. A supplied template ID must match `static_review.template_id`.

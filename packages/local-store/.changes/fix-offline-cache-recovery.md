@@ -1,0 +1,1 @@
+- Retire failed browser storage workers and fence stale SQLite handles after another connection rebuilds the cache.

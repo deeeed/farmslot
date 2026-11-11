@@ -26,6 +26,7 @@ import type {
   ResourceStoreMetadata,
   ResourceStoreScope,
 } from './store.js';
+import type { ResourceSyncState } from './sync-state.js';
 
 export type ResourceQueryStatus = 'loading' | 'ready' | 'stale' | 'error' | 'unsupported';
 export interface ResourceQueryError {
@@ -142,6 +143,11 @@ export interface ResourceQueryPlacement extends ResourceContentPlacement {
 }
 
 export interface GatewayResourceCache {
+  /** Sync status of the currently observed views. Optional for older test doubles. */
+  observeSync?(
+    listener: (state: ResourceSyncState) => void,
+    match?: (query: ResourceQuery) => boolean,
+  ): () => void;
   readonly conversations?: NativeConversationCache;
   observe<T>(query: ResourceQuery<T>, listener: (state: ResourceQueryState<T>) => void): () => void;
   read<T>(query: ResourceQuery<T>): ResourceQueryState<T>;

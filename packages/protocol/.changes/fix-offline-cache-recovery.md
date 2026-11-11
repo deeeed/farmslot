@@ -1,0 +1,1 @@
+- Recover persistent caches after I/O failures, reverify retained runs with the gateway, and expose sync status for observed views.
