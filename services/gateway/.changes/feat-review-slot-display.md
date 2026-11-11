@@ -1,0 +1,1 @@
+- Show retained review machine, slot and checkout placement in run details and reviewer sessions.

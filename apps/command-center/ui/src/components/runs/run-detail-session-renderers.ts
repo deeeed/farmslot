@@ -13,6 +13,12 @@ import { nativeWorkerTargets } from '../chat/native-worker-target.js';
 import { renderCollapsibleSectionHeader } from '../shared/collapsible-section-header.js';
 import { slotViewHash } from '../slot-view/slot-view-url-state.js';
 
+import {
+  renderReviewExecutionLocation,
+  type ReviewExecutionLocation,
+  reviewExecutionLocation,
+} from './review-execution-location.js';
+
 export type RunSessionCopyKind = 'reopen' | 'attach';
 
 export interface RunSessionRowState {
@@ -36,6 +42,7 @@ export interface RunSessionRowState {
 }
 
 export interface RunSessionRow {
+  reviewLocation?: ReviewExecutionLocation;
   nativeHref?: string;
   nativeHistory?: boolean;
   workspaceView?: boolean;
@@ -52,10 +59,15 @@ export interface RunSessionRow {
 }
 
 /** One row per agent context, in the order the run recorded them. */
-export function runAgentSessionRows(run: Pick<Run, 'agentContexts' | 'metrics'>): RunSessionRow[] {
+export function runAgentSessionRows(
+  run: Pick<Run, 'agentContexts' | 'metrics' | 'reviewWorkspace' | 'reviewWorkspaceTarget'>,
+): RunSessionRow[] {
   return (run.agentContexts ?? []).map((context) => {
     const sessionId = context.runnerSessionId?.trim() ? context.runnerSessionId.trim() : null;
     return {
+      ...(context.role === 'review'
+        ? { reviewLocation: reviewExecutionLocation(run, context) }
+        : {}),
       ...(!context.slotId && (context.nativeSession || context.target)
         ? { workspaceView: true }
         : {}),
@@ -324,7 +336,7 @@ function livenessColor(liveness: RunSessionLiveness): string {
 }
 
 export function renderRunAgentSessions(
-  run: Pick<Run, 'agentContexts' | 'metrics'>,
+  run: Pick<Run, 'agentContexts' | 'metrics' | 'reviewWorkspace' | 'reviewWorkspaceTarget'>,
   ctx: RunSessionRenderContext,
 ): unknown {
   const rows = runAgentSessionRows(run);
@@ -519,15 +531,17 @@ export function renderRunAgentSessions(
               data-testid="run-agent-session-id-${row.contextId}"
               >${row.sessionIdShort ?? 'no session captured'}</span
             >
-            ${location
-              ? html`<span
-                  class="agent-session-location"
-                  title=${row.slotId ?? ''}
-                  data-slot=${row.slotId ?? ''}
-                  data-testid="run-agent-session-location-${row.contextId}"
-                  >${location}</span
-                >`
-              : nothing}
+            ${row.reviewLocation
+              ? renderReviewExecutionLocation(row.reviewLocation)
+              : location
+                ? html`<span
+                    class="agent-session-location"
+                    title=${row.slotId ?? ''}
+                    data-slot=${row.slotId ?? ''}
+                    data-testid="run-agent-session-location-${row.contextId}"
+                    >${location}</span
+                  >`
+                : nothing}
             ${state?.liveness
               ? html`<span
                   class="agent-session-liveness"

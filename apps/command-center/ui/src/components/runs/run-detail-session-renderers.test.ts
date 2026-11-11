@@ -298,3 +298,22 @@ test('slot-free native review rows do not fall back to tmux controls', () => {
   assert.equal(rows[0].workspaceView, true);
   assert.equal(rows[0].nativeHref, undefined);
 });
+
+test('review session rows show the same retained workspace after completion', () => {
+  const workspaceRun: Pick<Run, 'agentContexts' | 'metrics' | 'reviewWorkspace'> = {
+    ...run([context({ id: 'review', role: 'review', slotId: null, status: 'complete' })]),
+    reviewWorkspace: {
+      workspaceId: 'workspace-one',
+      machine: 'macpro',
+      executionNodeId: 'macpro',
+      checkoutPath: '/review/source',
+      taskPath: '/review/task',
+      artifactPath: '/review/artifacts',
+    },
+  };
+  const [row] = runAgentSessionRows(workspaceRun);
+  assert.equal(row.reviewLocation?.checkoutPath, '/review/source');
+  assert.equal(row.reviewLocation?.workspaceId, 'workspace-one');
+  assert.equal(row.reviewLocation?.slotId, undefined);
+  assert.equal(runAgentSessionRows(run([context()]))[0].reviewLocation, undefined);
+});

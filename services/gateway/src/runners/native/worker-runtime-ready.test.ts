@@ -433,3 +433,15 @@ for (const [effective, requested, stopped, transferred] of [
       NATIVE_WORKER_TRANSFER,
     ]);
   });
+
+test('fresh workers retain the launch machine and canonical checkout for later review display', async () => {
+  delete run.agentContexts![0].nativeSession;
+  await assert.rejects(
+    dispatch(),
+    (error) => error instanceof Error && error.message.includes(stop.message),
+  );
+  assert.deepEqual(run.agentContexts![0].executionLocation, {
+    machine: vars.machine,
+    checkoutPath: '/owned/repo',
+  });
+});

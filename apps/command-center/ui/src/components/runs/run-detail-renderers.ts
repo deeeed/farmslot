@@ -67,6 +67,10 @@ import { renderRunTitle } from '../shared/run-title.js';
 import { isRecoverableBlockedWorkerRun } from './blocked-run-recovery-model.js';
 import { runSourceLinks, ticketUrlForRun } from './family-observability-link-model.js';
 import { familyRunHash } from './family-observability-url-state.js';
+import {
+  renderReviewExecutionLocation,
+  reviewExecutionLocations,
+} from './review-execution-location.js';
 import type { RunLifecycleAction } from './run-detail-actions.js';
 import { renderCancelledRunSlotChoices } from './run-detail-cancelled-slot-renderers.js';
 import {
@@ -652,6 +656,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   const sessions = ctx._renderAgentSessions(r);
   const posture = ctx._renderPosture(r);
   const history = reviewHistoryView(r);
+  const reviewLocations = reviewExecutionLocations(r);
 
   return html`
     ${backToRuns}
@@ -1088,8 +1093,8 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         <div class="meta-label">Project</div>
         <div class="meta-value">${r.project}</div>
       </div>
-      <div class="meta-item">
-        <div class="meta-label">${r.reviewWorkspaceTarget ? 'Workspace' : 'Slot'}</div>
+      <div class="meta-item" style=${r.reviewWorkspace ? 'grid-column:1 / -1' : nothing}>
+        <div class="meta-label">${r.reviewWorkspaceTarget ? 'Review workspace' : 'Slot'}</div>
         <div class="meta-value">
           ${boundSlotId
             ? html`<a
@@ -1115,11 +1120,8 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
                   onReplayStep: ctx._onReplayStep,
                 })}`
             : r.reviewWorkspace
-              ? html`<span
-                    data-testid="run-workspace-location"
-                    title=${r.reviewWorkspace.checkoutPath}
-                    >${r.reviewWorkspace.machine} ·
-                    ${r.reviewWorkspace.cleanedAt ? 'cleaned' : 'worktree'}</span
+              ? html`<span data-testid="run-workspace-location"
+                    >${renderReviewExecutionLocation(reviewLocations[0])}</span
                   >
                   <workspace-pin .runId=${r.id} .label=${r.ticketOrPr}></workspace-pin>
                   ${!r.reviewWorkspace.cleanedAt
@@ -1128,10 +1130,16 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
                       >`
                     : nothing}`
               : r.reviewWorkspaceTarget
-                ? 'Allocating worktree…'
+                ? `${r.reviewWorkspaceTarget.machine} · ${isTerminal ? 'No worktree allocated' : 'Allocating worktree…'}`
                 : 'pending'}
         </div>
       </div>
+      ${!r.reviewWorkspace && reviewLocations.length
+        ? html`<div class="meta-item" style="grid-column:1 / -1">
+            <div class="meta-label">Review execution</div>
+            <div class="meta-value">${reviewLocations.map(renderReviewExecutionLocation)}</div>
+          </div>`
+        : nothing}
       ${r.branch
         ? html`<div class="meta-item">
             <div class="meta-label">Branch</div>
