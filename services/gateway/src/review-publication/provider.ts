@@ -323,7 +323,16 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
     live.user?.login?.toLowerCase() === account.login.toLowerCase() ? 'COMMENT' : recommendation;
   const located = locatePublicationComments(
     comments,
-    comments.length ? await get('/files?per_page=100', true) : [],
+    // Kept page by page: the locator refuses a file list with a page that is not an array.
+    comments.length
+      ? await github.rest<unknown>('GET', `${endpoint}/files?per_page=100`, {
+          host: pr.host,
+          account: binding,
+          force: true,
+          paginate: true,
+          slurp: true,
+        })
+      : [],
     { host: pr.host, repo: pr.repo, headSha: subject.headSha },
   );
   publishedBody = `${report}${located.bodySuffix}\n\n${marker}`;
