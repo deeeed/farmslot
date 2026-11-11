@@ -20,6 +20,7 @@ import { resolveNativeContext } from '../../agents/native-context.js';
 import { readSlotField } from '../../core/index.js';
 import { getRun, updateRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
+import { ensureWorkerContinuationReady } from '../continuation-ready.js';
 
 import { routeNativeExecution } from './node.js';
 import { nativeWorkerProfileMatches } from './worker-profile.js';
@@ -304,6 +305,7 @@ export async function sendNativeWorkerInstruction(input: {
     return 'not-attempted';
   if (input.slotId !== null && (await readSlotField(input.slotId, 'current_run_id')) !== run.id)
     return 'not-attempted';
+  if (input.slotId) await ensureWorkerContinuationReady(input.slotId, run.id);
   const latest = workerBinding(run.id, input.role, input.contextId);
   input.assertCurrent?.();
   assertInstruction(latest.context);

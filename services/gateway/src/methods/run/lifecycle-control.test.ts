@@ -48,6 +48,7 @@ test('blocked native resume routes through its retained recovery decision', asyn
   t.after(() => cleanupRun(run.id));
   updateRun(run.id, {
     status: 'blocked',
+    slotId: 'slot-a',
     decisions: [
       {
         id: 'recovery-decision',
@@ -60,11 +61,17 @@ test('blocked native resume routes through its retained recovery decision', asyn
     ],
   });
   let resumed = false;
+  let prepared = false;
   await runResumeTransitionLocked(
     { runId: run.id },
     () => {},
     {},
     {
+      prepareIdleDevServers: async (slotId, runId) => {
+        assert.equal(slotId, 'slot-a');
+        assert.equal(runId, run.id);
+        prepared = true;
+      },
       nudgeMonitor: async () => {
         throw new Error('paused nudge must not run');
       },
@@ -77,6 +84,7 @@ test('blocked native resume routes through its retained recovery decision', asyn
       resumeBlockedDecision: async (id, decisionId) => {
         assert.equal(id, run.id);
         assert.equal(decisionId, 'recovery-decision');
+        assert.equal(prepared, true, 'dev server re-prepare precedes worker resume');
         resumed = true;
         updateRun(id, { status: 'monitoring' });
       },

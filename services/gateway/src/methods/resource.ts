@@ -27,6 +27,7 @@ import {
   selectResourcePressureGroups,
   SlotStatus,
 } from '@farmslot/protocol';
+import { formatTcpSnapshotDetail } from '@farmslot/protocol/node/tcp-metrics';
 
 import { isMissingProjectConfigError, SlotConfigError } from '../core/config.js';
 import { readDeviceInventory } from '../fleet/device-inventory.js';
@@ -1028,6 +1029,14 @@ function buildPressureConcerns(
     if (!system) {
       concerns.push({ severity: 'warn', reason: 'No system metrics available yet.' });
     } else {
+      const tcp = system.tcp;
+      if (tcp?.severity === 'unknown')
+        concerns.push({ severity: 'warn', reason: `TCP census unavailable: ${tcp.error}` });
+      else if (tcp && tcp.severity !== 'ok')
+        concerns.push({
+          severity: tcp.severity === 'critical' ? 'critical' : 'warn',
+          reason: `TCP ${formatTcpSnapshotDetail(tcp)}.`,
+        });
       addMetricConcern(concerns, 'CPU', system.cpuPercent, thresholds.cpuCriticalPercent, 70);
       addMetricConcern(
         concerns,

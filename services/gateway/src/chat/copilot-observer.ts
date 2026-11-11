@@ -254,13 +254,17 @@ function dispatch(type: string, payload: unknown): void {
 }
 
 /** A farm condition the gateway detected that an operator should act on before it breaks runs. */
-export function reportGatewayWarning(type: string, summary: string): void {
-  observe(type, 'warn', summary);
+export function reportGatewayWarning(
+  type: string,
+  summary: string,
+  severity: 'warn' | 'error' = 'warn',
+): void {
+  observe(type, severity, summary);
   // The board's health feed subscribes to monitor violations, not observer notifications.
   const violation: MonitorViolation = {
     slotId: 'gateway',
     target: type,
-    type: 'budget',
+    type: severity === 'error' ? 'error' : 'budget',
     message: summary,
     nudgeSent: null,
     timestamp: new Date().toISOString(),

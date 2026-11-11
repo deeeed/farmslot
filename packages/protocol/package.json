@@ -360,6 +360,11 @@
       "import": "./dist/node/farmslot-home.js",
       "default": "./dist/node/farmslot-home.js"
     },
+    "./node/tcp-metrics": {
+      "types": "./dist/node/tcp-metrics.d.ts",
+      "import": "./dist/node/tcp-metrics.js",
+      "default": "./dist/node/tcp-metrics.js"
+    },
     "./node/farm-paths": {
       "types": "./dist/node/farm-paths.d.ts",
       "import": "./dist/node/farm-paths.js",

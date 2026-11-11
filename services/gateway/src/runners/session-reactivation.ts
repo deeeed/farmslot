@@ -14,6 +14,7 @@ import {
 } from '../core/tmux.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 
+import { ensureWorkerContinuationReady } from './continuation-ready.js';
 import {
   buildLaunchCommand,
   buildRunnerSessionReloadCommand,
@@ -226,6 +227,17 @@ async function relaunchRunnerWithArgvPrompt(
         sendAttempted: false,
       };
     }
+  }
+  try {
+    await ensureWorkerContinuationReady(options.vars.slotId);
+  } catch (error) {
+    return {
+      delivered: false,
+      disposition: 'hold',
+      reason: `${runner} argv relaunch runtime readiness failed: ${(error as Error).message}`,
+      retryable: true,
+      sendAttempted: false,
+    };
   }
   // Capture this at the mutation boundary. A caller baseline may predate other
   // work and could let an unrelated pre-relaunch write acknowledge this task.
@@ -451,6 +463,7 @@ async function reactivateRunnerSessionWithPrompt(
         initialPrompt: options.prompt,
       },
     )}`;
+    await ensureWorkerContinuationReady(options.vars.slotId);
     await respawnTmuxWindowWithCommand(options.vars, options.target, command, {
       preserveWindowAfterExit: true,
       beforeRespawn: async () => {
