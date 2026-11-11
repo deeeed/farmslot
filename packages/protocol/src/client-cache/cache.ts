@@ -15,7 +15,12 @@ import { Methods } from '../rpc/registry.js';
 import type { UpstreamObservation } from '../rpc/resource-observers.js';
 import type { RunGetResult, RunListParams, RunListResult } from '../rpc/run.js';
 import { runListVersion } from '../runs/list-version.js';
-import { isPREntity, isSlotEntity, type ResourceChangedPayload } from '../transport/events.js';
+import {
+  isNodeHealthEntity,
+  isPREntity,
+  isSlotEntity,
+  type ResourceChangedPayload,
+} from '../transport/events.js';
 
 import { ResourceCollectorAdmission } from './collector-admission.js';
 import {
@@ -1199,6 +1204,35 @@ export function createGatewayResourceCache(
           }
           if (change.membershipRevision !== undefined)
             fleetCollection.storeMembershipRevision(change.membershipRevision);
+        }
+        // Machine health entity sync: update the machines array so reattachHostLoad
+        // picks up the new data without waiting for the next versions read.
+        if (
+          change.key.family === 'node' &&
+          'nodeId' in change.key &&
+          change.changedEntity &&
+          isNodeHealthEntity(change.changedEntity)
+        ) {
+          if (fleetNonEntityFields) {
+            const nodeId = change.key.nodeId;
+            const updatedMachine = change.changedEntity.entity;
+            const existing = fleetNonEntityFields.machines ?? [];
+            const idx = existing.findIndex((m) => m.machine === nodeId);
+            const machines =
+              idx >= 0
+                ? [...existing.slice(0, idx), updatedMachine, ...existing.slice(idx + 1)]
+                : [...existing, updatedMachine];
+            fleetNonEntityFields = { ...fleetNonEntityFields, machines };
+          }
+          // Dirty fleet.status view entries so readFleetStatusView reassembles with updated hostLoad.
+          for (const entry of entries.values()) {
+            if (isFleetStatusView(entry.query)) {
+              entry.dirty = true;
+              entry.state = { ...entry.state, status: 'stale' };
+              notify(entry);
+              if (!entry.pending) schedule(entry);
+            }
+          }
         }
         // PR entity sync: apply pushed PR entities; track collection membership changes.
         if (change.key.family === 'upstream') {

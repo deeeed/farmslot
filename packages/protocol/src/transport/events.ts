@@ -166,7 +166,9 @@ export const Events = {
 export type ChangedEntity =
   | { family: 'slot'; entity: SlotEntity; version: string }
   | { family: 'decision'; entity: PendingDecision; version: string }
-  | { family: 'upstream'; entity: PRStatus; version: string };
+  | { family: 'upstream'; entity: PRStatus; version: string }
+  /** Machine health entity pushed on every sample; full MachineHealth including system. */
+  | { family: 'node'; entity: MachineHealth; version: string };
 
 /** Runtime guard: narrow a pushed entity to a slot. */
 export function isSlotEntity(
@@ -192,6 +194,19 @@ export function isPREntity(
   e: ChangedEntity,
 ): e is { family: 'upstream'; entity: PRStatus; version: string } {
   return e.family === 'upstream' && typeof e.entity === 'object' && e.entity !== null;
+}
+
+/** Runtime guard: narrow a pushed entity to a machine health sample. */
+export function isNodeHealthEntity(
+  e: ChangedEntity,
+): e is { family: 'node'; entity: MachineHealth; version: string } {
+  if (e.family !== 'node') return false;
+  const entity: unknown = e.entity;
+  return (
+    typeof entity === 'object' &&
+    entity !== null &&
+    typeof (entity as { machine?: unknown }).machine === 'string'
+  );
 }
 
 export interface ResourceChangeEntry {

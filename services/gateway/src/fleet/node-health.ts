@@ -1,5 +1,6 @@
 // node-health.ts — In-memory machine health state, local collection, headroom computation
 
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 
 import {
@@ -32,6 +33,8 @@ import { loadPressureHistory, savePressureHistory } from './pressure-history-sto
 import { getCachedFleet } from './state.js';
 
 const healthMap = new Map<string, MachineHealth>();
+/** Content-hash versions for pushed machine entities; keyed by nodeId (machine name). */
+const nodeEntityVersions = new Map<string, string>();
 const pressureHistory = new Map<string, NodePressureHistorySample[]>();
 const processInventoryMap = new Map<string, NodeProcessInventory>();
 const processSamplerHealthMap = new Map<string, NodeProcessSamplerHealth>();
@@ -56,6 +59,15 @@ function publishMachineObservation(machine: string): void {
   });
   if (observationFingerprints.get(machine) === fingerprint) return;
   observationFingerprints.set(machine, fingerprint);
+  // Compute and store the machine entity version hash (full MachineHealth, system included)
+  // so the entity provider can attach it synchronously at publish time.
+  const health = healthMap.get(machine);
+  if (health) {
+    nodeEntityVersions.set(
+      machine,
+      createHash('sha256').update(canonicalResourceJson(health)).digest('hex'),
+    );
+  }
   const keys = new Map<string, ResourceKey>();
   const add = (key: ResourceKey) => keys.set(resourceKeyId(key), key);
   add({ family: 'node', nodeId: machine });
@@ -530,6 +542,11 @@ export function stopLocalCollection(): void {
 
 export function getMachineHealth(machine: string): MachineHealth | undefined {
   return healthMap.get(machine);
+}
+
+/** Entity version hash for the machine health entity; undefined until first sample. */
+export function getMachineEntityVersion(machine: string): string | undefined {
+  return nodeEntityVersions.get(machine);
 }
 
 export function getAllMachineHealth(): MachineHealth[] {

@@ -43,7 +43,12 @@ import { GatewayInternalError, GatewayMethodError } from './core/method-error.js
 import { setSlotUpdateHook } from './core/state.js';
 import { slotEntityProvider } from './fleet/entity-version.js';
 import { unregisterByWs } from './fleet/machine-registry.js';
-import { getMachineHealth, markMachineOffline, updateMachineMetrics } from './fleet/node-health.js';
+import {
+  getMachineEntityVersion,
+  getMachineHealth,
+  markMachineOffline,
+  updateMachineMetrics,
+} from './fleet/node-health.js';
 import { acceptNodeLinkStream } from './fleet/node-link.js';
 import { failRequestsBoundTo, handleNodeExecOutput, handleNodeResponse } from './fleet/node-rpc.js';
 import { pairingExchange } from './fleet/pairing.js';
@@ -608,6 +613,13 @@ export function initServerGlobals(): void {
     return slotEntityProvider(key.slotId);
   });
   resourceRevisions.setEntityProvider('upstream', prEntityProvider());
+  resourceRevisions.setEntityProvider('node', (key) => {
+    if (key.family !== 'node' || !('nodeId' in key)) return undefined;
+    const entity = getMachineHealth(key.nodeId);
+    const version = getMachineEntityVersion(key.nodeId);
+    if (!entity || !version) return undefined;
+    return { family: 'node', entity, version };
+  });
 
   // Watch for fleet state changes and broadcast
   const publishFleetChange = (fleet: FleetStatus) => {
