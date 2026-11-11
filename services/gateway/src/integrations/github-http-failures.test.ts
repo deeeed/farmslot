@@ -264,7 +264,8 @@ describe('GitHub HTTP failures', { concurrency: 1 }, () => {
     initGitHubClient((event, payload) => events.push({ event, payload }));
     const reset = Math.floor(Date.now() / 1000) + 600;
     for (const remaining of [4000, 3900, 3950]) {
-      responses.push({ headers: graphqlHeaders(remaining, reset, 5000), body: '{}' });
+      // A GraphQL answer carries data; an empty envelope is the missing-data rejection.
+      responses.push({ headers: graphqlHeaders(remaining, reset, 5000), body: '{"data":{}}' });
       await githubGraphQL(
         `query { value${remaining} }`,
         {},
