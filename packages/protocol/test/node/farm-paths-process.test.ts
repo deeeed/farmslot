@@ -203,3 +203,25 @@ test('external pool lookup ignores whitespace-only overrides and preserves its d
   assert.equal(resolveSlotPoolDir(spaces)?.dir, path.join(root, 'pool'));
   assert.equal(currentFarmPaths('gateway', spaces).pool, path.resolve('  '));
 });
+
+test('process paths read only the variables resolution uses, and refresh when one changes', (t) => {
+  const root = fixture(t);
+  const values: Record<string, string | undefined> = {
+    FARMSLOT_HOME: path.join(root, 'home'),
+    FARMSLOT_ROOT: root,
+    FARMSLOT_UNRELATED: 'one',
+  };
+  // Enumerating the environment costs a native call per variable on process.env.
+  const env = new Proxy(values, {
+    ownKeys() {
+      throw new Error('the environment was enumerated');
+    },
+  });
+  const first = currentFarmPaths('gateway', env);
+  values.FARMSLOT_UNRELATED = 'two';
+  assert.strictEqual(currentFarmPaths('gateway', env), first, 'an unread variable keeps the entry');
+  values.FARMSLOT_POOL_DIR = path.join(root, 'pool');
+  const overridden = currentFarmPaths('gateway', env);
+  assert.notStrictEqual(overridden, first, 'a read override refreshes it');
+  assert.equal(overridden.pool, path.join(root, 'pool'));
+});

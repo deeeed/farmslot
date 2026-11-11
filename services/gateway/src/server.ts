@@ -695,7 +695,7 @@ async function dispatchMessage(
 ): Promise<void> {
   if (personSessionMethods.has(frame.method)) {
     try {
-      const result = routePersonSessionMethod(
+      const result = await routePersonSessionMethod(
         frame.method,
         frame.params ?? {},
         authRuntime,
@@ -745,9 +745,9 @@ async function dispatchMessage(
       });
       return;
     }
-    let result: ReturnType<typeof authenticateGatewayClient>;
+    let result: Awaited<ReturnType<typeof authenticateGatewayClient>>;
     try {
-      result = authenticateGatewayClient({
+      result = await authenticateGatewayClient({
         runtime: authRuntime,
         connectParams: authParams,
         clientIp: resolveRequestIp(req, authRuntime.store.env),

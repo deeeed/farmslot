@@ -248,3 +248,17 @@ test('a transaction that changes nothing neither clones the store nor rewrites i
   const paused = await store.setLifecycle(monitor.id, 'owner', monitor.revision, 'paused');
   assert.deepEqual((await PRMonitorStore.load(file)).get(monitor.id, 'owner'), paused);
 });
+
+test('a repair plan that changes nothing does not parse or rewrite the store', async (t) => {
+  const { file, store } = await fixture(t);
+  const monitor = await store.subscribe('owner', config);
+  const persisted = await readFile(file, 'utf8');
+  const parse = t.mock.method(JSON, 'parse');
+  // The dispatcher plans every monitor on every tick; a notify-only monitor plans no repair.
+  assert.equal(await store.ensureRepair(monitor.id, 'owner'), undefined);
+  const wholeStore = parse.mock.calls.filter((call) => call.arguments[0] === persisted);
+  parse.mock.restore();
+  assert.equal(wholeStore.length, 0, 'the whole store is not parsed');
+  assert.equal(await readFile(file, 'utf8'), persisted);
+  assert.deepEqual(store.get(monitor.id, 'owner'), monitor);
+});

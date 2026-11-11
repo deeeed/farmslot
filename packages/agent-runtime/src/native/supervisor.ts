@@ -181,7 +181,8 @@ try {
   });
   durableWrite(join(root, 'cleanup.json'), { hostPid: child.pid, state: 'pending' });
   if (!child.pid) throw new Error('Native host did not obtain a process identity');
-  tree = new NativeProcessTree(child.pid);
+  // The host starts its runner only on the 'start' message sent below.
+  tree = new NativeProcessTree(child.pid, { gated: true });
   stopObservingTree = tree.observe(stopHost);
   child.send('start', (error) => {
     if (error) stopHost(error);

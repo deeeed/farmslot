@@ -472,7 +472,7 @@ test('public RPC preserves historical task pointers and adopted generations in a
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
-  const personGrant = runtime.writer.exchangePersonCredential(personCredential.secret, {
+  const personGrant = await runtime.writer.exchangePersonCredential(personCredential.secret, {
     deviceName: 'Publication fixture',
     deviceKind: 'cli',
   });

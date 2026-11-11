@@ -225,8 +225,17 @@ export class NativeProcessTree {
   private owned = new Map<number, ProcessIdentity>();
   private readonly rootIdentity: string;
   private readonly rootObservation: ProcessIdentity;
-  constructor(private readonly root: number) {
-    const snapshot = processes();
+  /**
+   * `gated`: the root is still held at its launch gate and cannot have started anything, so it is
+   * its whole tree and only that one process is read. A full census blocks the caller's event loop
+   * for as long as `ps` walks every process on the host (hundreds of milliseconds under load); the
+   * shared async census adds descendants once the gate opens.
+   */
+  constructor(
+    private readonly root: number,
+    { gated = false }: { gated?: boolean } = {},
+  ) {
+    const snapshot = processes(gated ? root : undefined);
     const observation = snapshot.get(root);
     if (!observation?.identity) throw new Error('Native process identity is unavailable');
     this.rootIdentity = observation.identity;

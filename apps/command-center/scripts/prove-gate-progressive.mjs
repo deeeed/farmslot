@@ -404,7 +404,7 @@ try {
   const { serveFile, serveRunArtifact } = await sourceModule(
     'services/gateway/src/methods/filesystem.ts',
   );
-  gatewayServer = createServer((req, res) => {
+  gatewayServer = createServer(async (req, res) => {
     if (!applyGatewayCors(req, res)) {
       res.writeHead(403);
       res.end();
@@ -421,7 +421,7 @@ try {
         ? 'file'
         : null;
     if (resource) {
-      if (!authorizeHttpRequest({ runtime: auth, req, res, resource })) return;
+      if (!(await authorizeHttpRequest({ runtime: auth, req, res, resource }))) return;
       if (resource === 'run-artifact') serveRunArtifact(req, res);
       else serveFile(req, res);
       return;

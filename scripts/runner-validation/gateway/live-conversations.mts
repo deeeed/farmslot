@@ -150,7 +150,7 @@ const person = auth.writer.createPrincipal(
 );
 const credential = auth.writer.issueCredential(person.id, 'Private browser');
 await writeFile(path.join(root, 'operator.secret'), credential.secret, { mode: 0o600 });
-const grant = auth.writer.exchangePersonCredential(credential.secret, {
+const grant = await auth.writer.exchangePersonCredential(credential.secret, {
   deviceName: 'Proof RPC',
   deviceKind: 'cli',
 });

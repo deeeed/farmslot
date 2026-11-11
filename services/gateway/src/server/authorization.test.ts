@@ -69,7 +69,7 @@ test('authorization denial survives the response frame with a teaching Next acti
     const ws = await connect(harness.url);
     const auth = await request(ws, Methods.AUTH_CONNECT, {
       clientKind: 'ui',
-      token: personAccess(runtime, issue.secret),
+      token: await personAccess(runtime, issue.secret),
     });
     assert.equal(auth.ok, true);
     assert.deepEqual((auth.payload as { principal?: unknown }).principal, {
@@ -136,7 +136,7 @@ test('auth.connect enforces node subject and returns all virtual and stored self
     const ws = await connect(activatedHarness.url);
     const rejected = await request(ws, Methods.AUTH_CONNECT, {
       clientKind: 'node',
-      token: personAccess(activated, operatorIssue.secret),
+      token: await personAccess(activated, operatorIssue.secret),
     });
     assert.equal(rejected.ok, false);
     assert.equal(rejected.error?.code, 'AUTH_FORBIDDEN');
@@ -249,7 +249,7 @@ test('all seven node frame paths accept node principals and refuse non-node prin
       const adminWs = await connect(harness.url);
       const adminAuth = await request(adminWs, Methods.AUTH_CONNECT, {
         clientKind: 'ui',
-        token: personAccess(runtime, adminIssue.secret),
+        token: await personAccess(runtime, adminIssue.secret),
       });
       assert.equal(adminAuth.ok, true, `${frame.name}: non-node authentication`);
       const closed = onceClose(adminWs);
@@ -373,7 +373,7 @@ test(
       const ws = await connect(harness.url);
       const auth = await request(ws, Methods.AUTH_CONNECT, {
         clientKind: 'ui',
-        token: personAccess(runtime, adminIssue.secret),
+        token: await personAccess(runtime, adminIssue.secret),
       });
       assert.equal(auth.ok, true);
 
@@ -445,7 +445,7 @@ test(
       const ws = await connect(harness.url);
       const auth = await request(ws, Methods.AUTH_CONNECT, {
         clientKind: 'ui',
-        token: personAccess(runtime, adminIssue.secret),
+        token: await personAccess(runtime, adminIssue.secret),
       });
       assert.equal(auth.ok, true);
 
@@ -491,7 +491,7 @@ test(
       const ws = await connect(harness.url);
       const auth = await request(ws, Methods.AUTH_CONNECT, {
         clientKind: 'ui',
-        token: personAccess(runtime, adminIssue.secret),
+        token: await personAccess(runtime, adminIssue.secret),
       });
       assert.equal(auth.ok, true);
 
@@ -524,7 +524,7 @@ test(
       const ws = await connect(harness.url);
       const auth = await request(ws, Methods.AUTH_CONNECT, {
         clientKind: 'ui',
-        token: personAccess(runtime, adminIssue.secret),
+        token: await personAccess(runtime, adminIssue.secret),
       });
       assert.equal(auth.ok, true);
 
@@ -659,13 +659,13 @@ test(
       const adminWs = await connect(harness.url);
       const adminAuth = await request(adminWs, Methods.AUTH_CONNECT, {
         clientKind: 'ui',
-        token: personAccess(runtime, adminIssue.secret),
+        token: await personAccess(runtime, adminIssue.secret),
       });
       assert.equal(adminAuth.ok, true);
       const operatorWs = await connect(harness.url);
       const operatorAuth = await request(operatorWs, Methods.AUTH_CONNECT, {
         clientKind: 'ui',
-        token: personAccess(runtime, operatorIssue.secret),
+        token: await personAccess(runtime, operatorIssue.secret),
       });
       assert.equal(operatorAuth.ok, true);
 
@@ -801,7 +801,7 @@ test('scoped source mutations require admin credentials and never trust wire act
     const ws = await connect(harness.url);
     await request(ws, Methods.AUTH_CONNECT, {
       clientKind: 'ui',
-      token: personAccess(runtime, credential.secret),
+      token: await personAccess(runtime, credential.secret),
     });
     for (const method of [
       Methods.SOURCES_STATUS,
@@ -826,11 +826,16 @@ test('scoped source mutations require admin credentials and never trust wire act
   }
 });
 
-function personAccess(runtime: ReturnType<typeof isolatedRuntime>, credential: string): string {
-  return runtime.writer.exchangePersonCredential(credential, {
-    deviceName: 'Authorization fixture',
-    deviceKind: 'cli',
-  }).accessToken;
+async function personAccess(
+  runtime: ReturnType<typeof isolatedRuntime>,
+  credential: string,
+): Promise<string> {
+  return (
+    await runtime.writer.exchangePersonCredential(credential, {
+      deviceName: 'Authorization fixture',
+      deviceKind: 'cli',
+    })
+  ).accessToken;
 }
 
 test('resource capabilities and principal generations reach farm, node and native-only connections', async () => {

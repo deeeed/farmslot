@@ -6,3 +6,4 @@ export * from './credential-store-lock.js';
 export * from './credential-store-writer.js';
 export * from './gateway-presence.js';
 export * from './person-sessions.js';
+export * from './secret-work.js';
