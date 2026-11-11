@@ -9,7 +9,7 @@ import {
 } from '@farmslot/protocol';
 import { machinePoolFileName } from '@farmslot/slot-config';
 
-import { loadMachinePool, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
+import { loadMachinePool, loadSlotVars } from '../core/config.js';
 import { execOnSlot, isDisconnectedRemote, isLocal } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { withMachineEnv } from '../core/project-env.js';
@@ -88,15 +88,9 @@ export async function modelCatalogNodes(): Promise<ModelCatalogNode[]> {
       const vars = await loadSlotVars(slot);
       if (isDisconnectedRemote(vars)) throw new Error('node is not connected');
       const binary = vars[source.slotPathKey]?.trim() || source.nodeCommand;
-      const baseCommand =
+      let command =
         source.buildCommand?.(vars, binary) ??
         `${shellExpressionForRemotePath(binary)} ${source.args.map(shellQuote).join(' ')}`;
-      let command = source.prepareCommand
-        ? source.prepareCommand(baseCommand, {
-            repo: vars.remoteRepo,
-            runtimeDir: await resolveProjectRuntimeDir(vars.projectName),
-          })
-        : baseCommand;
       // Resolve and activate support before the bounded listing. The resolved
       // command names its immutable bundle, so execOnSlot need not ensure it again.
       if (!isLocal(vars.host, vars.machine) || usesNodeLink(vars.machine))

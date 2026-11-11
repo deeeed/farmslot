@@ -3,7 +3,10 @@ import test from 'node:test';
 
 import type { SlotVars } from '../core/index.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
-import { buildPiAuthCheckCommand } from '../runners/runner-observability.js';
+import {
+  buildPiAuthCheckCommand,
+  buildPiModelCatalogCommand,
+} from '../runners/runner-observability.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
 import type { NodeSupportIo } from './ensure.js';
@@ -198,6 +201,27 @@ test('remote auth resolves its current bundled helper before executing a stale l
   );
   assert.doesNotMatch(resolved, /node ~\/farmslot-node\/scripts/);
   assert.ok(node.calls.includes('writeFiles'), 'current bundle is installed before auth');
+});
+
+test('remote pi catalog resolves helper and extension to the same verified bundle', async () => {
+  resetRemoteFarmCommandCache();
+  const node = fakeNode();
+  const vars = makeVars({
+    host: 'remote-fixture.local',
+    machine: 'remote-fixture',
+    projectName: PROJECT,
+  });
+  const resolved = await resolveRemoteFarmCommand(vars, buildPiModelCatalogCommand(vars, 'pi'), {
+    io: node.io,
+  });
+  const helper = resolved.match(
+    /([^\s\x27\x22]*\/farmslot-node\/support\/[0-9a-f]{64})\/scripts\/runners\/pi-farmslot-providers\.mjs/,
+  );
+  assert.ok(helper);
+  assert.ok(resolved.includes(`-e ${helper[1]}/scripts/runners/pi-farmslot-observability.ts`));
+  assert.doesNotMatch(resolved, /~\/farmslot-node\/scripts/);
+  assert.doesNotMatch(resolved, /\.observability\/bin/);
+  assert.ok(node.calls.includes('writeFiles'));
 });
 
 test('concurrent hooks on one slot share a single publish', async () => {
