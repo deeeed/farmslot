@@ -8,6 +8,8 @@ import {
   resourceQuery,
   type ResourceStore,
 } from '../../src/client-cache/index.js';
+import type { RunListParams, RunListResult } from '../../src/rpc/run.js';
+import { storedRun } from '../fixtures/run.js';
 
 test('a transient storage I/O error reopens persistence without a socket reconnect', async () => {
   const scope = {
@@ -347,6 +349,95 @@ test('a refused oversized value cannot confirm recovery through a no-op write ca
     assert.equal(opens, 2, 'An admission refusal is not a successful persistence confirmation');
     (await transport.nextRead()).resolve({ value: 'fresh in memory' });
     await cache.retry(query);
+  } finally {
+    stop();
+    await cache.dispose();
+  }
+});
+
+test('a successful first page cannot confirm recovery while a later run-list page keeps failing', async () => {
+  const scope = {
+    gatewayUrl: 'ws://paged-recovery.invalid/',
+    principalId: 'owner',
+    principalGeneration: 0,
+  };
+  const connection = new ResourceCacheConformanceTransport(scope);
+  connection.setConnection({
+    connected: true,
+    id: 1,
+    capabilities: {
+      httpBearerAuth: true,
+      voiceInstructionFormatting: false,
+      resourceChanges: { version: 1, epoch: 'epoch', versionLists: true },
+    },
+  });
+  const runs = ['a', 'b', 'c', 'd'].map((id) => storedRun(id));
+  let opens = 0,
+    successfulPages = 0,
+    failedPages = 0;
+  const transport = {
+    getConnection: connection.getConnection,
+    onConnectionChange: connection.onConnectionChange,
+    onResourceChanged: connection.onResourceChanged,
+    resynchronize: connection.resynchronize,
+    async request<T>(_method: string, params: unknown) {
+      const input = params as RunListParams;
+      const selected = input.versions
+        ? []
+        : runs.filter((run) => input.ids?.includes(run.id)).slice(0, 2);
+      const data: RunListResult = {
+        runs: selected,
+        totalCount: runs.length,
+        versions: (input.versions ? runs : selected).map((run) => ({ id: run.id, version: 'v1' })),
+      };
+      return {
+        data: data as T,
+        resourceState: {
+          epoch: 'epoch',
+          dependencies: [{ key: { family: 'runs' as const, scope: 'farm' as const }, revision: 1 }],
+        },
+      };
+    },
+  };
+  const cache = createGatewayResourceCache({
+    transport,
+    openStore: async () => {
+      if (++opens > 6) throw new Error('Stop unbounded multi-page test');
+      const memory = createMemoryResourceStore();
+      return {
+        ...memory,
+        persistent: true,
+        async mergeRows(key, merge) {
+          if (merge.upserts.some((row) => row.id === 'c')) {
+            failedPages++;
+            throw new Error('later page remains unavailable');
+          }
+          successfulPages++;
+          await memory.mergeRows!(key, merge);
+        },
+      } satisfies ResourceStore;
+    },
+  });
+  const query = resourceQuery<RunListResult>('run.list', { limit: 10 });
+  const stop = cache.observe(query, () => {});
+  try {
+    await cache.retry(query);
+    for (let i = 0; i < 40; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+    assert(
+      successfulPages >= 2,
+      'Both persistent attempts must successfully commit their first page',
+    );
+    assert.equal(opens, 2, 'Only a complete refresh may confirm collection recovery');
+    assert.equal(failedPages, 2);
+    assert.deepEqual(
+      cache
+        .read(query)
+        .data?.runs.map((run) => run.id)
+        .sort(),
+      ['a', 'b', 'c', 'd'],
+      'Fresh rows must remain readable in memory',
+    );
+    assert.match(cache.read(query).storageNotice!, /later page remains unavailable/);
   } finally {
     stop();
     await cache.dispose();

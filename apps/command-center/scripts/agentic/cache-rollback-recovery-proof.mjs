@@ -8,11 +8,37 @@ const baseline = process.argv.includes('--expect-masked');
 const negativeReload = process.argv.includes('--negative-reload');
 const artifactGapAccepted = process.argv.includes('--accept-artifact-gap');
 const negativePartial = process.argv.includes('--negative-partial-outage');
-const partialOutage = process.argv.includes('--partial-outage') || negativePartial;
+const negativeLaterPage = process.argv.includes('--negative-later-page');
+const laterPageOutage = process.argv.includes('--later-page-outage') || negativeLaterPage;
+const partialOutage =
+  process.argv.includes('--partial-outage') || negativePartial || laterPageOutage;
 const faultMode = process.env.FARMSLOT_PROOF_FAULT ?? 'transaction-abort';
 const proofDatabase = '/rollback-recovery-proof.sqlite';
 assert(['transaction-abort', 'opfs-io'].includes(faultMode));
 function transformSource({ url, body }) {
+  if (laterPageOutage && url.pathname.endsWith('/client-cache/run-list-versions.ts')) {
+    const requestBoundary = 'this.options.request({ ids: ask }, signal)';
+    assert(body.toString().includes(requestBoundary), 'Paged request boundary changed');
+    // Ask for real supported 50-ID pages; never trim or fabricate gateway replies.
+    body = Buffer.from(
+      body
+        .toString()
+        .replace(requestBoundary, 'this.options.request({ ids: ask.slice(0, 50) }, signal)'),
+    );
+  }
+  if (negativeLaterPage && url.pathname.endsWith('/client-cache/cache.ts')) {
+    const pageCommit = '() => writingStore.mergeRows(RUN_LIST_COLLECTION_ID, merge)';
+    assert(body.toString().includes(pageCommit), 'Negative page-confirm boundary changed');
+    body = Buffer.from(
+      body
+        .toString()
+        .replace(
+          pageCommit,
+          'async () => { await writingStore.mergeRows(RUN_LIST_COLLECTION_ID, merge); if(current()) confirmPersistentWrite(writingStore, RUN_LIST_COLLECTION_ID); }',
+        ),
+    );
+  }
+
   if (negativePartial && url.pathname.endsWith('/client-cache/cache.ts')) {
     const boundary = 'else await write();';
     assert(body.toString().includes(boundary), 'Negative cache boundary changed');
@@ -148,7 +174,7 @@ try {
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Emulation.setDataSaverOverride', { dataSaverEnabled: true });
   await page.addInitScript(
-    ({ databaseName, partialOutage }) => {
+    ({ databaseName, partialOutage, laterPageOutage }) => {
       const NativeWorker = window.Worker;
       const proof = { workers: 0, retired: 0, injected: false, failures: [], successfulMerges: 0 };
       window.__rollbackProof = proof;
@@ -157,13 +183,20 @@ try {
           super(url, options);
           this.storage = String(url).includes('browser-worker');
           this.merges = new Set();
+          this.completedMerges = 0;
+          this.pageSizes = new Map();
           this.writes = new Set();
           this.cleanOwnedFiles = this.storage && proof.workers === 0;
           if (this.storage) proof.workers++;
           this.addEventListener('message', ({ data }) => {
             if (data.proofCleanup) proof.cleanup = data.proofCleanup;
             if (data.ok === false) proof.failures.push(data);
-            if (this.merges.delete(data.id) && data.ok) proof.successfulMerges++;
+            if (this.merges.delete(data.id) && data.ok) {
+              proof.successfulMerges++;
+              this.completedMerges++;
+              (proof.completedPageRows ??= []).push(this.pageSizes.get(data.id));
+            }
+            this.pageSizes.delete(data.id);
             if (this.writes.delete(data.id) && data.ok)
               proof.healthyWrites = (proof.healthyWrites ?? 0) + 1;
           });
@@ -180,7 +213,11 @@ try {
           if (this.storage && request.operation === 'putQuery') this.writes.add(request.id);
           if (this.storage && request.operation === 'mergeRows') {
             this.merges.add(request.id);
-            if (!proof.injected || proof.repeatArmed || partialOutage) {
+            this.pageSizes.set(request.id, request.merge.upserts.length);
+            const failMerge = laterPageOutage
+              ? this.completedMerges > 0
+              : !proof.injected || proof.repeatArmed || partialOutage;
+            if (failMerge) {
               proof.injected = true;
               proof.repeatArmed = false;
               proof.injections = (proof.injections ?? 0) + 1;
@@ -203,7 +240,7 @@ try {
         }
       };
     },
-    { databaseName: proofDatabase, partialOutage },
+    { databaseName: proofDatabase, partialOutage, laterPageOutage },
   );
   await page.bringToFront();
   await page.goto(`${origin}/#runs?tab=all`, { waitUntil: 'domcontentloaded' });
@@ -247,6 +284,11 @@ try {
         'Partial outage needs healthy query writes alongside the failing merge',
       );
       assert.equal(recovered.diagnostics.storage, 'memory');
+      if (laterPageOutage)
+        assert(
+          recovered.fault.completedPageRows.filter((rows) => rows > 0).length >= 2,
+          'Each attempt must commit a page before a later page fails',
+        );
       assertSameDocumentAndConnection(recovered);
       await page.screenshot({ path: path.join(output, 'partial-outage.png') });
     } else {
@@ -348,6 +390,8 @@ try {
   completedProof = {
     baseline,
     partialOutage,
+    laterPageOutage,
+    pageSize: laterPageOutage ? 50 : undefined,
     faultMode,
     artifactGapAccepted,
     pageErrors,

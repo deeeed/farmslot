@@ -301,10 +301,7 @@ export function createGatewayResourceCache(
       return updateStore(
         writingStore,
         current,
-        async () => {
-          await writingStore.mergeRows!(RUN_LIST_COLLECTION_ID, merge);
-          if (current()) confirmPersistentWrite(writingStore, RUN_LIST_COLLECTION_ID);
-        },
+        () => writingStore.mergeRows!(RUN_LIST_COLLECTION_ID, merge),
         true,
         RUN_LIST_COLLECTION_ID,
       );
@@ -1172,8 +1169,19 @@ export function createGatewayResourceCache(
     const flags = runListFlags();
     try {
       // A new view of a current collection needs no read: no runs change since its version reply.
-      if (!runList.complete || !runList.serves(flags) || !stampCovers(entry, runList.resourceState))
+      if (
+        !runList.complete ||
+        !runList.serves(flags) ||
+        !stampCovers(entry, runList.resourceState)
+      ) {
+        const refreshingStore = store;
+        const incarnation = storeVersion;
         await runList.refresh(flags);
+        // Earlier pages cannot prove that the failed later page can be stored.
+        // Confirm only a complete refresh that never switched its store.
+        if (store === refreshingStore && storeVersion === incarnation && runList.complete)
+          confirmPersistentWrite(refreshingStore, RUN_LIST_COLLECTION_ID);
+      }
     } catch (error) {
       // A refused collection read evicts the stored collection, like every refused read.
       if (evictionCodes.has(queryError(error).code)) {
