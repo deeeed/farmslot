@@ -342,7 +342,7 @@ if (process.argv[2] === 'fake') {
 } else if (process.argv[2] === 'serve') {
   // Persistent HTTP server: routes all GitHub API calls that the migrated gateway sends over
   // HTTP transport (FARMSLOT_GITHUB_API_URL) so the proof never reaches the real GitHub API.
-  const [, serveStateFile] = process.argv.slice(2);
+  const [, serveStateFile, serveLogFile] = process.argv.slice(2);
   const { createServer: httpCreateServer } = await import('node:http');
   const readState = () => JSON.parse(readFileSync(serveStateFile, 'utf8'));
   const makeGqlPR = (pr) => ({
@@ -386,6 +386,20 @@ if (process.argv[2] === 'fake') {
           const payload = JSON.stringify(body);
           res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
           res.end(payload);
+        };
+        const appendLog = (source) => {
+          if (!serveLogFile) return;
+          const state = readState();
+          appendFileSync(
+            serveLogFile,
+            JSON.stringify({
+              source,
+              method: req.method,
+              path: urlPath,
+              stateRevision: state.revision,
+              at: Date.now(),
+            }) + '\n',
+          );
         };
         if (req.method === 'POST' && urlPath === '/graphql') {
           const query = String(bodyJson?.query ?? '');
@@ -462,6 +476,7 @@ if (process.argv[2] === 'fake') {
                 rateLimit: { cost: 1 },
               },
             });
+            appendLog('pr-detail:checks');
             return;
           }
           if (query.includes('PullRequestByNumber') || query.includes('pullRequest(number:')) {
@@ -474,6 +489,7 @@ if (process.argv[2] === 'fake') {
             json(200, {
               data: { repository: { pullRequest: makeGqlPR(pr) }, rateLimit: { cost: 1 } },
             });
+            appendLog('pr-detail:view');
             return;
           }
           if (query.includes('PullRequestList') || query.includes('pullRequests(')) {
@@ -812,7 +828,8 @@ if (process.argv[2] === 'fake') {
     await symlink(node, path.join(fakeBin, 'node'));
     // Start the GitHub API fixture HTTP server. Gateway uses it via FARMSLOT_GITHUB_API_URL
     // so all PR GraphQL and REST calls go here instead of real GitHub.
-    const serveChild = spawn(node, [fixtureFile, 'serve', stateFile], {
+    const githubHttpLogFile = path.join(root, 'github-http-invocations.jsonl');
+    const serveChild = spawn(node, [fixtureFile, 'serve', stateFile, githubHttpLogFile], {
       detached: true,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
@@ -856,6 +873,7 @@ if (process.argv[2] === 'fake') {
       monitorId: monitor.id,
       githubHttpPid: serveChild.pid,
       githubApiUrl,
+      githubHttpInvocationsFile: githubHttpLogFile,
       setupComplete: true,
       fixtureOnly: true,
       providerExecution: false,

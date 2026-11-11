@@ -161,34 +161,66 @@ describe('in-process gh client', { concurrency: 1 }, () => {
     assert(bytesBound.get('t'));
   });
 
-  test('a rejected keyring token is re-read once and the request retried', async () => {
+  test('a rejected keyring token is re-read once and the request retried', async (t) => {
     keyring.push('stale-token', 'fresh-token');
     route = (request) =>
       authOf(request) === 'token fresh-token'
         ? { body: { ok: true } }
         : { status: 401, body: { message: 'Bad credentials' } };
     const start = fixture.requests.length;
-    assert.deepEqual(await github.rest<{ ok: boolean }>('GET', 'refresh/one'), { ok: true });
-    assert.deepEqual(await github.rest<{ ok: boolean }>('GET', 'refresh/two'), { ok: true });
-    assert.deepEqual(requestsSince(start).map(authOf), [
-      'token stale-token',
-      'token fresh-token',
-      'token fresh-token',
-    ]);
-    assert.equal(processes.length, 2, 'the fresh token is cached after the retry');
+    // These tests exercise keyring + retry behavior: unset the override so the transport
+    // reads the keyring, then redirect fetch to the fixture server.
+    const origin = fixture.origin;
+    const realFetch = globalThis.fetch;
+    t.mock.method(
+      globalThis as { fetch: typeof globalThis.fetch },
+      'fetch',
+      (url: string | URL, init?: RequestInit): Promise<Response> => {
+        const u = new URL(String(url));
+        return realFetch(origin + u.pathname + u.search, init);
+      },
+    );
+    delete process.env.FARMSLOT_GITHUB_API_URL;
+    try {
+      assert.deepEqual(await github.rest<{ ok: boolean }>('GET', 'refresh/one'), { ok: true });
+      assert.deepEqual(await github.rest<{ ok: boolean }>('GET', 'refresh/two'), { ok: true });
+      assert.deepEqual(requestsSince(start).map(authOf), [
+        'token stale-token',
+        'token fresh-token',
+        'token fresh-token',
+      ]);
+      assert.equal(processes.length, 2, 'the fresh token is cached after the retry');
+    } finally {
+      process.env.FARMSLOT_GITHUB_API_URL = origin;
+    }
   });
 
-  test('an explicit account is not retried on 401 and its cached token is dropped', async () => {
+  test('an explicit account is not retried on 401 and its cached token is dropped', async (t) => {
     keyring.push('account-token', 'account-token-2');
-    const token = await transport.resolveGitHubToken('github.com', 'reviewer');
-    route = () => ({ status: 401, body: { message: 'Bad credentials' } });
-    const start = fixture.requests.length;
-    await assert.rejects(
-      github.rest('GET', 'account/user', { account: { host: 'github.com', token, scope: 's' } }),
-      (error: unknown) => error instanceof GitHubHttpError && error.status === 401,
+    const origin = fixture.origin;
+    const realFetch = globalThis.fetch;
+    t.mock.method(
+      globalThis as { fetch: typeof globalThis.fetch },
+      'fetch',
+      (url: string | URL, init?: RequestInit): Promise<Response> => {
+        const u = new URL(String(url));
+        return realFetch(origin + u.pathname + u.search, init);
+      },
     );
-    assert.equal(requestsSince(start).length, 1);
-    assert.equal(await transport.resolveGitHubToken('github.com', 'reviewer'), 'account-token-2');
+    delete process.env.FARMSLOT_GITHUB_API_URL;
+    try {
+      const token = await transport.resolveGitHubToken('github.com', 'reviewer');
+      route = () => ({ status: 401, body: { message: 'Bad credentials' } });
+      const start = fixture.requests.length;
+      await assert.rejects(
+        github.rest('GET', 'account/user', { account: { host: 'github.com', token, scope: 's' } }),
+        (error: unknown) => error instanceof GitHubHttpError && error.status === 401,
+      );
+      assert.equal(requestsSince(start).length, 1);
+      assert.equal(await transport.resolveGitHubToken('github.com', 'reviewer'), 'account-token-2');
+    } finally {
+      process.env.FARMSLOT_GITHUB_API_URL = origin;
+    }
   });
 
   test('aborted requests reject as AbortError and are not failure-cached', async () => {
@@ -279,8 +311,10 @@ describe('in-process gh client', { concurrency: 1 }, () => {
     assert.deepEqual(result, { nameWithOwner: 'owner/repo' });
   });
 
-  test('a PR status refresh spawns one keyring read and no gh request processes', async () => {
+  test('a PR status refresh spawns one keyring read and no gh request processes', async (t) => {
     keyring.push('refresh-token');
+    const origin = fixture.origin;
+    const realFetch = globalThis.fetch;
     route = (request) => {
       if (request.path === '/graphql') {
         const query = String((request.json as { query?: string }).query);
@@ -321,18 +355,167 @@ describe('in-process gh client', { concurrency: 1 }, () => {
       }
       return { headers: { etag: `"${request.path}"` }, body: [] };
     };
-    const refresh = () =>
-      Promise.all([
-        github.prChecks('o/r', 1, ['name', 'bucket'], { force: true }),
-        github.prView('o/r', 1, ['state', 'author'], { force: true }),
-        github.rest<unknown[]>('GET', 'repos/o/r/issues/1/comments', {
-          paginate: true,
-          force: true,
-        }),
-        github.rest<unknown>('GET', 'repos/o/r/pulls/1/commits', { force: true }),
-      ]);
-    for (let i = 0; i < 5; i++) await refresh();
-    assert.deepEqual(processes, [['gh', 'auth', 'token', '--hostname', 'github.com']]);
+    t.mock.method(
+      globalThis as { fetch: typeof globalThis.fetch },
+      'fetch',
+      (url: string | URL, init?: RequestInit): Promise<Response> => {
+        const u = new URL(String(url));
+        return realFetch(origin + u.pathname + u.search, init);
+      },
+    );
+    delete process.env.FARMSLOT_GITHUB_API_URL;
+    try {
+      const refresh = () =>
+        Promise.all([
+          github.prChecks('o/r', 1, ['name', 'bucket'], { force: true }),
+          github.prView('o/r', 1, ['state', 'author'], { force: true }),
+          github.rest<unknown[]>('GET', 'repos/o/r/issues/1/comments', {
+            paginate: true,
+            force: true,
+          }),
+          github.rest<unknown>('GET', 'repos/o/r/pulls/1/commits', { force: true }),
+        ]);
+      for (let i = 0; i < 5; i++) await refresh();
+      assert.deepEqual(processes, [['gh', 'auth', 'token', '--hostname', 'github.com']]);
+    } finally {
+      process.env.FARMSLOT_GITHUB_API_URL = origin;
+    }
+  });
+
+  test('fixture-token rule: override set, no fixture token, keyring is never read', async () => {
+    delete process.env.FARMSLOT_GITHUB_FIXTURE_TOKEN;
+    keyring.push('should-never-be-read');
+    const start = fixture.requests.length;
+    route = (request) => ({ body: { noAuth: authOf(request) == null } });
+    const result = await github.rest<{ noAuth: boolean }>('GET', 'fixture/rule');
+    assert.deepEqual(result, { noAuth: true });
+    assert.equal(processes.length, 0, 'keyring was never called');
+    assert.equal(fixture.requests.length - start, 1);
+  });
+
+  test('prView export maps scalar fields and author through the pr export shape', async () => {
+    keyring.push('view-export-token');
+    route = (request) => {
+      if (request.path === '/graphql') {
+        return {
+          body: {
+            data: {
+              repository: {
+                pullRequest: {
+                  id: 'PR_01',
+                  state: 'OPEN',
+                  headRefName: 'feat/export',
+                  author: { id: 'U_01', login: 'octo', name: 'Octo Cat' },
+                },
+              },
+              rateLimit: { cost: 1 },
+            },
+          },
+        };
+      }
+      return { body: [] };
+    };
+    const pr = await github.prView('o/r', 1, ['state', 'headRefName', 'author']);
+    assert.deepEqual(pr, {
+      state: 'OPEN',
+      headRefName: 'feat/export',
+      author: { is_bot: false, login: 'octo', id: 'U_01', name: 'Octo Cat' },
+    });
+  });
+
+  test('prChecks maps GitHub states to buckets and deduplicates check runs', async () => {
+    keyring.push('checks-bucket-token');
+    route = (request) => {
+      if (request.path === '/graphql') {
+        return {
+          body: {
+            data: {
+              repository: {
+                pullRequest: {
+                  headRefName: 'feat',
+                  statusCheckRollup: {
+                    nodes: [
+                      {
+                        commit: {
+                          statusCheckRollup: {
+                            contexts: {
+                              nodes: [
+                                {
+                                  __typename: 'CheckRun',
+                                  name: 'ci',
+                                  status: 'COMPLETED',
+                                  conclusion: 'SUCCESS',
+                                  startedAt: '2024-01-01T10:00:00Z',
+                                  completedAt: null,
+                                  detailsUrl: null,
+                                  url: null,
+                                  checkSuite: {
+                                    workflowRun: { event: 'push', workflow: { name: 'CI' } },
+                                  },
+                                },
+                                {
+                                  // duplicate of ci — same name/workflow/event, started earlier → deduped
+                                  __typename: 'CheckRun',
+                                  name: 'ci',
+                                  status: 'COMPLETED',
+                                  conclusion: 'FAILURE',
+                                  startedAt: '2024-01-01T09:00:00Z',
+                                  completedAt: null,
+                                  detailsUrl: null,
+                                  url: null,
+                                  checkSuite: {
+                                    workflowRun: { event: 'push', workflow: { name: 'CI' } },
+                                  },
+                                },
+                                {
+                                  __typename: 'CheckRun',
+                                  name: 'lint',
+                                  status: 'COMPLETED',
+                                  conclusion: 'FAILURE',
+                                  startedAt: '2024-01-01T10:00:00Z',
+                                  completedAt: null,
+                                  detailsUrl: null,
+                                  url: null,
+                                  checkSuite: {
+                                    workflowRun: { event: 'push', workflow: { name: 'Lint' } },
+                                  },
+                                },
+                                {
+                                  __typename: 'CheckRun',
+                                  name: 'docs',
+                                  status: 'COMPLETED',
+                                  conclusion: 'SKIPPED',
+                                  startedAt: '2024-01-01T10:00:00Z',
+                                  completedAt: null,
+                                  detailsUrl: null,
+                                  url: null,
+                                  checkSuite: {
+                                    workflowRun: { event: 'push', workflow: { name: 'Docs' } },
+                                  },
+                                },
+                              ],
+                              pageInfo: { hasNextPage: false },
+                            },
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+              rateLimit: { cost: 1 },
+            },
+          },
+        };
+      }
+      return { body: [] };
+    };
+    const checks = await github.prChecks('o/r', 1, ['name', 'bucket']);
+    assert.equal(checks.length, 3, 'duplicate ci run (same name/workflow/event) is deduped');
+    const byName = Object.fromEntries(checks.map((c) => [String(c.name), String(c.bucket)]));
+    assert.equal(byName['ci'], 'pass', 'SUCCESS conclusion maps to pass');
+    assert.equal(byName['lint'], 'fail', 'FAILURE conclusion maps to fail');
+    assert.equal(byName['docs'], 'skipping', 'SKIPPED conclusion maps to skipping');
   });
 
   test('hosts map to github.com, tenancy and Enterprise Server endpoints', () => {
