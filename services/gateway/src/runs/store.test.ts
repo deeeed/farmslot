@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
 import {
   chmod,
   mkdir,
   mkdtemp,
+  open,
   readdir,
   readFile,
   rm,
@@ -27,8 +29,11 @@ import {
   buildRunRecord,
   cleanupRuns,
   createRun,
+  deleteArchivedRun,
   deleteRun,
+  forgetArchivedRuns,
   getAllRunsWithArchived,
+  getArchivedRuns,
   getRun,
   isSyntheticLeak,
   listRuns,
@@ -36,6 +41,7 @@ import {
   persistRunNow,
   runRecordPath,
   shouldUseIsolatedRunsDir,
+  updateReviewPublication,
   updateRun,
 } from './store.js';
 import { isLeakedGatewayTestRun } from './test-run-leak.js';
@@ -1112,6 +1118,98 @@ test('loadAllRuns migrates a persisted merge-main.md worker template to update-b
   assert.equal(disk.taskTemplate.fileName, 'update-branch.md');
 });
 
+const testArchiveDir = () => path.join(os.tmpdir(), `farmslot-test-runs-${process.pid}`, 'archive');
+
+/** A finished run, archived; removed from the archive when the test ends. */
+async function archivedFixture(t: test.TestContext, label: string): Promise<string> {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${randomUUID()}-${label}`,
+  });
+  t.after(async () => {
+    await cleanupRun(run.id);
+    await deleteArchivedRun(run.id);
+  });
+  updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+  assert.equal(await archiveRun(run.id), true);
+  return run.id;
+}
+
+/**
+ * A run record put in the archive directory behind the store's back. Only a scan of the whole
+ * directory can find it, so its absence from a read proves that read did not scan.
+ */
+async function archiveDecoy(t: test.TestContext): Promise<string> {
+  const id = randomUUID();
+  const file = path.join(testArchiveDir(), `${id}.json`);
+  const record = buildRunRecord({ flowType: 'dev', project: 'demo', ticketOrPr: `DECOY-${id}` });
+  await writeFile(file, JSON.stringify({ ...record, id, status: 'done' }), 'utf-8');
+  t.after(async () => {
+    await rm(file, { force: true });
+    forgetArchivedRuns();
+  });
+  return id;
+}
+
+const archivedIds = async () => new Set((await getArchivedRuns()).map((run) => run.id));
+
+test('archiving, changing and deleting an archived run update its one record without a rescan', async (t) => {
+  const first = await archivedFixture(t, 'archive-cache-first');
+  assert.ok((await archivedIds()).has(first));
+  const decoy = await archiveDecoy(t);
+
+  const second = await archivedFixture(t, 'archive-cache-second');
+  let ids = await archivedIds();
+  assert.ok(ids.has(second), 'the newly archived run is readable at once');
+  assert.ok(!ids.has(decoy), 'archiving did not scan the archive again');
+
+  await updateReviewPublication(first, { error: 'publication refused' });
+  const changed = (await getArchivedRuns()).find((run) => run.id === first);
+  assert.equal(changed?.reviewPublication?.error, 'publication refused');
+  assert.ok(!(await archivedIds()).has(decoy), 'a retained change did not scan the archive again');
+
+  assert.equal(await deleteArchivedRun(second), true);
+  ids = await archivedIds();
+  assert.ok(!ids.has(second));
+  assert.ok(ids.has(first));
+  assert.ok(!ids.has(decoy), 'a delete did not scan the archive again');
+
+  // The decoy is on disk all along: a real scan finds it.
+  forgetArchivedRuns();
+  assert.ok((await archivedIds()).has(decoy));
+});
+
+test('cold readers share one archive scan, and a run archived during it is in the result', async (t) => {
+  // A named pipe in the archive holds the scan open until something writes to it.
+  const pipe = path.join(testArchiveDir(), `${randomUUID()}.json`);
+  await mkdir(testArchiveDir(), { recursive: true });
+  await execFileAsync('mkfifo', [pipe]);
+  const releaseScan = async () => {
+    // Read-write does not wait for the other end, so this never blocks, scan or no scan.
+    const handle = await open(pipe, constants.O_RDWR | constants.O_NONBLOCK);
+    await handle.write('not a run record');
+    await handle.close();
+  };
+  t.after(async () => {
+    await releaseScan();
+    await rm(pipe, { force: true });
+    forgetArchivedRuns();
+  });
+
+  forgetArchivedRuns();
+  const [one, two] = [getArchivedRuns(), getArchivedRuns()];
+  const during = await archivedFixture(t, 'archive-cache-during-scan');
+  await releaseScan();
+  const [first, second] = await Promise.all([one, two]);
+  assert.equal(first, second, 'both readers got the same scan');
+  assert.ok(
+    first.some((run) => run.id === during),
+    'the scan result includes the run archived while it ran',
+  );
+  assert.equal(await getArchivedRuns(), first, 'the scan became the cache');
+});
+
 test('getAllRunsWithArchived dedupes a run present in both the live map and the archive', async (t) => {
   // Codex round-7 P2: a background persist racing archiveRun can recreate runs/<id>.json
   // after the archive copy is written, so after a restart the same id loads from both
@@ -1123,8 +1221,6 @@ test('getAllRunsWithArchived dedupes a run present in both the live map and the 
   });
   t.after(() => cleanupRun(live.id));
 
-  // Archiving a throwaway run invalidates the archive cache, so the manual file below
-  // is picked up by the next scan rather than hidden behind a warm cache.
   const throwaway = createRun({
     flowType: 'dev',
     project: 'example-mobile-farm',
@@ -1152,6 +1248,8 @@ test('getAllRunsWithArchived dedupes a run present in both the live map and the 
     JSON.stringify({ ...live, status: 'cancelled', archivedAt: new Date().toISOString() }, null, 2),
     'utf-8',
   );
+  // The store did not write that file: as after a restart, the next read scans the directory.
+  forgetArchivedRuns();
 
   const all = await getAllRunsWithArchived();
   const matches = all.filter((candidate) => candidate.id === live.id);
