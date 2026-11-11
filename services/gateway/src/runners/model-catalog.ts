@@ -11,7 +11,8 @@ import {
 } from '@farmslot/protocol';
 
 import {
-  parsePiModelList as decodePiModelList,
+  decodePiModelList,
+  parsePiProviderDiscovery,
   PiModelListFormatError,
 } from '../../../../scripts/runners/pi-farmslot-providers.mjs';
 import type { SlotVars } from '../core/config.js';
@@ -34,12 +35,24 @@ export interface RunnerModelCatalogCommandSource {
   parse: (output: string) => RunnerCatalogModel[];
 }
 
+export interface NodeModelCatalogListing extends NodeCatalogModels {
+  ids: string[];
+  configuredProviders: string[];
+}
+
+export interface RunnerModelCatalogNodeCommandContext {
+  repo: string;
+  runtimeDir: string;
+}
+
 /** A listing command every execution node runs itself, through its slots' exec path. */
 export interface RunnerModelCatalogNodeSource {
   nodeCommand: string;
   /** Slot var naming the pool's configured executable; `nodeCommand` when unset. */
   slotPathKey: 'piPath' | 'opencodePath';
   args: string[];
+  /** Runner-owned additions using the listing slot's installed runtime. */
+  prepareCommand?: (command: string, context: RunnerModelCatalogNodeCommandContext) => string;
   /** Model ids, `provider/model`. */
   parse: (output: string) => string[] | NodeCatalogModels;
   /** Runner-owned listing command, executed with this node's inherited and pool environment. */
@@ -251,9 +264,20 @@ export function parsePiModelList(output: string): string[] {
 }
 
 /** Farmslot's node-local Pi helper reports the models actually registered by discovery. */
-export function parsePiModelCatalog(output: string): NodeCatalogModels {
+export function parsePiModelCatalog(output: string): NodeModelCatalogListing {
   // Raw tables remain valid for callers that list native Pi directly.
-  if (!output.trimStart().startsWith('{')) return { ids: parsePiModelList(output) };
+  if (!output.trimStart().startsWith('{') || output.includes('farmslot.pi-provider-discovery')) {
+    const ids = parsePiModelList(output);
+    try {
+      return {
+        ids,
+        configuredProviders: parsePiProviderDiscovery(output, ids).configuredProviders,
+      };
+    } catch (error) {
+      if (error instanceof PiModelListFormatError) throw new ModelCatalogFormatError(error.message);
+      throw error;
+    }
+  }
   let value: unknown;
   try {
     value = JSON.parse(output);
@@ -265,7 +289,12 @@ export function parsePiModelCatalog(output: string): NodeCatalogModels {
     !isModelIds(value.ids) ||
     !value.ids.length ||
     !isRecord(value.aliases) ||
-    (value.nativeIds !== undefined && !isModelIds(value.nativeIds))
+    (value.nativeIds !== undefined && !isModelIds(value.nativeIds)) ||
+    (value.configuredProviders !== undefined &&
+      (!Array.isArray(value.configuredProviders) ||
+        !value.configuredProviders.every(
+          (id) => typeof id === 'string' && /^[a-z0-9][\w.-]*$/i.test(id),
+        )))
   )
     throw new ModelCatalogFormatError('Pi model catalog has invalid models or aliases.');
   const ids: string[] = value.ids;
@@ -281,7 +310,12 @@ export function parsePiModelCatalog(output: string): NodeCatalogModels {
       throw new ModelCatalogFormatError('Pi model catalog has invalid aliases.');
     aliases[alias] = canonical;
   }
-  return { ids, aliases, ...(value.nativeIds === undefined ? {} : { nativeIds: value.nativeIds }) };
+  return {
+    ids,
+    aliases,
+    configuredProviders: value.configuredProviders ?? [],
+    ...(value.nativeIds === undefined ? {} : { nativeIds: value.nativeIds }),
+  };
 }
 
 function isModelIds(value: unknown): value is string[] {
@@ -305,6 +339,7 @@ interface NodeModelListing {
   nativeIds: readonly string[];
   ids: readonly string[];
   observedAt?: number;
+  shrink?: { signature: string; repeats: number };
   aliases: Readonly<Record<string, string>>;
 }
 
@@ -327,6 +362,24 @@ export class NodeModelCatalogs {
       nativeIds: [...nativeIds],
       observedAt: Date.now(),
     });
+  }
+
+  /** Confirm large drops from configured providers before replacing the last good listing. */
+  accept(runner: string, machine: string, listing: NodeModelCatalogListing): boolean {
+    const previous = this.listings.get(runner)?.get(machine);
+    const { ids, configuredProviders } = listing;
+    if (
+      previous &&
+      ids.length < previous.ids.length / 2 &&
+      previous.ids.some((id) => configuredProviders.includes(id.split('/')[0]) && !ids.includes(id))
+    ) {
+      const signature = JSON.stringify([...ids].sort());
+      const repeats = previous.shrink?.signature === signature ? previous.shrink.repeats + 1 : 1;
+      previous.shrink = { signature, repeats };
+      if (repeats < 3) return false;
+    }
+    this.record(runner, machine, ids, listing.aliases, listing.nativeIds);
+    return true;
   }
 
   unavailable(runner: string, machine: string): void {
@@ -414,6 +467,7 @@ export class NodeModelCatalogs {
 export const nodeModelCatalogs = new NodeModelCatalogs();
 
 export interface NodeCatalogModels {
+  configuredProviders?: string[];
   ids: string[];
   nativeIds?: readonly string[];
   aliases?: Readonly<Record<string, string>>;
@@ -433,9 +487,9 @@ export async function queryNodeModelCatalog(
 ): Promise<RunnerModelCatalogResult> {
   await Promise.all(
     nodes.map(async (node) => {
-      const ids = await listNodeModels(runner, source, node);
-      if (ids) store.record(runner, node.machine, ids.ids, ids.aliases, ids.nativeIds);
-      else store.unavailable(runner, node.machine);
+      const listing = await listNodeModels(runner, source, node);
+      if (listing && store.accept(runner, node.machine, listing)) return;
+      store.unavailable(runner, node.machine);
     }),
   );
   return store.result(runner);
@@ -446,10 +500,12 @@ export async function listNodeModels(
   runner: string,
   source: RunnerModelCatalogNodeSource,
   node: ModelCatalogNode,
-): Promise<NodeCatalogModels | undefined> {
+): Promise<NodeModelCatalogListing | undefined> {
   try {
-    const ids = source.parse(await node.list(source));
-    return Array.isArray(ids) ? { ids } : ids;
+    const listing = source.parse(await node.list(source));
+    return Array.isArray(listing)
+      ? { ids: listing, configuredProviders: [] }
+      : { ...listing, configuredProviders: listing.configuredProviders ?? [] };
   } catch (error) {
     console.warn(
       `[runner-models] ${runner} model list on ${node.machine} failed; keeping its last listing: ${error instanceof Error ? error.message : String(error)}`,

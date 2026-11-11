@@ -23,6 +23,7 @@ async function withAliasExtension(check) {
   const records = [];
   const directory = mkdtempSync(join(tmpdir(), 'pi-router-alias-'));
   process.env = {
+    PI_CODING_AGENT_DIR: join(directory, 'synthetic-agent'),
     FARMSLOT_PI_OLLAMA: '0',
     FARMSLOT_PI_ROUTER_URL: 'https://models.invalid/v1',
     FARMSLOT_PI_ROUTER_ID: 'localsparks',
