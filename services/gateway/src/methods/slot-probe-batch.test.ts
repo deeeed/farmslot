@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -50,7 +50,9 @@ for (const shell of [
   ['/bin/zsh', '-f', '-c'],
   ['/bin/sh', '-c'],
 ]) {
-  test(`one ${shell[0]} reports each probe and times out only the slow one`, async () => {
+  // zsh serves macOS node-link slots; Linux hosts may not install it.
+  const skip = existsSync(shell[0]) ? false : `${shell[0]} is not installed`;
+  test(`one ${shell[0]} reports each probe and times out only the slow one`, { skip }, async () => {
     const started = Date.now();
     const { stdout } = await run(shell[0], [...shell.slice(1), slotProbeScript(probes, 0.3)]);
     assert.ok(Date.now() - started < 3_000, 'the slow probe is stopped at the deadline');
@@ -64,7 +66,7 @@ for (const shell of [
 
   test(
     `one ${shell[0]} kills a timed-out probe's grandchildren`,
-    { timeout: 10_000 },
+    { skip, timeout: 10_000 },
     async (t) => {
       const file = pidFile(t);
       // probe subshell -> sh -> sleep: the sleep is a grandchild of the probe.
@@ -79,7 +81,7 @@ for (const shell of [
 
   test(
     `one ${shell[0]} terminated mid-batch kills a probe that ignores SIGTERM`,
-    { timeout: 10_000 },
+    { skip, timeout: 10_000 },
     async (t) => {
       const file = pidFile(t);
       const probe = `sh -c 'trap "" TERM; echo $$ >${file}; while :; do sleep 1; done'`;
