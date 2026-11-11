@@ -241,6 +241,28 @@ export interface NodeProcessInventory {
   health: NodeProcessSamplerHealth;
 }
 
+export interface NodeTcpSnapshot {
+  established: number;
+  timeWait: number;
+  total: number;
+  ephemeralFirst: number;
+  ephemeralLast: number;
+  ephemeralCapacity: number;
+  warningThreshold: number;
+  criticalThreshold: number;
+  severity: 'ok' | 'warning' | 'critical';
+  topProcesses: Array<{ pid: number; command: string; connections: number }>;
+  collectedAt: string;
+}
+
+export type NodeTcpMetrics =
+  | NodeTcpSnapshot
+  | {
+      severity: 'unknown';
+      error: string;
+      collectedAt: string;
+    };
+
 export interface NodeSystemMetrics {
   cpuPercent: number; // 0-100
   memoryPercent: number; // 0-100
@@ -253,6 +275,7 @@ export interface NodeSystemMetrics {
   pressure?: NodePressureRatios;
   thermalPressure?: ThermalPressure; // macOS only
   resourceWatches?: ResourceWatchRuntimeStats;
+  tcp?: NodeTcpMetrics;
   collectedAt: string;
 }
 

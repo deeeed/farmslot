@@ -221,6 +221,11 @@ export async function updateSlotStatusIf(
  * rival claim aborts the remainder of an in-flight teardown instead of being
  * clobbered by it. Returns the new epoch on success.
  */
+/** The ownership epoch a successful claim of this slot row advances to. */
+export function nextSlotEpoch(slot: Readonly<Record<string, unknown>>): number {
+  return (Number(slot.slot_epoch) || 0) + 1;
+}
+
 export async function claimSlotStatusIf(
   slotId: string,
   predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
@@ -250,7 +255,7 @@ export async function claimSlotStatusIf(
     const clearCleanup =
       !('cleanup_run_id' in fields) &&
       hasSupersededSlotCleanup({ ...slot, current_run_id: fields.current_run_id });
-    const nextEpoch = (Number(slot.slot_epoch) || 0) + 1;
+    const nextEpoch = nextSlotEpoch(slot);
     for (const [key, value] of Object.entries(fields)) {
       slot[key] = value;
     }

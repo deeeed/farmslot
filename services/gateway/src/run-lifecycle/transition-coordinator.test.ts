@@ -151,3 +151,35 @@ test('a transition queued past the warning interval names the operation holding 
       `the holder of ${key} is named by the operation that took it`,
     );
 });
+
+for (const heldScope of ['run', 'machine'] as const) {
+  test(`background admissions skip a busy ${heldScope} without blocking later polls`, async () => {
+    const coordinator = new RunTransitionCoordinator(async () => 'machine-a');
+    const entered = deferred();
+    const release = deferred();
+    const hold = async () => {
+      entered.resolve();
+      await release.promise;
+    };
+    const transition =
+      heldScope === 'run'
+        ? coordinator.withRun('run-a', hold)
+        : coordinator.withMachine('machine-a', hold);
+    await entered.promise;
+    let cleanups = 0;
+    try {
+      for (let poll = 0; poll < 2; poll++) {
+        assert.equal(await coordinator.tryWithRun('run-a', async () => ++cleanups), undefined);
+      }
+      assert.equal(cleanups, 0);
+      if (heldScope === 'run') {
+        assert.equal(await coordinator.tryWithRun('run-b', async () => ++cleanups), 1);
+      }
+    } finally {
+      release.resolve();
+      await transition;
+    }
+    await coordinator.tryWithRun('run-a', async () => ++cleanups);
+    assert.equal(cleanups, heldScope === 'run' ? 2 : 1);
+  });
+}

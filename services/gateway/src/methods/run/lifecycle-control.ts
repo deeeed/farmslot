@@ -593,6 +593,7 @@ export interface RunResumeTransitionOptions {
 }
 
 export interface RunResumeTransitionDependencies {
+  prepareIdleDevServers?(slotId: string, runId: string): Promise<void>;
   resumeBlockedDecision?(runId: string, decisionId: string, emit: Emit): Promise<void>;
   nudgeMonitor(run: Run, emit: Emit): Promise<void>;
   redrive(runId: string, expectedGeneration: number): Promise<RunEngineStepStartAcknowledgement>;
@@ -613,6 +614,10 @@ export interface RunResumeTransitionDependencies {
 export const GATE_PARK_REPLAY_TRIGGER = 'operator' as const;
 
 const DEFAULT_RUN_RESUME_DEPS: RunResumeTransitionDependencies = {
+  prepareIdleDevServers: async (slotId, runId) => {
+    const { ensureWorkerContinuationReady } = await import('../../runners/continuation-ready.js');
+    await ensureWorkerContinuationReady(slotId, runId);
+  },
   nudgeMonitor: nudgeResumedMonitor,
   redrive: startRunWithStepAcknowledgement,
   replayGate: async (runId, stepName) => {
@@ -652,6 +657,9 @@ export async function runResumeTransitionLocked(
         `(${MachineParkEligibilityCodes.freedSlotRestoreRequired}); ` +
         'the restore must re-bind the slot before the run can resume',
     );
+  }
+  if (existing.slotId) {
+    await deps.prepareIdleDevServers?.(existing.slotId, existing.id);
   }
   // The counterpart to `isGateParkPause` on the pause side, and it has to
   // exist: that branch deliberately never moved the run to `paused` and never

@@ -2437,6 +2437,12 @@ export async function resolveRunDecision(
     // was not parked when the request arrived. Consuming the decision after that
     // would drive the engine against a worker the park stopped.
     assertNotGateParked(params.runId, getRun(params.runId)!);
+    if (existing.slotId && params.actionId !== 'abort') {
+      const { ensureWorkerContinuationReady } = await import('../runners/continuation-ready.js');
+      await ensureWorkerContinuationReady(existing.slotId, existing.id);
+      assertDecisionStillUnresolved(params.runId, params.decisionId);
+      assertNotGateParked(params.runId, getRun(params.runId)!);
+    }
     if (resumeNative) {
       const { resumeNativeWorkerDecision } = await import('./run/native-worker-decision.js');
       await resumeNativeWorkerDecision(existing.id, params.decisionId);
@@ -2734,7 +2740,7 @@ export async function resolveRunDecision(
 
     return { run: updated, ...(gateParkRestore ? { gateParkRestore } : {}) };
   };
-  if (guardedAdvance) {
+  if (guardedAdvance || (existing.slotId && !resumeNative)) {
     // Restore above owns its own machine transition. Only consumption enters
     // this coordinator, so a parked gate cannot deadlock through nested restore.
     const { withRunTransition } = await import('../run-lifecycle/transition-coordinator.js');
