@@ -157,6 +157,38 @@ test(
   },
 );
 
+test(
+  'a versions read derives a row only when its run changed since the last read',
+  TEST_TIMEOUT,
+  async (t) => {
+    const run = fixtureRun(t, 'VERSIONS-DERIVED-ON-CHANGE', 'before');
+    const first = (await runList({ versions: true })).versions!.find(({ id }) => id === run.id)!;
+    assert.deepEqual(first, servedVersion(run.id));
+
+    // A write that neither publishes nor stamps updatedAt is invisible to the stored version:
+    // proof that a read with an unchanged stamp does not re-derive the row.
+    const live = getRun(run.id)!;
+    const summary = live.summary;
+    live.summary = 'unpublished in-place write';
+    const unchanged = (await runList({ versions: true })).versions!.find(({ id }) => id === run.id);
+    assert.equal(unchanged?.version, first.version);
+    live.summary = summary;
+
+    // A published write advances the run's resource revision.
+    updateRun(run.id, { summary: 'after a published write' });
+    const published = (await runList({ versions: true })).versions!.find(({ id }) => id === run.id);
+    assert.deepEqual(published, servedVersion(run.id));
+    assert.notEqual(published?.version, first.version);
+
+    // An in-place writer that stamps updatedAt is seen as well.
+    live.summary = 'after an in-place write';
+    live.updatedAt = new Date(Date.parse(live.updatedAt) + 1000).toISOString();
+    const stamped = (await runList({ versions: true })).versions!.find(({ id }) => id === run.id);
+    assert.deepEqual(stamped, servedVersion(run.id));
+    assert.notEqual(stamped?.version, published?.version);
+  },
+);
+
 test('an unchanged row keeps its version across a gateway restart', { timeout: 90_000 }, (t) => {
   const root = mkdtempSync(path.join(tmpdir(), 'run-list-version-restart-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));

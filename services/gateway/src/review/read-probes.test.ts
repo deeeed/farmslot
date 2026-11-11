@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 import { mock, test } from 'node:test';
 
 import { WebSocket, WebSocketServer } from 'ws';
@@ -14,6 +16,8 @@ const { registerNode, unregisterByWs } = await import('../fleet/machine-registry
 const templates = await import('./templates.js');
 const { makeVars } = await import('../runners/test-fixtures.js');
 const vars = makeVars({ projectName: 'read-probes', remoteRepo: '/fixture/terminal' });
+// Remote slots read runner files through the node's shell; local slots read them in-process.
+const remoteVars = { ...vars, host: 'remote-fixture', machine: 'remote-fixture-node' };
 let execute: typeof execution.execOnSlot = async () => ({ stdout: '', stderr: '', exitCode: 0 });
 mock.module('../core/config.js', {
   namedExports: {
@@ -227,7 +231,7 @@ test('concurrent progress consumers share the same slow hooks and statusline rea
     await hold.promise;
     return { stdout: '{}', stderr: '', exitCode: 0 };
   };
-  const readers = Array.from({ length: 100 }, () => readRunnerObservabilityFiles(vars));
+  const readers = Array.from({ length: 100 }, () => readRunnerObservabilityFiles(remoteVars));
   try {
     await flush();
     assert.equal(hooks, 1, 'activity, turn and background reads share the hooks command');
@@ -236,13 +240,16 @@ test('concurrent progress consumers share the same slow hooks and statusline rea
     hold.release();
     await Promise.all(readers);
   }
-  await readRunnerObservabilityFiles(vars);
+  await readRunnerObservabilityFiles(remoteVars);
   assert.equal(hooks, 2);
 });
 
 for (const snapshot of [
-  { name: 'session', read: () => readRunnerSessionObservabilityState(vars, 'fixture-session') },
-  { name: 'pane', read: () => readRunnerPaneObservabilityState(vars, '%fixture') },
+  {
+    name: 'session',
+    read: () => readRunnerSessionObservabilityState(remoteVars, 'fixture-session'),
+  },
+  { name: 'pane', read: () => readRunnerPaneObservabilityState(remoteVars, '%fixture') },
 ]) {
   test(`concurrent progress readers share one ${snapshot.name} snapshot command`, async () => {
     const hold = latch();
@@ -263,6 +270,41 @@ for (const snapshot of [
     }
   });
 }
+
+test('a local slot reads runner files in-process and starts no command', async (t) => {
+  const repo = mkdtempSync(path.join(os.tmpdir(), 'read-probes-local-'));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  const local = { ...vars, remoteRepo: repo };
+  // No external install marker: the legacy directory under the repo's runtime dir is used.
+  const dir = path.join(repo, 'temp/farmslot/.observability');
+  mkdirSync(path.join(dir, 'sessions'), { recursive: true });
+  const hooks = `${'x'.repeat(70_000)}\n{"event":"Stop"}\n`;
+  writeFileSync(path.join(dir, 'hooks.jsonl'), hooks);
+  writeFileSync(path.join(dir, 'statusline.json'), '{"ctx":1}');
+  writeFileSync(path.join(dir, 'sessions', 'fixture-session.json'), '{"event":"Stop"}');
+  let commands = 0;
+  execute = async () => {
+    commands++;
+    return { stdout: '', stderr: '', exitCode: 0 };
+  };
+  const files = await readRunnerObservabilityFiles(local);
+  assert.equal(
+    files.hooksRaw,
+    hooks.slice(-65536),
+    'the hooks read keeps the last 64 KiB, as tail -c did',
+  );
+  assert.equal(files.statuslineRaw, '{"ctx":1}');
+  assert.equal(
+    (await readRunnerSessionObservabilityState(local, 'fixture-session'))?.event,
+    'Stop',
+  );
+  assert.equal(
+    await readRunnerPaneObservabilityState(local, '%missing'),
+    null,
+    'a missing file reads as empty',
+  );
+  assert.equal(commands, 0);
+});
 
 test(
   'a timed-out probe retains its flight until the owned process is killed and reaped',

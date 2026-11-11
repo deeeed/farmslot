@@ -59,6 +59,21 @@ export function isLocal(host: string, machine: string): boolean {
   return false;
 }
 
+/**
+ * Whether a slot's files can be read in-process instead of through a shell: the routing
+ * `execOnSlot` would give a command to this machine is a plain local shell, with no workspace
+ * owner or project sources that must vet each command.
+ */
+export function slotFilesReadInProcess(slotVars: Pick<SlotVars, 'host' | 'machine'>): boolean {
+  assertCleanupCurrent();
+  return (
+    !currentSlotCommandExecutor() &&
+    !currentProjectSources() &&
+    isLocal(slotVars.host, slotVars.machine) &&
+    !usesNodeLink(slotVars.machine)
+  );
+}
+
 /** A remote slot machine with no connected node: commands sent to it now fail. */
 export function isDisconnectedRemote(vars: Pick<SlotVars, 'host' | 'machine'>): boolean {
   return (
