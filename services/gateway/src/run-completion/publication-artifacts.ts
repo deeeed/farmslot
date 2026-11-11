@@ -99,7 +99,7 @@ ${body}`;
 
   const { getLLMConfig } = await import('../llm/config.js');
   const cfgLLM = getLLMConfig();
-  assertPublicationTextSafe(systemPrompt, userPrompt);
+  await assertPublicationTextSafe(systemPrompt, userPrompt);
   const result = await callLLM({
     model: cfgLLM.intelligenceModel,
     provider: cfgLLM.defaultProvider,
@@ -109,7 +109,7 @@ ${body}`;
   });
 
   const rewritten = result.text.trim();
-  assertPublicationTextSafe(rewritten);
+  await assertPublicationTextSafe(rewritten);
   if (rewritten.length < body.length * 0.3) {
     console.warn(
       `[run-completion] LLM rewrite suspiciously short (${rewritten.length} vs ${body.length}), rejecting`,
@@ -472,7 +472,7 @@ export async function publishSelectedEvidence(
   comparison?: ReviewDiffSnapshot,
 ): Promise<PublishedEvidence> {
   const selectedEvidenceKeys = expandPublicationEvidenceSelection(selection);
-  assertPublicationTextSafe(JSON.stringify(selection.trustedEvidenceManifest ?? null));
+  await assertPublicationTextSafe(JSON.stringify(selection.trustedEvidenceManifest ?? null));
   await verifyFrozenPublicationEvidence(
     run,
     selection.evidenceManifest,
@@ -1465,7 +1465,7 @@ export async function postProcessPRBody(
       body = result.stdout;
     }
 
-    assertPublicationTextSafe(body);
+    await assertPublicationTextSafe(body);
 
     const humanBody = body;
     if (options.adoptedEvidence) {
@@ -1485,7 +1485,7 @@ export async function postProcessPRBody(
       options.evidenceManifest !== undefined
         ? options.evidenceManifest
         : await readEvidenceManifest(run);
-    assertPublicationTextSafe(JSON.stringify(rawManifest));
+    await assertPublicationTextSafe(JSON.stringify(rawManifest));
     if (options.failOnError) {
       assertPublicationEvidenceSelection({
         selectedEvidenceKeys: selectedEvidenceKeys ?? [...(selectedArtifactUrls?.keys() ?? [])],
@@ -1567,7 +1567,7 @@ export async function postProcessPRBody(
     body = withPublicationProvenance(run, body);
     if (options.adoptedEvidence)
       body = mergeOwnedEvidenceBody(run.id, humanBody, options.adoptedEvidence.previousBody, body);
-    assertPublicationTextSafe(body);
+    await assertPublicationTextSafe(body);
     const tmpFile = `/tmp/farmslot-pr-body-${prNumber}-${randomUUID()}.md`;
     const { writeFile: writeF } = await import('node:fs/promises');
     await writeF(tmpFile, body, 'utf-8');

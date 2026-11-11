@@ -82,6 +82,7 @@ import {
   statusFile,
 } from './fleet/state.js';
 import { backgroundHost } from './host-services/background/client.js';
+import secretScan from './host-services/secret-scan.js';
 import {
   startGitHubAccountsObservation,
   wakeGitHubAccountsObservation,
@@ -299,6 +300,7 @@ async function main(): Promise<void> {
         stopRunnerModelCatalogCollection(),
         stopProviderAccountsCollection(),
         backgroundHost.stop(),
+        secretScan.stop(),
       ]);
     } catch (error) {
       console.error('[gateway] Upstream observation shutdown failed:', error);

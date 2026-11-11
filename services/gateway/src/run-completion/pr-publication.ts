@@ -183,7 +183,7 @@ async function buildPRComment(
 
   if (!template) return buildPRCommentHardcoded(run, report, workflowMmd);
 
-  assertPublicationTextSafe(template);
+  await assertPublicationTextSafe(template);
   try {
     const { callLLM } = await import('../llm/index.js');
     const { getLLMConfig } = await import('../llm/config.js');
@@ -194,7 +194,7 @@ async function buildPRComment(
       model: cfg.intelligenceModel,
       provider: cfg.defaultProvider,
     });
-    assertPublicationTextSafe(result.text);
+    await assertPublicationTextSafe(result.text);
     if (result.text.length > 50 && result.text.length < 10000) {
       return result.text;
     }
@@ -248,7 +248,7 @@ export async function postPRComment(
       }
     }
 
-    assertPublicationTextSafe(report ?? '', workflowMmd ?? '');
+    await assertPublicationTextSafe(report ?? '', workflowMmd ?? '');
     let generatedComment = report?.trim() ? await buildPRComment(run, report, workflowMmd) : '';
     let inheritedText: string | undefined;
     if (options.inheritedAcceptance) {
@@ -256,7 +256,7 @@ export async function postPRComment(
       inheritedText = inheritedAcceptanceMarkdown(options.inheritedAcceptance);
       generatedComment = [generatedComment, inheritedText].filter(Boolean).join('\n\n');
     }
-    assertPublicationTextSafe(generatedComment);
+    await assertPublicationTextSafe(generatedComment);
     const identityMarker = prCommentIdentityMarker(run.id);
     const comment = generatedComment.includes(identityMarker)
       ? generatedComment
@@ -287,7 +287,7 @@ export async function postPRComment(
         if (previous) {
           if (!previous.body.includes(inheritedText!)) {
             const updated = `${previous.body}\n\n${inheritedText}`;
-            assertPublicationTextSafe(updated);
+            await assertPublicationTextSafe(updated);
             await writeFile(tmpFile, updated, 'utf8');
             await ghRequest(
               [
@@ -342,7 +342,7 @@ export async function updatePRTitle(run: Run, ciRepo: string, prNumber: number):
   const titleSuffix = formatPrTitleSuffix(pv?.projectJson.ci?.pr_title_suffix);
   const desc = lowercaseLeadingTitleWord(run.ticketData.title).replace(/\.$/, '');
   const newTitle = `${commitType}${scopePart}: ${desc}${titleSuffix}`;
-  assertPublicationTextSafe(newTitle);
+  await assertPublicationTextSafe(newTitle);
 
   try {
     // Check current title — only update if it looks like a ticket ID
