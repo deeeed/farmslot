@@ -3168,6 +3168,12 @@ export interface Run {
   engineState?: RunEngineState;
   /** Provenance-aware live recipe context used by slot-view/dev harness surfaces. */
   liveRecipeContext?: LiveRecipeContext | null;
+  /**
+   * Pre-computed evidence counts for run.list rows. When present, `summarizeRunEvidence` returns
+   * this directly instead of walking decisions/steps. Old cached fat rows lack this field and
+   * fall back to computing from their own content. The gateway sets it when serving slim rows.
+   */
+  evidenceSummary?: import('../runs/evidence-summary.js').RunEvidenceSummary;
   recoveryAttempts?: RunReplayStep[];
   recoveryProposal?: RunRecoveryRuntimeProposal;
   autoRecoveryDisabled?: boolean;

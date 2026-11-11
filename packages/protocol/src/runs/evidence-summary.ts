@@ -82,8 +82,12 @@ export function runEvidenceArtifacts(
 }
 
 export function summarizeRunEvidence(
-  run: Pick<Run, 'decisions' | 'steps' | 'output' | 'liveRecipeContext'>,
+  run: Pick<Run, 'decisions' | 'steps' | 'output' | 'liveRecipeContext'> & {
+    evidenceSummary?: RunEvidenceSummary;
+  },
 ): RunEvidenceSummary {
+  // Slim list rows carry a pre-computed summary from the gateway; use it directly.
+  if (run.evidenceSummary) return run.evidenceSummary;
   const artifacts = runEvidenceArtifacts(run);
   return {
     artifactCount: artifacts.length,
