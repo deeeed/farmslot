@@ -6,6 +6,8 @@ export interface NodeObservationCapabilities {
   files?: 1;
   fileAppends?: 1;
   workspace?: 1;
+  /** The node answers `fs.readText` and `fs.isFile`. */
+  textReads?: 1;
 }
 
 export type NodeTmuxWorkerObservation =

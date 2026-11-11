@@ -1,0 +1,1 @@
+- Read runner progress files on remote slots through the node's `fs.readText` and `fs.isFile` instead of a shell per poll; nodes that do not declare the reads keep the shell read.

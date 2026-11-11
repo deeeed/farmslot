@@ -6,6 +6,11 @@ import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { piFailureKind } from '../../../../scripts/runners/pi-farmslot-hook-writer.mjs';
 import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { slotFilesReadInProcess } from '../core/exec.js';
+import {
+  readSlotTextThroughNode,
+  slotFilesReadThroughNode,
+  slotIsFileThroughNode,
+} from '../core/node-file-reads.js';
 import { readSlotProbe } from '../core/read-probes.js';
 import {
   isShellHomePath,
@@ -360,6 +365,8 @@ export async function runnerObservabilityDirForSlot(vars: SlotVars): Promise<str
   const marker = path.posix.join(external, 'install.json');
   if (slotFilesReadInProcess(vars))
     return (await isLocalFile(localPath(vars, marker))) ? external : legacy;
+  if (slotFilesReadThroughNode(vars))
+    return (await slotIsFileThroughNode(vars, marker, 10_000)) ? external : legacy;
   const probe = await readSlotProbe(
     vars,
     `if [ -f ${shellExpressionForRemotePath(marker)} ]; then printf external; fi`,
@@ -398,6 +405,8 @@ async function readSlotText(
   tailBytes?: number,
 ): Promise<string> {
   if (!slotFilesReadInProcess(vars)) {
+    if (slotFilesReadThroughNode(vars))
+      return readSlotTextThroughNode(vars, file, 10_000, tailBytes);
     const expression = shellExpressionForRemotePath(file);
     const command = tailBytes
       ? `tail -c ${tailBytes} ${expression} 2>/dev/null || true`
