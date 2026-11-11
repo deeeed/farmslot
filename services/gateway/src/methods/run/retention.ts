@@ -75,12 +75,13 @@ export async function gatewayRetentionRoots(): Promise<RunRetentionRoots> {
 }
 
 async function readOpenPrs(repo: string): Promise<number[]> {
-  const prs = await github.rest<Array<{ number: number }>>(
-    'GET',
-    `repos/${repo}/pulls?state=open&per_page=${OPEN_PR_PAGE}`,
+  // Pages to the limit, newest first, like `gh pr list --limit`; a full page reads as possibly truncated.
+  const prs = await github.prList(
+    repo,
+    { state: 'open', limit: OPEN_PR_PAGE },
     { caller: 'run-retention' },
   );
-  return (prs ?? []).map((pr) => pr.number);
+  return prs.flatMap((pr) => (typeof pr.number === 'number' ? [pr.number] : []));
 }
 
 async function projectRepo(project: string): Promise<string | undefined> {
