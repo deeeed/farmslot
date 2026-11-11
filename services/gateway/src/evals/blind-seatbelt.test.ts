@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -44,12 +44,18 @@ with patch.dict(os.environ, {'TMUX_TMPDIR': '/tmp/fixture-tmux', 'TMUX': '/tmp/f
     }
   }
   assert.ok(profile.includes('(deny network-outbound (remote unix-socket)'), profile);
-  for (const prefix of ['/var/run', '/private/var/run']) {
-    assert.ok(
-      profile.includes(`(remote unix-socket (literal "${prefix}/mDNSResponder"))`),
-      profile,
-    );
-  }
+  // /var/run resolves through /private on macOS and /run on Ubuntu.
+  const resolverPaths = new Set([
+    '/var/run/mDNSResponder',
+    path.join(realpathSync('/var/run'), 'mDNSResponder'),
+  ]);
+  assert.equal(
+    profile.split('\n').find((line) => line.startsWith('(allow network-outbound')),
+    `(allow network-outbound ${[...resolverPaths]
+      .sort()
+      .map((socket) => `(remote unix-socket (literal "${socket}"))`)
+      .join(' ')})`,
+  );
   assert.equal(profile.split('(allow network-outbound').length, 2);
 });
 
