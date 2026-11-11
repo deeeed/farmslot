@@ -17,9 +17,7 @@ import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import {
   ACCEPTANCE_STATUS_ARTIFACT,
   enumerateChecklistCheckboxes,
-  isRecord,
   isTerminalRunStatus,
-  type ReviewLineComment,
   type ReviewWorkspaceBinding,
   type ReviewWorkspaceSubject,
   type Run,
@@ -31,12 +29,9 @@ import {
 } from '@farmslot/protocol';
 import {
   isReviewSeverity,
-  normalizeReviewSeverity,
   renderApprovalPolicy,
   renderReviewResultInstructions,
   resolveApprovalPolicy,
-  ReviewApprovalPolicyError,
-  type ReviewSeverity,
 } from '@farmslot/protocol/review-approval-policy.cjs';
 import { resolveReviewMode } from '@farmslot/review-dispatch';
 import { invalidateProjectVarsCache } from '@farmslot/slot-config';
@@ -64,7 +59,7 @@ import { nextReviewBudgetScopeBrief, reviewPolicyRound } from '../review/review-
 import { STATIC_REVIEW_EXECUTION_RULE } from '../review/static-review-execution.js';
 import {
   appendReviewFindingBodies,
-  assertReviewCommentLines,
+  deriveReviewLineComments,
   readReviewCommentDiff,
 } from '../review-publication/validate-comments.js';
 import { mirrorWorkerSubtasks } from '../run-completion/artifact-mirror.js';
@@ -91,38 +86,8 @@ import { resolveReviewWorkspacePool } from './pool.js';
 const exec = promisify(execFile);
 const SUBJECT = 'inputs/review-subject.json';
 const RESULT = 'artifacts/review-result.json';
-type StaticReviewLineComment = ReviewLineComment & { severity: ReviewSeverity };
 /** The gateway's own filesystem, for the operator-visible copy of a review task. */
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
-
-export function resolveStaticReviewLineComments(
-  verdict: 'pass' | 'issues',
-  expected: ReviewLineComment[],
-  comments: unknown,
-): StaticReviewLineComment[] {
-  if (
-    !Array.isArray(comments) ||
-    !comments.every(
-      (comment): comment is StaticReviewLineComment =>
-        isRecord(comment) &&
-        typeof comment.path === 'string' &&
-        comment.path.trim().length > 0 &&
-        !path.posix.isAbsolute(comment.path) &&
-        within('.', comment.path) &&
-        typeof comment.line === 'number' &&
-        Number.isInteger(comment.line) &&
-        comment.line > 0 &&
-        typeof comment.body === 'string' &&
-        comment.body.trim().length > 0 &&
-        typeof comment.severity === 'string' &&
-        isReviewSeverity(comment.severity),
-    ) ||
-    ((verdict === 'issues' || expected.length > 0) &&
-      comments.some((comment) => !expected.some((issue) => isDeepStrictEqual(issue, comment))))
-  )
-    throw new Error('Static review line comments disagree with its authoritative findings');
-  return comments;
-}
 
 function sameWorkspaceIdentity(
   a: ReviewWorkspaceBinding | undefined,
@@ -342,13 +307,14 @@ export async function materializeReviewWorkspaceTask(
         now: subject.capturedAt,
       },
     );
-    // Add the typed result without removing any farm-owned completion requirements.
+    // Inline comments are gateway-owned; workers author findings only in the typed result.
     terminalContract.requireSignal = true;
     terminalContract.commands.complete.artifacts = [
       ...new Set([
-        ...terminalContract.commands.complete.artifacts,
+        ...terminalContract.commands.complete.artifacts.filter(
+          (artifact) => artifact !== 'artifacts/line-comments.json',
+        ),
         'artifacts/review.md',
-        'artifacts/line-comments.json',
         RESULT,
       ]),
     ];
@@ -416,11 +382,11 @@ export async function materializeReviewWorkspaceTask(
       '',
       'Run ./mark start once, then read its SIGNAL.json attemptId. Use ./mark N for checklist progress.',
       'Write artifacts/review.md with VERDICT: APPROVE, REQUEST_CHANGES or COMMENT, exact COMMIT, findings, evidence and unchecked areas. VERDICT and COMMIT must each be alone on their own line, without trailing annotations.',
-      'Write artifacts/line-comments.json as {"comments":[{"path":"file","line":1,"body":"finding","severity":"major"}]}; use an empty comments array for a clean review.',
+      'Write each finding once in review-result.json issues. Put its full problem, evidence and concrete ask in description. The gateway derives inline comments; do not author artifacts/line-comments.json.',
       renderReviewResultInstructions(RESULT),
       `Add runId ${JSON.stringify(run.id)}, workspaceId ${JSON.stringify(run.reviewWorkspace.workspaceId)}, headSha ${JSON.stringify(subject.headSha)}, baseSha ${JSON.stringify(subject.baseSha)}, attemptId copied from SIGNAL.json, and reportSha256 containing the SHA-256 of the exact review.md bytes.`,
       `Required artifacts: ${terminalContract.commands.complete.artifacts.join(', ')}.`,
-      'Every inline entry must match an authoritative issue: path=file, body=description, line and severity. Out-of-diff findings stay in issues and the review body, without an inline entry.',
+      'The gateway anchors findings to the frozen RIGHT-side diff. Findings without a diff location remain in issues and the review body.',
       'Complete every checklist item, then run ./mark complete --mark-last. Findings still complete a static review. Block only when you cannot produce a report. Record unchecked evidence without claiming it passed; evidence the author owes is a finding with a concrete ask.',
     ].join('\n');
     const handoff = buildHandoffMetadata({
@@ -663,18 +629,8 @@ export async function readReviewWorkspaceCompletion(
   const policy = resolveApprovalPolicy(
     (await deps.loadProjectVars(run.project)).projectJson.approvalPolicy,
   );
-  const commentArtifact = JSON.parse(
-    await confinedRead(io, taskDir, 'artifacts/line-comments.json'),
-  ) as { comments?: unknown };
-  const commentInput = resolveStaticReviewLineComments('pass', [], commentArtifact.comments);
   const reviewRound = reviewPolicyRound(run, workspaceReviewRoundAdmissionId(run));
-  const commentFindings = commentInput.map((comment) => ({
-    file: comment.path,
-    line: comment.line,
-    description: comment.body,
-    severity: comment.severity,
-  }));
-  const feedback = parseStructuredReviewFeedback(raw, RESULT, policy, commentFindings, reviewRound);
+  const feedback = parseStructuredReviewFeedback(raw, RESULT, policy, [], reviewRound);
   if (feedback.incomplete && !feedback.recommendation)
     throw new GatewayMethodError(
       'REVIEW_OUTPUT_INVALID',
@@ -701,9 +657,15 @@ export async function readReviewWorkspaceCompletion(
     throw new Error('Static review findings require source-relative paths and canonical severity');
   const reviewMd = await confinedRead(io, taskDir, 'artifacts/review.md');
   if (!reviewMd.trim() || artifact.reportSha256 !== sha256(reviewMd))
-    throw new Error('Static review report is missing or its digest changed');
+    throw new GatewayMethodError(
+      'REVIEW_OUTPUT_INVALID',
+      `Static review report is missing or its digest changed: expected reportSha256 ${sha256(reviewMd)}, received ${JSON.stringify(artifact.reportSha256)}. Hash the current artifacts/review.md bytes.`,
+    );
   if (feedback.incomplete && feedback.recommendation)
-    throw new ReviewApprovalPolicyError(feedback.recommendation);
+    throw new GatewayMethodError(
+      'REVIEW_OUTPUT_INVALID',
+      `${feedback.terminalInvalidReason ?? 'Review verdict conflicts with its findings'}. Expected recommendation ${feedback.recommendation}; keep the findings and correct the verdict/recommendation fields.`,
+    );
   const checklist = await confinedRead(io, taskDir, 'CHECKLIST.md');
   const originalLines = snapshot.checklist.split('\n');
   const actualLines = checklist.split('\n');
@@ -721,21 +683,11 @@ export async function readReviewWorkspaceCompletion(
   }
   if (!items.length || actualLines.join('\n') !== originalLines.join('\n'))
     throw new Error('Static review checklist is incomplete or changed beyond completion marks');
-  const lineComments = resolveStaticReviewLineComments(
-    feedback.verdict,
-    issues.flatMap((issue) =>
-      issue.line === undefined
-        ? []
-        : [
-            {
-              path: issue.file,
-              line: issue.line,
-              body: issue.description,
-              severity: normalizeReviewSeverity(issue.severity),
-            },
-          ],
-    ),
-    commentInput,
+  const lineComments = await deriveReviewLineComments(
+    run,
+    issues,
+    { ...snapshot.subject, source: 'github-pr' },
+    deps.readCommentDiff,
   );
   const recommendation = feedback.recommendation;
   if (!recommendation) throw new Error('Static review recommendation could not be validated');
@@ -743,23 +695,24 @@ export async function readReviewWorkspaceCompletion(
     throw new Error('Review recommendation conflicts with findings or incomplete evidence');
   const markdownRecommendation = reviewRecommendationFromMarkdown(reviewMd);
   const advisoryRecommendation =
-    reviewPolicyFindings([...issues, ...commentFindings], reviewRound).advisoriesOnly &&
+    reviewPolicyFindings(issues, reviewRound).advisoriesOnly &&
     normalizeReviewRecommendation(markdownRecommendation) !== null;
   if (
     (!advisoryRecommendation && markdownRecommendation !== recommendation) ||
     reviewCommitFromMarkdown(reviewMd) !== snapshot.subject.headSha
   )
-    throw new Error('Static review Markdown verdict or commit disagrees with its typed result');
-  await assertReviewCommentLines(
-    run,
-    lineComments,
-    { ...snapshot.subject, source: 'github-pr' },
-    deps.readCommentDiff,
-  );
+    throw new GatewayMethodError(
+      'REVIEW_OUTPUT_INVALID',
+      `Static review Markdown verdict or commit disagrees with its typed result: expected VERDICT ${recommendation} and COMMIT ${snapshot.subject.headSha}; received VERDICT ${JSON.stringify(markdownRecommendation)} and COMMIT ${JSON.stringify(reviewCommitFromMarkdown(reviewMd))}. Keep findings unchanged and correct the report headers and its reportSha256.`,
+    );
   const mirror = await mkdtemp(path.join(os.tmpdir(), 'workspace-review-completion-'));
   const viewer = viewDirFor(run.id, deps);
   try {
     await slotCopyDir(io, snapshot.workspace.artifactPath, path.join(mirror, 'artifacts'));
+    await writeFile(
+      path.join(mirror, 'artifacts/line-comments.json'),
+      `${JSON.stringify({ comments: lineComments }, null, 2)}\n`,
+    );
     await mkdir(path.join(mirror, 'inputs'));
     const contractPath = path.join(mirror, 'inputs/worker-terminal-contract.json');
     await writeFile(contractPath, JSON.stringify(snapshot.terminalContract));

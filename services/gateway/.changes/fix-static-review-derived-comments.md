@@ -1,0 +1,1 @@
+- Derive static review line comments from authoritative findings and keep output-contract failures recoverable in their original workspace and reviewer session.
