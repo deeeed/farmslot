@@ -1,0 +1,1 @@
+- Avoid recounting the entire bundle store for each archived media file, reducing storage-lock contention during publication packaging while preserving verified archives and exact capacity accounting.
