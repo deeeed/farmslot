@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { URL } from 'node:url';
 
-import type { Run, RunGetResult } from '@farmslot/protocol';
+import type { Run, RunGetResult, RunListRow } from '@farmslot/protocol';
 import {
   canActOn,
   createGatewayResourceCache,
@@ -43,6 +43,7 @@ function run(summary: string, updatedAt = '2026-11-01T00:00:00.000Z'): Run {
 }
 
 type Rendered = {
+  row: RunListRow | null;
   run: Run | null;
   fromList: boolean;
   runActionable: boolean;
@@ -53,6 +54,7 @@ function isRendered(value: unknown): value is Rendered {
   return (
     typeof value === 'object' &&
     value !== null &&
+    'row' in value &&
     'run' in value &&
     'fromList' in value &&
     'runObservation' in value
@@ -123,8 +125,8 @@ async function mount(listed: Run[], saved?: Run, online = false, answers: Answer
       },
       '../../store/runs': {
         useRunStore: (
-          select: (state: { runs: Run[]; observation: ResourceQueryState }) => unknown,
-        ) => select({ runs: listed, observation: { status: 'stale' } }),
+          select: (state: { runs: RunListRow[]; observation: ResourceQueryState }) => unknown,
+        ) => select({ runs: listed as RunListRow[], observation: { status: 'stale' } }),
       },
     },
     // The hook's clock, which `age` moves ahead of the cache's.
@@ -170,7 +172,7 @@ test('a listed run renders on the first render while its saved run.get hydrates 
     const first = detail.render();
     // The saved run.get is read from the store asynchronously, so the first render has none.
     assert.equal(first.runObservation.status, 'loading');
-    assert.equal(first.run, row);
+    assert.equal(first.row, row);
     await turns();
     const hydrated = detail.render();
     assert.equal(hydrated.runObservation.status, 'stale');
@@ -185,9 +187,9 @@ test('a listed run that was never opened renders offline from its row alone', as
   const row = run('listed row');
   const detail = await mount([row]);
   try {
-    assert.equal(detail.render().run, row);
+    assert.equal(detail.render().row, row);
     await turns();
-    assert.equal(detail.render().run, row);
+    assert.equal(detail.render().row, row);
     assert.equal(detail.transport.requestCount, 0);
   } finally {
     await detail.dispose();
@@ -213,13 +215,13 @@ test('a refused run.get drops the row; a failed one keeps it', async () => {
     const row = run('listed row');
     const detail = await mount([row], undefined, true);
     try {
-      assert.equal(detail.render().run, row);
+      assert.equal(detail.render().row, row);
       const read = await detail.transport.nextRead();
       read.reject(code);
       await turns();
       const after = detail.render();
       assert.equal(after.runObservation.error?.code, code);
-      assert.equal(after.run, kept ? row : null, code);
+      assert.equal(after.row, kept ? row : null, code);
     } finally {
       await detail.dispose();
     }
@@ -239,7 +241,7 @@ test('the newer of the row and the saved run.get is the one shown', async () => 
       await turns();
       const hydrated = detail.render();
       assert.equal(hydrated.runObservation.status, 'stale');
-      assert.equal(hydrated.run?.summary, shown);
+      assert.equal((shown === 'listed row' ? hydrated.row : hydrated.run)?.summary, shown);
       assert.equal(hydrated.fromList, shown === 'listed row');
     } finally {
       await detail.dispose();
@@ -319,7 +321,7 @@ test('a connection drop keeps run.get through the grace, then shows a newer row'
     assert.equal(held.run?.summary, 'run.get');
     detail.drop(false);
     const dropped = detail.render();
-    assert.equal(dropped.run?.summary, 'newer listed row');
+    assert.equal(dropped.row?.summary, 'newer listed row');
     assert.equal(dropped.fromList, true);
     assert.equal(dropped.runActionable, false);
   } finally {
@@ -333,7 +335,7 @@ test('online, a failed reread of a read over 60 s old shows a newer row', async 
     assert.equal(detail.render().run?.summary, 'run.get');
     detail.age(120_000);
     const aged = detail.render();
-    assert.equal(aged.run?.summary, 'newer listed row');
+    assert.equal(aged.row?.summary, 'newer listed row');
     assert.equal(aged.fromList, true);
     assert.equal(aged.runActionable, false);
   } finally {

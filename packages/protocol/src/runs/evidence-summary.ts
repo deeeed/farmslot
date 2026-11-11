@@ -7,6 +7,7 @@ import {
   isRunArtifactMediaPath,
   isRunEvidenceVideoArtifact,
 } from './artifact-media.js';
+import type { RunListRow } from './list-row.js';
 
 export { isRunArtifactImagePath, isRunArtifactMediaPath, isRunEvidenceVideoArtifact };
 
@@ -33,27 +34,35 @@ export interface RunEvidenceSummary {
  * Center and Companion both read a run's artifacts through this.
  */
 export function extractRunArtifactManifest(
-  run: Pick<Run, 'decisions' | 'steps' | 'output'>,
+  run:
+    | Pick<Run, 'decisions' | 'steps' | 'output'>
+    | Pick<RunListRow, 'decisions' | 'steps' | 'output'>,
 ): RunArtifactManifestEntry[] {
   const entries: RunArtifactManifestEntry[] = [];
   for (const decision of run.decisions ?? []) {
     const payload = decision.payload;
     if (payload?.kind === 'ready') {
-      entries.push(...(payload.artifactManifest ?? []));
-      entries.push(...(payload.prPackage?.evidenceManifest ?? []));
-      for (const check of payload.prPackage?.deterministicChecks ?? []) {
-        if (check.logPath) {
-          entries.push({
-            path: check.logPath,
-            purpose: 'ci-parity-log',
-            type: 'log',
-            label: `${check.reference} · ${check.status}`,
-          });
+      // slim RunListReadyGatePayload omits artifactManifest and prPackage
+      if ('artifactManifest' in payload) entries.push(...(payload.artifactManifest ?? []));
+      if ('prPackage' in payload) {
+        entries.push(...(payload.prPackage?.evidenceManifest ?? []));
+        for (const check of payload.prPackage?.deterministicChecks ?? []) {
+          if (check.logPath) {
+            entries.push({
+              path: check.logPath,
+              purpose: 'ci-parity-log',
+              type: 'log',
+              label: `${check.reference} · ${check.status}`,
+            });
+          }
         }
       }
     } else if (payload?.kind === 'review') {
-      entries.push(...(payload.artifactManifest ?? []));
-      entries.push(...runArtifactPathsToManifest(payload.reviewInputArtifactPaths ?? []));
+      // slim RunListReviewGatePayload omits artifactManifest and reviewInputArtifactPaths
+      if ('artifactManifest' in payload) entries.push(...(payload.artifactManifest ?? []));
+      if ('reviewInputArtifactPaths' in payload) {
+        entries.push(...runArtifactPathsToManifest(payload.reviewInputArtifactPaths ?? []));
+      }
     } else if (payload?.kind === 'no-change') {
       entries.push(...(payload.artifactManifest ?? []));
     }

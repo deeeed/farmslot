@@ -9,7 +9,7 @@ import type {
 import { isTerminalRunStatus } from '../contracts/runs.js';
 
 export function reviewResultForRun(
-  run: Pick<Run, 'decisions' | 'reviewResult'>,
+  run: Pick<Run, 'reviewResult'> & { decisions: ReadonlyArray<{ payload?: unknown }> },
 ): RunReviewResult | null {
   if (run.reviewResult) return run.reviewResult;
   for (let index = run.decisions.length - 1; index >= 0; index -= 1) {
@@ -21,7 +21,14 @@ export function reviewResultForRun(
 
 /** Saved choices are requests; only a published receipt confirms the provider event. */
 export function savedReviewView(
-  run: Pick<Run, 'flowType' | 'status' | 'decisions' | 'reviewResult' | 'reviewPublication'>,
+  run: Pick<Run, 'flowType' | 'status' | 'reviewResult' | 'reviewPublication'> & {
+    decisions: ReadonlyArray<{
+      type: string;
+      resolvedAt?: string | null;
+      selectionData?: Record<string, unknown> | null;
+      payload?: unknown;
+    }>;
+  },
 ) {
   const latestGate = [...run.decisions]
     .reverse()

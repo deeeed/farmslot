@@ -1444,7 +1444,7 @@ export function FamilyRunWorkspaceCard({
       ? (retrospective.payload as RetrospectivePayload)
       : null;
   const retrospectivePresentation = retrospective
-    ? decisionPresentationForFamilyRun(run, retrospective)
+    ? decisionPresentationForFamilyRun(run, retrospective as RunDecision)
     : null;
   const retroArtifacts = retrospectivePresentation?.artifactManifest ?? [];
   const retroVisualPairSummary = groupVisualArtifactPairs(retroArtifacts, (artifact) =>

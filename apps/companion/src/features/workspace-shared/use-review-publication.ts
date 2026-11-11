@@ -12,6 +12,7 @@ import {
   type Run,
   type RunDecision,
   type RunGetResult,
+  type RunListRow,
   savedReviewView,
   toggleReviewFinding,
 } from '@farmslot/protocol';
@@ -31,7 +32,7 @@ import { heldConnectionCurrent } from '../../store/held-connection';
 export type ReviewPublicationContext = 'publication' | 'saved';
 
 export function useReviewPublication(
-  run: Run | null,
+  run: Run | RunListRow | null,
   selectedDecision?: RunDecision | null,
   context: ReviewPublicationContext = 'publication',
 ) {

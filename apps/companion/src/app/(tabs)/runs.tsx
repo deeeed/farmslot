@@ -12,6 +12,7 @@ import {
   type Run,
   runDisplayStatus,
   type RunFamilyGroup,
+  type RunListRow,
   selectRecentRunFamilyGroups,
   selectRunList,
   slotMachineMap,
@@ -106,7 +107,7 @@ type RunsListRow =
   | { kind: 'family'; group: RunFamilyGroup; familyIndex: number; familyCount: number }
   | {
       kind: 'run';
-      run: Run;
+      run: RunListRow;
       familyRunIndex: number;
       familyRunCount: number;
       isFamilyRoot: boolean;
@@ -123,7 +124,7 @@ const RunCard = React.memo(function RunCard({
   gatewayUrl,
   artifactAuthHeaders,
 }: {
-  run: Run;
+  run: RunListRow;
   familyRunIndex: number;
   familyRunCount: number;
   isFamilyRoot: boolean;
@@ -227,7 +228,7 @@ const RunCard = React.memo(function RunCard({
             <Text style={[styles.badgeText, { color: statusColor }]}>{runDisplayStatus(run)}</Text>
           </View>
         </View>
-        <RunLinkedTickets key={run.id} run={run} compact />
+        <RunLinkedTickets key={run.id} run={run as Run} compact />
         {run.summary ? <RunTitle style={styles.runSummary} title={run.summary} /> : null}
         {tags.length > 0 ? (
           <View style={styles.tagRow}>
@@ -240,9 +241,9 @@ const RunCard = React.memo(function RunCard({
         ) : null}
         <View style={styles.metaRow}>
           {run.slotId && <Text style={baseStyles.textMuted}>{run.slotId}</Text>}
-          <RunElapsedTime run={run} />
+          <RunElapsedTime run={run as Run} />
         </View>
-        {(run.steps ?? []).length > 0 && <RunPipelineMini run={run} />}
+        {(run.steps ?? []).length > 0 && <RunPipelineMini run={run as Run} />}
         {primaryVisualPair ? (
           <View style={styles.runComparePreview}>
             <BeforeAfterPreview
@@ -274,9 +275,27 @@ const RunCard = React.memo(function RunCard({
   );
 });
 
-function RunEvidenceSignals({ run, compact = false }: { run: Run; compact?: boolean }) {
+function RunEvidenceSignals({
+  run,
+  compact = false,
+}: {
+  run: Run | RunListRow;
+  compact?: boolean;
+}) {
   const router = useRouter();
-  const signals = useMemo(() => summarizeRunEvidenceSignals(run), [run]);
+  const signals = useMemo(() => {
+    if ('evidenceSummary' in run && run.evidenceSummary != null) {
+      return summarizeRunEvidenceSignals({
+        steps: run.steps,
+        liveRecipeContext: run.liveRecipeContext,
+        decisions: run.decisions,
+        evidenceSummary: run.evidenceSummary,
+      });
+    }
+    return summarizeRunEvidenceSignals(
+      run as Pick<Run, 'decisions' | 'steps' | 'liveRecipeContext'>,
+    );
+  }, [run]);
   if (signals.length === 0) return null;
 
   const openSignal = (signal: RunEvidenceSignal) => {

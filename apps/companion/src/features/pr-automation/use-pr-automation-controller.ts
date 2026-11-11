@@ -20,6 +20,7 @@ import {
   type PRTriggerRule,
   type PRWatchListResult,
   type Run,
+  type RunListRow,
   type SlotStatus,
   viewChoiceField,
 } from '@farmslot/protocol';
@@ -553,7 +554,7 @@ export function usePRAutomationController(
       openPolicy,
       openRepair,
       openRequest,
-      openQA: (intent: PRReviewIntent, run?: Run) => {
+      openQA: (intent: PRReviewIntent, run?: Run | RunListRow) => {
         setRequestDraft(
           qaRequestFromReview(intent, run, useConnectionStore.getState().principalId),
         );

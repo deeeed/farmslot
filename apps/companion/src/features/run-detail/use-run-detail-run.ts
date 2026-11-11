@@ -9,18 +9,19 @@ import { useHeldConnection } from '../../store/held-connection';
 import { useRunStore } from '../../store/runs';
 
 /**
- * The run Run Detail renders: run.get's answer, or the run collections' row for that id while
- * run.get has nothing usable to show (loading, or saved data the screen would call saved). The
- * row, which the Review list already holds, stands in so a listed run never opens on a skeleton.
- * Over a saved run.get it shows only when it was updated later. Usable run.get data is not
- * replaced: a run write marks it stale and rereads it, and run.list can land first. A failed
- * reread stays quiet only while the last good read is under 60 s old (`heldDataUsable`); after
- * that a newer row shows. A refusal such as RUN_NOT_FOUND drops the row.
+ * The two things Run Detail needs separated:
+ * - `row`: the run-list row for header, status, pipeline and anything a RunListRow has. Present
+ *   as soon as the run appears in the list, regardless of whether run.get has loaded. Never
+ *   null while the run is listed and not refused.
+ * - `run`: the detail from run.get only, never a list row. Null while run.get has not yet
+ *   returned data (loading or refused). Set as soon as data exists — including stale cached
+ *   data — so detail-only fields (prPackage, artifactManifest, full decision payloads) are
+ *   available even offline. Use `runActionable` to guard write actions; use `fromList` to
+ *   know whether the row is a more up-to-date source for status/header display.
  *
- * Display and actions use different rules. A row is display data only: run.list leaves large
- * detail out (`runHasTrimmedDetail`), and run actions check run.get's own run
- * (`assertNativeRunReady`). `runActionable` (`canActOn`) says when actions may run, which a
- * failed reread already stops. `listObservation` dates the row while it shows.
+ * The old `fromList` flag is preserved for callers that need to know the detail is not yet held.
+ * The brief: "Where a screen needs a detail-only field to render correctly, it waits for the
+ * detail." Nothing already on screen disappears; the row keeps the header live.
  */
 export function useRunDetailRun(runId: string) {
   const runQuery = useMemo(
@@ -35,7 +36,7 @@ export function useRunDetailRun(runId: string) {
   const now = Date.now();
   const runActionable = canActOn(runObservation, connected, now);
   const directShown = heldDataUsable(runObservation, connected, now);
-  const row = readRefused(runObservation.error) ? undefined : listedRun;
+  const row = (readRefused(runObservation.error) ? undefined : listedRun) ?? null;
   const fromList = Boolean(
     row && !directShown && (!direct || Date.parse(row.updatedAt) > Date.parse(direct.updatedAt)),
   );
@@ -45,6 +46,7 @@ export function useRunDetailRun(runId: string) {
     runActionable,
     listObservation,
     fromList,
-    run: (fromList ? row : direct) ?? null,
+    row,
+    run: direct ?? null,
   };
 }

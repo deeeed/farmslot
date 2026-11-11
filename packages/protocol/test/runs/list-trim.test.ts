@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run, RunDecision, RunDecisionPayload } from '../../src/contracts/index.js';
+import type {
+  ReadyGatePayload,
+  ReviewGatePayload,
+  Run,
+  RunDecision,
+  RunDecisionPayload,
+} from '../../src/contracts/index.js';
 import { summarizeRunEvidence } from '../../src/runs/evidence-summary.js';
 import {
   RUN_LIST_PAYLOAD_VALUE_LIMIT,
@@ -55,7 +61,7 @@ test('run.list trims CI snapshot context without a payload and retains other con
   assert.deepEqual(stored.context?.checkSnapshot, { checks: [] });
 });
 
-function decision(payload: Record<string, unknown>): RunDecision {
+function decision(payload: RunDecisionPayload): RunDecision {
   return {
     id: 'd1',
     type: 'engine_review_posting',
@@ -63,7 +69,7 @@ function decision(payload: Record<string, unknown>): RunDecision {
     description: '',
     actions: [],
     createdAt: '2026-09-14T00:00:00.000Z',
-    payload: payload as RunDecisionPayload,
+    payload,
   };
 }
 
@@ -74,14 +80,14 @@ test('run.list keeps small decision payload values and names the large ones it d
       recommendation: 'REQUEST_CHANGES',
       reviewMd: big,
       evidenceMarkdown: big,
-    }),
+    } as ReviewGatePayload),
   );
   assert.deepEqual(trimmed.payload, { kind: 'review', recommendation: 'REQUEST_CHANGES' });
   assert.deepEqual(trimmed.payloadTrimmed, ['reviewMd', 'evidenceMarkdown']);
 });
 
 test('a decision with only small values is returned as-is, without a marker', () => {
-  const small = decision({ kind: 'review', recommendation: 'COMMENT' });
+  const small = decision({ kind: 'review', recommendation: 'COMMENT' } as ReviewGatePayload);
   assert.equal(trimDecisionForList(small), small);
   assert.equal(trimDecisionForList(small).payloadTrimmed, undefined);
 });
@@ -90,7 +96,10 @@ test('trimRunForList copies instead of mutating the stored run', () => {
   const run: Run = {
     ...minRun(),
     id: 'r1',
-    decisions: [decision({ kind: 'review', reviewMd: big }), decision({ kind: 'ready' })],
+    decisions: [
+      decision({ kind: 'review', reviewMd: big } as ReviewGatePayload),
+      decision({ kind: 'ready' } as ReadyGatePayload),
+    ],
   };
   const listed = trimRunForList(run);
   assert.notEqual(listed, run);
@@ -99,18 +108,25 @@ test('trimRunForList copies instead of mutating the stored run', () => {
   assert.equal(storedPayload.reviewMd, big, 'the store object keeps its payload');
   assert.equal(listed.decisions[0].payloadTrimmed?.[0], 'reviewMd');
   assert.equal(listed.decisions[1], run.decisions[1], 'untouched decisions are shared');
-  const noop: Run = { ...minRun(), id: 'r2', decisions: [decision({ kind: 'ready' })] };
+  const noop: Run = {
+    ...minRun(),
+    id: 'r2',
+    decisions: [decision({ kind: 'ready' } as ReadyGatePayload)],
+  };
   assert.equal(trimRunForList(noop), noop);
 });
 
 test('the limit is measured in UTF-8 bytes, not string length', () => {
   // 1,000 three-byte characters: 1,002 JSON characters, 3,002 JSON bytes.
   const wide = '\u4e2d'.repeat(1000);
-  const trimmed = trimDecisionForList(decision({ kind: 'review', reviewMd: wide }));
+  const trimmed = trimDecisionForList(
+    decision({ kind: 'review', reviewMd: wide } as ReviewGatePayload),
+  );
   assert.deepEqual(trimmed.payloadTrimmed, ['reviewMd']);
   const narrow = 'x'.repeat(RUN_LIST_PAYLOAD_VALUE_LIMIT - 2);
   assert.equal(
-    trimDecisionForList(decision({ kind: 'review', reviewMd: narrow })).payloadTrimmed,
+    trimDecisionForList(decision({ kind: 'review', reviewMd: narrow } as ReviewGatePayload))
+      .payloadTrimmed,
     undefined,
   );
 });
@@ -239,7 +255,14 @@ function richRun(): Run {
       workerRetained: false,
       updatedAt: '2026-11-11T00:00:00.000Z',
     },
-    sessionUsage: [{ runner: 'claude', totalTokens: 5000 }],
+    sessionUsage: [
+      {
+        runner: 'claude',
+        totalTokens: 5000,
+        measuredAt: '2026-11-11T00:00:00.000Z',
+        source: 'runner-transcript' as const,
+      },
+    ],
     visualJudgmentReceipts: [],
     templateProvenance: null,
   };
@@ -248,10 +271,10 @@ function richRun(): Run {
 test('runListRow drops the four heavy fields', () => {
   const run = richRun();
   const row = runListRow(run);
-  assert.equal(row.resourcePosture, undefined, 'resourcePosture dropped');
-  assert.equal(row.sessionUsage, undefined, 'sessionUsage dropped');
-  assert.equal(row.visualJudgmentReceipts, undefined, 'visualJudgmentReceipts dropped');
-  assert.equal(row.templateProvenance, undefined, 'templateProvenance dropped');
+  assert.equal('resourcePosture' in row, false, 'resourcePosture dropped');
+  assert.equal('sessionUsage' in row, false, 'sessionUsage dropped');
+  assert.equal('visualJudgmentReceipts' in row, false, 'visualJudgmentReceipts dropped');
+  assert.equal('templateProvenance' in row, false, 'templateProvenance dropped');
 });
 
 test('runListRow keeps only allowed step output keys', () => {
