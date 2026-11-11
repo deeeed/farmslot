@@ -245,9 +245,8 @@ function parseRepo(value: string | undefined, context: GhCommandContext): RepoRe
 }
 
 function httpErrorMessage(response: GitHubHttpResponse): string {
-  let message = `${response.status} ${response.statusText}`.trim();
   if (isJsonContentType(response.headers)) {
-    message = '';
+    let message = '';
     try {
       const parsed = JSON.parse(response.body) as { message?: unknown; errors?: unknown };
       const messages: string[] = [];
@@ -264,9 +263,13 @@ function httpErrorMessage(response: GitHubHttpResponse): string {
       // go-gh reports an unparsable JSON error body by status and URL alone.
       if (!(error instanceof SyntaxError)) throw error;
     }
+    if (!message) return `HTTP ${response.status} (${response.url})`;
+    const [first, ...rest] = message.split('\n');
+    return `gh: ${first} (HTTP ${response.status})${rest.length ? `\n${rest.join('\n')}` : ''}`;
   }
-  const [first, ...rest] = message.split('\n');
+  const message = `${response.status} ${response.statusText}`.trim();
   if (!message) return `HTTP ${response.status} (${response.url})`;
+  const [first, ...rest] = message.split('\n');
   return `HTTP ${response.status}: ${first} (${response.url})${rest.length ? `\n${rest.join('\n')}` : ''}`;
 }
 

@@ -352,7 +352,10 @@ async function execTypedOp<T>(
     return result.data;
   } catch (err) {
     if (!(err instanceof Error)) throw err;
-    if (!isAbortError(err)) cacheNegative(cacheKey, err);
+    if (!isAbortError(err)) {
+      cacheNegative(cacheKey, err);
+      err.message = `failed: ${err.message}`;
+    }
     throw err;
   } finally {
     release();
@@ -560,4 +563,9 @@ function updateQuotaFromHeaders(headers: Map<string, string>, credentialKey: str
     );
     lastQuotaBucket = bucket;
   }
+}
+
+/** Allow githubGraphQL (called outside execTypedOp) to fire the same quota broadcast. */
+export function notifyRateLimitHeaders(headers: Map<string, string>, credentialKey: string): void {
+  updateQuotaFromHeaders(headers, credentialKey);
 }

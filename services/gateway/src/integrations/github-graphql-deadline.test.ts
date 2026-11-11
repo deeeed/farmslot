@@ -7,6 +7,7 @@ const observed: Array<AbortSignal | undefined> = [];
 mock.module('./github-client.js', {
   namedExports: {
     githubRequestCacheKey: () => 'deadline-fixture',
+    notifyRateLimitHeaders: () => {},
   },
 });
 mock.module('./github-operations.js', {
