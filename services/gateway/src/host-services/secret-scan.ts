@@ -4,6 +4,8 @@ import { Worker } from 'node:worker_threads';
 
 import type { FloorHit } from '@farmslot/handoff/scrub';
 
+import { registerHostOperations } from '../observability/performance.js';
+
 import type { PublicationScanReply, PublicationScanRequest } from './secret-scan-worker.js';
 
 export interface SecretScanService {
@@ -17,6 +19,7 @@ export interface SecretScanService {
 export const secretScanOperations = {
   publication: 'secretScan.publication',
 } as const;
+registerHostOperations(Object.values(secretScanOperations));
 
 /** Scans waiting on the worker; one more refuses instead of queueing without bound. */
 export const MAX_PENDING_PUBLICATION_SCANS = 32;

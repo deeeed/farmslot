@@ -16,6 +16,7 @@ import {
 } from '@farmslot/protocol';
 
 import { EXEC_TIMEOUT_EXIT_CODE, execFileArgv } from '../core/exec.js';
+import { registerHostOperations, withHostOperation } from '../observability/performance.js';
 
 // ─── Exported types ───
 
@@ -67,6 +68,7 @@ export const GIT_OPS = {
   readDefaultBranchProbe: 'git.readDefaultBranchProbe',
   run: 'git.run',
 } as const;
+registerHostOperations(Object.values(GIT_OPS));
 
 // ─── Service interface ───
 
@@ -749,11 +751,13 @@ export function readDefaultBranchProbeFiles(
  * Routes through execFileArgv to get exec metrics, cleanup scope, and process-group kill.
  */
 function runGit(argv: string[], options?: GitRunOptions): Promise<GitResult> {
-  return execFileArgv(['git', ...argv], {
-    cwd: options?.cwd,
-    timeout: options?.timeout,
-    maxBuffer: options?.maxBuffer ?? 64 * 1024,
-  });
+  return withHostOperation(GIT_OPS.run, () =>
+    execFileArgv(['git', ...argv], {
+      cwd: options?.cwd,
+      timeout: options?.timeout,
+      maxBuffer: options?.maxBuffer ?? 64 * 1024,
+    }),
+  );
 }
 
 // ─── Service instance ───

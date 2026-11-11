@@ -19,6 +19,7 @@ import {
   normalizeRemotePath,
   shellExpressionForRemotePath,
 } from '../core/remote-paths.js';
+import { registerHostOperations, withHostOperation } from '../observability/performance.js';
 
 /** Stable operation-name constants for per-operation metric attribution. */
 export const OP_SLOT_FILES_READ = 'slotFiles.read' as const;
@@ -67,7 +68,7 @@ const DEFAULT_TIMEOUT = 10_000;
 
 // ── Service implementation ────────────────────────────────────────────────────
 
-const slotFiles: SlotFilesService = {
+const transports: SlotFilesService = {
   async read(vars, file, key, timeout = DEFAULT_TIMEOUT): Promise<string> {
     if (slotFilesReadInProcess(vars)) {
       try {
@@ -132,6 +133,15 @@ const slotFiles: SlotFilesService = {
     );
     return probe.stdout.trim() === '1';
   },
+};
+
+registerHostOperations([OP_SLOT_FILES_READ, OP_SLOT_FILES_TAIL, OP_SLOT_FILES_IS_FILE]);
+
+/** Each read's commands (the shell fallback, a node exec) are counted under its operation. */
+const slotFiles: SlotFilesService = {
+  read: (...args) => withHostOperation(OP_SLOT_FILES_READ, () => transports.read(...args)),
+  tail: (...args) => withHostOperation(OP_SLOT_FILES_TAIL, () => transports.tail(...args)),
+  isFile: (...args) => withHostOperation(OP_SLOT_FILES_IS_FILE, () => transports.isFile(...args)),
 };
 
 export default slotFiles;

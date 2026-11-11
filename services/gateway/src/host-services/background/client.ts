@@ -5,14 +5,22 @@
 import { type ChildProcess, fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import type {
-  BackgroundChildMessage,
-  BackgroundOperation,
-  BackgroundParams,
-  BackgroundRequestMessage,
-  BackgroundResult,
-  ExecTally,
+import {
+  recordHostOperationExec,
+  registerHostOperations,
+} from '../../observability/performance.js';
+
+import {
+  BACKGROUND_OPERATIONS,
+  type BackgroundChildMessage,
+  type BackgroundOperation,
+  type BackgroundParams,
+  type BackgroundRequestMessage,
+  type BackgroundResult,
+  type ExecTally,
 } from './protocol.js';
+
+registerHostOperations(Object.values(BACKGROUND_OPERATIONS));
 
 export type BackgroundHostState = 'disabled' | 'stopped' | 'starting' | 'ready' | 'restarting';
 
@@ -301,8 +309,11 @@ export class ForkedBackgroundHost implements BackgroundHost {
       return;
     }
     this.rssBytes = message.rssBytes;
-    if (Object.keys(message.exec).length)
+    if (Object.keys(message.exec).length) {
       this.exec[message.operation] = addTally(this.exec[message.operation] ?? {}, message.exec);
+      // The child ran these commands for this process: they count here, under the operation.
+      recordHostOperationExec(message.operation, message.exec);
+    }
     if (!this.pending.has(message.id)) return; // the caller's deadline already passed
     this.missedDeadlines = 0;
     if (message.ok) this.settle(message.id, undefined, message.value);
