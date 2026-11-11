@@ -72,7 +72,11 @@ import {
   readReviewWorkspaceCompletion,
   readReviewWorkspaceSignal,
 } from './task.js';
-import { allocateReviewWorkspace, cancelReviewWorkspaceAllocation } from './workspace.js';
+import {
+  allocateReviewWorkspace,
+  cancelReviewWorkspaceAllocation,
+  cleanupReviewWorkspace,
+} from './workspace.js';
 
 interface ReviewOutputRepair {
   requestedAt: string;
@@ -325,12 +329,50 @@ async function freezeSubject(
   return subject;
 }
 
+function reviewWorkspaceNeverLaunched(run: Run): boolean {
+  return (
+    ['failed', 'cancelled'].includes(run.status) &&
+    !run.reviewResult &&
+    run.engineState?.workspaceReviewDispatchGeneration === undefined &&
+    !(run.agentContexts ?? []).some(
+      (context) =>
+        context.nativeSession ||
+        context.target ||
+        context.runnerSessionId ||
+        context.promptDeliveryStartedAt,
+    )
+  );
+}
+
 export async function teardownReviewWorkspace(
   runId: string,
   options: { preserveInvalidOutput?: boolean } = {},
 ): Promise<void> {
   const run = getRun(runId);
   if (!run?.reviewWorkspace) return;
+  if (!run.reviewWorkspace.cleanedAt && reviewWorkspaceNeverLaunched(run)) {
+    const generation = run.engineState?.generation ?? 0;
+    const assertCurrent = () => {
+      currentWorkspaceRun(runId, generation, true);
+    };
+    if (run.status === 'cancelled') await cancelReviewWorkspaceAllocation(runId, { assertCurrent });
+    await cleanupReviewWorkspace(runId, { assertCurrent });
+    const current = currentWorkspaceRun(runId, generation, true);
+    if (!current.reviewWorkspace) throw new Error('Review workspace changed during cleanup');
+    const closedAt = new Date().toISOString();
+    await persistRunNow(
+      updateRun(runId, {
+        reviewWorkspace: {
+          ...current.reviewWorkspace,
+          cleanedAt: closedAt,
+          executionStoppedAt: closedAt,
+        },
+        reviewWorkspaceCleanupError: undefined,
+      }),
+      'release review workspace before reviewer launch',
+    );
+    return;
+  }
   if (options.preserveInvalidOutput && retainsInvalidReviewOutput(run)) return;
   if (run.reviewWorkspace.cleanedAt || run.reviewWorkspace.executionStoppedAt) return;
   const generation = run.engineState?.generation ?? 0;
@@ -538,7 +580,7 @@ export function reconcileReviewWorkspaceCleanup(
     for (const run of getAllRuns()) {
       if (
         !run.reviewWorkspace ||
-        run.reviewWorkspace.executionStoppedAt ||
+        (run.reviewWorkspace.executionStoppedAt && !reviewWorkspaceNeverLaunched(run)) ||
         (run.reviewWorkspace.cleanedAt && !hasHeldReviewWorker(run)) ||
         hasUncertainReviewOperation(run) ||
         retainsInvalidReviewOutput(run) ||

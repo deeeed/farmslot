@@ -29,8 +29,11 @@ mock.module('../runners/review-tmux.js', {
     },
   },
 });
-const { createRun, getRun, updateRun } = await import('../runs/store.js');
-const { reconcileReviewWorkspaceCleanup } = await import('./pipeline.js');
+const workspace = await import('./workspace.js');
+const cleanup = mock.fn(async (_runId: string) => {});
+mock.module('./workspace.js', { namedExports: { ...workspace, cleanupReviewWorkspace: cleanup } });
+const { createRun, getRun, updateRun, archiveRun } = await import('../runs/store.js');
+const { reconcileReviewWorkspaceCleanup, teardownReviewWorkspace } = await import('./pipeline.js');
 const { retainedWorkspaceIsIdle } = await import('./retention-policy.js');
 
 test('a retained result keeps capacity until terminal reconciliation confirms the worker stop', async () => {
@@ -83,3 +86,48 @@ test('a retained result keeps capacity until terminal reconciliation confirms th
   assert.equal(retainedWorkspaceIsIdle(getRun(created.id)!), true);
   assert.equal(getRun(created.id)!.reviewWorkspaceCleanupError, undefined);
 });
+
+for (const alreadyStopped of [false, true]) {
+  test(`an unstarted setup failure releases checkout and allows archive, stopped=${alreadyStopped}`, async () => {
+    const created = createRun(
+      {
+        flowType: 'review-pr',
+        project: 'fixture',
+        ticketOrPr: `example/app#${alreadyStopped ? 44 : 43}`,
+        mode: 'autonomous',
+        runner: 'pi',
+        model: 'litellm/glm-5p3-flash',
+        transport: 'native',
+        reviewWorkspaceTarget: { machine: 'local' },
+      },
+      { nativeOwnerPrincipalId: 'closeout-owner' },
+    );
+    updateRun(created.id, {
+      status: 'failed',
+      error: 'Review support source is unavailable',
+      steps: [
+        { name: 'write-task', status: 'failed' },
+        { name: 'dispatch', status: 'skipped' },
+      ],
+      agentContexts: [],
+      reviewWorkspace: {
+        workspaceId: created.id,
+        machine: 'local',
+        executionNodeId: 'local',
+        checkoutPath: '/owned/source',
+        taskPath: '/owned/task',
+        artifactPath: '/owned/task/artifacts',
+        retainedAt: '2026-11-11T00:00:00Z',
+        ...(alreadyStopped ? { executionStoppedAt: '2026-11-11T00:00:01Z' } : {}),
+      },
+    });
+    const before = cleanup.mock.callCount();
+    const previousStops = stops;
+    if (alreadyStopped) await reconcileReviewWorkspaceCleanup(() => {});
+    else await teardownReviewWorkspace(created.id);
+    assert.equal(cleanup.mock.callCount(), before + 1);
+    assert.equal(stops, previousStops, 'No reviewer process was launched');
+    assert(getRun(created.id)!.reviewWorkspace?.cleanedAt);
+    assert.equal(await archiveRun(created.id), true);
+  });
+}

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import { agentContextStatusFromRunStatus, type Run } from '@farmslot/protocol';
 
 import { makeRun } from '../methods/run/test-fixtures.js';
 
@@ -81,6 +81,107 @@ test('workspace capacity counts host workers independently of device slots', () 
   ];
   assert.equal(activeWorkspaceReviews('node', runs), 2);
   assert.equal(activeWorkspaceReviews('node', runs, 'one'), 1);
+});
+
+test('a retained finished review awaiting posting leaves capacity for another review', () => {
+  const ended = '2026-11-11T00:00:00.000Z';
+  const run: Run = {
+    ...makeRun({
+      id: 'finished-review',
+      flowType: 'review-pr',
+      slotId: null,
+      status: 'reconciling',
+    }),
+    reviewWorkspaceTarget: { machine: 'node' },
+    reviewWorkspace: {
+      workspaceId: 'finished-review',
+      machine: 'node',
+      executionNodeId: 'node',
+      checkoutPath: '/owned/source',
+      taskPath: '/owned/task',
+      artifactPath: '/owned/task/artifacts',
+      retainedAt: ended,
+      executionStoppedAt: ended,
+    },
+    reviewResult: {
+      recommendation: 'APPROVE',
+      reviewMd: 'VERDICT: APPROVE\n',
+      lineComments: [],
+      artifactManifest: [],
+    },
+    steps: [
+      { name: 'monitor', status: 'done' },
+      { name: 'human-gate', status: 'running' },
+    ],
+    decisions: [
+      {
+        id: 'posting',
+        type: 'engine_review_posting',
+        title: 'Post review',
+        description: 'Saved review',
+        actions: [],
+        createdAt: ended,
+      },
+    ],
+    agentContexts: [
+      {
+        id: 'review',
+        role: 'review',
+        label: 'Reviewer',
+        runId: 'finished-review',
+        slotId: null,
+        status: agentContextStatusFromRunStatus('reconciling'),
+        reviewResultValidatedAt: ended,
+        nativeSession: {
+          sessionId: 'retained-conversation',
+          executionNodeId: 'node',
+          ownerPrincipalId: 'owner',
+          leaseId: 'retained-lease',
+          commandId: 'completed-review',
+        },
+      },
+    ],
+  };
+  assert.equal(activeWorkspaceReviews('node', [run]), 0);
+  run.steps[1].outputs = { reviewFollowupCommandId: 'active-followup' };
+  assert.equal(activeWorkspaceReviews('node', [run]), 1);
+  delete run.steps[1].outputs;
+  assert.equal(
+    activeWorkspaceReviews('node', [
+      run,
+      {
+        ...makeRun({ id: 'next-review', flowType: 'review-pr', slotId: null }),
+        reviewWorkspaceTarget: { machine: 'node' },
+      },
+    ]),
+    1,
+  );
+  assert.equal(
+    activeWorkspaceReviews('node', [
+      { ...run, reviewWorkspace: { ...run.reviewWorkspace!, executionStoppedAt: undefined } },
+    ]),
+    0,
+  );
+  assert.equal(activeWorkspaceReviews('node', [{ ...run, reviewResult: undefined }]), 1);
+  assert.equal(
+    activeWorkspaceReviews('node', [
+      {
+        ...run,
+        status: 'monitoring',
+        agentContexts: [
+          {
+            id: 'review',
+            role: 'review',
+            label: 'Reviewer',
+            runId: run.id,
+            slotId: null,
+            status: 'working',
+          },
+        ],
+      },
+    ]),
+    1,
+  );
 });
 
 test('a terminal run retains capacity until its native process close is confirmed', () => {

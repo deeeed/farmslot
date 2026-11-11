@@ -113,6 +113,7 @@ import {
   type LaunchAckSignalSnapshot,
   probeRunnerHandoffAck,
   readLaunchAckSignalSnapshot,
+  readRunnerPromptAcceptance,
   type RunnerHandoffAckProbe,
 } from './prompt-delivery-evidence.js';
 import {
@@ -2911,6 +2912,10 @@ export async function sendRunnerPrompt(
   ...args: Parameters<typeof submitRunnerPrompt>
 ): Promise<void> {
   const outcome = await submitRunnerPrompt(...args);
+  assertRunnerPromptSent(outcome);
+}
+
+export function assertRunnerPromptSent(outcome: RunnerInstructionOutcome): void {
   if (outcome !== 'sent')
     throw new Error(
       outcome === 'held-untouched'
@@ -3235,24 +3240,14 @@ export async function sendRunnerInstructionSafely(
     const observability = getRunnerObservability(runner);
     if (!observability) return false;
     do {
-      const reading =
-        opts.retainedSession && observability.promptAcceptedInSession
-          ? await observability.promptAcceptedInSession(
-              vars,
-              target,
-              opts.retainedSession.sessionId,
-              opts.retainedSession.sessionPath,
-              message,
-              opts.acceptanceSinceMs!,
-            )
-          : await observability.promptAccepted(
-              vars,
-              target,
-              runnerPromptDigest(message),
-              opts.acceptanceSinceMs!,
-              true,
-              message,
-            );
+      const reading = await readRunnerPromptAcceptance(
+        observability,
+        vars,
+        target,
+        message,
+        opts.acceptanceSinceMs!,
+        opts.retainedSession,
+      );
       if (
         reading?.value === true &&
         (reading.source === 'hook' || reading.source === 'signal') &&

@@ -465,7 +465,14 @@ export async function ensureReviewWorkspaceSupport(
         project: run.project,
         subject: run.reviewWorkspaceSubject,
         target: run.reviewWorkspaceTarget,
-        workspace: { ...run.reviewWorkspace, support: undefined, cleanedAt: undefined },
+        workspace: {
+          ...run.reviewWorkspace,
+          support: undefined,
+          cleanedAt: undefined,
+          retainedAt: undefined,
+          retainedUntil: undefined,
+          executionStoppedAt: undefined,
+        },
         domain: run.domain,
         template: run.executionTemplate,
       });
