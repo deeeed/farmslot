@@ -113,7 +113,7 @@ test('a mismatched live session refuses; a confirmed absent worker keeps ordinar
   );
 });
 
-test('a different run, slot, role, task or newer attempt cannot borrow an old worker', async () => {
+test('a different run, slot, role or task cannot borrow an old worker', async () => {
   for (const change of [{ runId: 'foreign' }, { slotId: 'foreign' }, { role: 'review' as const }]) {
     const { run, context, vars, signal } = fixture();
     assert.equal(
@@ -137,16 +137,46 @@ test('a different run, slot, role, task or newer attempt cannot borrow an old wo
     ),
     /current task/,
   );
-  await assert.rejects(
-    retainedDispatchSignal(
-      run,
-      { ...context, attemptStartedAt: '2026-11-11T15:01:00.000Z' },
-      vars,
-      signal,
-      healthy,
-    ),
-    /original attempt identity/,
+});
+
+test('a current-attempt launch failure before pane capture keeps ordinary dispatch replay', async () => {
+  const { run, context, vars } = fixture();
+  context.attemptStartedAt = run.steps[0].startedAt;
+  context.target = { session: 'fixture', target: 'fixture:dev' };
+  assert.equal(await retainedDispatchSignal(run, context, vars, undefined, healthy), null);
+});
+
+test('current-attempt uncertain delivery without a captured session keeps ordinary replay', async () => {
+  const { run, context, vars } = fixture();
+  context.attemptStartedAt = '2026-11-11T15:01:00.000Z';
+  context.runnerSessionId = null;
+  context.runnerSessionPath = null;
+  assert.equal(
+    await retainedDispatchSignal(run, context, vars, undefined, {
+      ...healthy,
+      pane: async () => {
+        throw new Error('Current-attempt replay must not inspect a retained worker');
+      },
+    }),
+    null,
   );
+});
+
+test('undated attempts keep ordinary replay rather than claiming an older retained worker', async () => {
+  for (const missing of ['dispatch', 'context'] as const) {
+    const { run, context, vars } = fixture();
+    if (missing === 'dispatch') run.steps[0].startedAt = undefined;
+    else context.attemptStartedAt = undefined;
+    assert.equal(
+      await retainedDispatchSignal(run, context, vars, undefined, {
+        ...healthy,
+        pane: async () => {
+          throw new Error('An undated attempt cannot establish a retained retry');
+        },
+      }),
+      null,
+    );
+  }
 });
 
 test('a regenerated current task cannot adopt the old worker and both old context paths', async () => {

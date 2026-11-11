@@ -50,6 +50,9 @@ export async function retainedDispatchSignal(
     context.slotId !== run.slotId
   )
     return null;
+  // A current-attempt launch failure keeps its existing dispatch replay contract.
+  // Retained-worker recovery applies only when a later retry left an older worker behind.
+  if (failedAt === null || attemptAt === null || attemptAt >= failedAt) return null;
 
   const runner = context.runner ?? run.metrics.runner;
   if (!runner || !context.target?.paneId)
@@ -69,14 +72,7 @@ export async function retainedDispatchSignal(
     throw new Error(
       'Retained worker identity is incomplete; preserve the live worker and restore its recorded session.',
     );
-  if (
-    !context.taskFile ||
-    !context.signalFile ||
-    !context.signalAttemptId ||
-    failedAt === null ||
-    attemptAt === null ||
-    attemptAt >= failedAt
-  )
+  if (!context.taskFile || !context.signalFile || !context.signalAttemptId)
     throw new Error(
       'Retained worker original attempt identity is incomplete or unconfirmed; preserve the live worker.',
     );
