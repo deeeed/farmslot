@@ -70,6 +70,8 @@ for (const stage of ['after-review', 'ready-gate'] as const) {
     let advanced = false;
     const prepare = async (): Promise<never> => {
       preparing.resolve();
+      // Exercise a waiter that registers after the test first advances the clock.
+      await flushed();
       assert.equal(
         getRun(run.id)!.steps[0].detail,
         'Preparing operator decision: checking publication package',
@@ -114,8 +116,13 @@ for (const stage of ['after-review', 'ready-gate'] as const) {
     let executionFailure: unknown;
     try {
       await preparing.promise;
-      t.mock.timers.tick(60_001);
-      for (let turn = 0; turn < 30; turn++) await flushed();
+      // Preparation can yield before its lock timer is armed, and the gate can
+      // await real I/O afterwards. Keep advancing until the operator path runs.
+      const deadline = performance.now() + 5_000;
+      while (!advanced && performance.now() < deadline) {
+        t.mock.timers.tick(10_000);
+        await flushed();
+      }
       assert.equal(
         advanced,
         true,
