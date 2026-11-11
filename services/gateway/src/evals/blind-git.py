@@ -162,7 +162,7 @@ def gateway_network_rules(spec):
     # fields or parser exceptions, which can include the original secret bytes.
     # Wildcard ports cover DNS aliases, LAN, IPv6 and mapped IPv4 without a
     # resolution race. A provider sharing a control-plane port fails closed too.
-    ports = {7777, 7801, 8808, 8809}  # CLI/server, desktop validation, worktree validation.
+    ports = {7777, 7778, 7801, 8808, 8809}  # CLI/server + TLS, desktop/worktree validation.
     urls = []
     homes = gateway_homes()
     configs = homes | {p / 'config' for p in homes}
@@ -189,7 +189,7 @@ def gateway_network_rules(spec):
                                     else (443 if url.scheme in ['wss', 'https'] else 80)))
         except (ValueError, TypeError, AttributeError):
             raise RuntimeError('Invalid gateway endpoint for the blind boundary') from None
-    for name in ['GATEWAY_PORT', 'GW_PORT']:
+    for name in ['GATEWAY_PORT', 'GW_PORT', 'FARMSLOT_GATEWAY_TLS_PORT']:
         if os.environ.get(name):
             ports.add(boundary_port(os.environ[name]))
     # The slot's disposable recipe browser is independent of operator CDP.

@@ -351,7 +351,7 @@ try {
   }), { code: 'EPERM' });
 } finally { socket.terminate(); }
 for (const host of ['127.0.0.1', '127.0.0.2', '::1', ${JSON.stringify(os.hostname())}]) {
-  for (const port of [Number(new URL(${JSON.stringify(url)}).port), ${cdpAddress.port}, 7777, 7801, 8808, 8809, 9323]) {
+  for (const port of [Number(new URL(${JSON.stringify(url)}).port), ${cdpAddress.port}, 7777, 7778, 7801, 8808, 8809, 9323]) {
     const connection = net.connect({ host, port });
     try {
       await assert.rejects(new Promise((resolve, reject) => { connection.once('connect', resolve); connection.once('error', reject); }), { code: 'EPERM' });

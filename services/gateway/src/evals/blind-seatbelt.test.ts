@@ -91,7 +91,7 @@ function generatedProfile(t: TestContext, workerCdpPort?: number, invalidProfile
 import json, os, pathlib, runpy, sys
 from unittest.mock import patch
 blind = runpy.run_path(sys.argv[1], run_name='fixture')
-with patch.dict(os.environ, {'HOME': sys.argv[2] + '/boundary/home', 'FARMSLOT_HOME': sys.argv[2] + '/boundary/selected-home', 'FARMSLOT_CONFIG_DIR': sys.argv[2] + '/boundary/selected-config', 'GATEWAY_URL': 'ws://[::1]:17901', 'GW_URL': 'ws://node.local:17902', 'FARMSLOT_GATEWAY': 'wss://node.local:17903', 'GATEWAY_PORT': '17904', 'FARMSLOT_CDP_PORT': '19323', 'FARMSLOT_CDP_PROFILE': sys.argv[2] + '/operator-debug', 'TMUX_TMPDIR': '/tmp/fixture-tmux', 'TMUX': '/tmp/fixture-inherited/server,123,0'}, clear=True):
+with patch.dict(os.environ, {'HOME': sys.argv[2] + '/boundary/home', 'FARMSLOT_HOME': sys.argv[2] + '/boundary/selected-home', 'FARMSLOT_CONFIG_DIR': sys.argv[2] + '/boundary/selected-config', 'GATEWAY_URL': 'ws://[::1]:17901', 'GW_URL': 'ws://node.local:17902', 'FARMSLOT_GATEWAY': 'wss://node.local:17903', 'GATEWAY_PORT': '17904', 'FARMSLOT_GATEWAY_TLS_PORT': '17905', 'FARMSLOT_CDP_PORT': '19323', 'FARMSLOT_CDP_PROFILE': sys.argv[2] + '/operator-debug', 'TMUX_TMPDIR': '/tmp/fixture-tmux', 'TMUX': '/tmp/fixture-inherited/server,123,0'}, clear=True):
     print(blind['sandbox_profile']({'repo': sys.argv[2], 'workerCdpPort': int(sys.argv[3])}, pathlib.Path(sys.argv[2]), ['/tmp/fixture-discovered/server']))
 `,
       fileURLToPath(new URL('./blind-git.py', import.meta.url)),
@@ -109,6 +109,7 @@ test('blind profile denies every configured gateway port on every address and op
     80,
     443,
     7777,
+    7778,
     7801,
     8808,
     8809,
@@ -118,6 +119,7 @@ test('blind profile denies every configured gateway port on every address and op
     17902,
     17903,
     17904,
+    17905,
     ...gatewayFiles
       .filter((file) => path.basename(file) === 'gateways.json')
       .map((_, index) => 17801 + index),
