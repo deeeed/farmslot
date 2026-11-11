@@ -66,7 +66,7 @@ const person = auth.writer.createPrincipal({ type: 'person', displayName: 'Press
   { role: 'admin', scope: { kind: 'global' } },
 ]);
 const secret = auth.writer.issueCredential(person.id, 'Disposable proof');
-const grant = auth.writer.exchangePersonCredential(secret.secret, {
+const grant = await auth.writer.exchangePersonCredential(secret.secret, {
   deviceName: 'Proof',
   deviceKind: 'cli',
 });

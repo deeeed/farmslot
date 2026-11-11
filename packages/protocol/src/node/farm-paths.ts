@@ -496,9 +496,34 @@ export function resolveFarmPaths(options: ResolveFarmPathsOptions): FarmPaths {
     : { ...shared, role: 'node', state };
 }
 
-// A process may switch homes during a test or CLI invocation. Include the marker timestamp
-// and environment in the key so neither a migration nor a changed override leaves stale roots.
-const processPaths = new Map<string, FarmPaths>();
+interface CachedFarmPaths {
+  role: FarmRole;
+  checkoutRoot: string | undefined;
+  cwd: string;
+  homedir: string;
+  /** The instance marker's stamp when resolved: a migration or edit changes it. */
+  marker: string;
+  /** Every environment name resolution read, with the value it saw. */
+  reads: Map<string, string | undefined>;
+  paths: FarmPaths;
+}
+
+// A process may switch homes or overrides during a test or CLI invocation, so an entry holds only
+// while the marker stamp and every variable resolution read are unchanged. Reading just those
+// names matters: scanning all of process.env crosses into native code per variable, on every call.
+const processPaths: CachedFarmPaths[] = [];
+const PROCESS_PATHS_LIMIT = 32;
+
+function instanceMarker(home: string): string {
+  try {
+    const info = statSync(path.join(home, 'config', 'instance.json'));
+    return `${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
+  } catch (error) {
+    // A missing marker selects legacy; permission and other filesystem errors must surface.
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    return 'absent';
+  }
+}
 
 export function currentFarmPaths(
   role: 'gateway',
@@ -516,36 +541,30 @@ export function currentFarmPaths(
   checkoutRoot?: string,
 ): FarmPaths {
   const home = expandHome(env.FARMSLOT_HOME?.trim() || path.join(homedir(), '.farmslot'));
-  let marker = 'absent';
-  try {
-    const info = statSync(path.join(home, 'config', 'instance.json'));
-    marker = `${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
-  } catch (error) {
-    // A missing marker selects legacy; permission and other filesystem errors must surface.
-    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
-  }
-  const selectedEnv = Object.entries(env).filter(
-    ([name]) =>
-      name.startsWith('FARMSLOT_') ||
-      name === 'GATEWAY_PORT' ||
-      name === 'CANARY_HOME' ||
-      name === 'RECIPE_HARNESS_BROWSER_CACHE' ||
-      name === 'XDG_CACHE_HOME',
+  const marker = instanceMarker(home);
+  const cwd = process.cwd();
+  const userHome = homedir();
+  const index = processPaths.findIndex(
+    (entry) =>
+      entry.role === role &&
+      entry.checkoutRoot === checkoutRoot &&
+      entry.cwd === cwd &&
+      entry.homedir === userHome &&
+      entry.marker === marker &&
+      [...entry.reads].every(([name, value]) => env[name] === value),
   );
-  const key = JSON.stringify([
-    role,
-    home,
-    homedir(),
-    marker,
-    checkoutRoot,
-    process.cwd(),
-    selectedEnv,
-  ]);
-  let paths = processPaths.get(key);
-  if (!paths) {
-    paths = resolveFarmPaths({ role, env, checkoutRoot });
-    processPaths.set(key, paths);
-  }
+  if (index >= 0) return processPaths[index].paths;
+  const reads = new Map<string, string | undefined>();
+  const recording = new Proxy(env, {
+    get(target, name, receiver) {
+      const value: unknown = Reflect.get(target, name, receiver);
+      if (typeof name === 'string') reads.set(name, value as string | undefined);
+      return value;
+    },
+  });
+  const paths = resolveFarmPaths({ role, env: recording, checkoutRoot });
+  processPaths.unshift({ role, checkoutRoot, cwd, homedir: userHome, marker, reads, paths });
+  processPaths.length = Math.min(processPaths.length, PROCESS_PATHS_LIMIT);
   return paths;
 }
 

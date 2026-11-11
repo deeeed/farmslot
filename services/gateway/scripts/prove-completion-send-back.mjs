@@ -327,7 +327,7 @@ try {
     [{ role: 'admin', scope: { kind: 'global' } }],
   );
   const credential = auth.writer.issueCredential(principal.id, 'Owned completion proof');
-  const grant = auth.writer.exchangePersonCredential(credential.secret, {
+  const grant = await auth.writer.exchangePersonCredential(credential.secret, {
     deviceName: 'Fixture',
     deviceKind: 'cli',
   });

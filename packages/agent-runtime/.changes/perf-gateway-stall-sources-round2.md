@@ -1,0 +1,1 @@
+- Starting a native session reads only its own runner process, which is still held at its launch gate, instead of a census of every process on the host; the shared background census adds descendants once it starts.

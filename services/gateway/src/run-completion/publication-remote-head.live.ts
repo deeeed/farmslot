@@ -137,7 +137,7 @@ test(
       [{ role: 'admin', scope: { kind: 'global' } }],
     );
     const credential = auth.writer.issueCredential(person.id, 'Local proof');
-    const grant = auth.writer.exchangePersonCredential(credential.secret, {
+    const grant = await auth.writer.exchangePersonCredential(credential.secret, {
       deviceName: 'Local proof',
       deviceKind: 'cli',
     });

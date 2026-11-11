@@ -128,7 +128,7 @@ test('decision advice gateway RPC gates on admission and refuses stale snapshots
       }),
     );
     assert.equal((await request(Methods.DECISION_ADVICE_GET, args)).eligible, true);
-    const resolved = runtime.resolver.resolveSecret(token, 'token');
+    const resolved = await runtime.resolver.resolveSecret(token, 'token');
     assert.equal(resolved.ok, true);
     if (!resolved.ok) throw new Error('Synthetic gateway principal unavailable');
     const validRecord = await beginAssessment({

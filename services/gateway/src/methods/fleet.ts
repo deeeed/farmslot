@@ -6,12 +6,14 @@ import { setTimeout as delay } from 'node:timers/promises';
 import {
   type AgentContextSummary,
   DEFAULT_BRANCH,
+  defaultBranchProbeCommand,
   type ExecResult,
   type FleetPoolReadError,
   type FleetStatus,
   type FleetStatusParams,
   type FleetStatusResult,
   isSlotFreedByPark,
+  readDefaultBranchProbe,
   type ReadinessRecord,
   type Run,
   type RunStatus,
@@ -54,12 +56,17 @@ import {
   slotPinIsRequestOnly,
 } from './dispatch/slot-scoring.js';
 import { checkFixtureSteps } from './slot/check.js';
-import { isLinkedGitWorktreeMarker, probeDefaultBranch } from './slot/slot-tracking.js';
+import { isLinkedGitWorktreeMarker } from './slot/slot-tracking.js';
 import {
   enrichFleetWorkspaces,
   markFailedWorkspacesUnverified,
   observedFleetWorkspaces,
 } from './slot/workspace.js';
+import {
+  parseSlotProbeOutput,
+  type SlotProbeOutcome,
+  slotProbeScript,
+} from './slot-probe-batch.js';
 
 const LOCAL_SLOT_CHECK_CONCURRENCY = 4;
 const SLOT_CHECK_TIMEOUT_MS = 5_000;
@@ -1085,23 +1092,41 @@ async function checkSingleSlot(
     /* no project config */
   }
 
-  // Run all checks in parallel for this slot
+  // The slot's shell probes run together in one process (see runSlotProbes); fixtures and the
+  // machine's agent census run beside them.
   // Without the project config the default branch is unknown: probing `main`
   // would flag a non-main project, so give no repo verdict.
-  const repoProbe = projectVars
-    ? probeSlotDefaultBranch(vars, getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH)
-    : Promise.resolve(null);
-  const [branchInfo, agentStr, emuStr, devserverStr, cdpStr, fixStr, linkedWorktree, repoBlocker] =
-    await Promise.all([
-      checkBranch(vars),
-      agents.then((states) => states.get(sid) ?? 'no-tmux'),
-      checkDevice(vars, projectJson, projectVars),
-      checkDevServer(vars, projectJson, projectVars),
-      checkCDP(vars, projectJson, projectVars),
-      checkFixtures(vars, projectVars, projectJson),
-      checkLinkedWorktree(vars),
-      repoProbe,
-    ]);
+  const defaultBranch = projectVars
+    ? getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH
+    : undefined;
+  const device = deviceProbe(vars, projectJson, projectVars);
+  const devServerCommand = devServerProbe(vars, projectJson, projectVars);
+  const healthCommand = expandHook('health_check', projectJson, vars, projectVars);
+  const probes = [
+    gitHeadProbeCommand(vars.remoteRepo),
+    `test -f ${shellQuote(path.join(vars.remoteRepo, '.git'))} && echo linked || echo primary`,
+    device?.command,
+    devServerCommand,
+    healthCommand ? `cd '${vars.remoteRepo}' && ${healthCommand} 2>/dev/null` : undefined,
+    defaultBranch === undefined
+      ? undefined
+      : defaultBranchProbeCommand(vars.remoteRepo, defaultBranch),
+  ];
+  const [probed, agentStr, fixStr] = await Promise.all([
+    runSlotProbes(vars, probes, SLOT_CHECK_TIMEOUT_MS),
+    agents.then((states) => states.get(sid) ?? 'no-tmux'),
+    checkFixtures(vars, projectVars, projectJson),
+  ]);
+  const [branchResult, linkedResult, deviceResult, devServerResult, healthResult, repoResult] =
+    probed;
+  const branchInfo = branchResult ? parseGitHeadProbe(branchResult.stdout) : { branch: '-' };
+  const linkedWorktree = readLinkedWorktree(vars, linkedResult);
+  const emuStr = device ? `${device.prefix}:${deviceResult?.exitCode === 0 ? 'OK' : 'OFF'}` : '-';
+  const devserverStr = devServerCommand ? (devServerResult?.exitCode === 0 ? 'OK' : 'OFF') : '-';
+  const [cdpStr, repoBlocker] = await Promise.all([
+    healthCommand ? readHealth(projectJson, healthResult) : '-',
+    defaultBranch === undefined ? null : readSlotDefaultBranch(vars, defaultBranch, repoResult),
+  ]);
 
   const dispatchable =
     mode === 'dispatch' &&
@@ -1139,41 +1164,66 @@ async function checkSingleSlot(
 
 // ─── Individual check helpers ───
 
-async function probeSlotDefaultBranch(
+/** Each check reads its own probe result; an unavailable result is that check's failure value. */
+async function runSlotProbes(
   vars: SlotVars,
-  defaultBranch: string,
-): Promise<string | null> {
+  commands: ReadonlyArray<string | undefined>,
+  timeoutMs: number,
+): Promise<SlotProbeOutcome[]> {
+  const present = commands.flatMap((command, index) => (command ? [{ command, index }] : []));
+  const results: SlotProbeOutcome[] = commands.map(() => undefined);
+  if (!present.length) return results;
+  let stdout: string;
   try {
-    const probe = await probeDefaultBranch(vars, defaultBranch, { timeout: SLOT_CHECK_TIMEOUT_MS });
-    if (probe.readable) return probe.blocker;
-    // A failed git read is not evidence about the default branch: no verdict.
-    console.warn(`[fleet.refresh] ${vars.slotId}: default-branch probe: ${probe.error}`);
-    return null;
-  } catch (e) {
-    // Transport failure is not evidence about the repo; the SSH probe owns that verdict.
+    stdout = (
+      await execOnSlot(
+        vars,
+        slotProbeScript(
+          present.map((entry) => entry.command),
+          timeoutMs / 1000,
+        ),
+        // The in-script deadline decides each probe; this one only bounds the batch.
+        { timeout: timeoutMs + 5_000 },
+      )
+    ).stdout;
+  } catch (error) {
+    // Transport failure is not evidence about any probe: each reads as unavailable, as when
+    // its own exec failed before probes were batched.
     console.warn(
-      `[fleet.refresh] ${vars.slotId}: default-branch probe failed; no repo verdict`,
-      (e as Error).message ?? e,
+      `[fleet.refresh] ${vars.slotId}: slot probes did not run`,
+      (error as Error).message ?? error,
     );
-    return null;
+    return results;
   }
+  parseSlotProbeOutput(stdout, present.length).forEach((result, position) => {
+    results[present[position].index] = result;
+  });
+  return results;
 }
 
-async function checkLinkedWorktree(vars: SlotVars): Promise<boolean> {
-  try {
-    const r = await execOnSlot(
-      vars,
-      `test -f ${shellQuote(path.join(vars.remoteRepo, '.git'))} && echo linked || echo primary`,
-      { timeout: SLOT_CHECK_TIMEOUT_MS },
-    );
-    return isLinkedGitWorktreeMarker(r.stdout);
-  } catch (e) {
-    console.warn(
-      `[fleet.refresh] ${vars.slotId}: linked worktree probe failed; treating as primary clone`,
-      (e as Error).message ?? e,
-    );
-    return false;
+function readSlotDefaultBranch(
+  vars: SlotVars,
+  defaultBranch: string,
+  result: SlotProbeOutcome,
+): string | null {
+  if (!result) {
+    // Transport failure is not evidence about the repo; the SSH probe owns that verdict.
+    console.warn(`[fleet.refresh] ${vars.slotId}: default-branch probe failed; no repo verdict`);
+    return null;
   }
+  const probe = readDefaultBranchProbe(result, defaultBranch);
+  if (probe.readable) return probe.blocker;
+  // A failed git read is not evidence about the default branch: no verdict.
+  console.warn(`[fleet.refresh] ${vars.slotId}: default-branch probe: ${probe.error}`);
+  return null;
+}
+
+function readLinkedWorktree(vars: SlotVars, result: SlotProbeOutcome): boolean {
+  if (result) return isLinkedGitWorktreeMarker(result.stdout);
+  console.warn(
+    `[fleet.refresh] ${vars.slotId}: linked worktree probe failed; treating as primary clone`,
+  );
+  return false;
 }
 
 /**
@@ -1226,17 +1276,6 @@ export function slotHeadRefreshUpdate(
 ): { branch: string; head_sha: string | null } | null {
   if (probe.branch === current.branch && probe.headSha === current.headSha) return null;
   return { branch: probe.branch, head_sha: probe.headSha ?? null };
-}
-
-async function checkBranch(vars: SlotVars): Promise<{ branch: string; headSha?: string }> {
-  try {
-    const r = await execOnSlot(vars, gitHeadProbeCommand(vars.remoteRepo), {
-      timeout: SLOT_CHECK_TIMEOUT_MS,
-    });
-    return parseGitHeadProbe(r.stdout);
-  } catch {
-    return { branch: '-' };
-  }
 }
 
 type FleetAgentState = 'working' | 'idle' | 'no-tmux' | '-';
@@ -1324,96 +1363,53 @@ async function checkMachineAgents(
   return agents;
 }
 
-async function checkDevice(vars: SlotVars, pj: RawProjectJson, pv?: ProjectVars): Promise<string> {
-  const cmd = expandPlatformField('device_check', pj, vars, pv);
-  if (!cmd) {
-    // Fallback
-    const adbSerial = vars.resourceVars.adb_serial ?? '';
-    if (vars.platform === 'android' && adbSerial) {
-      try {
-        const r = await execOnSlot(vars, `adb devices 2>/dev/null | grep -q '${adbSerial}'`, {
-          timeout: SLOT_CHECK_TIMEOUT_MS,
-        });
-        return r.exitCode === 0 ? 'emu:OK' : 'emu:OFF';
-      } catch {
-        return 'emu:OFF';
-      }
-    }
-    const iosSim = vars.resourceVars.simulator ?? '';
-    if (vars.platform === 'ios' && iosSim) {
-      try {
-        const r = await execOnSlot(
-          vars,
-          `xcrun simctl list devices booted 2>/dev/null | grep -q '${iosSim}'`,
-          { timeout: SLOT_CHECK_TIMEOUT_MS },
-        );
-        return r.exitCode === 0 ? 'sim:OK' : 'sim:OFF';
-      } catch {
-        return 'sim:OFF';
-      }
-    }
-    return '-';
-  }
-  try {
-    const r = await execOnSlot(vars, cmd, { timeout: SLOT_CHECK_TIMEOUT_MS });
-    const prefix = vars.platform === 'android' ? 'emu' : vars.platform === 'ios' ? 'sim' : 'ext';
-    return r.exitCode === 0 ? `${prefix}:OK` : `${prefix}:OFF`;
-  } catch {
-    const prefix = vars.platform === 'android' ? 'emu' : vars.platform === 'ios' ? 'sim' : 'ext';
-    return `${prefix}:OFF`;
-  }
-}
-
-async function checkDevServer(
+/** The device check's command and its status prefix, or undefined when the slot has none. */
+function deviceProbe(
   vars: SlotVars,
   pj: RawProjectJson,
   pv?: ProjectVars,
-): Promise<string> {
-  const cmd = expandHook('dev_server_check', pj, vars, pv);
+): { command: string; prefix: string } | undefined {
+  const cmd = expandPlatformField('device_check', pj, vars, pv);
   if (cmd) {
-    try {
-      const r = await execOnSlot(vars, cmd, { timeout: SLOT_CHECK_TIMEOUT_MS });
-      return r.exitCode === 0 ? 'OK' : 'OFF';
-    } catch {
-      return 'OFF';
-    }
+    const prefix = vars.platform === 'android' ? 'emu' : vars.platform === 'ios' ? 'sim' : 'ext';
+    return { command: cmd, prefix };
   }
-  // Fallback: check port
-  const port = parseInt(vars.resourceVars.port ?? '0', 10);
-  if (port) {
-    try {
-      const r = await execOnSlot(
-        vars,
-        `ss -tln 2>/dev/null | grep -q ':${port} ' || lsof -nP -iTCP:${port} -sTCP:LISTEN -t >/dev/null 2>&1`,
-        { timeout: SLOT_CHECK_TIMEOUT_MS },
-      );
-      return r.exitCode === 0 ? 'OK' : 'OFF';
-    } catch {
-      return 'OFF';
-    }
-  }
-  return '-';
+  // Fallback
+  const adbSerial = vars.resourceVars.adb_serial ?? '';
+  if (vars.platform === 'android' && adbSerial)
+    return { command: `adb devices 2>/dev/null | grep -q '${adbSerial}'`, prefix: 'emu' };
+  const iosSim = vars.resourceVars.simulator ?? '';
+  if (vars.platform === 'ios' && iosSim)
+    return {
+      command: `xcrun simctl list devices booted 2>/dev/null | grep -q '${iosSim}'`,
+      prefix: 'sim',
+    };
+  return undefined;
 }
 
-async function checkCDP(vars: SlotVars, pj: RawProjectJson, pv?: ProjectVars): Promise<string> {
-  const healthCmd = expandHook('health_check', pj, vars, pv);
-  if (!healthCmd) return '-';
+/** The dev-server check's command, or undefined when the slot has none. */
+function devServerProbe(vars: SlotVars, pj: RawProjectJson, pv?: ProjectVars): string | undefined {
+  const cmd = expandHook('dev_server_check', pj, vars, pv);
+  if (cmd) return cmd;
+  // Fallback: check port
+  const port = parseInt(vars.resourceVars.port ?? '0', 10);
+  return port
+    ? `ss -tln 2>/dev/null | grep -q ':${port} ' || lsof -nP -iTCP:${port} -sTCP:LISTEN -t >/dev/null 2>&1`
+    : undefined;
+}
 
+async function readHealth(pj: RawProjectJson, result: SlotProbeOutcome): Promise<string> {
+  const raw = result?.stdout.trim();
+  if (!raw) return 'OFF';
   const parseCmd = getProjectField(pj, 'health.parse_health');
+  if (!parseCmd) return 'OK';
   try {
-    const r = await execOnSlot(vars, `cd '${vars.remoteRepo}' && ${healthCmd} 2>/dev/null`, {
-      timeout: SLOT_CHECK_TIMEOUT_MS,
-    });
-    const raw = r.stdout.trim();
-    if (!raw) return 'OFF';
-    if (!parseCmd) return 'OK';
     // Parse through project's parse command
     const { execLocal } = await import('../core/exec.js');
     const parsed = await execLocal(`echo '${raw.replace(/'/g, "'\\''")}' | ${parseCmd}`, {
       timeout: SLOT_CHECK_TIMEOUT_MS,
     });
-    const val = parsed.stdout.trim();
-    return val || 'Other';
+    return parsed.stdout.trim() || 'Other';
   } catch {
     return 'OFF';
   }

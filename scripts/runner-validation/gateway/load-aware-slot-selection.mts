@@ -171,7 +171,7 @@ const person = auth.writer.createPrincipal({ type: 'person', displayName: 'Load 
   { role: 'admin', scope: { kind: 'global' } },
 ]);
 const credential = auth.writer.issueCredential(person.id, 'Disposable fixture');
-const grant = auth.writer.exchangePersonCredential(credential.secret, {
+const grant = await auth.writer.exchangePersonCredential(credential.secret, {
   deviceName: 'Fixture',
   deviceKind: 'cli',
 });

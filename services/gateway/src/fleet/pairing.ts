@@ -226,11 +226,11 @@ export function pairingExchange(
   };
 }
 
-export function pairingExchangePersonSession(
+export async function pairingExchangePersonSession(
   code: string,
   device: PersonDeviceDescription,
   runtime: GatewayAuthRuntime,
-): PersonSessionGrant {
+): Promise<PersonSessionGrant> {
   const record = livePairingRecord(code);
   if (
     record.authority.kind !== 'existing-principal' ||
@@ -240,20 +240,22 @@ export function pairingExchangePersonSession(
       'AUTH_PERSON_REQUIRED',
       'This code is for a service or node, not a person sign-in.',
     );
-  let grant: PersonSessionGrant;
+  // The code is single-use: claim it before the session's secrets are derived, so a second
+  // exchange during that wait finds it gone. Infrastructure failures give it back for retry.
+  pairings.delete(record.code);
   try {
-    grant = runtime.writer.issuePersonSession(
+    return await runtime.writer.issuePersonSession(
       record.authority.principalId,
       record.principalGeneration ?? 0,
       device,
     );
   } catch (error) {
-    if (!(error instanceof CredentialStoreRefusalError)) throw error;
-    pairings.delete(record.code);
+    if (!(error instanceof CredentialStoreRefusalError)) {
+      pairings.set(record.code, record);
+      throw error;
+    }
     throw new GatewayMethodError('PAIRING_FAILED', 'Pairing authority is no longer valid');
   }
-  pairings.delete(record.code);
-  return grant;
 }
 
 function livePairingRecord(value: unknown): PairingRecord {

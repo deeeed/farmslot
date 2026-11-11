@@ -12,7 +12,7 @@ import {
   authorizeVisualClaimReview,
 } from './evidence-attestation.js';
 
-test('attestation rejects solo, service, node and unprivileged callers; active person authority is rechecked', (t) => {
+test('attestation rejects solo, service, node and unprivileged callers; active person authority is rechecked', async (t) => {
   const home = mkdtempSync(path.join(tmpdir(), 'evidence-attestation-auth-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const runtime = createGatewayAuthRuntime({
@@ -52,13 +52,11 @@ test('attestation rejects solo, service, node and unprivileged callers; active p
     [],
   );
   const unprivilegedIssue = runtime.writer.issueCredential(unprivileged.id, 'observer');
-  assert.throws(
-    () => authorizeEvidenceAttestation(runtime, personDevice(runtime, unprivilegedIssue.secret)),
-    /Denied/,
-  );
+  const unprivilegedDevice = await personDevice(runtime, unprivilegedIssue.secret);
+  assert.throws(() => authorizeEvidenceAttestation(runtime, unprivilegedDevice), /Denied/);
   const person = runtime.writer.createPrincipal({ type: 'person', displayName: 'Operator' }, roles);
   const issue = runtime.writer.issueCredential(person.id, 'operator');
-  const session = personDevice(runtime, issue.secret);
+  const session = await personDevice(runtime, issue.secret);
   assert.deepEqual(authorizeEvidenceAttestation(runtime, session), {
     principalId: person.id,
     displayName: 'Operator',
@@ -220,12 +218,15 @@ test('a visual-review delegator binds generation zero unless the policy pins its
   );
 });
 
-function personDevice(runtime: ReturnType<typeof createGatewayAuthRuntime>, credential: string) {
-  const grant = runtime.writer.exchangePersonCredential(credential, {
+async function personDevice(
+  runtime: ReturnType<typeof createGatewayAuthRuntime>,
+  credential: string,
+) {
+  const grant = await runtime.writer.exchangePersonCredential(credential, {
     deviceName: 'Attestation fixture',
     deviceKind: 'cli',
   });
-  const resolved = runtime.resolver.resolveSecret(grant.accessToken, 'token');
+  const resolved = await runtime.resolver.resolveSecret(grant.accessToken, 'token');
   assert.ok(resolved.ok && resolved.authentication?.kind === 'person-session');
   return {
     authenticated: true,
@@ -234,7 +235,7 @@ function personDevice(runtime: ReturnType<typeof createGatewayAuthRuntime>, cred
   };
 }
 
-test('paired person devices retain human approvals without inventing a source credential', (t) => {
+test('paired person devices retain human approvals without inventing a source credential', async (t) => {
   const home = mkdtempSync(path.join(tmpdir(), 'paired-attestation-auth-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const runtime = createGatewayAuthRuntime({
@@ -259,12 +260,12 @@ test('paired person devices retain human approvals without inventing a source cr
     },
     runtime,
   );
-  const grant = pairingExchangePersonSession(
+  const grant = await pairingExchangePersonSession(
     invitation.code,
     { deviceName: 'Paired fixture', deviceKind: 'companion' },
     runtime,
   );
-  const resolved = runtime.resolver.resolveSecret(grant.accessToken, 'token');
+  const resolved = await runtime.resolver.resolveSecret(grant.accessToken, 'token');
   assert.ok(resolved.ok && resolved.authentication?.kind === 'person-session');
   const authentication = resolved.authentication;
   const session = { authenticated: true, clientKind: 'companion' as const, authentication };

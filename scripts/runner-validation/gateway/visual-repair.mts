@@ -343,7 +343,7 @@ try {
     { role: 'admin', scope: { kind: 'global' } },
   ]);
   const credential = auth.writer.issueCredential(person.id, 'Send back proof');
-  const grant = auth.writer.exchangePersonCredential(credential.secret, {
+  const grant = await auth.writer.exchangePersonCredential(credential.secret, {
     deviceName: 'Send back proof',
     deviceKind: 'cli',
   });

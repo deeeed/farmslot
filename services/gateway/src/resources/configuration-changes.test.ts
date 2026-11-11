@@ -372,7 +372,7 @@ test('missing authorized configuration details return eviction codes and refused
   assert.equal(resourceRevisions.revision(farm), before);
 });
 
-test('configuration notifications use the same admin read authorization, including revocation', () => {
+test('configuration notifications use the same admin read authorization, including revocation', async () => {
   const runtime = createGatewayAuthRuntime({ FARMSLOT_HOME: path.join(root, 'authorization') });
   initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
   const principal = runtime.writer.createPrincipal(
@@ -380,11 +380,11 @@ test('configuration notifications use the same admin read authorization, includi
     [{ role: 'operator', scope: { kind: 'global' } }],
   );
   const issued = runtime.writer.issueCredential(principal.id, 'configuration-test');
-  const grant = runtime.writer.exchangePersonCredential(issued.secret, {
+  const grant = await runtime.writer.exchangePersonCredential(issued.secret, {
     deviceName: 'Private test',
     deviceKind: 'cli',
   });
-  const resolved = runtime.resolver.resolveSecret(grant.accessToken, 'token');
+  const resolved = await runtime.resolver.resolveSecret(grant.accessToken, 'token');
   assert(resolved.ok && resolved.authentication);
   const state = {
     authenticated: true,
