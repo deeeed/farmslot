@@ -76,7 +76,7 @@ async function readAttachmentSource(
     .replace(/^git@github\.com:/, '')
     .replace(/^https:\/\/github\.com\//, '')
     .replace(/\.git$/, '');
-  const identity: unknown = await github.repoView(parsedRepo, ['nameWithOwner'], {
+  const identity: unknown = await github.repoView(parsedRepo, {
     force: true,
     signal: AbortSignal.timeout(15_000),
   });

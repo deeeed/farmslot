@@ -135,6 +135,13 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
   let publishedBody = `${report}\n\n${marker}`;
   await input.authorize();
   const binding = await resolvePRSourceAccount(account, ownerId);
+  type LivePR = {
+    number?: number;
+    state?: string;
+    user?: { login?: string } | null;
+    base?: { repo?: { full_name?: string } } | null;
+    head?: { sha?: string } | null;
+  };
   const endpoint = `repos/${pr.repo}/pulls/${pr.number}`;
   const get = async (suffix: string, paginate = false) =>
     github.rest<unknown>('GET', suffix.startsWith('repos/') ? suffix : `${endpoint}${suffix}`, {
@@ -262,7 +269,7 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
       );
       if (JSON.stringify(actual.sort()) !== JSON.stringify(expected.sort()))
         throw new Error('Provider inline findings differ from the gated review');
-      const live = await get('');
+      const live = (await get('')) as LivePR;
       const event =
         live.user?.login?.toLowerCase() === account.login.toLowerCase()
           ? 'COMMENT'
@@ -304,7 +311,7 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
     throw new Error(
       'Publication outcome is uncertain; no duplicate was sent. Retry reconciliation after checking GitHub.',
     );
-  const live = await get('');
+  const live = (await get('')) as LivePR;
   if (
     live.number !== pr.number ||
     live.base?.repo?.full_name?.toLowerCase() !== pr.repo.toLowerCase() ||
