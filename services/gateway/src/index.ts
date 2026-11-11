@@ -81,6 +81,7 @@ import {
   startFileWatcher,
   statusFile,
 } from './fleet/state.js';
+import secretScan from './host-services/secret-scan.js';
 import {
   startGitHubAccountsObservation,
   wakeGitHubAccountsObservation,
@@ -141,7 +142,6 @@ import { initReview } from './review/orchestrator.js';
 import { roadmapRoot, setRoadmapObservationGuard } from './roadmap/store.js';
 import { watchRoadmapItems } from './roadmap/watcher.js';
 import { initRunCompletion } from './run-completion/orchestrator.js';
-import { stopPublicationSecretScanner } from './run-completion/publication-secrets.js';
 import { initializeRunBundleStore } from './run-completion/retained-artifacts.js';
 import {
   initRunEngine,
@@ -298,7 +298,7 @@ async function main(): Promise<void> {
         stopPRDetailCollection(),
         stopRunnerModelCatalogCollection(),
         stopProviderAccountsCollection(),
-        stopPublicationSecretScanner(),
+        secretScan.stop(),
       ]);
     } catch (error) {
       console.error('[gateway] Upstream observation shutdown failed:', error);

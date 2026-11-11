@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { mock, test } from 'node:test';
 
-import type { PublicationScanRequest } from './publication-secret-scan-worker.js';
+import type { PublicationScanRequest } from '../host-services/secret-scan-worker.js';
 
 /** Stands in for the scan worker so each failure can be driven deterministically. */
 class FakeWorker extends EventEmitter {
@@ -40,12 +40,10 @@ class FakeWorker extends EventEmitter {
 
 const workers: FakeWorker[] = [];
 mock.module('node:worker_threads', { namedExports: { Worker: FakeWorker } });
-const {
-  assertPublicationTextSafe,
-  MAX_PENDING_PUBLICATION_SCANS,
-  PublicationSecretError,
-  stopPublicationSecretScanner,
-} = await import('./publication-secrets.js');
+const { default: secretScan, MAX_PENDING_PUBLICATION_SCANS } =
+  await import('../host-services/secret-scan.js');
+const { assertPublicationTextSafe, PublicationSecretError } =
+  await import('./publication-secrets.js');
 
 function latest(): FakeWorker {
   const worker = workers.at(-1);
@@ -107,7 +105,7 @@ test('a saturated scanner refuses instead of queueing without bound', settles, a
 test('shutdown terminates the scanner and refuses waiting scans', settles, async () => {
   const refused = assert.rejects(assertPublicationTextSafe('text'), notASecretRefusal(/stopped/));
   const worker = latest();
-  await stopPublicationSecretScanner();
+  await secretScan.stop();
   assert.equal(worker.terminated, true);
   await refused;
 });

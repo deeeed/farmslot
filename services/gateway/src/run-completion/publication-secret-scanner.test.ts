@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
+import secretScan from '../host-services/secret-scan.js';
+
 // Counts scans in the caller's thread. The worker thread loads the real module.
 const scrub = await import('@farmslot/handoff/scrub');
 let callerThreadScans = 0;
@@ -13,7 +15,7 @@ mock.module('@farmslot/handoff/scrub', {
     },
   },
 });
-const { assertPublicationTextSafe, PublicationSecretError, stopPublicationSecretScanner } =
+const { assertPublicationTextSafe, PublicationSecretError } =
   await import('./publication-secrets.js');
 
 const secret = `private_key = ${'1'.repeat(64)}`;
@@ -32,8 +34,8 @@ test('a scan stopped before it completes refuses, and the next scan starts a new
       !(error instanceof PublicationSecretError) &&
       /stopped/.test(error.message),
   );
-  await stopPublicationSecretScanner();
+  await secretScan.stop();
   await refused;
   await assert.rejects(assertPublicationTextSafe(secret), PublicationSecretError);
-  await stopPublicationSecretScanner();
+  await secretScan.stop();
 });
