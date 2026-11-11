@@ -1,17 +1,15 @@
 import assert from 'node:assert/strict';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { after, mock, test, type TestContext } from 'node:test';
-import { promisify } from 'node:util';
+import { after, afterEach, beforeEach, mock, test, type TestContext } from 'node:test';
 
 import type { ExecResult, QaProfileSelection } from '@farmslot/protocol';
 
 import type { SlotVars } from '../core/config.js';
 import { seedRunnerObservabilityFixture } from '../node-support/support-test-fixtures.js';
 
-const executeFile = promisify(execFile);
 const root = mkdtempSync(path.join(tmpdir(), 'qa-scope-prepare-'));
 const project = 'qa-scope-fixture';
 const slotId = 'qa-scope-slot';
@@ -35,10 +33,13 @@ writeFileSync(path.join(root, 'scripts/dev.sh'), '');
 writeFileSync(path.join(root, 'services/gateway/package.json'), '{}');
 await seedRunnerObservabilityFixture(root);
 
+const budget = { timeout: 30_000 };
+
 function git(directory: string, ...args: string[]): string {
   return execFileSync('git', ['-C', directory, '-c', 'core.hooksPath=/dev/null', ...args], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: budget.timeout,
   }).trim();
 }
 
@@ -112,23 +113,35 @@ writeFileSync(
   }),
 );
 
-const budget = { timeout: 5000 };
+let commandSignal: AbortSignal | undefined;
+let commandController: AbortController | undefined;
+const pendingCommands = new Set<Promise<ExecResult>>();
+beforeEach((t) => {
+  commandController = new AbortController();
+  commandSignal = AbortSignal.any([t.signal, commandController.signal]);
+});
+afterEach(async () => {
+  commandController?.abort();
+  await Promise.all(pendingCommands);
+  commandSignal = undefined;
+  commandController = undefined;
+});
 
 // Git runs for real; tmux never does (prepare only asks whether a session exists).
 async function slotExec(vars: SlotVars, command: string): Promise<ExecResult> {
   if (command.includes('TMUX_BIN') || /\btmux\b/.test(command))
     return { exitCode: 1, stdout: '', stderr: 'fixture has no tmux server' };
+  assert(commandSignal, 'Slot commands must belong to a test');
+  const executing = realExec.execLocal(command, {
+    cwd: vars.remoteRepo,
+    timeout: budget.timeout,
+    signal: commandSignal,
+  });
+  pendingCommands.add(executing);
   try {
-    // No command outlives the test that started it.
-    const result = await executeFile('bash', ['-c', command], {
-      cwd: vars.remoteRepo,
-      timeout: budget.timeout,
-    });
-    return { ...result, exitCode: 0 };
-  } catch (error) {
-    const result = error as Error & { stdout?: string; stderr?: string; code?: number };
-    if (typeof result.code !== 'number') throw error;
-    return { exitCode: result.code, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+    return await executing;
+  } finally {
+    pendingCommands.delete(executing);
   }
 }
 const realExec = await import('../core/exec.js');
