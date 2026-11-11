@@ -33,9 +33,22 @@ fs.writeFileSync(process.env.TERMINAL_ATTACH_STATE, JSON.stringify(state));
 );
 after(() => rmSync(scratch, { recursive: true, force: true }));
 
+const tmuxCommands: string[][] = [];
+const existingSessions = new Set<string>();
 mock.method(childProcess, 'execFileSync', (command: string, args: string[]) => {
   if (command === 'which' && args[0] === 'tmux') return selector;
-  if (command === selector && args[0] === 'set-option') return '';
+  if (command === selector) {
+    tmuxCommands.push([...args]);
+    if (args[0] === 'set-option') return '';
+    if (args[0] === 'has-session') {
+      if (existingSessions.has(args[2]!)) return '';
+      throw new Error('fixture session absent');
+    }
+    if (args[0] === 'new-session') {
+      existingSessions.add(args[3]!);
+      return '';
+    }
+  }
   throw new Error(`Unexpected process during PTY import: ${command}`);
 });
 syncBuiltinESMExports();
@@ -56,7 +69,39 @@ mock.module('node-pty', {
     },
   },
 });
-const { subscribePty } = await import('./pty-stream.js');
+const { subscribePty, reinitTmuxSession } = await (async () => {
+  const previousTmpdir = process.env.TMUX_TMPDIR;
+  delete process.env.TMUX_TMPDIR;
+  try {
+    return await import('./pty-stream.js');
+  } finally {
+    if (previousTmpdir === undefined) delete process.env.TMUX_TMPDIR;
+    else process.env.TMUX_TMPDIR = previousTmpdir;
+  }
+})();
+const importCommands = tmuxCommands.map((args) => [...args]);
+
+test('import without a private tmux directory sends no server command', () => {
+  assert.deepEqual(importCommands, []);
+});
+
+test('reinitializing an existing session leaves its server options untouched', async () => {
+  existingSessions.add('existing-session');
+  const before = tmuxCommands.length;
+  assert.equal(await reinitTmuxSession('existing-session', '/fixture/repo'), true);
+  assert.deepEqual(tmuxCommands.slice(before), [['has-session', '-t', 'existing-session']]);
+});
+
+test('creating an owned session applies tuning only after creation', async () => {
+  const before = tmuxCommands.length;
+  assert.equal(await reinitTmuxSession('new-owned-session', '/fixture/repo'), true);
+  assert.deepEqual(tmuxCommands.slice(before), [
+    ['has-session', '-t', 'new-owned-session'],
+    ['new-session', '-d', '-s', 'new-owned-session', '-c', '/fixture/repo'],
+    ['set-option', '-s', 'escape-time', '10'],
+    ['set-option', '-t', 'new-owned-session', 'status-left-length', '30'],
+  ]);
+});
 
 test('a reviewer PTY selects its window and exact pane before attaching', (t) => {
   t.after(() => exits.splice(0).forEach((exit) => exit()));
