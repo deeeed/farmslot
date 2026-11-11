@@ -471,16 +471,25 @@ export function buildInteractiveRefinementRunnerCommand(options: {
     return `${prefix} ${shellQuote(binary)}${modelFlag} --prompt ${promptArg}`;
   }
   if (runnerId === 'pi') {
-    if (options.workspaceTrust === 'untrusted')
+    if (options.workspaceTrust === 'untrusted') {
+      const taskDir = path.posix.dirname(options.promptPath);
+      const support = path.posix.join(taskDir, 'inputs/runner-observability');
       return [
+        `${piObservabilityVerificationCommand(support)} &&`,
+        `FARMSLOT_OBS_DIR=${shellQuote(path.posix.join(taskDir, '.observability'))}`,
+        `FARMSLOT_TASK_FILE=${shellQuote(path.posix.join(taskDir, 'TASK.md'))}`,
+        `FARMSLOT_THINKING=${shellQuote((options.effort?.trim() || DEFAULT_PI_THINKING).toLowerCase())}`,
+        "FARMSLOT_PI_WORKSPACE_TRUST='untrusted'",
         shellQuote(binary),
         reviewFlags,
         piThinkingFlag(options.effort).trim(),
+        `-e ${shellQuote(path.posix.join(support, 'bin/pi-farmslot-observability.ts'))}`,
         `--model ${shellQuote(resolvePiModel(options.model))}`,
         promptArg,
       ]
         .filter(Boolean)
         .join(' ');
+    }
     const launch = `${buildPiLaunch({
       binary,
       model: options.model,

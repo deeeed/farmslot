@@ -1,0 +1,1 @@
+- Load verified provider support for Pi terminal reviews so router and LiteLLM models start in read-only review workspaces.

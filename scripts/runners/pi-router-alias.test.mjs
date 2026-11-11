@@ -13,7 +13,7 @@ import install from './pi-farmslot-observability.ts';
 
 const MODEL = 'GLM-5.3-Flash-s12';
 
-async function withAliasExtension(check) {
+async function withAliasExtension(check, environment = {}) {
   const originalEnv = process.env;
   const originalFetch = globalThis.fetch;
   const originalError = console.error;
@@ -21,6 +21,7 @@ async function withAliasExtension(check) {
   const configurations = new Map();
   const native = new Map();
   const records = [];
+  const messages = [];
   const directory = mkdtempSync(join(tmpdir(), 'pi-router-alias-'));
   process.env = {
     FARMSLOT_PI_OLLAMA: '0',
@@ -28,6 +29,7 @@ async function withAliasExtension(check) {
     FARMSLOT_PI_ROUTER_ID: 'localsparks',
     FARMSLOT_PI_ROUTER_KEY: 'synthetic-test-key',
     FARMSLOT_OBS_DIR: directory,
+    ...environment,
   };
   globalThis.fetch = async (input) => {
     if (String(input) === 'https://models.invalid/v1/chat/completions')
@@ -39,13 +41,14 @@ async function withAliasExtension(check) {
   try {
     await install({
       on: (event, handler) => events.set(event, handler),
+      sendUserMessage: (text) => messages.push(text),
       appendEntry: (customType, data) => records.push({ type: 'custom', customType, data }),
       registerProvider: (id, configuration) => {
         if (typeof id === 'string') configurations.set(id, configuration);
         else native.set(id.id, id);
       },
     });
-    await check({ configurations, native, events, records, directory });
+    await check({ configurations, native, events, records, directory, messages });
   } finally {
     await events.get('session_shutdown')?.({ reason: 'exit' });
     process.env = originalEnv;
@@ -197,3 +200,25 @@ test(
     });
   },
 );
+
+test('read-only terminal review registers providers but leaves trust and argv delivery to Pi', async () => {
+  await withAliasExtension(
+    async ({ native, events, directory, messages }) => {
+      assert.equal(events.has('project_trust'), false);
+      process.env.FARMSLOT_TASK_FILE = join(directory, 'TASK.md');
+      writeFileSync(process.env.FARMSLOT_TASK_FILE, 'Review task body');
+      await events.get('session_start')(
+        {},
+        {
+          model: native.get('router').getModels()[0],
+          hasUI: true,
+          cwd: directory,
+          abort: () => assert.fail('unexpected abort'),
+          shutdown: () => assert.fail('unexpected shutdown'),
+        },
+      );
+      assert.deepEqual(messages, [], 'the argv prompt must be the only initial message');
+    },
+    { FARMSLOT_PI_WORKSPACE_TRUST: 'untrusted', FARMSLOT_THINKING: 'max' },
+  );
+});

@@ -297,7 +297,7 @@ test('a retained workspace session needs exact structured acceptance even if a c
   );
 });
 
-test('Pi read-only review launch ignores project files and never installs a source-side observer', () => {
+test('Pi read-only review loads verified task-side providers without trusting project files', () => {
   const command = buildInteractiveRefinementRunnerCommand({
     runner: 'pi',
     model: 'litellm/claude-opus-5-5',
@@ -309,7 +309,17 @@ test('Pi read-only review launch ignores project files and never installs a sour
   assert(command);
   assert.match(command, /--no-approve/);
   assert(!command.includes(' --approve'));
-  assert(!command.includes('.observability'));
+  assert.match(command, /RUNNER_OBSERVABILITY_BUNDLE_MISMATCH/);
+  assert.match(
+    command,
+    /-e '\/owned\/task\/inputs\/runner-observability\/bin\/pi-farmslot-observability.ts'/,
+  );
+  assert.match(command, /FARMSLOT_OBS_DIR='\/owned\/task\/\.observability'/);
+  assert.match(command, /FARMSLOT_THINKING='low'/);
+  assert.match(command, /FARMSLOT_PI_WORKSPACE_TRUST='untrusted'/);
+  assert.match(command, /FARMSLOT_TASK_FILE='\/owned\/task\/TASK.md'/);
+  assert(!command.includes('/owned/source/.agent'));
+  assert(!command.includes('install-runner-observability'));
 });
 
 test('OpenCode review passes its prompt as a prompt and disables project startup configuration', () => {
