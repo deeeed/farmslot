@@ -76,9 +76,24 @@ test(
         timeout: 3000,
       });
     const started: string[] = [];
+    // spawnSync returns each failure so one missing server cannot skip the next.
+    const stopServers = () =>
+      started.map((socket) =>
+        spawnSync('tmux', ['-S', socket, 'kill-server'], {
+          env,
+          encoding: 'utf8',
+          timeout: 3000,
+        }),
+      );
     t.after(() => {
       try {
-        for (const socket of started) tmux(socket, 'kill-server');
+        const results = stopServers();
+        for (const result of results) {
+          assert.ifError(result.error);
+          // The regression below deliberately stops the first server early.
+          if (result.status !== 0)
+            assert.match(result.stderr, /No such file or directory|no server running/u);
+        }
       } finally {
         rmSync(root, { recursive: true });
       }
@@ -129,6 +144,12 @@ test(
     // The trusted caller outside the sandbox still controls its own private pane.
     tmux(sockets[0], 'send-keys', '-t', 'fixture', 'observable', 'Enter');
     assert.match(tmux(sockets[0], 'capture-pane', '-p', '-t', 'fixture'), /observable/u);
+    // Prove teardown still reaches the second server when the first is gone.
+    tmux(sockets[0], 'kill-server');
+    const cleanup = stopServers();
+    assert.notEqual(cleanup[0].status, 0);
+    assert.equal(cleanup[1].status, 0, cleanup[1].stderr);
+    t.diagnostic('cleanup attempted both private servers after the first was already absent');
   },
 );
 
