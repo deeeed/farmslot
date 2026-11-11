@@ -286,6 +286,21 @@ export function getCollectorSnapshotByQueryId(queryId: string): PRListSnapshot |
   return collectors.get(queryId)?.snapshot ?? null;
 }
 
+/**
+ * Return the current non-entity fields (observation, refreshing) for a collector.
+ * Used by prListVersions to include them in the versions read reply.
+ */
+export function getPRListCollectorState(
+  queryId: string,
+): { observation: UpstreamObservation; refreshing: boolean } | undefined {
+  const state = collectors.get(queryId);
+  if (!state) return undefined;
+  return {
+    observation: observation(state),
+    refreshing: Boolean(state.inflight),
+  };
+}
+
 function publish(state: CollectorState, membershipChanged = false): void {
   if (membershipChanged) {
     resourceRevisions.advanceMembership(prListResourceKey(state.project));

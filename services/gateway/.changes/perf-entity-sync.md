@@ -5,3 +5,5 @@
 - Advance per-PR entity keys on data and membership changes in the PR list collector
 - Remove local `computeSummary`; use shared implementation from `@farmslot/protocol`
 - Add `fleet.status { versions }` and `{ ids }` authorization test; cap ids page at 2 MB (export `FLEET_ENTITY_PAGE_MAX_BYTES`)
+- Export `getPRListCollectorState` from `list-cache.ts`; pass `observation`/`refreshing` through `prListVersions`
+- `enrichSlotHostLoad` in `node-health.ts` delegates to shared `reattachHostLoad`; removes duplicate machine-lookup logic

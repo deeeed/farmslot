@@ -2,6 +2,7 @@ import type {
   FleetPoolReadError,
   FleetSummary,
   MachineHealth,
+  PRStatus,
   SlotEntity,
 } from '../contracts/index.js';
 import { reattachHostLoad } from '../fleet/host-load.js';
@@ -9,7 +10,9 @@ import { computeSummary } from '../fleet/summary.js';
 import { afterForegroundPaint } from '../performance/paint.js';
 import type { FleetEntityPage, FleetStatusResult, FleetVersionsResult } from '../rpc/fleet.js';
 import type { NativeSessionReadResult, NativeSessionTargetParams } from '../rpc/native-session.js';
+import type { PREntityPage, PRListParams, PRListResult, PRVersionsResult } from '../rpc/pr.js';
 import { Methods } from '../rpc/registry.js';
+import type { UpstreamObservation } from '../rpc/resource-observers.js';
 import type { RunGetResult, RunListParams, RunListResult } from '../rpc/run.js';
 import { runListVersion } from '../runs/list-version.js';
 import { isSlotEntity, type ResourceChangedPayload } from '../transport/events.js';
@@ -45,7 +48,12 @@ import {
   readNativeHistory,
   storedNativeHistoryMatches,
 } from './native-history.js';
-import { type ResourceQuery, resourceQuery, type ResourceReadMethod } from './registry.js';
+import {
+  resourceCollectorQuery,
+  type ResourceQuery,
+  resourceQuery,
+  type ResourceReadMethod,
+} from './registry.js';
 import { createRunDetailSync, type RunDetailTarget, runDetailTarget } from './run-details.js';
 import {
   isRunListCollectionRead,
@@ -328,6 +336,23 @@ export function createGatewayResourceCache(
     checkedAt: string;
     poolErrors?: FleetPoolReadError[];
   }
+  /** Runtime guard for stored FleetNonEntityFields (untrusted offline store rows). */
+  function isFleetNonEntityFields(x: unknown): x is FleetNonEntityFields {
+    if (x == null || typeof x !== 'object') return false;
+    const r = x as Record<string, unknown>;
+    return (
+      typeof r.checkedAt === 'string' &&
+      r.summary != null &&
+      typeof r.summary === 'object' &&
+      typeof (r.summary as Record<string, unknown>).total === 'number'
+    );
+  }
+  /** Runtime guard for stored SlotEntity body (untrusted offline store rows). */
+  function isStoredSlotEntity(x: unknown): x is SlotEntity {
+    return (
+      x != null && typeof x === 'object' && typeof (x as Record<string, unknown>).slot === 'string'
+    );
+  }
   let fleetNonEntityFields: FleetNonEntityFields | undefined;
   let fleetResourceState: ResourceReadStamp | undefined;
   /** True when a membership change arrived but no versions read has been done since. */
@@ -413,6 +438,132 @@ export function createGatewayResourceCache(
     fleetMembershipStale = false;
   }
 
+  // ─── PR entity collection (ADR-071 Amendment 3) ───
+  // Keyed by resourceCollectorQuery(PR_LIST, params).id; one collection per project scope.
+  interface PRListNonEntityFields {
+    observation?: UpstreamObservation;
+    fetchedAt?: string;
+    refreshing?: boolean;
+  }
+  interface PRCollectionState {
+    collection: EntityCollection<PRStatus>;
+    nonEntityFields?: PRListNonEntityFields;
+    membershipStale: boolean;
+    project?: string;
+  }
+  const prCollections = new Map<string, PRCollectionState>();
+
+  function getOrCreatePRCollection(
+    queryId: string,
+    project: string | undefined,
+  ): PRCollectionState {
+    const existing = prCollections.get(queryId);
+    if (existing) return existing;
+    // Create colState first so fetchVersions closure can reference it.
+    const colState: PRCollectionState = { collection: null!, membershipStale: false, project };
+    const col = new EntityCollection<PRStatus>({
+      idOf: (pr) => `${pr.repo}/${pr.pr}`,
+      sort: (a, b) => `${a.repo}/${a.pr}`.localeCompare(`${b.repo}/${b.pr}`),
+      fetchVersions: async (signal) => {
+        const result = await request<PRVersionsResult>(
+          Methods.PR_LIST,
+          { versions: true as const, ...(project !== undefined ? { project } : {}) },
+          signal,
+        );
+        colState.nonEntityFields = {
+          observation: result.data.observation,
+          fetchedAt: result.data.fetchedAt,
+          refreshing: result.data.refreshing,
+        };
+        colState.membershipStale = false;
+        return { versions: result.data.versions };
+      },
+      fetchPage: async (ids, signal) => {
+        const result = await request<PREntityPage>(
+          Methods.PR_LIST,
+          { ids, ...(project !== undefined ? { project } : {}) },
+          signal,
+        );
+        return result.data;
+      },
+    });
+    colState.collection = col;
+    prCollections.set(queryId, colState);
+    return colState;
+  }
+
+  function forgetPRCollections(): void {
+    for (const state of prCollections.values()) {
+      state.collection.clear();
+      state.nonEntityFields = undefined;
+      state.membershipStale = false;
+    }
+    prCollections.clear();
+  }
+
+  /** Extract the queryId from a plain pr.list view query. */
+  function prQueryId(query: ResourceQuery): string {
+    const params = query.params as PRListParams | undefined;
+    const project = params?.project;
+    return resourceCollectorQuery(Methods.PR_LIST, project !== undefined ? { project } : {}).id;
+  }
+
+  /** True for plain pr.list reads (not versions read, not page reads). */
+  function isPRListView(query: ResourceQuery): boolean {
+    const params = query.params as PRListParams | undefined;
+    return (
+      query.method === Methods.PR_LIST && params?.versions !== true && params?.ids === undefined
+    );
+  }
+
+  /** Entity-sync PR list view (ADR-071 Amendment 3): assemble from held PR entities. */
+  async function readPRListView(entry: QueryEntry, signal: AbortSignal): Promise<ReadReply> {
+    const params = entry.query.params as PRListParams | undefined;
+    const project = params?.project;
+    const queryId = resourceCollectorQuery(
+      Methods.PR_LIST,
+      project !== undefined ? { project } : {},
+    ).id;
+    const colState = getOrCreatePRCollection(queryId, project);
+    try {
+      if (!colState.collection.held || !colState.collection.complete || colState.membershipStale) {
+        await colState.collection.refresh();
+      }
+    } catch (error) {
+      if (evictionCodes.has(queryError(error).code)) {
+        colState.collection.clear();
+        colState.nonEntityFields = undefined;
+      }
+      throw error;
+    }
+    const prs = colState.collection.assemble();
+    const non = colState.nonEntityFields;
+    if (prs && non !== undefined) {
+      const epoch = connection.capabilities?.resourceChanges?.epoch;
+      const coveredState = epoch
+        ? {
+            epoch,
+            dependencies: entry.query.dependencies.map((key) => ({
+              key,
+              revision: revisions.get(resourceKeyId(key)) ?? 0,
+            })),
+          }
+        : undefined;
+      return {
+        data: {
+          prs,
+          ...(non.observation !== undefined ? { observation: non.observation } : {}),
+          ...(non.fetchedAt !== undefined ? { fetchedAt: non.fetchedAt } : {}),
+          ...(non.refreshing ? { refreshing: non.refreshing } : {}),
+        } satisfies PRListResult,
+        resourceState: coveredState,
+        observedAt: non.fetchedAt ? Date.parse(non.fetchedAt) || Date.now() : Date.now(),
+      };
+    }
+    // Fallback: entity data not yet available; fall back to full read.
+    return request<PRListResult>(Methods.PR_LIST, entry.query.params, signal);
+  }
+
   /** Persist fleet entity rows to the store after a successful refresh (fire-and-forget). */
   function persistFleetCollection(): void {
     const writingStore = store;
@@ -469,6 +620,7 @@ export function createGatewayResourceCache(
     version++;
     forgetRunList();
     forgetFleetCollection();
+    forgetPRCollections();
     for (const entry of entries.values()) invalidate(entry, true);
     transport.resynchronize();
   }
@@ -580,6 +732,7 @@ export function createGatewayResourceCache(
     // require a full gateway versions read and never hydrate its old disk rows.
     forgetRunList();
     forgetFleetCollection();
+    forgetPRCollections();
     for (const entry of entries.values()) invalidate(entry);
     if (
       needsStore &&
@@ -768,11 +921,11 @@ export function createGatewayResourceCache(
           : undefined;
       if (!current()) return;
       if (fleetRows?.rows.length) {
-        if (fleetRows.entry?.data)
-          fleetNonEntityFields = fleetRows.entry.data as FleetNonEntityFields;
+        if (isFleetNonEntityFields(fleetRows.entry?.data))
+          fleetNonEntityFields = fleetRows.entry.data;
         for (const row of fleetRows.rows) {
-          if (row.body !== undefined)
-            fleetCollection.applyEntity(row.id, row.body as SlotEntity, row.version);
+          if (isStoredSlotEntity(row.body))
+            fleetCollection.applyEntity(row.id, row.body, row.version);
         }
       }
       startupStore = readingStore;
@@ -827,6 +980,7 @@ export function createGatewayResourceCache(
     recoveryAttempted = false;
     runList.abort();
     fleetCollection.abort();
+    for (const col of prCollections.values()) col.collection.abort();
     // Stored facts belong to an owner, not a socket attempt. Fence a revoked
     // owner's pending I/O synchronously, before queued deletion can run.
     if (revoke || scopeChanged || authorityChanged) {
@@ -835,6 +989,7 @@ export function createGatewayResourceCache(
       hydrationOwnerVersion++;
       forgetRunList();
       forgetFleetCollection();
+      forgetPRCollections();
     }
     connection = next;
     conversations?.connectionChanged(revoke || scopeChanged || authorityChanged);
@@ -885,6 +1040,7 @@ export function createGatewayResourceCache(
           storeVersion++;
           forgetRunList();
           forgetFleetCollection();
+          forgetPRCollections();
           for (const entry of entries.values()) invalidate(entry, true);
           // Switching profiles retains the old profile's store; revoked authority deletes it.
           if (!switchingProfile || revoke || deletionRequired) {
@@ -963,6 +1119,7 @@ export function createGatewayResourceCache(
       version++;
       runList.abort();
       fleetCollection.abort();
+      for (const col of prCollections.values()) col.collection.abort();
       for (const entry of entries.values()) invalidate(entry);
       transport.resynchronize();
       return;
@@ -1024,6 +1181,62 @@ export function createGatewayResourceCache(
           }
           if (change.membershipRevision !== undefined)
             fleetCollection.storeMembershipRevision(change.membershipRevision);
+        }
+        // PR entity sync: apply pushed PR entities; track collection membership changes.
+        if (change.key.family === 'upstream') {
+          const upKey = change.key as {
+            family: 'upstream';
+            integration: string;
+            queryId: string;
+            prKey?: string;
+          };
+          if (upKey.integration === 'github') {
+            if (upKey.prKey && change.changedEntity) {
+              // Per-PR entity push: apply to the matching collection if held.
+              const colState = prCollections.get(upKey.queryId);
+              if (colState) {
+                colState.collection.applyEntity(
+                  upKey.prKey,
+                  change.changedEntity.entity as PRStatus,
+                  change.changedEntity.version,
+                );
+                for (const entry of entries.values()) {
+                  if (isPRListView(entry.query) && prQueryId(entry.query) === upKey.queryId) {
+                    entry.dirty = true;
+                    entry.state = { ...entry.state, status: 'stale' };
+                    notify(entry);
+                    if (!entry.pending) schedule(entry);
+                  }
+                }
+              }
+            } else if (!upKey.prKey) {
+              // Collection membership change.
+              const colState = prCollections.get(upKey.queryId);
+              if (colState?.collection.needsVersionsRead(change.membershipRevision)) {
+                colState.membershipStale = true;
+                for (const entry of entries.values()) {
+                  if (
+                    isPRListView(entry.query) &&
+                    prQueryId(entry.query) === upKey.queryId &&
+                    !entry.pending &&
+                    !entry.queued
+                  ) {
+                    entry.dirty = true;
+                    entry.state = { ...entry.state, status: 'stale' };
+                    notify(entry);
+                    entry.queued = true;
+                    queueMicrotask(() => {
+                      entry.queued = false;
+                      if (entry.listeners.size && usable && !disposed)
+                        void fetchEntry(entry, false);
+                    });
+                  }
+                }
+              }
+              if (change.membershipRevision !== undefined)
+                colState?.collection.storeMembershipRevision(change.membershipRevision);
+            }
+          }
         }
       }
       const affected = [...entries.values()].filter((entry) => entry.dependencyIds.has(id));
@@ -1549,30 +1762,37 @@ export function createGatewayResourceCache(
     pending.promise = (async () => {
       try {
         if (disposed || pending.version !== version || pending.controller.signal.aborted) return;
-        if (entry.query.collector) {
+        // Entity-sync views bypass the collector gate: the gateway pushes entities directly.
+        const fromFleetCollection =
+          isFleetStatusView(entry.query) &&
+          connection.capabilities?.resourceChanges?.entitySync === true;
+        const fromPRList =
+          isPRListView(entry.query) &&
+          connection.capabilities?.resourceChanges?.entitySync === true;
+        const fromEntitySync = fromFleetCollection || fromPRList;
+        if (entry.query.collector && !fromEntitySync) {
           await collectors.require(entry.query, !observedOnly);
           if (disposed || pending.version !== version || pending.controller.signal.aborted) return;
         }
         entry.lastRequestedAt = performance.now();
-        const fromFleetCollection =
-          isFleetStatusView(entry.query) &&
-          connection.capabilities?.resourceChanges?.entitySync === true;
         const fromRunList =
           isRunListView(entry.query) &&
           connection.capabilities?.resourceChanges?.versionLists === true;
         const reply: ReadReply = fromFleetCollection
           ? await readFleetStatusView(entry, pending.controller.signal)
-          : fromRunList
-            ? await readRunListView(entry, pending.controller.signal)
-            : entry.query.method === Methods.NATIVE_SESSION_READ
-              ? await readNativeHistory(
-                  entry.query.params as NativeSessionTargetParams,
-                  entry.state.data as NativeSessionReadResult | undefined,
-                  (params, signal) =>
-                    request<NativeSessionReadResult>(Methods.NATIVE_SESSION_READ, params, signal),
-                  pending.controller.signal,
-                )
-              : await request(entry.query.method, entry.query.params, pending.controller.signal);
+          : fromPRList
+            ? await readPRListView(entry, pending.controller.signal)
+            : fromRunList
+              ? await readRunListView(entry, pending.controller.signal)
+              : entry.query.method === Methods.NATIVE_SESSION_READ
+                ? await readNativeHistory(
+                    entry.query.params as NativeSessionTargetParams,
+                    entry.state.data as NativeSessionReadResult | undefined,
+                    (params, signal) =>
+                      request<NativeSessionReadResult>(Methods.NATIVE_SESSION_READ, params, signal),
+                    pending.controller.signal,
+                  )
+                : await request(entry.query.method, entry.query.params, pending.controller.signal);
         if (
           disposed ||
           store.deleted ||
@@ -1588,7 +1808,8 @@ export function createGatewayResourceCache(
         const covered =
           supported &&
           stampCovers(entry, reply.resourceState) &&
-          (!entry.query.collector || collectors.has(entry.query)) &&
+          // Entity-sync reads bypass the collector, so skip the collector-has check for them.
+          (!entry.query.collector || collectors.has(entry.query) || fromEntitySync) &&
           entry.unknownGeneration === unknownGeneration &&
           // A view is current only once every listed run is held at its listed version.
           !reply.incomplete;

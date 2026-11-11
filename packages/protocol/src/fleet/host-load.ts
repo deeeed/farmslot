@@ -20,14 +20,14 @@ export function reattachHostLoad(
   machines: MachineHealth[] | undefined,
 ): SlotStatus[] {
   if (!machines?.length) {
-    // SlotEntity is Omit<SlotStatus, 'hostLoad'>; without hostLoad it is structurally
-    // compatible with SlotStatus (hostLoad is optional).
-    return entities as SlotStatus[];
+    // SlotEntity is Omit<SlotStatus, 'hostLoad'>; hostLoad is optional in SlotStatus,
+    // so SlotEntity satisfies SlotStatus structurally — no cast needed.
+    return entities;
   }
   const machineMap = new Map(machines.map((m) => [m.machine, m]));
   return entities.map((entity) => {
     const mh = machineMap.get(entity.machine);
-    if (!mh?.system) return entity as SlotStatus;
+    if (!mh?.system) return entity;
     return {
       ...entity,
       hostLoad: {

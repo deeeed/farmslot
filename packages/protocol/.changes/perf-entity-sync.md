@@ -6,3 +6,5 @@
 - Add `entitySync` capability flag to `GatewayResourceChangesCapability`
 - Client cache applies pushed slot entities inline and assembles fleet view without extra RPCs (62x reduction per data-only change on a 100-slot fleet)
 - Membership changes trigger a targeted non-throttled versions read; cold-start hydrates from persisted store rows with zero ids-read RPCs
+- Add `PRVersionsResult.versions`/`ids` entity-sync types and optional `observation`/`refreshing` fields; wire `EntityCollection<PRStatus>` in client cache
+- Add `reattachHostLoad` to `@farmslot/protocol/fleet/host-load`; client reassembles `hostLoad` from the machines array returned by versions reads

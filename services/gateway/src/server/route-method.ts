@@ -134,7 +134,6 @@ import {
   type PrincipalRetireParams,
   type PrincipalReuseRetiredIdParams,
   type PrincipalRevokeRoleParams,
-  type PRListParams,
   PROTOCOL_VERSION,
   type ProviderAccountsSnapshotParams,
   type PRResolveThreadParams,
@@ -660,6 +659,22 @@ export function forgetTerminalRedraws(state: ClientState): void {
   terminalRedraws.cancelAll(state);
 }
 
+/**
+ * Validate and return a string array from an unknown param field.
+ * Throws INVALID_PARAMS if the value is present but not a string array.
+ * Returns undefined when the value is absent.
+ */
+function toStringArray(raw: unknown, errorMsg: string): string[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) throw new GatewayMethodError('INVALID_PARAMS', errorMsg);
+  const result: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'string') throw new GatewayMethodError('INVALID_PARAMS', errorMsg);
+    result.push(item);
+  }
+  return result;
+}
+
 export async function routeMethod(
   method: string,
   params: unknown,
@@ -911,12 +926,15 @@ async function routeAuthorizedMethod(
 
     // Fleet
     case Methods.FLEET_STATUS: {
-      const fp: FleetStatusParams =
-        p != null && typeof p === 'object' ? (p as FleetStatusParams) : {};
-      if (fp.ids !== undefined) {
-        if (!Array.isArray(fp.ids) || !fp.ids.every((id) => typeof id === 'string'))
-          throw new GatewayMethodError('INVALID_PARAMS', 'fleet.status ids must be a string array');
-      }
+      const raw: Record<string, unknown> =
+        p != null && typeof p === 'object' ? (p as Record<string, unknown>) : {};
+      const ids = toStringArray(raw.ids, 'fleet.status ids must be a string array');
+      const fp: FleetStatusParams = {
+        ...(raw.versions === true ? { versions: true as const } : {}),
+        ...(ids !== undefined ? { ids } : {}),
+        ...(raw.forceRefresh === true ? { forceRefresh: true } : {}),
+        ...(typeof raw.visibleCount === 'number' ? { visibleCount: raw.visibleCount } : {}),
+      };
       if (fp.versions === true) return fleetStatusVersions();
       if (fp.ids !== undefined) return fleetStatusIds(fp.ids);
       return fleetStatus(fp, undefined, (fleet) =>
@@ -1359,10 +1377,15 @@ async function routeAuthorizedMethod(
         legacyInterest: !upstreamObservers.manages(state, Methods.PR_STATUS),
       });
     case Methods.PR_LIST: {
-      const plp = p as PRListParams;
-      if (plp.versions === true) return prListVersions(plp.project);
-      if (plp.ids !== undefined) return prListIds(plp.project, plp.ids);
-      return prList(plp, undefined, {
+      const raw: Record<string, unknown> =
+        p != null && typeof p === 'object' ? (p as Record<string, unknown>) : {};
+      const project = typeof raw.project === 'string' ? raw.project : undefined;
+      const ids = toStringArray(raw.ids, 'pr.list ids must be a string array');
+      if (raw.versions !== undefined && raw.versions !== true)
+        throw new GatewayMethodError('INVALID_PARAMS', 'pr.list versions must be true or absent');
+      if (raw.versions === true) return prListVersions(project);
+      if (ids !== undefined) return prListIds(project, ids);
+      return prList({ project, ...(raw.force === true ? { force: true } : {}) }, undefined, {
         legacyClientId: state.id,
         legacyInterest: !upstreamObservers.manages(state, Methods.PR_LIST),
       });

@@ -8,7 +8,11 @@ import type { ChangedEntity } from '@farmslot/protocol/transport/events';
 
 import { GatewayMethodError } from '../../core/method-error.js';
 
-import { getCollectorSnapshotByQueryId, prListResourceKey } from './list-cache.js';
+import {
+  getCollectorSnapshotByQueryId,
+  getPRListCollectorState,
+  prListResourceKey,
+} from './list-cache.js';
 import { prEntityVersion, prPrKey } from './pr-entity-keys.js';
 
 const PAGE_MAX_BYTES = 2 * 1024 * 1024;
@@ -52,10 +56,13 @@ export async function prListVersions(project?: string): Promise<PRVersionsResult
     id: prPrKey(pr),
     version: prEntityVersion(pr),
   }));
+  const collectorState = getPRListCollectorState(queryId);
   return {
     versions,
     ...(snapshot.fetchedAt ? { fetchedAt: snapshot.fetchedAt } : {}),
     ...(snapshot.truncated ? { truncated: snapshot.truncated } : {}),
+    ...(collectorState ? { observation: collectorState.observation } : {}),
+    ...(collectorState?.refreshing ? { refreshing: collectorState.refreshing } : {}),
   };
 }
 

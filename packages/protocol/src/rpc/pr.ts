@@ -32,6 +32,10 @@ export interface PRVersionsResult {
   versions: Array<{ id: string; version: string }>;
   fetchedAt?: string;
   truncated?: boolean;
+  /** Upstream observation state; absent until a successful gateway collection. */
+  observation?: UpstreamObservation;
+  /** True when the gateway answered from its warm list while a GitHub refresh runs. */
+  refreshing?: boolean;
 }
 
 /** ids page for pr.list { ids: string[] }. Only the requested PR entities plus their versions. */

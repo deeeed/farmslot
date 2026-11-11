@@ -13,7 +13,9 @@ import {
   type NodeProcessInventory,
   type NodeProcessSamplerHealth,
   type NodeSystemMetrics,
+  reattachHostLoad,
   type RecipeRuntimeCapabilityDeclaration,
+  type SlotStatus,
 } from '@farmslot/protocol';
 import {
   canonicalResourceJson,
@@ -556,21 +558,19 @@ export function getMachineProcessSamplerHealth(
 
 // ─── Enrich fleet status with hostLoad per slot ───
 
-export function enrichSlotHostLoad(
-  slots: Array<{
-    machine: string;
-    hostLoad?: { cpuPercent: number; memoryPercent: number; diskPercent: number; headroom: string };
-  }>,
-): void {
-  for (const slot of slots) {
-    const health = healthMap.get(slot.machine);
-    if (health?.system) {
-      slot.hostLoad = {
-        cpuPercent: health.system.cpuPercent,
-        memoryPercent: health.system.memoryPercent,
-        diskPercent: health.system.diskPercent,
-        headroom: health.headroom,
-      };
-    }
+/**
+ * Enrich slots with current machine hostLoad, mutating the array in place.
+ * Delegates to protocol's reattachHostLoad so the gateway full read and the
+ * client entity-sync path share one implementation. When machine health is
+ * absent (e.g. a remote slot) hostLoad is left unset.
+ */
+export function enrichSlotHostLoad(slots: SlotStatus[]): void {
+  const machines = getAllMachineHealth();
+  // Strip any existing hostLoad (previous enrichment or stale data), then
+  // re-attach from the current in-process health map via the protocol function.
+  const entities = slots.map(({ hostLoad: _, ...rest }) => rest);
+  const enriched = reattachHostLoad(entities, machines);
+  for (let i = 0; i < slots.length; i++) {
+    slots[i] = enriched[i] ?? slots[i];
   }
 }

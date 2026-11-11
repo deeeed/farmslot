@@ -60,9 +60,11 @@ function makeVersionsResult(entities: SlotEntity[]): FleetVersionsResult {
       total: entities.length,
       ready: entities.length,
       busy: 0,
+      held: 0,
+      manual: 0,
       disabled: 0,
-      offline: 0,
-      warmReady: 0,
+      blocked: 0,
+      warmCount: 0,
     },
     checkedAt: new Date().toISOString(),
   };
