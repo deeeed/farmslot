@@ -15,6 +15,8 @@ import type {
 
 import { projectTaskRoots } from '../core/config.js';
 import { farmslotRoot } from '../fleet/state.js';
+import { backgroundHost, BackgroundHostError } from '../host-services/background/client.js';
+import { BACKGROUND_OPERATIONS } from '../host-services/background/protocol.js';
 import { fleetMonitorStatus } from '../methods/fleet.js';
 import { resourceRevisions } from '../resources/revisions.js';
 import { getRun } from '../runs/store.js';
@@ -56,7 +58,7 @@ let resolutionSeq = 0;
 const resolvedAt = new Map<string, number>();
 let handler: MonitorEventHandler | null = null;
 
-interface FileDecision {
+export interface FileDecision {
   path: string;
   decision: PendingDecision;
   signature: string;
@@ -172,12 +174,22 @@ export function stopMonitor(): void {
 
 // ─── Decision scanning ───
 
+/** The monitor's walk: the background process runs it when started, so the loop only diffs. */
+function walkFileDecisions(): Promise<FileDecision[]> {
+  return backgroundHost.active()
+    ? backgroundHost.request(BACKGROUND_OPERATIONS.decisionsScan, {}, { deadlineMs: 30_000 })
+    : loadFileDecisions();
+}
+
 export async function scanDecisions(): Promise<void> {
   const since = resolutionSeq;
   let files: FileDecision[];
   try {
-    files = (await loadFileDecisions()).filter((file) => (resolvedAt.get(file.path) ?? 0) <= since);
+    files = (await walkFileDecisions()).filter((file) => (resolvedAt.get(file.path) ?? 0) <= since);
   } catch (error) {
+    // A background process that is down says nothing about the decision files: readers keep the
+    // last scan, the host status reports the outage, and the next tick scans again.
+    if (error instanceof BackgroundHostError) throw error;
     lastDecisionScan = { error };
     const failure = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
     // Invalidate once so readers retain stale facts with the real read error.
@@ -230,7 +242,7 @@ export async function loadPendingDecisions(): Promise<PendingDecision[]> {
   return (await listingFileDecisions).map((file) => file.decision);
 }
 
-async function loadFileDecisions(): Promise<FileDecision[]> {
+export async function loadFileDecisions(): Promise<FileDecision[]> {
   const decisions: FileDecision[] = [];
 
   // Scan all project task directories for .pending_decision.json files
