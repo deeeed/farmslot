@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { execOnSlot, type SlotVars } from '../core/index.js';
 import { shellQuote } from '../core/tmux.js';
 
@@ -21,9 +23,9 @@ function escapeRegExp(value: string): string {
  * CDP port and the helpers attached to it (wallet host, console collector).
  * A recipe call starts them detached, so they outlive the worker with parent 1
  * and no lease records them (run 22e62daa). A process is reaped only when it is
- * detached, on the CDP port (socket or flag) and tied to the slot checkout by
- * its working directory or arguments; descendants go with it. While a
- * capability lease on the slot still holds or keeps providers warm, its release
+ * detached and either uses a browser profile inside the slot checkout, or is
+ * on its CDP port and tied to the checkout by cwd or arguments. Descendants
+ * go with it. While a capability lease on the slot still holds or keeps providers warm, its release
  * effect decides and nothing is reaped; a process a lease recorded is never
  * reaped. Returns a reason naming each process that survived SIGKILL.
  */
@@ -31,15 +33,18 @@ export async function reapSlotBrowserSession(
   vars: SlotVars,
   opts: { stillOwned?: () => Promise<boolean> } = {},
 ): Promise<string | null> {
-  const cdpPort = vars.resourceVars?.cdp_port;
-  if (!cdpPort || !/^\d+$/.test(cdpPort) || !vars.remoteRepo) return null;
+  const configuredPort = vars.resourceVars?.cdp_port;
+  const cdpPort = configuredPort && /^\d+$/.test(configuredPort) ? configuredPort : undefined;
+  if (!vars.remoteRepo) return null;
   const census = await execOnSlot(
     vars,
     [
       `: ${CENSUS_MARKER}`,
       'ps -axo pid=,ppid=,pgid=,lstart=,args= || exit 3',
       `echo "--repo-- $(cd ${shellQuote(vars.remoteRepo)} 2>/dev/null && pwd -P)"`,
-      `pids=$(lsof -nP -iTCP:${cdpPort} -t 2>/dev/null | sort -u | paste -sd, -)`,
+      cdpPort
+        ? `pids=$(lsof -nP -iTCP:${cdpPort} -t 2>/dev/null | sort -u | paste -sd, -)`
+        : "pids=''",
       'echo "--cdp-- $pids"',
       'if [ -n "$pids" ]; then lsof -a -d cwd -Fpn -p "$pids" 2>/dev/null; fi',
       'true',
@@ -64,17 +69,26 @@ export async function reapSlotBrowserSession(
   const repoArg = new RegExp(
     `(?:^|[\\s='"])(?:${repos.map(escapeRegExp).join('|')})(?=$|[\\s/'"])`,
   );
-  const portArg = new RegExp(
-    `(?:^|\\s)--(?:cdp-port|remote-debugging-port)(?:=|\\s+)${cdpPort}(?=$|\\s)`,
-  );
+  const portArg = cdpPort
+    ? new RegExp(`(?:^|\\s)--(?:cdp-port|remote-debugging-port)(?:=|\\s+)${cdpPort}(?=$|\\s)`)
+    : undefined;
   const candidates = rows.filter((row) => {
     const cwd = cwds.get(row.pid);
+    const profileArg = /(?:^|\s)--user-data-dir(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(
+      row.command,
+    );
+    const profile = profileArg?.[1] ?? profileArg?.[2] ?? profileArg?.[3];
+    const ownedProfile =
+      profile !== undefined &&
+      path.posix.isAbsolute(profile) &&
+      repos.some((repo) => isWithinPath(repo, path.posix.normalize(profile)));
     return (
       row.parent === '1' &&
       !isTmuxProcess(row.command) &&
-      (onPort.has(row.pid) || portArg.test(row.command)) &&
-      ((cwd !== undefined && repos.some((repo) => isWithinPath(repo, cwd))) ||
-        repoArg.test(row.command))
+      (ownedProfile ||
+        ((onPort.has(row.pid) || portArg?.test(row.command)) &&
+          ((cwd !== undefined && repos.some((repo) => isWithinPath(repo, cwd))) ||
+            repoArg.test(row.command))))
     );
   });
   if (candidates.length === 0) return null;
@@ -100,12 +114,16 @@ export async function reapSlotBrowserSession(
   if (!result) return null;
   const { survivors, total } = result;
   console.log(
-    `[browser-session] ${vars.slotId}: stopped ${total - survivors.length} browser session process(es) on CDP port ${cdpPort}`,
+    `[browser-session] ${vars.slotId}: stopped ${total - survivors.length} browser session process(es)`,
   );
   if (survivors.length === 0) return null;
   return survivors
     .map(({ pid, command: args }) => {
-      return `Browser session process ${pid} (${args.length > 120 ? `${args.slice(0, 117)}...` : args}) on CDP port ${cdpPort} did not stop`;
+      const scope =
+        onPort.has(pid) || portArg?.test(args)
+          ? `on CDP port ${cdpPort}`
+          : 'with a profile in the slot repository';
+      return `Browser session process ${pid} (${args.length > 120 ? `${args.slice(0, 117)}...` : args}) ${scope} did not stop`;
     })
     .join('; ');
 }
