@@ -87,13 +87,16 @@ test('archive and permanent deletion advance their distinct readable states', as
   await persistRunNow(run);
   const key = { family: 'run', runId: run.id } as const;
   const before = resourceRevisions.revision(key);
+  // Archiving first appends the run's analytics record (the only append: no completedAt, so the
+  // status write started none), whose flag is published while the run is still live; the archive
+  // then publishes the removal.
   assert.equal(await archiveRun(run.id), true);
   assert.equal(getRun(run.id), undefined);
   assert((await getRunWithArchived(run.id))?.archivedAt);
-  assert.equal(resourceRevisions.revision(key), before + 1);
+  assert.equal(resourceRevisions.revision(key), before + 2);
   assert.equal(await deleteArchivedRun(run.id), true);
   assert.equal(await getRunWithArchived(run.id), undefined);
-  assert.equal(resourceRevisions.revision(key), before + 2);
+  assert.equal(resourceRevisions.revision(key), before + 3);
 });
 
 test('deleting a live retained run invalidates its detail and list membership', async (t) => {
@@ -107,10 +110,11 @@ test('deleting a live retained run invalidates its detail and list membership', 
   await persistRunNow(run);
   const key = { family: 'run', runId: run.id } as const;
   const before = resourceRevisions.revision(key);
+  // As with archive: the analytics flag is published before the removal.
   assert.equal(await deleteRun(run.id), true);
   assert.equal(getRun(run.id), undefined);
   assert(!listRuns().runs.some((entry) => entry.id === run.id));
-  assert.equal(resourceRevisions.revision(key), before + 1);
+  assert.equal(resourceRevisions.revision(key), before + 2);
 });
 
 for (const archived of [false, true]) {

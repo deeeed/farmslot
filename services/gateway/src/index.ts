@@ -153,6 +153,7 @@ import { backfillMissingRunLinks } from './run-engine/run-links.js';
 import { initRunMonitor } from './run-engine/run-monitor.js';
 import { scheduledGraphOf } from './run-engine/stack-base.js';
 import { withRunSettlementLane } from './run-lifecycle/broadcast-lanes.js';
+import { warmRunListVersions } from './runs/list-version.js';
 import { getAllRuns, loadAllRuns } from './runs/store.js';
 import { assertHostPressureAdmissionEnvValid } from './runtime-capabilities/host-pressure-config.js';
 import { reconcileRuntimeCapabilityLeases } from './runtime-capabilities/recovery.js';
@@ -481,6 +482,13 @@ async function main(): Promise<void> {
   });
   // Restore PR ownership before periodic monitoring can perform its first check.
   await loadAllRuns();
+  // A row the warm-up could not derive is derived again by the versions read that needs it, which
+  // reports the same failure to its caller; startup does not wait for, or fail on, the warm-up.
+  void warmRunListVersions(getAllRuns).catch((error: unknown) =>
+    console.warn(
+      `[run-list] version warm-up stopped: ${error instanceof Error ? error.message : String(error)}`,
+    ),
+  );
   await backfillMissingRunLinks(getAllRuns());
   await initializeRunBundleStore();
   startRunRetention(observedBroadcast);

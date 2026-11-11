@@ -23,7 +23,7 @@ import {
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 
 await import('../../runtime/mock-pty.test-support.js');
-const { RUN_LIST_PAGE_MAX_BYTES } = await import('../../runs/list-version.js');
+const { RUN_LIST_PAGE_MAX_BYTES, warmRunListVersions } = await import('../../runs/list-version.js');
 const { archiveRun, createRun, deleteRun, getAllRuns, getRun, updateRun } =
   await import('../../runs/store.js');
 const { runList } = await import('./context.js');
@@ -154,6 +154,92 @@ test(
     await assert.rejects(runList({ ids: [1] } as unknown as RunListParams), {
       code: 'INVALID_PARAMS',
     });
+  },
+);
+
+test(
+  'a versions read derives a row only when its run changed since the last read',
+  TEST_TIMEOUT,
+  async (t) => {
+    const run = fixtureRun(t, 'VERSIONS-DERIVED-ON-CHANGE', 'before');
+    const first = (await runList({ versions: true })).versions!.find(({ id }) => id === run.id)!;
+    assert.deepEqual(first, servedVersion(run.id));
+
+    // A write that neither publishes nor stamps updatedAt is invisible to the stored version:
+    // proof that a read with an unchanged stamp does not re-derive the row.
+    const live = getRun(run.id)!;
+    const summary = live.summary;
+    live.summary = 'unpublished in-place write';
+    const unchanged = (await runList({ versions: true })).versions!.find(({ id }) => id === run.id);
+    assert.equal(unchanged?.version, first.version);
+    live.summary = summary;
+
+    // A published write advances the run's resource revision.
+    updateRun(run.id, { summary: 'after a published write' });
+    const published = (await runList({ versions: true })).versions!.find(({ id }) => id === run.id);
+    assert.deepEqual(published, servedVersion(run.id));
+    assert.notEqual(published?.version, first.version);
+
+    // An in-place writer that stamps updatedAt is seen as well.
+    live.summary = 'after an in-place write';
+    live.updatedAt = new Date(Date.parse(live.updatedAt) + 1000).toISOString();
+    const stamped = (await runList({ versions: true })).versions!.find(({ id }) => id === run.id);
+    assert.deepEqual(stamped, servedVersion(run.id));
+    assert.notEqual(stamped?.version, published?.version);
+  },
+);
+
+test(
+  'the startup warm-up derives every live row before the first versions read',
+  TEST_TIMEOUT,
+  async (t) => {
+    const run = fixtureRun(t, 'VERSIONS-WARMED', 'warmed');
+    updateRun(run.id, { summary: 'changed before the warm-up' });
+    const expected = servedVersion(run.id);
+    await warmRunListVersions(getAllRuns);
+    // An unpublished in-place write after the warm-up is invisible: the read used the warmed row.
+    const live = getRun(run.id)!;
+    live.summary = 'unpublished in-place write';
+    const listed = (await runList({ versions: true })).versions!.find(({ id }) => id === run.id);
+    live.summary = 'changed before the warm-up';
+    assert.deepEqual(listed, expected);
+  },
+);
+
+test(
+  'a terminal run whose analytics append lands later gets a new version',
+  TEST_TIMEOUT,
+  async (t) => {
+    const run = fixtureRun(t, 'VERSIONS-ANALYTICS');
+    // Completion starts the analytics append; its flag lands on the run once the append is written.
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    assert.equal(getRun(run.id)!.analyticsEmittedAt, undefined);
+    const before = (await runList({ versions: true })).versions!.find(({ id }) => id === run.id);
+    for (let waited = 0; !getRun(run.id)!.analyticsEmittedAt && waited < 5000; waited += 10)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(getRun(run.id)!.analyticsEmittedAt);
+    const after = (await runList({ versions: true })).versions!.find(({ id }) => id === run.id);
+    assert.deepEqual(after, servedVersion(run.id));
+    assert.notEqual(after?.version, before?.version);
+  },
+);
+
+test(
+  'repeated catch-up pages reuse a row version until the run changes',
+  TEST_TIMEOUT,
+  async (t) => {
+    const run = fixtureRun(t, 'VERSIONS-IDS-MEMO', 'before');
+    const first = await runList({ ids: [run.id] });
+    assert.deepEqual(first.versions, [servedVersion(run.id)]);
+    // An unpublished in-place write is invisible to a page with an unchanged stamp: no re-derive.
+    const live = getRun(run.id)!;
+    live.summary = 'unpublished in-place write';
+    assert.deepEqual((await runList({ ids: [run.id] })).versions, first.versions);
+    live.summary = 'before';
+    updateRun(run.id, { summary: 'after a published write' });
+    const changed = await runList({ ids: [run.id] });
+    assert.deepEqual(changed.versions, [servedVersion(run.id)]);
+    assert.notDeepEqual(changed.versions, first.versions);
   },
 );
 
