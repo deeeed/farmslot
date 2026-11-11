@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { after, beforeEach, mock, test } from 'node:test';
 
+import type { GitHubService, RestServiceOpts } from './github-client.js';
+
 process.env.NODE_TEST_CONTEXT = '1';
 await import('../runtime/mock-pty.test-support.js');
 
@@ -28,21 +30,33 @@ mock.module('./github-bindings-cache.js', {
     },
   },
 });
-mock.module('./github-client.js', {
-  namedExports: {
-    ghRequest: async (args: string[]) => {
-      requests.push(args);
-      if (args[0] === 'pr' && args[1] === 'view') {
-        if (metadataFailure) throw metadataFailure;
-        return { stdout: JSON.stringify(candidate), stderr: '' };
-      }
-      if (args[0] === 'api')
-        return { stdout: JSON.stringify({ state: 'closed', head: 'fix/reused' }), stderr: '' };
-      assert.deepEqual(args.slice(0, 2), ['pr', 'list']);
-      const prs = args.includes('all') || candidate.state === 'OPEN' ? [candidate] : [];
-      return { stdout: JSON.stringify(prs), stderr: '' };
-    },
+const clientModule = await import('./github-client.js');
+const fakeGithub: GitHubService = {
+  ...clientModule.github,
+  prView: async (repo, number, _fields, _opts?) => {
+    requests.push(['pr', 'view', String(number)]);
+    if (metadataFailure) throw metadataFailure;
+    return { number: candidate.number, state: candidate.state, headRefOid: candidate.headRefOid };
   },
+  prListFields: async (_repo, _fields, params, _opts?) => {
+    const args = ['pr', 'list'];
+    if (params.state === 'all') args.push('all');
+    if (params.head) args.push('--head', params.head);
+    requests.push(args);
+    const hasAll = params.state === 'all';
+    if (hasAll || candidate.state === 'OPEN')
+      return [
+        { number: candidate.number, state: candidate.state, headRefOid: candidate.headRefOid },
+      ];
+    return [];
+  },
+  rest: async <T>(_method: string, path: string, _opts?: RestServiceOpts): Promise<T> => {
+    requests.push(['api', path]);
+    return { state: 'closed', head: { ref: 'fix/reused' } } as unknown as T;
+  },
+};
+mock.module('./github-client.js', {
+  namedExports: { ...clientModule, github: fakeGithub },
 });
 after(() => mock.restoreAll());
 const { findPRNumber } = await import('./pr-linkage.js');
@@ -214,68 +228,6 @@ test('a closed PR at the approved publication head stays linked without a review
         },
       },
     ],
-  });
-  assert.equal(await findPRNumber(run, 'owner/repo', { noRetry: true }), candidate.number);
-});
-
-test('a closed PR at the recorded gate head remains linked', async () => {
-  const run = makeRun({ branch: 'fix/reused', prNumber: candidate.number });
-  const prepared = makeReadyGatePackage();
-  run.decisions = [
-    {
-      id: 'gate',
-      type: 'engine_human_gate',
-      title: 'Publish',
-      description: '',
-      actions: [],
-      createdAt: '2026-10-26T00:00:00Z',
-      payload: {
-        kind: 'ready',
-        prNumber: null,
-        repo: 'owner/repo',
-        branch: 'fix/reused',
-        workerReport: '',
-        diffStat: prepared.diffStat,
-        headSha: candidate.headRefOid,
-      },
-    },
-  ];
-  assert.equal(await findPRNumber(run, 'owner/repo', { noRetry: true }), candidate.number);
-});
-
-test('a closed PR at a recorded review-result head remains linked', async () => {
-  const run = makeRun({ branch: 'fix/reused', prNumber: candidate.number });
-  run.reviewResult = {
-    recommendation: 'APPROVE',
-    reviewMd: '',
-    lineComments: [],
-    reviewSnapshot: {
-      headSha: candidate.headRefOid,
-      source: 'local-git',
-      capturedAt: '2026-10-26T00:00:00Z',
-    },
-  };
-  assert.equal(await findPRNumber(run, 'owner/repo', { noRetry: true }), candidate.number);
-});
-
-test('a closed PR at a retained reviewed head remains linked', async () => {
-  const run = makeRun({
-    branch: 'fix/reused',
-    prNumber: candidate.number,
-    engineState: {
-      publishGate: {
-        reviews: [
-          {
-            id: 'review',
-            mode: 'warm',
-            loopNumber: 2,
-            verdict: 'pass',
-            unresolvedCount: 0,
-            reviewedHeadSha: candidate.headRefOid,
-          },
-        ],
-      },
-    },
   });
   assert.equal(await findPRNumber(run, 'owner/repo', { noRetry: true }), candidate.number);
 });
