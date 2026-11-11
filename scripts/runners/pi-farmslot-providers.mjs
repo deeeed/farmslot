@@ -138,8 +138,29 @@ export function piRouterProviderId(env = process.env) {
   return id;
 }
 
-/** Run on the execution node, with the same environment and discovery as its workers. */
+export class PiModelListFormatError extends Error {}
+
+/** `pi --list-models`: preserve native membership and order, removing duplicates. */
+export function parsePiModelList(output) {
+  const rows = stripVTControlCharacters(output)
+    .split(/\r?\n/)
+    .map((line) => line.trim().split(/\s+/));
+  const header = rows.findIndex(
+    ([provider, model]) => provider === 'provider' && model === 'model',
+  );
+  if (header < 0) throw new PiModelListFormatError('Missing Pi model list header.');
+  const ids = rows
+    .slice(header + 1)
+    .flatMap(([provider, model]) =>
+      model && /^[a-z0-9][\w.-]*$/i.test(provider) ? [`${provider}/${model}`] : [],
+    );
+  if (!ids.length) throw new PiModelListFormatError('Pi listed no models.');
+  return [...new Set(ids)];
+}
+
+/** Run on the execution node. Only a renamed router needs worker discovery. */
 export async function listPiModelCatalog(binary, env = process.env, opts = {}) {
+  const routerId = piRouterProviderId(env);
   const result = spawnSync(binary, ['--list-models'], {
     env,
     encoding: 'utf8',
@@ -147,21 +168,13 @@ export async function listPiModelCatalog(binary, env = process.env, opts = {}) {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   if (result.status !== 0) throw new Error('Pi native model listing failed');
-  const lines = stripVTControlCharacters(result.stdout)
-    .split(/\r?\n/)
-    .map((line) => line.trim().split(/\s+/));
-  const header = lines.findIndex(
-    ([provider, model]) => provider === 'provider' && model === 'model',
+  const native = parsePiModelList(result.stdout);
+  if (routerId === 'router') return { ids: native, aliases: {}, nativeIds: native };
+  const sources = await resolvePiSources(
+    listPiProviderSources(env).filter((source) => source.kind === 'router'),
+    env,
+    opts,
   );
-  const native =
-    header < 0
-      ? []
-      : lines
-          .slice(header + 1)
-          .flatMap(([provider, model]) =>
-            model && /^[a-z0-9][\w.-]*$/i.test(provider) ? [`${provider}/${model}`] : [],
-          );
-  const sources = await resolvePiProviderCatalog(env, opts);
   const aliases = {};
   const ids = new Set(native);
   for (const source of sources) {
@@ -179,7 +192,7 @@ export async function listPiModelCatalog(binary, env = process.env, opts = {}) {
     }
   }
   if (!ids.size) throw new Error('Pi listed no models');
-  return { ids: [...ids], aliases };
+  return { ids: [...ids], aliases, nativeIds: native };
 }
 
 export function listPiProviderSources(env = process.env) {
@@ -442,7 +455,10 @@ function modelEntry(row, source, defaults, info = {}, configured = {}) {
 }
 
 export async function resolvePiProviderCatalog(env = process.env, opts = {}) {
-  const sources = listPiProviderSources(env);
+  return resolvePiSources(listPiProviderSources(env), env, opts);
+}
+
+async function resolvePiSources(sources, env, opts) {
   const resolved = await Promise.all(
     sources.map(async (source) => {
       const prefix = `FARMSLOT_PI_${source.kind.toUpperCase()}`;

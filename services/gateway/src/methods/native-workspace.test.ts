@@ -219,7 +219,7 @@ test('Pi and OpenCode native pickers list the models of the node each context ru
   assert.equal(nativeNodeModels('claude', 'opus', contexts), undefined);
 });
 
-test('saved router picker preferences display canonical ids without rewriting preferences', async (t) => {
+test('native picker keeps native ids and saved preferences when worker aliases differ', async (t) => {
   const home = await mkdtemp(path.join(tmpdir(), 'native-router-picker-'));
   const previous = process.env.FARMSLOT_HOME;
   process.env.FARMSLOT_HOME = home;
@@ -238,9 +238,12 @@ test('saved router picker preferences display canonical ids without rewriting pr
     defaults: { pi: alias },
   });
   await writeFile(file, saved);
-  nodeModelCatalogs.record('pi', 'picker-alias-node', [canonical, hidden], { [alias]: canonical });
+  nodeModelCatalogs.record('pi', 'picker-alias-node', [canonical, hidden], { [alias]: canonical }, [
+    alias,
+    hidden,
+  ]);
   assert.deepEqual(nativeNodeModels('pi', alias, new Map([['fixture', 'picker-alias-node']])), {
-    fixture: [canonical, hidden],
+    fixture: [alias, hidden],
   });
   const { readFile } = await import('node:fs/promises');
   assert.equal(await readFile(file, 'utf8'), saved);

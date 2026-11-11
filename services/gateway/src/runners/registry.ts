@@ -995,11 +995,17 @@ export function runnerModelNodeBlocker(
   runnerId: string,
   model: string,
   machine: string,
+  transport: 'tmux' | 'native' = 'tmux',
 ): string | null {
   const definition = getRunnerDefinition(runnerId);
   const source = definition.modelCatalog;
   if (!source || !('nodeCommand' in source) || !model.trim() || model === 'unknown') return null;
-  return nodeModelCatalogs.blocker(definition.id, source.resolveModel?.(model) ?? model, machine);
+  return nodeModelCatalogs.blocker(
+    definition.id,
+    source.resolveModel?.(model) ?? model,
+    machine,
+    transport,
+  );
 }
 
 /** Placement hint from the last successful listing, including stale listings. */

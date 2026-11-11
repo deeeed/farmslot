@@ -399,7 +399,12 @@ test('renamed Pi node catalogs hide router aliases but retain placement and bloc
     [
       {
         machine: 'renamed-node',
-        list: async () => JSON.stringify({ ids: [canonical], aliases: { [alias]: canonical } }),
+        list: async () =>
+          JSON.stringify({
+            ids: [canonical],
+            aliases: { [alias]: canonical },
+            nativeIds: ['litellm/native-only'],
+          }),
       },
       { machine: 'other-node', list: async () => 'provider model\nxai grok-4.7\n' },
     ],
@@ -412,6 +417,17 @@ test('renamed Pi node catalogs hide router aliases but retain placement and bloc
   assert.equal(
     result.models.some((row) => row.id === alias),
     false,
+  );
+  assert.deepEqual(store.nativeListing('pi', 'renamed-node'), ['litellm/native-only']);
+  assert.equal(store.blocker('pi', 'litellm/native-only', 'renamed-node', 'native'), null);
+  assert.match(
+    store.blocker('pi', 'litellm/native-only', 'other-node', 'native') ?? '',
+    /only on renamed-node/,
+  );
+  assert.equal(
+    store.blocker('pi', canonical, 'other-node', 'native'),
+    null,
+    'worker registration is not native availability',
   );
   assert.equal(store.listing('pi', 'renamed-node')?.includes(alias), true);
   assert.equal(store.blocker('pi', alias, 'renamed-node'), null);
@@ -452,6 +468,11 @@ test('renamed Pi node catalogs hide router aliases but retain placement and bloc
   store.record('pi', 'custom-node', [custom], { [alias]: custom });
   assert.ok(store.result('pi').models.some((row) => row.id === custom));
   assert.deepEqual(store.pickerListing('pi', 'custom-node'), [custom]);
+  assert.deepEqual(
+    store.nativeListing('pi', 'custom-node'),
+    [],
+    'legacy worker catalogs are not native registry evidence',
+  );
 });
 
 test('Pi node helper catalog validates alias targets and the runner owns its listing command', () => {
@@ -465,6 +486,8 @@ test('Pi node helper catalog validates alias targets and the runner owns its lis
     { ids: ['localsparks/model'], aliases: { 'litellm/model': 'localsparks/model' } },
     { ids: ['localsparks/model'], aliases: [] },
     { ids: ['--unsafe'], aliases: {} },
+    { ids: ['localsparks/model'], aliases: {}, nativeIds: 'invalid' },
+    { ids: ['localsparks/model'], aliases: {}, nativeIds: ['--unsafe'] },
   ])
     assert.throws(() => parsePiModelCatalog(JSON.stringify(value)), ModelCatalogFormatError);
 });

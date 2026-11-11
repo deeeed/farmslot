@@ -10,6 +10,10 @@ import {
   type RunnerModelCatalogResult,
 } from '@farmslot/protocol';
 
+import {
+  parsePiModelList as decodePiModelList,
+  PiModelListFormatError,
+} from '../../../../scripts/runners/pi-farmslot-providers.mjs';
 import type { SlotVars } from '../core/config.js';
 
 export class ModelCatalogFormatError extends Error {}
@@ -236,24 +240,14 @@ export function parseGrokModelCatalog(data: unknown): RunnerCatalogModel[] {
   return parsed;
 }
 
-const LISTED_PROVIDER = /^[a-z0-9][\w.-]*$/i;
-
-/** `pi --list-models`: a whitespace table under a `provider model …` header. */
+/** Translate the shared Pi decoder's format failures into gateway catalog errors. */
 export function parsePiModelList(output: string): string[] {
-  const rows = stripVTControlCharacters(output)
-    .split(/\r?\n/)
-    .map((line) => line.trim().split(/\s+/));
-  const header = rows.findIndex(
-    ([provider, model]) => provider === 'provider' && model === 'model',
-  );
-  if (header < 0) throw new ModelCatalogFormatError('Missing Pi model list header.');
-  const ids = rows
-    .slice(header + 1)
-    .flatMap(([provider, model]) =>
-      model && LISTED_PROVIDER.test(provider) ? [`${provider}/${model}`] : [],
-    );
-  if (!ids.length) throw new ModelCatalogFormatError('Pi listed no models.');
-  return [...new Set(ids)];
+  try {
+    return decodePiModelList(output);
+  } catch (error) {
+    if (error instanceof PiModelListFormatError) throw new ModelCatalogFormatError(error.message);
+    throw error;
+  }
 }
 
 /** Farmslot's node-local Pi helper reports the models actually registered by discovery. */
@@ -268,10 +262,10 @@ export function parsePiModelCatalog(output: string): NodeCatalogModels {
   }
   if (
     !isRecord(value) ||
-    !Array.isArray(value.ids) ||
+    !isModelIds(value.ids) ||
     !value.ids.length ||
-    value.ids.some((id) => typeof id !== 'string' || !/^[a-z0-9][\w.-]*\/\S+$/i.test(id)) ||
-    !isRecord(value.aliases)
+    !isRecord(value.aliases) ||
+    (value.nativeIds !== undefined && !isModelIds(value.nativeIds))
   )
     throw new ModelCatalogFormatError('Pi model catalog has invalid models or aliases.');
   const ids: string[] = value.ids;
@@ -287,7 +281,14 @@ export function parsePiModelCatalog(output: string): NodeCatalogModels {
       throw new ModelCatalogFormatError('Pi model catalog has invalid aliases.');
     aliases[alias] = canonical;
   }
-  return { ids, aliases };
+  return { ids, aliases, ...(value.nativeIds === undefined ? {} : { nativeIds: value.nativeIds }) };
+}
+
+function isModelIds(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.every((id) => typeof id === 'string' && /^[a-z0-9][\w.-]*\/\S+$/i.test(id))
+  );
 }
 
 /** `opencode models`: one `provider/model` per line. */
@@ -301,6 +302,7 @@ export function parseOpenCodeModelList(output: string): string[] {
 }
 
 interface NodeModelListing {
+  nativeIds: readonly string[];
   ids: readonly string[];
   observedAt?: number;
   aliases: Readonly<Record<string, string>>;
@@ -315,10 +317,16 @@ export class NodeModelCatalogs {
     machine: string,
     ids: readonly string[],
     aliases: Readonly<Record<string, string>> = {},
+    nativeIds: readonly string[] = Object.keys(aliases).length ? [] : ids,
   ): void {
     let byNode = this.listings.get(runner);
     if (!byNode) this.listings.set(runner, (byNode = new Map()));
-    byNode.set(machine, { ids: [...ids], aliases: { ...aliases }, observedAt: Date.now() });
+    byNode.set(machine, {
+      ids: [...ids],
+      aliases: { ...aliases },
+      nativeIds: [...nativeIds],
+      observedAt: Date.now(),
+    });
   }
 
   unavailable(runner: string, machine: string): void {
@@ -332,9 +340,9 @@ export class NodeModelCatalogs {
     return listing ? [...listing.ids, ...Object.keys(listing.aliases)] : undefined;
   }
 
-  canonicalModel(runner: string, machine: string, id: string): string {
-    const aliases = this.listings.get(runner)?.get(machine)?.aliases;
-    return aliases && Object.hasOwn(aliases, id) ? aliases[id] : id;
+  /** Native registry evidence only; legacy synthesized catalogs cannot establish it. */
+  nativeListing(runner: string, machine: string): readonly string[] | undefined {
+    return this.listings.get(runner)?.get(machine)?.nativeIds;
   }
 
   /** Canonical picker ids, including router ids configured by this node. */
@@ -374,19 +382,27 @@ export class NodeModelCatalogs {
   }
 
   /** Only a fresh successful listing can refuse a model on this node. */
-  blocker(runner: string, model: string, machine: string): string | null {
+  blocker(
+    runner: string,
+    model: string,
+    machine: string,
+    transport: 'tmux' | 'native' = 'tmux',
+  ): string | null {
     const byNode = this.listings.get(runner);
     const listing = byNode?.get(machine);
+    const contains = (entry: NodeModelListing) =>
+      transport === 'native'
+        ? entry.nativeIds.includes(model)
+        : entry.ids.includes(model) || Object.hasOwn(entry.aliases, model);
     if (
       !byNode ||
       listing?.observedAt === undefined ||
       Date.now() - listing.observedAt >= RUNNER_MODEL_CATALOG_TTL_MS ||
-      listing.ids.includes(model) ||
-      Object.hasOwn(listing.aliases, model)
+      contains(listing)
     )
       return null;
     const listedOn = [...byNode]
-      .filter(([, { ids, aliases }]) => ids.includes(model) || Object.hasOwn(aliases, model))
+      .filter(([, entry]) => contains(entry))
       .map(([node]) => node)
       .sort();
     return listedOn.length
@@ -399,6 +415,7 @@ export const nodeModelCatalogs = new NodeModelCatalogs();
 
 export interface NodeCatalogModels {
   ids: string[];
+  nativeIds?: readonly string[];
   aliases?: Readonly<Record<string, string>>;
 }
 
@@ -417,7 +434,7 @@ export async function queryNodeModelCatalog(
   await Promise.all(
     nodes.map(async (node) => {
       const ids = await listNodeModels(runner, source, node);
-      if (ids) store.record(runner, node.machine, ids.ids, ids.aliases);
+      if (ids) store.record(runner, node.machine, ids.ids, ids.aliases, ids.nativeIds);
       else store.unavailable(runner, node.machine);
     }),
   );

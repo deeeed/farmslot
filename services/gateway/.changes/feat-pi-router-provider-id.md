@@ -1,1 +1,1 @@
-- Configure Pi router provider names while preserving hidden router model aliases for existing runs, session restoration and per-node model checks.
+- Configure Pi router provider names while preserving existing worker aliases and default catalogs; keep native pickers and placement checks faithful to the native registry.

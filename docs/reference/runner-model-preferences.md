@@ -76,9 +76,16 @@ list models as `localsparks/GLM-5.3-Flash-s12`. Use lowercase letters, digits,
 dots, underscores or hyphens, beginning and ending with a letter or digit.
 Names reserved for other providers, including `litellm`, `ollama` and `lmstudio`,
 are rejected. Keep the `FARMSLOT_PI_ROUTER_*` setting names when renaming the provider.
-Saved `router/<model>` references remain selectable and authenticated aliases of
-the same models. Aliases are hidden from model listings and pickers, and existing
-runs and sessions retain their saved model names during replay or restoration.
+Terminal workers keep saved `router/<model>` references as authenticated aliases
+of the same models. Worker pickers hide those aliases, and existing worker runs
+retain their saved model names during replay or restoration.
+
+With the default `router` id, catalogs keep the native `pi --list-models` membership
+and order. A renamed router replaces only that router's worker catalog through
+discovery; other providers keep their native entries. Native RPC sessions do not
+load the worker provider extension. Their pickers and placement checks use the raw
+native registry, so a worker-only provider name is not offered there. Configure
+that provider in Pi's native registry to use it in a native session.
 
 Discovered model metadata supplies context and output limits. LiteLLM also uses
 `/v1/model/info` for limits and reasoning support, with one bounded metadata request

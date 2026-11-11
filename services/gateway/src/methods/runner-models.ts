@@ -102,7 +102,7 @@ const catalogObservation = new RunnerModelCatalogObservation({
   hasInterest: (runner) => hasCatalogInterest(runner),
   changed: (runner) => {
     resourceRevisions.advance(runnerModelCatalogResourceKey({ runner }));
-    // Native pickers list the same per-node models (native.session.catalog nodeModels).
+    // Native pickers share these per-node catalog observations.
     const source = getRunnerDefinition(runner).modelCatalog;
     if (source && 'nodeCommand' in source) nativeCatalogChanges.catalogChanged();
   },
