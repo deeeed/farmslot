@@ -62,7 +62,7 @@ with patch.dict(os.environ, {'TMUX_TMPDIR': '/tmp/fixture-tmux', 'TMUX': '/tmp/f
 test('blind boundary strips tmux control variables, keeps pane identity, opts into outer-seatbelt Chrome', (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'seatbelt-env-'));
   t.after(() => rmSync(root, { recursive: true }));
-  const command = withBlindTrialBoundary('env', root);
+  const command = withBlindTrialBoundary('env', { capsule: root, baseSha: 'a'.repeat(40) });
   // Inspect the shell setup on every platform without launching a real sandbox.
   const setup = command.slice(0, command.indexOf('/usr/bin/sandbox-exec'));
   const worker = spawnSync('/bin/sh', ['-c', `${setup} env`], {
@@ -79,4 +79,5 @@ test('blind boundary strips tmux control variables, keeps pane identity, opts in
   assert.doesNotMatch(worker.stdout, /^TMUX(?:_TMPDIR)?=/mu);
   assert.match(worker.stdout, /^TMUX_PANE=%42$/mu);
   assert.match(worker.stdout, /^FARMSLOT_BLIND_SEATBELT=1$/mu);
+  assert.match(worker.stdout, /^FARMSLOT_CI_BASE_REF=a{40}$/mu);
 });
