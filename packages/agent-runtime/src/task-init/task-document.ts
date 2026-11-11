@@ -161,6 +161,8 @@ export interface TaskDocumentInput {
   commentSummaryMarkdown?: string;
   /** Rendered project addendum (`templates/task-document.md`), if the project ships one. */
   addendum?: string | null;
+  /** Static review supplies its enforced completion command instead of development guidance. */
+  completionInstructions?: string;
   hasTicketData: boolean;
 }
 
@@ -266,8 +268,12 @@ export function buildTaskDocument(input: TaskDocumentInput): string {
     '## Checklist',
     '',
     `Follow \`${taskDir}/${EXECUTION_CHECKLIST_DOCUMENT}\` top to bottom. That file is the only checklist that counts.`,
-    `Marker: \`${taskDir}/mark\`, run from the repo root. \`mark start\` once when work begins, \`mark N\` after each step (visible 1-based number), then \`mark complete --mark-last\`, \`mark no-change --reason "…"\`, or \`mark blocked --reason "…"\`.`,
-    'Never hand-write `SIGNAL.json`. Do not add step checkboxes to this document; append notes (for example `## Recipe ACs`) below.',
+    ...(input.completionInstructions
+      ? [input.completionInstructions]
+      : [
+          `Marker: \`${taskDir}/mark\`, run from the repo root. \`mark start\` once when work begins, \`mark N\` after each step (visible 1-based number), then \`mark complete --mark-last\`, \`mark no-change --reason "…"\`, or \`mark blocked --reason "…"\`.`,
+          'Never hand-write `SIGNAL.json`. Do not add step checkboxes to this document; append notes (for example `## Recipe ACs`) below.',
+        ]),
     '',
     '## Inputs',
     '',
