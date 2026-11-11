@@ -132,7 +132,7 @@ module['boundary'](json.loads(sys.argv[2]))
         '-c',
         withBlindTrialBoundary(
           '! /usr/bin/env git fetch https://github.com/owner/reference.git main',
-          spec.capsule,
+          spec,
         ),
       ],
       { cwd: repo, env, encoding: 'utf8' },
@@ -156,6 +156,8 @@ module['boundary'](json.loads(sys.argv[2]))
         withBlindTrialBoundary(
           [
             'test -z "${GH_TOKEN-}${GITHUB_TOKEN-}"',
+            `test "$FARMSLOT_CI_BASE_REF" = '${base}'`,
+            `git -C ${q(repo)} diff "$FARMSLOT_CI_BASE_REF" -- value.txt`,
             `test "$(cat ${q(path.join(repo, 'value.txt'))})" = base`,
             `! cat ${q(path.join(sibling, 'answer.txt'))}`,
             `! ls ${q(path.join(root, '.farmslot-blind-evals'))}`,
@@ -172,7 +174,7 @@ module['boundary'](json.loads(sys.argv[2]))
             `! sh -c 'printf x > ${path.join(root, 'pool-link.json')}'`,
             `! touch ${q(path.join(farmPool, 'new.json'))}`,
           ].join(' && '),
-          spec.capsule,
+          spec,
         ),
       ],
       {
@@ -302,7 +304,7 @@ test('proof Git admits both source snapshots and keeps product and pinned inputs
           `echo captured > '${task}/artifacts/output.txt'`,
           `echo cache > '${runtime}/cache'`,
         ].join(' && '),
-        spec.capsule,
+        spec,
       ),
     ],
     { env, encoding: 'utf8' },

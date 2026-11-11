@@ -82,7 +82,7 @@ function worker(root: string, command: string, launchEnv = env, timeout = 45_000
     '/bin/sh',
     [
       '-c',
-      withBlindTrialBoundary(command, root).replace(
+      withBlindTrialBoundary(command, { capsule: root, baseSha: 'a'.repeat(40) }).replace(
         '/usr/bin/sandbox-exec',
         'exec /usr/bin/sandbox-exec',
       ),
@@ -351,7 +351,7 @@ try {
             '-c',
             withBlindTrialBoundary(
               `exec ${q(process.execPath)} ${q(probe)} ${q(mode)} ${parent.pid}`,
-              root,
+              { capsule: root, baseSha: 'a'.repeat(40) },
             ).replace('/usr/bin/sandbox-exec', 'exec /usr/bin/sandbox-exec'),
           ],
           { env, stdio: ['ignore', 'pipe', 'pipe'] },
@@ -544,7 +544,7 @@ try {
               '-c',
               withBlindTrialBoundary(
                 `exec ${q(process.execPath)} ${q(piProbe)} ${q(mode)} ${parent.pid}`,
-                root,
+                { capsule: root, baseSha: 'a'.repeat(40) },
               ).replace('/usr/bin/sandbox-exec', 'exec /usr/bin/sandbox-exec'),
             ],
             { env, stdio: ['ignore', 'pipe', 'pipe'] },
