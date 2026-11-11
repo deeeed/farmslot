@@ -68,7 +68,7 @@ test('nudge delivery is pressure-gated immediately before the send', () => {
   );
   const eligibility = nudgeSource.indexOf('verifyBranchAffinityNudgeStillEligible(');
   const gate = nudgeSource.indexOf('await enforceDispatchPressureGate({');
-  const send = nudgeSource.indexOf('await sendRunnerInstructionSafely(');
+  const send = nudgeSource.indexOf('const sent = await withRunnerPromptMutationBoundary(');
   assert.ok(eligibility > 0 && gate > 0 && send > 0, 'anchors missing in nudge.ts');
   assert.ok(eligibility < gate, 'gate must run after the eligibility re-check');
   assert.ok(gate < send, 'gate must run before the irreversible nudge send');
