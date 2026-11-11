@@ -2,8 +2,8 @@ import { activePersonAccess, parsePersonSessionToken } from '@farmslot/credentia
 import type { AuthenticationRef, GatewayAuthClientKind, Principal } from '@farmslot/protocol';
 
 import type { GatewayAuthSession } from './auth.js';
-import { parseCredentialWire, verifySecret } from './credential-secret.js';
-import type { CredentialStoreRuntime } from './credential-store.js';
+import { parseCredentialWire, sameStoredSecret, verifySecretAsync } from './credential-secret.js';
+import type { CredentialStoreRuntime, StoredSecret } from './credential-store.js';
 import { VerificationCache } from './verification-cache.js';
 
 export type PrincipalResolution =
@@ -56,7 +56,15 @@ export class PrincipalResolver {
     );
   }
 
-  resolveSecret(presented: string, transport: 'token' | 'password'): PrincipalResolution {
+  /**
+   * scrypt runs off the event loop, so the store can change while it derives. The reference is
+   * then resolved from the store as it is afterwards, and only while the verified hash is still
+   * the stored one, so a revocation or a reused id during the wait is not missed.
+   */
+  async resolveSecret(
+    presented: string,
+    transport: 'token' | 'password',
+  ): Promise<PrincipalResolution> {
     this.store.ensureFresh();
     if (transport !== 'token') return { ok: false, reason: 'secret_mismatch' };
     const cached = this.verificationCache.get(presented);
@@ -65,29 +73,44 @@ export class PrincipalResolver {
     const credentialWire = parseCredentialWire(presented);
     const accessWire = parsePersonSessionToken(presented, 'fsa');
     let reference: AuthenticationRef;
+    let verified: StoredSecret;
     if (credentialWire) {
       const credential = store.credentials.find(
         (record) => record.id === credentialWire.credentialId,
       );
       if (!credential) return { ok: false, reason: 'secret_mismatch' };
       if (credential.revokedAt !== null) return { ok: false, reason: 'revoked' };
-      if (!verifySecret(credentialWire.secret, credential.secret))
+      if (!(await verifySecretAsync(credentialWire.secret, credential.secret)))
         return { ok: false, reason: 'secret_mismatch' };
       reference = { kind: 'credential', credentialId: credential.id };
+      verified = credential.secret;
     } else if (accessWire) {
       const active = activePersonAccess(store, accessWire.id, this.now());
       if (!active) return { ok: false, reason: 'session_ended' };
-      if (!verifySecret(accessWire.secret, active.access.secret))
+      if (!(await verifySecretAsync(accessWire.secret, active.access.secret)))
         return { ok: false, reason: 'secret_mismatch' };
       reference = {
         kind: 'person-session',
         sessionId: active.session.id,
         accessId: active.access.id,
       };
+      verified = active.access.secret;
     } else return { ok: false, reason: 'secret_mismatch' };
+    this.store.ensureFresh();
+    const current = this.storedSecret(reference);
+    if (current && !sameStoredSecret(current, verified))
+      return { ok: false, reason: 'secret_mismatch' };
     const resolved = this.resolveAuthenticationReference(reference);
     if (resolved.ok) this.verificationCache.set(presented, reference);
     return resolved;
+  }
+
+  /** The hash a reference's secret is stored under now; missing records fail in resolution. */
+  private storedSecret(reference: AuthenticationRef): StoredSecret | undefined {
+    const store = this.store.snapshot();
+    if (reference.kind === 'credential')
+      return store.credentials.find((record) => record.id === reference.credentialId)?.secret;
+    return store.personAccessTokens.find((record) => record.id === reference.accessId)?.secret;
   }
 
   resolveSessionPrincipal(session: GatewayAuthSession): PrincipalResolution {

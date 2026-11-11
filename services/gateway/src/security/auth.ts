@@ -196,11 +196,11 @@ export function assertGatewayBindAllowed(params: {
   );
 }
 
-export function authenticateGatewayClient(params: {
+export async function authenticateGatewayClient(params: {
   runtime: GatewayAuthRuntime;
   connectParams: GatewayAuthConnectParams;
   clientIp: string;
-}): GatewayAuthResult {
+}): Promise<GatewayAuthResult> {
   const { limiter } = params.runtime;
   // A loopback client (the local browser or hosted Command Center connecting to
   // ws://localhost) already implies same-machine trust — a local process can read the
@@ -236,9 +236,11 @@ export function authenticateGatewayClient(params: {
   const presented = params.connectParams.token;
   if (params.connectParams.password) return { ok: false, reason: 'credential_mismatch' };
   if (!presented) return { ok: false, reason: 'token_missing' };
-  const resolution = params.runtime.resolver.resolveSecret(presented, 'token');
+  // Count the attempt as failed in the turn that admitted it, so attempts still verifying count
+  // against the limit; a success clears the bucket.
+  if (rateLimitApplies) limiter.recordFailure(params.clientIp);
+  const resolution = await params.runtime.resolver.resolveSecret(presented, 'token');
   if (!resolution.ok) {
-    if (rateLimitApplies) limiter.recordFailure(params.clientIp);
     return {
       ok: false,
       reason:
@@ -288,16 +290,16 @@ export function requireNodeSession(runtime: GatewayAuthRuntime, session: Gateway
   }
 }
 
-export function authorizeHttpRequest(params: {
+export async function authorizeHttpRequest(params: {
   runtime: GatewayAuthRuntime;
   req: IncomingMessage;
   res: ServerResponse;
   resource: GatewayHttpResource;
-}): boolean {
+}): Promise<boolean> {
   try {
     if (params.runtime.resolver.isSoloMode()) return true;
     const credential = getHttpCredential(params.req);
-    const result = authenticateGatewayClient({
+    const result = await authenticateGatewayClient({
       runtime: params.runtime,
       connectParams: {
         clientKind: 'companion',

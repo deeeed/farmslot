@@ -108,7 +108,7 @@ test('production WebSocket route accepts only a fixture person, preserves archiv
       timeout: 2000,
       credential: { token: secret },
     });
-  const personGrant = runtime.writer.exchangePersonCredential(humanCredential.secret, {
+  const personGrant = await runtime.writer.exchangePersonCredential(humanCredential.secret, {
     deviceName: 'Publication fixture',
     deviceKind: 'cli',
   });

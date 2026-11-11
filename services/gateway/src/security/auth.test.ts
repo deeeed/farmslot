@@ -28,19 +28,23 @@ try {
   );
   const { runtime, secret } = createInitializedRuntime({});
   assert.equal(
-    authenticateGatewayClient({
-      runtime,
-      connectParams: { clientKind: 'ui', token: 'wrong' },
-      clientIp: '1.2.3.4',
-    }).ok,
+    (
+      await authenticateGatewayClient({
+        runtime,
+        connectParams: { clientKind: 'ui', token: 'wrong' },
+        clientIp: '1.2.3.4',
+      })
+    ).ok,
     false,
   );
   assert.equal(
-    authenticateGatewayClient({
-      runtime,
-      connectParams: { clientKind: 'ui', token: secret },
-      clientIp: '1.2.3.4',
-    }).ok,
+    (
+      await authenticateGatewayClient({
+        runtime,
+        connectParams: { clientKind: 'ui', token: secret },
+        clientIp: '1.2.3.4',
+      })
+    ).ok,
     true,
   );
 
@@ -48,28 +52,45 @@ try {
     ...runtime,
     limiter: new GatewayAuthRateLimiter(1, 60_000),
   };
-  authenticateGatewayClient({
+  await authenticateGatewayClient({
     runtime: limited,
     connectParams: { clientKind: 'ui', token: 'bad' },
     clientIp: '5.6.7.8',
   });
-  const rateLimited = authenticateGatewayClient({
+  const rateLimited = await authenticateGatewayClient({
     runtime: limited,
     connectParams: { clientKind: 'ui', token: 'bad' },
     clientIp: '5.6.7.8',
   });
   assert.equal(rateLimited.rateLimited, true);
 
+  // Attempts still verifying count against the limit: of three concurrent bad tokens, only the
+  // first is admitted.
+  const concurrentLimited = { ...runtime, limiter: new GatewayAuthRateLimiter(1, 60_000) };
+  const concurrent = await Promise.all(
+    Array.from({ length: 3 }, () =>
+      authenticateGatewayClient({
+        runtime: concurrentLimited,
+        connectParams: { clientKind: 'ui', token: 'bad' },
+        clientIp: '9.9.9.9',
+      }),
+    ),
+  );
+  assert.deepEqual(
+    concurrent.map((result) => result.rateLimited === true),
+    [false, true, true],
+  );
+
   // Loopback clients bypass the rate limiter: a valid token authenticates even after a
   // prior failure that would lock out a remote IP (max=1). Covers the mapped IPv6 form.
   for (const ip of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) {
     const loopbackLimited = { ...runtime, limiter: new GatewayAuthRateLimiter(1, 60_000) };
-    authenticateGatewayClient({
+    await authenticateGatewayClient({
       runtime: loopbackLimited,
       connectParams: { clientKind: 'ui', token: 'bad' },
       clientIp: ip,
     });
-    const loopbackOk = authenticateGatewayClient({
+    const loopbackOk = await authenticateGatewayClient({
       runtime: loopbackLimited,
       connectParams: { clientKind: 'ui', token: secret },
       clientIp: ip,
@@ -88,12 +109,12 @@ try {
     FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS: '1',
   });
   const proxyLimited = { ...proxyRuntime, limiter: new GatewayAuthRateLimiter(1, 60_000) };
-  authenticateGatewayClient({
+  await authenticateGatewayClient({
     runtime: proxyLimited,
     connectParams: { clientKind: 'ui', token: 'bad' },
     clientIp: '127.0.0.1',
   });
-  const forged = authenticateGatewayClient({
+  const forged = await authenticateGatewayClient({
     runtime: proxyLimited,
     connectParams: { clientKind: 'ui', token: proxySecret },
     clientIp: '127.0.0.1',
@@ -106,7 +127,7 @@ try {
 
   const { runtime: cookieRuntime, secret: cookieSecret } = createInitializedRuntime({});
   const cookieResponse = createFakeResponse();
-  const cookieAuthorized = authorizeHttpRequest({
+  const cookieAuthorized = await authorizeHttpRequest({
     runtime: cookieRuntime,
     req: createFakeRequest({
       cookie: `other=value; farmslot_gateway_credential=${cookieSecret}`,
@@ -119,7 +140,7 @@ try {
   assert.equal(cookieResponse.statusCode, undefined);
 
   const encodedCookieResponse = createFakeResponse();
-  const encodedCookieAuthorized = authorizeHttpRequest({
+  const encodedCookieAuthorized = await authorizeHttpRequest({
     runtime: cookieRuntime,
     req: createFakeRequest({
       cookie: `farmslot_gateway_credential=${encodeURIComponent(cookieSecret)}`,
@@ -131,7 +152,7 @@ try {
   assert.equal(encodedCookieAuthorized, true);
 
   const queryTokenResponse = createFakeResponse();
-  const queryTokenAuthorized = authorizeHttpRequest({
+  const queryTokenAuthorized = await authorizeHttpRequest({
     runtime: cookieRuntime,
     req: createFakeRequest({
       url: `/api/run-artifact?runId=run-1&path=artifacts%2Fafter.png&token=${encodeURIComponent(cookieSecret)}`,
@@ -149,7 +170,7 @@ try {
   const operatorIssue = cookieRuntime.writer.issueCredential(operator.id, 'http-operator');
   const operatorResponse = createFakeResponse();
   assert.equal(
-    authorizeHttpRequest({
+    await authorizeHttpRequest({
       runtime: cookieRuntime,
       req: createFakeRequest({
         cookie: `farmslot_gateway_credential=${operatorIssue.secret}`,
@@ -164,7 +185,7 @@ try {
 
   const operatorFileResponse = createFakeResponse();
   assert.equal(
-    authorizeHttpRequest({
+    await authorizeHttpRequest({
       runtime: cookieRuntime,
       req: createFakeRequest({
         url: '/api/file?slotId=slot-1&path=.env.local-auth',
@@ -190,7 +211,7 @@ try {
   };
   try {
     assert.equal(
-      authorizeHttpRequest({
+      await authorizeHttpRequest({
         runtime: cookieRuntime,
         req: createFakeRequest({
           cookie: `farmslot_gateway_credential=${cookieSecret}`,
@@ -211,7 +232,7 @@ try {
   assert.match(resolverFailureLog, /credential store reload failed/u);
 
   const missingCookieResponse = createFakeResponse();
-  const missingCookieAuthorized = authorizeHttpRequest({
+  const missingCookieAuthorized = await authorizeHttpRequest({
     runtime: cookieRuntime,
     req: createFakeRequest({ cookie: 'other=value', remoteAddress: '127.0.0.1' }),
     res: missingCookieResponse,

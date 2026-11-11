@@ -147,7 +147,7 @@ test('up reports the browser open on its own line, without promising a connectio
   assert.doesNotMatch(runUpResult({ open: () => false }).text, /\n {2}browser /);
 });
 
-test('first local bootstrap and restart preserve one refresh-only person device', (t) => {
+test('first local bootstrap and restart preserve one refresh-only person device', async (t) => {
   const previousHome = process.env.FARMSLOT_HOME;
   const input = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
   const output = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
@@ -174,13 +174,13 @@ test('first local bootstrap and restart preserve one refresh-only person device'
     },
   });
   const before = readFileSync(profilesPath(), 'utf8');
-  assert.throws(() => ensureLocalCredential(8801), /unverified credential/);
+  await assert.rejects(ensureLocalCredential(8801), /unverified credential/);
   assert.equal(readFileSync(profilesPath(), 'utf8'), before);
   saveProfiles({ gateways: {} });
-  const first = ensureLocalCredential(8801);
+  const first = await ensureLocalCredential(8801);
   assert.ok(first.personSession);
   assert.equal(first.token, undefined);
-  const again = ensureLocalCredential(8801);
+  const again = await ensureLocalCredential(8801);
   assert.equal(again.personSession?.session.id, first.personSession.session.id);
   assert.equal(again.personSession?.refreshToken, first.personSession.refreshToken);
   assert.equal(loadProfiles().gateways.local.secret, undefined);

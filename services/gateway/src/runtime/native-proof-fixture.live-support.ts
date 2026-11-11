@@ -134,7 +134,7 @@ export async function createNativeProofFixture(
   );
   process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = person.id;
   const credential = runtime.writer.issueCredential(person.id, 'Disposable proof');
-  const grant = runtime.writer.exchangePersonCredential(credential.secret, {
+  const grant = await runtime.writer.exchangePersonCredential(credential.secret, {
     deviceName: 'Loopback native proof',
     deviceKind: 'cli',
   });
