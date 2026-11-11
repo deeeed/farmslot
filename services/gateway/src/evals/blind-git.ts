@@ -38,7 +38,9 @@ export function buildBlindGitCommand(
   return `python3 - ${shSingleQuote(JSON.stringify({ ...spec, action }))} <<'FARMSLOT_BLIND_GIT_PY'\n${script}\nFARMSLOT_BLIND_GIT_PY`;
 }
 
-export type BlindTrialWorkerBoundary = Pick<BlindGitSpec, 'capsule' | 'baseSha'>;
+export type BlindTrialWorkerBoundary = Pick<BlindGitSpec, 'capsule' | 'baseSha'> & {
+  browserCdpPort?: number;
+};
 
 /** Variables `gh` and Git read a GitHub token from. */
 const GITHUB_TOKEN_NAMES = [
@@ -76,6 +78,11 @@ export function withBlindTrialBoundary(command: string, trial: BlindTrialWorkerB
     'export GIT_TERMINAL_PROMPT=0',
     // Browser children must stay in this seatbelt; preserve TMUX_PANE for hooks.
     'export FARMSLOT_BLIND_SEATBELT=1',
+    ...(trial.browserCdpPort
+      ? [
+          `export RECIPE_CDP_PORT=${shSingleQuote(String(trial.browserCdpPort))} CDP_PORT=${shSingleQuote(String(trial.browserCdpPort))}`,
+        ]
+      : []),
     // Records transports the isolated repository refuses, for any git binary.
     `export GIT_TRACE2_EVENT=${shSingleQuote(`${boundary}/git-trace.jsonl`)} GIT_TRACE2_EVENT_NESTING=1`,
     `export GIT_SSH_COMMAND=${shSingleQuote(`${deny} ssh`)}`,
@@ -94,5 +101,7 @@ export function blindTrialWorkerBoundary(
   if (!run || (role && role !== primaryRoleForFlow(run.flowType))) return undefined;
   const trial = run.engineState?.evalExperiment?.blind;
   const capsule = trial?.isolation?.capsulePath;
-  return trial && capsule ? { capsule, baseSha: trial.baseSha } : undefined;
+  return trial && capsule
+    ? { capsule, baseSha: trial.baseSha, browserCdpPort: trial.isolation?.browserCdpPort }
+    : undefined;
 }

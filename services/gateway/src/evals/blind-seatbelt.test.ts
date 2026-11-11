@@ -287,16 +287,66 @@ test('blind profile hides boundary and node internals after runtime read excepti
     assert.ok(profile.includes(`(deny file-write* (subpath ${JSON.stringify(file)}))`));
 });
 
+test('blind browser allocation skips protected and assigned ports and stays stable', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'blind-cdp-unit-')));
+  t.after(() => rmSync(root, { recursive: true }));
+  mkdirSync(path.join(root, 'home'));
+  writeFileSync(path.join(root, 'state.json'), '{"originalIsDirectory":true}');
+  const result = spawnSync(
+    'python3',
+    [
+      '-c',
+      `
+import json, os, pathlib, runpy, sys
+from unittest.mock import patch, Mock
+blind = runpy.run_path(sys.argv[1], run_name='fixture')
+root = pathlib.Path(sys.argv[2])
+spec = {'repo': str(root), 'slotResourcePorts': {'cdp_port': 19222}}
+globals = blind['prepare_boundary'].__globals__
+probe = Mock()
+probe.__enter__ = Mock(return_value=probe)
+probe.__exit__ = Mock(return_value=False)
+probe.getsockname.side_effect = [('127.0.0.1', p) for p in [7777, 19222, 19444]]
+with patch.dict(os.environ, {'HOME': str(root / 'home')}, clear=True), \
+     patch.dict(globals, {'require_sandbox': lambda: None, 'live_tmux_sockets': lambda: []}), \
+     patch('socket.socket', return_value=probe) as sockets, \
+     patch('subprocess.run', return_value=Mock(returncode=0)):
+    assert blind['prepare_boundary'](spec, root) == 19444
+    assert blind['prepare_boundary'](spec, root) == 19444
+    assert sockets.call_count == 3
+    spec['slotResourcePorts']['cdp_port'] = 19444
+    try:
+        blind['prepare_boundary'](spec, root)
+    except RuntimeError as error:
+        assert 'overlaps a protected endpoint' in str(error)
+    else:
+        raise AssertionError('retained endpoint collision must fail closed')
+`,
+      fileURLToPath(new URL('./blind-git.py', import.meta.url)),
+      root,
+    ],
+    { encoding: 'utf8', timeout: 4500 },
+  );
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+});
+
 test('blind boundary strips gateway credentials, routing, tmux and SSH agent variables, keeps tools and pane identity', (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'seatbelt-env-'));
   t.after(() => rmSync(root, { recursive: true }));
-  const command = withBlindTrialBoundary('env', { capsule: root, baseSha: 'a'.repeat(40) });
+  const command = withBlindTrialBoundary('env', {
+    capsule: root,
+    baseSha: 'a'.repeat(40),
+    browserCdpPort: 19444,
+  });
   // Inspect the shell setup on every platform without launching a real sandbox.
   const setup = command.slice(0, command.indexOf('/usr/bin/sandbox-exec'));
   const worker = spawnSync('/bin/sh', ['-c', `${setup} env`], {
     encoding: 'utf8',
     env: {
       PATH: process.env.PATH,
+      CDP_PORT: '19222',
+      RECIPE_CDP_PORT: '19222',
       TMUX: '/fixture/socket,1,0',
       TMUX_TMPDIR: '/fixture',
       TMUX_PANE: '%42',
@@ -327,5 +377,7 @@ test('blind boundary strips gateway credentials, routing, tmux and SSH agent var
   assert.match(worker.stdout, /^OPENAI_API_KEY=synthetic-provider$/mu);
   assert.match(worker.stdout, /^TMUX_PANE=%42$/mu);
   assert.match(worker.stdout, /^FARMSLOT_BLIND_SEATBELT=1$/mu);
+  assert.match(worker.stdout, /^RECIPE_CDP_PORT=19444$/mu);
+  assert.match(worker.stdout, /^CDP_PORT=19444$/mu);
   assert.match(worker.stdout, /^FARMSLOT_CI_BASE_REF=a{40}$/mu);
 });

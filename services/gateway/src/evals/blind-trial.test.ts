@@ -9,6 +9,8 @@ import type { Run } from '@farmslot/protocol';
 
 import type { SlotVars } from '../core/config.js';
 
+import { blindTrialWorkerBoundary } from './blind-git.js';
+
 const vars: SlotVars = {
   slotId: 'owned',
   machine: 'local',
@@ -95,7 +97,13 @@ mock.module('../core/exec.js', {
       verifications++;
       return {
         exitCode: verifyAllowed ? 0 : 1,
-        stdout: JSON.stringify({ status: 'isolated', runId: run.id, baseSha: base, githubAttempt }),
+        stdout: JSON.stringify({
+          status: 'isolated',
+          runId: run.id,
+          baseSha: base,
+          browserCdpPort: 19444,
+          githubAttempt,
+        }),
         stderr: verifyAllowed
           ? command.includes('"action":"boundary"')
             ? boundaryWarning
@@ -304,6 +312,10 @@ test('the worker boundary uses the pool-selected credential home and resolved si
     );
   };
   assert.equal(spec('isolate').siblingRepos, undefined);
+  assert.equal(spec('isolate').slotResourcePorts, undefined);
+  assert.equal(run.engineState!.evalExperiment!.blind!.isolation!.browserCdpPort, 19444);
+  assert.equal(blindTrialWorkerBoundary(run)?.browserCdpPort, 19444);
+  assert.equal(blindTrialWorkerBoundary(run, 'reviewer'), undefined);
   assert.deepEqual(spec('boundary').slotResourcePorts, {
     cdp_port: 19222,
     metro_port: 8081,

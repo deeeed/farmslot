@@ -82,11 +82,6 @@ function gitSpec(
     branch: run.branch,
     baseSha: blind.baseSha,
     referenceCommits: blind.referenceCommits,
-    slotResourcePorts: Object.fromEntries(
-      Object.entries(vars.resourceVars)
-        .filter(([name, value]) => (name === 'port' || name.endsWith('_port')) && value.trim())
-        .map(([name, value]) => [name, Number(value)]),
-    ),
     ...(blind.proof ? { proof: blind.proof.source } : {}),
   };
 }
@@ -97,7 +92,21 @@ async function executeGit(
   spec: BlindGitSpec,
   signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
-  const command = buildBlindGitCommand(action, spec);
+  const command = buildBlindGitCommand(
+    action,
+    action === 'boundary'
+      ? {
+          ...spec,
+          slotResourcePorts: Object.fromEntries(
+            Object.entries(vars.resourceVars)
+              .filter(
+                ([name, value]) => (name === 'port' || name.endsWith('_port')) && value.trim(),
+              )
+              .map(([name, value]) => [name, Number(value)]),
+          ),
+        }
+      : spec,
+  );
   // Resolve credential denials under the same pool-selected home as the worker.
   const result = await execOnSlot(
     vars,
@@ -167,12 +176,25 @@ export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal):
   const siblingRepos = await resolvedSiblingRepos(vars);
   const paths = await blindFarmPaths(vars);
   const farmConfigRoots = [paths.pool, paths.state.runs, paths.projects];
-  await executeGit('boundary', vars, { ...spec, siblingRepos, farmConfigRoots }, signal);
+  const boundary = await executeGit(
+    'boundary',
+    vars,
+    { ...spec, siblingRepos, farmConfigRoots },
+    signal,
+  );
+  const browserCdpPort = boundary.browserCdpPort;
+  if (
+    !Number.isInteger(browserCdpPort) ||
+    typeof browserCdpPort !== 'number' ||
+    browserCdpPort < 1 ||
+    browserCdpPort > 65535
+  )
+    throw new Error('Blind trial browser CDP port is missing or invalid.');
   await ownedEpoch(run, epoch);
   await persistRunNow(
     updateBlind(runId, {
       ...blind,
-      isolation: { ...isolation, verifiedAt: new Date().toISOString() },
+      isolation: { ...isolation, browserCdpPort, verifiedAt: new Date().toISOString() },
     }),
     'blind trial Git isolated',
   );

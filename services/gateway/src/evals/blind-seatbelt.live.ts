@@ -96,10 +96,12 @@ function worker(
     '/bin/sh',
     [
       '-c',
-      withBlindTrialBoundary(command, { capsule: root, baseSha: 'a'.repeat(40) }).replace(
-        '/usr/bin/sandbox-exec',
-        'exec /usr/bin/sandbox-exec',
-      ),
+      withBlindTrialBoundary(command, {
+        capsule: root,
+        baseSha: 'a'.repeat(40),
+        browserCdpPort: JSON.parse(readFileSync(path.join(root, 'state.json'), 'utf8'))
+          .browserCdpPort,
+      }).replace('/usr/bin/sandbox-exec', 'exec /usr/bin/sandbox-exec'),
     ],
     {
       env: launchEnv,
@@ -744,7 +746,49 @@ test(
         rmSync(root, { recursive: true });
       }
     });
-    profile(root);
+    const assigned = net.createServer((socket) => socket.end());
+    assigned.listen(0, '127.0.0.1');
+    await once(assigned, 'listening');
+    t.after(
+      () =>
+        new Promise<void>((resolve, reject) =>
+          assigned.close((error) => (error ? reject(error) : resolve())),
+        ),
+    );
+    const address = assigned.address();
+    assert.ok(address && typeof address !== 'string');
+    const assignedPort = address.port;
+    profile(root, env, { cdp_port: assignedPort });
+    const allocatedPort = JSON.parse(
+      readFileSync(path.join(root, 'state.json'), 'utf8'),
+    ).browserCdpPort;
+    assert.notEqual(allocatedPort, assignedPort);
+    // A retained dispatch must preserve the task's already published endpoint.
+    profile(root, env, { cdp_port: assignedPort });
+    assert.equal(
+      JSON.parse(readFileSync(path.join(root, 'state.json'), 'utf8')).browserCdpPort,
+      allocatedPort,
+    );
+    writeFileSync(
+      path.join(root, 'adapter-launch.mjs'),
+      `
+import assert from 'node:assert/strict';
+import { createWebDappAdapter } from ${JSON.stringify(path.join(adapter, 'src/web-dapp/index.mjs'))};
+const adapter = createWebDappAdapter();
+const resources = adapter.runtimeContext.resources({ existing: { cdpPort: ${assignedPort} }, defaults: {}, envPort: (...names) => {
+  const value = names.map(name => process.env[name]).find(Boolean);
+  return value ? Number(value) : undefined;
+} });
+assert.equal(resources.cdpPort, ${allocatedPort});
+await adapter.launch({
+  options: { cdpPort: String(${assignedPort}), watcherPort: process.argv[2], signer: 'injected', account: 'dev1', headless: true, freshProfile: true },
+  target: ${JSON.stringify(root)}, jsonOutput: true,
+  stream: { phase() {}, complete(status, code) { if (status !== 'pass' || code !== 0) process.exitCode = 1; } },
+  usage(message) { throw new Error(message); },
+});
+`,
+    );
+
     const probe = path.join(root, 'probe.mjs');
     const hidden = path.join(root, 'hidden');
     mkdirSync(hidden);
@@ -777,11 +821,11 @@ export const policy = { ...base, module: import.meta.filename, venueHosts: () =>
       probe,
       `
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import { once } from 'node:events';
 import { readFileSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
-import net from 'node:net';
 import { ownCleanup } from './owned-cleanup.mjs';
 import { launchWebDappBrowser } from ${JSON.stringify(path.join(adapter, 'src/web-dapp/launch.mjs'))};
 import { CdpClient } from ${JSON.stringify(path.join(adapter, 'src/web-dapp/lib/cdp-client.mjs'))};
@@ -794,7 +838,7 @@ if (${JSON.stringify(process.env.SEATBELT_TEST_CHROME ?? '')}) process.env.TERMI
 assert.notEqual(spawnSync('/bin/ps', ['-p', String(process.pid)]).status, 0);
 assert.throws(() => readFileSync(root + '/hidden/hidden'), { code: 'EPERM' });
 const app = http.createServer((req, res) => { res.setHeader('content-type', 'text/html'); res.end('<!doctype html><title>Seatbelt fixture</title><p>Synthetic app</p>'); });
-const portProbe = net.createServer();
+
 const runtime = root + '/temp/recipe/runtime/terminal';
 const stop = () => stopWebDappBrowser(root, { runtimeDir: runtime });
 const mode = process.argv[2] ?? 'normal';
@@ -809,19 +853,22 @@ const cleanup = ownCleanup(parent, async () => {
   try { await launching; }
   finally {
     try { await stop(); }
-    finally { await Promise.all([close(app), close(portProbe)]); }
+    finally { await close(app); }
   }
 });
 try {
   app.listen(0, '127.0.0.1');
   await once(app, 'listening');
-  portProbe.listen(0, '127.0.0.1');
-  await once(portProbe, 'listening');
-  const cdpPort = portProbe.address().port;
-  await close(portProbe);
-  const args = { target: root, 'cdp-port': cdpPort, 'app-port': app.address().port, signer: 'injected', account: 'dev1', headless: true, 'fresh-profile': true };
-  launching = launchWebDappBrowser(args, process.env, { timeouts: { browserStartMs: 10000, hostReadyMs: 15000 } });
+  const cdpPort = Number(process.env.RECIPE_CDP_PORT);
+  assert.equal(cdpPort, ${allocatedPort});
+  assert.equal(Number(process.env.CDP_PORT), cdpPort);
+  await assert.rejects(fetch('http://127.0.0.1:${assignedPort}/json/version', { signal: AbortSignal.timeout(500) }));
+  const args = { target: root, 'cdp-port': ${assignedPort}, 'app-port': app.address().port, signer: 'injected', account: 'dev1', headless: true, 'fresh-profile': true };
+  launching = mode === 'normal'
+    ? promisify(execFile)(process.execPath, [root + '/adapter-launch.mjs', String(app.address().port)], { timeout: 30000 }).then(({ stdout }) => JSON.parse(stdout))
+    : launchWebDappBrowser(args, process.env, { timeouts: { browserStartMs: 10000, hostReadyMs: 15000 } });
   const state = await launching;
+  assert.equal(state.cdpPort, cdpPort);
   assert.equal(state.browser.launchMethod, 'spawn');
   assert.equal(state.browser.outerSeatbelt, true);
   const version = await fetch('http://127.0.0.1:' + cdpPort + '/json/version').then(r => r.json());
@@ -857,7 +904,7 @@ try {
   assert.equal(reused.browserPid, state.browserPid);
   const stopped = await stop();
   assert.equal(stopped.stopped.length, 2);
-  console.log('ps denied; ownership/group/state/start identity passed; harness launched and reused Chrome; recipe-style CDP target/evaluation passed; Chrome CDP served; outer read denial retained');
+  console.log('ps denied; ownership/group/state/start identity passed; production adapter launch remapped assigned slot CDP to allocated recipe port; configured port denied; harness launched and reused Chrome; recipe-style CDP target/evaluation passed; Chrome CDP served; outer read denial retained');
 } finally {
   await cleanup();
 }
@@ -888,7 +935,7 @@ try {
             '-c',
             withBlindTrialBoundary(
               `exec ${q(process.execPath)} ${q(probe)} ${q(mode)} ${parent.pid}`,
-              { capsule: root, baseSha: 'a'.repeat(40) },
+              { capsule: root, baseSha: 'a'.repeat(40), browserCdpPort: allocatedPort },
             ).replace('/usr/bin/sandbox-exec', 'exec /usr/bin/sandbox-exec'),
           ],
           { env, stdio: ['ignore', 'pipe', 'pipe'] },

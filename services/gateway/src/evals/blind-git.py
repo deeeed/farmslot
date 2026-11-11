@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 from urllib.parse import urlsplit
@@ -157,7 +158,7 @@ def gateway_homes():
     return homes
 
 
-def gateway_network_rules(spec):
+def gateway_network_ports(spec):
     # Read only URL fields before sandbox entry. Never return/log credential
     # fields or parser exceptions, which can include the original secret bytes.
     # Wildcard ports cover DNS aliases, LAN, IPv6 and mapped IPv4 without a
@@ -219,8 +220,12 @@ def gateway_network_rules(spec):
         cdp_ports.add(boundary_port(resources['cdp_port']))
     ports |= cdp_ports
     ports -= {80, 443}
+    return ports
+
+
+def gateway_network_rules(spec, ports=None):
     return '(deny network-outbound ' + ' '.join(
-        '(remote tcp "*:%s")' % port for port in sorted(ports)) + ')'
+        '(remote tcp "*:%s")' % port for port in sorted(gateway_network_ports(spec) if ports is None else ports)) + ')'
 
 
 def boundary_port(value):
@@ -295,7 +300,7 @@ def worker_private_rules(capsule):
     return rules
 
 
-def sandbox_profile(spec, capsule, tmux_sockets=None):
+def sandbox_profile(spec, capsule, tmux_sockets=None, network_ports=None):
     # Deny reads of other slot checkouts, the original checkout a linked worktree
     # shares objects with, every blind capsule except this boundary, and the
     # GitHub CLI login. Later rules take precedence.
@@ -324,7 +329,7 @@ def sandbox_profile(spec, capsule, tmux_sockets=None):
     # Instance pool, runs and projects stay read-only, even through worker-created links.
     rules += ['(deny file-write* (subpath %s))' % quote(Path(os.path.expanduser(p)).resolve())
               for p in spec.get('farmConfigRoots', [])]
-    rules += [tmux_socket_rules(tmux_sockets or []), gateway_network_rules(spec)]
+    rules += [tmux_socket_rules(tmux_sockets or []), gateway_network_rules(spec, network_ports)]
     rules += worker_private_rules(capsule)
     return '\n'.join(rules + [''])
 
@@ -418,10 +423,32 @@ def prepare_boundary(spec, capsule):
         (root / 'bin' / name).chmod(0o700)
     if spec.get('proofBoundary'):
         freeze_proof_inputs(spec)
-    (root / 'sandbox.sb').write_text(sandbox_profile(spec, capsule, live_tmux_sockets()))
+    # Preserve the endpoint across retained dispatch and task regeneration. Never
+    # turn a configured slot/operator/gateway endpoint into an exemption.
+    state_file = capsule / 'state.json'
+    state = json.loads(state_file.read_text())
+    network_ports = gateway_network_ports(spec)
+    denied = network_ports | {22, 512, 513, 514}
+    denied |= {boundary_port(p) for p in spec.get('slotResourcePorts', {}).values()}
+    port = state.get('browserCdpPort')
+    if port is not None and boundary_port(port) in denied:
+        raise RuntimeError('Blind browser CDP port now overlaps a protected endpoint')
+    if port is None:
+        for _ in range(100):
+            with socket.socket() as probe:
+                probe.bind(('127.0.0.1', 0))
+                port = probe.getsockname()[1]
+            if port not in denied:
+                break
+        else:
+            raise RuntimeError('Cannot allocate a separate blind browser CDP port')
+        state['browserCdpPort'] = port
+        save(state_file, state)
+    (root / 'sandbox.sb').write_text(sandbox_profile(spec, capsule, live_tmux_sockets(), network_ports))
     checked = subprocess.run([SANDBOX, '-f', str(root / 'sandbox.sb'), '/usr/bin/true'], capture_output=True)
     if checked.returncode:
         raise RuntimeError(SANDBOX_REQUIRED + ': ' + checked.stderr.decode(errors='replace').strip())
+    return port
 
 
 def refused_git_transport(trace):
@@ -444,8 +471,8 @@ def refused_git_transport(trace):
 
 
 def boundary(spec):
-    prepare_boundary(spec, Path(spec['capsule']))
-    return verify(spec)
+    port = prepare_boundary(spec, Path(spec['capsule']))
+    return {**verify(spec), 'browserCdpPort': port}
 
 
 def verify(spec, worker_boundary=True):
