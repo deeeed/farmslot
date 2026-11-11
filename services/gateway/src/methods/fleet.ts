@@ -24,12 +24,6 @@ import { poolDirectory } from '@farmslot/slot-config';
 import { summarizeAgentContexts } from '../agents/contexts.js';
 import { slotFilesReadInProcess } from '../core/exec.js';
 import {
-  isGitFile,
-  openGitCheckout,
-  readDefaultBranchProbeFiles,
-  readHeadProbe,
-} from '../core/git-files.js';
-import {
   claimSlotStatusIf,
   execOnSlot,
   expandHook,
@@ -52,6 +46,7 @@ import {
 import { shellQuote, tmuxSessionCandidates, tmuxShellSnippet } from '../core/tmux.js';
 import { fleetStaleThresholdMs, isFleetCheckedAtStale } from '../fleet/freshness.js';
 import { loadFleetStatus, loadPoolConfigs } from '../fleet/state.js';
+import { gitService } from '../host-services/git.js';
 import { slotResourceChanges } from '../resources/slot-run-bindings.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
 import { isRunArchiving } from '../run-lifecycle/archive-fence.js';
@@ -1231,13 +1226,15 @@ export async function readLocalSlotGit(
 ): Promise<SlotGitFiles> {
   if (!slotFilesReadInProcess(vars)) return {};
   const [checkout, linked] = await Promise.all([
-    openGitCheckout(vars.remoteRepo),
-    isGitFile(vars.remoteRepo),
+    gitService.openCheckout(vars.remoteRepo),
+    gitService.isGitFile(vars.remoteRepo),
   ]);
   if (!checkout) return { linked };
   const [head, defaultProbe] = await Promise.all([
-    readHeadProbe(checkout),
-    defaultBranch === undefined ? undefined : readDefaultBranchProbeFiles(checkout, defaultBranch),
+    gitService.readHeadProbe(checkout),
+    defaultBranch === undefined
+      ? undefined
+      : gitService.readDefaultBranchProbe(checkout, defaultBranch),
   ]);
   return { head, linked, defaultBranch: defaultProbe };
 }

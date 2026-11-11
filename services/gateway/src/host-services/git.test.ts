@@ -8,14 +8,14 @@ import test from 'node:test';
 import { defaultBranchProbeCommand, readDefaultBranchProbe } from '@farmslot/protocol';
 
 // Global config comes from this test's own home, for git and for the reader alike.
-const root = await mkdtemp(path.join(await realpath(os.tmpdir()), 'git-files-'));
+const root = await mkdtemp(path.join(await realpath(os.tmpdir()), 'git-service-'));
 const home = path.join(root, 'home');
 await mkdir(home);
 process.env.HOME = home;
 delete process.env.XDG_CONFIG_HOME;
 for (const name of Object.keys(process.env)) if (name.startsWith('GIT_')) delete process.env[name];
 
-const files = await import('./git-files.js');
+const gitSvc = await import('./git.js');
 const { gitHeadProbeCommand, parseGitHeadProbe, readLocalSlotGit } =
   await import('../methods/fleet.js');
 
@@ -42,24 +42,24 @@ async function repo(branch = 'main'): Promise<string> {
 }
 
 async function open(dir: string) {
-  const checkout = await files.openGitCheckout(dir);
+  const checkout = await gitSvc.openGitCheckout(dir);
   assert.ok(checkout, `${dir} opens in-process`);
   return checkout;
 }
 
-/** The fleet head probe and branch-watcher command, from git and from the files. */
+/** The fleet head probe and branch-watcher command, from git and from the service. */
 async function assertHeadMatchesGit(dir: string): Promise<void> {
   const checkout = await open(dir);
   assert.deepEqual(
-    await files.readHeadProbe(checkout),
+    await gitSvc.readHeadProbe(checkout),
     parseGitHeadProbe(sh(gitHeadProbeCommand(dir)).stdout),
     `${dir}: rev-parse HEAD / --abbrev-ref HEAD`,
   );
-  const head = await files.readGitHead(checkout);
+  const head = await gitSvc.readGitHead(checkout);
   assert.equal(head?.kind, 'branch');
   if (head?.kind === 'branch')
     assert.equal(
-      await files.shortenRefName(checkout, head.ref, false),
+      await gitSvc.shortenRefName(checkout, head.ref, false),
       sh(`git -C '${dir}' symbolic-ref --short HEAD`).stdout.trim(),
       `${dir}: symbolic-ref --short HEAD`,
     );
@@ -69,7 +69,7 @@ async function assertDefaultBranchMatchesGit(dir: string, branch = 'main'): Prom
   const fromGit = readDefaultBranchProbe(sh(defaultBranchProbeCommand(dir, branch)), branch);
   assert.equal(fromGit.readable, true, JSON.stringify(fromGit));
   assert.deepEqual(
-    await files.readDefaultBranchProbeFiles(await open(dir), branch),
+    await gitSvc.readDefaultBranchProbeFiles(await open(dir), branch),
     fromGit,
     `${dir}: default-branch probe for ${branch}`,
   );
@@ -83,7 +83,7 @@ test('HEAD on a branch, loose and packed, reads as git reads it', async () => {
   await assertHeadMatchesGit(dir);
   // A loose ref written after packing wins over the packed one.
   git(dir, 'commit', '-q', '--allow-empty', '-m', 'b');
-  const probe = await files.readHeadProbe(await open(dir));
+  const probe = await gitSvc.readHeadProbe(await open(dir));
   assert.equal(probe?.headSha, git(dir, 'rev-parse', 'HEAD').trim());
   await assertHeadMatchesGit(dir);
 });
@@ -93,10 +93,10 @@ test('a detached HEAD reports HEAD and its commit; an unborn branch is left to g
   git(dir, 'checkout', '-q', '--detach');
   const checkout = await open(dir);
   assert.deepEqual(
-    await files.readHeadProbe(checkout),
+    await gitSvc.readHeadProbe(checkout),
     parseGitHeadProbe(sh(gitHeadProbeCommand(dir)).stdout),
   );
-  assert.deepEqual(await files.readGitHead(checkout), {
+  assert.deepEqual(await gitSvc.readGitHead(checkout), {
     kind: 'detached',
     sha: git(dir, 'rev-parse', 'HEAD').trim(),
   });
@@ -104,15 +104,15 @@ test('a detached HEAD reports HEAD and its commit; an unborn branch is left to g
   const unborn = path.join(root, 'unborn');
   git(root, 'init', '-q', '-b', 'main', unborn);
   const empty = await open(unborn);
-  assert.deepEqual(await files.readGitHead(empty), {
+  assert.deepEqual(await gitSvc.readGitHead(empty), {
     kind: 'branch',
     ref: 'refs/heads/main',
     sha: null,
   });
   // rev-parse prints its argument for an unborn HEAD; that output stays git's to give.
-  assert.equal(await files.readHeadProbe(empty), undefined);
+  assert.equal(await gitSvc.readHeadProbe(empty), undefined);
   assert.equal(
-    await files.shortenRefName(empty, 'refs/heads/main', false),
+    await gitSvc.shortenRefName(empty, 'refs/heads/main', false),
     sh(`git -C '${unborn}' symbolic-ref --short HEAD`).stdout.trim(),
   );
 });
@@ -151,8 +151,8 @@ test('linked worktrees and separate git directories resolve through their .git f
   );
   await assertHeadMatchesGit(linked);
   await assertDefaultBranchMatchesGit(linked);
-  assert.equal(await files.isGitFile(linked), true);
-  assert.equal(await files.isGitFile(dir), false);
+  assert.equal(await gitSvc.isGitFile(linked), true);
+  assert.equal(await gitSvc.isGitFile(dir), false);
 
   // A submodule's .git file has no commondir: its git directory holds everything.
   const separate = path.join(root, 'separate');
@@ -168,26 +168,26 @@ test('linked worktrees and separate git directories resolve through their .git f
   git(separate, 'commit', '-q', '--allow-empty', '-m', 'a');
   const module = await open(separate);
   assert.equal(module.commonDir, module.gitDir);
-  assert.equal(await files.isGitFile(separate), true);
+  assert.equal(await gitSvc.isGitFile(separate), true);
   await assertHeadMatchesGit(separate);
 });
 
 test('missing, unreadable and non-root checkouts are left to git', async () => {
   const missing = path.join(root, 'missing');
-  assert.equal(await files.openGitCheckout(missing), undefined);
-  assert.equal(await files.isGitFile(missing), sh(`test -f '${missing}/.git'`).exitCode === 0);
+  assert.equal(await gitSvc.openGitCheckout(missing), undefined);
+  assert.equal(await gitSvc.isGitFile(missing), sh(`test -f '${missing}/.git'`).exitCode === 0);
 
   // git searches parent directories from a directory without .git.
   const dir = await repo();
   await mkdir(path.join(dir, 'sub'));
-  assert.equal(await files.openGitCheckout(path.join(dir, 'sub')), undefined);
+  assert.equal(await gitSvc.openGitCheckout(path.join(dir, 'sub')), undefined);
 
   const locked = await repo();
   const checkout = await open(locked);
   await chmod(path.join(locked, '.git', 'HEAD'), 0o000);
   try {
-    assert.equal(await files.readGitHead(checkout), undefined);
-    assert.equal(await files.readHeadProbe(checkout), undefined);
+    assert.equal(await gitSvc.readGitHead(checkout), undefined);
+    assert.equal(await gitSvc.readHeadProbe(checkout), undefined);
     assert.notEqual(sh(`git -C '${locked}' rev-parse HEAD`).exitCode, 0);
   } finally {
     await chmod(path.join(locked, '.git', 'HEAD'), 0o644);
@@ -195,7 +195,7 @@ test('missing, unreadable and non-root checkouts are left to git', async () => {
 
   const broken = await repo();
   await writeFile(path.join(broken, '.git', 'refs', 'heads', 'main'), 'not a sha\n');
-  assert.equal(await files.readHeadProbe(await open(broken)), undefined);
+  assert.equal(await gitSvc.readHeadProbe(await open(broken)), undefined);
 });
 
 test('the default-branch probe reads config and refs as the git probe does', async () => {
@@ -236,20 +236,20 @@ test('the default-branch probe reads config and refs as the git probe does', asy
 test('config that git rejects or that includes other files is left to git', async () => {
   const dir = await repo();
   const checkout = await open(dir);
-  assert.ok(await files.readGitConfig(checkout));
+  assert.ok(await gitSvc.readGitConfig(checkout));
   await writeFile(
     path.join(home, '.gitconfig'),
     '[includeIf "gitdir:/elsewhere/"]\n\tpath = other\n',
   );
-  assert.equal(await files.readGitConfig(checkout), undefined);
-  assert.equal(await files.readDefaultBranchProbeFiles(checkout, 'main'), undefined);
+  assert.equal(await gitSvc.readGitConfig(checkout), undefined);
+  assert.equal(await gitSvc.readDefaultBranchProbeFiles(checkout, 'main'), undefined);
   await writeFile(path.join(home, '.gitconfig'), '[farmslot]\n\tblindRun = from-global\n');
   await assertDefaultBranchMatchesGit(dir);
   await rm(path.join(home, '.gitconfig'));
   await writeFile(path.join(dir, '.git', 'config'), '[core]\n\tbad = "unterminated\n', {
     flag: 'a',
   });
-  assert.equal(await files.readGitConfig(checkout), undefined);
+  assert.equal(await gitSvc.readGitConfig(checkout), undefined);
   assert.equal(sh(defaultBranchProbeCommand(dir, 'main')).stdout.includes('fetch-exit=128'), true);
 });
 
@@ -270,7 +270,7 @@ test('the config parser matches git config --list', async () => {
         const split = entry.indexOf('\n');
         return split < 0 ? [entry, null] : [entry.slice(0, split), entry.slice(split + 1)];
       });
-    assert.deepEqual(files.parseGitConfig(source), listed, `config ${index}`);
+    assert.deepEqual(gitSvc.parseGitConfig(source), listed, `config ${index}`);
   }
   for (const rejected of [
     '[s]\n\tk = "open\n',
@@ -282,13 +282,13 @@ test('the config parser matches git config --list', async () => {
     const file = path.join(root, 'rejected');
     await writeFile(file, rejected);
     assert.notEqual(sh(`git config --file '${file}' --list`).exitCode, 0, rejected);
-    assert.equal(files.parseGitConfig(rejected), undefined, rejected);
+    assert.equal(gitSvc.parseGitConfig(rejected), undefined, rejected);
   }
-  assert.equal(files.parseGitConfig('[include]\n\tpath = x\n'), undefined);
+  assert.equal(gitSvc.parseGitConfig('[include]\n\tpath = x\n'), undefined);
   // A key before any section is git's own case.
-  assert.equal(files.parseGitConfig('k = v\n'), undefined);
+  assert.equal(gitSvc.parseGitConfig('k = v\n'), undefined);
   // An inner tab reads differently across git versions.
-  assert.equal(files.parseGitConfig('[s]\n\tk = a\tb\n'), undefined);
+  assert.equal(gitSvc.parseGitConfig('[s]\n\tk = a\tb\n'), undefined);
 });
 
 test('origin/HEAD reads as git symbolic-ref --quiet --short reads it', async () => {
@@ -298,7 +298,7 @@ test('origin/HEAD reads as git symbolic-ref --quiet --short reads it', async () 
     const result = sh(`git -C '${dir}' symbolic-ref --quiet --short refs/remotes/origin/HEAD`);
     return result.exitCode === 0 ? result.stdout.trim() : result.exitCode === 1 ? null : 'error';
   };
-  const read = () => files.readSymbolicRefShort(checkout, 'refs/remotes/origin/HEAD');
+  const read = () => gitSvc.readSymbolicRefShort(checkout, 'refs/remotes/origin/HEAD');
   assert.equal(await read(), fromGit()); // missing
   git(dir, 'update-ref', 'refs/remotes/origin/HEAD', 'HEAD');
   assert.equal(await read(), fromGit()); // not symbolic
@@ -317,7 +317,7 @@ test('fleet refresh reads a local slot from its files and leaves a remote slot t
   git(dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
   const linked = path.join(root, 'fleet-linked');
   git(dir, 'worktree', 'add', '-q', linked, '-b', 'wt/slot-1');
-  const local = { host: 'localhost', machine: 'git-files-test', remoteRepo: linked };
+  const local = { host: 'localhost', machine: 'git-service-test', remoteRepo: linked };
   assert.deepEqual(await readLocalSlotGit(local, 'main'), {
     head: parseGitHeadProbe(sh(gitHeadProbeCommand(linked)).stdout),
     linked: sh(`test -f '${linked}/.git'`).exitCode === 0,

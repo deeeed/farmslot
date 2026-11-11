@@ -13,12 +13,12 @@ import type { NodeFsChangedPayload } from '@farmslot/protocol';
 
 import { loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot, isLocal as checkIsLocal, slotFilesReadInProcess } from '../core/exec.js';
-import { openGitCheckout, readGitHead, shortenRefName } from '../core/git-files.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { slotReadFile } from '../core/slot-io.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadFleetStatus } from '../fleet/state.js';
+import { gitService } from '../host-services/git.js';
 import {
   assertFileObservationsAdmitted,
   forgetNodeFileObservation,
@@ -88,7 +88,9 @@ export function normalizeGitHeadPath(repoPath: string, gitPath: string): string 
 }
 
 async function resolveGitHeadPath(repoPath: string, vars: SlotVars): Promise<string> {
-  const checkout = slotFilesReadInProcess(vars) ? await openGitCheckout(repoPath) : undefined;
+  const checkout = slotFilesReadInProcess(vars)
+    ? await gitService.openCheckout(repoPath)
+    : undefined;
   // `rev-parse --git-path HEAD`: relative `.git/HEAD` in a primary clone, the gitfile's real
   // directory in a linked worktree.
   if (checkout) return path.join(checkout.gitDir, 'HEAD');
@@ -254,12 +256,21 @@ async function readAndEmit(slotId: string, content?: string): Promise<void> {
     const detached = `git -C '${bw.repoPath}' rev-parse --short HEAD 2>/dev/null`;
     let command = `${symbolic} || ${detached}`;
     let branch: string | undefined;
-    const checkout = slotFilesReadInProcess(vars) ? await openGitCheckout(bw.repoPath) : undefined;
-    const head = checkout && (await readGitHead(checkout));
+    const checkout = slotFilesReadInProcess(vars)
+      ? await gitService.openCheckout(bw.repoPath)
+      : undefined;
+    const head = checkout && (await gitService.readHead(checkout));
     if (checkout && head?.kind === 'branch')
-      branch = await shortenRefName(checkout, head.ref, false);
-    // An abbreviated commit needs git's object database.
-    else if (head?.kind === 'detached') command = detached;
+      branch = await gitService.shortenRef(checkout, head.ref, false);
+    else if (checkout && head?.kind === 'detached') {
+      // An abbreviated commit needs git's object database; run directly for local checkouts.
+      command = detached;
+      const result = await gitService.run(['rev-parse', '--short', 'HEAD'], {
+        cwd: bw.repoPath,
+        timeout: GIT_HEAD_TIMEOUT_MS,
+      });
+      if (result.exitCode === 0 && result.stdout.trim()) branch = result.stdout.trim();
+    }
     branch ??= (await execOnSlot(vars, command, { timeout: GIT_HEAD_TIMEOUT_MS })).stdout.trim();
     if (!branch) {
       const raw = content ?? (await slotReadFile(bw, bw.gitHeadPath));

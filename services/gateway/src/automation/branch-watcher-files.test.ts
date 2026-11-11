@@ -79,5 +79,6 @@ test('a local slot branch is read from its files; only a detached HEAD asks git'
   git('-C', repo, 'checkout', '-q', '--detach');
   await watchBranch('files-slot');
   assert.deepEqual(branches.slice(1), [git('-C', repo, 'rev-parse', '--short', 'HEAD')]);
-  assert.deepEqual(commands, [`git -C '${repo}' rev-parse --short HEAD 2>/dev/null`]);
+  // A detached HEAD's abbreviated SHA comes from gitService.run directly, not execOnSlot.
+  assert.deepEqual(commands, []);
 });
