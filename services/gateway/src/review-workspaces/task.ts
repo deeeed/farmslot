@@ -69,6 +69,7 @@ import {
 } from '../run-engine/review-artifacts.js';
 import { requestNativeNode } from '../runners/native/node.js';
 import { assertReviewWorkspaceRun } from '../runners/native/review-workspace.js';
+import { runnerObservabilitySnapshotFiles } from '../runners/runner-observability.js';
 import { getRun, runsDirectory } from '../runs/store.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 import { readConfiguredExecutionTemplateSnapshot } from '../tasks/execution-template-catalog.js';
@@ -255,7 +256,10 @@ async function runtimeFiles() {
       collectSupportFiles(nobleRoot, 'inputs/runtime/node_modules/@noble/hashes'),
     ])
   ).flat();
-  return files.filter((file) => /\.(?:js|cjs|mjs|json)$/.test(file.relativePath));
+  return [
+    ...files.filter((file) => /\.(?:js|cjs|mjs|json)$/.test(file.relativePath)),
+    ...runnerObservabilitySnapshotFiles('inputs/runner-observability'),
+  ];
 }
 
 async function collectTaskBundle(root: string) {

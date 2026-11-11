@@ -127,3 +127,31 @@ test('OpenCode terminal review can read every frozen reference without granting 
   assert(input.command.includes('/frozen/reference/*'));
   assert(!input.command.includes('/missing/reference'));
 });
+
+test('slotless Pi static reviews load the frozen provider extension for router and LiteLLM models', async () => {
+  for (const model of ['router/review-model', 'litellm/review-model']) {
+    run = reviewRun('pi', 'autonomous');
+    run.slotId = null;
+    run.metrics.model = model;
+    run.effort = ' MAX ';
+    terminalInputs.length = 0;
+    await reviewTmuxOperation(run, 'launch', 'Review the PR');
+    const input = terminalInputs.at(-1);
+    assert(input);
+    assert(input.command.includes(`--model '${model}'`));
+    assert(input.command.includes('--thinking max'));
+    assert(input.command.includes("FARMSLOT_THINKING='max'"));
+    assert(input.command.includes("FARMSLOT_RUNNER='pi'"));
+    assert(input.command.includes(`FARMSLOT_MODEL='${model}'`));
+    assert(!input.command.includes('FARMSLOT_SLOT_ID='));
+    assert(input.command.includes("FARMSLOT_PI_WORKSPACE_TRUST='untrusted'"));
+    assert(
+      input.command.includes(
+        "-e '/tmp/review.task/inputs/runner-observability/bin/pi-farmslot-observability.ts'",
+      ),
+    );
+    assert(input.command.includes('RUNNER_OBSERVABILITY_BUNDLE_MISMATCH'));
+    assert(!input.command.includes(' --approve'));
+    assert(!input.command.includes('/tmp/review.source/.agent'));
+  }
+});

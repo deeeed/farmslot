@@ -149,6 +149,20 @@ async function withFixture(work: (f: Awaited<ReturnType<typeof fixture>>) => Pro
   }
 }
 
+test('static review freezes the gateway provider extension and verifies its identity', async () => {
+  await withFixture(async (f) => {
+    await materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps);
+    const { piObservabilityVerificationCommand } =
+      await import('../runners/runner-observability.js');
+    const runtime = path.join(f.task, 'inputs/runner-observability');
+    const command = piObservabilityVerificationCommand(runtime);
+    await exec('/bin/sh', ['-c', command]);
+    const extension = path.join(runtime, 'bin/pi-farmslot-observability.ts');
+    await writeFile(extension, '// wrong extension');
+    await assert.rejects(exec('/bin/sh', ['-c', command]), /RUNNER_OBSERVABILITY_BUNDLE_MISMATCH/);
+  });
+});
+
 test('materialization ignores an execution-only pool and preserves frozen guidance and snapshot retries', async () => {
   await withFixture(async (f) => {
     f.run.reviewWorkspace!.support = {
