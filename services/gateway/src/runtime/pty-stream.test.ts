@@ -69,19 +69,10 @@ mock.module('node-pty', {
     },
   },
 });
-const { subscribePty, reinitTmuxSession } = await (async () => {
-  const previousTmpdir = process.env.TMUX_TMPDIR;
-  delete process.env.TMUX_TMPDIR;
-  try {
-    return await import('./pty-stream.js');
-  } finally {
-    if (previousTmpdir === undefined) delete process.env.TMUX_TMPDIR;
-    else process.env.TMUX_TMPDIR = previousTmpdir;
-  }
-})();
+const { subscribePty, reinitTmuxSession } = await import('./pty-stream.js');
 const importCommands = tmuxCommands.map((args) => [...args]);
 
-test('import without a private tmux directory sends no server command', () => {
+test('import sends no tmux server command', () => {
   assert.deepEqual(importCommands, []);
 });
 

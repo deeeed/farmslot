@@ -53,8 +53,7 @@ try {
   );
 }
 
-// Apply tuning only after this module creates a session. Escape-time 0 sends
-// init sequences byte by byte, which xterm.js cannot parse correctly.
+// Apply gateway defaults only after this module creates a session.
 async function applyCreatedTmuxOptions(session: string, sshTarget?: string): Promise<void> {
   try {
     if (sshTarget) {
