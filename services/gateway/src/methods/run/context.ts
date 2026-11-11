@@ -10,12 +10,13 @@ import {
   type RunGetResult,
   type RunListParams,
   type RunListResult,
+  runListRow,
   type RunRecipeRunsForRunParams,
   type RunRecipeRunsForRunResult,
   type RunRecipeRunsForSlotParams,
   type RunRecipeRunsForSlotResult,
   runRecoveryHints,
-  trimRunForList,
+  summarizeRunEvidence,
 } from '@farmslot/protocol';
 
 import {
@@ -106,10 +107,18 @@ export async function runList(params: RunListParams): Promise<RunListResult> {
   // are consumed individually (runGet/runForSlot via presentRun, and
   // decisionList) — enriching every run in a list would be wasted work.
   const result = listRuns(params);
-  // Summaries read the full runs; the listed rows then shed the decision
-  // payload values only a single run's page renders (see @farmslot/protocol runs/list-trim.ts).
+  // Summaries read the full runs; the listed rows then shed the fields only a
+  // single run's page renders (see @farmslot/protocol runs/list-trim.ts). The
+  // gateway attaches a pre-computed evidenceSummary so consumers skip walking
+  // every step and decision on slim rows.
   const withSummaries = attachRunListSummaries(result, params);
-  return { ...withSummaries, runs: withSummaries.runs.map(trimRunForList) };
+  return {
+    ...withSummaries,
+    runs: withSummaries.runs.map((run) => ({
+      ...runListRow(run),
+      evidenceSummary: summarizeRunEvidence(run),
+    })),
+  };
 }
 
 export function selectActiveRunForSlot(

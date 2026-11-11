@@ -17,7 +17,9 @@ import {
   type ResponseFrame,
   type Run,
   type RunListParams,
+  runListRow,
   type RunListVersion,
+  summarizeRunEvidence,
   trimRunForList,
 } from '@farmslot/protocol';
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
@@ -45,12 +47,18 @@ function fixtureRun(t: TestContext, ticketOrPr: string, summary?: string): Run {
   return getRun(run.id)!;
 }
 
-// The contract, computed here rather than through the gateway's helper: sha256 of the served row.
 const rowVersion = (row: Run) =>
   createHash('sha256').update(canonicalResourceJson(row)).digest('hex');
+// The version contract: sha256 of trimRunForList(run), unchanged from before slim rows.
+// The served row is runListRow(run) + evidenceSummary, but the version hash is still the
+// trimRunForList basis (ADR-071 Amendment 1).
 const servedVersion = (id: string): RunListVersion => ({
   id,
   version: rowVersion(trimRunForList(getRun(id)!)),
+});
+const servedRow = (id: string): Run => ({
+  ...runListRow(getRun(id)!),
+  evidenceSummary: summarizeRunEvidence(getRun(id)!),
 });
 
 // A hang fails its test instead of holding the lane's test lock; cleanup lives in t.after.
@@ -124,7 +132,7 @@ test(
       );
       assert.deepEqual(
         reply.runs,
-        reply.runs.map((row) => trimRunForList(getRun(row.id)!)),
+        reply.runs.map((row) => servedRow(row.id)),
       );
       return reply.runs.map((row) => row.id);
     };

@@ -451,3 +451,22 @@ New screens add their reads to the registry instead of calling the gateway.
 Adding an exception means amending this table. Offline, commands stay disabled,
 so previews, searches and diagnostics are unavailable until the client
 reconnects.
+
+## Amendment 3 (2026-11-12): Slim run-list rows
+
+**Version basis unchanged; served row is now a narrower projection.**
+
+Amendment 1 stated that a row's `version` is a hash of the row as served. With
+slim rows the hash is `sha256(canonicalResourceJson(trimRunForList(run)))` —
+the same basis as before — while the row the gateway actually sends is
+`runListRow(run)` (a narrower projection that drops `resourcePosture`,
+`sessionUsage`, `visualJudgmentReceipts`, and `templateProvenance`, and
+projects `steps`, `decisions`, and `engineState` to only the fields list
+surfaces read). Old cached fat rows and new slim rows coexist in a client;
+every consumer falls back to computing from the row's own fields when
+`evidenceSummary` is absent.
+
+Average `run.list` row size drops from ~118 KB to ~9.5 KB (1.3 MB for a
+134-run list vs 15.9 MB). The version contract is otherwise unchanged: clients
+still compare versions from the versions list to decide which rows need a
+catch-up page fetch, and `run.get`/`run.forSlot` remain unaffected.

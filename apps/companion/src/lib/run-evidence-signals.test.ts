@@ -60,6 +60,37 @@ test('summarizeRunEvidenceSignals uses shared protocol evidence parsing', () => 
   assert.equal(signals.find((signal) => signal.kind === 'video')?.label, 'Video 1');
 });
 
+test('summarizeRunEvidenceSignals uses pre-computed evidenceSummary on slim rows', () => {
+  // A slim row has evidenceSummary set by the gateway; evidence signals should use it directly
+  // without walking decisions/steps, so a row with no decisions/steps still returns correct signals.
+  const slimRun = {
+    decisions: [],
+    steps: [],
+    liveRecipeContext: null,
+    evidenceSummary: { artifactCount: 5, videoCount: 2, visualPairCount: 3 },
+  } as unknown as Pick<Run, 'decisions' | 'steps' | 'liveRecipeContext'>;
+  const signals = summarizeRunEvidenceSignals(slimRun);
+  assert.equal(
+    signals.find((s) => s.kind === 'video')?.count,
+    2,
+    'videoCount from evidenceSummary',
+  );
+  assert.equal(
+    signals.find((s) => s.kind === 'compare')?.count,
+    3,
+    'visualPairCount from evidenceSummary',
+  );
+
+  // An old fat row without evidenceSummary falls back to computing from content.
+  const fatRun = {
+    decisions: [],
+    steps: [],
+    liveRecipeContext: { artifactManifest: [] },
+  } as unknown as Pick<Run, 'decisions' | 'steps' | 'liveRecipeContext'>;
+  const fatSignals = summarizeRunEvidenceSignals(fatRun);
+  assert.deepEqual(fatSignals, [], 'fat row with no artifacts returns empty signals');
+});
+
 test('normalizeFamilyEvidenceFilterParam accepts route-safe family evidence filters', () => {
   assert.equal(normalizeFamilyEvidenceFilterParam('videos'), 'videos');
   assert.equal(normalizeFamilyEvidenceFilterParam(['after']), 'after');

@@ -1,7 +1,13 @@
 // runs/list-version.ts — run.list version lists and catch-up pages (ADR-071 Amendment 1)
 import { createHash } from 'node:crypto';
 
-import { type Run, type RunListVersion, trimRunForList } from '@farmslot/protocol';
+import {
+  type Run,
+  runListRow,
+  type RunListVersion,
+  summarizeRunEvidence,
+  trimRunForList,
+} from '@farmslot/protocol';
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 
 import { resourceRevisions } from '../resources/revisions.js';
@@ -62,6 +68,12 @@ export function runListVersions(runs: readonly Run[]): RunListVersion[] {
   return listed;
 }
 
+/** Slim a full run into a list row, attaching the pre-computed evidence summary. */
+function serveListRow(run: Run): Run {
+  const slim = runListRow(run);
+  return { ...slim, evidenceSummary: summarizeRunEvidence(run) };
+}
+
 /**
  * One catch-up page: rows in the order asked. The page stops before the row that would take
  * it past the byte cap, but its first row is always served, so an oversized row goes alone.
@@ -75,7 +87,7 @@ export function runListIdsPage(runs: readonly Run[]): {
   const pageVersions: RunListVersion[] = [];
   let bytes = 0;
   for (const run of runs) {
-    const row = trimRunForList(run);
+    const row = serveListRow(run);
     bytes += Buffer.byteLength(JSON.stringify(row));
     if (page.length > 0 && bytes > RUN_LIST_PAGE_MAX_BYTES) break;
     page.push(row);
