@@ -4,10 +4,8 @@
 // `farmslot update` (fetch + reset to origin's default branch). "Update
 // available" therefore means the local HEAD is behind origin/<default-branch>.
 // One source owner captures remote refs. Client reads share its retained observation.
-import { execFile as execFileCb } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { promisify } from 'node:util';
 
 import type {
   GatewayReleaseNotes,
@@ -19,6 +17,7 @@ import type {
 
 import { farmslotRoot } from '../core/index.js';
 import { getGatewayListenSnapshot } from '../core/listen-address.js';
+import { type GitResult, gitService } from '../host-services/git.js';
 import { githubQueryBudget } from '../integrations/github-query-budget.js';
 import {
   GATEWAY_UPDATE_ERROR_TTL_MS,
@@ -33,8 +32,6 @@ import {
   watchCheckoutUpdateChanges,
 } from './gateway-update.js';
 import { workerSessionHistoryEnabled } from './worker-session-history.js';
-
-const execFile = promisify(execFileCb);
 
 const UPDATE_COMMAND = 'farmslot update';
 const GIT_TIMEOUT_MS = 8_000;
@@ -107,49 +104,42 @@ function readGatewayVersion(): string {
   }
 }
 
-interface GitResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
-
 /**
  * Run git against the gateway's own clone with argv (no shell). The default
  * branch name flows in from `origin/HEAD`, which is remote-controlled — git
  * permits refnames containing shell metacharacters (e.g. `main;id`), so this
- * MUST NOT go through a shell. execFile passes args verbatim to git; a hostile
+ * MUST NOT go through a shell. gitService.run passes args verbatim to git; a hostile
  * branch name can at worst make git fail to resolve a ref, never execute a
  * command. Resolves (never rejects) so callers branch on exitCode: a non-zero
  * git exit on the offline / missing-ref paths is routine control flow here.
  */
-async function git(args: string[], timeout = GIT_TIMEOUT_MS): Promise<GitResult> {
-  try {
-    const { stdout, stderr } = await execFile('git', args, {
-      cwd: farmslotRoot(),
-      timeout,
-      maxBuffer: 64 * 1024,
-    });
-    return { exitCode: 0, stdout, stderr };
-  } catch (err) {
-    const e = err as { code?: number | string; stdout?: string; stderr?: string; message?: string };
-    return {
-      exitCode: typeof e.code === 'number' ? e.code : 1,
-      stdout: e.stdout ?? '',
-      stderr: e.stderr ?? e.message ?? '',
-    };
-  }
+function git(args: string[], timeout = GIT_TIMEOUT_MS): Promise<GitResult> {
+  return gitService.run(args, { cwd: farmslotRoot(), timeout });
+}
+
+/** `git symbolic-ref --quiet --short refs/remotes/origin/HEAD`, from the checkout's files when they answer. */
+async function originHead(): Promise<GitResult> {
+  const checkout = await gitService.openCheckout(farmslotRoot());
+  const target =
+    checkout && (await gitService.readSymbolicRef(checkout, 'refs/remotes/origin/HEAD'));
+  if (target === undefined)
+    return git(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+  // --quiet: a missing or non-symbolic ref exits 1 with no output.
+  return target === null
+    ? { exitCode: 1, stdout: '', stderr: '' }
+    : { exitCode: 0, stdout: `${target}\n`, stderr: '' };
 }
 
 async function resolveDefaultBranch(): Promise<string> {
   // origin/HEAD records the remote default branch once `git remote set-head` ran.
-  const head = await git(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+  const head = await originHead();
   if (head.exitCode === 0 && head.stdout.trim()) {
     return head.stdout.trim().replace(/^origin\//, '');
   }
   // A `curl | bash` clone may never have set origin/HEAD — ask the remote once.
   const auto = await git(['remote', 'set-head', 'origin', '--auto']);
   if (auto.exitCode === 0) {
-    const retry = await git(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+    const retry = await originHead();
     if (retry.exitCode === 0 && retry.stdout.trim()) {
       return retry.stdout.trim().replace(/^origin\//, '');
     }
@@ -203,7 +193,7 @@ async function runGitFreshness(): Promise<GatewayUpdateStatus> {
 
 async function readInstalledCheckout(): Promise<Partial<GatewayUpdateStatus>> {
   const current = updateObservation.snapshot();
-  const tracked = await git(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+  const tracked = await originHead();
   const branch =
     tracked.exitCode === 0 && tracked.stdout.trim()
       ? tracked.stdout.trim().replace(/^origin\//, '')

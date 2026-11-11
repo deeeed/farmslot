@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import {
   type AgentContextSummary,
   DEFAULT_BRANCH,
+  type DefaultBranchProbe,
   defaultBranchProbeCommand,
   type ExecResult,
   type FleetPoolReadError,
@@ -21,6 +22,7 @@ import {
 import { poolDirectory } from '@farmslot/slot-config';
 
 import { summarizeAgentContexts } from '../agents/contexts.js';
+import { slotFilesReadInProcess } from '../core/exec.js';
 import {
   claimSlotStatusIf,
   execOnSlot,
@@ -47,6 +49,7 @@ import { usesNodeLink } from '../fleet/node-link-policy.js';
 import { loadFleetStatus, loadPoolConfigs } from '../fleet/state.js';
 import { backgroundHost } from '../host-services/background/client.js';
 import { BACKGROUND_OPERATIONS } from '../host-services/background/protocol.js';
+import { gitService } from '../host-services/git.js';
 import { slotResourceChanges } from '../resources/slot-run-bindings.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
 import { isRunArchiving } from '../run-lifecycle/archive-fence.js';
@@ -1139,13 +1142,17 @@ async function checkSingleSlot(
   const device = deviceProbe(vars, projectJson, projectVars);
   const devServerCommand = devServerProbe(vars, projectJson, projectVars);
   const healthCommand = expandHook('health_check', projectJson, vars, projectVars);
+  // A local checkout's git state is read from its files; whatever they cannot answer stays a probe.
+  const files = await readLocalSlotGit(vars, defaultBranch);
   const probes = [
-    gitHeadProbeCommand(vars.remoteRepo),
-    `test -f ${shellQuote(path.join(vars.remoteRepo, '.git'))} && echo linked || echo primary`,
+    files.head ? undefined : gitHeadProbeCommand(vars.remoteRepo),
+    files.linked !== undefined
+      ? undefined
+      : `test -f ${shellQuote(path.join(vars.remoteRepo, '.git'))} && echo linked || echo primary`,
     device?.command,
     devServerCommand,
     healthCommand ? `cd '${vars.remoteRepo}' && ${healthCommand} 2>/dev/null` : undefined,
-    defaultBranch === undefined
+    defaultBranch === undefined || files.defaultBranch
       ? undefined
       : defaultBranchProbeCommand(vars.remoteRepo, defaultBranch),
   ];
@@ -1156,13 +1163,18 @@ async function checkSingleSlot(
   ]);
   const [branchResult, linkedResult, deviceResult, devServerResult, healthResult, repoResult] =
     probed;
-  const branchInfo = branchResult ? parseGitHeadProbe(branchResult.stdout) : { branch: '-' };
-  const linkedWorktree = readLinkedWorktree(vars, linkedResult);
+  const branchInfo =
+    files.head ?? (branchResult ? parseGitHeadProbe(branchResult.stdout) : { branch: '-' });
+  const linkedWorktree = files.linked ?? readLinkedWorktree(vars, linkedResult);
   const emuStr = device ? `${device.prefix}:${deviceResult?.exitCode === 0 ? 'OK' : 'OFF'}` : '-';
   const devserverStr = devServerCommand ? (devServerResult?.exitCode === 0 ? 'OK' : 'OFF') : '-';
   const [cdpStr, repoBlocker] = await Promise.all([
     healthCommand ? readHealth(projectJson, healthResult) : '-',
-    defaultBranch === undefined ? null : readSlotDefaultBranch(vars, defaultBranch, repoResult),
+    defaultBranch === undefined
+      ? null
+      : files.defaultBranch
+        ? readSlotDefaultBranch(vars, defaultBranch, files.defaultBranch)
+        : readSlotDefaultBranch(vars, defaultBranch, repoResult),
   ]);
 
   const dispatchable =
@@ -1238,17 +1250,43 @@ async function runSlotProbes(
   return results;
 }
 
+/** The git state a local slot's files answer; each missing field is left to its shell probe. */
+export interface SlotGitFiles {
+  head?: { branch: string; headSha: string };
+  linked?: boolean;
+  defaultBranch?: DefaultBranchProbe;
+}
+
+export async function readLocalSlotGit(
+  vars: Pick<SlotVars, 'host' | 'machine' | 'remoteRepo'>,
+  defaultBranch: string | undefined,
+): Promise<SlotGitFiles> {
+  if (!slotFilesReadInProcess(vars)) return {};
+  const [checkout, linked] = await Promise.all([
+    gitService.openCheckout(vars.remoteRepo),
+    gitService.isGitFile(vars.remoteRepo),
+  ]);
+  if (!checkout) return { linked };
+  const [head, defaultProbe] = await Promise.all([
+    gitService.readHeadProbe(checkout),
+    defaultBranch === undefined
+      ? undefined
+      : gitService.readDefaultBranchProbe(checkout, defaultBranch),
+  ]);
+  return { head, linked, defaultBranch: defaultProbe };
+}
+
 function readSlotDefaultBranch(
   vars: SlotVars,
   defaultBranch: string,
-  result: SlotProbeOutcome,
+  result: SlotProbeOutcome | DefaultBranchProbe,
 ): string | null {
   if (!result) {
     // Transport failure is not evidence about the repo; the SSH probe owns that verdict.
     console.warn(`[fleet.refresh] ${vars.slotId}: default-branch probe failed; no repo verdict`);
     return null;
   }
-  const probe = readDefaultBranchProbe(result, defaultBranch);
+  const probe = 'readable' in result ? result : readDefaultBranchProbe(result, defaultBranch);
   if (probe.readable) return probe.blocker;
   // A failed git read is not evidence about the default branch: no verdict.
   console.warn(`[fleet.refresh] ${vars.slotId}: default-branch probe: ${probe.error}`);
