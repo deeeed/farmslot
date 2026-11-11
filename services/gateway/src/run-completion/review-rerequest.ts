@@ -8,7 +8,7 @@
 // Finalize now re-requests every reviewer whose latest review is
 // CHANGES_REQUESTED, so the PR reappears in their queue.
 
-import { ghRequest } from '../integrations/github-client.js';
+import { github } from '../integrations/github-client.js';
 
 export interface PrReviewSummary {
   author: string;
@@ -62,19 +62,25 @@ export function parseReviewPages(stdout: string): PrReviewSummary[] {
 }
 
 export async function listPrReviews(ciRepo: string, prNumber: number): Promise<PrReviewSummary[]> {
-  const result = await ghRequest(
-    ['api', `repos/${ciRepo}/pulls/${prNumber}/reviews?per_page=100`, '--paginate', '--slurp'],
-    { force: true },
+  const rows = await github.rest<GhReview[]>(
+    'GET',
+    `repos/${ciRepo}/pulls/${prNumber}/reviews?per_page=100`,
+    { force: true, paginate: true },
   );
-  return parseReviewPages(result.stdout);
+  return (rows ?? []).map((row) => ({
+    author: row.user?.type === 'Bot' ? `${row.user?.login ?? ''}[bot]` : (row.user?.login ?? ''),
+    state: row.state ?? '',
+    submittedAt: row.submitted_at ?? '',
+  }));
 }
 
 export async function prAuthorLogin(ciRepo: string, prNumber: number): Promise<string | null> {
-  const result = await ghRequest(
-    ['api', `repos/${ciRepo}/pulls/${prNumber}`, '--jq', '.user.login'],
+  const pr = await github.rest<{ user?: { login?: string } | null }>(
+    'GET',
+    `repos/${ciRepo}/pulls/${prNumber}`,
     { force: true },
   );
-  return result.stdout.trim() || null;
+  return pr?.user?.login?.trim() || null;
 }
 
 /**
@@ -101,16 +107,10 @@ export async function rerequestChangesRequestedReviewers(
     const requested: string[] = [];
     for (const login of reviewers) {
       try {
-        await ghRequest(
-          [
-            'api',
-            '-X',
-            'POST',
-            `repos/${ciRepo}/pulls/${prNumber}/requested_reviewers`,
-            '-f',
-            `reviewers[]=${login}`,
-          ],
-          { force: true },
+        await github.rest<unknown>(
+          'POST',
+          `repos/${ciRepo}/pulls/${prNumber}/requested_reviewers`,
+          { body: { reviewers: [login] }, force: true },
         );
         requested.push(login);
       } catch (error) {

@@ -1,8 +1,7 @@
 // run-completion.ts — Post-work completion pipeline
 // Handles artifact copy, PR comments (with worker report), PR body sanitization, retrospective curation.
-import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
@@ -30,7 +29,7 @@ import { execOnSlot } from '../core/exec.js';
 import { execLocal } from '../core/index.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { shellQuote } from '../core/tmux.js';
-import { ghRequest } from '../integrations/github-client.js';
+import { github } from '../integrations/github-client.js';
 import {
   findPRNumber,
   persistRunPrNumber,
@@ -1469,42 +1468,23 @@ export async function createPrFromApprovedPackage(
   await assertCommitSignatures(vars, `refs/remotes/origin/${base}`, prPackage.headSha || 'HEAD');
   await pushPublicationBranch(run, prPackage.headSha, base, prPackage.branch);
 
-  const tmpFile = `/tmp/farmslot-pr-body-${run.id.slice(0, 8)}-${randomUUID()}.md`;
-  await writeFile(tmpFile, pendingPublicationBody(prPackage), 'utf-8');
-  const args = [
-    'pr',
-    'create',
-    '--repo',
-    ciRepo,
-    '--head',
-    prPackage.branch,
-    '--base',
-    base,
-    '--title',
-    pendingPublicationTitle(prPackage),
-    '--body-file',
-    tmpFile,
-  ];
   // Always create local-first PRs as draft while artifact upload/body rewrite is
   // still pending. Ready publication marks it ready only after the final body is
   // rewritten with uploaded evidence URLs.
-  args.push('--draft');
-  try {
-    const result = await ghRequest(args, { force: true });
-    const url = result.stdout
-      .trim()
-      .split(/\s+/)
-      .find((part) => /github\.com\/.+\/pull\/\d+/.test(part));
-    const match = url?.match(/\/pull\/(\d+)/);
-    if (match) return Number(match[1]);
-    return findPRNumber(run, ciRepo);
-  } finally {
-    await rm(tmpFile, { force: true }).catch((err: unknown) => {
-      console.warn(
-        `[run-completion] temporary PR body cleanup failed: ${(err as Error).message.slice(0, 200)}`,
-      );
-    });
-  }
+  const prUrl = await github.prCreate(
+    ciRepo,
+    {
+      base,
+      head: prPackage.branch,
+      title: pendingPublicationTitle(prPackage),
+      body: pendingPublicationBody(prPackage),
+      draft: true,
+    },
+    { force: true },
+  );
+  const match = typeof prUrl === 'string' ? prUrl.match(/\/pull\/(\d+)/) : null;
+  if (match) return Number(match[1]);
+  return findPRNumber(run, ciRepo);
 }
 
 function pendingPublicationTitle(prPackage: ReadyGatePrPackage): string {
@@ -1525,10 +1505,7 @@ async function applyApprovedPrTitle(
   prNumber: number,
   prPackage: ReadyGatePrPackage,
 ): Promise<void> {
-  await ghRequest(
-    ['pr', 'edit', String(prNumber), '--repo', ciRepo, '--title', prPackage.draftTitle],
-    { force: true },
-  );
+  await github.prEdit(ciRepo, prNumber, { title: prPackage.draftTitle }, { force: true });
 }
 
 /**
@@ -1687,10 +1664,7 @@ export async function publishCompletionPackage(
         name: 'post-operator-comment',
         detail: `Posting operator comment to PR #${prNumber}`,
       });
-      await ghRequest(
-        ['pr', 'comment', String(prNumber), '--repo', ciRepo, '--body', options.comment],
-        { force: true },
-      );
+      await github.prComment(ciRepo, prNumber, options.comment, { force: true });
     }
 
     emit('substep', {
