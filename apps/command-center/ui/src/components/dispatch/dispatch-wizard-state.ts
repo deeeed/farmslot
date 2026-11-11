@@ -12,7 +12,7 @@ import type {
   ProfileFitSuggestion,
   ProjectConfig,
   QueueItem,
-  Run,
+  RunListRow,
   SlotStatus,
   TemplatePreview,
   WorkerTemplateOption,
@@ -40,7 +40,7 @@ export abstract class DispatchWizardState extends LitElement {
   @property({ attribute: false }) mockPools: PoolConfig[] = [];
   @state() _reviewPools: PoolConfig[] = [];
   @state() _reviewPoolsError = '';
-  @property({ attribute: false }) mockPriorRuns: Run[] | null = null;
+  @property({ attribute: false }) mockPriorRuns: RunListRow[] | null = null;
   @property({ attribute: false }) mockInitial: DispatchWizardMockInitialState | null = null;
 
   @state() _flowType: FlowType | null = null;

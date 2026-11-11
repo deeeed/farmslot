@@ -30,7 +30,7 @@ import type {
   ReviewPolicy,
   ReviewRequestContext,
   ReviewSequence,
-  Run,
+  RunListRow,
   SafetyTier,
   SlotStatus,
   TaskTemplateSelection,
@@ -356,7 +356,7 @@ export class BacklogPanel extends LitElement {
   @property({ attribute: false }) demoRuns: Run[] | null = null;
   @state() private _items: BacklogItem[] = [];
   @state() private _slots: SlotStatus[] = [];
-  @state() private _runs: Run[] = [];
+  @state() private _runs: RunListRow[] = [];
   @state() private _workGraphs: WorkGraphProjection[] = [];
   @state() private _globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private _project = 'all';
@@ -448,7 +448,7 @@ export class BacklogPanel extends LitElement {
   private _unsubVisibleModels?: () => void;
   @state() private _visibleModelsError = '';
   private _activityCacheItems: BacklogItem[] | null = null;
-  private _activityCacheRuns: Run[] | null = null;
+  private _activityCacheRuns: RunListRow[] | null = null;
   private _activityCache = new Map<string, Run | undefined>();
   private readonly _confirmTimer = new ConfirmActionTimer({
     pendingConfirm: () => this._pendingConfirm,

@@ -8,7 +8,7 @@ import type {
   PRStatus,
   QueueItem,
   ResultPackageManifest,
-  Run,
+  RunListRow,
   WorkerTemplateOption,
 } from '@farmslot/protocol';
 
@@ -67,7 +67,7 @@ export abstract class EvalCockpitState extends LitElement {
   @state() _suiteCells: EvalLaunchCell[] = [];
   @state() _busy = '';
   @state() _error = '';
-  @state() _runs: Run[] = [];
+  @state() _runs: RunListRow[] = [];
   @state() _prs: PRStatus[] = [];
   @state() _queueItems: QueueItem[] = [];
   @state() _evalSlotCap = 1;
@@ -90,7 +90,7 @@ export abstract class EvalCockpitState extends LitElement {
   @state() _visibleModelsError = '';
   _catalogCache: {
     override: EvalCaseCatalogItem[] | null;
-    runs: Run[];
+    runs: RunListRow[];
     prs: PRStatus[];
     globalProjects: string[];
     items: EvalCaseCatalogItem[];

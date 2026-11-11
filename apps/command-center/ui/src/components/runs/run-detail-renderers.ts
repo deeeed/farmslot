@@ -28,6 +28,7 @@ import {
   type Run,
   type RunDecision,
   type RunGrade,
+  type RunListRow,
   runOutputCloseUnavailableReason,
   runRecoveryHints,
   type TaskProgressStructured,
@@ -106,7 +107,7 @@ export interface RunDetailViewContext {
   embedded: boolean;
   run: Run | null;
   prStatus: PRStatus | null;
-  siblings: Run[];
+  siblings: RunListRow[];
   taskProgress: TaskProgressStructured | null;
   /** The run's acceptance ledger (ADR-060), rendered beside the pipeline progress. */
   evidenceModel?: EvidenceReviewModel | null;

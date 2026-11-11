@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 
 import {
   type Run,
+  type RunListRow,
   runListRow,
   type RunListVersion,
   summarizeRunEvidence,
@@ -69,7 +70,7 @@ export function runListVersions(runs: readonly Run[]): RunListVersion[] {
 }
 
 /** Slim a full run into a list row, attaching the pre-computed evidence summary. */
-function serveListRow(run: Run): Run {
+function serveListRow(run: Run): RunListRow {
   const slim = runListRow(run);
   return { ...slim, evidenceSummary: summarizeRunEvidence(run) };
 }
@@ -80,10 +81,10 @@ function serveListRow(run: Run): Run {
  * Rows are versioned through the same per-change memo as the versions list.
  */
 export function runListIdsPage(runs: readonly Run[]): {
-  runs: Run[];
+  runs: RunListRow[];
   versions: RunListVersion[];
 } {
-  const page: Run[] = [];
+  const page: RunListRow[] = [];
   const pageVersions: RunListVersion[] = [];
   let bytes = 0;
   for (const run of runs) {

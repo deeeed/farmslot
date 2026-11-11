@@ -9,7 +9,7 @@ import type {
   QueueItem,
   ResultPackageManifest,
   ResultPackageProjection,
-  Run,
+  RunListRow,
   WorkerTemplateOption,
 } from '@farmslot/protocol';
 import { evalTaskProfileFlow, isTerminalRunStatus } from '@farmslot/protocol';
@@ -80,7 +80,7 @@ export const CANDIDATE_TEMPLATE_OPTIONS: readonly CandidateTemplateChoice[] = [
   },
 ];
 
-export function activeEvalRunCount(runs: readonly Run[], capGroupId: string): number {
+export function activeEvalRunCount(runs: readonly RunListRow[], capGroupId: string): number {
   return runs.filter(
     (run) =>
       run.engineState?.evalExperiment?.capGroupId === capGroupId &&

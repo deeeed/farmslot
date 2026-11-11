@@ -10,6 +10,7 @@ import {
   isTerminalRunStatus,
   type ReviewSelection,
   type Run,
+  type RunListRow,
 } from '@farmslot/protocol';
 import { defaultModelForRunner, type ReviewDispatchCatalog } from '@farmslot/review-dispatch';
 
@@ -90,7 +91,7 @@ function comparisonValue(
 
 export function sortBacklogItems(
   items: readonly BacklogItem[],
-  runs: Run[],
+  runs: RunListRow[],
   key: BacklogSortKey,
   direction: BacklogSortDirection,
   prelinkedRuns?: ReadonlyMap<string, Run | undefined>,

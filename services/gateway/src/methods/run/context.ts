@@ -114,7 +114,7 @@ export async function runList(params: RunListParams): Promise<RunListResult> {
   const withSummaries = attachRunListSummaries(result, params);
   return {
     ...withSummaries,
-    runs: withSummaries.runs.map((run) => ({
+    runs: result.runs.map((run) => ({
       ...runListRow(run),
       evidenceSummary: summarizeRunEvidence(run),
     })),

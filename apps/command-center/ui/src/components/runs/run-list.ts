@@ -10,6 +10,7 @@ import type {
   RunEvidenceSummary,
   RunFamilyReadinessSummary,
   RunListResult,
+  RunListRow,
   RunRehydratePrNumberResult,
   TaskProgressResult,
 } from '@farmslot/protocol';
@@ -258,7 +259,7 @@ export class RunList extends RunListState {
     window.removeEventListener('hashchange', this._onHashChange);
   }
 
-  private syncTaskProgress(runs: readonly Run[]): void {
+  private syncTaskProgress(runs: readonly RunListRow[]): void {
     const targets = new Map(
       runs.flatMap((run) => {
         const target = runChecklistProgressTarget(run);
@@ -358,7 +359,7 @@ export class RunList extends RunListState {
       throw new Error('The selected runs changed. Review the current list before retrying.');
   }
 
-  private runById(id: string): Run | undefined {
+  private runById(id: string): RunListRow | undefined {
     return this.filteredRuns.find((run) => run.id === id) ?? this.runs.find((run) => run.id === id);
   }
 
@@ -376,7 +377,7 @@ export class RunList extends RunListState {
     };
   }
 
-  private get filteredRuns(): readonly Run[] {
+  private get filteredRuns(): readonly RunListRow[] {
     return filterRunList({
       ...this.listFilters,
       familyRuns: this.familyRuns,
@@ -391,7 +392,7 @@ export class RunList extends RunListState {
     if (!next) this.selectedIds = new Set();
   }
 
-  private selectRun(run: Run) {
+  private selectRun(run: RunListRow) {
     this.selectedRunId = run.id;
     this._persistHashState('push');
   }
@@ -422,7 +423,7 @@ export class RunList extends RunListState {
     this.selectedIds = next;
   }
 
-  private selectRuns(runs: readonly Run[]) {
+  private selectRuns(runs: readonly RunListRow[]) {
     this.selectedIds = new Set(runs.map((run) => run.id));
   }
 
@@ -856,7 +857,7 @@ export class RunList extends RunListState {
     });
   }
 
-  private renderCard(run: Run, showCheckbox: boolean) {
+  private renderCard(run: RunListRow, showCheckbox: boolean) {
     const timing = runElapsedTimeView({ ...run, steps: runActivityView(run)?.steps ?? run.steps });
     const fc = runDisplayColor(run);
     const sc = runStatusColor(run.status);
@@ -1029,7 +1030,7 @@ export class RunList extends RunListState {
     });
   }
 
-  private async setRunTags(run: Run, tags: string[]) {
+  private async setRunTags(run: RunListRow, tags: string[]) {
     await this.assertCurrentRuns([run.id]);
     await gateway.request(Methods.RUN_TAGS_SET, { runId: run.id, tags });
   }
@@ -1041,7 +1042,7 @@ export class RunList extends RunListState {
     this._persistHashState();
   }
 
-  private renderRunTags(run: Run) {
+  private renderRunTags(run: RunListRow) {
     return html`
       <run-tag-editor
         .tags=${normalizeRunTags(run.tags)}
@@ -1052,7 +1053,7 @@ export class RunList extends RunListState {
     `;
   }
 
-  private renderEvidenceSignals(run: Run, evidenceSummary: RunEvidenceSummary) {
+  private renderEvidenceSignals(run: RunListRow, evidenceSummary: RunEvidenceSummary) {
     if (evidenceSummary.videoCount === 0 && evidenceSummary.visualPairCount === 0) return nothing;
     return html`
       <span class="evidence-signals" aria-label="Reviewable evidence">

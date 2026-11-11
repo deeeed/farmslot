@@ -31,7 +31,7 @@ import {
   type ResourceStatus,
   type ResourceStatusUpdatedPayload,
   type ResourceWatchSetEnabledResult,
-  type Run,
+  type RunListRow,
   type SlotResource,
   type SlotStatus,
   sourceObservationAge,
@@ -129,7 +129,7 @@ export class FleetCanvas extends LitElement {
   @state() private slotProgress: Map<string, TaskProgressStructured> = new Map();
   @state() private progressObservations = new Map<string, ResourceQueryState<TaskProgressResult>>();
   private readonly progressQueries = new Map<string, ResourceQueryController<TaskProgressResult>>();
-  @state() private slotRuns: Map<string, Run> = new Map();
+  @state() private slotRuns: Map<string, RunListRow> = new Map();
   @state() private machineHealthMap: Map<string, MachineHealth> = new Map();
   @state() private slotResourceStatus: Map<string, Map<string, ResourceStatus>> = new Map();
   @state() private slotResourceDefs: Map<string, SlotResource[]> = new Map();
@@ -578,7 +578,7 @@ export class FleetCanvas extends LitElement {
   }
 
   private buildSlotRuns() {
-    const next = new Map<string, Run>();
+    const next = new Map<string, RunListRow>();
     for (const s of this.slots) {
       const run = getRunForSlot(s.slot);
       if (run) next.set(s.slot, run);

@@ -3,8 +3,8 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 
 import type {
-  Run,
   RunListResult,
+  RunListRow,
   SlotStatus,
   TmuxWorkerListResult,
   TmuxWorkerRef,
@@ -69,7 +69,7 @@ export class TerminalSplitView extends LitElement {
   @property({ type: String }) initialSlot = '';
   @property() initialRun = '';
   @state() private _selectedRuns: string[] = [];
-  @state() private _runs: Run[] = [];
+  @state() private _runs: RunListRow[] = [];
   @state() private _selectedContexts: Record<string, string> = {};
 
   @state() private _availableSlots: string[] = [];
@@ -546,7 +546,7 @@ export class TerminalSplitView extends LitElement {
   }
 
   /** Explicit selection uses the current canonical list, never a prior connection's reply. */
-  private async _refreshActiveRuns(): Promise<Run[]> {
+  private async _refreshActiveRuns(): Promise<RunListRow[]> {
     const owner = getResourceWorkspaceKey();
     const connection = gateway.resourceConnectionId;
     await this.activeRunsQuery.retry();

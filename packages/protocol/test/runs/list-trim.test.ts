@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run, RunDecision } from '../../src/contracts/index.js';
+import type {
+  ReviewStatus,
+  Run,
+  RunDecision,
+  RunDecisionPayload,
+  RunEngineState,
+} from '../../src/contracts/index.js';
 import { summarizeRunEvidence } from '../../src/runs/evidence-summary.js';
 import {
   RUN_LIST_PAYLOAD_VALUE_LIMIT,
@@ -42,8 +48,8 @@ function decision(payload: Record<string, unknown>): RunDecision {
     description: '',
     actions: [],
     createdAt: '2026-09-14T00:00:00.000Z',
-    payload: payload as unknown as RunDecision['payload'],
-  } as RunDecision;
+    payload: payload as RunDecisionPayload,
+  };
 }
 
 test('run.list keeps small decision payload values and names the large ones it drops', () => {
@@ -69,17 +75,15 @@ test('trimRunForList copies instead of mutating the stored run', () => {
   const run = {
     id: 'r1',
     decisions: [decision({ kind: 'review', reviewMd: big }), decision({ kind: 'ready' })],
-  } as unknown as Run;
+  } as Run;
   const listed = trimRunForList(run);
   assert.notEqual(listed, run);
-  assert.equal(
-    (run.decisions[0].payload as unknown as Record<string, unknown>).reviewMd,
-    big,
-    'the store object keeps its payload',
-  );
+  const storedPayload = run.decisions[0].payload;
+  if (!storedPayload || storedPayload.kind !== 'review') throw new Error('Expected review payload');
+  assert.equal(storedPayload.reviewMd, big, 'the store object keeps its payload');
   assert.equal(listed.decisions[0].payloadTrimmed?.[0], 'reviewMd');
   assert.equal(listed.decisions[1], run.decisions[1], 'untouched decisions are shared');
-  const noop = { id: 'r2', decisions: [decision({ kind: 'ready' })] } as unknown as Run;
+  const noop = { id: 'r2', decisions: [decision({ kind: 'ready' })] } as Run;
   assert.equal(trimRunForList(noop), noop);
 });
 
@@ -106,7 +110,7 @@ test('run lists omit output file manifests without changing the retained detail'
       reportPath: 'artifacts/report.md',
       artifactManifest: [{ path: 'artifacts/report.md', purpose: 'report' }],
     },
-  } as unknown as Run;
+  } as Run;
   const listed = trimRunForList(run);
   assert.equal(listed.output?.reportPath, run.output?.reportPath);
   assert.equal(listed.output?.artifactManifestOmitted, true);
@@ -130,9 +134,8 @@ function richRun(): Run {
     metrics: {
       runner: 'claude',
       model: 'claude-opus',
-      outcome: '',
-      disposition: '',
-    } as Run['metrics'],
+      nudgeCount: 0,
+    },
     steps: [
       {
         name: 'dispatch',
@@ -140,7 +143,7 @@ function richRun(): Run {
         startedAt: '2026-11-11T00:00:10.000Z',
         completedAt: '2026-11-11T00:00:20.000Z',
         outputs: { selectedSlot: 'slot-a', reason: 'picked best slot', ignoredField: 'drop me' },
-      } as unknown as Run['steps'][number],
+      },
     ],
     decisions: [
       {
@@ -163,8 +166,20 @@ function richRun(): Run {
           prNumber: null,
           repo: null,
           diffStat: { additions: 10, deletions: 2, files: 1 },
+          reviews: [
+            {
+              id: 'pr-rev-1',
+              mode: 'cold',
+              loopNumber: 1,
+              verdict: 'pass',
+              unresolvedCount: 0,
+              runner: 'claude',
+              model: 'claude-opus',
+              issues: [{ id: 'i1', text: 'nit', severity: 'nit', required: false }],
+            } as ReviewStatus,
+          ],
         },
-      } as unknown as Run['decisions'][number],
+      } as RunDecision,
     ],
     engineState: {
       generation: 5,
@@ -186,15 +201,21 @@ function richRun(): Run {
             model: 'claude-opus',
             issues: [],
             artifactPaths: ['artifacts/review.md'],
-          } as Run['engineState']['publishGate']['reviews'][number],
+          } as ReviewStatus,
         ],
       },
-    } as Run['engineState'],
-    resourcePosture: { level: 'standard', reason: 'default' } as unknown as Run['resourcePosture'],
-    sessionUsage: [{ runner: 'claude', totalTokens: 5000 }] as Run['sessionUsage'],
-    visualJudgmentReceipts: [] as Run['visualJudgmentReceipts'],
+    } as RunEngineState,
+    resourcePosture: {
+      posture: 'active',
+      policySource: 'framework-default',
+      capabilities: [],
+      workerRetained: false,
+      updatedAt: '2026-11-11T00:00:00.000Z',
+    },
+    sessionUsage: [{ runner: 'claude', totalTokens: 5000 }],
+    visualJudgmentReceipts: [],
     templateProvenance: null,
-  } as unknown as Run;
+  } as Run;
 }
 
 test('runListRow drops the four heavy fields', () => {
@@ -211,25 +232,26 @@ test('runListRow keeps only allowed step output keys', () => {
   const row = runListRow(run);
   assert.equal(row.steps[0]?.outputs?.selectedSlot, 'slot-a');
   assert.equal(row.steps[0]?.outputs?.reason, 'picked best slot');
-  assert.equal((row.steps[0]?.outputs as Record<string, unknown>)?.ignoredField, undefined);
+  assert.equal(row.steps[0]?.outputs?.['ignoredField'], undefined);
 });
 
 test('runListRow slims ready payload: drops large content fields, keeps metadata and slims reviews', () => {
   const run = richRun();
   const row = runListRow(run);
-  const payload = row.decisions[0]?.payload as Record<string, unknown>;
+  const payload = row.decisions[0]?.payload;
   assert.equal(payload?.kind, 'ready');
-  assert.ok(payload?.gateReadiness, 'gateReadiness kept');
+  if (!payload || payload.kind !== 'ready') throw new Error('Expected ready payload');
+  assert.ok(payload.gateReadiness, 'gateReadiness kept');
   // reviewRoundBudget slimmed to {used, remaining}
-  assert.deepEqual(payload?.reviewRoundBudget, { used: 1, remaining: 2 });
-  // Large content fields dropped
-  assert.equal(payload?.workerReport, undefined, 'workerReport dropped');
-  assert.equal(payload?.inputSnapshot, undefined, 'inputSnapshot dropped');
-  assert.equal(payload?.prPackage, undefined, 'prPackage dropped');
-  assert.equal(payload?.artifactManifest, undefined, 'artifactManifest dropped');
+  assert.deepEqual(payload.reviewRoundBudget, { used: 1, remaining: 2 });
+  // workerReport kept as optional (undefined on slim rows that omit it)
+  assert.equal(payload.workerReport, undefined, 'workerReport dropped');
+  // inputSnapshot, prPackage, artifactManifest are omitted from the slim type at runtime
+  assert.equal('inputSnapshot' in payload, false, 'inputSnapshot dropped');
+  assert.equal('prPackage' in payload, false, 'prPackage dropped');
+  assert.equal('artifactManifest' in payload, false, 'artifactManifest dropped');
   // reviews slimmed via slimReviewStatus (keeps verdict, unresolvedCount, etc.)
-  const reviews = payload?.reviews as Array<Record<string, unknown>> | undefined;
-  assert.ok(reviews, 'reviews kept');
+  assert.ok(payload.reviews, 'reviews kept');
 });
 
 test('runListRow slims engineState to the allowed subset', () => {
@@ -242,17 +264,14 @@ test('runListRow slims engineState to the allowed subset', () => {
   assert.equal(es?.reviewedInputs, undefined, 'reviewedInputs dropped');
   // publishGate: reviewPolicy keeps only requestedBy
   assert.equal(es?.publishGate?.reviewPolicy?.requestedBy, 'dispatch');
-  assert.equal(
-    (es?.publishGate?.reviewPolicy as Record<string, unknown>)?.minimumReviews,
-    undefined,
-  );
+  assert.equal(es?.publishGate?.reviewPolicy?.minimumReviews, undefined);
   // publishGate.reviews: keep slim fields only
   const rev = es?.publishGate?.reviews?.[0];
   assert.equal(rev?.id, 'rev-1');
   assert.equal(rev?.verdict, 'pass');
   assert.equal(rev?.runner, 'claude');
-  assert.equal((rev as Record<string, unknown>)?.issues, undefined, 'issues dropped');
-  assert.equal((rev as Record<string, unknown>)?.artifactPaths, undefined, 'artifactPaths dropped');
+  assert.equal(rev?.issues, undefined, 'issues dropped');
+  assert.equal(rev?.artifactPaths, undefined, 'artifactPaths dropped');
 });
 
 test('runListRow does not mutate the stored run', () => {

@@ -9,7 +9,7 @@ import type {
   PressureAdmissionDecision,
   ProfileFitSuggestion,
   QueueItem,
-  Run,
+  RunListRow,
   SlotStatus,
   WorkerTemplateOption,
 } from '@farmslot/protocol';
@@ -84,7 +84,7 @@ interface DispatchWizardViewContext {
   variantPreview: string;
   comparisonBranchHint: string | null;
   comparisonFlow: boolean;
-  comparisonPickerRuns: readonly Run[];
+  comparisonPickerRuns: readonly RunListRow[];
   comparisonPickerLoading: boolean;
   comparisonPickerReady: boolean;
   comparisonPickerError: string;
@@ -130,7 +130,7 @@ interface DispatchWizardViewContext {
   enterComparisonFlow: () => void;
   enterNormalFlow: () => void;
   openComparisonPicker: () => void;
-  onSelectBaselineRun: (run: Run) => void;
+  onSelectBaselineRun: (run: RunListRow) => void;
   setComparePickerOpen: (open: boolean) => void;
   setComparePickerSearch: (value: string) => void;
   exitComparisonMode: () => void;

@@ -7,6 +7,7 @@ import {
   isTerminalRunStatus,
   type PRStatus,
   type Run,
+  type RunListRow,
 } from '@farmslot/protocol';
 
 export type EvalCaseSourceKind = EvalExperimentSource['kind'];
@@ -585,17 +586,20 @@ export function findCatalogItemForPrRef(
 
 export function buildCaseCatalog(input: {
   prs: readonly PRStatus[];
-  runs: readonly Run[];
+  runs: readonly RunListRow[];
   project?: string;
 }): EvalCaseCatalogItem[] {
   const project = normalizedText(input.project);
   const runsById = new Map(input.runs.map((run) => [run.id, run]));
   const runItems = input.runs
     .filter((run) => EVAL_RUN_FLOW_TYPES.has(run.flowType))
-    .map(catalogItemFromRun);
+    .map((run) => catalogItemFromRun(run as Run));
   const items = [
     ...input.prs.map((pr) =>
-      catalogItemFromPr(pr, pr.latestRunId ? runsById.get(pr.latestRunId) : undefined),
+      catalogItemFromPr(
+        pr,
+        pr.latestRunId ? (runsById.get(pr.latestRunId) as Run | undefined) : undefined,
+      ),
     ),
     ...runItems,
   ];

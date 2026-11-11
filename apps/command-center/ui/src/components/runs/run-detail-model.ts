@@ -9,8 +9,8 @@ import type {
   FamilyObservabilityArtifact,
   PRStatus,
   RecipeRunArtifactGroup,
-  Run,
   RunDecision,
+  RunListRow,
   RunStep,
   TaskOperation,
   TaskProgressResult,
@@ -52,11 +52,11 @@ export function reviewTerminalUnavailableReason(
   return null;
 }
 
-export function isActiveInteractiveDevRun(run: Run): boolean {
+export function isActiveInteractiveDevRun(run: RunListRow): boolean {
   return run.flowType === 'dev' && run.mode === 'interactive' && !isTerminalRunStatus(run.status);
 }
 
-export function isInteractiveCompletionAwaitingOperator(run: Run | undefined): boolean {
+export function isInteractiveCompletionAwaitingOperator(run: RunListRow | undefined): boolean {
   if (!run || run.status !== 'paused' || !isActiveInteractiveDevRun(run)) return false;
   const monitor = run.steps.find((step) => step.name === 'monitor');
   return (
@@ -68,10 +68,7 @@ export function isInteractiveCompletionAwaitingOperator(run: Run | undefined): b
 
 export function canReplayRunSteps(
   run:
-    | Pick<
-        Run,
-        'status' | 'decisions' | 'slotId' | 'steps' | 'agentContexts' | 'engineState' | 'output'
-      >
+    | Pick<'status' | 'decisions' | 'slotId' | 'steps' | 'agentContexts' | 'engineState' | 'output'>
     | null
     | undefined,
   actionsBlocked = false,

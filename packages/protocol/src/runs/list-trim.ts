@@ -24,6 +24,14 @@ import type {
 import { utf8ByteLength } from '../utf8-byte-length.js';
 
 import { CI_SNAPSHOT_TRIM_KEY } from './ci-decision-context.js';
+import type {
+  RunListDecision,
+  RunListDecisionPayload,
+  RunListEngineState,
+  RunListReadyGatePayload,
+  RunListReviewGatePayload,
+  RunListRow,
+} from './list-row.js';
 
 /** JSON size in UTF-8 bytes above which a single decision payload value is left out of run.list. */
 export const RUN_LIST_PAYLOAD_VALUE_LIMIT = 2048;
@@ -109,17 +117,18 @@ function slimStepOutputs(
 
 function slimDecisionPayload(
   payload: RunDecisionPayload | undefined,
-): RunDecisionPayload | undefined {
+): RunListDecisionPayload | undefined {
   if (!payload) return payload;
   const { kind } = payload;
   if (kind === 'review') {
     // ReviewGatePayload: keep gateReadiness and session (no reviewRoundBudget on this type)
     const { gateReadiness, session } = payload;
-    return {
+    const slim: RunListReviewGatePayload = {
       kind,
       ...(gateReadiness !== undefined ? { gateReadiness } : {}),
       ...(session !== undefined ? { session } : {}),
-    } as RunDecisionPayload;
+    };
+    return slim;
   }
   if (kind === 'ready') {
     // ReadyGatePayload: keep metadata and display fields; drop the large content fields that only
@@ -167,23 +176,25 @@ function slimDecisionPayload(
     const budget = reviewRoundBudget
       ? { used: reviewRoundBudget.used, remaining: reviewRoundBudget.remaining }
       : undefined;
-    return {
+    const slim: RunListReadyGatePayload = {
       ...readyRest,
-      ...(budget !== undefined ? { reviewRoundBudget: budget as typeof reviewRoundBudget } : {}),
+      ...(budget !== undefined ? { reviewRoundBudget: budget } : {}),
       ...(reviews !== undefined ? { reviews: reviews.map(slimReviewStatus) } : {}),
-    } as RunDecisionPayload;
+    };
+    return slim;
   }
   if (kind === 'no-change') {
-    // NoChangeGatePayload: keep gateReadiness + disposition (required field)
+    // NoChangeGatePayload: keep gateReadiness + disposition (required field).
+    // The slim object satisfies the full NoChangeGatePayload type (both required fields kept).
     const { gateReadiness, disposition } = payload;
     return {
       kind,
       disposition,
       ...(gateReadiness !== undefined ? { gateReadiness } : {}),
-    } as RunDecisionPayload;
+    };
   }
-  // All other kinds (slot_picker, branch_affinity_nudge, etc.): keep only kind
-  return { kind } as RunDecisionPayload;
+  // All other kinds (slot_picker, branch_affinity_nudge, etc.): keep only the discriminant.
+  return { kind };
 }
 
 function slimReviewStatus(review: ReviewStatus): ReviewStatus {
@@ -214,16 +225,16 @@ function slimReviewStatus(review: ReviewStatus): ReviewStatus {
   };
 }
 
-function slimEngineState(engineState: RunEngineState | undefined): RunEngineState | undefined {
+function slimEngineState(engineState: RunEngineState | undefined): RunListEngineState | undefined {
   if (!engineState) return engineState;
   const { publishGate } = engineState;
-  const slimmedGate = publishGate
+  const slimmedGate: RunListEngineState['publishGate'] = publishGate
     ? {
         ...(publishGate.reviewPolicy !== undefined
           ? {
               reviewPolicy: {
                 requestedBy: publishGate.reviewPolicy.requestedBy,
-              } as typeof publishGate.reviewPolicy,
+              },
             }
           : {}),
         ...(publishGate.reviewSequence !== undefined
@@ -251,9 +262,7 @@ function slimEngineState(engineState: RunEngineState | undefined): RunEngineStat
     ...(engineState.evalExperiment !== undefined
       ? { evalExperiment: engineState.evalExperiment }
       : {}),
-    ...(slimmedGate !== undefined
-      ? { publishGate: slimmedGate as RunEngineState['publishGate'] }
-      : {}),
+    ...(slimmedGate !== undefined ? { publishGate: slimmedGate } : {}),
   };
 }
 
@@ -261,16 +270,15 @@ function slimEngineState(engineState: RunEngineState | undefined): RunEngineStat
  * A slim projection of `run` for `run.list` served rows.
  *
  * Drops heavy optional fields no list surface reads (`resourcePosture`,
- * `sessionUsage`, `visualJudgmentReceipts`, `templateProvenance`) and projects
- * `steps`, `decisions`, and `engineState` to only the keys list consumers
- * actually access. `trimRunForList` stays as the version basis; this function
- * is applied where rows are served.
+ * `sessionUsage`, `visualJudgmentReceipts`, `templateProvenance`,
+ * `evidenceSummary`) and projects `steps`, `decisions`, and `engineState` to
+ * only the keys list consumers actually access.  `trimRunForList` stays as the
+ * version basis; this function is applied where rows are served.
  *
- * All dropped fields are optional on `Run`, so the return type is `Run` with
- * no casts.
+ * Returns the honest `RunListRow` type — no forced casts.
  */
-export function runListRow(run: Run): Run {
-  // Drop the four heavy fields outright.
+export function runListRow(run: Run): RunListRow {
+  // Drop the heavy fields outright (all optional on Run).
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { resourcePosture, sessionUsage, visualJudgmentReceipts, templateProvenance, ...rest } =
     run;
@@ -281,12 +289,10 @@ export function runListRow(run: Run): Run {
     ...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
     ...(step.completedAt !== undefined ? { completedAt: step.completedAt } : {}),
     ...(step.detail !== undefined ? { detail: step.detail } : {}),
-    outputs: slimStepOutputs(
-      step.outputs as Record<string, unknown> | undefined,
-    ) as typeof step.outputs,
+    outputs: slimStepOutputs(step.outputs),
   }));
 
-  const decisions = (run.decisions ?? []).map((decision) => {
+  const decisions: RunListDecision[] = run.decisions.map((decision) => {
     const slimmedPayload = slimDecisionPayload(decision.payload);
     // Keep context but drop context.checkSnapshot (same as trimDecisionForList) if present
     let context = decision.context;
@@ -296,7 +302,7 @@ export function runListRow(run: Run): Run {
       delete context.checkSnapshot;
       if (!trimmed.includes(CI_SNAPSHOT_TRIM_KEY)) trimmed.push(CI_SNAPSHOT_TRIM_KEY);
     }
-    return {
+    const row: RunListDecision = {
       id: decision.id,
       type: decision.type,
       ...(decision.title !== undefined ? { title: decision.title } : {}),
@@ -308,13 +314,14 @@ export function runListRow(run: Run): Run {
               id: a.id,
               label: a.label,
               style: a.style,
-            })) as typeof decision.actions,
+            })),
           }
         : {}),
       ...(context !== undefined ? { context } : {}),
       ...(trimmed.length > 0 ? { payloadTrimmed: trimmed } : {}),
       ...(slimmedPayload !== undefined ? { payload: slimmedPayload } : {}),
-    } as RunDecision;
+    };
+    return row;
   });
 
   const engineState = slimEngineState(rest.engineState);

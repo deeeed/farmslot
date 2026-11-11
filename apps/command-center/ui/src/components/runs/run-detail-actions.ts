@@ -1,11 +1,11 @@
 import type {
   DevInteractiveCompletionAction,
   ResourcePostureGateChoice,
-  Run,
   RunCancelResult,
   RunDecision,
   RunForceCompleteResult,
   RunInteractiveDevResolveResult,
+  RunListRow,
   RunProbeWorkerSignalResult,
   RunRehydratePrNumberResult,
   RunResolveDecisionResult,
@@ -346,7 +346,7 @@ export interface SuccessorJumpContext {
   jumpTimer: () => Timer;
   setJumpTimer: (timer: Timer) => void;
   isConnected: () => boolean;
-  allRuns: () => Run[];
+  allRuns: () => RunListRow[];
   navigateToRun: (runId: string) => void;
 }
 

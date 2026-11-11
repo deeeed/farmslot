@@ -17,6 +17,7 @@ import {
   type ResponseFrame,
   type Run,
   type RunListParams,
+  type RunListRow,
   runListRow,
   type RunListVersion,
   summarizeRunEvidence,
@@ -47,7 +48,7 @@ function fixtureRun(t: TestContext, ticketOrPr: string, summary?: string): Run {
   return getRun(run.id)!;
 }
 
-const rowVersion = (row: Run) =>
+const rowVersion = (row: Run | RunListRow) =>
   createHash('sha256').update(canonicalResourceJson(row)).digest('hex');
 // The version contract: sha256 of trimRunForList(run), unchanged from before slim rows.
 // The served row is runListRow(run) + evidenceSummary, but the version hash is still the
@@ -56,7 +57,7 @@ const servedVersion = (id: string): RunListVersion => ({
   id,
   version: rowVersion(trimRunForList(getRun(id)!)),
 });
-const servedRow = (id: string): Run => ({
+const servedRow = (id: string): RunListRow => ({
   ...runListRow(getRun(id)!),
   evidenceSummary: summarizeRunEvidence(getRun(id)!),
 });
@@ -126,9 +127,11 @@ test(
     const page = async (ids: string[]) => {
       const reply = await runList({ ids });
       assert.equal(reply.totalCount, reply.runs.length, 'an ids page counts the rows it served');
+      // Version is sha256(trimRunForList(run)), not sha256(servedRow) — the slim
+      // projection (runListRow) differs from the version basis (trimRunForList).
       assert.deepEqual(
         reply.versions,
-        reply.runs.map((row) => ({ id: row.id, version: rowVersion(row) })),
+        reply.runs.map((row) => servedVersion(row.id)),
       );
       assert.deepEqual(
         reply.runs,
@@ -164,6 +167,16 @@ test(
     });
   },
 );
+
+test('a plain run.list serves slim rows with evidenceSummary attached', TEST_TIMEOUT, async (t) => {
+  const run = fixtureRun(t, 'PLAIN-LIST-SLIM');
+  const reply = await runList({});
+  const served = reply.runs?.find((row) => row.id === run.id);
+  assert.ok(served, 'run appears in plain list');
+  assert.deepEqual(served, servedRow(run.id), 'row matches slim projection with evidenceSummary');
+  assert.equal('resourcePosture' in served, false, 'resourcePosture dropped');
+  assert.ok(served.evidenceSummary !== undefined, 'evidenceSummary attached');
+});
 
 test(
   'a versions read derives a row only when its run changed since the last read',

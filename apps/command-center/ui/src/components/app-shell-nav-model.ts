@@ -1,4 +1,4 @@
-import type { Run, RunStep, SlotStatus, TmuxWorkerListResult } from '@farmslot/protocol';
+import type { RunListRow, RunStep, SlotStatus, TmuxWorkerListResult } from '@farmslot/protocol';
 import { taskTitleText } from '@farmslot/protocol';
 import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
@@ -37,11 +37,11 @@ export function parseStoredSidebarWidth(value: string | null): number {
 }
 
 export function activeSidebarRuns(
-  runs: readonly Run[],
+  runs: readonly RunListRow[],
   globalFilters: GlobalFilters,
   slots: readonly Pick<SlotStatus, 'slot' | 'machine'>[],
   limit = 8,
-): Run[] {
+): RunListRow[] {
   return activeRunsForGlobalFilters(runs, globalFilters, slots).slice(0, limit);
 }
 

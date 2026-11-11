@@ -8,7 +8,9 @@ import {
   resolveRunSlotId,
   reviewRoundAdmissionId,
   reviewRoundBudgetForRun,
+  type ReviewRoundBudgetSource,
   type Run,
+  type RunListRow,
   type RunStep,
   type RunStepDisplayStatus,
   runStepDisplayStatus,
@@ -45,7 +47,7 @@ export interface RunActivityView {
 }
 
 export function runReviewActivityContext(
-  run: Run,
+  run: RunListRow,
   roles: readonly AgentRole[] = ['review', 'review-fix'],
 ): AgentContext | undefined {
   return (run.agentContexts ?? [])
@@ -150,7 +152,7 @@ export function runTerminalTargetMatches(
 }
 
 /** Presentation only: the gateway's run status and actor records determine what is running. */
-export function runActivityView(run: Run): RunActivityView | null {
+export function runActivityView(run: RunListRow): RunActivityView | null {
   if (
     isTerminalRunStatus(run.status) ||
     ['blocked', 'paused', 'needs-decision', 'review-failed'].includes(run.status) ||
@@ -181,7 +183,7 @@ export function runActivityView(run: Run): RunActivityView | null {
         : 'pre-gate'
       : undefined;
   const used = run.reviewRoundAdmissions
-    ? reviewRoundBudgetForRun(run).used
+    ? reviewRoundBudgetForRun(run as ReviewRoundBudgetSource).used
     : Math.max(
         0,
         ...run.decisions.map((decision) =>
@@ -190,7 +192,11 @@ export function runActivityView(run: Run): RunActivityView | null {
       );
   const pending =
     actor && run.reviewWorkspaceSubject
-      ? run.reviewRoundSettlements?.[workspaceReviewRoundAdmissionId(run)]?.kind === 'pending'
+      ? run.reviewRoundSettlements?.[
+          workspaceReviewRoundAdmissionId(
+            run as Pick<Run, 'id'> & Partial<Pick<Run, 'createdAt' | 'engineState'>>,
+          )
+        ]?.kind === 'pending'
       : actor?.role === 'review' &&
         [actor.startedAt, actor.attemptStartedAt].some(
           (at) =>
