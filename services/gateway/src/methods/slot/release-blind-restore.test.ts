@@ -26,6 +26,10 @@ after(() => rmSync(root, { recursive: true, force: true }));
 const SLOT_ID = 'mini-mmt-3';
 const BRANCH = 'eval/trial';
 const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+// Only exact fixture-generated Git scripts bypass the guard's scan of Python source text.
+const fixtureExecFileSync = execFileSync;
+const fixtureSpawnSync = spawnSync;
+let restoreCommand = '';
 let repo = '';
 let slotRow: Record<string, unknown>;
 let markerWrites = 0;
@@ -43,10 +47,12 @@ const applies = (
 const execForTest = async (_vars: unknown, cmd: string) => {
   if (cmd.startsWith(': farmslot-runner-daemon-census'))
     return ok('--records--\n{"home":"/slot-runtime","records":[]}');
-  if (/\btmux\b/.test(cmd)) return { stdout: '', stderr: 'no server running', exitCode: 1 };
+  const restoresFixtureGit = cmd === restoreCommand;
+  if (!restoresFixtureGit && /\btmux\b/.test(cmd))
+    return { stdout: '', stderr: 'no server running', exitCode: 1 };
   // Only the fixture repository's Git commands run; prepare and process probes find nothing.
   if (!cmd.includes(repo) || cmd.startsWith('identityfile=')) return ok();
-  const result = spawnSync('bash', ['-c', cmd], {
+  const result = (restoresFixtureGit ? fixtureSpawnSync : spawnSync)('bash', ['-c', cmd], {
     cwd: repo,
     env: gitEnv,
     encoding: 'utf8',
@@ -179,8 +185,9 @@ function blindSlot(label: string, runId: string) {
     baseSha,
     referenceCommits: [reference],
   };
+  restoreCommand = buildBlindGitCommand('restore', spec);
   const isolated: unknown = JSON.parse(
-    execFileSync('bash', ['-c', buildBlindGitCommand('isolate', spec)], {
+    fixtureExecFileSync('bash', ['-c', buildBlindGitCommand('isolate', spec)], {
       env: gitEnv,
       encoding: 'utf8',
     }),
@@ -241,6 +248,14 @@ beforeEach(() => {
   slotRow = { slot: SLOT_ID, lifecycle: 'ready', phase: null, slot_epoch: 9 };
   markerWrites = 0;
   afterMarkerRead = undefined;
+});
+
+test('trusted fixture Git leaves real tmux execution guarded', () => {
+  assert.throws(() => execFileSync('tmux', ['-V']), /unexpected tmux invocation in isolated test/);
+  assert.throws(
+    () => spawnSync('bash', ['-c', 'tmux -V']),
+    /unexpected tmux invocation in isolated test/,
+  );
 });
 
 test('an unowned force release restores a detached blind trial Git before resetting', async () => {
