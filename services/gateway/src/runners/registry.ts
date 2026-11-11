@@ -2902,6 +2902,10 @@ export async function sendRunnerPrompt(
   ...args: Parameters<typeof submitRunnerPrompt>
 ): Promise<void> {
   const outcome = await submitRunnerPrompt(...args);
+  assertRunnerPromptSent(outcome);
+}
+
+export function assertRunnerPromptSent(outcome: RunnerInstructionOutcome): void {
   if (outcome !== 'sent')
     throw new Error(
       outcome === 'held-untouched'

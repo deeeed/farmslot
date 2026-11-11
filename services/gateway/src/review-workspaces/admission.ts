@@ -1,4 +1,5 @@
 import {
+  isRecord,
   isTerminalRunStatus,
   type NativeProfileReference,
   PipelineSteps,
@@ -22,12 +23,15 @@ import {
   runnerTerminalReviewRefusal,
 } from '../runners/native/review-workspace.js';
 import {
+  getRunnerObservability,
   isKnownRunner,
   runnerSupportsEffort,
   runnerSupportsModel,
   runnerSupportsNativeTaskReuse,
 } from '../runners/registry.js';
-import { getAllRuns, getRun, persistRunNow, updateRunStep } from '../runs/store.js';
+import { reviewWorkspaceRunnerVars } from '../runners/review-startup.js';
+import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
+import { withReviewWorkspaceExecutor } from '../runtime/workspace-terminal.js';
 import { ownsLocalNativeProfile } from '../security/native-owner.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 
@@ -51,6 +55,13 @@ export interface ReviewWorkspaceAdmission {
   active: number;
   limit: number;
   pressure: PressureAdmissionDecision;
+}
+
+export interface ReviewWorkspaceTerminalFollowup {
+  sessionId: string;
+  sessionPath: string;
+  message: string;
+  since: number;
 }
 
 /** A stopped run still owns capacity while an owned reviewer process remains alive. */
@@ -94,6 +105,7 @@ export function assertReviewWorkspaceCapacity(
 export async function admitReviewWorkspaceFollowup(
   runId: string,
   commandId: string,
+  terminal?: ReviewWorkspaceTerminalFollowup,
 ): Promise<void> {
   const run = getRun(runId);
   assertReviewWorkspaceRun(run);
@@ -124,17 +136,82 @@ export async function admitReviewWorkspaceFollowup(
   if (!gate || !current.reviewResult)
     throw new Error('Review follow-up requires its completed review and posting gate');
   updateRunStep(runId, gate.name, {
-    outputs: { ...gate.outputs, reviewFollowupCommandId: commandId },
+    outputs: {
+      ...gate.outputs,
+      reviewFollowupCommandId: commandId,
+      reviewFollowupTerminal: terminal,
+      reviewFollowupObservationError: undefined,
+    },
+  });
+  updateRun(runId, {
+    reviewWorkspace: { ...current.reviewWorkspace, executionStoppedAt: undefined },
   });
   await persistRunNow(current, 'reserve retained review follow-up');
 }
 
-async function settleReviewWorkspaceFollowups(
+async function reviewFollowupIsIdle(
+  run: Run,
+  gate: Run['steps'][number],
+  commandId: string,
+): Promise<boolean> {
+  if (run.transport !== 'tmux') {
+    const snapshot = await readReviewWorkspaceWorker(run.id, { allowGate: true, limit: 1 });
+    return (
+      snapshot.commands.some((command) => command.commandId === commandId) &&
+      snapshot.commands.every((command) => Boolean(command.outcome))
+    );
+  }
+  return withReviewWorkspaceExecutor(run, async () => {
+    const terminal = gate.outputs?.reviewFollowupTerminal;
+    const context = run.agentContexts?.find((entry) => entry.id === 'review');
+    if (
+      !isRecord(terminal) ||
+      typeof terminal.sessionId !== 'string' ||
+      typeof terminal.sessionPath !== 'string' ||
+      typeof terminal.message !== 'string' ||
+      typeof terminal.since !== 'number' ||
+      context?.runnerSessionId !== terminal.sessionId ||
+      context.runnerSessionPath !== terminal.sessionPath
+    )
+      return false;
+    const vars = await reviewWorkspaceRunnerVars(run);
+    const observer = getRunnerObservability(context.runner);
+    if (!vars || !observer?.promptAcceptedInSession || !observer.getSessionDeliveryState)
+      return false;
+    const accepted = await observer.promptAcceptedInSession(
+      vars,
+      vars.session,
+      terminal.sessionId,
+      terminal.sessionPath,
+      terminal.message,
+      terminal.since,
+    );
+    if (accepted?.value !== true || !accepted.exactPromptMatch || accepted.confidence !== 'high')
+      return false;
+    const state = await observer.getSessionDeliveryState(
+      vars,
+      vars.session,
+      terminal.sessionId,
+      terminal.sessionPath,
+    );
+    return (
+      state?.value === 'idle' &&
+      state.confidence === 'high' &&
+      ['hook', 'signal'].includes(state.source) &&
+      state.observedAt >= accepted.observedAt
+    );
+  });
+}
+
+/** Read only outstanding turns; confirmed stops need no host or retained session files. */
+export async function settleReviewWorkspaceFollowups(
   machine: string,
   owner: string,
   excludingRunId?: string,
+  confirmedUnsent?: { runId: string; commandId: string },
 ): Promise<void> {
   for (const run of getAllRuns()) {
+    if (confirmedUnsent && run.id !== confirmedUnsent.runId) continue;
     const gate = run.steps.find((step) => step.name === PipelineSteps.HUMAN_GATE);
     const commandId = gate?.outputs?.reviewFollowupCommandId;
     if (
@@ -142,28 +219,53 @@ async function settleReviewWorkspaceFollowups(
       run.reviewWorkspaceTarget?.machine !== machine ||
       run.nativeOwnerPrincipalId !== owner ||
       !run.reviewResult ||
+      !gate ||
       typeof commandId !== 'string'
     )
       continue;
     const generation = run.engineState?.generation ?? 0;
-    const snapshot = await readReviewWorkspaceWorker(run.id, { allowGate: true, limit: 1 });
-    if (
-      !snapshot.commands.some((command) => command.commandId === commandId) ||
-      snapshot.commands.some((command) => !command.outcome)
-    )
-      continue;
+    const binding = run.agentContexts?.find((entry) => entry.id === 'review')?.nativeSession;
+    let idle = Boolean(
+      confirmedUnsent?.commandId === commandId ||
+      run.reviewWorkspace?.executionStoppedAt ||
+      run.reviewWorkspace?.cleanedAt ||
+      binding?.closedAt ||
+      binding?.releasedAt ||
+      retainedWorkspaceIsIdle(run),
+    );
+    let observationError: string | undefined;
+    if (!idle) {
+      try {
+        idle = await reviewFollowupIsIdle(run, gate, commandId);
+      } catch (error) {
+        // An unavailable observation retains this run's reservation and a visible error,
+        // rather than preventing every other admission from using remaining capacity.
+        observationError = error instanceof Error ? error.message : String(error);
+      }
+    }
+    if (!idle && observationError === undefined) continue;
     const current = getRun(run.id);
     const currentGate = current?.steps.find((step) => step.name === PipelineSteps.HUMAN_GATE);
     if (
       !current ||
+      current.nativeOwnerPrincipalId !== owner ||
       (current.engineState?.generation ?? 0) !== generation ||
       currentGate?.outputs?.reviewFollowupCommandId !== commandId
     )
       continue;
+    if (!idle && currentGate.outputs?.reviewFollowupObservationError === observationError) continue;
     updateRunStep(run.id, currentGate.name, {
-      outputs: { ...currentGate.outputs, reviewFollowupCommandId: undefined },
+      outputs: {
+        ...currentGate.outputs,
+        reviewFollowupCommandId: idle ? undefined : commandId,
+        reviewFollowupTerminal: idle ? undefined : currentGate.outputs?.reviewFollowupTerminal,
+        reviewFollowupObservationError: idle ? undefined : observationError,
+      },
     });
-    await persistRunNow(current, 'settle retained review follow-up');
+    await persistRunNow(
+      current,
+      idle ? 'settle retained review follow-up' : 'retain uncertain review follow-up',
+    );
   }
 }
 

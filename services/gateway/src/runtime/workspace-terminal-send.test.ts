@@ -8,6 +8,9 @@ import type { PoolConfig, Run } from '@farmslot/protocol';
 import { makeVars } from '../runners/test-fixtures.js';
 
 const actualExec = await import('../core/exec.js');
+const actualRegistry = await import('../runners/registry.js');
+const observer = actualRegistry.getRunnerObservability('codex');
+assert(observer);
 const { registerNode, unregisterByWs } = await import('../fleet/machine-registry.js');
 const { handleNodeResponse } = await import('../fleet/node-rpc.js');
 const session = 'review-submission-proof';
@@ -61,6 +64,12 @@ let authority = true;
 let revokeAfterInspection = false;
 const nativeCommands: string[] = [];
 let rawCommands = 0;
+let full = false;
+let outcome: Awaited<ReturnType<typeof actualRegistry.submitRunnerPrompt>> = 'sent';
+const settle = mock.fn(async (..._args: unknown[]) => {});
+const admit = mock.fn(async (..._args: unknown[]) => {
+  if (full) throw new Error('Review capacity is full');
+});
 const submit = mock.fn(async (..._args: unknown[]) => {
   if (!confirmed) throw new Error('Runner submission was not confirmed');
 });
@@ -93,7 +102,21 @@ mock.module('../runners/review-tmux.js', {
 mock.module('../runners/review-startup.js', {
   namedExports: { reviewWorkspaceRunnerVars: async () => runnerVars },
 });
-mock.module('../runners/registry.js', { namedExports: { sendRunnerPrompt: submit } });
+mock.module('../runners/registry.js', {
+  namedExports: {
+    ...actualRegistry,
+    sendRunnerPrompt: submit,
+    submitRunnerPrompt: async (...args: unknown[]) => {
+      await submit(...args);
+      return outcome;
+    },
+    captureRunnerPromptAcceptanceBaseline: async () => 1000,
+    getRunnerObservability: () => observer,
+  },
+});
+mock.module('../review-workspaces/admission.js', {
+  namedExports: { admitReviewWorkspaceFollowup: admit, settleReviewWorkspaceFollowups: settle },
+});
 mock.module('../core/exec.js', {
   namedExports: {
     ...actualExec,
@@ -110,6 +133,10 @@ beforeEach(() => {
   pools = [];
   operations.length = 0;
   submit.mock.resetCalls();
+  admit.mock.resetCalls();
+  full = false;
+  outcome = 'sent';
+  settle.mock.resetCalls();
   confirmed = true;
   ownerAvailable = true;
   currentRun = run;
@@ -118,6 +145,84 @@ beforeEach(() => {
   revokeAfterInspection = false;
   nativeCommands.length = 0;
   rawCommands = 0;
+});
+
+test('retained terminal follow-ups reserve shared capacity before submission', async () => {
+  currentRun = {
+    ...run,
+    nativeOwnerPrincipalId: 'owner',
+    reviewWorkspace: { ...run.reviewWorkspace!, retainedAt: '2026-11-11T00:00:00Z' },
+    reviewResult: {
+      recommendation: 'APPROVE',
+      reviewMd: 'Saved review',
+      lineComments: [],
+      artifactManifest: [],
+    },
+    agentContexts: [
+      {
+        ...run.agentContexts![0],
+        runnerSessionId: 'saved-session',
+        runnerSessionPath: '/proof/session.jsonl',
+      },
+    ],
+  };
+  submit.mock.mockImplementationOnce(async () => {
+    assert.equal(admit.mock.callCount(), 1);
+  });
+  await workspaceTerminalOperation(currentRun, 'send', {
+    text: 'Explain the prior finding',
+    enter: true,
+  });
+  const args = admit.mock.calls[0].arguments;
+  assert.equal(args[0], run.id);
+  assert.equal(typeof args[1], 'string');
+  assert.deepEqual(args[2], {
+    sessionId: 'saved-session',
+    sessionPath: '/proof/session.jsonl',
+    message: 'Explain the prior finding',
+    since: 1000,
+  });
+  full = true;
+  submit.mock.resetCalls();
+  await assert.rejects(
+    workspaceTerminalOperation(currentRun, 'send', { text: 'Another follow-up' }),
+    /capacity is full/,
+  );
+  assert.equal(submit.mock.callCount(), 0);
+});
+
+test('an untouched terminal refusal releases its reservation; unconfirmed typing keeps it', async () => {
+  currentRun = {
+    ...run,
+    nativeOwnerPrincipalId: 'owner',
+    reviewWorkspace: { ...run.reviewWorkspace!, retainedAt: '2026-11-11T00:00:00Z' },
+    reviewResult: {
+      recommendation: 'APPROVE',
+      reviewMd: 'Saved',
+      lineComments: [],
+      artifactManifest: [],
+    },
+    agentContexts: [
+      {
+        ...run.agentContexts![0],
+        runnerSessionId: 'saved',
+        runnerSessionPath: '/proof/session.jsonl',
+      },
+    ],
+  };
+  outcome = 'held-untouched';
+  await assert.rejects(
+    workspaceTerminalOperation(currentRun, 'send', { text: 'Follow up' }),
+    /no input was sent/,
+  );
+  assert.equal(settle.mock.callCount(), 1);
+  settle.mock.resetCalls();
+  outcome = 'typed-unconfirmed';
+  await assert.rejects(
+    workspaceTerminalOperation(currentRun, 'send', { text: 'Follow up' }),
+    /may be buffered/,
+  );
+  assert.equal(settle.mock.callCount(), 0);
 });
 
 test('workspace semantic send verifies ownership then uses the shared runner submitter', async () => {

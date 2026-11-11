@@ -1,1 +1,2 @@
 - Exclude idle retained reviews from admission capacity and fill static review result identity and digest fields in the gateway.
+- Release allocated checkouts after setup failures that never launched a reviewer, allowing archive and a new admission.

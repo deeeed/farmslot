@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type { Run, SlotAgentTargetParams } from '@farmslot/protocol';
 
 import { execFileArgv, isLocal } from '../core/exec.js';
@@ -6,7 +8,13 @@ import { shellQuote } from '../core/tmux.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { resolveReviewWorkspacePool } from '../review-workspaces/pool.js';
 import { execNativeNodeArgv } from '../runners/native/node.js';
-import { sendRunnerPrompt } from '../runners/registry.js';
+import {
+  assertRunnerPromptSent,
+  captureRunnerPromptAcceptanceBaseline,
+  getRunnerObservability,
+  sendRunnerPrompt,
+  submitRunnerPrompt,
+} from '../runners/registry.js';
 import { reviewWorkspaceRunnerVars } from '../runners/review-startup.js';
 import { reviewTmuxOperation, reviewTmuxSession } from '../runners/review-tmux.js';
 import { getRun } from '../runs/store.js';
@@ -98,6 +106,37 @@ export function workspacePaneInputRecord(run: Run, session: string): PaneInputRe
   );
 }
 
+/** Keep shared runner observations and input on the review owner's transport. */
+export function withReviewWorkspaceExecutor<T>(run: Run, operation: () => Promise<T>): Promise<T> {
+  assertNativeRunOwner(run);
+  const workspace = structuredClone(run.reviewWorkspace);
+  if (!workspace) throw new Error('Review workspace is unavailable');
+  const { workspaceId, machine, executionNodeId } = workspace;
+  const owner = run.nativeOwnerPrincipalId;
+  const generation = run.engineState?.generation ?? 0;
+  return withSlotCommandExecutor(async (target, command, options) => {
+    const current = getRun(run.id);
+    if (
+      !current?.reviewWorkspace ||
+      current.reviewWorkspace.cleanedAt ||
+      current.reviewWorkspace.workspaceId !== workspaceId ||
+      current.reviewWorkspace.machine !== machine ||
+      current.reviewWorkspace.executionNodeId !== executionNodeId ||
+      current.nativeOwnerPrincipalId !== owner ||
+      (current.engineState?.generation ?? 0) !== generation ||
+      current.reviewWorkspace.checkoutPath !== workspace.checkoutPath ||
+      current.reviewWorkspace.taskPath !== workspace.taskPath ||
+      target.machine !== machine
+    )
+      throw new Error('Review workspace authority changed before runner input');
+    assertNativeRunOwner(current);
+    if (executionNodeId === 'local') return execFileArgv(['bash', '-c', command], options);
+    const body = `cd ${shellQuote(options.cwd ?? target.remoteRepo)} && ${command}`;
+    if (!owner) throw new Error('Remote review workspace has no owner');
+    return execNativeNodeArgv(owner, machine, ['bash', '-c', body], options.timeout ?? 10000);
+  }, operation);
+}
+
 export async function workspaceTerminalOperation(
   run: Run,
   action: 'ensure' | 'stop' | 'snapshot' | 'send',
@@ -113,7 +152,7 @@ export async function workspaceTerminalOperation(
   }
   if (run.transport === 'tmux' && action === 'stop') return [];
   const workspace = run.reviewWorkspace!;
-  const { workspaceId, machine, executionNodeId } = workspace;
+  const { machine } = workspace;
   const owner = run.nativeOwnerPrincipalId;
   const semanticSend = run.transport === 'tmux' && action === 'send' && input.enter !== false;
   const argv = [
@@ -143,26 +182,39 @@ export async function workspaceTerminalOperation(
       context?.runnerSessionId && context.runnerSessionPath
         ? { sessionId: context.runnerSessionId, sessionPath: context.runnerSessionPath }
         : undefined;
-    await withSlotCommandExecutor(
-      async (target, command, options) => {
-        const current = getRun(run.id);
+    await withReviewWorkspaceExecutor(run, async () => {
+      if (run.reviewWorkspace?.retainedAt && run.reviewResult) {
+        const observer = getRunnerObservability(runner);
         if (
-          !current?.reviewWorkspace ||
-          current.reviewWorkspace.cleanedAt ||
-          current.reviewWorkspace.workspaceId !== workspaceId ||
-          current.reviewWorkspace.machine !== machine ||
-          current.reviewWorkspace.executionNodeId !== executionNodeId ||
-          current.nativeOwnerPrincipalId !== owner ||
-          target.machine !== machine
+          !retainedSession ||
+          !observer?.promptAcceptedInSession ||
+          !observer.getSessionDeliveryState
         )
-          throw new Error('Review workspace authority changed before runner input');
-        assertNativeRunOwner(current);
-        if (executionNodeId === 'local') return execFileArgv(['bash', '-c', command], options);
-        const body = `cd ${shellQuote(options.cwd ?? target.remoteRepo)} && ${command}`;
-        return execNativeNodeArgv(owner!, machine, ['bash', '-c', body], options.timeout ?? 10000);
-      },
-      () => sendRunnerPrompt(vars, vars.session, runner, input.text ?? '', { retainedSession }),
-    );
+          throw new Error('Retained reviewer input requires its exact observable conversation');
+        const since = await captureRunnerPromptAcceptanceBaseline(vars, vars.session, runner);
+        if (since === null) throw new Error('Retained reviewer input has no acceptance baseline');
+        if (!owner) throw new Error('Retained reviewer input has no owner');
+        const { admitReviewWorkspaceFollowup, settleReviewWorkspaceFollowups } =
+          await import('../review-workspaces/admission.js');
+        const commandId = randomUUID();
+        await admitReviewWorkspaceFollowup(run.id, commandId, {
+          ...retainedSession,
+          message: input.text ?? '',
+          since,
+        });
+        const outcome = await submitRunnerPrompt(vars, vars.session, runner, input.text ?? '', {
+          retainedSession,
+        });
+        if (outcome === 'held-untouched')
+          await settleReviewWorkspaceFollowups(machine, owner, undefined, {
+            runId: run.id,
+            commandId,
+          });
+        assertRunnerPromptSent(outcome);
+        return;
+      }
+      await sendRunnerPrompt(vars, vars.session, runner, input.text ?? '', { retainedSession });
+    });
   }
   if (action !== 'stop') {
     const current = getRun(run.id);
