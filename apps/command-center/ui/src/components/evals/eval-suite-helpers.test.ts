@@ -1,13 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { PRStatus, Run } from '@farmslot/protocol';
+import {
+  type PRStatus,
+  type Run,
+  type RunListRow,
+  runListRow,
+  summarizeRunEvidence,
+} from '@farmslot/protocol';
 
 import {
   addCasesToBasket,
   buildCaseCatalog,
   canonicalSourceIdentity,
   catalogItemFromManual,
+  catalogItemFromRun,
   datasetIdFor,
   datasetItemIdFor,
   filterCaseCatalog,
@@ -381,4 +388,73 @@ test('launch matrix and summary aggregate operational fields only', () => {
   assert.equal(summary.costEstimate, 1.25);
   assert.equal(summary.validationEvidenceCount, 2);
   assert.equal(summary.missingDataCount, 1);
+});
+
+// Point 2: gateway-computed evidenceSummary round-trip
+test('catalogItemFromRun slim row with evidenceSummary matches full-run preview fields', () => {
+  const fullRun = makeRun({
+    steps: [
+      {
+        name: 'work',
+        status: 'done',
+        outputs: {
+          diffStat: { files: 2, additions: 10, deletions: 3 },
+          artifacts: [
+            { path: 'screenshots/after.png', purpose: 'screenshot', sizeBytes: 500 },
+            { path: 'reports/recipe-report.md', purpose: 'report', sizeBytes: 100 },
+            { path: 'reviews/final-review.md', purpose: 'review', sizeBytes: 200 },
+          ],
+        },
+      },
+    ] as Run['steps'],
+  });
+
+  // Gateway attaches evidenceSummary computed from the full run before slimming outputs.
+  const evidenceSummary = summarizeRunEvidence(fullRun);
+  const slimRow: RunListRow = { ...runListRow(fullRun), evidenceSummary };
+
+  const slimItem = catalogItemFromRun(slimRow);
+
+  assert.deepEqual(slimItem.diffStat, { files: 2, additions: 10, deletions: 3 });
+  assert.equal(slimItem.artifactCount, 3);
+  assert.equal(slimItem.artifactBytes, 800);
+  assert.equal(slimItem.visualEvidenceCount, 1);
+  assert.equal(slimItem.validationEvidenceCount, 1);
+  assert.equal(slimItem.reviewEvidenceCount, 1);
+
+  // Stripped row (same slim row, no evidenceSummary): step outputs are stripped so counts are 0.
+  const strippedRow = runListRow(fullRun);
+  const strippedItem = catalogItemFromRun(strippedRow);
+  assert.equal(strippedItem.artifactCount, 0); // step.outputs.artifacts not in ALLOWLIST
+  assert.equal(strippedItem.diffStat, undefined); // step.outputs.diffStat not in ALLOWLIST
+
+  // Revert proof: remove the `es.artifactBytes !== undefined` branch in previewFieldsFromRun →
+  // slimItem falls back to diffStatFromRun(slimRow) which reads stripped steps → undefined →
+  // `assert.deepEqual(slimItem.diffStat, { files: 2, ... })` fails.
+});
+
+test('catalogItemFromRun old fat row without evidenceSummary reads step outputs directly', () => {
+  // Simulate a row cached before the gateway started attaching evidenceSummary:
+  // step outputs are present (not stripped) but no evidenceSummary field.
+  const baseRow = runListRow(makeRun());
+  const stepWithOutputs: RunListRow['steps'][number] = {
+    name: 'work',
+    status: 'done',
+    outputs: {
+      artifacts: [
+        { path: 'screenshots/after.png', purpose: 'screenshot', sizeBytes: 300 },
+        { path: 'reports/report.md', purpose: 'report', sizeBytes: 50 },
+      ],
+      diffStat: { files: 1, additions: 5, deletions: 2 },
+    },
+  };
+  const oldFatRow: RunListRow = { ...baseRow, steps: [stepWithOutputs] };
+
+  const item = catalogItemFromRun(oldFatRow);
+
+  assert.equal(item.artifactCount, 2);
+  assert.equal(item.artifactBytes, 350);
+  assert.deepEqual(item.diffStat, { files: 1, additions: 5, deletions: 2 });
+  // Revert proof: break evidenceSummaryFromRun (return all zeros) →
+  // `assert.equal(item.artifactCount, 2)` fails: got 0.
 });

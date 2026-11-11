@@ -1,4 +1,10 @@
-import type { RunListRow, RunStep, SlotStatus, TmuxWorkerListResult } from '@farmslot/protocol';
+import type {
+  Run,
+  RunListRow,
+  RunStep,
+  SlotStatus,
+  TmuxWorkerListResult,
+} from '@farmslot/protocol';
 import { taskTitleText } from '@farmslot/protocol';
 import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 

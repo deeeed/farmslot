@@ -1,4 +1,4 @@
-import type { EvidenceManifestEntry, Run } from '../contracts/runs.js';
+import type { DiffStat, EvidenceManifestEntry, Run } from '../contracts/runs.js';
 import { isRelativeArtifactPath } from '../recipe/common.js';
 import { isInternalRunArtifactPath } from '../recipes/step-io.js';
 
@@ -26,6 +26,16 @@ export interface RunEvidenceSummary {
   artifactCount: number;
   videoCount: number;
   visualPairCount: number;
+  /** Diff stat from the run's latest step that reported one. Gateway-computed for slim rows. */
+  diffStat?: DiffStat;
+  /** Total bytes across all evidence artifacts. Gateway-computed for slim rows. */
+  artifactBytes?: number;
+  /** Count of visual (image/video) evidence artifacts. Gateway-computed for slim rows. */
+  visualEvidenceCount?: number;
+  /** Count of validation (recipe/report/trace/coverage/manifest) evidence artifacts. Gateway-computed for slim rows. */
+  validationEvidenceCount?: number;
+  /** Count of review/comment evidence artifacts. Gateway-computed for slim rows. */
+  reviewEvidenceCount?: number;
 }
 
 /**
@@ -90,6 +100,25 @@ export function runEvidenceArtifacts(
   ]);
 }
 
+/** Extract the most recent diff stat from step outputs. */
+function extractDiffStatFromSteps(
+  steps: readonly { outputs?: Record<string, unknown> | undefined }[],
+): DiffStat | undefined {
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const raw = steps[i].outputs?.diffStat;
+    if (!raw || typeof raw !== 'object') continue;
+    const row = raw as Partial<DiffStat>;
+    if (
+      typeof row.files === 'number' &&
+      typeof row.additions === 'number' &&
+      typeof row.deletions === 'number'
+    ) {
+      return { files: row.files, additions: row.additions, deletions: row.deletions };
+    }
+  }
+  return undefined;
+}
+
 export function summarizeRunEvidence(
   run:
     | Pick<Run, 'decisions' | 'steps' | 'output' | 'liveRecipeContext'>
@@ -104,10 +133,32 @@ export function summarizeRunEvidence(
   // where decisions: RunDecision[] — so runEvidenceArtifacts accepts run directly.
   if ('evidenceSummary' in run) return run.evidenceSummary;
   const artifacts = runEvidenceArtifacts(run);
+  let artifactBytes = 0;
+  let visualEvidenceCount = 0;
+  let validationEvidenceCount = 0;
+  let reviewEvidenceCount = 0;
+  for (const artifact of artifacts) {
+    if (typeof artifact.sizeBytes === 'number') artifactBytes += artifact.sizeBytes;
+    if (isRunEvidenceVisualArtifact(artifact)) visualEvidenceCount += 1;
+    const p = artifact.purpose.toLowerCase();
+    const path = artifact.path.toLowerCase();
+    if (
+      /recipe|report|summary|trace|coverage|manifest/.test(p) ||
+      /recipe|validation|report|summary|trace|coverage|manifest/.test(path)
+    ) {
+      validationEvidenceCount += 1;
+    }
+    if (/review|comment/.test(p) || /review|comment/.test(path)) reviewEvidenceCount += 1;
+  }
   return {
     artifactCount: artifacts.length,
     videoCount: artifacts.filter(isRunEvidenceVideoArtifact).length,
     visualPairCount: countRunEvidenceVisualPairs(artifacts),
+    diffStat: extractDiffStatFromSteps(run.steps),
+    artifactBytes,
+    visualEvidenceCount,
+    validationEvidenceCount,
+    reviewEvidenceCount,
   };
 }
 

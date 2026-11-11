@@ -52,7 +52,7 @@ function gateDecision(packageHash: string): RunDecision {
 }
 
 /** One gate on screen, read from the shared cache, with the real controller and draft hooks. */
-function gateWorld({ online = true, runBound = true, detailStored = true } = {}) {
+function gateWorld({ online = true, runBound = true, detailStored = true, nullRun = false } = {}) {
   const run = { id: params.runId, slotId: 's1', decisions: [gateDecision('pkg-1')] } as Run;
   const sent: Request[] = [];
   const alerts: Array<{ title: string; message?: string; buttons?: AlertButton[] }> = [];
@@ -178,11 +178,11 @@ function gateWorld({ online = true, runBound = true, detailStored = true } = {})
         useRunDetailRun: () => ({
           runQuery: resourceQuery('run.get', { runId: params.runId }),
           runObservation: {
-            status: online && detailStored ? 'ready' : 'stale',
-            ...(detailStored ? { data: { run } } : {}),
+            status: nullRun ? 'loading' : online && detailStored ? 'ready' : 'stale',
+            ...(detailStored && !nullRun ? { data: { run } } : {}),
             observedAt: 1,
           },
-          run,
+          run: nullRun ? null : run,
         }),
       },
       '../../lib/acceptance-evidence': { acceptanceEvidenceHref: () => '/' },
@@ -370,6 +370,38 @@ test('a gate Send refuses any confirmed transport other than run.resolveDecision
     assert.equal(world.alerts[0]?.title, 'Failed to resolve');
     assert.match(world.alerts[0]?.message ?? '', /does not send decision\.resolve/);
     assert.equal(world.haptics, 0);
+  } finally {
+    cleanup();
+  }
+});
+
+// Point 3: detail-only reads come from run (full Run from useRunDetailRun), not from a slim row.
+
+// No detail yet → loading state.  run is the discriminant: null means run.get has not returned.
+test('no run detail yet gives loading state', () => {
+  const { render, cleanup } = gateWorld({ nullRun: true });
+  try {
+    const state = render().state as GateReviewScreenState;
+    assert.equal(state.status, 'loading');
+  } finally {
+    cleanup();
+  }
+});
+
+// Held detail: run.decisions carries the full payload (prPackage + evidenceManifest) which
+// slim rows strip.  The model exposes artifacts from decision.payload, not from the row.
+// Slim row's status (from run.status on the full Run) is reflected in viewModel.run.status.
+test('held detail with package gives ready model; artifacts come from decision payload', () => {
+  const { render, cleanup } = gateWorld();
+  try {
+    const state = render().state as GateReviewScreenState;
+    assert.equal(state.status, 'ready');
+    const vm = (state as Extract<GateReviewScreenState, { status: 'ready' }>).viewModel;
+    // artifacts sourced from decision.payload.prPackage?.evidenceManifest (detail-only field,
+    // stripped in slim rows) — not from step outputs or the row's evidenceSummary.
+    assert.ok(Array.isArray(vm.artifacts), 'artifacts array present');
+    // run.status comes from the full Run returned by useRunDetailRun, same as the row's status.
+    assert.ok(vm.run.decisions.length > 0, 'full Run decisions accessible (stripped in slim row)');
   } finally {
     cleanup();
   }

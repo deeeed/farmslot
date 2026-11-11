@@ -9,6 +9,7 @@ import type {
   FamilyObservabilityArtifact,
   PRStatus,
   RecipeRunArtifactGroup,
+  Run,
   RunDecision,
   RunListRow,
   RunStep,
@@ -68,7 +69,10 @@ export function isInteractiveCompletionAwaitingOperator(run: RunListRow | undefi
 
 export function canReplayRunSteps(
   run:
-    | Pick<'status' | 'decisions' | 'slotId' | 'steps' | 'agentContexts' | 'engineState' | 'output'>
+    | Pick<
+        Run,
+        'status' | 'decisions' | 'slotId' | 'steps' | 'agentContexts' | 'engineState' | 'output'
+      >
     | null
     | undefined,
   actionsBlocked = false,

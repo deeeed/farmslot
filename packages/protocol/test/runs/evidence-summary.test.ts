@@ -8,6 +8,7 @@ import {
   isRunArtifactImagePath,
   isRunArtifactMediaPath,
   runEvidenceArtifacts,
+  type RunEvidenceSummary,
   summarizeRunEvidence,
 } from '../../src/runs/evidence-summary.js';
 
@@ -202,6 +203,64 @@ test('a gate keeps the frozen metadata of a file the run output recaptured', () 
   );
 
   assert.deepEqual([video?.purpose, video?.sha256], ['video-after', 'frozen']);
+});
+
+test('summarizeRunEvidence computes diffStat and per-purpose evidence counts from step outputs', () => {
+  const fullRun = run({
+    steps: [
+      {
+        name: 'work',
+        status: 'done',
+        startedAt: '2026-11-01T00:00:00.000Z',
+        completedAt: '2026-11-01T00:01:00.000Z',
+        outputs: {
+          diffStat: { files: 3, additions: 20, deletions: 5 },
+          artifacts: [
+            { path: 'screenshots/after.png', purpose: 'screenshot', sizeBytes: 500 },
+            { path: 'reports/recipe-report.md', purpose: 'report', sizeBytes: 100 },
+            { path: 'reviews/final-review.md', purpose: 'review', sizeBytes: 200 },
+          ],
+        },
+      },
+    ],
+  });
+
+  const summary = summarizeRunEvidence(fullRun);
+
+  assert.deepEqual(summary.diffStat, { files: 3, additions: 20, deletions: 5 });
+  assert.equal(summary.artifactBytes, 800);
+  assert.equal(summary.visualEvidenceCount, 1); // screenshots/after.png is visual
+  assert.equal(summary.validationEvidenceCount, 1); // purpose 'report' matches /report/
+  assert.equal(summary.reviewEvidenceCount, 1); // purpose 'review' matches /review/
+  assert.equal(summary.artifactCount, 3);
+  // Revert proof: break extractDiffStatFromSteps (always return undefined) →
+  // `assert.deepEqual(summary.diffStat, { files: 3, ... })` fails: got undefined.
+  // Break isRunEvidenceVisualArtifact (always false) →
+  // `assert.equal(summary.visualEvidenceCount, 1)` fails: got 0.
+});
+
+test('summarizeRunEvidence returns the pre-computed summary directly for slim rows', () => {
+  const precomputed: RunEvidenceSummary = {
+    artifactCount: 7,
+    videoCount: 2,
+    visualPairCount: 1,
+    diffStat: { files: 1, additions: 5, deletions: 2 },
+    artifactBytes: 1024,
+    visualEvidenceCount: 3,
+    validationEvidenceCount: 2,
+    reviewEvidenceCount: 1,
+  };
+
+  const result = summarizeRunEvidence({
+    steps: [],
+    decisions: [],
+    evidenceSummary: precomputed,
+  });
+
+  assert.strictEqual(result, precomputed);
+  // Revert proof: remove `if ('evidenceSummary' in run) return run.evidenceSummary` →
+  // fat path runs on empty steps/decisions → returns { artifactCount: 0, ... } ≠ precomputed →
+  // `assert.strictEqual(result, precomputed)` fails (reference inequality).
 });
 
 test('WebP stills are inline images and publishable media, beside retained PNG stills', () => {

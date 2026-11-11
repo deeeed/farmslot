@@ -390,6 +390,24 @@ function previewFieldsFromRun(
   | 'validationEvidenceCount'
   | 'reviewEvidenceCount'
 > {
+  const es = run.evidenceSummary;
+  // New-shape evidenceSummary (gateway-computed from full run) has artifactBytes set.
+  // Old slim rows and old fat rows without this field fall back to scanning step outputs.
+  if (es !== undefined && es.artifactBytes !== undefined) {
+    return {
+      prUrl: githubPrUrlFromRun(run),
+      runHref: runHref(run),
+      familyHref: familyHref(run),
+      diffStat: es.diffStat,
+      artifactCount: es.artifactCount,
+      artifactBytes: es.artifactBytes,
+      visualEvidenceCount: es.visualEvidenceCount,
+      validationEvidenceCount: es.validationEvidenceCount,
+      reviewEvidenceCount: es.reviewEvidenceCount,
+    };
+  }
+  // Old fat rows (full Run, no evidenceSummary) or old slim rows (stripped step outputs):
+  // compute from step.outputs directly — returns 0/undefined for stripped slim rows.
   return {
     prUrl: githubPrUrlFromRun(run),
     runHref: runHref(run),

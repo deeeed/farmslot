@@ -12,6 +12,7 @@ import type {
   ProfileFitSuggestion,
   ProjectConfig,
   QueueItem,
+  Run,
   RunListRow,
   SlotStatus,
   TemplatePreview,

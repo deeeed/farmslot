@@ -1,6 +1,7 @@
 import type {
   DispatchCandidatesResult,
   FlowType,
+  Run,
   RunListRow,
   SlotStatus,
 } from '@farmslot/protocol';

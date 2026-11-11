@@ -1,6 +1,7 @@
 import type {
   DevInteractiveCompletionAction,
   ResourcePostureGateChoice,
+  Run,
   RunCancelResult,
   RunDecision,
   RunForceCompleteResult,

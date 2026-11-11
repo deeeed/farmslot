@@ -25,7 +25,6 @@ import {
   type RunFamilyGroup,
   runWorkerEffort,
   slotMachineMap,
-  summarizeRunEvidence,
 } from '@farmslot/protocol';
 import { type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
 import { runActivityView, runChecklistProgressTarget } from '@farmslot/review-dispatch';
@@ -869,7 +868,11 @@ export class RunList extends RunListState {
     const slotId = resolveRunSlotId(run);
     const pipelineLabel = compactRunPipelineLabel(run);
     const disposition = dispositionLabel(run.metrics.disposition);
-    const evidenceSummary = summarizeRunEvidence(run);
+    const evidenceSummary: RunEvidenceSummary = run.evidenceSummary ?? {
+      artifactCount: 0,
+      videoCount: 0,
+      visualPairCount: 0,
+    };
     const hasAutoRecoveryAttempt =
       run.recoveryAttempts?.some((a) => a.triggeredBy === 'auto-recovery') ?? false;
     const showStopAutoRecovery =

@@ -9,6 +9,7 @@ import type {
   PressureAdmissionDecision,
   ProfileFitSuggestion,
   QueueItem,
+  Run,
   RunListRow,
   SlotStatus,
   WorkerTemplateOption,
