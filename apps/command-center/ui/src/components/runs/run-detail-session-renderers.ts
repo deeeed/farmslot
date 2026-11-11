@@ -531,7 +531,16 @@ export function renderRunAgentSessions(
               data-testid="run-agent-session-id-${row.contextId}"
               >${row.sessionIdShort ?? 'no session captured'}</span
             >
-            ${row.reviewLocation ? renderReviewExecutionLocation(row.reviewLocation) : nothing}
+            ${row.reviewLocation
+              ? html`<span
+                  data-testid=${row.target
+                    ? nothing
+                    : `run-agent-session-location-${row.contextId}`}
+                  data-slot=${row.slotId ?? ''}
+                  style="min-width:0;max-width:100%"
+                  >${renderReviewExecutionLocation(row.reviewLocation)}</span
+                >`
+              : nothing}
             ${location && (!row.reviewLocation || row.target)
               ? html`<span
                   class="agent-session-location"

@@ -352,3 +352,31 @@ test('a static tmux reviewer keeps its attach target beside the review workspace
   assert.match(text, />\/review\/source<\/code/);
   assert.match(text, /Workspace <code>workspace-one/);
 });
+
+test('native pipeline reviewer preserves the location and slot read by the session probe', () => {
+  const review = context({
+    id: 'review',
+    role: 'review',
+    target: null,
+    executionLocation: { machine: 'macpro', checkoutPath: '/original/review/source' },
+    nativeSession: {
+      sessionId: 'native-review',
+      executionNodeId: 'macpro',
+      ownerPrincipalId: 'owner',
+      leaseId: 'lease',
+      commandId: 'command',
+    },
+  });
+  const text = litText(
+    renderRunAgentSessions(run([review]), {
+      nativeHistoryOpen: false,
+      onToggleNativeHistory: () => {},
+      states: {},
+      onCopy: () => {},
+    }),
+  );
+  assert.match(text, /data-testid=run-agent-session-location-review/);
+  assert.match(text, /data-slot=macpro-mm-1/);
+  assert.match(text, /macpro · macpro-mm-1/);
+  assert.match(text, />\/original\/review\/source<\/code/);
+});
