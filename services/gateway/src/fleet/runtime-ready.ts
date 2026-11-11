@@ -95,70 +95,91 @@ export async function ensureRunRuntimeReady(
       updateRunStep(runId, step.name, { detail });
     };
     for (const resource of resources) {
-      await assertOwner();
-      const observed = await probeResourceStatus(slotId, resource.id);
-      await assertOwner();
-      if (observed.status === 'running') continue;
-      if (observed.status !== 'stopped')
-        throw new Error(
-          `Runtime ${resource.id} on ${slotId} is ${observed.status}: ${observed.detail ?? 'health unavailable'}`,
-        );
-      let deadline = 0;
-      let ready = observed;
-      const starting = `Starting ${resource.id} on ${slotId} (up to ${Math.ceil(bootTimeoutMs / 1000)} s)`;
-      showDetail(starting);
-      // Reuse the slot/device ownership fence of the capability registry. A pack's
-      // server hook may also launch its device, so inspect device claims for both.
-      const controlled = await getRuntimeCapabilityRegistry().withSlotResourceShutdown(
-        slotId,
-        runId,
-        resource.id,
-        true,
-        async () => {
-          showDetail(starting);
-          await beforeBoot();
-          await assertOwner();
-          const active = getActiveResource(slotId, resource.id);
-          if (active && active.runId !== runId && (await probeResourceProcess(vars, active.pid)))
-            throw new Error(
-              `Runtime ${resource.id} on ${slotId} has a foreign live process; boot refused`,
-            );
-          deadline = Date.now() + bootTimeoutMs;
-          const result = await executeResourceControl(
-            slotId,
-            resource.id,
-            'boot',
-            undefined,
-            runId,
-            { bootTimeoutMs },
-          );
-          await assertOwner();
-          if (!result.ok)
-            throw new Error(
-              `Runtime ${resource.id} on ${slotId} failed to boot: ${result.detail ?? 'unknown failure'}`,
-            );
-          ready = await probeResourceStatus(slotId, resource.id);
-          await assertOwner();
-        },
-        () => showDetail(`Waiting for an earlier runtime action on ${slotId}`),
-      );
-      if (!controlled.ok)
-        throw new Error(`Runtime ${resource.id} on ${slotId}: ${controlled.reason}`);
-      // A host still busy from the boot (CoreSimulator right after `simctl boot`) can
-      // time out one health probe, so keep probing within the launch budget, outside
-      // the slot's runtime control queue.
-      while (ready.status === 'stopped' && Date.now() < deadline) {
-        await timers.setTimeout(Math.min(options.pollMs ?? HEALTH_POLL_MS, deadline - Date.now()));
-        if (Date.now() >= deadline) break;
-        ready = await probeResourceStatus(slotId, resource.id);
-        await assertOwner();
-      }
-      if (ready.status !== 'running')
-        throw new Error(
-          `Runtime ${resource.id} on ${slotId} is ${ready.status} after boot: ${ready.detail ?? 'not healthy'}`,
-        );
+      await ensureResourceReady(slotId, runId, resource.id, beforeBoot, assertOwner, {
+        ...options,
+        bootTimeoutMs,
+        showDetail,
+      });
     }
     showDetail(stepDetail);
     await assertOwner();
   });
+}
+
+export interface ResourceReadinessOptions {
+  bootTimeoutMs?: number;
+  pollMs?: number;
+  showDetail?(detail: string): void;
+}
+
+/** Shared boot, ownership fencing and health polling for fresh and retained workers. */
+export async function ensureResourceReady(
+  slotId: string,
+  runId: string,
+  resourceId: string,
+  beforeBoot: () => Promise<void>,
+  assertOwner: () => Promise<void>,
+  options: ResourceReadinessOptions = {},
+): Promise<void> {
+  const vars = await loadSlotVars(slotId);
+  const bootTimeoutMs =
+    options.bootTimeoutMs ??
+    runtimeBootTimeoutMs((await loadProjectVars(vars.projectName)).projectJson);
+  const showDetail = (detail: string) => options.showDetail?.(detail);
+  await assertOwner();
+  const observed = await probeResourceStatus(slotId, resourceId);
+  await assertOwner();
+  if (observed.status === 'running') return;
+  if (observed.status !== 'stopped')
+    throw new Error(
+      `Runtime ${resourceId} on ${slotId} is ${observed.status}: ${observed.detail ?? 'health unavailable'}`,
+    );
+  let deadline = 0;
+  let ready = observed;
+  const starting = `Starting ${resourceId} on ${slotId} (up to ${Math.ceil(bootTimeoutMs / 1000)} s)`;
+  showDetail(starting);
+  // Reuse the slot/device ownership fence of the capability registry. A pack's
+  // server hook may also launch its device, so inspect device claims for both.
+  const controlled = await getRuntimeCapabilityRegistry().withSlotResourceShutdown(
+    slotId,
+    runId,
+    resourceId,
+    true,
+    async () => {
+      showDetail(starting);
+      await beforeBoot();
+      await assertOwner();
+      const active = getActiveResource(slotId, resourceId);
+      if (active && active.runId !== runId && (await probeResourceProcess(vars, active.pid)))
+        throw new Error(
+          `Runtime ${resourceId} on ${slotId} has a foreign live process; boot refused`,
+        );
+      deadline = Date.now() + bootTimeoutMs;
+      const result = await executeResourceControl(slotId, resourceId, 'boot', undefined, runId, {
+        bootTimeoutMs,
+      });
+      await assertOwner();
+      if (!result.ok)
+        throw new Error(
+          `Runtime ${resourceId} on ${slotId} failed to boot: ${result.detail ?? 'unknown failure'}`,
+        );
+      ready = await probeResourceStatus(slotId, resourceId);
+      await assertOwner();
+    },
+    () => showDetail(`Waiting for an earlier runtime action on ${slotId}`),
+  );
+  if (!controlled.ok) throw new Error(`Runtime ${resourceId} on ${slotId}: ${controlled.reason}`);
+  // A host still busy from the boot (CoreSimulator right after `simctl boot`) can
+  // time out one health probe, so keep probing within the launch budget, outside
+  // the slot's runtime control queue.
+  while (ready.status === 'stopped' && Date.now() < deadline) {
+    await timers.setTimeout(Math.min(options.pollMs ?? HEALTH_POLL_MS, deadline - Date.now()));
+    if (Date.now() >= deadline) break;
+    ready = await probeResourceStatus(slotId, resourceId);
+    await assertOwner();
+  }
+  if (ready.status !== 'running')
+    throw new Error(
+      `Runtime ${resourceId} on ${slotId} is ${ready.status} after boot: ${ready.detail ?? 'not healthy'}`,
+    );
 }

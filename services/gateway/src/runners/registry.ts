@@ -59,6 +59,7 @@ import { isTerminalWorkerSignal, normalizeWorkerSignal } from '../tasks/worker-s
 
 import { claudeHookObservability } from './claude-observability.js';
 import { codexSessionObservability } from './codex-observability.js';
+import { ensureWorkerContinuationReady } from './continuation-ready.js';
 import { createCursorLogObservability } from './cursor-observability.js';
 import { grokLogObservability } from './grok-observability.js';
 import {
@@ -2844,6 +2845,7 @@ export async function submitRunnerPrompt(
     retainedSession?: { sessionId: string; sessionPath: string };
   } = {},
 ): Promise<RunnerInstructionOutcome> {
+  await ensureWorkerContinuationReady(vars.slotId);
   const observability = getRunnerObservability(runner);
   if (!observability) return 'held-untouched';
   let retainedSession = options.retainedSession;
@@ -3213,6 +3215,7 @@ export async function sendRunnerInstructionSafely(
     retainedSession?: { sessionId: string; sessionPath: string };
   } = {},
 ): Promise<boolean> {
+  if (!opts.observeOnly) await ensureWorkerContinuationReady(vars.slotId);
   const runner = normalizeRunner(runnerId);
   const def = getRunnerDefinition(runner);
   const effectiveTimeoutMs = timeoutMs ?? resolveSafeSendTimeoutMs(runner);
@@ -3547,6 +3550,7 @@ export async function sendRunnerPostLaunchPrompt(
     runtimeDir?: string;
   } = {},
 ): Promise<void> {
+  await ensureWorkerContinuationReady(vars.slotId);
   const runner = normalizeRunner(runnerId);
   const readyTimeoutMs = opts.readyTimeoutMs ?? 30_000;
   const stabilityPolls = opts.stabilityPolls ?? 3;

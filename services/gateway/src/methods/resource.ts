@@ -27,6 +27,7 @@ import {
   selectResourcePressureGroups,
   SlotStatus,
 } from '@farmslot/protocol';
+import { formatTcpSnapshotDetail } from '@farmslot/protocol/node/tcp-metrics';
 
 import { isMissingProjectConfigError, SlotConfigError } from '../core/config.js';
 import { readDeviceInventory } from '../fleet/device-inventory.js';
@@ -1034,7 +1035,7 @@ function buildPressureConcerns(
       else if (tcp && tcp.severity !== 'ok')
         concerns.push({
           severity: tcp.severity === 'critical' ? 'critical' : 'warn',
-          reason: `TCP connections ${tcp.total} (${tcp.established} ESTABLISHED + ${tcp.timeWait} TIME_WAIT), ephemeral range ${tcp.ephemeralCapacity}; top owners: ${tcp.topProcesses.map((owner) => `${owner.command} pid ${owner.pid}: ${owner.connections}`).join(', ') || 'unavailable'}.`,
+          reason: `TCP ${formatTcpSnapshotDetail(tcp)}.`,
         });
       addMetricConcern(concerns, 'CPU', system.cpuPercent, thresholds.cpuCriticalPercent, 70);
       addMetricConcern(

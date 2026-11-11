@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { collectTcpMetrics, parseTcpMetrics } from './tcp-metrics.js';
+import {
+  collectTcpMetrics,
+  formatTcpSnapshotDetail,
+  parseTcpMetrics,
+} from '../../src/node/tcp-metrics.js';
 
 test('macOS counts TCP states and ranks owners using the netstat header', () => {
   const sample = parseTcpMetrics(
@@ -88,4 +92,20 @@ test('failed TCP commands report unknown health rather than zero connections', a
   );
   assert.equal(metrics.severity, 'unknown');
   if (metrics.severity === 'unknown') assert.match(metrics.error, /fixture timeout/);
+});
+
+test('snapshot detail includes counts and owners, with an explicit unavailable fallback', () => {
+  const sample = parseTcpMetrics(
+    'linux',
+    '40000 40009',
+    'ESTAB 0 0 local:40001 peer:443 users:(("server",pid=101,fd=1))',
+  );
+  assert.equal(
+    formatTcpSnapshotDetail(sample),
+    '1 connections (1 ESTABLISHED + 0 TIME_WAIT), ephemeral range 10; top owners: server pid 101: 1',
+  );
+  assert.equal(
+    formatTcpSnapshotDetail({ ...sample, topProcesses: [] }),
+    '1 connections (1 ESTABLISHED + 0 TIME_WAIT), ephemeral range 10; top owners: unavailable',
+  );
 });

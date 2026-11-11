@@ -2438,8 +2438,8 @@ export async function resolveRunDecision(
     // would drive the engine against a worker the park stopped.
     assertNotGateParked(params.runId, getRun(params.runId)!);
     if (existing.slotId && params.actionId !== 'abort') {
-      const { restoreIdleDevServers } = await import('../run-lifecycle/idle-devserver-service.js');
-      await restoreIdleDevServers(existing.slotId, existing.id);
+      const { ensureWorkerContinuationReady } = await import('../runners/continuation-ready.js');
+      await ensureWorkerContinuationReady(existing.slotId, existing.id);
       assertDecisionStillUnresolved(params.runId, params.decisionId);
       assertNotGateParked(params.runId, getRun(params.runId)!);
     }

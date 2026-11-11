@@ -13,6 +13,7 @@ import {
 } from '../core/tmux.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 
+import { ensureWorkerContinuationReady } from './continuation-ready.js';
 import {
   buildRunnerSessionReloadCommand,
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
@@ -790,6 +791,8 @@ export async function reloadRunnerForPark(
       'Runner park reload requires a non-empty continuation prompt',
     );
   }
+
+  await ensureWorkerContinuationReady(options.vars.slotId);
 
   let command: string;
   let promptAcceptanceBaselineMs: number;

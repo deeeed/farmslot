@@ -21,6 +21,9 @@ let epoch = 0;
 let tmuxState = 'present';
 let outsideRepo = false;
 let pagedOwner = false;
+let foreign = false;
+let unhealthyBoot = false;
+let closedHistory = false;
 const run: Run = {
   id: 'run-a',
   familyId: 'family-a',
@@ -83,7 +86,7 @@ mock.module('../core/config.js', {
   namedExports: {
     ...realConfig,
     loadSlotVars: async () => vars,
-    loadProjectVars: async () => ({ projectJson: {} }),
+    loadProjectVars: async () => ({ projectJson: { timeouts: { prepare_preflight_s: 0.001 } } }),
   },
 });
 const realIo = await import('../core/slot-io.js');
@@ -91,6 +94,14 @@ mock.module('../core/slot-io.js', {
   namedExports: { ...realIo, slotRealpath: async () => '/fixture' },
 });
 const fixtureExec = async (_vars: unknown, command: string) => {
+  if (command.startsWith('lsof -a'))
+    return { stdout: `p101\nn${foreign ? '/foreign' : '/fixture'}\n`, stderr: '', exitCode: 0 };
+  if (command.startsWith('ps -p'))
+    return {
+      stdout: `101 101 Mon Jan 1 00:00:${foreign ? '02' : '00'} 2024`,
+      stderr: '',
+      exitCode: 0,
+    };
   if (command.startsWith('lsof ')) {
     lookups++;
     assert.match(command, /-iTCP:9001 -sTCP:LISTEN -t$/);
@@ -99,7 +110,7 @@ const fixtureExec = async (_vars: unknown, command: string) => {
   if (command.startsWith('ps -axo'))
     return {
       stdout:
-        '101 1 101 Mon Jan 1 00:00:00 2024 fixture-server\n102 101 101 Mon Jan 1 00:00:01 2024 fixture-helper' +
+        `101 1 101 Mon Jan 1 00:00:${foreign ? '02' : '00'} 2024 fixture-server\n102 101 101 Mon Jan 1 00:00:01 2024 fixture-helper` +
         (tmuxState === 'foreign' ? '\n200 1 200 Mon Jan 1 00:00:02 2024 tmux' : ''),
       stderr: '',
       exitCode: 0,
@@ -114,7 +125,7 @@ const fixtureExec = async (_vars: unknown, command: string) => {
       exitCode: tmuxState === 'present' ? 0 : tmuxState === 'timeout' ? 124 : 1,
     };
   if (command.includes('farmslot-owned-process-reap')) {
-    assert.match(command, /101\|1\|Mon Jan 1 00:00:00 2024/);
+    assert.ok(command.includes(`101|1|Mon Jan 1 00:00:${foreign ? '02' : '00'} 2024`));
     assert.match(command, /102\|0\|Mon Jan 1 00:00:01 2024/);
     assert.ok(!command.includes('pkill') && !command.includes('killall'));
     alive = false;
@@ -146,7 +157,7 @@ mock.module('../fleet/resource-manager.js', {
       assert.equal(resource, 'server');
       assert.equal(action, 'boot');
       boots++;
-      alive = true;
+      alive = !unhealthyBoot;
       return { ok: true };
     },
   },
@@ -156,6 +167,16 @@ mock.module('../methods/runtime-capabilities.js', {
   namedExports: {
     ...realCapabilities,
     getRuntimeCapabilityRegistry: () => ({
+      withSlotResourceShutdown: async (
+        _slot: string,
+        _run: string,
+        _resource: string,
+        _device: boolean,
+        body: () => Promise<void>,
+      ) => {
+        await body();
+        return { ok: true };
+      },
       settledStatus: async () => ({
         leases: warmLease
           ? [{ state: 'released', keepWarmUntil: '2024-01-02' }]
@@ -173,7 +194,9 @@ const realProgress = await import('../runners/run-progress.js');
 mock.module('../runners/run-progress.js', {
   namedExports: {
     ...realProgress,
-    readRunProgress: async () => ({ kind: activeWorker ? 'making-progress' : 'idle' }),
+    readRunProgress: async (observed: Run) => ({
+      kind: observed.id === 'old-run' ? 'unproven' : activeWorker ? 'making-progress' : 'idle',
+    }),
   },
 });
 const realProcess = await import('../runners/session-process.js');
@@ -188,17 +211,37 @@ mock.module('../runs/store.js', {
   namedExports: {
     ...realRuns,
     listRuns: (filter?: { limit?: number }) => ({
-      runs: pagedOwner && (filter?.limit ?? 500) <= 500 ? [] : [run],
+      runs:
+        pagedOwner && (filter?.limit ?? 500) <= 500
+          ? []
+          : [
+              run,
+              ...(closedHistory
+                ? [
+                    {
+                      ...run,
+                      id: 'old-run',
+                      status: 'done',
+                      agentContexts: [
+                        {
+                          id: 'primary',
+                          role: 'primary',
+                          target: {
+                            target: '%7',
+                            paneId: '%7',
+                            session: 'fixture-session',
+                            window: 'worker',
+                          },
+                        },
+                      ],
+                    },
+                  ]
+                : []),
+            ],
     }),
   },
 });
-const realTransitions = await import('./transition-coordinator.js');
-mock.module('./transition-coordinator.js', {
-  namedExports: {
-    ...realTransitions,
-    withRunTransition: async (_run: string, operation: () => Promise<void>) => operation(),
-  },
-});
+const { withRunTransitionWhileMachineHeld } = await import('./transition-coordinator.js');
 const { reapIdleDevServers, restoreIdleDevServers } = await import('./idle-devserver-service.js');
 mock.method(Date, 'now', () => clock);
 const { DEVSERVER_IDLE_LIMIT_MS } = await import('./idle-devserver.js');
@@ -219,6 +262,9 @@ beforeEach(() => {
   tmuxState = 'present';
   outsideRepo = false;
   pagedOwner = false;
+  foreign = false;
+  unhealthyBoot = false;
+  closedHistory = false;
 });
 
 test('port watch resolves once, expires through the real identity reaper and resumes through boot', async () => {
@@ -300,3 +346,90 @@ test('a parked owner older than the default run-list page still has an idle cap'
   await reapIdleDevServers('slot-a');
   assert.equal(stops, 1);
 });
+
+for (const afterAdmission of [false, true]) {
+  test(`a foreign listener after the managed server exited is never stopped, admitted=${afterAdmission}`, async () => {
+    if (afterAdmission) await reapIdleDevServers('slot-a');
+    foreign = true;
+    clock += DEVSERVER_IDLE_LIMIT_MS;
+    await reapIdleDevServers('slot-a');
+    clock += DEVSERVER_IDLE_LIMIT_MS;
+    await reapIdleDevServers('slot-a');
+    assert.equal(stops, 0);
+  });
+}
+
+test('stale launch metadata cannot authorize a replacement listener with the same PID', async () => {
+  pointer = {
+    pid: 101,
+    startedAt: '2024-01-01',
+    runId: run.id,
+    meta: {
+      runId: run.id,
+      slotId: 'slot-a',
+      startedAt: '2024-01-01',
+      process: { pid: 101, group: 101, identity: 'Mon Jan 1 00:00:00 2024' },
+    },
+  };
+  foreign = true;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 0);
+});
+
+test('a boot that exits zero without healthy runtime retains the restart marker', async () => {
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  unhealthyBoot = true;
+  // Clock is controlled; use a health failure to end polling deterministically.
+  const prior = clock;
+  mock.method(Date, 'now', () => ++clock);
+  await assert.rejects(restoreIdleDevServers('slot-a', run.id), /stopped after boot/);
+  assert.ok(clock > prior);
+  assert.deepEqual(row.idle_devservers, ['server']);
+  assert.equal(boots, 1);
+  mock.method(Date, 'now', () => clock);
+});
+
+test('busy transitions skip cleanup so successive poll ticks complete before the transition', async () => {
+  let enter!: () => void;
+  let release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const transition = withRunTransitionWhileMachineHeld(run.id, async () => {
+    enter();
+    await held;
+  });
+  await entered;
+  try {
+    await reapIdleDevServers('slot-a');
+    clock += DEVSERVER_IDLE_LIMIT_MS;
+    await reapIdleDevServers('slot-a');
+    assert.equal(lookups, 0);
+    assert.equal(stops, 0);
+  } finally {
+    release();
+    await transition;
+  }
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 1);
+});
+
+for (const live of [false, true]) {
+  test(`closed history only protects a genuinely surviving worker, live=${live}`, async () => {
+    closedHistory = true;
+    unrecordedWorker = live;
+    await reapIdleDevServers('slot-a');
+    clock += DEVSERVER_IDLE_LIMIT_MS;
+    await reapIdleDevServers('slot-a');
+    assert.equal(stops, live ? 0 : 1);
+  });
+}

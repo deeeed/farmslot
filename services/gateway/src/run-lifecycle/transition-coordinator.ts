@@ -62,6 +62,16 @@ export class RunTransitionCoordinator {
     return machine ? this.withSharedKey(machineKey(machine), run, site) : run();
   }
 
+  /** Background maintenance never queues behind a run or machine transition. */
+  async tryWithRun<T>(runId: string, operation: TransitionOperation<T>): Promise<T | undefined> {
+    const machine = await this.resolveMachine(runId);
+    if (this.tails.has(runKey(runId)) || (machine && this.tails.has(machineKey(machine))))
+      return undefined;
+    // No await between the availability check and reserving the run key.
+    const run = () => this.withKey(runKey(runId), operation, new Error());
+    return machine ? this.withSharedKey(machineKey(machine), run, new Error()) : run();
+  }
+
   withRunWhileMachineHeld<T>(runId: string, operation: TransitionOperation<T>): Promise<T> {
     return this.withKey(runKey(runId), operation, new Error());
   }
@@ -231,3 +241,6 @@ export const withRunTransitionWhileMachineHeld = <T>(
   runId: string,
   operation: TransitionOperation<T>,
 ) => runTransitionCoordinator.withRunWhileMachineHeld(runId, operation);
+
+export const tryWithRunTransition = <T>(runId: string, operation: TransitionOperation<T>) =>
+  runTransitionCoordinator.tryWithRun(runId, operation);

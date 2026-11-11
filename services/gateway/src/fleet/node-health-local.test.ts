@@ -21,8 +21,10 @@ mock.module('../core/exec.js', {
     },
   },
 });
+const realTcp = await import('@farmslot/protocol/node/tcp-metrics');
 mock.module('@farmslot/protocol/node/tcp-metrics', {
   namedExports: {
+    ...realTcp,
     collectTcpMetrics: async () => ({
       severity: 'unknown',
       error: 'fixture unavailable',

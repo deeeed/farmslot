@@ -1,9 +1,11 @@
-import type { ActiveResourcePointer, Run, SlotResource } from '@farmslot/protocol';
+import { isTerminalRunStatus, type Run, type SlotResource } from '@farmslot/protocol';
 
 import type { ProcessCensusRow } from './process-census.js';
 
 export const DEVSERVER_IDLE_LIMIT_MS = 15 * 60_000;
 type SlotRow = Readonly<Record<string, unknown>>;
+
+export type IdleDevServerPointer = Pick<ProcessCensusRow, 'identity' | 'group'> & { pid: number };
 
 export interface IdleDevServerDeps {
   now(): number;
@@ -17,7 +19,7 @@ export interface IdleDevServerDeps {
     slotId: string,
     resourceId: string,
     refresh?: boolean,
-  ): ActiveResourcePointer | undefined | Promise<ActiveResourcePointer | undefined>;
+  ): IdleDevServerPointer | undefined | Promise<IdleDevServerPointer | undefined>;
   census(slotId: string): Promise<ProcessCensusRow[]>;
   write(slotId: string, expected: SlotRow, fields: Record<string, unknown>): Promise<boolean>;
   stop(
@@ -26,8 +28,12 @@ export interface IdleDevServerDeps {
     roots: ProcessCensusRow[],
     stillOwned: () => Promise<boolean>,
   ): Promise<boolean>;
-  boot(slotId: string, resourceId: string): Promise<{ ok: boolean; detail?: string }>;
-  health(slotId: string, resourceId: string): Promise<string>;
+  ready(
+    slotId: string,
+    resourceId: string,
+    runId: string | undefined,
+    assertOwner: () => Promise<void>,
+  ): Promise<void>;
 }
 
 interface IdleCandidate {
@@ -35,6 +41,13 @@ interface IdleCandidate {
   epoch: unknown;
   owner: unknown;
   process: ProcessCensusRow;
+}
+
+/** Closed history is not a progress source; surviving historical panes are checked by census. */
+export function slotWorkerRuns(runs: Run[], slotId: string, owner: unknown): Run[] {
+  return runs.filter(
+    (run) => run.slotId === slotId && (run.id === owner || !isTerminalRunStatus(run.status)),
+  );
 }
 
 /** Policy for watched dev servers only. It never infers ownership from a process name. */
@@ -57,7 +70,7 @@ export class IdleDevServerReaper {
       (resourceId !== undefined && (await this.deps.retained(slotId, resourceId)))
     )
       return false;
-    const runs = this.deps.runs().filter((run) => run.slotId === slotId);
+    const runs = slotWorkerRuns(this.deps.runs(), slotId, row.current_run_id);
     if (row.current_run_id && !runs.some((run) => run.id === row.current_run_id)) return false;
     if (!runs.length && row.agent === 'working') return false;
     for (const run of runs) {
@@ -88,7 +101,7 @@ export class IdleDevServerReaper {
         this.idle.delete(key);
         continue;
       }
-      const pointer = await this.deps.pointer(slotId, resource.id);
+      const pointer = await this.deps.pointer(slotId, resource.id, !this.idle.has(key));
       // A port-only health result without a watched PID grants no stop authority.
       if (!pointer) {
         this.idle.delete(key);
@@ -98,17 +111,14 @@ export class IdleDevServerReaper {
       if (
         !candidate ||
         candidate.process.pid !== String(pointer.pid) ||
+        candidate.process.identity !== pointer.identity ||
+        candidate.process.group !== pointer.group ||
         candidate.epoch !== row.slot_epoch ||
         candidate.owner !== row.current_run_id
       ) {
         rows ??= await this.deps.census(slotId);
         const process = rows.find((process) => process.pid === String(pointer.pid));
-        if (
-          !process ||
-          (pointer.meta?.process &&
-            (pointer.meta.process.identity !== process.identity ||
-              pointer.meta.process.group !== process.group))
-        ) {
+        if (!process || pointer.identity !== process.identity || pointer.group !== process.group) {
           this.idle.delete(key);
           continue;
         }
@@ -145,14 +155,15 @@ export class IdleDevServerReaper {
         }))
       )
         return;
-      const stopped = await this.deps.stop(
-        slotId,
-        rows,
-        [root],
-        async () =>
-          (await this.deps.pointer(slotId, resource.id, true))?.pid === pointer.pid &&
-          (await this.quiet(slotId, row, resource.id)),
-      );
+      const stopped = await this.deps.stop(slotId, rows, [root], async () => {
+        const current = await this.deps.pointer(slotId, resource.id, true);
+        return (
+          current?.pid === pointer.pid &&
+          current.identity === pointer.identity &&
+          current.group === pointer.group &&
+          (await this.quiet(slotId, row, resource.id))
+        );
+      });
       if (stopped) this.idle.delete(key);
     }
   }
@@ -183,13 +194,7 @@ export class IdleDevServerReaper {
       );
       if (!resource) throw new Error(`Idle dev server '${String(id)}' is no longer configured`);
       await assertOwner();
-      const status = await this.deps.health(slotId, resource.id);
-      if (status === 'stopped') {
-        await assertOwner();
-        const result = await this.deps.boot(slotId, resource.id);
-        if (!result.ok) throw new Error(result.detail ?? 'Dev server re-prepare failed');
-      } else if (status !== 'running')
-        throw new Error(`Dev server '${resource.id}' health is ${status}; resume refused`);
+      await this.deps.ready(slotId, resource.id, ownerRunId, assertOwner);
     }
     await assertOwner();
     if (

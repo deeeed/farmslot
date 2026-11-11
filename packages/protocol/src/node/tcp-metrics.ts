@@ -20,6 +20,10 @@ const runCommand: TcpCommandRunner = (command, args) =>
     );
   });
 
+export function formatTcpSnapshotDetail(tcp: NodeTcpSnapshot): string {
+  return `${tcp.total} connections (${tcp.established} ESTABLISHED + ${tcp.timeWait} TIME_WAIT), ephemeral range ${tcp.ephemeralCapacity}; top owners: ${tcp.topProcesses.map((owner) => `${owner.command} pid ${owner.pid}: ${owner.connections}`).join(', ') || 'unavailable'}`;
+}
+
 /** Counts are a conservative port-pressure signal, not unique occupied local ports. */
 export function parseTcpMetrics(
   platform: 'darwin' | 'linux',

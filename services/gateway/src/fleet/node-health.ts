@@ -20,7 +20,7 @@ import {
   type ResourceKey,
   resourceKeyId,
 } from '@farmslot/protocol/client-cache';
-import { collectTcpMetrics } from '@farmslot/protocol/node/tcp-metrics';
+import { collectTcpMetrics, formatTcpSnapshotDetail } from '@farmslot/protocol/node/tcp-metrics';
 
 import { reportGatewayWarning } from '../chat/copilot-observer.js';
 import { execFileArgv } from '../core/exec.js';
@@ -130,10 +130,7 @@ export function updateMachineMetrics(machine: string, metrics: NodeMetricsSample
   publishMachineObservation(machine);
   const tcp = metrics.tcp;
   if (tcp && tcp.severity !== 'ok' && tcp.severity !== existing?.system?.tcp?.severity) {
-    const detail =
-      tcp.severity === 'unknown'
-        ? tcp.error
-        : `${tcp.total} connections (${tcp.established} ESTABLISHED + ${tcp.timeWait} TIME_WAIT), ephemeral range ${tcp.ephemeralCapacity}; top owners: ${tcp.topProcesses.map((owner) => `${owner.command} pid ${owner.pid}: ${owner.connections}`).join(', ') || 'unavailable'}`;
+    const detail = tcp.severity === 'unknown' ? tcp.error : formatTcpSnapshotDetail(tcp);
     reportGatewayWarning(
       'node.tcp-pressure',
       `Node ${machine} TCP ${tcp.severity}: ${detail}`,

@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import type { ActiveResourcePointer, Run } from '@farmslot/protocol';
+import type { Run } from '@farmslot/protocol';
 
 import {
   DEVSERVER_IDLE_LIMIT_MS,
   type IdleDevServerDeps,
+  type IdleDevServerPointer,
   IdleDevServerReaper,
 } from './idle-devserver.js';
 
@@ -21,10 +22,10 @@ function fixture(status: Run['status'] = 'blocked') {
   let now = 1000;
   let progress = 'idle';
   let row: Record<string, unknown> = { current_run_id: 'run-a', slot_epoch: 1 };
-  let pointer: ActiveResourcePointer | undefined = {
+  let pointer: IdleDevServerPointer | undefined = {
     pid: 101,
-    startedAt: '2024-01-01',
-    runId: null,
+    identity: frame.identity,
+    group: frame.group,
   };
   let stopped = 0;
   let booted = 0;
@@ -82,12 +83,11 @@ function fixture(status: Run['status'] = 'blocked') {
       pointer = undefined;
       return true;
     },
-    boot: async (_slot, resourceId) => {
+    ready: async (_slot, resourceId, _runId, assertOwner) => {
       assert.equal(resourceId, 'server');
+      await assertOwner();
       booted++;
-      return { ok: true };
     },
-    health: async () => 'stopped',
   };
   const reaper = new IdleDevServerReaper(deps);
   return {
@@ -99,7 +99,7 @@ function fixture(status: Run['status'] = 'blocked') {
     booted: () => booted,
     advance: () => (now += DEVSERVER_IDLE_LIMIT_MS),
     progress: (value: string) => (progress = value),
-    replace: () => (pointer = { pid: 202, startedAt: '2024-01-02', runId: null }),
+    replace: () => (pointer = { pid: 202, identity: 'new-process', group: 202 }),
     setRow: (value: Record<string, unknown>) => (row = { ...row, ...value }),
   };
 }
@@ -183,15 +183,17 @@ test('ownership change before signals refuses cleanup and preserves durable rest
   assert.equal(f.stopped(), 0);
 });
 
-test('failed boot keeps marker for retry; a live replacement is never double-started', async () => {
+test('failed readiness keeps marker for retry; confirmed readiness clears it', async () => {
   const f = fixture();
   await f.reaper.sweep('slot-a');
   f.advance();
   await f.reaper.sweep('slot-a');
-  f.deps.boot = async () => ({ ok: false, detail: 'fixture failure' });
+  f.deps.ready = async () => {
+    throw new Error('fixture failure');
+  };
   await assert.rejects(f.reaper.restore('slot-a'), /fixture failure/);
   assert.deepEqual(f.row().idle_devservers, ['server']);
-  f.deps.health = async () => 'running';
+  f.deps.ready = async () => {};
   await f.reaper.restore('slot-a');
   assert.equal(f.booted(), 0);
 });
@@ -202,11 +204,33 @@ for (const change of [{ current_run_id: 'run-b', slot_epoch: 2 }, { phase: 'rele
     await f.reaper.sweep('slot-a');
     f.advance();
     await f.reaper.sweep('slot-a');
-    f.deps.health = async () => {
+    f.deps.ready = async (_slot, _resource, _owner, assertOwner) => {
       f.setRow(change);
-      return 'stopped';
+      await assertOwner();
     };
     await assert.rejects(f.reaper.restore('slot-a', 'run-a'), /owner changed|releasing/);
     assert.equal(f.booted(), 0);
   });
 }
+
+test('closed tmux history never vetoes the current idle owner', async () => {
+  const f = fixture();
+  const history: Run = { ...f.run, id: 'old-run', status: 'done' };
+  f.deps.runs = () => [history, f.run];
+  f.deps.progress = async (run) => (run.id === history.id ? 'unproven' : 'idle');
+  await f.reaper.sweep('slot-a');
+  f.advance();
+  await f.reaper.sweep('slot-a');
+  assert.equal(f.stopped(), 1);
+});
+
+test('another live run still vetoes cleanup while working', async () => {
+  const f = fixture();
+  const live: Run = { ...f.run, id: 'live-run', status: 'monitoring' };
+  f.deps.runs = () => [live, f.run];
+  f.deps.progress = async (run) => (run.id === live.id ? 'making-progress' : 'idle');
+  await f.reaper.sweep('slot-a');
+  f.advance();
+  await f.reaper.sweep('slot-a');
+  assert.equal(f.stopped(), 0);
+});

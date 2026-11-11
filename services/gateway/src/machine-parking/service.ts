@@ -852,8 +852,8 @@ const defaultDependencies: MachineParkingDependencies = {
     return runnerRunningForPark({ vars: await loadSlotVars(run.slotId), recoveryHandle: handle });
   },
   prepareIdleDevServers: async (slotId, runId) => {
-    const { restoreIdleDevServers } = await import('../run-lifecycle/idle-devserver-service.js');
-    await restoreIdleDevServers(slotId, runId);
+    const { ensureWorkerContinuationReady } = await import('../runners/continuation-ready.js');
+    await ensureWorkerContinuationReady(slotId, runId);
   },
   stopResource: (slotId, resourceId) => executeResourceControl(slotId, resourceId, 'shutdown'),
   startResource: (slotId, resourceId) => executeResourceControl(slotId, resourceId, 'boot'),

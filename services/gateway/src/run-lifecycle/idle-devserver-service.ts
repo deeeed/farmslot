@@ -11,13 +11,12 @@ import { markSlotStatusIf, readSlotRow } from '../core/state.js';
 import { resolveTmuxSession, tmuxShellSnippet } from '../core/tmux.js';
 import {
   deleteActiveResource,
-  executeResourceControl,
   getActiveResource,
-  probeResourceStatus,
   resolveSlotResources,
-  setActiveResource,
   setCachedResourceStatus,
 } from '../fleet/resource-manager.js';
+import { probeResourceProcess } from '../fleet/resource-process.js';
+import { ensureResourceReady } from '../fleet/runtime-ready.js';
 import { getRuntimeCapabilityRegistry } from '../methods/runtime-capabilities.js';
 import { activePrepareAborts } from '../methods/slot/shared.js';
 import { readRunProgress } from '../runners/run-progress.js';
@@ -25,12 +24,25 @@ import { probeRunnerDescendantPid } from '../runners/session-process.js';
 import { contextPaneId } from '../runners/session-record.js';
 import { listRuns } from '../runs/store.js';
 
-import { IdleDevServerReaper } from './idle-devserver.js';
-import { isTmuxProcess, isWithinPath, parseProcessCensus } from './process-census.js';
+import {
+  type IdleDevServerPointer,
+  IdleDevServerReaper,
+  slotWorkerRuns,
+} from './idle-devserver.js';
+import {
+  isTmuxProcess,
+  isWithinPath,
+  parseLsofNames,
+  parseProcessCensus,
+} from './process-census.js';
 import { reapIdentifiedSlotProcesses } from './process-reap.js';
-import { withRunTransition } from './transition-coordinator.js';
+import { tryWithRunTransition } from './transition-coordinator.js';
 
 const stoppingSlots = new Set<string>();
+interface OwnedListener extends IdleDevServerPointer {
+  epoch: unknown;
+}
+const ownedListeners = new Map<string, OwnedListener>();
 
 const idleDevServers = new IdleDevServerReaper({
   now: () => Date.now(),
@@ -58,35 +70,63 @@ const idleDevServers = new IdleDevServerReaper({
   },
   resources: resolveSlotResources,
   pointer: async (slotId, resourceId, refresh) => {
+    const key = `${slotId}/${resourceId}`;
+    const epoch = (await readSlotRow(slotId))?.slot_epoch;
+    const saved = ownedListeners.get(key);
+    const retained = saved?.epoch === epoch ? saved : undefined;
+    if (retained && !refresh) return retained;
     const cached = getActiveResource(slotId, resourceId);
-    if (cached && !refresh) return cached;
+    const vars = await loadSlotVars(slotId);
     const resource = (await resolveSlotResources(slotId)).find(
       (resource) => resource.id === resourceId,
     );
-    if (resource?.definition.watch?.type !== 'port-listen') return cached;
-    const vars = await loadSlotVars(slotId);
-    const project = await loadProjectVars(vars.projectName);
-    const port = Number(
-      expandTemplate(String(resource.definition.watch.port ?? ''), vars, project),
-    );
-    if (!Number.isInteger(port) || port < 1 || port > 65535) return undefined;
-    // Port watches intentionally use cheap connect probes. Resolve their exact
-    // listener only on idle admission and before cleanup, never every watch tick.
-    const result = await execOnSlot(vars, `lsof -nP -iTCP:${port} -sTCP:LISTEN -t`, {
-      cwd: '/',
-      timeout: 5_000,
-    });
-    if (result.exitCode === 1 && !result.stdout.trim() && !result.stderr.trim()) return undefined;
-    if (result.exitCode !== 0) throw new Error('Idle dev server listener identity unavailable');
-    const pids = [...new Set(result.stdout.trim().split(/\s+/).map(Number))];
-    if (pids.length !== 1 || !Number.isSafeInteger(pids[0]) || pids[0] <= 0) return undefined;
-    const pointer = {
-      pid: pids[0],
-      startedAt: cached?.startedAt ?? new Date().toISOString(),
-      runId: cached?.runId ?? null,
-    };
-    setActiveResource(slotId, resourceId, pointer);
-    return pointer;
+    let pid = cached?.pid;
+    if (resource?.definition.watch?.type === 'port-listen') {
+      const project = await loadProjectVars(vars.projectName);
+      const port = Number(
+        expandTemplate(String(resource.definition.watch.port ?? ''), vars, project),
+      );
+      if (!Number.isInteger(port) || port < 1 || port > 65535) return undefined;
+      const result = await execOnSlot(vars, `lsof -nP -iTCP:${port} -sTCP:LISTEN -t`, {
+        cwd: '/',
+        timeout: 5_000,
+      });
+      if (result.exitCode === 1 && !result.stdout.trim() && !result.stderr.trim()) return undefined;
+      if (result.exitCode !== 0) throw new Error('Idle dev server listener identity unavailable');
+      const pids = [...new Set(result.stdout.trim().split(/\s+/).map(Number))];
+      if (pids.length !== 1 || !Number.isSafeInteger(pids[0]) || pids[0] <= 0) return undefined;
+      pid = pids[0];
+    }
+    if (!pid) return undefined;
+    const process = await probeResourceProcess(vars, pid);
+    if (!process) return undefined;
+    const launch = cached?.meta?.slotId === slotId ? cached.meta.process : undefined;
+    const matches = (known: IdleDevServerPointer | undefined) =>
+      known &&
+      known.pid === pid &&
+      known.identity === process.identity &&
+      known.group === process.group;
+    if (!matches(launch) && !matches(retained)) {
+      // A listener alone grants no authority. A checkout cwd is independent slot
+      // provenance for legacy prepare hooks that don't retain launch metadata.
+      const repo = await slotRealpath(vars, vars.remoteRepo);
+      const cwd = await execOnSlot(vars, `lsof -a -p ${pid} -d cwd -Fn`, {
+        cwd: '/',
+        timeout: 5_000,
+      });
+      if (cwd.exitCode !== 0) throw new Error('Idle dev server checkout provenance unavailable');
+      const paths = parseLsofNames(cwd.stdout).filter(([owner]) => owner === String(pid));
+      if (!paths.some(([, directory]) => isWithinPath(repo.replace(/\/$/, ''), directory))) {
+        console.warn(
+          `[idle-devserver] ${slotId}/${resourceId}: listener ${pid} has no slot ownership proof; preserving it`,
+        );
+        return undefined;
+      }
+      const after = await probeResourceProcess(vars, pid);
+      if (!after || !matches(after)) return undefined;
+    }
+    ownedListeners.set(key, { ...process, epoch });
+    return process;
   },
   census: async (slotId) => {
     const result = await execOnSlot(
@@ -127,14 +167,14 @@ const idleDevServers = new IdleDevServerReaper({
       throw new Error('Idle dev server worker census unavailable');
     const session = noTmuxServer ? null : await resolveTmuxSession(slotId, vars, { strict: true });
     const repo = (await slotRealpath(vars, vars.remoteRepo)).replace(/\/$/, '');
+    const currentOwner = (await readSlotRow(slotId))?.current_run_id;
     const recorded = new Set(
-      listRuns({ limit: RUN_LIST_UNLIMITED })
-        .runs.filter((run) => run.slotId === slotId)
-        .flatMap((run) =>
+      slotWorkerRuns(listRuns({ limit: RUN_LIST_UNLIMITED }).runs, slotId, currentOwner).flatMap(
+        (run) =>
           (run.agentContexts ?? []).flatMap((context) =>
             context.target ? [contextPaneId(context.target)] : [],
           ),
-        ),
+      ),
     );
     for (const line of panes.stdout.split('\n')) {
       const [paneSession, paneId, panePid, cwd, origin] = line.split('\t');
@@ -159,7 +199,9 @@ const idleDevServers = new IdleDevServerReaper({
       if (result.survivors.length) throw new Error('Idle dev server process survived cleanup');
       for (const resource of await resolveSlotResources(slotId)) {
         if (
-          roots.some((root) => Number(root.pid) === getActiveResource(slotId, resource.id)?.pid)
+          roots.some(
+            (root) => Number(root.pid) === ownedListeners.get(`${slotId}/${resource.id}`)?.pid,
+          )
         ) {
           reportSlotResourceLifecycle({
             slotId,
@@ -168,6 +210,7 @@ const idleDevServers = new IdleDevServerReaper({
             ok: true,
             detail: 'Dev server idle limit reached',
           });
+          ownedListeners.delete(`${slotId}/${resource.id}`);
           deleteActiveResource(slotId, resource.id);
           setCachedResourceStatus(slotId, resource.id, 'stopped');
         }
@@ -178,14 +221,18 @@ const idleDevServers = new IdleDevServerReaper({
       activePrepareSlots.delete(slotId);
     }
   },
-  boot: (slotId, resourceId) => executeResourceControl(slotId, resourceId, 'boot'),
-  health: async (slotId, resourceId) => (await probeResourceStatus(slotId, resourceId)).status,
+  ready: async (slotId, resourceId, runId, assertOwner) => {
+    const owner = runId ?? (await readSlotRow(slotId))?.current_run_id;
+    if (typeof owner !== 'string') throw new Error('Dev server restore requires an owned slot');
+    await ensureResourceReady(slotId, owner, resourceId, assertOwner, assertOwner);
+  },
 });
 
 /** Runs on the resource poll, serialized with run resume and machine parking. */
 export async function reapIdleDevServers(slotId: string): Promise<void> {
   const owner = (await readSlotRow(slotId))?.current_run_id;
-  if (typeof owner === 'string') await withRunTransition(owner, () => idleDevServers.sweep(slotId));
+  if (typeof owner === 'string')
+    await tryWithRunTransition(owner, () => idleDevServers.sweep(slotId));
   else await idleDevServers.sweep(slotId);
 }
 

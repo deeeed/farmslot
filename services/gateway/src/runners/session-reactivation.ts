@@ -14,6 +14,7 @@ import {
 } from '../core/tmux.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 
+import { ensureWorkerContinuationReady } from './continuation-ready.js';
 import {
   buildLaunchCommand,
   buildRunnerSessionReloadCommand,
@@ -261,6 +262,7 @@ async function relaunchRunnerWithArgvPrompt(
     },
   );
   try {
+    await ensureWorkerContinuationReady(options.vars.slotId);
     await respawnTmuxWindowWithCommand(
       options.vars,
       owningWindowId,
@@ -451,6 +453,7 @@ async function reactivateRunnerSessionWithPrompt(
         initialPrompt: options.prompt,
       },
     )}`;
+    await ensureWorkerContinuationReady(options.vars.slotId);
     await respawnTmuxWindowWithCommand(options.vars, options.target, command, {
       preserveWindowAfterExit: true,
       beforeRespawn: async () => {

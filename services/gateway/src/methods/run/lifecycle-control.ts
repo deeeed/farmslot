@@ -615,8 +615,8 @@ export const GATE_PARK_REPLAY_TRIGGER = 'operator' as const;
 
 const DEFAULT_RUN_RESUME_DEPS: RunResumeTransitionDependencies = {
   prepareIdleDevServers: async (slotId, runId) => {
-    const { restoreIdleDevServers } = await import('../../run-lifecycle/idle-devserver-service.js');
-    await restoreIdleDevServers(slotId, runId);
+    const { ensureWorkerContinuationReady } = await import('../../runners/continuation-ready.js');
+    await ensureWorkerContinuationReady(slotId, runId);
   },
   nudgeMonitor: nudgeResumedMonitor,
   redrive: startRunWithStepAcknowledgement,
