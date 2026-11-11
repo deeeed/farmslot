@@ -7,7 +7,6 @@ import path from 'node:path';
 import {
   type FlowType,
   type InheritedAcceptanceProvenance,
-  isRecord,
   modelsMatch,
   type Run,
 } from '@farmslot/protocol';
@@ -38,41 +37,7 @@ interface PrCommentMatch {
   id?: number;
 }
 
-function findRunPrComment(
-  output: string,
-  runId: string,
-  requireId = false,
-): PrCommentMatch | undefined {
-  for (const line of output.split('\n')) {
-    if (!line) continue;
-    try {
-      const value: unknown = JSON.parse(line);
-      const body = typeof value === 'string' ? value : isRecord(value) ? value.body : undefined;
-      if (typeof body !== 'string' || !prCommentBelongsToRun(body, runId)) continue;
-      const id =
-        isRecord(value) &&
-        typeof value.id === 'number' &&
-        Number.isSafeInteger(value.id) &&
-        value.id > 0
-          ? value.id
-          : undefined;
-      if (requireId && !id) throw new Error('Existing run comment has no usable identity');
-      return { body, id };
-    } catch {
-      if (requireId)
-        throw new Error('Could not verify the existing run comment for inherited acceptance');
-      // A malformed pagination row is not positive evidence that this run
-      // already posted a comment.
-    }
-  }
-  return undefined;
-}
-
-export function paginatedPrCommentOutputContainsRun(output: string, runId: string): boolean {
-  return Boolean(findRunPrComment(output, runId));
-}
-
-/** Typed variant — used by migrated call sites that receive a REST array. */
+/** This run's comment among a PR's issue comments, as the REST list returns them. */
 function findRunPrCommentInArray(
   comments: Array<{ id?: unknown; body?: unknown }>,
   runId: string,

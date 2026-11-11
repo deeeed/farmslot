@@ -296,22 +296,6 @@ interface ReviewMetaData {
   } | null;
 }
 
-export function buildPRChecksArgs(prNum: number, ghRepo: string): string[] {
-  // Plain `gh pr checks` exits with code 8 whenever any check is still pending.
-  // That is valid state, not a transport failure, so fetch JSON buckets instead.
-  return [
-    'pr',
-    'checks',
-    String(prNum),
-    '--repo',
-    ghRepo,
-    '--json',
-    'name,bucket,startedAt,completedAt,state,link',
-    '--jq',
-    '.[] | [.name, .bucket, (.startedAt // ""), (.completedAt // ""), (.state // ""), (.link // "")] | @tsv',
-  ];
-}
-
 export async function getPRRawData(
   ghRepo: string,
   prNum: number,

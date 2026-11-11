@@ -49,18 +49,6 @@ interface GhReview {
   submitted_at?: string;
 }
 
-/** `gh api --paginate --slurp` returns one JSON array per page; flatten them. */
-export function parseReviewPages(stdout: string): PrReviewSummary[] {
-  const pages = JSON.parse(stdout) as GhReview[][];
-  return pages.flat().map((row) => ({
-    // Bots are tagged here and filtered in reviewersToRerequest; the two are
-    // one contract (GitHub marks apps with user.type, not with a login suffix).
-    author: row.user?.type === 'Bot' ? `${row.user?.login ?? ''}[bot]` : (row.user?.login ?? ''),
-    state: row.state ?? '',
-    submittedAt: row.submitted_at ?? '',
-  }));
-}
-
 export async function listPrReviews(ciRepo: string, prNumber: number): Promise<PrReviewSummary[]> {
   const rows = await github.rest<GhReview[]>(
     'GET',
