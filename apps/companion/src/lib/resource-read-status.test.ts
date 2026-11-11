@@ -62,6 +62,37 @@ test('a connected reread in flight or a fresh superseded read stays quiet', () =
 });
 
 // A screen with no banner (a stack route over the tabs) still says why it is empty.
+test('entity catch-up progress is shown; disappears when done === total', () => {
+  const inProgress = {
+    status: 'ready' as const,
+    data: { decisions: [] },
+    catchUpProgress: { done: 3, total: 10 },
+  };
+  assert.deepEqual(
+    resourceReadMessages([{ label: 'decisions', observation: inProgress }], 0, true),
+    ['Syncing decisions · 3 of 10'],
+    'in-progress catch-up shows label + count',
+  );
+  // Revert proof: removing the catchUpProgress check makes this test fail.
+  // Without the check, `status === 'ready'` returns `[]` immediately — no "Syncing" message.
+  const done = {
+    status: 'ready' as const,
+    data: { decisions: [] },
+    catchUpProgress: { done: 10, total: 10 },
+  };
+  assert.deepEqual(
+    resourceReadMessages([{ label: 'decisions', observation: done }], 0, true),
+    [],
+    'done === total is silent',
+  );
+  const noCatchUp = { status: 'ready' as const, data: { decisions: [] } };
+  assert.deepEqual(
+    resourceReadMessages([{ label: 'decisions', observation: noCatchUp }], 0, true),
+    [],
+    'no catchUpProgress is silent',
+  );
+});
+
 test('offline, a read with nothing to show says Offline once, unless the banner does', () => {
   const failed = {
     status: 'error',

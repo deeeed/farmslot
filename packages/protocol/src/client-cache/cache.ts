@@ -369,6 +369,8 @@ export function createGatewayResourceCache(
   let fleetResourceState: ResourceReadStamp | undefined;
   /** True when a membership change arrived but no versions read has been done since. */
   let fleetMembershipStale = false;
+  /** Entry currently driving a fleet catch-up refresh; cleared on completion. */
+  let fleetProgressEntry: QueryEntry | undefined;
   const fleetCollection = new EntityCollection<SlotEntity>({
     idOf: (entity) => entity.slot,
     sort: (a, b) => a.slot.localeCompare(b.slot),
@@ -391,6 +393,11 @@ export function createGatewayResourceCache(
     fetchPage: async (ids, signal) => {
       const result = await request<FleetEntityPage>(Methods.FLEET_STATUS, { ids }, signal);
       return result.data;
+    },
+    onProgress: (done, total) => {
+      if (!fleetProgressEntry) return;
+      fleetProgressEntry.state = { ...fleetProgressEntry.state, catchUpProgress: { done, total } };
+      notify(fleetProgressEntry);
     },
   });
 
@@ -462,6 +469,8 @@ export function createGatewayResourceCache(
     nonEntityFields?: PRListNonEntityFields;
     membershipStale: boolean;
     project?: string;
+    /** Entry currently driving a catch-up refresh; cleared on completion. */
+    progressEntry?: QueryEntry;
   }
   const prCollections = new Map<string, PRCollectionState>();
 
@@ -497,6 +506,12 @@ export function createGatewayResourceCache(
           signal,
         );
         return result.data;
+      },
+      onProgress: (done, total) => {
+        const e = colState.progressEntry;
+        if (!e) return;
+        e.state = { ...e.state, catchUpProgress: { done, total } };
+        notify(e);
       },
     });
     colState.collection = col;
@@ -555,6 +570,7 @@ export function createGatewayResourceCache(
       project !== undefined ? { project } : {},
     ).id;
     const colState = getOrCreatePRCollection(queryId, project);
+    colState.progressEntry = entry;
     try {
       if (!colState.collection.held || !colState.collection.complete || colState.membershipStale) {
         await colState.collection.refresh();
@@ -565,6 +581,11 @@ export function createGatewayResourceCache(
         colState.nonEntityFields = undefined;
       }
       throw error;
+    } finally {
+      colState.progressEntry = undefined;
+      if (entry.state.catchUpProgress !== undefined) {
+        entry.state = { ...entry.state, catchUpProgress: undefined };
+      }
     }
     const prs = colState.collection.assemble();
     const non = colState.nonEntityFields;
@@ -599,6 +620,8 @@ export function createGatewayResourceCache(
   interface DecisionCollectionState {
     collection: EntityCollection<PendingDecision>;
     membershipStale: boolean;
+    /** Entry currently driving a catch-up refresh; cleared on completion. */
+    progressEntry?: QueryEntry;
   }
   let decisionCollection: DecisionCollectionState | undefined;
 
@@ -620,6 +643,12 @@ export function createGatewayResourceCache(
       fetchPage: async (ids, signal) => {
         const result = await request<DecisionEntityPage>(Methods.DECISION_LIST, { ids }, signal);
         return result.data;
+      },
+      onProgress: (done, total) => {
+        const e = colState.progressEntry;
+        if (!e) return;
+        e.state = { ...e.state, catchUpProgress: { done, total } };
+        notify(e);
       },
     });
     colState.collection = col;
@@ -648,6 +677,7 @@ export function createGatewayResourceCache(
   /** Entity-sync decision list view: assemble from held decision entities. */
   async function readDecisionListView(entry: QueryEntry, signal: AbortSignal): Promise<ReadReply> {
     const colState = getOrCreateDecisionCollection();
+    colState.progressEntry = entry;
     try {
       if (!colState.collection.held || !colState.collection.complete || colState.membershipStale) {
         await colState.collection.refresh();
@@ -658,6 +688,11 @@ export function createGatewayResourceCache(
         colState.membershipStale = false;
       }
       throw error;
+    } finally {
+      colState.progressEntry = undefined;
+      if (entry.state.catchUpProgress !== undefined) {
+        entry.state = { ...entry.state, catchUpProgress: undefined };
+      }
     }
     const decisions = colState.collection.assemble();
     if (decisions) {
@@ -1775,6 +1810,7 @@ export function createGatewayResourceCache(
 
   /** Entity-sync fleet view (ADR-071 Amendment 3): assemble from held entities when complete. */
   async function readFleetStatusView(entry: QueryEntry, signal: AbortSignal): Promise<ReadReply> {
+    fleetProgressEntry = entry;
     try {
       if (!fleetCollection.held || !fleetCollection.complete || fleetMembershipStale) {
         await fleetCollection.refresh();
@@ -1792,6 +1828,11 @@ export function createGatewayResourceCache(
         );
       }
       throw error;
+    } finally {
+      fleetProgressEntry = undefined;
+      if (entry.state.catchUpProgress !== undefined) {
+        entry.state = { ...entry.state, catchUpProgress: undefined };
+      }
     }
     const entities = fleetCollection.assemble();
     const non = fleetNonEntityFields;
