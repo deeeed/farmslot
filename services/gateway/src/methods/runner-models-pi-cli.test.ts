@@ -297,6 +297,11 @@ for (const scenario of [
         1,
         'installed extension discovers once; helper preserves its static union',
       );
+      assert.equal(
+        listing.nativeIds?.includes(`${provider}/discovered-fixture`),
+        scenario === 'static-overrides',
+        'discovery alone cannot certify native registry membership',
+      );
       assert.ok(listing.ids.includes(`${provider}/discovered-fixture`));
       assert.ok(listing.ids.includes(`${provider}/static-only`));
       assert.deepEqual(listing.configuredProviders, [provider]);

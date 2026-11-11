@@ -1,21 +1,44 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { existsSync, realpathSync } from 'node:fs';
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { piNativeAdapter } from '@farmslot/agent-runtime/native/pi';
-
-import { nodeModelCatalogs } from '../runners/model-catalog.js';
-import { NodeModelCatalogObservation } from '../runners/node-model-catalog-observation.js';
-import { getRunnerDefinition } from '../runners/registry.js';
-
-import { nativeNodeModels } from './native-workspace.js';
+// Config paths are captured at import. Every command uses this synthetic home and pool.
+const home = realpathSync(await mkdtemp(path.join(tmpdir(), 'native-pi-catalog-')));
+after(() => rm(home, { recursive: true, force: true }));
+process.env = {
+  PATH: process.env.PATH,
+  TSX_TSCONFIG_PATH: process.env.TSX_TSCONFIG_PATH,
+  HOME: home,
+  FARMSLOT_HOME: path.join(home, 'farm'),
+  FARMSLOT_ROOT: home,
+  FARMSLOT_POOL_DIR: path.join(home, 'pool'),
+  FARMSLOT_PROJECTS_DIR: path.join(home, 'projects'),
+};
+for (const dir of ['scripts/runners', 'services/gateway', 'pool', 'projects/fixture'])
+  await mkdir(path.join(home, dir), { recursive: true });
+await writeFile(path.join(home, 'CLAUDE.md'), '# Synthetic root\n');
+await writeFile(path.join(home, 'scripts/dev.sh'), '#!/bin/sh\n');
+await writeFile(path.join(home, 'services/gateway/package.json'), '{}');
+await writeFile(path.join(home, 'projects/fixture/project.json'), '{}');
+const checkout = fileURLToPath(new URL('../../../../', import.meta.url));
+await copyFile(
+  path.join(checkout, 'scripts/runners/pi-farmslot-providers.mjs'),
+  path.join(home, 'scripts/runners/pi-farmslot-providers.mjs'),
+);
+const { piNativeAdapter } = await import('@farmslot/agent-runtime/native/pi');
+const { nodeModelCatalogs } = await import('../runners/model-catalog.js');
+const { NodeModelCatalogObservation } =
+  await import('../runners/node-model-catalog-observation.js');
+const { getRunnerDefinition } = await import('../runners/registry.js');
+const { modelCatalogNodes } = await import('./runner-models.js');
+const { nativeNodeModels } = await import('./native-workspace.js');
 
 const pi = (process.env.PATH ?? '')
   .split(path.delimiter)
@@ -29,14 +52,6 @@ test(
   },
   async (t) => {
     assert.ok(pi);
-    const home = await mkdtemp(path.join(tmpdir(), 'native-pi-catalog-'));
-    const previous = process.env.FARMSLOT_HOME;
-    process.env.FARMSLOT_HOME = home;
-    t.after(async () => {
-      if (previous === undefined) delete process.env.FARMSLOT_HOME;
-      else process.env.FARMSLOT_HOME = previous;
-      await rm(home, { recursive: true, force: true });
-    });
     const agent = path.join(home, 'agent');
     await mkdir(agent);
     const model = 'GLM-5.3-Flash-s12';
@@ -57,7 +72,7 @@ test(
     const server = createServer((request, response) => {
       requests.push(request.url ?? '');
       response.setHeader('Content-Type', 'application/json');
-      response.end(JSON.stringify({ data: [{ id: model }] }));
+      response.end(JSON.stringify({ data: [{ id: model }, { id: 'discovered-only' }] }));
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     t.after(
@@ -76,41 +91,55 @@ test(
       PI_OFFLINE: '1',
       FARMSLOT_PI_OLLAMA: '0',
       FARMSLOT_PI_ROUTER_URL: `http://127.0.0.1:${address.port}/v1`,
-      FARMSLOT_PI_ROUTER_ID: 'local-sparks',
+      FARMSLOT_PI_ROUTER_ID: 'localsparks',
     };
     const source = getRunnerDefinition('pi').modelCatalog;
     assert.ok(source && 'nodeCommand' in source);
-    const helper = fileURLToPath(
-      new URL('../../../../scripts/runners/pi-farmslot-providers.mjs', import.meta.url),
+    const repo = path.join(home, 'repo');
+    await mkdir(repo);
+    await promisify(execFile)(
+      process.execPath,
+      [
+        path.join(checkout, 'scripts/install-runner-observability.mjs'),
+        '--runner',
+        'pi',
+        '--repo',
+        repo,
+        '--slot-id',
+        'fixture-slot',
+      ],
+      { env },
+    );
+    await writeFile(
+      path.join(home, 'pool/fixture.json'),
+      JSON.stringify({
+        machine: 'native-pi-fixture',
+        host: 'localhost',
+        ssh_user: 'fixture',
+        os: 'macos',
+        project: 'fixture',
+        pi_path: pi,
+        env,
+        slots: [{ id: 'fixture-slot', repo, session: 'fixture' }],
+      }),
     );
     const observation = new NodeModelCatalogObservation({
       runner: 'pi',
       source,
       changed: () => undefined,
-      nodes: async () => [
-        {
-          machine: 'native-pi-fixture',
-          list: async () => {
-            const { stdout } = await promisify(execFile)(
-              process.execPath,
-              [helper, '--list-models', pi],
-              { env, cwd: home },
-            );
-            return stdout;
-          },
-        },
-      ],
+      nodes: modelCatalogNodes,
     });
     t.after(() => observation.stop());
     const worker = await observation.sample();
-    assert.ok(worker.models.some((entry) => entry.id === `local-sparks/${model}`));
+    assert.ok(worker.models.some((entry) => entry.id === `localsparks/discovered-only`));
     const models = nativeNodeModels(
       'pi',
       undefined,
       new Map([['fixture', 'native-pi-fixture']]),
     )?.fixture;
     assert.deepEqual(models, [`localsparks/${model}`]);
-    assert.ok(!models.includes(`local-sparks/${model}`));
+    assert.ok(worker.models.some((entry) => entry.id === `localsparks/${model}`));
+    assert.ok(!models.includes('localsparks/discovered-only'));
     assert.ok(!models.includes(`router/${model}`));
     assert.deepEqual(nodeModelCatalogs.nativeListing('pi', 'native-pi-fixture'), models);
     const session = await piNativeAdapter.start(

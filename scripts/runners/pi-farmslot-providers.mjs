@@ -207,22 +207,29 @@ export function parsePiProviderDiscovery(output, ids) {
 /** Run on the execution node. Only a renamed router needs worker discovery. */
 export async function listPiModelCatalog(binary, env = process.env, opts = {}) {
   const routerId = piRouterProviderId(env);
-  const result = spawnSync(binary, ['--list-models', ...(opts.args ?? [])], {
-    env,
-    encoding: 'utf8',
-    timeout: 15_000,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  if (result.status !== 0) throw new Error('Pi native model listing failed');
-  const native = decodePiModelList(result.stdout);
-  const discovery = parsePiProviderDiscovery(result.stdout, native);
+  const list = (args) => {
+    const result = spawnSync(binary, ['--list-models', ...args], {
+      env,
+      encoding: 'utf8',
+      timeout: 15_000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    if (result.status !== 0) throw new Error('Pi native model listing failed');
+    return result.stdout;
+  };
+  const output = list(opts.args ?? []);
+  const listed = decodePiModelList(output);
+  const discovery = parsePiProviderDiscovery(output, listed);
+  // Native RPC omits the worker extension, so its registry needs its own evidence.
+  // Reuse the table when no extension arguments were supplied.
+  const native = opts.args?.length ? decodePiModelList(list([])) : listed;
   if (routerId === 'router' || discovery.reported) {
     const aliases = {};
     if (routerId !== 'router' && discovery.configuredProviders.includes(routerId))
-      for (const id of native)
+      for (const id of listed)
         if (id.startsWith(`${routerId}/`)) aliases[`router/${id.slice(routerId.length + 1)}`] = id;
     return {
-      ids: native,
+      ids: listed,
       aliases,
       nativeIds: native,
       configuredProviders: discovery.configuredProviders,
@@ -235,7 +242,7 @@ export async function listPiModelCatalog(binary, env = process.env, opts = {}) {
     { ...opts, onDiscovery: (source) => reports.push(source) },
   );
   const aliases = {};
-  const ids = new Set(native);
+  const ids = new Set(listed);
   for (const source of sources) {
     // Provider registration replaces its entire model list, including legacy aliases.
     const replaced = new Set([source.id, ...(source.aliases ?? [])]);
