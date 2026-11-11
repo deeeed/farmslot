@@ -275,3 +275,154 @@ test('failed runner/node pairs retry independently and stop when their source is
   }
   assert.equal(clock.timers.size, 0);
 });
+
+for (const removal of ['retry', 'sample'] as const) {
+  test(`a removed node cancels its retry during the next ${removal}`, async (t) => {
+    const runner = `retry-removed-${removal}`;
+    let attempts = 0;
+    const nodes: ModelCatalogNode[] = [
+      {
+        machine: 'node-a',
+        list: async () => {
+          attempts++;
+          throw new Error('fixture node disconnected');
+        },
+      },
+    ];
+    const { observation, clock } = fixture(runner, nodes);
+    t.after(() => observation.stop());
+    await observation.read(runner);
+    assert.equal(clock.timers.size, 1);
+    nodes.length = 0;
+    if (removal === 'sample') {
+      await observation.read(runner);
+      assert.equal(clock.timers.size, 0);
+    }
+    await clock.advance(15_000);
+    assert.equal(attempts, 1);
+    assert.equal(clock.timers.size, 0);
+    await clock.advance(600_000);
+    assert.equal(attempts, 1);
+  });
+}
+
+for (const listing of ['retry', 'sample'] as const) {
+  test(`the next ${listing} uses the current execution slot and cancels the old retry`, async (t) => {
+    const runner = `retry-changed-slot-${listing}`;
+    const slots: string[] = [];
+    const nodes: ModelCatalogNode[] = [
+      {
+        machine: 'node-a',
+        list: async () => {
+          slots.push('old-slot');
+          throw new Error('fixture slot removed');
+        },
+      },
+    ];
+    const { observation, clock } = fixture(runner, nodes);
+    t.after(() => observation.stop());
+    await observation.read(runner);
+    nodes[0] = {
+      machine: 'node-a',
+      list: async () => {
+        slots.push('current-slot');
+        return 'litellm/fixture-current';
+      },
+    };
+    if (listing === 'sample') await observation.read(runner);
+    else await clock.advance(15_000);
+    assert.deepEqual(slots, ['old-slot', 'current-slot']);
+    assert.deepEqual(nodeModelCatalogs.listing(runner, 'node-a'), ['litellm/fixture-current']);
+    assert.equal(clock.timers.size, 0);
+    await clock.advance(600_000);
+    assert.equal(slots.length, 2);
+  });
+}
+
+test('stop drains a pruned node listing and fences its late reply', async (t) => {
+  const runner = 'retry-pruned-pending';
+  let attempts = 0;
+  let complete!: (output: string) => void;
+  const nodes: ModelCatalogNode[] = [
+    {
+      machine: 'node-a',
+      list: async () => {
+        if (++attempts === 1) throw new Error('fixture node disconnected');
+        return new Promise<string>((resolve) => {
+          complete = resolve;
+        });
+      },
+    },
+  ];
+  const { observation, clock } = fixture(runner, nodes);
+  t.after(() => observation.stop());
+  await observation.read(runner);
+  await clock.advance(15_000);
+  nodes.length = 0;
+  await observation.read(runner);
+  let drained = false;
+  const stopping = observation.stop().then(() => {
+    drained = true;
+  });
+  await settle();
+  assert.equal(drained, false);
+  complete('litellm/fixture-late');
+  await stopping;
+  assert.equal(nodeModelCatalogs.listing(runner, 'node-a'), undefined);
+  assert.equal(clock.timers.size, 0);
+});
+
+for (const outcome of ['failing', 'recovered'] as const) {
+  test(`${outcome} node retries preserve retained age and the healthy node refresh deadline`, async (t) => {
+    const runner = `retry-healthy-cadence-${outcome}`;
+    let healthyAttempts = 0;
+    let failingAttempts = 0;
+    let recovered = false;
+    const { observation, clock, interest } = fixture(runner, [
+      {
+        machine: 'node-a',
+        list: async () => {
+          failingAttempts++;
+          if (!recovered) throw new Error('fixture node disconnected');
+          return 'litellm/fixture-recovered';
+        },
+      },
+      {
+        machine: 'node-b',
+        list: async () => {
+          healthyAttempts++;
+          return `litellm/fixture-healthy-${healthyAttempts}`;
+        },
+      },
+    ]);
+    t.after(() => observation.stop());
+    interest();
+    const initial = await observation.read(runner, managed);
+    for (const delay of [15_000, 30_000, 60_000]) {
+      await clock.advance(delay);
+      assert.equal((await observation.read(runner, managed)).observation?.observedAt, 1000);
+      await observation.tick();
+      assert.equal(healthyAttempts, 1);
+    }
+    recovered = outcome === 'recovered';
+    await clock.advance(120_000);
+    const recovery = await observation.read(runner, managed);
+    assert.equal(recovery.observation?.observedAt, initial.observation?.observedAt);
+    assert.equal(
+      recovery.models.some((model) => model.id === 'litellm/fixture-recovered'),
+      recovered,
+    );
+    assert.equal(clock.timers.size, recovered ? 0 : 1);
+    await clock.advance(75_000 - 1);
+    await observation.tick();
+    assert.equal(healthyAttempts, 1);
+    await clock.advance(1);
+    assert.equal((await observation.read(runner, managed)).observation?.status, 'stale');
+    await observation.tick();
+    assert.equal(healthyAttempts, 2);
+    assert.equal(failingAttempts, 6);
+    const refreshed = await observation.read(runner, managed);
+    assert.equal(refreshed.observation?.observedAt, clock.now);
+    assert.ok(refreshed.models.some((model) => model.id === 'litellm/fixture-healthy-2'));
+  });
+}

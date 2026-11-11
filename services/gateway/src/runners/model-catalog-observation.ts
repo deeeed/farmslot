@@ -96,7 +96,7 @@ class CatalogSourceOwner {
       this.nodeCatalog = new NodeModelCatalogObservation({
         ...options.node,
         runner,
-        changed: (result) => this.record(result),
+        changed: (result) => this.record(result, false),
       });
   }
 
@@ -214,13 +214,15 @@ class CatalogSourceOwner {
     return this.pending;
   }
 
-  private record(result: RunnerModelCatalogResult): void {
+  private record(result: RunnerModelCatalogResult, fullSample = true): void {
     // A stopped or superseded source never retains or publishes its late reply.
     if (this.stopped) return;
-    this.attemptedAt = this.options.now();
+    // A node retry publishes its models without postponing other nodes' refresh.
+    if (fullSample) this.attemptedAt = this.options.now();
     if (result.status === 'ready') {
       this.models = result.models.map(catalogModel);
-      this.observedAt = this.attemptedAt;
+      // Retained nodes keep their age; only a full sample renews the aggregate clock.
+      if (fullSample || this.observedAt === undefined) this.observedAt = this.options.now();
       this.error = undefined;
     } else this.error = result.detail || 'Runner model catalog is unavailable.';
     this.publish();
