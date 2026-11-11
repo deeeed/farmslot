@@ -7,6 +7,7 @@ import {
   type RunnerVisibleModelsGetResult,
   type RunnerVisibleModelsSetResult,
 } from '@farmslot/protocol';
+import { machinePoolFileName } from '@farmslot/slot-config';
 
 import { loadMachinePool, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot, isDisconnectedRemote, isLocal } from '../core/exec.js';
@@ -77,7 +78,8 @@ export async function modelCatalogNodes(): Promise<ModelCatalogNode[]> {
     if (
       pool.machine &&
       pool.slots[0] &&
-      (!slots.has(pool.machine) || basename(poolConfigId(pool)) === `${pool.machine}.json`)
+      (!slots.has(pool.machine) ||
+        basename(poolConfigId(pool)) === machinePoolFileName(pool.machine))
     )
       slots.set(pool.machine, pool.slots[0].id);
   return [...slots].map(([machine, slot]) => ({
