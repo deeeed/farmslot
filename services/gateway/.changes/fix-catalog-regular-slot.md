@@ -1,0 +1,1 @@
+- List per-node model catalogs through the machine's regular pool slot when available, and finish support-bundle activation before starting the listing's timeout.

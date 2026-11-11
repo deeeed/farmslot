@@ -552,7 +552,7 @@ for (const mode of ['local', 'remote']) {
 test('node project sync updates templates and checklists without deleting unrelated data', (t) => {
   const deploy = fs.readFileSync(path.join(repo, 'scripts/deploy-node.sh'), 'utf8');
   const start = deploy.indexOf('for proj_dir in "$FARMSLOT_PROJECTS_DIR"/*/; do');
-  const end = deploy.indexOf('\n# --- Install deps', start);
+  const end = deploy.indexOf('\n}\n', start);
   assert.ok(start > 0 && end > start);
   const copyPhase = deploy.slice(start, end);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'project-config-sync-'));
@@ -981,6 +981,63 @@ for (const [where, machine] of [
     assert.deepEqual(fixture.tscBuilds(), []);
   });
 }
+
+// Execution nodes run pack hooks from their own copies, which a full deploy
+// (bundle, deps, restart) refreshes only when the node is idle. --packs-only
+// syncs the pack files alone, over the real ssh stub and rsync, with no token.
+test('deploy-node --packs-only syncs pack files and leaves the node install and service alone', (t) => {
+  const fixture = cliFixture(t);
+  fs.rmSync(path.join(fixture.root, 'bin/rsync'));
+  fixture.write('pool/fixture-machine.json', '{"slots":[]}\n');
+  fixture.write('projects/example/project.json', '{"name":"example"}\n');
+  fixture.write('projects/example/setup/ensure-skills.sh', '#!/bin/sh\n', true);
+  fixture.write('projects/example/scripts/preflight.sh', '#!/bin/sh\n', true);
+  const node = path.join(fixture.home, 'farmslot-node');
+  fixture.write('home/farmslot-node/projects/example/project.json', '{"name":"stale"}\n');
+
+  const output = fixture.deploy({
+    args: ['--packs-only'],
+    nodeTokenFile: false,
+    env: { FARMSLOT_ROOT: '', FARMSLOT_POOL_DIR: '', FARMSLOT_PROJECTS_DIR: '' },
+  });
+
+  for (const file of [
+    'pool/fixture-machine.json',
+    'projects/example/project.json',
+    'projects/example/setup/ensure-skills.sh',
+    'projects/example/scripts/preflight.sh',
+  ])
+    assert.equal(
+      fs.readFileSync(path.join(node, file), 'utf8'),
+      fs.readFileSync(path.join(fixture.root, file), 'utf8'),
+      file,
+    );
+  assert.doesNotMatch(output, /syncing node source|installing dependencies|workspace packages/);
+  for (const absent of ['src/index.ts', 'package.json', 'scripts', 'node_modules/@farmslot'])
+    assert.equal(fs.existsSync(path.join(node, absent)), false, absent);
+  assert.deepEqual(fixture.tscBuilds(), []);
+  assert.deepEqual(fixture.systemctl(), []);
+  assert.deepEqual(fixture.snapshotInstalls(), []);
+  assert.deepEqual(fixture.calls(), []);
+});
+
+test('deploy-node refuses --packs-only with a CLI refresh', (t) => {
+  const fixture = cliFixture(t);
+  for (const flag of ['--cli-only', '--refresh-cli'])
+    assert.throws(
+      () => fixture.deploy({ args: ['--packs-only', flag], nodeTokenFile: false }),
+      (error) =>
+        /--packs-only cannot be combined with --cli-only or --refresh-cli/.test(error.stderr),
+    );
+});
+
+test('deploy-node refuses --packs-only with a node token file', (t) => {
+  const fixture = cliFixture(t);
+  assert.throws(
+    () => fixture.deploy({ args: ['--packs-only'] }),
+    (error) => /--packs-only needs no node token/.test(error.stderr),
+  );
+});
 
 test('deploy-node --cli-only builds only the protocol dist, and only when it is missing', (t) => {
   const fixture = cliFixture(t);
@@ -1967,7 +2024,7 @@ test('node pool sync copies gateway contents over stale node-local links', (t) =
   // Run the production pool phase with real rsync and private local paths.
   const deploy = fs.readFileSync(path.join(repo, 'scripts/deploy-node.sh'), 'utf8');
   const start = deploy.indexOf('echo "[deploy] syncing pool configs..."');
-  const end = deploy.indexOf('\necho "[deploy] syncing project configs', start);
+  const end = deploy.indexOf('\n  echo "[deploy] syncing project configs', start);
   assert.ok(start >= 0 && end > start);
   execFileSync(
     'bash',

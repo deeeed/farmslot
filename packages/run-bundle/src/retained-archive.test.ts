@@ -7,6 +7,7 @@ import fs, {
   readdir,
   readFile,
   realpath,
+  rename,
   rm,
   stat,
   writeFile,
@@ -454,3 +455,111 @@ test('when all history is pinned, admission preserves the source and fails inste
     pinned.body,
   );
 });
+
+test('media archival counts store bytes once while preserving exact charged totals', async (t) => {
+  const f = await fixture(t);
+  for (const id of ['first', 'second', 'third']) await f.capture(id, 10000);
+  const readdir = fs.readdir;
+  let storeScans = 0;
+  t.mock.method(fs, 'readdir', (...args: Parameters<typeof fs.readdir>) => {
+    if (String(args[0]) === f.store.root) storeScans++;
+    return readdir(...args);
+  });
+  syncBuiltinESMExports();
+  let result: bundles.RunBundleMediaArchiveResult;
+  try {
+    result = await f.archive({ ...bundles.DEFAULT_RUN_BUNDLE_RETENTION, mediaRetentionDays: 0 });
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+  assert.equal(result.archivedPaths.length, 3);
+  assert.equal(
+    result.chargedBytesAfter,
+    (await bundles.runBundleAdmissionUsage(f.store, f.root)).total,
+  );
+  assert.equal(storeScans, 1, 'do not recount every retained bundle for each archived file');
+});
+
+test('publication waiting behind media archival keeps its budget when accounting does not rescan', async (t) => {
+  const f = await fixture(t);
+  for (const id of ['first', 'second', 'third']) await f.capture(id, 10000);
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const readdir = fs.readdir;
+  t.mock.method(fs, 'readdir', (...args: Parameters<typeof fs.readdir>) => {
+    // Scale the loaded gateway's store walk without a real minute-long wait.
+    if (String(args[0]) === f.store.root) now += 20000;
+    return readdir(...args);
+  });
+  syncBuiltinESMExports();
+  let publication: Promise<string> | undefined;
+  try {
+    await bundles.archiveRunBundleMedia({
+      store: f.store,
+      farmslotRoot: f.root,
+      archiveRoot: f.archiveRoot,
+      policy: { ...bundles.DEFAULT_RUN_BUNDLE_RETENTION, mediaRetentionDays: 0 },
+      assertArchiveWriteRoom: async () => {
+        publication ??= bundles.withRunBundleLockWaitBudget(60000, () =>
+          bundles.withRunBundleStoreLock(f.store, async () => 'publication admitted'),
+        );
+      },
+    });
+    assert.ok(publication);
+    assert.equal(await publication, 'publication admitted');
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+});
+
+for (const parent of ['sha256', 'staging', 'reservations']) {
+  test(`media pressure observes completed housekeeping from ${parent} during its pass`, async (t) => {
+    const f = await fixture(t);
+    const staged = path.join(f.store.root, parent, '.retention-fixture');
+    if (parent === 'sha256') {
+      const saved = await f.capture('superseded', 120000);
+      await rename(saved.bundle.directory, staged);
+      await rm(path.join(f.store.runsDir, `${saved.run.id}.json`));
+    } else if (parent === 'staging') {
+      await mkdir(staged, { recursive: true });
+      await writeFile(path.join(staged, 'abandoned.png'), Buffer.alloc(120000));
+    } else {
+      await mkdir(path.dirname(staged), { recursive: true });
+      await writeFile(staged, JSON.stringify({ runId: 'retired', bytes: 1000 }));
+    }
+    await f.capture('first', 10000);
+    await f.capture('second', 10000);
+    const usage = await bundles.runBundleAdmissionUsage(f.store, f.root);
+    let completed = false;
+    const result = await bundles.archiveRunBundleMedia({
+      store: f.store,
+      farmslotRoot: f.root,
+      archiveRoot: f.archiveRoot,
+      policy: {
+        maxStoreBytes: usage.total / 0.9,
+        maxBundleBytes: 1000000,
+        metadataReserveBytes: 1,
+        mediaRetentionDays: 30,
+      },
+      assertArchiveWriteRoom: async () => {
+        if (completed) return;
+        // finishStorageArchive renames/removes a charged stage outside the store lock.
+        await rename(staged, path.join(f.archiveRoot, 'completed-housekeeping'));
+        completed = true;
+      },
+    });
+    assert.equal(completed, true);
+    if (parent !== 'reservations')
+      assert.equal(
+        result.archivedPaths.length,
+        1,
+        'do not copy more referenced proof after housekeeping freed capacity',
+      );
+    assert.equal(
+      result.chargedBytesAfter,
+      (await bundles.runBundleAdmissionUsage(f.store, f.root)).total,
+    );
+  });
+}
