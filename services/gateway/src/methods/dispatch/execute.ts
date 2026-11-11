@@ -167,6 +167,7 @@ export {
   resolvePrRef,
   validateTicketRef,
 } from './ticket-ref.js';
+import { blindTrialWorkerBoundary } from '../../evals/blind-git.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
 import { admitWorkerLaunch } from '../../run-engine/worker-launch-preflight.js';
 
@@ -1863,7 +1864,7 @@ export async function dispatchExecute(
     runtimeDir: projectVars?.runtimeDir,
     // Label only — installer expands credential path on the slot host.
     codexAccountLabel: accountBind?.bind.launchAccountLabel ?? null,
-    blindTrialCapsule: currentRun?.engineState?.evalExperiment?.blind?.isolation?.capsulePath,
+    blindTrialBoundary: blindTrialWorkerBoundary(currentRun),
     modelQuestions: modelQuestionsForRun(currentRun),
   });
 

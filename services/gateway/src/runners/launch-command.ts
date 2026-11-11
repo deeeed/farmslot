@@ -36,7 +36,7 @@ import {
 import { applyProjectCommandEnv, withMachineEnv } from '../core/project-env.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
-import { withBlindTrialBoundary } from '../evals/blind-git.js';
+import { type BlindTrialWorkerBoundary, withBlindTrialBoundary } from '../evals/blind-git.js';
 
 import type { RunnerModelCatalogNodeCommandContext } from './model-catalog.js';
 import {
@@ -561,7 +561,7 @@ interface RunnerSessionReloadOptions {
   codexAuthSource?: string | null;
   initialPrompt?: string;
   /** Capsule of a blind eval trial; the resumed worker keeps the trial boundary. */
-  blindTrialCapsule?: string;
+  blindTrialBoundary?: BlindTrialWorkerBoundary;
 }
 
 export function buildRunnerSessionReloadCommand(
@@ -582,7 +582,7 @@ export function buildRunnerSessionReloadCommand(
     ? ` ${shellQuote(opts.initialPrompt.trim())}`
     : '';
   const blind = (command: string): string =>
-    opts.blindTrialCapsule ? withBlindTrialBoundary(command, opts.blindTrialCapsule) : command;
+    opts.blindTrialBoundary ? withBlindTrialBoundary(command, opts.blindTrialBoundary) : command;
 
   if (runner === 'claude') {
     const installCommand = buildRunnerObservabilityInstallCommand(
@@ -957,7 +957,7 @@ export interface BuildLaunchOptions {
    */
   codexAuthSource?: string | null;
   /** Capsule of a blind eval trial; its worker starts without GitHub credentials. */
-  blindTrialCapsule?: string;
+  blindTrialBoundary?: BlindTrialWorkerBoundary;
   /** 'off' for an autonomous run: the model has no question tool (modelQuestionsOffByRunner). */
   modelQuestions?: 'off';
 }
@@ -1001,8 +1001,8 @@ export function buildLaunchCommand(
       withTaskRecipeTrustEnvironment(
         // Innermost, so neither pool nor project environment restores a credential.
         withSourceInputs(
-          opts.blindTrialCapsule
-            ? withBlindTrialBoundary(command, opts.blindTrialCapsule)
+          opts.blindTrialBoundary
+            ? withBlindTrialBoundary(command, opts.blindTrialBoundary)
             : command,
         ),
         repo,
