@@ -41,6 +41,7 @@ import { autoDispatchBacklogReady, listBacklogItems } from './backlog/store.js';
 import { ChatActionRejectError } from './chat/chat-actions.js';
 import { GatewayInternalError, GatewayMethodError } from './core/method-error.js';
 import { setSlotUpdateHook } from './core/state.js';
+import { slotEntityProvider } from './fleet/entity-version.js';
 import { unregisterByWs } from './fleet/machine-registry.js';
 import { getMachineHealth, markMachineOffline, updateMachineMetrics } from './fleet/node-health.js';
 import { acceptNodeLinkStream } from './fleet/node-link.js';
@@ -600,6 +601,10 @@ export function initServerGlobals(): void {
     )
       nativeCatalogChanges.catalogChanged();
     broadcastEvent(Events.RESOURCE_CHANGED, payload);
+  });
+  resourceRevisions.setEntityProvider('slot', (key) => {
+    if (key.family !== 'slot' || !('slotId' in key)) return undefined;
+    return slotEntityProvider((key as { family: 'slot'; slotId: string }).slotId);
   });
 
   // Watch for fleet state changes and broadcast

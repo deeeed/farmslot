@@ -156,12 +156,66 @@ export const Events = {
 // ─── Event payload types ───
 // Every event subscriber gets a typed payload via GatewayClient.subscribe<T>()
 
-/** Invalidation-only change notice; clients reread through existing methods. */
+/**
+ * Typed, family-discriminated entity carried on a per-entity resource.changed entry.
+ * Clients narrow by `family` and validate required fields with a type guard before use.
+ * Only present on per-entity keys (slot, decision, upstream PR) under 16 KB; absent on
+ * collection keys.
+ */
+export type ChangedEntity =
+  | { family: 'slot'; entity: SlotStatus; version: string }
+  | { family: 'decision'; entity: PendingDecision; version: string }
+  | { family: 'upstream'; entity: PRStatus; version: string };
+
+/** Runtime guard: narrow a pushed entity to a slot. */
+export function isSlotEntity(
+  e: ChangedEntity,
+): e is { family: 'slot'; entity: SlotStatus; version: string } {
+  return (
+    e.family === 'slot' &&
+    typeof e.entity === 'object' &&
+    e.entity !== null &&
+    typeof (e.entity as SlotStatus).slot === 'string'
+  );
+}
+
+/** Runtime guard: narrow a pushed entity to a decision. */
+export function isDecisionEntity(
+  e: ChangedEntity,
+): e is { family: 'decision'; entity: PendingDecision; version: string } {
+  return e.family === 'decision' && typeof e.entity === 'object' && e.entity !== null;
+}
+
+/** Runtime guard: narrow a pushed entity to a PR. */
+export function isPREntity(
+  e: ChangedEntity,
+): e is { family: 'upstream'; entity: PRStatus; version: string } {
+  return e.family === 'upstream' && typeof e.entity === 'object' && e.entity !== null;
+}
+
+export interface ResourceChangeEntry {
+  key: ResourceKey;
+  revision: ResourceRevision;
+  kind: 'updated' | 'deleted';
+  /**
+   * Typed entity pushed inline for per-entity keys under 16 KB.
+   * Absent for collection keys and for deleted entities.
+   */
+  changedEntity?: ChangedEntity;
+  /**
+   * Advances only when the collection id-set or non-entity fields change.
+   * Present only on collection-key changes. Entity-sync clients skip a versions
+   * read when this value matches what they last stored (data-only change).
+   */
+  membershipRevision?: number;
+}
+
+/** Change notification; clients reread through existing methods or apply inline entity. */
 export interface ResourceChangedPayload {
   version: 1;
   /** Opaque gateway process identity; revisions are never compared across epochs. */
   epoch: string;
-  changes: Array<{ key: ResourceKey; revision: ResourceRevision; kind: 'updated' | 'deleted' }>;
+  changes: ResourceChangeEntry[];
 }
 
 export interface FleetUpdatedPayload {

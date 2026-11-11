@@ -1,7 +1,11 @@
 import type {
+  FleetPoolReadError,
   FleetStatus,
+  FleetSummary,
+  MachineHealth,
   SlotParkedCommits,
   SlotRecoveryRefusal,
+  SlotStatus,
   SlotWorkspaceIdentity,
 } from '../contracts/index.js';
 
@@ -17,6 +21,34 @@ export const FleetMethods = {
 
 export interface FleetStatusParams {
   forceRefresh?: boolean;
+  /**
+   * Entity-sync: return id/version pairs instead of full slots.
+   * Non-entity fields (summary, machines, checkedAt) are carried in the result.
+   */
+  versions?: true;
+  /**
+   * Entity-sync: return only the named slot entities (by slot id).
+   * Returns FleetEntityPage, not FleetStatusResult.
+   */
+  ids?: string[];
+  /** Visible-entity hint for first-page sizing. */
+  visibleCount?: number;
+}
+
+/** Versions reply for fleet.status { versions: true }. Non-entity fields plus the id/version list. */
+export interface FleetVersionsResult {
+  versions: Array<{ id: string; version: string }>;
+  summary: FleetSummary;
+  machines?: MachineHealth[];
+  checkedAt: string;
+  poolErrors?: FleetPoolReadError[];
+}
+
+/** ids page for fleet.status { ids: string[] }. Only the requested entities plus their versions. */
+export interface FleetEntityPage {
+  entities: SlotStatus[];
+  /** id/version pairs for each served entity (may differ from requested when entity changed during page). */
+  versions: Array<{ id: string; version: string }>;
 }
 export type FleetRefreshSlotStatus =
   | 'pending'

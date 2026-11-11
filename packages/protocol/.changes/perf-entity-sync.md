@@ -1,0 +1,6 @@
+- Add `ChangedEntity` discriminated union and `membershipRevision` field to `ResourceChangeEntry` for entity-sync push attachment
+- Add `FleetStatusParams.versions` and `FleetStatusParams.ids` for entity-sync reads; add `FleetVersionsResult` and `FleetEntityPage` result types
+- Add `EntityCollection<T>` client helper for id/version-based entity caching with priority catch-up
+- Add `catch-up` variant to `ResourceSyncState` with `done`/`total` progress for determinate catch-up display
+- Move `computeSummary` to `@farmslot/protocol/fleet/summary` so both gateway and client share one implementation
+- Add `entitySync` capability flag to `GatewayResourceChangesCapability`

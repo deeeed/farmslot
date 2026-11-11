@@ -26,6 +26,12 @@ export interface GatewayResourceChangesCapability {
   versionLists: boolean;
   /** Advertise only once the named read stamps, collector writers and admission work together. */
   upstreamObservers?: ResourceObserversCapability;
+  /**
+   * Entity sync (ADR-071 Amendment 3): fleet.status, decision.list and pr.list support
+   * { versions: true } and { ids: string[] } reads; resource.changed carries typed
+   * ChangedEntity for per-entity keys; collection changes carry membershipRevision.
+   */
+  entitySync?: boolean;
 }
 
 export interface GatewayAuthConnectParams {

@@ -377,6 +377,7 @@ import {
 } from '../methods/filesystem.js';
 import { finetuneExportDPO, finetuneExportSFT, finetuneIndex } from '../methods/finetune.js';
 import { fleetRefresh, fleetStatus } from '../methods/fleet.js';
+import { fleetStatusIds, fleetStatusVersions } from '../methods/fleet-entity-sync.js';
 import {
   fleetPrSummary,
   fleetRefreshSlots,
@@ -908,8 +909,11 @@ async function routeAuthorizedMethod(
       return credentialRevoke(p as CredentialRevokeParams, authRuntime);
 
     // Fleet
-    case Methods.FLEET_STATUS:
-      return fleetStatus(p as FleetStatusParams, undefined, (fleet) =>
+    case Methods.FLEET_STATUS: {
+      const fp = p as FleetStatusParams;
+      if (fp.versions === true) return fleetStatusVersions();
+      if (fp.ids !== undefined) return fleetStatusIds(fp.ids);
+      return fleetStatus(fp, undefined, (fleet) =>
         context.broadcast({
           type: 'event',
           event: Events.FLEET_UPDATED,
@@ -917,6 +921,7 @@ async function routeAuthorizedMethod(
           seq: context.nextEventSeq(),
         }),
       );
+    }
     case Methods.FLEET_REFRESH:
       return fleetRefresh();
 

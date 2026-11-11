@@ -1,0 +1,1 @@
+- Update `resource-store-notice` equality guard to re-render on `catch-up` progress increments (done/total changes)

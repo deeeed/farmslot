@@ -451,3 +451,81 @@ New screens add their reads to the registry instead of calling the gateway.
 Adding an exception means amending this table. Offline, commands stay disabled,
 so previews, searches and diagnostics are unavailable until the client
 reconnects.
+
+## Amendment 3 (2026-11-12): Entity sync
+
+### Status
+
+Accepted
+
+### Context
+
+Full fleet re-fetches are expensive on slow connections: even with caching, a
+reconnect or a background tab must refetch every slot to discover that most
+entities are unchanged. Amendment 3 adds an entity-sync layer so clients can
+skip unmodified entities.
+
+### Decision
+
+**Entity versions.** Each entity carries a content-hash version: sha256 of its
+canonical JSON body, truncated to 16 hex characters. The same entity content
+always produces the same version across gateway restarts (no epoch in the hash).
+Volatile fields that change without changing entity semantics are excluded from
+the body before hashing; `hostLoad` for slots is re-attached by the client from
+the `machines` array in the versions reply.
+
+**Push attachment.** `ResourceChangeEntry` gains two optional fields:
+
+```ts
+interface ResourceChangeEntry {
+  key: ResourceKey;
+  revision: ResourceRevision;
+  kind: 'updated' | 'deleted';
+  changedEntity?: ChangedEntity; // per-entity keys only
+  membershipRevision?: number; // collection keys only
+}
+```
+
+`changedEntity` carries the entity body and version for per-entity keys (not
+collection keys, not deletions). `membershipRevision` is a monotone counter on
+collection keys that advances only when the id set changes — a client holding
+the same membershipRevision can skip the versions read and apply the pushed
+entity directly.
+
+**Entity-sync reads.** `fleet.status` accepts two new param shapes:
+
+| Params               | Returns               | Description                                                                           |
+| -------------------- | --------------------- | ------------------------------------------------------------------------------------- |
+| `{ versions: true }` | `FleetVersionsResult` | id/version list + non-entity fields (summary, machines, checkedAt). No entity bodies. |
+| `{ ids: string[] }`  | `FleetEntityPage`     | Only the requested slot entities plus their versions. Page capped at 2 MiB.           |
+
+**Client machinery.** `EntityCollection<T>` in
+`@farmslot/protocol/client-cache` manages a local entity store. It holds an id
+→ `{entity, version}` map, applies pushed entities directly, and runs a
+versions-read + ids catch-up cycle on membership change. `refresh()` sends the
+versions read, diffs against held versions, and fetches only changed ids in
+priority batches (first page 20+ visible slots, then remainder). `assemble()`
+returns a sorted array; volatile fields are reattached by the caller from
+the versions reply.
+
+**Progress reporting.** `ResourceSyncState` gains a `catch-up` variant with
+`done` and `total` counts for determinate catch-up progress, labelled
+"Syncing N of M" in the UI notice.
+
+**Entity provider registration.** `GatewayResourceRevisions.setEntityProvider()`
+registers a synchronous per-family provider called at notification publish time.
+The provider reads `getCachedFleet()` (no I/O) and returns `ChangedEntity` for
+the named key. `advanceMembership()` advances the collection key and increments
+its `membershipRevision` counter; ordinary `advance()` increments the entity key
+revision only.
+
+**Capability advertisement.** `GatewayResourceChangesCapability.entitySync`
+flag tells connecting clients whether the gateway speaks entity sync.
+
+### Consequences
+
+Clients with entity-sync support skip unmodified entities on reconnect and after
+a tab-hidden wake, cutting re-fetch bytes proportionally to the unchanged
+fraction of the fleet. Clients without entity-sync support continue to work
+unmodified — the new params are additive and the existing `fleet.status {}` path
+is unchanged.

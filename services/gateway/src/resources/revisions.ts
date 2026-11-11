@@ -6,7 +6,7 @@ import {
   resourceKeyId,
   type ResourceReadStamp,
 } from '@farmslot/protocol/client-cache';
-import type { ResourceChangedPayload } from '@farmslot/protocol/transport/events';
+import type { ChangedEntity, ResourceChangedPayload } from '@farmslot/protocol/transport/events';
 
 type Change = ResourceChangedPayload['changes'][number];
 
@@ -27,8 +27,33 @@ export class GatewayResourceRevisions {
   >();
   private publisher?: (payload: ResourceChangedPayload) => void;
   private readonly deadlines = new Map<string, InvalidationDeadline>();
-
   private readonly listeners = new Set<(payload: ResourceChangedPayload) => void>();
+
+  /**
+   * Per-key membership revision counters. Incremented by advanceMembership().
+   * Attached to collection-key changes so entity-sync clients can detect data-only changes.
+   */
+  private readonly membershipRevisions = new Map<string, number>();
+
+  /**
+   * Per-family synchronous entity providers.
+   * publish() calls the provider for per-entity keys to attach ChangedEntity inline.
+   */
+  private readonly entityProviders = new Map<
+    ResourceKey['family'],
+    (key: ResourceKey) => ChangedEntity | undefined
+  >();
+
+  /**
+   * Register a synchronous entity provider for a resource family.
+   * Called once at gateway startup per entity type. No I/O on the event loop.
+   */
+  setEntityProvider(
+    family: ResourceKey['family'],
+    provider: (key: ResourceKey) => ChangedEntity | undefined,
+  ): void {
+    this.entityProviders.set(family, provider);
+  }
 
   /** Internal consumers share the same coalesced changes as connected clients. */
   subscribe(listener: (payload: ResourceChangedPayload) => void): () => void {
@@ -79,6 +104,17 @@ export class GatewayResourceRevisions {
     } else queueMicrotask(() => this.publish(key.family));
   }
 
+  /**
+   * Advance a collection key AND increment its membershipRevision.
+   * Use for slot-set changes (slot added or removed) and PR membership changes.
+   * Entity-sync clients skip a versions read when the membershipRevision is unchanged.
+   */
+  advanceMembership(key: ResourceKey, kind: Change['kind'] = 'updated'): void {
+    this.advance(key, kind);
+    const id = resourceKeyId(key);
+    this.membershipRevisions.set(id, (this.membershipRevisions.get(id) ?? 0) + 1);
+  }
+
   /** A time-dependent projection has no write at its boundary; its owner schedules that change. */
   scheduleInvalidation(ownerId: string, key: ResourceKey, at: number | undefined): void {
     this.scheduleDeadline(`${resourceKeyId(key)}\0${ownerId}`, [key], at);
@@ -122,8 +158,19 @@ export class GatewayResourceRevisions {
   private publish(family: ResourceKey['family']): void {
     this.scheduled.delete(family);
     const changes: Change[] = [];
+    const provider = this.entityProviders.get(family);
     for (const [id, change] of this.pending) {
       if (change.key.family !== family) continue;
+      // Attach entity for per-entity keys (not collection keys, not deletions).
+      if (provider && change.kind !== 'deleted') {
+        const pushed = provider(change.key);
+        if (pushed) (change as Change).changedEntity = pushed;
+      }
+      // Attach membershipRevision for collection keys that have one.
+      const membershipRev = this.membershipRevisions.get(id);
+      if (membershipRev !== undefined) {
+        (change as Change).membershipRevision = membershipRev;
+      }
       changes.push(change);
       this.pending.delete(id);
     }
@@ -148,6 +195,8 @@ export class GatewayResourceRevisions {
     for (const timer of this.scheduled.values()) if (timer) clearTimeout(timer);
     this.pending.clear();
     this.scheduled.clear();
+    this.membershipRevisions.clear();
+    this.entityProviders.clear();
   }
 }
 
