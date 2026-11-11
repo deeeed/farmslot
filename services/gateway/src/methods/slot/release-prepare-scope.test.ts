@@ -4,12 +4,13 @@ import { once } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { after, beforeEach, mock, test } from 'node:test';
+import { after, afterEach, beforeEach, mock, test } from 'node:test';
 
 import {
   cancelledRunHoldReason,
   cancelledRunSlotHold,
   releaseCancelledRunSlot,
+  type Run,
 } from '@farmslot/protocol';
 
 const runRoot = mkdtempSync(path.join(tmpdir(), 'release-owner-runs-'));
@@ -24,6 +25,7 @@ after(() => rmSync(runRoot, { recursive: true, force: true }));
 const SLOT_ID = 'macpro-mm-1';
 const IDENTITY = '/slot/.agent/preflight.identity';
 
+let fixtureRuns: Run[] = [];
 let slotRow: Record<string, unknown>;
 let recycleStartsRuntime = false;
 let recycledRuntime: ChildProcess | undefined;
@@ -289,7 +291,16 @@ const { slotPrepare } = await import('./prepare.js');
 const emit = (event: string, payload: unknown) =>
   emitted.push({ event, payload: payload as Record<string, unknown> });
 
+// Queue an awaitable persist for every fixture id, even one deleted or archived by
+// the test. The store ignores replaced records but still waits for earlier writes.
+afterEach(async () => {
+  await Promise.all(
+    fixtureRuns.map((run) => realRuns.persistRunNow(run, 'release fixture teardown')),
+  );
+});
+
 beforeEach(async () => {
+  fixtureRuns = [];
   recycleStartsRuntime = false;
   recycledRuntime = undefined;
   slotRow = { slot: SLOT_ID, lifecycle: 'ready', phase: null, slot_epoch: 1 };
@@ -320,6 +331,7 @@ beforeEach(async () => {
     );
     run.id = id;
     run.status = status;
+    fixtureRuns.push(run);
     writeFileSync(path.join(runRoot, id + '.json'), JSON.stringify(run));
   }
   await realRuns.loadAllRuns();
