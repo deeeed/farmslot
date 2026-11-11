@@ -198,7 +198,11 @@ test('failed readiness keeps marker for retry; confirmed readiness clears it', a
   assert.equal(f.booted(), 0);
 });
 
-for (const change of [{ current_run_id: 'run-b', slot_epoch: 2 }, { phase: 'releasing' }]) {
+for (const change of [
+  { current_run_id: 'run-b', slot_epoch: 2 },
+  { phase: 'releasing' },
+  { handoff_run_id: 'rival' },
+]) {
   test(`resume refuses ownership or release changes during its health probe: ${JSON.stringify(change)}`, async () => {
     const f = fixture();
     await f.reaper.sweep('slot-a');
@@ -233,4 +237,18 @@ test('another live run still vetoes cleanup while working', async () => {
   f.advance();
   await f.reaper.sweep('slot-a');
   assert.equal(f.stopped(), 0);
+});
+
+test('restoration refuses a reservation replaced during readiness and keeps its marker', async () => {
+  const f = fixture();
+  await f.reaper.sweep('slot-a');
+  f.advance();
+  await f.reaper.sweep('slot-a');
+  f.setRow({ handoff_run_id: 'authorized-follow-up' });
+  f.deps.ready = async (_slot, _resource, _owner, assertOwner) => {
+    f.setRow({ handoff_run_id: 'rival' });
+    await assertOwner();
+  };
+  await assert.rejects(f.reaper.restore('slot-a', 'run-a'), /owner changed|releasing/);
+  assert.deepEqual(f.row().idle_devservers, ['server']);
 });

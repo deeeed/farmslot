@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import { writeFile } from 'node:fs/promises';
 import { beforeEach, mock, test } from 'node:test';
 
 import type { ActiveResourcePointer, Run, SlotResource } from '@farmslot/protocol';
 
 import '../runtime/mock-pty.test-support.js';
+
+import { makeVars } from '../runners/test-fixtures.js';
 
 let clock = 1000;
 
@@ -24,6 +27,8 @@ let pagedOwner = false;
 let foreign = false;
 let unhealthyBoot = false;
 let closedHistory = false;
+let realStatus = false;
+let promptDelivered = false;
 const run: Run = {
   id: 'run-a',
   familyId: 'family-a',
@@ -56,7 +61,7 @@ const resources = (): SlotResource[] => [
     },
   },
 ];
-const vars = {
+const vars = makeVars({
   slotId: 'slot-a',
   machine: 'fixture-node',
   host: 'fixture-node',
@@ -64,17 +69,18 @@ const vars = {
   remoteRepo: '/fixture',
   repo: '/fixture',
   resourceVars: { port: '9001' },
-};
+});
 const realState = await import('../core/state.js');
 mock.module('../core/state.js', {
   namedExports: {
     ...realState,
-    readSlotRow: async () => row,
+    readSlotRow: async () => (realStatus ? realState.readSlotRow(vars.slotId) : row),
     markSlotStatusIf: async (
       _slot: string,
       predicate: (row: Record<string, unknown>) => boolean,
       fields: Record<string, unknown>,
     ) => {
+      if (realStatus) return realState.markSlotStatusIf(_slot, predicate, fields);
       const applied = predicate(row);
       if (applied) row = { ...row, ...fields };
       return { applied, epoch: row.slot_epoch };
@@ -94,6 +100,22 @@ mock.module('../core/slot-io.js', {
   namedExports: { ...realIo, slotRealpath: async () => '/fixture' },
 });
 const fixtureExec = async (_vars: unknown, command: string) => {
+  if (realStatus && command.includes('.observability'))
+    return { exitCode: 0, stdout: '', stderr: '' };
+  if (realStatus && command.includes('FARMSLOT_RUNNER_PATTERN='))
+    return {
+      exitCode: promptDelivered ? 0 : 1,
+      stdout: promptDelivered ? '301\n' : '',
+      stderr: '',
+    };
+  if (realStatus && command.includes('SIGNAL.json'))
+    return {
+      exitCode: 0,
+      stdout: `${promptDelivered ? 3000000000 : 2000000000}\n${JSON.stringify({ status: promptDelivered ? 'running' : 'complete' })}\n`,
+      stderr: '',
+    };
+  if (realStatus && command.includes('list-panes'))
+    return { exitCode: 0, stdout: '%7\n', stderr: '' };
   if (command.startsWith('lsof -a'))
     return { stdout: `p101\nn${foreign ? '/foreign' : '/fixture'}\n`, stderr: '', exitCode: 0 };
   if (command.startsWith('ps -p'))
@@ -136,12 +158,32 @@ const fixtureExec = async (_vars: unknown, command: string) => {
 };
 const realExec = await import('../core/exec.js');
 mock.module('../core/exec.js', { namedExports: { ...realExec, execOnSlot: fixtureExec } });
-const realCore = await import('../core/index.js');
-mock.module('../core/index.js', { namedExports: { ...realCore, execOnSlot: fixtureExec } });
 const realTmux = await import('../core/tmux.js');
 mock.module('../core/tmux.js', {
-  namedExports: { ...realTmux, resolveTmuxSession: async () => 'fixture-session' },
+  namedExports: {
+    ...realTmux,
+    resolveTmuxSession: async () => 'fixture-session',
+    resolveExactTmuxWindowPane: async () => ({ paneId: '%7', panePid: '201' }),
+    resolveTmuxWindowId: async () => '@7',
+    respawnTmuxWindowWithCommand: async (
+      _vars: unknown,
+      _target: string,
+      _command: string,
+      options?: { beforeRespawn?: () => void | Promise<void> },
+    ) => {
+      await options?.beforeRespawn?.();
+      assert.equal(alive, true, 'runtime must be restored before the warm prompt is delivered');
+      assert.equal((await realState.readSlotRow(vars.slotId))?.idle_devservers, null);
+      promptDelivered = true;
+    },
+  },
 });
+const realSupport = await import('../node-support/ensure.js');
+mock.module('../node-support/ensure.js', {
+  namedExports: { ...realSupport, ensureNodeSupportBundle: async () => {} },
+});
+const realCore = await import('../core/index.js');
+mock.module('../core/index.js', { namedExports: { ...realCore, execOnSlot: fixtureExec } });
 const realResources = await import('../fleet/resource-manager.js');
 mock.module('../fleet/resource-manager.js', {
   namedExports: {
@@ -265,6 +307,8 @@ beforeEach(() => {
   foreign = false;
   unhealthyBoot = false;
   closedHistory = false;
+  realStatus = false;
+  promptDelivered = false;
 });
 
 test('port watch resolves once, expires through the real identity reaper and resumes through boot', async () => {
@@ -433,3 +477,49 @@ for (const live of [false, true]) {
     assert.equal(stops, live ? 0 : 1);
   });
 }
+
+test('WARM reservation carries the capped server through the actual claim and retained delivery', async () => {
+  await reapIdleDevServers(vars.slotId);
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers(vars.slotId);
+  assert.equal(alive, false);
+  await writeFile(realState.statusFile, JSON.stringify({ slots: [{ ...row, slot: vars.slotId }] }));
+  realStatus = true;
+  const { commitSlotClaim } = await import('../run-engine/find-slot-step.js');
+  await commitSlotClaim(
+    vars.slotId,
+    'follow-up',
+    0,
+    'working',
+    'working',
+    {
+      takeoverLiveOwner: true,
+    },
+    {
+      runLookup: (id) => ({ status: id === 'follow-up' ? 'slot-finding' : 'paused' }),
+    },
+  );
+  const reserved = await realState.readSlotRow(vars.slotId);
+  assert.equal(reserved?.current_run_id, run.id);
+  assert.equal(reserved?.handoff_run_id, 'follow-up');
+  assert.equal(reserved?.slot_epoch, epoch + 1);
+  assert.equal(reserved?.idle_devserver_epoch, epoch + 1);
+  const { deliverPromptWithRetainedFallback } = await import('../runners/session-reactivation.js');
+  const result = await deliverPromptWithRetainedFallback({
+    vars,
+    target: '%7',
+    runnerId: 'cursor',
+    prompt: 'Read the follow-up task',
+    launchAckSignalPath: '/fixture/follow-up/SIGNAL.json',
+    onPromptMutationStart: () => {
+      assert.equal(boots, 1);
+      assert.equal(alive, true);
+    },
+  });
+  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.equal(promptDelivered, true);
+  assert.equal(boots, 1);
+  const restored = await realState.readSlotRow(vars.slotId);
+  assert.equal(restored?.idle_devservers, null);
+  assert.equal(restored?.handoff_run_id, 'follow-up');
+});

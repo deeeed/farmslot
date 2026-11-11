@@ -145,7 +145,7 @@ const idleDevServers = new IdleDevServerReaper({
           row.slot_epoch === expected.slot_epoch &&
           row.current_run_id === expected.current_run_id &&
           row.phase !== 'releasing' &&
-          !row.handoff_run_id,
+          (row.handoff_run_id ?? null) === (expected.handoff_run_id ?? null),
         fields,
       )
     ).applied,

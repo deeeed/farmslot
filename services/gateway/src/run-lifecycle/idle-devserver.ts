@@ -182,7 +182,7 @@ export class IdleDevServerReaper {
         current.slot_epoch !== row.slot_epoch ||
         current.current_run_id !== row.current_run_id ||
         current.phase === 'releasing' ||
-        current.handoff_run_id
+        (current.handoff_run_id ?? null) !== (row.handoff_run_id ?? null)
       )
         throw new Error('Slot owner changed or is releasing during dev server re-prepare');
     };
