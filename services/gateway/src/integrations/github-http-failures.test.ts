@@ -75,6 +75,30 @@ describe('GitHub HTTP failures', { concurrency: 1 }, () => {
     assert.equal(calls() - before, 1, 'A different query must not retry the exhausted credential');
   });
 
+  test('a 403 or 429 with exhausted GraphQL quota fences later queries', async () => {
+    const reset = Math.floor(Date.now() / 1000) + 600;
+    const account = { host: 'github.com', token: 'test-rejected-quota', scope: 'owner' };
+    for (const status of [403, 429]) {
+      githubQueryBudget.resetForTests();
+      const before = calls();
+      responses.push({
+        status,
+        headers: graphqlHeaders(0, reset),
+        body: '{"message":"API rate limit exceeded"}',
+      });
+      await assert.rejects(
+        githubGraphQL(`query { viewer { status${status} } }`, {}, account),
+        new RegExp(`HTTP ${status}`),
+      );
+      assert.ok(githubQueryBudget.anyReserved(), `${status} headers reserve the budget`);
+      await assert.rejects(
+        github.graphql(`query { other${status} }`, {}),
+        /query budget is reserved/,
+      );
+      assert.equal(calls() - before, 1, `${status}: the reserved budget sent nothing more`);
+    }
+  });
+
   test('a 304 revalidation still serves the previously cached response', async () => {
     responses.push(
       { headers: { etag: '"fixture"' }, body: '{"value":42}' },

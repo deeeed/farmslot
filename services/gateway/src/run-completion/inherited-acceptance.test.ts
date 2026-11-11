@@ -8,7 +8,8 @@ import { mock, test, type TestContext } from 'node:test';
 import { ACCEPTANCE_STATUS_ARTIFACT, type Run, type RunDecision } from '@farmslot/protocol';
 
 import { retainFixtureTask } from '../../../../packages/run-bundle/src/retained.test-support.js';
-import type { GitHubService, RestServiceOpts } from '../integrations/github-client.js';
+import type { RestServiceOpts } from '../integrations/github-client.js';
+import { fakeGitHubService } from '../integrations/github-test-fixtures.js';
 
 await import('../runtime/mock-pty.test-support.js');
 const store = await import('../runs/store.js');
@@ -25,29 +26,28 @@ let existingComment = '';
 let createdComments = 0;
 let patchedComments = 0;
 let refuseCommentWrite = false;
-const inheritFakeGithub: GitHubService = {
-  ...githubModule.github,
+const inheritFakeGithub = fakeGitHubService(githubModule.github, {
   prComment: async (_repo, _number, body) => {
     if (refuseCommentWrite) throw new Error('Comment permission denied');
     createdComments++;
     posted = body;
     return '';
   },
-  rest: async <T>(_method: string, _path: string, opts?: RestServiceOpts) => {
+  rest: async (_method: string, _path: string, opts?: RestServiceOpts) => {
     if (opts?.paginate) {
       const parsed = existingComment ? JSON.parse(existingComment) : [];
-      return (Array.isArray(parsed) ? parsed : [parsed]) as unknown as T;
+      return Array.isArray(parsed) ? parsed : [parsed];
     }
     if (_method === 'PATCH') {
       if (refuseCommentWrite) throw new Error('Comment permission denied');
       patchedComments++;
       posted = (opts?.body as { body?: string })?.body ?? '';
       existingComment = JSON.stringify({ id: 777, body: posted });
-      return {} as unknown as T;
+      return {};
     }
-    return [] as unknown as T;
+    return [];
   },
-};
+});
 mock.module('../integrations/github-client.js', {
   namedExports: { ...githubModule, github: inheritFakeGithub },
 });

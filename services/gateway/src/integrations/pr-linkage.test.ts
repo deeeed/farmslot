@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { after, beforeEach, mock, test } from 'node:test';
 
-import type { GitHubService, RestServiceOpts } from './github-client.js';
+import type { RestServiceOpts } from './github-client.js';
+import { fakeGitHubService } from './github-test-fixtures.js';
 
 process.env.NODE_TEST_CONTEXT = '1';
 await import('../runtime/mock-pty.test-support.js');
@@ -31,8 +32,7 @@ mock.module('./github-bindings-cache.js', {
   },
 });
 const clientModule = await import('./github-client.js');
-const fakeGithub: GitHubService = {
-  ...clientModule.github,
+const fakeGithub = fakeGitHubService(clientModule.github, {
   prView: async (repo, number, _fields, _opts?) => {
     requests.push(['pr', 'view', String(number)]);
     if (metadataFailure) throw metadataFailure;
@@ -50,11 +50,11 @@ const fakeGithub: GitHubService = {
       ];
     return [];
   },
-  rest: async <T>(_method: string, path: string, _opts?: RestServiceOpts): Promise<T> => {
+  rest: async (_method: string, path: string, _opts?: RestServiceOpts) => {
     requests.push(['api', path]);
-    return { state: 'closed', head: { ref: 'fix/reused' } } as unknown as T;
+    return { state: 'closed', head: { ref: 'fix/reused' } };
   },
-};
+});
 mock.module('./github-client.js', {
   namedExports: { ...clientModule, github: fakeGithub },
 });

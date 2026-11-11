@@ -7,25 +7,23 @@ import { after, mock, test } from 'node:test';
 
 import type { PRListFilters } from '../integrations/github-client.js';
 
-const scratch = mkdtempSync(path.join(tmpdir(), 'pr-slot-remote-'));
-// Only the checkout's own config: no machine-wide remotes leak into the choice.
+const scratch = mkdtempSync(path.join(tmpdir(), 'pr-slot-checkout-'));
+// Only the checkout's own config: no machine-wide url rewrites reach the origin slug.
 const emptyGlobal = path.join(scratch, 'gitconfig');
 writeFileSync(emptyGlobal, '');
 const previousGlobal = process.env.GIT_CONFIG_GLOBAL;
 process.env.GIT_CONFIG_GLOBAL = emptyGlobal;
 
-function checkout(name: string, remotes: Record<string, string>, resolved?: string): string {
+function checkout(name: string, origin: string): string {
   const dir = path.join(scratch, name);
   execFileSync('git', ['init', '-q', dir]);
-  for (const [remote, url] of Object.entries(remotes))
-    execFileSync('git', ['-C', dir, 'remote', 'add', remote, url]);
-  if (resolved)
-    execFileSync('git', ['-C', dir, 'config', `remote.${resolved}.gh-resolved`, 'base']);
+  execFileSync('git', ['-C', dir, 'remote', 'add', 'origin', origin]);
   return dir;
 }
 
 let slotRepo = '';
-const listed: string[] = [];
+const lookups: Array<[string, string]> = [];
+let lookupAnswer: () => Promise<{ number: number; baseRefName?: string } | null>;
 const callers: Array<string | undefined> = [];
 const fleet = await import('../fleet/state.js');
 mock.module('../fleet/state.js', {
@@ -41,6 +39,19 @@ mock.module('../fleet/state.js', {
     ],
   },
 });
+const githubCliModule = await import('../host-services/github-cli.js');
+mock.module('../host-services/github-cli.js', {
+  namedExports: {
+    ...githubCliModule,
+    githubCli: {
+      ...githubCliModule.githubCli,
+      checkoutPRForBranch: async (cwd: string, branch: string) => {
+        lookups.push([cwd, branch]);
+        return lookupAnswer();
+      },
+    },
+  },
+});
 const githubClient = await import('../integrations/github-client.js');
 mock.module('../integrations/github-client.js', {
   namedExports: {
@@ -48,12 +59,11 @@ mock.module('../integrations/github-client.js', {
     github: {
       ...githubClient.github,
       prListFields: async (
-        repo: string,
+        _repo: string,
         _fields: string[],
         filters: PRListFilters,
         opts?: { caller?: string },
       ) => {
-        listed.push(repo);
         callers.push(opts?.caller);
         assert.equal(filters.head, 'feat/a');
         return [{ number: 42, baseRefName: 'main' }];
@@ -69,40 +79,34 @@ after(() => {
   rmSync(scratch, { recursive: true, force: true });
 });
 
-test('a slot without ci.repo looks its PR up in the repository gh would pick', async () => {
-  const cases: Array<[string, string, Record<string, string>, string?]> = [
-    [
-      'fork origin plus upstream',
-      'github.com/canonical/app',
-      { origin: 'git@github.com:me/app.git', upstream: 'https://github.com/canonical/app.git' },
-    ],
-    [
-      'gh repo set-default',
-      'github.com/me/app',
-      { origin: 'git@github.com:me/app.git', upstream: 'https://github.com/canonical/app.git' },
-      'origin',
-    ],
-    [
-      'Enterprise remote',
-      'ghe.example.com/team/app',
-      { origin: 'ssh://git@ghe.example.com/team/app.git' },
-    ],
-  ];
-  for (const [name, expected, remotes, resolved] of cases) {
-    slotRepo = checkout(name.replaceAll(' ', '-'), remotes, resolved);
-    listed.length = 0;
-    const result = await prForSlot({ slotId: 's1' });
-    assert.deepEqual(listed, [expected], name);
-    assert.deepEqual(result, {
-      pr: 42,
-      repo: expected.split('/').slice(1).join('/'),
-      baseRef: 'main',
-    });
+test('a slot without ci.repo asks gh in its checkout and pairs the answer with the origin slug', async () => {
+  // gh resolves SSH host aliases itself; the reported repository is the origin slug, as before.
+  slotRepo = checkout('alias', 'git@github.com-deeeed:deeeed/farmslot.git');
+  lookups.length = 0;
+  lookupAnswer = async () => ({ number: 42, baseRefName: 'release' });
+  assert.deepEqual(await prForSlot({ slotId: 's1' }), {
+    pr: 42,
+    repo: 'deeeed/farmslot',
+    baseRef: 'release',
+  });
+  assert.deepEqual(lookups, [[slotRepo, 'feat/a']]);
+
+  slotRepo = checkout('enterprise', 'git@ghe.example.com:team/app.git');
+  lookupAnswer = async () => ({ number: 7 });
+  assert.deepEqual(
+    await prForSlot({ slotId: 's1' }),
+    { pr: 7, repo: null, baseRef: 'main' },
+    'a remote that is not github.com reports no repository slug',
+  );
+
+  for (const answer of [async () => null, async () => Promise.reject(new Error('gh: not found'))]) {
+    lookupAnswer = answer;
+    assert.deepEqual(await prForSlot({ slotId: 's1' }), { pr: null, repo: null, baseRef: 'main' });
   }
 });
 
 test('managed slot discovery keeps its spend attribution', async () => {
-  slotRepo = checkout('managed', { origin: 'git@github.com:me/app.git' });
+  slotRepo = checkout('managed', 'git@github.com:me/app.git');
   callers.length = 0;
   const found = await readPRForSlot({ slotId: 's1' }, { legacyInterest: false });
   assert.equal(found.pr, 42);

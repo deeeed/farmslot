@@ -13,6 +13,7 @@ import {
 } from './github-errors.js';
 import { type GhCommandContext, githubRestOp } from './github-operations.js';
 import { githubQueryBudget as queryBudget, GitHubQueryBudgetError } from './github-query-budget.js';
+import { defaultGitHubHost, graphqlEndpoint } from './github-transport.js';
 
 export interface GitHubPage<T> {
   nodes: T[];
@@ -46,13 +47,35 @@ function rateLimitCost(rateLimit: unknown): number {
   return typeof cost === 'number' && Number.isFinite(cost) && cost > 0 ? cost : 0;
 }
 
-export async function githubGraphQL<T>(
+export function githubGraphQL<T>(
   document: string,
   variables: Variables,
   account: GitHubQueryAccount,
   caller?: string,
 ): Promise<T> {
-  const quotaKey = githubRequestCacheKey([], { ...account, scope: 'query-budget' });
+  return classifiedGraphQL<T>(account.host, account, document, variables, caller);
+}
+
+/** The same classified read with the ambient keyring credential on gh's default host. */
+export function githubAmbientGraphQL<T>(
+  document: string,
+  variables: Variables,
+  caller?: string,
+): Promise<T> {
+  return classifiedGraphQL<T>(defaultGitHubHost(), undefined, document, variables, caller);
+}
+
+async function classifiedGraphQL<T>(
+  host: string,
+  account: GitHubQueryAccount | undefined,
+  document: string,
+  variables: Variables,
+  caller: string | undefined,
+): Promise<T> {
+  const quotaKey = githubRequestCacheKey(
+    [],
+    account ? { ...account, scope: 'query-budget' } : undefined,
+  );
   const retryAt = queryBudget.anyReserved();
   if (retryAt) throw new GitHubQueryBudgetError(retryAt);
   const metered = meteredDocument(document);
@@ -65,14 +88,14 @@ export async function githubGraphQL<T>(
     if (signal?.aborted) throw new Error('Source deadline reached');
     // Rejections are classified inside the exchange so the client's negative cache keeps them.
     return await runGitHubGraphQLExchange<T>(
-      account.host,
+      host,
       metered,
       variables,
       async (ctx) => {
         const { data: result, headers } = await githubRestOp<Envelope | null>(
-          account.host,
+          host,
           'POST',
-          'graphql',
+          graphqlEndpoint(host),
           { body: { query: metered, variables } },
           ctx,
         );

@@ -5,7 +5,7 @@ import type { Run, RunnerSessionUsage } from '@farmslot/protocol';
 
 import '../runtime/mock-pty.test-support.js';
 
-import type { GitHubService } from '../integrations/github-client.js';
+import { fakeGitHubService } from '../integrations/github-test-fixtures.js';
 import type { FinalizeStepContext } from '../run-engine/finalize-step.js';
 import { makeReadyGatePackage } from '../run-engine/test-fixtures.js';
 import { makeVars } from '../runners/test-fixtures.js';
@@ -136,8 +136,7 @@ mock.module('./pr-template.js', {
   namedExports: { ...template, readGitHubPrTemplate: async () => null },
 });
 const github = await import('../integrations/github-client.js');
-const remoteFakeGithub: GitHubService = {
-  ...github.github,
+const remoteFakeGithub = fakeGitHubService(github.github, {
   prView: async () => {
     mutations.push('github');
     return {};
@@ -169,15 +168,15 @@ const remoteFakeGithub: GitHubService = {
   prReady: async () => {
     mutations.push('github');
   },
-  graphql: async <T>() => {
+  graphql: async () => {
     mutations.push('github');
-    return {} as unknown as T;
+    return {};
   },
-  rest: async <T>() => {
+  rest: async () => {
     mutations.push('github');
-    return {} as unknown as T;
+    return {};
   },
-};
+});
 mock.module('../integrations/github-client.js', {
   namedExports: { ...github, github: remoteFakeGithub },
 });

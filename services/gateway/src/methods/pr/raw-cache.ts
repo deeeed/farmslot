@@ -3,7 +3,11 @@
 import { type CommandOutput, isRecord } from '@farmslot/protocol';
 
 import { github } from '../../integrations/github-client.js';
-import { collectGitHubPages, type GitHubPage } from '../../integrations/github-graphql.js';
+import {
+  collectGitHubPages,
+  githubAmbientGraphQL,
+  type GitHubPage,
+} from '../../integrations/github-graphql.js';
 import {
   githubQueryBudget,
   GitHubQueryBudgetError,
@@ -539,11 +543,6 @@ interface GqlPullRequestNode {
   };
 }
 
-interface GqlBatchResponse {
-  data?: { repository?: Record<string, GqlPullRequestNode | null> | null };
-  errors?: Array<{ message?: string }>;
-}
-
 export function chunkPRsByRepo(
   prsByRepo: Map<string, number[]>,
   maxPerRepo = PR_BATCH_MAX_PER_REPO,
@@ -822,22 +821,19 @@ export function synthesizeRawSnapshotFromGraphQL(
 
 // One GraphQL request per repo chunk. Quota holds fail the refresh; other failures log and continue —
 // `prList` falls through to the per-PR REST path for whichever PRs aren't in cache.
-// An 8-PR chunk with 100 contexts × 100 review threads × 50 comments could in
-// principle produce a large response on monster PRs; github.rest handles the parse.
+// A response carrying GraphQL errors is rejected whole, partial data included, as the
+// `gh api graphql` read was: none of its PRs is cached.
 async function runBatchChunk(chunk: BatchedRepoChunk, seeded: Set<string>): Promise<void> {
-  const query = buildBatchQuery(chunk.prs.length).replace(
-    /}\s*$/,
-    ' rateLimit { cost remaining resetAt } }',
-  );
   const variables: Record<string, string | number> = { owner: chunk.owner, name: chunk.name };
   for (let i = 0; i < chunk.prs.length; i++) variables[`pr_${i}`] = chunk.prs[i];
 
-  let parsed: GqlBatchResponse;
+  let parsed: { repository?: Record<string, GqlPullRequestNode | null> | null };
   try {
-    parsed = await github.rest<GqlBatchResponse>('POST', 'graphql', {
-      body: { query, variables },
-      force: true,
-    });
+    parsed = await githubAmbientGraphQL(
+      buildBatchQuery(chunk.prs.length),
+      variables,
+      'pr.list:prefetch',
+    );
   } catch (err) {
     if (err instanceof GitHubQueryBudgetError) throw err;
     // Per-PR fallback engages — see function-level comment.
@@ -847,7 +843,7 @@ async function runBatchChunk(chunk: BatchedRepoChunk, seeded: Set<string>): Prom
     return;
   }
 
-  const repoNode = parsed.data?.repository;
+  const repoNode = parsed.repository;
   if (!repoNode) return;
 
   for (let i = 0; i < chunk.prs.length; i++) {

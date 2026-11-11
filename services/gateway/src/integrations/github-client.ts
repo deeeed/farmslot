@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 
 import { Events, type GitHubRateLimitPayload } from '@farmslot/protocol';
 
+import { GitHubHttpError } from './github-errors.js';
 import {
   type GhCommandContext,
   githubGraphQLOp,
@@ -352,6 +353,15 @@ async function execTypedOp<T>(
     return result.data;
   } catch (err) {
     if (!(err instanceof Error)) throw err;
+    if (err instanceof GitHubHttpError && err.headers) {
+      // A 403/429 carries the exhausted quota: fence later queries before rejecting.
+      const quotaKey = githubRequestCacheKey(
+        [],
+        account ? { ...account, scope: 'query-budget' } : undefined,
+      );
+      updateQuotaFromHeaders(err.headers, quotaKey);
+      githubQueryBudget.observeHeaders(quotaKey, err.headers);
+    }
     if (!isAbortError(err)) {
       cacheNegative(cacheKey, err);
       err.message = `failed: ${err.message}`;

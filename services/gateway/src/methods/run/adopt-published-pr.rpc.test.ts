@@ -7,7 +7,8 @@ import { mock, test } from 'node:test';
 
 import { Methods, type RunAdoptPublishedPrResult } from '@farmslot/protocol';
 
-import type { GitHubService, RestServiceOpts } from '../../integrations/github-client.js';
+import type { RestServiceOpts } from '../../integrations/github-client.js';
+import { fakeGitHubService } from '../../integrations/github-test-fixtures.js';
 
 process.env.NODE_TEST_CONTEXT = '1';
 await import('../../runtime/mock-pty.test-support.js');
@@ -34,8 +35,7 @@ const prDetails = {
   base: { sha: 'e'.repeat(40), repo: { full_name: 'owner/repo' } },
   head: { sha: observed, ref: 'fix/feature', repo: { full_name: 'owner/repo' } },
 };
-const fakeGithub: GitHubService = {
-  ...clientModule.github,
+const fakeGithub = fakeGitHubService(clientModule.github, {
   prListFields: async (_repo, _fields, _params, _opts?) => [
     { number: 192, state: 'OPEN', headRefOid: observed },
   ],
@@ -44,11 +44,11 @@ const fakeGithub: GitHubService = {
     state: 'OPEN',
     headRefOid: observed,
   }),
-  rest: async <T>(_method: string, path: string, _opts?: RestServiceOpts): Promise<T> => {
-    if (path.endsWith('/commits')) return [{ sha: reviewed }, { sha: observed }] as unknown as T;
-    return prDetails as unknown as T;
+  rest: async (_method: string, path: string, _opts?: RestServiceOpts) => {
+    if (path.endsWith('/commits')) return [{ sha: reviewed }, { sha: observed }];
+    return prDetails;
   },
-};
+});
 mock.module('../../integrations/github-client.js', {
   namedExports: { ...clientModule, github: fakeGithub },
 });

@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
-import type { GitHubService, PREditParams } from '../integrations/github-client.js';
+import type { PREditParams } from '../integrations/github-client.js';
+import { fakeGitHubService } from '../integrations/github-test-fixtures.js';
 
 await import('../runtime/mock-pty.test-support.js');
 const github = await import('../integrations/github-client.js');
 const calls: string[][] = [];
 const bodies: string[] = [];
-const secretFakeGithub: GitHubService = {
-  ...github.github,
+const secretFakeGithub = fakeGitHubService(github.github, {
   prCreate: async () => {
     calls.push(['pr', 'create']);
     return '';
@@ -25,15 +25,15 @@ const secretFakeGithub: GitHubService = {
   prReady: async () => {
     calls.push(['pr', 'ready']);
   },
-  graphql: async <T>(_doc: string, _vars: Record<string, unknown>) => {
+  graphql: async (_doc: string, _vars: Record<string, unknown>) => {
     calls.push(['graphql']);
-    return {} as unknown as T;
+    return {};
   },
-  rest: async <T>(_method: string, path: string) => {
+  rest: async (_method: string, path: string) => {
     calls.push(['rest', path]);
-    return {} as unknown as T;
+    return {};
   },
-};
+});
 mock.module('../integrations/github-client.js', {
   namedExports: { ...github, github: secretFakeGithub },
 });

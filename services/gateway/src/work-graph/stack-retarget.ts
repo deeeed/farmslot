@@ -39,6 +39,22 @@ export interface UpstreamPr {
   mergedAt?: string;
 }
 
+/** The request's own abort cannot end a wait for a concurrency slot; this deadline does. */
+async function withDeadline<T>(operation: Promise<T>, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${what} timed out after ${GH_DEADLINE_MS / 1000}s`)),
+      GH_DEADLINE_MS,
+    );
+  });
+  try {
+    return await Promise.race([operation, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function projectGitHub(project: string): Promise<{ repo: string; base: string }> {
   const projectVars = await loadProjectVars(project);
   const repo = getProjectField(projectVars.projectJson, 'ci.repo');
@@ -50,17 +66,20 @@ async function projectGitHub(project: string): Promise<{ repo: string; base: str
 /** The upstream PR as GitHub reports it now. */
 export async function readUpstreamPr(project: string, prNumber: number): Promise<UpstreamPr> {
   const { repo } = await projectGitHub(project);
-  const pr = await github.rest<{
-    state: 'open' | 'closed';
-    merged?: boolean;
-    merged_at?: string | null;
-    merge_commit_sha?: string | null;
-    html_url: string;
-    head: { ref: string; repo?: { full_name?: string } | null };
-  }>('GET', `repos/${repo}/pulls/${prNumber}`, {
-    force: true,
-    signal: AbortSignal.timeout(GH_DEADLINE_MS),
-  });
+  const pr = await withDeadline(
+    github.rest<{
+      state: 'open' | 'closed';
+      merged?: boolean;
+      merged_at?: string | null;
+      merge_commit_sha?: string | null;
+      html_url: string;
+      head: { ref: string; repo?: { full_name?: string } | null };
+    }>('GET', `repos/${repo}/pulls/${prNumber}`, {
+      force: true,
+      signal: AbortSignal.timeout(GH_DEADLINE_MS),
+    }),
+    `reading PR #${prNumber}`,
+  );
   if (!pr) throw new Error(`PR #${prNumber} not found`);
   return {
     state: pr.state,
@@ -88,11 +107,14 @@ export async function retargetStackedPr(run: Run): Promise<StackRetargetResult> 
   if (run.prState === 'MERGED' || run.prState === 'CLOSED') {
     return { base, result: `skipped:#${run.prNumber} ${run.prState.toLowerCase()}`, ...merge };
   }
-  await github.rest<unknown>('PATCH', `repos/${repo}/pulls/${run.prNumber}`, {
-    body: { base },
-    force: true,
-    signal: AbortSignal.timeout(GH_DEADLINE_MS),
-  });
+  await withDeadline(
+    github.rest<unknown>('PATCH', `repos/${repo}/pulls/${run.prNumber}`, {
+      body: { base },
+      force: true,
+      signal: AbortSignal.timeout(GH_DEADLINE_MS),
+    }),
+    `retargeting PR #${run.prNumber}`,
+  );
   return { base, result: `retargeted:#${run.prNumber}->${base}`, ...merge };
 }
 

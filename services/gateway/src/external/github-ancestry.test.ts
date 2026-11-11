@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test, { mock } from 'node:test';
 
-import type { GitHubService, RestServiceOpts } from '../integrations/github-client.js';
+import type { RestServiceOpts } from '../integrations/github-client.js';
+import { fakeGitHubService } from '../integrations/github-test-fixtures.js';
 
 const clientModule = await import('../integrations/github-client.js');
 const requests: string[] = [];
@@ -17,16 +18,15 @@ let comparison:
       }>;
     }
   | undefined;
-const fakeGithub: GitHubService = {
-  ...clientModule.github,
-  rest: async <T>(_method: string, path: string, _opts?: RestServiceOpts): Promise<T> => {
+const fakeGithub = fakeGitHubService(clientModule.github, {
+  rest: async (_method: string, path: string, _opts?: RestServiceOpts) => {
     requests.push(path);
     if (status === 'missing') throw new Error('HTTP 404: No commit found');
-    if (comparison) return comparison as unknown as T;
-    if (path.includes('/compare/')) return { status } as unknown as T;
-    return {} as T;
+    if (comparison) return comparison;
+    if (path.includes('/compare/')) return { status };
+    return {};
   },
-};
+});
 mock.module('../integrations/github-client.js', {
   namedExports: { ...clientModule, github: fakeGithub },
 });

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { after, test } from 'node:test';
+import { after, mock, test } from 'node:test';
 
 import { isRecord, type ReviewViewedFilesResult } from '@farmslot/protocol';
 
@@ -36,13 +36,27 @@ const reset = () => {
   calls.length = 0;
   saved = undefined;
 };
+// A fixture origin never receives an account credential, so the binding is checked where
+// githubGraphQL hands each exchange to the client.
+const githubClient = await import('../integrations/github-client.js');
+mock.module('../integrations/github-client.js', {
+  namedExports: {
+    ...githubClient,
+    runGitHubGraphQLExchange: (
+      ...args: Parameters<typeof githubClient.runGitHubGraphQLExchange>
+    ) => {
+      assert.equal(
+        args[4]?.account?.token,
+        binding.token,
+        'Every observation and mutation uses the posting token',
+      );
+      return githubClient.runGitHubGraphQLExchange(...args);
+    },
+  },
+});
 // GitHub GraphQL through the real githubGraphQL client; the fixture validates like GitHub.
 const fixture = await startGitHubFixture((request) => {
-  assert.equal(
-    request.headers.authorization,
-    `token ${binding.token}`,
-    'Every observation and mutation uses the posting token',
-  );
+  assert.equal(request.headers.authorization, undefined, 'no credential reaches the fixture');
   const body = isRecord(request.json) ? request.json : {};
   const doc = typeof body.query === 'string' ? body.query : '';
   const variables = isRecord(body.variables) ? body.variables : {};

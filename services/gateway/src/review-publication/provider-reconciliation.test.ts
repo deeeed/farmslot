@@ -4,7 +4,7 @@ import { mock, test } from 'node:test';
 
 import type { ReviewPublicationReceipt, Run } from '@farmslot/protocol';
 
-import type { GitHubService } from '../integrations/github-client.js';
+import { fakeGitHubService } from '../integrations/github-test-fixtures.js';
 import { makeRun } from '../run-completion/test-fixtures.js';
 
 const gh = await import('../integrations/github-client.js');
@@ -49,9 +49,8 @@ let available = true;
 let receipt: ReviewPublicationReceipt | undefined;
 let posts = 0;
 let viewedWrites = 0;
-const reconcileFakeGithub: GitHubService = {
-  ...gh.github,
-  rest: async <T>(_method: string, path: string) => {
+const reconcileFakeGithub = fakeGitHubService(gh.github, {
+  rest: async (_method: string, path: string) => {
     if (_method.toUpperCase() === 'POST') {
       posts++;
       throw new Error('Reconciliation must never POST');
@@ -85,9 +84,9 @@ const reconcileFakeGithub: GitHubService = {
     else if (path.endsWith('/pulls/42'))
       value = { user: { login: 'author' }, head: { sha: 'c'.repeat(40) } };
     else throw new Error(`Unexpected provider read: ${path}`);
-    return value as unknown as T;
+    return value;
   },
-};
+});
 mock.module('../integrations/github-client.js', {
   namedExports: { ...gh, github: reconcileFakeGithub },
 });

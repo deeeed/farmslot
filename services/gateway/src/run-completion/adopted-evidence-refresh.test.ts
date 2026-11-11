@@ -11,7 +11,7 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
-import type { GitHubService } from '../integrations/github-client.js';
+import { fakeGitHubService } from '../integrations/github-test-fixtures.js';
 
 process.env.NODE_TEST_CONTEXT = '1';
 await import('../runtime/mock-pty.test-support.js');
@@ -43,8 +43,7 @@ let writes: string[] = [];
 let uploads: string[][] = [];
 let onUpload: (() => void | Promise<void>) | undefined;
 const github = await import('../integrations/github-client.js');
-const adoptFakeGithub: GitHubService = {
-  ...github.github,
+const adoptFakeGithub = fakeGitHubService(github.github, {
   prView: async () => ({ ...pr }),
   prListFields: async () => [{ number: 193 }],
   prEdit: async (_repo, _number, params) => {
@@ -52,17 +51,16 @@ const adoptFakeGithub: GitHubService = {
     writes.push(pr.body);
     return '';
   },
-  rest: async <T>() =>
-    ({
-      number: pr.number,
-      html_url: pr.url,
-      state: 'closed',
-      merged_at: new Date().toISOString(),
-      draft: false,
-      base: { sha: 'e'.repeat(40), repo: { full_name: 'owner/repo' } },
-      head: { sha: pr.headRefOid, ref: pr.headRefName, repo: { full_name: 'owner/repo' } },
-    }) as unknown as T,
-};
+  rest: async () => ({
+    number: pr.number,
+    html_url: pr.url,
+    state: 'closed',
+    merged_at: new Date().toISOString(),
+    draft: false,
+    base: { sha: 'e'.repeat(40), repo: { full_name: 'owner/repo' } },
+    head: { sha: pr.headRefOid, ref: pr.headRefName, repo: { full_name: 'owner/repo' } },
+  }),
+});
 mock.module('../integrations/github-client.js', {
   namedExports: { ...github, github: adoptFakeGithub },
 });

@@ -114,10 +114,6 @@
       "count": 1
     },
     {
-      "key": "services/gateway/src/integrations/github-accounts.ts:@typescript-eslint/no-restricted-imports",
-      "count": 1
-    },
-    {
       "key": "services/gateway/src/intelligence/improvement-engine.ts:@typescript-eslint/no-restricted-imports",
       "count": 1
     },

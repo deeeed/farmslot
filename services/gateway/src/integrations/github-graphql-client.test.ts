@@ -98,3 +98,34 @@ describe('githubGraphQL through the client middleware', { concurrency: 1 }, () =
     );
   });
 });
+
+test('GraphQL goes to each host kind’s GraphQL endpoint, not its REST prefix', async (t) => {
+  const urls: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (url: string | URL) => {
+    urls.push(String(url));
+    return new Response('{"data":{"viewer":{"login":"octo"}}}', {
+      headers: { 'content-type': 'application/json' },
+    });
+  });
+  const origin = process.env.FARMSLOT_GITHUB_API_URL;
+  delete process.env.FARMSLOT_GITHUB_API_URL;
+  try {
+    for (const host of ['github.com', 'tenant.ghe.com', 'ghes.example.com'])
+      await githubGraphQL(
+        'query { viewer { login } }',
+        {},
+        {
+          host,
+          token: 'endpoint-token',
+          scope: 'endpoint',
+        },
+      );
+  } finally {
+    process.env.FARMSLOT_GITHUB_API_URL = origin;
+  }
+  assert.deepEqual(urls, [
+    'https://api.github.com/graphql',
+    'https://api.tenant.ghe.com/graphql',
+    'https://ghes.example.com/api/graphql',
+  ]);
+});

@@ -3,11 +3,9 @@
 // Enterprise Server). Tokens come from the gh keyring at most once a minute per
 // host/account and are cached in memory; they are never logged, persisted, or used
 // as cache keys.
-import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { promisify } from 'node:util';
 
-const execFileAsync = promisify(execFile);
+import { githubCli } from '../host-services/github-cli.js';
 
 export interface GitHubHttpRequest {
   method: string;
@@ -95,8 +93,8 @@ function tokenKey(host: string, login?: string): string {
 
 /**
  * Token gh would use for this host (and named keyring account), cached for TOKEN_TTL_MS.
- * The environment mirrors the previous `gh` spawns: GH_TOKEN is ignored so the keyring
- * wins; a named account also ignores the other token variables.
+ * The read is githubCli.authToken: GH_TOKEN is ignored so the keyring wins; a named
+ * account also ignores the other token variables.
  *
  * When `FARMSLOT_GITHUB_API_URL` is set the transport routes all requests to a fixture
  * server, so the keyring is never read. The optional `FARMSLOT_GITHUB_FIXTURE_TOKEN` is
@@ -109,7 +107,7 @@ export function resolveGitHubToken(host: string, login?: string): Promise<string
   const key = tokenKey(host, login);
   const existing = tokens.get(key);
   if (existing && Date.now() - existing.readAt < TOKEN_TTL_MS) return existing.promise;
-  const entry: TokenEntry = { promise: readKeyringToken(host, login), readAt: Date.now() };
+  const entry: TokenEntry = { promise: githubCli.authToken(host, login), readAt: Date.now() };
   tokens.set(key, entry);
   entry.promise.then(
     (token) => {
@@ -122,32 +120,6 @@ export function resolveGitHubToken(host: string, login?: string): Promise<string
     },
   );
   return entry.promise;
-}
-
-async function readKeyringToken(host: string, login?: string): Promise<string> {
-  const env = { ...process.env };
-  delete env.GH_TOKEN;
-  if (login) {
-    delete env.GITHUB_TOKEN;
-    delete env.GH_ENTERPRISE_TOKEN;
-    delete env.GITHUB_ENTERPRISE_TOKEN;
-  }
-  let token: string;
-  try {
-    const result = await execFileAsync(
-      'gh',
-      ['auth', 'token', '--hostname', host, ...(login ? ['--user', login] : [])],
-      { env, timeout: 15_000, maxBuffer: 64 * 1024 },
-    );
-    token = result.stdout.trim();
-  } catch {
-    // Child errors can contain credential output. Report a fixed, actionable error instead.
-    throw new Error(
-      `GitHub account ${login ?? 'default'}@${host} is unavailable in the gateway keyring`,
-    );
-  }
-  if (!token) throw new Error('GitHub account has no credential');
-  return token;
 }
 
 /** A 401 means the keyring token changed: drop it so the next use re-reads the keyring. */
@@ -170,13 +142,16 @@ const API_VERSION = '2022-11-28';
 const USER_AGENT = 'farmslot-gateway';
 
 export async function githubHttp(request: GitHubHttpRequest): Promise<GitHubHttpResponse> {
+  // A fixture origin only ever receives FARMSLOT_GITHUB_FIXTURE_TOKEN, never a keyring or
+  // account-bound credential; without one no Authorization header is sent.
+  const token = overrideOrigin()
+    ? (process.env.FARMSLOT_GITHUB_FIXTURE_TOKEN?.trim() ?? '')
+    : request.token;
   const headers: Record<string, string> = {
     'User-Agent': USER_AGENT,
     'X-GitHub-Api-Version': API_VERSION,
     ...request.headers,
-    // An empty token means fixture mode (FARMSLOT_GITHUB_API_URL set without a fixture token).
-    // Omit the Authorization header entirely so the fixture server can respond freely.
-    ...(request.token ? { Authorization: `token ${request.token}` } : {}),
+    ...(token ? { Authorization: `token ${token}` } : {}),
   };
   let response: Response;
   let body: string;

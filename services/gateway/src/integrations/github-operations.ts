@@ -315,7 +315,8 @@ async function porcelainGraphQL<T>(
   );
   state.headers = response.headers;
   state.graphqlCost += graphqlCostOf(response.body) || 1;
-  if (response.status > 299) throw new GitHubHttpError(response.status, httpErrorMessage(response));
+  if (response.status > 299)
+    throw new GitHubHttpError(response.status, httpErrorMessage(response), response.headers);
   const parsed = parseJson(response.body) as { data?: T; errors?: GraphQLErrorItem[] };
   if (parsed.errors?.length) throw new GhFailure(graphQLErrorMessage(parsed.errors));
   if (!parsed.data) throw new GhFailure('GraphQL response had no data');
@@ -341,7 +342,8 @@ async function porcelainRest(
     context,
   );
   state.headers = response.headers;
-  if (response.status > 299) throw new GitHubHttpError(response.status, httpErrorMessage(response));
+  if (response.status > 299)
+    throw new GitHubHttpError(response.status, httpErrorMessage(response), response.headers);
   return response.status === 204 ? {} : (parseJson(response.body) as JsonObject);
 }
 
@@ -935,7 +937,7 @@ export async function githubRestOp<T>(
   if (!opts.paginate) {
     const response = await send(host, { method: methodUpper, url, headers, body }, ctx);
     if (response.status > 299)
-      throw new GitHubHttpError(response.status, httpErrorMessage(response));
+      throw new GitHubHttpError(response.status, httpErrorMessage(response), response.headers);
     if (opts.raw) return { data: response.body as T, headers: response.headers };
     // 204 No Content: body is empty; return null so callers that check can handle it.
     return { data: JSON.parse(response.body || 'null') as T, headers: response.headers };
@@ -953,7 +955,7 @@ export async function githubRestOp<T>(
     );
     lastHeaders = response.headers;
     if (response.status > 299)
-      throw new GitHubHttpError(response.status, httpErrorMessage(response));
+      throw new GitHubHttpError(response.status, httpErrorMessage(response), response.headers);
     const next = findNextPage(response.headers.get('link') ?? undefined);
     const isLastPage = !next;
     if (opts.slurp) {

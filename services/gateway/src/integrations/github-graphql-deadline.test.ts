@@ -19,13 +19,13 @@ mock.module('./github-client.js', {
 });
 mock.module('./github-operations.js', {
   namedExports: {
-    githubRestOp: async <T>(
+    githubRestOp: async (
       _host: string,
       _method: string,
       _path: string,
       _opts: unknown,
       ctx?: GhCommandContext,
-    ): Promise<{ data: T }> => {
+    ) => {
       observed.push(ctx?.signal);
       if (ctx?.signal) {
         await new Promise<void>((_resolve, reject) => {
@@ -38,7 +38,7 @@ mock.module('./github-operations.js', {
           else ctx.signal!.addEventListener('abort', abort, { once: true });
         });
       }
-      return { data: { data: { value: 'ready' } } as unknown as T };
+      return { data: { data: { value: 'ready' } } };
     },
   },
 });

@@ -40,11 +40,13 @@ export class GitHubPRUnavailableError extends Error {
   }
 }
 
-/** HTTP status from gh api --include, retained separately from rendered CLI errors. */
+/** HTTP status of a failed GitHub response, retained separately from its rendered message. */
 export class GitHubHttpError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** The failed response's headers; quota observation reads them before the rejection spreads. */
+    readonly headers?: Map<string, string>,
   ) {
     super(message);
     this.name = 'GitHubHttpError';

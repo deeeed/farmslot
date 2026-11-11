@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
 import type { SlotVars } from '../core/config.js';
-import type { GitHubService } from '../integrations/github-client.js';
+import { fakeGitHubService } from '../integrations/github-test-fixtures.js';
 
 await import('../runtime/mock-pty.test-support.js');
 
@@ -67,8 +67,7 @@ mock.module('../core/exec.js', {
 const core = await import('../core/index.js');
 mock.module('../core/index.js', { namedExports: { ...core, execOnSlot: execute } });
 const github = await import('../integrations/github-client.js');
-const closedFakeGithub: GitHubService = {
-  ...github.github,
+const closedFakeGithub = fakeGitHubService(github.github, {
   prView: async (_repo, number) => {
     calls.push(['pr', 'view', String(number)]);
     assert.equal(number, historical.number, 'prView should only be called for the historical PR');
@@ -88,12 +87,12 @@ const closedFakeGithub: GitHubService = {
     assert.notEqual(prNumber, historical.number, 'Never edit the historical PR');
     return '';
   },
-  rest: async <T>(_method: string, path: string) => {
+  rest: async (_method: string, path: string) => {
     calls.push(['api', path]);
     if (path.includes('/contents/')) throw new Error('HTTP 404 Not Found');
-    return {} as unknown as T;
+    return {};
   },
-};
+});
 mock.module('../integrations/github-client.js', {
   namedExports: { ...github, github: closedFakeGithub },
 });

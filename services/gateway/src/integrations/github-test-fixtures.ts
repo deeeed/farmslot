@@ -4,6 +4,8 @@ import { once } from 'node:events';
 import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
+import type { GitHubService, GraphQLServiceOpts, RestServiceOpts } from './github-client.js';
+
 export interface GitHubFixtureRequest {
   method: string;
   /** Path without the query string, e.g. `/repos/o/r/pulls/1` or `/graphql`. */
@@ -97,4 +99,25 @@ export async function startGitHubFixture(handler: GitHubFixtureHandler): Promise
       await once(server, 'close');
     },
   };
+}
+
+/**
+ * Overrides for a faked GitHubService. The generic reads answer untyped values: callers parse
+ * what they receive, so a fake states the payload, not the type each caller asks for.
+ */
+export interface GitHubServiceOverrides extends Partial<Omit<GitHubService, 'rest' | 'graphql'>> {
+  rest?: (method: string, path: string, opts?: RestServiceOpts) => Promise<unknown>;
+  graphql?: (
+    query: string,
+    variables: Record<string, string | number | null>,
+    opts?: GraphQLServiceOpts,
+  ) => Promise<unknown>;
+}
+
+/**
+ * The real service with test overrides, for `mock.module` named exports. The base is passed in
+ * so this module never loads the client before a test has mocked its process adapters.
+ */
+export function fakeGitHubService(base: GitHubService, overrides: GitHubServiceOverrides) {
+  return { ...base, ...overrides };
 }

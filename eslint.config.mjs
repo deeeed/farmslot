@@ -159,7 +159,6 @@ export default [
       'services/gateway/src/host-services/**',
       'services/gateway/src/core/exec.ts',
       // The GitHub service stays in integrations/; its transport reads gh's keyring token.
-      'services/gateway/src/integrations/github-transport.ts',
       'services/gateway/src/**/*.test.ts',
       'services/gateway/src/**/*.live.ts',
       'services/gateway/src/**/*.test-support.ts',
