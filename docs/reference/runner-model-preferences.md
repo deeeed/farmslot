@@ -70,6 +70,12 @@ change when an operator saves a preference.
 
 ## Pi compatible-provider limits
 
+Ollama discovery is optional with shell-inherited `OLLAMA_HOST` or `OLLAMA_BASE_URL`.
+Set `FARMSLOT_PI_OLLAMA=1` or `FARMSLOT_PI_OLLAMA_URL` in the execution node's pool
+or project environment to require successful discovery for catalog listing.
+`FARMSLOT_PI_OLLAMA=0` skips the probe. Router and LiteLLM discovery remain required
+when their endpoints are configured.
+
 `FARMSLOT_PI_ROUTER_ID` sets the router provider name, defaulting to `router`.
 For example, set it to `localsparks` in the execution node's pool environment to
 list models as `localsparks/GLM-5.3-Flash-s12`. Use lowercase letters, digits,

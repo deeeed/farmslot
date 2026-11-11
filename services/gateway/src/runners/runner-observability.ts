@@ -229,24 +229,35 @@ export function buildPiModelCatalogCommand(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   binary: string,
 ): string {
-  return buildPiProviderCommand(vars, `--list-models ${shellExpressionForRemotePath(binary)}`);
+  const helper = piProviderHelper(vars);
+  const extension = piProviderHelper(vars, 'pi-farmslot-observability.ts');
+  const listing = buildPiProviderCommand(
+    vars,
+    `--list-models ${shellExpressionForRemotePath(binary)} -e ${extension}`,
+  );
+  // The helper and extension travel through the same immutable bundle resolver.
+  // Older nodes without runner support can still report their native table.
+  const native = `cd ${shellExpressionForRemotePath(vars.remoteRepo)} && ${shellExpressionForRemotePath(binary)} --list-models`;
+  return `if [ -f ${helper} ]; then if [ ! -f ${extension} ]; then echo 'PI_MODEL_CATALOG_EXTENSION_MISSING: node support has no pi provider extension' >&2; exit 78; fi; ${listing}; else ${native}; fi`;
 }
 
 function buildPiProviderCommand(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   args: string,
 ): string {
-  const helper = path.posix.join(
-    farmslotDirForSlot(vars),
-    'scripts/runners',
-    'pi-farmslot-providers.mjs',
-  );
+  return `cd ${shellExpressionForRemotePath(vars.remoteRepo)} && node ${piProviderHelper(vars)} ${args}`;
+}
+
+function piProviderHelper(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  filename = 'pi-farmslot-providers.mjs',
+): string {
+  const helper = path.posix.join(farmslotDirForSlot(vars), 'scripts/runners', filename);
   // Preserve the literal remote-root prefix consumed by execOnSlot's immutable
   // support-bundle resolver. Expanding it to HOME here would bypass that owner.
-  const selectedHelper = helper.startsWith(`${legacyRemoteFarmPaths().code.node}/`)
+  return helper.startsWith(`${legacyRemoteFarmPaths().code.node}/`)
     ? helper
     : shellExpressionForRemotePath(helper);
-  return `cd ${shellExpressionForRemotePath(vars.remoteRepo)} && node ${selectedHelper} ${args}`;
 }
 
 /**
