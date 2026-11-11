@@ -1,12 +1,15 @@
 import type { ResourceSqliteDatabase } from './sqlite-store.js';
 
 /** A failed cleanup leaves connection state uncertain, even if the primary code is unavailable. */
-export class SqliteTransactionError extends AggregateError {
+export class SqliteTransactionError extends Error {
   readonly resultCode?: number;
 
-  constructor(error: unknown, rollbackError: unknown) {
+  constructor(
+    error: unknown,
+    readonly rollbackError: unknown,
+  ) {
     const message = (value: unknown) => (value instanceof Error ? value.message : String(value));
-    super([error, rollbackError], `${message(error)}; rollback failed: ${message(rollbackError)}`, {
+    super(`${message(error)}; rollback failed: ${message(rollbackError)}`, {
       cause: error,
     });
     this.name = 'SqliteTransactionError';

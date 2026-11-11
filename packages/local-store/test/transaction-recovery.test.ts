@@ -107,7 +107,7 @@ test('failed rollback without an error code is fatal and retains both failures',
     (error: unknown) => {
       assert.ok(error instanceof SqliteTransactionError);
       assert.equal(error.cause, primary);
-      assert.deepEqual(error.errors, [primary, cleanup]);
+      assert.equal(error.rollbackError, cleanup);
       const response = storeWorkerFailure(7, error);
       assert.ok('ok' in response && !response.ok && response.fatal);
       return true;

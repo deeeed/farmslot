@@ -156,3 +156,66 @@ test('a hydrate I/O recovery and reconnect serialize opens and close every handl
   }
   assert.equal(closed.size, opens, 'every replaced or final handle must be closed');
 });
+
+test('a successful persistent write rearms recovery for a later failure on the same connection', async () => {
+  const scope = {
+    gatewayUrl: 'ws://recovery.invalid/',
+    principalId: 'owner',
+    principalGeneration: 0,
+  };
+  const transport = new ResourceCacheConformanceTransport(scope);
+  transport.setConnection({ connected: true, id: 1 });
+  let opens = 0,
+    failNext = false;
+  const stores: ResourceStore[] = [];
+  const query = { ...resourceQuery<{ value: string }>('sources.status'), persisted: true };
+  const cache = createGatewayResourceCache({
+    transport,
+    openStore: async () => {
+      const attempt = ++opens;
+      const memory = createMemoryResourceStore();
+      stores.push(memory);
+      return {
+        ...memory,
+        persistent: true,
+        async putQuery(entry) {
+          if (attempt === 1 || failNext) {
+            failNext = false;
+            throw new Error('SQLite auto-aborted transaction');
+          }
+          await memory.putQuery(entry);
+        },
+      };
+    },
+  });
+  const stop = cache.observe(query, () => {});
+  try {
+    const first = cache.retry(query);
+    (await transport.nextRead()).resolve({ value: 'first failure' });
+    await first;
+    const healthy = await transport.nextRead();
+    healthy.resolve({ value: 'persisted after recovery' });
+    await cache.retry(query);
+    assert.equal(opens, 2);
+    assert.deepEqual((await stores[1].getQuery(query.id))?.data, {
+      value: 'persisted after recovery',
+    });
+    failNext = true;
+    const second = cache.retry(query);
+    (await transport.nextRead()).resolve({ value: 'second failure' });
+    await second;
+    assert.equal(opens, 3, 'a later failure must not stay degraded until a socket reconnect');
+    assert.equal(cache.read(query).status, 'stale');
+    const current = await transport.nextRead();
+    current.resolve({ value: 'fresh after second recovery' });
+    const result = await cache.retry(query);
+    assert.equal(result.status, 'ready');
+    assert.equal(result.storageNotice, undefined);
+    assert.deepEqual((await stores[2].getQuery(query.id))?.data, {
+      value: 'fresh after second recovery',
+    });
+  } finally {
+    stop();
+    await cache.dispose();
+  }
+});

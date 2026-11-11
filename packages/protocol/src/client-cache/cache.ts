@@ -531,6 +531,9 @@ export function createGatewayResourceCache(
         };
         if (lockWrites) await withStoreWriteLock(target, write);
         else await write();
+        // A confirmed persistent write ends the outage. A later failure gets its
+        // own bounded reopen attempt; a continuously broken store still cannot loop.
+        if (target === store && target.persistent && current()) recoveryAttempted = false;
       } catch (error) {
         await recoverStore(error, target);
       }
