@@ -218,3 +218,33 @@ test('Pi and OpenCode native pickers list the models of the node each context ru
   });
   assert.equal(nativeNodeModels('claude', 'opus', contexts), undefined);
 });
+
+test('native picker keeps native ids and saved preferences when worker aliases differ', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'native-router-picker-'));
+  const previous = process.env.FARMSLOT_HOME;
+  process.env.FARMSLOT_HOME = home;
+  t.after(async () => {
+    if (previous === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previous;
+    await rm(home, { recursive: true, force: true });
+  });
+  const canonical = 'localsparks/GLM-5.3-Flash-s12';
+  const alias = 'router/GLM-5.3-Flash-s12';
+  const hidden = 'amazon-bedrock/fixture';
+  const file = path.join(home, 'runner-visible-models.json');
+  const saved = JSON.stringify({
+    version: 1,
+    byRunner: { pi: [alias, canonical, hidden] },
+    defaults: { pi: alias },
+  });
+  await writeFile(file, saved);
+  nodeModelCatalogs.record('pi', 'picker-alias-node', [canonical, hidden], { [alias]: canonical }, [
+    alias,
+    hidden,
+  ]);
+  assert.deepEqual(nativeNodeModels('pi', alias, new Map([['fixture', 'picker-alias-node']])), {
+    fixture: [alias, hidden],
+  });
+  const { readFile } = await import('node:fs/promises');
+  assert.equal(await readFile(file, 'utf8'), saved);
+});

@@ -1,0 +1,1 @@
+- Support FARMSLOT_PI_ROUTER_ID in Pi worker providers while retaining hidden router aliases for saved models.

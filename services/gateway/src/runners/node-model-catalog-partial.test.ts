@@ -89,3 +89,48 @@ test('direct node reads retain suspect models without renewing other nodes age o
   await queryNodeModelCatalog('fixture', source, nodes, store);
   assert.deepEqual(store.listing('fixture', 'node-a'), ['anthropic/fixture']);
 });
+
+test('renamed router metadata checks the canonical provider without requiring hidden aliases', () => {
+  const discovery = [{ provider: 'localsparks', configured: true, status: 'ready', modelCount: 1 }];
+  const output = report(discovery) + 'localsparks fixture\n';
+  assert.deepEqual(parsePiModelCatalog(output), {
+    ids: ['anthropic/fixture', 'localsparks/fixture'],
+    configuredProviders: ['localsparks'],
+  });
+  assert.throws(
+    () => parsePiModelCatalog(report(discovery)),
+    /localsparks discovery is incomplete/,
+  );
+  assert.throws(
+    () =>
+      parsePiModelCatalog(
+        report([{ provider: 'localsparks', configured: true, status: 'failed', modelCount: 0 }]) +
+          'localsparks static-only\n',
+      ),
+    /localsparks discovery is incomplete/,
+  );
+});
+
+test('confirmed renamed router shrink preserves aliases and native registry evidence', () => {
+  const store = new NodeModelCatalogs();
+  const full = Array.from({ length: 8 }, (_, i) => `localsparks/fixture-${i}`);
+  const first = 'localsparks/fixture-0';
+  const aliases = { 'router/fixture-0': first };
+  const nativeIds = ['anthropic/native-only', first];
+  store.record('fixture', 'node-a', full, aliases, nativeIds);
+  const listing = {
+    ids: full.slice(0, 1),
+    configuredProviders: ['localsparks'],
+    aliases,
+    nativeIds,
+  };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    assert.equal(store.accept('fixture', 'node-a', listing), false);
+    assert.deepEqual(store.nativeListing('fixture', 'node-a'), nativeIds);
+    assert.deepEqual(store.listing('fixture', 'node-a'), [...full, ...Object.keys(aliases)]);
+  }
+  assert.equal(store.accept('fixture', 'node-a', listing), true);
+  assert.deepEqual(store.listing('fixture', 'node-a'), [...listing.ids, ...Object.keys(aliases)]);
+  assert.deepEqual(store.pickerListing('fixture', 'node-a'), listing.ids);
+  assert.deepEqual(store.nativeListing('fixture', 'node-a'), nativeIds);
+});

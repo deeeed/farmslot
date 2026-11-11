@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripVTControlCharacters } from 'node:util';
 
 const DEFAULT_OLLAMA = '127.0.0.1:11434';
 const PI_REASONING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
@@ -79,13 +80,193 @@ export function openaiBaseUrl(raw) {
   return `${url}/v1`;
 }
 
+// Reserved even when their discovery is disabled, so a later configuration cannot collide.
+const RESERVED_ROUTER_IDS = new Set([
+  'ollama',
+  'litellm',
+  'lmstudio',
+  'omlx',
+  'xai',
+  'anthropic',
+  'openai',
+  'amazon-bedrock',
+  'azure',
+  'azure-openai-responses',
+  'openai-codex',
+  'radius',
+  'nvidia',
+  'deepseek',
+  'google',
+  'google-vertex',
+  'github-copilot',
+  'openrouter',
+  'vercel-ai-gateway',
+  'groq',
+  'cerebras',
+  'zai',
+  'zai-coding-cn',
+  'mistral',
+  'minimax',
+  'minimax-cn',
+  'moonshotai',
+  'moonshotai-cn',
+  'huggingface',
+  'fireworks',
+  'together',
+  'baseten',
+  'opencode',
+  'opencode-go',
+  'kimi-coding',
+  'meta',
+  'cloudflare-workers-ai',
+  'cloudflare-ai-gateway',
+  'qwen-token-plan',
+  'qwen-token-plan-cn',
+  'qwen-token-plan-individual',
+  'xiaomi',
+  'xiaomi-token-plan-cn',
+  'xiaomi-token-plan-ams',
+  'xiaomi-token-plan-sgp',
+  'ant-ling',
+]);
+
+/** The source kind owns environment names; the configured id owns model names. */
+export function piRouterProviderId(env = process.env) {
+  const id = env.FARMSLOT_PI_ROUTER_ID ?? 'router';
+  if (!/^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/.test(id) || RESERVED_ROUTER_IDS.has(id))
+    throw new PiProviderConfigurationError(
+      'FARMSLOT_PI_ROUTER_ID must be a lowercase provider id and must not collide with another provider',
+    );
+  return id;
+}
+
+export class PiModelListFormatError extends Error {}
+
+/** `pi --list-models`: preserve native membership and order, removing duplicates. */
+export function decodePiModelList(output) {
+  const rows = stripVTControlCharacters(output)
+    .split(/\r?\n/)
+    .map((line) => line.trim().split(/\s+/));
+  const header = rows.findIndex(
+    ([provider, model]) => provider === 'provider' && model === 'model',
+  );
+  if (header < 0) throw new PiModelListFormatError('Missing Pi model list header.');
+  const ids = rows
+    .slice(header + 1)
+    .flatMap(([provider, model]) =>
+      model && /^[a-z0-9][\w.-]*$/i.test(provider) ? [`${provider}/${model}`] : [],
+    );
+  if (!ids.length) throw new PiModelListFormatError('Pi listed no models.');
+  return [...new Set(ids)];
+}
+
+/** Pi's extension reports discovery separately from the native model table. Older nodes omit it. */
+export function parsePiProviderDiscovery(output, ids) {
+  const configuredProviders = [];
+  let reported = false;
+  for (const line of output.split(/\r?\n/)) {
+    if (!line.startsWith('{')) continue;
+    let report;
+    try {
+      report = JSON.parse(line);
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      continue; // Unrelated CLI output is not a discovery report.
+    }
+    if (!report || report.type !== 'farmslot.pi-provider-discovery') continue;
+    reported = true;
+    if (!Array.isArray(report.sources))
+      throw new PiModelListFormatError('Invalid Pi provider discovery report.');
+    for (const source of report.sources) {
+      if (
+        !source ||
+        typeof source !== 'object' ||
+        typeof source.provider !== 'string' ||
+        !/^[a-z0-9][\w.-]*$/i.test(source.provider) ||
+        typeof source.configured !== 'boolean' ||
+        (source.status !== 'ready' && source.status !== 'failed') ||
+        typeof source.modelCount !== 'number' ||
+        !Number.isSafeInteger(source.modelCount) ||
+        source.modelCount < 0
+      )
+        throw new PiModelListFormatError('Invalid Pi provider discovery source.');
+      if (!source.configured) continue;
+      configuredProviders.push(source.provider);
+      if (
+        source.status === 'failed' ||
+        (source.modelCount > 0 && !ids.some((id) => id.startsWith(`${source.provider}/`)))
+      )
+        throw new PiModelListFormatError(
+          `Pi configured provider ${source.provider} discovery is incomplete.`,
+        );
+    }
+  }
+  return { configuredProviders, reported };
+}
+
+/** Run on the execution node. Only a renamed router needs worker discovery. */
+export async function listPiModelCatalog(binary, env = process.env, opts = {}) {
+  const routerId = piRouterProviderId(env);
+  const result = spawnSync(binary, ['--list-models', ...(opts.args ?? [])], {
+    env,
+    encoding: 'utf8',
+    timeout: 15_000,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (result.status !== 0) throw new Error('Pi native model listing failed');
+  const native = decodePiModelList(result.stdout);
+  const discovery = parsePiProviderDiscovery(result.stdout, native);
+  if (routerId === 'router' || discovery.reported) {
+    const aliases = {};
+    if (routerId !== 'router' && discovery.configuredProviders.includes(routerId))
+      for (const id of native)
+        if (id.startsWith(`${routerId}/`)) aliases[`router/${id.slice(routerId.length + 1)}`] = id;
+    return {
+      ids: native,
+      aliases,
+      nativeIds: native,
+      configuredProviders: discovery.configuredProviders,
+    };
+  }
+  const reports = [];
+  const sources = await resolvePiSources(
+    listPiProviderSources(env).filter((source) => source.kind === 'router'),
+    env,
+    { ...opts, onDiscovery: (source) => reports.push(source) },
+  );
+  const aliases = {};
+  const ids = new Set(native);
+  for (const source of sources) {
+    // Provider registration replaces its entire model list, including legacy aliases.
+    const replaced = new Set([source.id, ...(source.aliases ?? [])]);
+    for (const id of ids) if (replaced.has(id.slice(0, id.indexOf('/')))) ids.delete(id);
+    for (const model of source.models) {
+      const canonical = `${source.id}/${model.id}`;
+      ids.add(canonical);
+      for (const alias of source.aliases ?? []) {
+        const id = `${alias}/${model.id}`;
+        aliases[id] = canonical;
+        ids.delete(id);
+      }
+    }
+  }
+  if (!ids.size) throw new Error('Pi listed no models');
+  const { configuredProviders } = parsePiProviderDiscovery(
+    JSON.stringify({ type: 'farmslot.pi-provider-discovery', sources: reports }),
+    [...ids],
+  );
+  return { ids: [...ids], aliases, nativeIds: native, configuredProviders };
+}
+
 export function listPiProviderSources(env = process.env) {
+  const routerId = piRouterProviderId(env);
   const sources = [];
   if (env.FARMSLOT_PI_OLLAMA !== '0') {
     const ollama =
       env.FARMSLOT_PI_OLLAMA_URL || env.OLLAMA_BASE_URL || env.OLLAMA_HOST || DEFAULT_OLLAMA;
     sources.push({
       id: 'ollama',
+      kind: 'ollama',
       name: 'Ollama',
       baseUrl: openaiBaseUrl(ollama),
       apiKey: env.OLLAMA_API_KEY || 'ollama',
@@ -95,6 +276,7 @@ export function listPiProviderSources(env = process.env) {
   if (litellmUrl) {
     sources.push({
       id: 'litellm',
+      kind: 'litellm',
       name: 'LiteLLM',
       baseUrl: openaiBaseUrl(litellmUrl),
       apiKey: env.LITELLM_API_KEY || 'local',
@@ -103,7 +285,9 @@ export function listPiProviderSources(env = process.env) {
   const routerUrl = env.FARMSLOT_PI_ROUTER_URL;
   if (routerUrl && openaiBaseUrl(routerUrl) !== openaiBaseUrl(litellmUrl || '')) {
     sources.push({
-      id: 'router',
+      id: routerId,
+      kind: 'router',
+      ...(routerId === 'router' ? {} : { aliases: ['router'] }),
       name: 'OpenAI-compatible router',
       baseUrl: openaiBaseUrl(routerUrl),
       apiKey: env.FARMSLOT_PI_ROUTER_KEY || env.LITELLM_API_KEY || 'local',
@@ -331,6 +515,7 @@ export function piSdkModels(models) {
 }
 
 function modelEntry(row, source, defaults, info = {}, configured = {}) {
+  const provider = source.id;
   const context =
     row.context_length ??
     row.max_model_len ??
@@ -346,21 +531,21 @@ function modelEntry(row, source, defaults, info = {}, configured = {}) {
   const reasoning =
     reasoningSetting(
       row.reasoning ?? row.supports_reasoning ?? info.supports_reasoning,
-      `${source}/${row.id} reasoning`,
+      `${provider}/${row.id} reasoning`,
     ) ??
     configured.reasoning ??
     defaults.reasoning;
-  if ((source === 'router' || configured.reasoning === true) && !reasoning)
+  if ((source.kind === 'router' || configured.reasoning === true) && !reasoning)
     throw new PiProviderConfigurationError(
-      `Model ${source}/${row.id} requires reasoning for code work`,
+      `Model ${provider}/${row.id} requires reasoning for code work`,
     );
   return {
     id: row.id,
     name: row.id,
     reasoning,
-    ...(source === 'router'
+    ...(source.kind === 'router'
       ? { thinkingLevelMap: Object.fromEntries(PI_REASONING_LEVELS.map((level) => [level, level])) }
-      : reasoning && source === 'litellm'
+      : reasoning && source.kind === 'litellm'
         ? { thinkingLevelMap: reportedThinkingMap(info) }
         : {}),
     input: ['text', 'image'],
@@ -369,34 +554,37 @@ function modelEntry(row, source, defaults, info = {}, configured = {}) {
       context,
       configured.contextWindow,
       defaults.contextWindow,
-      `${source}/${row.id} context`,
+      `${provider}/${row.id} context`,
     ),
     maxTokens: modelLimit(
       output,
       configured.maxTokens,
       defaults.maxTokens,
-      `${source}/${row.id} maxTokens`,
+      `${provider}/${row.id} maxTokens`,
     ),
   };
 }
 
 export async function resolvePiProviderCatalog(env = process.env, opts = {}) {
-  const sources = listPiProviderSources(env);
+  return resolvePiSources(listPiProviderSources(env), env, opts);
+}
+
+async function resolvePiSources(sources, env, opts) {
   const resolved = await Promise.all(
     sources.map(async (source) => {
-      const prefix = `FARMSLOT_PI_${source.id.toUpperCase()}`;
+      const prefix = `FARMSLOT_PI_${source.kind.toUpperCase()}`;
       const defaults = {
         contextWindow: positiveInteger(env[`${prefix}_CONTEXT`], `${prefix}_CONTEXT`) ?? 128000,
         maxTokens: positiveInteger(env[`${prefix}_MAX_TOKENS`], `${prefix}_MAX_TOKENS`) ?? 8192,
         reasoning:
           reasoningSetting(env[`${prefix}_REASONING`], `${prefix}_REASONING`) ??
-          source.id === 'router',
+          source.kind === 'router',
       };
       const overrides = configuredModelLimits(
         env[`${prefix}_MODEL_LIMITS`],
         `${prefix}_MODEL_LIMITS`,
       );
-      const fetchOptions = { timeoutMs: source.id === 'litellm' ? 5000 : 400, ...opts };
+      const fetchOptions = { timeoutMs: source.kind === 'litellm' ? 5000 : 400, ...opts };
       let failed = false;
       const [rows, infos] = await Promise.all([
         fetchOpenAiModels(source.baseUrl, source.apiKey, {
@@ -405,7 +593,7 @@ export async function resolvePiProviderCatalog(env = process.env, opts = {}) {
             failed = true;
           },
         }),
-        source.id === 'litellm'
+        source.kind === 'litellm'
           ? fetchOpenAiModels(source.baseUrl, source.apiKey, {
               ...fetchOptions,
               endpoint: 'model/info',
@@ -432,7 +620,7 @@ export async function resolvePiProviderCatalog(env = process.env, opts = {}) {
       return {
         ...source,
         models: rows.map((row) =>
-          modelEntry(row, source.id, defaults, infoById.get(row.id) ?? {}, overrides.get(row.id)),
+          modelEntry(row, source, defaults, infoById.get(row.id) ?? {}, overrides.get(row.id)),
         ),
       };
     }),
@@ -440,23 +628,29 @@ export async function resolvePiProviderCatalog(env = process.env, opts = {}) {
   return resolved.filter(Boolean);
 }
 
-function piReasoningMismatch(model, requestedEffort, detail) {
+function piReasoningMismatch(model, requestedEffort, detail, kind = model.provider) {
   return new PiProviderConfigurationError(
     `PI_REASONING_EFFORT_MISMATCH: Model ${model.provider}/${model.id} requested ${requestedEffort}, ${detail}. ` +
-      `Declare reasoning=true for the model in FARMSLOT_PI_${model.provider.toUpperCase()}_MODEL_LIMITS, or choose a reasoning model / no thinking (--thinking off).`,
+      `Declare reasoning=true for the model in FARMSLOT_PI_${kind.toUpperCase()}_MODEL_LIMITS, or choose a reasoning model / no thinking (--thinking off).`,
   );
 }
 
 /** Check the selected model before Pi can clamp thinking and enter the SDK retry loop. */
-export function assertPiModelThinking(model, requestedEffort) {
+export function assertPiModelThinking(model, requestedEffort, kind = model?.provider) {
   if (!model || !requestedEffort || requestedEffort === 'off') return;
   if (!model.reasoning)
-    throw piReasoningMismatch(model, requestedEffort, 'but the model declares reasoning=false');
+    throw piReasoningMismatch(
+      model,
+      requestedEffort,
+      'but the model declares reasoning=false',
+      kind,
+    );
   if (model.thinkingLevelMap?.[requestedEffort] === null)
     throw piReasoningMismatch(
       model,
       requestedEffort,
       'but the model declares that level unsupported',
+      kind,
     );
 }
 
@@ -495,6 +689,7 @@ export function providerReasoningFetch(
             { ...model, provider: provider.id },
             requestedEffort,
             `mapped to ${expected}, but wire effort was ${effort}`,
+            provider.kind,
           );
           if (!mismatchReported) {
             mismatchReported = true;
@@ -506,7 +701,7 @@ export function providerReasoningFetch(
           throw error;
         }
       }
-      if (model && effort !== undefined && (provider.id === 'router' || model.reasoning)) {
+      if (model && effort !== undefined && (provider.kind === 'router' || model.reasoning)) {
         if (
           !model.reasoning ||
           typeof effort !== 'string' ||
@@ -590,9 +785,16 @@ export async function checkPiProviderAuth(binary, model, env = process.env) {
   const native = nativePiAuth(binary, model, env);
   if (native.status === 'ready') return native;
   const [provider, ...parts] = model.split('/');
-  if (parts.length && listPiProviderSources(env).some((source) => source.id === provider)) {
+  if (
+    parts.length &&
+    listPiProviderSources(env).some(
+      (source) => source.id === provider || source.aliases?.includes(provider),
+    )
+  ) {
     const catalog = await resolvePiProviderCatalog(env);
-    const available = catalog.find((source) => source.id === provider);
+    const available = catalog.find(
+      (source) => source.id === provider || source.aliases?.includes(provider),
+    );
     if (available?.models.some((entry) => entry.id === parts.join('/')))
       return { status: 'ready', provider };
   }
@@ -600,7 +802,10 @@ export async function checkPiProviderAuth(binary, model, env = process.env) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const result = await checkPiProviderAuth(process.argv[2], process.argv[3]);
+  const listing = process.argv[2] === '--list-models';
+  const result = listing
+    ? await listPiModelCatalog(process.argv[3], process.env, { args: process.argv.slice(4) })
+    : await checkPiProviderAuth(process.argv[2], process.argv[3]);
   process.stdout.write(`${JSON.stringify(result)}\n`);
-  process.exitCode = result.status === 'ready' ? 0 : 1;
+  process.exitCode = listing || result.status === 'ready' ? 0 : 1;
 }

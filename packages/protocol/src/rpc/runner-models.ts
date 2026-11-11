@@ -48,6 +48,7 @@ export const RUNNER_MODEL_PROVIDER_LABELS: ReadonlyMap<string, string> = new Map
   ['litellm', 'Consensys LiteLLM'],
   ['xai', 'xAI'],
   ['anthropic', 'Anthropic'],
+  ['localsparks', 'Local'],
   ['omlx', 'Local'],
   ['lmstudio', 'Local'],
 ]);

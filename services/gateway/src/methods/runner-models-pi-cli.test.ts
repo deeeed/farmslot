@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -44,6 +44,11 @@ for (const dir of [
 writeFileSync(path.join(root, 'CLAUDE.md'), '# Synthetic root\n');
 writeFileSync(path.join(root, 'scripts/dev.sh'), '#!/bin/sh\n');
 writeFileSync(path.join(root, 'services/gateway/package.json'), '{}');
+mkdirSync(path.join(root, 'scripts/runners'));
+copyFileSync(
+  path.join(checkout, 'scripts/runners/pi-farmslot-providers.mjs'),
+  path.join(root, 'scripts/runners/pi-farmslot-providers.mjs'),
+);
 const { modelCatalogNodes } = await import('./runner-models.js');
 const { getRunnerDefinition } = await import('../runners/registry.js');
 const { ModelCatalogFormatError, parsePiModelCatalog } =
@@ -59,14 +64,18 @@ for (const scenario of [
   'timeout',
   'legacy',
   'worker-static',
+  'renamed-router',
+  'renamed-router-failed',
 ] as const) {
   test(
     `installed pi catalog CLI: ${scenario}`,
     { skip: pi ? false : 'pi CLI is absent' },
     async (t) => {
       assert.ok(pi);
-      const provider = scenario === 'timeout' ? 'router' : 'litellm';
-      const healthy = scenario === 'healthy' || scenario === 'static-overrides';
+      const renamed = scenario === 'renamed-router' || scenario === 'renamed-router-failed';
+      const provider = renamed ? 'localsparks' : scenario === 'timeout' ? 'router' : 'litellm';
+      const healthy =
+        scenario === 'healthy' || scenario === 'static-overrides' || scenario === 'renamed-router';
       let requests = 0;
       const inferenceModels: string[] = [];
       const server = createServer((req, res) => {
@@ -102,7 +111,9 @@ for (const scenario of [
         requests++;
         assert.equal(req.headers.authorization, 'Bearer synthetic-key');
         if (scenario === 'timeout') return; // Abort is the condition; no fixed sleep.
-        res.writeHead(scenario === 'http-500' ? 500 : 200, { 'content-type': 'application/json' });
+        res.writeHead(scenario === 'http-500' || scenario === 'renamed-router-failed' ? 500 : 200, {
+          'content-type': 'application/json',
+        });
         res.end(JSON.stringify({ data: [{ id: 'discovered-fixture' }] }));
       });
       t.after(() => {
@@ -172,8 +183,12 @@ for (const scenario of [
         );
       const machineEnv = {
         ...env,
-        ...(provider === 'router'
-          ? { FARMSLOT_PI_ROUTER_URL: baseUrl, FARMSLOT_PI_ROUTER_KEY: 'synthetic-key' }
+        ...(provider === 'router' || renamed
+          ? {
+              FARMSLOT_PI_ROUTER_URL: baseUrl,
+              FARMSLOT_PI_ROUTER_KEY: 'synthetic-key',
+              ...(renamed ? { FARMSLOT_PI_ROUTER_ID: provider } : {}),
+            }
           : { LITELLM_URL: baseUrl, LITELLM_API_KEY: 'synthetic-key' }),
       };
       if (scenario === 'worker-static') {
@@ -247,44 +262,66 @@ for (const scenario of [
       assert.equal(nodes.length, 1);
       const [node] = nodes;
       assert.ok(node);
-      const output = await node.list(source);
-      assert.match(output, /baseline\s+control/);
-      assert.match(output, new RegExp(`${provider}\\s+static-only`));
-      if (scenario === 'legacy') {
-        assert.equal(requests, 0);
-        assert.doesNotMatch(output, /farmslot.pi-provider-discovery/);
-        assert.deepEqual(parsePiModelCatalog(output), {
-          ids: ['baseline/control', 'litellm/static-only'],
-          configuredProviders: [],
-        });
+      if (scenario !== 'legacy' && !healthy) {
+        // Static rows survive discovery failure, but cannot certify the node catalog.
+        await assert.rejects(node.list(source), /exit code/);
+        const { stdout } = await run(
+          pi,
+          ['--list-models', '-e', piObservabilityExtensionPath(repo, runtimeDir)],
+          { cwd: repo, env: machineEnv },
+        );
+        assert.match(stdout, new RegExp(`${provider}\\s+static-only`));
+        const report = stdout
+          .split('\n')
+          .find((line) => line.startsWith('{"type":"farmslot.pi-provider-discovery"'));
+        assert.ok(report);
+        assert.deepEqual(JSON.parse(report).sources, [
+          { provider, configured: true, status: 'failed', modelCount: 0 },
+        ]);
+        assert.throws(() => parsePiModelCatalog(stdout), ModelCatalogFormatError);
         return;
       }
-      const report = output
-        .split('\n')
-        .find((line) => line.startsWith('{"type":"farmslot.pi-provider-discovery"'));
-      assert.ok(
-        report,
-        `No discovery report from installed extension ${piObservabilityExtensionPath(repo, runtimeDir)}`,
-      );
+      const output = await node.list(source);
+      const listing = parsePiModelCatalog(output);
+      assert.ok(listing.nativeIds?.includes('baseline/control'));
+      assert.ok(listing.nativeIds?.includes(`${provider}/static-only`));
+      if (scenario === 'legacy') {
+        assert.equal(requests, 0);
+        assert.deepEqual(listing.ids, ['baseline/control', 'litellm/static-only']);
+        assert.deepEqual(listing.configuredProviders, []);
+        return;
+      }
       assert.ok(requests > 0, 'slot machine environment must reach provider discovery');
-      assert.deepEqual(JSON.parse(report).sources, [
-        {
-          provider,
-          configured: true,
-          status: healthy ? 'ready' : 'failed',
-          modelCount: healthy ? 1 : 0,
-        },
-      ]);
-      if (healthy) {
-        const listing = parsePiModelCatalog(output);
-        assert.ok(listing.ids.includes(`${provider}/discovered-fixture`));
-        assert.ok(listing.ids.includes(`${provider}/static-only`));
-        assert.deepEqual(listing.configuredProviders, [provider]);
-        assert.equal(listing.ids.filter((id) => id === `${provider}/discovered-fixture`).length, 1);
-        if (scenario === 'static-overrides')
-          assert.match(output, /litellm\s+discovered-fixture\s+32\.8K\s+1\.0K\s+no\s+no/);
-      } else {
-        assert.throws(() => parsePiModelCatalog(output), ModelCatalogFormatError);
+      assert.equal(
+        requests,
+        1,
+        'installed extension discovers once; helper preserves its static union',
+      );
+      assert.ok(listing.ids.includes(`${provider}/discovered-fixture`));
+      assert.ok(listing.ids.includes(`${provider}/static-only`));
+      assert.deepEqual(listing.configuredProviders, [provider]);
+      assert.equal(listing.ids.filter((id) => id === `${provider}/discovered-fixture`).length, 1);
+      if (renamed) {
+        assert.deepEqual(listing.aliases, {
+          'router/discovered-fixture': 'localsparks/discovered-fixture',
+          'router/static-only': 'localsparks/static-only',
+        });
+        assert.equal(
+          listing.ids.some((id) => id.startsWith('router/')),
+          false,
+        );
+        assert.equal(
+          listing.nativeIds?.some((id) => id.startsWith('router/')),
+          false,
+        );
+      }
+      if (scenario === 'static-overrides') {
+        const { stdout } = await run(
+          pi,
+          ['--list-models', '-e', piObservabilityExtensionPath(repo, runtimeDir)],
+          { cwd: repo, env: machineEnv },
+        );
+        assert.match(stdout, /litellm\s+discovered-fixture\s+32\.8K\s+1\.0K\s+no\s+no/);
       }
     },
   );

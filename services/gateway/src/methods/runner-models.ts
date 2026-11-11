@@ -77,7 +77,9 @@ export async function modelCatalogNodes(): Promise<ModelCatalogNode[]> {
       const vars = await loadSlotVars(slot);
       if (isDisconnectedRemote(vars)) throw new Error('node is not connected');
       const binary = vars[source.slotPathKey]?.trim() || source.nodeCommand;
-      const baseCommand = `${shellExpressionForRemotePath(binary)} ${source.args.map(shellQuote).join(' ')}`;
+      const baseCommand =
+        source.buildCommand?.(vars, binary) ??
+        `${shellExpressionForRemotePath(binary)} ${source.args.map(shellQuote).join(' ')}`;
       const command = source.prepareCommand
         ? source.prepareCommand(baseCommand, {
             repo: vars.remoteRepo,
@@ -106,7 +108,7 @@ const catalogObservation = new RunnerModelCatalogObservation({
   hasInterest: (runner) => hasCatalogInterest(runner),
   changed: (runner) => {
     resourceRevisions.advance(runnerModelCatalogResourceKey({ runner }));
-    // Native pickers list the same per-node models (native.session.catalog nodeModels).
+    // Native pickers share these per-node catalog observations.
     const source = getRunnerDefinition(runner).modelCatalog;
     if (source && 'nodeCommand' in source) nativeCatalogChanges.catalogChanged();
   },
