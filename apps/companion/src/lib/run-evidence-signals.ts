@@ -1,8 +1,12 @@
-import {
-  type Run,
-  type RunEvidenceSummary,
-  summarizeRunEvidence,
-} from '@farmslot/protocol';
+import { type Run, type RunEvidenceSummary, summarizeRunEvidence } from '@farmslot/protocol';
+
+/** Union of run shapes that summarizeRunEvidenceSignals accepts — matches summarizeRunEvidence. */
+type RunEvidenceInput =
+  | Pick<Run, 'decisions' | 'steps' | 'liveRecipeContext'>
+  | (Pick<Run, 'steps' | 'liveRecipeContext'> & {
+      decisions?: ReadonlyArray<{ payload?: unknown }>;
+      evidenceSummary: RunEvidenceSummary;
+    });
 
 export type RunEvidenceSignalKind = 'video' | 'compare';
 
@@ -26,9 +30,7 @@ export function runEvidenceSignalRouteTarget(
     : { section: 'evidence', evidence: 'videos' };
 }
 
-export function summarizeRunEvidenceSignals(
-  run: Pick<Run, 'decisions' | 'steps' | 'liveRecipeContext'>,
-): RunEvidenceSignal[] {
+export function summarizeRunEvidenceSignals(run: RunEvidenceInput): RunEvidenceSignal[] {
   return runEvidenceSignals(summarizeRunEvidence(run));
 }
 

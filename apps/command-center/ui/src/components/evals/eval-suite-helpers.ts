@@ -169,11 +169,11 @@ export function datasetIdFor(input: {
   return `dataset-${slugFor(input.project, 'project')}-${stableIdHash(ids.join('|'))}`;
 }
 
-function taskProfileFromRun(run: Run): EvalTaskProfile {
+function taskProfileFromRun(run: RunListRow): EvalTaskProfile {
   return run.flowType === 'dev' ? 'dev' : 'fix-bug';
 }
 
-function unsupportedRunFlowWarning(run: Run): string | null {
+function unsupportedRunFlowWarning(run: RunListRow): string | null {
   return EVAL_RUN_FLOW_TYPES.has(run.flowType)
     ? null
     : `Only fix-bug and dev runs can seed eval cases; ${run.flowType} is unsupported.`;
@@ -201,7 +201,7 @@ function dateFields(
   };
 }
 
-function runSearchText(run: Run): string {
+function runSearchText(run: RunListRow): string {
   return [
     run.id,
     run.familyId,
@@ -293,7 +293,7 @@ function caseSearchNeedles(query: string): string[] {
   return [...new Set([normalized, prRef, prUrl, prNumber].filter(Boolean))];
 }
 
-function githubPrUrlFromRun(run: Run): string | undefined {
+function githubPrUrlFromRun(run: RunListRow): string | undefined {
   const linked = run.links?.find(
     (link) => /^pr$/i.test(link.label) && /github\.com\/[^/]+\/[^/]+\/pull\/\d+/.test(link.url),
   );
@@ -310,7 +310,7 @@ function familyHref(run: Pick<Run, 'id' | 'familyId'>): string {
   return `#family/${run.familyId}?run=${encodeURIComponent(run.id)}`;
 }
 
-function diffStatFromRun(run: Run): DiffStat | undefined {
+function diffStatFromRun(run: RunListRow): DiffStat | undefined {
   for (const step of [...run.steps].reverse()) {
     const raw = step.outputs?.diffStat;
     if (!raw || typeof raw !== 'object') continue;
@@ -327,7 +327,7 @@ function diffStatFromRun(run: Run): DiffStat | undefined {
 }
 
 function evidenceSummaryFromRun(
-  run: Run,
+  run: RunListRow,
 ): Pick<
   EvalCaseCatalogItem,
   | 'artifactCount'
@@ -377,7 +377,7 @@ function evidenceSummaryFromRun(
 }
 
 function previewFieldsFromRun(
-  run: Run,
+  run: RunListRow,
 ): Pick<
   EvalCaseCatalogItem,
   | 'prUrl'
@@ -399,7 +399,7 @@ function previewFieldsFromRun(
   };
 }
 
-export function catalogItemFromPr(pr: PRStatus, latestRun?: Run): EvalCaseCatalogItem {
+export function catalogItemFromPr(pr: PRStatus, latestRun?: RunListRow): EvalCaseCatalogItem {
   const prRef = `${pr.repo}#${pr.pr}`;
   const merged = pr.merged || pr.prState === 'MERGED' || pr.recommendation === 'MERGED';
   const runFlowWarning = latestRun ? unsupportedRunFlowWarning(latestRun) : null;
@@ -461,7 +461,7 @@ export function catalogItemFromPr(pr: PRStatus, latestRun?: Run): EvalCaseCatalo
   };
 }
 
-export function catalogItemFromRun(run: Run): EvalCaseCatalogItem {
+export function catalogItemFromRun(run: RunListRow): EvalCaseCatalogItem {
   const source: EvalExperimentSource = { kind: 'prior-run', runId: run.id };
   const terminal = isTerminalRunStatus(run.status);
   const flowWarning = unsupportedRunFlowWarning(run);
@@ -593,13 +593,10 @@ export function buildCaseCatalog(input: {
   const runsById = new Map(input.runs.map((run) => [run.id, run]));
   const runItems = input.runs
     .filter((run) => EVAL_RUN_FLOW_TYPES.has(run.flowType))
-    .map((run) => catalogItemFromRun(run as Run));
+    .map((run) => catalogItemFromRun(run));
   const items = [
     ...input.prs.map((pr) =>
-      catalogItemFromPr(
-        pr,
-        pr.latestRunId ? (runsById.get(pr.latestRunId) as Run | undefined) : undefined,
-      ),
+      catalogItemFromPr(pr, pr.latestRunId ? runsById.get(pr.latestRunId) : undefined),
     ),
     ...runItems,
   ];

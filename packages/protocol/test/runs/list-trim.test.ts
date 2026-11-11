@@ -1,13 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type {
-  ReviewStatus,
-  Run,
-  RunDecision,
-  RunDecisionPayload,
-  RunEngineState,
-} from '../../src/contracts/index.js';
+import type { Run, RunDecision, RunDecisionPayload } from '../../src/contracts/index.js';
 import { summarizeRunEvidence } from '../../src/runs/evidence-summary.js';
 import {
   RUN_LIST_PAYLOAD_VALUE_LIMIT,
@@ -17,6 +11,27 @@ import {
 } from '../../src/runs/list-trim.js';
 
 const big = 'x'.repeat(RUN_LIST_PAYLOAD_VALUE_LIMIT);
+
+/** Minimal valid Run with every required field set to a safe default. */
+function minRun(): Run {
+  return {
+    id: 'min',
+    familyId: 'fam-min',
+    lane: 'production',
+    flowType: 'dev',
+    status: 'monitoring',
+    project: 'test',
+    ticketOrPr: '',
+    slotId: null,
+    branch: null,
+    taskFile: null,
+    steps: [],
+    decisions: [],
+    metrics: { nudgeCount: 0, model: null, runner: null },
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+}
 
 test('run.list trims CI snapshot context without a payload and retains other context', () => {
   const stored: RunDecision = {
@@ -58,11 +73,11 @@ test('run.list keeps small decision payload values and names the large ones it d
       kind: 'review',
       recommendation: 'REQUEST_CHANGES',
       reviewMd: big,
-      prPackage: { draftBody: big },
+      evidenceMarkdown: big,
     }),
   );
   assert.deepEqual(trimmed.payload, { kind: 'review', recommendation: 'REQUEST_CHANGES' });
-  assert.deepEqual(trimmed.payloadTrimmed, ['reviewMd', 'prPackage']);
+  assert.deepEqual(trimmed.payloadTrimmed, ['reviewMd', 'evidenceMarkdown']);
 });
 
 test('a decision with only small values is returned as-is, without a marker', () => {
@@ -72,10 +87,11 @@ test('a decision with only small values is returned as-is, without a marker', ()
 });
 
 test('trimRunForList copies instead of mutating the stored run', () => {
-  const run = {
+  const run: Run = {
+    ...minRun(),
     id: 'r1',
     decisions: [decision({ kind: 'review', reviewMd: big }), decision({ kind: 'ready' })],
-  } as Run;
+  };
   const listed = trimRunForList(run);
   assert.notEqual(listed, run);
   const storedPayload = run.decisions[0].payload;
@@ -83,7 +99,7 @@ test('trimRunForList copies instead of mutating the stored run', () => {
   assert.equal(storedPayload.reviewMd, big, 'the store object keeps its payload');
   assert.equal(listed.decisions[0].payloadTrimmed?.[0], 'reviewMd');
   assert.equal(listed.decisions[1], run.decisions[1], 'untouched decisions are shared');
-  const noop = { id: 'r2', decisions: [decision({ kind: 'ready' })] } as Run;
+  const noop: Run = { ...minRun(), id: 'r2', decisions: [decision({ kind: 'ready' })] };
   assert.equal(trimRunForList(noop), noop);
 });
 
@@ -100,9 +116,9 @@ test('the limit is measured in UTF-8 bytes, not string length', () => {
 });
 
 test('run lists omit output file manifests without changing the retained detail', () => {
-  const run = {
+  const run: Run = {
+    ...minRun(),
     id: 'output',
-    decisions: [],
     output: {
       workerFinished: true,
       capturedAt: 'now',
@@ -110,7 +126,7 @@ test('run lists omit output file manifests without changing the retained detail'
       reportPath: 'artifacts/report.md',
       artifactManifest: [{ path: 'artifacts/report.md', purpose: 'report' }],
     },
-  } as Run;
+  };
   const listed = trimRunForList(run);
   assert.equal(listed.output?.reportPath, run.output?.reportPath);
   assert.equal(listed.output?.artifactManifestOmitted, true);
@@ -123,14 +139,18 @@ test('run lists omit output file manifests without changing the retained detail'
 function richRun(): Run {
   return {
     id: 'slim-test',
+    familyId: 'fam-1',
+    lane: 'production',
     flowType: 'dev',
     project: 'test-project',
     ticketOrPr: 'T-1',
     status: 'monitoring',
+    slotId: null,
+    branch: null,
+    taskFile: null,
     summary: 'worker running',
     createdAt: '2026-11-11T00:00:00.000Z',
     updatedAt: '2026-11-11T00:01:00.000Z',
-    familyId: 'fam-1',
     metrics: {
       runner: 'claude',
       model: 'claude-opus',
@@ -160,7 +180,14 @@ function richRun(): Run {
             identity: { runId: 'slim-test', generation: 1 },
             reasons: [],
           },
-          reviewRoundBudget: { used: 1, remaining: 2, max: 3 },
+          reviewRoundBudget: {
+            used: 1,
+            remaining: 2,
+            limit: 3,
+            label: 'rounds',
+            noVerdict: 0,
+            noVerdictLimit: 3,
+          },
           workerReport: 'big report text to drop',
           branch: 'feature/x',
           prNumber: null,
@@ -175,11 +202,11 @@ function richRun(): Run {
               unresolvedCount: 0,
               runner: 'claude',
               model: 'claude-opus',
-              issues: [{ id: 'i1', text: 'nit', severity: 'nit', required: false }],
-            } as ReviewStatus,
+              issues: [{ file: 'src/main.ts', description: 'nit' }],
+            },
           ],
         },
-      } as RunDecision,
+      },
     ],
     engineState: {
       generation: 5,
@@ -201,10 +228,10 @@ function richRun(): Run {
             model: 'claude-opus',
             issues: [],
             artifactPaths: ['artifacts/review.md'],
-          } as ReviewStatus,
+          },
         ],
       },
-    } as RunEngineState,
+    },
     resourcePosture: {
       posture: 'active',
       policySource: 'framework-default',
@@ -215,7 +242,7 @@ function richRun(): Run {
     sessionUsage: [{ runner: 'claude', totalTokens: 5000 }],
     visualJudgmentReceipts: [],
     templateProvenance: null,
-  } as Run;
+  };
 }
 
 test('runListRow drops the four heavy fields', () => {

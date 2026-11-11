@@ -82,16 +82,19 @@ export function runEvidenceArtifacts(
 }
 
 export function summarizeRunEvidence(
-  run: Pick<Run, 'steps' | 'output' | 'liveRecipeContext'> & {
-    decisions?: ReadonlyArray<{ payload?: unknown }>;
-    evidenceSummary?: RunEvidenceSummary;
-  },
+  run:
+    | Pick<Run, 'decisions' | 'steps' | 'output' | 'liveRecipeContext'>
+    | (Pick<Run, 'steps' | 'output' | 'liveRecipeContext'> & {
+        decisions?: ReadonlyArray<{ payload?: unknown }>;
+        evidenceSummary: RunEvidenceSummary;
+      }),
 ): RunEvidenceSummary {
   // Slim list rows carry a pre-computed summary from the gateway; use it directly.
-  if (run.evidenceSummary) return run.evidenceSummary;
-  const artifacts = runEvidenceArtifacts(
-    run as Pick<Run, 'decisions' | 'steps' | 'output' | 'liveRecipeContext'>,
-  );
+  // The `in` check narrows to the second union member so evidenceSummary is accessible;
+  // after this early return TypeScript narrows to the first union member (fat path)
+  // where decisions: RunDecision[] — so runEvidenceArtifacts accepts run directly.
+  if ('evidenceSummary' in run) return run.evidenceSummary;
+  const artifacts = runEvidenceArtifacts(run);
   return {
     artifactCount: artifacts.length,
     videoCount: artifacts.filter(isRunEvidenceVideoArtifact).length,

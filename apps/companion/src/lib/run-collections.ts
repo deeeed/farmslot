@@ -1,4 +1,4 @@
-import type { FleetStatus, RunGetResult } from '@farmslot/protocol';
+import type { FleetStatus, Run, RunGetResult } from '@farmslot/protocol';
 import { canActOn, resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { useConnectionStore } from '../store/connection';
@@ -31,7 +31,9 @@ const collections = new NativeRunCollections((snapshot) => {
     fleet: snapshot.fleet.data?.fleet ?? null,
     loading: snapshot.fleet.status === 'loading',
   });
-  const runs = snapshot.runs.data?.runs ?? [];
+  // The companion store still uses Run[] until it migrates to RunListRow; slim rows are
+  // structurally compatible for the list view (the companion fetches detail on selection).
+  const runs = (snapshot.runs.data?.runs ?? []) as Run[];
   const previousRuns = useRunStore.getState().runs;
   useRunStore.setState({
     observation: snapshot.runs,

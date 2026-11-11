@@ -5,8 +5,11 @@ import type {
   ReviewRoundSettlement,
   ReviewStatus,
   Run,
+  RunEngineState,
 } from '../contracts/runs.js';
 import { isRecord } from '../recipe/common.js';
+
+import type { RunListEngineState } from './list-row.js';
 
 export const MAX_REVIEW_ROUNDS = 5;
 export const MAX_UPDATE_BRANCH_REVIEW_ROUNDS = 2;
@@ -23,16 +26,11 @@ export type ReviewRoundBudgetSource = Pick<
   | 'reviewBudgetExtensions'
 > &
   Partial<
-    Pick<
-      Run,
-      | 'createdAt'
-      | 'agentContexts'
-      | 'engineState'
-      | 'steps'
-      | 'reviewWorkspaceSubject'
-      | 'reviewResult'
-    >
-  >;
+    Pick<Run, 'createdAt' | 'agentContexts' | 'steps' | 'reviewWorkspaceSubject' | 'reviewResult'>
+  > & {
+    /** Accept slim list-row engine state as well as the full gateway type. */
+    engineState?: RunEngineState | RunListEngineState;
+  };
 
 export function reviewRoundAdmissionId(
   reviewId: string,
@@ -43,7 +41,10 @@ export function reviewRoundAdmissionId(
 }
 
 export function workspaceReviewRoundAdmissionId(
-  run: Pick<Run, 'id'> & Partial<Pick<Run, 'createdAt' | 'engineState'>>,
+  run: Pick<Run, 'id'> & {
+    createdAt?: string;
+    engineState?: { workspaceReviewDispatchGeneration?: number; generation?: number };
+  },
   generation = run.engineState?.workspaceReviewDispatchGeneration ??
     run.engineState?.generation ??
     0,

@@ -8,7 +8,6 @@ import {
   resolveRunSlotId,
   reviewRoundAdmissionId,
   reviewRoundBudgetForRun,
-  type ReviewRoundBudgetSource,
   type Run,
   type RunListRow,
   type RunStep,
@@ -183,7 +182,7 @@ export function runActivityView(run: RunListRow): RunActivityView | null {
         : 'pre-gate'
       : undefined;
   const used = run.reviewRoundAdmissions
-    ? reviewRoundBudgetForRun(run as ReviewRoundBudgetSource).used
+    ? reviewRoundBudgetForRun(run).used
     : Math.max(
         0,
         ...run.decisions.map((decision) =>
@@ -192,11 +191,7 @@ export function runActivityView(run: RunListRow): RunActivityView | null {
       );
   const pending =
     actor && run.reviewWorkspaceSubject
-      ? run.reviewRoundSettlements?.[
-          workspaceReviewRoundAdmissionId(
-            run as Pick<Run, 'id'> & Partial<Pick<Run, 'createdAt' | 'engineState'>>,
-          )
-        ]?.kind === 'pending'
+      ? run.reviewRoundSettlements?.[workspaceReviewRoundAdmissionId(run)]?.kind === 'pending'
       : actor?.role === 'review' &&
         [actor.startedAt, actor.attemptStartedAt].some(
           (at) =>

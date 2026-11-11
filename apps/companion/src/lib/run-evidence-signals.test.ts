@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import type { Run, RunEvidenceSummary } from '@farmslot/protocol';
 
 import { normalizeFamilyEvidenceFilterParam } from './family-evidence';
 import {
@@ -37,23 +37,31 @@ test('runEvidenceSignalRouteTarget maps signal chips to family workspace route p
 });
 
 test('summarizeRunEvidenceSignals uses shared protocol evidence parsing', () => {
-  const run = {
+  const run: Pick<Run, 'decisions' | 'steps' | 'liveRecipeContext'> = {
     decisions: [],
     liveRecipeContext: {
+      source: 'recipe-run-artifacts',
+      recipeRunId: null,
+      artifactRoot: null,
       artifactManifest: [
         { path: 'evidence/before-login.png', purpose: 'before screenshot' },
         { path: 'evidence/after-login.png', purpose: 'after screenshot' },
       ],
+      recipeJson: null,
+      recipeQualityArtifact: null,
+      qualityReport: null,
+      workerLearnings: null,
+      isStale: false,
+      selectionReason: 'latest-run',
     },
     steps: [
       {
-        id: 'recipe',
-        title: 'Recipe',
-        status: 'completed',
+        name: 'recipe',
+        status: 'done',
         outputs: { video: 'artifacts/demo-after.mp4' },
       },
     ],
-  } as unknown as Pick<Run, 'decisions' | 'steps' | 'liveRecipeContext'>;
+  };
   const signals = summarizeRunEvidenceSignals(run);
 
   assert.equal(signals.find((signal) => signal.kind === 'compare')?.label, 'Compare 1');
@@ -63,12 +71,15 @@ test('summarizeRunEvidenceSignals uses shared protocol evidence parsing', () => 
 test('summarizeRunEvidenceSignals uses pre-computed evidenceSummary on slim rows', () => {
   // A slim row has evidenceSummary set by the gateway; evidence signals should use it directly
   // without walking decisions/steps, so a row with no decisions/steps still returns correct signals.
-  const slimRun = {
+  const slimRun: Pick<Run, 'steps' | 'liveRecipeContext'> & {
+    decisions?: ReadonlyArray<{ payload?: unknown }>;
+    evidenceSummary: RunEvidenceSummary;
+  } = {
     decisions: [],
     steps: [],
     liveRecipeContext: null,
     evidenceSummary: { artifactCount: 5, videoCount: 2, visualPairCount: 3 },
-  } as unknown as Pick<Run, 'decisions' | 'steps' | 'liveRecipeContext'>;
+  };
   const signals = summarizeRunEvidenceSignals(slimRun);
   assert.equal(
     signals.find((s) => s.kind === 'video')?.count,
@@ -82,11 +93,11 @@ test('summarizeRunEvidenceSignals uses pre-computed evidenceSummary on slim rows
   );
 
   // An old fat row without evidenceSummary falls back to computing from content.
-  const fatRun = {
+  const fatRun: Pick<Run, 'decisions' | 'steps' | 'liveRecipeContext'> = {
     decisions: [],
     steps: [],
-    liveRecipeContext: { artifactManifest: [] },
-  } as unknown as Pick<Run, 'decisions' | 'steps' | 'liveRecipeContext'>;
+    liveRecipeContext: null,
+  };
   const fatSignals = summarizeRunEvidenceSignals(fatRun);
   assert.deepEqual(fatSignals, [], 'fat row with no artifacts returns empty signals');
 });
