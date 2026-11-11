@@ -181,11 +181,11 @@ test('planning notification authorization keeps admin roadmap data separate from
       { role: 'operator', scope: { kind: 'global' } },
     ]);
     const issued = runtime.writer.issueCredential(principal.id, 'planning-tests');
-    const grant = runtime.writer.exchangePersonCredential(issued.secret, {
+    const grant = await runtime.writer.exchangePersonCredential(issued.secret, {
       deviceName: 'Planning test',
       deviceKind: 'cli',
     });
-    const resolution = runtime.resolver.resolveSecret(grant.accessToken, 'token');
+    const resolution = await runtime.resolver.resolveSecret(grant.accessToken, 'token');
     assert(resolution.ok && resolution.authentication);
     const state = {
       authenticated: true,

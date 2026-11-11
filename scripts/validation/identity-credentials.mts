@@ -115,8 +115,8 @@ try {
   const rules = await initPRRules(runtime, broadcastPrincipalEvent, false, monitoring);
   await initPRPush(runtime, monitoring, rules, false, broadcastPrincipalEvent);
 
-  const httpServer = createServer((req, res) => {
-    if (authorizeHttpRequest({ runtime, req, res, resource: 'file' })) {
+  const httpServer = createServer(async (req, res) => {
+    if (await authorizeHttpRequest({ runtime, req, res, resource: 'file' })) {
       res.writeHead(204);
       res.end();
     }

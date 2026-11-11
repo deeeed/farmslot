@@ -330,7 +330,7 @@ async function start() {
   running.wss = createWebSocketServer(running.server, auth);
   initServerGlobals();
   await listen(running.server, port);
-  const grant = auth.writer.exchangePersonCredential(credential.secret, {
+  const grant = await auth.writer.exchangePersonCredential(credential.secret, {
     deviceName: 'Companion stream setup',
     deviceKind: 'cli',
   });

@@ -452,9 +452,8 @@ export class PRMonitorStore {
     assertMutable?: () => void,
   ): Promise<PRMonitorRepair | undefined> {
     const selection = manual ? structuredClone(manual) : undefined;
-    return this.change((data) => {
+    return this.changeMonitor(id, ownerId, (monitor) => {
       if (selection) assertMutable?.();
-      const monitor = this.find(data, id, ownerId);
       const before = structuredClone(monitor);
       const repair = planMonitorRepair(monitor, selection);
       if (!isDeepStrictEqual(before, monitor)) this.touch(monitor);
@@ -567,8 +566,7 @@ export class PRMonitorStore {
   ): Promise<PRMonitor> {
     const update = structuredClone(patch);
     options = structuredClone(options);
-    return this.change((data) => {
-      const monitor = this.find(data, id, ownerId);
+    return this.changeMonitor(id, ownerId, (monitor) => {
       const repair = monitor.repairs?.find((entry) => entry.id === repairId);
       if (!repair) throw new Error('Repair request not found');
       const before = structuredClone(monitor);
@@ -634,24 +632,55 @@ export class PRMonitorStore {
   }
 
   private change<T>(mutate: (data: PRMonitorStoreData) => T): Promise<T> {
-    const operation = async () => {
+    return this.enqueue(async () => {
       // Parsing the committed text is several times cheaper than cloning the store, and
       // comparing texts says whether the transaction changed what the file would hold.
       const draft: PRMonitorStoreData = JSON.parse(this.text);
       const result = mutate(draft);
-      if (JSON.stringify(draft) === this.text) return structuredClone(result);
-      draft.revision += 1;
-      decodeMonitorStore(draft);
-      const text = JSON.stringify(draft);
-      await writeAtomicText(this.file, text);
-      // Committed state is exactly what a restart would load: no keys the file drops.
-      this.data = JSON.parse(text);
-      this.text = text;
-      publishPRAutomationResources();
-      // Retrospective inbox and family projections consume the current observations/incidents.
-      resourceRevisions.advance({ family: 'decisions', scope: 'farm' });
+      if (JSON.stringify(draft) !== this.text) await this.commit(draft);
       return structuredClone(result);
-    };
+    });
+  }
+
+  /**
+   * A transaction confined to one monitor runs on a copy of that monitor alone; the whole store is
+   * parsed and rewritten only when the monitor changed. The dispatcher re-plans every monitor on
+   * every tick and almost every plan changes nothing, so each would otherwise cost a full
+   * round trip of the store.
+   */
+  private changeMonitor<T>(
+    id: string,
+    ownerId: string,
+    mutate: (monitor: PRMonitor) => T,
+  ): Promise<T> {
+    return this.enqueue(async () => {
+      const committed = this.find(this.data, id, ownerId);
+      const monitor = structuredClone(committed);
+      const result = mutate(monitor);
+      // Compared as the file holds it, so keys set to undefined are no change.
+      if (JSON.stringify(monitor) !== JSON.stringify(committed)) {
+        const draft: PRMonitorStoreData = JSON.parse(this.text);
+        draft.monitors[this.data.monitors.indexOf(committed)] = monitor;
+        await this.commit(draft);
+      }
+      return structuredClone(result);
+    });
+  }
+
+  private async commit(draft: PRMonitorStoreData): Promise<void> {
+    draft.revision += 1;
+    decodeMonitorStore(draft);
+    const text = JSON.stringify(draft);
+    await writeAtomicText(this.file, text);
+    // Committed state is exactly what a restart would load: no keys the file drops.
+    this.data = JSON.parse(text);
+    this.text = text;
+    publishPRAutomationResources();
+    // Retrospective inbox and family projections consume the current observations/incidents.
+    resourceRevisions.advance({ family: 'decisions', scope: 'farm' });
+  }
+
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
     // The failed transaction rejects to its caller and leaves memory unchanged.
     // A later mutation may retry persistence rather than inheriting that rejection.
     const result = this.pending.then(operation, operation);

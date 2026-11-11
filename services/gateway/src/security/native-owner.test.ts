@@ -58,7 +58,7 @@ test('worker authority follows resolved solo mode and its activation latch', asy
   }
 });
 
-test('role-free enrollment grants only native ingress, never farm HTTP or broadcasts', () => {
+test('role-free enrollment grants only native ingress, never farm HTTP or broadcasts', async () => {
   const home = mkdtempSync(join(tmpdir(), 'native-owner-ingress-'));
   try {
     const runtime = createGatewayAuthRuntime({
@@ -72,11 +72,11 @@ test('role-free enrollment grants only native ingress, never farm HTTP or broadc
     );
     const issue = runtime.writer.issueCredential(owner.id, 'native-client');
     assert.equal(gatewayWorkspaceAccess(owner, runtime.store.snapshot().principals), 'none');
-    const grant = runtime.writer.exchangePersonCredential(issue.secret, {
+    const grant = await runtime.writer.exchangePersonCredential(issue.secret, {
       deviceName: 'Native owner fixture',
       deviceKind: 'cli',
     });
-    const resolved = runtime.resolver.resolveSecret(grant.accessToken, 'token');
+    const resolved = await runtime.resolver.resolveSecret(grant.accessToken, 'token');
     assert.ok(resolved.ok && resolved.authentication);
     const state = {
       authenticated: true,
