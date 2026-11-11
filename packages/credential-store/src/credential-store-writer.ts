@@ -1,12 +1,13 @@
-import type {
-  PersonDeviceDescription,
-  PersonDeviceSession,
-  PersonSessionGrant,
-  Principal,
-  PrincipalSubject,
-  Role,
-  RoleBinding,
-  RoleScope,
+import {
+  parsePersonSessionToken,
+  type PersonDeviceDescription,
+  type PersonDeviceSession,
+  type PersonSessionGrant,
+  type Principal,
+  type PrincipalSubject,
+  type Role,
+  type RoleBinding,
+  type RoleScope,
 } from '@farmslot/protocol';
 
 import {
@@ -14,6 +15,7 @@ import {
   generateCredentialId,
   generateCredentialSecret,
   hashSecret,
+  parseCredentialWire,
 } from './credential-secret.js';
 import {
   activeAdminCredentialCount,
@@ -32,6 +34,7 @@ import {
   refreshPersonSession,
   revokePersonSession,
 } from './person-sessions.js';
+import { prepareSecretWork } from './secret-work.js';
 
 export { VIRTUAL_PRINCIPAL_IDS } from './credential-store.js';
 import { type PrincipalRetirement, retireSelectedPrincipals } from './credential-retirement.js';
@@ -307,25 +310,45 @@ export class CredentialStoreWriter {
     });
   }
 
-  exchangePersonCredential(
+  // Person sessions derive scrypt hashes before the lock (see prepareSecretWork): a gateway serves
+  // sign-ins and refreshes on its event loop.
+  async exchangePersonCredential(
     credential: string,
     device: PersonDeviceDescription,
-  ): PersonSessionGrant {
-    return this.mutate((store) => exchangePersonCredential(store, credential, device, this.now()));
-  }
-
-  issuePersonSession(
-    principalId: string,
-    generation: number,
-    device: PersonDeviceDescription,
-  ): PersonSessionGrant {
+  ): Promise<PersonSessionGrant> {
+    const parsed = parseCredentialWire(credential);
+    const source =
+      parsed &&
+      this.runtime.snapshot().credentials.find((record) => record.id === parsed.credentialId);
+    const secrets = await prepareSecretWork(
+      parsed && source ? [[parsed.secret, source.secret]] : [],
+      2,
+    );
     return this.mutate((store) =>
-      issuePersonSession(store, principalId, generation, device, this.now()),
+      exchangePersonCredential(store, credential, device, this.now(), secrets),
     );
   }
 
-  refreshPersonSession(refreshToken: string): PersonSessionGrant {
-    return this.mutate((store) => refreshPersonSession(store, refreshToken, this.now()));
+  async issuePersonSession(
+    principalId: string,
+    generation: number,
+    device: PersonDeviceDescription,
+  ): Promise<PersonSessionGrant> {
+    const secrets = await prepareSecretWork([], 2);
+    return this.mutate((store) =>
+      issuePersonSession(store, principalId, generation, device, this.now(), undefined, secrets),
+    );
+  }
+
+  async refreshPersonSession(refreshToken: string): Promise<PersonSessionGrant> {
+    const parsed = parsePersonSessionToken(refreshToken, 'fsr');
+    const record =
+      parsed && this.runtime.snapshot().personSessions.find((item) => item.id === parsed.id);
+    const secrets = await prepareSecretWork(
+      parsed && record ? [[parsed.secret, record.refreshSecret]] : [],
+      1,
+    );
+    return this.mutate((store) => refreshPersonSession(store, refreshToken, this.now(), secrets));
   }
 
   listPersonSessions(actor: PersonSessionAuthority): PersonDeviceSession[] {

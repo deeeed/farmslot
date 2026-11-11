@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 import test from 'node:test';
 
 import { Command } from 'commander';
@@ -12,6 +13,7 @@ import {
   CredentialStoreRefusalError,
   CredentialStoreRuntime,
   CredentialStoreWriter,
+  hashSecret,
   loadCredentialStore,
   parsePersonSessionToken,
   type PersonSessionAuthority,
@@ -172,9 +174,9 @@ test('schema1 migration refuses a live gateway without changing store bytes', (t
   assert.deepEqual(migrated.credentials, before.credentials);
 });
 
-test('issued tokens are hash-only on disk and survive a runtime restart', (t) => {
+test('issued tokens are hash-only on disk and survive a runtime restart', async (t) => {
   const f = fixture(t);
-  const grant = f.grant();
+  const grant = await f.grant();
   assert.equal(Date.parse(grant.accessExpiresAt) - f.clock.now, 3_600_000);
   assert.equal(Date.parse(grant.session.refreshExpiresAt) - f.clock.now, 2_592_000_000);
   const bytes = readFileSync(f.runtime.path, 'utf8');
@@ -188,9 +190,9 @@ test('issued tokens are hash-only on disk and survive a runtime restart', (t) =>
   );
 });
 
-test('access expires exactly at one hour without any store write', (t) => {
+test('access expires exactly at one hour without any store write', async (t) => {
   const f = fixture(t);
-  const grant = f.grant();
+  const grant = await f.grant();
   const id = authority(grant).accessId;
   const bytes = readFileSync(f.runtime.path, 'utf8');
   f.clock.now += 3_600_000 - 1;
@@ -200,27 +202,27 @@ test('access expires exactly at one hour without any store write', (t) => {
   assert.equal(readFileSync(f.runtime.path, 'utf8'), bytes);
 });
 
-test('refresh slides thirty days, keeps concurrent access and refuses exact expiry', (t) => {
+test('refresh slides thirty days, keeps concurrent access and refuses exact expiry', async (t) => {
   const f = fixture(t);
-  const first = f.grant();
+  const first = await f.grant();
   f.clock.now += 60_000;
-  const refreshed = f.writer.refreshPersonSession(first.refreshToken);
+  const refreshed = await f.writer.refreshPersonSession(first.refreshToken);
   assert.equal(refreshed.refreshToken, first.refreshToken);
   assert.equal(Date.parse(refreshed.session.refreshExpiresAt), f.clock.now + 2_592_000_000);
   assert.ok(activePersonAccess(f.runtime.snapshot(), authority(first).accessId, f.clock.now));
   assert.ok(activePersonAccess(f.runtime.snapshot(), authority(refreshed).accessId, f.clock.now));
   f.clock.now = Date.parse(refreshed.session.refreshExpiresAt);
   const bytes = readFileSync(f.runtime.path, 'utf8');
-  assert.throws(() => f.writer.refreshPersonSession(first.refreshToken), ended);
+  await assert.rejects(f.writer.refreshPersonSession(first.refreshToken), ended);
   assert.equal(readFileSync(f.runtime.path, 'utf8'), bytes);
 });
 
-test('device revocation is independent, idempotent and cannot cross a person boundary', (t) => {
+test('device revocation is independent, idempotent and cannot cross a person boundary', async (t) => {
   const f = fixture(t);
-  const first = f.grant();
-  const second = f.grant();
+  const first = await f.grant();
+  const second = await f.grant();
   const otherPerson = f.writer.createPrincipal({ type: 'person', displayName: 'Other' }, []);
-  const other = f.writer.issuePersonSession(otherPerson.id, 0, f.device);
+  const other = await f.writer.issuePersonSession(otherPerson.id, 0, f.device);
   const actor = authority(first);
   const revoked = f.writer.revokePersonSession(actor, second.session.id);
   assert.ok(revoked.revokedAt);
@@ -241,9 +243,9 @@ test('device revocation is independent, idempotent and cannot cross a person bou
   assert.equal(f.writer.listPersonSessions(actor).length, 2);
 });
 
-test('source credential revocation closes device tokens and refresh authority', (t) => {
+test('source credential revocation closes device tokens and refresh authority', async (t) => {
   const f = fixture(t);
-  const grant = f.grant();
+  const grant = await f.grant();
   let invalidated: string[] = [];
   f.runtime.onChange((change) => {
     invalidated = change.revokedSessionIds ?? [];
@@ -254,13 +256,13 @@ test('source credential revocation closes device tokens and refresh authority', 
     activePersonAccess(f.runtime.snapshot(), authority(grant).accessId, f.clock.now),
     undefined,
   );
-  assert.throws(() => f.writer.refreshPersonSession(grant.refreshToken), ended);
+  await assert.rejects(f.writer.refreshPersonSession(grant.refreshToken), ended);
 });
 
-test('a revoked acting device cannot mutate another device while its person still exists', (t) => {
+test('a revoked acting device cannot mutate another device while its person still exists', async (t) => {
   const f = fixture(t);
-  const first = f.grant();
-  const second = f.grant();
+  const first = await f.grant();
+  const second = await f.grant();
   const actor = authority(first);
   f.writer.revokePersonSession(authority(second), first.session.id);
   const bytes = readFileSync(f.runtime.path, 'utf8');
@@ -305,8 +307,8 @@ async function startSessionRpcServer(
   resources: Record<string, SessionProofResource> = {},
   port = 0,
 ) {
-  const server = createServer((req, res) => {
-    if (!authorizeHttpRequest({ runtime, req, res, resource: 'run-artifact' })) return;
+  const server = createServer(async (req, res) => {
+    if (!(await authorizeHttpRequest({ runtime, req, res, resource: 'run-artifact' }))) return;
     const resource = resources[new URL(req.url ?? '/', 'http://localhost').pathname];
     if (resource) res.setHeader('Content-Type', resource.contentType);
     res.end(resource?.body ?? 'authorized');
@@ -534,7 +536,7 @@ test('the public CLI login persists only a person refresh token and nonsecret me
 
 test('the public CLI logout confirms revocation before removing its person refresh token', async (t) => {
   const f = await rpcFixture(t);
-  const grant = f.grant();
+  const grant = await f.grant();
   const path = profilesPath();
   t.after(() => rmSync(path, { force: true }));
   saveProfiles(
@@ -561,7 +563,7 @@ test('the public CLI logout confirms revocation before removing its person refre
 
 test('CLI access-token input cannot replace or overwrite a saved service credential', async (t) => {
   const f = await rpcFixture(t);
-  const grant = f.grant();
+  const grant = await f.grant();
   const path = profilesPath();
   t.after(() => rmSync(path, { force: true }));
   saveProfiles(
@@ -656,7 +658,7 @@ test('first local startup persists one device and renews it through the producti
   process.env.FARMSLOT_HOME = home;
   Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: true });
   Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true });
-  const initial = ensureLocalCredential(8801);
+  const initial = await ensureLocalCredential(8801);
   assert.ok(initial.personSession);
   const runtime = createGatewayAuthRuntime({ FARMSLOT_HOME: home });
   initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
@@ -667,7 +669,7 @@ test('first local startup persists one device and renews it through the producti
   const port = Number(new URL(server.url).port);
   profile.gateways.local.url = 'ws://localhost:' + port;
   saveProfiles(profile);
-  const restored = ensureLocalCredential(port);
+  const restored = await ensureLocalCredential(port);
   assert.equal(restored.personSession?.session.id, initial.personSession.session.id);
   assert.equal(
     (await probeGatewayAuth(profile.gateways.local.url, restored)).state,
@@ -685,8 +687,8 @@ test('revoked local sign-in preserves the owned gateway and pid for pairing agai
     await import('../../../../packages/cli/src/commands/up.js');
   const f = await rpcFixture(t, true);
   f.writer.grantRole(f.person.id, 'admin', { kind: 'global' });
-  const local = f.grant();
-  const browser = f.grant();
+  const local = await f.grant();
+  const browser = await f.grant();
   saveProfiles({
     gateways: {
       local: {
@@ -779,6 +781,32 @@ test('online activation exchanges its one-time owner credential before saving a 
   assert.ok(profiles.gateways.local.personSession);
   const raw = readFileSync(profilesPath(), 'utf8');
   assert.ok(!raw.includes(issue.adminGrant.secret) && !raw.includes('fsa_'));
-  assert.equal((await probeGatewayAuth(url, ensureLocalCredential(port))).state, 'authenticated');
+  assert.equal(
+    (await probeGatewayAuth(url, await ensureLocalCredential(port))).state,
+    'authenticated',
+  );
   assert.equal(runtime.store.snapshot().personSessions.length, 1);
+});
+
+test('sign-in, refresh and token checks derive scrypt outside the caller turn', async (t) => {
+  const f = fixture(t);
+  const { PrincipalResolver } = await import('./principal-resolver.js');
+  const resolver = new PrincipalResolver(f.runtime, {
+    bindIsLoopbackOnly: false,
+    trustProxyHeaders: false,
+    machine: 'test',
+  });
+  // One synchronous derivation on this machine, now: the bar the loop's worst delay stays under.
+  const started = performance.now();
+  hashSecret('calibration');
+  const scryptMs = performance.now() - started;
+  const delay = monitorEventLoopDelay({ resolution: 1 });
+  delay.enable();
+  const grant = await f.grant();
+  const refreshed = await f.writer.refreshPersonSession(grant.refreshToken);
+  const checked = await resolver.resolveSecret(refreshed.accessToken, 'token');
+  delay.disable();
+  assert.equal(checked.ok, true);
+  const worstMs = delay.max / 1e6;
+  assert.ok(worstMs < scryptMs / 2, `the loop stalled ${worstMs} ms; one scrypt is ${scryptMs} ms`);
 });

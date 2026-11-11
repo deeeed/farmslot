@@ -17,13 +17,13 @@ export const personSessionMethods = new Set<string>([
 ]);
 
 /** Authentication entry points own their credential proof, not the farm-role allowlist. */
-export function routePersonSessionMethod(
+export async function routePersonSessionMethod(
   method: string,
   value: unknown,
   runtime: GatewayAuthRuntime,
   session: GatewayAuthSession,
   clientIp: string,
-): unknown {
+): Promise<unknown> {
   if (!isRecord(value)) throw invalid();
   const unauthenticated =
     method === Methods.AUTH_SESSION_EXCHANGE || method === Methods.AUTH_SESSION_REFRESH;
@@ -42,13 +42,13 @@ export function routePersonSessionMethod(
         if (!device || 'credential' in value === 'code' in value) throw invalid();
         result =
           'credential' in value
-            ? runtime.writer.exchangePersonCredential(text(value.credential), device)
-            : pairingExchangePersonSession(text(value.code), device, runtime);
+            ? await runtime.writer.exchangePersonCredential(text(value.credential), device)
+            : await pairingExchangePersonSession(text(value.code), device, runtime);
         break;
       }
       case Methods.AUTH_SESSION_REFRESH:
         keys(value, ['refreshToken']);
-        result = runtime.writer.refreshPersonSession(text(value.refreshToken));
+        result = await runtime.writer.refreshPersonSession(text(value.refreshToken));
         break;
       case Methods.AUTH_SESSION_LIST:
         keys(value, []);

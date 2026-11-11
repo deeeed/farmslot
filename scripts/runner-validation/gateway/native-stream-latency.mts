@@ -260,7 +260,7 @@ const run = async () => {
   const address = listening.address();
   assert(address && typeof address !== 'string');
   const connect = async () => {
-    const grant = auth.writer.exchangePersonCredential(credential.secret, {
+    const grant = await auth.writer.exchangePersonCredential(credential.secret, {
       deviceName: 'Latency RPC',
       deviceKind: 'cli',
     });

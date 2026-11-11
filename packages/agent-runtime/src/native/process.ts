@@ -197,7 +197,8 @@ export class JsonLineProcess {
     });
     try {
       if (this.child.pid) {
-        this.tree = new NativeProcessTree(this.child.pid);
+        // The registered launch waits for the newline written below before starting the runner.
+        this.tree = new NativeProcessTree(this.child.pid, { gated: true });
         this.stopObservingTree = this.tree.observe((error) => {
           // Loss of process ownership evidence fails this session and its cleanup claim.
           this.beginCleanup(new Error('Native process census failed', { cause: error }));

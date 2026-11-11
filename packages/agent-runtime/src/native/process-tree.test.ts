@@ -382,3 +382,31 @@ test('cleanup censuses cap concurrency and expired queued reads never spawn late
     syncBuiltinESMExports();
   }
 });
+
+test('a gated tree reads only its root; the next census adds its descendants', async () => {
+  const root = spawn(
+    process.execPath,
+    [
+      '-e',
+      `const child = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+      process.send(child.pid);
+      setInterval(() => {}, 1000);`,
+    ],
+    { detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] },
+  );
+  let tree: NativeProcessTree | undefined;
+  try {
+    const [descendant] = (await once(root, 'message')) as [number];
+    tree = new NativeProcessTree(root.pid!, { gated: true });
+    assert.deepEqual(
+      tree.snapshot().map((entry) => entry.pid),
+      [root.pid],
+      'only the root is read at the gate',
+    );
+    await tree.capture();
+    assert.ok(tree.snapshot().some((entry) => entry.pid === descendant));
+  } finally {
+    await tree?.stop();
+    if (root.pid && alive(root.pid)) root.kill('SIGKILL');
+  }
+});

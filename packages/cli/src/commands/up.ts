@@ -221,7 +221,7 @@ function readPid(): number | null {
 }
 
 /** First interactive startup issues a person credential; subsequent starts reuse its profile. */
-export function ensureLocalCredential(port: number): GatewayCredential {
+export async function ensureLocalCredential(port: number): Promise<GatewayCredential> {
   const profile = loadProfiles().gateways[LOCAL_PROFILE];
   const url = port === DEFAULT_GATEWAY_PORT ? DEFAULT_GATEWAY_URL : `ws://localhost:${port}`;
   const runtime = new CredentialStoreRuntime();
@@ -269,7 +269,7 @@ export function ensureLocalCredential(port: number): GatewayCredential {
   const issued = writer.issueCredential(principal.id, 'local-cli');
   // The existing offline first-owner bootstrap uses the same locked issuer as the gateway.
   // Persist its device authority before boot so a failed daemon start cannot lose the only login.
-  const grant = writer.exchangePersonCredential(issued.secret, {
+  const grant = await writer.exchangePersonCredential(issued.secret, {
     deviceName: `CLI on ${hostname()}`.slice(0, 128),
     deviceKind: 'cli',
   });
@@ -622,7 +622,7 @@ async function up(
   const existingPid = readPid();
   if (existingPid && isAlive(existingPid)) {
     if (await waitForHealth(port, 2000)) {
-      const credential = ensureLocalCredential(port);
+      const credential = await ensureLocalCredential(port);
       await verifyTokenAuth(port, credential, output);
       const localActive = registerLocalProfile(port, credential);
       if (startNode)
@@ -674,7 +674,7 @@ async function up(
     process.exit(1);
   }
 
-  const credential = ensureLocalCredential(port);
+  const credential = await ensureLocalCredential(port);
   mkdirSync(farmslotHome(), { recursive: true, mode: 0o700 });
   mkdirSync(dirname(logFilePath()), { recursive: true, mode: 0o700 });
   mkdirSync(dirname(pidFilePath()), { recursive: true, mode: 0o700 });

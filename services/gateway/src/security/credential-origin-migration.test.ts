@@ -66,7 +66,7 @@ function fixture(t: { after(fn: () => void): void }) {
   return { home, path, store, historical, env: { FARMSLOT_HOME: home } };
 }
 
-test('gateway boots with historical origins and preserves authority, secrets and revocations', (t) => {
+test('gateway boots with historical origins and preserves authority, secrets and revocations', async (t) => {
   const f = fixture(t);
   const runtime = createGatewayAuthRuntime(f.env);
   assert.equal(runtime.auth.mode, 'token');
@@ -77,23 +77,27 @@ test('gateway boots with historical origins and preserves authority, secrets and
   assert.equal(runtime.store.findPrincipal('node-proof')?.subject.type, 'node');
   for (const [index, credential] of f.store.credentials.entries()) {
     assert.equal(
-      authenticateGatewayClient({
-        runtime,
-        connectParams: {
-          clientKind: 'ui',
-          token: `fs_${credential.id}_synthetic-origin-proof`,
-        },
-        clientIp: '127.0.0.1',
-      }).ok,
+      (
+        await authenticateGatewayClient({
+          runtime,
+          connectParams: {
+            clientKind: 'ui',
+            token: `fs_${credential.id}_synthetic-origin-proof`,
+          },
+          clientIp: '127.0.0.1',
+        })
+      ).ok,
       index !== 3,
     );
   }
   assert.equal(
-    authenticateGatewayClient({
-      runtime,
-      connectParams: { clientKind: 'ui', token: 'synthetic-origin-proof' },
-      clientIp: '127.0.0.1',
-    }).ok,
+    (
+      await authenticateGatewayClient({
+        runtime,
+        connectParams: { clientKind: 'ui', token: 'synthetic-origin-proof' },
+        clientIp: '127.0.0.1',
+      })
+    ).ok,
     false,
   );
   const bytes = readFileSync(f.path);
