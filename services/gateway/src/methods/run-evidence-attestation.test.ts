@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -15,21 +15,43 @@ import {
   type RunResolveDecisionParams,
 } from '@farmslot/protocol';
 
+import type { GitHubService, PREditParams } from '../integrations/github-client.js';
 import { manualTicketData } from '../run-completion/test-fixtures.js';
 
 await import('../runtime/mock-pty.test-support.js');
 const github = await import('../integrations/github-client.js');
 const postedBodies: string[] = [];
-mock.module('../integrations/github-client.js', {
-  namedExports: {
-    ...github,
-    ghRequest: async (args: string[]) => {
-      if (args[0] !== 'pr' || args[1] !== 'edit')
-        throw new Error('Unexpected external publication request in attestation test');
-      postedBodies.push(await readFile(args[args.indexOf('--body-file') + 1], 'utf8'));
-      return { exitCode: 0, stdout: '', stderr: '' };
-    },
+const guardMsg = 'Unexpected external publication request in attestation test';
+const attestFakeGithub: GitHubService = {
+  ...github.github,
+  prView: async () => {
+    throw new Error(guardMsg);
   },
+  prListFields: async () => {
+    throw new Error(guardMsg);
+  },
+  prCreate: async () => {
+    throw new Error(guardMsg);
+  },
+  prComment: async () => {
+    throw new Error(guardMsg);
+  },
+  prReady: async () => {
+    throw new Error(guardMsg);
+  },
+  graphql: async () => {
+    throw new Error(guardMsg);
+  },
+  rest: async () => {
+    throw new Error(guardMsg);
+  },
+  prEdit: async (_repo: string, _number: number, params: PREditParams) => {
+    if (params.body != null) postedBodies.push(params.body);
+    return '';
+  },
+};
+mock.module('../integrations/github-client.js', {
+  namedExports: { ...github, github: attestFakeGithub },
 });
 const { runResolveDecision } = await import('./run.js');
 const { createRun, getRun, updateRun } = await import('../runs/store.js');
