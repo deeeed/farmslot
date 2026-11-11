@@ -8,7 +8,7 @@ import {
   type RunnerVisibleModelsSetResult,
 } from '@farmslot/protocol';
 
-import { loadMachinePool, loadSlotVars } from '../core/config.js';
+import { loadMachinePool, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot, isDisconnectedRemote, isLocal } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { withMachineEnv } from '../core/project-env.js';
@@ -77,8 +77,16 @@ export async function modelCatalogNodes(): Promise<ModelCatalogNode[]> {
       const vars = await loadSlotVars(slot);
       if (isDisconnectedRemote(vars)) throw new Error('node is not connected');
       const binary = vars[source.slotPathKey]?.trim() || source.nodeCommand;
-      const command = `${shellExpressionForRemotePath(binary)} ${source.args.map(shellQuote).join(' ')} </dev/null`;
-      const result = await execOnSlot(vars, withMachineEnv(command, vars), {
+      const baseCommand =
+        source.buildCommand?.(vars, binary) ??
+        `${shellExpressionForRemotePath(binary)} ${source.args.map(shellQuote).join(' ')}`;
+      const command = source.prepareCommand
+        ? source.prepareCommand(baseCommand, {
+            repo: vars.remoteRepo,
+            runtimeDir: await resolveProjectRuntimeDir(vars.projectName),
+          })
+        : baseCommand;
+      const result = await execOnSlot(vars, withMachineEnv(`${command} </dev/null`, vars), {
         cwd: '/',
         timeout: NODE_MODEL_LIST_TIMEOUT_MS,
         maxBuffer: 1024 * 1024,
@@ -100,7 +108,7 @@ const catalogObservation = new RunnerModelCatalogObservation({
   hasInterest: (runner) => hasCatalogInterest(runner),
   changed: (runner) => {
     resourceRevisions.advance(runnerModelCatalogResourceKey({ runner }));
-    // Native pickers list the same per-node models (native.session.catalog nodeModels).
+    // Native pickers share these per-node catalog observations.
     const source = getRunnerDefinition(runner).modelCatalog;
     if (source && 'nodeCommand' in source) nativeCatalogChanges.catalogChanged();
   },

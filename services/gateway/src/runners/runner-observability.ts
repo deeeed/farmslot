@@ -199,6 +199,24 @@ export function buildPiAuthCheckCommand(
   binary: string,
   model: string,
 ): string {
+  return buildPiProviderCommand(
+    vars,
+    `${shellExpressionForRemotePath(binary)} ${shellQuote(model)}`,
+  );
+}
+
+/** Catalog and auth use the same node-support helper as the worker extension. */
+export function buildPiModelCatalogCommand(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  binary: string,
+): string {
+  return buildPiProviderCommand(vars, `--list-models ${shellExpressionForRemotePath(binary)}`);
+}
+
+function buildPiProviderCommand(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  args: string,
+): string {
   const helper = path.posix.join(
     farmslotDirForSlot(vars),
     'scripts/runners',
@@ -209,7 +227,7 @@ export function buildPiAuthCheckCommand(
   const selectedHelper = helper.startsWith(`${legacyRemoteFarmPaths().code.node}/`)
     ? helper
     : shellExpressionForRemotePath(helper);
-  return `cd ${shellExpressionForRemotePath(vars.remoteRepo)} && node ${selectedHelper} ${shellExpressionForRemotePath(binary)} ${shellQuote(model)}`;
+  return `cd ${shellExpressionForRemotePath(vars.remoteRepo)} && node ${selectedHelper} ${args}`;
 }
 
 /**

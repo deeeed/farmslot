@@ -1,8 +1,9 @@
 // Farmslot PI extension: hooks, task delivery, mark/signal tools, HUD, slash cmds.
-// Do not import @earendil-works/pi-coding-agent — PI's jiti provides `pi` at load.
+// Pi's jiti supplies the extension API and resolves the host SDK when needed.
 import { writeSync } from 'node:fs';
 import path from 'node:path';
 
+import type { Provider } from '@earendil-works/pi-ai';
 import { Type } from 'typebox';
 
 import { piMessageTokenUsage, piTurnFailure, writePiHook } from './pi-farmslot-hook-writer.mjs';
@@ -11,6 +12,7 @@ import {
   deadlinePiFetch,
   PiProviderConfigurationError,
   piSdkModels,
+  preservePiStaticModels,
   providerReasoningFetch,
   resolvePiProviderCatalog,
 } from './pi-farmslot-providers.mjs';
@@ -47,6 +49,13 @@ function toolResult(text: string, isError = false) {
   };
 }
 
+interface PiProviderDiscoverySource {
+  provider: string;
+  configured: boolean;
+  status: 'ready' | 'failed';
+  modelCount: number;
+}
+
 interface PiThinkingModel {
   provider: string;
   id: string;
@@ -63,12 +72,17 @@ interface PiShutdownContext {
 
 export default async function (pi: {
   on: (event: string, handler: (...args: never[]) => unknown) => void;
-  registerProvider?: (id: string, provider: Record<string, unknown>) => void;
+  registerProvider?: {
+    (id: string, provider: Record<string, unknown>): void;
+    (provider: Provider): void;
+  };
   appendEntry?: (type: string, data: Record<string, unknown>) => void;
   registerTool?: (tool: Record<string, unknown>) => void;
   registerCommand?: (name: string, spec: Record<string, unknown>) => void;
   sendUserMessage?: (text: string) => void;
 }) {
+  const providerKinds = new Map<string, string>();
+  let selectedModel: PiThinkingModel | undefined;
   let configurationFailure: string | null = null;
   let shutdownContext: PiShutdownContext | undefined;
   const stopPiConfiguration = (error: PiProviderConfigurationError) => {
@@ -92,7 +106,12 @@ export default async function (pi: {
   const checkThinking = (model: PiThinkingModel | undefined, ctx: PiShutdownContext) => {
     shutdownContext = ctx;
     try {
-      assertPiModelThinking(model, process.env.FARMSLOT_THINKING);
+      assertPiModelThinking(
+        model,
+        process.env.FARMSLOT_THINKING,
+        model && providerKinds.get(model.provider),
+      );
+      selectedModel = model;
       return true;
     } catch (error) {
       if (!(error instanceof PiProviderConfigurationError)) throw error;
@@ -123,18 +142,48 @@ export default async function (pi: {
     if (globalThis.fetch === ownedFetch) globalThis.fetch = originalFetch;
   });
   try {
-    const catalog = await resolvePiProviderCatalog(process.env);
+    const sources: PiProviderDiscoverySource[] = [];
+    const discovered = await resolvePiProviderCatalog(process.env, {
+      onDiscovery: (source: PiProviderDiscoverySource) => sources.push(source),
+    });
+    const catalog = await preservePiStaticModels(discovered, async (modelsPath: string) => {
+      // Resolve through Pi's loader, not the copied .mjs helper's Node resolver.
+      const sdk = '@earendil-works/pi-coding-agent';
+      const ai = '@earendil-works/pi-ai';
+      const { ModelRuntime } = await import(sdk);
+      const { InMemoryCredentialStore } = await import(ai);
+      return ModelRuntime.create({
+        modelsPath,
+        refreshOnCreate: false,
+        credentials: new InMemoryCredentialStore(),
+      });
+    });
+    // Structured catalog metadata only. Worker launches keep their normal stdout contract.
+    if (process.argv.includes('--list-models'))
+      writeSync(1, `${JSON.stringify({ type: 'farmslot.pi-provider-discovery', sources })}\n`);
     requestFetch = providerReasoningFetch(
       boundedFetch,
       catalog,
       (configuration) => {
-        console.error('[farmslot-pi] request', JSON.stringify(configuration));
-        pi.appendEntry?.('farmslot-model-request', configuration);
+        const kind = selectedModel && providerKinds.get(selectedModel.provider);
+        // Saved alias sessions record assistant usage under their selected provider.
+        // Keep pricing metadata on that same key without renaming another source's request.
+        const record = {
+          ...configuration,
+          ...(selectedModel?.id === configuration.model &&
+          kind !== undefined &&
+          kind === providerKinds.get(configuration.provider)
+            ? { provider: selectedModel.provider }
+            : {}),
+        };
+        console.error('[farmslot-pi] request', JSON.stringify(record));
+        pi.appendEntry?.('farmslot-model-request', record);
       },
       process.env.FARMSLOT_THINKING,
       stopPiConfiguration,
     );
     for (const source of catalog) {
+      for (const id of [source.id, ...(source.aliases ?? [])]) providerKinds.set(id, source.kind);
       pi.registerProvider?.(source.id, {
         name: source.name,
         baseUrl: source.baseUrl,
@@ -142,6 +191,33 @@ export default async function (pi: {
         api: 'openai-completions',
         models: piSdkModels(source.models),
       });
+      for (const alias of source.aliases ?? []) {
+        const { createProvider, openAICompletionsApi } =
+          await import('@earendil-works/pi-ai/compat');
+        // Pi resolves CLI and saved-session models from the full registry, while
+        // its pickers and --list-models use the available-model filter.
+        pi.registerProvider?.(
+          createProvider({
+            id: alias,
+            name: source.name,
+            baseUrl: source.baseUrl,
+            auth: {
+              apiKey: {
+                name: source.name,
+                resolve: async () => ({ auth: { apiKey: source.apiKey } }),
+              },
+            },
+            models: piSdkModels(source.models).map((model) => ({
+              ...model,
+              provider: alias,
+              baseUrl: source.baseUrl,
+              api: 'openai-completions' as const,
+            })),
+            filterModels: () => [],
+            api: openAICompletionsApi(),
+          }),
+        );
+      }
       for (const model of source.models)
         console.error(
           '[farmslot-pi] registered',

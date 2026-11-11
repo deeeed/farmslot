@@ -123,7 +123,7 @@ export async function nativeModelNodeBlocker(
       pool.machine === executionNodeId ||
       (executionNodeId === 'local' && isLocal(pool.host, pool.machine))
     )
-      return runnerModelNodeBlocker(runner, model, pool.machine);
+      return runnerModelNodeBlocker(runner, model, pool.machine, 'native');
   return null;
 }
 
@@ -140,7 +140,7 @@ export function nativeNodeModels(
   const source = getRunnerDefinition(runner).modelCatalog;
   if (!source || !('nodeCommand' in source)) return undefined;
   const entries = [...contextMachines].flatMap(([executionNodeId, machine]) => {
-    const listing = nodeModelCatalogs.listing(runner, machine);
+    const listing = nodeModelCatalogs.nativeListing(runner, machine);
     if (!listing) return [];
     const listed = listing.filter(isPickerCatalogModel);
     return [
