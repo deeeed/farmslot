@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test, type TestContext } from 'node:test';
@@ -8,6 +8,7 @@ import { mock, test, type TestContext } from 'node:test';
 import { ACCEPTANCE_STATUS_ARTIFACT, type Run, type RunDecision } from '@farmslot/protocol';
 
 import { retainFixtureTask } from '../../../../packages/run-bundle/src/retained.test-support.js';
+import type { GitHubService, RestServiceOpts } from '../integrations/github-client.js';
 
 await import('../runtime/mock-pty.test-support.js');
 const store = await import('../runs/store.js');
@@ -18,33 +19,37 @@ mock.module('../runs/store.js', {
     getRunWithArchived: async (id: string) => (parent?.id === id ? parent : undefined),
   },
 });
-const github = await import('../integrations/github-client.js');
+const githubModule = await import('../integrations/github-client.js');
 let posted = '';
 let existingComment = '';
 let createdComments = 0;
 let patchedComments = 0;
 let refuseCommentWrite = false;
-mock.module('../integrations/github-client.js', {
-  namedExports: {
-    ...github,
-    ghRequest: async (args: string[]) => {
-      if (args[0] === 'api' && args.includes('--paginate'))
-        return { stdout: existingComment, stderr: '', exitCode: 0 };
-      if (args[0] === 'pr' && args[1] === 'comment') {
-        if (refuseCommentWrite) throw new Error('Comment permission denied');
-        createdComments++;
-        posted = await readFile(args[args.indexOf('--body-file') + 1]!, 'utf8');
-      }
-      if (args.includes('PATCH')) {
-        if (refuseCommentWrite) throw new Error('Comment permission denied');
-        patchedComments++;
-        const file = args[args.indexOf('-F') + 1]!;
-        posted = await readFile(file.slice('body=@'.length), 'utf8');
-        existingComment = JSON.stringify({ id: 777, body: posted });
-      }
-      return { stdout: '[]', stderr: '', exitCode: 0 };
-    },
+const inheritFakeGithub: GitHubService = {
+  ...githubModule.github,
+  prComment: async (_repo, _number, body) => {
+    if (refuseCommentWrite) throw new Error('Comment permission denied');
+    createdComments++;
+    posted = body;
+    return '';
   },
+  rest: async <T>(_method: string, _path: string, opts?: RestServiceOpts) => {
+    if (opts?.paginate) {
+      const parsed = existingComment ? JSON.parse(existingComment) : [];
+      return (Array.isArray(parsed) ? parsed : [parsed]) as unknown as T;
+    }
+    if (_method === 'PATCH') {
+      if (refuseCommentWrite) throw new Error('Comment permission denied');
+      patchedComments++;
+      posted = (opts?.body as { body?: string })?.body ?? '';
+      existingComment = JSON.stringify({ id: 777, body: posted });
+      return {} as unknown as T;
+    }
+    return [] as unknown as T;
+  },
+};
+mock.module('../integrations/github-client.js', {
+  namedExports: { ...githubModule, github: inheritFakeGithub },
 });
 const prompts = await import('../core/prompt-templates.js');
 mock.module('../core/prompt-templates.js', {

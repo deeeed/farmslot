@@ -10,7 +10,7 @@ import {
 } from '@farmslot/protocol';
 
 import { getProjectField, loadProjectVars } from '../core/config.js';
-import { ghRequest } from '../integrations/github-client.js';
+import { github } from '../integrations/github-client.js';
 import { latestResolvedHumanGateDecision } from '../run-engine/decision-replay.js';
 import { recordPublishedDescription } from '../run-engine/finalize-step.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
@@ -138,19 +138,22 @@ async function refreshPublishedEvidenceLocked(
   if (adoption && ciRepo.toLowerCase() !== adoption.repository.toLowerCase())
     throw new Error('Configured repository no longer matches the publication attestation');
   const readPr = async (): Promise<PublishedPrDescription> => {
-    const result = await ghRequest(
-      [
-        'pr',
-        'view',
-        String(run.prNumber),
-        '--repo',
-        ciRepo,
-        '--json',
-        'number,url,headRepository,body,title,headRefName,headRefOid,state',
-      ],
+    const data = await github.prView(
+      ciRepo,
+      run.prNumber as number,
+      ['number', 'url', 'headRepository', 'body', 'title', 'headRefName', 'headRefOid', 'state'],
       { force: true },
     );
-    return JSON.parse(result.stdout) as PublishedPrDescription;
+    return {
+      number: Number(data.number),
+      url: String(data.url ?? ''),
+      headRepository: (data.headRepository as PublishedPrDescription['headRepository']) ?? null,
+      body: String(data.body ?? ''),
+      title: String(data.title ?? ''),
+      headRefName: String(data.headRefName ?? ''),
+      headRefOid: String(data.headRefOid ?? ''),
+      state: String(data.state ?? ''),
+    };
   };
   const assertAdoptedTarget = (facts: PublishedPrDescription) => {
     if (!adoption) return;

@@ -4,6 +4,7 @@ import { mock, test } from 'node:test';
 
 import type { ReviewPublicationReceipt, Run } from '@farmslot/protocol';
 
+import type { GitHubService } from '../integrations/github-client.js';
 import { makeRun } from '../run-completion/test-fixtures.js';
 
 const gh = await import('../integrations/github-client.js');
@@ -48,49 +49,47 @@ let available = true;
 let receipt: ReviewPublicationReceipt | undefined;
 let posts = 0;
 let viewedWrites = 0;
-mock.module('../integrations/github-client.js', {
-  namedExports: {
-    ...gh,
-    ghRequest: async (args: string[]) => {
-      if (args.includes('POST')) {
-        posts++;
-        throw new Error('Reconciliation must never POST');
-      }
-      const endpoint = args.find((arg) => arg.startsWith('repos/'));
-      let value: unknown;
-      if (endpoint?.endsWith('/reviews?per_page=100'))
-        value = [
-          available
-            ? [
-                {
-                  id: 123,
-                  body,
-                  commit_id: head,
-                  user: { login: 'reviewer' },
-                  state: 'CHANGES_REQUESTED',
-                  submitted_at: '2026-10-22T03:35:49Z',
-                },
-              ]
-            : [],
-        ];
-      else if (endpoint?.endsWith('/reviews/123/comments?per_page=100')) value = [[{ id: 7 }]];
-      else if (endpoint?.endsWith('/pulls/comments/7'))
-        value = {
-          id: 7,
-          pull_request_review_id: 123,
-          original_commit_id: head,
-          path: 'src/a.ts',
-          original_line: 7,
-          side: 'RIGHT',
-          body: commentBody,
-          user: { login: commentOwner },
-        };
-      else if (endpoint?.endsWith('/pulls/42'))
-        value = { user: { login: 'author' }, head: { sha: 'c'.repeat(40) } };
-      else throw new Error(`Unexpected provider read: ${endpoint}`);
-      return { stdout: JSON.stringify(value), stderr: '' };
-    },
+const reconcileFakeGithub: GitHubService = {
+  ...gh.github,
+  rest: async <T>(_method: string, path: string) => {
+    if (_method.toUpperCase() === 'POST') {
+      posts++;
+      throw new Error('Reconciliation must never POST');
+    }
+    let value: unknown;
+    if (path.includes('/reviews?') || path.endsWith('/reviews'))
+      value = available
+        ? [
+            {
+              id: 123,
+              body,
+              commit_id: head,
+              user: { login: 'reviewer' },
+              state: 'CHANGES_REQUESTED',
+              submitted_at: '2026-10-22T03:35:49Z',
+            },
+          ]
+        : [];
+    else if (path.includes('/reviews/123/comments')) value = [{ id: 7 }];
+    else if (path.endsWith('/pulls/comments/7'))
+      value = {
+        id: 7,
+        pull_request_review_id: 123,
+        original_commit_id: head,
+        path: 'src/a.ts',
+        original_line: 7,
+        side: 'RIGHT',
+        body: commentBody,
+        user: { login: commentOwner },
+      };
+    else if (path.endsWith('/pulls/42'))
+      value = { user: { login: 'author' }, head: { sha: 'c'.repeat(40) } };
+    else throw new Error(`Unexpected provider read: ${path}`);
+    return value as unknown as T;
   },
+};
+mock.module('../integrations/github-client.js', {
+  namedExports: { ...gh, github: reconcileFakeGithub },
 });
 mock.module('../pr-monitoring/github-account.js', {
   namedExports: {

@@ -46,7 +46,7 @@ import {
   tmuxShellSnippet,
 } from '../core/tmux.js';
 import { projectWorkerTemplatePath } from '../core/worker-templates.js';
-import { ghRequest } from '../integrations/github-client.js';
+import { github } from '../integrations/github-client.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 import { retryDeferredFixDelivery } from '../review/orchestrator.js';
@@ -1673,23 +1673,13 @@ export async function tryInlineCIFix(
 
 export async function rerunFailedChecks(prNumber: number, ciRepo: string): Promise<void> {
   try {
-    const result = await ghRequest([
-      'pr',
-      'view',
-      String(prNumber),
-      '--repo',
-      ciRepo,
-      '--json',
-      'headRefOid',
-      '--jq',
-      '.headRefOid',
-    ]);
-    const sha = result.stdout.trim();
+    const pr = await github.prView(ciRepo, prNumber, ['headRefOid']);
+    const sha = typeof pr.headRefOid === 'string' ? pr.headRefOid.trim() : '';
     if (sha) {
-      await ghRequest(
-        ['api', `repos/${ciRepo}/check-suites`, '-X', 'POST', '-f', `head_sha=${sha}`],
-        { force: true },
-      );
+      await github.rest<unknown>('POST', `repos/${ciRepo}/check-suites`, {
+        body: { head_sha: sha },
+        force: true,
+      });
       console.log(`[ci-monitor] requested check re-run for PR #${prNumber}`);
     }
   } catch {

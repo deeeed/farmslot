@@ -4,7 +4,6 @@ import type {
   ReviewViewedFilesResult,
 } from '@farmslot/protocol';
 
-import { ghRequest } from '../integrations/github-client.js';
 import {
   collectGitHubPages,
   githubGraphQL,
@@ -77,7 +76,6 @@ async function attemptViewedFiles(input: ViewedFilesInput): Promise<ReviewViewed
     paths: [],
     markedPaths: [],
   };
-  const signal = AbortSignal.timeout(8000);
   try {
     return await withGitHubQueryDeadline(8000, async () => {
       const [owner, name] = input.pr.repo.split('/');
@@ -125,27 +123,20 @@ async function attemptViewedFiles(input: ViewedFilesInput): Promise<ReviewViewed
               `file${i}: markFileAsViewed(input: { pullRequestId: $id, path: $path${i}, clientMutationId: $head }) { pullRequest { id headRefOid baseRefOid } }`,
           )
           .join('\n');
-        const args = [
-          'api',
-          '--hostname',
-          input.pr.host,
-          'graphql',
-          '-f',
-          `query=mutation($id: ID!, $head: String!, ${declarations}) { ${mutations} }`,
-          '-f',
-          `id=${prId}`,
-          '-f',
-          `head=${input.headSha}`,
-          ...batch.flatMap((file, i) => ['-f', `path${i}=${file}`]),
-        ];
-        const { stdout } = await ghRequest(args, { account: input.binding, signal });
-        const response: {
-          data?: Record<string, { pullRequest?: PullRequestFiles }>;
-          errors?: { message: string }[];
-        } = JSON.parse(stdout);
+        const variables: Record<string, string> = { id: prId as string, head: input.headSha };
+        batch.forEach((f, i) => {
+          variables[`path${i}`] = f;
+        });
+        const responseData = await githubGraphQL<
+          Record<string, { pullRequest?: PullRequestFiles } | undefined>
+        >(
+          `mutation($id: ID!, $head: String!, ${declarations}) { ${mutations} }`,
+          variables,
+          input.binding,
+        );
         let unconfirmed = false;
         for (const [i, file] of batch.entries()) {
-          const pr = response.data?.[`file${i}`]?.pullRequest;
+          const pr = responseData[`file${i}`]?.pullRequest;
           if (!pr) {
             unconfirmed = true;
             continue;
@@ -154,8 +145,6 @@ async function attemptViewedFiles(input: ViewedFilesInput): Promise<ReviewViewed
           if (pr?.id !== prId) throw new Error('GitHub did not confirm the Viewed mutation');
           result.markedPaths.push(file);
         }
-        if (response.errors?.length)
-          throw new Error(response.errors.map((error) => error.message).join('; '));
         if (unconfirmed) throw new Error('GitHub did not confirm every Viewed mutation');
       }
       result.state = 'complete';

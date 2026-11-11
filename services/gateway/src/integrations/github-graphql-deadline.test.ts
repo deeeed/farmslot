@@ -1,25 +1,37 @@
 import assert from 'node:assert/strict';
 import { after, mock, test } from 'node:test';
 
-import type { GhRequestOpts } from './github-client.js';
+import type { GhCommandContext } from './github-operations.js';
 
 const observed: Array<AbortSignal | undefined> = [];
 mock.module('./github-client.js', {
   namedExports: {
     githubRequestCacheKey: () => 'deadline-fixture',
-    ghRequest: async (_args: string[], opts?: GhRequestOpts) => {
-      observed.push(opts?.signal);
-      if (opts?.signal)
+    notifyRateLimitHeaders: () => {},
+  },
+});
+mock.module('./github-operations.js', {
+  namedExports: {
+    githubRestOp: async <T>(
+      _host: string,
+      _method: string,
+      _path: string,
+      _opts: unknown,
+      ctx?: GhCommandContext,
+    ): Promise<{ data: T }> => {
+      observed.push(ctx?.signal);
+      if (ctx?.signal) {
         await new Promise<void>((_resolve, reject) => {
           const timer = setTimeout(() => reject(new Error('Test fixture did not cancel')), 1000);
           const abort = () => {
             clearTimeout(timer);
             reject(new Error('gh request aborted'));
           };
-          if (opts.signal!.aborted) abort();
-          else opts.signal!.addEventListener('abort', abort, { once: true });
+          if (ctx.signal!.aborted) abort();
+          else ctx.signal!.addEventListener('abort', abort, { once: true });
         });
-      return { stdout: JSON.stringify({ data: { value: 'ready' } }), stderr: '' };
+      }
+      return { data: { data: { value: 'ready' } } as unknown as T };
     },
   },
 });

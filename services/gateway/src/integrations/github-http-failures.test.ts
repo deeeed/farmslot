@@ -1,34 +1,55 @@
 import assert from 'node:assert/strict';
-import { beforeEach, describe, mock, test } from 'node:test';
+import { after, beforeEach, describe, mock, test } from 'node:test';
 import { promisify } from 'node:util';
 
 import type { GitHubRateLimitPayload } from '@farmslot/protocol';
 
-const responses: Array<{ stdout: string; failed?: boolean }> = [];
-let calls = 0;
+import { startGitHubFixture } from './github-test-fixtures.js';
+
+interface FixtureReply {
+  status?: number;
+  headers?: Record<string, string>;
+  body: string;
+}
+const responses: FixtureReply[] = [];
+const fixture = await startGitHubFixture(() => {
+  const response = responses.shift();
+  assert(response, 'Unexpected GitHub request');
+  return {
+    status: response.status ?? 200,
+    headers: { 'content-type': 'application/json; charset=utf-8', ...response.headers },
+    body: response.body,
+  };
+});
+const calls = () => fixture.requests.length;
+process.env.FARMSLOT_GITHUB_API_URL = fixture.origin;
 const fakeExecFile = Object.assign(
   () => {
     throw new Error('Use the promisified process adapter');
   },
   {
-    [promisify.custom]: async () => {
-      calls++;
-      const response = responses.shift();
-      assert(response, 'Unexpected GitHub process invocation');
-      if (response.failed)
-        throw Object.assign(new Error('GitHub request failed'), {
-          stdout: response.stdout,
-          stderr: 'provider failure',
-          code: 1,
-        });
-      return { stdout: response.stdout, stderr: '' };
+    [promisify.custom]: async (file: string, args: string[]) => {
+      assert.equal(file, 'gh');
+      assert.deepEqual(args.slice(0, 2), ['auth', 'token'], 'only credential reads may spawn gh');
+      return { stdout: 'ambient-fixture-token\n', stderr: '' };
     },
   },
 );
 mock.module('node:child_process', { namedExports: { execFile: fakeExecFile } });
-const { ghRequest } = await import('./github-client.js');
+const { github } = await import('./github-client.js');
 const { githubGraphQL } = await import('./github-graphql.js');
 const { githubQueryBudget } = await import('./github-query-budget.js');
+after(async () => {
+  delete process.env.FARMSLOT_GITHUB_API_URL;
+  await fixture.close();
+});
+
+const graphqlHeaders = (remaining: number, reset: number, limit?: number) => ({
+  'x-ratelimit-resource': 'graphql',
+  'x-ratelimit-remaining': String(remaining),
+  'x-ratelimit-reset': String(reset),
+  ...(limit ? { 'x-ratelimit-limit': String(limit) } : {}),
+});
 
 describe('GitHub HTTP failures', { concurrency: 1 }, () => {
   beforeEach(() => {
@@ -36,11 +57,11 @@ describe('GitHub HTTP failures', { concurrency: 1 }, () => {
   });
 
   test('GraphQL HTTP 200 errors remain failed while their reset headers fence later queries', async () => {
-    calls = 0;
+    const before = calls();
     const reset = Math.floor(Date.now() / 1000) + 600;
     responses.push({
-      failed: true,
-      stdout: `HTTP/2.0 200 OK\r\nx-ratelimit-resource: graphql\r\nx-ratelimit-remaining: 0\r\nx-ratelimit-reset: ${reset}\r\n\r\n{"errors":[{"message":"API rate limit exceeded"}]}`,
+      headers: graphqlHeaders(0, reset),
+      body: '{"errors":[{"message":"API rate limit exceeded"}]}',
     });
     const account = { host: 'github.com', token: 'test-quota-credential', scope: 'owner' };
     await assert.rejects(
@@ -51,38 +72,44 @@ describe('GitHub HTTP failures', { concurrency: 1 }, () => {
       githubGraphQL('query { viewer { id } }', {}, account),
       /query budget is reserved/,
     );
-    assert.equal(calls, 1, 'A different query must not retry the exhausted credential');
+    assert.equal(calls() - before, 1, 'A different query must not retry the exhausted credential');
   });
 
-  test('nonzero 304 exits still serve the previously cached response', async () => {
+  test('a 304 revalidation still serves the previously cached response', async () => {
     responses.push(
-      { stdout: 'HTTP/2.0 200 OK\r\netag: "fixture"\r\n\r\n{"value":42}' },
-      { failed: true, stdout: 'HTTP/2.0 304 Not Modified\r\n\r\n' },
+      { headers: { etag: '"fixture"' }, body: '{"value":42}' },
+      { status: 304, body: '' },
     );
-    const args = ['api', 'repos/owner/repo'];
     const account = { host: 'github.com', token: 'test-etag-credential', scope: 'owner' };
-    assert.equal((await ghRequest(args, { account })).stdout, '{"value":42}');
-    assert.equal((await ghRequest(args, { account })).stdout, '{"value":42}');
+    assert.deepEqual(await github.rest<{ value: number }>('GET', 'repos/owner/repo', { account }), {
+      value: 42,
+    });
+    assert.deepEqual(
+      await github.rest<{ value: number }>('GET', 'repos/owner/repo', { account, force: true }),
+      { value: 42 },
+    );
+    assert.equal(fixture.requests.at(-1)?.headers['if-none-match'], '"fixture"');
   });
 
   test('paginated and non-API failures cannot become successful command outputs', async () => {
     responses.push(
-      { failed: true, stdout: 'HTTP/2.0 403 Forbidden\r\n\r\n{}' },
-      { failed: true, stdout: 'some partial output' },
+      { status: 403, body: '{"message":"Resource not accessible"}' },
+      { status: 502, headers: { 'content-type': 'text/html' }, body: '<html>bad gateway</html>' },
     );
     await assert.rejects(
-      ghRequest(['api', '--include', '--paginate', 'repos/owner/repo/issues']),
-      /provider failure/,
+      github.rest('GET', 'repos/owner/repo/issues', { paginate: true }),
+      /failed: gh: Resource not accessible \(HTTP 403\)/,
     );
-    await assert.rejects(ghRequest(['pr', 'view', '1']), /provider failure/);
+    await assert.rejects(
+      github.prView('owner/repo', 1, ['title']),
+      /failed: HTTP 502: 502 Bad Gateway/,
+    );
   });
 
   test('provider cursor rejection retains a structured error through failed HTTP output', async () => {
     const { GitHubCursorError } = await import('./github-errors.js');
     responses.push({
-      failed: true,
-      stdout:
-        'HTTP/2.0 200 OK\r\n\r\n{"errors":[{"type":"INVALID_CURSOR_ARGUMENTS","message":"The cursor is invalid"}]}',
+      body: '{"errors":[{"type":"INVALID_CURSOR_ARGUMENTS","message":"The cursor is invalid"}]}',
     });
     await assert.rejects(
       githubGraphQL(
@@ -103,8 +130,7 @@ describe('GitHub HTTP failures', { concurrency: 1 }, () => {
       ['repository', 'pullRequest', 'labels'],
     ].entries()) {
       responses.push({
-        failed: true,
-        stdout: `HTTP/2.0 200 OK\r\n\r\n${JSON.stringify({ errors: [{ type: 'NOT_FOUND', path, message: 'not found' }] })}`,
+        body: JSON.stringify({ errors: [{ type: 'NOT_FOUND', path, message: 'not found' }] }),
       });
       try {
         await githubGraphQL(
@@ -125,36 +151,50 @@ describe('GitHub HTTP failures', { concurrency: 1 }, () => {
       cost: 1,
       resetAt: new Date(Date.now() + 120_000).toISOString(),
     });
-    const before = calls;
+    const before = calls();
     await assert.rejects(
-      ghRequest(['pr', 'view', '99191'], { force: true }),
+      github.prView('owner/repo', 99191, ['title'], { force: true }),
       /query budget is reserved/,
     );
-    assert.equal(calls, before, 'ambient porcelain must not spawn gh');
+    assert.equal(calls(), before, 'ambient porcelain must not reach GitHub');
   });
 
   test('GraphQL without rateLimit in the body still records at least one point', async () => {
     const reset = Math.floor(Date.now() / 1000) + 600;
     responses.push({
-      stdout: `HTTP/2.0 200 OK\r\nx-ratelimit-resource: graphql\r\nx-ratelimit-remaining: 4000\r\nx-ratelimit-reset: ${reset}\r\n\r\n{"data":{"viewer":{"login":"reader"}}}`,
+      headers: graphqlHeaders(4000, reset),
+      body: '{"data":{"viewer":{"login":"reader"}}}',
     });
-    await ghRequest(['api', 'graphql', '-f', 'query=query { viewer { login } }']);
+    await githubGraphQL(
+      'query { viewer { login } }',
+      {},
+      { host: 'github.com', token: 'test-budget-record', scope: 'owner' },
+    );
     assert.equal(githubQueryBudget.spendSnapshot().hourCost, 1);
   });
 
-  test('paginated GraphQL records at least one point when the body has no rateLimit', async () => {
-    responses.push({ stdout: '{"comments":[]}' });
-    await ghRequest(['api', 'graphql', '--paginate', '-f', 'query=query { viewer { login } }']);
+  test('paginated GraphQL records at least one point per page without a body rateLimit', async () => {
+    responses.push(
+      { body: '{"data":{"viewer":{"pageInfo":{"hasNextPage":true,"endCursor":"c1"}}}}' },
+      { body: '{"data":{"viewer":{"pageInfo":{"hasNextPage":false,"endCursor":"c2"}}}}' },
+    );
+    const paginateAccount = { host: 'github.com', token: 'test-paginate-record', scope: 'owner' };
+    // Two separate calls simulate two pages; each records at least 1 cost point.
+    await githubGraphQL('query($endCursor: String) { viewer { login } }', {}, paginateAccount);
+    await githubGraphQL(
+      'query($endCursor: String) { viewer { login } }',
+      { endCursor: 'c1' },
+      paginateAccount,
+    );
     const snap = githubQueryBudget.spendSnapshot();
-    assert.equal(snap.hourCost, 1);
-    assert.equal(snap.hourQueries, 1);
+    assert.equal(snap.hourCost, 2);
   });
 
   test('a reserved GraphQL credential fails closed for later GraphQL on another key', async () => {
     const reset = Math.floor(Date.now() / 1000) + 600;
     responses.push({
-      failed: true,
-      stdout: `HTTP/2.0 200 OK\r\nx-ratelimit-resource: graphql\r\nx-ratelimit-remaining: 0\r\nx-ratelimit-reset: ${reset}\r\n\r\n{"errors":[{"message":"API rate limit exceeded"}]}`,
+      headers: graphqlHeaders(0, reset),
+      body: '{"errors":[{"message":"API rate limit exceeded"}]}',
     });
     await assert.rejects(
       githubGraphQL(
@@ -164,7 +204,7 @@ describe('GitHub HTTP failures', { concurrency: 1 }, () => {
       ),
       /rate limit/,
     );
-    const before = calls;
+    const before = calls();
     await assert.rejects(
       githubGraphQL(
         'query { viewer { id } }',
@@ -173,31 +213,45 @@ describe('GitHub HTTP failures', { concurrency: 1 }, () => {
       ),
       /query budget is reserved/,
     );
-    assert.equal(calls, before, 'a second credential must not spend after fail-closed reserve');
+    assert.equal(calls(), before, 'a second credential must not spend after fail-closed reserve');
   });
 
   test('legacy dashboard GraphQL reads obey the observed reserve without blocking REST', async () => {
     const account = { host: 'github.com', token: 'test-dashboard-reserve', scope: 'owner' };
     const reset = Math.floor(Date.now() / 1000) + 600;
     responses.push({
-      stdout: `HTTP/2.0 200 OK\r\nx-ratelimit-resource: graphql\r\nx-ratelimit-limit: 5000\r\nx-ratelimit-remaining: 12\r\nx-ratelimit-reset: ${reset}\r\n\r\n{"data":{"viewer":{"login":"reader"}}}`,
+      headers: graphqlHeaders(12, reset, 5000),
+      body: '{"data":{"viewer":{"login":"reader"}}}',
     });
-    await ghRequest(['api', 'graphql', '-f', 'query=query { viewer { login } }'], { account });
-    const before = calls;
-    for (const args of [
-      ['api', 'graphql', '--paginate'],
-      ['pr', 'view', '1'],
-      ['pr', 'checks', '1'],
-      ['pr', 'list'],
-    ])
-      await assert.rejects(ghRequest(args, { account }), /query budget is reserved/);
-    assert.equal(calls, before, 'Held requests must not spawn gh');
+    await githubGraphQL('query { viewer { login } }', {}, account);
+    const before = calls();
+    await assert.rejects(
+      githubGraphQL('query { viewer { login2 } }', {}, account),
+      /query budget is reserved/,
+    );
+    await assert.rejects(
+      github.prView('owner/repo', 1, ['title'], { account, force: true }),
+      /query budget is reserved/,
+    );
+    await assert.rejects(
+      github.prChecks('owner/repo', 1, ['name'], { account, force: true }),
+      /query budget is reserved/,
+    );
+    await assert.rejects(
+      github.prList('owner/repo', {}, { account, force: true }),
+      /query budget is reserved/,
+    );
+    assert.equal(calls(), before, 'Held requests must not reach GitHub');
     responses.push({
-      stdout:
-        'HTTP/2.0 200 OK\r\nx-ratelimit-resource: core\r\nx-ratelimit-limit: 5000\r\nx-ratelimit-remaining: 4500\r\n\r\n{}',
+      headers: {
+        'x-ratelimit-resource': 'core',
+        'x-ratelimit-limit': '5000',
+        'x-ratelimit-remaining': '4500',
+      },
+      body: '{}',
     });
-    await ghRequest(['api', 'repos/owner/repo'], { account });
-    assert.equal(calls, before + 1);
+    await github.rest('GET', 'repos/owner/repo', { account, force: true });
+    assert.equal(calls(), before + 1);
     const { getQuotaSnapshot } = await import('./github-client.js');
     const observations = getQuotaSnapshot().observations!;
     assert(observations.some((item) => item.resource === 'graphql' && item.remaining === 12));
@@ -210,12 +264,12 @@ describe('GitHub HTTP failures', { concurrency: 1 }, () => {
     initGitHubClient((event, payload) => events.push({ event, payload }));
     const reset = Math.floor(Date.now() / 1000) + 600;
     for (const remaining of [4000, 3900, 3950]) {
-      responses.push({
-        stdout: `HTTP/2.0 200 OK\r\nx-ratelimit-resource: graphql\r\nx-ratelimit-limit: 5000\r\nx-ratelimit-remaining: ${remaining}\r\nx-ratelimit-reset: ${reset}\r\n\r\n{}`,
-      });
-      await ghRequest(['api', 'graphql', '-f', `query=query { value${remaining} }`], {
-        account: { host: 'github.com', token: 'test-quota-counts', scope: 'owner' },
-      });
+      responses.push({ headers: graphqlHeaders(remaining, reset, 5000), body: '{}' });
+      await githubGraphQL(
+        `query { value${remaining} }`,
+        {},
+        { host: 'github.com', token: 'test-quota-counts', scope: 'owner' },
+      );
     }
     assert.equal(events.length, 2);
     assert.equal(getQuotaSnapshot().resource, 'graphql');

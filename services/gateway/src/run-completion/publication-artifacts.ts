@@ -26,7 +26,7 @@ import {
   inferArtifactPurpose,
   sanitizeLatestValidRecipeRunPointer,
 } from '../core/index.js';
-import { ghRequest } from '../integrations/github-client.js';
+import { github } from '../integrations/github-client.js';
 
 import { markerBaselineVerifier } from './baseline-debug-marker.js';
 import { withPublicationProvenance } from './evidence-attestation.js';
@@ -1451,18 +1451,8 @@ export async function postProcessPRBody(
     if (options.baseBody !== undefined) {
       body = options.baseBody;
     } else {
-      const result = await ghRequest([
-        'pr',
-        'view',
-        String(prNumber),
-        '--repo',
-        ciRepo,
-        '--json',
-        'body',
-        '--jq',
-        '.body',
-      ]);
-      body = result.stdout;
+      const prData = await github.prView(ciRepo, prNumber, ['body'], { force: true });
+      body = typeof prData.body === 'string' ? prData.body : '';
     }
 
     await assertPublicationTextSafe(body);
@@ -1568,33 +1558,8 @@ export async function postProcessPRBody(
     if (options.adoptedEvidence)
       body = mergeOwnedEvidenceBody(run.id, humanBody, options.adoptedEvidence.previousBody, body);
     await assertPublicationTextSafe(body);
-    const tmpFile = `/tmp/farmslot-pr-body-${prNumber}-${randomUUID()}.md`;
-    const { writeFile: writeF } = await import('node:fs/promises');
-    await writeF(tmpFile, body, 'utf-8');
-    let editError: unknown = null;
-    let cleanupError: unknown = null;
-    try {
-      await options.validateBody?.(body);
-      await ghRequest(['pr', 'edit', String(prNumber), '--repo', ciRepo, '--body-file', tmpFile], {
-        force: true,
-      });
-    } catch (err) {
-      editError = err;
-    }
-    try {
-      await rm(tmpFile, { force: true });
-    } catch (err) {
-      cleanupError = err;
-    }
-    if (editError) {
-      if (cleanupError) {
-        console.warn(
-          `[run-completion] failed to remove temporary PR body after edit failure: ${(cleanupError as Error).message}`,
-        );
-      }
-      throw editError;
-    }
-    if (cleanupError) throw cleanupError;
+    await options.validateBody?.(body);
+    await github.prEdit(ciRepo, prNumber, { body }, { force: true });
     console.log(`[run-completion] post-processed PR #${prNumber} body (sanitized + checklist)`);
     return body;
   } catch (err) {

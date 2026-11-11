@@ -1,7 +1,4 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
 
 import {
   assertMonitoredPRIdentity,
@@ -12,7 +9,7 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
-import { ghRequest } from '../integrations/github-client.js';
+import { github } from '../integrations/github-client.js';
 import { GitHubHttpError } from '../integrations/github-errors.js';
 import { resolvePRSourceAccount } from '../pr-monitoring/github-account.js';
 
@@ -138,24 +135,21 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
   let publishedBody = `${report}\n\n${marker}`;
   await input.authorize();
   const binding = await resolvePRSourceAccount(account, ownerId);
+  type LivePR = {
+    number?: number;
+    state?: string;
+    user?: { login?: string } | null;
+    base?: { repo?: { full_name?: string } } | null;
+    head?: { sha?: string } | null;
+  };
   const endpoint = `repos/${pr.repo}/pulls/${pr.number}`;
-  const get = async (suffix: string, extra: string[] = []) =>
-    JSON.parse(
-      (
-        await ghRequest(
-          [
-            'api',
-            '--hostname',
-            pr.host,
-            suffix.startsWith('repos/') ? suffix : `${endpoint}${suffix}`,
-            '--method',
-            'GET',
-            ...extra,
-          ],
-          { account: binding, force: true },
-        )
-      ).stdout,
-    );
+  const get = async <T = LivePR>(suffix: string, paginate = false) =>
+    github.rest<T>('GET', suffix.startsWith('repos/') ? suffix : `${endpoint}${suffix}`, {
+      host: pr.host,
+      account: binding,
+      force: true,
+      paginate,
+    });
   const prior = await input.readReceipt();
   if (
     prior &&
@@ -170,9 +164,8 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
   )
     throw new Error('Publication receipt does not match the selected review/account');
   if (prior?.state === 'published') return prior;
-  const pages = await get('/reviews?per_page=100', ['--paginate', '--slurp']);
-  if (!Array.isArray(pages) || pages.some((page) => !Array.isArray(page)))
-    throw new Error('GitHub review history is incomplete');
+  const pages = await get('/reviews?per_page=100', true);
+  if (!Array.isArray(pages)) throw new Error('GitHub review history is incomplete');
   const exactManualReview = (review: Record<string, unknown>) =>
     typeof review.body === 'string' &&
     review.body.trim() === report &&
@@ -247,14 +240,10 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
         throw new Error('Provider review body differs from the gated report');
       if (typeof review.id !== 'number' || !Number.isSafeInteger(review.id) || review.id <= 0)
         throw new Error('Provider review identity is invalid');
-      const pages = await get(`/reviews/${review.id}/comments?per_page=100`, [
-        '--paginate',
-        '--slurp',
-      ]);
-      if (!Array.isArray(pages) || pages.some((page) => !Array.isArray(page)))
-        throw new Error('Provider inline findings are incomplete');
+      const pages = await get<unknown>(`/reviews/${review.id}/comments?per_page=100`, true);
+      if (!Array.isArray(pages)) throw new Error('Provider inline findings are incomplete');
       const actual: string[] = [];
-      for (const comment of pages.flat()) {
+      for (const comment of pages) {
         if (
           !record(comment) ||
           typeof comment.id !== 'number' ||
@@ -263,7 +252,7 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
         )
           throw new Error('Provider inline findings have an invalid identity');
         // The review-comments collection omits line fields; individual comments retain them.
-        const detail = await get(`repos/${pr.repo}/pulls/comments/${comment.id}`);
+        const detail = await get<unknown>(`repos/${pr.repo}/pulls/comments/${comment.id}`);
         if (
           !record(detail) ||
           detail.pull_request_review_id !== review.id ||
@@ -334,7 +323,7 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
     live.user?.login?.toLowerCase() === account.login.toLowerCase() ? 'COMMENT' : recommendation;
   const located = locatePublicationComments(
     comments,
-    comments.length ? await get('/files?per_page=100', ['--paginate', '--slurp']) : [],
+    comments.length ? await get('/files?per_page=100', true) : [],
     { host: pr.host, repo: pr.repo, headSha: subject.headSha },
   );
   publishedBody = `${report}${located.bodySuffix}\n\n${marker}`;
@@ -353,49 +342,34 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
     attemptedAt: new Date().toISOString(),
     bodySha256: createHash('sha256').update(publishedBody).digest('hex'),
   };
-  const directory = await mkdtemp(path.join(os.tmpdir(), 'review-publication-'));
+  await input.authorize();
+  await input.saveReceipt(receipt);
   try {
-    const file = path.join(directory, 'review.json');
-    await writeFile(
-      file,
-      JSON.stringify({
-        commit_id: subject.headSha,
-        event,
-        body: publishedBody,
-        comments: located.inline,
-      }),
-      { mode: 0o600 },
-    );
     await input.authorize();
-    await input.saveReceipt(receipt);
-    try {
-      await input.authorize();
-    } catch (error) {
-      // No provider mutation has been attempted; preserve a retryable reservation.
-      await input.saveReceipt({ ...receipt, state: 'prepared' });
-      throw error;
-    }
-    let response;
-    try {
-      response = await ghRequest(
-        ['api', '--hostname', pr.host, `${endpoint}/reviews`, '--method', 'POST', '--input', file],
-        { account: binding, force: true },
-      );
-    } catch (error) {
-      // These explicit provider rejections confirm no review was created. Transport failures,
-      // timeouts and server errors keep the uncertain receipt to prevent duplicate reviews.
-      if (
-        error instanceof GitHubHttpError &&
-        [400, 401, 403, 404, 409, 422, 429].includes(error.status)
-      ) {
-        await input.saveReceipt({ ...receipt, state: 'prepared' });
-      }
-      throw error;
-    }
-    const posted: unknown = JSON.parse(response.stdout);
-    if (!record(posted)) throw new Error('Provider returned an invalid review');
-    return retain(posted, receipt);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
+  } catch (error) {
+    // No provider mutation has been attempted; preserve a retryable reservation.
+    await input.saveReceipt({ ...receipt, state: 'prepared' });
+    throw error;
   }
+  let posted: unknown;
+  try {
+    posted = await github.rest<unknown>('POST', `${endpoint}/reviews`, {
+      host: pr.host,
+      account: binding,
+      force: true,
+      body: { commit_id: subject.headSha, event, body: publishedBody, comments: located.inline },
+    });
+  } catch (error) {
+    // These explicit provider rejections confirm no review was created. Transport failures,
+    // timeouts and server errors keep the uncertain receipt to prevent duplicate reviews.
+    if (
+      error instanceof GitHubHttpError &&
+      [400, 401, 403, 404, 409, 422, 429].includes(error.status)
+    ) {
+      await input.saveReceipt({ ...receipt, state: 'prepared' });
+    }
+    throw error;
+  }
+  if (!record(posted)) throw new Error('Provider returned an invalid review');
+  return retain(posted, receipt);
 }

@@ -8,6 +8,7 @@ import test from 'node:test';
 
 import { Methods, type SlotPrepareResult } from '@farmslot/protocol';
 
+import { startGitHubFixture } from '../../integrations/github-test-fixtures.js';
 import {
   createNativeProofFixture,
   type NativeProofFixture,
@@ -137,21 +138,41 @@ test(
     );
     git(safe, 'update-ref', 'refs/remotes/origin/main', `${mainHead}^`);
     const branchEndpoint = `repos/fixture/prepare/pulls?state=closed&head=${encodeURIComponent(`fixture:${branch}`)}&per_page=100`;
-    const githubCalls = path.join(root, 'github-calls.jsonl');
+    const githubCalls: string[] = [];
     await writeFile(
       path.join(root, 'bin/gh'),
-      `#!/usr/bin/env node
-const fs = require('node:fs');
-const endpoint = process.argv.find(arg => arg.startsWith('repos/'));
-fs.appendFileSync(${JSON.stringify(githubCalls)}, JSON.stringify(endpoint) + '\\n');
-let body;
-if (endpoint === ${JSON.stringify(branchEndpoint)}) body = [{number:277,state:'closed',merged_at:'2026-10-28T12:00:00Z',base:{ref:'main'},head:{sha:${JSON.stringify(publishedHead)},ref:${JSON.stringify(branch)},repo:{full_name:'Fixture/Prepare'}},merge_commit_sha:${JSON.stringify(mainHead)}}];
-else if (/^repos\\/fixture\\/prepare\\/commits\\/[a-f0-9]+\\/pulls\\?per_page=100$/.test(endpoint || '')) body = [];
-else { console.error('Unexpected fixture GitHub endpoint'); process.exit(1); }
-console.log('HTTP/2.0 200 OK\\nContent-Type: application/json\\n\\n' + JSON.stringify(body));
+      `#!/bin/sh
+if [ "$1" = auth ] && [ "$2" = token ]; then printf fixture-token; exit 0; fi
+echo 'Fixture answers credential reads only' >&2
+exit 1
 `,
       { mode: 0o755 },
     );
+    const github = await startGitHubFixture((request) => {
+      const endpoint = request.url.slice(1);
+      githubCalls.push(endpoint);
+      if (endpoint === branchEndpoint)
+        return {
+          body: [
+            {
+              number: 277,
+              state: 'closed',
+              merged_at: '2026-10-28T12:00:00Z',
+              base: { ref: 'main' },
+              head: { sha: publishedHead, ref: branch, repo: { full_name: 'Fixture/Prepare' } },
+              merge_commit_sha: mainHead,
+            },
+          ],
+        };
+      if (/^repos\/fixture\/prepare\/commits\/[a-f0-9]+\/pulls\?per_page=100$/.test(endpoint))
+        return { body: [] };
+      return { status: 500, body: { message: 'Unexpected fixture GitHub endpoint' } };
+    });
+    process.env.FARMSLOT_GITHUB_API_URL = github.origin;
+    t.after(async () => {
+      delete process.env.FARMSLOT_GITHUB_API_URL;
+      await github.close();
+    });
     const slots = [
       { id: 'merged-prepare-safe', repo: safe },
       { id: 'merged-prepare-unsafe', repo: unsafe },
@@ -252,12 +273,8 @@ console.log('HTTP/2.0 200 OK\\nContent-Type: application/json\\n\\n' + JSON.stri
     assert.equal(git(safe, 'rev-parse', 'HEAD'), mainHead);
     assert.equal(git(safe, 'branch', '--show-current'), 'next-run');
     assert.equal(git(safe, 'rev-parse', branch), publishedHead);
-    const observedGithubCalls = (await readFile(githubCalls, 'utf8'))
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line));
     assert.ok(
-      observedGithubCalls.includes(branchEndpoint),
+      githubCalls.includes(branchEndpoint),
       'prepare must read merged state for this exact head branch',
     );
     const publishedRun = makeRun(slots[4].id);

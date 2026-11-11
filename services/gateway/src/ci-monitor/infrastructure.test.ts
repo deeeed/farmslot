@@ -6,26 +6,30 @@ import { after, mock, test } from 'node:test';
 
 import type { BotComment, ProjectCICheckGroup, PRStatus } from '@farmslot/protocol';
 
+import type { GitHubService } from '../integrations/github-client.js';
 import type { PRRawSnapshot } from '../methods/pr/raw-cache.js';
 import type { CIWatchStepContext } from '../run-engine/ci-watch-step.js';
 
 process.env.FARMSLOT_RUNS_DIR = mkdtempSync(path.join(tmpdir(), 'f415-infrastructure-'));
 const githubClient = await import('../integrations/github-client.js');
-mock.module('../integrations/github-client.js', {
-  namedExports: {
-    ...githubClient,
-    ghRequest: async (args: string[], opts?: { force?: boolean }) => {
-      assert.equal(opts?.force, true);
-      if (args[0] === 'pr' && args[1] === 'checks') {
-        throw new Error('HTTP 503: checks unavailable');
-      }
-      return {
-        stdout:
-          args[0] === 'pr' && args[1] === 'view' ? 'OPEN\tMERGEABLE\tCLEAN\t\tfix/product' : '',
-        stderr: '',
-      };
-    },
+const fakeGithub: GitHubService = {
+  ...githubClient.github,
+  graphql: async <T>(_doc: string, _vars: Record<string, unknown>, opts?: { force?: boolean }) => {
+    assert.equal(opts?.force, true);
+    return {
+      repository: {
+        pr_0: {
+          state: 'OPEN',
+          mergeable: 'MERGEABLE',
+          mergeStateStatus: 'CLEAN',
+          headRefName: 'fix/product',
+        },
+      },
+    } as unknown as T;
   },
+};
+mock.module('../integrations/github-client.js', {
+  namedExports: { ...githubClient, github: fakeGithub },
 });
 const { getPRRawData, synthesizeRawSnapshotFromGraphQL } =
   await import('../methods/pr/raw-cache.js');

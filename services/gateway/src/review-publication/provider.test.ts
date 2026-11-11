@@ -17,6 +17,8 @@ import {
   GatewayConnectionError,
 } from '../../../../packages/cli/src/gateway-client.js';
 import { testGatewayIdentity } from '../../../../scripts/lib/test-gateway-identity-source.mjs';
+import { startReviewProviderFixture } from '../../../../scripts/runner-validation/review-provider-fixture.cjs';
+import { resetGitHubTokensForTests } from '../integrations/github-transport.js';
 import { resolveDefaultPublicationAccount } from '../pr-monitoring/github-account.js';
 import { makeRun } from '../run-completion/test-fixtures.js';
 
@@ -32,9 +34,13 @@ await symlink(
 );
 const priorPath = process.env.PATH;
 process.env.PATH = path.join(root, 'bin') + path.delimiter + priorPath;
+const provider = await startReviewProviderFixture();
+process.env.FARMSLOT_GITHUB_API_URL = provider.origin;
 after(async () => {
   process.env.PATH = priorPath;
   delete process.env.PUBLICATION_FIXTURE_STATE;
+  delete process.env.FARMSLOT_GITHUB_API_URL;
+  await provider.close();
   await rm(root, { recursive: true, force: true });
 });
 const head = 'a'.repeat(40);
@@ -54,6 +60,8 @@ async function fixture(overrides: Record<string, unknown> = {}) {
   };
   await writeFile(stateFile, JSON.stringify(state));
   process.env.PUBLICATION_FIXTURE_STATE = stateFile;
+  // Each fixture is a fresh keyring: credential reads are cached per host and account.
+  resetGitHubTokensForTests();
   const receiptFile = path.join(directory, 'receipt.json');
   let receipt: ReviewPublicationReceipt | undefined;
   const run: Run = {

@@ -1,7 +1,29 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 
-import { normalizeTicketRef, resolvePrRef, validateTicketRef } from './ticket-ref.js';
+import * as githubClientMod from '../../integrations/github-client.js';
+
+// Branch name with shell metacharacters — must arrive at prListFields unchanged, not executed.
+mock.module('../../integrations/github-client.js', {
+  namedExports: {
+    ...githubClientMod,
+    github: {
+      ...githubClientMod.github,
+      prListFields: async (
+        _repo: string,
+        _fields: string[],
+        opts?: { head?: string; limit?: number },
+      ) => {
+        capturedHead = opts?.head;
+        return [{ number: 42 }];
+      },
+    },
+  },
+});
+
+let capturedHead: string | undefined;
+
+const { normalizeTicketRef, resolvePrRef, validateTicketRef } = await import('./ticket-ref.js');
 
 test('shared Jira parsing preserves existing URL normalization and branch references', () => {
   assert.equal(
@@ -23,27 +45,13 @@ test('QA replay accepts admitted task titles while other flows retain their refe
     assert.throws(() => validateTicketRef(title, flow), /Invalid .* reference/);
 });
 
-test('resolvePrRef passes a branch containing command substitution as one literal argv value', async () => {
+test('resolvePrRef passes a branch containing command substitution as one literal string to prListFields', async () => {
+  capturedHead = undefined;
   const branch = 'feature/$(touch /tmp/pwned)`id`';
-  let transmitted: string[] | undefined;
 
-  const resolved = await resolvePrRef(branch, 'owner/repo', async (argv) => {
-    transmitted = argv;
-    return { stdout: '42\n', stderr: '', exitCode: 0 };
-  });
+  const resolved = await resolvePrRef(branch, 'owner/repo');
 
   assert.equal(resolved, 'owner/repo#42');
-  assert.deepEqual(transmitted, [
-    'gh',
-    'pr',
-    'list',
-    '--head',
-    branch,
-    '--repo',
-    'owner/repo',
-    '--json',
-    'number',
-    '--jq',
-    '.[0].number',
-  ]);
+  // The branch name must reach prListFields as the literal head filter — no shell execution.
+  assert.equal(capturedHead, branch);
 });

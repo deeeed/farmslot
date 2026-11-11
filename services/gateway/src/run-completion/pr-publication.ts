@@ -1,7 +1,7 @@
 // run-completion/pr-publication.ts — PR comment, title, and ready-state mutations.
 
 import { existsSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -13,7 +13,7 @@ import {
 } from '@farmslot/protocol';
 
 import { loadProjectVars } from '../core/config.js';
-import { ghRequest } from '../integrations/github-client.js';
+import { github } from '../integrations/github-client.js';
 import { formatPrTitleSuffix } from '../tasks/writer.js';
 
 import { lowercaseLeadingTitleWord } from './pr-title.js';
@@ -70,6 +70,25 @@ function findRunPrComment(
 
 export function paginatedPrCommentOutputContainsRun(output: string, runId: string): boolean {
   return Boolean(findRunPrComment(output, runId));
+}
+
+/** Typed variant — used by migrated call sites that receive a REST array. */
+function findRunPrCommentInArray(
+  comments: Array<{ id?: unknown; body?: unknown }>,
+  runId: string,
+  requireId = false,
+): PrCommentMatch | undefined {
+  for (const item of comments) {
+    const body = typeof item.body === 'string' ? item.body : undefined;
+    if (!body || !prCommentBelongsToRun(body, runId)) continue;
+    const id =
+      typeof item.id === 'number' && Number.isSafeInteger(item.id) && item.id > 0
+        ? item.id
+        : undefined;
+    if (requireId && !id) throw new Error('Existing run comment has no usable identity');
+    return { body, id };
+  }
+  return undefined;
 }
 
 export function shouldPostWorkerReportComment(
@@ -204,7 +223,7 @@ async function buildPRComment(
   } catch (err) {
     if (err instanceof PublicationSecretError) throw err;
     console.warn(
-      `[run-completion] LLM pr-comment failed, using hardcoded: ${(err as Error).message}`,
+      `[run-completion] LLM pr-comment failed, using hardcoded: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 
@@ -242,7 +261,7 @@ export async function postPRComment(
         } catch (err) {
           if (strict) throw err;
           console.warn(
-            `[run-completion] workflow diagram read failed: ${(err as Error).message.slice(0, 200)}`,
+            `[run-completion] workflow diagram read failed: ${err instanceof Error ? err.message : String(err).slice(0, 200)}`,
           );
         }
       }
@@ -269,60 +288,49 @@ export async function postPRComment(
       return false;
     }
 
-    const tmpFile = `/tmp/farmslot-pr-comment-${run.id.slice(0, 8)}.md`;
-    await writeFile(tmpFile, comment, 'utf-8');
-
     // A replay after posting must be idempotent for this run, while a distinct
     // run on the same PR may still publish its own report.
     try {
-      const existing = await ghRequest([
-        'api',
-        '--paginate',
+      const existingComments = await github.rest<Array<{ id: number; body: string }>>(
+        'GET',
         `repos/${ciRepo}/issues/${prNumber}/comments`,
-        '--jq',
-        options.inheritedAcceptance ? '.[] | {id,body} | @json' : '.[].body | @json',
-      ]);
+        { paginate: true },
+      );
       if (options.inheritedAcceptance) {
-        const previous = findRunPrComment(existing.stdout, run.id, true);
+        const previous = findRunPrCommentInArray(existingComments, run.id, true);
         if (previous) {
           if (!previous.body.includes(inheritedText!)) {
             const updated = `${previous.body}\n\n${inheritedText}`;
             await assertPublicationTextSafe(updated);
-            await writeFile(tmpFile, updated, 'utf8');
-            await ghRequest(
-              [
-                'api',
-                `repos/${ciRepo}/issues/comments/${previous.id}`,
-                '--method',
-                'PATCH',
-                '-F',
-                `body=@${tmpFile}`,
-              ],
-              { force: true },
-            );
+            await github.rest<unknown>('PATCH', `repos/${ciRepo}/issues/comments/${previous.id}`, {
+              body: { body: updated },
+              force: true,
+            });
           }
           return true;
         }
       }
-      const alreadyPosted = paginatedPrCommentOutputContainsRun(existing.stdout, run.id);
+      const alreadyPosted = Boolean(findRunPrCommentInArray(existingComments, run.id));
       if (alreadyPosted) {
         console.log(`[run-completion] comment already posted for run ${run.id.slice(0, 8)}`);
         return true;
       }
     } catch (err) {
       if (strict) throw err;
-      console.warn(`[run-completion] bot comment dedup check failed: ${(err as Error).message}`);
+      console.warn(
+        `[run-completion] bot comment dedup check failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
-    await ghRequest(['pr', 'comment', String(prNumber), '--repo', ciRepo, '--body-file', tmpFile], {
-      force: true,
-    });
+    await github.prComment(ciRepo, prNumber, comment, { force: true });
     console.log(`[run-completion] posted comment on PR #${prNumber}`);
     return true;
   } catch (err) {
     if (err instanceof PublicationSecretError) throw err;
     if (strict) throw err;
-    console.warn(`[run-completion] PR comment failed: ${(err as Error).message}`);
+    console.warn(
+      `[run-completion] PR comment failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return false;
   }
 }
@@ -346,26 +354,18 @@ export async function updatePRTitle(run: Run, ciRepo: string, prNumber: number):
 
   try {
     // Check current title — only update if it looks like a ticket ID
-    const prResult = await ghRequest([
-      'pr',
-      'view',
-      String(prNumber),
-      '--repo',
-      ciRepo,
-      '--json',
-      'title',
-    ]);
-    const current = JSON.parse(prResult.stdout || '{}').title ?? '';
+    const prView = await github.prView(ciRepo, prNumber, ['title']);
+    const current = (prView.title as string | undefined) ?? '';
     // Update if current title contains just the ticket ID (e.g. "fix(perps): PROJ-2418")
     const ticketId = run.ticketOrPr.toUpperCase();
     if (current.includes(ticketId) && !current.includes(run.ticketData.title.slice(0, 20))) {
-      await ghRequest(['pr', 'edit', String(prNumber), '--repo', ciRepo, '--title', newTitle], {
-        force: true,
-      });
+      await github.prEdit(ciRepo, prNumber, { title: newTitle }, { force: true });
       console.log(`[run-completion] updated PR #${prNumber} title: ${newTitle}`);
     }
   } catch (err) {
-    console.warn(`[run-completion] PR title update failed: ${(err as Error).message}`);
+    console.warn(
+      `[run-completion] PR title update failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 
@@ -386,16 +386,15 @@ export function resolvePrReadyAction(pr: PrLifecycle): PrReadyResult | 'closed' 
 }
 
 export async function markPRReady(ciRepo: string, prNumber: number): Promise<PrReadyResult> {
-  const result = await ghRequest([
-    'pr',
-    'view',
-    String(prNumber),
-    '--repo',
-    ciRepo,
-    '--json',
-    'state,isDraft,mergedAt',
-  ]);
-  const action = resolvePrReadyAction(JSON.parse(result.stdout || '{}') as PrLifecycle);
+  const prData = await github.prView(ciRepo, prNumber, ['state', 'isDraft', 'mergedAt']);
+  const rawState = String(prData.state ?? '');
+  const lifecycle: PrLifecycle = {
+    state:
+      rawState === 'OPEN' || rawState === 'CLOSED' || rawState === 'MERGED' ? rawState : 'OPEN',
+    isDraft: Boolean(prData.isDraft),
+    mergedAt: prData.mergedAt != null ? String(prData.mergedAt) : null,
+  };
+  const action = resolvePrReadyAction(lifecycle);
   if (action === 'merged') {
     console.log(`[run-completion] PR #${prNumber} is already merged`);
     return action;
@@ -407,7 +406,7 @@ export async function markPRReady(ciRepo: string, prNumber: number): Promise<PrR
   if (action === 'closed') {
     throw new Error(`PR #${prNumber} is closed without merging; it cannot be published`);
   }
-  await ghRequest(['pr', 'ready', String(prNumber), '--repo', ciRepo], { force: true });
+  await github.prReady(ciRepo, prNumber, { force: true });
   console.log(`[run-completion] marked PR #${prNumber} as ready for review`);
   return 'marked-ready';
 }

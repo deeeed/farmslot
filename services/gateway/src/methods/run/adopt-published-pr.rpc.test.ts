@@ -7,6 +7,8 @@ import { mock, test } from 'node:test';
 
 import { Methods, type RunAdoptPublishedPrResult } from '@farmslot/protocol';
 
+import type { GitHubService, RestServiceOpts } from '../../integrations/github-client.js';
+
 process.env.NODE_TEST_CONTEXT = '1';
 await import('../../runtime/mock-pty.test-support.js');
 let projectReadBarrier: (() => Promise<void>) | undefined;
@@ -20,30 +22,35 @@ mock.module('../../core/config.js', {
     },
   },
 });
-const github = await import('../../integrations/github-client.js');
+const clientModule = await import('../../integrations/github-client.js');
 const reviewed = 'a'.repeat(40);
 const observed = 'b'.repeat(40);
-mock.module('../../integrations/github-client.js', {
-  namedExports: {
-    ...github,
-    ghRequest: async (args: string[]) => ({
-      stdout:
-        args[0] === 'pr'
-          ? '[{"number":192}]'
-          : args.some((arg) => arg.endsWith('/commits'))
-            ? `${reviewed}\n${observed}\n`
-            : JSON.stringify({
-                number: 192,
-                html_url: 'https://github.com/owner/repo/pull/192',
-                state: 'open',
-                merged_at: null,
-                draft: false,
-                base: { sha: 'e'.repeat(40), repo: { full_name: 'owner/repo' } },
-                head: { sha: observed, ref: 'fix/feature', repo: { full_name: 'owner/repo' } },
-              }),
-      stderr: '',
-    }),
+const prDetails = {
+  number: 192,
+  html_url: 'https://github.com/owner/repo/pull/192',
+  state: 'open',
+  merged_at: null,
+  draft: false,
+  base: { sha: 'e'.repeat(40), repo: { full_name: 'owner/repo' } },
+  head: { sha: observed, ref: 'fix/feature', repo: { full_name: 'owner/repo' } },
+};
+const fakeGithub: GitHubService = {
+  ...clientModule.github,
+  prListFields: async (_repo, _fields, _params, _opts?) => [
+    { number: 192, state: 'OPEN', headRefOid: observed },
+  ],
+  prView: async (_repo, _number, _fields, _opts?) => ({
+    number: 192,
+    state: 'OPEN',
+    headRefOid: observed,
+  }),
+  rest: async <T>(_method: string, path: string, _opts?: RestServiceOpts): Promise<T> => {
+    if (path.endsWith('/commits')) return [{ sha: reviewed }, { sha: observed }] as unknown as T;
+    return prDetails as unknown as T;
   },
+};
+mock.module('../../integrations/github-client.js', {
+  namedExports: { ...clientModule, github: fakeGithub },
 });
 const { createGatewayAuthRuntime, initializeGatewayIdentity } =
   await import('../../security/auth.js');

@@ -10,6 +10,7 @@ import {
   isEvalProofInput,
 } from '@farmslot/protocol';
 
+import type { GitHubService, RestServiceOpts } from '../integrations/github-client.js';
 import type { ResolvedEvalSource } from '../methods/eval/source-resolution.js';
 
 import { sha256Text, unavailableDiff } from './package-store.js';
@@ -52,22 +53,33 @@ const qa: Pick<EvalProofInput, 'qa' | 'executionTemplate'> = {
     sha256: 'd'.repeat(64),
   },
 };
-function dependencies(diff = patch): ProofInputDependencies {
+function notImpl(): never {
+  throw new Error('not implemented in fake');
+}
+
+function makeRequestFake(diff = patch): GitHubService {
   return {
-    request: async (args) => {
-      if (args[1].includes('/git/commits/'))
-        return {
-          stdout: JSON.stringify({
-            sha: headSha,
-            tree: { sha: treeSha },
-            parents: [{ sha: baseSha }],
-          }),
-        };
-      if (args.includes('Accept: application/vnd.github.diff')) return { stdout: diff };
-      return { stdout: JSON.stringify({ merge_base_commit: { sha: baseSha } }) };
+    prView: notImpl,
+    prList: notImpl,
+    prListFields: notImpl,
+    prChecks: notImpl,
+    prCreate: notImpl,
+    prEdit: notImpl,
+    prComment: notImpl,
+    prReady: notImpl,
+    repoView: notImpl,
+    graphql: notImpl,
+    async rest<T>(_method: string, path: string, opts?: RestServiceOpts): Promise<T> {
+      if (path.includes('/git/commits/'))
+        return { sha: headSha, tree: { sha: treeSha }, parents: [{ sha: baseSha }] } as T;
+      if (opts?.headers?.Accept?.includes('vnd.github.diff')) return diff as T;
+      return { merge_base_commit: { sha: baseSha } } as T;
     },
-    admitQa: async () => qa,
   };
+}
+
+function dependencies(diff = patch): ProofInputDependencies {
+  return { request: makeRequestFake(diff), admitQa: async () => qa };
 }
 
 test('proof admission freezes the actual QA range, exact AC set and admitted template', async () => {
@@ -128,16 +140,15 @@ test('proof admission rejects known golden bytes present in the implementation t
     .update(text)
     .digest('hex');
   const deps = dependencies();
-  const request = deps.request;
-  deps.request = async (args) =>
-    args[1].includes('/git/trees/')
-      ? {
-          stdout: JSON.stringify({
-            truncated: false,
-            tree: [{ type: 'blob', path: 'hidden-answer.json', sha }],
-          }),
-        }
-      : request(args);
+  const originalRequest = deps.request;
+  deps.request = {
+    ...originalRequest,
+    rest: async <T>(_method: string, path: string, opts?: RestServiceOpts): Promise<T> => {
+      if (path.includes('/git/trees/'))
+        return { truncated: false, tree: [{ type: 'blob', path: 'hidden-answer.json', sha }] } as T;
+      return originalRequest.rest<T>(_method, path, opts);
+    },
+  };
   await assert.rejects(
     resolveProofInput(
       params,
