@@ -51,7 +51,19 @@ const slotFilesModule: string = '../host-services/slot-files.js?bounded-read-pro
 const freshSlotFiles: typeof import('../host-services/slot-files.js') = await import(
   slotFilesModule
 );
-mock.module('../host-services/slot-files.js', { namedExports: { ...freshSlotFiles } });
+// Use a mutable impl so the EPERM test can swap in an fs-mocked version without re-mocking the
+// module (Node.js rejects a second mock.module on a module already mocked at the outer level).
+let _slotFilesImpl = freshSlotFiles.default;
+mock.module('../host-services/slot-files.js', {
+  namedExports: {
+    ...freshSlotFiles,
+    default: {
+      read: (...args: Parameters<typeof _slotFilesImpl.read>) => _slotFilesImpl.read(...args),
+      tail: (...args: Parameters<typeof _slotFilesImpl.tail>) => _slotFilesImpl.tail(...args),
+      isFile: (...args: Parameters<typeof _slotFilesImpl.isFile>) => _slotFilesImpl.isFile(...args),
+    },
+  },
+});
 const observabilityModule: string = '../runners/observability-files.js?bounded-read-probes';
 const {
   readRunnerObservabilityFiles,
@@ -325,6 +337,17 @@ test('a local runner file the OS refuses (EPERM) reads as empty, as the shell re
     namedExports: { ...fs, open: refuse, readFile: refuse, stat: refuse },
   });
   t.after(() => refused.restore());
+  // slot-files.ts owns the in-process fs calls; load it fresh after the fs mock so it picks up
+  // the EPERM functions rather than the real fs captured when the top-level mock was set up.
+  // Swap the mutable impl behind the top-level proxy rather than re-mocking the module.
+  const slotFilesEperm: string = '../host-services/slot-files.js?eperm';
+  const freshSlotFilesEperm: typeof import('../host-services/slot-files.js') = await import(
+    slotFilesEperm
+  );
+  _slotFilesImpl = freshSlotFilesEperm.default;
+  t.after(() => {
+    _slotFilesImpl = freshSlotFiles.default;
+  });
   const eperm: string = '../runners/observability-files.js?eperm';
   const files: typeof import('../runners/observability-files.js') = await import(eperm);
   let commands = 0;
