@@ -1,0 +1,1 @@
+- Keep static-review tasks focused on frozen inputs and enforced output contracts, leaving skill and subtask execution to the selected checklist.
