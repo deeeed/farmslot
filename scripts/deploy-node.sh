@@ -108,6 +108,10 @@ if [[ "$PACKS_ONLY" == true && "$REFRESH_CLI" == true ]]; then
   echo '[deploy] ERROR: --packs-only cannot be combined with --cli-only or --refresh-cli' >&2
   exit 1
 fi
+if [[ "$PACKS_ONLY" == true && -n "$NODE_TOKEN_FILE" ]]; then
+  echo '[deploy] ERROR: --packs-only needs no node token; drop --node-token-file' >&2
+  exit 1
+fi
 
 MACHINE="${1:?Usage: deploy-node.sh <machine> [gateway-ip] [--home dir | --instance dev|prod] [--dry-run] [--node-token-file path] [--refresh-cli|--cli-only|--packs-only]}"
 GATEWAY_IP="${2:-}"

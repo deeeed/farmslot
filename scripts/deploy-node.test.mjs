@@ -1031,6 +1031,14 @@ test('deploy-node refuses --packs-only with a CLI refresh', (t) => {
     );
 });
 
+test('deploy-node refuses --packs-only with a node token file', (t) => {
+  const fixture = cliFixture(t);
+  assert.throws(
+    () => fixture.deploy({ args: ['--packs-only'] }),
+    (error) => /--packs-only needs no node token/.test(error.stderr),
+  );
+});
+
 test('deploy-node --cli-only builds only the protocol dist, and only when it is missing', (t) => {
   const fixture = cliFixture(t);
   fs.rmSync(path.join(fixture.root, 'packages/protocol/dist/node/slot-by-repo.js'));
