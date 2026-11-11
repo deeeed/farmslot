@@ -108,6 +108,11 @@ export interface RunnerSessionArchiveRef {
   reason?: string;
 }
 
+export interface AgentExecutionLocation {
+  machine: string;
+  checkoutPath: string;
+}
+
 export interface AgentContext {
   id: string;
   role: AgentRole;
@@ -117,6 +122,8 @@ export interface AgentContext {
   error?: string;
   slotId: string | null;
   runId: string;
+  /** Launch placement retained independently of later slot reuse. Absent on older contexts. */
+  executionLocation?: AgentExecutionLocation;
   taskFile?: string | null;
   signalFile?: string | null;
   /** Machine-readable reviewer verdict/issues artifact required for this reviewer attempt. */

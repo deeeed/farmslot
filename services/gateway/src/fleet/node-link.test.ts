@@ -134,6 +134,10 @@ async function linkedNode(
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
   const calls: Array<{ method: string; params: unknown }> = [];
+  let markDelayedReplyReady!: () => void;
+  const delayedReplyReady = new Promise<void>((resolve) => {
+    markDelayedReplyReady = resolve;
+  });
   nodeSocket.on('message', async (raw) => {
     const frame = JSON.parse(raw.toString());
     calls.push({ method: frame.method, params: frame.params });
@@ -142,8 +146,11 @@ async function linkedNode(
         frame.method === 'fs.read' && fileReadFixture !== undefined
           ? { content: fileReadFixture }
           : await agent.handle(frame.method, frame.params);
-      if (replyDelayMs && frame.method === 'node.link.command')
-        await new Promise<void>((resolve) => setTimeout(resolve, replyDelayMs));
+      if (replyDelayMs && frame.method === 'node.link.command') {
+        const delay = new Promise<void>((resolve) => setTimeout(resolve, replyDelayMs));
+        markDelayedReplyReady();
+        await delay;
+      }
       if (!dropCommandReply || frame.method !== 'node.link.command')
         nodeSocket.send(JSON.stringify({ type: 'res', id: frame.id, ok: true, payload }));
     } catch (error) {
@@ -193,7 +200,7 @@ async function linkedNode(
       nodePrincipal: principal,
     },
   );
-  return { agent, principal, calls };
+  return { agent, principal, calls, delayedReplyReady };
 }
 
 test('flagged task staging uses node commands, preserves existing artifacts and publishes executable marker last', async (t) => {
@@ -868,46 +875,58 @@ test(
 
 test(
   'a late original response resolves the unconfirmed closeout on the same socket',
-  { timeout: 9000 },
+  { timeout: 5000 },
   async (t) => {
     const root = await realpath(await mkdtemp(path.join(tmpdir(), 'node-link-late-closeout-')));
     const previousHome = process.env.FARMSLOT_HOME;
     process.env.FARMSLOT_HOME = root;
     const machine = 'node-link-late-closeout';
-    const { principal } = await linkedNode(t, root, machine, false, undefined, 5500);
+    const { principal, delayedReplyReady } = await linkedNode(
+      t,
+      root,
+      machine,
+      false,
+      undefined,
+      6500,
+    );
     t.after(async () => {
       if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
       else process.env.FARMSLOT_HOME = previousHome;
       await rm(root, { recursive: true, force: true });
     });
     const { NodeExecUnconfirmedError } = await import('./node-rpc.js');
-    let unconfirmed: InstanceType<typeof NodeExecUnconfirmedError> | undefined;
-    try {
-      await invokeNodeLink(
-        {
-          operation: 'file.write',
-          input: { root, relPath: 'once', content: 'written', expectedHash: null },
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+    const failure = invokeNodeLink(
+      {
+        operation: 'file.write',
+        input: { root, relPath: 'once', content: 'written', expectedHash: null },
+      },
+      {
+        commandId: 'late-closeout',
+        target: { nodeId: machine, resourceId: 'workspace' },
+        root,
+        timeoutMs: 1000,
+        authority: {
+          requester: { principalId: 'operator', generation: 1 },
+          executor: principal,
+          grantId: 'policy',
+          approvalId: 'approval',
+          approval: 'framework',
         },
-        {
-          commandId: 'late-closeout',
-          target: { nodeId: machine, resourceId: 'workspace' },
-          root,
-          timeoutMs: 100,
-          authority: {
-            requester: { principalId: 'operator', generation: 1 },
-            executor: principal,
-            grantId: 'policy',
-            approvalId: 'approval',
-            approval: 'framework',
-          },
-          assertCurrent: () => undefined,
-        },
-      );
-      assert.fail('Expected the deliberately delayed exchange to time out');
-    } catch (error) {
-      assert(error instanceof NodeExecUnconfirmedError);
-      unconfirmed = error;
-    }
+        assertCurrent: () => undefined,
+      },
+    ).then(
+      () => assert.fail('Expected the deliberately delayed exchange to time out'),
+      (error: unknown) => {
+        assert(error instanceof NodeExecUnconfirmedError);
+        return error;
+      },
+    );
+    // Complete admission and execution before advancing the transport clock.
+    await delayedReplyReady;
+    t.mock.timers.tick(6000);
+    const unconfirmed = await failure;
+    t.mock.timers.tick(500);
     await unconfirmed.closeout;
     assert.equal(await readFile(path.join(root, 'once'), 'utf8'), 'written');
   },

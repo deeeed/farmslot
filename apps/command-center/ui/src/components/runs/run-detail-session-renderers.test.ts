@@ -5,8 +5,11 @@ import test from 'node:test';
 
 import type { AgentContext, Run, RunSessionCommandResult } from '@farmslot/protocol';
 
+import { litText } from '../../testing/lit-text.js';
+
 import {
   livenessLabel,
+  renderRunAgentSessions,
   runAgentSessionRows,
   runnerSessionOpenRefusal,
   runSessionCommandTextForKind,
@@ -297,4 +300,83 @@ test('slot-free native review rows do not fall back to tmux controls', () => {
   );
   assert.equal(rows[0].workspaceView, true);
   assert.equal(rows[0].nativeHref, undefined);
+});
+
+test('review session rows show the same retained workspace after completion', () => {
+  const workspaceRun: Pick<Run, 'agentContexts' | 'metrics' | 'reviewWorkspace'> = {
+    ...run([context({ id: 'review', role: 'review', slotId: null, status: 'complete' })]),
+    reviewWorkspace: {
+      workspaceId: 'workspace-one',
+      machine: 'macpro',
+      executionNodeId: 'macpro',
+      checkoutPath: '/review/source',
+      taskPath: '/review/task',
+      artifactPath: '/review/artifacts',
+    },
+  };
+  const [row] = runAgentSessionRows(workspaceRun);
+  assert.equal(row.reviewLocation?.checkoutPath, '/review/source');
+  assert.equal(row.reviewLocation?.workspaceId, 'workspace-one');
+  assert.equal(row.reviewLocation?.slotId, undefined);
+  assert.equal(runAgentSessionRows(run([context()]))[0].reviewLocation, undefined);
+});
+
+test('a static tmux reviewer keeps its attach target beside the review workspace', () => {
+  const review = context({
+    id: 'review',
+    role: 'review',
+    slotId: null,
+    target: { session: 'review-session', target: 'review-session:review' },
+  });
+  const workspaceRun = {
+    ...run([review]),
+    reviewWorkspace: {
+      workspaceId: 'workspace-one',
+      machine: 'macpro',
+      executionNodeId: 'macpro',
+      checkoutPath: '/review/source',
+      taskPath: '/review/task',
+      artifactPath: '/review/artifacts',
+    },
+  };
+  const text = litText(
+    renderRunAgentSessions(workspaceRun, {
+      nativeHistoryOpen: false,
+      onToggleNativeHistory: () => {},
+      states: {},
+      onCopy: () => {},
+    }),
+  );
+  assert.match(text, /data-testid="run-agent-session-location-review"/);
+  assert.match(text, />review-session:review<\/span/);
+  assert.match(text, />\/review\/source<\/code/);
+  assert.match(text, /Workspace <code>workspace-one/);
+});
+
+test('native pipeline reviewer preserves the location and slot read by the session probe', () => {
+  const review = context({
+    id: 'review',
+    role: 'review',
+    target: null,
+    executionLocation: { machine: 'macpro', checkoutPath: '/original/review/source' },
+    nativeSession: {
+      sessionId: 'native-review',
+      executionNodeId: 'macpro',
+      ownerPrincipalId: 'owner',
+      leaseId: 'lease',
+      commandId: 'command',
+    },
+  });
+  const text = litText(
+    renderRunAgentSessions(run([review]), {
+      nativeHistoryOpen: false,
+      onToggleNativeHistory: () => {},
+      states: {},
+      onCopy: () => {},
+    }),
+  );
+  assert.match(text, /data-testid=run-agent-session-location-review/);
+  assert.match(text, /data-slot=macpro-mm-1/);
+  assert.match(text, /macpro · macpro-mm-1/);
+  assert.match(text, />\/original\/review\/source<\/code/);
 });
