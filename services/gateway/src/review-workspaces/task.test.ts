@@ -168,30 +168,31 @@ test('materialization ignores an execution-only pool and preserves frozen guidan
     };
     const first = await materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps);
     const task = await readFile(first.taskFile, 'utf8');
-    assert(
-      task.includes(`Reference mobile: /dev/mobile-ref @ ${'c'.repeat(40)} (uncommitted changes)`),
-    );
-    assert(
-      task.includes(
-        `Reference core: not cloned at /dev/core-ref on ${f.run.reviewWorkspace!.machine}`,
-      ),
-    );
-    assert(
-      task.includes(
-        `Reference unplaced: no ${f.run.project} slot on ${f.run.reviewWorkspace!.machine}`,
-      ),
-    );
-    assert.match(task, /Tests and code validation belong to CI/);
     assert.match(
       task,
-      /Do not run tests, builds, recipes, installs, probes or ad hoc validation scripts/,
+      /Mark completed checklist steps with .*mark' N, using the visible 1-based number/,
     );
-    assert.match(task, /CI results and CI receipts/);
-    assert.match(task, /unverified/);
-    assert.doesNotMatch(task, /Put probe tests|reviewer_recipe_replay\(/);
-    assert.match(task, /Write each finding once in review-result.json issues/);
-    assert.match(task, /full problem, evidence and concrete ask in description/);
-    assert.match(task, /gateway derives inline comments/);
+    assert.match(task, /Child checklist completion marks its parent step/);
+    assert.equal((task.match(/complete --mark-last/g) ?? []).length, 1);
+    assert.doesNotMatch(
+      task,
+      /mark no-change|review-checklist\.md|For commands named|Invoke team-review/,
+    );
+    assert.equal((task.match(/^## Diff scope$/gm) ?? []).length, 1);
+    assert.match(task, /inputs\/review-support\.json/);
+    assert.doesNotMatch(task, /Tests and code validation belong to CI|Run any domain checklist/);
+    assert.match(task, /full problem, evidence and concrete ask/);
+    assert.match(task, /gateway derives comments from issues/);
+    const exampleBlock = task.match(/## Review result[\s\S]*?```json\n([\s\S]*?)\n```/);
+    assert(exampleBlock);
+    const example = JSON.parse(exampleBlock[1]);
+    assert.equal(example.schemaVersion, 1);
+    assert.equal(example.runId, f.run.id);
+    assert.equal(example.workspaceId, f.run.reviewWorkspace!.workspaceId);
+    assert.equal(example.headSha, f.subject.headSha);
+    assert.equal(example.baseSha, f.subject.baseSha);
+    assert.equal(example.recommendation, 'REQUEST_CHANGES');
+    assert.equal(example.issues.length, 1);
     const contract = JSON.parse(
       await readFile(path.join(f.task, 'inputs/worker-terminal-contract.json'), 'utf8'),
     );
@@ -204,11 +205,6 @@ test('materialization ignores an execution-only pool and preserves frozen guidan
     assert.deepEqual(
       JSON.parse(await readFile(path.join(f.task, 'inputs/review-support.json'), 'utf8')),
       f.run.reviewWorkspace!.support,
-    );
-    assert(
-      (await readFile(first.taskFile, 'utf8')).includes(
-        f.run.reviewWorkspace!.support.skills[0].path,
-      ),
     );
     assert.equal(
       JSON.parse(await readFile(path.join(f.task, 'inputs/review-subject.json'), 'utf8')).headSha,
