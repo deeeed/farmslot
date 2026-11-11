@@ -93,8 +93,15 @@ function tokenKey(host: string, login?: string): string {
  * Token gh would use for this host (and named keyring account), read once and cached.
  * The environment mirrors the previous `gh` spawns: GH_TOKEN is ignored so the keyring
  * wins; a named account also ignores the other token variables.
+ *
+ * When `FARMSLOT_GITHUB_API_URL` is set the transport routes all requests to a fixture
+ * server, so the keyring is never read. The optional `FARMSLOT_GITHUB_FIXTURE_TOKEN` is
+ * returned verbatim (empty string when unset → no Authorization header sent).
  */
 export function resolveGitHubToken(host: string, login?: string): Promise<string> {
+  if (overrideOrigin()) {
+    return Promise.resolve(process.env.FARMSLOT_GITHUB_FIXTURE_TOKEN?.trim() ?? '');
+  }
   const key = tokenKey(host, login);
   const existing = tokens.get(key);
   if (existing) return existing.promise;
@@ -163,7 +170,9 @@ export async function githubHttp(request: GitHubHttpRequest): Promise<GitHubHttp
     'User-Agent': USER_AGENT,
     'X-GitHub-Api-Version': API_VERSION,
     ...request.headers,
-    Authorization: `token ${request.token}`,
+    // An empty token means fixture mode (FARMSLOT_GITHUB_API_URL set without a fixture token).
+    // Omit the Authorization header entirely so the fixture server can respond freely.
+    ...(request.token ? { Authorization: `token ${request.token}` } : {}),
   };
   let response: Response;
   let body: string;

@@ -14,7 +14,26 @@ import {
   hasInvalidGitHubCursor,
   hasUnavailableGitHubPR,
 } from './github-errors.js';
-import { executeGhCommand } from './github-gh-command.js';
+import {
+  executeGhCommand,
+  type GhCommandContext,
+  githubGraphQLOp,
+  type GitHubOpResult,
+  githubPrChecksOp,
+  githubPrCommentOp,
+  githubPrCreateOp,
+  githubPrEditOp,
+  githubPrListFieldsOp,
+  githubPrListOp,
+  githubPrReadyOp,
+  githubPrViewOp,
+  githubRepoViewOp,
+  githubRestOp,
+  type PRCreateParams,
+  type PREditParams,
+  type PRListFilters,
+  type RestOpOpts,
+} from './github-gh-command.js';
 import {
   githubQueryBudget,
   GitHubQueryBudgetError,
@@ -348,6 +367,365 @@ function cacheNegative(key: string, err: Error): void {
     if (oldest !== undefined) negativeCache.delete(oldest);
   }
 }
+
+// ─── Typed service layer ───
+
+/** Stable operation-name constants for metrics and attribution. */
+export const GH_OP_PR_VIEW = 'github.prView';
+export const GH_OP_PR_LIST = 'github.prList';
+export const GH_OP_PR_CHECKS = 'github.prChecks';
+export const GH_OP_PR_CREATE = 'github.prCreate';
+export const GH_OP_PR_EDIT = 'github.prEdit';
+export const GH_OP_PR_COMMENT = 'github.prComment';
+export const GH_OP_PR_READY = 'github.prReady';
+export const GH_OP_REPO_VIEW = 'github.repoView';
+export const GH_OP_GRAPHQL = 'github.graphql';
+export const GH_OP_REST = 'github.rest';
+
+export interface ServiceOpts {
+  force?: boolean;
+  signal?: AbortSignal;
+  account?: GhRequestOpts['account'];
+  caller?: string;
+}
+
+export interface RestServiceOpts extends ServiceOpts {
+  host?: string;
+  paginate?: boolean;
+  slurp?: boolean;
+  perPage?: number;
+  headers?: Record<string, string>;
+  body?: unknown;
+}
+
+export interface GraphQLServiceOpts extends ServiceOpts {
+  host?: string;
+}
+
+export interface GitHubService {
+  prView(
+    repo: string,
+    prNumber: number,
+    fields: string[],
+    opts?: ServiceOpts,
+  ): Promise<Record<string, unknown>>;
+  prList(
+    repo: string,
+    filters: PRListFilters,
+    opts?: ServiceOpts,
+  ): Promise<Record<string, unknown>[]>;
+  prListFields(
+    repo: string,
+    fields: string[],
+    filters: PRListFilters,
+    opts?: ServiceOpts,
+  ): Promise<Record<string, unknown>[]>;
+  prChecks(
+    repo: string,
+    prNumber: number,
+    fields: string[],
+    opts?: ServiceOpts,
+  ): Promise<Record<string, unknown>[]>;
+  prCreate(repo: string, params: PRCreateParams, opts?: ServiceOpts): Promise<string>;
+  prEdit(repo: string, prNumber: number, params: PREditParams, opts?: ServiceOpts): Promise<string>;
+  prComment(repo: string, prNumber: number, body: string, opts?: ServiceOpts): Promise<string>;
+  prReady(repo: string, prNumber: number, opts?: ServiceOpts): Promise<void>;
+  repoView(repo: string, opts?: ServiceOpts): Promise<{ nameWithOwner: string }>;
+  graphql<T>(
+    query: string,
+    variables: Record<string, string | number | null>,
+    opts?: GraphQLServiceOpts,
+  ): Promise<T>;
+  rest<T>(method: string, path: string, opts?: RestServiceOpts): Promise<T>;
+}
+
+// Re-export param types so callers import only from this module.
+export type {
+  GhCommandContext,
+  GitHubOpResult,
+  PRCreateParams,
+  PREditParams,
+  PRListFilters,
+  RestOpOpts,
+};
+
+/** In-flight de-duplication for typed operations (read-only ops only). */
+interface TypedInFlightEntry {
+  promise: Promise<unknown>;
+  controller: AbortController;
+  refCount: number;
+}
+const typedInFlight = new Map<string, TypedInFlightEntry>();
+
+function attachTypedSharedSignal<T>(entry: TypedInFlightEntry, signal?: AbortSignal): Promise<T> {
+  if (!signal) {
+    entry.refCount += 1;
+    return (entry.promise as Promise<T>).finally(() => {
+      entry.refCount -= 1;
+    });
+  }
+  if (signal.aborted) return Promise.reject(new Error('gh request aborted'));
+  entry.refCount += 1;
+  let aborted = false;
+  let onAbort: (() => void) | undefined;
+  const abortPromise = new Promise<T>((_, reject) => {
+    onAbort = () => {
+      aborted = true;
+      entry.refCount -= 1;
+      if (entry.refCount <= 0 && !entry.controller.signal.aborted) entry.controller.abort();
+      reject(new Error('gh request aborted'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  return Promise.race([entry.promise as Promise<T>, abortPromise]).finally(() => {
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+    if (!aborted) entry.refCount -= 1;
+  });
+}
+
+type TypedOpFn<T> = (ctx: GhCommandContext) => Promise<GitHubOpResult<T>>;
+
+/**
+ * Middleware for typed ops: semaphore, query-budget guard, in-flight dedup,
+ * negative cache, quota observation, and GraphQL spend recording.
+ */
+async function runTypedOp<T>(
+  cacheKey: string,
+  opName: string,
+  isWrite: boolean,
+  fn: TypedOpFn<T>,
+  opts?: ServiceOpts,
+): Promise<T> {
+  const force = opts?.force === true || isWrite;
+  const signal = opts?.signal;
+  const caller = resolveGitHubQueryCaller(opts?.caller ?? opName);
+
+  if (!force) {
+    const neg = negativeCache.get(cacheKey);
+    if (neg && Date.now() - neg.at < negativeTtlMs) throw neg.error;
+
+    const existing = typedInFlight.get(cacheKey);
+    if (existing) return attachTypedSharedSignal<T>(existing, signal);
+
+    const controller = new AbortController();
+    const promise = execTypedOp(
+      cacheKey,
+      opName,
+      fn,
+      controller.signal,
+      opts?.account,
+      caller,
+    ).finally(() => {
+      typedInFlight.delete(cacheKey);
+    });
+    const entry: TypedInFlightEntry = { promise, controller, refCount: 0 };
+    typedInFlight.set(cacheKey, entry);
+    return attachTypedSharedSignal<T>(entry, signal);
+  }
+
+  return execTypedOp(cacheKey, opName, fn, signal, opts?.account, caller);
+}
+
+const GRAPHQL_OPS = new Set([GH_OP_PR_VIEW, GH_OP_PR_LIST, GH_OP_PR_CHECKS, GH_OP_GRAPHQL]);
+
+async function execTypedOp<T>(
+  cacheKey: string,
+  opName: string,
+  fn: TypedOpFn<T>,
+  signal?: AbortSignal,
+  account?: GhRequestOpts['account'],
+  caller = 'graphql',
+): Promise<T> {
+  await acquire();
+  try {
+    const isGql = GRAPHQL_OPS.has(opName);
+    if (isGql) {
+      const retryAt = githubQueryBudget.anyReserved();
+      if (retryAt) throw new GitHubQueryBudgetError(retryAt);
+    }
+    const quotaKey = githubRequestCacheKey(
+      [],
+      account ? { ...account, scope: 'query-budget' } : undefined,
+    );
+    const previousRemaining = githubQueryBudget.peek(quotaKey)?.remaining;
+    const ctx: GhCommandContext = { signal, account };
+    const result = await fn(ctx);
+    if (result.headers) {
+      updateQuotaFromHeaders(result.headers, quotaKey);
+      githubQueryBudget.observeHeaders(quotaKey, result.headers);
+    }
+    if (isGql) {
+      const cost = result.graphqlCost ?? 0;
+      const remaining = Number(result.headers?.get('x-ratelimit-remaining'));
+      const delta =
+        Number.isFinite(remaining) &&
+        previousRemaining !== undefined &&
+        previousRemaining > remaining
+          ? previousRemaining - remaining
+          : 0;
+      githubQueryBudget.record(caller, cost || delta || 1, 1);
+    }
+    return result.data;
+  } catch (err) {
+    if (!(err instanceof Error)) throw err;
+    if (!isAbortError(err)) cacheNegative(cacheKey, err);
+    throw err;
+  } finally {
+    release();
+  }
+}
+
+function typedOpKey(opName: string, params: unknown[], account?: GhRequestOpts['account']): string {
+  return JSON.stringify([
+    account
+      ? [
+          account.host.toLowerCase(),
+          account.scope,
+          createHash('sha256').update(account.token).digest('hex'),
+        ]
+      : 'ambient',
+    opName,
+    params,
+  ]);
+}
+
+function defaultHost(opts?: { host?: string; account?: GhRequestOpts['account'] }): string {
+  return opts?.host ?? opts?.account?.host ?? (process.env.GH_HOST?.trim() || 'github.com');
+}
+
+/** Default `GitHubService` instance used by all callers in the gateway. */
+export const github: GitHubService = {
+  prView(repo, prNumber, fields, opts) {
+    const key = typedOpKey(GH_OP_PR_VIEW, [repo, prNumber, fields.slice().sort()], opts?.account);
+    return runTypedOp(
+      key,
+      GH_OP_PR_VIEW,
+      false,
+      (ctx) => githubPrViewOp(repo, prNumber, fields, ctx),
+      opts,
+    );
+  },
+
+  prList(repo, filters, opts) {
+    const key = typedOpKey(GH_OP_PR_LIST, [repo, filters], opts?.account);
+    return runTypedOp(key, GH_OP_PR_LIST, false, (ctx) => githubPrListOp(repo, filters, ctx), opts);
+  },
+
+  prListFields(repo, fields, filters, opts) {
+    const key = typedOpKey(GH_OP_PR_LIST, [repo, fields.slice().sort(), filters], opts?.account);
+    return runTypedOp(
+      key,
+      GH_OP_PR_LIST,
+      false,
+      (ctx) => githubPrListFieldsOp(repo, fields, filters, ctx),
+      opts,
+    );
+  },
+
+  prChecks(repo, prNumber, fields, opts) {
+    const key = typedOpKey(GH_OP_PR_CHECKS, [repo, prNumber, fields.slice().sort()], opts?.account);
+    return runTypedOp(
+      key,
+      GH_OP_PR_CHECKS,
+      false,
+      (ctx) => githubPrChecksOp(repo, prNumber, fields, ctx),
+      opts,
+    );
+  },
+
+  prCreate(repo, params, opts) {
+    const key = typedOpKey(
+      GH_OP_PR_CREATE,
+      [repo, params.head, params.base, params.title],
+      opts?.account,
+    );
+    return runTypedOp(
+      key,
+      GH_OP_PR_CREATE,
+      true,
+      (ctx) => githubPrCreateOp(repo, params, ctx),
+      opts,
+    );
+  },
+
+  prEdit(repo, prNumber, params, opts) {
+    const key = typedOpKey(GH_OP_PR_EDIT, [repo, prNumber], opts?.account);
+    return runTypedOp(
+      key,
+      GH_OP_PR_EDIT,
+      true,
+      (ctx) => githubPrEditOp(repo, prNumber, params, ctx),
+      opts,
+    );
+  },
+
+  prComment(repo, prNumber, body, opts) {
+    const key = typedOpKey(GH_OP_PR_COMMENT, [repo, prNumber], opts?.account);
+    return runTypedOp(
+      key,
+      GH_OP_PR_COMMENT,
+      true,
+      (ctx) => githubPrCommentOp(repo, prNumber, body, ctx),
+      opts,
+    );
+  },
+
+  prReady(repo, prNumber, opts) {
+    const key = typedOpKey(GH_OP_PR_READY, [repo, prNumber], opts?.account);
+    return runTypedOp(
+      key,
+      GH_OP_PR_READY,
+      true,
+      (ctx) => githubPrReadyOp(repo, prNumber, ctx),
+      opts,
+    );
+  },
+
+  repoView(repo, opts) {
+    const key = typedOpKey(GH_OP_REPO_VIEW, [repo], opts?.account);
+    return runTypedOp(key, GH_OP_REPO_VIEW, false, (ctx) => githubRepoViewOp(repo, ctx), opts);
+  },
+
+  graphql<T>(
+    query: string,
+    variables: Record<string, string | number | null>,
+    opts?: GraphQLServiceOpts,
+  ): Promise<T> {
+    const host = defaultHost(opts);
+    const key = typedOpKey(GH_OP_GRAPHQL, [host, query, variables], opts?.account);
+    return runTypedOp<T>(
+      key,
+      GH_OP_GRAPHQL,
+      false,
+      (ctx) => githubGraphQLOp<T>(host, query, variables, ctx),
+      opts,
+    );
+  },
+
+  rest<T>(method: string, path: string, opts?: RestServiceOpts): Promise<T> {
+    const host = defaultHost(opts);
+    const isWrite = !['GET', 'HEAD'].includes(method.toUpperCase());
+    const restOpts: RestOpOpts = {
+      paginate: opts?.paginate,
+      slurp: opts?.slurp,
+      perPage: opts?.perPage,
+      headers: opts?.headers,
+      body: opts?.body,
+    };
+    const key = typedOpKey(
+      GH_OP_REST,
+      [host, method.toUpperCase(), path, isWrite ? Date.now() : restOpts],
+      opts?.account,
+    );
+    return runTypedOp<T>(
+      key,
+      GH_OP_REST,
+      isWrite,
+      (ctx) => githubRestOp<T>(host, method, path, restOpts, ctx),
+      opts,
+    );
+  },
+};
 
 function updateQuotaFromHeaders(headers: Map<string, string>, credentialKey: string): void {
   const remainingStr = headers.get('x-ratelimit-remaining');

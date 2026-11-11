@@ -1322,3 +1322,397 @@ async function runRepoView(argv: string[], context: GhCommandContext): Promise<G
     headers: state.headers,
   };
 }
+
+// ─── Typed service operations (no gh arg grammar) ───
+// Called directly from github-client.ts. Each returns { data, headers, graphqlCost? }.
+
+/** Returned by every typed operation so the client middleware can observe quota + spend. */
+export interface GitHubOpResult<T> {
+  data: T;
+  headers?: Map<string, string>;
+  /** GraphQL points consumed (operations that issued at least one GraphQL request). */
+  graphqlCost?: number;
+}
+
+/** Filters for `githubPrListOp`. */
+export interface PRListFilters {
+  head?: string;
+  base?: string;
+  state?: 'open' | 'closed' | 'merged' | 'all';
+  limit?: number;
+}
+
+/** Parameters for `githubPrCreateOp`. */
+export interface PRCreateParams {
+  head: string;
+  base: string;
+  title: string;
+  body: string;
+  draft?: boolean;
+}
+
+/** Parameters for `githubPrEditOp`. */
+export interface PREditParams {
+  title?: string;
+  body?: string;
+}
+
+/** Options for `githubRestOp`. */
+export interface RestOpOpts {
+  paginate?: boolean;
+  slurp?: boolean;
+  perPage?: number;
+  headers?: Record<string, string>;
+  body?: unknown;
+}
+
+export async function githubPrViewOp(
+  repo: string,
+  prNumber: number,
+  fields: string[],
+  ctx: GhCommandContext,
+): Promise<GitHubOpResult<JsonObject>> {
+  const ref = parseRepo(repo, ctx);
+  const state: PorcelainState = { graphqlCost: 0 };
+  const data = await porcelainGraphQL<{ repository?: { pullRequest?: JsonObject } }>(
+    ref.host,
+    `query PullRequestByNumber($owner: String!, $repo: String!, $pr_number: Int!) {repository(owner: $owner, name: $repo) {pullRequest(number: $pr_number) {id,${prFieldQuery(fields)}}} rateLimit{cost}}`,
+    { owner: ref.owner, repo: ref.name, pr_number: prNumber },
+    ctx,
+    state,
+  );
+  const pr = data.repository?.pullRequest;
+  if (!pr) throw new GhFailure(`no pull requests found for number ${prNumber}`);
+  return { data: exportPR(pr, fields), headers: state.headers, graphqlCost: state.graphqlCost };
+}
+
+export async function githubPrListOp(
+  repo: string,
+  filters: PRListFilters,
+  ctx: GhCommandContext,
+): Promise<GitHubOpResult<JsonObject[]>> {
+  const ref = parseRepo(repo, ctx);
+  const limit = filters.limit ?? 30;
+  if (!Number.isInteger(limit) || limit < 1) throw new GhFailure(`invalid limit: ${limit}`);
+  const states = PR_LIST_STATES[filters.state ?? 'open'];
+  if (!states) throw new GhFailure(`invalid state: ${String(filters.state)}`);
+  const variables: Params = { owner: ref.owner, repo: ref.name, state: states };
+  if (filters.head) variables.headBranch = filters.head;
+  if (filters.base) variables.baseBranch = filters.base;
+  const query = `query PullRequestList($owner: String!, $repo: String!, $limit: Int!, $endCursor: String, $baseBranch: String, $headBranch: String, $state: [PullRequestState!] = OPEN) {repository(owner: $owner, name: $repo) {pullRequests(states: $state, baseRefName: $baseBranch, headRefName: $headBranch, first: $limit, after: $endCursor, orderBy: {field: CREATED_AT, direction: DESC}) {totalCount nodes {number} pageInfo {hasNextPage endCursor}}} rateLimit{cost}}`;
+  const state: PorcelainState = { graphqlCost: 0 };
+  const seen = new Set<number>();
+  const prs: JsonObject[] = [];
+  let pageLimit = Math.min(limit, 100);
+  for (;;) {
+    variables.limit = pageLimit;
+    const data = await porcelainGraphQL<{
+      repository?: {
+        pullRequests?: {
+          nodes?: JsonObject[];
+          pageInfo?: { hasNextPage?: boolean; endCursor?: string };
+        };
+      };
+    }>(ref.host, query, variables, ctx, state);
+    const page = data.repository?.pullRequests;
+    let done = false;
+    for (const pr of page?.nodes ?? []) {
+      const number = typeof pr.number === 'number' ? pr.number : 0;
+      if (number > 0 && seen.has(number)) continue;
+      seen.add(number);
+      prs.push(pr);
+      if (prs.length === limit) {
+        done = true;
+        break;
+      }
+    }
+    if (done || !page?.pageInfo?.hasNextPage) break;
+    variables.endCursor = page.pageInfo.endCursor ?? null;
+    pageLimit = Math.min(pageLimit, limit - prs.length);
+  }
+  return { data: prs, headers: state.headers, graphqlCost: state.graphqlCost };
+}
+
+/** Full prList with field selection (used by raw-cache prefetch which requests specific fields). */
+export async function githubPrListFieldsOp(
+  repo: string,
+  fields: string[],
+  filters: PRListFilters,
+  ctx: GhCommandContext,
+): Promise<GitHubOpResult<JsonObject[]>> {
+  const ref = parseRepo(repo, ctx);
+  const limit = filters.limit ?? 30;
+  if (!Number.isInteger(limit) || limit < 1) throw new GhFailure(`invalid limit: ${limit}`);
+  const states = PR_LIST_STATES[filters.state ?? 'open'];
+  if (!states) throw new GhFailure(`invalid state: ${String(filters.state)}`);
+  const variables: Params = { owner: ref.owner, repo: ref.name, state: states };
+  if (filters.head) variables.headBranch = filters.head;
+  if (filters.base) variables.baseBranch = filters.base;
+  const allFields = fields.includes('number') ? fields : [...fields, 'number'];
+  const query = `query PullRequestList($owner: String!, $repo: String!, $limit: Int!, $endCursor: String, $baseBranch: String, $headBranch: String, $state: [PullRequestState!] = OPEN) {repository(owner: $owner, name: $repo) {pullRequests(states: $state, baseRefName: $baseBranch, headRefName: $headBranch, first: $limit, after: $endCursor, orderBy: {field: CREATED_AT, direction: DESC}) {totalCount nodes {${prFieldQuery(allFields)}} pageInfo {hasNextPage endCursor}}} rateLimit{cost}}`;
+  const state: PorcelainState = { graphqlCost: 0 };
+  const seen = new Set<number>();
+  const prs: JsonObject[] = [];
+  let pageLimit = Math.min(limit, 100);
+  for (;;) {
+    variables.limit = pageLimit;
+    const data = await porcelainGraphQL<{
+      repository?: {
+        pullRequests?: {
+          nodes?: JsonObject[];
+          pageInfo?: { hasNextPage?: boolean; endCursor?: string };
+        };
+      };
+    }>(ref.host, query, variables, ctx, state);
+    const page = data.repository?.pullRequests;
+    let done = false;
+    for (const pr of page?.nodes ?? []) {
+      const number = typeof pr.number === 'number' ? pr.number : 0;
+      if (number > 0 && seen.has(number)) continue;
+      seen.add(number);
+      prs.push(exportPR(pr, fields));
+      if (prs.length === limit) {
+        done = true;
+        break;
+      }
+    }
+    if (done || !page?.pageInfo?.hasNextPage) break;
+    variables.endCursor = page.pageInfo.endCursor ?? null;
+    pageLimit = Math.min(pageLimit, limit - prs.length);
+  }
+  return { data: prs, headers: state.headers, graphqlCost: state.graphqlCost };
+}
+
+export async function githubPrChecksOp(
+  repo: string,
+  prNumber: number,
+  fields: string[],
+  ctx: GhCommandContext,
+): Promise<GitHubOpResult<JsonObject[]>> {
+  for (const field of fields)
+    if (!CHECK_FIELDS.has(field)) throw new GhFailure(`Unknown JSON field: "${field}"`);
+  const ref = parseRepo(repo, ctx);
+  const state: PorcelainState = { graphqlCost: 0 };
+  const variables: Params = { owner: ref.owner, repo: ref.name, pr_number: prNumber };
+  const contexts: CheckContextNode[] = [];
+  let headRefName = '';
+  for (;;) {
+    const data = await porcelainGraphQL<{
+      repository?: {
+        pullRequest?: {
+          headRefName?: string;
+          statusCheckRollup?: {
+            nodes?: Array<{
+              commit?: {
+                statusCheckRollup?: {
+                  contexts?: {
+                    nodes?: CheckContextNode[];
+                    pageInfo?: { hasNextPage?: boolean; endCursor?: string };
+                  };
+                } | null;
+              };
+            }>;
+          };
+        } | null;
+      };
+    }>(ref.host, PR_CHECKS_QUERY, variables, ctx, state);
+    const pr = data.repository?.pullRequest;
+    if (!pr) throw new GhFailure(`no pull requests found for number ${prNumber}`);
+    headRefName = pr.headRefName ?? '';
+    const commits = pr.statusCheckRollup?.nodes ?? [];
+    if (commits.length === 0) throw new GhFailure('no commit found on the pull request');
+    const result = commits[0].commit?.statusCheckRollup?.contexts;
+    contexts.push(...(result?.nodes ?? []));
+    if (!result?.pageInfo?.hasNextPage) break;
+    variables.endCursor = result.pageInfo.endCursor ?? null;
+  }
+  if (contexts.length === 0)
+    throw new GhFailure(`no checks reported on the '${headRefName}' branch`);
+  const checks = aggregateChecks(contexts).map((check) =>
+    Object.fromEntries(fields.map((field) => [field, check[field]])),
+  );
+  return { data: checks, headers: state.headers, graphqlCost: state.graphqlCost };
+}
+
+export async function githubPrCreateOp(
+  repo: string,
+  params: PRCreateParams,
+  ctx: GhCommandContext,
+): Promise<GitHubOpResult<string>> {
+  const ref = parseRepo(repo, ctx);
+  const prefix = `repos/${ref.owner}/${ref.name}`;
+  const state: PorcelainState = { graphqlCost: 0 };
+  const created = await porcelainRest(
+    ref.host,
+    'POST',
+    `${prefix}/pulls`,
+    {
+      title: params.title,
+      head: params.head,
+      base: params.base,
+      body: params.body,
+      draft: params.draft === true,
+    },
+    ctx,
+    state,
+  );
+  return { data: `${asString(created.html_url)}\n`, headers: state.headers };
+}
+
+export async function githubPrEditOp(
+  repo: string,
+  prNumber: number,
+  params: PREditParams,
+  ctx: GhCommandContext,
+): Promise<GitHubOpResult<string>> {
+  const ref = parseRepo(repo, ctx);
+  const prefix = `repos/${ref.owner}/${ref.name}`;
+  const state: PorcelainState = { graphqlCost: 0 };
+  const update: Params = {};
+  if (params.title !== undefined) update.title = params.title;
+  if (params.body !== undefined) update.body = params.body;
+  if (Object.keys(update).length === 0) throw new GhFailure('pr edit needs title or body');
+  const edited = await porcelainRest(
+    ref.host,
+    'PATCH',
+    `${prefix}/pulls/${prNumber}`,
+    update,
+    ctx,
+    state,
+  );
+  return { data: `${asString(edited.html_url)}\n`, headers: state.headers };
+}
+
+export async function githubPrCommentOp(
+  repo: string,
+  prNumber: number,
+  body: string,
+  ctx: GhCommandContext,
+): Promise<GitHubOpResult<string>> {
+  const ref = parseRepo(repo, ctx);
+  const prefix = `repos/${ref.owner}/${ref.name}`;
+  const state: PorcelainState = { graphqlCost: 0 };
+  const comment = await porcelainRest(
+    ref.host,
+    'POST',
+    `${prefix}/issues/${prNumber}/comments`,
+    { body },
+    ctx,
+    state,
+  );
+  return { data: `${asString(comment.html_url)}\n`, headers: state.headers };
+}
+
+export async function githubPrReadyOp(
+  repo: string,
+  prNumber: number,
+  ctx: GhCommandContext,
+): Promise<GitHubOpResult<void>> {
+  const ref = parseRepo(repo, ctx);
+  const prefix = `repos/${ref.owner}/${ref.name}`;
+  const state: PorcelainState = { graphqlCost: 0 };
+  const pr = await porcelainRest(
+    ref.host,
+    'GET',
+    `${prefix}/pulls/${prNumber}`,
+    undefined,
+    ctx,
+    state,
+  );
+  if (pr.state === 'closed')
+    throw new GhFailure(
+      `Pull request ${ref.owner}/${ref.name}#${prNumber} is closed. Only draft pull requests can be marked as "ready for review"`,
+    );
+  if (pr.draft !== true) return { data: undefined, headers: state.headers };
+  await porcelainGraphQL(
+    ref.host,
+    'mutation PullRequestReadyForReview($id: ID!) {markPullRequestReadyForReview(input: {pullRequestId: $id}) {clientMutationId}}',
+    { id: asString(pr.node_id) },
+    ctx,
+    state,
+  );
+  return { data: undefined, headers: state.headers, graphqlCost: state.graphqlCost };
+}
+
+export async function githubRepoViewOp(
+  repo: string,
+  ctx: GhCommandContext,
+): Promise<GitHubOpResult<{ nameWithOwner: string }>> {
+  const ref = parseRepo(repo, ctx);
+  const state: PorcelainState = { graphqlCost: 0 };
+  const data = await porcelainRest(
+    ref.host,
+    'GET',
+    `repos/${ref.owner}/${ref.name}`,
+    undefined,
+    ctx,
+    state,
+  );
+  return { data: { nameWithOwner: asString(data.full_name) }, headers: state.headers };
+}
+
+export async function githubGraphQLOp<T>(
+  host: string,
+  query: string,
+  variables: Record<string, string | number | null>,
+  ctx: GhCommandContext,
+): Promise<GitHubOpResult<T>> {
+  const state: PorcelainState = { graphqlCost: 0 };
+  const data = await porcelainGraphQL<T>(host, query, variables as Params, ctx, state);
+  return { data, headers: state.headers, graphqlCost: state.graphqlCost };
+}
+
+export async function githubRestOp<T>(
+  host: string,
+  method: string,
+  path: string,
+  opts: RestOpOpts,
+  ctx: GhCommandContext,
+): Promise<GitHubOpResult<T>> {
+  const methodUpper = method.toUpperCase();
+  const perPage = opts.perPage ?? (opts.paginate ? 100 : undefined);
+  let url = path.includes('://') ? path : restPrefix(host) + path.replace(/^\//, '');
+  if (perPage && methodUpper === 'GET' && !url.includes('per_page=')) {
+    url = url.includes('?') ? `${url}&per_page=${perPage}` : `${url}?per_page=${perPage}`;
+  }
+  const headers: Record<string, string> = {
+    Accept: '*/*',
+    'Content-Type': 'application/json; charset=utf-8',
+    ...opts.headers,
+  };
+  const body = opts.body !== undefined ? JSON.stringify(opts.body) : undefined;
+
+  if (!opts.paginate) {
+    const response = await send(host, { method: methodUpper, url, headers, body }, ctx);
+    if (response.status > 299) throw new GhFailure(httpErrorMessage(response));
+    // 204 No Content: body is empty; return null so callers that check can handle it.
+    return { data: JSON.parse(response.body || 'null') as T, headers: response.headers };
+  }
+
+  // Paginated REST: follow Link rel="next" headers, join JSON arrays.
+  const output: string[] = [];
+  let lastHeaders: Map<string, string> | undefined;
+  let pageCount = 0;
+  for (;;) {
+    const response = await send(
+      host,
+      { method: methodUpper, url, headers, body: pageCount === 0 ? body : undefined },
+      ctx,
+    );
+    lastHeaders = response.headers;
+    if (response.status > 299) throw new GhFailure(httpErrorMessage(response));
+    const next = findNextPage(response.headers.get('link') ?? undefined);
+    const isLastPage = !next;
+    if (opts.slurp) {
+      output.push(response.body);
+    } else {
+      output.push(mergePageArray(response.body, pageCount === 0, isLastPage));
+    }
+    pageCount++;
+    if (isLastPage) break;
+    // next is defined (truthy) because isLastPage is false
+    url = next as string;
+  }
+  const joined = opts.slurp ? `[${output.join(',')}]` : output.join('');
+  return { data: parseJson(joined) as T, headers: lastHeaders };
+}
