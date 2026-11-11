@@ -1,1 +1,1 @@
-- Resume an initialized task after template changes using its frozen requirements and a verified original worker; retain its signals until replacement and refuse uncertain worker identity.
+- Resume initialized tasks after template changes using retained requirements and a verified worker; preserve signals on refused admission and prevent stale outcomes on admitted cold, warm and nudge dispatch.
