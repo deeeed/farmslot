@@ -128,6 +128,10 @@ import {
 import { resolveRunnerAccountForDispatch } from '../../runners/status-provider.js';
 import { createProviderUsageLimitError } from '../../runners/usage-limit-error.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
+import {
+  CHECKLIST_TARGET_BY_AGENT_ROLE,
+  WORKER_SIGNAL_FILE,
+} from '../../tasks/checklist-target.js';
 import { initializeAuthoredTaskOnSlot } from '../../tasks/existing-runtime.js';
 import { verifyHostedTaskOnSlot } from '../../tasks/hosted-task-init.js';
 import { pinnedTaskLibraries } from '../../tasks/pinned-libraries.js';
@@ -1792,6 +1796,20 @@ export async function dispatchExecute(
     // from a freshly respawned shell after cleanup.
     await respawnRoleWindowForDispatch(vars, workerTarget);
   }
+  // Admission failures must leave an existing worker's signal available for recovery.
+  // This cold dispatch has now replaced its pane, so the previous attempt can be cleared.
+  options.assertCurrent?.();
+  const signalPaths = [
+    WORKER_SIGNAL_FILE,
+    CHECKLIST_TARGET_BY_AGENT_ROLE.review.signal,
+    CHECKLIST_TARGET_BY_AGENT_ROLE['review-fix'].signal,
+    CHECKLIST_TARGET_BY_AGENT_ROLE['ci-fix'].signal,
+  ].map((file) => shellQuote(`${vars.remoteRepo}/${workerTaskDir}/${file}`));
+  const clearedSignals = await execOnSlot(vars, `rm -f ${signalPaths.join(' ')}`, vars.remoteRepo);
+  if (clearedSignals.exitCode !== 0)
+    throw new Error(
+      `Failed to clear previous worker signals: ${clearedSignals.stderr || clearedSignals.stdout || `exit ${clearedSignals.exitCode}`}`,
+    );
   primaryTarget = {
     session,
     window: agentDispatchWindow(workerRole),

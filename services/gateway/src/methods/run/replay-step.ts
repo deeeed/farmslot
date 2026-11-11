@@ -2252,7 +2252,8 @@ async function replayRunStep(
 
     if (
       replaysWorkerLaunch &&
-      (existing.transport !== 'native' || nativeFreshRestart) &&
+      existing.transport === 'native' &&
+      nativeFreshRestart &&
       effectiveSlotId &&
       existing.taskFile
     ) {
