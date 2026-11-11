@@ -219,3 +219,136 @@ test('a successful persistent write rearms recovery for a later failure on the s
     await cache.dispose();
   }
 });
+
+test('a healthy query cannot rearm an always-failing query into a reopen loop', async () => {
+  const scope = {
+    gatewayUrl: 'ws://recovery.invalid/',
+    principalId: 'owner',
+    principalGeneration: 0,
+  };
+  const connection = new ResourceCacheConformanceTransport(scope);
+  connection.setConnection({
+    connected: true,
+    id: 1,
+    capabilities: {
+      httpBearerAuth: true,
+      voiceInstructionFormatting: false,
+      resourceChanges: {
+        version: 1,
+        epoch: 'conformance-epoch',
+        versionLists: false,
+        observedReads: 1,
+      },
+    },
+  });
+  const good = { ...resourceQuery<{ value: string }>('fleet.status'), persisted: true };
+  const bad = { ...resourceQuery<{ value: string }>('sources.status'), persisted: true };
+  let opens = 0,
+    goodWrites = 0;
+  const transport = {
+    getConnection: connection.getConnection,
+    onConnectionChange: connection.onConnectionChange,
+    onResourceChanged: connection.onResourceChanged,
+    resynchronize: connection.resynchronize,
+    async request<T>(method: string) {
+      const query = method === good.method ? good : bad;
+      return {
+        data: { value: method } as T,
+        resourceState: {
+          epoch: 'conformance-epoch',
+          dependencies: query.dependencies.map((key) => ({ key, revision: 0 })),
+        },
+      };
+    },
+  };
+  const cache = createGatewayResourceCache({
+    transport,
+    openStore: async () => {
+      // Bound the red control itself; the assertion below must catch excess opens.
+      if (++opens > 6) throw new Error('Stop unbounded recovery test');
+      const memory = createMemoryResourceStore();
+      return {
+        ...memory,
+        persistent: true,
+        async putQuery(entry) {
+          if (entry.id === bad.id) throw new Error('large row still cannot be persisted');
+          goodWrites++;
+          await memory.putQuery(entry);
+        },
+      };
+    },
+  });
+  const stopGood = cache.observe(good, () => {}),
+    stopBad = cache.observe(bad, () => {});
+  try {
+    await Promise.all([cache.retry(good), cache.retry(bad)]);
+    for (let i = 0; i < 40; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+    assert(goodWrites > 0, 'A healthy write must land beside the failed write');
+    assert.equal(opens, 2, 'Only the failing write can confirm its own recovery');
+    assert.match(cache.read(bad).storageNotice!, /large row still cannot be persisted/);
+    assert.equal(
+      cache.read(bad).data?.value,
+      bad.method,
+      'Fresh network values remain available in memory',
+    );
+  } finally {
+    stopGood();
+    stopBad();
+    await cache.dispose();
+  }
+});
+
+test('a refused oversized value cannot confirm recovery through a no-op write callback', async () => {
+  const scope = {
+    gatewayUrl: 'ws://recovery.invalid/',
+    principalId: 'owner',
+    principalGeneration: 0,
+  };
+  const transport = new ResourceCacheConformanceTransport(scope);
+  transport.setConnection({ connected: true, id: 1 });
+  let opens = 0,
+    failNext = false;
+  const query = {
+    ...resourceQuery<{ value: string }>('sources.status'),
+    persisted: true,
+    maxBytes: 128,
+  };
+  const cache = createGatewayResourceCache({
+    transport,
+    openStore: async () => {
+      const attempt = ++opens,
+        memory = createMemoryResourceStore();
+      return {
+        ...memory,
+        persistent: true,
+        async putQuery(entry) {
+          if (attempt === 1 || failNext) {
+            failNext = false;
+            throw new Error('Still cannot persist the row');
+          }
+          await memory.putQuery(entry);
+        },
+      };
+    },
+  });
+  const stop = cache.observe(query, () => {});
+  try {
+    const first = cache.retry(query);
+    (await transport.nextRead()).resolve({ value: 'first failure' });
+    await first;
+    query.maxBytes = 0;
+    (await transport.nextRead()).resolve({ value: 'not admitted to persistence' });
+    await cache.retry(query);
+    query.maxBytes = 128;
+    failNext = true;
+    const next = cache.retry(query);
+    (await transport.nextRead()).resolve({ value: 'same write still fails' });
+    await next;
+    assert.equal(opens, 2, 'An admission refusal is not a successful persistence confirmation');
+    (await transport.nextRead()).resolve({ value: 'fresh in memory' });
+    await cache.retry(query);
+  } finally {
+    stop();
+    await cache.dispose();
+  }
+});

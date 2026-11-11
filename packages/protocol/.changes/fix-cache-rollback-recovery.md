@@ -1,1 +1,1 @@
-- Re-arm automatic storage recovery after a successful persistent write so later failures on the same connection can reopen and resynchronize again.
+- Re-arm automatic storage recovery only when the previously failed query or collection write succeeds, so later transient failures recover without looping on partially unavailable storage.

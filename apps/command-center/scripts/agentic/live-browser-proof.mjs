@@ -27,8 +27,12 @@ export async function openLiveBrowserProof({ transformSource }) {
   const browser = await chromium.connectOverCDP(endpoint);
   const page = await browser.contexts()[0].newPage();
   const errors = [],
+    pageErrors = [],
     failedResponses = [];
-  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('pageerror', (error) => {
+    pageErrors.push(error.message);
+    errors.push(error.message);
+  });
   page.on('console', (message) => {
     if (message.type() === 'error') errors.push(message.text());
   });
@@ -72,7 +76,7 @@ export async function openLiveBrowserProof({ transformSource }) {
   try {
     await page.route(`${origin}/**`, proxy);
     await browser.contexts()[0].route(workerPattern, proxy);
-    return { page, origin, output, errors, failedResponses, close };
+    return { page, origin, output, errors, pageErrors, failedResponses, close };
   } catch (error) {
     await close();
     throw error;
