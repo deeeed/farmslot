@@ -133,7 +133,7 @@ test('slotless Pi static reviews load the frozen provider extension for router a
     run = reviewRun('pi', 'autonomous');
     run.slotId = null;
     run.metrics.model = model;
-    run.effort = 'max';
+    run.effort = ' MAX ';
     terminalInputs.length = 0;
     await reviewTmuxOperation(run, 'launch', 'Review the PR');
     const input = terminalInputs.at(-1);
@@ -141,6 +141,9 @@ test('slotless Pi static reviews load the frozen provider extension for router a
     assert(input.command.includes(`--model '${model}'`));
     assert(input.command.includes('--thinking max'));
     assert(input.command.includes("FARMSLOT_THINKING='max'"));
+    assert(input.command.includes("FARMSLOT_RUNNER='pi'"));
+    assert(input.command.includes(`FARMSLOT_MODEL='${model}'`));
+    assert(!input.command.includes('FARMSLOT_SLOT_ID='));
     assert(input.command.includes("FARMSLOT_PI_WORKSPACE_TRUST='untrusted'"));
     assert(
       input.command.includes(

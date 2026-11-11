@@ -282,7 +282,7 @@ export function buildPiLaunch(options: {
   const flagList = runnerFlagsForTier('pi', options.safetyTier);
   const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
   const thinkingFlag = piThinkingFlag(options.effort);
-  const thinking = (options.effort?.trim() || DEFAULT_PI_THINKING).toLowerCase();
+  const thinking = resolvePiThinkingLevel(options.effort);
   const taskFile = options.taskFile?.trim()
     ? path.isAbsolute(options.taskFile)
       ? options.taskFile
@@ -474,17 +474,20 @@ export function buildInteractiveRefinementRunnerCommand(options: {
     if (options.workspaceTrust === 'untrusted') {
       const taskDir = path.posix.dirname(options.promptPath);
       const support = path.posix.join(taskDir, 'inputs/runner-observability');
+      const cliModel = resolvePiModel(options.model);
       return [
         `${piObservabilityVerificationCommand(support)} &&`,
         `FARMSLOT_OBS_DIR=${shellQuote(path.posix.join(taskDir, '.observability'))}`,
         `FARMSLOT_TASK_FILE=${shellQuote(path.posix.join(taskDir, 'TASK.md'))}`,
-        `FARMSLOT_THINKING=${shellQuote((options.effort?.trim() || DEFAULT_PI_THINKING).toLowerCase())}`,
+        `FARMSLOT_RUNNER=${shellQuote('pi')}`,
+        `FARMSLOT_THINKING=${shellQuote(resolvePiThinkingLevel(options.effort))}`,
+        `FARMSLOT_MODEL=${shellQuote(cliModel)}`,
         "FARMSLOT_PI_WORKSPACE_TRUST='untrusted'",
         shellQuote(binary),
         reviewFlags,
         piThinkingFlag(options.effort).trim(),
         `-e ${shellQuote(path.posix.join(support, 'bin/pi-farmslot-observability.ts'))}`,
-        `--model ${shellQuote(resolvePiModel(options.model))}`,
+        `--model ${shellQuote(cliModel)}`,
         promptArg,
       ]
         .filter(Boolean)
@@ -752,8 +755,12 @@ function codexReasoningEffortFlag(effort?: string | null, model?: string | null)
   return ` --config ${shellQuote(`model_reasoning_effort="${effective}"`)}`;
 }
 
+function resolvePiThinkingLevel(effort?: string | null): string {
+  return (effort?.trim() || DEFAULT_PI_THINKING).toLowerCase();
+}
+
 function piThinkingFlag(effort?: string | null): string {
-  const normalized = (effort?.trim() || DEFAULT_PI_THINKING).toLowerCase();
+  const normalized = resolvePiThinkingLevel(effort);
   if (!isPiThinkingLevel(normalized)) {
     throw new Error(`Invalid PI thinking level: ${effort}`);
   }
