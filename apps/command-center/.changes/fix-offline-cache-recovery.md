@@ -1,0 +1,1 @@
+- Add repeatable browser proofs for durable storage recovery, schema isolation and gateway resynchronization.

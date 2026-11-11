@@ -220,6 +220,51 @@ const reads = (calls: RunListParams[]) => ({
 const ids = (state: ResourceQueryState<RunListResult> | undefined) =>
   state?.data?.runs.map(({ id }) => id);
 
+test('an I/O failure during removal cannot resurrect absent disk rows after recovery', async () => {
+  const fake = gateway([run('a', 1), run('b', 2)]);
+  const saved = createMemoryResourceStore();
+  let fail = false;
+  let opens = 0;
+  const durable: ResourceStore = {
+    ...saved,
+    persistent: true,
+    // Closing a connection does not remove the durable database.
+    async close() {},
+    async mergeRows(key, merge) {
+      if (fail) {
+        fail = false;
+        throw new Error('SQLITE_IOERR');
+      }
+      await saved.mergeRows!(key, merge);
+    },
+  };
+  const cache = createGatewayResourceCache({
+    transport: fake.transport,
+    openStore: async () => {
+      opens++;
+      return durable;
+    },
+  });
+  const history = observe<RunListResult>(cache, { limit: 1000 });
+  try {
+    await flush();
+    fail = true;
+    fake.remove('b');
+    await flush();
+    assert.equal(opens, 2);
+    assert.deepEqual(ids(history.last()), ['a']);
+    assert.equal(history.last()?.status, 'ready');
+    assert.deepEqual(
+      (await saved.getRows!(RUN_LIST_COLLECTION_ID)).rows.map(({ id }) => id),
+      ['a'],
+    );
+    assert.equal(reads(fake.calls).versions, 3, 'recovery requires a fresh versions read');
+  } finally {
+    history.stop();
+    await cache.dispose();
+  }
+});
+
 test('stored rows missing from the version reply are removed', async () => {
   const fake = gateway([run('a', 1), run('b', 2), run('c', 3)]);
   const store = createMemoryResourceStore();

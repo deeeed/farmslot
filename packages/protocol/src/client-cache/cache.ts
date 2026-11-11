@@ -55,6 +55,7 @@ import {
   type StoredResourceContent,
   type StoredResourceQuery,
 } from './store.js';
+import { type ResourceSyncState, resourceSyncState } from './sync-state.js';
 import type {
   GatewayResourceCache,
   GatewayResourceCacheOptions,
@@ -270,9 +271,15 @@ export function createGatewayResourceCache(
   let storageNotice: string | undefined;
   let needsStore = options.store === undefined && options.openStore !== undefined;
   let deletionRequired = false;
+  let recoveryAttempted = false;
   let barrier: Promise<void> = Promise.resolve();
+  let storeOpening: Promise<void> = Promise.resolve();
   const entries = new Map<string, QueryEntry>();
   const revisions = new Map<string, number>();
+  const syncListeners = new Map<
+    (state: ResourceSyncState) => void,
+    ((query: ResourceQuery) => boolean) | undefined
+  >();
   const encoder = new TextEncoder();
   const collectors = new ResourceCollectorAdmission(transport);
   let retiringStore = false;
@@ -393,9 +400,30 @@ export function createGatewayResourceCache(
     }
   }
 
+  const failedSyncObservers = new WeakSet<(state: ResourceSyncState) => void>();
+
+  function notifySync(): void {
+    if (!syncListeners.size) return;
+    const observed = [...entries.values()].filter((entry) => entry.listeners.size > 0);
+    for (const [listener, match] of syncListeners) {
+      const state = resourceSyncState(
+        observed.filter((entry) => !match || match(entry.query)).map((entry) => entry.state),
+        usable,
+      );
+      try {
+        listener(state);
+      } catch (error) {
+        if (failedSyncObservers.has(listener)) continue;
+        failedSyncObservers.add(listener);
+        console.error('Resource cache sync observer failed:', error);
+      }
+    }
+  }
+
   function notify(entry: QueryEntry): void {
     entry.state = { ...entry.state, storageNotice };
     for (const listener of entry.listeners) deliver(entry, listener);
+    notifySync();
   }
 
   function cancelScheduledRead(entry: QueryEntry): void {
@@ -440,7 +468,6 @@ export function createGatewayResourceCache(
     // A retired store's late I/O failure cannot replace the new principal's store.
     if (failed !== store || disposed) return;
     replaceStore(createMemoryResourceStore());
-    // Retry on the next connection lifecycle, never in an I/O failure loop.
     needsStore = options.openStore !== undefined && canPersist(connection);
     storageNotice = `Cached data will not survive a restart: ${queryError(error).message}`;
     if (metadata) await store.setMetadata(metadata);
@@ -451,7 +478,37 @@ export function createGatewayResourceCache(
       storageNotice += `; ${queryError(closeError).message}`;
     }
     options.onStorageNotice?.(storageNotice);
-    for (const entry of entries.values()) notify(entry);
+    // An I/O failure may have lost a collection merge. Keep visible values, but
+    // require a full gateway versions read and never hydrate its old disk rows.
+    forgetRunList();
+    for (const entry of entries.values()) invalidate(entry);
+    if (
+      needsStore &&
+      metadata &&
+      connection.connected &&
+      connection.foreground !== false &&
+      !recoveryAttempted
+    ) {
+      recoveryAttempted = true;
+      const ticket = version;
+      const nextMetadata = metadata;
+      await openFreshStore(nextMetadata, connection, false);
+      if (disposed || ticket !== version) return;
+      try {
+        const recoveredStore = store;
+        await withStoreWriteLock(recoveredStore, async () => {
+          if (disposed || ticket !== version || recoveredStore !== store) return;
+          await recoveredStore.setMetadata(nextMetadata);
+          await recoveredStore.deleteQuery(RUN_LIST_COLLECTION_ID);
+        });
+      } catch (retryError) {
+        await recoverStore(retryError);
+      }
+    }
+    for (const entry of entries.values()) {
+      notify(entry);
+      if (usable) schedule(entry);
+    }
   }
 
   function withStoreWriteLock<T>(target: ResourceStore, write: () => Promise<T>): Promise<T> {
@@ -485,15 +542,23 @@ export function createGatewayResourceCache(
   async function openFreshStore(
     next: ResourceStoreMetadata,
     nextConnection: ResourceCacheConnection,
+    hydrate = true,
   ): Promise<void> {
-    const previous = store;
-    const recoveringMemory = metadata !== undefined && !previous.persistent;
-    metadata = next;
-    try {
+    // Hydration/content failures can recover outside the write barrier. Serialize
+    // every opener with connection-lifecycle opens, without recursively holding it on failure.
+    const opening = storeOpening.then(async () => {
+      if (disposed) return;
+      const previous = store;
+      const recoveringMemory = metadata !== undefined && !previous.persistent;
+      metadata = next;
       const opened =
         options.openStore && canPersist(nextConnection)
           ? await options.openStore(next)
           : createMemoryResourceStore();
+      if (disposed) {
+        await opened.close();
+        return;
+      }
       if (opened !== previous) {
         if (recoveringMemory && !opened.persistent) {
           // A failed retry must not discard the active fallback's cached bodies.
@@ -529,13 +594,23 @@ export function createGatewayResourceCache(
         storageNotice = 'Offline data will not survive a restart with this gateway version.';
         options.onStorageNotice?.(storageNotice);
       }
+      needsStore =
+        options.openStore !== undefined && !store.persistent && canPersist(nextConnection);
+      // Same-owner recovery must not replace a newer visible reply with older disk data.
+      if (hydrate)
+        for (const entry of entries.values())
+          if (entry.state.data === undefined && entry.state.status !== 'ready') hydrateEntry(entry);
+    });
+    // The caller handles failures; a later opener still gets a usable queue.
+    storeOpening = opening.then(
+      () => undefined,
+      () => undefined,
+    );
+    try {
+      await opening;
     } catch (error) {
       await recoverStore(error);
     }
-    needsStore = options.openStore !== undefined && !store.persistent && canPersist(nextConnection);
-    // Same-owner recovery must not replace a newer visible reply with older disk data.
-    for (const entry of entries.values())
-      if (entry.state.data === undefined && entry.state.status !== 'ready') hydrateEntry(entry);
   }
 
   async function warmStoredQueries(): Promise<void> {
@@ -635,6 +710,7 @@ export function createGatewayResourceCache(
       return;
     }
     const ticket = ++version;
+    recoveryAttempted = false;
     runList.abort();
     // Stored facts belong to an owner, not a socket attempt. Fence a revoked
     // owner's pending I/O synchronously, before queued deletion can run.
@@ -742,6 +818,7 @@ export function createGatewayResourceCache(
         if (!revoke && canPersist(next)) await warmStoredQueries();
         if (disposed || ticket !== version) return;
         usable = next.connected && next.foreground !== false && !revoke;
+        notifySync();
         refreshDetailTargets();
         updateCollectors();
         if (usable) for (const entry of entries.values()) schedule(entry);
@@ -1808,11 +1885,13 @@ export function createGatewayResourceCache(
         });
       }
       deliver(entry, receive);
+      notifySync();
       if (entry.state.status !== 'ready' || entry.dirty) schedule(entry);
       return () => {
         active = false;
         cancelPaint?.();
         entry.listeners.delete(receive);
+        notifySync();
         updateCollectors();
         if (!entry.listeners.size) {
           cancelScheduledRead(entry);
@@ -1820,6 +1899,13 @@ export function createGatewayResourceCache(
         }
         entry.lastUsed = ++lastUsed;
         prune();
+      };
+    },
+    observeSync(listener, match) {
+      syncListeners.set(listener, match);
+      notifySync();
+      return () => {
+        syncListeners.delete(listener);
       };
     },
     read<T>(query: ResourceQuery<T>) {
@@ -1893,9 +1979,11 @@ export function createGatewayResourceCache(
         entry.listeners.clear();
       }
       entries.clear();
+      syncListeners.clear();
       await flushingConversations;
       conversationFlush = false;
       await barrier;
+      await storeOpening;
       try {
         if (reason && deletionReasons.has(reason)) await store.deleteAll();
         await withdrawing;
