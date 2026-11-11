@@ -12,7 +12,8 @@ import { ForkedBackgroundHost } from './client.js';
 import type { BackgroundReadyMessage } from './protocol.js';
 
 // Live check (not in the default suite: importing the child's graph under tsx takes seconds).
-// Run: yarn workspace @farmslot/gateway test:background-child-live
+// Run from services/gateway:
+//   TSX_TSCONFIG_PATH=tsconfig.json node --import tsx --test src/host-services/background/child.live.ts
 // The real child.ts on a temp farm: one local slot (a git checkout on main) and one pending
 // decision. Proves the forked entry imports, answers both operations, and dies with its parent.
 const root = await mkdtemp(path.join(os.tmpdir(), 'background-child-'));

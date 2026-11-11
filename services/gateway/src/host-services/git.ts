@@ -1,8 +1,8 @@
 // host-services/git.ts — Git service: checkout and ref reads from files, git processes when needed.
 //
 // All file-based readers answer only what git itself would answer from the same files. Layouts not
-// covered (no .git, reftable, symlinked or broken refs, symref chains, config includes, another
-// owner, Git environment overrides) return undefined: the caller then uses git.run, which reads the
+// covered (no .git, reftable, symlinked or broken refs, symref chains, config git rejects or that
+// includes files, another owner, Git environment overrides) return undefined: the caller then uses git.run, which reads the
 // same files and gives the exact answer, failures included. Object-database reads always go through
 // git.run — the only place call sites in this workstream spawn git.
 import type { Stats } from 'node:fs';
@@ -152,9 +152,28 @@ function pointerPath(content: string): string | undefined {
 }
 
 /**
+ * Whether git reads this repository through the files ref backend these readers implement: format
+ * version 0 or 1, and `extensions.refStorage` unset, or `files` in a version 1 repository (git
+ * refuses the extension in version 0). Reftable or a newer format is left to git.
+ */
+function filesRefBackend(local: GitConfigEntries): boolean {
+  const last = (name: string) => {
+    const found = local.filter(([key]) => key === name);
+    return found.length ? found[found.length - 1][1] : undefined;
+  };
+  const version = last('core.repositoryformatversion');
+  if (version !== undefined && version !== '0' && version !== '1') return false;
+  const storage = last('extensions.refstorage');
+  return storage === undefined || (version === '1' && storage === 'files');
+}
+
+/**
  * The checkout's Git directories, or undefined when git would not take them from
  * `<worktree>/.git` alone: no `.git` (git searches parent directories), another owner
  * (safe.directory), a Git environment override, or a directory that is not a repository.
+ * Also undefined when git would not answer the way these readers do: a config file git rejects or
+ * that includes another, or a ref backend other than files. Open a checkout for each read: the
+ * config check costs a stat per file while the files are unchanged.
  */
 export function openGitCheckout(worktree: string): Promise<GitCheckout | undefined> {
   return orGit(async () => {
@@ -190,7 +209,13 @@ export function openGitCheckout(worktree: string): Promise<GitCheckout | undefin
       const entry = await statOrNull(path.join(commonDir, directory), true);
       if (!entry?.isDirectory()) return undefined;
     }
-    return { worktree, gitDir, commonDir };
+    // Every git command loads the whole config and checks the repository format before it reads
+    // a ref; where it would fail or read refs another way, so does every read here: git answers.
+    const checkout = { worktree, gitDir, commonDir };
+    if (!(await readGitConfig(checkout))) return undefined;
+    const local = await readConfigFile(path.join(commonDir, 'config'));
+    if (!local || !filesRefBackend(local)) return undefined;
+    return checkout;
   });
 }
 

@@ -102,6 +102,35 @@ export interface ExecOptions {
   noRetry?: boolean;
 }
 
+// ─── Process groups ───
+
+/** Watches local commands that own a process group (a timeout or a signal gives them one). */
+export interface ProcessGroupObserver {
+  started(pgid: number): void;
+  ended(pgid: number): void;
+}
+let processGroupObserver: ProcessGroupObserver | undefined;
+
+/**
+ * Report each command's process group as it starts and closes. The gateway-background process
+ * uses this to kill its commands' groups when it exits, and to tell its supervisor about them.
+ */
+export function observeProcessGroups(observer: ProcessGroupObserver | undefined): void {
+  processGroupObserver = observer;
+}
+
+/** Signals every process in a command's group; false when none is left (ESRCH). */
+export function signalProcessGroup(pgid: number, signal: NodeJS.Signals): boolean {
+  try {
+    process.kill(-pgid, signal);
+    return true;
+  } catch (error) {
+    // The group's processes have all exited: there is nothing left to signal.
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
 // ─── execLocal ───
 // Run a command locally via child_process.spawn.
 // When onOutput is provided, invokes it per chunk (streaming).
@@ -155,21 +184,30 @@ function spawnLocalProcess(
       let aborted = false;
       let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
 
+      const group = useProcessGroup ? proc.pid : undefined;
+      if (group !== undefined) {
+        const observer = processGroupObserver;
+        observer?.started(group);
+        proc.once('close', () => observer?.ended(group));
+      }
+
       const killProcessTree = (sig: NodeJS.Signals) => {
-        if (useProcessGroup && proc.pid) {
+        if (group !== undefined) {
+          let groupError: string;
           try {
-            process.kill(-proc.pid, sig);
+            if (signalProcessGroup(group, sig)) return;
+            groupError = 'no process left in the group';
+          } catch (error) {
+            groupError = (error as Error).message;
+          }
+          try {
+            proc.kill(sig);
             return;
-          } catch (groupError) {
-            try {
-              proc.kill(sig);
-              return;
-            } catch (processError) {
-              console.warn(
-                `[execSpawn] ${sig} after process exit: group=${(groupError as Error).message}; process=${(processError as Error).message}`,
-              );
-              return;
-            }
+          } catch (processError) {
+            console.warn(
+              `[execSpawn] ${sig} after process exit: group=${groupError}; process=${(processError as Error).message}`,
+            );
+            return;
           }
         }
         proc.kill(sig);

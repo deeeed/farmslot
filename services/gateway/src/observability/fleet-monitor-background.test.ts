@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
@@ -37,7 +37,7 @@ mock.module('../host-services/background/client.js', {
   namedExports: { ...client, backgroundHost: fakeHost },
 });
 await import('../runtime/mock-pty.test-support.js');
-const { loadPendingDecisions, scanDecisions, startMonitor, stopMonitor } =
+const { loadPendingDecisions, resolveFileDecision, scanDecisions, startMonitor, stopMonitor } =
   await import('./fleet-monitor.js');
 
 const decision: PendingDecision = {
@@ -54,6 +54,45 @@ const decision: PendingDecision = {
 async function until(check: () => boolean): Promise<void> {
   for (let i = 0; i < 200 && !check(); i++) await new Promise((r) => setTimeout(r, 10));
 }
+
+test('a listing before any monitor result walks through the background host', async () => {
+  walk = async () => [{ path: '/tasks/run/.pending_decision.json', decision, signature: 'one' }];
+  const before = walks;
+  assert.deepEqual(
+    (await loadPendingDecisions()).map(({ id }) => id),
+    ['from-background'],
+  );
+  assert.equal(walks, before + 1);
+});
+
+test('resolving a file decision finds its file through the background host', async () => {
+  // The file lives outside the projects dir: only the host's answer can lead the resolver to it.
+  const file = path.join(projects, '..', `${path.basename(projects)}-decision.json`);
+  writeFileSync(file, '{}');
+  after(() => rmSync(file, { force: true }));
+  walk = async () => [
+    {
+      path: file,
+      decision: { ...decision, actions: [{ id: 'ack', label: 'Ack', style: 'primary' }] },
+      signature: 'one',
+    },
+  ];
+  const before = walks;
+  await resolveFileDecision('from-background', 'ack');
+  assert.equal(walks, before + 1);
+  assert.equal(existsSync(file), false);
+});
+
+test('while the background host is down, listing and resolving fail closed', async () => {
+  walk = async () => {
+    throw new client.BackgroundUnavailableError('The gateway background process is restarting');
+  };
+  await assert.rejects(loadPendingDecisions(), client.BackgroundUnavailableError);
+  await assert.rejects(
+    resolveFileDecision('from-background', 'ack'),
+    client.BackgroundUnavailableError,
+  );
+});
 
 test('the monitor announces decisions the background walk found', async (t) => {
   walk = async () => [{ path: '/tasks/run/.pending_decision.json', decision, signature: 'one' }];

@@ -5,6 +5,7 @@
 import { type ChildProcess, fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+import { signalProcessGroup } from '../../core/exec.js';
 import {
   recordHostOperationExec,
   registerHostOperations,
@@ -15,6 +16,7 @@ import {
   type BackgroundChildMessage,
   type BackgroundOperation,
   type BackgroundParams,
+  type BackgroundProcessGroupMessage,
   type BackgroundRequestMessage,
   type BackgroundResult,
   type ExecTally,
@@ -134,6 +136,22 @@ function addTally(total: ExecTally, delta: ExecTally): ExecTally {
     sum[kind] = { calls: previous.calls + value.calls, seconds: previous.seconds + value.seconds };
   }
   return sum;
+}
+
+/** SIGKILL the process groups a dead child's commands left behind: their timeouts died with it. */
+function killCommandGroups(pid: number | undefined, groups: Iterable<number>): void {
+  for (const pgid of groups) {
+    try {
+      if (signalProcessGroup(pgid, 'SIGKILL'))
+        console.warn(`[background] killed process group ${pgid} left by pid ${pid}`);
+    } catch (error) {
+      // Not ours to signal any more (EPERM: the id now names another user's group), so none of the
+      // child's commands is in it. The remaining groups still need killing and the gateway runs on.
+      console.error(
+        `[background] could not kill process group ${pgid}: ${(error as Error).message}`,
+      );
+    }
+  }
 }
 
 export class ForkedBackgroundHost implements BackgroundHost {
@@ -288,8 +306,22 @@ export class ForkedBackgroundHost implements BackgroundHost {
     });
     this.child = child;
     this.startedAt = Date.now();
-    child.on('message', (message: BackgroundChildMessage) => this.receive(child, message));
-    child.on('exit', (code, signal) => this.exited(child, code, signal));
+    // Process groups of the child's commands that have not closed. Whatever way the child exits,
+    // the ones it left are killed here; a report that arrives after the exit is killed at once.
+    const commandGroups = new Set<number>();
+    let gone = false;
+    child.on('message', (message: BackgroundChildMessage) => {
+      if (message.type !== 'processGroup') return this.receive(child, message);
+      if (message.state === 'ended') commandGroups.delete(message.pgid);
+      else if (gone) killCommandGroups(child.pid, [message.pgid]);
+      else commandGroups.add(message.pgid);
+    });
+    child.on('exit', (code, signal) => {
+      gone = true;
+      killCommandGroups(child.pid, commandGroups);
+      commandGroups.clear();
+      this.exited(child, code, signal);
+    });
     child.on('error', (error) => {
       console.error(`[background] process error: ${error.message}`);
       // A process that never started emits no exit; account for it as one.
@@ -297,7 +329,10 @@ export class ForkedBackgroundHost implements BackgroundHost {
     });
   }
 
-  private receive(child: ChildProcess, message: BackgroundChildMessage): void {
+  private receive(
+    child: ChildProcess,
+    message: Exclude<BackgroundChildMessage, BackgroundProcessGroupMessage>,
+  ): void {
     if (child !== this.child) return;
     if (message.type === 'ready') {
       this.rssBytes = message.rssBytes;
