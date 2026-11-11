@@ -30,7 +30,16 @@ test(
     setCachedFleetForTests({
       checkedAt: new Date().toISOString(),
       slots: [],
-      summary: { total: 0, ready: 0, busy: 0, disabled: 0, offline: 0, warmReady: 0 },
+      summary: {
+        total: 0,
+        ready: 0,
+        busy: 0,
+        held: 0,
+        manual: 0,
+        disabled: 0,
+        blocked: 0,
+        warmCount: 0,
+      },
     });
     t.after(() => setCachedFleetForTests(null));
     const runtime = createGatewayAuthRuntime({ FARMSLOT_HOME: home, GATEWAY_HOST: '127.0.0.1' });

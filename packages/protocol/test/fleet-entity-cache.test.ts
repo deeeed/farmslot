@@ -236,6 +236,8 @@ test(
     const result2 = await reading2;
 
     assert.equal(result2.fleet.slots.length, 2);
+    // Summary must be recomputed from assembled slots (not taken from stale versions read cache).
+    assert.equal(result2.fleet.summary.total, 2, 'computeSummary reflects assembled slot count');
     // Exactly one versions read triggered (the membership update)
     assert.equal(
       transport.requestCount - countAfterFirst,
