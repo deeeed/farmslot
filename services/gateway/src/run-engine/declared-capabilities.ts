@@ -5,6 +5,7 @@ import { parseMarkdownDocument } from '@farmslot/agent-runtime';
 import {
   EXECUTION_CHECKLIST_DOCUMENT,
   type ExecutionTemplateRunMode,
+  isArtifactOnlyScriptedCommandRun,
   isLightweightInteractiveDevRun,
   isTerminalRunStatus,
   recipeFlowRequirements,
@@ -204,9 +205,10 @@ async function authoredTemplateFrontmatter(run: Run) {
     throw new BlockedRunError(
       'Retained capability preparation requires the authored task snapshot.',
     );
-  const document = isLightweightInteractiveDevRun(run)
-    ? run.taskFile
-    : path.join(path.dirname(run.taskFile), EXECUTION_CHECKLIST_DOCUMENT);
+  const document =
+    isLightweightInteractiveDevRun(run) || isArtifactOnlyScriptedCommandRun(run)
+      ? run.taskFile
+      : path.join(path.dirname(run.taskFile), EXECUTION_CHECKLIST_DOCUMENT);
   return parseMarkdownDocument(await readFile(document, 'utf8')).frontmatter;
 }
 

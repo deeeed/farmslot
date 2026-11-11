@@ -146,6 +146,8 @@ export interface RunReplayStepHooks {
   startEngine?(runId: string): Promise<void>;
   /** Test-only: whether an engine loop drives the run when the replay cancels it. */
   engineDriven?(runId: string): boolean;
+  /** Test-only: an already validated task-signal probe, without starting a runner. */
+  probeTaskSignal?: typeof readAdoptableTaskSignal;
   /** Test-only: the worker mirror refresh a human-gate replay runs before rebuilding the gate. */
   captureOutput?: typeof captureRunOutput;
   /**
@@ -773,9 +775,9 @@ export async function readAdoptableTaskSignal(
     // would send it a second time.
     throw new ReplayTaskSignalProbeError(
       `Run ${run.id.slice(0, 8)} could not be replayed: the worker signal on slot ${slotId} ` +
-        `could not be read (${message}), so replay cannot tell whether the prompt is already ` +
-        'executing. Next: retry once the slot is reachable, replay with freshDispatch to ' +
-        'abandon the retained handoff, or replay from find-slot to select a fresh worker.',
+        `and its original session could not be confirmed (${message}); no replacement was authorized. ` +
+        'Retry after restoring slot reachability and the original session/signal, or explicitly ' +
+        'replay from find-slot to select a fresh worker.',
     );
   }
 }
@@ -1271,10 +1273,8 @@ async function replayRunStep(
     replayStepName === PS.DISPATCH ||
     (replayStepName === PS.MONITOR &&
       existing.steps.some((step) => step.name === PS.DISPATCH && step.status === 'failed'))
-      ? await readAdoptableTaskSignal(existing, {
-          freshDispatch: Boolean(
-            params.freshDispatch || (existing.transport === 'native' && hasWorkerRunnerOverride),
-          ),
+      ? await (hooks.probeTaskSignal ?? readAdoptableTaskSignal)(existing, {
+          freshDispatch: Boolean(params.freshDispatch || hasWorkerRunnerOverride),
         })
       : null;
   const adoptedTaskSignal = probedTaskSignal && monitorIdx >= 0 ? probedTaskSignal : null;

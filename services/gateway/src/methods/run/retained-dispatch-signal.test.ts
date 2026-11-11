@@ -15,7 +15,7 @@ function fixture() {
     id: 'retained-run',
     slotId: 'slot-1',
     flowType: 'dev',
-    taskFile: '/mirror/task/TASK.md',
+    taskFile: '/mirror/original/TASK.md',
   });
   run.engineState = { taskInit: { taskFile: run.taskFile!, status: 'initialized' } };
   run.steps = [{ name: 'dispatch', status: 'failed', startedAt: '2026-11-11T15:00:00.000Z' }];
@@ -48,6 +48,7 @@ function fixture() {
 
 type Deps = NonNullable<Parameters<typeof retainedDispatchSignal>[4]>;
 const healthy: Deps = {
+  taskDir: async () => 'tasks/original',
   pane: async () => ({ paneId: '%1', panePid: '100' }),
   probe: async () => ({ state: 'present', pid: '101' }),
   binding: async (_vars, _runner, expected) => {
@@ -113,12 +114,7 @@ test('a mismatched live session refuses; a confirmed absent worker keeps ordinar
 });
 
 test('a different run, slot, role, task or newer attempt cannot borrow an old worker', async () => {
-  for (const change of [
-    { runId: 'foreign' },
-    { slotId: 'foreign' },
-    { role: 'review' as const },
-    { attemptStartedAt: '2026-11-11T15:01:00.000Z' },
-  ]) {
+  for (const change of [{ runId: 'foreign' }, { slotId: 'foreign' }, { role: 'review' as const }]) {
     const { run, context, vars, signal } = fixture();
     assert.equal(
       await retainedDispatchSignal(run, { ...context, ...change }, vars, signal, {
@@ -139,6 +135,51 @@ test('a different run, slot, role, task or newer attempt cannot borrow an old wo
       signal,
       healthy,
     ),
-    /signal does not match/,
+    /current task/,
+  );
+  await assert.rejects(
+    retainedDispatchSignal(
+      run,
+      { ...context, attemptStartedAt: '2026-11-11T15:01:00.000Z' },
+      vars,
+      signal,
+      healthy,
+    ),
+    /original attempt identity/,
+  );
+});
+
+test('a regenerated current task cannot adopt the old worker and both old context paths', async () => {
+  const { run, context, vars, signal } = fixture();
+  run.taskFile = '/mirror/new-task/TASK.md';
+  run.engineState = { taskInit: { taskFile: run.taskFile, status: 'initialized' } };
+  await assert.rejects(
+    retainedDispatchSignal(run, context, vars, signal, {
+      ...healthy,
+      taskDir: async () => 'tasks/new-task',
+    }),
+    /current task/,
+  );
+});
+
+test('missing session identity preserves a live worker but permits confirmed absence', async () => {
+  for (const missing of [{ runnerSessionId: null }, { runnerSessionPath: null }]) {
+    const { run, context, vars, signal } = fixture();
+    await assert.rejects(
+      retainedDispatchSignal(run, { ...context, ...missing }, vars, signal, healthy),
+      /identity is incomplete/,
+    );
+    assert.equal(
+      await retainedDispatchSignal(run, { ...context, ...missing }, vars, signal, {
+        ...healthy,
+        probe: async () => ({ state: 'absent' }),
+      }),
+      null,
+    );
+  }
+  const { run, context, vars, signal } = fixture();
+  await assert.rejects(
+    retainedDispatchSignal(run, context, vars, signal, { ...healthy, pane: async () => null }),
+    /liveness is unconfirmed/,
   );
 });

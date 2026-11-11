@@ -109,6 +109,10 @@ test('dispatch of an initialized task keeps its frozen template after a pack edi
     prepareDispatchRunCapabilities({ run, project, slot, flow: 'dev', mode: 'autonomous' }),
     /ENOENT/,
   );
+  run.metrics.runner = 'scripted';
+  run.scripted = { mode: 'command', commandRef: 'hold' };
+  run.completionPolicy = 'artifact-only';
+  await prepareDispatchRunCapabilities({ run, project, slot, flow: 'dev', mode: 'autonomous' });
 });
 
 test('declared IDs consume frozen inputs and leave unrelated authored requirements unacquired', async () => {
