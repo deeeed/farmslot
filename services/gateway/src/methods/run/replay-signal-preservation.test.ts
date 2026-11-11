@@ -18,6 +18,7 @@ for (const [key, value] of Object.entries({
   FARMSLOT_RUNS_DIR: path.join(fixture, 'runs'),
   FARMSLOT_PROJECTS_DIR: path.join(fixture, 'projects'),
   FARMSLOT_POOL_DIR: path.join(fixture, 'pool'),
+  FARMSLOT_TEST_STATUS_FILE: path.join(fixture, 'status.json'),
   TMUX_TMPDIR: path.join(fixture, 't'),
   FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
   NODE_TEST_CONTEXT: '1',
@@ -65,7 +66,7 @@ const { statusFile } = await import('../../core/state.js');
 const { createRun, deleteRun, getRun, runsDirectory, updateRun } =
   await import('../../runs/store.js');
 const { runReplayStep } = await import('./replay-step.js');
-assert.equal(statusFile, path.join(tmpdir(), `farmslot-test-status-${process.pid}.json`));
+assert.equal(statusFile, path.join(fixture, 'status.json'));
 assert.equal(runsDirectory(), path.join(fixture, 'runs'));
 
 test('dispatch replay preserves the idle worker signal until replacement admission', async (t) => {
