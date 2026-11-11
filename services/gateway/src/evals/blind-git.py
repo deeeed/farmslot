@@ -103,6 +103,69 @@ def tmux_socket_rules(sockets):
             + '(allow network-outbound ' + ' '.join(resolver) + ')')
 
 
+def rename_guard_rules(values):
+    # A path-based read denial must survive moving any of its ancestor dirs.
+    parents = {str(parent) for value in values for alias in path_aliases(value)
+               for parent in Path(alias).parents if str(parent) != '/'}
+    return ['(deny file-write-unlink ' + ' '.join(
+        '(literal %s)' % json.dumps(p, ensure_ascii=False) for p in sorted(parents)) + ')']
+
+
+def worker_access_rules(repo):
+    quote = lambda value: json.dumps(str(value), ensure_ascii=False)
+    rules = []
+    # Recipe CDP/dev servers, Metro, databases, local model providers and the
+    # visual-review server (which can choose port 0) need TCP. Their complete
+    # endpoint set is not captured at boundary creation. Block remote-shell
+    # services on every address, including IPv6/mapped IPv4 and loopback aliases.
+    rules += ['(deny network-outbound ' + ' '.join(
+        '(remote tcp "*:%s")' % port for port in [22, 512, 513, 514]) + ')']
+    rules += ['(deny process-exec ' + ' '.join(
+        '(literal "/usr/bin/%s")' % name for name in ['ssh', 'scp', 'sftp']) + ')']
+    # Deployed task helpers and support bundles must remain executable.
+    # Hide the rest of both legacy node installations, including dev-stack and
+    # pool/project sources. Preserve a task checkout nested inside either root.
+    for name in ['farmslot-node', 'farmslot-node-dev']:
+        installation = Path.home() / name
+        rules += ['(deny %s (subpath %s))' % (operation, quote(p))
+                  for operation in ['file-read*', 'file-write*'] for p in path_aliases(installation)]
+        readable = [installation / p for p in ['support', 'node_modules', 'packages/agent-runtime']]
+        # Node realpath/module resolution stats ancestors of admitted scripts.
+        # Metadata alone does not permit listing directories or reading sources.
+        metadata = [installation, installation / 'packages']
+        if inside(repo, installation.resolve()):
+            readable += [repo]
+            metadata += [p for p in repo.parents if inside(p, installation.resolve())]
+            rules += ['(allow file-write* (subpath %s))' % quote(p) for p in path_aliases(repo)]
+        rules += ['(allow file-read-metadata (literal %s))' % quote(p)
+                  for value in metadata for p in path_aliases(value)]
+        rules += ['(allow file-read* (subpath %s))' % quote(p)
+                  for value in readable for p in path_aliases(value)]
+        rules += ['(allow file-read* (literal %s))' % quote(p)
+                  for p in path_aliases(installation / 'package.json')]
+    rules += rename_guard_rules([Path.home() / name for name in ['farmslot-node', 'farmslot-node-dev']])
+    return rules
+
+
+def worker_private_rules(capsule):
+    quote = lambda value: json.dumps(str(value), ensure_ascii=False)
+    rules = []
+    # These denials come after every read exception, including the boundary and
+    # node_modules. Resolve symlinks before entering the sandbox as well.
+    protected = [Path.home() / '.ssh', Path.home() / '.pi/agent/settings.json',
+                 capsule / 'boundary/sandbox.sb']
+    for value in protected:
+        rules += ['(deny %s (subpath %s))' % (operation, quote(p))
+                  for operation in ['file-read*', 'file-write*'] for p in path_aliases(value)]
+    # The basename remains protected even when a checkout's parent is renamed.
+    rules += ['(deny %s (regex #"/blind-git[.](py|ts|js)$"))' % operation
+              for operation in ['file-read*', 'file-write*']]
+    rules += rename_guard_rules(protected)
+    # Pi loads extensions inside this same seatbelt. File rules cannot distinguish
+    # Pi's loader from its tool children; denying extension sources breaks startup.
+    return rules
+
+
 def sandbox_profile(spec, capsule, tmux_sockets=None):
     # Deny reads of other slot checkouts, the original checkout a linked worktree
     # shares objects with, every blind capsule except this boundary, and the
@@ -119,6 +182,7 @@ def sandbox_profile(spec, capsule, tmux_sockets=None):
     denied += sorted(capsules) + [(Path.home() / '.config' / 'gh').resolve()]
     quote = lambda path: json.dumps(str(path), ensure_ascii=False)
     rules = ['(version 1)', '(allow default)',
+                      *worker_access_rules(repo),
                       '(deny file-read* ' + ' '.join('(subpath %s)' % quote(path) for path in denied) + ')',
                       '(allow file-read* (subpath %s))' % quote((capsule / 'boundary').resolve())]
     if spec.get('proofBoundary'):
@@ -132,6 +196,7 @@ def sandbox_profile(spec, capsule, tmux_sockets=None):
     rules += ['(deny file-write* (subpath %s))' % quote(Path(os.path.expanduser(p)).resolve())
               for p in spec.get('farmConfigRoots', [])]
     rules += [tmux_socket_rules(tmux_sockets or [])]
+    rules += worker_private_rules(capsule)
     return '\n'.join(rules + [''])
 
 

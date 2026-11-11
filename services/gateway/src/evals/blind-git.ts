@@ -55,7 +55,7 @@ export function withBlindTrialBoundary(command: string, trial: BlindTrialWorkerB
   const boundary = `${trial.capsule}/boundary`;
   const deny = shSingleQuote(`${boundary}/bin/deny`);
   return [
-    `unset ${GITHUB_TOKEN_NAMES.join(' ')} TMUX TMUX_TMPDIR`,
+    `unset ${GITHUB_TOKEN_NAMES.join(' ')} TMUX TMUX_TMPDIR SSH_AUTH_SOCK SSH_AGENT_PID`,
     `export FARMSLOT_CI_BASE_REF=${shSingleQuote(trial.baseSha)}`,
     `export GH_CONFIG_DIR=${shSingleQuote(`${boundary}/gh-config`)}`,
     `export PATH=${shSingleQuote(`${boundary}/bin`)}:"$PATH"`,

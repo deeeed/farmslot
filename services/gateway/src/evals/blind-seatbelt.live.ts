@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import {
+  copyFileSync,
   existsSync,
   linkSync,
   mkdirSync,
@@ -13,9 +14,10 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
@@ -26,9 +28,11 @@ import { withBlindTrialBoundary } from './blind-git.js';
 const python = fileURLToPath(new URL('./blind-git.py', import.meta.url));
 const adapter = fileURLToPath(new URL('../../../../packages/adapter-web/', import.meta.url));
 const { stopWebDappBrowser } = await import(path.join(adapter, 'src/web-dapp/lib/processes.mjs'));
+const syntheticHome = realpathSync(mkdtempSync(path.join('/tmp', 'seatbelt-home-')));
+after(() => rmSync(syntheticHome, { recursive: true }));
 const env = {
   PATH: process.env.PATH,
-  HOME: os.homedir(),
+  HOME: syntheticHome,
   TMPDIR: os.tmpdir(),
   TMUX_TMPDIR: process.env.TMUX_TMPDIR,
   PYTHONDONTWRITEBYTECODE: '1',
@@ -94,6 +98,177 @@ function worker(root: string, command: string, launchEnv = env, timeout = 45_000
     },
   );
 }
+
+test(
+  'SSH execution, loopback remote shells, credentials and a known agent socket are denied',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const root = fixture();
+    const agent = net.createServer((socket) => socket.destroy());
+    t.after(async () => {
+      try {
+        if (agent.listening)
+          await new Promise<void>((resolve, reject) =>
+            agent.close((error) => (error ? reject(error) : resolve())),
+          );
+      } finally {
+        rmSync(root, { recursive: true });
+      }
+    });
+    const home = path.join(root, 'home');
+    const credentials = path.join(root, 'credentials');
+    mkdirSync(home);
+    mkdirSync(credentials);
+    symlinkSync(credentials, path.join(home, '.ssh'));
+    for (const name of ['id_ed25519', 'config', 'known_hosts'])
+      writeFileSync(path.join(credentials, name), 'synthetic SSH fixture only', { mode: 0o600 });
+    const socket = path.join(root, 'agent.sock');
+    agent.listen(socket);
+    await once(agent, 'listening');
+    const launchEnv = { ...env, HOME: home, SSH_AUTH_SOCK: socket, SSH_AGENT_PID: '123' };
+    profile(root, launchEnv);
+    const probe = path.join(root, 'ssh-probe.mjs');
+    writeFileSync(
+      probe,
+      `
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { readFileSync, renameSync, linkSync } from 'node:fs';
+import net from 'node:net';
+assert.equal(process.env.SSH_AUTH_SOCK, undefined);
+assert.equal(process.env.SSH_AGENT_PID, undefined);
+const home = ${JSON.stringify(home)};
+const credentials = ${JSON.stringify(credentials)};
+for (const directory of [home + '/.ssh', credentials]) {
+  for (const name of ['id_ed25519', 'config', 'known_hosts'])
+    assert.throws(() => readFileSync(directory + '/' + name), { code: 'EPERM' });
+  assert.throws(() => renameSync(directory, directory + '-moved'), { code: 'EPERM' });
+  assert.throws(() => linkSync(directory + '/id_ed25519', home + '/linked-key'), { code: 'EPERM' });
+}
+assert.throws(() => renameSync(home, home + '-moved'), { code: 'EPERM' });
+const deniedConnection = options => new Promise((resolve, reject) => {
+  const client = net.connect(options);
+  const timer = setTimeout(() => { client.destroy(); reject(new Error('connection did not fail promptly')); }, 1500);
+  client.once('connect', () => { clearTimeout(timer); client.destroy(); reject(new Error('sandbox allowed connection')); });
+  client.once('error', error => {
+    clearTimeout(timer);
+    client.destroy();
+    try { assert.equal(error.code, 'EPERM'); resolve(); }
+    catch (failure) { reject(failure); }
+  });
+});
+// Raw TCP proves the network rule even if a worker copies an SSH client.
+for (const host of ['localhost', '127.0.0.1', '::1', '127.0.0.2', '::ffff:127.0.0.1'])
+  for (const port of [22, 512, 513, 514]) await deniedConnection({ host, port });
+// Knowing or re-exporting the agent path must not restore access.
+process.env.SSH_AUTH_SOCK = ${JSON.stringify(socket)};
+await deniedConnection({ path: process.env.SSH_AUTH_SOCK });
+for (const host of ['localhost', '127.0.0.1', '::1']) {
+  const result = spawnSync('/usr/bin/ssh', ['-F', '/dev/null', '-o', 'BatchMode=yes', '-o', 'IdentityAgent=none', '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=none', '-o', 'ConnectTimeout=1', host, 'true']);
+  assert.ok(['EPERM', 'EACCES'].includes(result.error?.code), 'SSH execution must be denied');
+}
+for (const executable of ['/usr/bin/scp', '/usr/bin/sftp']) {
+  const result = spawnSync(executable, ['-h']);
+  assert.ok(['EPERM', 'EACCES'].includes(result.error?.code), executable + ' execution must be denied');
+}
+console.log('SSH/scp/sftp execution denied; loopback TCP 22/512/513/514 denied across IPv4/IPv6; synthetic SSH files unreadable; agent env stripped and known socket unusable');
+`,
+    );
+    const result = worker(root, `exec ${q(process.execPath)} ${q(probe)}`, launchEnv);
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    t.diagnostic(result.stdout.trim());
+  },
+);
+
+test(
+  'reconnaissance reads and alternate process launch paths stay blocked',
+  { skip: process.platform !== 'darwin' },
+  (t) => {
+    const root = fixture();
+    t.after(() => rmSync(root, { recursive: true }));
+    const home = path.join(root, 'home');
+    const blocked = ['.pi/agent/settings.json'];
+    const allowed: string[] = [];
+    for (const installation of ['farmslot-node', 'farmslot-node-dev']) {
+      blocked.push(
+        ...[
+          'src/index.ts',
+          'scripts/dev-stack/start.sh',
+          'pool/fixture.json',
+          'projects/fixture/private.txt',
+        ].map((file) => `${installation}/${file}`),
+      );
+      allowed.push(
+        ...[
+          'support/fixture/scripts/proof.mjs',
+          'node_modules/fixture/index.js',
+          'packages/agent-runtime/scripts/proof.cjs',
+        ].map((file) => `${installation}/${file}`),
+      );
+      // A runtime exception must never reopen installed wrapper source reads.
+      blocked.push(`${installation}/node_modules/@farmslot/gateway/src/evals/blind-git.py`);
+    }
+    blocked.push('outside/services/gateway/src/evals/blind-git.ts');
+    for (const file of [...blocked, ...allowed]) {
+      mkdirSync(path.dirname(path.join(home, file)), { recursive: true });
+      writeFileSync(path.join(home, file), "console.log('synthetic helper executed');");
+    }
+    const launchEnv = { ...env, HOME: home };
+    profile(root, launchEnv);
+    const denied = [
+      ...blocked.map((file) => path.join(home, file)),
+      path.join(root, 'boundary/sandbox.sb'),
+    ];
+    // Exercise a worker-created alias as well as the resolved profile path.
+    const profileAlias = path.join(root, 'profile-alias');
+    symlinkSync(path.join(root, 'boundary/sandbox.sb'), profileAlias);
+    denied.push(profileAlias);
+    const copiedPs = path.join(root, 'copied-ps');
+    copyFileSync('/bin/ps', copiedPs);
+    const label = `seatbelt-fixture-${process.pid}-${path.basename(root)}`;
+    t.after(() => {
+      const removed = spawnSync('/bin/launchctl', ['remove', label], {
+        env,
+        encoding: 'utf8',
+        timeout: 2000,
+      });
+      assert.ifError(removed.error);
+      assert.ok([0, 3, 113].includes(removed.status!), removed.stderr);
+    });
+    const probe = path.join(root, 'recon-probe.mjs');
+    writeFileSync(
+      probe,
+      `
+import assert from 'node:assert/strict';
+import { readFileSync, readdirSync, renameSync, linkSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+for (const file of ${JSON.stringify(denied)}) assert.throws(() => readFileSync(file), { code: 'EPERM' });
+for (const file of ${JSON.stringify(denied.filter((file) => file !== profileAlias))}) {
+  assert.throws(() => renameSync(file, file + '-moved'), { code: 'EPERM' });
+  assert.throws(() => linkSync(file, file + '-linked'), { code: 'EPERM' });
+}
+for (const directory of ${JSON.stringify(['.pi', '.pi/agent', 'farmslot-node', 'farmslot-node-dev'].map((file) => path.join(home, file)).concat([path.join(root, 'boundary')]))}) assert.throws(() => renameSync(directory, directory + '-moved'), { code: 'EPERM' });
+for (const installation of ['farmslot-node', 'farmslot-node-dev']) assert.throws(() => readdirSync(${JSON.stringify(home)} + '/' + installation), { code: 'EPERM' });
+for (const file of ${JSON.stringify(allowed.map((file) => path.join(home, file)))}) {
+  assert.equal(readFileSync(file, 'utf8'), "console.log('synthetic helper executed');");
+  const helper = spawnSync(process.execPath, [file]);
+  assert.equal(helper.status, 0, helper.stderr.toString());
+  assert.equal(helper.stdout.toString().trim(), 'synthetic helper executed');
+}
+const launch = spawnSync('/bin/launchctl', ['submit', '-l', ${JSON.stringify(label)}, '--', '/bin/ps', '-p', '1'], { timeout: 2000 });
+assert.notEqual(launch.status, 0, 'launchctl submit must fail');
+const copied = spawnSync(${JSON.stringify(copiedPs)}, ['-p', '1'], { timeout: 2000 });
+assert.notEqual(copied.status, 0, 'copied ps must remain non-functional');
+console.log('synthetic settings/profile/wrapper/node reads denied; support/dependencies/helpers executed; launchctl submit and copied ps non-functional');
+`,
+    );
+    const result = worker(root, `exec ${q(process.execPath)} ${q(probe)}`, launchEnv);
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    t.diagnostic(result.stdout.trim());
+  },
+);
 
 test(
   'private tmux servers refuse worker control; gateway-side control and pane identity survive',
@@ -460,11 +635,13 @@ try {
   await once(server, 'listening');
   const agent = root + '/pi-agent-' + mode;
   mkdirSync(agent);
+  const extension = agent + '/fixture-extension.mjs';
+  writeFileSync(extension, "import { writeFileSync } from 'node:fs'; export default function(pi) { pi.on('session_start', () => writeFileSync(" + JSON.stringify(agent + '/extension-loaded') + ", 'synthetic extension loaded')); }");
   writeFileSync(agent + '/models.json', JSON.stringify({ providers: { 'seatbelt-fixture': {
     baseUrl: 'http://127.0.0.1:' + server.address().port + '/v1', api: 'openai-completions', apiKey: 'fixture-only',
     models: [{ id: 'fixture', name: 'Fixture', reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 4096, maxTokens: 128 }],
   } } }));
-  child = spawn(${JSON.stringify(pi)}, ['--offline', '--print', '--no-session', '--no-tools', '--no-extensions', '--no-mcp', '--no-skills', '--no-prompt-templates', '--no-context-files', '--no-themes', '--provider', 'seatbelt-fixture', '--model', 'fixture', '--system-prompt', 'Synthetic fixture only.', 'Reply with seatbelt-fixture-ok'], { cwd: root, env: { ...process.env, PI_CODING_AGENT_DIR: agent }, stdio: ['ignore', 'pipe', 'pipe'] });
+  child = spawn(${JSON.stringify(pi)}, ['--offline', '--print', '--no-session', '--no-tools', '--no-extensions', '--extension', extension, '--no-mcp', '--no-skills', '--no-prompt-templates', '--no-context-files', '--no-themes', '--provider', 'seatbelt-fixture', '--model', 'fixture', '--system-prompt', 'Synthetic fixture only.', 'Reply with seatbelt-fixture-ok'], { cwd: root, env: { ...process.env, PI_CODING_AGENT_DIR: agent }, stdio: ['ignore', 'pipe', 'pipe'] });
   writeFileSync(root + '/pi-spawned-' + mode + '.json', JSON.stringify({ piPid: child.pid }));
   let stdout = '', stderr = '';
   child.stdout.on('data', chunk => { stdout += chunk; });
@@ -475,7 +652,8 @@ try {
   } else {
     assert.equal(code, 0, stderr);
     assert.match(stdout, /seatbelt-fixture-ok/u);
-    console.log('pi completed a turn through a local synthetic provider');
+    assert.equal((await import('node:fs')).readFileSync(agent + '/extension-loaded', 'utf8'), 'synthetic extension loaded');
+    console.log('pi loaded its synthetic extension and completed a turn through a local synthetic provider');
   }
 } finally {
   await cleanup();
