@@ -87,16 +87,13 @@ try {
   mkdirSync(seed);
   git(seed, 'init', '-q', '--initial-branch=main');
   writeFileSync(path.join(seed, 'README.md'), 'Fixture\n');
-  for (const name of [
-    'package.json',
-    'packages',
-    'node_modules',
-    'apps',
-    'services',
-    '.yarn',
-    '.yarnrc.yml',
-    'yarn.lock',
-  ])
+  writeJson(path.join(seed, 'package.json'), {
+    name: 'late-shutdown-fixture',
+    private: true,
+    type: 'module',
+    engines: { node: '>=22.12.0' },
+  });
+  for (const name of ['packages', 'node_modules'])
     symlinkSync(path.join(sourceRoot, name), path.join(seed, name));
   symlinkSync(path.join(root, 'projects'), path.join(seed, 'projects'));
   git(seed, 'add', '.');
@@ -106,7 +103,7 @@ try {
   const hook = path.join(temporaryRoot, 'shutdown.cjs');
   writeFileSync(
     hook,
-    "const fs = require('fs'); if (!fs.existsSync(process.argv[2])) process.exit(0); setTimeout(() => { if (process.argv[3] === 'stop') fs.unlinkSync(process.argv[2]); }, 16000);\n",
+    "const fs = require('fs'); if (!fs.existsSync(process.argv[2])) process.exit(0); setTimeout(() => { if (process.argv[3] === 'stop') fs.unlinkSync(process.argv[2]); }, Number(process.argv[4]));\n",
   );
   const fixtures = ['stop', 'keep'].map((action) => {
     const slotId = `late-${action}-${randomUUID()}`;
@@ -134,21 +131,58 @@ try {
     });
     return { action, slotId, runId, flag, repo };
   });
+  const mixed = {
+    slotId: `mixed-${randomUUID()}`,
+    repo: path.join(temporaryRoot, 'mixed'),
+    stopped: path.join(temporaryRoot, 'mixed-stop.running'),
+    pending: path.join(temporaryRoot, 'mixed-pending.running'),
+  };
+  git(temporaryRoot, 'clone', '-q', origin, mixed.repo);
+  writeFileSync(mixed.stopped, '');
+  writeFileSync(mixed.pending, '');
   writeJson(path.join(root, 'pool/late.json'), {
     machine: os.hostname(),
     host: 'localhost',
     ssh_user: os.userInfo().username,
     os: process.platform,
-    slots: fixtures.map(({ action, slotId, repo, flag }) => ({
-      id: slotId,
-      project,
-      platform: 'cli',
-      repo,
-      session: slotId,
-      enabled: true,
-      mode: 'dispatch',
-      resources: { 'dev-server': { flag, action } },
-    })),
+    slots: [
+      ...fixtures.map(({ action, slotId, repo, flag }) => ({
+        id: slotId,
+        project,
+        platform: 'cli',
+        repo,
+        session: slotId,
+        enabled: true,
+        mode: 'dispatch',
+        resources: { 'dev-server': { flag, action, delay_ms: 16000 } },
+      })),
+      {
+        id: mixed.slotId,
+        project,
+        platform: 'cli',
+        repo: mixed.repo,
+        session: mixed.slotId,
+        enabled: true,
+        mode: 'dispatch',
+        resources: {
+          'dev-server': { flag: mixed.stopped, action: 'stop', delay_ms: 16000 },
+          'pending-service': {
+            pending_flag: mixed.pending,
+            pending_action: 'keep',
+            pending_delay_ms: 35000,
+          },
+        },
+      },
+    ],
+  });
+  const resource = (prefix, type) => ({
+    type,
+    label: 'Fixture service',
+    controllable: true,
+    hooks: {
+      health: `test -f "{{${prefix}flag}}"`,
+      shutdown: `"${process.execPath}" "${hook}" "{{${prefix}flag}}" "{{${prefix}action}}" "{{${prefix}delay_ms}}"`,
+    },
   });
   writeJson(path.join(root, 'projects', project, 'project.json'), {
     name: project,
@@ -164,21 +198,18 @@ try {
     scripted: {
       commands: { smoke: { command: 'node -e "setInterval(() => {}, 1000)"', timeout_ms: 120000 } },
     },
+    // Shutdown reverses this order: the confirmed service precedes the pending one.
     resources: {
-      'dev-server': {
-        type: 'dev-server',
-        label: 'Fixture service',
-        controllable: true,
-        hooks: {
-          health: 'test -f "{{flag}}"',
-          shutdown: `"${process.execPath}" "${hook}" "{{flag}}" "{{action}}"`,
-        },
-      },
+      'pending-service': resource('pending_', 'service'),
+      'dev-server': resource('', 'dev-server'),
     },
   });
   const template = path.join(root, 'projects', project, 'templates/worker/dev.md');
   mkdirSync(path.dirname(template), { recursive: true });
   writeFileSync(template, '# Worker: dev\n\n- [ ] Disposable dispatch smoke.\n');
+  const prompt = path.join(root, 'projects', project, 'templates/prompts/worker-dispatch.md');
+  mkdirSync(path.dirname(prompt), { recursive: true });
+  writeFileSync(prompt, 'Read {{TASK_FILE}} and execute the declared smoke command.\n');
   const statusFile = path.join(temporaryRoot, 'fixture-status.json');
   writeJson(statusFile, {
     checked_at: new Date().toISOString(),
@@ -276,6 +307,12 @@ try {
   assert.deepEqual(cleanup.cleaned, ['dev-server']);
   assert.deepEqual(cleanup.skipped, []);
   assert.equal(existsSync(fixtures[0].flag), false);
+  const mixedCleanup = rpc('slot.cleanup', { slotId: mixed.slotId, reason: 'manual' });
+  assert.deepEqual(mixedCleanup.cleaned, ['dev-server']);
+  assert.deepEqual(mixedCleanup.skipped, ['pending-service']);
+  assert.match(mixedCleanup.skippedReason['pending-service'], /timeout|timed out/);
+  assert.equal(existsSync(mixed.stopped), false);
+  assert.equal(existsSync(mixed.pending), true);
   const smoke = rpc('run.create', {
     project,
     flowType: 'dev',
@@ -319,7 +356,27 @@ try {
   assert.match(log, /late-post-verify-still-running/);
   console.log(
     JSON.stringify(
-      { results, shutdownLog: log.split('\n').filter((line) => line.includes('[teardown]')) },
+      {
+        sourceHead: execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: sourceRoot,
+          env: baseEnv,
+          encoding: 'utf8',
+        }).trim(),
+        sourceChanges: execFileSync('git', ['status', '--porcelain'], {
+          cwd: sourceRoot,
+          env: baseEnv,
+          encoding: 'utf8',
+        }).trim(),
+        results,
+        cleanup,
+        mixedCleanup,
+        smoke: {
+          runId: smoke.id,
+          steps: smokeRun.steps.map(({ name, status }) => ({ name, status })),
+          cancelled: rpc('run.get', { runId: smoke.id }).run.status === 'cancelled',
+        },
+        shutdownLog: log.split('\n').filter((line) => line.includes('[teardown]')),
+      },
       null,
       2,
     ),

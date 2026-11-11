@@ -290,17 +290,19 @@ async function runCleanup(slotId: string, reason: string): Promise<SlotCleanupRe
   // and orphan sweep takes over on the next tick.
   if (pending.length > 0) {
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const settled = await Promise.race([
-      Promise.allSettled(pending),
-      new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), DRAIN_TIMEOUT_MS);
+    await Promise.race([
+      Promise.allSettled(
+        // Keep each confirmed result even if another hook outlasts the drain.
+        pending.map(async (late) => {
+          const result = await late;
+          const index = outcomes.findIndex((outcome) => outcome.resourceId === result.resourceId);
+          if (index !== -1) outcomes[index] = result;
+        }),
+      ),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, DRAIN_TIMEOUT_MS);
       }),
     ]).finally(() => clearTimeout(timer));
-    for (const late of settled ?? []) {
-      if (late.status !== 'fulfilled') continue;
-      const index = outcomes.findIndex((outcome) => outcome.resourceId === late.value.resourceId);
-      if (index !== -1) outcomes[index] = late.value;
-    }
   }
 
   const cleaned: string[] = [];

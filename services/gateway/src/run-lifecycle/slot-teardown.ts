@@ -24,13 +24,13 @@ import {
   updateSlotStatusIf,
 } from '../core/index.js';
 import { slotRealpath } from '../core/slot-io.js';
-import type { ResourceShutdownOutcome } from '../fleet/slot-cleanup.js';
 import {
   DEVSERVER_LOG_WINDOW_NAME,
   resolveTmuxSession,
   shellQuote,
   tmuxShellSnippet,
 } from '../core/tmux.js';
+import type { ResourceShutdownOutcome } from '../fleet/slot-cleanup.js';
 import { isActiveSlotHolder, slotPinIsRequestOnly } from '../methods/dispatch/slot-scoring.js';
 import { reapSlotPrepareScope } from '../methods/slot/prepare-command.js';
 import { resolveDevServerLogPath } from '../methods/slot/prepare-devserver-log.js';
