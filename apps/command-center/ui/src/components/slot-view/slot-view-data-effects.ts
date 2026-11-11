@@ -4,9 +4,9 @@ import type {
   SlotActionListResult,
   TaskProgressResult,
 } from '@farmslot/protocol';
-import { enumerateChecklistCheckboxes, Methods } from '@farmslot/protocol';
+import { Methods, taskProgressWithStepDetails } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
-import { type ChecklistProgressStep, checklistProgressView } from '@farmslot/review-dispatch';
+import { checklistProgressSteps, checklistProgressView } from '@farmslot/review-dispatch';
 
 import { readConfiguration } from '../../configuration-resources.js';
 import { getState } from '../../state.js';
@@ -115,16 +115,12 @@ export function applySlotViewTaskProgress(view: SlotView): void {
     ? view._progressQuery.state.data
     : undefined;
   const previous = view._structuredProgress;
-  view._structuredProgress = result?.structured;
-  const steps: ChecklistProgressStep[] = enumerateChecklistCheckboxes(result?.markdown ?? '').map(
-    (row) => ({
-      text: row.rawLabel,
-      checked: row.checked,
-      ...(row.detail ? { detail: row.detail } : {}),
-    }),
-  );
+  view._structuredProgress =
+    taskProgressWithStepDetails(result?.structured, result?.markdown) ?? undefined;
+  const steps = checklistProgressSteps(result?.markdown ?? '');
   view._taskSteps = steps;
-  view._taskProgress = (checklistProgressView(result?.structured, { steps })?.percent ?? 0) / 100;
+  view._taskProgress =
+    (checklistProgressView(view._structuredProgress, { steps })?.percent ?? 0) / 100;
   // A new shared observation replaces the former progress-event trigger.
   if (
     result?.structured &&

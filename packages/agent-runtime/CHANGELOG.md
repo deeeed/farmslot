@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
 ## 0.45.9 - 2026-11-11
 
 - Expose de-indented checklist step instructions while preserving mark step positions and completion behavior.

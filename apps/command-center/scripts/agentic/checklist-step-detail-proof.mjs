@@ -91,6 +91,16 @@ try {
       detailFound: !!step,
     });
     if (step && row) {
+      if (
+        step.detail !== undefined ||
+        process.env.FARMSLOT_PROOF_REQUIRE_STRUCTURED_DETAIL === '1'
+      ) {
+        assert.equal(
+          step.detail,
+          row.detail,
+          'task.progress structured detail must match the actual checklist',
+        );
+      }
       selected = {
         runId: run.id,
         slotId: run.slotId,
@@ -98,6 +108,7 @@ try {
         stepIndex: step.index,
         stepTitle: step.name,
         detail: row.detail,
+        ...(step.detail !== undefined ? { structuredDetail: step.detail } : {}),
       };
       break;
     }
@@ -108,50 +119,64 @@ try {
   );
   selected.attempts = attempts;
   await writeFile(path.join(output, 'selected.json'), JSON.stringify(selected, null, 2));
-  const target = new URL(origin);
-  target.hash = `run/${selected.runId}`;
-  await page.bringToFront();
-  await page.goto(target.href, { waitUntil: 'domcontentloaded' });
-  const title = page
-    .locator('progress-tracker')
-    .getByText(selected.stepTitle, { exact: true })
-    .first();
-  await title.waitFor({ state: 'visible', timeout: 120000 });
-  await title.scrollIntoViewIfNeeded();
-  const renderedRunId = await title.evaluate((element) => element.getRootNode().host.runId);
-  assert.equal(renderedRunId, selected.runId);
-  assert.equal(await page.locator('.sv-recovery-overlay').count(), 0);
-  const collapsed = await title.evaluate((element) => ({
-    open: element.closest('details').open,
-    text: element.textContent,
-  }));
-  assert.equal(collapsed.open, false);
-  await page.screenshot({ path: path.join(output, 'collapsed.png') });
-  await title.click();
-  await page.waitForFunction(() =>
-    new URLSearchParams(location.hash.split('?')[1]).has('stepDetails'),
-  );
-  const expanded = await title.evaluate((element) => {
-    const details = element.closest('details');
-    return {
-      open: details.open,
-      detail: details.querySelector('.step-instructions').textContent,
-      visibleHeight: details.querySelector('.step-instructions').getBoundingClientRect().height,
+  if (process.env.FARMSLOT_PROOF_RPC_ONLY === '1') {
+    await writeFile(
+      path.join(output, 'result.json'),
+      JSON.stringify({ selected, rpcOnly: true }, null, 2),
+    );
+  } else {
+    const target = new URL(origin);
+    target.hash = `run/${selected.runId}`;
+    await page.bringToFront();
+    await page.goto(target.href, { waitUntil: 'domcontentloaded' });
+    const title = page
+      .locator('progress-tracker')
+      .getByText(selected.stepTitle, { exact: true })
+      .first();
+    await title.waitFor({ state: 'visible', timeout: 120000 });
+    await title.scrollIntoViewIfNeeded();
+    const renderedRunId = await title.evaluate((element) => element.getRootNode().host.runId);
+    assert.equal(renderedRunId, selected.runId);
+    assert.equal(await page.locator('.sv-recovery-overlay').count(), 0);
+    const collapsed = await title.evaluate((element) => ({
+      open: element.closest('details').open,
+      text: element.textContent,
+    }));
+    assert.equal(collapsed.open, false);
+    await page.screenshot({ path: path.join(output, 'collapsed.png') });
+    await title.click();
+    await page.waitForFunction(() =>
+      new URLSearchParams(location.hash.split('?')[1]).has('stepDetails'),
+    );
+    const expanded = await title.evaluate((element) => {
+      const details = element.closest('details');
+      return {
+        open: details.open,
+        detail: details.querySelector('.step-instructions').textContent,
+        visibleHeight: details.querySelector('.step-instructions').getBoundingClientRect().height,
+      };
+    });
+    assert.equal(expanded.open, true);
+    assert.equal(expanded.detail, selected.detail);
+    assert(expanded.visibleHeight > 0);
+    await page.screenshot({ path: path.join(output, 'expanded.png') });
+    await title.click();
+    await page.waitForFunction(
+      () => !new URLSearchParams(location.hash.split('?')[1]).has('stepDetails'),
+    );
+    const closedAgain = await title.evaluate((element) => element.closest('details').open);
+    assert.equal(closedAgain, false);
+    const result = {
+      selected,
+      renderedRunId,
+      collapsed,
+      expanded,
+      closedAgain,
+      pageErrors: errors,
     };
-  });
-  assert.equal(expanded.open, true);
-  assert.equal(expanded.detail, selected.detail);
-  assert(expanded.visibleHeight > 0);
-  await page.screenshot({ path: path.join(output, 'expanded.png') });
-  await title.click();
-  await page.waitForFunction(
-    () => !new URLSearchParams(location.hash.split('?')[1]).has('stepDetails'),
-  );
-  const closedAgain = await title.evaluate((element) => element.closest('details').open);
-  assert.equal(closedAgain, false);
-  const result = { selected, renderedRunId, collapsed, expanded, closedAgain, pageErrors: errors };
-  await writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2));
-  assert.equal(errors.length, 0, errors.join('\n'));
+    await writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2));
+    assert.equal(errors.length, 0, errors.join('\n'));
+  }
 } catch (error) {
   await writeFile(
     path.join(output, 'failure.json'),

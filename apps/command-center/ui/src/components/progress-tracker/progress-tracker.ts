@@ -23,7 +23,7 @@ import {
 } from '@farmslot/review-dispatch';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import { browserViewState, viewStateUpdates } from '../../utils/view-state.js';
+import { browserViewState, viewDetails, viewStateUpdates } from '../../utils/view-state.js';
 
 import { OperationClock, operationPanelStyles, renderOperationPanel } from './operation-panel.js';
 import {
@@ -64,12 +64,7 @@ export function renderTrackerStepRow(
   const open = step.detail ? browserViewState.get(field) : false;
   return html`
     ${step.detail
-      ? html` <details
-          class="step-detail"
-          .open=${open}
-          @toggle=${(event: Event) =>
-            browserViewState.set(field, (event.currentTarget as HTMLDetailsElement).open)}
-        >
+      ? html` <details class="step-detail" ${viewDetails(field)}>
           <summary
             class="substep ${step.status}"
             aria-expanded=${open}

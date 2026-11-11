@@ -9,9 +9,15 @@ beforeEach(() => {
 });
 afterEach(() => restoreView());
 
-import type { TaskProgressStructured, TaskStepSubtaskProgress } from '@farmslot/protocol';
+import {
+  type TaskProgressStructured,
+  type TaskStepSubtaskProgress,
+  viewToggleField,
+} from '@farmslot/protocol';
+import { checklistStepDetailKey } from '@farmslot/review-dispatch';
 
 import { litBinding, litText } from '../../testing/lit-text.js';
+import { browserViewState } from '../../utils/view-state.js';
 
 import { renderChecklistProgress, renderTrackerStepRow } from './progress-tracker.js';
 import { SubtaskOpenState } from './subtask-block.js';
@@ -182,21 +188,28 @@ test('step detail starts collapsed and toggles only its run-scoped display choic
       runId: 'detail-run',
       checklist: 'CHECKLIST.md',
     });
-  assert.equal(litBinding(render(), '.open='), false);
+  assert.equal(litBinding(render(), 'aria-expanded='), false);
   assert.match(litText(render()), /Read the actual source/);
-  const toggle = litBinding(render(), '@toggle=');
-  assert.equal(typeof toggle, 'function');
-  if (typeof toggle !== 'function') throw new Error('Missing disclosure toggle');
-  toggle({ currentTarget: { open: true } });
-  assert.equal(litBinding(render(), '.open='), true);
+  const field = viewToggleField(
+    'stepDetails',
+    checklistStepDetailKey(1, { runId: 'detail-run', checklist: 'CHECKLIST.md' }),
+    false,
+  );
+  assert.equal(
+    litBinding(render(), '@toggle='),
+    undefined,
+    'shared viewDetails owns toggle persistence',
+  );
+  browserViewState.set(field, true);
+  assert.equal(litBinding(render(), 'aria-expanded='), true);
   assert.equal(step.status, 'pending');
   const other = renderTrackerStepRow(step, scope, false, undefined, undefined, undefined, {
     runId: 'other-run',
     checklist: 'CHECKLIST.md',
   });
-  assert.equal(litBinding(other, '.open='), false);
-  toggle({ currentTarget: { open: false } });
-  assert.equal(litBinding(render(), '.open='), false);
+  assert.equal(litBinding(other, 'aria-expanded='), false);
+  browserViewState.set(field, false);
+  assert.equal(litBinding(render(), 'aria-expanded='), false);
   assert.equal(
     location.hash.includes('stepDetails'),
     false,

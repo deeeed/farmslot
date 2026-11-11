@@ -35,7 +35,7 @@ function ChecklistStepRow({
   const content = (
     <>
       {step.detail ? (
-        <Text style={styles.caret} accessibilityElementsHidden>
+        <Text style={styles.caret} accessibilityElementsHidden importantForAccessibility="no">
           {expanded ? '▾' : '▸'}
         </Text>
       ) : null}
