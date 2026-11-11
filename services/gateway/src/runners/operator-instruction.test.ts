@@ -20,6 +20,39 @@ const owner = auth.writer.createPrincipal(
 );
 process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = owner.id;
 const store = await import('../runs/store.js');
+let idleMarker = false;
+let restoreFailure = false;
+let restored = false;
+let useRealContinuation = false;
+const continuationOrder: string[] = [];
+const state = await import('../core/state.js');
+mock.module('../core/state.js', {
+  namedExports: {
+    ...state,
+    readSlotRow: async () =>
+      idleMarker
+        ? {
+            current_run_id: 'fixture-owner',
+            slot_epoch: 1,
+            idle_devserver_epoch: 1,
+            idle_devservers: ['server'],
+          }
+        : null,
+  },
+});
+mock.module('../run-lifecycle/idle-devserver-service.js', {
+  namedExports: {
+    restoreIdleDevServers: async () => {
+      continuationOrder.push('restore');
+      if (restoreFailure) throw new Error('Fixture runtime never healthy');
+      idleMarker = false;
+      restored = true;
+    },
+  },
+});
+mock.module('../node-support/ensure.js', {
+  namedExports: { ensureNodeSupportBundle: async () => {} },
+});
 const controls = await import('./native/worker-control.js');
 const recovery = await import('./native/worker-recovery.js');
 const registry = await import('./registry.js');
@@ -55,6 +88,40 @@ mock.module('./session-lifecycle.js', {
     reloadRunnerForPark: async (options: Parameters<typeof lifecycle.reloadRunnerForPark>[0]) => {
       reloadAttempts++;
       reloads.push(options);
+      if (useRealContinuation) {
+        let live = false;
+        return lifecycle.reloadRunnerForPark(options, {
+          exec: async (_vars, command) => ({
+            exitCode: 0,
+            stdout: command.includes('display-message') ? 'proof\tworker\t%999999\t101\n' : '',
+            stderr: '',
+          }),
+          findRunnerPid: async () => (live ? '202' : ''),
+          verifyLiveBinding: async () => ({
+            ok: true,
+            binding: {
+              runnerSessionId: options.recoveryHandle.sessionId,
+              runnerSessionPath: options.recoveryHandle.sessionPath,
+              canonicalSessionPath: options.recoveryHandle.sessionPath,
+              source: 'native',
+            },
+          }),
+          respawnPane: async (_vars, _target, _command, respawnOptions) => {
+            await respawnOptions?.beforeRespawn?.();
+            assert.equal(restored, true, 'server must be healthy before continuing the worker');
+            continuationOrder.push('continue');
+            live = true;
+          },
+          writePromptSentinel: async () => ({ digest: 'fixture', sentAt: 100 }),
+          capturePromptBaseline: async () => 100,
+          probePromptHandoff: async () => ({
+            accepted: true,
+            source: 'hook-digest',
+            reason: 'fixture acknowledgement',
+          }),
+          sleep: async () => {},
+        });
+      }
       return {
         ok: false,
         status: 'acceptance-failed',
@@ -72,6 +139,7 @@ mock.module('./registry.js', {
     sendRunnerInstructionWithOutcome: async (
       ...args: Parameters<typeof registry.sendRunnerInstructionWithOutcome>
     ) => {
+      if (useRealContinuation) return registry.sendRunnerInstructionWithOutcome(...args);
       tmuxCalls.push(args);
       return tmuxOutcome;
     },
@@ -122,6 +190,11 @@ const {
 }: typeof import('./operator-instruction.js') = await import(adapterModule);
 
 async function fixture(t: TestContext, native = true) {
+  idleMarker = false;
+  restoreFailure = false;
+  restored = false;
+  useRealContinuation = false;
+  continuationOrder.length = 0;
   tmuxCalls.length = 0;
   tmuxOutcome = 'sent';
   inspectionError = false;
@@ -340,4 +413,27 @@ test("a stopped tmux worker reloads with its run mode's question tool", async (t
     store.updateRun(run.id, { slotId: null });
     assert.throws(() => reload.beforeRespawn?.(), /worker generation changed/);
   }
+});
+
+test('operator continue after the idle cap restores runtime at the shared tmux reload boundary', async (t) => {
+  const run = await fixture(t, false);
+  idleMarker = true;
+  tmuxStopped = true;
+  useRealContinuation = true;
+  assert.equal(await deliverOperatorInstruction(run, 'unit', 'Continue'), 'confirmed');
+  assert.deepEqual(continuationOrder, ['restore', 'continue']);
+  assert.equal(idleMarker, false);
+});
+
+test('operator prompt to an idle tmux worker refuses before typing if runtime restore fails', async (t) => {
+  const run = await fixture(t, false);
+  idleMarker = true;
+  restoreFailure = true;
+  useRealContinuation = true;
+  await assert.rejects(
+    deliverOperatorInstruction(run, 'unit', 'Continue'),
+    /Fixture runtime never healthy/,
+  );
+  assert.deepEqual(continuationOrder, ['restore']);
+  assert.equal(idleMarker, true);
 });

@@ -301,3 +301,39 @@ test('failed dev worker verification is a fleet health failure until a successfu
   updateMachineMetrics(machine, metrics);
   assert.equal(getMachineHealth(machine)?.headroom, 'green');
 });
+
+test('TCP pressure sets warning and critical fleet headroom without masking other pressure', () => {
+  const base: NodeSystemMetrics = {
+    cpuPercent: 1,
+    memoryPercent: 1,
+    memoryUsedGb: 1,
+    memoryTotalGb: 16,
+    diskPercent: 1,
+    loadAvg1: 0,
+    loadAvg5: 0,
+    collectedAt: new Date().toISOString(),
+  };
+  for (const [total, severity, headroom] of [
+    [4, 'ok', 'green'],
+    [5, 'warning', 'yellow'],
+    [8, 'critical', 'red'],
+  ] as const) {
+    updateMachineMetrics('tcp-fixture', {
+      ...base,
+      tcp: {
+        established: total,
+        timeWait: 0,
+        total,
+        ephemeralFirst: 40000,
+        ephemeralLast: 40009,
+        ephemeralCapacity: 10,
+        warningThreshold: 5,
+        criticalThreshold: 8,
+        severity,
+        topProcesses: [],
+        collectedAt: base.collectedAt,
+      },
+    });
+    assert.equal(getMachineHealth('tcp-fixture')?.headroom, headroom);
+  }
+});

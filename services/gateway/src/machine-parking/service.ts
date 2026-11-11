@@ -317,6 +317,7 @@ export interface MachineParkingDependencies {
     run: Run,
     handle: MachinePauseRecoveryHandle,
   ): Promise<'running' | 'stopped' | 'unknown'>;
+  prepareIdleDevServers?(slotId: string, runId: string): Promise<void>;
   stopResource(slotId: string, resourceId: string): Promise<{ ok: boolean; detail?: string }>;
   startResource(slotId: string, resourceId: string): Promise<{ ok: boolean; detail?: string }>;
 }
@@ -849,6 +850,10 @@ const defaultDependencies: MachineParkingDependencies = {
     }
     if (!run.slotId) return 'unknown';
     return runnerRunningForPark({ vars: await loadSlotVars(run.slotId), recoveryHandle: handle });
+  },
+  prepareIdleDevServers: async (slotId, runId) => {
+    const { ensureWorkerContinuationReady } = await import('../runners/continuation-ready.js');
+    await ensureWorkerContinuationReady(slotId, runId);
   },
   stopResource: (slotId, resourceId) => executeResourceControl(slotId, resourceId, 'shutdown'),
   startResource: (slotId, resourceId) => executeResourceControl(slotId, resourceId, 'boot'),
@@ -3377,6 +3382,9 @@ export class MachineParkingService {
       } else {
         await this.deps.inspectRecoveryHandle(initial, record.recoveryHandle!, expectedRunnerState);
       }
+      // The idle cap owns only its durable stop intents. Re-prepare those before
+      // verifying the park's retained-resource contract; unexplained deaths still refuse.
+      await this.deps.prepareIdleDevServers?.(record.slotId, runId);
       // Ordered FIRST, before anything acquires. A provider's acquire action is
       // frequently its resource's own boot action — the shipped gateway/UI
       // provider is exactly that — so acquiring first would revive a retained

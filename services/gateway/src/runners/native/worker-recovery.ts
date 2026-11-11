@@ -29,6 +29,7 @@ import { getRun, persistRunNow, updateRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { runTaskLibraries } from '../../tasks/pinned-libraries.js';
 import { normalizeWorkerSignal } from '../../tasks/worker-signals.js';
+import { ensureWorkerContinuationReady } from '../continuation-ready.js';
 import { modelQuestionsForRun, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../launch-command.js';
 
 import { routeNativeExecution } from './node.js';
@@ -74,6 +75,7 @@ export async function resumeNativeWorker(
 ): Promise<void> {
   const slotId = getRun(runId)?.slotId;
   if (!slotId) throw new Error('Native worker recovery requires its owned slot');
+  await ensureWorkerContinuationReady(slotId, runId);
   const release = acquireNativeWorkerRecovery(slotId);
   try {
     await resumeNativeWorkerExclusive(runId, options);

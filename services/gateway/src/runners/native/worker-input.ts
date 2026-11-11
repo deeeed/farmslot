@@ -20,6 +20,7 @@ import { GatewayMethodError } from '../../core/method-error.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import { getRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
+import { ensureWorkerContinuationReady } from '../continuation-ready.js';
 
 import { routeNativeExecution } from './node.js';
 import { cancelReviewWorkspaceWorker } from './review-workspace.js';
@@ -184,12 +185,17 @@ async function routePinnedWorkerInput(
       state: message.delivery === 'confirmed' ? 'accepted' : 'pending',
     };
   }
-  if (method === Methods.NATIVE_SESSION_SEND)
+  if (method === Methods.NATIVE_SESSION_SEND || method === Methods.NATIVE_SESSION_RESPOND) {
+    if (run.slotId) await ensureWorkerContinuationReady(run.slotId, run.id);
+    current();
+  }
+  if (method === Methods.NATIVE_SESSION_SEND) {
     return routeNativeExecution(
       binding.ownerPrincipalId,
       steer ? NATIVE_WORKER_STEER : NATIVE_WORKER_SEND,
       { ...nativeTarget, commandId: params.commandId, text: params.text },
     );
+  }
   if (method === Methods.NATIVE_SESSION_RESPOND)
     return routeNativeExecution(binding.ownerPrincipalId, NATIVE_WORKER_RESPOND, {
       ...nativeTarget,

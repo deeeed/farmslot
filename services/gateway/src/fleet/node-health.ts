@@ -20,7 +20,9 @@ import {
   type ResourceKey,
   resourceKeyId,
 } from '@farmslot/protocol/client-cache';
+import { collectTcpMetrics, formatTcpSnapshotDetail } from '@farmslot/protocol/node/tcp-metrics';
 
+import { reportGatewayWarning } from '../chat/copilot-observer.js';
 import { execFileArgv } from '../core/exec.js';
 import { resourceRevisions } from '../resources/revisions.js';
 
@@ -112,16 +114,29 @@ export function updateMachineMetrics(machine: string, metrics: NodeMetricsSample
     workerCliHealth: worker,
     capacity,
     headroom:
+      metrics.tcp?.severity === 'critical' ||
       worker?.ok === false ||
       providers?.some(
         (health) => !health.ok && (health.status !== 'probe-timeout' || health.confirmedMismatch),
       )
         ? 'red'
-        : headroom === 'green' && providers?.some((health) => health.status === 'probe-timeout')
+        : headroom === 'green' &&
+            (metrics.tcp?.severity === 'warning' ||
+              metrics.tcp?.severity === 'unknown' ||
+              providers?.some((health) => health.status === 'probe-timeout'))
           ? 'yellow'
           : headroom,
   });
   publishMachineObservation(machine);
+  const tcp = metrics.tcp;
+  if (tcp && tcp.severity !== 'ok' && tcp.severity !== existing?.system?.tcp?.severity) {
+    const detail = tcp.severity === 'unknown' ? tcp.error : formatTcpSnapshotDetail(tcp);
+    reportGatewayWarning(
+      'node.tcp-pressure',
+      `Node ${machine} TCP ${tcp.severity}: ${detail}`,
+      tcp.severity === 'critical' ? 'error' : 'warn',
+    );
+  }
 }
 
 function updateProcessInventory(machine: string, incoming: NodeProcessInventory | undefined): void {
@@ -410,8 +425,13 @@ async function getLocalMemoryUsage(): Promise<LocalMemoryUsage> {
 }
 
 export async function collectLocalMetrics(): Promise<NodeSystemMetrics> {
-  const [{ usedBytes: usedMem, totalBytes: totalMem }, diskPercent, thermalPressure] =
-    await Promise.all([getLocalMemoryUsage(), getLocalDiskPercent(), getLocalThermal()]);
+  const [{ usedBytes: usedMem, totalBytes: totalMem }, diskPercent, thermalPressure, tcp] =
+    await Promise.all([
+      getLocalMemoryUsage(),
+      getLocalDiskPercent(),
+      getLocalThermal(),
+      collectTcpMetrics(),
+    ]);
   const [loadAvg1, loadAvg5] = os.loadavg();
   const cpuCores = os.cpus().length;
   const cpuPercent = getLocalCpuPercent();
@@ -434,6 +454,7 @@ export async function collectLocalMetrics(): Promise<NodeSystemMetrics> {
       load5: rounded(loadAvg5 / Math.max(1, cpuCores)),
     },
     thermalPressure,
+    tcp,
     collectedAt: new Date().toISOString(),
   };
 }

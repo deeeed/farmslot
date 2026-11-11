@@ -260,7 +260,7 @@ export function shouldProbeResourceForSlot(
   return Boolean(slot && slotHasActiveRun(slot));
 }
 
-function setActiveResource(
+export function setActiveResource(
   slotId: string,
   resourceId: string,
   pointer: ActiveResourcePointer,
@@ -827,6 +827,8 @@ async function pollAllResources(): Promise<void> {
     await mapWithConcurrency(slotIds, RESOURCE_POLL_CONCURRENCY, async (id) => {
       try {
         await pollSlotResources(id);
+        const { reapIdleDevServers } = await import('../run-lifecycle/idle-devserver-service.js');
+        await reapIdleDevServers(id);
       } catch (err) {
         failures.push(`${id}: ${(err as Error).message}`);
       }
