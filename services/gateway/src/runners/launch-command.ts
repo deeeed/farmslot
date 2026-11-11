@@ -487,7 +487,7 @@ export function buildInteractiveRefinementRunnerCommand(options: {
       const cliModel = resolvePiModel(options.model);
       return [
         `${piObservabilityVerificationCommand(support)} &&`,
-        `FARMSLOT_OBS_DIR=${shellQuote(path.posix.join(taskDir, '.observability'))}`,
+        `FARMSLOT_OBS_DIR=${shellQuote(getRunnerDefinition(runnerId).reviewObservabilityDir!(taskDir))}`,
         `FARMSLOT_TASK_FILE=${shellQuote(path.posix.join(taskDir, 'TASK.md'))}`,
         `FARMSLOT_RUNNER=${shellQuote('pi')}`,
         `FARMSLOT_THINKING=${shellQuote(resolvePiThinkingLevel(options.effort))}`,

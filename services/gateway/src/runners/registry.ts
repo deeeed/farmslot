@@ -214,6 +214,8 @@ export interface NativeRunnerChoices {
 }
 
 export interface RunnerDefinition {
+  /** Hook destination for a read-only terminal review, shared by launch and observation. */
+  reviewObservabilityDir?: (taskDir: string) => string;
   /** Tmux launches install and verify the copied runner observability bundle. */
   usesObservabilityBundle?: boolean;
   /** Stop only structured, slot-isolated managed processes after the workers are stopped. */
@@ -629,6 +631,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   },
   pi: {
     usesObservabilityBundle: true,
+    reviewObservabilityDir: (taskDir) => path.posix.join(taskDir, '.observability'),
     id: 'pi',
     requiresInitialPromptAck: true,
     nativeTransport: 'pi-rpc',
