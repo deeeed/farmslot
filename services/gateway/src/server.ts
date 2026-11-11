@@ -74,6 +74,7 @@ import { unsubscribeWorkerTerminalPty } from './methods/terminal-worker.js';
 import { tmuxWorkerObservedList } from './methods/tmux-workers.js';
 import { workerSessionHistorySubscriptionKey } from './methods/worker-session-history.js';
 import { metroUnsubscribeAll } from './methods/workspace.js';
+import { setFileDecisionScanHook } from './observability/fleet-monitor.js';
 import {
   measureGatewayRequest,
   recordGatewayResponse,
@@ -630,11 +631,13 @@ export function initServerGlobals(): void {
     if (!entity || !version) return undefined;
     return { family: 'decision', entity, version };
   });
-  // Wire decision lifecycle hooks so run-changes.ts can trigger the index without importing it.
+  // Wire decision lifecycle hooks: run-changes.ts triggers a per-run rebuild (not per-decision).
   setDecisionHooks(
-    (decisionId) => void decisionIndex.scheduleRebuild(decisionId),
+    (runId) => void decisionIndex.scheduleRebuildForRun(runId),
     (decisionId) => decisionIndex.markResolved(decisionId),
   );
+  // Wire file-decision scan hook: fleet-monitor calls this after each scan with the full set.
+  setFileDecisionScanHook((decisions) => decisionIndex.reconcileFileDecisions(decisions));
   // Gap trigger 1: review round file changed → rebuild all decisions in the run.
   resourceRevisions.subscribe((payload) => {
     for (const change of payload.changes) {

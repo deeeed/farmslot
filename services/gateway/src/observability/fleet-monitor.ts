@@ -30,6 +30,8 @@ const MONITOR_STATE_FILE = path.join(farmslotRoot(), '.monitor_state.json');
 export type MonitorEventHandler = {
   onFleetUpdated: (fleet: FleetStatus) => void;
   onDecisionNew: (decision: PendingDecision) => void;
+  /** Called after every successful decision scan with the full set of current file decisions. */
+  onFileDecisionsScanned?: (decisions: PendingDecision[]) => void;
   onViolation: (violation: MonitorViolation) => void;
   onPublicationGateStall: (violation: MonitorViolation) => void;
 };
@@ -55,6 +57,15 @@ let lastDecisionScan: { files: FileDecision[] } | { error: unknown } | undefined
 let resolutionSeq = 0;
 const resolvedAt = new Map<string, number>();
 let handler: MonitorEventHandler | null = null;
+
+/**
+ * Optional hook set by server.ts so the decision index can reconcile the full file-decision
+ * set without server.ts or fleet-monitor.ts importing each other's implementation.
+ */
+let fileDecisionScanHook: ((decisions: PendingDecision[]) => void) | undefined;
+export function setFileDecisionScanHook(cb: (decisions: PendingDecision[]) => void): void {
+  fileDecisionScanHook = cb;
+}
 
 interface FileDecision {
   path: string;
@@ -198,6 +209,9 @@ export async function scanDecisions(): Promise<void> {
   // Legacy decision ids can be paths, so only the safe collection key goes on the wire.
   if (changed) resourceRevisions.advance(decisionsKey);
   const decisions = files.map((file) => file.decision);
+  // Notify the decision index with the full set so it can reconcile adds/removes.
+  fileDecisionScanHook?.(decisions);
+  handler?.onFileDecisionsScanned?.(decisions);
   for (const d of decisions) {
     if (!knownDecisions.has(d.id)) {
       knownDecisions.add(d.id);
