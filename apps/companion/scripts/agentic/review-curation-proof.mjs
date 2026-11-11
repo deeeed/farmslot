@@ -55,6 +55,11 @@ const findings = [
 const phase = process.argv[2];
 
 if (phase === 'serve') {
+  // The gateway reads GitHub over HTTP; the provider fixture serves that API from this process.
+  const { default: providerFixture } = await import(
+    path.join(root, 'scripts/runner-validation/review-provider-fixture.cjs')
+  );
+  process.env.FARMSLOT_GITHUB_API_URL = (await providerFixture.startReviewProviderFixture()).origin;
   await import(path.join(root, 'services/gateway/src/index.ts'));
   const { createRun, updateRun, getRun, persistRunNow } = await import(
     path.join(root, 'services/gateway/src/runs/store.ts')

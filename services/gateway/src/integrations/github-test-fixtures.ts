@@ -8,6 +8,8 @@ export interface GitHubFixtureRequest {
   method: string;
   /** Path without the query string, e.g. `/repos/o/r/pulls/1` or `/graphql`. */
   path: string;
+  /** Path and raw query string as received, e.g. `/repos/o/r/pulls?state=closed`. */
+  url: string;
   query: URLSearchParams;
   headers: IncomingMessage['headers'];
   body: string;
@@ -52,6 +54,7 @@ export async function startGitHubFixture(handler: GitHubFixtureHandler): Promise
       const request: GitHubFixtureRequest = {
         method: req.method ?? 'GET',
         path: url.pathname,
+        url: `${url.pathname}${url.search}`,
         query: url.searchParams,
         headers: req.headers,
         body,
