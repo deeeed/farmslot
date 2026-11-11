@@ -41,21 +41,22 @@ export function sameReviewPR(
 
 /** Retention keeps files/conversation identity, not an active machine admission. */
 export function retainedWorkspaceIsIdle(
-  run: Pick<Run, 'status' | 'reviewWorkspace' | 'agentContexts'>,
+  run: Pick<Run, 'status' | 'reviewWorkspace' | 'agentContexts' | 'reviewResult'>,
 ): boolean {
   return (
     !!run.reviewWorkspace?.retainedAt &&
-    !!run.reviewWorkspace.executionStoppedAt &&
-    !(run.agentContexts ?? []).some(
-      (context) =>
-        context.nativeSession &&
-        !context.nativeSession.closedAt &&
-        !context.nativeSession.releasedAt,
-    ) &&
-    ['done', 'failed', 'cancelled', 'blocked'].includes(run.status) &&
     !(run.agentContexts ?? []).some(
       (context) => !['complete', 'failed', 'idle'].includes(context.status),
-    )
+    ) &&
+    (Boolean(run.reviewResult) ||
+      (!!run.reviewWorkspace.executionStoppedAt &&
+        ['done', 'failed', 'cancelled', 'blocked'].includes(run.status) &&
+        !(run.agentContexts ?? []).some(
+          (context) =>
+            context.nativeSession &&
+            !context.nativeSession.closedAt &&
+            !context.nativeSession.releasedAt,
+        )))
   );
 }
 

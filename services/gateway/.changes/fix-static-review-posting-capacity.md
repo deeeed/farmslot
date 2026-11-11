@@ -1,0 +1,1 @@
+- Exclude idle retained reviews from admission capacity and fill static review result identity and digest fields in the gateway.

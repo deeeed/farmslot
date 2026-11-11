@@ -17,6 +17,7 @@ import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import {
   ACCEPTANCE_STATUS_ARTIFACT,
   enumerateChecklistCheckboxes,
+  isRecord,
   isTerminalRunStatus,
   type ReviewWorkspaceBinding,
   type ReviewWorkspaceSubject,
@@ -362,15 +363,12 @@ export async function materializeReviewWorkspaceTask(
       '## Review result',
       '',
       `Write ${RESULT} using this shape, retaining all findings and permitted nits in issues. The gateway derives comments from issues; each description contains the full problem, evidence and concrete ask. Omit line for body-only findings.`,
-      'Use verdict pass when the approval policy permits APPROVE, otherwise issues. Read attemptId from SIGNAL.json and compute reportSha256 from the exact artifacts/review.md bytes.',
+      'Use verdict pass when the approval policy permits APPROVE, otherwise issues. The gateway adds the frozen run, workspace, source and accepted-attempt identity and computes the report digest when retaining the result.',
       `The report requires separate VERDICT: <recommendation> and COMMIT: ${subject.headSha} lines. Required artifacts: ${terminalContract.commands.complete.artifacts.join(', ')}.`,
       '```json',
       '{',
-      `  "schemaVersion": 1, "verdict": "${exampleRecommendation === 'APPROVE' ? 'pass' : 'issues'}", "recommendation": ${JSON.stringify(exampleRecommendation)},`,
-      `  "issues": ${JSON.stringify([exampleIssue])},`,
-      `  "runId": ${JSON.stringify(run.id)}, "workspaceId": ${JSON.stringify(run.reviewWorkspace.workspaceId)},`,
-      `  "headSha": ${JSON.stringify(subject.headSha)}, "baseSha": ${JSON.stringify(subject.baseSha)},`,
-      '  "attemptId": "<SIGNAL.json attemptId>", "reportSha256": "<SHA-256 of review.md>"',
+      `  "verdict": "${exampleRecommendation === 'APPROVE' ? 'pass' : 'issues'}", "recommendation": ${JSON.stringify(exampleRecommendation)},`,
+      `  "issues": ${JSON.stringify([exampleIssue])}`,
       '}',
       '```',
     ].join('\n');
@@ -611,26 +609,47 @@ export async function readReviewWorkspaceCompletion(
     if (openChild) throw new Error(openChild);
   }
   const raw = await confinedRead(io, taskDir, RESULT);
+  let modelResult: unknown;
+  try {
+    modelResult = JSON.parse(raw);
+  } catch (error) {
+    throw new GatewayMethodError(
+      'REVIEW_OUTPUT_INVALID',
+      `Static review result is invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (!isRecord(modelResult))
+    throw new GatewayMethodError('REVIEW_OUTPUT_INVALID', 'Static review result must be an object');
+  const reviewMd = await confinedRead(io, taskDir, 'artifacts/review.md');
+  if (!reviewMd.trim())
+    throw new GatewayMethodError('REVIEW_OUTPUT_INVALID', 'Static review report is empty');
+  const artifact = {
+    ...modelResult,
+    schemaVersion: 1,
+    runId,
+    workspaceId: snapshot.workspace.workspaceId,
+    headSha: snapshot.subject.headSha,
+    baseSha: snapshot.subject.baseSha,
+    attemptId: signal.attemptId,
+    reportSha256: sha256(reviewMd),
+  };
   invalidateProjectVarsCache(run.project);
   const policy = resolveApprovalPolicy(
     (await deps.loadProjectVars(run.project)).projectJson.approvalPolicy,
   );
   const reviewRound = reviewPolicyRound(run, workspaceReviewRoundAdmissionId(run));
-  const feedback = parseStructuredReviewFeedback(raw, RESULT, policy, [], reviewRound);
+  const feedback = parseStructuredReviewFeedback(
+    JSON.stringify(artifact),
+    RESULT,
+    policy,
+    [],
+    reviewRound,
+  );
   if (feedback.incomplete && !feedback.recommendation)
     throw new GatewayMethodError(
       'REVIEW_OUTPUT_INVALID',
       feedback.terminalInvalidReason ?? 'Review output is invalid',
     );
-  const artifact = JSON.parse(raw) as Record<string, unknown>;
-  if (
-    artifact.runId !== runId ||
-    artifact.workspaceId !== snapshot.workspace.workspaceId ||
-    artifact.headSha !== snapshot.subject.headSha ||
-    artifact.baseSha !== snapshot.subject.baseSha ||
-    artifact.attemptId !== signal.attemptId
-  )
-    throw new Error('Static review result does not match its exact source/task/attempt identity');
   const issues = feedback.issues;
   if (
     issues.some(
@@ -641,12 +660,6 @@ export async function readReviewWorkspaceCompletion(
     )
   )
     throw new Error('Static review findings require source-relative paths and canonical severity');
-  const reviewMd = await confinedRead(io, taskDir, 'artifacts/review.md');
-  if (!reviewMd.trim() || artifact.reportSha256 !== sha256(reviewMd))
-    throw new GatewayMethodError(
-      'REVIEW_OUTPUT_INVALID',
-      `Static review report is missing or its digest changed: expected reportSha256 ${sha256(reviewMd)}, received ${JSON.stringify(artifact.reportSha256)}. Hash the current artifacts/review.md bytes.`,
-    );
   if (feedback.incomplete && feedback.recommendation)
     throw new GatewayMethodError(
       'REVIEW_OUTPUT_INVALID',
@@ -689,12 +702,13 @@ export async function readReviewWorkspaceCompletion(
   )
     throw new GatewayMethodError(
       'REVIEW_OUTPUT_INVALID',
-      `Static review Markdown verdict or commit disagrees with its typed result: expected VERDICT ${recommendation} and COMMIT ${snapshot.subject.headSha}; received VERDICT ${JSON.stringify(markdownRecommendation)} and COMMIT ${JSON.stringify(reviewCommitFromMarkdown(reviewMd))}. Keep findings unchanged and correct the report headers and its reportSha256.`,
+      `Static review Markdown verdict or commit disagrees with its typed result: expected VERDICT ${recommendation} and COMMIT ${snapshot.subject.headSha}; received VERDICT ${JSON.stringify(markdownRecommendation)} and COMMIT ${JSON.stringify(reviewCommitFromMarkdown(reviewMd))}. Keep findings unchanged and correct the report headers.`,
     );
   const mirror = await mkdtemp(path.join(os.tmpdir(), 'workspace-review-completion-'));
   const viewer = viewDirFor(run.id, deps);
   try {
     await slotCopyDir(io, snapshot.workspace.artifactPath, path.join(mirror, 'artifacts'));
+    await writeFile(path.join(mirror, RESULT), `${JSON.stringify(artifact, null, 2)}\n`);
     await writeFile(
       path.join(mirror, 'artifacts/line-comments.json'),
       `${JSON.stringify({ comments: lineComments }, null, 2)}\n`,
