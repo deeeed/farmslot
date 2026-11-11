@@ -6071,3 +6071,47 @@ test('release-mode monitoring refuses dirty work before stopping anything', asyn
     false,
   );
 });
+
+test('restore re-prepares capped dev servers before checking retained resources', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  const status = statusWithAffectedResources(
+    'run-a',
+    [{ resourceId: 'browser-cdp', ownership: 'slot-lifecycle', releaseEffect: 'retain' }],
+    { leases: false },
+  );
+  ctx.deps.capabilityStatus = async () => structuredClone(status);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'fixture-idle-park',
+  });
+  let prepared = false;
+  ctx.deps.prepareIdleDevServers = async (slotId, runId) => {
+    assert.equal(slotId, 'slot-a');
+    assert.equal(runId, 'run-a');
+    prepared = true;
+  };
+  const observe = ctx.deps.observeResources;
+  ctx.deps.observeResources = async (slotId) => {
+    assert.equal(prepared, true, 'idle re-prepare runs before retained-resource verification');
+    return observe(slotId);
+  };
+  const restore = await ctx.service.restore({ machine: 'machine-a', selector: { kind: 'all' } });
+  const result = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+    execute: true,
+    previewId: restore.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'fixture-idle-restore',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(prepared, true);
+});

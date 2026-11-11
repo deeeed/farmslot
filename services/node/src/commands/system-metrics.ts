@@ -8,6 +8,7 @@ import type {
   NodeProcessInventory,
   NodeProcessSample,
 } from '@farmslot/protocol';
+import { collectTcpMetrics } from '@farmslot/protocol/node/tcp-metrics';
 
 import { getProviderCliHealth } from './provider-cli-health.js';
 import { getCachedResourceWatchPids, getResourceWatchRuntimeStats } from './resource-watch.js';
@@ -368,7 +369,7 @@ export async function collectMetrics(
   const cpuCores = os.cpus().length;
   const cpuPercent = getCpuPercent();
   const providerCliHealth = options.machine ? getProviderCliHealth(options.machine) : undefined;
-  const workerCliHealth = await readWorkerCliHealth();
+  const [workerCliHealth, tcp] = await Promise.all([readWorkerCliHealth(), collectTcpMetrics()]);
   const memoryPercent = Math.round((usedMem / totalMem) * 100);
   const diskPercent = getDiskPercent();
   const thermalPressure = getThermalPressure();
@@ -436,6 +437,7 @@ export async function collectMetrics(
     workerCliHealth,
     thermalPressure,
     resourceWatches: getResourceWatchRuntimeStats(),
+    tcp,
     collectedAt: new Date().toISOString(),
   };
 }

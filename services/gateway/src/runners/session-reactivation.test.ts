@@ -5,6 +5,28 @@ import type { SlotVars } from '../core/config.js';
 
 import type { ObservabilityReading, RunnerSessionDeliveryState } from './observability-types.js';
 
+let restoreRuntime: (() => Promise<void>) | undefined;
+mock.module('../run-lifecycle/idle-devserver-service.js', {
+  namedExports: {
+    restoreIdleDevServers: async () => restoreRuntime?.(),
+  },
+});
+const realState = await import('../core/state.js');
+mock.module('../core/state.js', {
+  namedExports: {
+    ...realState,
+    readSlotRow: async () =>
+      restoreRuntime
+        ? {
+            current_run_id: 'retained-owner',
+            slot_epoch: 1,
+            idle_devserver_epoch: 1,
+            idle_devservers: ['server'],
+          }
+        : null,
+  },
+});
+
 const commands: string[] = [];
 const launchScripts: string[] = [];
 mock.module('../core/tmux-launch-script.js', {
@@ -1380,3 +1402,79 @@ test('a scripted worker without an interactive receipt keeps live delivery uncon
     false,
   );
 });
+
+for (const runnerId of ['cursor', 'pi']) {
+  test(`${runnerId} slow runtime restore preserves the full argv launch and acknowledgement window`, async (t) => {
+    commands.length = 0;
+    paneCount = 1;
+    runnerAlive = true;
+    let clock = 1_000_000;
+    const restoredAt = clock + 180_000;
+    t.mock.method(Date, 'now', () => clock);
+    restoreRuntime = async () => {
+      clock = restoredAt;
+    };
+    advanceTaskSignalOnRespawn = true;
+    t.after(() => {
+      restoreRuntime = undefined;
+      advanceTaskSignalOnRespawn = false;
+      taskSignalOutput =
+        '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n';
+    });
+    let launchWindowOpenedAt = 0;
+    const result = await deliverPromptToLiveRunner({
+      vars,
+      target: '%1',
+      runnerId,
+      prompt: 'Read and execute REVIEW-FIX.md',
+      promptMarker: 'REVIEW-FIX.md',
+      replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
+      launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
+      timeoutMs: 120_000,
+      onPromptMutationStart: () => {
+        launchWindowOpenedAt = clock;
+        // Nearly the whole launch window elapses after restoration. Both the
+        // liveness and structured acknowledgement checks must still run.
+        clock += 119_000;
+      },
+    });
+    assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+    assert.equal(launchWindowOpenedAt, restoredAt);
+  });
+
+  test(`${runnerId} runtime rejection before argv relaunch is retryable without a send`, async (t) => {
+    commands.length = 0;
+    paneCount = 1;
+    runnerAlive = true;
+    restoreRuntime = async () => {
+      throw new Error('Runtime health unavailable');
+    };
+    t.after(() => {
+      restoreRuntime = undefined;
+    });
+    let mutations = 0;
+    const result = await deliverPromptToLiveRunner({
+      vars,
+      target: '%1',
+      runnerId,
+      prompt: 'Read and execute REVIEW-FIX.md',
+      promptMarker: 'REVIEW-FIX.md',
+      replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
+      launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
+      onPromptMutationStart: () => {
+        mutations++;
+      },
+    });
+    assert.equal(result.delivered, false);
+    if (result.delivered) assert.fail('Expected readiness hold');
+    assert.equal(result.disposition, 'hold');
+    assert.equal(result.retryable, true);
+    assert.equal(result.sendAttempted, false);
+    assert.match(result.reason, /runtime readiness failed: Runtime health unavailable/);
+    assert.equal(mutations, 0);
+    assert.equal(
+      commands.some((command) => command.includes('respawn-window')),
+      false,
+    );
+  });
+}

@@ -25,6 +25,7 @@ import {
   claimSlotStatusIf,
   getProjectField,
   loadProjectVars,
+  nextSlotEpoch,
   readSlotRow,
   resetSlotIf,
   SLOT_PHASE_RELEASING,
@@ -617,6 +618,15 @@ export async function commitSlotClaim(
         return false;
       overwritten = Object.fromEntries(Object.keys(fields).map((key) => [key, slot[key] ?? null]));
       ownerBefore = slot.current_run_id ?? null;
+      // A retained delivery keeps this checkout and its stopped-server obligation.
+      // Transfer it in the reservation CAS, before the ownership epoch advances.
+      if (
+        opts?.takeoverLiveOwner &&
+        phase === 'working' &&
+        slot.idle_devserver_epoch === slot.slot_epoch &&
+        Array.isArray(slot.idle_devservers)
+      )
+        fields.idle_devserver_epoch = nextSlotEpoch(slot);
       return true;
     },
     fields,
