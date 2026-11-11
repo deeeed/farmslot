@@ -1716,6 +1716,17 @@ async function assertCompletionFailureReleased(run: Run, operation: string): Pro
   await getRuntimeCapabilityRegistry().assertRunReleased(run.id);
 }
 
+/**
+ * A failed append before eviction keeps the run and clears its analytics flag so a later retry
+ * appends again. An earlier append may have landed and published the flag meanwhile; the reset is
+ * published the same way, so readers (and the run list version) see the served run.
+ */
+function clearAnalyticsFlagForRetry(run: Run): void {
+  if (run.analyticsEmittedAt === undefined) return;
+  run.analyticsEmittedAt = undefined;
+  if (runs.get(run.id) === run) publishRunResources(captureRunResources(run));
+}
+
 export async function deleteRun(id: string): Promise<boolean> {
   return withCompletionFailureEviction(id, () => deleteRunBody(id));
 }
@@ -1744,7 +1755,7 @@ async function deleteRunBody(id: string): Promise<boolean> {
     try {
       await deleteEmit;
     } catch (err) {
-      run.analyticsEmittedAt = undefined; // allow a later retry to re-append
+      clearAnalyticsFlagForRetry(run);
       console.warn(
         `[run-store] keeping run ${id}: analytics append failed before delete: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -2207,7 +2218,7 @@ async function archiveRunBody(id: string): Promise<boolean> {
     try {
       await archiveEmit;
     } catch (err) {
-      run.analyticsEmittedAt = undefined; // allow a later retry to re-append
+      clearAnalyticsFlagForRetry(run);
       console.warn(
         `[run-store] keeping run ${id}: analytics append failed before archive: ${err instanceof Error ? err.message : String(err)}`,
       );
