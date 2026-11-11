@@ -1385,6 +1385,56 @@ test('default node catalog preserves main membership and order without provider 
   }
 });
 
+test('worker catalogs accept only confirmed empty native listings', async (t) => {
+  const { listPiModelCatalog, PiModelListFormatError } =
+    await import('./pi-farmslot-providers.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'pi-empty-native-catalog-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const binary = join(dir, 'pi-fixture');
+  writeFileSync(
+    binary,
+    `#!/bin/sh
+if [ "$#" -gt 1 ]; then
+  printf 'provider model\\nlocalsparks discovered-only\\n'
+else
+  printf '%s' "$NATIVE_OUTPUT"
+  printf '%s' "$NATIVE_STDERR" >&2
+  exit "$NATIVE_STATUS"
+fi
+`,
+    { mode: 0o755 },
+  );
+  const list = (output, status = '0', stderr = '') =>
+    listPiModelCatalog(
+      binary,
+      { NATIVE_OUTPUT: output, NATIVE_STATUS: status, NATIVE_STDERR: stderr },
+      { args: ['-e', 'fixture'] },
+    );
+  const guidance =
+    'No models available. Use /login to log into a provider via OAuth or API key. See:\n' +
+    '  /synthetic/pi/docs/providers.md\n  /synthetic/pi/docs/models.md\n';
+  for (const output of ['No models available\n', guidance]) {
+    const listing = await list(output);
+    assert.deepEqual(listing.ids, ['localsparks/discovered-only']);
+    assert.deepEqual(listing.nativeIds, []);
+  }
+  for (const output of [
+    '',
+    'warning only\n',
+    'provider model\n',
+    'No models available!\n',
+    'warning\nNo models available\n',
+    'No models available\nwarning\n',
+    `warning\n${guidance}`,
+    `${guidance}warning\n`,
+    guidance.replace('/docs/models.md', '/other/models.md'),
+  ])
+    await assert.rejects(list(output), PiModelListFormatError);
+  await assert.rejects(list('No models available\n', '1'), /native model listing failed/);
+  await assert.rejects(list(guidance, '1'), /native model listing failed/);
+  await assert.rejects(list(guidance, '0', 'warning\n'), PiModelListFormatError);
+});
+
 test('shared Pi table decoder rejects missing headers and empty tables before discovery', async (t) => {
   const { decodePiModelList, PiModelListFormatError, listPiModelCatalog } =
     await import('./pi-farmslot-providers.mjs');

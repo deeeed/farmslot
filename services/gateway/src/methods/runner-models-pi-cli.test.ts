@@ -65,6 +65,7 @@ for (const scenario of [
   'legacy',
   'worker-static',
   'renamed-router',
+  'renamed-router-empty-native',
   'renamed-router-failed',
 ] as const) {
   test(
@@ -72,10 +73,15 @@ for (const scenario of [
     { skip: pi ? false : 'pi CLI is absent' },
     async (t) => {
       assert.ok(pi);
-      const renamed = scenario === 'renamed-router' || scenario === 'renamed-router-failed';
+      const emptyNative = scenario === 'renamed-router-empty-native';
+      const renamed =
+        scenario === 'renamed-router' || emptyNative || scenario === 'renamed-router-failed';
       const provider = renamed ? 'localsparks' : scenario === 'timeout' ? 'router' : 'litellm';
       const healthy =
-        scenario === 'healthy' || scenario === 'static-overrides' || scenario === 'renamed-router';
+        scenario === 'healthy' ||
+        scenario === 'static-overrides' ||
+        scenario === 'renamed-router' ||
+        emptyNative;
       let requests = 0;
       const inferenceModels: string[] = [];
       const server = createServer((req, res) => {
@@ -126,34 +132,36 @@ for (const scenario of [
       const address = server.address();
       assert.ok(address && typeof address !== 'string');
       const baseUrl = `http://127.0.0.1:${address.port}/v1`;
-      writeFileSync(
-        path.join(env.PI_CODING_AGENT_DIR, 'models.json'),
-        '// Synthetic pi JSONC configuration\n' +
-          JSON.stringify({
-            providers: {
-              baseline: {
-                baseUrl,
-                api: 'openai-completions',
-                apiKey: 'synthetic-key',
-                models: [{ id: 'control', contextWindow: 8192, maxTokens: 1024 }],
-              },
-              [provider]: {
-                baseUrl,
-                api: 'openai-completions',
-                apiKey: 'synthetic-key',
-                models: [
-                  { id: 'static-only', contextWindow: 16384, maxTokens: 2048 },
+      if (emptyNative) rmSync(path.join(env.PI_CODING_AGENT_DIR, 'models.json'), { force: true });
+      else
+        writeFileSync(
+          path.join(env.PI_CODING_AGENT_DIR, 'models.json'),
+          '// Synthetic pi JSONC configuration\n' +
+            JSON.stringify({
+              providers: {
+                baseline: {
+                  baseUrl,
+                  api: 'openai-completions',
+                  apiKey: 'synthetic-key',
+                  models: [{ id: 'control', contextWindow: 8192, maxTokens: 1024 }],
+                },
+                [provider]: {
+                  baseUrl,
+                  api: 'openai-completions',
+                  apiKey: 'synthetic-key',
+                  models: [
+                    { id: 'static-only', contextWindow: 16384, maxTokens: 2048 },
+                    ...(scenario === 'static-overrides'
+                      ? [{ id: 'discovered-fixture', contextWindow: 32768, maxTokens: 2048 }]
+                      : []),
+                  ],
                   ...(scenario === 'static-overrides'
-                    ? [{ id: 'discovered-fixture', contextWindow: 32768, maxTokens: 2048 }]
-                    : []),
-                ],
-                ...(scenario === 'static-overrides'
-                  ? { modelOverrides: { 'discovered-fixture': { maxTokens: 1024 } } }
-                  : {}),
+                    ? { modelOverrides: { 'discovered-fixture': { maxTokens: 1024 } } }
+                    : {}),
+                },
               },
-            },
-          }),
-      );
+            }),
+        );
       // An apostrophe and spaces exercise shell quoting. A custom runtime proves
       // catalog lookup uses the listing slot's project path rather than a default.
       const repo = path.join(root, `slot's ${scenario}`);
@@ -283,6 +291,16 @@ for (const scenario of [
       }
       const output = await node.list(source);
       const listing = parsePiModelCatalog(output);
+      if (emptyNative) {
+        assert.equal(requests, 1, 'installed extension must discover worker models');
+        assert.deepEqual(listing.ids, ['localsparks/discovered-fixture']);
+        assert.deepEqual(listing.nativeIds, []);
+        assert.deepEqual(listing.configuredProviders, ['localsparks']);
+        assert.deepEqual(listing.aliases, {
+          'router/discovered-fixture': 'localsparks/discovered-fixture',
+        });
+        return;
+      }
       assert.ok(listing.nativeIds?.includes('baseline/control'));
       assert.ok(listing.nativeIds?.includes(`${provider}/static-only`));
       if (scenario === 'legacy') {

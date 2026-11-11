@@ -18,6 +18,7 @@ import { startRemoteNodeStack } from './lib/remote-node-stack.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const evidence = path.resolve(process.argv[2] ?? '/tmp/node-model-catalog-retry-proof');
+const emptyNative = process.argv.includes('--empty-native');
 await mkdir(evidence, { recursive: true });
 const machine = 'catalog-proof-node';
 const project = 'catalog-proof';
@@ -65,6 +66,10 @@ try {
 const fs = require('node:fs');
 if (process.argv[2] !== '--list-models') process.exit(2);
 fs.appendFileSync(${JSON.stringify(marker)}, JSON.stringify({ at: Date.now(), extension: process.argv.includes('-e') }) + '\\n');
+if (${emptyNative} && !process.argv.includes('-e')) {
+  process.stdout.write('No models available\\n');
+  process.exit(0);
+}
 process.stdout.write('provider model context max-out thinking images\\nlocalsparks fixture-model 1M 64K yes yes\\n');
 if (process.argv.includes('-e')) {
   process.stdout.write('localsparks discovered-only 1M 64K yes yes\\n');
@@ -108,17 +113,20 @@ if (process.argv.includes('-e')) {
   );
   // This RPC projects cached listings only. It never requests a runner.modelCatalog sample.
   const models = await poll(
-    'the cached native Pi catalog to contain the fixture model',
+    'the cached native Pi catalog to match its registry',
     async () => {
       const catalog = await stack.call<NativeSessionCatalogResult>('native.session.catalog');
       const listed = catalog.runners.find((runner) => runner.runner === 'pi')?.nodeModels?.[
         machine
       ];
-      return listed?.includes('localsparks/fixture-model') ? listed : undefined;
+      return (emptyNative ? listed?.length === 0 : listed?.includes('localsparks/fixture-model'))
+        ? listed
+        : undefined;
     },
     5000,
   );
   assert.ok(!models.includes('localsparks/discovered-only'), 'discovery is not native evidence');
+  if (emptyNative) assert.deepEqual(models, [], 'confirmed empty native registry');
   const listings = (await readFile(marker, 'utf8'))
     .trim()
     .split('\n')
@@ -136,6 +144,7 @@ if (process.argv.includes('-e')) {
     passed: true,
     machine,
     nativeModels: models,
+    emptyNative,
     workerModels: worker.models.map((entry) => entry.id),
     nodeAwayMs: 18_000,
     startupCatalogCollectionReads: 0,

@@ -215,14 +215,26 @@ export async function listPiModelCatalog(binary, env = process.env, opts = {}) {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     if (result.status !== 0) throw new Error('Pi native model listing failed');
-    return result.stdout;
+    return result;
   };
-  const output = list(opts.args ?? []);
+  const output = list(opts.args ?? []).stdout;
   const listed = decodePiModelList(output);
   const discovery = parsePiProviderDiscovery(output, listed);
   // Native RPC omits the worker extension, so its registry needs its own evidence.
   // Reuse the table when no extension arguments were supplied.
-  const native = opts.args?.length ? decodePiModelList(list([])) : listed;
+  let native = listed;
+  if (opts.args?.length) {
+    const result = list([]);
+    const nativeOutput = result.stdout.trim();
+    // Pi exits successfully without a table when its native registry is empty.
+    const empty =
+      !result.stderr.trim() &&
+      (nativeOutput === 'No models available' ||
+        /^No models available\. Use \/login to log into a provider via OAuth or API key\. See:\r?\n {2}([^\r\n]+[/\\]docs)[/\\]providers\.md\r?\n {2}\1[/\\]models\.md$/.test(
+          nativeOutput,
+        ));
+    native = empty ? [] : decodePiModelList(nativeOutput);
+  }
   if (routerId === 'router' || discovery.reported) {
     const aliases = {};
     if (routerId !== 'router' && discovery.configuredProviders.includes(routerId))
