@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
 import type { SlotVars } from '../core/config.js';
+import type { GitHubService } from '../integrations/github-client.js';
 
 await import('../runtime/mock-pty.test-support.js');
 
@@ -66,23 +67,34 @@ mock.module('../core/exec.js', {
 const core = await import('../core/index.js');
 mock.module('../core/index.js', { namedExports: { ...core, execOnSlot: execute } });
 const github = await import('../integrations/github-client.js');
-mock.module('../integrations/github-client.js', {
-  namedExports: {
-    ...github,
-    ghRequest: async (args: string[]) => {
-      calls.push(args);
-      const ok = (value = '') => ({ stdout: value, stderr: '' });
-      if (args[0] === 'api') return ok('{}');
-      if (args[1] === 'view') {
-        assert.equal(args[2], String(historical.number));
-        return ok(JSON.stringify(historical));
-      }
-      if (args[1] === 'list') return ok(JSON.stringify(args.includes('all') ? [historical] : []));
-      if (args[1] === 'create') return ok('https://github.com/owner/repo/pull/194');
-      assert.deepEqual(args.slice(0, 3), ['pr', 'edit', '194'], 'Never edit the historical PR');
-      return ok();
-    },
+const closedFakeGithub: GitHubService = {
+  ...github.github,
+  prView: async (_repo, number) => {
+    calls.push(['pr', 'view', String(number)]);
+    assert.equal(number, historical.number, 'prView should only be called for the historical PR');
+    return { ...historical };
   },
+  prListFields: async (_repo, _fields, params) => {
+    const isAll = params.state === 'all';
+    calls.push(isAll ? ['pr', 'list', 'all'] : ['pr', 'list']);
+    return isAll ? [{ ...historical }] : [];
+  },
+  prCreate: async () => {
+    calls.push(['pr', 'create']);
+    return 'https://github.com/owner/repo/pull/194';
+  },
+  prEdit: async (_repo, prNumber, _params) => {
+    calls.push(['pr', 'edit', String(prNumber)]);
+    assert.notEqual(prNumber, historical.number, 'Never edit the historical PR');
+    return '';
+  },
+  rest: async <T>(_method: string, path: string) => {
+    calls.push(['api', path]);
+    return {} as unknown as T;
+  },
+};
+mock.module('../integrations/github-client.js', {
+  namedExports: { ...github, github: closedFakeGithub },
 });
 mock.module('../integrations/github-bindings-cache.js', {
   namedExports: {

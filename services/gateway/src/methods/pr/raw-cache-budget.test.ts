@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, mock, test } from 'node:test';
 
+import type { GitHubService } from '../../integrations/github-client.js';
 import {
   githubQueryBudget,
   GitHubQueryBudgetError,
@@ -8,19 +9,31 @@ import {
 
 let paused = false;
 let calls = 0;
-mock.module('../../integrations/github-client.js', {
-  namedExports: {
-    ghRequest: async (args: string[]) => {
-      calls++;
-      if (paused && (args[0] === 'pr' || args.includes('graphql')))
-        throw new GitHubQueryBudgetError(new Date(Date.now() + 60000).toISOString());
-      return {
-        stdout:
-          args[0] === 'pr' && args[1] === 'view' ? 'OPEN\tMERGEABLE\tCLEAN' : 'confirmed-data',
-        stderr: '',
-      };
-    },
+const clientModule = await import('../../integrations/github-client.js');
+const budgetFakeGithub: GitHubService = {
+  ...clientModule.github,
+  graphql: async <T>() => {
+    calls++;
+    if (paused) throw new GitHubQueryBudgetError(new Date(Date.now() + 60000).toISOString());
+    return {
+      repository: {
+        pr_0: {
+          state: 'OPEN',
+          mergeable: 'MERGEABLE',
+          mergeStateStatus: 'CLEAN',
+          headRefName: 'main',
+        },
+      },
+    } as unknown as T;
   },
+  rest: async <T>() => {
+    calls++;
+    if (paused) throw new GitHubQueryBudgetError(new Date(Date.now() + 60000).toISOString());
+    return { data: { repository: null } } as unknown as T;
+  },
+};
+mock.module('../../integrations/github-client.js', {
+  namedExports: { ...clientModule, github: budgetFakeGithub },
 });
 const { getPRRawData, prefetchPRBatchViaGraphQL } = await import('./raw-cache.js');
 
