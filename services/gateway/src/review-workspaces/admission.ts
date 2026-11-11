@@ -1,5 +1,7 @@
 import {
+  isTerminalRunStatus,
   type NativeProfileReference,
+  PipelineSteps,
   type PoolConfig,
   type PressureAdmissionDecision,
   type ProjectConfig,
@@ -14,6 +16,8 @@ import { loadPoolConfigs, loadProjectConfig } from '../fleet/state.js';
 import { capturePressureAdmissionDecisionsLightweight } from '../methods/dispatch/pressure-admission.js';
 import { resolveNativeExecutionNode } from '../runners/native/node.js';
 import {
+  assertReviewWorkspaceRun,
+  readReviewWorkspaceWorker,
   runnerSupportsReadonlyReviewWorkspace,
   runnerTerminalReviewRefusal,
 } from '../runners/native/review-workspace.js';
@@ -23,8 +27,9 @@ import {
   runnerSupportsModel,
   runnerSupportsNativeTaskReuse,
 } from '../runners/registry.js';
-import { getAllRuns } from '../runs/store.js';
+import { getAllRuns, getRun, persistRunNow, updateRunStep } from '../runs/store.js';
 import { ownsLocalNativeProfile } from '../security/native-owner.js';
+import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 
 import { resolveReviewWorkspacePool } from './pool.js';
 import { retainedWorkspaceIsIdle } from './retention-policy.js';
@@ -82,6 +87,83 @@ export function assertReviewWorkspaceCapacity(
       'REVIEW_WORKSPACE_CAPACITY',
       `Review capacity is full on ${machine}`,
     );
+  }
+}
+
+/** Extra turns reuse the worktree, but reserve admission until their receipts settle. */
+export async function admitReviewWorkspaceFollowup(
+  runId: string,
+  commandId: string,
+): Promise<void> {
+  const run = getRun(runId);
+  assertReviewWorkspaceRun(run);
+  assertNativeRunOwner(run);
+  const runner = run.metrics.runner;
+  const model = run.metrics.model;
+  if (!runner || !model) throw new Error('Review follow-up requires its recorded runner and model');
+  const generation = run.engineState?.generation ?? 0;
+  const admission = await inspectReviewWorkspaceTarget(
+    {
+      project: run.project,
+      machine: run.reviewWorkspace.machine,
+      runner,
+      model,
+      effort: run.effort,
+      transport: run.transport,
+      nativeProfile: run.nativeProfile,
+    },
+    run.nativeOwnerPrincipalId,
+    runId,
+  );
+  const current = getRun(runId);
+  assertReviewWorkspaceRun(current);
+  if (isTerminalRunStatus(current.status) || (current.engineState?.generation ?? 0) !== generation)
+    throw new Error('Review no longer owns this follow-up');
+  assertReviewWorkspaceAdmitted(admission, runId);
+  const gate = current.steps.find((step) => step.name === PipelineSteps.HUMAN_GATE);
+  if (!gate || !current.reviewResult)
+    throw new Error('Review follow-up requires its completed review and posting gate');
+  updateRunStep(runId, gate.name, {
+    outputs: { ...gate.outputs, reviewFollowupCommandId: commandId },
+  });
+  await persistRunNow(current, 'reserve retained review follow-up');
+}
+
+async function settleReviewWorkspaceFollowups(
+  machine: string,
+  owner: string,
+  excludingRunId?: string,
+): Promise<void> {
+  for (const run of getAllRuns()) {
+    const gate = run.steps.find((step) => step.name === PipelineSteps.HUMAN_GATE);
+    const commandId = gate?.outputs?.reviewFollowupCommandId;
+    if (
+      run.id === excludingRunId ||
+      run.reviewWorkspaceTarget?.machine !== machine ||
+      run.nativeOwnerPrincipalId !== owner ||
+      !run.reviewResult ||
+      typeof commandId !== 'string'
+    )
+      continue;
+    const generation = run.engineState?.generation ?? 0;
+    const snapshot = await readReviewWorkspaceWorker(run.id, { allowGate: true, limit: 1 });
+    if (
+      !snapshot.commands.some((command) => command.commandId === commandId) ||
+      snapshot.commands.some((command) => !command.outcome)
+    )
+      continue;
+    const current = getRun(run.id);
+    const currentGate = current?.steps.find((step) => step.name === PipelineSteps.HUMAN_GATE);
+    if (
+      !current ||
+      (current.engineState?.generation ?? 0) !== generation ||
+      currentGate?.outputs?.reviewFollowupCommandId !== commandId
+    )
+      continue;
+    updateRunStep(run.id, currentGate.name, {
+      outputs: { ...currentGate.outputs, reviewFollowupCommandId: undefined },
+    });
+    await persistRunNow(current, 'settle retained review follow-up');
   }
 }
 
@@ -162,6 +244,7 @@ export async function inspectReviewWorkspaceTarget(
   }
   const pressure = capturePressureAdmissionDecisionsLightweight([pool.machine]).get(pool.machine);
   if (!pressure) throw new Error(`Missing pressure admission result for ${pool.machine}`);
+  await settleReviewWorkspaceFollowups(pool.machine, owner, excludingRunId);
   return {
     pool,
     project,

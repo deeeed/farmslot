@@ -143,6 +143,9 @@ test('a retained finished review awaiting posting leaves capacity for another re
     ],
   };
   assert.equal(activeWorkspaceReviews('node', [run]), 0);
+  run.steps[1].outputs = { reviewFollowupCommandId: 'active-followup' };
+  assert.equal(activeWorkspaceReviews('node', [run]), 1);
+  delete run.steps[1].outputs;
   assert.equal(
     activeWorkspaceReviews('node', [
       run,

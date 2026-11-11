@@ -41,12 +41,13 @@ export function sameReviewPR(
 
 /** Retention keeps files/conversation identity, not an active machine admission. */
 export function retainedWorkspaceIsIdle(
-  run: Pick<Run, 'status' | 'reviewWorkspace' | 'agentContexts' | 'reviewResult'>,
+  run: Pick<Run, 'status' | 'reviewWorkspace' | 'agentContexts' | 'reviewResult' | 'steps'>,
 ): boolean {
   // The run's posting wait projects onto its reviewer context after completion.
   if (
     run.reviewWorkspace?.retainedAt &&
     run.reviewResult &&
+    !run.steps.some((step) => typeof step.outputs?.reviewFollowupCommandId === 'string') &&
     ['reconciling', 'human-gating', 'needs-decision', 'completing', 'done'].includes(run.status)
   )
     return true;
