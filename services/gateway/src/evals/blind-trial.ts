@@ -82,6 +82,7 @@ function gitSpec(
     branch: run.branch,
     baseSha: blind.baseSha,
     referenceCommits: blind.referenceCommits,
+    workerCdpPort: Number(vars.resourceVars.cdp_port) || undefined,
     ...(blind.proof ? { proof: blind.proof.source } : {}),
   };
 }

@@ -105,7 +105,7 @@ function worker(
 }
 
 test(
-  'gateway credentials cannot authenticate execution RPCs; task markers remain file-only',
+  'gateway network is denied even with a readable valid token; browser stores and operator CDP are denied',
   { skip: process.platform !== 'darwin' },
   async (t) => {
     const root = fixture();
@@ -152,7 +152,11 @@ test(
     ];
     for (const file of credentialFiles) {
       mkdirSync(path.dirname(file), { recursive: true });
-      writeFileSync(file, 'synthetic credential only', { mode: 0o600 });
+      writeFileSync(
+        file,
+        path.basename(file) === 'gateways.json' ? '{"gateways":{}}' : 'synthetic credential only',
+        { mode: 0o600 },
+      );
     }
     for (const marker of ['CLAUDE.md', 'scripts/dev.sh', 'services/gateway/package.json']) {
       const file = path.join(launchEnv.FARMSLOT_ROOT, marker);
@@ -161,7 +165,7 @@ test(
     }
     // Resolve an individual credential symlink outside the config directory too.
     const target = path.join(root, 'boundary/opaque-credential');
-    writeFileSync(target, 'synthetic credential only');
+    writeFileSync(target, '{"gateways":{}}');
     rmSync(path.join(home, '.farmslot/gateways.json'));
     symlinkSync(target, path.join(home, '.farmslot/gateways.json'));
     credentialFiles.push(...credentialFiles.map((file) => realpathSync(file)), target);
@@ -244,6 +248,50 @@ writeFileSync(${JSON.stringify(path.join(root, 'gateway-ready.json'))}, JSON.str
     const { url } = JSON.parse(readFileSync(ready, 'utf8'));
     const token = JSON.parse(readFileSync(path.join(config, 'gateways.json'), 'utf8')).gateways
       .proof.secret;
+    // Hand the worker valid authority on purpose. Network policy must suffice.
+    const handedToken = path.join(root, 'readable-token');
+    writeFileSync(handedToken, token);
+    const browserFiles = [
+      'Google/Chrome',
+      'Google/Chrome Beta',
+      'Google/Chrome Canary',
+      'Google/Chrome Dev',
+      'Chromium',
+      'Google/Chrome for Testing',
+    ].map((name) =>
+      path.join(
+        home,
+        'Library/Application Support',
+        name,
+        'Default/Local Storage/leveldb/synthetic.log',
+      ),
+    );
+    browserFiles.push(
+      path.join(home, '.chrome-farmslot-9323/Default/Local Storage/leveldb/synthetic.log'),
+      path.join(root, 'operator-debug/Default/Local Storage/leveldb/synthetic.log'),
+    );
+    for (const file of browserFiles) {
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, JSON.stringify({ refreshToken: 'synthetic-browser-session' }));
+    }
+    const disposable = path.join(root, 'boundary/worker-chrome/Default/Local Storage/fixture');
+    mkdirSync(path.dirname(disposable), { recursive: true });
+    writeFileSync(disposable, 'worker-disposable-session');
+    const operatorCdp = net.createServer((socket) => socket.end('synthetic operator CDP'));
+    t.after(async () => {
+      if (operatorCdp.listening)
+        await new Promise<void>((resolve, reject) =>
+          operatorCdp.close((error) => (error ? reject(error) : resolve())),
+        );
+    });
+    operatorCdp.listen(0, '127.0.0.1');
+    await once(operatorCdp, 'listening');
+    const cdpAddress = operatorCdp.address();
+    assert.ok(cdpAddress && typeof cdpAddress !== 'string');
+    Object.assign(launchEnv, {
+      FARMSLOT_CDP_PORT: String(cdpAddress.port),
+      FARMSLOT_CDP_PROFILE: path.join(root, 'operator-debug'),
+    });
     profile(root, launchEnv);
     // A profile materialized after boundary generation still carries no authority.
     const late = path.join(root, 'late-config');
@@ -264,6 +312,24 @@ import assert from 'node:assert/strict';
 import { readFileSync, renameSync, linkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import WebSocket from ${JSON.stringify(import.meta.resolve('ws'))};
+import net from 'node:net';
+const handedToken = readFileSync(${JSON.stringify(handedToken)}, 'utf8');
+assert.ok(handedToken.length > 0);
+if (process.argv[2] === 'control') {
+  const socket = new WebSocket(${JSON.stringify(url)});
+  const timeout = setTimeout(() => { socket.terminate(); throw new Error('control timed out'); }, 2500);
+  try {
+    await new Promise((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
+    const response = new Promise(resolve => socket.on('message', raw => { const frame = JSON.parse(raw); if (frame.id === 'auth') resolve(frame); }));
+    socket.send(JSON.stringify({ type: 'req', id: 'auth', method: 'auth.connect', params: { clientKind: 'ui', token: handedToken } }));
+    assert.equal((await response).ok, true);
+    console.log('synthetic token authenticates outside seatbelt');
+  } finally { clearTimeout(timeout); socket.terminate(); }
+  process.exit(0);
+}
+for (const file of ${JSON.stringify(browserFiles)})
+  assert.throws(() => readFileSync(file), { code: 'EPERM' });
+assert.equal(readFileSync(${JSON.stringify(disposable)}, 'utf8'), 'worker-disposable-session');
 for (const name of ['FARMSLOT_NODE_TOKEN', 'FARMSLOT_GATEWAY_TOKEN', 'FARMSLOT_GATEWAY_PASSWORD', 'GW_URL', 'GATEWAY_URL', 'FARMSLOT_GATEWAY', 'FARMSLOT_GATEWAY_PROFILE']) assert.equal(process.env[name], undefined, name);
 for (const file of ${JSON.stringify([...new Set([...credentialFiles, alias])])}) {
   assert.throws(() => readFileSync(file), { code: 'EPERM' });
@@ -277,25 +343,30 @@ const marked = spawnSync(process.execPath, [${JSON.stringify(fileURLToPath(new U
 assert.equal(marked.status, 0, marked.stderr);
 assert.ok(readFileSync(${JSON.stringify(path.join(task, 'CHECKLIST.md'))}, 'utf8').includes('- [x] Prove local marking'));
 assert.ok(JSON.parse(readFileSync(${JSON.stringify(path.join(task, 'SIGNAL.json'))}, 'utf8')));
-// The endpoint is deliberately known. Reachability must not grant execution authority.
+// Authority is readable, but the gateway transport must fail before auth.
 const socket = new WebSocket(${JSON.stringify(url)});
-const timeout = setTimeout(() => { socket.terminate(); throw new Error('synthetic gateway RPC timed out'); }, 2500);
 try {
-  await new Promise((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
-  const rpc = (id, method, params) => new Promise((resolve, reject) => {
-    const receive = raw => { const frame = JSON.parse(raw); if (frame.type === 'res' && frame.id === id) { socket.off('message', receive); resolve(frame); } };
-    socket.on('message', receive);
-    socket.send(JSON.stringify({ type: 'req', id, method, params }));
-  });
-  const auth = await rpc('auth', 'auth.connect', { clientKind: 'ui', token: process.env.FARMSLOT_GATEWAY_TOKEN });
-  assert.equal(auth.ok, false);
-  const execution = await rpc('execution', 'tmux.pasteText', { session: 'synthetic', text: 'synthetic no-op', submit: true });
-  assert.equal(execution.ok, false);
-  assert.equal(execution.error.code, 'AUTH_REQUIRED');
-  console.log('synthetic gateway reachable; authentication and tmux.pasteText refused; local marker updated CHECKLIST/SIGNAL');
-} finally { clearTimeout(timeout); socket.terminate(); }
+  await assert.rejects(new Promise((resolve, reject) => {
+    socket.once('open', resolve); socket.once('error', reject);
+  }), { code: 'EPERM' });
+} finally { socket.terminate(); }
+for (const host of ['127.0.0.1', '127.0.0.2', '::1', ${JSON.stringify(os.hostname())}]) {
+  for (const port of [Number(new URL(${JSON.stringify(url)}).port), ${cdpAddress.port}, 7777, 7801, 8808, 8809, 9323]) {
+    const connection = net.connect({ host, port });
+    try {
+      await assert.rejects(new Promise((resolve, reject) => { connection.once('connect', resolve); connection.once('error', reject); }), { code: 'EPERM' });
+    } finally { connection.destroy(); }
+  }
+}
+console.log('readable valid token cannot reach gateway; browser localStorage and operator CDP denied; disposable profile and local markers passed');
 `,
     );
+    const control = spawnSync(process.execPath, [probe, 'control'], {
+      env: launchEnv,
+      encoding: 'utf8',
+      timeout: 5000,
+    });
+    assert.equal(control.status, 0, control.stderr);
     const result = worker(root, `exec ${q(process.execPath)} ${q(probe)}`, {
       ...launchEnv,
       FARMSLOT_NODE_TOKEN: 'synthetic-node',

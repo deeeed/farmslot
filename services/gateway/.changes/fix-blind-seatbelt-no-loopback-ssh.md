@@ -1,1 +1,1 @@
-- Blocked SSH and remote-shell service ports, SSH tools, gateway credentials and inherited control-plane secrets in blind workers while preserving local task markers and recipe runtime helpers.
+- Blocked blind workers from gateway and operator debug-browser ports, browser session stores, SSH and control-plane credentials while preserving local task markers and disposable recipe browsers.

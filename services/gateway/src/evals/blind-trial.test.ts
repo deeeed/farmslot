@@ -273,8 +273,10 @@ test('a completion recovery cannot relabel reviewed output as the first output',
 test('the worker boundary uses the pool-selected credential home and resolved sibling checkouts', async (t) => {
   await fixture(t);
   vars.machineEnv = { FARMSLOT_HOME: '/synthetic/selected-profile' };
+  vars.resourceVars.cdp_port = '19222';
   t.after(() => {
     delete vars.machineEnv;
+    delete vars.resourceVars.cdp_port;
   });
   slotCommands.length = 0;
   await prepareBlindTrialGit(run.id);
@@ -286,6 +288,7 @@ test('the worker boundary uses the pool-selected credential home and resolved si
     );
   };
   assert.equal(spec('isolate').siblingRepos, undefined);
+  assert.equal(spec('boundary').workerCdpPort, 19222);
   assert.deepEqual(spec('boundary').siblingRepos, ['/farm/slots/sibling']);
   assert.deepEqual(spec('boundary').farmConfigRoots, [
     '/farm/pool',

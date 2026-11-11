@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { withBlindTrialBoundary } from './blind-git.js';
 
-function generatedProfile(t: TestContext) {
+function generatedProfile(t: TestContext, workerCdpPort?: number, invalidProfiles?: string) {
   const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'seatbelt-unit-')));
   t.after(() => rmSync(root, { recursive: true }));
   mkdirSync(path.join(root, 'boundary'));
@@ -50,6 +50,38 @@ function generatedProfile(t: TestContext) {
     mkdirSync(path.dirname(file), { recursive: true });
     writeFileSync(file, 'synthetic credential only');
   }
+  const browserDirs = [
+    'Google/Chrome',
+    'Google/Chrome Beta',
+    'Google/Chrome Canary',
+    'Google/Chrome Dev',
+    'Chromium',
+    'Google/Chrome for Testing',
+  ].map((name) => path.join(home, 'Library/Application Support', name));
+  browserDirs.push(
+    path.join(home, '.chrome-farmslot-9323'),
+    path.join(home, '.chrome-farmslot-19323'),
+    path.join(root, 'operator-debug'),
+  );
+  for (const directory of browserDirs) mkdirSync(directory, { recursive: true });
+  symlinkSync(path.join(root, 'operator-debug'), path.join(home, '.chrome-farmslot-alias'));
+  // Each home/config must contribute, rather than only the selected/active profile.
+  const profileFiles = gatewayFiles.filter((file) => path.basename(file) === 'gateways.json');
+  for (const [index, file] of profileFiles.entries())
+    writeFileSync(
+      file,
+      JSON.stringify({
+        gateways: {
+          inactive: {
+            url: 'ws://unresolved.example.invalid:' + (17801 + index),
+            secret: 'synthetic-only',
+          },
+          secure: { url: 'wss://example.invalid' },
+          plain: { url: 'ws://example.invalid' },
+        },
+      }),
+    );
+  if (invalidProfiles !== undefined) writeFileSync(profileFiles[0], invalidProfiles);
   writeFileSync(path.join(root, 'state.json'), '{"originalIsDirectory":true}');
   const profile = execFileSync(
     'python3',
@@ -59,16 +91,80 @@ function generatedProfile(t: TestContext) {
 import json, os, pathlib, runpy, sys
 from unittest.mock import patch
 blind = runpy.run_path(sys.argv[1], run_name='fixture')
-with patch.dict(os.environ, {'HOME': sys.argv[2] + '/boundary/home', 'FARMSLOT_HOME': sys.argv[2] + '/boundary/selected-home', 'FARMSLOT_CONFIG_DIR': sys.argv[2] + '/boundary/selected-config', 'TMUX_TMPDIR': '/tmp/fixture-tmux', 'TMUX': '/tmp/fixture-inherited/server,123,0'}, clear=True):
-    print(blind['sandbox_profile']({'repo': sys.argv[2]}, pathlib.Path(sys.argv[2]), ['/tmp/fixture-discovered/server']))
+with patch.dict(os.environ, {'HOME': sys.argv[2] + '/boundary/home', 'FARMSLOT_HOME': sys.argv[2] + '/boundary/selected-home', 'FARMSLOT_CONFIG_DIR': sys.argv[2] + '/boundary/selected-config', 'GATEWAY_URL': 'ws://[::1]:17901', 'GW_URL': 'ws://node.local:17902', 'FARMSLOT_GATEWAY': 'wss://node.local:17903', 'GATEWAY_PORT': '17904', 'FARMSLOT_CDP_PORT': '19323', 'FARMSLOT_CDP_PROFILE': sys.argv[2] + '/operator-debug', 'TMUX_TMPDIR': '/tmp/fixture-tmux', 'TMUX': '/tmp/fixture-inherited/server,123,0'}, clear=True):
+    print(blind['sandbox_profile']({'repo': sys.argv[2], 'workerCdpPort': int(sys.argv[3])}, pathlib.Path(sys.argv[2]), ['/tmp/fixture-discovered/server']))
 `,
       fileURLToPath(new URL('./blind-git.py', import.meta.url)),
       root,
+      String(workerCdpPort ?? 0),
     ],
     { encoding: 'utf8', timeout: 4500 },
   );
-  return { root, home, profile, gatewayFiles };
+  return { root, home, profile, gatewayFiles, browserDirs };
 }
+
+test('blind profile denies every configured gateway port on every address and operator CDP', (t) => {
+  const { profile, gatewayFiles } = generatedProfile(t);
+  const ports = [
+    80,
+    443,
+    7777,
+    7801,
+    8808,
+    8809,
+    9323,
+    19323,
+    17901,
+    17902,
+    17903,
+    17904,
+    ...gatewayFiles
+      .filter((file) => path.basename(file) === 'gateways.json')
+      .map((_, index) => 17801 + index),
+  ];
+  for (const port of ports)
+    assert.ok(profile.includes('(remote tcp "*:' + port + '")'), 'missing denied port ' + port);
+  assert.ok(!profile.includes('synthetic-only'));
+  for (const port of [5174, 8081, 9222])
+    assert.ok(!profile.includes('(remote tcp "*:' + port + '")'));
+});
+
+test('blind profile protects operator browser stores and aliases after read exceptions', (t) => {
+  const { profile, browserDirs } = generatedProfile(t);
+  for (const directory of browserDirs) {
+    const rule = '(deny file-read* (subpath ' + JSON.stringify(directory) + '))';
+    assert.ok(profile.includes(rule), directory);
+    assert.ok(profile.indexOf(rule) > profile.lastIndexOf('(allow file-read*'));
+    assert.ok(profile.includes('(literal ' + JSON.stringify(path.dirname(directory)) + ')'));
+  }
+});
+
+test('slot CDP is excluded from operator CDP defaults, never from gateway denials', (t) => {
+  const { profile } = generatedProfile(t, 9323);
+  assert.ok(!profile.includes('(remote tcp "*:9323")'));
+  assert.ok(profile.includes('(remote tcp "*:19323")'));
+  assert.ok(generatedProfile(t, 7777).profile.includes('(remote tcp "*:7777")'));
+});
+
+test('malformed gateway discovery fails closed without exposing credential bytes', (t) => {
+  for (const input of [
+    '{"secret":"synthetic-secret-do-not-print",',
+    '{"gateways":{"bad":{"url":"ws://host:invalid","secret":"synthetic-secret-do-not-print"}}}',
+  ]) {
+    assert.throws(
+      () => generatedProfile(t, undefined, input),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.match(
+          error.message,
+          /(?:Cannot discover gateway endpoints|Invalid gateway endpoint)/u,
+        );
+        assert.doesNotMatch(error.message, /synthetic-secret-do-not-print/u);
+        return true;
+      },
+    );
+  }
+});
 
 test('blind profile denies gateway credentials after all runtime exceptions, including resolved aliases and rename guards', (t) => {
   const { profile, gatewayFiles } = generatedProfile(t);

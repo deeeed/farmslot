@@ -8,6 +8,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from urllib.parse import urlsplit
 
 os.umask(0o077)
 
@@ -148,13 +149,89 @@ def worker_access_rules(repo):
     return rules
 
 
-def gateway_credential_paths():
-    # Discover paths/aliases only, never parse credential contents. Protect both
-    # legacy and layout-2 profiles, including inactive homes and pool overrides.
+def gateway_homes():
     home = Path.home()
-    homes = {home / '.farmslot', *home.glob('.farmslot*')}
+    homes = {home / '.farmslot', *(p for p in home.glob('.farmslot*') if p.is_dir())}
     homes.update(Path(os.path.expanduser(os.environ[name]))
                  for name in ['FARMSLOT_HOME', 'FARMSLOT_CONFIG_DIR'] if os.environ.get(name))
+    return homes
+
+
+def gateway_network_rules(spec):
+    # Read only URL fields before sandbox entry. Never return/log credential
+    # fields or parser exceptions, which can include the original secret bytes.
+    # Wildcard ports cover DNS aliases, LAN, IPv6 and mapped IPv4 without a
+    # resolution race. A provider sharing a control-plane port fails closed too.
+    ports = {7777, 7801, 8808, 8809}  # CLI/server, desktop validation, worktree validation.
+    urls = []
+    homes = gateway_homes()
+    configs = homes | {p / 'config' for p in homes}
+    for root in sorted(configs):
+        file = root / 'gateways.json'
+        try:
+            profiles = json.loads(file.read_text())
+            urls += [profile['url'] for profile in profiles['gateways'].values()]
+        except FileNotFoundError:
+            continue  # Absent homes/config layouts do not contribute endpoints.
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            raise RuntimeError('Cannot discover gateway endpoints for the blind boundary') from None
+    for name in ['GATEWAY_URL', 'GW_URL', 'FARMSLOT_GATEWAY', 'VITE_FARMSLOT_GATEWAY_URL']:
+        value = os.environ.get(name)
+        # FARMSLOT_GATEWAY can also name a profile; every profile is read above.
+        if value and (name != 'FARMSLOT_GATEWAY' or '://' in value):
+            urls.append(value)
+    for value in urls:
+        try:
+            url = urlsplit(value)
+            if url.scheme not in ['ws', 'wss', 'http', 'https'] or not url.hostname:
+                raise ValueError()
+            ports.add(boundary_port(url.port if url.port is not None
+                                    else (443 if url.scheme in ['wss', 'https'] else 80)))
+        except (ValueError, TypeError, AttributeError):
+            raise RuntimeError('Invalid gateway endpoint for the blind boundary') from None
+    for name in ['GATEWAY_PORT', 'GW_PORT']:
+        if os.environ.get(name):
+            ports.add(boundary_port(os.environ[name]))
+    # The slot's disposable recipe browser is independent of operator CDP.
+    # Never exempt its port if it is also a gateway endpoint.
+    cdp_ports = {9323}
+    for profile in Path.home().glob('.chrome-farmslot-*'):
+        suffix = profile.name.removeprefix('.chrome-farmslot-')
+        if suffix.isdigit():
+            cdp_ports.add(boundary_port(suffix))
+    if os.environ.get('FARMSLOT_CDP_PORT'):
+        cdp_ports.add(boundary_port(os.environ['FARMSLOT_CDP_PORT']))
+    cdp_ports.discard(spec.get('workerCdpPort'))
+    ports |= cdp_ports
+    return '(deny network-outbound ' + ' '.join(
+        '(remote tcp "*:%s")' % port for port in sorted(ports)) + ')'
+
+
+def boundary_port(value):
+    if not str(value).isdigit() or not 1 <= int(value) <= 65535:
+        raise RuntimeError('Invalid control-plane port for the blind boundary')
+    return int(value)
+
+
+def operator_browser_paths():
+    # Paths/aliases only. Never open browser files, including DevToolsActivePort.
+    home = Path.home()
+    support = home / 'Library/Application Support'
+    protected = [support / name for name in ['Google/Chrome', 'Google/Chrome Beta',
+                 'Google/Chrome Canary', 'Google/Chrome Dev', 'Google/Chrome for Testing',
+                 'Chromium', 'Chrome for Testing']]
+    protected += [home / '.chrome-farmslot-9323', *home.glob('.chrome-farmslot-*')]
+    if os.environ.get('FARMSLOT_CDP_PROFILE'):
+        protected.append(Path(os.path.expanduser(os.environ['FARMSLOT_CDP_PROFILE'])))
+    # Worker profiles live in the slot runtime, outside these operator stores.
+    return protected
+
+
+def gateway_credential_paths():
+    # Discover paths/aliases only. Protect both legacy and layout-2 profiles,
+    # including inactive homes and pool overrides.
+    home = Path.home()
+    homes = gateway_homes()
     configs = homes | {p / 'config' for p in homes}
     names = ['gateways.json', 'credentials.json', 'provider-accounts.json',
              'active-provider-accounts.json', 'node.secret', 'providers.env']
@@ -186,7 +263,7 @@ def worker_private_rules(capsule):
     # These denials come after every read exception, including the boundary and
     # node_modules. Resolve symlinks before entering the sandbox as well.
     protected = [Path.home() / '.ssh', Path.home() / '.pi/agent/settings.json',
-                 capsule / 'boundary/sandbox.sb'] + gateway_credential_paths()
+                 capsule / 'boundary/sandbox.sb'] + gateway_credential_paths() + operator_browser_paths()
     for value in protected:
         rules += ['(deny %s (subpath %s))' % (operation, quote(p))
                   for operation in ['file-read*', 'file-write*'] for p in path_aliases(value)]
@@ -231,7 +308,7 @@ def sandbox_profile(spec, capsule, tmux_sockets=None):
     # Instance pool, runs and projects stay read-only, even through worker-created links.
     rules += ['(deny file-write* (subpath %s))' % quote(Path(os.path.expanduser(p)).resolve())
               for p in spec.get('farmConfigRoots', [])]
-    rules += [tmux_socket_rules(tmux_sockets or [])]
+    rules += [tmux_socket_rules(tmux_sockets or []), gateway_network_rules(spec)]
     rules += worker_private_rules(capsule)
     return '\n'.join(rules + [''])
 

@@ -13,6 +13,8 @@ export interface BlindGitSpec {
   siblingRepos?: string[];
   /** The node's resolved pool, runs and projects roots, which the worker sandbox cannot write. */
   farmConfigRoots?: string[];
+  /** Trusted slot resource port; never exempted from gateway network denials. */
+  workerCdpPort?: number;
   runId: string;
   branch: string;
   baseSha: string;

@@ -242,13 +242,13 @@
   {
     "file": "services/gateway/src/evals/blind-git.py",
     "literal": ".farmslot",
-    "reason": "Blind worker credential denials include default and inactive CLI homes, regardless of the selected instance; only path metadata is discovered.",
+    "reason": "Blind worker denials cover default and inactive CLI homes; discovery reads path metadata and gateway URL fields only, never logs credentials.",
     "count": 1
   },
   {
     "file": "services/gateway/src/evals/blind-git.py",
     "literal": ".farmslot*",
-    "reason": "Blind worker credential denials include default and inactive CLI homes, regardless of the selected instance; only path metadata is discovered.",
+    "reason": "Blind worker denials cover default and inactive CLI homes; discovery reads path metadata and gateway URL fields only, never logs credentials.",
     "count": 1
   }
 ]
