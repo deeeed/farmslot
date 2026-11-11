@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -96,6 +97,32 @@ test('a pack-copied project reads its policy from runtime settings, a hand-manag
   assert.deepEqual((await loadProjectVars(project)).projectJson.backlog, {
     auto_dispatch: { enabled: true },
   });
+});
+
+test('pack-copied projects read state.json again only when it changes', async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'pack-state-stamp-test-'));
+  const previous = process.env.FARMSLOT_WORKSPACE;
+  process.env.FARMSLOT_WORKSPACE = home;
+  const state = path.join(home, 'state.json');
+  t.after(async () => {
+    if (previous === undefined) delete process.env.FARMSLOT_WORKSPACE;
+    else process.env.FARMSLOT_WORKSPACE = previous;
+    // The test may stop while the file is unreadable; give it back its mode before removing it.
+    if (existsSync(state)) await chmod(state, 0o644);
+    await rm(home, { recursive: true, force: true });
+  });
+  const packs = (projects: string[]) =>
+    JSON.stringify({ schema_version: 1, packs: { pack: { projects } } });
+  await writeFile(state, packs(['copied']));
+  assert.equal(isPackCopiedProject('copied'), true);
+  assert.equal(isPackCopiedProject('hand-managed'), false);
+  // chmod changes neither inode, size nor mtime: a lookup that read the file again would fail.
+  await chmod(state, 0o000);
+  assert.equal(isPackCopiedProject('copied'), true);
+  await chmod(state, 0o644);
+  await writeFile(state, packs(['hand-managed']));
+  assert.equal(isPackCopiedProject('copied'), false);
+  assert.equal(isPackCopiedProject('hand-managed'), true);
 });
 
 test('source runtime settings retain and validate approval policy overrides', async (t) => {

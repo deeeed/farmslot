@@ -14,6 +14,8 @@ let nextResult: ExecResult = { stdout: '', stderr: '', exitCode: 0 };
 const execCommands: string[] = [];
 mock.module('../../core/exec.js', {
   namedExports: {
+    // Runner files come from the mocked shell below, as they would on a remote slot.
+    slotFilesReadInProcess: () => false,
     execOnSlot: async (_vars: unknown, cmd: string): Promise<ExecResult> => {
       execCommands.push(cmd);
       return nextResult;

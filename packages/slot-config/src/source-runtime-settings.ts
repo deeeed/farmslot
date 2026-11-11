@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { statSync } from 'node:fs';
 import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -6,7 +7,7 @@ import { isRecord, parseProjectVisualClaimReviewPolicy } from '@farmslot/protoco
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { resolveApprovalPolicy } from '@farmslot/protocol/review-approval-policy.cjs';
 
-import { readWorkspaceState, resolveWorkspaceRoot } from './repo-root.js';
+import { readWorkspaceState, resolveWorkspaceRoot, WORKSPACE_STATE_FILE } from './repo-root.js';
 import { projectSourceContext } from './source-binding.js';
 
 export type SourceRuntimeSettings = Partial<
@@ -98,14 +99,33 @@ export function writeSourceRuntimeSettings(
  * state.json records. `farmslot update` replaces such a project dir on every pack sync.
  */
 export function isPackCopiedProject(project: string): boolean {
+  return packCopiedProjects().has(project);
+}
+
+/** The projects the workspace's packs copied in, read again only when state.json changes. */
+let packCopied: { stamp: string; projects: Set<string> } | undefined;
+
+function packCopiedProjects(): Set<string> {
   const workspace = resolveWorkspaceRoot();
+  const file = workspace ? path.join(workspace, WORKSPACE_STATE_FILE) : null;
+  const stamp = file ? stateStamp(file) : 'none';
+  if (packCopied?.stamp === stamp) return packCopied.projects;
   const state = workspace
     ? readWorkspaceState<{ schema_version: number; packs?: unknown }>(workspace)
     : null;
   const packs = state && isRecord(state.packs) ? Object.values(state.packs) : [];
-  return packs.some(
-    (pack) => isRecord(pack) && Array.isArray(pack.projects) && pack.projects.includes(project),
-  );
+  const projects = new Set<string>();
+  for (const pack of packs)
+    if (isRecord(pack) && Array.isArray(pack.projects))
+      for (const name of pack.projects) if (typeof name === 'string') projects.add(name);
+  packCopied = { stamp, projects };
+  return projects;
+}
+
+function stateStamp(file: string): string {
+  const stat = statSync(file, { throwIfNoEntry: false, bigint: true });
+  // A missing file reads as no packs; readWorkspaceState reports a malformed one.
+  return stat ? `${file}|${stat.ino}|${stat.size}|${stat.mtimeNs}` : `${file}|missing`;
 }
 
 /**
