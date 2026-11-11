@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import {
   runnerModelCatalogResourceKey,
@@ -7,6 +7,7 @@ import {
   type RunnerVisibleModelsGetResult,
   type RunnerVisibleModelsSetResult,
 } from '@farmslot/protocol';
+import { machinePoolFileName } from '@farmslot/slot-config';
 
 import { loadMachinePool, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot, isDisconnectedRemote, isLocal } from '../core/exec.js';
@@ -14,8 +15,10 @@ import { GatewayMethodError } from '../core/method-error.js';
 import { withMachineEnv } from '../core/project-env.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
-import { resolveMachinePoolConfigs } from '../fleet/machine-pool.js';
+import { poolConfigId, resolveMachinePoolConfigs } from '../fleet/machine-pool.js';
+import { usesNodeLink } from '../fleet/node-link-policy.js';
 import { loadPoolConfigs } from '../fleet/state.js';
+import { resolveRemoteFarmCommand } from '../node-support/remote-command.js';
 import { nativeCatalogChanges } from '../resources/native-catalog-changes.js';
 import { resourceRevisions } from '../resources/revisions.js';
 import type { ModelCatalogNode, RunnerModelCatalogSource } from '../runners/model-catalog.js';
@@ -67,9 +70,17 @@ const NODE_MODEL_CATALOG_STARTUP_DELAY_MS = 15_000;
 
 /** Every pool machine, local or remote, lists through one of its slots' exec path. */
 export async function modelCatalogNodes(): Promise<ModelCatalogNode[]> {
+  const pools = await loadPoolConfigs();
   const slots = new Map<string, string>();
-  for (const pool of await loadPoolConfigs())
-    if (pool.machine && pool.slots[0] && !slots.has(pool.machine))
+  // The canonical pool/<machine>.json supplies regular slots. Keep auxiliary
+  // capacity as fallback, even when there is no canonical machine-settings pool.
+  for (const pool of pools)
+    if (
+      pool.machine &&
+      pool.slots[0] &&
+      (!slots.has(pool.machine) ||
+        basename(poolConfigId(pool)) === machinePoolFileName(pool.machine))
+    )
       slots.set(pool.machine, pool.slots[0].id);
   return [...slots].map(([machine, slot]) => ({
     machine,
@@ -80,12 +91,16 @@ export async function modelCatalogNodes(): Promise<ModelCatalogNode[]> {
       const baseCommand =
         source.buildCommand?.(vars, binary) ??
         `${shellExpressionForRemotePath(binary)} ${source.args.map(shellQuote).join(' ')}`;
-      const command = source.prepareCommand
+      let command = source.prepareCommand
         ? source.prepareCommand(baseCommand, {
             repo: vars.remoteRepo,
             runtimeDir: await resolveProjectRuntimeDir(vars.projectName),
           })
         : baseCommand;
+      // Resolve and activate support before the bounded listing. The resolved
+      // command names its immutable bundle, so execOnSlot need not ensure it again.
+      if (!isLocal(vars.host, vars.machine) || usesNodeLink(vars.machine))
+        command = await resolveRemoteFarmCommand(vars, command);
       const result = await execOnSlot(vars, withMachineEnv(`${command} </dev/null`, vars), {
         cwd: '/',
         timeout: NODE_MODEL_LIST_TIMEOUT_MS,
