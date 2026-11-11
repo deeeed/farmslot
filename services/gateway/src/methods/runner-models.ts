@@ -77,7 +77,9 @@ export async function modelCatalogNodes(): Promise<ModelCatalogNode[]> {
       const vars = await loadSlotVars(slot);
       if (isDisconnectedRemote(vars)) throw new Error('node is not connected');
       const binary = vars[source.slotPathKey]?.trim() || source.nodeCommand;
-      const command = `${shellExpressionForRemotePath(binary)} ${source.args.map(shellQuote).join(' ')} </dev/null`;
+      const command =
+        source.buildCommand?.(vars, binary) ??
+        `${shellExpressionForRemotePath(binary)} ${source.args.map(shellQuote).join(' ')} </dev/null`;
       const result = await execOnSlot(vars, withMachineEnv(command, vars), {
         cwd: '/',
         timeout: NODE_MODEL_LIST_TIMEOUT_MS,

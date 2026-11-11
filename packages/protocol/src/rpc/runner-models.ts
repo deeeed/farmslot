@@ -46,6 +46,7 @@ export const RUNNER_PICKER_MODELS: Readonly<Record<string, readonly string[]>> =
 /** Node catalog providers the picker shows, in group order. Every other provider is hidden. */
 export const RUNNER_MODEL_PROVIDER_LABELS: ReadonlyMap<string, string> = new Map([
   ['litellm', 'Consensys LiteLLM'],
+  ['localsparks', 'Local'],
   ['xai', 'xAI'],
   ['anthropic', 'Anthropic'],
   ['omlx', 'Local'],

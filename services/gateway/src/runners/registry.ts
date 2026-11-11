@@ -67,7 +67,7 @@ import {
   parseCursorModelCatalog,
   parseGrokModelCatalog,
   parseOpenCodeModelList,
-  parsePiModelList,
+  parsePiModelCatalog,
   type RunnerModelCatalogSource,
 } from './model-catalog.js';
 import {
@@ -116,6 +116,7 @@ import {
 } from './prompt-delivery-evidence.js';
 import {
   buildPiAuthCheckCommand,
+  buildPiModelCatalogCommand,
   buildRunnerObservabilityInstallCommand,
 } from './runner-observability.js';
 import {
@@ -675,8 +676,9 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
       nodeCommand: 'pi',
       slotPathKey: 'piPath',
       args: ['--list-models'],
-      parse: parsePiModelList,
+      parse: parsePiModelCatalog,
       resolveModel: resolvePiModel,
+      buildCommand: buildPiModelCatalogCommand,
     },
     acceptsEffort: (_model, effort) => isPiThinkingLevel(effort.trim().toLowerCase()),
     acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,

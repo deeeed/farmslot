@@ -70,6 +70,16 @@ change when an operator saves a preference.
 
 ## Pi compatible-provider limits
 
+`FARMSLOT_PI_ROUTER_ID` sets the router provider name, defaulting to `router`.
+For example, set it to `localsparks` in the execution node's pool environment to
+list models as `localsparks/GLM-5.3-Flash-s12`. Use lowercase letters, digits,
+dots, underscores or hyphens, beginning and ending with a letter or digit.
+Names reserved for other providers, including `litellm`, `ollama` and `lmstudio`,
+are rejected. Keep the `FARMSLOT_PI_ROUTER_*` setting names when renaming the provider.
+Saved `router/<model>` references remain selectable and authenticated aliases of
+the same models. Aliases are hidden from model listings and pickers, and existing
+runs and sessions retain their saved model names during replay or restoration.
+
 Discovered model metadata supplies context and output limits. LiteLLM also uses
 `/v1/model/info` for limits and reasoning support, with one bounded metadata request
 per source rather than per model. When fields are absent,

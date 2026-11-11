@@ -1,0 +1,1 @@
+- Configure Pi router provider names while preserving hidden router model aliases for existing runs, session restoration and per-node model checks.

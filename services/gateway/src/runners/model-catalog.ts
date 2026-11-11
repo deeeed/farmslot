@@ -10,6 +10,8 @@ import {
   type RunnerModelCatalogResult,
 } from '@farmslot/protocol';
 
+import type { SlotVars } from '../core/config.js';
+
 export class ModelCatalogFormatError extends Error {}
 
 export const RUNNER_MODEL_CATALOG_TTL_MS = 5 * 60_000;
@@ -35,7 +37,9 @@ export interface RunnerModelCatalogNodeSource {
   slotPathKey: 'piPath' | 'opencodePath';
   args: string[];
   /** Model ids, `provider/model`. */
-  parse: (output: string) => string[];
+  parse: (output: string) => string[] | NodeCatalogModels;
+  /** Runner-owned listing command, executed with this node's inherited and pool environment. */
+  buildCommand?: (vars: SlotVars, binary: string) => string;
   /** The listed id a requested model launches as, such as Pi's bare `grok-*` as `xai/grok-*`. */
   resolveModel?: (model: string) => string;
 }
@@ -252,6 +256,40 @@ export function parsePiModelList(output: string): string[] {
   return [...new Set(ids)];
 }
 
+/** Farmslot's node-local Pi helper reports the models actually registered by discovery. */
+export function parsePiModelCatalog(output: string): NodeCatalogModels {
+  // Raw tables remain valid for callers that list native Pi directly.
+  if (!output.trimStart().startsWith('{')) return { ids: parsePiModelList(output) };
+  let value: unknown;
+  try {
+    value = JSON.parse(output);
+  } catch {
+    throw new ModelCatalogFormatError('Pi model catalog is not valid JSON.');
+  }
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.ids) ||
+    !value.ids.length ||
+    value.ids.some((id) => typeof id !== 'string' || !/^[a-z0-9][\w.-]*\/\S+$/i.test(id)) ||
+    !isRecord(value.aliases)
+  )
+    throw new ModelCatalogFormatError('Pi model catalog has invalid models or aliases.');
+  const ids: string[] = value.ids;
+  const aliases: Record<string, string> = {};
+  for (const [alias, canonical] of Object.entries(value.aliases)) {
+    if (
+      !alias.startsWith('router/') ||
+      typeof canonical !== 'string' ||
+      !ids.includes(canonical) ||
+      ids.includes(alias) ||
+      alias.slice(7) !== canonical.slice(canonical.indexOf('/') + 1)
+    )
+      throw new ModelCatalogFormatError('Pi model catalog has invalid aliases.');
+    aliases[alias] = canonical;
+  }
+  return { ids, aliases };
+}
+
 /** `opencode models`: one `provider/model` per line. */
 export function parseOpenCodeModelList(output: string): string[] {
   const ids = stripVTControlCharacters(output)
@@ -265,16 +303,22 @@ export function parseOpenCodeModelList(output: string): string[] {
 interface NodeModelListing {
   ids: readonly string[];
   observedAt?: number;
+  aliases: Readonly<Record<string, string>>;
 }
 
 /** Last good listing per runner and execution node. Stale data guides placement only. */
 export class NodeModelCatalogs {
   private readonly listings = new Map<string, Map<string, NodeModelListing>>();
 
-  record(runner: string, machine: string, ids: readonly string[]): void {
+  record(
+    runner: string,
+    machine: string,
+    ids: readonly string[],
+    aliases: Readonly<Record<string, string>> = {},
+  ): void {
     let byNode = this.listings.get(runner);
     if (!byNode) this.listings.set(runner, (byNode = new Map()));
-    byNode.set(machine, { ids: [...ids], observedAt: Date.now() });
+    byNode.set(machine, { ids: [...ids], aliases: { ...aliases }, observedAt: Date.now() });
   }
 
   unavailable(runner: string, machine: string): void {
@@ -284,7 +328,21 @@ export class NodeModelCatalogs {
 
   /** One node's full last good listing; undefined until it has listed. */
   listing(runner: string, machine: string): readonly string[] | undefined {
-    return this.listings.get(runner)?.get(machine)?.ids;
+    const listing = this.listings.get(runner)?.get(machine);
+    return listing ? [...listing.ids, ...Object.keys(listing.aliases)] : undefined;
+  }
+
+  canonicalModel(runner: string, machine: string, id: string): string {
+    const aliases = this.listings.get(runner)?.get(machine)?.aliases;
+    return aliases && Object.hasOwn(aliases, id) ? aliases[id] : id;
+  }
+
+  /** Canonical picker ids, including router ids configured by this node. */
+  pickerListing(runner: string, machine: string): readonly string[] | undefined {
+    const listing = this.listings.get(runner)?.get(machine);
+    if (!listing) return undefined;
+    const configured = new Set(Object.values(listing.aliases));
+    return listing.ids.filter((id) => isPickerCatalogModel(id) || configured.has(id));
   }
 
   /** Picker models only, each naming its nodes when some node lacks it. */
@@ -299,9 +357,9 @@ export class NodeModelCatalogs {
         models: [],
       };
     const listedOn = new Map<string, string[]>();
-    for (const [machine, { ids }] of nodes)
-      for (const id of ids)
-        if (isPickerCatalogModel(id)) listedOn.set(id, [...(listedOn.get(id) ?? []), machine]);
+    for (const [machine] of nodes)
+      for (const id of this.pickerListing(runner, machine) ?? [])
+        listedOn.set(id, [...(listedOn.get(id) ?? []), machine]);
     return {
       runner,
       status: 'ready',
@@ -323,11 +381,12 @@ export class NodeModelCatalogs {
       !byNode ||
       listing?.observedAt === undefined ||
       Date.now() - listing.observedAt >= RUNNER_MODEL_CATALOG_TTL_MS ||
-      listing.ids.includes(model)
+      listing.ids.includes(model) ||
+      Object.hasOwn(listing.aliases, model)
     )
       return null;
     const listedOn = [...byNode]
-      .filter(([, { ids }]) => ids.includes(model))
+      .filter(([, { ids, aliases }]) => ids.includes(model) || Object.hasOwn(aliases, model))
       .map(([node]) => node)
       .sort();
     return listedOn.length
@@ -337,6 +396,11 @@ export class NodeModelCatalogs {
 }
 
 export const nodeModelCatalogs = new NodeModelCatalogs();
+
+export interface NodeCatalogModels {
+  ids: string[];
+  aliases?: Readonly<Record<string, string>>;
+}
 
 /** One execution node: `list` resolves the source command's stdout or rejects. */
 export interface ModelCatalogNode {
@@ -353,7 +417,7 @@ export async function queryNodeModelCatalog(
   await Promise.all(
     nodes.map(async (node) => {
       const ids = await listNodeModels(runner, source, node);
-      if (ids) store.record(runner, node.machine, ids);
+      if (ids) store.record(runner, node.machine, ids.ids, ids.aliases);
       else store.unavailable(runner, node.machine);
     }),
   );
@@ -365,9 +429,10 @@ export async function listNodeModels(
   runner: string,
   source: RunnerModelCatalogNodeSource,
   node: ModelCatalogNode,
-): Promise<string[] | undefined> {
+): Promise<NodeCatalogModels | undefined> {
   try {
-    return source.parse(await node.list(source));
+    const ids = source.parse(await node.list(source));
+    return Array.isArray(ids) ? { ids } : ids;
   } catch (error) {
     console.warn(
       `[runner-models] ${runner} model list on ${node.machine} failed; keeping its last listing: ${error instanceof Error ? error.message : String(error)}`,

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
@@ -137,6 +137,58 @@ test('extension-provider preflight uses live authenticated model discovery witho
   assert.equal(requests, 1);
 });
 
+test('renamed router auth accepts the legacy model through the helper and CLI', async (t) => {
+  const server = http.createServer((req, res) => {
+    assert.equal(req.url, '/v1/models');
+    assert.equal(req.headers.authorization, 'Bearer fixture-key');
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ data: [{ id: 'GLM-5.3-Flash-s12' }] }));
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const env = {
+    FARMSLOT_PI_OLLAMA: '0',
+    FARMSLOT_PI_ROUTER_ID: 'localsparks',
+    FARMSLOT_PI_ROUTER_URL: `http://127.0.0.1:${address.port}`,
+    FARMSLOT_PI_ROUTER_KEY: 'fixture-key',
+  };
+  for (const provider of ['router', 'localsparks']) {
+    const model = `${provider}/GLM-5.3-Flash-s12`;
+    assert.deepEqual(await checkPiProviderAuth('/synthetic/missing-pi', model, env), {
+      status: 'ready',
+      provider,
+    });
+    const child = spawn(
+      process.execPath,
+      [
+        new URL('./pi-farmslot-providers.mjs', import.meta.url).pathname,
+        '/synthetic/missing-pi',
+        model,
+      ],
+      { env, stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    t.after(() => {
+      if (child.exitCode === null) child.kill();
+    });
+    let output = '';
+    child.stdout.on('data', (chunk) => {
+      output += chunk;
+    });
+    const code = await new Promise((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', resolve);
+    });
+    assert.equal(code, 0);
+    assert.deepEqual(JSON.parse(output), { status: 'ready', provider });
+  }
+  assert.notEqual(
+    (await checkPiProviderAuth('/synthetic/missing-pi', 'router/missing', env)).status,
+    'ready',
+  );
+});
+
 test('a native check without a verdict names its cause and never passes its output on', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'pi-auth-cause-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -206,6 +258,79 @@ test('listPiProviderSources adds LiteLLM and a distinct custom router', () => {
       ['litellm', 'http://127.0.0.1:4000/v1', 'sk-litellm'],
       ['router', 'http://127.0.0.1:9000/v1', 'sk-router'],
     ],
+  );
+});
+
+test('router id validation rejects malformed and reserved provider ids', () => {
+  for (const id of [
+    '',
+    'LocalSparks',
+    'has space',
+    'router/model',
+    '-leading',
+    'trailing-',
+    'litellm',
+    'ollama',
+    'lmstudio',
+    'omlx',
+    'xai',
+    'anthropic',
+    'openai',
+    'azure-openai-responses',
+  ])
+    assert.throws(() => listPiProviderSources({ FARMSLOT_PI_ROUTER_ID: id }), {
+      name: 'Error',
+      message: /FARMSLOT_PI_ROUTER_ID/,
+    });
+  for (const id of ['localsparks', 'local-sparks', 'local_sparks', 'local.sparks'])
+    assert.equal(
+      listPiProviderSources({
+        FARMSLOT_PI_OLLAMA: '0',
+        FARMSLOT_PI_ROUTER_URL: 'http://router.test',
+        FARMSLOT_PI_ROUTER_ID: id,
+      })[0].id,
+      id,
+    );
+});
+
+test('configured router keeps its source kind, limits, reasoning and hidden alias names', async () => {
+  const [provider] = await resolvePiProviderCatalog(
+    {
+      FARMSLOT_PI_OLLAMA: '0',
+      FARMSLOT_PI_ROUTER_URL: 'http://router.test',
+      FARMSLOT_PI_ROUTER_ID: 'localsparks',
+      FARMSLOT_PI_ROUTER_CONTEXT: '65536',
+      FARMSLOT_PI_ROUTER_MAX_TOKENS: '4096',
+      FARMSLOT_PI_ROUTER_MODEL_LIMITS: JSON.stringify({ 'GLM-5.3-Flash-s12': { maxTokens: 2048 } }),
+    },
+    { fetchImpl: modelsFetch({ id: 'GLM-5.3-Flash-s12' }) },
+  );
+  assert.equal(provider.id, 'localsparks');
+  assert.equal(provider.kind, 'router');
+  assert.deepEqual(provider.aliases, ['router']);
+  const model = provider.models[0];
+  assert.equal(model.contextWindow, 65536);
+  assert.equal(model.maxTokens, 2048);
+  assert.equal(model.reasoning, true);
+  assert.equal(model.thinkingLevelMap.max, 'max');
+  await assert.rejects(
+    resolvePiProviderCatalog(
+      {
+        FARMSLOT_PI_OLLAMA: '0',
+        FARMSLOT_PI_ROUTER_URL: 'http://router.test',
+        FARMSLOT_PI_ROUTER_ID: 'localsparks',
+        FARMSLOT_PI_ROUTER_REASONING: 'false',
+      },
+      { fetchImpl: modelsFetch({ id: 'model' }) },
+    ),
+    /requires reasoning/,
+  );
+  const fetch = providerReasoningFetch(async () => new Response('OK'), [provider]);
+  await assert.rejects(
+    fetch('http://router.test/v1/chat/completions', {
+      body: JSON.stringify({ model: model.id, reasoning_effort: 'none' }),
+    }),
+    /requires a reasoning effort/,
   );
 });
 
@@ -1093,3 +1218,42 @@ for (const scenario of [
     assert.equal(result.status, 0, result.stderr);
     assert.doesNotMatch(result.stderr, /PI_REASONING_EFFORT_MISMATCH/);
   });
+
+test('node Pi catalogs discover router models with canonical ids and only real aliases', async (t) => {
+  const { listPiModelCatalog } = await import('./pi-farmslot-providers.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'pi-catalog-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const binary = join(dir, 'pi-fixture');
+  writeFileSync(
+    binary,
+    '#!/bin/sh\nprintf "provider model\\nlocalsparks native-only\\nrouter retired\\nxai grok-4.7\\n"\n',
+    { mode: 0o755 },
+  );
+  for (const id of ['localsparks', 'local-sparks']) {
+    const result = await listPiModelCatalog(
+      binary,
+      {
+        FARMSLOT_PI_OLLAMA: '0',
+        FARMSLOT_PI_ROUTER_URL: 'http://router.test',
+        FARMSLOT_PI_ROUTER_ID: id,
+      },
+      { fetchImpl: modelsFetch({ id: 'GLM-5.3-Flash-s12' }) },
+    );
+    assert.ok(result.ids.includes(`${id}/GLM-5.3-Flash-s12`));
+    assert.equal(result.ids.includes('router/GLM-5.3-Flash-s12'), false);
+    assert.deepEqual(result.aliases, { 'router/GLM-5.3-Flash-s12': `${id}/GLM-5.3-Flash-s12` });
+    assert.equal(Object.hasOwn(result.aliases, 'router/native-only'), false);
+    assert.equal(result.ids.includes('router/retired'), false);
+    if (id === 'localsparks') assert.equal(result.ids.includes('localsparks/native-only'), false);
+    assert.equal(result.ids.includes('xai/grok-4.7'), true);
+  }
+  assert.deepEqual(
+    (
+      await listPiModelCatalog(binary, {
+        FARMSLOT_PI_OLLAMA: '0',
+        FARMSLOT_PI_ROUTER_ID: 'localsparks',
+      })
+    ).aliases,
+    {},
+  );
+});

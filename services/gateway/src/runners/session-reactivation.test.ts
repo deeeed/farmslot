@@ -302,9 +302,10 @@ test('Pi fix handoff launches its task file without typing into the prior sessio
     taskSignalOutput = '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n';
   });
   const result = await deliverPromptToLiveRunner({
-    vars,
+    vars: { ...vars, machineEnv: { FARMSLOT_PI_ROUTER_ID: 'localsparks' } },
     target: '%1',
     runnerId: 'pi',
+    model: 'router/GLM-5.3-Flash-s12',
     prompt: 'Read and execute REVIEW-FIX.md',
     promptMarker: 'REVIEW-FIX.md',
     taskFile: 'tasks/run-1/REVIEW-FIX.md',
@@ -314,6 +315,7 @@ test('Pi fix handoff launches its task file without typing into the prior sessio
   });
   assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
   const command = launchScripts.at(-1) ?? '';
+  assert.match(command, /--model '?router\/GLM-5[.]3-Flash-s12'?/);
   assert.match(command, /FARMSLOT_TASK_FILE=/);
   assert.match(command, /tasks\/run-1\/REVIEW-FIX[.]md/);
   assert.equal(

@@ -1,5 +1,4 @@
 import {
-  isPickerCatalogModel,
   type NativeSessionCatalogResult,
   type NativeSessionExecutionNode,
   type Principal,
@@ -142,11 +141,13 @@ export function nativeNodeModels(
   const entries = [...contextMachines].flatMap(([executionNodeId, machine]) => {
     const listing = nodeModelCatalogs.listing(runner, machine);
     if (!listing) return [];
-    const listed = listing.filter(isPickerCatalogModel);
+    const listed = [...(nodeModelCatalogs.pickerListing(runner, machine) ?? [])];
     return [
       [
         executionNodeId,
-        nativeModelPreferences(runner, listed, defaultModel, listing).models,
+        nativeModelPreferences(runner, listed, defaultModel, listing, (id) =>
+          nodeModelCatalogs.canonicalModel(runner, machine, id),
+        ).models,
       ] as const,
     ];
   });
@@ -162,6 +163,7 @@ export function nativeModelPreferences(
   seed: string[],
   defaultModel: string | null | undefined,
   availableModels?: readonly string[],
+  canonicalModel: (id: string) => string = (id) => id,
 ) {
   const visible = describeVisibleModels(runner);
   const source = getRunnerDefinition(runner).modelCatalog;
@@ -170,8 +172,11 @@ export function nativeModelPreferences(
     availableModels.includes(
       source && 'nodeCommand' in source ? (source.resolveModel?.(model) ?? model) : model,
     );
-  const effectiveDefault = (visible.defaultConfigured && visible.defaultModel) || defaultModel;
-  const preferred = (visible.configured ? visible.models : seed).filter(available);
+  const savedDefault = (visible.defaultConfigured && visible.defaultModel) || defaultModel;
+  const effectiveDefault = savedDefault && canonicalModel(savedDefault);
+  const preferred = [
+    ...new Set((visible.configured ? visible.models : seed).map(canonicalModel)),
+  ].filter(available);
   const models = preferred.length || !availableModels ? preferred : seed;
   return {
     defaultModel: effectiveDefault ?? '',

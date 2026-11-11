@@ -4,27 +4,36 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { type Principal, RUNNER_PICKER_MODELS } from '@farmslot/protocol';
+import { type Principal, type Run, RUNNER_PICKER_MODELS } from '@farmslot/protocol';
 
 import {
   runnerModelCatalog,
   runnerVisibleModelsGet,
   runnerVisibleModelsSet,
 } from '../methods/runner-models.js';
+import { resolveRunDispatchRunnerModel } from '../run-engine/dispatch-policy.js';
 import { runWithSessionOriginator } from '../security/work-originator.js';
 
+import { buildLaunchCommand } from './launch-command.js';
 import {
   ModelCatalogFormatError,
   NodeModelCatalogs,
+  nodeModelCatalogs,
   parseCodexModelCatalog,
   parseCursorModelCatalog,
   parseGrokModelCatalog,
   parseOpenCodeModelList,
+  parsePiModelCatalog,
   parsePiModelList,
   queryNodeModelCatalog,
   queryRunnerModelCatalog,
 } from './model-catalog.js';
-import { getRunnerDefinition } from './registry.js';
+import {
+  getRunnerDefinition,
+  runnerModelNodeBlocker,
+  runnerModelNodePreference,
+} from './registry.js';
+import { makeVars } from './test-fixtures.js';
 import { visibleModelsHome } from './visible-models.js';
 
 test('codex and grok parse structured catalogs and keep reasoning modes', () => {
@@ -375,4 +384,87 @@ test('per-node listings merge into picker models that name the nodes having them
   assert.match(store.blocker('pi', 'anthropic/claude-haiku-4-5', 'mini') ?? '', /only on macpro/);
   assert.equal(store.blocker('pi', 'litellm/glm-5p3', 'never-listed'), null, 'unknown node');
   assert.equal(store.blocker('pi', 'custom/model', 'mini'), null, 'model no node lists');
+});
+
+test('renamed Pi node catalogs hide router aliases but retain placement and blockers', async () => {
+  const source = getRunnerDefinition('pi').modelCatalog;
+  assert.ok(source && 'nodeCommand' in source);
+  const model = 'GLM-5.3-Flash-s12';
+  const alias = `router/${model}`;
+  const canonical = `localsparks/${model}`;
+  const store = new NodeModelCatalogs();
+  const result = await queryNodeModelCatalog(
+    'pi',
+    source,
+    [
+      {
+        machine: 'renamed-node',
+        list: async () => JSON.stringify({ ids: [canonical], aliases: { [alias]: canonical } }),
+      },
+      { machine: 'other-node', list: async () => 'provider model\nxai grok-4.7\n' },
+    ],
+    store,
+  );
+  assert.equal(
+    result.models.some((row) => row.id === canonical && row.listed),
+    true,
+  );
+  assert.equal(
+    result.models.some((row) => row.id === alias),
+    false,
+  );
+  assert.equal(store.listing('pi', 'renamed-node')?.includes(alias), true);
+  assert.equal(store.blocker('pi', alias, 'renamed-node'), null);
+  assert.match(store.blocker('pi', alias, 'other-node') ?? '', /only on renamed-node/);
+  assert.equal(store.blocker('pi', 'router/missing', 'renamed-node'), null);
+  nodeModelCatalogs.record('pi', 'alias-fixture-node', [canonical], { [alias]: canonical });
+  nodeModelCatalogs.record('pi', 'alias-fixture-other', ['xai/grok-4.7']);
+  assert.equal(runnerModelNodeBlocker('pi', alias, 'alias-fixture-node'), null);
+  assert.equal(runnerModelNodePreference('pi', alias, 'alias-fixture-node'), true);
+  const persistedRun: Pick<Run, 'metrics'> = {
+    metrics: {
+      nudgeCount: 0,
+      runner: 'pi',
+      model: alias,
+      runnerSessionId: 'saved-session',
+      runnerSessionPath: '/fixture/session.jsonl',
+    },
+  };
+  const replay = resolveRunDispatchRunnerModel(persistedRun, { runner: 'pi', model: canonical });
+  assert.deepEqual(replay, { runner: 'pi', model: alias });
+  const launch = buildLaunchCommand(
+    makeVars({
+      machine: 'alias-fixture-node',
+      machineEnv: { FARMSLOT_PI_ROUTER_ID: 'localsparks' },
+    }),
+    replay.runner,
+    replay.model,
+    'Read TASK.md',
+  );
+  assert.match(launch, /--model '?router\/GLM-5[.]3-Flash-s12'?/);
+  assert.equal(persistedRun.metrics.model, alias, 'relaunch does not rewrite stored run identity');
+
+  assert.match(
+    runnerModelNodeBlocker('pi', alias, 'alias-fixture-other') ?? '',
+    /alias-fixture-node/,
+  );
+  const custom = 'local-sparks/' + model;
+  store.record('pi', 'custom-node', [custom], { [alias]: custom });
+  assert.ok(store.result('pi').models.some((row) => row.id === custom));
+  assert.deepEqual(store.pickerListing('pi', 'custom-node'), [custom]);
+});
+
+test('Pi node helper catalog validates alias targets and the runner owns its listing command', () => {
+  const source = getRunnerDefinition('pi').modelCatalog;
+  assert.ok(source && 'nodeCommand' in source);
+  const command = source.buildCommand?.(makeVars(), '/fixture/bin/pi');
+  assert.match(command ?? '', /pi-farmslot-providers[.]mjs.*--list-models.*pi/);
+  for (const value of [
+    { ids: ['localsparks/model'], aliases: { 'router/missing': 'localsparks/model' } },
+    { ids: ['localsparks/model'], aliases: { 'router/model': 'localsparks/absent' } },
+    { ids: ['localsparks/model'], aliases: { 'litellm/model': 'localsparks/model' } },
+    { ids: ['localsparks/model'], aliases: [] },
+    { ids: ['--unsafe'], aliases: {} },
+  ])
+    assert.throws(() => parsePiModelCatalog(JSON.stringify(value)), ModelCatalogFormatError);
 });

@@ -93,7 +93,7 @@ export class NodeModelCatalogObservation {
         const ids = await listNodeModels(this.options.runner, this.options.source, node);
         if (this.stopped || this.states.get(node.machine) !== current) return;
         if (ids) {
-          nodeModelCatalogs.record(this.options.runner, node.machine, ids);
+          nodeModelCatalogs.record(this.options.runner, node.machine, ids.ids, ids.aliases);
           current.cancel?.();
           current.cancel = undefined;
           current.delay = RETRY_DELAY_MS;
