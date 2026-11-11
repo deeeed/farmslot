@@ -1698,8 +1698,12 @@ describe('buildLaunchCommand', () => {
     for (const runner of ['claude', 'pi', 'codex']) {
       const launch = buildLaunchCommand(vars, runner, null, PROMPT, {
         taskDir: TASK_DIR,
-        blindTrialCapsule: '/slots/.farmslot-blind-evals/s/run-1',
+        blindTrialBoundary: {
+          capsule: '/slots/.farmslot-blind-evals/s/run-1',
+          baseSha: 'a'.repeat(40),
+        },
       });
+      assert.ok(launch.includes("export FARMSLOT_CI_BASE_REF='" + 'a'.repeat(40) + "'"), runner);
       const boundary = launch.indexOf('unset GH_TOKEN GITHUB_TOKEN');
       const sandbox = launch.indexOf(
         "/usr/bin/sandbox-exec -f '/slots/.farmslot-blind-evals/s/run-1/boundary/sandbox.sb' /bin/sh -c ",
@@ -1719,8 +1723,12 @@ describe('buildLaunchCommand', () => {
     for (const runner of ['claude', 'codex', 'grok']) {
       const reload = buildRunnerSessionReloadCommand(vars, runner, null, 'sess-1', {
         taskDir: TASK_DIR,
-        blindTrialCapsule: '/slots/.farmslot-blind-evals/s/run-1',
+        blindTrialBoundary: {
+          capsule: '/slots/.farmslot-blind-evals/s/run-1',
+          baseSha: 'a'.repeat(40),
+        },
       });
+      assert.ok(reload.includes("export FARMSLOT_CI_BASE_REF='" + 'a'.repeat(40) + "'"), runner);
       const sandbox = reload.indexOf(
         "/usr/bin/sandbox-exec -f '/slots/.farmslot-blind-evals/s/run-1/",
       );

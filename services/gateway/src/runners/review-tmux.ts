@@ -16,7 +16,7 @@ import { resolveReviewMode } from '@farmslot/review-dispatch';
 import { upsertAgentContext } from '../agents/contexts.js';
 import { loadMachinePool, loadProjectVars } from '../core/config.js';
 import { execFileArgv } from '../core/exec.js';
-import { resolveProjectCommandEnv } from '../core/project-env.js';
+import { machineShellEnv, resolveProjectCommandEnv } from '../core/project-env.js';
 import { WarmReviewRefusal } from '../review/session-mode.js';
 import {
   bindReviewWorkspaceSupportValue,
@@ -120,16 +120,21 @@ export async function recoverReviewTmuxSession(run: Run, assertCurrent: () => vo
 async function reviewEnvironment(run: Run) {
   const w = run.reviewWorkspace!;
   const project = await loadProjectVars(run.project);
+  const pool = await loadMachinePool(w.machine);
   return resolveProjectCommandEnv(project.projectJson, {
     domain: run.domain,
-    overrides: w.support
-      ? Object.fromEntries(
-          Object.entries(w.support.environment).map(([k, v]) => [
-            k,
-            bindReviewWorkspaceSupportValue(v, w.support!),
-          ]),
-        )
-      : undefined,
+    overrides: {
+      ...machineShellEnv({ machine: w.machine, host: pool.host, machineEnv: pool.env }),
+      // Frozen support paths must survive mutable project and pool defaults.
+      ...(w.support
+        ? Object.fromEntries(
+            Object.entries(w.support.environment).map(([k, v]) => [
+              k,
+              bindReviewWorkspaceSupportValue(v, w.support!),
+            ]),
+          )
+        : {}),
+    },
   });
 }
 
