@@ -1,10 +1,26 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 
 import type { MachineHealth, SlotStatus } from '@farmslot/protocol';
+import type { ResourceKey } from '@farmslot/protocol/client-cache';
 import type { ChangedEntity, ResourceChangedPayload } from '@farmslot/protocol/transport/events';
 
-import { GatewayResourceRevisions } from './revisions.js';
+import { GatewayMethodError } from '../core/method-error.js';
+
+// Mock authorizeGatewayMethod so the auth test below is self-contained and
+// doesn't depend on a real filesystem auth-runtime.
+// The mock is stateful: set `mockAuthAllow` to control per-test behaviour.
+let mockAuthAllow = true;
+mock.module('../security/authorization.js', {
+  namedExports: {
+    authorizeGatewayMethod: (): void => {
+      if (!mockAuthAllow) throw new GatewayMethodError('AUTH_FORBIDDEN', 'operator-only resource');
+    },
+  },
+});
+
+const { GatewayResourceRevisions } = await import('./revisions.js');
+const { canReadResourceKey } = await import('./authorization.js');
 
 const slotKey = { family: 'slot', slotId: 'macwork-01' } as const;
 const collectionKey = { family: 'slots', scope: 'farm' } as const;
@@ -215,22 +231,23 @@ test('health sample through the real publish path produces resource.changed for 
   }
 });
 
-test('node entity key: canReadResourceKey returns false when authorization is denied (operator-only)', async () => {
-  // Verifies that a non-operator principal cannot read node entity keys.
-  // The actual auth stripping in broadcastResourceChanges calls canReadResourceKey per principal;
-  // this test proves the false path: when authorizeGatewayMethod throws AUTH_FORBIDDEN,
-  // canReadResourceKey returns false and the entity is not delivered to that principal.
-  //
-  // canReadResourceKey is covered by d07-domain-authorization.test.ts which shows
-  // {family:'node', nodeId} → NODE_HEALTH → false when allow=false.
-  //
-  // Here we directly confirm canReadResourceKey rejects with the GatewayMethodError pattern
-  // used in broadcastResourceChanges.
-  //
-  // This test is intentionally a marker — the full auth-stripping path is an integration
-  // concern covered by d07-domain-authorization + the entity provider test above.
-  assert.ok(
-    true,
-    'operator-only marker: see d07-domain-authorization.test.ts for AUTH_FORBIDDEN → false',
-  );
+test('node entity key: canReadResourceKey returns false when authorization is denied', () => {
+  // Proves that a principal denied NODE_HEALTH cannot read the {family:'node'} key.
+  // broadcastResourceChanges in server.ts calls canReadResourceKey per principal and
+  // strips the changedEntity when this returns false.
+  mockAuthAllow = false;
+  try {
+    const nodeKey: ResourceKey = { family: 'node', nodeId: 'macwork' };
+    assert.equal(
+      canReadResourceKey(
+        {} as Parameters<typeof canReadResourceKey>[0],
+        {} as Parameters<typeof canReadResourceKey>[1],
+        nodeKey,
+      ),
+      false,
+      'canReadResourceKey must return false for node key when auth is denied',
+    );
+  } finally {
+    mockAuthAllow = true;
+  }
 });
