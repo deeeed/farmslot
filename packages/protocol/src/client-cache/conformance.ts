@@ -44,6 +44,9 @@ const stamp = (revision = 0): ResourceReadStamp => ({
     // fleet.status declares a 'slots' dependency; include it so full-RPC fleet reads
     // reach 'ready' (covered) in tests that use the conformance transport.
     { key: { family: 'slots', scope: 'farm' }, revision },
+    // decision.list declares a 'decisions' dependency; include it so full-RPC decision
+    // list reads reach 'ready' (covered) in tests that use the conformance transport.
+    { key: { family: 'decisions', scope: 'farm' }, revision },
   ],
 });
 

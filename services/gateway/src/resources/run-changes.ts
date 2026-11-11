@@ -2,6 +2,17 @@ import type { Run } from '@farmslot/protocol';
 
 import { completedDecisionExpiresAt, type RunDecisionInboxRecord } from '../runs/decision-inbox.js';
 
+/** Registered by server.ts to enrich and advance per-decision entity keys. */
+let decisionUpdatedHook: ((decisionId: string) => void) | undefined;
+let decisionRemovedHook: ((decisionId: string) => void) | undefined;
+export function setDecisionHooks(
+  onUpdated: (decisionId: string) => void,
+  onRemoved: (decisionId: string) => void,
+): void {
+  decisionUpdatedHook = onUpdated;
+  decisionRemovedHook = onRemoved;
+}
+
 import { resourceRevisions } from './revisions.js';
 import { publishWorkerResources } from './worker-changes.js';
 
@@ -66,7 +77,14 @@ export function publishRunResources(
   const retained = new Set(current.decisionIds);
   for (const decisionId of new Set([...retained, ...(previous?.decisionIds ?? [])])) {
     const removed = kind === 'deleted' || !retained.has(decisionId);
-    revisions.advance({ family: 'decision', decisionId }, removed ? 'deleted' : 'updated');
+    if (removed) {
+      // Tombstone the index entry and immediately notify with 'deleted' kind.
+      decisionRemovedHook?.(decisionId);
+      revisions.advance({ family: 'decision', decisionId }, 'deleted');
+    } else {
+      // Enrich async via the hook; the index advances the key once the entity is ready.
+      decisionUpdatedHook?.(decisionId);
+    }
     revisions.advance(
       { family: 'gate', runId: current.id, decisionId },
       removed ? 'deleted' : 'updated',
