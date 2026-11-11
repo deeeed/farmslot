@@ -1593,7 +1593,7 @@ export async function publishCompletionPackage(
   });
 
   try {
-    assertPublicationTextSafe(
+    await assertPublicationTextSafe(
       approvedPackage.draftTitle,
       approvedPackage.draftBody,
       options?.comment ?? '',

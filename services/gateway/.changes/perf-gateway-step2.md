@@ -1,0 +1,1 @@
+- Publication secret scanning runs on a worker thread, so a large log no longer holds the gateway for seconds. Publication waits for the completed scan, and refuses when the scan fails or is stopped, or when 32 scans are already waiting.

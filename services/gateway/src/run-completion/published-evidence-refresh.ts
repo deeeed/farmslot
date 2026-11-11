@@ -170,7 +170,7 @@ async function refreshPublishedEvidenceLocked(
       );
   };
   const before = await readPr();
-  assertPublicationTextSafe(before.title, before.body);
+  await assertPublicationTextSafe(before.title, before.body);
   // An adoption owns its PR branch, which may differ from the run's (a republished PR).
   if (!run.branch || before.headRefName !== publishedBranchOf(run) || before.state === 'CLOSED') {
     throw new Error('Published PR no longer matches the run branch');
