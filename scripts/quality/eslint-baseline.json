@@ -54,10 +54,6 @@
       "count": 1
     },
     {
-      "key": "services/gateway/src/core/node-file-reads.ts:@typescript-eslint/no-restricted-imports",
-      "count": 1
-    },
-    {
       "key": "services/gateway/src/core/project-env.ts:@typescript-eslint/no-restricted-imports",
       "count": 1
     },
