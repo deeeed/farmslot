@@ -10,6 +10,8 @@ import '../runtime/mock-pty.test-support.js';
 import * as realConfig from '../core/config.js';
 import * as realExec from '../core/exec.js';
 import * as realState from '../fleet/state.js';
+import type { GitRunOptions } from '../host-services/git.js';
+import * as realGit from '../host-services/git.js';
 
 const root = await mkdtemp(path.join(await realpath(os.tmpdir()), 'branch-watcher-files-'));
 const repo = path.join(root, 'repo');
@@ -25,6 +27,19 @@ git('init', '-q', '-b', 'feature/x', repo);
 git('-C', repo, 'commit', '-q', '--allow-empty', '-m', 'a');
 
 const commands: string[] = [];
+const gitRunCalls: string[][] = [];
+mock.module('../host-services/git.js', {
+  namedExports: {
+    ...realGit,
+    gitService: {
+      ...realGit.gitService,
+      run(argv: string[], options?: GitRunOptions) {
+        gitRunCalls.push(argv);
+        return realGit.gitService.run(argv, options);
+      },
+    },
+  },
+});
 mock.module('../core/exec.js', {
   namedExports: {
     ...realExec,
@@ -81,4 +96,11 @@ test('a local slot branch is read from its files; only a detached HEAD asks git'
   assert.deepEqual(branches.slice(1), [git('-C', repo, 'rev-parse', '--short', 'HEAD')]);
   // A detached HEAD's abbreviated SHA comes from gitService.run directly, not execOnSlot.
   assert.deepEqual(commands, []);
+  // Positive proof: gitService.run was called with rev-parse --short HEAD for the detached case.
+  assert.ok(
+    gitRunCalls.some(
+      (argv) => argv[0] === 'rev-parse' && argv[1] === '--short' && argv[2] === 'HEAD',
+    ),
+    `expected gitService.run(['rev-parse', '--short', 'HEAD', …]) but got: ${JSON.stringify(gitRunCalls)}`,
+  );
 });

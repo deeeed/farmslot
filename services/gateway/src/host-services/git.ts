@@ -5,11 +5,9 @@
 // owner, Git environment overrides) return undefined: the caller then uses git.run, which reads the
 // same files and gives the exact answer, failures included. Object-database reads always go through
 // git.run — the only place call sites in this workstream spawn git.
-import { execFile as execFileCb } from 'node:child_process';
 import type { Stats } from 'node:fs';
 import { lstat, open, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { promisify } from 'node:util';
 
 import {
   type DefaultBranchProbe,
@@ -17,7 +15,7 @@ import {
   readDefaultBranchProbe,
 } from '@farmslot/protocol';
 
-const execFile = promisify(execFileCb);
+import { EXEC_TIMEOUT_EXIT_CODE, execFileArgv } from '../core/exec.js';
 
 // ─── Exported types ───
 
@@ -114,7 +112,7 @@ const REV_PARSE_RULES = [
 const SYMREF_MAX_DEPTH = 5;
 
 /** Sentinel exit code for a git process killed by timeout; matches core/exec.ts EXEC_TIMEOUT_EXIT_CODE. */
-const GIT_TIMEOUT_EXIT_CODE = 124;
+const GIT_TIMEOUT_EXIT_CODE = EXEC_TIMEOUT_EXIT_CODE;
 
 function isSystemError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && typeof (error as NodeJS.ErrnoException).code === 'string';
@@ -748,37 +746,14 @@ export function readDefaultBranchProbeFiles(
 /**
  * Run git with the given argv; resolves (never rejects) so callers branch on exitCode.
  * Returns GIT_TIMEOUT_EXIT_CODE (124) when the process is killed by the timeout.
+ * Routes through execFileArgv to get exec metrics, cleanup scope, and process-group kill.
  */
-async function runGit(argv: string[], options?: GitRunOptions): Promise<GitResult> {
-  try {
-    const { stdout, stderr } = await execFile('git', argv, {
-      cwd: options?.cwd,
-      timeout: options?.timeout,
-      maxBuffer: options?.maxBuffer ?? 64 * 1024,
-    });
-    return { exitCode: 0, stdout, stderr };
-  } catch (err) {
-    const e = err as {
-      code?: number | string | null;
-      killed?: boolean;
-      stdout?: string;
-      stderr?: string;
-      message?: string;
-    };
-    if (e.killed === true) {
-      // Process was killed by the timeout option.
-      return {
-        exitCode: GIT_TIMEOUT_EXIT_CODE,
-        stdout: e.stdout ?? '',
-        stderr: e.stderr ?? e.message ?? '',
-      };
-    }
-    return {
-      exitCode: typeof e.code === 'number' ? e.code : 1,
-      stdout: e.stdout ?? '',
-      stderr: e.stderr ?? e.message ?? '',
-    };
-  }
+function runGit(argv: string[], options?: GitRunOptions): Promise<GitResult> {
+  return execFileArgv(['git', ...argv], {
+    cwd: options?.cwd,
+    timeout: options?.timeout,
+    maxBuffer: options?.maxBuffer ?? 64 * 1024,
+  });
 }
 
 // ─── Service instance ───
