@@ -26,6 +26,9 @@ import { makeRun as baseRun } from '../run-engine/test-fixtures.js';
 
 const revisionAdvances: Array<{ key: object; kind?: string }> = [];
 
+/** Call counts — reset in clearMockState, incremented inside mocks. */
+let enrichCallCount = 0; // tracks inspectedRun calls (one per run, not per decision)
+
 mock.module('../resources/revisions.js', {
   namedExports: {
     resourceRevisions: {
@@ -58,13 +61,16 @@ mock.module('../runs/store.js', {
  */
 mock.module('../run-engine/gate-inspection.js', {
   namedExports: {
-    inspectedRun: (run: Run) => ({
-      ...run,
-      decisions: run.decisions.map((d) => ({
-        ...d,
-        context: { ...(d.context ?? {}), _inspected: true },
-      })),
-    }),
+    inspectedRun: (run: Run) => {
+      enrichCallCount++;
+      return {
+        ...run,
+        decisions: run.decisions.map((d) => ({
+          ...d,
+          context: { ...(d.context ?? {}), _inspected: true },
+        })),
+      };
+    },
   },
 });
 
@@ -212,6 +218,7 @@ async function referenceDecisionList(
 
 function clearMockState(): void {
   revisionAdvances.length = 0;
+  enrichCallCount = 0;
   mockActiveRuns.length = 0;
   mockDoneRuns.length = 0;
   mockRunById.clear();
@@ -441,5 +448,65 @@ test('rebuildAllRetrospectiveDecisions: retro decisions present, non-retro decis
     retroEntity.context._enriched,
     true,
     'retro decision context must remain enriched after rebuildAll',
+  );
+});
+
+test('cost (B): enrichment called once per run, not once per decision', async () => {
+  clearMockState();
+  // Three decisions in one run.
+  const run = makeRun({
+    id: 'run-cost',
+    status: 'monitoring',
+    decisions: [
+      makeDecision({ id: 'cost-d1', type: 'collision_check' }),
+      makeDecision({ id: 'cost-d2', type: 'collision_check' }),
+      makeDecision({ id: 'cost-d3', type: 'collision_check' }),
+    ],
+  });
+  mockActiveRuns.push(run);
+  mockRunById.set(run.id, run);
+
+  const idx = new TestDecisionIndex([], [run]);
+  idx.startWarmup();
+  await idx.ready();
+
+  // inspectedRun is the outer-most enrichment step; it must be called exactly once
+  // (once per run, not 3× once per decision).
+  // Revert proof: in applyRebuildRun, move the enrichment call inside the `for (const d of ...)` loop.
+  // Failing assertion: 'enrichment called once per run, not 3× per decision'
+  // actual=3, expected=1.
+  assert.equal(enrichCallCount, 1, 'enrichment called once per run, not 3× per decision');
+});
+
+test('A5 (collection-key): {family:decisions,scope:farm} not advanced on data-only change', async () => {
+  clearMockState();
+  const decision = makeDecision({ id: 'a5-d', type: 'collision_check' });
+  const run = makeRun({ id: 'run-a5', status: 'monitoring', decisions: [decision] });
+  mockActiveRuns.push(run);
+  mockRunById.set(run.id, run);
+
+  const idx = new TestDecisionIndex([], [run]);
+  idx.startWarmup();
+  await idx.ready();
+
+  // Warm-up advanced membership (new decision added). Reset.
+  revisionAdvances.length = 0;
+
+  // Rebuild the same run with identical content — no membership change, no data change.
+  // Revert proof: remove the `if (membershipChanged)` guard in applyRebuildRun and always advance
+  // {family:'decisions',scope:'farm'}. Failing assertion: 'membership key must NOT advance on
+  // data-only or no-change rebuild' actual=1, expected=0.
+  idx.scheduleRebuildForRun(run.id);
+  await new Promise<void>((r) => setImmediate(r));
+
+  const membershipAdvances = revisionAdvances.filter(
+    (a) =>
+      (a.key as { family?: string }).family === 'decisions' &&
+      (a.key as { scope?: string }).scope === 'farm',
+  );
+  assert.equal(
+    membershipAdvances.length,
+    0,
+    'membership key must NOT advance on data-only or no-change rebuild',
   );
 });
