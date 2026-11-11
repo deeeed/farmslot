@@ -494,10 +494,16 @@ function deepEqual(a: JqValue, b: JqValue): boolean {
   return false;
 }
 
-/** Code-point slicing, as jq and gojq slice strings. */
+const SURROGATE = /[\uD800-\uDFFF]/;
+
+/** Code-point length and slicing, as jq and gojq measure strings; UTF-16 fast path. */
+function codePointLength(text: string): number {
+  return SURROGATE.test(text) ? Array.from(text).length : text.length;
+}
+
 function sliceCodePoints(text: string, from: number, to: number): string {
-  const points = Array.from(text);
-  return points.slice(from, to).join('');
+  if (!SURROGATE.test(text)) return text.slice(from, to);
+  return Array.from(text).slice(from, to).join('');
 }
 
 function sliceBounds(length: number, from: JqValue, to: JqValue): [number, number] {
@@ -636,7 +642,7 @@ function* evaluateCall(
     yield !truthy(input);
   } else if (name === 'length') {
     if (input === null) yield 0;
-    else if (typeof input === 'string') yield Array.from(input).length;
+    else if (typeof input === 'string') yield codePointLength(input);
     else if (Array.isArray(input)) yield input.length;
     else if (isObject(input)) yield Object.keys(input).length;
     else if (typeof input === 'number') yield Math.abs(input);
@@ -657,7 +663,7 @@ function indexValue(target: JqValue, index: JqValue): JqValue {
 function sliceValue(target: JqValue, from: JqValue, to: JqValue): JqValue {
   if (target === null) return null;
   if (typeof target === 'string') {
-    const length = Array.from(target).length;
+    const length = codePointLength(target);
     const [start, end] = sliceBounds(length, from, to);
     return start >= end ? '' : sliceCodePoints(target, start, end);
   }
@@ -702,9 +708,14 @@ function* buildObjects(
   for (const key of evaluate(entries[i].key, input)) {
     if (typeof key !== 'string')
       throw new GitHubJqError(`expected a string for object key but got: ${typeName(key)}`);
+    const had = Object.hasOwn(partial, key);
+    const previous = partial[key];
     for (const value of evaluate(entries[i].value, input)) {
-      yield* buildObjects(entries, i + 1, input, { ...partial, [key]: value });
+      partial[key] = value;
+      yield* buildObjects(entries, i + 1, input, partial);
     }
+    if (had) partial[key] = previous;
+    else delete partial[key];
   }
 }
 
@@ -751,29 +762,22 @@ export function goStruct<T extends JqObject>(value: T): T {
   return value;
 }
 
-const HEX = '0123456789abcdef';
+const HTML_UNSAFE = /[<>&\u2028\u2029]/g;
 
+/**
+ * JSON.stringify escapes quotes, backslashes and C0 controls with lowercase hex, as Go does;
+ * only \b/\f, DEL (gojq) and the HTML set (json.Marshal) differ.
+ */
 function encodeString(text: string, encoding: GoJsonEncoding): string {
-  let out = '"';
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    const code = text.charCodeAt(i);
-    if (ch === '"') out += '\\"';
-    else if (ch === '\\') out += '\\\\';
-    else if (ch === '\n') out += '\\n';
-    else if (ch === '\r') out += '\\r';
-    else if (ch === '\t') out += '\\t';
-    else if (encoding.shortControlEscapes && ch === '\b') out += '\\b';
-    else if (encoding.shortControlEscapes && ch === '\f') out += '\\f';
-    else if (
-      code < 0x20 ||
-      (encoding.escapeHtml && (ch === '<' || ch === '>' || ch === '&')) ||
-      (encoding.escapeHtml && (code === 0x2028 || code === 0x2029))
-    )
-      out += `\\u${HEX[(code >> 12) & 15]}${HEX[(code >> 8) & 15]}${HEX[(code >> 4) & 15]}${HEX[code & 15]}`;
-    else out += ch;
-  }
-  return `${out}"`;
+  let out = JSON.stringify(text);
+  if (encoding.shortControlEscapes) out = out.replace(/\x7f/g, '\\u007f');
+  else
+    out = out.replace(/\\[bf\\]/g, (escape) =>
+      escape === '\\b' ? '\\u0008' : escape === '\\f' ? '\\u000c' : escape,
+    );
+  if (encoding.escapeHtml)
+    out = out.replace(HTML_UNSAFE, (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  return out;
 }
 
 function encodeNumber(value: number): string {

@@ -80,6 +80,8 @@ test('@json follows gojq: sorted keys, no HTML escaping, short control escapes',
     runGitHubJq('.[] | {id,body} | @json', [{ id: 7, body: '<p>\b', extra: 1 }]),
     '{"body":"<p>\\b","id":7}\n',
   );
+  assert.equal(runGitHubJq('{d:.d} | @json', { d: '\x7f\f' }), '{"d":"\\u007f\\f"}\n');
+  assert.equal(runGitHubJq('{d:.d}', { d: '\x7f\f' }), '{"d":"\x7f\\u000c"}\n');
 });
 
 test('@tsv escapes separators and renders null as empty', () => {
@@ -177,6 +179,11 @@ test('optional iteration and alternatives tolerate missing data', () => {
     }),
     '{"author":"","state":"APPROVED","submittedAt":null,"t":"review"}\n{"kind":"team","name":"core","t":"request"}\n',
   );
+});
+
+test('an erroring left side of // falls through to the alternative', () => {
+  assert.equal(runGitHubJq('(.a[] // "none")', { a: null }), 'none\n');
+  assert.equal(runGitHubJq('(.a[] // "none")', { a: [false, 2] }), '2\n');
 });
 
 test('runtime errors fail the filter instead of producing partial output', () => {
