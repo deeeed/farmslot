@@ -2,13 +2,13 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
-import type { RawPoolJson } from '@farmslot/slot-config';
+import type { RawPoolJson, RawProjectJson } from '@farmslot/slot-config';
 
 await import('../runtime/mock-pty.test-support.js');
 const config = await import('../core/config.js');
 const exec = await import('../core/exec.js');
 const owners = await import('../security/native-worker-owner.js');
-const pool = {
+const pool: RawPoolJson = {
   machine: 'host',
   os: 'macos',
   host: 'localhost',
@@ -16,17 +16,18 @@ const pool = {
   platform: 'test',
   ssh_user: 'fixture',
   slots: [],
-} satisfies RawPoolJson;
+};
+let projectJson: RawProjectJson = {};
 mock.module('../core/config.js', {
   namedExports: {
     ...config,
     loadMachinePool: async () => pool,
-    loadProjectVars: async () => ({ projectJson: {} }),
+    loadProjectVars: async () => ({ projectJson }),
   },
 });
 interface TerminalLaunch {
   command: string;
-  environment: { set: Record<string, string> };
+  environment: { set: Record<string, string>; unset: string[] };
 }
 const terminalInputs: TerminalLaunch[] = [];
 mock.module('../core/exec.js', {
@@ -153,5 +154,63 @@ test('slotless Pi static reviews load the frozen provider extension for router a
     assert(input.command.includes('RUNNER_OBSERVABILITY_BUNDLE_MISMATCH'));
     assert(!input.command.includes(' --approve'));
     assert(!input.command.includes('/tmp/review.source/.agent'));
+  }
+});
+
+test('slotless reviews receive pool-only providers after project defaults and preserve frozen support', async (t) => {
+  const providerEnv = {
+    FARMSLOT_PI_ROUTER_URL: 'https://router.example.invalid/v1',
+    FARMSLOT_PI_ROUTER_KEY: 'synthetic-router-key',
+    LITELLM_URL: 'https://litellm.example.invalid/v1',
+    LITELLM_API_KEY: 'synthetic-litellm-key',
+  };
+  for (const name of Object.keys(providerEnv)) {
+    const inherited = process.env[name];
+    delete process.env[name];
+    t.after(() => {
+      if (inherited === undefined) delete process.env[name];
+      else process.env[name] = inherited;
+    });
+  }
+  pool.env = { ...providerEnv, REVIEW_LIBRARY: '/mutable/pool/library', REVIEW_MODE: 'pool' };
+  projectJson = {
+    command_env: {
+      unset: ['FARMSLOT_PI_ROUTER_URL', 'LITELLM_API_KEY', 'REMOVE_FOR_REVIEW'],
+      set: { REVIEW_MODE: 'project' },
+      domains: { review: { set: { REVIEW_MODE: 'domain', DOMAIN_DEFAULT: 'review' } } },
+    },
+  };
+  t.after(() => {
+    delete pool.env;
+    projectJson = {};
+  });
+  for (const model of ['router/review-model', 'litellm/review-model']) {
+    run = reviewRun('pi', 'autonomous');
+    run.slotId = null;
+    run.domain = 'review';
+    run.metrics.model = model;
+    assert(run.reviewWorkspace);
+    run.reviewWorkspace.support = {
+      path: '/frozen/support',
+      sha256: 'a'.repeat(64),
+      sources: [],
+      skills: [],
+      environment: { REVIEW_LIBRARY: '{{support}}/library' },
+    };
+    terminalInputs.length = 0;
+    await reviewTmuxOperation(run, 'launch', 'Review the PR');
+    const input = terminalInputs.at(-1);
+    assert(input);
+    for (const [name, value] of Object.entries(providerEnv)) {
+      assert.equal(process.env[name], undefined);
+      assert.equal(input.environment.set[name], value);
+      assert(!input.environment.unset.includes(name));
+      assert(!input.command.includes(value));
+    }
+    assert.equal(input.environment.set.REVIEW_MODE, 'pool');
+    assert.equal(input.environment.set.DOMAIN_DEFAULT, 'review');
+    assert.equal(input.environment.set.REVIEW_LIBRARY, '/frozen/support/library');
+    assert(input.environment.unset.includes('REMOVE_FOR_REVIEW'));
+    assert(input.command.includes("FARMSLOT_PI_WORKSPACE_TRUST='untrusted'"));
   }
 });

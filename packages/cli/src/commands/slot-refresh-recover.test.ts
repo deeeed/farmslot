@@ -60,6 +60,7 @@ async function runRecover(
   slots: unknown[],
   refreshResult: unknown = { refreshed: true },
   extraArgs: string[] = [],
+  cachedSlots: unknown[] = slots,
 ): Promise<{ refreshParams: unknown[]; run: Awaited<ReturnType<typeof spawnCli>> }> {
   const refreshParams: unknown[] = [];
   // Created before the server listens, so every exit path closes the server.
@@ -69,7 +70,15 @@ async function runRecover(
     socket.on('message', (data) => {
       const request = JSON.parse(String(data)) as { id: string; method: string; params?: unknown };
       let payload: unknown = {};
-      if (request.method === 'fleet.status') payload = { fleet: { slots } };
+      if (request.method === 'fleet.status') {
+        const params = request.params;
+        const fresh =
+          typeof params === 'object' &&
+          params !== null &&
+          'forceRefresh' in params &&
+          params.forceRefresh === true;
+        payload = { fleet: { slots: fresh ? slots : cachedSlots } };
+      }
       if (request.method === 'slot.refresh') {
         refreshParams.push(request.params);
         payload = refreshResult;
@@ -155,4 +164,17 @@ test('slot refresh --recover --force sends force and a dirty refusal offers the 
     { slotId: 'example-slot', mode: 'force', release: true, expectedWorkspace: IDENTITY },
   ]);
   assert.match(printed, /--recover --force` to discard it/);
+});
+
+test('force recovery obtains the workspace witness when the cached fleet read has none', async () => {
+  const { refreshParams, run } = await runRecover(
+    [{ slot: 'example-slot', workspace: { ...IDENTITY, observedAt: 'now', dirtyCount: 38 } }],
+    { refreshed: true },
+    ['--force'],
+    [{ slot: 'example-slot' }],
+  );
+  assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
+  assert.deepEqual(refreshParams, [
+    { slotId: 'example-slot', mode: 'force', release: true, expectedWorkspace: IDENTITY },
+  ]);
 });

@@ -53,10 +53,12 @@ export function withBlindTrialBoundary(command: string, capsule: string): string
   const boundary = `${capsule}/boundary`;
   const deny = shSingleQuote(`${boundary}/bin/deny`);
   return [
-    `unset ${GITHUB_TOKEN_NAMES.join(' ')}`,
+    `unset ${GITHUB_TOKEN_NAMES.join(' ')} TMUX TMUX_TMPDIR`,
     `export GH_CONFIG_DIR=${shSingleQuote(`${boundary}/gh-config`)}`,
     `export PATH=${shSingleQuote(`${boundary}/bin`)}:"$PATH"`,
     'export GIT_TERMINAL_PROMPT=0',
+    // Browser children must stay in this seatbelt; preserve TMUX_PANE for hooks.
+    'export FARMSLOT_BLIND_SEATBELT=1',
     // Records transports the isolated repository refuses, for any git binary.
     `export GIT_TRACE2_EVENT=${shSingleQuote(`${boundary}/git-trace.jsonl`)} GIT_TRACE2_EVENT_NESTING=1`,
     `export GIT_SSH_COMMAND=${shSingleQuote(`${deny} ssh`)}`,

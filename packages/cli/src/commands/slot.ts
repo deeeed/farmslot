@@ -261,7 +261,10 @@ export function registerSlotCommand(program: Command): void {
         const slotId = resolveSlotId(id);
         let params: SlotRefreshParams = { slotId, mode: opts.force ? 'force' : 'safe' };
         if (opts.recover) {
-          const { fleet } = await client.call<FleetStatusResult>('fleet.status');
+          const { fleet } = await client.call<FleetStatusResult>(
+            'fleet.status',
+            opts.force ? { forceRefresh: true } : undefined,
+          );
           const workspace = fleet.slots.find((slot) => slot.slot === slotId)?.workspace;
           params = {
             ...params,
