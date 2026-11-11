@@ -516,6 +516,7 @@ export async function dispatchNativeWorker(input: {
         if (existing?.target) throw new Error('Retire the previous transport before native launch');
         return {
           status: 'launching',
+          executionLocation: { machine: vars.machine, checkoutPath: vars.remoteRepo },
           taskFile: input.taskFile,
           signalFile: input.signalFile,
           runner: input.runner,
