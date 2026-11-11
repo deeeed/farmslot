@@ -59,6 +59,7 @@ import { forgetGatewayUpdateClientInterest } from './methods/gateway-status.js';
 import { resolveObservedNativeWorkspace } from './methods/native-workspace.js';
 import { forgetPRDetailClientInterest } from './methods/pr/detail-observations.js';
 import { forgetPRListClientInterest } from './methods/pr/list-cache.js';
+import { prEntityProvider } from './methods/pr/pr-entity-sync.js';
 import { forgetProviderAccountsClientInterest } from './methods/provider-accounts.js';
 import { resetClientResourceIndex, streamUnsubscribe } from './methods/stream-feed.js';
 import { taskProgress } from './methods/task.js';
@@ -606,6 +607,7 @@ export function initServerGlobals(): void {
     if (key.family !== 'slot' || !('slotId' in key)) return undefined;
     return slotEntityProvider((key as { family: 'slot'; slotId: string }).slotId);
   });
+  resourceRevisions.setEntityProvider('upstream', prEntityProvider());
 
   // Watch for fleet state changes and broadcast
   const publishFleetChange = (fleet: FleetStatus) => {

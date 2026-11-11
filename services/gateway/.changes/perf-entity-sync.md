@@ -1,5 +1,6 @@
-- Attach `changedEntity` (entity body + content-hash version) to per-entity `ResourceChangeEntry` notifications for slot changes
-- Attach `membershipRevision` to collection-key notifications; counter advances only when the slot id set changes
-- Add `fleet.status { versions: true }` handler returning id/version list plus non-entity fleet fields
-- Add `fleet.status { ids: [...] }` handler returning only requested slot entities (2 MiB page cap)
+- Attach `changedEntity` (entity body + content-hash version) to per-entity `ResourceChangeEntry` notifications for slot and PR changes
+- Attach `membershipRevision` to collection-key notifications; counter advances only when the id set changes
+- Add `fleet.status { versions: true }` and `fleet.status { ids: [...] }` handlers for slot entity-sync
+- Add `pr.list { versions: true }` and `pr.list { ids: [...] }` handlers for PR entity-sync
+- Advance per-PR entity keys on data and membership changes in the PR list collector
 - Remove local `computeSummary`; use shared implementation from `@farmslot/protocol`

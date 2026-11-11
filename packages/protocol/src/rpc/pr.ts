@@ -15,6 +15,29 @@ export interface PRListParams {
   project?: string;
   /** Bypass the gateway's warm list and refetch every PR from GitHub before answering. */
   force?: boolean;
+  /**
+   * Entity-sync: return id/version pairs instead of full PR entities.
+   * Non-entity fields (fetchedAt, truncated) are carried in the result.
+   */
+  versions?: true;
+  /**
+   * Entity-sync: return only the named PR entities (by prKey `${repo}/${pr}`).
+   * Returns PREntityPage, not PRListResult.
+   */
+  ids?: string[];
+}
+
+/** Versions reply for pr.list { versions: true }. Non-entity fields plus the id/version list. */
+export interface PRVersionsResult {
+  versions: Array<{ id: string; version: string }>;
+  fetchedAt?: string;
+  truncated?: boolean;
+}
+
+/** ids page for pr.list { ids: string[] }. Only the requested PR entities plus their versions. */
+export interface PREntityPage {
+  entities: PRStatus[];
+  versions: Array<{ id: string; version: string }>;
 }
 
 export interface PRReviewCommentsParams {

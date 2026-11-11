@@ -413,6 +413,7 @@ import { nativeSessionRoute } from '../methods/native-session.js';
 import { prList, prMonitor, readPRForSlot, readPRStatus } from '../methods/pr.js';
 import { forgetPRDetailClientInterest } from '../methods/pr/detail-observations.js';
 import { forgetPRListClientInterest } from '../methods/pr/list-cache.js';
+import { prListIds, prListVersions } from '../methods/pr/pr-entity-sync.js';
 import {
   prAddComment,
   prDeleteComment,
@@ -1352,11 +1353,15 @@ async function routeAuthorizedMethod(
         legacyClientId: state.id,
         legacyInterest: !upstreamObservers.manages(state, Methods.PR_STATUS),
       });
-    case Methods.PR_LIST:
-      return prList(p as PRListParams, undefined, {
+    case Methods.PR_LIST: {
+      const plp = p as PRListParams;
+      if (plp.versions === true) return prListVersions(plp.project);
+      if (plp.ids !== undefined) return prListIds(plp.project, plp.ids);
+      return prList(plp, undefined, {
         legacyClientId: state.id,
         legacyInterest: !upstreamObservers.manages(state, Methods.PR_LIST),
       });
+    }
     case Methods.PR_MONITOR:
       return prMonitor(p as PRStatusParams | undefined, emit);
     case Methods.PR_REVIEW_COMMENTS:
