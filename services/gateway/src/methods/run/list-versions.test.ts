@@ -206,6 +206,43 @@ test(
   },
 );
 
+test(
+  'a terminal run whose analytics append lands later gets a new version',
+  TEST_TIMEOUT,
+  async (t) => {
+    const run = fixtureRun(t, 'VERSIONS-ANALYTICS');
+    // Completion starts the analytics append; its flag lands on the run once the append is written.
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    assert.equal(getRun(run.id)!.analyticsEmittedAt, undefined);
+    const before = (await runList({ versions: true })).versions!.find(({ id }) => id === run.id);
+    for (let waited = 0; !getRun(run.id)!.analyticsEmittedAt && waited < 5000; waited += 10)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(getRun(run.id)!.analyticsEmittedAt);
+    const after = (await runList({ versions: true })).versions!.find(({ id }) => id === run.id);
+    assert.deepEqual(after, servedVersion(run.id));
+    assert.notEqual(after?.version, before?.version);
+  },
+);
+
+test(
+  'repeated catch-up pages reuse a row version until the run changes',
+  TEST_TIMEOUT,
+  async (t) => {
+    const run = fixtureRun(t, 'VERSIONS-IDS-MEMO', 'before');
+    const first = await runList({ ids: [run.id] });
+    assert.deepEqual(first.versions, [servedVersion(run.id)]);
+    // An unpublished in-place write is invisible to a page with an unchanged stamp: no re-derive.
+    const live = getRun(run.id)!;
+    live.summary = 'unpublished in-place write';
+    assert.deepEqual((await runList({ ids: [run.id] })).versions, first.versions);
+    live.summary = 'before';
+    updateRun(run.id, { summary: 'after a published write' });
+    const changed = await runList({ ids: [run.id] });
+    assert.deepEqual(changed.versions, [servedVersion(run.id)]);
+    assert.notDeepEqual(changed.versions, first.versions);
+  },
+);
+
 test('an unchanged row keeps its version across a gateway restart', { timeout: 90_000 }, (t) => {
   const root = mkdtempSync(path.join(tmpdir(), 'run-list-version-restart-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));

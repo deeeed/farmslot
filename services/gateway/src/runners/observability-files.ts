@@ -378,7 +378,7 @@ function localPath(vars: SlotVars, file: string): string {
 
 // The shell reads below discard errors (`2>/dev/null || true`): a file that is missing or
 // unreadable reads as empty. The in-process reads keep that contract for the same failures.
-const UNREADABLE = new Set(['ENOENT', 'ENOTDIR', 'EACCES', 'EISDIR']);
+const UNREADABLE = new Set(['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'EISDIR']);
 const unreadable = (error: unknown) => UNREADABLE.has((error as NodeJS.ErrnoException).code ?? '');
 
 async function isLocalFile(file: string): Promise<boolean> {

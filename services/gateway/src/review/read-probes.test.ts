@@ -306,6 +306,31 @@ test('a local slot reads runner files in-process and starts no command', async (
   assert.equal(commands, 0);
 });
 
+test('a local runner file the OS refuses (EPERM) reads as empty, as the shell read did', async (t) => {
+  const fs = await import('node:fs/promises');
+  const refuse = async () => {
+    throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+  };
+  const refused = t.mock.module('node:fs/promises', {
+    namedExports: { ...fs, open: refuse, readFile: refuse, stat: refuse },
+  });
+  t.after(() => refused.restore());
+  const eperm: string = '../runners/observability-files.js?eperm';
+  const files: typeof import('../runners/observability-files.js') = await import(eperm);
+  let commands = 0;
+  execute = async () => {
+    commands++;
+    return { stdout: '', stderr: '', exitCode: 0 };
+  };
+  const local = { ...vars, remoteRepo: os.tmpdir() };
+  assert.deepEqual(await files.readRunnerObservabilityFiles(local), {
+    hooksRaw: '',
+    statuslineRaw: '',
+  });
+  assert.equal(await files.readRunnerSessionObservabilityState(local, 'refused'), null);
+  assert.equal(commands, 0);
+});
+
 test(
   'a timed-out probe retains its flight until the owned process is killed and reaped',
   { timeout: 10_000 },

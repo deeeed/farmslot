@@ -65,7 +65,7 @@ export function runListVersions(runs: readonly Run[]): RunListVersion[] {
 /**
  * One catch-up page: rows in the order asked. The page stops before the row that would take
  * it past the byte cap, but its first row is always served, so an oversized row goes alone.
- * Each served row is versioned from the row itself, so the page and its versions agree.
+ * Rows are versioned through the same per-change memo as the versions list.
  */
 export function runListIdsPage(runs: readonly Run[]): {
   runs: Run[];
@@ -79,9 +79,7 @@ export function runListIdsPage(runs: readonly Run[]): {
     bytes += Buffer.byteLength(JSON.stringify(row));
     if (page.length > 0 && bytes > RUN_LIST_PAGE_MAX_BYTES) break;
     page.push(row);
-    const version = rowVersion(row);
-    versions.set(run.id, { stamp: stampOf(run), version });
-    pageVersions.push({ id: row.id, version });
+    pageVersions.push({ id: row.id, version: runListVersion(run) });
   }
   return { runs: page, versions: pageVersions };
 }
