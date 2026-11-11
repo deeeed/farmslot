@@ -198,18 +198,22 @@ mock.module('../sources/runtime.js', {
 });
 // A second dispatch that claims this slot between our selection and our claim (F283).
 let rivalClaim: { slot: string; rival: Run } | undefined;
+let beforePreview: (() => void) | undefined;
+function applyRivalClaim(id: string, holder: Run): void {
+  cancelledHolder = holder;
+  liveRows.set(id, { ...liveRows.get(id), current_run_id: holder.id, lifecycle: 'busy' });
+  const slot = slots.find((slot) => slot.slot === id);
+  assert(slot);
+  slot.lifecycle = 'busy';
+  slot.currentRunId = holder.id;
+}
 // The load-pin policy each selection pass ran under.
 const previewPins: Array<boolean | undefined> = [];
 const claim: typeof core.claimSlotStatusIf = async (id, predicate, fields) => {
   if (rivalClaim?.slot === id) {
     const { rival } = rivalClaim;
     rivalClaim = undefined;
-    cancelledHolder = rival;
-    liveRows.set(id, { ...liveRows.get(id), current_run_id: rival.id, lifecycle: 'busy' });
-    Object.assign(slots.find((slot) => slot.slot === id)!, {
-      lifecycle: 'busy',
-      currentRunId: rival.id,
-    });
+    applyRivalClaim(id, rival);
     return { claimed: false, epoch: null };
   }
   const row: Record<string, unknown> = {
@@ -325,6 +329,7 @@ mock.module('../methods/dispatch.js', {
       options: Parameters<typeof import('../methods/dispatch/preview.js').dispatchPreview>[1],
     ) => {
       if (!run.slotId) assert.equal(params.targetBranch, expectedTarget);
+      beforePreview?.();
       previewPins.push(options?.automaticLoadPinned);
       if (freshPreview)
         return resolveDispatchPreviewFromFleet(
@@ -508,6 +513,7 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   afterReuse = undefined;
   liveRows.clear();
   rivalClaim = undefined;
+  beforePreview = undefined;
   previewPins.length = 0;
   slotApps.clear();
   projectApps = undefined;
@@ -1277,6 +1283,44 @@ const rival = (): Run =>
     status: 'writing-task',
     engineState: { generation: 0 },
   });
+
+for (const clean of [true, false]) {
+  test(`automatic ${clean ? 'clean' : 'recovered'} candidate claimed during preview queues and reselects`, async () => {
+    reset('dev', 'TAT-9000');
+    expectedTarget = undefined;
+    const first = slots[0]!;
+    const alternate = slots[1]!;
+    first.branch = alternate.branch = 'main';
+    run.allowedSlots = [first.slot, alternate.slot];
+    if (clean) {
+      cleanSlots.add(first.slot);
+      cleanSlots.add(alternate.slot);
+    }
+    freshPreview = true;
+    const holder = rival();
+    holder.slotId = first.slot;
+    beforePreview = () => {
+      beforePreview = undefined;
+      first.phase = 'preparing';
+      applyRivalClaim(first.slot, holder);
+    };
+    afterLoadWait = () => {
+      assert.equal(loadWaits.length, 1);
+      assert.match(String(run.steps[0]!.inputs?.slotClaimWaitReason), /Lost slot macpro-mmt-1/);
+      assert.ok(run.steps[0]!.queuedSince, 'the retry counts as queue time');
+      assert.deepEqual(claims, []);
+      expectedSlot = alternate.slot;
+    };
+    const result = await executeFindSlotStep(run.id, run, 0, context);
+    assert.equal(result.outputs?.selectedSlot, alternate.slot);
+    assert.equal(run.requestedSlotId, null, 'an automatic candidate never becomes a pin');
+    assert.deepEqual(run.allowedSlots, [first.slot, alternate.slot]);
+    assert.deepEqual(claims, [alternate.slot]);
+    assert.deepEqual(loadWaits, [1_000]);
+    assert.equal(liveRows.get(first.slot)?.current_run_id, holder.id);
+    assert.deepEqual(reclaims, [], 'the live rival is never reclaimed');
+  });
+}
 
 test('a claim another dispatch won selects again instead of failing the run', async () => {
   reset('fix-bug', 'TAT-4137');
