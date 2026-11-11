@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run, RunEvidenceSummary } from '@farmslot/protocol';
+import { type Run, type RunEvidenceSummary, runListRow, trimRunForList } from '@farmslot/protocol';
 
 import { normalizeFamilyEvidenceFilterParam } from './family-evidence';
 import {
@@ -10,22 +10,41 @@ import {
   summarizeRunEvidenceSignals,
 } from './run-evidence-signals';
 
+function summary(
+  counts: Pick<RunEvidenceSummary, 'artifactCount' | 'videoCount' | 'visualPairCount'>,
+) {
+  const full: RunEvidenceSummary = {
+    ...counts,
+    artifactBytes: 0,
+    visualEvidenceCount: 0,
+    validationEvidenceCount: 0,
+    reviewEvidenceCount: 0,
+  };
+  return full;
+}
+
 test('runEvidenceSignals exposes video and compare signal labels', () => {
-  assert.deepEqual(runEvidenceSignals({ artifactCount: 4, videoCount: 1, visualPairCount: 2 }), [
-    {
-      kind: 'video',
-      label: 'Video 1',
-      count: 1,
-      title: '1 video artifact available',
-    },
-    {
-      kind: 'compare',
-      label: 'Compare 2',
-      count: 2,
-      title: '2 before/after pairs available',
-    },
-  ]);
-  assert.deepEqual(runEvidenceSignals({ artifactCount: 0, videoCount: 0, visualPairCount: 0 }), []);
+  assert.deepEqual(
+    runEvidenceSignals(summary({ artifactCount: 4, videoCount: 1, visualPairCount: 2 })),
+    [
+      {
+        kind: 'video',
+        label: 'Video 1',
+        count: 1,
+        title: '1 video artifact available',
+      },
+      {
+        kind: 'compare',
+        label: 'Compare 2',
+        count: 2,
+        title: '2 before/after pairs available',
+      },
+    ],
+  );
+  assert.deepEqual(
+    runEvidenceSignals(summary({ artifactCount: 0, videoCount: 0, visualPairCount: 0 })),
+    [],
+  );
 });
 
 test('runEvidenceSignalRouteTarget maps signal chips to family workspace route params', () => {
@@ -68,38 +87,44 @@ test('summarizeRunEvidenceSignals uses shared protocol evidence parsing', () => 
   assert.equal(signals.find((signal) => signal.kind === 'video')?.label, 'Video 1');
 });
 
-test('summarizeRunEvidenceSignals uses pre-computed evidenceSummary on slim rows', () => {
-  // A slim row has evidenceSummary set by the gateway; evidence signals should use it directly
-  // without walking decisions/steps, so a row with no decisions/steps still returns correct signals.
-  const slimRun: Pick<Run, 'steps' | 'liveRecipeContext'> & {
-    decisions?: ReadonlyArray<{ payload?: unknown }>;
-    evidenceSummary: RunEvidenceSummary;
-  } = {
+test('a slim row, its full run and an old cached row show the same evidence signals', () => {
+  const full: Run = {
+    id: 'run-evidence',
+    familyId: 'family-evidence',
+    lane: 'production',
+    flowType: 'fix-bug',
+    status: 'done',
+    project: 'example-mobile',
+    ticketOrPr: 'PR-7',
+    slotId: null,
+    branch: null,
+    taskFile: null,
+    steps: [
+      {
+        name: 'recipe',
+        status: 'done',
+        outputs: {
+          video: 'artifacts/demo-after.mp4',
+          screenshots: ['evidence/before-login.png', 'evidence/after-login.png'],
+        },
+      },
+    ],
     decisions: [],
-    steps: [],
-    liveRecipeContext: null,
-    evidenceSummary: { artifactCount: 5, videoCount: 2, visualPairCount: 3 },
+    metrics: { nudgeCount: 0, model: null, runner: null },
+    createdAt: '2026-11-01T00:00:00.000Z',
+    updatedAt: '2026-11-01T00:00:00.000Z',
   };
-  const signals = summarizeRunEvidenceSignals(slimRun);
-  assert.equal(
-    signals.find((s) => s.kind === 'video')?.count,
-    2,
-    'videoCount from evidenceSummary',
+  const expected = summarizeRunEvidenceSignals(full);
+  assert.deepEqual(
+    expected.map(({ label }) => label),
+    ['Video 1', 'Compare 1'],
   );
-  assert.equal(
-    signals.find((s) => s.kind === 'compare')?.count,
-    3,
-    'visualPairCount from evidenceSummary',
-  );
-
-  // An old fat row without evidenceSummary falls back to computing from content.
-  const fatRun: Pick<Run, 'decisions' | 'steps' | 'liveRecipeContext'> = {
-    decisions: [],
-    steps: [],
-    liveRecipeContext: null,
-  };
-  const fatSignals = summarizeRunEvidenceSignals(fatRun);
-  assert.deepEqual(fatSignals, [], 'fat row with no artifacts returns empty signals');
+  // The served row has lost the step outputs; its signals come from the gateway's summary.
+  const served = runListRow(full);
+  assert.deepEqual(served.steps[0]?.outputs, {});
+  assert.deepEqual(summarizeRunEvidenceSignals(served), expected);
+  // A row cached before slim rows has no summary and still carries the step outputs.
+  assert.deepEqual(summarizeRunEvidenceSignals(trimRunForList(full)), expected);
 });
 
 test('normalizeFamilyEvidenceFilterParam accepts route-safe family evidence filters', () => {

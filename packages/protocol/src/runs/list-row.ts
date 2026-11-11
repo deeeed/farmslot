@@ -105,19 +105,12 @@ export type RunListDecisionPayload =
 // ─── Slim decision type ───────────────────────────────────────────────────────
 
 /**
- * Slim decision for run.list rows.  `id` and `type` are always present;
- * `title`, `description`, `actions`, and `createdAt` are optional because the
- * gateway may omit them on slim rows.  Every full `RunDecision` satisfies
- * `RunListDecision`.
+ * Slim decision for run.list rows. The gateway leaves `description` out and keeps
+ * each action's id, label and style; every other field stays. Every full
+ * `RunDecision` satisfies `RunListDecision`.
  */
-export type RunListDecision = Omit<
-  RunDecision,
-  'title' | 'description' | 'actions' | 'createdAt' | 'payload'
-> & {
-  title?: string;
+export type RunListDecision = Omit<RunDecision, 'description' | 'payload'> & {
   description?: string;
-  actions?: RunDecision['actions'];
-  createdAt?: string;
   payload?: RunListDecisionPayload;
 };
 

@@ -9,8 +9,19 @@ import {
   isRunArtifactMediaPath,
   runEvidenceArtifacts,
   type RunEvidenceSummary,
+  runListEvidenceSummary,
   summarizeRunEvidence,
 } from '../../src/runs/evidence-summary.js';
+
+const zeroSummary: RunEvidenceSummary = {
+  artifactCount: 0,
+  videoCount: 0,
+  visualPairCount: 0,
+  artifactBytes: 0,
+  visualEvidenceCount: 0,
+  validationEvidenceCount: 0,
+  reviewEvidenceCount: 0,
+};
 
 function run(
   overrides: Partial<Run> = {},
@@ -233,34 +244,31 @@ test('summarizeRunEvidence computes diffStat and per-purpose evidence counts fro
   assert.equal(summary.validationEvidenceCount, 1); // purpose 'report' matches /report/
   assert.equal(summary.reviewEvidenceCount, 1); // purpose 'review' matches /review/
   assert.equal(summary.artifactCount, 3);
-  // Revert proof: break extractDiffStatFromSteps (always return undefined) →
-  // `assert.deepEqual(summary.diffStat, { files: 3, ... })` fails: got undefined.
-  // Break isRunEvidenceVisualArtifact (always false) →
-  // `assert.equal(summary.visualEvidenceCount, 1)` fails: got 0.
 });
 
-test('summarizeRunEvidence returns the pre-computed summary directly for slim rows', () => {
-  const precomputed: RunEvidenceSummary = {
-    artifactCount: 7,
-    videoCount: 2,
-    visualPairCount: 1,
-    diffStat: { files: 1, additions: 5, deletions: 2 },
-    artifactBytes: 1024,
-    visualEvidenceCount: 3,
-    validationEvidenceCount: 2,
-    reviewEvidenceCount: 1,
-  };
-
-  const result = summarizeRunEvidence({
-    steps: [],
-    decisions: [],
-    evidenceSummary: precomputed,
+test('summarizeRunEvidence always computes from what the run carries, even with a summary key', () => {
+  const stored = run({
+    steps: [{ name: 'work', status: 'done', outputs: { video: 'artifacts/demo-after.mp4' } }],
   });
+  const expected = summarizeRunEvidence(stored);
+  assert.equal(expected.videoCount, 1);
+  // A stored run object that picked up the served-only key, empty or not, is still computed.
+  const emptyKey = { ...stored, evidenceSummary: undefined };
+  const staleKey = { ...stored, evidenceSummary: zeroSummary };
+  assert.deepEqual(summarizeRunEvidence(emptyKey), expected);
+  assert.deepEqual(summarizeRunEvidence(staleKey), expected);
+});
 
-  assert.strictEqual(result, precomputed);
-  // Revert proof: remove `if ('evidenceSummary' in run) return run.evidenceSummary` →
-  // fat path runs on empty steps/decisions → returns { artifactCount: 0, ... } ≠ precomputed →
-  // `assert.strictEqual(result, precomputed)` fails (reference inequality).
+test('runListEvidenceSummary uses the served summary and computes when the row has none', () => {
+  const row = {
+    decisions: [],
+    steps: [{ name: 'work', status: 'done' as const, outputs: { video: 'artifacts/demo.mp4' } }],
+  };
+  const served: RunEvidenceSummary = { ...zeroSummary, artifactCount: 7, videoCount: 2 };
+  assert.strictEqual(runListEvidenceSummary({ ...row, evidenceSummary: served }), served);
+  // A row cached before the gateway served summaries, or one whose key is present but empty.
+  assert.equal(runListEvidenceSummary(row).videoCount, 1);
+  assert.equal(runListEvidenceSummary({ ...row, evidenceSummary: undefined }).videoCount, 1);
 });
 
 test('WebP stills are inline images and publishable media, beside retained PNG stills', () => {

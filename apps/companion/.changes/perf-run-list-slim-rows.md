@@ -1,1 +1,1 @@
-- Run list rows are now slim; Companion's evidence signal computation uses the pre-computed `evidenceSummary` field when present, with fallback to full computation on old cached rows.
+- Lists read the smaller `run.list` rows. Evidence chips use the gateway's evidence summary. Run detail, gate review and the artifact viewer read `run.get`: when a newer list row arrives first, the header shows its status while the package and evidence stay on screen until the reread lands.

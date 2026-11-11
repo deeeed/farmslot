@@ -136,12 +136,8 @@ export function runProgressSummary(
   const activity = run.status === 'blocked' ? undefined : deriveRunLifecycleView(run).activityLabel;
   if (activity) return summary(run.status === 'fixing' ? 'step' : 'gate', activity);
   if (pending) {
-    const action =
-      pending.actions?.find((item) => item.style === 'primary') ?? pending.actions?.[0];
-    return summary(
-      'gate',
-      action ? `${pending.title ?? ''} → ${action.label}` : (pending.title ?? ''),
-    );
+    const action = pending.actions.find((item) => item.style === 'primary') ?? pending.actions[0];
+    return summary('gate', action ? `${pending.title} → ${action.label}` : pending.title);
   }
   // A finished interactive worker, or a pause, waits on the operator without a decision.
   if (step?.outputs?.awaitingOperator === true)

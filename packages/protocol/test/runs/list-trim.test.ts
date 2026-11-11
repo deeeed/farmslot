@@ -8,13 +8,14 @@ import type {
   RunDecision,
   RunDecisionPayload,
 } from '../../src/contracts/index.js';
-import { summarizeRunEvidence } from '../../src/runs/evidence-summary.js';
+import { runListEvidenceSummary, summarizeRunEvidence } from '../../src/runs/evidence-summary.js';
 import {
   RUN_LIST_PAYLOAD_VALUE_LIMIT,
   runListRow,
   trimDecisionForList,
   trimRunForList,
 } from '../../src/runs/list-trim.js';
+import { runListVersion } from '../../src/runs/list-version.js';
 
 const big = 'x'.repeat(RUN_LIST_PAYLOAD_VALUE_LIMIT);
 
@@ -152,6 +153,7 @@ test('run lists omit output file manifests without changing the retained detail'
 
 // ─── runListRow (slim projection) tests ──────────────────────────────────────
 
+/** One run with every heavy field the slim row drops or reduces, and evidence of each kind. */
 function richRun(): Run {
   return {
     id: 'slim-test',
@@ -180,15 +182,29 @@ function richRun(): Run {
         completedAt: '2026-11-11T00:00:20.000Z',
         outputs: { selectedSlot: 'slot-a', reason: 'picked best slot', ignoredField: 'drop me' },
       },
+      {
+        name: 'work',
+        status: 'done',
+        outputs: {
+          transcript: 't'.repeat(8000),
+          diffStat: { files: 2, additions: 10, deletions: 3 },
+          artifacts: [
+            { path: 'evidence/before-login.png', purpose: 'before screenshot', sizeBytes: 400 },
+            { path: 'evidence/after-login.png', purpose: 'after screenshot', sizeBytes: 500 },
+            { path: 'reports/recipe-report.md', purpose: 'report', sizeBytes: 100 },
+            { path: 'reviews/final-review.md', purpose: 'review', sizeBytes: 200 },
+          ],
+        },
+      },
     ],
     decisions: [
       {
         id: 'd1',
         type: 'engine_human_gate',
         title: 'Human gate',
-        description: '',
+        description: 'd'.repeat(4000),
         createdAt: '2026-11-11T00:00:30.000Z',
-        actions: [{ id: 'approve', label: 'Approve', style: 'primary' }],
+        actions: [{ id: 'approve', label: 'Approve', style: 'primary', description: 'Publish' }],
         payload: {
           kind: 'ready',
           gateReadiness: {
@@ -204,7 +220,8 @@ function richRun(): Run {
             noVerdict: 0,
             noVerdictLimit: 3,
           },
-          workerReport: 'big report text to drop',
+          workerReport: 'w'.repeat(8000),
+          inputSnapshot: { taskPrompt: 'p'.repeat(8000) },
           branch: 'feature/x',
           prNumber: null,
           repo: null,
@@ -224,6 +241,12 @@ function richRun(): Run {
         },
       },
     ],
+    output: {
+      workerFinished: true,
+      capturedAt: '2026-11-11T00:00:50.000Z',
+      manifestDigest: 'digest',
+      artifactManifest: [{ path: 'artifacts/output.mp4', purpose: 'video', sizeBytes: 900 }],
+    },
     engineState: {
       generation: 5,
       workspaceReviewDispatchGeneration: 3,
@@ -331,26 +354,131 @@ test('runListRow does not mutate the stored run', () => {
   assert.equal(JSON.stringify(run), before);
 });
 
-test('version basis is sha256 of trimRunForList, not runListRow', () => {
-  // trimRunForList and runListRow produce different results, but the version is
-  // derived from trimRunForList so it stays stable across the slim-row deploy.
-  const run = richRun();
-  const trim = trimRunForList(run);
-  const slim = runListRow(run);
-  // They differ (slim drops more)
-  assert.notDeepEqual(trim, slim);
-  // runListRow also drops the output manifest like trimRunForList does not (output manifest
-  // is handled by trimRunForList; runListRow builds on the full run directly).
-  // The key invariant: trimRunForList is what the client uses for version comparison.
-  assert.ok(trim, 'trimRunForList returns a value');
-  assert.ok(slim, 'runListRow returns a value');
+test('runListRow serves exactly the kept fields of a rich run, and its evidence summary', () => {
+  const row = runListRow(richRun());
+  assert.deepEqual(JSON.parse(JSON.stringify(row)), {
+    id: 'slim-test',
+    familyId: 'fam-1',
+    lane: 'production',
+    flowType: 'dev',
+    project: 'test-project',
+    ticketOrPr: 'T-1',
+    status: 'monitoring',
+    slotId: null,
+    branch: null,
+    taskFile: null,
+    summary: 'worker running',
+    createdAt: '2026-11-11T00:00:00.000Z',
+    updatedAt: '2026-11-11T00:01:00.000Z',
+    metrics: { runner: 'claude', model: 'claude-opus', nudgeCount: 0 },
+    steps: [
+      {
+        name: 'dispatch',
+        status: 'done',
+        startedAt: '2026-11-11T00:00:10.000Z',
+        completedAt: '2026-11-11T00:00:20.000Z',
+        outputs: { selectedSlot: 'slot-a', reason: 'picked best slot' },
+      },
+      { name: 'work', status: 'done', outputs: {} },
+    ],
+    decisions: [
+      {
+        id: 'd1',
+        type: 'engine_human_gate',
+        title: 'Human gate',
+        createdAt: '2026-11-11T00:00:30.000Z',
+        actions: [{ id: 'approve', label: 'Approve', style: 'primary' }],
+        payload: {
+          kind: 'ready',
+          gateReadiness: {
+            state: 'ready',
+            identity: { runId: 'slim-test', generation: 1 },
+            reasons: [],
+          },
+          branch: 'feature/x',
+          prNumber: null,
+          repo: null,
+          diffStat: { additions: 10, deletions: 2, files: 1 },
+          reviewRoundBudget: { used: 1, remaining: 2 },
+          reviews: [
+            {
+              id: 'pr-rev-1',
+              mode: 'cold',
+              loopNumber: 1,
+              verdict: 'pass',
+              unresolvedCount: 0,
+              runner: 'claude',
+              model: 'claude-opus',
+            },
+          ],
+        },
+      },
+    ],
+    output: {
+      workerFinished: true,
+      capturedAt: '2026-11-11T00:00:50.000Z',
+      manifestDigest: 'digest',
+      artifactManifest: [],
+      artifactManifestOmitted: true,
+    },
+    engineState: {
+      intelligenceAuditDegraded: false,
+      generation: 5,
+      workspaceReviewDispatchGeneration: 3,
+      publishGate: {
+        reviewPolicy: { requestedBy: 'dispatch' },
+        reviewSequence: [{ runner: 'claude', model: null, effort: null, mode: 'cold' }],
+        reviews: [
+          {
+            id: 'rev-1',
+            mode: 'cold',
+            loopNumber: 1,
+            verdict: 'pass',
+            unresolvedCount: 0,
+            source: 'dispatch',
+            runner: 'claude',
+            model: 'claude-opus',
+          },
+        ],
+      },
+    },
+    evidenceSummary: {
+      artifactCount: 5,
+      videoCount: 1,
+      visualPairCount: 1,
+      diffStat: { files: 2, additions: 10, deletions: 3 },
+      artifactBytes: 2100,
+      visualEvidenceCount: 3,
+      validationEvidenceCount: 1,
+      reviewEvidenceCount: 1,
+    },
+  });
 });
 
-test('summarizeRunEvidence returns the same result from a full run and from a slim row with evidenceSummary', () => {
+test('the served row of a rich run is under 2.5 KB, a fraction of the trimmed row', () => {
   const run = richRun();
-  const fromFull = summarizeRunEvidence(run);
-  const slim = runListRow(run);
-  const withSummary = { ...slim, evidenceSummary: fromFull };
-  const fromSlim = summarizeRunEvidence(withSummary);
-  assert.deepEqual(fromSlim, fromFull);
+  const served = Buffer.byteLength(JSON.stringify(runListRow(run)));
+  const trimmed = Buffer.byteLength(JSON.stringify(trimRunForList(run)));
+  assert.ok(served < 2560, `served row ${served} B`);
+  assert.ok(served * 5 < trimmed, `served ${served} B vs trimmed ${trimmed} B`);
+});
+
+test('the row version basis is trimRunForList, which serving a slim row leaves unchanged', () => {
+  const run = richRun();
+  const basis = runListVersion(trimRunForList(run));
+  runListRow(run);
+  assert.equal(runListVersion(trimRunForList(run)), basis);
+  // The served row hashes differently, so a version is never taken from the served row.
+  assert.notEqual(runListVersion(runListRow(run)), basis);
+});
+
+test('the served evidence summary is computed from the full run, not from the slim row', () => {
+  const run = richRun();
+  const row = runListRow(run);
+  assert.deepEqual(row.evidenceSummary, summarizeRunEvidence(run));
+  // The slim row alone has lost the step and output artifacts the summary counts.
+  const { evidenceSummary, ...withoutSummary } = row;
+  assert.ok(evidenceSummary);
+  assert.equal(summarizeRunEvidence(withoutSummary).artifactCount, 0);
+  assert.equal(runListEvidenceSummary(row), evidenceSummary);
 });

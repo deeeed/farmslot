@@ -23,6 +23,7 @@ import {
   runElapsedTimeView,
   runEngineLabel,
   type RunFamilyGroup,
+  runListEvidenceSummary,
   runWorkerEffort,
   slotMachineMap,
 } from '@farmslot/protocol';
@@ -868,11 +869,7 @@ export class RunList extends RunListState {
     const slotId = resolveRunSlotId(run);
     const pipelineLabel = compactRunPipelineLabel(run);
     const disposition = dispositionLabel(run.metrics.disposition);
-    const evidenceSummary: RunEvidenceSummary = run.evidenceSummary ?? {
-      artifactCount: 0,
-      videoCount: 0,
-      visualPairCount: 0,
-    };
+    const evidenceSummary = runListEvidenceSummary(run);
     const hasAutoRecoveryAttempt =
       run.recoveryAttempts?.some((a) => a.triggeredBy === 'auto-recovery') ?? false;
     const showStopAutoRecovery =

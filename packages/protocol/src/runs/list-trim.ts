@@ -24,6 +24,7 @@ import type {
 import { utf8ByteLength } from '../utf8-byte-length.js';
 
 import { CI_SNAPSHOT_TRIM_KEY } from './ci-decision-context.js';
+import { summarizeRunEvidence } from './evidence-summary.js';
 import type {
   RunListDecision,
   RunListDecisionPayload,
@@ -63,11 +64,16 @@ export function trimDecisionForList(decision: RunDecision): RunDecision {
   return { ...decision, context, payload: kept as RunDecisionPayload, payloadTrimmed: trimmed };
 }
 
-/** A copy of `run` for run.list; the store's own object is never mutated. */
-export function trimRunForList(run: Run): Run {
-  const output = run.output?.artifactManifest.length
+/** The run output a list row carries: the file manifest is left out and marked omitted. */
+function listRunOutput(run: Run): Run['output'] {
+  return run.output?.artifactManifest.length
     ? { ...run.output, artifactManifest: [], artifactManifestOmitted: true }
     : run.output;
+}
+
+/** A copy of `run` for run.list; the store's own object is never mutated. */
+export function trimRunForList(run: Run): Run {
+  const output = listRunOutput(run);
   let changed = output !== run.output;
   const decisions = (run.decisions ?? []).map((decision) => {
     const next = trimDecisionForList(decision);
@@ -270,10 +276,12 @@ function slimEngineState(engineState: RunEngineState | undefined): RunListEngine
  * A slim projection of `run` for `run.list` served rows.
  *
  * Drops heavy optional fields no list surface reads (`resourcePosture`,
- * `sessionUsage`, `visualJudgmentReceipts`, `templateProvenance`,
- * `evidenceSummary`) and projects `steps`, `decisions`, and `engineState` to
- * only the keys list consumers actually access.  `trimRunForList` stays as the
- * version basis; this function is applied where rows are served.
+ * `sessionUsage`, `visualJudgmentReceipts`, `templateProvenance`), leaves the
+ * output file manifest out as `trimRunForList` does, projects `steps`,
+ * `decisions`, and `engineState` to only the keys list consumers actually
+ * access, and attaches `evidenceSummary` computed from the full run.
+ * `trimRunForList` stays as the version basis; this function is applied where
+ * rows are served.
  *
  * Returns the honest `RunListRow` type — no forced casts.
  */
@@ -305,18 +313,10 @@ export function runListRow(run: Run): RunListRow {
     const row: RunListDecision = {
       id: decision.id,
       type: decision.type,
-      ...(decision.title !== undefined ? { title: decision.title } : {}),
-      ...(decision.createdAt !== undefined ? { createdAt: decision.createdAt } : {}),
+      title: decision.title,
+      createdAt: decision.createdAt,
       ...(decision.resolvedAt !== undefined ? { resolvedAt: decision.resolvedAt } : {}),
-      ...(decision.actions !== undefined
-        ? {
-            actions: decision.actions.map((a) => ({
-              id: a.id,
-              label: a.label,
-              style: a.style,
-            })),
-          }
-        : {}),
+      actions: decision.actions.map((a) => ({ id: a.id, label: a.label, style: a.style })),
       ...(context !== undefined ? { context } : {}),
       ...(trimmed.length > 0 ? { payloadTrimmed: trimmed } : {}),
       ...(slimmedPayload !== undefined ? { payload: slimmedPayload } : {}),
@@ -325,11 +325,14 @@ export function runListRow(run: Run): RunListRow {
   });
 
   const engineState = slimEngineState(rest.engineState);
+  const output = listRunOutput(run);
 
   return {
     ...rest,
+    ...(output !== undefined ? { output } : {}),
     steps,
     decisions,
     ...(engineState !== undefined ? { engineState } : { engineState: undefined }),
+    evidenceSummary: summarizeRunEvidence(run),
   };
 }

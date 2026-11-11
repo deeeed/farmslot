@@ -9,11 +9,19 @@ import { mountHook } from '../../hooks/hook-harness.fixtures';
 import * as connectionAuthority from '../../lib/connection-authority';
 import * as decisionResolve from '../../lib/decision-resolve';
 import { readErrorMessage } from '../../lib/resource-read-status';
+import {
+  HELD_EVIDENCE_MANIFEST,
+  HELD_PACKAGE_HASH,
+  heldGateRun,
+  newerSlimRow,
+} from '../run-detail/held-detail.fixtures';
+import { heldDetailWithNewerRow } from '../run-detail/run-detail-reads';
 
 import type { GateReviewScreenState, useGateReviewController } from './use-gate-review-controller';
 
 type Run = protocol.Run;
 type RunDecision = protocol.RunDecision;
+type RunListRow = protocol.RunListRow;
 type Controller = ReturnType<typeof useGateReviewController>;
 type ReadyViewModel = Extract<GateReviewScreenState, { status: 'ready' }>['viewModel'];
 interface AlertButton {
@@ -52,8 +60,27 @@ function gateDecision(packageHash: string): RunDecision {
 }
 
 /** One gate on screen, read from the shared cache, with the real controller and draft hooks. */
-function gateWorld({ online = true, runBound = true, detailStored = true, nullRun = false } = {}) {
-  const run = { id: params.runId, slotId: 's1', decisions: [gateDecision('pkg-1')] } as Run;
+function gateWorld({
+  online = true,
+  runBound = true,
+  detailStored = true,
+  nullRun = false,
+  heldRun,
+  row = null,
+}: {
+  online?: boolean;
+  runBound?: boolean;
+  detailStored?: boolean;
+  nullRun?: boolean;
+  /** A complete held run.get; the default is a minimal run with one publish gate. */
+  heldRun?: Run;
+  /** The run.list row useRunDetailRun hands over beside the detail. */
+  row?: RunListRow | null;
+} = {}) {
+  const run =
+    heldRun ?? ({ id: params.runId, slotId: 's1', decisions: [gateDecision('pkg-1')] } as Run);
+  // useRunDetailRun's detail: a held run.get under a newer row carries the row's own fields.
+  const detail = heldRun && row ? heldDetailWithNewerRow(heldRun, row) : run;
   const sent: Request[] = [];
   const alerts: Array<{ title: string; message?: string; buttons?: AlertButton[] }> = [];
   let haptics = 0;
@@ -182,7 +209,8 @@ function gateWorld({ online = true, runBound = true, detailStored = true, nullRu
             ...(detailStored && !nullRun ? { data: { run } } : {}),
             observedAt: 1,
           },
-          run: nullRun ? null : run,
+          row,
+          run: nullRun ? null : detail,
         }),
       },
       '../../lib/acceptance-evidence': { acceptanceEvidenceHref: () => '/' },
@@ -375,33 +403,38 @@ test('a gate Send refuses any confirmed transport other than run.resolveDecision
   }
 });
 
-// Point 3: detail-only reads come from run (full Run from useRunDetailRun), not from a slim row.
-
-// No detail yet → loading state.  run is the discriminant: null means run.get has not returned.
-test('no run detail yet gives loading state', () => {
-  const { render, cleanup } = gateWorld({ nullRun: true });
+// With no run.get yet, the screen loads even when the run's list row is held.
+test('no run detail yet gives the loading state even with a list row', () => {
+  const { render, cleanup } = gateWorld({ nullRun: true, row: newerSlimRow(heldGateRun()) });
   try {
-    const state = render().state as GateReviewScreenState;
-    assert.equal(state.status, 'loading');
+    assert.equal(render().state.status, 'loading');
   } finally {
     cleanup();
   }
 });
 
-// Held detail: run.decisions carries the full payload (prPackage + evidenceManifest) which
-// slim rows strip.  The model exposes artifacts from decision.payload, not from the row.
-// Slim row's status (from run.status on the full Run) is reflected in viewModel.run.status.
-test('held detail with package gives ready model; artifacts come from decision payload', () => {
-  const { render, cleanup } = gateWorld();
+// A run write lands in run.list before run.get's reread: the row's status shows, the package
+// and its evidence stay the held detail's, and Refresh package still has a package to refresh.
+test('a newer slim row over a held gate keeps its package, evidence and refresh action', async () => {
+  const held = heldGateRun();
+  const { world, render, viewModel, cleanup } = gateWorld({
+    heldRun: held,
+    row: newerSlimRow(held),
+  });
   try {
-    const state = render().state as GateReviewScreenState;
-    assert.equal(state.status, 'ready');
-    const vm = (state as Extract<GateReviewScreenState, { status: 'ready' }>).viewModel;
-    // artifacts sourced from decision.payload.prPackage?.evidenceManifest (detail-only field,
-    // stripped in slim rows) — not from step outputs or the row's evidenceSummary.
-    assert.ok(Array.isArray(vm.artifacts), 'artifacts array present');
-    // run.status comes from the full Run returned by useRunDetailRun, same as the row's status.
-    assert.ok(vm.run.decisions.length > 0, 'full Run decisions accessible (stripped in slim row)');
+    const vm = viewModel();
+    assert.equal(vm.run.status, 'needs-decision');
+    assert.deepEqual(vm.artifacts, HELD_EVIDENCE_MANIFEST);
+    const payload = vm.decision.payload;
+    assert.equal(
+      payload?.kind === 'ready' ? payload.prPackage?.packageHash : null,
+      HELD_PACKAGE_HASH,
+    );
+    await render().actions.refreshPackage();
+    assert.deepEqual(
+      world.sent.map(({ method, params: sentParams }) => [method, sentParams.decisionId]),
+      [[Methods.RUN_REFRESH_PUBLISH_PACKAGE, params.decisionId]],
+    );
   } finally {
     cleanup();
   }

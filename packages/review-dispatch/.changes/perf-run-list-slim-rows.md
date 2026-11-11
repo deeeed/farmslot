@@ -1,0 +1,1 @@
+- Run activity, provenance, checklist, CI watch and recovered-review helpers accept `RunListRow` as well as `Run`.

@@ -8,20 +8,23 @@ import { heldDataUsable } from '../../lib/resource-read-status';
 import { useHeldConnection } from '../../store/held-connection';
 import { useRunStore } from '../../store/runs';
 
+import { heldDetailWithNewerRow } from './run-detail-reads';
+
 /**
- * The two things Run Detail needs separated:
- * - `row`: the run-list row for header, status, pipeline and anything a RunListRow has. Present
- *   as soon as the run appears in the list, regardless of whether run.get has loaded. Never
- *   null while the run is listed and not refused.
- * - `run`: the detail from run.get only, never a list row. Null while run.get has not yet
- *   returned data (loading or refused). Set as soon as data exists — including stale cached
- *   data — so detail-only fields (prPackage, artifactManifest, full decision payloads) are
- *   available even offline. Use `runActionable` to guard write actions; use `fromList` to
- *   know whether the row is a more up-to-date source for status/header display.
+ * What Run Detail screens read for one run:
+ * - `row`: the run.list row, present while the run is listed and its run.get was not refused.
+ * - `run`: run.get's run, never a list row; null until run.get has data (loading, or nothing
+ *   saved). When the row is newer than a held run.get (`fromList`), `run` is the held detail
+ *   with the row's own fields laid over it (`heldDetailWithNewerRow`): the header shows the
+ *   row's status, and the detail parts keep the held data until the reread lands, so nothing
+ *   already on screen goes empty. A run.list row alone never stands in: it lacks the detail
+ *   these screens render, so they show their loading state until run.get answers.
  *
- * The old `fromList` flag is preserved for callers that need to know the detail is not yet held.
- * The brief: "Where a screen needs a detail-only field to render correctly, it waits for the
- * detail." Nothing already on screen disappears; the row keeps the header live.
+ * Display and actions use different rules. `runActionable` (`canActOn`) says when actions may
+ * run, which a failed reread already stops, and run actions check run.get's own run
+ * (`assertNativeRunReady`), which an overlaid run is not. A failed reread stays quiet only while
+ * the last good read is under 60 s old (`heldDataUsable`); after that a newer row's facts show.
+ * A refusal such as RUN_NOT_FOUND drops the row. `listObservation` dates the row.
  */
 export function useRunDetailRun(runId: string) {
   const runQuery = useMemo(
@@ -40,13 +43,9 @@ export function useRunDetailRun(runId: string) {
   const fromList = Boolean(
     row && !directShown && (!direct || Date.parse(row.updatedAt) > Date.parse(direct.updatedAt)),
   );
-  return {
-    runQuery,
-    runObservation,
-    runActionable,
-    listObservation,
-    fromList,
-    row,
-    run: direct ?? null,
-  };
+  const run = useMemo(
+    () => (direct && row && fromList ? heldDetailWithNewerRow(direct, row) : (direct ?? null)),
+    [direct, row, fromList],
+  );
+  return { runQuery, runObservation, runActionable, listObservation, fromList, row, run };
 }

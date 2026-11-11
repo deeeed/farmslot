@@ -20,7 +20,6 @@ import {
   type RunListRow,
   runListRow,
   type RunListVersion,
-  summarizeRunEvidence,
   trimRunForList,
 } from '@farmslot/protocol';
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
@@ -50,17 +49,32 @@ function fixtureRun(t: TestContext, ticketOrPr: string, summary?: string): Run {
 
 const rowVersion = (row: Run | RunListRow) =>
   createHash('sha256').update(canonicalResourceJson(row)).digest('hex');
-// The version contract: sha256 of trimRunForList(run), unchanged from before slim rows.
-// The served row is runListRow(run) + evidenceSummary, but the version hash is still the
-// trimRunForList basis (ADR-071 Amendment 1).
+// The contract: version = sha256 of trimRunForList(run), unchanged from before slim rows;
+// row = runListRow(run), the slim row with the run's evidence summary.
 const servedVersion = (id: string): RunListVersion => ({
   id,
   version: rowVersion(trimRunForList(getRun(id)!)),
 });
-const servedRow = (id: string): RunListRow => ({
-  ...runListRow(getRun(id)!),
-  evidenceSummary: summarizeRunEvidence(getRun(id)!),
-});
+const servedRow = (id: string): RunListRow => runListRow(getRun(id)!);
+
+/** Gives a run a large step output and session usage, which a served row leaves out. */
+function addDroppedDetail(id: string, bytes: number): void {
+  const run = getRun(id)!;
+  updateRun(id, {
+    steps: [
+      ...run.steps,
+      { name: 'work', status: 'done', outputs: { transcript: 't'.repeat(bytes), runner: 'codex' } },
+    ],
+    sessionUsage: [
+      {
+        runner: 'codex',
+        totalTokens: 10,
+        measuredAt: new Date().toISOString(),
+        source: 'runner-transcript',
+      },
+    ],
+  });
+}
 
 // A hang fails its test instead of holding the lane's test lock; cleanup lives in t.after.
 const TEST_TIMEOUT = { timeout: 15_000 };
@@ -170,13 +184,42 @@ test(
 
 test('a plain run.list serves slim rows with evidenceSummary attached', TEST_TIMEOUT, async (t) => {
   const run = fixtureRun(t, 'PLAIN-LIST-SLIM');
+  addDroppedDetail(run.id, 10_000);
   const reply = await runList({});
   const served = reply.runs?.find((row) => row.id === run.id);
   assert.ok(served, 'run appears in plain list');
   assert.deepEqual(served, servedRow(run.id), 'row matches slim projection with evidenceSummary');
-  assert.equal('resourcePosture' in served, false, 'resourcePosture dropped');
+  assert.equal('sessionUsage' in served, false, 'sessionUsage dropped');
+  assert.deepEqual(served.steps.at(-1)?.outputs, { runner: 'codex' }, 'step output slimmed');
   assert.ok(served.evidenceSummary !== undefined, 'evidenceSummary attached');
 });
+
+test(
+  'an ids page caps the bytes of the rows it serves, not of the full runs',
+  TEST_TIMEOUT,
+  async (t) => {
+    // Each run is ~900 KB in full and trimmed, a few KB served: three fit one 2 MB page.
+    const runs = ['PAGE-SERVED-A', 'PAGE-SERVED-B', 'PAGE-SERVED-C'].map((ticket) => {
+      const run = fixtureRun(t, ticket);
+      addDroppedDetail(run.id, 900_000);
+      return run.id;
+    });
+    const trimmedBytes = runs.reduce(
+      (total, id) => total + Buffer.byteLength(JSON.stringify(trimRunForList(getRun(id)!))),
+      0,
+    );
+    assert.ok(trimmedBytes > RUN_LIST_PAGE_MAX_BYTES, `trimmed rows ${trimmedBytes} B`);
+    const reply = await runList({ ids: runs });
+    assert.deepEqual(
+      reply.runs.map((row) => row.id),
+      runs,
+    );
+    assert.deepEqual(
+      reply.runs,
+      runs.map((id) => servedRow(id)),
+    );
+  },
+);
 
 test(
   'a versions read derives a row only when its run changed since the last read',

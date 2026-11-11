@@ -18,6 +18,14 @@ import { ResourceCacheConformanceTransport } from '../../../../../packages/proto
 import { mountHook } from '../../hooks/hook-harness.fixtures';
 import { heldDataUsable } from '../../lib/resource-read-status';
 
+import {
+  HELD_EVIDENCE_MANIFEST,
+  HELD_PACKAGE_HASH,
+  heldGateRun,
+  newerSlimRow,
+} from './held-detail.fixtures';
+import { heldDetailWithNewerRow } from './run-detail-reads';
+
 const scope = { gatewayUrl: 'ws://run-detail.invalid/', principalId: 'p', principalGeneration: 0 };
 const authority = { roles: [], workspaceAccess: 'farm' as const };
 
@@ -72,7 +80,7 @@ type Answer = Run | 'pending' | { fail: string };
  * The cold start Run Detail opens on: a run.get saved by an earlier session, and a gateway
  * that is offline unless `online`. Online, each run.get read takes the next of `answers`.
  */
-async function mount(listed: Run[], saved?: Run, online = false, answers: Answer[] = []) {
+async function mount(listed: RunListRow[], saved?: Run, online = false, answers: Answer[] = []) {
   const store = createMemoryResourceStore();
   await store.setMetadata({ scope, authority });
   if (saved)
@@ -115,6 +123,7 @@ async function mount(listed: Run[], saved?: Run, online = false, answers: Answer
     {
       '@farmslot/protocol/client-cache': { canActOn, readRefused, resourceQuery },
       '../../lib/resource-read-status': { heldDataUsable },
+      './run-detail-reads': { heldDetailWithNewerRow },
       '../../store/held-connection': { useHeldConnection: () => held },
       '../../hooks/useResourceQuery': {
         useResourceQuery<T>(query: ResourceQuery<T> | undefined): ResourceQueryState<T> {
@@ -126,7 +135,7 @@ async function mount(listed: Run[], saved?: Run, online = false, answers: Answer
       '../../store/runs': {
         useRunStore: (
           select: (state: { runs: RunListRow[]; observation: ResourceQueryState }) => unknown,
-        ) => select({ runs: listed as RunListRow[], observation: { status: 'stale' } }),
+        ) => select({ runs: listed, observation: { status: 'stale' } }),
       },
     },
     // The hook's clock, which `age` moves ahead of the cache's.
@@ -183,13 +192,15 @@ test('a listed run renders on the first render while its saved run.get hydrates 
   }
 });
 
-test('a listed run that was never opened renders offline from its row alone', async () => {
-  const row = run('listed row');
+test('a listed run that was never opened has its row offline and no detail to stand in', async () => {
+  const row = newerSlimRow(heldGateRun());
   const detail = await mount([row]);
   try {
     assert.equal(detail.render().row, row);
     await turns();
-    assert.equal(detail.render().row, row);
+    const offline = detail.render();
+    assert.equal(offline.row, row);
+    assert.equal(offline.run, null);
     assert.equal(detail.transport.requestCount, 0);
   } finally {
     await detail.dispose();
@@ -246,6 +257,29 @@ test('the newer of the row and the saved run.get is the one shown', async () => 
     } finally {
       await detail.dispose();
     }
+  }
+});
+
+test('a newer slim row over a held run.get shows the row status and keeps the held package', async () => {
+  const held = heldGateRun();
+  const row = newerSlimRow(held);
+  const detail = await mount([row], held);
+  try {
+    detail.render();
+    await turns();
+    const shown = detail.render();
+    assert.equal(shown.fromList, true);
+    assert.equal(shown.row, row);
+    assert.equal(shown.run?.status, 'needs-decision');
+    assert.equal(shown.run?.summary, 'newer listed row');
+    const payload = shown.run?.decisions[0]?.payload;
+    assert.equal(payload?.kind, 'ready');
+    if (payload?.kind !== 'ready') return;
+    assert.equal(payload.prPackage?.packageHash, HELD_PACKAGE_HASH);
+    assert.deepEqual(payload.prPackage?.evidenceManifest, HELD_EVIDENCE_MANIFEST);
+    assert.deepEqual(shown.run?.steps[0]?.outputs, { transcript: 'worker transcript' });
+  } finally {
+    await detail.dispose();
   }
 });
 

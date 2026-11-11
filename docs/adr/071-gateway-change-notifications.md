@@ -460,11 +460,14 @@ Amendment 1 stated that a row's `version` is a hash of the row as served. With
 slim rows the hash is `sha256(canonicalResourceJson(trimRunForList(run)))` —
 the same basis as before — while the row the gateway actually sends is
 `runListRow(run)` (a narrower projection that drops `resourcePosture`,
-`sessionUsage`, `visualJudgmentReceipts`, and `templateProvenance`, and
-projects `steps`, `decisions`, and `engineState` to only the fields list
-surfaces read). Old cached fat rows and new slim rows coexist in a client;
-every consumer falls back to computing from the row's own fields when
-`evidenceSummary` is absent.
+`sessionUsage`, `visualJudgmentReceipts`, and `templateProvenance`, leaves the
+output file manifest out as before, and projects `steps`, `decisions`, and
+`engineState` to only the fields list surfaces read). Each served row carries
+`evidenceSummary`, which the gateway computes from the full run with the same
+`summarizeRunEvidence` clients use. Old cached fat rows and new slim rows
+coexist in a client; a row without `evidenceSummary` has its summary computed
+from the row's own fields (`runListEvidenceSummary`). Screens that render
+step outputs or decision payloads read `run.get`, never the list row.
 
 Average `run.list` row size drops from ~118 KB to ~9.5 KB (1.3 MB for a
 134-run list vs 15.9 MB). The version contract is otherwise unchanged: clients

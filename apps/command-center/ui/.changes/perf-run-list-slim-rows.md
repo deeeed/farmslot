@@ -1,1 +1,1 @@
-- Run list rows served by the gateway are now slim (~9.5 KB each vs ~118 KB before), with pre-computed `evidenceSummary`; the UI automatically benefits from smaller `run.list` payloads and faster list load times.
+- Lists read the smaller `run.list` rows. The runs list evidence chips and the eval catalog preview use the gateway's evidence summary, or compute it from a row cached before the change; run detail waits for `run.get` instead of drawing a list row.

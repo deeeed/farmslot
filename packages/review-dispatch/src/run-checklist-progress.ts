@@ -64,7 +64,7 @@ export interface RunChecklistProgressView {
 
 /** Both clients render the gateway's checklist counts without inferring totals from hint text. */
 export function runChecklistProgressView(
-  run: Run,
+  run: RunListRow,
   progress: TaskProgressStructured | null | undefined,
 ): RunChecklistProgressView | null {
   if (!runChecklistProgressTarget(run)) return null;

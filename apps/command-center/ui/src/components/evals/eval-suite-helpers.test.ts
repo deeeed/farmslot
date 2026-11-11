@@ -1,13 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {
-  type PRStatus,
-  type Run,
-  type RunListRow,
-  runListRow,
-  summarizeRunEvidence,
-} from '@farmslot/protocol';
+import { type PRStatus, type Run, runListRow, trimRunForList } from '@farmslot/protocol';
 
 import {
   addCasesToBasket,
@@ -390,8 +384,7 @@ test('launch matrix and summary aggregate operational fields only', () => {
   assert.equal(summary.missingDataCount, 1);
 });
 
-// Point 2: gateway-computed evidenceSummary round-trip
-test('catalogItemFromRun slim row with evidenceSummary matches full-run preview fields', () => {
+test('catalog preview fields are the same from the full run, the served row and an old cached row', () => {
   const fullRun = makeRun({
     steps: [
       {
@@ -400,61 +393,57 @@ test('catalogItemFromRun slim row with evidenceSummary matches full-run preview 
         outputs: {
           diffStat: { files: 2, additions: 10, deletions: 3 },
           artifacts: [
-            { path: 'screenshots/after.png', purpose: 'screenshot', sizeBytes: 500 },
+            { path: 'evidence/before-login.png', purpose: 'before screenshot', sizeBytes: 400 },
+            { path: 'evidence/after-login.png', purpose: 'after screenshot', sizeBytes: 500 },
             { path: 'reports/recipe-report.md', purpose: 'report', sizeBytes: 100 },
             { path: 'reviews/final-review.md', purpose: 'review', sizeBytes: 200 },
           ],
         },
       },
-    ] as Run['steps'],
+    ],
+    decisions: [
+      {
+        id: 'gate',
+        type: 'engine_human_gate',
+        title: 'Publish',
+        description: '',
+        createdAt: '2026-05-09T00:00:00.000Z',
+        actions: [],
+        payload: {
+          kind: 'ready',
+          prNumber: null,
+          repo: null,
+          branch: 'fix/crash',
+          workerReport: 'done',
+          diffStat: { files: 2, additions: 10, deletions: 3 },
+          artifactManifest: [{ path: 'artifacts/demo.mp4', purpose: 'video', sizeBytes: 900 }],
+        },
+      },
+    ],
   });
-
-  // Gateway attaches evidenceSummary computed from the full run before slimming outputs.
-  const evidenceSummary = summarizeRunEvidence(fullRun);
-  const slimRow: RunListRow = { ...runListRow(fullRun), evidenceSummary };
-
-  const slimItem = catalogItemFromRun(slimRow);
-
-  assert.deepEqual(slimItem.diffStat, { files: 2, additions: 10, deletions: 3 });
-  assert.equal(slimItem.artifactCount, 3);
-  assert.equal(slimItem.artifactBytes, 800);
-  assert.equal(slimItem.visualEvidenceCount, 1);
-  assert.equal(slimItem.validationEvidenceCount, 1);
-  assert.equal(slimItem.reviewEvidenceCount, 1);
-
-  // Stripped row (same slim row, no evidenceSummary): step outputs are stripped so counts are 0.
-  const strippedRow = runListRow(fullRun);
-  const strippedItem = catalogItemFromRun(strippedRow);
-  assert.equal(strippedItem.artifactCount, 0); // step.outputs.artifacts not in ALLOWLIST
-  assert.equal(strippedItem.diffStat, undefined); // step.outputs.diffStat not in ALLOWLIST
-
-  // Revert proof: remove the `es.artifactBytes !== undefined` branch in previewFieldsFromRun →
-  // slimItem falls back to diffStatFromRun(slimRow) which reads stripped steps → undefined →
-  // `assert.deepEqual(slimItem.diffStat, { files: 2, ... })` fails.
-});
-
-test('catalogItemFromRun old fat row without evidenceSummary reads step outputs directly', () => {
-  // Simulate a row cached before the gateway started attaching evidenceSummary:
-  // step outputs are present (not stripped) but no evidenceSummary field.
-  const baseRow = runListRow(makeRun());
-  const stepWithOutputs: RunListRow['steps'][number] = {
-    name: 'work',
-    status: 'done',
-    outputs: {
-      artifacts: [
-        { path: 'screenshots/after.png', purpose: 'screenshot', sizeBytes: 300 },
-        { path: 'reports/report.md', purpose: 'report', sizeBytes: 50 },
-      ],
-      diffStat: { files: 1, additions: 5, deletions: 2 },
-    },
-  };
-  const oldFatRow: RunListRow = { ...baseRow, steps: [stepWithOutputs] };
-
-  const item = catalogItemFromRun(oldFatRow);
-
-  assert.equal(item.artifactCount, 2);
-  assert.equal(item.artifactBytes, 350);
-  assert.deepEqual(item.diffStat, { files: 1, additions: 5, deletions: 2 });
-  // Revert proof: break evidenceSummaryFromRun (return all zeros) →
-  // `assert.equal(item.artifactCount, 2)` fails: got 0.
+  const preview = (item: ReturnType<typeof catalogItemFromRun>) => ({
+    diffStat: item.diffStat,
+    artifactCount: item.artifactCount,
+    artifactBytes: item.artifactBytes,
+    visualEvidenceCount: item.visualEvidenceCount,
+    validationEvidenceCount: item.validationEvidenceCount,
+    reviewEvidenceCount: item.reviewEvidenceCount,
+  });
+  const fromFull = preview(catalogItemFromRun(fullRun));
+  assert.deepEqual(fromFull, {
+    diffStat: { files: 2, additions: 10, deletions: 3 },
+    artifactCount: 5,
+    artifactBytes: 2100,
+    visualEvidenceCount: 3,
+    validationEvidenceCount: 1,
+    reviewEvidenceCount: 1,
+  });
+  // The row the gateway serves: no step artifacts, no gate manifest, only its evidence summary.
+  const served = runListRow(fullRun);
+  assert.deepEqual(served.steps[0]?.outputs, {});
+  assert.deepEqual(preview(catalogItemFromRun(served)), fromFull);
+  // A row cached before slim rows: the trimmed full run, without a summary.
+  const cached = trimRunForList(fullRun);
+  assert.equal('evidenceSummary' in cached, false);
+  assert.deepEqual(preview(catalogItemFromRun(cached)), fromFull);
 });

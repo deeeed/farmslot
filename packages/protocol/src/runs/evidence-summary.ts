@@ -26,16 +26,16 @@ export interface RunEvidenceSummary {
   artifactCount: number;
   videoCount: number;
   visualPairCount: number;
-  /** Diff stat from the run's latest step that reported one. Gateway-computed for slim rows. */
+  /** Diff stat from the run's latest step that reported one. */
   diffStat?: DiffStat;
-  /** Total bytes across all evidence artifacts. Gateway-computed for slim rows. */
-  artifactBytes?: number;
-  /** Count of visual (image/video) evidence artifacts. Gateway-computed for slim rows. */
-  visualEvidenceCount?: number;
-  /** Count of validation (recipe/report/trace/coverage/manifest) evidence artifacts. Gateway-computed for slim rows. */
-  validationEvidenceCount?: number;
-  /** Count of review/comment evidence artifacts. Gateway-computed for slim rows. */
-  reviewEvidenceCount?: number;
+  /** Total recorded bytes across the run's artifacts. */
+  artifactBytes: number;
+  /** Image and video artifacts. */
+  visualEvidenceCount: number;
+  /** Recipe, report, summary, trace, coverage and manifest artifacts. */
+  validationEvidenceCount: number;
+  /** Review and comment artifacts. */
+  reviewEvidenceCount: number;
 }
 
 /**
@@ -91,9 +91,12 @@ export function extractRunArtifactManifest(
   return dedupeRunArtifacts(entries);
 }
 
-export function runEvidenceArtifacts(
-  run: Pick<Run, 'decisions' | 'steps' | 'output' | 'liveRecipeContext'>,
-): RunArtifactManifestEntry[] {
+/** What the evidence summary reads: a full run, or a run.list row (slim or cached full). */
+export type RunEvidenceSource =
+  | Pick<Run, 'decisions' | 'steps' | 'output' | 'liveRecipeContext'>
+  | Pick<RunListRow, 'decisions' | 'steps' | 'output' | 'liveRecipeContext'>;
+
+export function runEvidenceArtifacts(run: RunEvidenceSource): RunArtifactManifestEntry[] {
   return dedupeRunArtifacts([
     ...(run.liveRecipeContext?.artifactManifest ?? []),
     ...extractRunArtifactManifest(run),
@@ -107,31 +110,20 @@ function extractDiffStatFromSteps(
   for (let i = steps.length - 1; i >= 0; i--) {
     const raw = steps[i].outputs?.diffStat;
     if (!raw || typeof raw !== 'object') continue;
-    const row = raw as Partial<DiffStat>;
-    if (
-      typeof row.files === 'number' &&
-      typeof row.additions === 'number' &&
-      typeof row.deletions === 'number'
-    ) {
-      return { files: row.files, additions: row.additions, deletions: row.deletions };
-    }
+    if (!('files' in raw) || !('additions' in raw) || !('deletions' in raw)) continue;
+    const { files, additions, deletions } = raw;
+    if (typeof files === 'number' && typeof additions === 'number' && typeof deletions === 'number')
+      return { files, additions, deletions };
   }
   return undefined;
 }
 
-export function summarizeRunEvidence(
-  run:
-    | Pick<Run, 'decisions' | 'steps' | 'output' | 'liveRecipeContext'>
-    | (Pick<Run, 'steps' | 'output' | 'liveRecipeContext'> & {
-        decisions?: ReadonlyArray<{ payload?: unknown }>;
-        evidenceSummary: RunEvidenceSummary;
-      }),
-): RunEvidenceSummary {
-  // Slim list rows carry a pre-computed summary from the gateway; use it directly.
-  // The `in` check narrows to the second union member so evidenceSummary is accessible;
-  // after this early return TypeScript narrows to the first union member (fat path)
-  // where decisions: RunDecision[] — so runEvidenceArtifacts accepts run directly.
-  if ('evidenceSummary' in run) return run.evidenceSummary;
+/**
+ * The evidence summary computed from what `run` carries. The gateway computes it from the full
+ * run and serves it on each run.list row; clients read a row's summary with
+ * `runListEvidenceSummary`.
+ */
+export function summarizeRunEvidence(run: RunEvidenceSource): RunEvidenceSummary {
   const artifacts = runEvidenceArtifacts(run);
   let artifactBytes = 0;
   let visualEvidenceCount = 0;
@@ -160,6 +152,20 @@ export function summarizeRunEvidence(
     validationEvidenceCount,
     reviewEvidenceCount,
   };
+}
+
+/** What `runListEvidenceSummary` reads from a run.list row. */
+export type RunListEvidenceSource = Pick<
+  RunListRow,
+  'decisions' | 'steps' | 'output' | 'liveRecipeContext' | 'evidenceSummary'
+>;
+
+/**
+ * A run.list row's evidence summary: the one the gateway computed from the full run, or, on a
+ * row cached before the gateway served one, the summary computed from the row itself.
+ */
+export function runListEvidenceSummary(row: RunListEvidenceSource): RunEvidenceSummary {
+  return row.evidenceSummary ?? summarizeRunEvidence(row);
 }
 
 export function isRunEvidenceImageArtifact(entry: Pick<EvidenceManifestEntry, 'path'>): boolean {

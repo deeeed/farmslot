@@ -340,8 +340,9 @@ totalCount, summaryMeta, familySummaries, projectAnalytics }` for every live
    which sort ties follow. That order can change across a gateway restart.
 2. `version` is `sha256(trimRunForList(run))` — stable across gateway restarts
    for an unchanged run, and unchanged by the slim-row projection (ADR-071
-   Amendment 3). Rows returned by `run.list { ids }` are slimmed to the fields
-   list surfaces read; full rows come from `run.get` / `run.forSlot`.
+   Amendment 3). Rows returned by `run.list`, plain or `{ ids }`, are
+   `runListRow(run)`: the fields list surfaces read plus the run's
+   `evidenceSummary`. Full runs come from `run.get` / `run.forSlot`.
 3. Only the version reply decides which rows exist. Stored rows it does not list
    are removed.
 4. The client reads changed and missing ids with `run.list { ids }`, in pages of

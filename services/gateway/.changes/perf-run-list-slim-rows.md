@@ -1,3 +1,1 @@
-- Serve slim `runListRow` projections on `run.list` and the ids catch-up page instead of `trimRunForList` rows, reducing average response size from 118 KB to 9.5 KB per row (1.3 MB for a 134-run list vs 15.9 MB before).
-- Attach a pre-computed `evidenceSummary` to each served row so clients skip evidence computation on list surfaces.
-- Version hash unchanged: still `sha256(trimRunForList(run))`, so existing cached rows remain valid across the deploy.
+- `run.list` and its ids catch-up page serve slim `runListRow` rows with the run's `evidenceSummary` instead of whole runs; the page byte cap counts the served rows. Row versions are unchanged (`sha256(trimRunForList(run))`), so clients keep the rows they hold.

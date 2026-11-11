@@ -573,11 +573,10 @@ export class RunDetail extends RunDetailState {
     const snapshotRun = this.snapshotQuery.belongsToWorkspace
       ? this.snapshotQuery.state.data?.run
       : undefined;
-    const sharedRun = s.runs.find((run) => run.id === this.runId) ?? null;
-    // Compact rows are placeholders while this query hydrates. Full detail and
-    // its freshness belong solely to the authoritative run.get observation.
+    // A run.list row is not a stand-in: it leaves out the step outputs and decision payloads
+    // this page renders. The page shows its loading state until run.get (snapshot or full)
+    // answers; detail and its freshness belong solely to that observation.
     this.run = observation.data?.run ?? snapshotRun ?? null;
-    this.standInRow = observation.status === 'loading' && !this.run ? sharedRun : null;
     // Reset transient nudge-decision-card state when the bound run changes or when the
     // current `branch_affinity_nudge` decision has been resolved server-side. Without this,
     // _branchNudgeShowPicker / _selectedSlotId leak into the next decision render and the

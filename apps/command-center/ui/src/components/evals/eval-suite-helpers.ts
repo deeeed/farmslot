@@ -1,4 +1,4 @@
-import { isRunArtifactMediaPath, runDisplayTitle } from '@farmslot/protocol';
+import { runDisplayTitle, runListEvidenceSummary } from '@farmslot/protocol';
 import {
   type DiffStat,
   type EvalExperimentSource,
@@ -310,72 +310,6 @@ function familyHref(run: Pick<Run, 'id' | 'familyId'>): string {
   return `#family/${run.familyId}?run=${encodeURIComponent(run.id)}`;
 }
 
-function diffStatFromRun(run: RunListRow): DiffStat | undefined {
-  for (const step of [...run.steps].reverse()) {
-    const raw = step.outputs?.diffStat;
-    if (!raw || typeof raw !== 'object') continue;
-    const row = raw as Partial<DiffStat>;
-    if (
-      typeof row.files !== 'number' ||
-      typeof row.additions !== 'number' ||
-      typeof row.deletions !== 'number'
-    )
-      continue;
-    return { files: row.files, additions: row.additions, deletions: row.deletions };
-  }
-  return undefined;
-}
-
-function evidenceSummaryFromRun(
-  run: RunListRow,
-): Pick<
-  EvalCaseCatalogItem,
-  | 'artifactCount'
-  | 'artifactBytes'
-  | 'visualEvidenceCount'
-  | 'validationEvidenceCount'
-  | 'reviewEvidenceCount'
-> {
-  const seen = new Set<string>();
-  let artifactCount = 0;
-  let artifactBytes = 0;
-  let visualEvidenceCount = 0;
-  let validationEvidenceCount = 0;
-  let reviewEvidenceCount = 0;
-  for (const step of run.steps) {
-    const rawArtifacts = step.outputs?.artifacts;
-    if (!Array.isArray(rawArtifacts)) continue;
-    for (const raw of rawArtifacts) {
-      if (!raw || typeof raw !== 'object') continue;
-      const artifact = raw as { path?: unknown; purpose?: unknown; sizeBytes?: unknown };
-      if (typeof artifact.path !== 'string' || !artifact.path.trim()) continue;
-      const key = `${step.name}:${artifact.path}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      artifactCount += 1;
-      if (typeof artifact.sizeBytes === 'number') artifactBytes += artifact.sizeBytes;
-      const purpose = typeof artifact.purpose === 'string' ? artifact.purpose.toLowerCase() : '';
-      const pathLower = artifact.path.toLowerCase();
-      if (/screenshot|video|visual/.test(purpose) || isRunArtifactMediaPath(pathLower))
-        visualEvidenceCount += 1;
-      if (
-        /recipe|validation|report|summary|trace|coverage|manifest/.test(purpose) ||
-        /recipe|validation|report|summary|trace|coverage|manifest/.test(pathLower)
-      )
-        validationEvidenceCount += 1;
-      if (/review|comment/.test(purpose) || /review|comment/.test(pathLower))
-        reviewEvidenceCount += 1;
-    }
-  }
-  return {
-    artifactCount,
-    artifactBytes,
-    visualEvidenceCount,
-    validationEvidenceCount,
-    reviewEvidenceCount,
-  };
-}
-
 function previewFieldsFromRun(
   run: RunListRow,
 ): Pick<
@@ -390,30 +324,17 @@ function previewFieldsFromRun(
   | 'validationEvidenceCount'
   | 'reviewEvidenceCount'
 > {
-  const es = run.evidenceSummary;
-  // New-shape evidenceSummary (gateway-computed from full run) has artifactBytes set.
-  // Old slim rows and old fat rows without this field fall back to scanning step outputs.
-  if (es !== undefined && es.artifactBytes !== undefined) {
-    return {
-      prUrl: githubPrUrlFromRun(run),
-      runHref: runHref(run),
-      familyHref: familyHref(run),
-      diffStat: es.diffStat,
-      artifactCount: es.artifactCount,
-      artifactBytes: es.artifactBytes,
-      visualEvidenceCount: es.visualEvidenceCount,
-      validationEvidenceCount: es.validationEvidenceCount,
-      reviewEvidenceCount: es.reviewEvidenceCount,
-    };
-  }
-  // Old fat rows (full Run, no evidenceSummary) or old slim rows (stripped step outputs):
-  // compute from step.outputs directly — returns 0/undefined for stripped slim rows.
+  const evidence = runListEvidenceSummary(run);
   return {
     prUrl: githubPrUrlFromRun(run),
     runHref: runHref(run),
     familyHref: familyHref(run),
-    diffStat: diffStatFromRun(run),
-    ...evidenceSummaryFromRun(run),
+    diffStat: evidence.diffStat,
+    artifactCount: evidence.artifactCount,
+    artifactBytes: evidence.artifactBytes,
+    visualEvidenceCount: evidence.visualEvidenceCount,
+    validationEvidenceCount: evidence.validationEvidenceCount,
+    reviewEvidenceCount: evidence.reviewEvidenceCount,
   };
 }
 

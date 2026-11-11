@@ -20,7 +20,7 @@ import {
 import { nativeWorkerTarget } from './native-worker-target.js';
 
 /** An open blocked gate waits for a person; its recorded running step is not a running actor. */
-export function runActivityStepStatus(run: Run, step: RunStep): RunStepDisplayStatus {
+export function runActivityStepStatus(run: RunListRow, step: RunStep): RunStepDisplayStatus {
   return step.name === 'human-gate' && isBlockedAtOpenHumanGate(run)
     ? 'blocked'
     : runStepDisplayStatus(run, step);

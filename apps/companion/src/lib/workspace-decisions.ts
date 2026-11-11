@@ -11,7 +11,7 @@ import { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from './artifact-url';
 type WorkspaceDecisionEntry = {
   id: string;
   type: string;
-  createdAt?: string;
+  createdAt: string;
   resolvedAt?: string | null;
   resolvedAction?: string | null;
   description?: string;
@@ -19,12 +19,13 @@ type WorkspaceDecisionEntry = {
 };
 
 /**
- * Source for workspace decision navigation.  Accepts both full Run (decisions:
- * RunDecision[]) and slim RunListRow (decisions: RunListDecision[]) since every
- * RunDecision and RunListDecision satisfies WorkspaceDecisionEntry.
+ * Source for workspace decision navigation: a full Run (RunDecision) or a run.list row
+ * (RunListDecision). Selectors return the decision type the source holds.
  */
-export interface WorkspaceDecisionSource {
-  decisions?: ReadonlyArray<WorkspaceDecisionEntry> | null;
+export interface WorkspaceDecisionSource<
+  D extends WorkspaceDecisionEntry = WorkspaceDecisionEntry,
+> {
+  decisions?: ReadonlyArray<D> | null;
 }
 
 /**
@@ -47,36 +48,36 @@ export function selectArtifactWorkspaceDecision(
   if (recipeRun !== DECISION_EVIDENCE_RECIPE_RUN_PARAM) return undefined;
   return explicitDecisionId
     ? source?.decisions?.find((decision) => decision.id === explicitDecisionId)
-    : ((selectReadyWorkspaceDecision(source) as RunDecision | null) ?? undefined);
+    : (selectReadyWorkspaceDecision(source) ?? undefined);
 }
 
-export function selectReadyWorkspaceDecision(
-  source: WorkspaceDecisionSource | null | undefined,
-): WorkspaceDecisionEntry | null {
+export function selectReadyWorkspaceDecision<D extends WorkspaceDecisionEntry>(
+  source: WorkspaceDecisionSource<D> | null | undefined,
+): D | null {
   return latestDecisionMatching(source?.decisions, (decision) =>
     READY_WORKSPACE_KINDS.has(workspaceDecisionKind(decision)),
   );
 }
 
-export function selectReviewGateWorkspaceDecision(
-  source: WorkspaceDecisionSource | null | undefined,
-): WorkspaceDecisionEntry | null {
+export function selectReviewGateWorkspaceDecision<D extends WorkspaceDecisionEntry>(
+  source: WorkspaceDecisionSource<D> | null | undefined,
+): D | null {
   return latestDecisionMatching(source?.decisions, (decision) =>
     REVIEW_GATE_WORKSPACE_KINDS.has(workspaceDecisionKind(decision)),
   );
 }
 
-export function selectReviewWorkspaceDecision(
-  source: WorkspaceDecisionSource | null | undefined,
-): WorkspaceDecisionEntry | null {
+export function selectReviewWorkspaceDecision<D extends WorkspaceDecisionEntry>(
+  source: WorkspaceDecisionSource<D> | null | undefined,
+): D | null {
   return latestDecisionMatching(source?.decisions, (decision) =>
     REVIEW_WORKSPACE_KINDS.has(workspaceDecisionKind(decision)),
   );
 }
 
-export function selectRetrospectiveWorkspaceDecision(
-  source: WorkspaceDecisionSource | null | undefined,
-): WorkspaceDecisionEntry | null {
+export function selectRetrospectiveWorkspaceDecision<D extends WorkspaceDecisionEntry>(
+  source: WorkspaceDecisionSource<D> | null | undefined,
+): D | null {
   return latestDecisionMatching(
     source?.decisions,
     (decision) => workspaceDecisionKind(decision) === 'retrospective',
@@ -88,9 +89,9 @@ export function selectPrimaryWorkspaceDecision(
 ): RunDecision | null {
   return (
     pendingResultDecision({ decisions: source?.decisions ?? [] }) ??
-    (selectReviewWorkspaceDecision(source) as RunDecision | null) ??
-    (selectRetrospectiveWorkspaceDecision(source) as RunDecision | null) ??
-    (latestDecisionMatching(source?.decisions, () => true) as RunDecision | null)
+    selectReviewWorkspaceDecision(source) ??
+    selectRetrospectiveWorkspaceDecision(source) ??
+    latestDecisionMatching(source?.decisions, () => true)
   );
 }
 
@@ -113,10 +114,10 @@ export function workspaceDecisionKind(decision: WorkspaceDecisionEntry | null | 
   return decision?.payload?.kind ?? decision?.type ?? '';
 }
 
-function latestDecisionMatching(
-  decisions: ReadonlyArray<WorkspaceDecisionEntry> | null | undefined,
-  predicate: (decision: WorkspaceDecisionEntry) => boolean,
-): WorkspaceDecisionEntry | null {
+function latestDecisionMatching<D extends WorkspaceDecisionEntry>(
+  decisions: ReadonlyArray<D> | null | undefined,
+  predicate: (decision: D) => boolean,
+): D | null {
   const matches = (decisions ?? []).filter(predicate).sort(compareDecisionsNewestFirst);
   return matches.find((decision) => !decision.resolvedAt) ?? matches[0] ?? null;
 }
@@ -129,6 +130,6 @@ function compareDecisionsNewestFirst(
 }
 
 function decisionTimestamp(decision: WorkspaceDecisionEntry): number {
-  const timestamp = Date.parse(decision.resolvedAt ?? decision.createdAt ?? '');
+  const timestamp = Date.parse(decision.resolvedAt ?? decision.createdAt);
   return Number.isNaN(timestamp) ? 0 : timestamp;
 }
