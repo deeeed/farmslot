@@ -812,13 +812,10 @@ async function reclaimCancelledSlotForSelection(
 }
 
 /**
- * Preview an explicit slot pick once the slot can be claimed. Explicit picks
- * land right after the previous run on that slot ended, and its teardown runs
- * after the cancel returns. A release ends by itself, so wait for it
- * (bounded, as queue time); every other holder — a live run, a handoff, an
- * occupancy hold — is refused at once, named. A live run's refusal is a claim
- * conflict: find-slot waits for that run to release the slot instead of failing. A cancel, pause or replay while waiting owns the run: stop
- * without previewing or claiming. Scored picks (no slotId) preview directly.
+ * Guard an already chosen slot before preview. A release gets a bounded queue wait.
+ * A live owner becomes a claim conflict: the caller reselects an automatic pick
+ * or waits for its pin. Handoffs and occupied holds are refused. Cancel, pause or
+ * replay stops this attempt. Unconstrained scoring previews directly.
  */
 export async function previewWhenSlotClaimable<T>(
   runId: string,
@@ -2293,7 +2290,7 @@ async function findSlotAttempt(
 
   let result: DispatchPreviewResult;
   try {
-    result = await previewWhenSlotClaimable(runId, generation, run.slotId || undefined, () =>
+    result = await previewWhenSlotClaimable(runId, generation, run.slotId || reusableSlotId, () =>
       dispatchPreview(
         {
           ...buildDispatchPreviewParamsForRun(run),
