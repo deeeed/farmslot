@@ -117,6 +117,7 @@ import { runContractSection, shouldApplyArtifactOnlyTaskPolicy } from './run-con
 import { stackSection } from './stack-section.js';
 import { renderAcceptanceCriteria } from './task-document.js';
 import {
+  localCheckWithBaseRef,
   readWorkerTerminalProjectConfig,
   resolveWorkerTerminalContract,
 } from './worker-terminal-contract.js';
@@ -1288,7 +1289,9 @@ export async function writeTaskFile(
     name: 'render-template',
     detail: `Rendering ${path.basename(taskAbsDir)}/${splitChecklist ? EXECUTION_CHECKLIST_DOCUMENT : 'TASK.md'}`,
   });
-  vars['ci.local_check'] = getProjectField(projectVars.projectJson, 'ci.local_check') || '';
+  const localCheck = getProjectField(projectVars.projectJson, 'ci.local_check') || '';
+  const blindBase = run.engineState?.evalExperiment?.blind?.baseSha;
+  vars['ci.local_check'] = localCheckWithBaseRef(localCheck, blindBase);
   vars.CI_PARITY_CHECKLIST =
     splitChecklist && !scriptedCommand ? EXECUTION_CHECKLIST_DOCUMENT : 'TASK.md';
   if (publicationBase) {

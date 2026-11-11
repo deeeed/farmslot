@@ -1,0 +1,1 @@
+- Give blind eval workers and their frozen changed-file checks the recorded replay base, including session reloads, without requiring remote refs.

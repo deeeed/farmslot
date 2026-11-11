@@ -36,6 +36,8 @@ export function buildBlindGitCommand(
   return `python3 - ${shSingleQuote(JSON.stringify({ ...spec, action }))} <<'FARMSLOT_BLIND_GIT_PY'\n${script}\nFARMSLOT_BLIND_GIT_PY`;
 }
 
+export type BlindTrialWorkerBoundary = Pick<BlindGitSpec, 'capsule' | 'baseSha'>;
+
 /** Variables `gh` and Git read a GitHub token from. */
 const GITHUB_TOKEN_NAMES = [
   'GH_TOKEN',
@@ -49,11 +51,12 @@ const GITHUB_TOKEN_NAMES = [
  * profile (blind-git.py). Its gh, credential-helper and SSH-transport calls
  * reach the capsule's recording stand-ins, and Git's trace records refused transports.
  */
-export function withBlindTrialBoundary(command: string, capsule: string): string {
-  const boundary = `${capsule}/boundary`;
+export function withBlindTrialBoundary(command: string, trial: BlindTrialWorkerBoundary): string {
+  const boundary = `${trial.capsule}/boundary`;
   const deny = shSingleQuote(`${boundary}/bin/deny`);
   return [
     `unset ${GITHUB_TOKEN_NAMES.join(' ')} TMUX TMUX_TMPDIR`,
+    `export FARMSLOT_CI_BASE_REF=${shSingleQuote(trial.baseSha)}`,
     `export GH_CONFIG_DIR=${shSingleQuote(`${boundary}/gh-config`)}`,
     `export PATH=${shSingleQuote(`${boundary}/bin`)}:"$PATH"`,
     'export GIT_TERMINAL_PROMPT=0',
@@ -70,7 +73,12 @@ export function withBlindTrialBoundary(command: string, capsule: string): string
 }
 
 /** The capsule a relaunched worker of a blind trial must start under; reviewers keep their own launch. */
-export function blindTrialWorkerCapsule(run: Run, role?: string | null): string | undefined {
-  if (role && role !== primaryRoleForFlow(run.flowType)) return undefined;
-  return run.engineState?.evalExperiment?.blind?.isolation?.capsulePath;
+export function blindTrialWorkerBoundary(
+  run: Run | null | undefined,
+  role?: string | null,
+): BlindTrialWorkerBoundary | undefined {
+  if (!run || (role && role !== primaryRoleForFlow(run.flowType))) return undefined;
+  const trial = run.engineState?.evalExperiment?.blind;
+  const capsule = trial?.isolation?.capsulePath;
+  return trial && capsule ? { capsule, baseSha: trial.baseSha } : undefined;
 }
