@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { nativeRunnerDefinitions } from '@farmslot/agent-runtime/native/registry';
 import {
+  isRecord,
   isTerminalRunStatus,
   parseGitHubRef,
   type Run,
@@ -210,8 +211,9 @@ export function reviewTmuxSession(run: Run) {
 
 export async function reviewTmuxOperation(
   run: Run,
-  action: 'launch' | 'inspect' | 'stop',
+  action: 'launch' | 'resume' | 'inspect' | 'stop',
   prompt?: string,
+  resumeCommandId?: string,
 ): Promise<ReviewTmuxOperationResult> {
   assertNativeRunOwner(run);
   const w = run.reviewWorkspace!;
@@ -226,7 +228,17 @@ export async function reviewTmuxOperation(
     runner,
     model: run.metrics.model,
   };
-  if (action === 'launch') {
+  const continuation = run.steps.find((step) => step.name === 'dispatch')?.outputs
+    ?.retainedReviewResume;
+  if (action === 'stop' && isRecord(continuation)) input.resumeCommandId = continuation.commandId;
+  if (action === 'launch' || action === 'resume') {
+    const resumeSessionId = run.agentContexts?.find(
+      (context) => context.id === 'review',
+    )?.runnerSessionId;
+    if (action === 'resume' && (!resumeSessionId || !resumeCommandId))
+      throw new Error(
+        'Terminal reviewer continuation requires its exact saved session and command',
+      );
     const pool = await loadMachinePool(w.machine);
     const environment = await reviewEnvironment(run);
     const modelQuestions = modelQuestionsForRun(run);
@@ -263,8 +275,7 @@ export async function reviewTmuxOperation(
         'DISABLE_OMC',
         'FARMSLOT_SIGNAL_ATTEMPT_ID',
       ],
-      resumeSessionId:
-        run.agentContexts?.find((context) => context.id === 'review')?.runnerSessionId ?? undefined,
+      resumeSessionId: resumeSessionId ?? undefined,
       safetyTier: 'dangerous',
       modelQuestions,
     });
@@ -279,20 +290,37 @@ export async function reviewTmuxOperation(
       runtimeRoots: nativeRunnerDefinitions[runner]?.reviewRuntimeRoots?.({ HOME: '~' }) ?? [
         '~/.codex',
       ],
+      ...(action === 'resume' ? { resumeSessionId, resumeCommandId } : {}),
     });
   }
   const script = path.posix.join(
     w.taskPath,
     'inputs/runtime/node_modules/@farmslot/agent-runtime/scripts/review-terminal.cjs',
   );
-  const argv = ['node', script, JSON.stringify(input)];
+  // Control code comes from the owning gateway, even for a pre-change retained task.
+  // Resolve its unchanged runtime dependencies beside that task without rewriting it.
+  const control = await readFile(
+    new URL('../../../../packages/agent-runtime/scripts/review-terminal.cjs', import.meta.url),
+    'utf8',
+  );
+  const argv = [
+    'node',
+    '-e',
+    'const [code,file,input]=process.argv.slice(1);process.argv=[process.execPath,file,input];new Function("require",code)(require("node:module").createRequire(file));',
+    control,
+    script,
+    JSON.stringify(input),
+  ];
   const result =
     w.executionNodeId === 'local'
       ? await execFileArgv([process.execPath, ...argv.slice(1)], { timeout: 30000 })
       : await execNativeNodeArgv(run.nativeOwnerPrincipalId!, w.machine, argv, 30000);
   if (result.exitCode !== 0) throw new Error(result.stderr || 'Review terminal operation failed');
   const receipt = JSON.parse(result.stdout);
-  if (action === 'launch' && (receipt.runner !== runner || receipt.model !== run.metrics.model))
+  if (
+    (action === 'launch' || action === 'resume') &&
+    (receipt.runner !== runner || receipt.model !== run.metrics.model)
+  )
     throw new Error('Review terminal did not confirm the requested runner and model');
   return receipt;
 }

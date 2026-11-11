@@ -4661,7 +4661,7 @@ test('review replay clears the capacity hold so restart can observe the retry', 
   );
 });
 
-test('a cleaned static review with no saved artifacts refuses monitor replay before changing generation', async (t) => {
+test('a cleaned static review admits artifact-only monitor replay without replacing its workspace', async (t) => {
   const priorOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
   process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'replay-empty-owner';
   const run = createRun(
@@ -4704,13 +4704,19 @@ test('a cleaned static review with no saved artifacts refuses monitor replay bef
     else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = priorOwner;
   });
   const before = structuredClone(getRun(run.id));
-  await assert.rejects(
-    runReplayStep({ runId: run.id, stepName: 'monitor' }, () => {}, {
-      afterGenerationBump: async () => {
-        throw new Error('Unrecoverable replay changed generation');
-      },
-    }),
-    { code: 'REVIEW_RESTART_REQUIRED' },
+  let started = false;
+  await runReplayStep({ runId: run.id, stepName: 'monitor' }, () => {}, {
+    startEngine: async () => {
+      started = true;
+    },
+  });
+  const replayed = getRun(run.id)!;
+  assert.equal(started, true);
+  assert.equal(replayed.engineState?.generation, 3);
+  assert.equal(
+    replayed.steps.find((step) => step.name === 'monitor')?.outputs?.reviewArtifactReplay,
+    true,
   );
-  assert.deepEqual(getRun(run.id), before);
+  assert.deepEqual(replayed.reviewWorkspace, before?.reviewWorkspace);
+  assert.equal(replayed.taskFile, before?.taskFile);
 });

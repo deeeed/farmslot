@@ -18,8 +18,8 @@ const exec = promisify(execFile);
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 
 test(
-  'stopped review fails, empty replay refuses without mutation, and valid retained output remains recoverable',
-  { timeout: 60_000 },
+  'stopped review recovers corrected findings through monitor replay without a new reviewer',
+  { timeout: 120_000 },
   async (t) => {
     const output = process.env.FARMSLOT_REVIEW_RECOVERY_PROOF_OUT;
     assert(output, 'Set FARMSLOT_REVIEW_RECOVERY_PROOF_OUT');
@@ -94,6 +94,7 @@ test(
         unsubscribeAllPty: noPty,
         writePty: noPty,
         resizePty: noPty,
+        redrawPty: noPty,
         hasPty: () => false,
         reinitTmuxSession: noPty,
       },
@@ -103,6 +104,8 @@ test(
     const store = await import('../runs/store.js');
     const { initServerGlobals, resetServerGlobalsForTests } = await import('../server.js');
     initServerGlobals();
+    // This proof drives only its fixture-owned run; explicit replay must drive the engine.
+    delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
     t.after(resetServerGlobalsForTests);
     const connection = await fixture.client.connect();
     t.after(() => connection.close());
@@ -140,6 +143,7 @@ test(
     );
     store.updateRun(run.id, {
       executionTemplate: selection.reference,
+      reviewAutoFinish: true,
       reviewWorkspaceSubject: subject,
       reviewWorkspace: {
         workspaceId: 'fixture-workspace',
@@ -212,23 +216,36 @@ test(
     assert.equal(observed.status, 'failed', 'A known stopped reviewer must not remain reconciling');
     assert.equal(observed.steps.find((step) => step.name === 'monitor')?.status, 'failed');
     const generation = observed.engineState?.generation;
-    await assert.rejects(
-      call('run.replayStep', { runId: run.id, stepName: 'monitor' }),
-      (error: unknown) =>
-        error instanceof Error && 'code' in error && error.code === 'REVIEW_RESTART_REQUIRED',
-    );
-    assert.equal(
-      (await call<RunGetResult>('run.get', { runId: run.id })).run.engineState?.generation,
-      generation,
-    );
-    const report = `VERDICT: APPROVE\nCOMMIT: ${subject.headSha}\nNo findings.\n`;
+    await call('run.replayStep', { runId: run.id, stepName: 'monitor' });
+    const invalidDeadline = Date.now() + 10000;
+    while (true) {
+      observed = (await call<RunGetResult>('run.get', { runId: run.id })).run;
+      if (observed.status === 'reconciling') break;
+      assert(
+        Date.now() < invalidDeadline,
+        'Invalid saved output did not settle: ' + observed.status,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(observed.status, 'reconciling');
+    assert.match(observed.error ?? '', /No complete saved review is available/);
+    assert.equal(observed.reviewResult, undefined);
+    assert.equal(observed.reviewWorkspace?.workspaceId, 'fixture-workspace');
+    const report = `VERDICT: REQUEST_CHANGES\nCOMMIT: ${subject.headSha}\nRetained finding.\n`;
     await writeFile(path.join(task, 'artifacts/review.md'), report);
     await writeFile(
       path.join(task, 'artifacts/review-result.json'),
       JSON.stringify({
         schemaVersion: 1,
-        verdict: 'pass',
-        issues: [],
+        verdict: 'issues',
+        recommendation: 'REQUEST_CHANGES',
+        issues: [
+          {
+            file: 'PR description',
+            severity: 'major',
+            description: 'Retained issue must survive recovery.',
+          },
+        ],
         runId: run.id,
         workspaceId: 'fixture-workspace',
         headSha: subject.headSha,
@@ -246,7 +263,19 @@ test(
       stepName: 'monitor',
     });
     assert((replay.run.engineState?.generation ?? 0) > (generation ?? 0));
-    await call('run.cancel', { runId: run.id });
+    const completedDeadline = Date.now() + 10000;
+    while (true) {
+      observed = (await call<RunGetResult>('run.get', { runId: run.id })).run;
+      if (observed.status === 'done') break;
+      assert(
+        Date.now() < completedDeadline,
+        'Repaired review did not complete: ' + observed.status,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(observed.reviewResult?.recommendation, 'REQUEST_CHANGES');
+    assert(observed.reviewResult?.reviewMd.includes('Retained issue must survive recovery.'));
+    assert.equal(observed.reviewWorkspace?.workspaceId, 'fixture-workspace');
     await writeFile(
       path.join(output, 'result.json'),
       JSON.stringify(
@@ -254,7 +283,9 @@ test(
           pass: true,
           runId: run.id,
           stoppedStatus: observed.status,
-          emptyReplayRefused: true,
+          invalidReplayRetained: true,
+          correctedReviewDone: true,
+          findingsRetained: true,
           validSavedReplayAdmitted: true,
           inferenceCalls: 0,
           publicationActions: 0,
@@ -263,5 +294,6 @@ test(
         2,
       ),
     );
+    await store.persistRunNow(store.getRun(run.id)!, 'proof run writes settled');
   },
 );
