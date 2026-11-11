@@ -1,18 +1,13 @@
 // Typed service for reading and stat-ing slot files.
 // Transport is chosen per slot: in-process fs for local slots, the node-daemon RPC for
 // capable remote nodes, and a shell read as the last resort for older or unreachable nodes.
-// core/node-file-reads.ts owns the node transport; this module calls it, not the other way.
+// slot-files-node.ts owns the node transport; this module calls it, not the other way.
 import { open, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
 import type { SlotVars } from '../core/config.js';
 import { slotFilesReadInProcess } from '../core/exec.js';
-import {
-  readSlotTextThroughNode,
-  slotFilesReadThroughNode,
-  slotIsFileThroughNode,
-} from '../core/node-file-reads.js';
 import { readSlotProbe } from '../core/read-probes.js';
 import {
   isShellHomePath,
@@ -20,6 +15,12 @@ import {
   shellExpressionForRemotePath,
 } from '../core/remote-paths.js';
 import { registerHostOperations, withHostOperation } from '../observability/performance.js';
+
+import {
+  readSlotTextThroughNode,
+  slotFilesReadThroughNode,
+  slotIsFileThroughNode,
+} from './slot-files-node.js';
 
 /** Stable operation-name constants for per-operation metric attribution. */
 export const OP_SLOT_FILES_READ = 'slotFiles.read' as const;

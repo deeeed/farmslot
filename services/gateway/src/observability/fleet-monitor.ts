@@ -174,7 +174,11 @@ export function stopMonitor(): void {
 
 // ─── Decision scanning ───
 
-/** The monitor's walk: the background process runs it when started, so the loop only diffs. */
+/**
+ * Every walk of the decision files: the background process runs it when started, so the gateway
+ * only diffs. While the process is down the walk rejects with its error (fail closed); only
+ * FARMSLOT_GATEWAY_BACKGROUND=0, or a gateway that never started the host, walks in-process.
+ */
 function walkFileDecisions(): Promise<FileDecision[]> {
   return backgroundHost.active()
     ? backgroundHost.request(BACKGROUND_OPERATIONS.decisionsScan, {}, { deadlineMs: 30_000 })
@@ -236,7 +240,7 @@ export async function loadPendingDecisions(): Promise<PendingDecision[]> {
     return lastDecisionScan.files.map((file) => file.decision);
   }
   // Concurrent list calls share one scan instead of stacking walks.
-  listingFileDecisions ??= loadFileDecisions().finally(() => {
+  listingFileDecisions ??= walkFileDecisions().finally(() => {
     listingFileDecisions = null;
   });
   return (await listingFileDecisions).map((file) => file.decision);
@@ -255,7 +259,7 @@ export async function loadFileDecisions(): Promise<FileDecision[]> {
 
 /** Resolve through the owning reader so explicit ids delete their actual source file. */
 export async function resolveFileDecision(decisionId: string, actionId: string): Promise<void> {
-  const file = (await loadFileDecisions()).find((entry) => entry.decision.id === decisionId);
+  const file = (await walkFileDecisions()).find((entry) => entry.decision.id === decisionId);
   if (!file) throw new Error(`Decision not found: ${decisionId}`);
   if (!file.decision.actions.some((action) => action.id === actionId))
     throw new Error(`Action not found: ${actionId}`);

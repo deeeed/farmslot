@@ -1,4 +1,5 @@
-// Remote slot file reads answered by the node daemon without a shell (`fs.readText`, `fs.isFile`).
+// The node transport of slot-files.ts: remote slot file reads answered by the node daemon without
+// a shell (`fs.readText`, `fs.isFile`).
 import path from 'node:path';
 
 import type {
@@ -8,14 +9,13 @@ import type {
 } from '@farmslot/protocol';
 import { currentProjectSources } from '@farmslot/slot-config';
 
+import type { SlotVars } from '../core/config.js';
+import { isLocal } from '../core/exec.js';
+import { currentSlotCommandExecutor } from '../core/exec-scope.js';
+import { isShellHomePath, nodePathParams, normalizeRemotePath } from '../core/remote-paths.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { usesNodeLink } from '../fleet/node-link-policy.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
-
-import type { SlotVars } from './config.js';
-import { isLocal } from './exec.js';
-import { currentSlotCommandExecutor } from './exec-scope.js';
-import { isShellHomePath, nodePathParams, normalizeRemotePath } from './remote-paths.js';
 
 /**
  * Whether a remote slot's files are read through its node's `fs.readText`/`fs.isFile` instead of

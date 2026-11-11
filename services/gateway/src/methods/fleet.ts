@@ -957,6 +957,9 @@ async function checkAllSlots(
       if (isLocal(pool.host, pool.machine)) {
         // A local machine's probes are this host's processes, so the background process runs
         // them off the request loop. Node-link machines route commands through this process.
+        // That is intended: a node-link machine's commands and files belong to its node agent,
+        // reached over the link only this process holds, so its probes stay here as node RPCs
+        // (no local process starts) and readLocalSlotGit reads none of its files.
         if (backgroundHost.active() && !usesNodeLink(pool.machine))
           return backgroundHost.request(
             BACKGROUND_OPERATIONS.fleetProbeMachine,

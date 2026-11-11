@@ -65,7 +65,17 @@ export interface BackgroundFailureMessage extends BackgroundResultBase {
   ok: false;
   error: { name: string; message: string };
 }
+/**
+ * A command the child started got its own process group, or that command closed. The supervisor
+ * kills the groups still open when the child dies without doing so itself (SIGKILL, a crash).
+ */
+export interface BackgroundProcessGroupMessage {
+  type: 'processGroup';
+  pgid: number;
+  state: 'started' | 'ended';
+}
 export type BackgroundChildMessage =
   | BackgroundReadyMessage
   | BackgroundSuccessMessage
-  | BackgroundFailureMessage;
+  | BackgroundFailureMessage
+  | BackgroundProcessGroupMessage;

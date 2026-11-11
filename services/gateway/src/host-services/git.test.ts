@@ -7,6 +7,8 @@ import test from 'node:test';
 
 import { defaultBranchProbeCommand, readDefaultBranchProbe } from '@farmslot/protocol';
 
+import type { GitCheckout } from './git.js';
+
 // Global config comes from this test's own home, for git and for the reader alike.
 const root = await mkdtemp(path.join(await realpath(os.tmpdir()), 'git-service-'));
 const home = path.join(root, 'home');
@@ -333,4 +335,80 @@ test('fleet refresh reads a local slot from its files and leaves a remote slot t
     },
   );
   assert.deepEqual(await readLocalSlotGit({ ...local, host: 'remote.invalid' }, 'main'), {});
+});
+
+/** What a caller reads: the service's file answer when the checkout opens, otherwise git's. */
+async function serviceOrGit<T>(
+  dir: string,
+  files: (checkout: GitCheckout) => Promise<T>,
+  fromGit: () => T,
+): Promise<T> {
+  const checkout = await gitSvc.openGitCheckout(dir);
+  return checkout ? files(checkout) : fromGit();
+}
+
+test('a reftable repository is left to git, which reads its refs', async (t) => {
+  const dir = path.join(root, 'reftable');
+  const created = sh(`git init -q --ref-format=reftable -b main '${dir}'`);
+  if (created.exitCode !== 0) {
+    t.skip(`this git cannot create a reftable repository: ${created.stderr.trim()}`);
+    return;
+  }
+  git(dir, 'commit', '-q', '--allow-empty', '-m', 'a');
+  git(dir, 'remote', 'add', 'origin', 'https://example.invalid/repo.git');
+  git(dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  git(dir, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  const originHead = () => {
+    const result = sh(`git -C '${dir}' symbolic-ref --quiet --short refs/remotes/origin/HEAD`);
+    return result.exitCode === 0 ? result.stdout.trim() : result.exitCode === 1 ? null : 'error';
+  };
+  assert.equal(originHead(), 'origin/main');
+  assert.equal(
+    await serviceOrGit(
+      dir,
+      (checkout) => gitSvc.readSymbolicRefShort(checkout, 'refs/remotes/origin/HEAD'),
+      originHead,
+    ),
+    'origin/main',
+  );
+  const probe = () => readDefaultBranchProbe(sh(defaultBranchProbeCommand(dir, 'main')), 'main');
+  assert.deepEqual(
+    await serviceOrGit(
+      dir,
+      (checkout) => gitSvc.readDefaultBranchProbeFiles(checkout, 'main'),
+      probe,
+    ),
+    probe(),
+  );
+  assert.equal(await gitSvc.openGitCheckout(dir), undefined);
+  // The same repository on the files backend, declared explicitly, still reads from its files.
+  const files = path.join(root, 'files-declared');
+  git(root, 'init', '-q', '--ref-format=files', '-b', 'main', files);
+  git(files, 'commit', '-q', '--allow-empty', '-m', 'a');
+  git(files, 'config', 'core.repositoryformatversion', '1');
+  git(files, 'config', 'extensions.refStorage', 'files');
+  await assertHeadMatchesGit(files);
+});
+
+test('a global config git rejects makes every read fail as git fails', async (t) => {
+  const dir = await repo();
+  git(dir, 'remote', 'add', 'origin', 'https://example.invalid/repo.git');
+  git(dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  assert.ok(await gitSvc.openGitCheckout(dir));
+  await writeFile(path.join(home, '.gitconfig'), '[core\n');
+  t.after(() => rm(path.join(home, '.gitconfig'), { force: true }));
+  // Every git command the file readers stand in for loads the config first and dies on it.
+  for (const command of [
+    'rev-parse HEAD',
+    'rev-parse --abbrev-ref HEAD',
+    'symbolic-ref --quiet --short HEAD',
+    'for-each-ref refs/remotes/origin/main',
+    'config --get-all remote.origin.fetch',
+  ])
+    assert.equal(sh(`git -C '${dir}' ${command}`).exitCode, 128, command);
+  // So no read answers from the files: each caller falls back to git and meets the same failure.
+  assert.equal(await gitSvc.openGitCheckout(dir), undefined);
+  const local = { host: 'localhost', machine: 'git-service-test', remoteRepo: dir };
+  assert.deepEqual(await readLocalSlotGit(local, 'main'), { linked: false });
+  assert.equal((await gitSvc.gitService.run(['rev-parse', 'HEAD'], { cwd: dir })).exitCode, 128);
 });

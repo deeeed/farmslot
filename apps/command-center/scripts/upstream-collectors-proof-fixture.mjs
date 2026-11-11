@@ -834,50 +834,71 @@ if (process.argv[2] === 'fake') {
       stdio: ['ignore', 'pipe', 'ignore'],
     });
     serveChild.unref();
-    const githubApiUrl = await new Promise((resolve, reject) => {
-      let buf = '';
-      serveChild.stdout.on('data', (chunk) => {
-        buf += chunk.toString();
-        const nl = buf.indexOf('\n');
-        if (nl >= 0) {
-          const { port } = JSON.parse(buf.slice(0, nl));
-          resolve(`http://127.0.0.1:${port}`);
-        }
+    let githubApiUrl;
+    try {
+      githubApiUrl = await new Promise((resolve, reject) => {
+        let buf = '';
+        const timer = setTimeout(
+          () => reject(new Error('GitHub fixture server did not report port in time')),
+          8000,
+        );
+        const fail = (error) => {
+          clearTimeout(timer);
+          reject(error);
+        };
+        const exited = (code, signal) =>
+          fail(new Error(`GitHub fixture server exited (code ${code}, signal ${signal})`));
+        serveChild.once('exit', exited);
+        serveChild.stdout.on('error', fail);
+        serveChild.stdout.on('data', (chunk) => {
+          buf += chunk.toString();
+          const nl = buf.indexOf('\n');
+          if (nl < 0) return;
+          clearTimeout(timer);
+          serveChild.off('exit', exited);
+          // The port line is the server's only output: release the pipe, which would otherwise
+          // keep this setup process alive after its work is done.
+          serveChild.stdout.destroy();
+          try {
+            resolve(`http://127.0.0.1:${JSON.parse(buf.slice(0, nl)).port}`);
+          } catch (error) {
+            reject(error);
+          }
+        });
       });
-      serveChild.stdout.on('error', reject);
-      setTimeout(
-        () => reject(new Error('GitHub fixture server did not report port in time')),
-        8000,
-      );
-    });
-    // Write FARMSLOT_GITHUB_API_URL to farm/.env so the gateway picks it up at startup.
-    await put(path.join(farm, '.env'), `FARMSLOT_GITHUB_API_URL=${githubApiUrl}\n`);
-    await save('fixture.json', {
-      ...config,
-      farm,
-      home,
-      osHome,
-      fakeBin,
-      stateFile,
-      node,
-      marker,
-      tools: FAKE_TOOLS,
-      repo: REPO,
-      pr: PR_NUMBER,
-      listPr: LIST_PR_NUMBER,
-      runId,
-      project: PROJECT,
-      machine: MACHINE,
-      slotId: SLOT,
-      actorId: actor.id,
-      monitorId: monitor.id,
-      githubHttpPid: serveChild.pid,
-      githubApiUrl,
-      githubHttpInvocationsFile: githubHttpLogFile,
-      setupComplete: true,
-      fixtureOnly: true,
-      providerExecution: false,
-    });
+      // Write FARMSLOT_GITHUB_API_URL to farm/.env so the gateway picks it up at startup.
+      await put(path.join(farm, '.env'), `FARMSLOT_GITHUB_API_URL=${githubApiUrl}\n`);
+      await save('fixture.json', {
+        ...config,
+        farm,
+        home,
+        osHome,
+        fakeBin,
+        stateFile,
+        node,
+        marker,
+        tools: FAKE_TOOLS,
+        repo: REPO,
+        pr: PR_NUMBER,
+        listPr: LIST_PR_NUMBER,
+        runId,
+        project: PROJECT,
+        machine: MACHINE,
+        slotId: SLOT,
+        actorId: actor.id,
+        monitorId: monitor.id,
+        githubHttpPid: serveChild.pid,
+        githubApiUrl,
+        githubHttpInvocationsFile: githubHttpLogFile,
+        setupComplete: true,
+        fixtureOnly: true,
+        providerExecution: false,
+      });
+    } catch (error) {
+      // Cleanup only learns the server's pid from fixture.json, which a failed setup never writes.
+      serveChild.kill('SIGTERM');
+      throw error;
+    }
     console.log(JSON.stringify({ fixturePrepared: true, actorId: actor.id, fakeBin }));
   } else {
     const fixture = JSON.parse(await readFile(path.join(root, 'fixture.json'), 'utf8'));
@@ -887,8 +908,9 @@ if (process.argv[2] === 'fake') {
       if (fixture.githubHttpPid) {
         try {
           process.kill(fixture.githubHttpPid, 'SIGTERM');
-        } catch {
-          /* process may have already exited */
+        } catch (error) {
+          // A server that already exited needs no stop; any other failure is real.
+          if (error.code !== 'ESRCH') throw error;
         }
       }
       const actor = JSON.parse(await readFile(path.join(root, 'actor.json'), 'utf8'));
