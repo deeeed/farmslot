@@ -43,6 +43,13 @@ const labels: Record<RunStatus, string> = {
 export const HUMAN_GATE_DECISION_TYPE = 'engine_human_gate';
 
 const NEEDS_YOUR_DECISION = 'Needs your decision';
+const WAITING_FOR_POSTING_DECISION = 'Waiting for posting decision';
+
+interface RunDecisionWait {
+  kind: 'human' | 'posting';
+  label: string;
+  reason?: string;
+}
 
 /** The fields of a run decision the lifecycle view reads. */
 export type GateDecisionFields = {
@@ -92,12 +99,19 @@ export function isBlockedAtOpenHumanGate(run: {
 function gateDecisionWait(run: {
   status: RunStatus;
   decisions?: readonly GateDecisionFields[];
-}): { reason?: string } | undefined {
+}): RunDecisionWait | undefined {
+  if (
+    ['reconciling', 'human-gating', 'needs-decision', 'blocked'].includes(run.status) &&
+    run.decisions?.some(
+      (decision) => decision.type === 'engine_review_posting' && !decision.resolvedAt,
+    )
+  )
+    return { kind: 'posting', label: WAITING_FOR_POSTING_DECISION };
   if (run.status !== 'blocked' && run.status !== 'human-gating') return undefined;
   const decision = openHumanGateDecision(run);
   if (!decision) return undefined;
   const reason = gateWaitReason(decision);
-  return reason ? { reason } : {};
+  return { kind: 'human', label: NEEDS_YOUR_DECISION, ...(reason ? { reason } : {}) };
 }
 
 /** A decision's readiness reasons, which of them the gate offers a remedy for, and its review budget. */
@@ -155,7 +169,7 @@ export function runDisplayStatus(run: {
   status: RunStatus;
   decisions?: readonly GateDecisionFields[];
 }): string {
-  return gateDecisionWait(run) ? NEEDS_YOUR_DECISION : run.status;
+  return gateDecisionWait(run)?.label ?? run.status;
 }
 
 /** Both clients and the CLI present the gateway's state and prerequisite reasons. */
@@ -189,12 +203,10 @@ export function deriveRunLifecycleView(input: {
             : 'running';
   return {
     status: input.status,
-    label: gateWait ? NEEDS_YOUR_DECISION : labels[input.status],
-    ...(gateWait && input.status === 'blocked'
+    label: gateWait?.label ?? labels[input.status],
+    ...(gateWait && (input.status === 'blocked' || gateWait.kind === 'posting')
       ? {
-          activityLabel: gateWait.reason
-            ? `${NEEDS_YOUR_DECISION}: ${gateWait.reason}`
-            : NEEDS_YOUR_DECISION,
+          activityLabel: gateWait.reason ? `${gateWait.label}: ${gateWait.reason}` : gateWait.label,
         }
       : input.status === 'blocked'
         ? { activityLabel: blockedReason ? `Blocked: ${blockedReason}` : labels.blocked }

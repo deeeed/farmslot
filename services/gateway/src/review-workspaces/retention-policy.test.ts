@@ -57,8 +57,9 @@ test('PR protection uses exact repository and number, independent of project or 
   );
 });
 test('only stopped terminal retained reviews release active machine capacity', () => {
-  const run: Pick<Run, 'status' | 'reviewWorkspace' | 'agentContexts'> = {
+  const run: Pick<Run, 'status' | 'reviewWorkspace' | 'agentContexts' | 'steps'> = {
     status: 'done',
+    steps: [],
     reviewWorkspace: { ...workspace, retainedAt: ended, executionStoppedAt: ended },
     agentContexts: [],
   };

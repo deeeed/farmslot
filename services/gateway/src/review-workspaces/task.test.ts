@@ -200,11 +200,8 @@ test('materialization ignores an execution-only pool and preserves frozen guidan
     const exampleBlock = task.match(/## Review result[\s\S]*?```json\n([\s\S]*?)\n```/);
     assert(exampleBlock);
     const example = JSON.parse(exampleBlock[1]);
-    assert.equal(example.schemaVersion, 1);
-    assert.equal(example.runId, f.run.id);
-    assert.equal(example.workspaceId, f.run.reviewWorkspace!.workspaceId);
-    assert.equal(example.headSha, f.subject.headSha);
-    assert.equal(example.baseSha, f.subject.baseSha);
+    assert.deepEqual(Object.keys(example).sort(), ['issues', 'recommendation', 'verdict']);
+    assert.doesNotMatch(task, /Read attemptId from SIGNAL|compute reportSha256/);
     assert.equal(example.recommendation, 'REQUEST_CHANGES');
     assert.equal(example.issues.length, 1);
     const contract = JSON.parse(
@@ -324,15 +321,9 @@ test('the copied shared marker works offline; completion rejects wrong SHA, stal
     assert.equal(await readReviewWorkspaceCompletion(f.run.id, f.deps), null);
     const report = `VERDICT: APPROVE\nCOMMIT: ${f.subject.headSha}\nNo findings.\n`;
     const result = {
-      schemaVersion: 1,
       verdict: 'pass',
+      recommendation: 'APPROVE',
       issues: [],
-      runId: f.run.id,
-      workspaceId: f.run.reviewWorkspace!.workspaceId,
-      headSha: f.subject.headSha,
-      baseSha: f.subject.baseSha,
-      attemptId: started.attemptId,
-      reportSha256: digest(report),
     };
     await writeFile(path.join(f.task, 'artifacts/review.md'), report);
     await writeFile(path.join(f.task, 'artifacts/review-result.json'), JSON.stringify(result));
@@ -346,6 +337,23 @@ test('the copied shared marker works offline; completion rejects wrong SHA, stal
     const completion = await readReviewWorkspaceCompletion(f.run.id, f.deps);
     assert.equal(completion?.result?.recommendation, 'APPROVE');
     assert.equal(completion?.result?.reviewSnapshot?.headSha, f.subject.headSha);
+    const retainedResult = async () =>
+      JSON.parse(
+        await readFile(
+          path.join(f.deps.snapshotRoot(), f.run.id, 'view/artifacts/review-result.json'),
+          'utf8',
+        ),
+      );
+    assert.deepEqual(await retainedResult(), {
+      ...result,
+      schemaVersion: 1,
+      runId: f.run.id,
+      workspaceId: f.run.reviewWorkspace!.workspaceId,
+      headSha: f.subject.headSha,
+      baseSha: f.subject.baseSha,
+      attemptId: started.attemptId,
+      reportSha256: digest(report),
+    });
     assert.equal(
       await readFile(
         path.join(f.deps.snapshotRoot(), f.run.id, 'view/artifacts/review.md'),
@@ -364,15 +372,11 @@ test('the copied shared marker works offline; completion rejects wrong SHA, stal
       path.join(f.task, 'artifacts/review-result.json'),
       JSON.stringify({ ...result, reportSha256: 'wrong-digest' }),
     );
-    await assert.rejects(
-      readReviewWorkspaceCompletion(f.run.id, f.deps),
-      (error: unknown) =>
-        error instanceof Error &&
-        'code' in error &&
-        error.code === 'REVIEW_OUTPUT_INVALID' &&
-        error.message.includes(digest(report)) &&
-        error.message.includes('wrong-digest'),
+    assert.equal(
+      (await readReviewWorkspaceCompletion(f.run.id, f.deps))?.result?.recommendation,
+      'APPROVE',
     );
+    assert.equal((await retainedResult()).reportSha256, digest(report));
     await writeFile(
       path.join(f.task, 'artifacts/review-result.json'),
       JSON.stringify({ ...result, verdict: 'issues', issues: [] }),
@@ -382,14 +386,28 @@ test('the copied shared marker works offline; completion rejects wrong SHA, stal
     });
     await writeFile(
       path.join(f.task, 'artifacts/review-result.json'),
-      JSON.stringify({ ...result, headSha: 'c'.repeat(40) }),
+      JSON.stringify({
+        ...result,
+        runId: 'copied-run',
+        workspaceId: '1e4edc546224c47c2b1a66351e33a6a9fbfda556d244f1493b030907a7e8b85f',
+        headSha: 'c'.repeat(40),
+        baseSha: 'd'.repeat(40),
+        attemptId: 'older-attempt',
+      }),
     );
-    await assert.rejects(readReviewWorkspaceCompletion(f.run.id, f.deps), /exact source/);
-    await writeFile(
-      path.join(f.task, 'artifacts/review-result.json'),
-      JSON.stringify({ ...result, attemptId: 'older-attempt' }),
+    await readReviewWorkspaceCompletion(f.run.id, f.deps);
+    const bound = await retainedResult();
+    assert.equal(bound.runId, f.run.id);
+    assert.equal(bound.workspaceId, f.run.reviewWorkspace!.workspaceId);
+    assert.equal(bound.headSha, f.subject.headSha);
+    assert.equal(bound.baseSha, f.subject.baseSha);
+    assert.equal(bound.attemptId, started.attemptId);
+    f.run.agentContexts[0].signalAttemptId = 'another-worker-attempt';
+    await assert.rejects(
+      readReviewWorkspaceCompletion(f.run.id, f.deps),
+      /accepted worker attempt/,
     );
-    await assert.rejects(readReviewWorkspaceCompletion(f.run.id, f.deps), /exact source/);
+    f.run.agentContexts[0].signalAttemptId = started.attemptId;
     await writeFile(path.join(f.task, 'artifacts/review-result.json'), JSON.stringify(result));
     const findingsReport = report.replace('APPROVE', 'REQUEST_CHANGES');
     const finding = {
@@ -401,6 +419,7 @@ test('the copied shared marker works offline; completion rejects wrong SHA, stal
     const findingsResult = {
       ...result,
       verdict: 'issues',
+      recommendation: 'REQUEST_CHANGES',
       issues: [finding],
       reportSha256: digest(findingsReport),
     };

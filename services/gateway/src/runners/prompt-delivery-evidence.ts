@@ -15,8 +15,30 @@ import {
 } from './observability-files.js';
 import { runnerPromptDigest } from './observability-prompt-digest.js';
 import { isObservabilityReadingAuthoritative } from './observability-send-decision.js';
+import type { RunnerObservability } from './observability-types.js';
 
 type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
+
+/** Native histories and digest hooks are the shared exact-acceptance alternatives. */
+export function readRunnerPromptAcceptance(
+  observer: RunnerObservability,
+  vars: SlotVars,
+  target: string,
+  message: string,
+  since: number,
+  retained?: { sessionId: string; sessionPath: string },
+) {
+  return retained && observer.promptAcceptedInSession
+    ? observer.promptAcceptedInSession(
+        vars,
+        target,
+        retained.sessionId,
+        retained.sessionPath,
+        message,
+        since,
+      )
+    : observer.promptAccepted(vars, target, runnerPromptDigest(message), since, true, message);
+}
 
 export interface RunnerHandoffAckProbe {
   accepted: boolean;

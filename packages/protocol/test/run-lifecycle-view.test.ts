@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  awaitsHumanDecision,
   blockedRunReason,
   deriveRunLifecycleView,
   gateDisplayReasons,
@@ -19,6 +20,32 @@ const ready: RunGateReadiness = {
   identity: { runId: 'run', generation: 2, headSha: 'head' },
   reasons: [],
 };
+
+test('a completed review names its pending posting decision across shared run views', () => {
+  const run = {
+    status: 'reconciling' as const,
+    decisions: [{ type: 'engine_review_posting' }],
+  };
+  const view = deriveRunLifecycleView(run);
+  assert.equal(view.label, 'Waiting for posting decision');
+  assert.equal(view.activityLabel, 'Waiting for posting decision');
+  assert.equal(view.status, 'reconciling');
+  assert.equal(view.canAdvance, false);
+  assert.equal(runDisplayStatus(run), 'Waiting for posting decision');
+  assert.equal(awaitsHumanDecision(run), true);
+  const resolved = {
+    ...run,
+    decisions: [{ type: 'engine_review_posting', resolvedAt: '2026-11-11T00:00:00Z' }],
+  };
+  assert.equal(deriveRunLifecycleView(resolved).label, 'Reconciling');
+  assert.equal(runDisplayStatus(resolved), 'reconciling');
+  for (const status of ['preparing', 'monitoring', 'reviewing', 'done', 'cancelled'] as const) {
+    assert.notEqual(
+      deriveRunLifecycleView({ ...run, status }).label,
+      'Waiting for posting decision',
+    );
+  }
+});
 
 test('operator activity names the dependency without authorizing a gate transition', () => {
   const waitingForOperator = {

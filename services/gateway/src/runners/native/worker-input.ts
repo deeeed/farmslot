@@ -190,6 +190,21 @@ async function routePinnedWorkerInput(
     current();
   }
   if (method === Methods.NATIVE_SESSION_SEND) {
+    if (run.reviewWorkspace?.retainedAt && run.reviewResult && context.role === 'review') {
+      if (
+        typeof params.commandId !== 'string' ||
+        !params.commandId.trim() ||
+        typeof params.text !== 'string' ||
+        !params.text.trim()
+      )
+        throw new GatewayMethodError(
+          'INVALID_PARAMS',
+          'Review follow-up requires commandId and text',
+        );
+      const { admitReviewWorkspaceFollowup } = await import('../../review-workspaces/admission.js');
+      await admitReviewWorkspaceFollowup(run.id, params.commandId);
+      current();
+    }
     return routeNativeExecution(
       binding.ownerPrincipalId,
       steer ? NATIVE_WORKER_STEER : NATIVE_WORKER_SEND,
