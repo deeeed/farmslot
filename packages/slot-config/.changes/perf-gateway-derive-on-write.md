@@ -1,0 +1,1 @@
+- Pack-copied project checks read the workspace state.json again only when it changes.

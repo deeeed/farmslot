@@ -12,7 +12,6 @@ KIND="${3:-harness}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 FARMSLOT_DIR="$(cd "${PROJECT_DIR}/../.." && pwd)"
-POOL_DIR="${FARMSLOT_DIR}/pool"
 source "${FARMSLOT_DIR}/scripts/lib/slot-common.sh"
 load_slot_vars "$SLOT_ID"
 

@@ -65,6 +65,8 @@ let sessionState: ObservabilityReading<RunnerSessionDeliveryState> | null = {
 
 mock.module('../core/exec.js', {
   namedExports: {
+    // Runner files come from the mocked shell below, as they would on a remote slot.
+    slotFilesReadInProcess: () => false,
     // Mirrors the real module: callers classify a probe timeout by this exit
     // status, so the mocked module has to export it too.
     EXEC_TIMEOUT_EXIT_CODE: 124,

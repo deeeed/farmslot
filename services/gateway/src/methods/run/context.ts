@@ -82,7 +82,7 @@ export async function runGet(params: RunGetParams): Promise<RunGetResult> {
   // The first paint must not wait for worker/source/evidence I/O. The ordinary read
   // serves the last gate check and asks for a new one; command handlers retain their guards.
   if (params.view === 'snapshot') return { run };
-  const listVersion = runListVersion(trimRunForList(run));
+  const listVersion = runListVersion(run);
   return { run: await presentRun(run), listVersion, recoveryHints: runRecoveryHints(run) };
 }
 

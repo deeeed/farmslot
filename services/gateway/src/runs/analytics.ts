@@ -24,9 +24,10 @@ import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { resourceRevisions } from '../resources/revisions.js';
+import { captureRunResources, publishRunResources } from '../resources/run-changes.js';
 import { checklistTimingContext, checklistTimingForAttempt } from '../tasks/checklist-timing.js';
 
-import { getAllRuns, shouldUseIsolatedRunsDir } from './store.js';
+import { getAllRuns, getRun, shouldUseIsolatedRunsDir } from './store.js';
 
 // Append-only analytics sink, decoupled from the prunable run-history store.
 // One record per terminal run, written before the run JSON can be deleted/archived.
@@ -567,6 +568,10 @@ export function emitAnalyticsForTerminalRun(
         // then failed.
         if (run.completedAt && run.completedAt !== emittedAt) return;
         run.analyticsEmittedAt = emittedAt;
+        // The flag is part of the served run: publish it like any other run write, so readers
+        // (and the run list version) see the change. An archived or deleted run has already
+        // published its removal and is no longer listed.
+        if (getRun(run.id) === run) publishRunResources(captureRunResources(run));
       }),
     )
     .finally(() => {
