@@ -9,6 +9,8 @@ import type {
   StoredResourceQuery,
 } from '@farmslot/protocol/client-cache';
 
+import { SqliteTransactionError } from './sqlite-transaction.js';
+
 export type StoreWorkerRequest =
   | {
       id: number;
@@ -106,6 +108,9 @@ export function storeWorkerFailure(id: number, error: unknown, fatal = false): S
     ok: false,
     message: error instanceof Error ? error.message : String(error),
     ...(resultCode === undefined ? {} : { resultCode }),
-    fatal: fatal || (resultCode !== undefined && [10, 11, 26].includes(resultCode & 0xff)),
+    fatal:
+      fatal ||
+      error instanceof SqliteTransactionError ||
+      (resultCode !== undefined && [10, 11, 26].includes(resultCode & 0xff)),
   };
 }
