@@ -66,6 +66,7 @@ export {
 export {
   cdpListenerPids,
   ownedBrowserPids,
+  ownedProcessIdentity,
   OWNER_FLAG,
   OWNER_KINDS,
   ownerMarker,

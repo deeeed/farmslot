@@ -63,6 +63,7 @@ Status: proposed contract for ADR-030 Amendment 4.
 - A GitHub CLI call that bypasses the stand-in, by absolute path or through a shell profile that reorders `PATH`, fails without credentials but is not recorded.
 - The worker runs under a macOS `sandbox-exec` profile generated from the pool at preparation. It cannot read the node's other slot checkouts, the original checkout a linked-worktree slot shares objects with, blind capsules other than its own boundary, or the GitHub CLI login.
 - Worker session reloads (recovery, parking and operator resume) start under the same boundary.
+- The worker environment and the initial frozen `ci.local_check` command export `FARMSLOT_CI_BASE_REF` as the trial's recorded `baseSha`. Changed-file checks use that local commit without fetching a remote ref. Reloads preserve it; existing frozen commands are not rewritten.
 - The network stays open. A blind trial on a source repository readable without credentials is not isolated by this boundary.
 - Preparation fails on a node without `sandbox-exec`. Dispatch fails for a native worker and for a runner tier that applies its own sandbox. Neither path starts the worker unsandboxed.
 

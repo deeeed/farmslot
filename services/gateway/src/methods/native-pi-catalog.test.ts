@@ -9,6 +9,8 @@ import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { RUNNER_OBSERVABILITY_COPY_PATHS } from '../../../../scripts/lib/runner-observability-bundle.mjs';
+
 // Config paths are captured at import. Every command uses this synthetic home and pool.
 const home = realpathSync(await mkdtemp(path.join(tmpdir(), 'native-pi-catalog-')));
 after(() => rm(home, { recursive: true, force: true }));
@@ -28,10 +30,8 @@ await writeFile(path.join(home, 'scripts/dev.sh'), '#!/bin/sh\n');
 await writeFile(path.join(home, 'services/gateway/package.json'), '{}');
 await writeFile(path.join(home, 'projects/fixture/project.json'), '{}');
 const checkout = fileURLToPath(new URL('../../../../', import.meta.url));
-await copyFile(
-  path.join(checkout, 'scripts/runners/pi-farmslot-providers.mjs'),
-  path.join(home, 'scripts/runners/pi-farmslot-providers.mjs'),
-);
+for (const relativePath of RUNNER_OBSERVABILITY_COPY_PATHS)
+  await copyFile(path.join(checkout, relativePath), path.join(home, relativePath));
 const { piNativeAdapter } = await import('@farmslot/agent-runtime/native/pi');
 const { nodeModelCatalogs } = await import('../runners/model-catalog.js');
 const { NodeModelCatalogObservation } =

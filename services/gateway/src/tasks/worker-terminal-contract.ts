@@ -366,6 +366,12 @@ export function withTerminalReportPath(
   return { ...contract, commands };
 }
 
+export function localCheckWithBaseRef(command: string, ciBaseRef?: string | null): string {
+  return command && ciBaseRef
+    ? `export FARMSLOT_CI_BASE_REF=${shellQuote(ciBaseRef)}\n${command}`
+    : command;
+}
+
 export async function syncTerminalContractForFlowOnSlot(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   taskDir: string,
@@ -412,9 +418,7 @@ export async function syncTerminalContractForFlowOnSlot(
     const checklist = checklistBasename ?? 'CHECKLIST.md';
     const markdown = await slotReadFile(vars, `${fullTaskDir}/${checklist}`);
     contract = deterministicChecks.freeze(contract, markdown, checklist, {
-      'ci.local_check': ciBaseRef
-        ? `export FARMSLOT_CI_BASE_REF=${shellQuote(ciBaseRef)}\n${localCheck}`
-        : localCheck,
+      'ci.local_check': localCheckWithBaseRef(localCheck, ciBaseRef),
     });
   }
   await writeTextFileOnSlot(

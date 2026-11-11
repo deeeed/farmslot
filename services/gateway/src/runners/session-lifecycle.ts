@@ -11,6 +11,7 @@ import {
   tmuxSendTextCommand,
   tmuxShellSnippet,
 } from '../core/tmux.js';
+import type { BlindTrialWorkerBoundary } from '../evals/blind-git.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 
 import { ensureWorkerContinuationReady } from './continuation-ready.js';
@@ -747,7 +748,7 @@ export interface ReloadRunnerForParkOptions {
   beforeRespawn?: () => void | Promise<void>;
   timeoutMs?: number;
   /** Capsule of a blind eval trial whose worker this reload resumes. */
-  blindTrialCapsule?: string;
+  blindTrialBoundary?: BlindTrialWorkerBoundary;
   /** The owning run's modelQuestionsForRun. */
   modelQuestions?: 'off';
 }
@@ -829,7 +830,7 @@ export async function reloadRunnerForPark(
         runtimeDir: handle.runtimeDir,
         taskDir: handle.taskDir,
         initialPrompt,
-        blindTrialCapsule: options.blindTrialCapsule,
+        blindTrialBoundary: options.blindTrialBoundary,
         modelQuestions: options.modelQuestions,
       },
     )}`;
