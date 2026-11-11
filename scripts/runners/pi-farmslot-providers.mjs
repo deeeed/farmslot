@@ -1,5 +1,7 @@
 // OpenAI-compatible Pi providers: optional discovery, validated model configuration.
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -155,6 +157,36 @@ export async function fetchOpenAiModels(
 }
 
 export class PiProviderConfigurationError extends Error {}
+
+/** Pi replaces extension model arrays; retain the statically composed models for workers too. */
+export async function preservePiStaticModels(catalog, loadStaticRuntime) {
+  if (catalog.length === 0) return catalog;
+  const configuredDir = process.env.PI_CODING_AGENT_DIR;
+  const agentDir = configuredDir
+    ? configuredDir.replace(/^~(?=\/|$)/, homedir())
+    : path.join(homedir(), '.pi', 'agent');
+  const modelsPath = path.join(agentDir, 'models.json');
+  if (!existsSync(modelsPath)) return catalog;
+  try {
+    // Pi's loader resolves its own SDK. Reuse its JSONC parsing, defaults and
+    // overrides without refreshing catalogs or looking up credentials.
+    const runtime = await loadStaticRuntime(modelsPath);
+    if (runtime.getError()) throw new PiProviderConfigurationError('Invalid pi static models');
+    return catalog.map((source) => ({
+      ...source,
+      models: [
+        ...new Map([
+          ...source.models.map((model) => [model.id, model]),
+          ...runtime.getModels(source.id).map((model) => [model.id, model]),
+        ]).values(),
+      ],
+    }));
+  } catch {
+    // Do not let optional discovery hide a failed static-model composition or
+    // include configuration contents in a public catalog error.
+    throw new PiProviderConfigurationError('Cannot preserve pi static models');
+  }
+}
 
 function positiveInteger(value, name) {
   if (value === undefined || value === null) return undefined;

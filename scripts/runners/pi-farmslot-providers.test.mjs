@@ -859,6 +859,7 @@ async function checkExtension(extensionUrl, scenario, obsDir) {
   const originalEnv = process.env;
   const originalFetch = globalThis.fetch;
   process.env = {
+    PI_CODING_AGENT_DIR: `${obsDir}/synthetic-agent`,
     FARMSLOT_PI_OLLAMA: '0',
     FARMSLOT_OBS_DIR: obsDir,
     FARMSLOT_PI_REQUEST_TIMEOUT_MS: '300000',

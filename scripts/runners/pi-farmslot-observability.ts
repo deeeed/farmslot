@@ -1,5 +1,5 @@
 // Farmslot PI extension: hooks, task delivery, mark/signal tools, HUD, slash cmds.
-// Do not import @earendil-works/pi-coding-agent — PI's jiti provides `pi` at load.
+// Pi's jiti supplies the extension API and resolves the host SDK when needed.
 import { writeSync } from 'node:fs';
 import path from 'node:path';
 
@@ -11,6 +11,7 @@ import {
   deadlinePiFetch,
   PiProviderConfigurationError,
   piSdkModels,
+  preservePiStaticModels,
   providerReasoningFetch,
   resolvePiProviderCatalog,
 } from './pi-farmslot-providers.mjs';
@@ -131,8 +132,20 @@ export default async function (pi: {
   });
   try {
     const sources: PiProviderDiscoverySource[] = [];
-    const catalog = await resolvePiProviderCatalog(process.env, {
+    const discovered = await resolvePiProviderCatalog(process.env, {
       onDiscovery: (source: PiProviderDiscoverySource) => sources.push(source),
+    });
+    const catalog = await preservePiStaticModels(discovered, async (modelsPath: string) => {
+      // Resolve through Pi's loader, not the copied .mjs helper's Node resolver.
+      const sdk = '@earendil-works/pi-coding-agent';
+      const ai = '@earendil-works/pi-ai';
+      const { ModelRuntime } = await import(sdk);
+      const { InMemoryCredentialStore } = await import(ai);
+      return ModelRuntime.create({
+        modelsPath,
+        refreshOnCreate: false,
+        credentials: new InMemoryCredentialStore(),
+      });
     });
     // Structured catalog metadata only. Worker launches keep their normal stdout contract.
     if (process.argv.includes('--list-models'))
