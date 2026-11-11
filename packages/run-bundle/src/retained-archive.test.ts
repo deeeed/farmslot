@@ -514,7 +514,7 @@ test('publication waiting behind media archival keeps its budget when accounting
   }
 });
 
-for (const parent of ['sha256', 'staging']) {
+for (const parent of ['sha256', 'staging', 'reservations']) {
   test(`media pressure observes completed housekeeping from ${parent} during its pass`, async (t) => {
     const f = await fixture(t);
     const staged = path.join(f.store.root, parent, '.retention-fixture');
@@ -522,9 +522,12 @@ for (const parent of ['sha256', 'staging']) {
       const saved = await f.capture('superseded', 120000);
       await rename(saved.bundle.directory, staged);
       await rm(path.join(f.store.runsDir, `${saved.run.id}.json`));
-    } else {
+    } else if (parent === 'staging') {
       await mkdir(staged, { recursive: true });
       await writeFile(path.join(staged, 'abandoned.png'), Buffer.alloc(120000));
+    } else {
+      await mkdir(path.dirname(staged), { recursive: true });
+      await writeFile(staged, JSON.stringify({ runId: 'retired', bytes: 1000 }));
     }
     await f.capture('first', 10000);
     await f.capture('second', 10000);
@@ -548,11 +551,12 @@ for (const parent of ['sha256', 'staging']) {
       },
     });
     assert.equal(completed, true);
-    assert.equal(
-      result.archivedPaths.length,
-      1,
-      'do not copy more referenced proof after housekeeping freed capacity',
-    );
+    if (parent !== 'reservations')
+      assert.equal(
+        result.archivedPaths.length,
+        1,
+        'do not copy more referenced proof after housekeeping freed capacity',
+      );
     assert.equal(
       result.chargedBytesAfter,
       (await bundles.runBundleAdmissionUsage(f.store, f.root)).total,

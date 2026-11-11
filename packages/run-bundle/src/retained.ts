@@ -869,8 +869,9 @@ function concurrencyLimit(max: number) {
 
 /** Lets a walk charge a dir from a kept size instead of entering it, and keep what it walked. */
 interface WalkHooks {
-  kept(directory: string, depth: number): number | undefined;
-  walked(directory: string, depth: number, bytes: number): void;
+  kept?(directory: string, depth: number): number | undefined;
+  walked?(directory: string, depth: number, bytes: number): void;
+  file?(file: string, depth: number, bytes: number): void;
 }
 
 async function physicalBytes(
@@ -880,10 +881,10 @@ async function physicalBytes(
 ): Promise<number> {
   const limit = concurrencyLimit(PHYSICAL_SCAN_CONCURRENCY);
   const walk = async (directory: string, depth = 0): Promise<number> => {
-    const kept = hooks?.kept(directory, depth);
+    const kept = hooks?.kept?.(directory, depth);
     if (kept !== undefined) return kept;
     const bytes = await walkEntries(directory, depth);
-    hooks?.walked(directory, depth, bytes);
+    hooks?.walked?.(directory, depth, bytes);
     return bytes;
   };
   const walkEntries = async (directory: string, depth: number): Promise<number> => {
@@ -900,12 +901,14 @@ async function physicalBytes(
         if (entry.isDirectory()) return walk(file, depth + 1);
         if (!entry.isFile()) return 0;
         try {
-          return (
+          const bytes = (
             await limit(() => {
               if (scan) scan.fileCount++;
               return stat(file);
             })
           ).size;
+          hooks?.file?.(file, depth, bytes);
+          return bytes;
         } catch (error) {
           if (!hasCode(error, 'ENOENT')) throw error;
           return 0;
@@ -986,7 +989,18 @@ async function chargedStoreBytes(
     // Records (and the kept acquisition footprints) are bookkeeping, not stored payload.
     if (entry.name === 'usage') continue;
     if (entry.name !== 'staging' || !entry.isDirectory()) {
-      bytes += entry.isDirectory() ? await physicalBytes(file) : (await stat(file)).size;
+      const hooks: WalkHooks | undefined =
+        entry.name === 'reservations' && stagedCharges
+          ? {
+              file: (source, depth, charged) => {
+                if (depth === 0 && path.basename(source).startsWith('.retention-'))
+                  stagedCharges.set(source, charged);
+              },
+            }
+          : undefined;
+      bytes += entry.isDirectory()
+        ? await physicalBytes(file, undefined, hooks)
+        : (await stat(file)).size;
       continue;
     }
     for (const stage of await readdir(file)) {
