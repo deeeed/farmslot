@@ -117,10 +117,19 @@ for (const stage of ['after-review', 'ready-gate'] as const) {
     try {
       await preparing.promise;
       // Preparation can yield before its lock timer is armed, and the gate can
-      // await real I/O afterwards. Keep advancing until the operator path runs.
+      // await real I/O afterwards. Simulated time is capped at the 60 s budget
+      // plus one step (the timer may arm one step late); after that only real
+      // work is flushed, so a longer production budget fails this test.
+      const step = 10_000;
+      const simulatedCap = 60_000 + step + 1;
+      let simulated = 0;
       const deadline = performance.now() + 5_000;
       while (!advanced && performance.now() < deadline) {
-        t.mock.timers.tick(10_000);
+        if (simulated < simulatedCap) {
+          const advance = Math.min(step, simulatedCap - simulated);
+          t.mock.timers.tick(advance);
+          simulated += advance;
+        }
         await flushed();
       }
       assert.equal(
