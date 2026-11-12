@@ -244,7 +244,12 @@ test('configured workspace references resolve before remote prepare script publi
     configured,
     await logPath(),
     'bash /configured/farm-node/scripts/dev.sh',
-    { signal: controller.signal, windowLabel: 'configured-root', phase: 'preflight' },
+    {
+      signal: controller.signal,
+      windowLabel: 'configured-root',
+      phase: 'preflight',
+      tailPollIntervalMs: 10,
+    },
   );
   assert.equal(result.exitCode, 130);
   assert.equal(resolutions.length, 1);

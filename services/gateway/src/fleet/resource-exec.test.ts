@@ -9,6 +9,7 @@ const sentTimeouts: number[] = [];
 let resolutionMs = 0;
 let now = 0;
 let bundlePending = false;
+let machineEnv: Record<string, string> | undefined;
 class NodeSupportPendingError extends Error {}
 mock.module('../node-support/remote-command.js', {
   namedExports: {
@@ -16,12 +17,15 @@ mock.module('../node-support/remote-command.js', {
     resolveSlotFarmCommand: async (_slotId: string, cmd: string) => {
       if (bundlePending) throw new NodeSupportPendingError('still being delivered');
       now += resolutionMs;
-      return cmd.replaceAll('~/farmslot-node/', '~/farmslot-node/support/h/');
+      return cmd
+        .replaceAll('~/farmslot-node/', '~/farmslot-node/support/h/')
+        .replaceAll('/configured/farm-node/', '~/farmslot-node/support/h/');
     },
   },
 });
 mock.module('../core/exec.js', {
   namedExports: {
+    isLocal: () => false,
     execLocal: async () => {
       localCalls++;
       return { stdout: '', stderr: '', exitCode: 0 };
@@ -31,7 +35,7 @@ mock.module('../core/exec.js', {
 mock.module('./machine-registry.js', { namedExports: { getNode: () => node } });
 mock.module('./node-rpc.js', {
   namedExports: {
-    getSlotLocality: async () => ({ isLocal: false, machine: 'remote' }),
+    getSlotLocality: async () => ({ isLocal: false, machine: 'remote', machineEnv }),
     sendNodeRequest: async (
       _node: unknown,
       _method: string,
@@ -104,4 +108,23 @@ test('resource hooks that call farm scripts run them from the bundle (ledger F15
   );
   bundlePending = false;
   assert.equal(sentCmds.length, 1, 'nothing ran from the stale copy');
+});
+
+test('configured workspace resource health uses the selected support resolver', async (t) => {
+  node = {};
+  remoteError = undefined;
+  sentCmds.length = 0;
+  machineEnv = { FARMSLOT_WORKSPACE: '/configured/farm-node' };
+  t.after(() => {
+    machineEnv = undefined;
+  });
+  await execResourceCommand(
+    'slot',
+    '/tmp',
+    'bash /configured/farm-node/projects/farmslot-farm/setup/sandbox-dev.sh health',
+    5_000,
+  );
+  assert.deepEqual(sentCmds, [
+    'bash ~/farmslot-node/support/h/projects/farmslot-farm/setup/sandbox-dev.sh health',
+  ]);
 });
