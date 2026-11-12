@@ -42,6 +42,7 @@ import {
   runnerSessionContextPatch,
 } from '../../runners/session-record.js';
 import { resolveWorkerNudgePrompt } from '../../runners/worker-prompt.js';
+import { clearWorkerSignalsForDispatch } from '../../tasks/checklist-target.js';
 import { verifyHostedTaskOnSlot } from '../../tasks/hosted-task-init.js';
 import { unwatchContext, unwatchSlot, watchContext, watchSlot } from '../../tasks/watcher.js';
 
@@ -393,6 +394,26 @@ export async function warmSessionHandoffDispatch(
     runTier: requestingRun.safetyTier ?? parentRun?.safetyTier,
     projectDefaultRaw: projectJson.default_safety_tier,
   });
+  // Delivery-boundary pressure gate (MANUAL-000109): warm-session handoff is
+  // a new task delivery even though it reuses an existing runner. Keep this
+  // check immediately before the send, after target/session resolution, and
+  // persist any one-shot consumption before the runner can receive the prompt.
+  await recordRetainedPrBaseline(params.runId, vars);
+  const latestRequestingRun = getRun(params.runId) ?? requestingRun;
+  await enforceDispatchPressureGate({
+    machine: vars.machine,
+    runId: params.runId,
+    run: latestRequestingRun,
+    attemptKey: `${params.runId}:${dispatchStartedAtMs(latestRequestingRun) ?? 'no-attempt'}`,
+    onInfo: (detail) => step('info', detail),
+    deps: {
+      persistRun: async (runId, patch) => {
+        const { updateRun, persistRunNow } = await import('../../runs/store.js');
+        await persistRunNow(updateRun(runId, patch), 'pressure-override-consumption');
+      },
+    },
+  });
+  await clearWorkerSignalsForDispatch(vars, workerTaskAbs);
   const launchAckSignalPath = `${workerTaskAbs}/SIGNAL.json`;
   const launchAckBaseline = await readLaunchAckSignalSnapshot(vars, launchAckSignalPath);
   const recoveringDispatch = isWarmHandoffDispatchRecovery(requestingRun);
@@ -420,25 +441,6 @@ export async function warmSessionHandoffDispatch(
     acceptExistingLaunchAck: false,
     recovery: { runId: params.runId, emit },
   };
-  // Delivery-boundary pressure gate (MANUAL-000109): warm-session handoff is
-  // a new task delivery even though it reuses an existing runner. Keep this
-  // check immediately before the send, after target/session resolution, and
-  // persist any one-shot consumption before the runner can receive the prompt.
-  await recordRetainedPrBaseline(params.runId, vars);
-  const latestRequestingRun = getRun(params.runId) ?? requestingRun;
-  await enforceDispatchPressureGate({
-    machine: vars.machine,
-    runId: params.runId,
-    run: latestRequestingRun,
-    attemptKey: `${params.runId}:${dispatchStartedAtMs(latestRequestingRun) ?? 'no-attempt'}`,
-    onInfo: (detail) => step('info', detail),
-    deps: {
-      persistRun: async (runId, patch) => {
-        const { updateRun, persistRunNow } = await import('../../runs/store.js');
-        await persistRunNow(updateRun(runId, patch), 'pressure-override-consumption');
-      },
-    },
-  });
   const delivery = await deliverPromptWithRetainedFallback(deliveryOptions);
   if (!delivery.delivered) {
     return warmHandoffFailureFromRetainedDelivery(delivery);
