@@ -1,9 +1,7 @@
 // runs/list-version.ts — run.list version lists and catch-up pages (ADR-071 Amendment 1)
-import { createHash } from 'node:crypto';
-
 import { type Run, type RunListVersion, trimRunForList } from '@farmslot/protocol';
-import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 
+import { entityVersionHash } from '../resources/entity-version-hash.js';
 import { resourceRevisions } from '../resources/revisions.js';
 
 /** A catch-up page stops before the row that would take it past this many UTF-8 JSON bytes. */
@@ -27,7 +25,7 @@ const stampOf = (run: Run) =>
 
 /** sha256 of the row's canonical JSON: the same digest as the protocol's `runListVersion`. */
 function rowVersion(row: Run): string {
-  return createHash('sha256').update(canonicalResourceJson(row)).digest('hex');
+  return entityVersionHash(row);
 }
 
 /** The version of a live run's list row, derived only when the run changed since the last one. */

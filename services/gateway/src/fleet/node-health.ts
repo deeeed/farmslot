@@ -1,6 +1,5 @@
 // node-health.ts — In-memory machine health state, local collection, headroom computation
 
-import { createHash } from 'node:crypto';
 import os from 'node:os';
 
 import {
@@ -27,6 +26,7 @@ import { collectTcpMetrics, formatTcpSnapshotDetail } from '@farmslot/protocol/n
 
 import { reportGatewayWarning } from '../chat/copilot-observer.js';
 import { execFileArgv } from '../core/exec.js';
+import { entityVersionHash } from '../resources/entity-version-hash.js';
 import { resourceRevisions } from '../resources/revisions.js';
 
 import { loadPressureHistory, savePressureHistory } from './pressure-history-store.js';
@@ -63,10 +63,7 @@ function publishMachineObservation(machine: string): void {
   // so the entity provider can attach it synchronously at publish time.
   const health = healthMap.get(machine);
   if (health) {
-    nodeEntityVersions.set(
-      machine,
-      createHash('sha256').update(canonicalResourceJson(health)).digest('hex'),
-    );
+    nodeEntityVersions.set(machine, entityVersionHash(health));
   }
   const keys = new Map<string, ResourceKey>();
   const add = (key: ResourceKey) => keys.set(resourceKeyId(key), key);

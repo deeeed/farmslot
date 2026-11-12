@@ -18,7 +18,13 @@
 import assert from 'node:assert/strict';
 import test, { mock } from 'node:test';
 
-import type { PendingDecision, Run, RunDecision, RunDecisionPayload } from '@farmslot/protocol';
+import type {
+  PendingDecision,
+  RetrospectivePayload,
+  Run,
+  RunDecision,
+  RunDecisionPayload,
+} from '@farmslot/protocol';
 
 import { makeRun as baseRun } from '../run-engine/test-fixtures.js';
 
@@ -28,6 +34,10 @@ const revisionAdvances: Array<{ key: object; kind?: string }> = [];
 
 /** Call counts — reset in clearMockState, incremented inside mocks. */
 let enrichCallCount = 0; // tracks inspectedRun calls (one per run, not per decision)
+let listRunsCallCount = 0; // tracks listRuns calls; must be 0 during reads after warm-up
+/** When true, inspectedRun throws for the matching run id (or for all if undefined). */
+let shouldThrowInEnrich = false;
+let enrichThrowForRunId: string | undefined;
 
 mock.module('../resources/revisions.js', {
   namedExports: {
@@ -49,6 +59,7 @@ mock.module('../runs/store.js', {
   namedExports: {
     getRun: (id: string) => mockRunById.get(id),
     listRuns: (filter?: { active?: boolean }) => {
+      listRunsCallCount++;
       const runs = filter?.active ? [...mockActiveRuns] : [...mockActiveRuns, ...mockDoneRuns];
       return { runs, totalCount: runs.length };
     },
@@ -63,6 +74,9 @@ mock.module('../run-engine/gate-inspection.js', {
   namedExports: {
     inspectedRun: (run: Run) => {
       enrichCallCount++;
+      if (shouldThrowInEnrich && (!enrichThrowForRunId || enrichThrowForRunId === run.id)) {
+        throw new Error('simulated enrichment failure');
+      }
       return {
         ...run,
         decisions: run.decisions.map((d) => ({
@@ -98,11 +112,12 @@ mock.module('../review/review-round-budget.js', {
   },
 });
 
-const RETRO_PAYLOAD: RunDecisionPayload = {
+const RETRO_PAYLOAD: RetrospectivePayload = {
   kind: 'retrospective',
-  feedback: [],
-  grading: { score: 0, notes: '' },
-} as unknown as RunDecisionPayload;
+  outcome: 'success',
+  whatThisIs: 'test run',
+  actionEffects: [],
+};
 
 mock.module('../run-completion/orchestrator.js', {
   namedExports: {
@@ -219,6 +234,9 @@ async function referenceDecisionList(
 function clearMockState(): void {
   revisionAdvances.length = 0;
   enrichCallCount = 0;
+  listRunsCallCount = 0;
+  shouldThrowInEnrich = false;
+  enrichThrowForRunId = undefined;
   mockActiveRuns.length = 0;
   mockDoneRuns.length = 0;
   mockRunById.clear();
@@ -476,6 +494,183 @@ test('cost (B): enrichment called once per run, not once per decision', async ()
   // Failing assertion: 'enrichment called once per run, not 3× per decision'
   // actual=3, expected=1.
   assert.equal(enrichCallCount, 1, 'enrichment called once per run, not 3× per decision');
+});
+
+test('reads call listRuns 0 times after warm-up (item 1: order on write)', async () => {
+  clearMockState();
+  const run = makeRun({
+    id: 'run-rc',
+    status: 'monitoring',
+    decisions: [makeDecision({ id: 'rc-d', type: 'collision_check' })],
+  });
+  mockActiveRuns.push(run);
+  mockRunById.set(run.id, run);
+
+  const idx = new TestDecisionIndex([], [run]);
+  idx.startWarmup();
+  await idx.ready();
+
+  // Verify reads never call listRuns (TestDecisionIndex overrides loadAll so warm-up
+  // also does not call it; the important proof is that getAll/getAllVersions don't scan).
+  listRunsCallCount = 0;
+  idx.getAll();
+  idx.getAllVersions();
+  assert.equal(
+    listRunsCallCount,
+    0,
+    // Revert proof: re-add `for (const run of getRunsWithDecisions())` in getAll/getAllVersions.
+    // Failing assertion: 'getAll and getAllVersions call listRuns 0 times' actual=2, expected=0.
+    'getAll and getAllVersions call listRuns 0 times after warm-up',
+  );
+  idx.dispose();
+});
+
+test('failed rebuild → reads reject; next successful rebuild → reads answer (item 3)', async () => {
+  clearMockState();
+  const decision = makeDecision({ id: 'err-d', type: 'collision_check' });
+  const run = makeRun({ id: 'run-err', status: 'monitoring', decisions: [decision] });
+  mockActiveRuns.push(run);
+  mockRunById.set(run.id, run);
+
+  const idx = new TestDecisionIndex([], [run]);
+  idx.startWarmup();
+  await idx.ready();
+
+  // Make enrichment fail for this run.
+  shouldThrowInEnrich = true;
+  enrichThrowForRunId = run.id;
+
+  // Trigger a rebuild that will fail.
+  idx.scheduleRebuildForRun(run.id);
+  await new Promise<void>((r) => setImmediate(r));
+
+  // Reads must now reject.
+  assert.throws(
+    () => idx.getAll(),
+    /simulated enrichment failure/,
+    // Revert proof: remove `if (this.runErrors.size > 0) throw firstError` from getAll().
+    // Failing assertion: 'getAll rejects after failed rebuild' (no throw occurs).
+    'getAll rejects after failed rebuild',
+  );
+  assert.throws(
+    () => idx.getAllVersions(),
+    /simulated enrichment failure/,
+    'getAllVersions rejects after failed rebuild',
+  );
+
+  // Fix the mock and trigger a successful rebuild.
+  shouldThrowInEnrich = false;
+  enrichThrowForRunId = undefined;
+
+  idx.scheduleRebuildForRun(run.id);
+  await new Promise<void>((r) => setImmediate(r));
+
+  // Reads must work again.
+  const entities = idx.getAll();
+  assert.ok(
+    entities.find((d) => d.id === 'err-d'),
+    'decision present after successful rebuild clears error',
+  );
+  idx.dispose();
+});
+
+test('concurrent rebuild: older result must not win (generation counter, item 4a)', async () => {
+  clearMockState();
+
+  // Two decisions for two different runs with the same id — d1 for run1, d2 for run2.
+  const d1 = makeDecision({ id: 'gen-d1', type: 'collision_check' });
+  const d2 = makeDecision({ id: 'gen-d2', type: 'collision_check' });
+
+  const run1 = makeRun({ id: 'run-gen', status: 'monitoring', decisions: [d1] });
+  const run2 = makeRun({ id: 'run-gen', status: 'monitoring', decisions: [d2] });
+
+  mockActiveRuns.push(run1);
+  mockRunById.set(run1.id, run1);
+
+  // Gate: a TestDecisionIndex subclass that stalls applyRebuildRun for the first call.
+  let gateRelease: (() => void) | undefined;
+  const gatePromise = new Promise<void>((r) => {
+    gateRelease = r;
+  });
+  let gatedCallCount = 0;
+
+  class GatedDecisionIndex extends TestDecisionIndex {
+    protected override async applyRebuildRun(run: Run, gen?: number): Promise<void> {
+      // Only gate explicit rebuildRun calls (gen is defined).
+      // Warmup calls applyRebuildRun directly with gen=undefined — do not gate those.
+      if (gen !== undefined && gatedCallCount === 0) {
+        gatedCallCount++;
+        await gatePromise; // block first explicit rebuild until gate is released
+      }
+      return super.applyRebuildRun(run, gen);
+    }
+  }
+
+  const idx = new GatedDecisionIndex([], [run1]);
+  idx.startWarmup();
+  await idx.ready();
+
+  // Start two rebuilds: p1 (old run, d1) is gated; p2 (new run, d2) runs immediately.
+  const p1 = idx.rebuildRun(run1); // gen=N+1 set, then gated before enrichment
+  const p2 = idx.rebuildRun(run2); // gen=N+2 set, runs to completion
+  await p2; // p2 completes: gen N+2 wins, d2 in index
+
+  // Release gate: p1 resumes, sees generation mismatch (N+1 ≠ N+2), discards its result.
+  gateRelease?.();
+  await p1;
+
+  const all = idx.getAll();
+  assert.ok(
+    all.find((d) => d.id === 'gen-d2'),
+    // Revert proof: comment out the two stale-generation checks in applyRebuildRun.
+    // Failing assertion: 'newer rebuild result must appear' fails if d1 wins instead of d2.
+    'newer rebuild result (d2) must appear',
+  );
+  assert.ok(
+    !all.find((d) => d.id === 'gen-d1'),
+    'stale rebuild result (d1) must not appear after generation check discards it',
+  );
+  idx.dispose();
+});
+
+test('tombstones purged when run expires (item 4b)', async () => {
+  clearMockState();
+  const decision = makeDecision({ id: 'tomb-d', type: 'collision_check' });
+  // Run already expired (completedAt 49h ago → expiresAt in the past).
+  const oldCompletedAt = new Date(Date.now() - 49 * 3600 * 1000).toISOString();
+  const run = makeRun({
+    id: 'run-tomb',
+    status: 'done',
+    completedAt: oldCompletedAt,
+    decisions: [decision],
+  });
+
+  mockDoneRuns.push(run);
+  mockRunById.set(run.id, run);
+
+  const idx = new TestDecisionIndex([], [run]);
+  idx.startWarmup();
+  await idx.ready();
+
+  // Tombstone the decision.
+  idx.markResolved('tomb-d');
+  // Verify tombstone is active: the decision must not be in getAll() after resolve.
+  assert.equal(idx.get('tomb-d'), undefined, 'tombstoned decision not visible');
+  // Track tombstone count via private bracket access (compile-only restriction).
+  const tombstones = (idx as unknown as { tombstones: Set<string> }).tombstones;
+  assert.ok(tombstones.size > 0, 'tombstone added after markResolved');
+
+  // Expire the run — should purge the tombstone.
+  idx['handleExpiry']();
+
+  assert.equal(
+    tombstones.size,
+    0,
+    // Revert proof: comment out `for (const id of state.decisions.keys()) this.tombstones.delete(id)`
+    // in handleExpiry. Failing assertion: 'tombstones purged when run expires' actual=1, expected=0.
+    'tombstones purged when run expires',
+  );
+  idx.dispose();
 });
 
 test('A5 (collection-key): {family:decisions,scope:farm} not advanced on data-only change', async () => {

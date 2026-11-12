@@ -2,10 +2,10 @@
  * Pure key and version functions for PR entity-sync (ADR-071 Amendment 3).
  * No dependency on list-cache; imported by both list-cache and pr-entity-sync.
  */
-import { createHash } from 'node:crypto';
-
 import type { PRStatus } from '@farmslot/protocol';
-import { canonicalResourceJson, type ResourceKey } from '@farmslot/protocol/client-cache';
+import { type ResourceKey } from '@farmslot/protocol/client-cache';
+
+import { entityVersionHash } from '../../resources/entity-version-hash.js';
 
 /** prKey is `${repo}/${pr}` — unique within a queryId scope. */
 export function prPrKey(pr: PRStatus): string {
@@ -19,5 +19,5 @@ export function prEntityKey(queryId: string, pr: PRStatus): ResourceKey {
 
 /** Content-hash version for a PR entity. Full sha256 hex (64 chars). Stable across gateway restarts. */
 export function prEntityVersion(pr: PRStatus): string {
-  return createHash('sha256').update(canonicalResourceJson(pr)).digest('hex');
+  return entityVersionHash(pr);
 }

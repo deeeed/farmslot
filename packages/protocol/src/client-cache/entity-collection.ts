@@ -134,6 +134,19 @@ export class EntityCollection<T> {
         const entity = page.entities[i];
         const id = this.options.idOf(entity);
         if (!listed.has(id)) continue;
+        // Skip if the row is already at the currently-listed version.
+        // applyEntity (from a push) may have delivered a newer version while this page
+        // was in-flight: listed snapshot said a:v1, push delivered a@v2, now page
+        // returns a@v1 — do not regress the row back to v1.
+        const currentListedVersion = this.listed?.get(id);
+        const currentRow = this.rows.get(id);
+        if (
+          currentRow !== undefined &&
+          currentListedVersion !== undefined &&
+          currentRow.version === currentListedVersion
+        ) {
+          continue;
+        }
         const v = page.versions.find((e) => e.id === id)?.version ?? listed.get(id) ?? '';
         this.rows.set(id, { entity, version: v });
       }

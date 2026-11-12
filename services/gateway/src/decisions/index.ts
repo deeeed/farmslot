@@ -2,11 +2,12 @@
  * Decision index — pre-enriched PendingDecision entities (ADR-071 Amendment 3).
  *
  * Unit of work is the run, not the individual decision:
- *   rebuildRun(run) enriches the run once and handles all of its decisions.
+ *   rebuildRun(run) enriches once per run; applyRebuildRun commits the result.
  *   reconcileFileDecisions(decisions) diffs the full file-decision set.
  *
- * Ordering: file decisions in scan order, then run decisions in
- * getRunsWithDecisions() order (active runs first, then recent completed).
+ * Ordering: file decisions in scan order, then run decisions — active runs in
+ * the order established at warm-up, then recently completed runs.  Order is
+ * maintained on write (activeRunOrder / doneRunOrder), never re-derived on read.
  *
  * Expiry: one timer re-armed to the earliest run expiry; expired runs are
  * purged automatically without polling the full set.
@@ -15,15 +16,15 @@
  * Per-decision key {family:'decision',decisionId} advances on data change.
  *
  * Failed warm-up rejects ready(), schedules a retry; resolves only on complete build.
+ * Failed run rebuild: reads reject while the error persists; retried on next change +
+ * bounded backoff; cleared on success.
  * Tombstones are bounded to run lifetime and purged on expiry or file-set removal.
  */
 
-import { createHash } from 'node:crypto';
-
 import type { PendingDecision, Run } from '@farmslot/protocol';
-import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 
 import { refreshRetrospectiveFeedback } from '../intelligence/feedback-candidates.js';
+import { entityVersionHash } from '../resources/entity-version-hash.js';
 import { resourceRevisions } from '../resources/revisions.js';
 import { attachReviewRoundBudget } from '../review/review-round-budget.js';
 import { buildRetrospectivePayload } from '../run-completion/orchestrator.js';
@@ -32,10 +33,6 @@ import { inspectedRun } from '../run-engine/gate-inspection.js';
 import { enrichDecisionsWithGateSummary } from '../run-engine/gate-summary.js';
 import { completedDecisionExpiresAt } from '../runs/decision-inbox.js';
 import { getRun, listRuns } from '../runs/store.js';
-
-function entityVersion(entity: PendingDecision): string {
-  return createHash('sha256').update(canonicalResourceJson(entity)).digest('hex').slice(0, 16);
-}
 
 interface DecisionEntry {
   entity: PendingDecision;
@@ -50,6 +47,7 @@ interface RunState {
 }
 
 const WARMUP_RETRY_DELAYS = [30_000, 60_000, 120_000];
+const REBUILD_RETRY_DELAY = 30_000;
 
 /** Active runs + recently completed runs that still have unresolved decisions. */
 function getRunsWithDecisions(): Run[] {
@@ -70,8 +68,24 @@ export class DecisionIndex {
   /** Run decisions: runId → RunState. */
   private readonly runStates = new Map<string, RunState>();
 
+  /**
+   * Ordered run ids for reads — maintained on write, never re-derived.
+   * Active runs come first; done-but-unexpired runs follow.
+   */
+  private activeRunOrder: string[] = [];
+  private doneRunOrder: string[] = [];
+
   /** Tombstoned decision ids (resolved). Bounded: purged when owning run expires. */
   private readonly tombstones = new Set<string>();
+
+  /**
+   * Per-run build errors.  While any run has a failed rebuild, reads throw.
+   * Cleared on the next successful rebuild for that run.
+   */
+  private readonly runErrors = new Map<string, Error>();
+
+  /** Bounded-backoff retry timers for failed run rebuilds. */
+  private readonly runRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   /** Expiry timer for the earliest run expiry. */
   private expiryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -80,6 +94,9 @@ export class DecisionIndex {
   private readyPromise: Promise<void> | undefined;
   private readyResolve: (() => void) | undefined;
   private readyReject: ((err: unknown) => void) | undefined;
+
+  /** Timer handle for the warm-up retry, so dispose() can cancel it. */
+  private warmupRetryTimer: ReturnType<typeof setTimeout> | undefined;
 
   ready(): Promise<void> {
     return this.readyPromise ?? Promise.resolve();
@@ -101,6 +118,16 @@ export class DecisionIndex {
       // Reconcile file decisions as a set.
       this.applyFileDecisionSet(fileDecisions);
 
+      // Pre-populate run order in load order before concurrent enrichment so that
+      // parallel applyRebuildRun completions do not scramble the insertion sequence.
+      this.activeRunOrder = [];
+      this.doneRunOrder = [];
+      for (const run of runs) {
+        const expiresAt = completedDecisionExpiresAt(run);
+        if (expiresAt === undefined) this.activeRunOrder.push(run.id);
+        else this.doneRunOrder.push(run.id);
+      }
+
       // Rebuild each run in batches of 5, yielding between batches.
       for (let i = 0; i < runs.length; i += 5) {
         const batch = runs.slice(i, i + 5);
@@ -110,9 +137,6 @@ export class DecisionIndex {
 
       this.readyResolve?.();
     } catch (err) {
-      console.warn(
-        `[decision-index] warm-up failed (attempt ${retryIndex + 1}): ${(err as Error).message}`,
-      );
       this.readyReject?.(err);
       // Create a new ready promise for the retry.
       const delay = WARMUP_RETRY_DELAYS[Math.min(retryIndex, WARMUP_RETRY_DELAYS.length - 1)];
@@ -120,7 +144,10 @@ export class DecisionIndex {
         this.readyResolve = resolve;
         this.readyReject = reject;
       });
-      setTimeout(() => void this.runWarmup(retryIndex + 1), delay);
+      this.warmupRetryTimer = setTimeout(() => {
+        this.warmupRetryTimer = undefined;
+        void this.runWarmup(retryIndex + 1);
+      }, delay);
     }
   }
 
@@ -153,15 +180,22 @@ export class DecisionIndex {
     try {
       await this.applyRebuildRun(run, gen);
     } catch (err) {
-      console.warn(
-        `[decision-index] rebuildRun ${run.id.slice(0, 8)} failed: ${(err as Error).message}`,
-      );
-      // Failed rebuild: advance collection key without entity so client falls back.
+      // Track the failure so reads reject until the next successful rebuild.
+      this.runErrors.set(run.id, err as Error);
+      // Advance collection key so the client sees the failure state.
       resourceRevisions.advance({ family: 'decisions', scope: 'farm' });
+      // Schedule a bounded-backoff retry if one is not already pending.
+      if (!this.runRetryTimers.has(run.id)) {
+        const timer = setTimeout(() => {
+          this.runRetryTimers.delete(run.id);
+          this.scheduleRebuildForRun(run.id);
+        }, REBUILD_RETRY_DELAY);
+        this.runRetryTimers.set(run.id, timer);
+      }
     }
   }
 
-  private async applyRebuildRun(run: Run, gen?: number): Promise<void> {
+  protected async applyRebuildRun(run: Run, gen?: number): Promise<void> {
     const enrichedRun = enrichDecisionsWithGateSummary(
       await attachReviewRoundBudget(inspectedRun(run)),
     );
@@ -181,7 +215,7 @@ export class DecisionIndex {
       if (payload?.kind === 'retrospective')
         payload = await refreshRetrospectiveFeedback(payload, enrichedRun);
       const entity = pendingDecisionForRun(run, d, payload);
-      newDecisions.set(d.id, { entity, version: entityVersion(entity) });
+      newDecisions.set(d.id, { entity, version: entityVersionHash(entity) });
     }
 
     // Stale generation check again (async calls above may take time).
@@ -189,6 +223,7 @@ export class DecisionIndex {
     if (gen !== undefined && currentAfter?.generation !== gen) return;
 
     const prevDecisions = currentAfter?.decisions ?? new Map<string, DecisionEntry>();
+    const prevExpiresAt = currentAfter?.expiresAt;
     let membershipChanged = false;
 
     // Detect removed decisions (were in prev, not in new).
@@ -224,8 +259,43 @@ export class DecisionIndex {
     };
     this.runStates.set(run.id, updatedState);
 
+    // Clear any previous build error for this run.
+    this.runErrors.delete(run.id);
+
+    // Maintain ordered run lists (active-first, done after).
+    this.updateRunOrder(run.id, prevExpiresAt, expiresAt);
+
     if (membershipChanged) resourceRevisions.advance({ family: 'decisions', scope: 'farm' });
     this.rearmExpiryTimer();
+  }
+
+  /**
+   * Maintain activeRunOrder / doneRunOrder after a rebuild commits.
+   * - New run: added to active or done list.
+   * - Active → done transition: moved from activeRunOrder to doneRunOrder.
+   * - done → active is unexpected; treated as no-op.
+   */
+  private updateRunOrder(
+    runId: string,
+    prevExpiresAt: number | undefined,
+    newExpiresAt: number | undefined,
+  ): void {
+    const inActive = this.activeRunOrder.includes(runId);
+    const inDone = this.doneRunOrder.includes(runId);
+
+    if (!inActive && !inDone) {
+      // New run — add to appropriate list.
+      if (newExpiresAt === undefined) this.activeRunOrder.push(runId);
+      else this.doneRunOrder.push(runId);
+      return;
+    }
+
+    // Handle active → done transition.
+    if (inActive && newExpiresAt !== undefined && prevExpiresAt === undefined) {
+      this.activeRunOrder = this.activeRunOrder.filter((id) => id !== runId);
+      this.doneRunOrder.push(runId);
+    }
+    // done → active is not expected; no-op is safe.
   }
 
   /**
@@ -248,7 +318,7 @@ export class DecisionIndex {
 
     // Added or changed ids.
     for (const [id, entity] of incoming) {
-      const ver = entityVersion(entity);
+      const ver = entityVersionHash(entity);
       if (this.tombstones.has(id)) {
         // Previously resolved; treat the re-appearing file as new.
         this.tombstones.delete(id);
@@ -302,10 +372,11 @@ export class DecisionIndex {
       resourceRevisions.advance({ family: 'decision', decisionId }, 'deleted');
       return;
     }
-    // Remove from any run entries if present.
+    // Advance revision keys for the run decision. Do NOT remove from state.decisions:
+    // getAll() and get() filter tombstoned ids, and handleExpiry purges tombstones by
+    // iterating state.decisions — removing early would orphan the tombstone entry.
     for (const [, state] of this.runStates) {
       if (state.decisions.has(decisionId)) {
-        state.decisions.delete(decisionId);
         resourceRevisions.advance({ family: 'decisions', scope: 'farm' });
         resourceRevisions.advance({ family: 'decision', decisionId }, 'deleted');
         break;
@@ -344,17 +415,22 @@ export class DecisionIndex {
   }
 
   /**
-   * File decisions first (in scan order), then run decisions in
-   * getRunsWithDecisions() order. Matches today's decisionList() output order.
+   * File decisions first (in scan order), then run decisions in write-time order
+   * (active runs first, then recently completed runs).
+   * Throws if any run has a pending rebuild failure.
    */
   getAll(): PendingDecision[] {
+    if (this.runErrors.size > 0) {
+      const [firstError] = this.runErrors.values();
+      throw firstError;
+    }
     const result: PendingDecision[] = [];
     for (const id of this.fileOrder) {
       const e = this.fileDecisions.get(id);
       if (e && !this.tombstones.has(id)) result.push(e.entity);
     }
-    for (const run of getRunsWithDecisions()) {
-      const state = this.runStates.get(run.id);
+    for (const runId of [...this.activeRunOrder, ...this.doneRunOrder]) {
+      const state = this.runStates.get(runId);
       if (!state) continue;
       for (const [id, e] of state.decisions) {
         if (!this.tombstones.has(id)) result.push(e.entity);
@@ -363,14 +439,19 @@ export class DecisionIndex {
     return result;
   }
 
+  /** Throws if any run has a pending rebuild failure. */
   getAllVersions(): Array<{ id: string; version: string }> {
+    if (this.runErrors.size > 0) {
+      const [firstError] = this.runErrors.values();
+      throw firstError;
+    }
     const result: Array<{ id: string; version: string }> = [];
     for (const id of this.fileOrder) {
       const e = this.fileDecisions.get(id);
       if (e && !this.tombstones.has(id)) result.push({ id, version: e.version });
     }
-    for (const run of getRunsWithDecisions()) {
-      const state = this.runStates.get(run.id);
+    for (const runId of [...this.activeRunOrder, ...this.doneRunOrder]) {
+      const state = this.runStates.get(runId);
       if (!state) continue;
       for (const [id, e] of state.decisions) {
         if (!this.tombstones.has(id)) result.push({ id, version: e.version });
@@ -406,10 +487,35 @@ export class DecisionIndex {
         for (const id of state.decisions.keys()) this.tombstones.delete(id);
         if (state.decisions.size > 0) membershipChanged = true;
         this.runStates.delete(runId);
+        // Remove from run order.
+        this.doneRunOrder = this.doneRunOrder.filter((id) => id !== runId);
+        // Also remove from run errors if present.
+        this.runErrors.delete(runId);
+        const retryTimer = this.runRetryTimers.get(runId);
+        if (retryTimer !== undefined) {
+          clearTimeout(retryTimer);
+          this.runRetryTimers.delete(runId);
+        }
       }
     }
     if (membershipChanged) resourceRevisions.advance({ family: 'decisions', scope: 'farm' });
     this.rearmExpiryTimer();
+  }
+
+  /**
+   * Release all timers.  Call at gateway shutdown and in tests after each test.
+   */
+  dispose(): void {
+    if (this.expiryTimer !== undefined) {
+      clearTimeout(this.expiryTimer);
+      this.expiryTimer = undefined;
+    }
+    if (this.warmupRetryTimer !== undefined) {
+      clearTimeout(this.warmupRetryTimer);
+      this.warmupRetryTimer = undefined;
+    }
+    for (const timer of this.runRetryTimers.values()) clearTimeout(timer);
+    this.runRetryTimers.clear();
   }
 }
 
