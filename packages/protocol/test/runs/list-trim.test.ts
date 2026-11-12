@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type {
+  GateSummary,
   ReadyGatePayload,
   ReviewGatePayload,
   Run,
@@ -158,6 +159,36 @@ test('run lists omit output file manifests without changing the retained detail'
 
 // ─── runListRow (slim projection) tests ──────────────────────────────────────
 
+/** A gate summary of realistic weight: what a ready payload and the publish gate both hold. */
+function readyGateSummary(): GateSummary {
+  return {
+    kind: 'publication',
+    headline: 'h'.repeat(1500),
+    worker: { model: 'claude-opus', turns: 12 },
+    review: {
+      reviews: [],
+      passingReviews: 0,
+      totalUnresolved: 0,
+      didAnyReviewTriggerReWork: false,
+    },
+    tokens: {
+      mainWorker: {
+        model: 'claude-opus',
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheCreation: 0,
+        total: 2,
+        turns: 12,
+      },
+      reviews: [],
+      byModel: [],
+      familyTotalTokens: 2,
+      perTurnDetailsAvailable: false,
+    },
+  };
+}
+
 /** One run with every heavy field the slim row drops or reduces, and evidence of each kind. */
 function richRun(): Run {
   return {
@@ -271,7 +302,8 @@ function richRun(): Run {
         id: 'd1',
         type: 'engine_human_gate',
         title: 'Human gate',
-        description: 'd'.repeat(4000),
+        description: 'Review the package and publish it.',
+        selectionData: { selectedEvidenceKeys: ['k'.repeat(900)] },
         createdAt: '2026-11-11T00:00:30.000Z',
         actions: [{ id: 'approve', label: 'Approve', style: 'primary', description: 'Publish' }],
         payload: {
@@ -291,32 +323,7 @@ function richRun(): Run {
           },
           workerReport: 'w'.repeat(8000),
           inputSnapshot: { taskPrompt: 'p'.repeat(8000) },
-          gateSummary: {
-            kind: 'publication',
-            headline: 'h'.repeat(1500),
-            worker: { model: 'claude-opus', turns: 12 },
-            review: {
-              reviews: [],
-              passingReviews: 0,
-              totalUnresolved: 0,
-              didAnyReviewTriggerReWork: false,
-            },
-            tokens: {
-              mainWorker: {
-                model: 'claude-opus',
-                input: 1,
-                output: 1,
-                cacheRead: 0,
-                cacheCreation: 0,
-                total: 2,
-                turns: 12,
-              },
-              reviews: [],
-              byModel: [],
-              familyTotalTokens: 2,
-              perTurnDetailsAvailable: false,
-            },
-          },
+          gateSummary: readyGateSummary(),
           branch: 'feature/x',
           prNumber: null,
           repo: null,
@@ -347,7 +354,9 @@ function richRun(): Run {
       workspaceReviewDispatchGeneration: 3,
       intelligenceAuditDegraded: false,
       reviewedInputs: { fingerprint: 'abc', recordedAt: '2026-11-11' },
+      operatorForceCompleted: true,
       publishGate: {
+        packageHash: 'pkg-1',
         reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
         reviewSequence: [{ runner: 'claude', model: null, effort: null, mode: 'cold' }],
         reviews: [
@@ -403,43 +412,66 @@ test('runListRow keeps only allowed step output keys', () => {
   assert.equal(row.steps[0]?.outputs?.['ignoredField'], undefined);
 });
 
-test('runListRow slims ready payload: drops large content fields, keeps metadata and slims reviews', () => {
+test('a ready payload on a row leaves out only its heavy keys', () => {
   const run = richRun();
-  const row = runListRow(run);
-  const payload = row.decisions[0]?.payload;
-  assert.equal(payload?.kind, 'ready');
-  if (!payload || payload.kind !== 'ready') throw new Error('Expected ready payload');
-  assert.ok(payload.gateReadiness, 'gateReadiness kept');
-  // reviewRoundBudget slimmed to {used, remaining}
-  assert.deepEqual(payload.reviewRoundBudget, { used: 1, remaining: 2 });
-  // workerReport kept as optional (undefined on slim rows that omit it)
-  assert.equal(payload.workerReport, undefined, 'workerReport dropped');
-  // inputSnapshot, prPackage, artifactManifest are omitted from the slim type at runtime
-  assert.equal('inputSnapshot' in payload, false, 'inputSnapshot dropped');
-  assert.equal('prPackage' in payload, false, 'prPackage dropped');
-  assert.equal('artifactManifest' in payload, false, 'artifactManifest dropped');
-  // reviews slimmed via slimReviewStatus (keeps verdict, unresolvedCount, etc.)
-  assert.ok(payload.reviews, 'reviews kept');
+  const full = run.decisions[0]?.payload;
+  const payload = runListRow(run).decisions[0]?.payload;
+  if (full?.kind !== 'ready' || payload?.kind !== 'ready')
+    throw new Error('Expected ready payload');
+  for (const heavy of ['workerReport', 'inputSnapshot', 'gateSummary'])
+    assert.equal(heavy in payload, false, heavy);
+  // Every other key is the run's own: the whole round budget, reviews with their issues.
+  const { workerReport: _report, inputSnapshot: _snapshot, gateSummary: _summary, ...rest } = full;
+  assert.deepEqual(payload, rest);
+  assert.equal(payload.reviewRoundBudget?.limit, 3);
+  assert.equal(payload.reviews?.[0]?.issues?.length, 1);
 });
 
-test('runListRow slims engineState to the allowed subset', () => {
+test('engine state on a row leaves out only the publish gate summary', () => {
   const run = richRun();
+  const state = run.engineState;
+  if (!state?.publishGate) throw new Error('Expected a publish gate');
+  assert.deepEqual(runListRow(run).engineState, state);
+  const summarized: Run = {
+    ...run,
+    engineState: {
+      ...state,
+      publishGate: { ...state.publishGate, gateSummary: readyGateSummary() },
+    },
+  };
+  const row = runListRow(summarized);
+  assert.deepEqual(row.engineState, state);
+  assert.equal(row.detailTrimmed, true);
+});
+
+// The frozen contract: small fields stay. A resolved decision keeps its resolution, an action
+// its description, a no-change payload its reason, and the row says what it left out.
+test('a decision on a row keeps its small fields and leaves out the selection and attestation', () => {
+  const resolved: RunDecision = {
+    id: 'gate',
+    type: 'engine_human_gate',
+    title: 'Publish',
+    description: 'Nothing changed.',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    resolvedAt: '2026-01-01T00:01:00.000Z',
+    resolvedAction: 'close-run',
+    triageAssessmentId: 'triage-1',
+    actions: [
+      { id: 'close-run', label: 'Close', style: 'secondary', description: 'Close the run' },
+    ],
+    selectionData: { feedback: 'f'.repeat(600) },
+    payload: { kind: 'no-change', disposition: 'already_fixed', reason: 'unchanged' },
+  };
+  const run: Run = { ...minRun(), decisions: [resolved] };
   const row = runListRow(run);
-  const es = row.engineState;
-  assert.equal(es?.generation, 5);
-  assert.equal(es?.workspaceReviewDispatchGeneration, 3);
-  assert.equal(es?.intelligenceAuditDegraded, false);
-  assert.equal(es?.reviewedInputs, undefined, 'reviewedInputs dropped');
-  // publishGate: reviewPolicy keeps its two fields (owner chip, mini pipeline numbering)
-  assert.equal(es?.publishGate?.reviewPolicy?.requestedBy, 'dispatch');
-  assert.equal(es?.publishGate?.reviewPolicy?.minimumReviews, 1);
-  // publishGate.reviews: keep slim fields only
-  const rev = es?.publishGate?.reviews?.[0];
-  assert.equal(rev?.id, 'rev-1');
-  assert.equal(rev?.verdict, 'pass');
-  assert.equal(rev?.runner, 'claude');
-  assert.equal(rev?.issues, undefined, 'issues dropped');
-  assert.equal(rev?.artifactPaths, undefined, 'artifactPaths dropped');
+  const { selectionData: _selection, ...kept } = resolved;
+  assert.deepEqual(row.decisions, [kept]);
+  assert.equal(row.detailTrimmed, true);
+  assert.equal(runHasTrimmedDetail(row), true);
+  // A decision that holds neither is served whole, and the row carries no marker.
+  const plain = runListRow({ ...minRun(), decisions: [kept] });
+  assert.deepEqual(plain.decisions, [kept]);
+  assert.equal('detailTrimmed' in plain, false);
 });
 
 test('runListRow does not mutate the stored run', () => {
@@ -537,8 +569,11 @@ test('runListRow serves exactly the kept fields of a rich run, and its evidence 
         id: 'd1',
         type: 'engine_human_gate',
         title: 'Human gate',
+        description: 'Review the package and publish it.',
         createdAt: '2026-11-11T00:00:30.000Z',
-        actions: [{ id: 'approve', label: 'Approve', style: 'primary' }],
+        actions: [{ id: 'approve', label: 'Approve', style: 'primary', description: 'Publish' }],
+        // The decision's selection is gone (the row carries `detailTrimmed`); the payload
+        // lost only its heavy keys, each named here.
         payloadTrimmed: ['workerReport', 'inputSnapshot', 'gateSummary'],
         payload: {
           kind: 'ready',
@@ -547,11 +582,18 @@ test('runListRow serves exactly the kept fields of a rich run, and its evidence 
             identity: { runId: 'slim-test', generation: 1 },
             reasons: [],
           },
+          reviewRoundBudget: {
+            used: 1,
+            remaining: 2,
+            limit: 3,
+            label: 'rounds',
+            noVerdict: 0,
+            noVerdictLimit: 3,
+          },
           branch: 'feature/x',
           prNumber: null,
           repo: null,
           diffStat: { additions: 10, deletions: 2, files: 1 },
-          reviewRoundBudget: { used: 1, remaining: 2 },
           reviews: [
             {
               id: 'pr-rev-1',
@@ -561,6 +603,7 @@ test('runListRow serves exactly the kept fields of a rich run, and its evidence 
               unresolvedCount: 0,
               runner: 'claude',
               model: 'claude-opus',
+              issues: [{ file: 'src/main.ts', description: 'nit' }],
             },
           ],
         },
@@ -573,11 +616,15 @@ test('runListRow serves exactly the kept fields of a rich run, and its evidence 
       artifactManifest: [],
       artifactManifestOmitted: true,
     },
+    // Engine state is the run's own: small flags and the reviews with their issues stay.
     engineState: {
-      intelligenceAuditDegraded: false,
       generation: 5,
       workspaceReviewDispatchGeneration: 3,
+      intelligenceAuditDegraded: false,
+      reviewedInputs: { fingerprint: 'abc', recordedAt: '2026-11-11' },
+      operatorForceCompleted: true,
       publishGate: {
+        packageHash: 'pkg-1',
         reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
         reviewSequence: [{ runner: 'claude', model: null, effort: null, mode: 'cold' }],
         reviews: [
@@ -590,6 +637,8 @@ test('runListRow serves exactly the kept fields of a rich run, and its evidence 
             source: 'dispatch',
             runner: 'claude',
             model: 'claude-opus',
+            issues: [],
+            artifactPaths: ['artifacts/review.md'],
           },
         ],
       },
@@ -607,11 +656,11 @@ test('runListRow serves exactly the kept fields of a rich run, and its evidence 
   });
 });
 
-test('the served row of a rich run is under 3.5 KB, a fraction of the trimmed row', () => {
+test('the served row of a rich run is under 4 KB, a fraction of the trimmed row', () => {
   const run = richRun();
   const served = Buffer.byteLength(JSON.stringify(runListRow(run)));
   const trimmed = Buffer.byteLength(JSON.stringify(trimRunForList(run)));
-  assert.ok(served < 3584, `served row ${served} B`);
+  assert.ok(served < 4096, `served row ${served} B`);
   assert.ok(served * 5 < trimmed, `served ${served} B vs trimmed ${trimmed} B`);
 });
 

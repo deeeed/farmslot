@@ -12,28 +12,15 @@
 // `runListRow` (step 2 slim rows, 2026-11-11) reduces a row further — from
 // 110 KB to 19 KB on average over 81 stored runs — by dropping four heavy optional
 // fields (resourcePosture, sessionUsage, visualJudgmentReceipts, templateProvenance),
-// projecting steps, decisions, and engineState to only the keys list surfaces read,
-// and leaving the heavy keys out of agent contexts, metrics, the ticket, the review
-// result and the review subject. `trimRunForList` is kept as the version basis.
-import type {
-  ReviewStatus,
-  Run,
-  RunDecision,
-  RunDecisionPayload,
-  RunEngineState,
-} from '../contracts/runs.js';
+// keeping only the step outputs list surfaces read, and leaving the heavy keys out of
+// decisions, the publish gate, agent contexts, metrics, the ticket, the review result
+// and the review subject. `trimRunForList` is kept as the version basis.
+import type { Run, RunDecision, RunDecisionPayload } from '../contracts/runs.js';
 import { utf8ByteLength } from '../utf8-byte-length.js';
 
 import { CI_SNAPSHOT_TRIM_KEY } from './ci-decision-context.js';
 import { summarizeRunEvidence } from './evidence-summary.js';
-import type {
-  RunListDecision,
-  RunListDecisionPayload,
-  RunListEngineState,
-  RunListReadyGatePayload,
-  RunListReviewGatePayload,
-  RunListRow,
-} from './list-row.js';
+import type { RunListDecision, RunListDecisionPayload, RunListRow } from './list-row.js';
 
 /** JSON size in UTF-8 bytes above which a single decision payload value is left out of run.list. */
 export const RUN_LIST_PAYLOAD_VALUE_LIMIT = 2048;
@@ -241,155 +228,33 @@ export function listStepOutputs(
   return slim;
 }
 
-function slimDecisionPayload(
+/** A decision's payload as a list row carries it: the heavy keys of its kind left out. */
+function listDecisionPayload(
   payload: RunDecisionPayload | undefined,
 ): RunListDecisionPayload | undefined {
-  if (!payload) return payload;
-  const { kind } = payload;
-  if (kind === 'review') {
-    // ReviewGatePayload: keep gateReadiness and session (no reviewRoundBudget on this type)
-    const { gateReadiness, session } = payload;
-    const slim: RunListReviewGatePayload = {
-      kind,
-      ...(gateReadiness !== undefined ? { gateReadiness } : {}),
-      ...(session !== undefined ? { session } : {}),
-    };
-    return slim;
-  }
-  if (kind === 'ready') {
-    // ReadyGatePayload: keep metadata and display fields; drop the large content fields that only
-    // the detail view renders (workerReport, inputSnapshot, prPackage, etc.). Apply slimReviewStatus
-    // to reviews so stand-in rendering before run.get arrives has correct verdict/unresolvedCount.
+  /* eslint-disable @typescript-eslint/no-unused-vars -- each kind names what it leaves out */
+  if (payload?.kind === 'ready') {
     const {
-      // Large content fields dropped from list rows:
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      workerReport,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      inputSnapshot,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       prPackage,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      artifactManifest,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      ciChecks,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      reviewSummary,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      reviewVerdict,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      workerLearnings,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      acceptanceCriteria,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      acceptanceStatus,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       currentDescription,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      draftEdits,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      reviewLineageOptions,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       recipeJson,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      recipeQualityArtifact,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      qualityReport,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      inputSnapshot,
       gateSummary,
-      // Keep these:
-      reviewRoundBudget,
-      reviews,
-      ...readyRest
+      workerReport,
+      ...kept
     } = payload;
-    const budget = reviewRoundBudget
-      ? { used: reviewRoundBudget.used, remaining: reviewRoundBudget.remaining }
-      : undefined;
-    const slim: RunListReadyGatePayload = {
-      ...readyRest,
-      ...(budget !== undefined ? { reviewRoundBudget: budget } : {}),
-      ...(reviews !== undefined ? { reviews: reviews.map(slimReviewStatus) } : {}),
-    };
-    return slim;
+    return kept;
   }
-  if (kind === 'no-change') {
-    // NoChangeGatePayload: keep gateReadiness + disposition (required field).
-    // The slim object satisfies the full NoChangeGatePayload type (both required fields kept).
-    const { gateReadiness, disposition } = payload;
-    return {
-      kind,
-      disposition,
-      ...(gateReadiness !== undefined ? { gateReadiness } : {}),
-    };
+  if (payload?.kind === 'review') {
+    const { reviewMd, lineComments, ...kept } = payload;
+    return kept;
   }
-  // All other kinds (slot_picker, branch_affinity_nudge, etc.): keep only the discriminant.
-  return { kind };
-}
-
-function slimReviewStatus(review: ReviewStatus): ReviewStatus {
-  return {
-    id: review.id,
-    mode: review.mode,
-    loopNumber: review.loopNumber,
-    verdict: review.verdict,
-    unresolvedCount: review.unresolvedCount,
-    ...(review.source !== undefined ? { source: review.source } : {}),
-    ...(review.runner !== undefined ? { runner: review.runner } : {}),
-    ...(review.model !== undefined ? { model: review.model } : {}),
-    ...(review.maxRetriesExhausted !== undefined
-      ? { maxRetriesExhausted: review.maxRetriesExhausted }
-      : {}),
-    ...(review.session !== undefined ? { session: review.session } : {}),
-    ...(review.attempts !== undefined
-      ? {
-          attempts: review.attempts.map((a) => ({
-            mode: a.mode,
-            loopNumber: a.loopNumber,
-            verdict: a.verdict,
-            unresolvedCount: a.unresolvedCount,
-            ...(a.session !== undefined ? { session: a.session } : {}),
-          })),
-        }
-      : {}),
-  };
-}
-
-function slimEngineState(engineState: RunEngineState | undefined): RunListEngineState | undefined {
-  if (!engineState) return engineState;
-  const { publishGate } = engineState;
-  const slimmedGate: RunListEngineState['publishGate'] = publishGate
-    ? {
-        ...(publishGate.reviewPolicy !== undefined
-          ? {
-              reviewPolicy: publishGate.reviewPolicy,
-            }
-          : {}),
-        ...(publishGate.reviewSequence !== undefined
-          ? { reviewSequence: publishGate.reviewSequence }
-          : {}),
-        ...(publishGate.reviewLaunchRejection !== undefined
-          ? { reviewLaunchRejection: publishGate.reviewLaunchRejection }
-          : {}),
-        ...(publishGate.reviewRecovery !== undefined
-          ? { reviewRecovery: publishGate.reviewRecovery }
-          : {}),
-        ...(publishGate.reviews !== undefined
-          ? { reviews: publishGate.reviews.map(slimReviewStatus) }
-          : {}),
-      }
-    : undefined;
-  return {
-    ...(engineState.intelligenceAuditDegraded !== undefined
-      ? { intelligenceAuditDegraded: engineState.intelligenceAuditDegraded }
-      : {}),
-    ...(engineState.generation !== undefined ? { generation: engineState.generation } : {}),
-    ...(engineState.workspaceReviewDispatchGeneration !== undefined
-      ? { workspaceReviewDispatchGeneration: engineState.workspaceReviewDispatchGeneration }
-      : {}),
-    ...(engineState.evalExperiment !== undefined
-      ? { evalExperiment: engineState.evalExperiment }
-      : {}),
-    ...(slimmedGate !== undefined ? { publishGate: slimmedGate } : {}),
-  };
+  if (payload?.kind === 'retrospective') {
+    const { gateSummary, ...kept } = payload;
+    return kept;
+  }
+  /* eslint-enable @typescript-eslint/no-unused-vars */
+  return payload;
 }
 
 /**
@@ -397,14 +262,12 @@ function slimEngineState(engineState: RunEngineState | undefined): RunListEngine
  *
  * Drops heavy optional fields no list surface reads (`resourcePosture`,
  * `sessionUsage`, `visualJudgmentReceipts`, `templateProvenance`), leaves the
- * output file manifest out as `trimRunForList` does, projects `steps`,
- * `decisions`, and `engineState` to only the keys list consumers actually
- * access, leaves the heavy keys out of the per-run detail fields (marked
- * `detailTrimmed`), and attaches `evidenceSummary` computed from the full run.
- * `trimRunForList` stays as the version basis; this function is applied where
+ * output file manifest out as `trimRunForList` does, keeps the step outputs list
+ * surfaces read, serves decisions as `trimRunForList` does minus their heavy keys,
+ * leaves the heavy keys out of the publish gate and the per-run detail fields
+ * (marked `detailTrimmed`), and attaches `evidenceSummary` computed from the full
+ * run. `trimRunForList` stays as the version basis; this function is applied where
  * rows are served.
- *
- * Returns the honest `RunListRow` type — no forced casts.
  */
 export function runListRow(run: Run): RunListRow {
   // Drop the heavy fields outright (all optional on Run).
@@ -412,8 +275,9 @@ export function runListRow(run: Run): RunListRow {
   const { resourcePosture, sessionUsage, visualJudgmentReceipts, templateProvenance, ...rest } =
     run;
 
-  // Agent contexts, metrics, the ticket, the review result and the review subject leave out
-  // only their heavy keys (see list-row.ts). The row says so when one held something.
+  // Agent contexts, metrics, the ticket, the review result, the review subject, decisions and
+  // the publish gate leave out only their heavy keys (see list-row.ts). The row says so
+  // (`detailTrimmed`) when one held something.
   const heavy: unknown[] = [];
   const agentContexts = run.agentContexts?.map(
     ({
@@ -452,7 +316,6 @@ export function runListRow(run: Run): RunListRow {
     heavy.push(body);
     reviewWorkspaceSubject = subject;
   }
-  const detailTrimmed = heavy.some((value) => value !== undefined);
 
   // Steps keep their timing (list durations, queue waits, progress age) and leave out
   // their inputs; outputs keep only what list surfaces read. A step that lost anything
@@ -463,36 +326,31 @@ export function runListRow(run: Run): RunListRow {
     return { ...step, outputs: slim, ...(lost ? { outputsTrimmed: true as const } : {}) };
   });
 
-  const decisions: RunListDecision[] = run.decisions.map((decision) => {
-    const slimmedPayload = slimDecisionPayload(decision.payload);
-    // Keep context but drop context.checkSnapshot (same as trimDecisionForList) if present
-    let context = decision.context;
-    // Name every payload key the row leaves out, so runHasTrimmedDetail reports the row as
-    // trimmed and readers show those values as not loaded rather than empty.
-    const trimmed = [...(decision.payloadTrimmed ?? [])];
-    for (const key of Object.keys(decision.payload ?? {})) {
-      if (slimmedPayload && !(key in slimmedPayload) && !trimmed.includes(key)) trimmed.push(key);
-    }
-    if (context?.checkSnapshot !== undefined) {
-      context = { ...context };
-      delete context.checkSnapshot;
-      if (!trimmed.includes(CI_SNAPSHOT_TRIM_KEY)) trimmed.push(CI_SNAPSHOT_TRIM_KEY);
-    }
-    const row: RunListDecision = {
-      id: decision.id,
-      type: decision.type,
-      title: decision.title,
-      createdAt: decision.createdAt,
-      ...(decision.resolvedAt !== undefined ? { resolvedAt: decision.resolvedAt } : {}),
-      actions: decision.actions.map((a) => ({ id: a.id, label: a.label, style: a.style })),
-      ...(context !== undefined ? { context } : {}),
+  // A decision is the one trimRunForList serves, without the resolver's selection, the
+  // evidence attestation and its payload's heavy keys, each named in `payloadTrimmed`.
+  const decisions: RunListDecision[] = run.decisions.map((stored) => {
+    const { selectionData, evidenceAttestation, payload, payloadTrimmed, ...decision } =
+      trimDecisionForList(stored);
+    heavy.push(selectionData, evidenceAttestation);
+    const kept = listDecisionPayload(payload);
+    const trimmed = [
+      ...(payloadTrimmed ?? []),
+      ...Object.keys(payload ?? {}).filter((key) => kept && !(key in kept)),
+    ];
+    return {
+      ...decision,
+      ...(kept !== undefined ? { payload: kept } : {}),
       ...(trimmed.length > 0 ? { payloadTrimmed: trimmed } : {}),
-      ...(slimmedPayload !== undefined ? { payload: slimmedPayload } : {}),
     };
-    return row;
   });
 
-  const engineState = slimEngineState(rest.engineState);
+  let engineState: RunListRow['engineState'];
+  if (run.engineState?.publishGate) {
+    const { gateSummary, ...publishGate } = run.engineState.publishGate;
+    heavy.push(gateSummary);
+    engineState = { ...run.engineState, publishGate };
+  }
+  const detailTrimmed = heavy.some((value) => value !== undefined);
   const output = listRunOutput(run);
 
   return {
@@ -500,7 +358,7 @@ export function runListRow(run: Run): RunListRow {
     ...(output !== undefined ? { output } : {}),
     steps,
     decisions,
-    ...(engineState !== undefined ? { engineState } : { engineState: undefined }),
+    ...(engineState !== undefined ? { engineState } : {}),
     ...(agentContexts !== undefined ? { agentContexts } : {}),
     metrics,
     ...(ticketData !== undefined ? { ticketData } : {}),

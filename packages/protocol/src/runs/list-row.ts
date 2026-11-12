@@ -1,17 +1,14 @@
 // runs/list-row.ts — honest slim types for run.list served rows.
 //
-// `RunListRow` is what `run.list` actually serves: a projection of `Run` with
-// heavy optional fields dropped and decisions/engineState narrowed to only the
-// keys list surfaces read.  Every full `Run` satisfies `RunListRow` (every
-// required field that slim keeps is also required or optional on `Run`), so old
-// cached fat rows and new slim rows are both valid `RunListRow` values.
+// `RunListRow` is what `run.list` actually serves: a `Run` without its heavy keys.
+// Every full `Run` satisfies `RunListRow`, so old cached fat rows and new slim rows are
+// both valid `RunListRow` values.
 import type { AgentContext } from '../contracts/agents.js';
 import type { ReviewWorkspaceSubject } from '../contracts/review-workspace.js';
 import type {
-  NoChangeGatePayload,
   ReadyGatePayload,
+  RetrospectivePayload,
   ReviewGatePayload,
-  ReviewPolicy,
   Run,
   RunDecision,
   RunDecisionPayload,
@@ -23,114 +20,48 @@ import type {
 
 import type { RunEvidenceSummary } from './evidence-summary.js';
 
-// ─── Slim payload component types ────────────────────────────────────────────
+// ─── Decisions and engine state ──────────────────────────────────────────────
+//
+// A decision is served as `trimRunForList` serves it (a payload value over
+// RUN_LIST_PAYLOAD_VALUE_LIMIT is left out and named in `payloadTrimmed`), minus the heavy
+// keys below. Each averages over 500 B per stored run and no list surface reads it; every
+// other key is served as the run holds it.
 
-/** Display-only review-round budget kept on slim list rows. */
-export interface RunListReviewRoundBudget {
-  used: number;
-  remaining: number;
-}
-
-/**
- * Slim review policy for list rows: who requested reviews (the policy owner chip) and the
- * minimum (the mini pipeline numbers dispatch review rounds past it).
- */
-export type RunListReviewPolicy = Pick<ReviewPolicy, 'requestedBy' | 'minimumReviews'>;
-
-// ─── Slim payload types ───────────────────────────────────────────────────────
-
-/**
- * Slim review gate payload.  Keeps only the display fields the list renders;
- * the full `ReviewGatePayload` satisfies this type.
- */
-export interface RunListReviewGatePayload {
-  kind: 'review';
-  gateReadiness?: ReviewGatePayload['gateReadiness'];
-  session?: ReviewGatePayload['session'];
-}
-
-/**
- * Slim ready gate payload.  Keeps metadata and display fields; drops the large
- * content fields (workerReport, inputSnapshot, prPackage, reviewMd, ciChecks,
- * etc.) that only the detail view renders.  The full `ReadyGatePayload`
- * satisfies this type.
- */
+/** A ready gate payload on a list row, without its package, snapshots, report and summary. */
 export type RunListReadyGatePayload = Omit<
   ReadyGatePayload,
+  | 'prPackage'
+  | 'currentDescription'
+  | 'recipeJson'
+  | 'inputSnapshot'
   | 'gateSummary'
   | 'workerReport'
-  | 'reviewRoundBudget'
-  | 'inputSnapshot'
-  | 'prPackage'
-  | 'artifactManifest'
-  | 'ciChecks'
-  | 'reviewSummary'
-  | 'reviewVerdict'
-  | 'workerLearnings'
-  | 'acceptanceCriteria'
-  | 'acceptanceStatus'
-  | 'currentDescription'
-  | 'draftEdits'
-  | 'reviewLineageOptions'
-  | 'recipeJson'
-  | 'recipeQualityArtifact'
-  | 'qualityReport'
-> & {
-  /** Absent on slim rows; present on full rows from run.get. */
-  workerReport?: string;
-  /** Display-only budget; large computation fields dropped. */
-  reviewRoundBudget?: RunListReviewRoundBudget;
-};
+>;
 
-/**
- * For unhandled decision kinds the gateway keeps only the discriminant.  Every
- * full payload with one of these kinds satisfies this type (required fields
- * beyond `kind` are extra properties that structural typing ignores when
- * assigning to a narrower type).
- */
-export type RunListUnhandledPayload = {
-  kind: Exclude<RunDecisionPayload['kind'], 'ready' | 'review' | 'no-change'>;
-};
+/** A review gate payload on a list row, without the review's text and line comments. */
+export type RunListReviewGatePayload = Omit<ReviewGatePayload, 'reviewMd' | 'lineComments'>;
 
-/**
- * Decision payload union for run.list rows.
- *
- * - `'review'` → slim: gateReadiness + session only
- * - `'ready'`  → slim: metadata + display fields; large content dropped
- * - `'no-change'` → full type (slim keeps all required fields)
- * - all other kinds → only the discriminant is kept
- */
+/** A retrospective payload on a list row, without its gate summary. */
+export type RunListRetrospectivePayload = Omit<RetrospectivePayload, 'gateSummary'>;
+
+/** A decision payload on a list row: the three kinds above, every other kind whole. */
 export type RunListDecisionPayload =
   | RunListReadyGatePayload
   | RunListReviewGatePayload
-  | NoChangeGatePayload
-  | RunListUnhandledPayload;
+  | RunListRetrospectivePayload
+  | Exclude<RunDecisionPayload, ReadyGatePayload | ReviewGatePayload | RetrospectivePayload>;
 
-// ─── Slim decision type ───────────────────────────────────────────────────────
-
-/**
- * Slim decision for run.list rows. The gateway leaves `description` out and keeps
- * each action's id, label and style; every other field stays. Every full
- * `RunDecision` satisfies `RunListDecision`.
- */
-export type RunListDecision = Omit<RunDecision, 'description' | 'payload'> & {
-  description?: string;
+/** A decision on a list row, without the resolver's selection and the evidence attestation. */
+export type RunListDecision = Omit<
+  RunDecision,
+  'selectionData' | 'evidenceAttestation' | 'payload'
+> & {
   payload?: RunListDecisionPayload;
 };
 
-// ─── Slim engine state ────────────────────────────────────────────────────────
-
-/** Slim publish-gate: uses RunListReviewPolicy instead of the full ReviewPolicy. */
-export type RunListPublishGate = Omit<
-  NonNullable<RunEngineState['publishGate']>,
-  'reviewPolicy'
-> & {
-  reviewPolicy?: RunListReviewPolicy;
-};
-
-/** Slim engine-state for list rows: publishGate uses RunListPublishGate. */
+/** Engine state on a list row, without the publish gate's summary. */
 export type RunListEngineState = Omit<RunEngineState, 'publishGate'> & {
-  publishGate?: RunListPublishGate;
+  publishGate?: Omit<NonNullable<RunEngineState['publishGate']>, 'gateSummary'>;
 };
 
 // ─── Heavy per-run detail left out ───────────────────────────────────────────
@@ -159,9 +90,8 @@ export type RunListReviewWorkspaceSubject = Omit<ReviewWorkspaceSubject, 'body'>
 // ─── RunListRow ───────────────────────────────────────────────────────────────
 
 /**
- * A `run.list` served row: a projection of `Run` with heavy optional fields
- * dropped and decisions/engineState narrowed to only the keys list surfaces
- * actually read.
+ * A `run.list` served row: a `Run` without its heavy keys, with the step outputs
+ * list surfaces read.
  *
  * Every full `Run` satisfies `RunListRow`, so old cached fat rows and new slim
  * rows are both valid `RunListRow` values.  `evidenceSummary` is a served-only
@@ -190,8 +120,9 @@ export type RunListRow = Omit<
   reviewResult?: RunListReviewResult;
   reviewWorkspaceSubject?: RunListReviewWorkspaceSubject;
   /**
-   * Set only on a served row that left out a heavy agent-context, metrics, ticket,
-   * review-result or review-subject key (see `payloadTrimmed` on decisions and
+   * Set only on a served row that left out a heavy key outside decision payloads and step
+   * outputs: on an agent context, the metrics, the ticket, the review result, the review
+   * subject, a decision or the publish gate (see `payloadTrimmed` on decisions and
    * `outputsTrimmed` on steps). A reader that needs one fetches the run.
    */
   detailTrimmed?: true;

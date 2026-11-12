@@ -628,3 +628,44 @@ test('the active review label is the same from the served row, the full run and 
   assert.equal(activePublicationReviewLabel(row), expected);
   assert.equal(activePublicationReviewLabel(trimRunForList(full)), expected);
 });
+
+// Review round 1's two inputs: the label reads a review's retry cap, retry count and issues,
+// which a served row carries whole.
+test('the gate label for a review at its retry cap is the same from the served row and the full run', () => {
+  const gated = (review: ReviewStatus): Run => ({
+    id: 'run-gate',
+    familyId: 'family-gate',
+    lane: 'production',
+    flowType: 'fix-bug',
+    status: 'human-gating',
+    project: 'farm',
+    ticketOrPr: 'owner/repo#4',
+    slotId: 'slot-1',
+    branch: null,
+    taskFile: null,
+    steps: [{ name: 'human-gate', status: 'running' }],
+    decisions: [],
+    engineState: { publishGate: { reviews: [review] } },
+    metrics: { nudgeCount: 0, model: null, runner: null },
+    createdAt: '2026-11-01T00:00:00.000Z',
+    updatedAt: '2026-11-01T00:00:00.000Z',
+  });
+  const review = { id: 'rev-1', mode: 'cold' as const, loopNumber: 1, verdict: 'issues' as const };
+  const exhausted = gated({
+    ...review,
+    unresolvedCount: 0,
+    issues: [{ file: 'src/main.ts', description: 'Unhandled error' }],
+    maxRetries: 2,
+    retryCount: 2,
+  });
+  assert.equal(compactHumanGateLabel(exhausted), 'review retries exhausted');
+  assert.equal(compactHumanGateLabel(runListRow(exhausted)), 'review retries exhausted');
+  const uncapped = gated({
+    ...review,
+    unresolvedCount: 1,
+    maxRetries: 0,
+    maxRetriesExhausted: true,
+  });
+  assert.equal(compactHumanGateLabel(uncapped), 'review blocked');
+  assert.equal(compactHumanGateLabel(runListRow(uncapped)), 'review blocked');
+});
