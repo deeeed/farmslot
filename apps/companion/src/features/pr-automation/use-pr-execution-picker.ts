@@ -31,6 +31,7 @@ export function usePRExecutionPicker(
           allowSequence: true,
           sequenceRole: 'execution-alternatives',
           workflow,
+          allowFreshChain: reviewMode !== undefined && workflow !== 'qa',
           reviewContext,
           reviewLineages,
         },
@@ -48,13 +49,20 @@ export function usePRExecutionPicker(
     if (
       previousContext.current === reviewContext &&
       previousLineages.current === reviewLineages &&
-      picker.context.workflow === workflow
+      picker.context.workflow === workflow &&
+      picker.context.allowFreshChain === (reviewMode !== undefined && workflow !== 'qa')
     )
       return;
-    picker.setContext({ ...picker.context, reviewContext, reviewLineages, workflow });
+    picker.setContext({
+      ...picker.context,
+      reviewContext,
+      reviewLineages,
+      workflow,
+      allowFreshChain: reviewMode !== undefined && workflow !== 'qa',
+    });
     previousContext.current = reviewContext;
     previousLineages.current = reviewLineages;
-  }, [picker, reviewContext, reviewLineages, workflow]);
+  }, [picker, reviewContext, reviewLineages, workflow, reviewMode]);
   const resources = useRef(new Map<number, ReviewDispatchExecutionResources>());
   const previousModels = useRef(value.models);
   const previousMode = useRef(reviewMode);

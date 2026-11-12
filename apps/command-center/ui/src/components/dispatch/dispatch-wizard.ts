@@ -1711,6 +1711,15 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _syncWorkflowSelection(): void {
+    const freshAllowed = this._flowType === 'review-pr';
+    if (this._executionPicker.context.allowFreshChain !== freshAllowed) {
+      const context = this._executionPicker.toReviewContext();
+      this._executionPicker.setContext({
+        ...this._executionPicker.context,
+        allowFreshChain: freshAllowed,
+        reviewContext: context?.freshChain && !freshAllowed ? undefined : context,
+      });
+    }
     const pr =
       parseGitHubRef(this._normalizedTicket || this._ticketId) ??
       parseGitHubPullUrl(this._ticketId);

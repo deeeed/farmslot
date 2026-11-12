@@ -3,11 +3,13 @@ import test from 'node:test';
 
 import {
   assertPRExecutionProfile,
+  assertPRReviewOptions,
   type ReviewSelection,
   type ReviewSessionTrace,
   type Run,
   type RunnerModelCatalogResult,
   type RunnerVisibleModelState,
+  samePRReviewOptions,
 } from '@farmslot/protocol';
 
 import {
@@ -20,6 +22,7 @@ import {
   createReviewDispatchCatalog,
   executionModelFromSelection,
   executionModelsFromReviewSequence,
+  parseReviewRequestContext,
   parseReviewSequence,
   resolveReviewDispatchDefaults,
   resolveReviewMode,
@@ -1012,4 +1015,76 @@ test('selecting a retained WARM review fills its settings and refuses an unavail
   assert.equal(vm.canInvoke('request-review'), false);
   assert.match(vm.errors[0], /cannot be resumed/);
   assert.throws(() => vm.toRequestPayload(), /cannot be resumed/);
+});
+
+test('fresh review-pr selection clears lineage, selects COLD and survives serialization', () => {
+  const vm = new ReviewDispatchViewModel({
+    context: {
+      allowedActions: ['configure'],
+      allowFreshChain: true,
+      sequenceRole: 'execution-alternatives',
+      reviewLineages: [lineage],
+    },
+    sequence: [warm],
+  });
+  vm.setFreshChain(true);
+  assert.equal(vm.selection?.mode, 'cold');
+  assert.equal(vm.rows[0].context, null);
+  const context = vm.toReviewContext();
+  assert.deepEqual(context, { freshChain: true, reviewLineages: [null] });
+  assert.deepEqual(parseReviewRequestContext(context, 1), context);
+  assert(
+    samePRReviewOptions(
+      { mode: 'cold', reviewContext: context },
+      { mode: 'cold', reviewContext: parseReviewRequestContext(context, 1) },
+    ),
+  );
+  assertPRReviewOptions({ mode: 'cold', reviewContext: context });
+  assert(
+    !samePRReviewOptions(
+      { mode: 'cold', reviewContext: context },
+      { mode: 'cold', reviewContext: { reviewLineages: [null] } },
+    ),
+  );
+  assert.equal(vm.canInvoke('configure'), true);
+  vm.setContext({ ...vm.context, allowSequence: true });
+  vm.addRow();
+  assert.deepEqual(vm.toReviewContext(), { freshChain: true, reviewLineages: [null, null] });
+  assert(vm.rows.every((row) => row.context === null && row.selection.mode === 'cold'));
+  assert.throws(
+    () => assertPRReviewOptions({ mode: 'warm', reviewContext: context }),
+    /requires COLD/,
+  );
+  assert.throws(
+    () => assertPRReviewOptions({ mode: 'cold', workflow: 'qa', reviewContext: context }),
+    /static review-pr/,
+  );
+  vm.setFreshChain(false);
+  assert.equal(vm.toReviewContext(), undefined);
+  assert.equal(vm.selection?.mode, 'cold');
+});
+
+test('fresh chains reject retained input and cannot be requested at a publication gate', () => {
+  assert.throws(
+    () => parseReviewRequestContext({ freshChain: true, reviewLineages: [lineage] }),
+    /without a retained lineage/,
+  );
+  assert.throws(
+    () => parseReviewRequestContext({ freshChain: 'true', reviewLineages: [null] }),
+    /must be boolean/,
+  );
+  assert.throws(
+    () =>
+      assertReviewRequestPayload({
+        ...cold,
+        context: { freshChain: true, reviewLineages: [null] },
+      }),
+    /new review-pr request/,
+  );
+  const gate = new ReviewDispatchViewModel({
+    context: { allowedActions: ['request-review'] },
+    sequence: [cold],
+  });
+  assert.equal(gate.canStartFreshChain, false);
+  assert.throws(() => gate.setFreshChain(true), /unavailable/);
 });

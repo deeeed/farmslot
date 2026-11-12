@@ -70,6 +70,15 @@ export function ReviewDispatchPicker({
       {triggerLabel ? (
         <Choice label="Close review setup" disabled={disabled} onPress={() => changeOpen(false)} />
       ) : null}
+      {model.canStartFreshChain && (
+        <Choice
+          label={model.freshChainLabel}
+          testID={`${testID}-fresh-chain`}
+          selected={model.freshChain}
+          disabled={disabled}
+          onPress={() => change(() => model.setFreshChain(!model.freshChain))}
+        />
+      )}
       {model.rows.map((row, index) => {
         const runner = model.catalog.runners.find((entry) => entry.id === row.selection.runner);
         const executionDisabled = disabled || model.executionLocked(row.id);
@@ -215,7 +224,7 @@ export function ReviewDispatchPicker({
                       label={mode.toUpperCase()}
                       testID={`${testID}-mode-${index}-${mode}`}
                       selected={row.selection.mode === mode}
-                      disabled={disabled}
+                      disabled={disabled || model.freshChain}
                       onPress={() => change(() => model.setMode(row.id, mode))}
                     />
                   ))}

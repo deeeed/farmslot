@@ -76,11 +76,13 @@ export class PRExecutionPicker extends LitElement {
     if (
       changed.has('value') ||
       changed.has('reviewMode') ||
+      changed.has('review') ||
       changed.has('reviewContext') ||
       changed.has('reviewLineages')
     ) {
       this.viewModel.setContext({
         ...this.viewModel.context,
+        allowFreshChain: this.review,
         reviewContext: this.reviewContext,
         reviewLineages: this.reviewLineages,
       });

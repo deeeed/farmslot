@@ -5,6 +5,7 @@ import {
   type PRTeamConfig,
   type PRTriggerRuleConfig,
 } from '../contracts/pr-rules.js';
+import { assertFreshReviewChainSelection } from '../runs/review-chain.js';
 
 import {
   assertMonitoredPRIdentity,
@@ -55,9 +56,15 @@ export function assertPRReviewOptions(value: unknown): asserts value is PRReview
     throw new Error('Review mode must be warm or cold');
   if (value.reviewContext !== undefined) {
     record(value.reviewContext, 'review context');
-    keys(value.reviewContext, ['reviewLineages']);
+    keys(value.reviewContext, ['reviewLineages', 'freshChain']);
     if (!Array.isArray(value.reviewContext.reviewLineages))
       throw new Error('reviewLineages must be an array');
+    assertFreshReviewChainSelection({
+      freshChain: value.reviewContext.freshChain,
+      reviewLineages: value.reviewContext.reviewLineages,
+      mode: value.mode,
+      workflow: value.workflow,
+    });
     for (const lineage of value.reviewContext.reviewLineages) {
       if (lineage === null) continue;
       record(lineage, 'review lineage');

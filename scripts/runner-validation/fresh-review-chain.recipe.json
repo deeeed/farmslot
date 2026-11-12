@@ -1,0 +1,28 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Fresh review-pr chain request and task inputs",
+  "description": "An isolated authenticated gateway and checkout-local CLI prove the fresh-chain flag, persistence, predecessor exclusion and conflicting-request refusal. A separate manual task writer check proves the absence of prior-review input and instructions. No reviewer, product run or provider write occurs.",
+  "workflow": {
+    "entry": "request-policy",
+    "nodes": {
+      "request-policy": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json FARMSLOT_FRESH_CHAIN_RPC_OUT=temp/fresh-review-chain/rpc.json node --import tsx --experimental-test-module-mocks --test services/gateway/src/review-workspaces/fresh-chain.rpc.live.ts",
+        "timeout_ms": 240000,
+        "intent": "Create an isolated review request through the actual CLI and gateway, keep fresh selection on disk, reject inherited lineage and keep previous runs unchanged.",
+        "next": "task-inputs"
+      },
+      "task-inputs": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json FARMSLOT_FRESH_CHAIN_MATERIALIZATION_OUT=temp/fresh-review-chain/materialization.json node --import tsx --test services/gateway/src/review-workspaces/fresh-chain.live.ts",
+        "timeout_ms": 180000,
+        "intent": "Materialize the existing static review task without a previous-review file or instruction.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

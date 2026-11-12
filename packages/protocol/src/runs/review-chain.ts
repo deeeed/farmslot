@@ -8,6 +8,24 @@ import type {
 } from '../contracts/index.js';
 import { isTerminalRunStatus } from '../contracts/runs.js';
 
+interface FreshReviewChainSelection {
+  freshChain?: unknown;
+  reviewLineages: readonly unknown[];
+  mode?: unknown;
+  workflow?: unknown;
+}
+
+/** Shared validation for an explicit independent review-pr request. */
+export function assertFreshReviewChainSelection(selection: FreshReviewChainSelection): void {
+  if (selection.freshChain !== undefined && typeof selection.freshChain !== 'boolean')
+    throw new Error('freshChain must be boolean');
+  if (!selection.freshChain) return;
+  if (selection.mode === 'warm' || selection.reviewLineages.some(Boolean))
+    throw new Error('A fresh review chain requires COLD without a retained lineage');
+  if (selection.workflow === 'qa')
+    throw new Error('A fresh review chain applies only to static review-pr requests');
+}
+
 export function reviewResultForRun(
   run: Pick<Run, 'decisions' | 'reviewResult'>,
 ): RunReviewResult | null {

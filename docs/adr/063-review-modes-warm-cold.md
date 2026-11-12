@@ -620,3 +620,39 @@ Retained validated contexts and recorded review results preserve historical char
 ### Consequences
 
 The optional disposition kind gains `pending` and `verdict`. A legacy no-kind disposition still denotes a no-verdict outcome. The shared projection and gateway ingestion use the same classification. The [normative review contract](../reference/review-modes-warm-cold.md#verdict-based-charging) defines transitions and compatibility. No command or flag is added.
+
+## Amendment 12: explicitly start a fresh review-pr chain, 2026-11-12
+
+**Status:** Proposed implementation of the lead's fresh-chain direction.
+**Specification:** [Fresh review chains](../reference/review-modes-warm-cold.md#fresh-review-chains).
+
+### Decision
+
+A new `review-pr` request may explicitly start a fresh review chain. It uses a
+new reviewer session and the full frozen contribution, without a previous
+review's findings, verdict, artifacts, generation history or session as input.
+The old run and chain remain unchanged and discoverable as history.
+
+COLD continues to mean a new session in the existing chain when a predecessor
+exists. WARM retains its explicit lineage. A fresh chain requires COLD and no
+retained lineage. Publication-gate continuations keep their current contract.
+The new request has its existing independent review-pr budget; this choice does
+not reset a running request or grant rounds.
+
+### Rationale and consequences
+
+A new session can still read and follow the preceding review through
+`inputs/prior-review.json`. An explicit fresh chain lets an operator request an
+independent assessment without changing existing continuation behavior.
+
+### Public surface
+
+Add optional `ReviewRequestContext.freshChain` in `@farmslot/protocol`, carried
+by the existing run-create and PR-review options. The shared picker exposes it
+only for new review-pr requests; Command Center and Companion render the same
+choice. The checkout-local CLI adds `run create --fresh-review-chain`.
+The protocol export `assertFreshReviewChainSelection` validates this choice for
+PR option parsing, shared picker validation and gateway admission. Its consumers
+share the same COLD/no-lineage rule. Omitting the choice retains current behavior.
+No new RPC, review mode or harness extension is introduced. Publication-gate
+requests reject this policy.

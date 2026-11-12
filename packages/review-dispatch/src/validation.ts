@@ -1,4 +1,5 @@
 import {
+  assertFreshReviewChainSelection,
   isReviewMode,
   type ReviewContinuationContext,
   type ReviewPolicy,
@@ -83,6 +84,8 @@ export function assertReviewRequestPayload(
       value.context,
       1 + (Array.isArray(value.sequence) ? value.sequence.length : 0),
     );
+  if (value.context?.freshChain)
+    throw new Error('A fresh review chain applies only to a new review-pr request');
   if (value.sequence !== undefined) {
     assertReviewSequence(value.sequence, { ...reviewOptions, allowEmpty: true });
     const maxRows = sequenceMaximumRows(reviewOptions);
@@ -178,12 +181,16 @@ export function assertReviewRequestContext(
   rows?: number,
 ): asserts value is ReviewRequestContext {
   record(value, 'Review request context');
-  exactKeys(value, ['reviewLineages'], 'Review request context');
+  exactKeys(value, ['reviewLineages', 'freshChain'], 'Review request context');
   if (
     !Array.isArray(value.reviewLineages) ||
     (rows !== undefined && value.reviewLineages.length !== rows)
   )
     throw new Error('Review lineage context must align with every sequence row');
+  assertFreshReviewChainSelection({
+    freshChain: value.freshChain,
+    reviewLineages: value.reviewLineages,
+  });
   value.reviewLineages.forEach((lineage) => {
     if (lineage !== null) assertReviewContinuationContext(lineage);
   });
@@ -192,6 +199,7 @@ export function parseReviewRequestContext(value: unknown, rows?: number): Review
   assertReviewRequestContext(value, rows);
   return {
     reviewLineages: value.reviewLineages.map((lineage) => (lineage ? { ...lineage } : null)),
+    ...(value.freshChain ? { freshChain: true } : {}),
   };
 }
 
