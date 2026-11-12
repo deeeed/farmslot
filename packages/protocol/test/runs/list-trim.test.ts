@@ -8,9 +8,12 @@ import type {
   RunDecision,
   RunDecisionPayload,
 } from '../../src/contracts/index.js';
+import { hasUnsettledRunExecution } from '../../src/contracts/runs.js';
 import { runListEvidenceSummary, summarizeRunEvidence } from '../../src/runs/evidence-summary.js';
 import {
+  listStepOutputs,
   RUN_LIST_PAYLOAD_VALUE_LIMIT,
+  runHasTrimmedDetail,
   runListRow,
   trimDecisionForList,
   trimRunForList,
@@ -335,9 +338,9 @@ test('runListRow slims engineState to the allowed subset', () => {
   assert.equal(es?.workspaceReviewDispatchGeneration, 3);
   assert.equal(es?.intelligenceAuditDegraded, false);
   assert.equal(es?.reviewedInputs, undefined, 'reviewedInputs dropped');
-  // publishGate: reviewPolicy keeps only requestedBy
+  // publishGate: reviewPolicy keeps its two fields (owner chip, mini pipeline numbering)
   assert.equal(es?.publishGate?.reviewPolicy?.requestedBy, 'dispatch');
-  assert.equal(es?.publishGate?.reviewPolicy?.minimumReviews, undefined);
+  assert.equal(es?.publishGate?.reviewPolicy?.minimumReviews, 1);
   // publishGate.reviews: keep slim fields only
   const rev = es?.publishGate?.reviews?.[0];
   assert.equal(rev?.id, 'rev-1');
@@ -388,6 +391,7 @@ test('runListRow serves exactly the kept fields of a rich run, and its evidence 
         title: 'Human gate',
         createdAt: '2026-11-11T00:00:30.000Z',
         actions: [{ id: 'approve', label: 'Approve', style: 'primary' }],
+        payloadTrimmed: ['workerReport', 'inputSnapshot'],
         payload: {
           kind: 'ready',
           gateReadiness: {
@@ -426,7 +430,7 @@ test('runListRow serves exactly the kept fields of a rich run, and its evidence 
       generation: 5,
       workspaceReviewDispatchGeneration: 3,
       publishGate: {
-        reviewPolicy: { requestedBy: 'dispatch' },
+        reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
         reviewSequence: [{ runner: 'claude', model: null, effort: null, mode: 'cold' }],
         reviews: [
           {
@@ -481,4 +485,73 @@ test('the served evidence summary is computed from the full run, not from the sl
   assert.ok(evidenceSummary);
   assert.equal(summarizeRunEvidence(withoutSummary).artifactCount, 0);
   assert.equal(runListEvidenceSummary(row), evidenceSummary);
+});
+
+test('a slim row reports itself trimmed and names the payload keys it left out', () => {
+  const run = richRun();
+  const row = runListRow(run);
+  assert.equal(runHasTrimmedDetail(row), true);
+  assert.deepEqual(row.decisions[0]?.payloadTrimmed, ['workerReport', 'inputSnapshot']);
+  // The full run reports nothing trimmed.
+  assert.equal(runHasTrimmedDetail(run), false);
+});
+
+test('list step outputs keep each read key in its bounded shape and drop the rest', () => {
+  assert.deepEqual(
+    listStepOutputs({
+      phase: 'fixing',
+      fixInProgress: true,
+      nextPollAt: null,
+      actionableBotCommentCount: 2,
+      checkSummary: { passed: 3, failed: 1, pending: 0, total: 4, perCheck: [{ log: 'x' }] },
+      failedNames: ['lint', { name: 'scan', log: 'x'.repeat(100) }],
+      failedChecks: ['lint'],
+      fixProgress: { completed: 1, total: 3, currentLabel: 'Fix lint', history: ['a', 'b'] },
+      checkTimeline: [{ timestamp: 't', status: 'failed' }],
+      verdict: 'issues',
+      reviewVerdict: { nested: true },
+      gatePrerequisiteRefusal: { code: 'EVIDENCE', reasons: ['r'.repeat(500)] },
+      packageHash: 'a'.repeat(64),
+    }),
+    {
+      phase: 'fixing',
+      fixInProgress: true,
+      nextPollAt: null,
+      actionableBotCommentCount: 2,
+      checkSummary: { passed: 3, failed: 1, pending: 0, total: 4 },
+      failedNames: ['lint'],
+      failedChecks: ['lint'],
+      fixProgress: { completed: 1, total: 3, currentLabel: 'Fix lint' },
+      verdict: 'issues',
+      gatePrerequisiteRefusal: {},
+      packageHash: 'a'.repeat(64),
+    },
+  );
+});
+
+test('a refused completion keeps its run unsettled on the served row, as on the full run', () => {
+  const refused: Run = {
+    ...minRun(),
+    status: 'failed',
+    steps: [
+      {
+        name: 'complete',
+        status: 'failed',
+        outputs: { gatePrerequisiteRefusal: { code: 'EVIDENCE', detail: 'd'.repeat(3000) } },
+      },
+    ],
+  };
+  assert.equal(hasUnsettledRunExecution(refused), true);
+  assert.equal(hasUnsettledRunExecution(runListRow(refused)), true);
+  const discarded: Run = {
+    ...refused,
+    steps: [
+      {
+        name: 'complete',
+        status: 'failed',
+        outputs: { gatePrerequisiteRefusal: {}, gatePrerequisiteDiscardedAt: 'now' },
+      },
+    ],
+  };
+  assert.equal(hasUnsettledRunExecution(runListRow(discarded)), false);
 });

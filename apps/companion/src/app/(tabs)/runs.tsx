@@ -11,6 +11,7 @@ import {
   normalizeRunTags,
   runDisplayStatus,
   type RunFamilyGroup,
+  runListEvidenceSummary,
   type RunListRow,
   selectRecentRunFamilyGroups,
   selectRunList,
@@ -39,7 +40,6 @@ import {
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
   groupVisualArtifactPairs,
 } from '../../lib/artifact-url';
-import { diffArtifactCandidate } from '../../lib/diff';
 import { runWorkspacePathnameForStatus } from '../../lib/legacy-run-route';
 import { openNativeRunHistory } from '../../lib/run-collections';
 import {
@@ -440,7 +440,8 @@ function RecentFamilyShortcut({
     artifactUrlForEntry(gatewayUrl, run.id, artifact),
   );
   const primaryVisualPair = visualPairSummary.pairs[0] ?? null;
-  const diffArtifactPath = diffArtifactCandidate(artifactManifest)?.path ?? null;
+  // The gateway's summary names the diff file; a row cached before slim rows computes it.
+  const diffArtifactPath = runListEvidenceSummary(run).diffArtifactPath ?? null;
   const canOpenDiff = Boolean(diffArtifactPath || run.slotId);
   const readyDecision = selectReadyWorkspaceDecision(run);
   const reviewGateDecision = selectReviewGateWorkspaceDecision(run);

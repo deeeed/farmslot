@@ -9,6 +9,7 @@ import type {
   NoChangeGatePayload,
   ReadyGatePayload,
   ReviewGatePayload,
+  ReviewPolicy,
   Run,
   RunDecision,
   RunDecisionPayload,
@@ -26,13 +27,10 @@ export interface RunListReviewRoundBudget {
 }
 
 /**
- * Slim review policy for list rows.  `minimumReviews` is optional because the
- * gateway only keeps `requestedBy` to show the policy owner chip.
+ * Slim review policy for list rows: who requested reviews (the policy owner chip) and the
+ * minimum (the mini pipeline numbers dispatch review rounds past it).
  */
-export interface RunListReviewPolicy {
-  requestedBy: 'dispatch' | 'human-gate' | 'agent-gate';
-  minimumReviews?: number;
-}
+export type RunListReviewPolicy = Pick<ReviewPolicy, 'requestedBy' | 'minimumReviews'>;
 
 // ─── Slim payload types ───────────────────────────────────────────────────────
 

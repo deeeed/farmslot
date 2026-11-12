@@ -88,7 +88,7 @@ export function trimRunForList(run: Run): Run {
  * drawn from such a row reads them from the run's direct `run.get` copy, and shows them as not
  * loaded until then rather than as empty.
  */
-export function runHasTrimmedDetail(run: Pick<Run, 'decisions' | 'output'>): boolean {
+export function runHasTrimmedDetail(run: Pick<RunListRow, 'decisions' | 'output'>): boolean {
   return (
     Boolean(run.output?.artifactManifestOmitted) ||
     (run.decisions ?? []).some((decision) => (decision.payloadTrimmed?.length ?? 0) > 0)
@@ -97,26 +97,98 @@ export function runHasTrimmedDetail(run: Pick<Run, 'decisions' | 'output'>): boo
 
 // ─── Step-2 slim projection ───────────────────────────────────────────────────
 
-/** Step output keys that list surfaces actually read (slot-resolution, run-activity, run-pipeline-mini). */
-const STEP_OUTPUT_ALLOWLIST = new Set([
-  'awaitingOperator',
-  'reason',
-  'selectedSlot',
-  'runner',
-  'model',
-  'templateName',
-  'gatePrerequisiteDiscardedAt',
-  'promptDeliveryUncertain',
-  'nativeWorkerOperationUncertain',
-]);
+/** A string, number, boolean or null; anything else is left out. */
+function scalarOutput(value: unknown): unknown {
+  return value === null || ['string', 'number', 'boolean'].includes(typeof value)
+    ? value
+    : undefined;
+}
 
-function slimStepOutputs(
+/** The string entries of an array (CI check names); anything else is left out. */
+function stringEntriesOutput(value: unknown): unknown {
+  return Array.isArray(value) ? value.filter((entry) => typeof entry === 'string') : undefined;
+}
+
+/** A ci-watch check summary: only its counts. */
+function checkSummaryOutput(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return undefined;
+  const counts: Record<string, number> = {};
+  for (const key of ['passed', 'failed', 'pending', 'skipped', 'total']) {
+    const count: unknown = Reflect.get(value, key);
+    if (typeof count === 'number') counts[key] = count;
+  }
+  return counts;
+}
+
+/** A ci-watch fix's progress: completed and total steps, and the current step's label. */
+function fixProgressOutput(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return undefined;
+  const completed: unknown = Reflect.get(value, 'completed');
+  const total: unknown = Reflect.get(value, 'total');
+  const currentLabel: unknown = Reflect.get(value, 'currentLabel');
+  return {
+    ...(typeof completed === 'number' ? { completed } : {}),
+    ...(typeof total === 'number' ? { total } : {}),
+    ...(typeof currentLabel === 'string' || currentLabel === null ? { currentLabel } : {}),
+  };
+}
+
+/** A recorded value whose presence lists test, not its body: a scalar, or `{}` for an object. */
+function presenceOutput(value: unknown): unknown {
+  const scalar = scalarOutput(value);
+  return scalar !== undefined ? scalar : value === undefined ? undefined : {};
+}
+
+const keepOutput = (value: unknown) => value;
+
+/**
+ * Step output keys list surfaces read, each in the bounded shape those views read:
+ * slot resolution and run activity (dispatch keys); the mini pipeline's tone and step
+ * tooltip (`verdict`, `reviewVerdict`, `maxRetriesExhausted`, `packageHash`,
+ * `reviewSatisfied`, `resolvedAction`, `publicationStatus`); the CI watch line and the
+ * CI-fix checklist (ci-watch keys); the active and split-view filters, which test only
+ * whether a completion prerequisite was refused (`gatePrerequisiteRefusal`).
+ */
+const STEP_OUTPUT_PROJECTIONS: Record<string, (value: unknown) => unknown> = {
+  awaitingOperator: keepOutput,
+  reason: keepOutput,
+  selectedSlot: keepOutput,
+  runner: keepOutput,
+  model: keepOutput,
+  templateName: keepOutput,
+  gatePrerequisiteDiscardedAt: keepOutput,
+  gatePrerequisiteRefusal: presenceOutput,
+  promptDeliveryUncertain: keepOutput,
+  nativeWorkerOperationUncertain: keepOutput,
+  verdict: scalarOutput,
+  reviewVerdict: scalarOutput,
+  maxRetriesExhausted: scalarOutput,
+  packageHash: scalarOutput,
+  reviewSatisfied: scalarOutput,
+  resolvedAction: scalarOutput,
+  publicationStatus: scalarOutput,
+  phase: scalarOutput,
+  fixInProgress: scalarOutput,
+  nextPollAt: scalarOutput,
+  progressTimeoutAt: scalarOutput,
+  totalTimeoutAt: scalarOutput,
+  actionableBotCommentCount: scalarOutput,
+  checkSummary: checkSummaryOutput,
+  failedNames: stringEntriesOutput,
+  failedChecks: stringEntriesOutput,
+  fixProgress: fixProgressOutput,
+};
+
+/** A step's outputs as a list row carries them (see STEP_OUTPUT_PROJECTIONS). */
+export function listStepOutputs(
   outputs: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
   if (!outputs) return outputs;
   const slim: Record<string, unknown> = {};
   for (const key of Object.keys(outputs)) {
-    if (STEP_OUTPUT_ALLOWLIST.has(key)) slim[key] = outputs[key];
+    const project = STEP_OUTPUT_PROJECTIONS[key];
+    const value = project ? project(outputs[key]) : undefined;
+    if (value !== undefined) slim[key] = value;
   }
   return slim;
 }
@@ -238,9 +310,7 @@ function slimEngineState(engineState: RunEngineState | undefined): RunListEngine
     ? {
         ...(publishGate.reviewPolicy !== undefined
           ? {
-              reviewPolicy: {
-                requestedBy: publishGate.reviewPolicy.requestedBy,
-              },
+              reviewPolicy: publishGate.reviewPolicy,
             }
           : {}),
         ...(publishGate.reviewSequence !== undefined
@@ -291,20 +361,24 @@ export function runListRow(run: Run): RunListRow {
   const { resourcePosture, sessionUsage, visualJudgmentReceipts, templateProvenance, ...rest } =
     run;
 
-  const steps = run.steps.map((step) => ({
-    name: step.name,
-    status: step.status,
-    ...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
-    ...(step.completedAt !== undefined ? { completedAt: step.completedAt } : {}),
-    ...(step.detail !== undefined ? { detail: step.detail } : {}),
-    outputs: slimStepOutputs(step.outputs),
+  // Steps keep their timing (list durations, queue waits, progress age) and leave out
+  // their inputs; outputs keep only what list surfaces read.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const steps = run.steps.map(({ inputs, outputs, ...step }) => ({
+    ...step,
+    outputs: listStepOutputs(outputs),
   }));
 
   const decisions: RunListDecision[] = run.decisions.map((decision) => {
     const slimmedPayload = slimDecisionPayload(decision.payload);
     // Keep context but drop context.checkSnapshot (same as trimDecisionForList) if present
     let context = decision.context;
+    // Name every payload key the row leaves out, so runHasTrimmedDetail reports the row as
+    // trimmed and readers show those values as not loaded rather than empty.
     const trimmed = [...(decision.payloadTrimmed ?? [])];
+    for (const key of Object.keys(decision.payload ?? {})) {
+      if (slimmedPayload && !(key in slimmedPayload) && !trimmed.includes(key)) trimmed.push(key);
+    }
     if (context?.checkSnapshot !== undefined) {
       context = { ...context };
       delete context.checkSnapshot;

@@ -1,1 +1,1 @@
-- Run activity, provenance, checklist, CI watch and recovered-review helpers accept `RunListRow` as well as `Run`.
+- Run activity, provenance, checklist, CI watch and recovered-review helpers accept `RunListRow` as well as `Run`, and give the same result from a served row as from the full run.

@@ -36,6 +36,8 @@ export interface RunEvidenceSummary {
   validationEvidenceCount: number;
   /** Review and comment artifacts. */
   reviewEvidenceCount: number;
+  /** The diff file a run's Diff button opens (`diffArtifactCandidate` over its artifacts). */
+  diffArtifactPath?: string;
 }
 
 /**
@@ -124,7 +126,12 @@ function extractDiffStatFromSteps(
  * `runListEvidenceSummary`.
  */
 export function summarizeRunEvidence(run: RunEvidenceSource): RunEvidenceSummary {
-  const artifacts = runEvidenceArtifacts(run);
+  const runArtifacts = extractRunArtifactManifest(run);
+  // Same set as runEvidenceArtifacts, without extracting the run's artifacts twice.
+  const artifacts = dedupeRunArtifacts([
+    ...(run.liveRecipeContext?.artifactManifest ?? []),
+    ...runArtifacts,
+  ]);
   let artifactBytes = 0;
   let visualEvidenceCount = 0;
   let validationEvidenceCount = 0;
@@ -151,7 +158,30 @@ export function summarizeRunEvidence(run: RunEvidenceSource): RunEvidenceSummary
     visualEvidenceCount,
     validationEvidenceCount,
     reviewEvidenceCount,
+    diffArtifactPath: diffArtifactCandidate(runArtifacts)?.path,
   };
+}
+
+/** The best-ranked diff file among `artifacts`: what a run's Diff action opens. */
+export function diffArtifactCandidate<T extends { path: string; purpose?: string }>(
+  artifacts: readonly T[],
+): T | undefined {
+  const ranked = artifacts
+    .map((artifact) => ({ artifact, score: diffArtifactScore(artifact) }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score);
+  return ranked[0]?.artifact;
+}
+
+function diffArtifactScore(artifact: { path: string; purpose?: string }): number {
+  const lowerPath = artifact.path.toLowerCase();
+  const lowerPurpose = artifact.purpose?.toLowerCase() ?? '';
+  if (lowerPath === 'artifacts/diff.txt') return 100;
+  if (lowerPath.endsWith('/diff.txt')) return 95;
+  if (/\.(diff|patch)$/.test(lowerPath)) return 90;
+  if (lowerPath.endsWith('.json')) return 0;
+  if (lowerPurpose.includes('diff')) return 60;
+  return 0;
 }
 
 /** What `runListEvidenceSummary` reads from a run.list row. */

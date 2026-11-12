@@ -462,7 +462,9 @@ the same basis as before — while the row the gateway actually sends is
 `runListRow(run)` (a narrower projection that drops `resourcePosture`,
 `sessionUsage`, `visualJudgmentReceipts`, and `templateProvenance`, leaves the
 output file manifest out as before, and projects `steps`, `decisions`, and
-`engineState` to only the fields list surfaces read). Each served row carries
+`engineState` to only the fields list surfaces read; step outputs keep each read key in
+the bounded shape its view reads, and every left-out payload key is named in
+`payloadTrimmed`, so `runHasTrimmedDetail` reports the row as trimmed). Each served row carries
 `evidenceSummary`, which the gateway computes from the full run with the same
 `summarizeRunEvidence` clients use. Old cached fat rows and new slim rows
 coexist in a client; a row without `evidenceSummary` has its summary computed

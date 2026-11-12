@@ -1,1 +1,1 @@
-- Lists read the smaller `run.list` rows. The runs list evidence chips and the eval catalog preview use the gateway's evidence summary, or compute it from a row cached before the change; run detail waits for `run.get` instead of drawing a list row.
+- Lists read the smaller `run.list` rows. The runs list evidence chips and the eval catalog preview use the gateway's evidence summary, or compute it from a row cached before the change; run detail and the fleet map's expanded run pipeline wait for `run.get` instead of drawing a list row.

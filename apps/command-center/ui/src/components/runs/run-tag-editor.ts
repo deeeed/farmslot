@@ -5,8 +5,8 @@ import {
   normalizeRunLinkedTicketRefs,
   normalizeRunTags,
   parseRunLinkedTicketRefs,
-  type Run,
   runLinkedTicketsView,
+  type RunListRow,
 } from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
@@ -132,7 +132,7 @@ export class RunTagEditor extends LitElement {
 
   @property({ reflect: true }) kind: 'tags' | 'tickets' = 'tags';
   @property({ type: Boolean }) compact = false;
-  @property({ attribute: false }) run?: Run;
+  @property({ attribute: false }) run?: RunListRow;
   @property({ attribute: false }) tags: readonly string[] = [];
   @property({ type: Boolean }) disabled = false;
   @property({ attribute: false }) saveTags?: (tags: string[]) => void | Promise<void>;

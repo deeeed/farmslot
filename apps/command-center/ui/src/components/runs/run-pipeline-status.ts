@@ -4,7 +4,7 @@
 // - orange (warn) = recoverable: review issues / package refresh / re-publish rework
 // - green (ok) / blue (running) / muted = success / in-flight / idle
 
-import type { Run, RunStep, RunStepDisplayStatus, RunStepStatus } from '@farmslot/protocol';
+import type { RunListRow, RunStep, RunStepDisplayStatus, RunStepStatus } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 
@@ -78,7 +78,7 @@ const ACTIVE_REVIEW_AGENT_STATUSES = new Set(['launching', 'working', 'waiting']
  * "running … re-review" on the step after the review completes.
  */
 export function isPostGateReviewOrFixInFlight(
-  run: Pick<Run, 'steps' | 'agentContexts' | 'engineState'> | null | undefined,
+  run: Pick<RunListRow, 'steps' | 'agentContexts' | 'engineState'> | null | undefined,
 ): boolean {
   if (!run) return false;
 
@@ -102,7 +102,7 @@ export function isPostGateReviewOrFixInFlight(
  */
 export function computePackageRefreshStatus(
   reviewStepStatuses: readonly RunStepStatus[],
-  run?: Pick<Run, 'steps' | 'agentContexts' | 'engineState'> | null,
+  run?: Pick<RunListRow, 'steps' | 'agentContexts' | 'engineState'> | null,
 ): RunStepStatus {
   if (reviewStepStatuses.some((status) => status === 'running' || status === 'pending')) {
     return 'pending';

@@ -12,6 +12,7 @@ import {
   runListEvidenceSummary,
   summarizeRunEvidence,
 } from '../../src/runs/evidence-summary.js';
+import { runListRow, trimRunForList } from '../../src/runs/list-trim.js';
 
 const zeroSummary: RunEvidenceSummary = {
   artifactCount: 0,
@@ -281,4 +282,63 @@ test('WebP stills are inline images and publishable media, beside retained PNG s
   assert.equal(isRunArtifactImagePath('videos/run.mp4'), false);
   assert.equal(isRunArtifactMediaPath('report.json'), false);
   assert.equal(isRunArtifactMediaPath('stills/a.webp.json'), false);
+});
+
+// The Companion runs list opens its Diff button on the summary's diff file: the served row,
+// the full run and an old cached row name the same one.
+test('the served summary names the same diff file as the full run and an old cached row', () => {
+  const full: Run = {
+    id: 'diff-run',
+    familyId: 'diff-family',
+    lane: 'production',
+    flowType: 'fix-bug',
+    status: 'done',
+    project: 'demo',
+    ticketOrPr: 'DEMO-3',
+    slotId: null,
+    branch: null,
+    taskFile: null,
+    steps: [
+      {
+        name: 'work',
+        status: 'done',
+        outputs: { screenshots: ['evidence/before-home.png', 'evidence/after-home.png'] },
+      },
+      { name: 'recipe', status: 'done', outputs: { patch: 'artifacts/changes.patch' } },
+    ],
+    decisions: [
+      {
+        id: 'gate',
+        type: 'engine_human_gate',
+        title: 'Publish',
+        description: '',
+        createdAt: '2026-11-01T00:00:00.000Z',
+        actions: [],
+        payload: {
+          kind: 'ready',
+          prNumber: null,
+          repo: null,
+          branch: 'fix/diff',
+          workerReport: 'done',
+          diffStat: { files: 1, additions: 1, deletions: 0 },
+          artifactManifest: [
+            { path: 'artifacts/diff.txt', purpose: 'diff' },
+            { path: 'evidence/after-settings.png', purpose: 'after screenshot' },
+          ],
+        },
+      },
+    ],
+    metrics: { nudgeCount: 0, model: null, runner: null },
+    createdAt: '2026-11-01T00:00:00.000Z',
+    updatedAt: '2026-11-01T00:00:00.000Z',
+  };
+  const expected = summarizeRunEvidence(full).diffArtifactPath;
+  assert.equal(expected, 'artifacts/diff.txt');
+  assert.equal(runListEvidenceSummary(runListRow(full)).diffArtifactPath, expected);
+  assert.equal(runListEvidenceSummary(trimRunForList(full)).diffArtifactPath, expected);
+  // A run with no diff or visual artifacts names none.
+  assert.equal(
+    summarizeRunEvidence({ ...full, steps: [], decisions: [] }).diffArtifactPath,
+    undefined,
+  );
 });
