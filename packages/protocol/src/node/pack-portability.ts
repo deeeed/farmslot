@@ -38,13 +38,57 @@ export function packEntryLinkTarget(entry: PackOwnedEntry): string | undefined {
   return typeof entry.content === 'string' ? entry.content.slice('symlink:'.length) : undefined;
 }
 
+/** One `git` invocation's answer, as `spawnSync` reports it: exit status (null if it did not run) and stdout. */
+export interface PackGitResult {
+  status: number | null;
+  stdout: Buffer;
+}
+
+/** Runs `git` with these arguments. The gateway passes one that does not block its event loop. */
+export type PackGitRunner = (args: string[]) => Promise<PackGitResult>;
+
+/** The ownership walk yields each `git` call it needs; a driver runs it and sends the answer back. */
+type PackWalk<T> = Generator<string[], T, PackGitResult>;
+
+function runPackWalk<T>(walk: PackWalk<T>): T {
+  let step = walk.next();
+  while (!step.done) {
+    let result: PackGitResult;
+    try {
+      result = spawnSync('git', step.value);
+    } catch (error) {
+      // Raised inside the walk so its cleanup runs; the walk does not catch it.
+      step = walk.throw(error);
+      continue;
+    }
+    step = walk.next(result);
+  }
+  return step.value;
+}
+
+async function runPackWalkAsync<T>(walk: PackWalk<T>, git: PackGitRunner): Promise<T> {
+  let step = walk.next();
+  while (!step.done) {
+    let result: PackGitResult;
+    try {
+      result = await git(step.value);
+    } catch (error) {
+      // Raised inside the walk so its cleanup runs; the walk does not catch it.
+      step = walk.throw(error);
+      continue;
+    }
+    step = walk.next(result);
+  }
+  return step.value;
+}
+
 /** A copied pack still owns its ignore rules, even without its original Git index. */
-function listUnindexedPackFiles(dir: string, prefix: string): string[] {
+function* listUnindexedPackFiles(dir: string, prefix: string): PackWalk<string[]> {
   const gitDir = mkdtempSync(path.join(tmpdir(), 'pack-ignore-'));
   try {
-    const initialized = spawnSync('git', ['init', '--bare', '--quiet', gitDir]);
+    const initialized = yield ['init', '--bare', '--quiet', gitDir];
     if (initialized.status !== 0) throw new Error('Cannot initialize pack ownership scan');
-    const listed = spawnSync('git', [
+    const listed = yield [
       '--git-dir',
       gitDir,
       '--work-tree',
@@ -55,7 +99,7 @@ function listUnindexedPackFiles(dir: string, prefix: string): string[] {
       '--others',
       '--exclude-standard',
       '-z',
-    ]);
+    ];
     if (listed.status !== 0) throw new Error('Cannot list copied pack-owned files');
     return listed.stdout
       .toString()
@@ -69,28 +113,30 @@ function listUnindexedPackFiles(dir: string, prefix: string): string[] {
 
 /** One ownership boundary for pack hashing, admission and gateway sync. */
 export function listPackOwnedEntries(root: string): PackOwnedEntry[] {
+  return runPackWalk(walkPackOwnedEntries(root));
+}
+
+/** `listPackOwnedEntries` with its `git` calls run by `git`, off the caller's event loop. */
+export function listPackOwnedEntriesAsync(
+  root: string,
+  git: PackGitRunner,
+): Promise<PackOwnedEntry[]> {
+  return runPackWalkAsync(walkPackOwnedEntries(root), git);
+}
+
+function* walkPackOwnedEntries(root: string): PackWalk<PackOwnedEntry[]> {
   const entries: PackOwnedEntry[] = [];
-  const walk = (dir: string, prefix: string) => {
+  const walk = function* (dir: string, prefix: string): PackWalk<void> {
     // Git scopes this to dir and honors its owning repository. Submodule entries
     // are directories, so the recursive call switches to the submodule's index.
-    const git = spawnSync('git', [
-      '-C',
-      dir,
-      'ls-files',
-      '-c',
-      '-o',
-      '--exclude-standard',
-      '-z',
-      '--',
-      '.',
-    ]);
+    const git = yield ['-C', dir, 'ls-files', '-c', '-o', '--exclude-standard', '-z', '--', '.'];
     let names: string[];
     if (git.status === 0 && git.stdout.length) {
       names = [...new Set(git.stdout.toString().split('\0').filter(Boolean))];
     } else if (git.status === 0 || git.status === 128) {
       // A standalone pack, or an untracked pack ignored by its parent repo,
       // still owns its source files. Its top-level runtime state is not source.
-      names = listUnindexedPackFiles(dir, prefix);
+      names = yield* listUnindexedPackFiles(dir, prefix);
     } else {
       throw new Error('Cannot list pack-owned files for portability validation');
     }
@@ -110,11 +156,11 @@ export function listPackOwnedEntries(root: string): PackOwnedEntry[] {
       const rel = prefix ? `${prefix}/${cleanName}` : cleanName;
       const stat = lstatSync(full);
       if (stat.isSymbolicLink()) entries.push({ rel, content: `symlink:${readlinkSync(full)}` });
-      else if (stat.isDirectory()) walk(full, rel);
+      else if (stat.isDirectory()) yield* walk(full, rel);
       else if (stat.isFile()) entries.push({ rel, content: readFileSync(full) });
     }
   };
-  walk(root, '');
+  yield* walk(root, '');
   return entries.sort((a, b) => {
     const left = a.rel.replaceAll('/', '\0');
     const right = b.rel.replaceAll('/', '\0');
@@ -219,15 +265,33 @@ export function validatePackBytesPortability(
     : validatePackFilePortability(file, bytes.toString('utf8'), machines);
 }
 
-export function validatePackPortability(
-  root: string,
-  prefix = '',
-  machines: readonly string[] = [],
+function validatePackEntries(
+  entries: PackOwnedEntry[],
+  prefix: string,
+  machines: readonly string[],
 ): string[] {
-  return listPackOwnedEntries(root).flatMap(({ rel, content }) => {
+  return entries.flatMap(({ rel, content }) => {
     const file = prefix ? `${prefix}/${rel}` : rel;
     return typeof content === 'string'
       ? validatePackFilePortability(file, packEntryLinkTarget({ rel, content }), machines)
       : validatePackBytesPortability(file, content, machines);
   });
+}
+
+export function validatePackPortability(
+  root: string,
+  prefix = '',
+  machines: readonly string[] = [],
+): string[] {
+  return validatePackEntries(listPackOwnedEntries(root), prefix, machines);
+}
+
+/** `validatePackPortability` with the ownership walk's `git` calls run by `git`. */
+export async function validatePackPortabilityAsync(
+  root: string,
+  prefix: string,
+  machines: readonly string[],
+  git: PackGitRunner,
+): Promise<string[]> {
+  return validatePackEntries(await listPackOwnedEntriesAsync(root, git), prefix, machines);
 }
