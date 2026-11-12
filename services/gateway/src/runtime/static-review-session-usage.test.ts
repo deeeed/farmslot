@@ -6,12 +6,30 @@ import { mock, test } from 'node:test';
 
 import { makeVars } from '../runners/test-fixtures.js';
 
+import type { NativeAgentUsageInput } from './native-session-usage.js';
+
 await import('./mock-pty.test-support.js');
 let remote = false;
 mock.module('../runners/review-workspace-context.js', {
   namedExports: {
     reviewWorkspaceRunnerVars: async () =>
       makeVars(remote ? { host: 'review.invalid', machine: 'review-node' } : {}),
+  },
+});
+const nativeRequests: NativeAgentUsageInput[] = [];
+mock.module('./native-session-usage.js', {
+  namedExports: {
+    extractNativeAgentSessionUsage: async (input: NativeAgentUsageInput) => {
+      nativeRequests.push(input);
+      return {
+        runner: input.runner,
+        runnerSessionId: input.runnerSessionId,
+        source: 'runner-transcript',
+        measuredAt: '2026-11-10T14:10:00Z',
+        totalTokens: 400,
+        costUsd: 0.002,
+      };
+    },
   },
 });
 const execution = await import('../core/exec.js');
@@ -174,4 +192,51 @@ test('ambiguous workspace sessions stay unbound', async (t) => {
     })),
   );
   assert.equal(await recoverWorkspaceUsageBindings(run), run);
+});
+
+test('native slotless review usage keeps its workspace context and run domain for expansion', async (t) => {
+  remote = true;
+  const run = createRun({
+    flowType: 'review-pr',
+    project: 'usage-fixture',
+    ticketOrPr: 'owner/repo#1',
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'cancelled', slotId: null, reviewWorkspace: undefined });
+    await deleteRun(run.id);
+  });
+  updateRun(run.id, {
+    domain: 'trading',
+    reviewWorkspace: {
+      workspaceId: 'review-fixture',
+      machine: 'review-node',
+      executionNodeId: 'review-node',
+      checkoutPath: '/owned/source',
+      taskPath: '/owned/task',
+      artifactPath: '/owned/artifacts',
+    },
+    sessionUsage: [
+      {
+        role: 'review',
+        runner: 'pi',
+        runnerSessionId: 'native-review',
+        source: 'unavailable',
+        measuredAt: '2026-11-10T14:00:00Z',
+        nativeSession: {
+          sessionId: 'host',
+          ownerPrincipalId: 'owner',
+          executionNodeId: 'review-node',
+        },
+      },
+    ],
+  });
+  const before = nativeRequests.length;
+  await captureRunSessionUsage(run.id);
+  assert.equal(nativeRequests.length, before + 1);
+  assert.deepEqual(
+    nativeRequests.at(-1)?.vars,
+    makeVars({ host: 'review.invalid', machine: 'review-node', domain: 'trading' }),
+  );
+  assert.equal(getRun(run.id)?.sessionUsage?.[0]?.totalTokens, 400);
+  assert.equal(getRun(run.id)?.sessionUsage?.[0]?.costUsd, 0.002);
 });

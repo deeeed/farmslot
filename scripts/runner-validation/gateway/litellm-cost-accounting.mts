@@ -151,7 +151,7 @@ try {
     project: 'fixture',
     platform: 'cli',
     os: process.platform,
-    slots: [],
+    slots: [{ id: 'fixture-native', repo: fixture, session: 'fixture-native' }],
     env: {
       LITELLM_URL: `http://127.0.0.1:${address.port}`,
       LITELLM_API_KEY: 'synthetic-key',
@@ -160,7 +160,15 @@ try {
   });
   await writeJson(path.join(fixture, 'projects/fixture/project.json'), {
     name: 'fixture',
-    command_env: { set: { LITELLM_URL: 'http://wrong-project.invalid' } },
+    reference_repos: {
+      trading_library: { repo_url: 'https://example.invalid/library.git', local_name: 'recipes' },
+    },
+    command_env: {
+      set: { LITELLM_URL: 'http://wrong-project.invalid' },
+      domains: {
+        trading: { set: { RECIPE_LIBRARY_PATH: 'trading={{trading_library_repo}}' } },
+      },
+    },
   });
   const now = '2026-01-01T00:00:00Z';
   const receipt = (id: string, role: string, costUsd: number | null): RunnerSessionUsage => ({
@@ -294,7 +302,12 @@ try {
   const { extractNativeAgentSessionUsage } =
     await import('../../../services/gateway/src/runtime/native-session-usage.js');
   const usage = await extractNativeAgentSessionUsage({
-    vars: { slotId: 'fixture-native', remoteRepo: fixture, projectName: 'fixture' },
+    vars: {
+      slotId: 'fixture-native',
+      remoteRepo: fixture,
+      projectName: 'fixture',
+      domain: 'trading',
+    },
     runner: 'pi',
     runnerSessionId: 'native-conversation',
     runnerSessionPath: transcript,
@@ -304,7 +317,8 @@ try {
       executionNodeId: 'local',
     },
   });
-  assert.equal(usage.source, 'runner-transcript');
+  assert.equal(usage.source, 'runner-transcript', usage.error);
+  assert.equal(usage.totalTokens, 38203);
   assert.equal(usage.costUsd, 0.007687);
   assert.equal(requests, 1, 'one metadata read from the owning pool, no inference');
   const native = run('native');

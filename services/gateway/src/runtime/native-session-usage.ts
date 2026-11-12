@@ -2,16 +2,25 @@ import { execFile } from 'node:child_process';
 import os from 'node:os';
 import { promisify } from 'node:util';
 
-import type { NativeWorkerSessionBinding, RunnerSessionUsage } from '@farmslot/protocol';
+import {
+  collectPlaceholderTokens,
+  type NativeWorkerSessionBinding,
+  type RunnerSessionUsage,
+} from '@farmslot/protocol';
 import { loadLiteLlmPrices } from '@farmslot/slot-config';
 
 import {
   loadMachinePool,
   loadProjectVars,
+  loadSlotVars,
   SlotConfigError,
   type SlotVars,
 } from '../core/config.js';
-import { machineShellEnv, resolveProjectCommandEnv } from '../core/project-env.js';
+import {
+  machineShellEnv,
+  projectCommandEnvOptions,
+  resolveProjectCommandEnv,
+} from '../core/project-env.js';
 import {
   nativeSessionUsageArgv,
   type NativeSessionUsageIdentity,
@@ -22,8 +31,12 @@ import { getRunnerSessionUsageProvider } from '../runners/registry.js';
 import { parseSessionUsageOutput, unavailableRunnerSessionUsage } from './session-usage-result.js';
 
 const execute = promisify(execFile);
+type NativeSessionUsageVars =
+  | SlotVars
+  | (Pick<SlotVars, 'remoteRepo' | 'slotId'> & Partial<Pick<SlotVars, 'projectName' | 'domain'>>);
+
 export interface NativeAgentUsageInput {
-  vars: Pick<SlotVars, 'remoteRepo' | 'slotId'> & Partial<SlotVars>;
+  vars: NativeSessionUsageVars;
   runner: string;
   runnerSessionId: string | null;
   runnerSessionPath?: string | null;
@@ -61,7 +74,7 @@ export async function extractNativeAgentSessionUsage(
         ? os.hostname().split('.')[0]
         : nativeSession.executionNodeId;
     const poolEnv =
-      vars.machine === machine && vars.machineEnv !== undefined
+      'machine' in vars && vars.machine === machine && vars.machineEnv !== undefined
         ? vars.machineEnv
         : await loadMachinePool(machine)
             .then((pool) => pool.env)
@@ -74,9 +87,21 @@ export async function extractNativeAgentSessionUsage(
     const environment = { ...process.env };
     if (vars.projectName) {
       const project = await loadProjectVars(vars.projectName);
-      const mutation = resolveProjectCommandEnv(project.projectJson, {
-        domain: vars.domain,
-      });
+      const domainEnvironment = vars.domain
+        ? project.projectJson.command_env?.domains?.[vars.domain]
+        : undefined;
+      // Literal environments still work after a retained session's slot is removed.
+      const needsSlotContext = Object.values(domainEnvironment?.set ?? {}).some(
+        (value) => collectPlaceholderTokens(value).size > 0,
+      );
+      const options = needsSlotContext
+        ? projectCommandEnvOptions(
+            'resourceVars' in vars ? vars : await loadSlotVars(vars.slotId),
+            project,
+            vars.domain,
+          )
+        : { domain: vars.domain };
+      const mutation = resolveProjectCommandEnv(project.projectJson, options);
       for (const name of mutation.unset) delete environment[name];
       Object.assign(environment, mutation.set);
     }

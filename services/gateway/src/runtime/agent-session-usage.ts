@@ -70,10 +70,16 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
   try {
     const slotId = row.slotId ?? run.slotId ?? run.id;
     if (row.nativeSession) {
+      const reviewVars =
+        row.role === 'review' && run.reviewWorkspace
+          ? await reviewWorkspaceRunnerVars(run)
+          : undefined;
       return completedMeasurement(
         row,
         await extractNativeAgentSessionUsage({
-          vars: { slotId, remoteRepo: '', projectName: run.project, domain: run.domain },
+          vars: reviewVars
+            ? { ...reviewVars, domain: run.domain }
+            : { slotId, remoteRepo: '', projectName: run.project, domain: run.domain },
           runner: row.runner ?? '',
           runnerSessionId: row.runnerSessionId ?? null,
           runnerSessionPath: row.runnerSessionPath,
