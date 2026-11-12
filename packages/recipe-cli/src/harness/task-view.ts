@@ -645,7 +645,7 @@ function readCheckout(target: string): TaskViewCheckout {
   const branch = gitRef(target, '--abbrev-ref');
   const head = gitRef(target, '--short');
   const view = { target, ...(branch ? { branch } : {}), ...(head ? { head } : {}) };
-  if (key) checkoutCache.set(target, { key, view });
+  if (key && branch && head) checkoutCache.set(target, { key, view });
   return view;
 }
 
@@ -666,12 +666,16 @@ function checkoutKey(target: string): string | undefined {
     const commonDir = fs.existsSync(path.join(gitDir, 'commondir'))
       ? path.resolve(gitDir, fs.readFileSync(path.join(gitDir, 'commondir'), 'utf8').trim())
       : gitDir;
-    const refFile = [
-      path.join(gitDir, ref),
-      path.join(commonDir, ref),
-      path.join(commonDir, 'packed-refs'),
-    ].find((file) => fs.existsSync(file));
-    return `${head}|${refFile ?? ''}|${refFile ? fs.statSync(refFile).mtimeMs : ''}`;
+    // Reftable keeps a placeholder HEAD and no ref files to watch: do not reuse.
+    if (fs.existsSync(path.join(commonDir, 'reftable'))) return undefined;
+    const packed = path.join(commonDir, 'packed-refs');
+    const refFile =
+      [path.join(gitDir, ref), path.join(commonDir, ref)].find((file) => fs.existsSync(file)) ??
+      (fs.existsSync(packed) && fs.readFileSync(packed, 'utf8').includes(` ${ref}\n`)
+        ? packed
+        : undefined);
+    if (!refFile) return undefined;
+    return `${head}|${refFile}|${fs.statSync(refFile).mtimeMs}`;
   } catch {
     return undefined;
   }
