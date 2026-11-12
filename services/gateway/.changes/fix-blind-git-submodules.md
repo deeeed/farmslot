@@ -1,0 +1,1 @@
+- Keep initialized submodules working during blind trial preparation, including nested submodules and linked worktrees, without exposing reference-only history. Restore their original Git metadata after the trial.
