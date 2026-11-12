@@ -210,6 +210,8 @@ test('Claude stream-json adapter preserves structured session, turn, tool, and a
     'stdio',
     '--model',
     'sonnet',
+    '--disallowedTools',
+    'Monitor',
     '--session-id',
     session.nativeSessionId,
   ]);
@@ -229,8 +231,9 @@ test('an autonomous Claude run starts without its question tool', async (t) => {
     () => {},
   );
   const args = JSON.parse(await readFile(invocation, 'utf8')) as string[];
-  assert.deepEqual(args.slice(-4), [
+  assert.deepEqual(args.slice(-5), [
     '--disallowedTools',
+    'Monitor',
     'AskUserQuestion',
     '--session-id',
     session.nativeSessionId,
