@@ -169,3 +169,97 @@ export async function readClaudeProcessState(
   const binding = await readClaudeProcessBinding(vars, target, overrides);
   return binding && binding.status !== 'waiting' ? { ...binding, status: binding.status } : null;
 }
+
+/** Exact prompt acceptance from the runner's native parent transcript, bounded independently of hooks. */
+export function buildClaudePromptAcceptanceCommand(
+  sessionId: string,
+  sessionPath: string,
+  prompt: string,
+  since: number,
+): string {
+  return `python3 - <<'PY'
+import json,os
+from datetime import datetime
+from pathlib import Path
+session=${JSON.stringify(sessionId)}
+file=Path(${JSON.stringify(sessionPath)})
+prompt=${JSON.stringify(prompt)}
+since=${Math.floor(since)}
+def unavailable():
+ print('{}');raise SystemExit(0)
+if file.name!=session+'.jsonl':unavailable()
+try:
+ with file.open('rb') as stream:
+  before=os.fstat(stream.fileno());offset=max(0,before.st_size-8*1024*1024);stream.seek(offset);data=stream.read(8*1024*1024+1);after=os.fstat(stream.fileno())
+ current=file.stat()
+except OSError:unavailable()
+identity=lambda s:(s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns)
+if identity(before)!=identity(after) or identity(after)!=identity(current) or not data.endswith(b'\\n'):unavailable()
+if offset:
+ boundary=data.find(b'\\n')
+ if boundary<0:unavailable()
+ data=data[boundary+1:]
+latest=None
+for line in data.splitlines():
+ try:row=json.loads(line)
+ except (ValueError,UnicodeError):unavailable()
+ if not isinstance(row,dict) or row.get('sessionId')!=session or row.get('isSidechain') is not False or row.get('isMeta') is True or row.get('type')!='user':continue
+ message=row.get('message')
+ if not isinstance(message,dict) or message.get('role')!='user':continue
+ content=message.get('content')
+ if isinstance(content,list):
+  if any(not isinstance(x,dict) or x.get('type')!='text' for x in content):continue
+  content=''.join(x.get('text','') for x in content)
+ if not isinstance(content,str):continue
+ try:stamp=datetime.fromisoformat(row.get('timestamp','').replace('Z','+00:00')).timestamp()*1000
+ except (ValueError,TypeError,AttributeError):continue
+ if stamp<since:continue
+ latest={'accepted':content.replace('\\r\\n','\\n').strip()==prompt.replace('\\r\\n','\\n').strip(),'observedAt':stamp,'turnToken':session+':'+str(int(stamp))}
+print(json.dumps(latest or {}))
+PY`;
+}
+
+export async function readClaudePromptAcceptance(
+  vars: SlotVars,
+  target: string,
+  sessionId: string,
+  sessionPath: string,
+  prompt: string,
+  since: number,
+  overrides: Partial<ProcessReaders> = {},
+) {
+  const before = await readClaudeProcessBinding(vars, target, overrides);
+  if (!before || before.sessionId !== sessionId || before.sessionPath !== sessionPath) return null;
+  const result = await (overrides.exec ?? execOnSlot)(
+    vars,
+    buildClaudePromptAcceptanceCommand(sessionId, sessionPath, prompt, since),
+    { timeout: 10000, maxBuffer: 4096 },
+  );
+  if (result.exitCode !== 0) return null;
+  const value: unknown = JSON.parse(result.stdout);
+  if (
+    !isRecord(value) ||
+    value.accepted !== true ||
+    typeof value.observedAt !== 'number' ||
+    !Number.isFinite(value.observedAt) ||
+    value.observedAt < since ||
+    typeof value.turnToken !== 'string'
+  )
+    return null;
+  const after = await readClaudeProcessBinding(vars, target, overrides);
+  if (
+    !after ||
+    after.processPid !== before.processPid ||
+    after.sessionId !== sessionId ||
+    after.sessionPath !== sessionPath
+  )
+    return null;
+  return {
+    value: true,
+    source: 'signal' as const,
+    confidence: 'high' as const,
+    observedAt: value.observedAt,
+    turnToken: value.turnToken,
+    exactPromptMatch: true,
+  };
+}

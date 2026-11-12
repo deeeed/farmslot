@@ -99,7 +99,7 @@ export async function completedReviewSessionTrace(
     reviewResultValidatedAt: new Date().toISOString(),
   });
   return {
-    ...(mode === 'warm' ? prior : {}),
+    ...(mode === 'warm' || prior?.fallback ? prior : {}),
     mode,
     continuity: mode === 'warm' ? 'resumed' : 'fresh',
     repository: identity.repository,

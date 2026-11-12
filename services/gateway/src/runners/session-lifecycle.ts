@@ -28,6 +28,7 @@ import {
   runnerHasDurablePromptHandoff,
   runnerIdsRequiringExplicitTerminationIdentity,
   runnerIdsSafeForUnattributedTermination,
+  runnerSessionReloadCapability,
   type SessionReloadCapability,
   WORKER_ENV_PREFIX,
 } from './registry.js';
@@ -152,8 +153,8 @@ export async function inspectRunnerRecovery(
     ? { supported: true, command: definition.gracefulExit.command }
     : { supported: false };
   const sessionReload = {
-    supported: definition.sessionReload !== 'none',
-    capability: definition.sessionReload,
+    supported: runnerSessionReloadCapability(runnerId) !== 'none',
+    capability: runnerSessionReloadCapability(runnerId),
   };
   const handleError = validateRecoveryHandle(runnerId, options.recoveryHandle);
   const recoveryHandle = handleError ? { valid: false, reason: handleError } : { valid: true };
@@ -1055,7 +1056,7 @@ async function resolveRunnerParkHost(
   if (!definition.gracefulExit) {
     return { ok: false, reason: `runner '${runnerId}' has no graceful exit capability` };
   }
-  if (definition.sessionReload === 'none') {
+  if (runnerSessionReloadCapability(runnerId) === 'none') {
     return { ok: false, reason: `runner '${runnerId}' has no persisted session reload capability` };
   }
   const handleError = validateRecoveryHandle(runnerId, handle);

@@ -15,9 +15,21 @@ import {
   type ReviewStatus,
   type Run,
 } from '@farmslot/protocol';
+import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import type { ReReviewContinuation } from './review-agent.js';
 import { reviewContextRoundId } from './review-round-budget.js';
+
+/** Session freshness does not widen a verified re-review's comparison scope. */
+export function usesPreviousReviewDelta(
+  run: Pick<Run, 'reviewMode' | 'prWork' | 'repeatReviewContext'>,
+): boolean {
+  const fallback = run.repeatReviewContext?.session?.fallback;
+  return (
+    resolveReviewMode({ run }) === 'warm' ||
+    Boolean(fallback && fallback.reason !== 'retention-expired')
+  );
+}
 
 export class WarmReviewRefusal extends Error {
   override name = 'WarmReviewRefusal';

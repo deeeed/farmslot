@@ -269,3 +269,17 @@ test('archive of a closed native review keeps the exact conversation and result'
   assert.deepEqual(archived.agentContexts?.[0].nativeSession, binding);
   assert.equal(archived.agentContexts?.[0].runnerSessionId, 'retained-conversation');
 });
+
+test('archive of a transferred predecessor preserves the successor workspace and terminal', async () => {
+  const run = retainedArchiveRun('done');
+  const transfer = { runId: 'successor-review', generation: 1 };
+  updateRun(run.id, { reviewWorkspace: { ...run.reviewWorkspace!, transferredTo: transfer } });
+  const beforeCleanup = cleanup.mock.callCount();
+  const beforeStops = stops;
+  assert.deepEqual(await runArchive({ runId: run.id }, () => {}), { ok: true });
+  assert.equal(cleanup.mock.callCount(), beforeCleanup);
+  assert.equal(stops, beforeStops);
+  const saved = (await getAllRunsWithArchived()).find((candidate) => candidate.id === run.id);
+  assert.deepEqual(saved?.reviewWorkspace?.transferredTo, transfer);
+  assert.equal(saved?.reviewWorkspace?.cleanedAt, undefined);
+});

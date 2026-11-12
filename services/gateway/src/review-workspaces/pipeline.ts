@@ -135,6 +135,7 @@ function workspaceGenerationOwner(
     !run ||
     run.flowType !== 'review-pr' ||
     !run.reviewWorkspaceTarget ||
+    Boolean(run.reviewWorkspace?.transferredTo) ||
     run.slotId !== null ||
     (run.engineState?.generation ?? 0) !== generation ||
     (!allowTerminal && ['paused', 'blocked', 'done', 'cancelled', 'failed'].includes(run.status))
@@ -331,8 +332,12 @@ async function freezeSubject(
     const savedPrior = await getRunWithArchived(prior.id);
     currentWorkspaceRun(runId, generation);
     if (!savedPrior) throw new Error('The prior review was removed during session recovery');
-    configureWorkspaceContinuity(run, savedPrior, context, subject);
-    if (context.mode === 'warm' && context.priorReviewedHeadSha)
+    configureWorkspaceContinuity(run, savedPrior, context, subject, allRuns);
+    if (
+      (context.mode === 'warm' ||
+        (context.session?.fallback && context.session.fallback.reason !== 'retention-expired')) &&
+      context.priorReviewedHeadSha
+    )
       subject.baseSha = context.priorReviewedHeadSha;
   }
   await persistRunNow(
@@ -368,7 +373,11 @@ export async function teardownReviewWorkspace(
 ): Promise<void> {
   const run = getRun(runId);
   if (!run?.reviewWorkspace) return;
-  if (!run.reviewWorkspace.cleanedAt && reviewWorkspaceNeverLaunched(run)) {
+  if (
+    !run.reviewWorkspace.cleanedAt &&
+    !run.reviewWorkspace.continuedFrom &&
+    reviewWorkspaceNeverLaunched(run)
+  ) {
     const generation = run.engineState?.generation ?? 0;
     const assertCurrent = () => {
       currentWorkspaceRun(runId, generation, true);
@@ -397,7 +406,7 @@ export async function teardownReviewWorkspace(
   const check = () => currentWorkspaceRun(runId, generation, true);
   check();
   if (run.transport === 'tmux') {
-    if (run.agentContexts?.some((context) => context.target))
+    if (run.reviewWorkspace.continuedFrom || run.agentContexts?.some((context) => context.target))
       await reviewTmuxOperation(run, 'stop');
     const reviewer = getRun(runId)?.agentContexts?.find((context) => context.id === 'review');
     if (reviewer && !['complete', 'failed', 'idle'].includes(reviewer.status))
@@ -449,6 +458,13 @@ export async function cleanupReviewWorkspaceForArchive(runId: string): Promise<v
   const run = getRun(runId);
   const workspace = run?.reviewWorkspace;
   if (!run || !workspace || workspace.cleanedAt) return;
+  if (workspace.transferredTo) {
+    assertRunArchivable(run);
+    assertNativeRunOwner(run);
+    if (!isRunArchiving(runId))
+      throw new Error('Review history archive no longer owns its request');
+    return;
+  }
   const generation = run.engineState?.generation ?? 0;
   const check = () => {
     const current = currentWorkspaceRun(runId, generation, true);
@@ -1075,12 +1091,17 @@ async function executeOwnedReviewWorkspaceStep(
           const context = current.agentContexts?.find((entry) => entry.id === 'review');
           const acceptance = await observe(() => observeReviewPromptAcceptance(current));
           check();
+          if (
+            resolveReviewMode({ run: current }) === 'warm' &&
+            acceptance &&
+            acceptance.sessionId !== current.repeatReviewContext?.session?.priorSessionId
+          )
+            throw new Error('WARM reviewer accepted a different saved session');
           const startup = reviewTmuxStartupState(signal, acceptance, {
             startedAt: context?.promptDeliveryStartedAt ?? started,
             now: Date.now(),
             ...(resolveReviewMode({ run: current }) === 'warm' &&
-            getRunnerDefinition(current.metrics.runner).workspaceTerminalSession ===
-              'resume-session'
+            getRunnerDefinition(current.metrics.runner).sessionContinuation.terminal
               ? { retainedSessionId: current.repeatReviewContext?.session?.priorSessionId }
               : {}),
           });
@@ -1123,8 +1144,7 @@ async function executeOwnedReviewWorkspaceStep(
           }
           if (
             resolveReviewMode({ run: current }) === 'warm' &&
-            getRunnerDefinition(current.metrics.runner).workspaceTerminalSession ===
-              'resume-session' &&
+            getRunnerDefinition(current.metrics.runner).sessionContinuation.terminal &&
             startup !== 'acknowledged'
           ) {
             await delay(1000);

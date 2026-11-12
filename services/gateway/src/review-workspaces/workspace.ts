@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { NATIVE_WORKER_STATE } from '@farmslot/agent-runtime/native';
 import {
   DEFAULT_REVIEW_WORKSPACE_RETENTION_DAYS,
+  isTerminalRunStatus,
   type ReviewWorkspaceBinding,
   type Run,
 } from '@farmslot/protocol';
@@ -13,7 +14,14 @@ import { reportedFarmPaths } from '@farmslot/slot-config';
 import { execFileArgv, isLocal } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { execNativeNodeArgv, routeNativeExecution } from '../runners/native/node.js';
-import { getRun, persistRunNow, updateRun } from '../runs/store.js';
+import {
+  claimReviewWorkspaceTransfer,
+  getAllRuns,
+  getAllRunsWithArchived,
+  getRun,
+  persistRunNow,
+  updateRun,
+} from '../runs/store.js';
 import { workspaceTerminalOperation } from '../runtime/workspace-terminal.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 
@@ -57,6 +65,8 @@ function ownedRun(runId: string): Run {
   )
     throw new Error('Review workspace requires an owned native review run without a slot');
   assertNativeRunOwner(run);
+  if (run.reviewWorkspace?.transferredTo)
+    throw new Error('Review workspace belongs to its successor');
   return run;
 }
 
@@ -134,6 +144,18 @@ async function executeWorkspace(
       generation: run.engineState?.generation ?? 0,
       action,
       contributionBaseSha: run.reviewWorkspaceSubject?.contributionBaseSha,
+      taskPath: binding.taskPath,
+      previousTaskPath: binding.continuedFrom?.taskPath,
+      ...(binding.continuedFrom
+        ? {
+            previousIdentity: {
+              ...identityFor(run, binding, subject),
+              runId: binding.continuedFrom.runId,
+              headSha: binding.continuedFrom.headSha,
+              baseSha: binding.continuedFrom.baseSha,
+            },
+          }
+        : {}),
       allowCancelled: (action === 'cleanup' || action === 'purge') && run.status === 'cancelled',
       ...(subject.session ? { session: subject.session } : {}),
     }),
@@ -196,27 +218,75 @@ export async function allocateReviewWorkspace(
     )
       throw new Error('Review workspace source does not match its frozen subject');
     const initialGeneration = initial.engineState?.generation ?? 0;
+    const initialStatus = initial.status;
     const initialProject = initial.project;
     const initialSubject = JSON.stringify(subject);
     const originalBinding = initial.reviewWorkspace
       ? structuredClone(initial.reviewWorkspace)
       : undefined;
-    const workspaceId = originalBinding?.workspaceId ?? randomUUID();
+    let expectedBinding = originalBinding;
+    const assertAllocationCurrent = () => {
+      const current = ownedRun(runId);
+      if (
+        current.nativeOwnerPrincipalId !== owner ||
+        current.status !== initialStatus ||
+        current.project !== initialProject ||
+        current.reviewWorkspaceTarget?.machine !== admission.pool.machine ||
+        (current.engineState?.generation ?? 0) !== initialGeneration ||
+        JSON.stringify(current.reviewWorkspaceSubject) !== initialSubject ||
+        !isDeepStrictEqual(current.reviewWorkspace, expectedBinding)
+      )
+        throw new Error('Review workspace ownership changed during allocation');
+      return current;
+    };
+    const trace = initial.repeatReviewContext?.session;
+    const retainedCwd =
+      trace?.continuity === 'resumed' &&
+      (await import('../runners/registry.js')).getRunnerDefinition(initial.metrics.runner)
+        .sessionContinuation.terminal?.workspace === 'retained';
+    let prior: Run | undefined;
+    let baseline: Run | undefined;
+    let history: Run[] = [];
+    if (originalBinding?.continuedFrom || retainedCwd) {
+      await options.assertCurrent();
+      if (!trace?.reviewId || !trace.priorSessionId || !initial.repeatReviewContext?.priorRunId)
+        throw new Error('The retained reviewer has no verified baseline');
+      const { resolveWorkspaceContinuationSource } = await import('./continuity.js');
+      history = await getAllRunsWithArchived();
+      baseline = history.find(
+        (candidate) => candidate.id === initial.repeatReviewContext!.priorRunId,
+      );
+      if (!baseline) throw new Error('The retained reviewer baseline is unavailable');
+      prior = resolveWorkspaceContinuationSource(
+        initial,
+        baseline,
+        (id) => history.find((candidate) => candidate.id === id),
+        trace.reviewId,
+      );
+      if (
+        !prior.reviewWorkspace ||
+        !prior.reviewWorkspaceSubject ||
+        prior.id !== trace.priorRunId ||
+        getAllRuns().some(
+          (other) =>
+            other.id !== runId &&
+            !isTerminalRunStatus(other.status) &&
+            other.agentContexts?.some(
+              (context) => context.runnerSessionId === trace.priorSessionId,
+            ),
+        )
+      )
+        throw new Error('The retained reviewer workspace is unavailable or busy');
+      await options.assertCurrent();
+    }
+    const sourceBinding = originalBinding ?? prior?.reviewWorkspace;
+    const workspaceId = sourceBinding?.workspaceId ?? randomUUID();
     const state = (await routeNativeExecution(owner, NATIVE_WORKER_STATE, {
       executionNodeId: admission.executionNodeId,
       sessionId: workspaceId,
     })) as { stateDirectory: string };
     await options.assertCurrent();
-    const current = ownedRun(runId);
-    if (
-      current.nativeOwnerPrincipalId !== owner ||
-      current.project !== initialProject ||
-      current.reviewWorkspaceTarget?.machine !== admission.pool.machine ||
-      (current.engineState?.generation ?? 0) !== initialGeneration ||
-      JSON.stringify(current.reviewWorkspaceSubject) !== initialSubject ||
-      JSON.stringify(current.reviewWorkspace) !== JSON.stringify(originalBinding)
-    )
-      throw new Error('Review workspace ownership changed during allocation');
+    assertAllocationCurrent();
     // Native state layout is <native-root>/workers/<owner-hash>/<session-id>.
     // Workspaces are siblings of native-root so writable output never grants access to profiles.
     const ownerHash = createHash('sha256').update(owner).digest('hex');
@@ -227,8 +297,8 @@ export async function allocateReviewWorkspace(
     const configuredRoot = admission.project.staticReview?.workspace?.root;
     const report = reportedFarmPaths(admission.pool.machine);
     const reportedRoot = report?.layout === 2 ? report.state.reviewWorkspaces : undefined;
-    const root = originalBinding
-      ? path.posix.resolve(originalBinding.checkoutPath, '../../..')
+    const root = sourceBinding
+      ? path.posix.resolve(sourceBinding.checkoutPath, '../../..')
       : path.posix.join(
           configuredRoot ??
             reportedRoot ??
@@ -236,13 +306,28 @@ export async function allocateReviewWorkspace(
           ownerHash,
         );
     const workspace = path.posix.join(root, 'runs', workspaceId);
+    const taskPath =
+      originalBinding?.taskPath ??
+      (prior ? path.posix.join(workspace, 'tasks', runId) : path.posix.join(workspace, 'task'));
     const binding: ReviewWorkspaceBinding = {
       workspaceId,
       machine: admission.pool.machine,
       executionNodeId: admission.executionNodeId,
       checkoutPath: path.posix.join(workspace, 'source'),
-      taskPath: path.posix.join(workspace, 'task'),
-      artifactPath: path.posix.join(workspace, 'task', 'artifacts'),
+      taskPath,
+      artifactPath: path.posix.join(taskPath, 'artifacts'),
+      ...(originalBinding?.continuedFrom
+        ? { continuedFrom: originalBinding.continuedFrom }
+        : prior
+          ? {
+              continuedFrom: {
+                runId: prior.id,
+                headSha: prior.reviewWorkspaceSubject!.headSha,
+                baseSha: prior.reviewWorkspaceSubject!.baseSha,
+                taskPath: prior.reviewWorkspace!.taskPath,
+              },
+            }
+          : {}),
       ...(originalBinding?.support ? { support: originalBinding.support } : {}),
       ...(!originalBinding
         ? {
@@ -261,6 +346,31 @@ export async function allocateReviewWorkspace(
       throw new Error('Persisted review workspace binding conflicts with node-owned paths');
     updateRun(runId, { reviewWorkspace: binding });
     await persistRunNow(ownedRun(runId), 'review workspace allocation identity');
+    expectedBinding = binding;
+    if (prior) {
+      const { resolveWorkspaceContinuationSource } = await import('./continuity.js');
+      await claimReviewWorkspaceTransfer(
+        prior.id,
+        prior.reviewWorkspace!,
+        { runId, generation: initialGeneration },
+        (candidate) => {
+          if (
+            resolveWorkspaceContinuationSource(
+              assertAllocationCurrent(),
+              candidate.id === baseline!.id ? candidate : baseline!,
+              (id) =>
+                id === candidate.id ? candidate : history.find((previous) => previous.id === id),
+              trace!.reviewId!,
+            ).id !== candidate.id
+          )
+            throw new Error('Review workspace ownership changed before transfer');
+        },
+      );
+      await options.assertCurrent();
+      await removeReviewWorkspaceSkills(prior);
+      await options.assertCurrent();
+    }
+
     await executeWorkspace(ownedRun(runId), 'allocate', options);
     return structuredClone(binding);
   });
