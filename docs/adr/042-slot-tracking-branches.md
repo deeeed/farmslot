@@ -315,26 +315,35 @@ automatic reuse and fresh prepare. Before a permitted operation would overwrite,
 delete, move off or reset unpublished commits or dirty work, extend the existing
 parking owner to retain every threatened head and a stash-style snapshot of
 staged, unstaged and relevant untracked work. Verify the immutable local ref
-`refs/farmslot/parked/<slot>/<run-or-timestamp>` and durably record its receipt
+`refs/farmslot/parked/<slot>/<run-or-timestamp>/<snapshot-key>` and durably record its receipt
 on the run when present and in the slot's inventory before destruction starts.
-A new snapshot gets a new key; exact retries reuse their recorded parking.
+The snapshot key distinguishes every threatened head and dirty snapshot, even
+at the same original HEAD; include staged/index and worktree state. Exact retries reuse their recorded key; run ID alone
+is never a snapshot key. Legacy run/head and manual-slot/time/head refs stay valid.
 
 Then proceed. Local-work classifications, stale Git evidence and #2060's
 same-branch refusal no longer block eligible work. Existing owner, held-slot,
-source, resource and branch-holder guards remain. Failed capture/persistence or
-changing ownership still stops the operation safely. `--keep-work` keeps the
+source, resource and branch-holder owner/park guards remain. Failed capture/persistence or
+changing ownership still stops the operation safely, with a typed repair reason;
+there is no discard-without-parking escape. `--keep-work` keeps the
 checkout; a later archive parks before its own reset. Git parking is not machine
 or run ownership.
 
 Restore verifies the retained snapshot, parks threatened current work first,
 and recovers into a fresh local branch. It does not revive a run, worker, review
-or evidence verdict, and never writes a remote. Prune through existing retention: default 14 days or verified
-reachability from a remote branch, excluding backups required by protected or
-in-flight operations. Unknown legacy age is not inferred from commit age.
+or evidence verdict, and never writes a remote. It preserves configured posture;
+it does not create a manual hold. A later dispatch may park it again. Prune through
+`startRunRetention` in `methods/run/retention.ts`: default 14 days or verified
+reachability of the retained tip from a remote branch, excluding backups required
+by protected/in-flight operations. Dirty snapshots age out; publishing only their
+original HEAD never permits early pruning. Missing replay checkpoints refuse
+with truthful prune/missing provenance, never a fresh-baseline fallback. Unknown legacy age is not inferred from commit age.
+This supersedes ADR-054's cancelled-delete/archive local-discard wording, not its
+ownership or resource-posture rules.
 
 ### Public surface
 
 - `farmslot slot parked list <slot>` and `farmslot slot parked restore <slot> <ref>` consume one `slot.parked` RPC with `list`/`restore` actions, scoped and authorized like slot release.
-- `@farmslot/protocol` owns proposed `SlotParkedParams`, `SlotParkedResult`, `SlotParkedWorkSummary` and the extended existing parked receipt. The SDK transport, CLI and shared fleet model consume them; Command Center adds a slot-row line, not another Git controller.
+- `@farmslot/protocol` owns proposed `SlotParkedParams`, `SlotParkedResult`, `SlotParkedWorkSummary` and the extended canonical `ParkedRunCommits` receipt. The SDK transport, CLI and shared fleet model consume them; Command Center adds a slot-row line, not another Git controller.
 - Existing retention consumes `FARMSLOT_PARKED_WORK_RETENTION_DAYS`, default 14. No new daemon or harness hook. Harnesses inherit parking through prepare/release.
 - Contracts are additive and experimental, released with matching protocol, gateway, CLI/SDK and client readers. Old records keep only proven facts; missing snapshot/age data is not fabricated.
