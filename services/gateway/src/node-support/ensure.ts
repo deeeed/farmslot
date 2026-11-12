@@ -158,17 +158,16 @@ export async function collectNodeSupportBundle(projectName: string, supportPaths
     ...supportPaths.filter((p) => p.startsWith('projects/')).map((p) => p.split('/')[1]),
   ]);
   const machines = packMachineNames(poolDirectory());
-  const portabilityErrors = (
-    await Promise.all(
-      [...projects].map((name) =>
-        validateProjectPackPortability(
-          path.join(projectsDirectory(), name),
-          `projects/${name}`,
-          machines,
-        ),
-      ),
-    )
-  ).flat();
+  // One project at a time, in insertion order: the primary pack's failure surfaces first.
+  const portabilityErrors: string[] = [];
+  for (const name of projects)
+    portabilityErrors.push(
+      ...(await validateProjectPackPortability(
+        path.join(projectsDirectory(), name),
+        `projects/${name}`,
+        machines,
+      )),
+    );
   if (portabilityErrors.length)
     throw new Error(`Project pack is not portable:\n${portabilityErrors.join('\n')}`);
   const farmslotRootRealPath = await realpath(farmslotRoot());
