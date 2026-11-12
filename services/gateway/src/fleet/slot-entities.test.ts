@@ -227,11 +227,11 @@ test('B: on a snapshot past the stale threshold the entity view equals the obser
     JSON.parse(JSON.stringify(view.answer()?.data)),
     JSON.parse(JSON.stringify(observed)),
   );
-  // The observed read a cache client sends has never applied the plain read's stale transform.
-  assert.equal(observed.fleet.stale, undefined);
+  // Both reads apply the plain read's stale rule: stale, and no slot dispatchable.
+  assert.equal(observed.fleet.stale, true);
   assert.deepEqual(
     observed.fleet.slots.map((row) => row.dispatchable),
-    [true, true],
+    [false, false],
   );
 });
 
