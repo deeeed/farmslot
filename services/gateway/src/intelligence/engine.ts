@@ -1,7 +1,6 @@
 // intelligence.ts — LLM calls for structured tasks (grading, task writing)
 // Uses the multi-provider LLM wrapper (ADR-014).
 // Auth cascade: farmslot store → openclaw store → env vars → CLI fallback.
-
 import {
   RECIPE_STRATEGY_LABELS,
   type RecipeStrategyToken,
@@ -10,6 +9,7 @@ import {
   type StepLLMUsage,
   taskTitleText,
 } from '@farmslot/protocol';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
 
 import { loadPromptTemplate } from '../core/prompt-templates.js';
 import { getLLMConfig } from '../llm/config.js';
@@ -304,11 +304,11 @@ export function buildSmartBranch(
     const ticketRaw = ticketOrPr.replace(/[~^:?*[\]\\@{}\x00-\x1f\x7f]/g, '').replace(/\//g, '-');
     const slug = branchSlug ? sanitizeBranchSlug(branchSlug) : '';
     return branchFormat
-      .replace('{{ticket}}', ticketRaw)
-      .replace('{{type}}', dir)
-      .replace('{{slug}}', slug)
-      .replace('{{namespace}}', namespace ?? '')
-      .replace('{{variant_suffix}}', variantSuffix)
+      .replace('{{ticket}}', literalReplacement(ticketRaw))
+      .replace('{{type}}', literalReplacement(dir))
+      .replace('{{slug}}', literalReplacement(slug))
+      .replace('{{namespace}}', literalReplacement(namespace ?? ''))
+      .replace('{{variant_suffix}}', literalReplacement(variantSuffix))
       .replace(/\/\/+/g, '/')
       .replace(/^\/|\/$/g, '')
       .replace(/-+/g, '-')

@@ -50,6 +50,7 @@ import {
   type WorkGraphSnapshot,
 } from '@farmslot/protocol';
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
 
 import {
   createBacklogItem,
@@ -1033,7 +1034,7 @@ function expandPromptTemplate(
   assertNoUnknownPlaceholders(template, Object.keys(vars), source);
   let rendered = template;
   for (const [key, value] of Object.entries(vars)) {
-    rendered = rendered.replaceAll(`{{${key}}}`, value);
+    rendered = rendered.replaceAll(`{{${key}}}`, literalReplacement(value));
   }
   return `${rendered.trimEnd()}\n`;
 }

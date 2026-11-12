@@ -14,6 +14,7 @@ import {
   packMachineNames,
   validatePackPortability,
 } from '@farmslot/protocol/node/pack-portability';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
 
 export interface PackProject {
   /** Project dir inside the pack, e.g. "projects/example-app-farm". Basename = project name. */
@@ -222,5 +223,5 @@ export function decideAddAction(existingHash: string | undefined, newHash: strin
 
 /** Expand onboarding template vars ({{workspace}}) in pack-declared strings. */
 export function expandPackVars(text: string, vars: { workspace: string }): string {
-  return text.replaceAll('{{workspace}}', vars.workspace);
+  return text.replaceAll('{{workspace}}', literalReplacement(vars.workspace));
 }

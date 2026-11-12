@@ -279,7 +279,10 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
           hasTicketData: spec.bugInput !== undefined,
         }));
   if (operatorPlan !== undefined && spec.modePreamble)
-    taskMarkdown = taskMarkdown.replace(/^(#.+\n)/, `$1\n${spec.modePreamble}\n`);
+    taskMarkdown = taskMarkdown.replace(
+      /^(#.+\n)/,
+      (_match, heading: string) => `${heading}\n${spec.modePreamble}\n`,
+    );
   if (spec.taskDocumentAdditions)
     taskMarkdown = `${taskMarkdown.trimEnd()}${spec.taskDocumentAdditions.startsWith('\n') ? '' : '\n\n'}${spec.taskDocumentAdditions}`;
   // Frozen once: an authored task keeps the set its handoff already carries.

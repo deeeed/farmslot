@@ -2,7 +2,6 @@
 // `farmslot bug batch`. Fetches a bug (gh / Jira curl), parses it with the
 // protocol cores, runs the project scorer, and writes scores/<key>.json —
 // preserving any existing llm/final/validation sections on re-triage.
-
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -16,6 +15,7 @@ import {
   scoreKeyForJira,
   validateBugScore,
 } from '@farmslot/protocol';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
 import { getProjectField, loadProjectVars, type ProjectVars } from '@farmslot/slot-config';
 
 import { curlDownload, curlGet, fetchGitHubIssue, fetchJiraIssue, runScorer } from './edges.js';
@@ -123,7 +123,7 @@ export async function runScore(
 ): Promise<BugScore | null> {
   const scriptTemplate = getProjectField(ctx.vars.projectJson, 'scoring.script');
   if (!scriptTemplate) return null;
-  const script = scriptTemplate.replaceAll('{{INPUT_FILE}}', inputAbsPath);
+  const script = scriptTemplate.replaceAll('{{INPUT_FILE}}', literalReplacement(inputAbsPath));
   const output = (await runScorer(script, ctx.projectDir)).trim();
   if (!output) return null;
   let parsed: unknown;

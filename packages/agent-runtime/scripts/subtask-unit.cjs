@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { isDeepStrictEqual } = require('node:util');
 const { ACCEPTANCE_REGISTRATION_INPUT } = require('@farmslot/protocol/scripts/acceptance.mjs');
+const { literalReplacement } = require('@farmslot/protocol/scripts/literal-replacement.cjs');
 const { pendingInitialAcceptanceDerivation } = require('./acceptance-ledger.cjs');
 
 const {
@@ -203,7 +204,7 @@ function renderPlaceholders(template, vars, source) {
   }
   let content = template;
   for (const [key, value] of Object.entries(vars)) {
-    content = content.replaceAll(`{{${key}}}`, value);
+    content = content.replaceAll(`{{${key}}}`, literalReplacement(value));
   }
   return content;
 }

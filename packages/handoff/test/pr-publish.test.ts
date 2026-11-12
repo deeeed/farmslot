@@ -7,6 +7,20 @@ import test from 'node:test';
 import { buildPrPackage } from '../src/pr-publish/build.js';
 import { publishPrEvidence } from '../src/pr-publish/publish.js';
 
+test('PR templates preserve replacement patterns in supplied text', () => {
+  const text = "Synthetic $' | $& | $` | $$ | $1";
+  const result = buildPrPackage({
+    title: text,
+    summary: text,
+    evidence: [{ path: 'synthetic.txt', description: text }],
+    prTemplate: '{{title}}\n{{summary}}\n{{evidence}}',
+  });
+  assert.equal(
+    result.prDescriptionMarkdown,
+    `${text}\n${text}\n## Evidence\n\n- \`synthetic.txt\` - ${text}\n`,
+  );
+});
+
 test('buildPrPackage is pure/local: composes title, report summary, and evidence block', () => {
   const artifactsDir = mkdtempSync(path.join(os.tmpdir(), 'handoff-pr-'));
   writeFileSync(path.join(artifactsDir, 'report.md'), '# Report\n\nFixed the gate.\n');

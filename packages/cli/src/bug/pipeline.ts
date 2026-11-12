@@ -1,7 +1,6 @@
 // pipeline.ts — the LLM grade / validity / batch stages of the bug pipeline.
 // Wires the `claude` and `gh` edges around the protocol decision cores
 // (normalizeLlmGrade, computeFinalScore, normalizeBugValidation, filterBatchIssues).
-
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -17,6 +16,7 @@ import {
   scoreKeyForGithub,
   scoreKeyForJira,
 } from '@farmslot/protocol';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
 import { getProjectField } from '@farmslot/slot-config';
 
 import { collectBatchRows, renderBatchReport } from './display.js';
@@ -37,7 +37,9 @@ export interface GradeResult {
 function substituteEnv(template: string, vars: Record<string, string>): string {
   let out = template;
   for (const [key, value] of Object.entries(vars)) {
-    out = out.replaceAll(`\${${key}}`, value).replaceAll(`$${key}`, value);
+    out = out
+      .replaceAll(`\${${key}}`, literalReplacement(value))
+      .replaceAll(`$${key}`, literalReplacement(value));
   }
   return out;
 }

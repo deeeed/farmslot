@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
+
 /** One evidence artifact selected for the PR evidence block. */
 export interface PrEvidenceItem {
   /** Package- or artifacts-relative path. */
@@ -62,9 +64,9 @@ export function buildPrPackage(options: BuildPrPackageOptions): BuildPrPackageRe
 
   const template = options.prTemplate ?? DEFAULT_PR_TEMPLATE;
   const prDescriptionMarkdown = template
-    .replace(/\{\{title\}\}/g, options.title)
-    .replace(/\{\{summary\}\}/g, summary)
-    .replace(/\{\{evidence\}\}/g, evidenceMarkdown)
+    .replace(/\{\{title\}\}/g, literalReplacement(options.title))
+    .replace(/\{\{summary\}\}/g, literalReplacement(summary))
+    .replace(/\{\{evidence\}\}/g, literalReplacement(evidenceMarkdown))
     .replace(/\n{3,}/g, '\n\n');
 
   return { prDescriptionMarkdown, evidenceMarkdown };

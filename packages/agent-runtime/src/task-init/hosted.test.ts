@@ -36,6 +36,24 @@ async function spec(t: TestContext): Promise<TaskInitSpec> {
   };
 }
 
+test('operator task preambles preserve replacement patterns once after the heading', async (t) => {
+  const input = await spec(t);
+  await writeFile(
+    path.join(path.dirname(input.taskDir), 'templates/dev/default.md'),
+    '# Worker\n- [ ] Prove behavior\n',
+  );
+  const preamble = "Synthetic $' | $& | $` | $$ | $1";
+  const result = await taskInit({
+    ...input,
+    template: { ...input.template, explicitId: undefined },
+    operatorPlan: '# Operator plan\n- [ ] Prove the fix\n',
+    modePreamble: preamble,
+  });
+  const document = await readFile(result.taskDocument, 'utf8');
+  assert.ok(document.startsWith(`# Worker\n\n${preamble}\n`));
+  assert.equal(document.split(preamble).length - 1, 1);
+});
+
 test('replay policy covers appended context before recording the rendered digest', async (t) => {
   const input = await spec(t);
   const result = await taskInit({

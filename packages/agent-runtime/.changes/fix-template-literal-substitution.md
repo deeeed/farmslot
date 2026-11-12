@@ -1,0 +1,1 @@
+- Preserve literal text in child checklists, task preambles, and replay instructions.

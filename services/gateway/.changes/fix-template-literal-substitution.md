@@ -1,0 +1,1 @@
+- Preserve literal dollar patterns in review findings and generated task, prompt, and command templates.

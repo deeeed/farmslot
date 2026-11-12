@@ -68,6 +68,14 @@ test('configured and unconfigured legacy CI parts render empty', () => {
   assert.equal(rendered, '');
 });
 
+test('legacy CI renumbering preserves replacement patterns in checklist labels', () => {
+  const label = "Synthetic $' | $& | $` | $$ | $1";
+  assert.equal(
+    renderTemplatePlaceholders('- [ ] **3. {{LABEL}}**\n{{CI_PARITY_STEP}}', { LABEL: label }),
+    `- [ ] **1. ${label}**\n`,
+  );
+});
+
 test('bundled implementation checklists retain explicit local checks while the legacy token stays retired', () => {
   const templates = [
     ...['dev', 'dev-interactive', 'fix-bug', 'pr-complete', 'review-fix', 'update-branch'].map(

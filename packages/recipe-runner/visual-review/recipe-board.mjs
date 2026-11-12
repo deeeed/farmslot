@@ -64,7 +64,10 @@ export function buildRecipeReviewBoard({
   const imageCopies = [];
 
   for (const capture of captures) {
-    const relativeImagePath = capture.imageTemplate.replaceAll('{{params.platform}}', platform);
+    const relativeImagePath = capture.imageTemplate.replaceAll(
+      '{{params.platform}}',
+      () => platform,
+    );
     const sourceImagePath = resolveArtifact(
       artifactsDir,
       relativeImagePath,
