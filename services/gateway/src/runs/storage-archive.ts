@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, lstatSync, renameSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, renameSync } from 'node:fs';
 import { cp, lstat, mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -396,12 +396,37 @@ export async function finishStorageArchive(root: string, runId: string): Promise
   await serializeArchiveOperation(archiveFinishes, manifestPath, async () => {
     if (!existsSync(manifestPath)) return;
     const manifest: StorageArchiveManifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    // A finish runs outside the admission locks, alongside staging and keeping. Its copy of the
+    // manifest goes stale, so it saves only the archive entries it finishes and each deletion
+    // intent it recovers; saveManifest merges by key, leaving every other entry as on disk.
+    const saveArchived = () =>
+      saveManifest(manifestPath, { runId, entries: manifest.entries.filter(isArchiveEntry) });
+    let removalFailure: { error: unknown } | undefined;
     for (const entry of manifest.entries) {
       if (entry.state === 'deleting') {
-        // A detached path is not a source: the run gave it up at the rename.
-        if (entry.detached) await rm(entry.detached, { recursive: true, force: true });
-        // Recovery never removes a surviving source; the next eligibility turn decides.
-        if (!lstatSync(entry.source, { throwIfNoEntry: false })) {
+        if (entry.detached)
+          try {
+            // A detached path is not a source: the run gave it up at the rename.
+            await rm(entry.detached, { recursive: true, force: true });
+          } catch (error) {
+            // The other entries of this manifest are finished first; the failure is rethrown below.
+            removalFailure ??= { error };
+            continue;
+          }
+        // Recovery never removes a surviving source; the next eligibility turn decides. Deleted
+        // means the source and every detached tree journaled for it are gone, checked in the same
+        // tick as the marking. The manifest is read again: staging may have given an older intent
+        // its detached path, and renamed the source to it, since this finish read it.
+        const current = (
+          JSON.parse(readFileSync(manifestPath, 'utf8')) as StorageArchiveManifest
+        ).entries.find((candidate) => manifestKey(candidate) === manifestKey(entry));
+        const detached = [entry, current].flatMap((intent) =>
+          intent && !isArchiveEntry(intent) && intent.detached ? [intent.detached] : [],
+        );
+        if (
+          !lstatSync(entry.source, { throwIfNoEntry: false }) &&
+          !detached.some((file) => lstatSync(file, { throwIfNoEntry: false }))
+        ) {
           const recovered: DeletedStorageEntry = {
             ...entry,
             state: 'deleted',
@@ -416,9 +441,10 @@ export async function finishStorageArchive(root: string, runId: string): Promise
       if (!isArchiveEntry(entry)) continue;
       if (!entry.completedAt && !existsSync(entry.staged) && !existsSync(entry.destination))
         continue;
-      await finishEntry(entry, () => saveManifest(manifestPath, manifest));
-      await saveManifest(manifestPath, manifest);
+      await finishEntry(entry, saveArchived);
+      await saveArchived();
     }
+    if (removalFailure) throw removalFailure.error;
   });
 }
 

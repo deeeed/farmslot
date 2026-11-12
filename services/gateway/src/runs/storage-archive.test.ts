@@ -237,12 +237,14 @@ test('a deletion detaches its source at once and removes it without holding the 
     mock.restoreAll();
     syncBuiltinESMExports();
   });
-  let otherWork = false;
-  setImmediate(() => (otherWork = true));
   let settled = false;
   const pending = stageStoragePaths(store.archive, 'run-del', [], () => true, [store.deletion]);
   void pending.finally(() => (settled = true));
   await Promise.race([removing, pending]);
+  // Work scheduled once the removal has begun still runs before the removal ends.
+  let otherWork = false;
+  setImmediate(() => (otherWork = true));
+  await new Promise((resolve) => setImmediate(resolve));
   // The synchronous section is over: the source is gone from its store, the tree is detached.
   assert.equal(await exists(store.source), false);
   const [intent] = (await store.manifest()).entries;
@@ -399,4 +401,202 @@ test('an intent whose source is still in place becomes kept when it is no longer
   assert.equal(kept.state, 'kept');
   assert.equal(kept.reason, 'holds its slot');
   assert.equal(await fs.readFile(path.join(store.source, 'tree', 'file'), 'utf8'), 'pinned input');
+});
+
+/** A gate: `entered` resolves when the gated call arrives, `open()` lets it continue. */
+function gate() {
+  let arrived!: () => void, open!: () => void;
+  const entered = new Promise<void>((resolve) => (arrived = resolve));
+  const opened = new Promise<void>((resolve) => (open = resolve));
+  return { entered, opened, arrived, open };
+}
+
+/** A staged archive entry needing a finish, for manifests that must also hold deletion intents. */
+async function stagedArchiveEntry(store: Awaited<ReturnType<typeof pinStore>>) {
+  const evidence = path.join(path.dirname(store.pins), 'evidence');
+  await fs.writeFile(evidence, 'session evidence');
+  await stageStoragePaths(store.archive, 'run-del', [{ source: evidence, store: 'task-dirs' }]);
+  const [entry] = (await store.manifest()).entries;
+  return { evidence, entry };
+}
+
+test('recovery overlapping a staging turn leaves no detached tree behind', async (t) => {
+  const store = await pinStore(t, 'storage-delete-overlap-');
+  // A deletion journaled earlier, before its rename (a crash, or a held turn): source in place.
+  const detached = path.join(store.pins, '.retention-overlap');
+  await fs.mkdir(path.dirname(store.manifestFile));
+  await fs.writeFile(
+    store.manifestFile,
+    JSON.stringify({
+      runId: 'run-del',
+      entries: [
+        {
+          state: 'deleting',
+          store: 'task-pins',
+          source: store.source,
+          bytes: 12,
+          plannedAt: '2026-11-12T00:00:00.000Z',
+          detached,
+        },
+      ],
+    }),
+  );
+  const remove = fs.rm;
+  const recovering = gate();
+  let calls = 0;
+  mock.method(fs, 'rm', async (...[file, options]: Parameters<typeof fs.rm>) => {
+    if (String(file) !== detached) return remove(file, options);
+    if (calls++ === 0) {
+      // Recovery's removal finds nothing yet and is held before it marks anything.
+      await remove(file, options);
+      recovering.arrived();
+      await recovering.opened;
+      return;
+    }
+    if (calls === 2) throw Object.assign(new Error('volume went away'), { code: 'EIO' });
+    return remove(file, options);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    recovering.open();
+    mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  const finish = finishStorageArchive(store.archive, 'run-del');
+  await recovering.entered;
+  // While recovery is held, staging renames the source to the journaled path and fails to remove it.
+  await assert.rejects(
+    stageStoragePaths(store.archive, 'run-del', [], () => true, [store.deletion]),
+    /volume went away/,
+  );
+  recovering.open();
+  await finish;
+  const [intent] = (await store.manifest()).entries;
+  assert.equal(intent.state, 'deleting');
+  assert.equal(intent.detached, detached);
+  assert.equal(await exists(detached), true, 'the detached tree is still journaled, not orphaned');
+  await finishStorageArchive(store.archive, 'run-del');
+  assert.equal(await exists(detached), false);
+  assert.equal((await store.manifest()).entries[0].state, 'deleted');
+});
+
+test('a finish started before a staging turn cannot write a stale entry over its intent', async (t) => {
+  const store = await pinStore(t, 'storage-delete-stale-');
+  const { entry } = await stagedArchiveEntry(store);
+  // The pin was kept by an earlier pass; this pass deletes it.
+  const manifest = await store.manifest();
+  manifest.entries.push({
+    state: 'kept',
+    store: 'task-pins',
+    source: store.source,
+    bytes: 12,
+    plannedAt: '2026-11-12T00:00:00.000Z',
+    reason: 'holds its slot',
+  });
+  await fs.writeFile(store.manifestFile, JSON.stringify(manifest));
+  const rename = fs.rename;
+  const remove = fs.rm;
+  const finishing = gate();
+  const removing = gate();
+  mock.method(fs, 'rename', async (...[from, to]: Parameters<typeof fs.rename>) => {
+    if (String(from) === entry.staged) {
+      finishing.arrived();
+      await finishing.opened;
+    }
+    return rename(from, to);
+  });
+  mock.method(fs, 'rm', async (...[file, options]: Parameters<typeof fs.rm>) => {
+    if (String(file).startsWith(path.join(store.pins, '.retention-'))) {
+      removing.arrived();
+      await removing.opened;
+    }
+    return remove(file, options);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    finishing.open();
+    removing.open();
+    mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  // The finish holds its copy of the manifest (pin kept) while it moves the archive entry.
+  const finish = finishStorageArchive(store.archive, 'run-del');
+  await finishing.entered;
+  // Staging journals the deletion and detaches the pin while the finish is held, then removes.
+  const stage = stageStoragePaths(store.archive, 'run-del', [], () => true, [store.deletion]);
+  await removing.entered;
+  finishing.open();
+  await finish;
+  const pin = (await store.manifest()).entries.find(
+    (candidate: { source: string }) => candidate.source === store.source,
+  );
+  assert.equal(pin.state, 'deleting', 'the journaled intent is on disk while its tree is removed');
+  assert.match(path.basename(pin.detached), /^\.retention-/);
+  removing.open();
+  await stage;
+  const deleted = (await store.manifest()).entries.find(
+    (candidate: { source: string }) => candidate.source === store.source,
+  );
+  assert.equal(deleted.state, 'deleted');
+  assert.equal(await exists(deleted.detached), false);
+});
+
+test('staging and recovery of different runs do not wait for each other', async (t) => {
+  const store = await pinStore(t, 'storage-delete-independent-');
+  const { entry } = await stagedArchiveEntry(store);
+  const rename = fs.rename;
+  const finishing = gate();
+  mock.method(fs, 'rename', async (...[from, to]: Parameters<typeof fs.rename>) => {
+    if (String(from) === entry.staged) {
+      finishing.arrived();
+      await finishing.opened;
+    }
+    return rename(from, to);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    finishing.open();
+    mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  const finish = finishStorageArchive(store.archive, 'run-del');
+  await finishing.entered;
+  // Another run's deletion completes while this run's finish is held.
+  await stageStoragePaths(store.archive, 'other-run', [], () => true, [store.deletion]);
+  assert.equal(await exists(store.source), false);
+  finishing.open();
+  await finish;
+});
+
+test('a detached tree that cannot be removed does not stop the other entries of its manifest', async (t) => {
+  const store = await pinStore(t, 'storage-delete-isolated-');
+  await stagedArchiveEntry(store);
+  const detached = path.join(store.pins, '.retention-stuck');
+  await fs.rename(store.source, detached);
+  const manifest = await store.manifest();
+  manifest.entries.unshift({
+    state: 'deleting',
+    store: 'task-pins',
+    source: store.source,
+    bytes: 12,
+    plannedAt: '2026-11-12T00:00:00.000Z',
+    detached,
+  });
+  await fs.writeFile(store.manifestFile, JSON.stringify(manifest));
+  const remove = fs.rm;
+  mock.method(fs, 'rm', async (...[file, options]: Parameters<typeof fs.rm>) => {
+    if (String(file) === detached)
+      throw Object.assign(new Error('read-only subdirectory'), { code: 'EACCES' });
+    return remove(file, options);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  await assert.rejects(finishStorageArchive(store.archive, 'run-del'), /read-only subdirectory/);
+  const [intent, archived] = (await store.manifest()).entries;
+  assert.equal(intent.state, 'deleting');
+  assert.equal(archived.state, 'archived', 'the archive entry after it was finished');
+  assert.equal(await fs.readFile(archived.destination, 'utf8'), 'session evidence');
 });
