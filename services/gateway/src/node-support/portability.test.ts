@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import childProcess from 'node:child_process';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -32,6 +34,28 @@ test('gateway pack sync rejects nonportable templates even when only config is b
     (await collectNodeSupportBundle(name, [`projects/${name}/project.json`])).files.length,
     1,
   );
+});
+
+test('gateway pack sync runs its git ownership scan off the event loop', async (t) => {
+  const name = `portability-async-${process.pid}-farm`;
+  const root = path.join(farmslotRoot(), 'projects', name);
+  await mkdir(path.join(root, 'templates'), { recursive: true });
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, 'templates/task.md'), 'ssh macwork.local\n');
+  const blocking: string[][] = [];
+  const spawnSync = childProcess.spawnSync;
+  t.mock.method(childProcess, 'spawnSync', (...args: Parameters<typeof spawnSync>) => {
+    if (args[0] === 'git') blocking.push([...(Array.isArray(args[1]) ? args[1] : [])]);
+    return spawnSync(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  // The scan still reads the pack's files and refuses the nonportable one.
+  await assert.rejects(collectNodeSupportBundle(name, []), /templates\/task.md:1:.*pool\/slot/);
+  assert.deepEqual(blocking, [], 'no git call blocks the event loop');
 });
 
 test('gateway pack sync requires QA even when config is not in the support bundle', async (t) => {
