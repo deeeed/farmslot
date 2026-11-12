@@ -410,7 +410,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
             adapter,
             action: shortName,
             resolvedAction,
-            args: redactCallValue(args),
+            args: safeCallArgs(args, describedAction),
             findings: validation.findings,
             ...(parameterHelp.length > 0 ? { parameterHelp } : {}),
             ...(packedInputs.length > 0 ? { packedInputs } : {}),
@@ -627,7 +627,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
       }
       const callOutput = readCallOutput(result.tracePath);
       const screenshots = callScreenshots(result.artifactManifestPath);
-      const safeArgs = redactCallValue(args);
+      const safeArgs = safeCallArgs(args, describedAction);
       const safeCallOutput = redactCallValue(callOutput);
       const failureUserAction = runFailureUserAction(target, result);
 
@@ -917,6 +917,25 @@ function formatCallOutput(value: unknown): string {
   if (typeof value === 'number' || typeof value === 'boolean' || value === null)
     return String(value);
   return JSON.stringify(value, null, 2);
+}
+
+// Call inputs with sensitive values redacted, and a key that is not a parameter but
+// misspells a sensitive one (pasword=...) redacted with them.
+function safeCallArgs(
+  args: Record<string, unknown>,
+  action: DescribedAction | undefined,
+): Record<string, unknown> {
+  const schema = isRecord(action?.schema) ? action.schema : {};
+  const properties = isRecord(schema.properties) ? schema.properties : {};
+  const sensitive = Object.keys(properties).filter(isSensitiveKey);
+  return Object.fromEntries(
+    Object.entries(args).map(([key, value]) => [
+      key,
+      !Object.hasOwn(properties, key) && closest(key, sensitive)
+        ? '<redacted>'
+        : redactCallValue(value, key),
+    ]),
+  );
 }
 
 /** Call inputs and output with every sensitive-keyed value redacted. */

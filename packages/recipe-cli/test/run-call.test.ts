@@ -4133,7 +4133,10 @@ describe('call', () => {
       handleCall(['shop.ping', 'mode=fast', 'pasword=hunter2', ...base], callOptions),
     );
     assert.match(secretHuman.stderr.join('\n'), /Did you mean 'password=<value>'\?/u);
-    assert.doesNotMatch(secretHuman.stderr.join('\n'), /hunter2/u);
+    // A key that misspells a sensitive parameter is redacted wherever the inputs echo.
+    assert.deepEqual(lastJson(secret.stdout).args, { mode: 'fast', pasword: '<redacted>' });
+    for (const output of [secret, secretHuman])
+      assert.doesNotMatch([...output.stdout, ...output.stderr].join('\n'), /hunter2/u);
     // A nested field is not an action input: its finding stays as the validator reports it.
     const nested = ['shop.ping', 'mode=fast', 'assert={"cuont":1}', ...base];
     const nestedJson = await capture(() => handleCall([...nested, '--json'], callOptions));
