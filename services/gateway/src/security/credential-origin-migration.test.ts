@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import test from 'node:test';
 
 import {
@@ -161,11 +162,14 @@ test('a live writer lock refuses migration without altering the store', (t) => {
 });
 
 test('runtime refresh migrates metadata without emitting authority changes', (t) => {
+  let now = 0;
+  t.mock.method(performance, 'now', () => now);
   const f = fixture(t);
   const runtime = new CredentialStoreRuntime(f.env);
   const changes: unknown[] = [];
   runtime.onChange((change) => changes.push(change));
   writeFileSync(f.path, JSON.stringify(f.historical));
+  now = 100; // An out-of-process rewrite is observed at the bounded recheck.
   assert.deepEqual(runtime.snapshot(), f.store);
   assert.deepEqual(changes, []);
   assert.deepEqual(JSON.parse(readFileSync(f.path, 'utf8')), f.store);
