@@ -517,6 +517,58 @@ test('finding 8 (client): a marker advance for PR metadata alone refreshes the o
   }
 });
 
+test('a refused fleet source reaches an entity-sync client as the error a full read shows', async () => {
+  const refusal = { code: 'RESOURCE_OBSERVATION_FAILED', message: 'Git HEAD was deleted.' };
+  // What a client on the full read shows once the source refuses its reread.
+  const fullGateway = new EntityGateway({ entitySync: false });
+  fullGateway.slots.set('a', slot('a'));
+  const fullClient = setup(fullGateway);
+  const gateway = new EntityGateway();
+  gateway.slots.set('a', slot('a'));
+  const client = setup(gateway);
+  try {
+    fullClient.watch(fleetQuery);
+    await flush();
+    fullGateway.fleetRefusal = refusal;
+    const full = await fullClient.cache.retry(fleetQuery);
+    assert.equal(full.error?.code, refusal.code);
+
+    client.watch(fleetQuery);
+    await flush();
+    assert.equal(client.read(fleetQuery).status, 'ready');
+    const reads = () => gateway.requests('fleet.status').length;
+    const settled = reads();
+
+    // The source updates and settles to the same outcome: nothing to read.
+    gateway.invalidateSlot('a', false);
+    await flush();
+    assert.equal(reads(), settled, 'an invalidation with the same outcome costs no read');
+    assert.equal(client.read(fleetQuery).status, 'ready');
+
+    // It settles refused: one versions read meets the refusal.
+    gateway.fleetRefusal = refusal;
+    gateway.invalidateSlot('a', true);
+    await flush();
+    const failed = client.read(fleetQuery);
+    assert.equal(gateway.requests('fleet.status', 'versions').length, 2, 'one versions read');
+    assert.equal(reads(), settled + 1, 'and no other read');
+    assert.equal(failed.status, full.status, 'the status a full read shows');
+    assert.deepEqual(failed.error, full.error, 'with the same error');
+    assert.deepEqual(slotsOf(failed), ['a:main'], 'rows stay displayed');
+
+    // It recovers: one versions read clears the error.
+    gateway.fleetRefusal = undefined;
+    gateway.invalidateSlot('a', true);
+    await flush();
+    assert.equal(reads(), settled + 2, 'one versions read for the recovery');
+    assert.equal(client.read(fleetQuery).status, 'ready');
+    assert.equal(client.read(fleetQuery).error, undefined);
+  } finally {
+    await client.close();
+    await fullClient.close();
+  }
+});
+
 test('a pushed machine sample updates host load with no read', async () => {
   const gateway = new EntityGateway();
   gateway.slots.set('a', slot('a', { machine: 'mac-a' }));

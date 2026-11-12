@@ -144,6 +144,8 @@ export class EntityGateway implements ResourceCacheTransport {
   readonly listedVersions = new Map<string, string>();
   /** Requests beyond this are refused, so a read loop fails a test instead of hanging it. */
   requestCap = 30;
+  /** While set, every fleet.status read is refused with it, as a failed fleet source refuses them. */
+  fleetRefusal?: { code: string; message: string };
   private readonly revisions = new Map<string, number>();
   private readonly markers = new Map<string, number>();
   private readonly holds: Hold[] = [];
@@ -268,6 +270,10 @@ export class EntityGateway implements ResourceCacheTransport {
       );
     let reply: ResourceReadResult<T>;
     try {
+      if (method === 'fleet.status' && this.fleetRefusal)
+        throw Object.assign(new Error(this.fleetRefusal.message), {
+          code: this.fleetRefusal.code,
+        });
       reply = this.answer<T>(method, record);
     } catch (error) {
       return Promise.reject(error);
@@ -421,6 +427,22 @@ export class EntityGateway implements ResourceCacheTransport {
             }),
       },
       { key: SLOTS_KEY, membership: added },
+    ]);
+  }
+
+  /**
+   * A fleet source invalidated a slot without changing it: the slot is named by its version, and
+   * the fleet marker moves only when the source settled to another outcome.
+   */
+  invalidateSlot(id: string, outcomeChanged: boolean): void {
+    const row = this.slots.get(id);
+    if (!row) throw new Error(`no slot ${id}`);
+    this.publish([
+      {
+        key: { family: 'slot', slotId: id },
+        changedEntity: { family: 'slot', version: versionOf(row) },
+      },
+      { key: SLOTS_KEY, membership: outcomeChanged },
     ]);
   }
 

@@ -492,6 +492,10 @@ list that includes `observation`, `refreshing` and `fetchedAt`, so a refresh
 that starts, completes or fails reaches the client. A client whose listing
 reflects the marker needs no versions read.
 
+A fleet read is refused while a slot's branch source has failed. That source
+moves the fleet marker when it settles refused or admitted again, so the
+versions read meets the same refusal; an update in progress moves no marker.
+
 **Gateway.** Entities and versions are stored where they are written; a
 publication or a read looks them up and hashes nothing.
 
