@@ -1,0 +1,1 @@
+- Preserve authentication’s post-verification freshness fence while reducing repeated credential-file reads.

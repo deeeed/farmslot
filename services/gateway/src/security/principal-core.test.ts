@@ -18,6 +18,7 @@ import {
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import test from 'node:test';
 
 import { Methods } from '@farmslot/protocol';
@@ -173,7 +174,7 @@ test('credential store writes are atomic, locked, permission-safe, and temp-clea
   );
 });
 
-test('read-only credential snapshots are shared until the store file changes', (t) => {
+test('read-only credential snapshots are frozen and refreshed within the bounded window', (t) => {
   const env = isolatedEnv();
   const runtime = new CredentialStoreRuntime(env);
   const writer = new CredentialStoreWriter(runtime);
@@ -181,10 +182,16 @@ test('read-only credential snapshots are shared until the store file changes', (
   const principal = writer.createPrincipal({ type: 'person', displayName: 'reader' }, []);
   const issued = writer.issueCredential(principal.id, 'reader');
 
-  // Just written: a coarse-timestamp filesystem could hide the next write, so it is reread.
-  assert.notEqual(readCredentialStoreSnapshot(path), readCredentialStoreSnapshot(path));
+  let freshnessNow = 0;
+  t.mock.method(performance, 'now', () => freshnessNow);
+  // Calls share the snapshot inside 100 ms; a racy stamp is reread at the deadline.
+  const racy = readCredentialStoreSnapshot(path);
+  assert.equal(readCredentialStoreSnapshot(path), racy);
+  freshnessNow = 100;
+  assert.notEqual(readCredentialStoreSnapshot(path), racy);
   const settledAt = Date.now() + 10_000;
   const clock = t.mock.method(Date, 'now', () => settledAt);
+  freshnessNow = 200;
   const snapshot = readCredentialStoreSnapshot(path);
   assert.equal(readCredentialStoreSnapshot(path), snapshot, 'an unchanged file is not re-read');
   assert.equal(
