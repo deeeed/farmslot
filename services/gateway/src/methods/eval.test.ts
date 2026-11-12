@@ -21,7 +21,14 @@ import {
 } from '../evals/package-store.js';
 import { resolveReviewRunnerModel } from '../review/orchestrator.js';
 import { normalizeEvalReplayForTaskWrite } from '../run-engine/eval-replay-normalization.js';
-import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
+import {
+  createRun,
+  deleteRun,
+  getRun,
+  persistRunNow,
+  runRecordPath,
+  updateRun,
+} from '../runs/store.js';
 import { writeTaskFixture } from '../tasks/writer.test-support.js';
 
 import {
@@ -541,6 +548,66 @@ test('evalTrialStart persists its judge override and creates a catalog candidate
       resumed.run?.engineState?.evalExperiment?.reviewModel,
       'litellm/claude-sonnet-5-5',
     );
+    for (const unknown of [{ reviewer: 'x' }, { reveiw: false }])
+      await t.test(
+        `rejects unknown trial parameter ${Object.keys(unknown)[0]} before idempotent reuse`,
+        async () => {
+          await assert.rejects(
+            evalTrialStart({ ...trialParams, ...unknown }, () => {}),
+            /Unknown eval.trial.start params: .*Allowed params: .*project.*review/,
+          );
+        },
+      );
+    await t.test(
+      'persists review:false and rejects contradictory or conflicting starts',
+      async () => {
+        const disabledParams = {
+          ...withoutOverride,
+          review: false as const,
+          trialId: 'worker-only',
+        };
+        const disabled = await evalTrialStart(disabledParams, () => {});
+        assert.ok(disabled.run);
+        runIds.push(disabled.run.id);
+        assert.equal(disabled.run.engineState?.evalExperiment?.review, false);
+        for (const override of [{ reviewRunner: 'pi' }, { reviewModel: 'gpt-5.5' }])
+          await assert.rejects(
+            evalTrialStart({ ...withoutOverride, review: false, ...override }, () => {}),
+            /review:false cannot be combined with reviewRunner or reviewModel/,
+          );
+        for (const review of [true, null, 'false', 0])
+          await assert.rejects(
+            // @ts-expect-error Runtime RPC inputs must reject values other than false.
+            evalTrialStart({ ...withoutOverride, review }, () => {}),
+            /review must be false/,
+          );
+        await assert.rejects(
+          evalTrialStart({ ...withoutOverride, review: false }, () => {}),
+          /Reviewer override conflicts with retained trial/,
+        );
+        await persistRunNow(disabled.run);
+        const persistedRun = JSON.parse(await readFile(runRecordPath(disabled.run.id), 'utf8'));
+        assert.equal(persistedRun.engineState.evalExperiment.review, false);
+        const retained = await readFile(experimentManifestPath, 'utf8');
+        assert.equal(
+          JSON.parse(retained).trials.find(
+            (trial: { trialId: string }) => trial.trialId === disabled.trialId,
+          ).review,
+          false,
+        );
+        for (const params of [disabledParams, { ...disabledParams, review: undefined }]) {
+          const reused = await evalTrialStart(params, () => {});
+          assert.equal(reused.deduped, true);
+          assert.equal(reused.run?.id, disabled.run.id);
+          assert.equal(reused.run?.engineState?.evalExperiment?.review, false);
+        }
+        await assert.rejects(
+          evalTrialStart({ ...trialParams, trialId: 'worker-only' }, () => {}),
+          /Reviewer override conflicts with retained trial/,
+        );
+        assert.equal(await readFile(experimentManifestPath, 'utf8'), retained);
+      },
+    );
   } finally {
     if (previousDisableEngine === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
     else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableEngine;
@@ -1028,6 +1095,7 @@ test('evalTrialStart treats explicit trialId as an idempotency key', async () =>
     for (const override of [
       { reviewRunner: 'pi', reviewModel: 'litellm/claude-sonnet-5-5' },
       { reviewModel: 'gpt-5.5' },
+      { review: false as const },
     ]) {
       await assert.rejects(
         evalTrialStart(

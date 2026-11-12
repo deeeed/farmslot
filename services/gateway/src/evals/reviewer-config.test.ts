@@ -31,6 +31,7 @@ mock.module('../runners/registry.js', {
     ...registry,
     runnerSupportsModel: (runner: string | null | undefined, model: string | null | undefined) => {
       resolved.push({ runner, model });
+      stopBeforeLaunch.message = `Synthetic test stops at reviewer selection: ${runner}/${model}`;
       throw stopBeforeLaunch;
     },
   },
@@ -41,8 +42,12 @@ const { deleteTestRunIfPresent } = await import('../run-engine/test-fixtures.js'
 const { firstOutputFixture } = await import('./first-output.test-support.js');
 const { freezeEvalFirstOutputPackage } = await import('./package-store.js');
 
-for (const reviewEnabled of [false, true]) {
-  test(`eval judge honors persisted reviewer and review:false (enabled=${reviewEnabled})`, async (t) => {
+for (const [reviewEnabled, trialDisabled] of [
+  [false, false],
+  [true, false],
+  [true, true],
+]) {
+  test(`eval judge honors persisted reviewer and review:false (enabled=${reviewEnabled}, trialDisabled=${trialDisabled})`, async (t) => {
     enabled = reviewEnabled;
     slotReads = 0;
     resolved.length = 0;
@@ -59,13 +64,15 @@ for (const reviewEnabled of [false, true]) {
     currentRunId = run.id;
     t.after(() => deleteTestRunIfPresent(run.id));
     const fixture = await firstOutputFixture(root, getRun(run.id)!);
-    Object.assign(fixture.engineState!.evalExperiment!, {
-      reviewRunner: 'pi',
-      reviewModel: 'litellm/claude-sonnet-5-5',
-    });
+    Object.assign(
+      fixture.engineState!.evalExperiment!,
+      trialDisabled
+        ? { review: false }
+        : { reviewRunner: 'pi', reviewModel: 'litellm/claude-sonnet-5-5' },
+    );
     await freezeEvalFirstOutputPackage(fixture, {});
     updateRun(run.id, { engineState: fixture.engineState, taskFile: fixture.taskFile });
-    if (reviewEnabled) {
+    if (reviewEnabled && !trialDisabled) {
       // Re-enter through the public orchestrator, as retries and resumes do.
       for (let attempt = 0; attempt < 2; attempt++)
         await assert.rejects(
@@ -77,11 +84,12 @@ for (const reviewEnabled of [false, true]) {
         { runner: 'pi', model: 'litellm/claude-sonnet-5-5' },
       ]);
     } else {
-      assert.deepEqual(await executeReview(run.id, 'synthetic-slot'), {
-        skipped: true,
-        reason: 'disabled-for-project',
-        retryCount: 0,
-      });
+      for (let attempt = 0; attempt < 2; attempt++)
+        assert.deepEqual(await executeReview(run.id, 'synthetic-slot'), {
+          skipped: true,
+          reason: 'disabled-for-project',
+          retryCount: 0,
+        });
       assert.equal(slotReads, 0, 'disabled judging must not reach slot or reviewer launch');
       assert.deepEqual(resolved, []);
     }

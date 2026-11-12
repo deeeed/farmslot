@@ -482,7 +482,48 @@ export function candidateVariant(
   return `${base}${invariantSuffix}`;
 }
 
+// Keep strict admission in sync with the protocol, including queued trial payloads.
+const EVAL_TRIAL_START_PARAMS: Record<keyof EvalTrialStartParams, true> = {
+  project: true,
+  experimentManifestPath: true,
+  axes: true,
+  source: true,
+  label: true,
+  startRef: true,
+  runner: true,
+  model: true,
+  review: true,
+  reviewRunner: true,
+  reviewModel: true,
+  effort: true,
+  app: true,
+  slotId: true,
+  allowedSlots: true,
+  safetyTier: true,
+  variant: true,
+  repeat: true,
+  trialId: true,
+  capGroupId: true,
+  suiteId: true,
+};
+
 function assertEvalTrialStartParams(params: EvalTrialStartParams): void {
+  if (!params || typeof params !== 'object' || Array.isArray(params))
+    throw new Error('Invalid eval.trial.start params: expected an object');
+  const unknown = Object.keys(params).filter((key) => !Object.hasOwn(EVAL_TRIAL_START_PARAMS, key));
+  if (unknown.length)
+    throw new Error(
+      `Unknown eval.trial.start params: ${unknown.join(', ')}. Allowed params: ${Object.keys(EVAL_TRIAL_START_PARAMS).join(', ')}`,
+    );
+  if (params.review !== undefined && params.review !== false)
+    throw new Error('Invalid eval.trial.start params: review must be false');
+  if (
+    params.review === false &&
+    (params.reviewRunner !== undefined || params.reviewModel !== undefined)
+  )
+    throw new Error(
+      'Invalid eval.trial.start params: review:false cannot be combined with reviewRunner or reviewModel',
+    );
   if (!params.project?.trim()) throw new Error('Invalid eval.trial.start params: missing project');
   if (!params.experimentManifestPath?.trim())
     throw new Error('Invalid eval.trial.start params: missing experimentManifestPath');
@@ -721,13 +762,17 @@ export async function evalTrialStart(
       : undefined;
   const reviewOverride = reviewer
     ? { reviewRunner: reviewer.reviewRunner, reviewModel: reviewer.model }
-    : {};
+    : params.review === false
+      ? { review: false as const }
+      : {};
 
   if (
     existingTrial &&
-    reviewer &&
-    (existingTrial.reviewRunner !== reviewer.reviewRunner ||
-      existingTrial.reviewModel !== reviewer.model)
+    ((params.review === false && existingTrial.review !== false) ||
+      (reviewer &&
+        (existingTrial.review === false ||
+          existingTrial.reviewRunner !== reviewer.reviewRunner ||
+          existingTrial.reviewModel !== reviewer.model)))
   )
     throw new Error(
       `Reviewer override conflicts with retained trial ${trialId}; start a new trial to change its reviewer.`,
