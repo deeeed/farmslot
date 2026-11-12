@@ -319,6 +319,8 @@ The optional fields ship in `@farmslot/protocol` 0.71.1. The gateway writes and 
 is an explicit selection, `Run.reviewMode`, `Run.prWork.review.options.mode`,
 the retained `Run.repeatReviewContext.mode`, a supplied project default, then
 COLD. An explicit COLD selection MUST override a configured WARM default.
+A new review-pr's explicit fresh-chain context also selects COLD when no mode
+was supplied, before a configured WARM default.
 Admission, continuity, task instructions and recorded review snapshots MUST use
 this precedence. Run creation MUST use the same shared default. The resolver does not verify lineage or authorize session reuse.
 
@@ -457,6 +459,8 @@ Existing recorded verdicts seed retained histories through their validated revie
 
 A new `review-pr` request MAY set `reviewContext.freshChain: true`, with a null
 lineage entry for each execution row, to start a fresh chain. It MUST use COLD.
+When mode is omitted, this explicit fresh request selects COLD before a
+configured WARM default. An explicit WARM choice remains invalid.
 The gateway MUST skip predecessor lookup for both slotless and slot-backed
 review-pr launch paths. No prior review findings, verdict, artifact references,
 generation history or retained session may enter the task. The writer MUST omit

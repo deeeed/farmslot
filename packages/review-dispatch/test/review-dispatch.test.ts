@@ -1088,3 +1088,13 @@ test('fresh chains reject retained input and cannot be requested at a publicatio
   assert.equal(gate.canStartFreshChain, false);
   assert.throws(() => gate.setFreshChain(true), /unavailable/);
 });
+
+test('an explicit fresh chain overrides a configured WARM default when mode is omitted', () => {
+  assert.equal(
+    resolveReviewMode({
+      run: { reviewContext: { freshChain: true, reviewLineages: [null] } },
+      defaultMode: 'warm',
+    }),
+    'cold',
+  );
+});

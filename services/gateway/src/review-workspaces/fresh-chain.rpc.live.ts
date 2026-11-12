@@ -12,6 +12,7 @@ import {
   isRecord,
   type ReviewGatePayload,
   type RunCreateParams,
+  type RunCreateResult,
   type RunGetResult,
 } from '@farmslot/protocol';
 
@@ -78,6 +79,7 @@ test(
         ci: { repo: 'example/app' },
         static_review: { template_id: 'review-pr/default' },
         execution_templates: {},
+        workflow_defaults: { 'review-pr': { review: { mode: 'warm' } } },
       }),
     );
     await writeFile(
@@ -211,6 +213,22 @@ test(
       await store.persistRunNow(store.getRun(runId)!, 'fresh request observed over RPC');
       const stored = JSON.parse(await readFile(path.join(root, 'runs', runId + '.json'), 'utf8'));
       assert.deepEqual(stored.reviewContext, request.reviewContext);
+      const cliRunId = runId;
+      await fixture.client.call('run.cancel', { runId: cliRunId });
+      await fixture.client.call('run.archive', { runId: cliRunId });
+      runId = undefined;
+      const omittedMode = await fixture.client.call<RunCreateResult>('run.create', {
+        ...request,
+        reviewMode: undefined,
+      });
+      try {
+        assert.equal(omittedMode.run.reviewMode, 'cold');
+        assert.deepEqual(omittedMode.run.reviewContext, request.reviewContext);
+      } finally {
+        await fixture.client.call('run.cancel', { runId: omittedMode.run.id });
+        await fixture.client.call('run.archive', { runId: omittedMode.run.id });
+      }
+
       await assert.rejects(
         fixture.client.call('run.create', { ...request, reviewMode: 'warm' }),
         /requires COLD/,
@@ -233,12 +251,14 @@ test(
         JSON.stringify(
           {
             pass: true,
-            runId,
+            runId: cliRunId,
+            omittedModeRunId: omittedMode.run.id,
             root,
             modelCalls: 0,
             reviewerStarted: false,
             checkoutLocalCliFlag: true,
             freshSelectionPersisted: true,
+            omittedModeOverridesWarmDefault: true,
             predecessorSelected: false,
             priorRunUnchanged: true,
             conflictingWarmRejected: true,

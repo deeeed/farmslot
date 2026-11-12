@@ -10,7 +10,7 @@ import type {
 
 export interface ResolveReviewModeOptions {
   explicitMode?: ReviewMode | null;
-  run?: Pick<Run, 'reviewMode' | 'prWork' | 'repeatReviewContext'> | null;
+  run?: Pick<Run, 'reviewMode' | 'prWork' | 'repeatReviewContext' | 'reviewContext'> | null;
   defaultMode?: ReviewMode | null;
 }
 
