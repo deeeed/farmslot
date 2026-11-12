@@ -1,1 +1,1 @@
-- Keep initialized submodules working during blind trial preparation, including nested submodules and linked worktrees, without exposing reference-only history. Restore their original Git metadata after the trial.
+- Keep initialized submodules working during blind trials, including nested submodules and linked worktrees, without exposing reference-only history. Refuse dirty modules regardless of ignore settings, preserve candidate module commits on restore and retry, and retain original module metadata apart from added objects and candidate refs.
