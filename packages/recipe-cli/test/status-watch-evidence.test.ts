@@ -201,7 +201,66 @@ test('status --watch says when no recipe run exists yet', async (t) => {
   await session.ready();
   session.key('v');
   await settle(() => session.frames.length === 2);
-  assert.match(session.frames[1]!, /no recipe run yet under .*temp\/recipe\/runs/u);
+  assert.match(session.frames[1]!, /no recipe run or call yet under .*temp\/recipe\/runs/u);
+});
+
+test("status --watch ignores a previous task's call made moments before this task started", async (t) => {
+  taskEnv(t, undefined);
+  const target = tempDir(t);
+  const calls = path.join(target, 'temp/recipe/calls');
+  writeRun(calls, 'previous', new Date(Date.now() - 1500).toISOString());
+  writeTask(path.join(target, 'temp/tasks/dev/task'), 'running');
+  const session = watch(t, target, {
+    serveEvidence: async () => assert.fail('a call from the previous task must not open'),
+    openUrl: () => assert.fail('nothing to open'),
+  });
+  await session.ready();
+  session.key('v');
+  await settle(() => session.frames.length === 2);
+  assert.match(session.frames[1]!, /no recipe run or call yet/u);
+});
+
+test('status --watch ignores calls made before the task started', async (t) => {
+  taskEnv(t, undefined);
+  const target = tempDir(t);
+  const calls = path.join(target, 'temp/recipe/calls');
+  writeRun(calls, 'earlier', '2026-01-01T00:00:00.000Z');
+  const old = new Date(Date.now() - 3_600_000);
+  fs.utimesSync(path.join(calls, 'earlier', 'recipe-invocation.json'), old, old);
+  fs.utimesSync(path.join(calls, 'earlier'), old, old);
+  writeTask(path.join(target, 'temp/tasks/dev/task'), 'running');
+  const session = watch(t, target, {
+    serveEvidence: async () => assert.fail('a call from before the task must not open'),
+    openUrl: () => assert.fail('nothing to open'),
+  });
+  await session.ready();
+  session.key('v');
+  await settle(() => session.frames.length === 2);
+  assert.match(session.frames[1]!, /no recipe run or call yet/u);
+});
+
+test('status --watch opens the newest call made during the task before any recipe run', async (t) => {
+  taskEnv(t, undefined);
+  const target = tempDir(t);
+  const active = path.join(target, 'temp/tasks/dev/task');
+  writeTask(active, 'running');
+  const calls = path.join(target, 'temp/recipe/calls');
+  writeRun(calls, 'read-positions', new Date().toISOString());
+  // A coarse file clock can stamp a call made right after the task started slightly earlier.
+  const justBefore = new Date(Date.now() - 50);
+  fs.utimesSync(
+    path.join(calls, 'read-positions', 'recipe-invocation.json'),
+    justBefore,
+    justBefore,
+  );
+  fs.utimesSync(path.join(calls, 'read-positions'), justBefore, justBefore);
+  const session = watch(t, target);
+  await session.ready();
+  session.key('v');
+  await settle(() => session.frames.length === 2);
+  assert.deepEqual(session.served, [calls]);
+  assert.deepEqual(session.opened, ['http://127.0.0.1:4100/runs/read-positions/#story']);
+  assert.match(session.frames[1]!, /evidence \(latest call, no recipe run yet\)/u);
 });
 
 test('status --watch --task opens the runs of the task it was asked to show', async (t) => {
