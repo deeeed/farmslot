@@ -254,6 +254,20 @@ test('cleanup preserves a nested repository and reports why it remains', async (
   assert.equal(git(nested, 'log', '-1', '--format=%s'), 'test: unique nested work');
 });
 
+test('unreadable HEAD metadata prevents support cleanup', async (t) => {
+  const f = cleanGitFixture(t);
+  writeFileSync(path.join(f.repo, 'CLAUDE.local.md'), 'keep until Git is verified');
+  writeFileSync(path.join(f.repo, '.git/refs/heads/main'), '9'.repeat(40) + '\n');
+  await assert.rejects(
+    cleanupSlotOwnedPaths(f.vars, retiredSupport, {}, execute),
+    /cleanup failed|valid object|bad object|tree/i,
+  );
+  assert.equal(
+    readFileSync(path.join(f.repo, 'CLAUDE.local.md'), 'utf8'),
+    'keep until Git is verified',
+  );
+});
+
 test('an empty retired selection cannot turn into an unrestricted Git clean', async (t) => {
   const f = cleanGitFixture(t);
   const project = {

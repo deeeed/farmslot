@@ -142,8 +142,8 @@ def inside_parent(relative):
  parent=os.path.realpath(os.path.dirname(os.path.join(repo,relative)))
  if os.path.commonpath([real_repo,parent])!=real_repo: raise RuntimeError('Farm-owned path parent escapes checkout: '+relative)
 for root in roots: inside_parent(root)
-# Refuse corrupt/unreadable Git before treating anything as untracked.
-git('status','--porcelain','-z','--untracked-files=all')
+# Refuse unreadable HEAD metadata without another full workspace scan.
+git('cat-file','-e','HEAD^{tree}')
 def untracked():
  return [os.fsdecode(name) for name in git('ls-files','--others','-z','--',*roots).split(bytes([0])) if name]
 before=untracked()
