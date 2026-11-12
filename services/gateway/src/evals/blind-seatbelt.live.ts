@@ -182,6 +182,90 @@ console.log('ambient secrets absent; tooling, task, pane and synthetic model con
 );
 
 test(
+  'frozen mark helper verifies its CLI and marks progress under the real seatbelt',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const { cliTaskInputExclusions } =
+      await import('../../../../packages/cli/src/commands/task.js');
+    const { retainTaskExecution } =
+      await import('../../../../packages/agent-runtime/src/task-init/execution-provenance.js');
+    const { buildMarkShim } =
+      await import('../../../../packages/agent-runtime/src/task-init/write.js');
+    const root = fixture();
+    t.after(() => rmSync(root, { recursive: true }));
+    const launchEnv = { ...env, FARMSLOT_HOME: path.join(root, 'farm') };
+    const previous = process.env.FARMSLOT_HOME;
+    process.env.FARMSLOT_HOME = launchEnv.FARMSLOT_HOME;
+    t.after(() => {
+      if (previous === undefined) delete process.env.FARMSLOT_HOME;
+      else process.env.FARMSLOT_HOME = previous;
+    });
+    const installed = path.join(root, 'installed');
+    const task = path.join(root, 'task');
+    const source = path.join(installed, 'services/gateway/src/evals/blind-git.py');
+    mkdirSync(path.dirname(source), { recursive: true });
+    writeFileSync(source, '# synthetic private boundary source\n');
+    writeFileSync(
+      path.join(installed, 'package.json'),
+      '{"name":"@farmslot/cli","version":"1.0.0"}',
+    );
+    const executable = path.join(installed, 'farmslot');
+    // Retain a tiny distribution fixture. The executable invokes the real CLI,
+    // including its receipt verifier and the production checklist marker.
+    writeFileSync(
+      executable,
+      `#!/bin/sh\nexec ${q(process.execPath)} ${q(fileURLToPath(new URL('../../../../packages/cli/bin/farmslot.mjs', import.meta.url)))} "$@"\n`,
+      { mode: 0o755 },
+    );
+    const receipt = retainTaskExecution(task, {
+      executable,
+      packageRoot: installed,
+      distributionRoot: installed,
+      bindingIdentity: null,
+      inputs: [],
+      excludedRoots: cliTaskInputExclusions(installed),
+      selectedConfiguration: '{"identity":null}',
+    });
+    writeFileSync(
+      path.join(task, 'CHECKLIST.md'),
+      '# Synthetic task\n- [ ] 1. Prove marker progress\n',
+    );
+    writeFileSync(
+      path.join(task, 'mark'),
+      buildMarkShim(`${q(receipt.resolvedExecutable)} task mark`, true),
+      { mode: 0o755 },
+    );
+    assert.equal(
+      existsSync(path.join(receipt.pin, 'cli/services/gateway/src/evals/blind-git.py')),
+      false,
+    );
+    profile(root, launchEnv);
+    const result = worker(root, `${q(path.join(task, 'mark'))} 1`, launchEnv);
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr + result.stdout);
+    assert.match(readFileSync(path.join(task, 'CHECKLIST.md'), 'utf8'), /- \[x\] 1\./u);
+    writeFileSync(
+      receipt.resolvedExecutable,
+      readFileSync(receipt.resolvedExecutable, 'utf8') + '# synthetic tamper\n',
+    );
+    const tampered = worker(root, `${q(path.join(task, 'mark'))} start`, launchEnv);
+    assert.notEqual(tampered.status, 0);
+    assert.match(tampered.stdout + tampered.stderr, /TASK_INPUT_CHANGED/u);
+    const denied = worker(
+      root,
+      `cat ${q(source)}; cat ${q(path.join(root, 'boundary/sandbox.sb'))}`,
+      launchEnv,
+    );
+    assert.notEqual(denied.status, 0);
+    assert.doesNotMatch(denied.stdout, /synthetic private boundary source/u);
+    assert.match(denied.stderr, /Operation not permitted/u);
+    t.diagnostic(
+      'real frozen mark verified its receipt and wrote CHECKLIST; boundary builder and sandbox profile contents remain denied',
+    );
+  },
+);
+
+test(
   'gateway network is denied even with a readable valid token; browser stores and operator CDP are denied',
   { skip: process.platform !== 'darwin' },
   async (t) => {
