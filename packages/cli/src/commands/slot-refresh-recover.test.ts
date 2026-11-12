@@ -9,6 +9,10 @@ import { fileURLToPath } from 'node:url';
 
 import { WebSocketServer } from 'ws';
 
+import { GatewayClient } from '../gateway-client.js';
+
+import { forcedRecoveryWorkspace } from './slot-recovery-workspace.js';
+
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const repoRoot = path.resolve(packageDir, '../..');
 const tsxBin = path.join(repoRoot, 'node_modules', '.bin', 'tsx');
@@ -236,4 +240,42 @@ test('a failed shared workspace observation never sends an unfenced forced recov
   assert.equal(run.status, 1, `${run.stdout}${run.stderr}`);
   assert.match(`${run.stdout}${run.stderr}`, /Workspace inspection unavailable/);
   assert.deepEqual(refreshParams, []);
+});
+
+test('forced recovery permits a full health generation beyond the ordinary RPC timeout', async (t) => {
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  t.after(() => {
+    for (const socket of server.clients) socket.terminate();
+    server.close();
+  });
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const request = once(server, 'connection').then(async ([socket]) => {
+    const [raw] = await once(socket, 'message');
+    const frame = JSON.parse(String(raw)) as { id: string; method: string };
+    assert.equal(frame.method, 'fleet.status');
+    return { socket, id: frame.id };
+  });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const recovery = forcedRecoveryWorkspace(
+    new GatewayClient({ url: `ws://127.0.0.1:${address.port}`, timeout: 200 }),
+    'example-slot',
+  ).then(
+    (workspace) => ({ workspace, error: undefined }),
+    (error: Error) => ({ workspace: undefined, error }),
+  );
+  const { socket, id } = await request;
+  t.mock.timers.tick(370_000);
+  socket.send(
+    JSON.stringify({
+      type: 'res',
+      id,
+      ok: true,
+      payload: { fleet: { slots: [{ slot: 'example-slot', workspace: IDENTITY }] } },
+    }),
+  );
+  const result = await recovery;
+  assert.equal(result.error, undefined);
+  assert.deepEqual(result.workspace, IDENTITY);
 });

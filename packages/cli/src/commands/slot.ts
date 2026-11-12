@@ -266,7 +266,7 @@ export function registerSlotCommand(program: Command): void {
             ? await forcedRecoveryWorkspace(
                 client,
                 slotId,
-                Math.min(Number(cmd.optsWithGlobals().timeout) || 30_000, 30_000),
+                Number(cmd.optsWithGlobals().timeout) || 30_000,
               )
             : (await client.call<FleetStatusResult>('fleet.status')).fleet.slots.find(
                 (slot) => slot.slot === slotId,

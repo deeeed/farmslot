@@ -2,6 +2,9 @@ import { Events, type FleetStatusResult, isRecord, type SlotWorkspace } from '@f
 
 import type { GatewayClient } from '../gateway-client.js';
 
+// Forced fleet reads have measured 370 s under load, beyond the ordinary RPC timeout.
+const FLEET_HEALTH_TIMEOUT_MS = 420_000;
+
 /** Recovery alone needs a workspace witness; ordinary forced health stays fast. */
 export async function forcedRecoveryWorkspace(
   client: Pick<GatewayClient, 'connect'>,
@@ -29,7 +32,11 @@ export async function forcedRecoveryWorkspace(
     }
   });
   try {
-    const first = await connection.call<FleetStatusResult>('fleet.status', { forceRefresh: true });
+    const first = await connection.call<FleetStatusResult>(
+      'fleet.status',
+      { forceRefresh: true },
+      { timeoutMs: Math.max(waitMs, FLEET_HEALTH_TIMEOUT_MS) },
+    );
     let slot = first.fleet.slots.find((value) => value.slot === slotId);
     if (!slot) throw new Error(`Slot ${slotId} is not in the observed fleet`);
     initialError = slot?.workspaceError;
