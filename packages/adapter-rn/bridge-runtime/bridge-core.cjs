@@ -713,15 +713,19 @@ function createBuiltinCommands({ routes, perfMarkerPrefixes, readyExpression }) 
         while (top.return) top = top.return;
         var windowNode = findMeasurable(top);
         if (!target || !windowNode) return false;
+        // Flatten like React Native: entries apply in order and the last one that sets
+        // overflow wins, an explicit undefined (visible) included. Numeric style IDs
+        // predate StyleSheet.create returning objects and are not resolvable here.
         function overflowOf(style) {
-          if (Array.isArray(style)) {
-            for (var i = style.length - 1; i >= 0; i--) {
-              var nested = overflowOf(style[i]);
-              if (nested) return nested;
+          var overflow;
+          (function apply(entry) {
+            if (Array.isArray(entry)) {
+              for (var i = 0; i < entry.length; i++) apply(entry[i]);
+            } else if (entry && typeof entry === 'object' && 'overflow' in entry) {
+              overflow = entry.overflow;
             }
-            return undefined;
-          }
-          return style && typeof style === 'object' ? style.overflow : undefined;
+          })(style);
+          return overflow;
         }
         var frames = [windowNode];
         for (var up = anchor.return; up; up = up.return) {

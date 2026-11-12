@@ -455,7 +455,13 @@ describe('bridge core', () => {
     const clipped = await runBridge(directory, port, args);
     assert.deepEqual(JSON.parse(clipped.stdout), refused);
 
+    // A later explicit `overflow: undefined` restores visible, as React Native's flatten does.
+    placement.sheetStyle = [{ overflow: 'hidden' }, [{ flex: 1, overflow: undefined }]];
+    const restored = await runBridge(directory, port, args);
+    assert.equal((JSON.parse(restored.stdout) as Record<string, unknown>).alreadyInView, true);
+
     // A clipping ancestor that never answers (unmounted) refuses instead of hanging.
+    placement.sheetStyle = { overflow: 'hidden' };
     placement.sheetAnswers = false;
     const unanswered = await runBridge(directory, port, args);
     assert.deepEqual(JSON.parse(unanswered.stdout), refused);
