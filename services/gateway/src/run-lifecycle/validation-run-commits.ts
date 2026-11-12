@@ -10,6 +10,7 @@ import {
 import type { SlotVars } from '../core/config.js';
 import type { execOnSlot } from '../core/exec.js';
 import { withFarmGitConfig } from '../core/farm-git.js';
+import { findUnpushedSlotCommits } from '../core/git-publication.js';
 import { shellQuote } from '../core/tmux.js';
 
 /**
@@ -273,15 +274,19 @@ function report(vars: SlotVars, parked: ParkedHead): SlotParkedCommits {
 }
 
 /**
- * After the reset, drop the parked branch so the same ticket can be prepared again. Only an
- * unchanged branch is deleted; its commits stay reachable from the parked ref, and prepare
- * recreates the branch from it (`restoreParkedBranch`).
+ * Keep an unpushed branch discoverable after cleanup, including for a new run of the ticket.
+ * Only a fully published, unchanged branch may be deleted. The parked ref remains durable;
+ * prepare can recreate a legacy dropped branch from it (`restoreParkedBranch`).
  */
 export async function dropParkedBranch(
   parked: ParkedRunCommits,
   vars: SlotVars,
   exec: typeof execOnSlot,
 ): Promise<string | null> {
+  // A skip-prepare rerun may inherit unpublished work as its baseline, so an
+  // empty run-local receipt alone cannot authorize deleting the whole branch.
+  if (parked.commits.length || (await findUnpushedSlotCommits(vars, parked.headSha, exec)).length)
+    return `kept branch ${parked.branch} (unpushed commits)`;
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
   const dropped = await exec(
     vars,

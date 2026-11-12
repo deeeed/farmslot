@@ -2,6 +2,7 @@ import { DEFAULT_BRANCH, remoteBranchRefspec } from '@farmslot/protocol';
 import { isRecord } from '@farmslot/protocol/recipe';
 
 import { withFarmGitConfig } from '../../core/farm-git.js';
+import { findUnpushedSlotCommits } from '../../core/git-publication.js';
 import { execOnSlot, type RawProjectJson, type SlotVars } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
 import { hasUserSlotChanges } from '../../fleet/slot-scaffolding.js';
@@ -10,11 +11,6 @@ import { GitHubHttpError } from '../../integrations/github-errors.js';
 
 /** Git's refusal when another fetch in the same repository moved or holds a ref. */
 const REF_LOCK_RACE = /cannot lock ref|unable to update local ref/;
-
-interface UnpushedCommitOptions {
-  preservedByLocalBranch?: boolean;
-  patchBase?: string;
-}
 
 interface PrepareCommitPublicationOptions {
   headOnRemote?: boolean;
@@ -216,46 +212,6 @@ export async function refIncludedInMergedPullRequest(
       );
   }
   return false;
-}
-
-/** Commits not retained by remote refs or an allowed local branch. Git failures refuse. */
-export async function findUnpushedSlotCommits(
-  vars: SlotVars,
-  ref = 'HEAD',
-  exec: typeof execOnSlot = execOnSlot,
-  options: UnpushedCommitOptions = {},
-): Promise<string[]> {
-  const result = await exec(
-    vars,
-    withFarmGitConfig(
-      `git -C ${shellQuote(vars.remoteRepo)} log --format='%H %s'${options.patchBase ? '' : ' --max-count=5'} ${shellQuote(ref)} --not --remotes${options.preservedByLocalBranch ? ' --branches' : ''}`,
-    ),
-  );
-  if (result.exitCode !== 0)
-    throw new Error(
-      `Cannot verify commits on ${vars.slotId} at ${ref}: ${result.stderr || result.stdout}`,
-    );
-  const commits = result.stdout.trim().split('\n').filter(Boolean);
-  if (!commits.length || !options.patchBase) return commits;
-  const cherry = await exec(
-    vars,
-    withFarmGitConfig(
-      `git -C ${shellQuote(vars.remoteRepo)} cherry ${shellQuote(options.patchBase)} ${shellQuote(ref)}`,
-    ),
-  );
-  if (cherry.exitCode !== 0)
-    throw new Error(
-      `Cannot verify merged patches on ${vars.slotId}: ${cherry.stderr || cherry.stdout}`,
-    );
-  const merged = new Set(
-    cherry.stdout
-      .trim()
-      .split('\n')
-      .filter((line) => line.startsWith('- '))
-      .map((line) => line.slice(2)),
-  );
-  // Filter before limiting the error details, so merged tips cannot hide older unpublished work.
-  return commits.filter((line) => !merged.has(line.split(' ', 1)[0])).slice(0, 5);
 }
 
 /** Refuse before prepare can move HEAD or reset/delete the requested run branch. */
