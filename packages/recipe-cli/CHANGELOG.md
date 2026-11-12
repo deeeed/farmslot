@@ -6,6 +6,14 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.4 - 2026-11-12
+
+- `status --watch` groups the page into task, now, acceptance and checklist sections with colored headings, shows the approved implementation plan (`inputs/plan.md`, its hash, approver and base) and the active step, leads "now" with the innermost running operation, and keeps acceptance criteria to one line in a terminal.
+- Pressing `v` answers with a highlighted, short-lived message, and before the first recipe run it opens the newest `call` evidence made during the task.
+- When a `call` input fails validation and its value reads like several `key=value` inputs quoted into one argument (such as `"provider=hyperliquid network=testnet"`), the error says to pass each separately; a value its parameter accepts runs as given, and validation help suggests the nearest parameter for an unknown action input (nested fields keep the validator's message) and the parameter whose values include a misplaced one (`Did you mean 'market_mode="pro"'?`); a suggested assignment keeps its value's type and is quoted for the shell. Help for a sensitive parameter, or one suggested for it, shows `<redacted>` and a `<value>` placeholder instead of the value. Echoed inputs also redact a key that misspells a sensitive parameter (`pasword=...`).
+- `call` prints the absolute path of each screenshot it took (not stills from a recording) (`Screenshot:` lines, and `screenshots` in `--json`).
+- `call` teaches a value of the wrong type with parameter help, for example `value expects a string; got number 2400. Quote it: 'value="2400"'`.
+
 ## 0.35.3 - 2026-11-12
 
 - Operation pruning also removes records left `running` by a process that died, so the operations directory stays bounded and `status` reads stay fast.
