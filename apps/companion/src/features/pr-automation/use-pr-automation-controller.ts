@@ -5,6 +5,7 @@ import { Linking } from 'react-native';
 import {
   type ConfigProjectsResult,
   type DispatchQueueListResult,
+  isTerminalRunStatus,
   Methods,
   monitoredPRUrl,
   parseGitHubPullUrl,
@@ -343,14 +344,15 @@ export function usePRAutomationController(
     setActionError('');
   };
   /**
-   * Run QA links its source review from the run's detail: a run.list row leaves the review
-   * out. The held run.get serves when it is at least as new as the row; otherwise one run.get
-   * is read through the shared cache. When the detail cannot be read, no draft opens.
+   * Run QA links its source review from the detail of the intent's run, listed or not: a
+   * run.list row leaves the review out. The stored run.get serves when it is at least as new
+   * as the row or, without a row, when its run has finished; otherwise one run.get is read
+   * through the shared cache. When the detail cannot be read, no draft opens.
    */
   const openQA = async (intent: PRReviewIntent, row?: RunListRow) => {
     if (mutation.current) return;
     let run: Run | undefined;
-    if (row) {
+    if (intent.runId) {
       const captured = scope.current;
       const stillCurrent = () =>
         scope.current.client === captured.client &&
@@ -363,9 +365,14 @@ export function usePRAutomationController(
       try {
         const cache = getResourceCache();
         if (!cache) throw new Error('The offline store is not open yet');
-        const query = resourceQuery<RunGetResult>(Methods.RUN_GET, { runId: row.id });
+        const query = resourceQuery<RunGetResult>(Methods.RUN_GET, { runId: intent.runId });
         const held = (await cache.readStored?.(query, false))?.data?.run;
-        if (held && Date.parse(held.updatedAt) >= Date.parse(row.updatedAt)) run = held;
+        const current =
+          held &&
+          (row
+            ? Date.parse(held.updatedAt) >= Date.parse(row.updatedAt)
+            : isTerminalRunStatus(held.status));
+        if (held && current) run = held;
         else {
           const state = await cache.retry(query);
           if (!state.data || state.error)

@@ -175,9 +175,9 @@ function qaWorld({
   render();
   return Object.assign(world, {
     viewModel: () => render().viewModel,
-    /** Press Run QA on the review card, which hands over the run.list row. */
-    pressQA(row: RunListRow | undefined) {
-      render().actions.openQA(intent, row);
+    /** Press Run QA on the review card, which hands over the run.list row when one is listed. */
+    pressQA(row: RunListRow | undefined, reviewIntent: PRReviewIntent = intent) {
+      render().actions.openQA(reviewIntent, row);
     },
   });
 }
@@ -281,10 +281,39 @@ test('Run QA opens an unlinked draft for a review of another head or a stale one
     assert.equal(viewModel.requestDraft.sourceReview, undefined);
     assert.equal(viewModel.requestDraft.review.workflow, 'qa');
   }
-  // No run for the intent: an unlinked draft, and nothing is read.
+  // An intent with no run: an unlinked draft, and nothing is read.
+  const { runId: _runId, ...unstarted } = intent;
   const world = qaWorld({});
-  world.pressQA(undefined);
+  world.pressQA(undefined, unstarted);
   await settle();
   assert.equal(world.viewModel().editor?.kind, 'request');
+  assert.equal(world.viewModel().requestDraft.sourceReview, undefined);
   assert.deepEqual(world.reads, []);
+});
+
+// Run QA can be pressed before run history is loaded: the intent's run id resolves the detail.
+test('Run QA resolves the detail from the intent when its run is not listed', async () => {
+  const run = reviewRun();
+  const stored = qaWorld({ held: run });
+  stored.pressQA(undefined);
+  await settle();
+  assert.equal(stored.viewModel().requestDraft.sourceReview?.runId, 'review');
+  assert.deepEqual(stored.reads, []);
+
+  // Nothing stored, or a stored copy from before the review finished: one run.get.
+  for (const held of [undefined, reviewRun({ status: 'monitoring', reviewResult: undefined })]) {
+    const world = qaWorld({ held, read: run });
+    world.pressQA(undefined);
+    await settle();
+    assert.deepEqual(world.reads, ['run.get:{"runId":"review"}']);
+    assert.equal(world.viewModel().editor?.kind, 'request');
+    assert.equal(world.viewModel().requestDraft.sourceReview?.runId, 'review');
+  }
+
+  const failing = qaWorld({ read: 'Gateway unavailable' });
+  failing.pressQA(undefined);
+  await settle();
+  assert.equal(failing.viewModel().editor, undefined);
+  assert.equal(failing.viewModel().actionError, 'Gateway unavailable');
+  assert.equal(failing.reads.length, 1);
 });
