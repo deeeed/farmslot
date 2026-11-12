@@ -1,6 +1,6 @@
 // What the gateway-background process runs for each operation: the same functions the gateway
 // would call in-process, so a probe's result does not depend on where it ran.
-import { checkLocalMachineSlots } from '../../methods/fleet.js';
+import { checkMachineSlots } from '../../methods/fleet.js';
 import { loadFileDecisions } from '../../observability/fleet-monitor.js';
 
 import type { BackgroundOperation, BackgroundParams, BackgroundResult } from './protocol.js';
@@ -10,7 +10,7 @@ export type BackgroundHandlers = {
 };
 
 export const backgroundHandlers: BackgroundHandlers = {
-  'fleet.probeMachine': ({ entries, ssh }) => checkLocalMachineSlots(entries, new Map(ssh)),
+  'fleet.probeMachine': ({ entries, ssh }) => checkMachineSlots(entries, new Map(ssh)),
   'decisions.scan': () => loadFileDecisions(),
 };
 
