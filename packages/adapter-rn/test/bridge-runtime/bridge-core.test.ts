@@ -378,6 +378,44 @@ describe('bridge core', () => {
     });
   }
 
+  it('reports an into-view target with no scroll container as in view only while it shows', async () => {
+    // A non-scrolling bottom sheet over an 800-tall window: nothing to scroll.
+    const placement = { y: 500 };
+    const host = (rect: number[]) => ({
+      measureLayout: () => undefined,
+      measureInWindow: (done: (...values: number[]) => void) => done(...rect),
+    });
+    const target = {
+      measureLayout: () => undefined,
+      measureInWindow: (done: (...rect: number[]) => void) => done(0, placement.y, 400, 30),
+    };
+    const rootFiber: Record<string, unknown> = { stateNode: host([0, 0, 400, 800]) };
+    const sheetFiber: Record<string, unknown> = {
+      stateNode: host([0, 400, 400, 400]),
+      return: rootFiber,
+    };
+    const targetFiber = { stateNode: target, memoizedProps: { testID: 'liq' }, return: sheetFiber };
+    rootFiber.child = sheetFiber;
+    sheetFiber.child = targetFiber;
+    const { directory, port } = await appBroker(rootFiber);
+    const args = ['scroll-view', '--test-id', 'liq', '--into-view'];
+
+    const shown = await runBridge(directory, port, args);
+    assert.equal(shown.code, 0, shown.stderr);
+    const output = JSON.parse(shown.stdout) as Record<string, unknown>;
+    assert.equal(output.ok, true);
+    assert.equal(output.alreadyInView, true);
+    assert.deepEqual(output.targetRect, { x: 0, y: 500, width: 400, height: 30 });
+
+    placement.y = 900;
+    const hidden = await runBridge(directory, port, args);
+    assert.deepEqual(JSON.parse(hidden.stdout), {
+      ok: false,
+      error: 'No scrollable near testID=liq',
+      deviceName: 'demo-1',
+    });
+  });
+
   it('prints help with the app label, built-ins and placed host lines', async () => {
     const directory = await tempDir();
 

@@ -702,7 +702,26 @@ function createBuiltinCommands({ routes, perfMarkerPrefixes, readyExpression }) 
           }
           current = current.return;
         }
-        return opts.intoView ? tryScroll(anchor, false) : false;
+        if (!opts.intoView) return false;
+        if (tryScroll(anchor, false)) return true;
+        // Nothing scrolls the target (a fixed sheet, say): it is in view when it shows
+        // whole inside the window, which the root host view measures.
+        var top = anchor;
+        while (top.return) top = top.return;
+        var windowNode = findMeasurable(top);
+        if (!target || !windowNode) return false;
+        return new Promise(function(resolve) {
+          settledRect(windowNode, function(view) {
+            settledRect(target, function(rect) {
+              var shows = rect.width > 0 && rect.height > 0 &&
+                rect.x >= view.x && rect.x + rect.width <= view.x + view.width &&
+                rect.y >= view.y && rect.y + rect.height <= view.y + view.height;
+              resolve(shows
+                ? { ok: true, testId: opts.testId, alreadyInView: true, targetRect: rect }
+                : { ok: false, error: 'No scrollable near testID=' + opts.testId });
+            });
+          });
+        });
       }
       function findTestId(fiber) {
         if (!fiber) return null;
