@@ -15,13 +15,12 @@ import {
 
 import { runnerRuntimeDir } from '../../../../../scripts/lib/runner-runtime.cjs';
 import { execOnSlot } from '../../core/exec.js';
+import { loadSlotVars, type ProjectVars, type RawProjectJson } from '../../core/index.js';
 import {
-  expandTemplate,
-  loadSlotVars,
-  type ProjectVars,
-  type RawProjectJson,
-} from '../../core/index.js';
-import { machineShellEnv, resolveProjectCommandEnv } from '../../core/project-env.js';
+  machineShellEnv,
+  projectCommandEnvOptions,
+  resolveProjectCommandEnv,
+} from '../../core/project-env.js';
 import { shellQuote } from '../../core/tmux.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
 import { resolveRunnerEffort, taskRecipeTrustEnvironment } from '../launch-command.js';
@@ -70,9 +69,7 @@ export async function prepareNativeWorkerLaunch(input: {
   if (!runnerSupportsEffort(runner, input.model, effort))
     throw new Error('Selected native runner/model does not support this effort');
   const environment = resolveProjectCommandEnv(input.project, {
-    domain: input.domain,
-    expandDomainValue: (value) =>
-      expandTemplate(value, vars, input.projectVars, { domain: input.domain ?? '' }),
+    ...projectCommandEnvOptions(vars, input.projectVars, input.domain ?? ''),
     ...(input.taskLibraries ? { taskLibraries: input.taskLibraries } : {}),
   });
   // Static reviewers need the selected home and pool for retained marker commands.

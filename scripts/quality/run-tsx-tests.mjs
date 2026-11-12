@@ -439,7 +439,6 @@ export const KNOWN_TMPDIR_LEAKERS = new Set([
   'cli/src/onboarding/pack.test.ts',
   'cli/src/onboarding/pool-config.test.ts',
   'cli/src/slot-context.test.ts',
-  'gateway/src/backlog/provenance.test.ts',
   'gateway/src/chat/chat-action-normalization.test.ts',
   'gateway/src/chat/chat-actions.test.ts',
   'gateway/src/ci-monitor/blocked-fix.test.ts',

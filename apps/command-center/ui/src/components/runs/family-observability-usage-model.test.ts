@@ -207,3 +207,19 @@ test('breakdowns keep canonical cost-only increments separate from inventory cov
     'selected-run accounting must not substitute a reused session total',
   );
 });
+
+test('local model breakdown preserves the explicit unpriced reason', () => {
+  const rows = [
+    {
+      runner: 'pi',
+      actualModel: 'ollama/fixture',
+      source: 'runner-transcript' as const,
+      measuredAt: '2026-01-01T00:00:00Z',
+      totalTokens: 20,
+      costUsd: null,
+      costStatus: 'unpriced' as const,
+      costReason: 'local, unpriced',
+    },
+  ];
+  assert.equal(usageBreakdown(rows, 'model')[0].costReason, 'local, unpriced');
+});
