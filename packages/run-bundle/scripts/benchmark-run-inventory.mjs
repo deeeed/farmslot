@@ -9,15 +9,16 @@ import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import { register } from 'tsx/esm/api';
 
-register({ tsconfig: new URL('../tsconfig.json', import.meta.url).pathname });
+register({ tsconfig: fileURLToPath(new URL('../tsconfig.json', import.meta.url)) });
 const { openRunBundleStore, runBundleHousekeepingPaths, withRunBundleStoreLock } =
   await import('../src/retained.ts');
 const { parseRunRecordFile } = await import('../src/collect.ts');
-const { isRacyStamp } = await import('../../protocol/src/file-stamp.ts');
+const { isRacyStamp } = await import('@farmslot/protocol');
 const { values } = parseArgs({
   options: {
     'runs-copy': { type: 'string' },

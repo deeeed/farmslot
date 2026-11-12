@@ -1681,7 +1681,7 @@ test('housekeeping parses a settled run record once, and again only after it cha
 
   // A changed record is parsed again and its references count at once.
   f.run.engineState = { generation: 2 };
-  await capture('generation-2:package');
+  const newest = await capture('generation-2:package');
   clock = settle();
   const superseded = [legacy.ref.bundleDigest, first.ref.bundleDigest].sort();
   assert.deepEqual(await pass(), { reads: 1, selected: superseded });
@@ -1704,9 +1704,14 @@ test('housekeeping parses a settled run record once, and again only after it cha
   assert.equal((await pass()).reads, 1);
   assert.equal((await pass()).reads, 0);
   await rm(recordPath);
-  assert.equal((await pass()).reads, 0, 'a removed record is not read or retained');
+  const removed = await pass();
+  assert.equal(removed.reads, 0, 'a removed record is not read');
+  assert(
+    removed.selected.includes(newest.ref.bundleDigest),
+    'its former bundle is no longer referenced',
+  );
   await writeFile(recordPath, JSON.stringify(f.run));
-  assert.equal((await pass()).reads, 1, 'a recreated record cannot reuse the removed entry');
+  assert.equal((await pass()).reads, 1, 'a recreated record is read');
   clock.mock.restore();
 });
 
@@ -1754,7 +1759,7 @@ test('expiry after media admission removes the copied payload and its charged re
   assert.equal(await withRunBundleStoreLock(f.store, async () => 'available'), 'available');
 });
 
-test('housekeeping yields during gated run reads and preserves the synchronous selection', async (t) => {
+test('housekeeping yields during gated run reads and preserves bundle selection and pins', async (t) => {
   const f = await fixture(t);
   const record = path.join(f.store.runsDir, `${f.run.id}.json`);
   const capture = (key: string) =>
