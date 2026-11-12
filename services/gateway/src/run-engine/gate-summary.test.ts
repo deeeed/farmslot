@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ReviewStatus, Run, RunMetrics, RunnerSessionUsage } from '@farmslot/protocol';
+import {
+  type ReadyGatePrPackage,
+  reviewFindingId,
+  type ReviewStatus,
+  type Run,
+  type RunMetrics,
+  type RunnerSessionUsage,
+} from '@farmslot/protocol';
 
 import { buildFamilyObservabilityTokenSummary } from '../family-observability/token-summary.js';
 
@@ -145,6 +152,160 @@ test('buildReviewSummary excludes findings from an older reviewed head', () => {
   assert.deepEqual(
     summary.reviews.map((review) => review.id),
     ['review-current'],
+  );
+  assert.equal(summary.passingReviews, 1);
+  assert.equal(summary.totalUnresolved, 0);
+});
+
+const summaryPackage: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSnapshot' | 'reviewSubjectHash'> =
+  {
+    headSha: 'current-head',
+    reviewSubjectHash: 'current-subject',
+    reviewSnapshot: {
+      source: 'local-git',
+      baseRef: 'main',
+      baseSha: 'base',
+      headRef: 'feature',
+      headSha: 'current-head',
+      diffHash: 'current-diff',
+      diffPath: 'artifacts/current.diff',
+      diffStat: { files: 1, additions: 2, deletions: 0 },
+      capturedAt: '2026-11-12T02:00:00.000Z',
+    },
+  };
+
+for (const scenario of [
+  { name: 'older findings', issuesAt: '2026-11-12T01:00:00.000Z', expected: 0 },
+  { name: 'later findings', issuesAt: '2026-11-12T03:00:00.000Z', expected: 2 },
+  { name: 'simultaneous findings', issuesAt: '2026-11-12T02:00:00.000Z', expected: 2 },
+  { name: 'undated findings', issuesAt: undefined, expected: 2 },
+  { name: 'invalid finding time', issuesAt: 'unknown', expected: 2 },
+  {
+    name: 'pass for an older subject',
+    issuesAt: '2026-11-12T01:00:00.000Z',
+    passSubject: 'old-subject',
+    expected: 2,
+  },
+]) {
+  test(`buildReviewSummary handles ${scenario.name} when source grouping reverses completion order`, () => {
+    const passed: ReviewStatus = {
+      ...passingReview,
+      reviewedHeadSha: summaryPackage.headSha,
+      reviewedReviewSubjectHash: scenario.passSubject ?? summaryPackage.reviewSubjectHash,
+      reviewSnapshot: summaryPackage.reviewSnapshot,
+      completedAt: '2026-11-12T02:00:00.000Z',
+    };
+    const issues: ReviewStatus = {
+      ...reworkingExtraReview,
+      reviewedHeadSha: summaryPackage.headSha,
+      reviewedReviewSubjectHash: summaryPackage.reviewSubjectHash,
+      reviewSnapshot: summaryPackage.reviewSnapshot,
+      completedAt: scenario.issuesAt,
+    };
+    // The later pipeline pass is materialized before the older requested review.
+    const run = makeRun({ engineState: { publishGate: { reviews: [passed, issues] } } });
+    const before = structuredClone(run.engineState?.publishGate?.reviews);
+    const summary = buildReviewSummary(run, summaryPackage);
+    assert.equal(summary.totalUnresolved, scenario.expected);
+    assert.equal(summary.passingReviews, scenario.passSubject ? 0 : 1);
+    assert.equal(
+      summary.reviews.some((review) => review.id === issues.id),
+      scenario.expected > 0,
+    );
+    assert.equal(summary.didAnyReviewTriggerReWork, true);
+    assert.deepEqual(run.engineState?.publishGate?.reviews, before);
+  });
+}
+
+test('buildReviewSummary counts qualified reviewer sessions without a prepared package', () => {
+  const reviews: ReviewStatus[] = [
+    { ...passingReview, id: 'legacy-pass', reviewerSessionId: null },
+    { ...passingReview, id: 'qualified-pass' },
+    { ...passingReview, id: 'same-session-pass' },
+  ];
+  const run = makeRun({ engineState: { publishGate: { reviews } } });
+  const before = structuredClone(reviews);
+  const summary = buildReviewSummary(run);
+  assert.equal(summary.passingReviews, 1);
+  assert.equal(summary.reviews.length, 3, 'Historical rows remain visible without counting twice');
+  assert.equal(summary.totalUnresolved, 0);
+  assert.deepEqual(reviews, before);
+});
+
+test('buildReviewSummary counts settled findings without rewriting the original verdict', () => {
+  const issue = {
+    file: 'artifacts/evidence-manifest.json',
+    description: 'check-1 needs confirmation.',
+  };
+  const review: ReviewStatus = {
+    ...reworkingExtraReview,
+    id: 'settled-review',
+    source: 'pipeline',
+    reviewedHeadSha: 'current-head',
+    unresolvedCount: 1,
+    issues: [issue],
+    settledFindings: [
+      {
+        reviewId: 'settled-review',
+        headSha: 'current-head',
+        findingId: reviewFindingId('settled-review', 'current-head', issue),
+        receiptId: 'person-confirmed-receipt',
+        claimId: 'check-1',
+      },
+    ],
+  };
+  const run = makeRun({ engineState: { publishGate: { reviews: [review] } } });
+  const before = structuredClone(review);
+  const summary = buildReviewSummary(run);
+  assert.equal(summary.totalUnresolved, 0);
+  assert.equal(summary.passingReviews, 1);
+  assert.equal(summary.review?.unresolvedCount, 0);
+  assert.equal(summary.reviews[0].unresolvedCount, 0);
+  assert.equal(summary.reviews[0].verdict, 'issues');
+  assert.deepEqual(review, before);
+});
+
+test('buildReviewSummary uses the prepared head when an older requested review is stored last', () => {
+  const current: ReviewStatus = {
+    ...passingReview,
+    reviewedHeadSha: 'current-head',
+    reviewedReviewSubjectHash: 'current-subject',
+    reviewSnapshot: {
+      source: 'local-git',
+      baseRef: 'main',
+      baseSha: 'base',
+      headRef: 'feature',
+      headSha: 'current-head',
+      diffHash: 'current-diff',
+      diffPath: 'artifacts/current.diff',
+      diffStat: { files: 1, additions: 2, deletions: 0 },
+      capturedAt: '2026-11-12T02:00:00.000Z',
+    },
+  };
+  const older: ReviewStatus = {
+    ...reworkingExtraReview,
+    reviewedHeadSha: 'old-head',
+    reviewSnapshot: {
+      source: 'local-git',
+      baseRef: 'main',
+      baseSha: 'base',
+      headRef: 'feature',
+      headSha: 'old-head',
+      diffHash: 'old-diff',
+      diffPath: 'artifacts/old.diff',
+      diffStat: { files: 1, additions: 1, deletions: 0 },
+      capturedAt: '2026-11-12T01:00:00.000Z',
+    },
+  };
+  const run = makeRun({ engineState: { publishGate: { reviews: [current, older] } } });
+  const summary = buildReviewSummary(run, {
+    headSha: 'current-head',
+    reviewSnapshot: current.reviewSnapshot,
+    reviewSubjectHash: 'current-subject',
+  });
+  assert.deepEqual(
+    summary.reviews.map((review) => review.id),
+    [current.id],
   );
   assert.equal(summary.passingReviews, 1);
   assert.equal(summary.totalUnresolved, 0);

@@ -330,7 +330,8 @@ test('the worker boundary uses the pool-selected credential home and resolved si
   assert.ok(
     slotCommands.some(
       (command) =>
-        command.startsWith("export FARMSLOT_HOME='/synthetic/selected-profile' && python3 - ") &&
+        command.startsWith("export FARMSLOT_HOME='/synthetic/selected-profile' && ") &&
+        command.includes('python3 - ') &&
         command.includes('"action":"boundary"'),
     ),
   );

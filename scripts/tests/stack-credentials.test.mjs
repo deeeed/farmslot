@@ -104,6 +104,40 @@ test('dev stack drops inherited parent credentials before co-launching its node'
   assert.equal(child.FARMSLOT_GATEWAY_AUTH_MODE, null);
 });
 
+for (const activated of [false, true]) {
+  test(`support-bundle dev script resolves slot dependencies with activation=${activated}`, (t) => {
+    const f = fixture(t);
+    const support = mkdtempSync(path.join(tmpdir(), 'dev-support-bundle-'));
+    t.after(() => rmSync(support, { recursive: true, force: true }));
+    for (const relative of ['scripts/dev.sh', 'scripts/lib/stack-credentials.sh']) {
+      mkdirSync(path.dirname(path.join(support, relative)), { recursive: true });
+      copyFileSync(path.join(repo, relative), path.join(support, relative));
+    }
+    mkdirSync(path.join(support, 'node_modules'));
+    symlinkSync(path.join(repo, 'node_modules/tsx'), path.join(support, 'node_modules/tsx'), 'dir');
+    if (activated) {
+      writeFileSync(
+        path.join(f.env.FARMSLOT_HOME, 'credentials.json'),
+        JSON.stringify({
+          schemaVersion: 1,
+          activatedAt: '2026-10-10T00:00:00.000Z',
+          principals: [],
+          credentials: [],
+        }),
+      );
+    }
+    execFileSync('bash', [path.join(support, 'scripts/dev.sh')], {
+      env: f.env,
+      stdio: 'pipe',
+      timeout: 3000,
+    });
+    const child = JSON.parse(readFileSync(f.capture, 'utf8'));
+    assert.equal(child.GATEWAY_HOST, activated ? '0.0.0.0' : '127.0.0.1');
+    assert.equal(child.FARMSLOT_HOME, f.env.FARMSLOT_HOME);
+    for (const key of keys) assert.equal(child[key], null, key);
+  });
+}
+
 test('retired checkout auth is ignored and the selected home supplies its node credential', (t) => {
   for (const auth of [
     'FARMSLOT_GATEWAY_TOKEN=stack-token\n',

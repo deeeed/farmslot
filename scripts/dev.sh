@@ -148,7 +148,7 @@ if (exec 3<>"/dev/tcp/127.0.0.1/$GATEWAY_PORT") 2>/dev/null; then
   exit 1
 fi
 if [ -z "${GATEWAY_HOST:-}" ]; then
-  dev_activated="$(cd "$DEV_FRAMEWORK_ROOT" && node --import tsx --input-type=module -e 'import { CredentialStoreRuntime } from "@farmslot/credential-store"; process.stdout.write(new CredentialStoreRuntime().isActivated() ? "yes" : "no")')"
+  dev_activated="$(cd "$FARMSLOT_ROOT" && node --import tsx --input-type=module -e 'import { CredentialStoreRuntime } from "@farmslot/credential-store"; process.stdout.write(new CredentialStoreRuntime().isActivated() ? "yes" : "no")')"
   if [ "$dev_activated" = yes ]; then
     export GATEWAY_HOST=0.0.0.0
   else

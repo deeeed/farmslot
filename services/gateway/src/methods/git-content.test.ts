@@ -220,7 +220,8 @@ test('batched git.show through a remote node returns non-UTF-8 bytes unchanged',
   const page = await gitShowBatch({ slotId: 's', ref: head, paths: ['b.bin'] }, deps);
 
   assert.equal(remoteArgv.length, 1);
-  assert.equal(remoteArgv[0][0], 'node');
+  assert.equal(remoteArgv[0][0], 'bash');
+  assert.equal(remoteArgv[0][4], 'node');
   assert.equal(page.entries[0].status, 'ok');
   assert.equal(page.entries[0].id, git('rev-parse', `${head}:b.bin`));
   assert.deepEqual(Buffer.from(page.entries[0].content!, 'base64'), nonUtf8);

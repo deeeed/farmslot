@@ -28,6 +28,7 @@ import {
   resolveTestFilePatterns,
 } from '@farmslot/protocol';
 
+import { withFarmGitArgv } from '../core/farm-git.js';
 import {
   execArgvOnSlot,
   getProjectFieldRaw,
@@ -43,6 +44,9 @@ import { loadProjectVarsOrNull } from '../run-engine/project-vars.js';
 import { getRunWithArchived } from '../runs/store.js';
 
 import { type GitShowPageInput, HOST_GIT_SHOW } from './git-show.js';
+
+const execFarmGitArgvOnSlot: typeof execArgvOnSlot = (vars, argv, options) =>
+  execArgvOnSlot(vars, withFarmGitArgv(argv), options);
 
 async function resolveRepoPath(slotId: string): Promise<string> {
   const pools = await loadPoolConfigs();
@@ -79,7 +83,7 @@ export async function gitExec(
   if (deps.runCommand) return deps.runCommand(args);
   const repoPath = await (deps.resolveRepo ?? resolveRepoPath)(slotId);
   const slotVars = await (deps.loadVars ?? loadSlotVars)(slotId);
-  const result = await (deps.runOnSlot ?? execArgvOnSlot)(
+  const result = await (deps.runOnSlot ?? execFarmGitArgvOnSlot)(
     slotVars,
     [
       'git',
@@ -130,7 +134,7 @@ async function gitUntrackedDiff(
 ): Promise<string> {
   const repoPath = await (deps.resolveRepo ?? resolveRepoPath)(slotId);
   const slotVars = await (deps.loadVars ?? loadSlotVars)(slotId);
-  const result = await (deps.runOnSlot ?? execArgvOnSlot)(
+  const result = await (deps.runOnSlot ?? execFarmGitArgvOnSlot)(
     slotVars,
     [
       'bash',
@@ -668,7 +672,7 @@ export async function gitShowBatch(
   const repoPath = await (deps.resolveRepo ?? resolveRepoPath)(params.slotId);
   const slotVars = await (deps.loadVars ?? loadSlotVars)(params.slotId);
   const node = isLocal(slotVars.host, slotVars.machine) ? process.execPath : 'node';
-  const result = await (deps.runOnSlot ?? execArgvOnSlot)(
+  const result = await (deps.runOnSlot ?? execFarmGitArgvOnSlot)(
     slotVars,
     [node, '-e', HOST_GIT_SHOW, JSON.stringify(input)],
     { cwd: repoPath, maxBuffer: 15 * MB },
