@@ -172,7 +172,7 @@ test('a command run by the child answers exactly as without the child, and leave
   assert.deepEqual(results.slice(0, compared.length), expected);
   assert.equal(expected[2].exitCode, 1, 'a signalled command reads as exit 1');
   assert.equal(expected[4].exitCode, 124);
-  // The watchdog leaves with its command: nothing of the group remains.
+  // The guard leaves with its command: nothing of the group remains.
   const [leader] = await pids(strayFile, 1);
   await until(() => !alive(-leader), 'the finished command group to empty');
 });
