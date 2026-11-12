@@ -270,8 +270,8 @@ export function configuredExecutionTemplateOptions(
 
 export function resolveConfiguredExecutionTemplate(
   projectVars: ProjectVars,
-  query: Required<Pick<ExecutionTemplateCatalogQuery, 'flow' | 'platform' | 'runMode'>> &
-    Pick<ExecutionTemplateCatalogQuery, 'domain' | 'explicitId'>,
+  query: Required<Pick<ExecutionTemplateCatalogQuery, 'flow' | 'runMode'>> &
+    Pick<ExecutionTemplateCatalogQuery, 'platform' | 'domain' | 'explicitId'>,
 ): ResolvedConfiguredExecutionTemplate {
   if (!projectUsesExecutionTemplateCatalog(projectVars)) {
     throw new Error(`Project "${projectVars.projectName}" has no execution-template catalog.`);

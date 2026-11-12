@@ -237,7 +237,7 @@ test('dataset and cap group helpers keep suite identity independent from candida
 
 test('candidate label and variant helpers derive stable strategy display data', () => {
   const selected = makeCase({ taskProfile: 'dev' });
-  const row = makeRow({ templatePath: 'templates/worker/dev.md', repeat: true });
+  const row = makeRow({ templatePath: '', promptName: 'dev', repeat: true });
   const choices = candidateTemplateChoices('dev', []);
 
   assert.match(candidateLabel(row, selected, choices), /^Dev replay · Codex \/ gpt-5\.5$/);
@@ -279,6 +279,42 @@ test('buildEvalCellQueueRequest keeps trial params and queue metadata in sync', 
     name: 'none',
     version: 'first-pass',
   });
+});
+
+test('default launch omits the template axis and explicit templates retain their digest', () => {
+  const row = makeRow();
+  const choices = candidateTemplateChoices('fix-bug', []);
+  assert.equal(choices[0].path, '');
+  const selectedCase = makeCase();
+  const request = buildEvalCellQueueRequest({
+    selectedCase,
+    row,
+    primaryCase: selectedCase,
+    choices,
+    projectFallback: '',
+    evalResult: makeEvalResult(),
+    datasetId: 'dataset-1',
+    capGroupId: 'suite-dataset-1',
+    cellId: 'selection-1:candidate-a',
+    trialId: 'trial-default',
+  });
+  const axes = JSON.parse(JSON.stringify(request.evalCell.trialStartParams.axes));
+  assert.deepEqual(axes, {
+    prompt: { name: 'fix-bug' },
+    harness: { name: 'recipe-harness' },
+    review: { name: 'none', version: 'first-pass' },
+    runner: { name: 'codex' },
+    model: { name: 'gpt-5.5' },
+  });
+  assert.deepEqual(
+    axesForCandidateRow(
+      makeRow({
+        templatePath: 'fix-bug/mobile.md',
+        templateHash: 'recorded-digest',
+      }),
+    ).template,
+    { path: 'fix-bug/mobile.md', hash: 'recorded-digest' },
+  );
 });
 
 test('candidate review mode maps to replay review axes', () => {

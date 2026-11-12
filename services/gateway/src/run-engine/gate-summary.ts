@@ -22,7 +22,9 @@ import {
   type GatePolicy,
   type GateSummary,
   type GateTokenSummary,
+  openReviewFindingCount,
   PipelineSteps,
+  qualifyingPassingReviews,
   type ReadyGatePrPackage,
   type ReviewStatus,
   type ReviewSummary,
@@ -205,7 +207,7 @@ function buildReview(
       ...(status === 'skipped' && stepReason ? { reason: stepReason } : {}),
       verdict: latest.verdict,
       feedbackSent: latest.feedbackSent === true,
-      unresolvedCount: latest.unresolvedCount,
+      unresolvedCount: openReviewFindingCount(latest),
       triggeredReWork: triggeredReWork(latest, allReviews),
       ...(latest.artifactPaths?.length ? { artifactPaths: latest.artifactPaths } : {}),
     };
@@ -228,18 +230,39 @@ export function buildReviewSummary(
 ): ReviewSummary {
   const reviews = run.engineState?.publishGate?.reviews ?? [];
   const selfEntries = reviews.filter(isReviewEntry);
-  const requestedEntries = reviewsForLatestReviewedHead(reviews);
+  const preparedHead = preparedPackage?.headSha?.trim();
+  const currentHeadEntries = preparedHead
+    ? reviews.filter((review) => effectiveReviewedHead(review) === preparedHead)
+    : [];
+  // Materialization groups pipeline and requested reviews; array order is not recency.
+  // Retain stale history for diagnosis when no review addresses the prepared head yet.
+  const requestedEntries = reviewsForLatestReviewedHead(
+    currentHeadEntries.length ? currentHeadEntries : reviews,
+  );
 
+  const passingEntries = qualifyingPassingReviews(requestedEntries).filter(
+    (entry) => !preparedPackage || publicationReviewMatchesPreparedPackage(entry, preparedPackage),
+  );
+  // Materialization groups sources, so a requested review can precede a pipeline
+  // pass even when stored last. Only a known later pass supersedes old findings.
+  const latestPassAt = Math.max(
+    ...passingEntries.map((entry) => Date.parse(entry.completedAt ?? '')).filter(Number.isFinite),
+  );
+  const currentEntries = requestedEntries.filter((entry) => {
+    if (entry.verdict !== 'issues') return true;
+    const completedAt = Date.parse(entry.completedAt ?? '');
+    return !Number.isFinite(completedAt) || completedAt >= latestPassAt;
+  });
   const review = buildReview(run, selfEntries, reviews);
 
-  const summaries = requestedEntries.map((r) => ({
+  const summaries = currentEntries.map((r) => ({
     id: r.id,
     ...(r.source ? { source: r.source } : {}),
     runner: r.runner ?? null,
     model: r.model ?? null,
     loopNumber: r.loopNumber,
     verdict: r.verdict,
-    unresolvedCount: r.unresolvedCount,
+    unresolvedCount: openReviewFindingCount(r),
     feedbackSent: r.feedbackSent === true,
     triggeredReWork: triggeredReWork(r, reviews),
     attempts: r.attempts?.length ?? 1,
@@ -252,15 +275,11 @@ export function buildReviewSummary(
     ...(r.completedAt ? { completedAt: r.completedAt } : {}),
   }));
 
-  const passingReviews = requestedEntries.filter(
-    (r) =>
-      r.verdict === 'pass' &&
-      (!preparedPackage ||
-        (r.unresolvedCount === 0 && publicationReviewMatchesPreparedPackage(r, preparedPackage))),
-  ).length;
-  const totalUnresolved = requestedEntries.reduce((sum, r) => sum + num(r.unresolvedCount), 0);
+  const passingReviews = passingEntries.length;
+  const totalUnresolved = currentEntries.reduce((sum, r) => sum + openReviewFindingCount(r), 0);
   const didAnyReviewTriggerReWork =
-    review?.triggeredReWork === true || summaries.some((r) => r.triggeredReWork);
+    review?.triggeredReWork === true ||
+    requestedEntries.some((entry) => triggeredReWork(entry, reviews));
   const requiredReviews = run.engineState?.publishGate?.reviewPolicy?.minimumReviews;
 
   return {

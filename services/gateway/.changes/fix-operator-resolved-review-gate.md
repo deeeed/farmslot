@@ -1,0 +1,1 @@
+- Correct review summary counts when a later pass supersedes earlier findings on the current package head.

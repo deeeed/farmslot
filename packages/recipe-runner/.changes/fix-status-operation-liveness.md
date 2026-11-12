@@ -1,1 +1,0 @@
-- Process liveness checks skip `ps` for dead processes and share one `ps` listing per burst, so reading a checkout with many stale operation records no longer spawns `ps` once per record.
