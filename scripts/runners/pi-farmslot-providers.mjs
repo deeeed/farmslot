@@ -362,9 +362,9 @@ export async function fetchOpenAiModels(
 export class PiProviderConfigurationError extends Error {}
 
 /** Pi replaces extension model arrays; retain the statically composed models for workers too. */
-export async function preservePiStaticModels(catalog, loadStaticRuntime) {
+export async function preservePiStaticModels(catalog, loadStaticRuntime, env = process.env) {
   if (catalog.length === 0) return catalog;
-  const configuredDir = process.env.PI_CODING_AGENT_DIR;
+  const configuredDir = env.PI_CODING_AGENT_DIR;
   const agentDir = configuredDir
     ? configuredDir.replace(/^~(?=\/|$)/, homedir())
     : path.join(homedir(), '.pi', 'agent');
@@ -375,15 +375,30 @@ export async function preservePiStaticModels(catalog, loadStaticRuntime) {
     // overrides without refreshing catalogs or looking up credentials.
     const runtime = await loadStaticRuntime(modelsPath);
     if (runtime.getError()) throw new PiProviderConfigurationError('Invalid pi static models');
-    return catalog.map((source) => ({
-      ...source,
-      models: [
-        ...new Map([
-          ...source.models.map((model) => [model.id, model]),
-          ...runtime.getModels(source.id).map((model) => [model.id, model]),
-        ]).values(),
-      ],
-    }));
+    return catalog.map((source) => {
+      const name = `FARMSLOT_PI_${source.kind.toUpperCase()}_MODEL_LIMITS`;
+      const limits = configuredModelLimits(env[name], name);
+      const discovered = new Map(source.models.map((model) => [model.id, model]));
+      return {
+        ...source,
+        models: [
+          ...new Map([
+            ...discovered,
+            ...runtime.getModels(source.id).map((model) => {
+              // Static defaults must not erase the pool's declared reasoning support.
+              // Keep discovery's endpoint validation and supported effort levels.
+              const live = discovered.get(model.id);
+              return [
+                model.id,
+                live && limits.get(model.id)?.reasoning !== undefined
+                  ? { ...model, reasoning: live.reasoning, thinkingLevelMap: live.thinkingLevelMap }
+                  : model,
+              ];
+            }),
+          ]).values(),
+        ],
+      };
+    });
   } catch {
     // Do not let optional discovery hide a failed static-model composition or
     // include configuration contents in a public catalog error.
@@ -622,15 +637,10 @@ async function resolvePiSources(sources, env, opts) {
       ]);
       opts.onDiscovery?.({
         provider: source.id,
-        // The default localhost probe is optional; explicit endpoints must be accounted for.
+        // Shell-inherited Ollama endpoints remain optional until Farmslot explicitly opts in.
         configured:
           source.id !== 'ollama' ||
-          Boolean(
-            env.FARMSLOT_PI_OLLAMA === '1' ||
-            env.FARMSLOT_PI_OLLAMA_URL ||
-            env.OLLAMA_BASE_URL ||
-            env.OLLAMA_HOST,
-          ),
+          Boolean(env.FARMSLOT_PI_OLLAMA === '1' || env.FARMSLOT_PI_OLLAMA_URL),
         status: failed ? 'failed' : 'ready',
         modelCount: rows.length,
       });

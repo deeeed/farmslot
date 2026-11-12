@@ -7,6 +7,7 @@ import test from 'node:test';
 import {
   DEFAULT_CURSOR_MODEL,
   type EvalExperimentManifest,
+  type EvalTrialStartParams,
   type ResultPackageManifest,
 } from '@farmslot/protocol';
 
@@ -18,11 +19,22 @@ import {
   writeEvalExperimentManifest,
   writeResultPackageManifest,
 } from '../evals/package-store.js';
+import { resolveReviewRunnerModel } from '../review/orchestrator.js';
 import { normalizeEvalReplayForTaskWrite } from '../run-engine/eval-replay-normalization.js';
-import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
+import {
+  createRun,
+  deleteRun,
+  getRun,
+  persistRunNow,
+  runRecordPath,
+  updateRun,
+} from '../runs/store.js';
 import { writeTaskFixture } from '../tasks/writer.test-support.js';
 
-import { harnessLifecycleForAxes } from './eval/candidate-setup.js';
+import {
+  harnessLifecycleForAxes,
+  resolveCandidateTemplateProvenance,
+} from './eval/candidate-setup.js';
 import { candidateVariant, evalExperimentCreate, evalTrialStart } from './eval.js';
 
 // These tests resolve the committed demo pool's slots (demo-ff-1), which the
@@ -386,7 +398,7 @@ test('harnessLifecycleForAxes rejects abbreviated harness commit refs early', ()
   );
 });
 
-test('evalTrialStart creates a catalog candidate without a template axis or original parent binding', async (t) => {
+test('evalTrialStart persists its judge override and creates a catalog candidate without parent binding', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-eval-trial-startref-'));
   const runIds: string[] = [];
   const taskDirs: string[] = [];
@@ -476,36 +488,147 @@ test('evalTrialStart creates a catalog candidate without a template axis or orig
 
   const previousDisableEngine = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
   process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  const trialParams: EvalTrialStartParams = {
+    project: 'farmslot-farm',
+    experimentManifestPath,
+    axes: {
+      harness: {
+        version: 'mobile',
+        ref: '2ceae4a099afcb183ae475d8b2724dd87a3f8645',
+        hash: '2ceae4a099afcb183ae475d8b2724dd87a3f8645',
+      },
+      model: { name: 'gpt-5.5' },
+    },
+    reviewRunner: 'pi',
+    reviewModel: 'litellm/claude-sonnet-5-5',
+    label: 'candidate start ref',
+    variant: 'candidate-start-ref',
+    startRef: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    runner: 'codex',
+    model: 'gpt-5.5',
+    slotId: 'demo-ff-1',
+  };
   let result: Awaited<ReturnType<typeof evalTrialStart>>;
   try {
-    result = await evalTrialStart(
-      {
-        project: 'farmslot-farm',
-        experimentManifestPath,
-        axes: {
-          harness: {
-            version: 'mobile',
-            ref: '2ceae4a099afcb183ae475d8b2724dd87a3f8645',
-            hash: '2ceae4a099afcb183ae475d8b2724dd87a3f8645',
-          },
-          model: { name: 'gpt-5.5' },
+    for (const invalid of [
+      { reviewRunner: 'missing-review-runner', reviewModel: 'opus' },
+      { reviewRunner: 'codex', reviewModel: 'opus' },
+      { reviewRunner: 'pi', reviewModel: '-unsafe' },
+      { reviewRunner: '', reviewModel: 'opus' },
+      { reviewRunner: 'pi', reviewModel: '' },
+    ]) {
+      await assert.rejects(
+        evalTrialStart({ ...trialParams, ...invalid }, () => {}),
+        /reviewRunner must be|reviewModel must be|Unknown review runner|does not support model/,
+      );
+    }
+    result = await evalTrialStart(trialParams, () => {});
+    if (result.run) runIds.push(result.run.id);
+    const retainedReview = structuredClone(getRun(result.run!.id)?.engineState?.evalExperiment);
+    const retainedManifest = await readFile(experimentManifestPath, 'utf8');
+    await assert.rejects(
+      evalTrialStart({ ...trialParams, reviewRunner: 'claude', reviewModel: 'opus' }, () => {}),
+      /reviewer override conflicts with retained trial/i,
+    );
+    await assert.rejects(
+      evalTrialStart({ ...trialParams, reviewRunner: 'codex', reviewModel: 'opus' }, () => {}),
+      /does not support model/,
+    );
+    assert.deepEqual(getRun(result.run!.id)?.engineState?.evalExperiment, retainedReview);
+    assert.equal(await readFile(experimentManifestPath, 'utf8'), retainedManifest);
+    const resumed = await evalTrialStart(trialParams, () => {});
+    const withoutOverride = { ...trialParams };
+    delete withoutOverride.reviewRunner;
+    delete withoutOverride.reviewModel;
+    assert.equal((await evalTrialStart(withoutOverride, () => {})).deduped, true);
+    assert.equal(resumed.deduped, true);
+    assert.equal(resumed.run?.id, result.run?.id);
+    assert.equal(resumed.run?.engineState?.evalExperiment?.reviewRunner, 'pi');
+    assert.equal(
+      resumed.run?.engineState?.evalExperiment?.reviewModel,
+      'litellm/claude-sonnet-5-5',
+    );
+    for (const unknown of [{ reviewer: 'x' }, { reveiw: false }])
+      await t.test(
+        `rejects unknown trial parameter ${Object.keys(unknown)[0]} before idempotent reuse`,
+        async () => {
+          await assert.rejects(
+            evalTrialStart({ ...trialParams, ...unknown }, () => {}),
+            /Invalid eval.trial.start params: unknown key\(s\): .*; allowed: .*project.*review/,
+          );
         },
-        label: 'candidate start ref',
-        variant: 'candidate-start-ref',
-        startRef: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-        runner: 'codex',
-        model: 'gpt-5.5',
-        slotId: 'demo-ff-1',
+      );
+    await t.test(
+      'persists review:false and rejects contradictory or conflicting starts',
+      async () => {
+        const disabledParams = {
+          ...withoutOverride,
+          review: false as const,
+          trialId: 'worker-only',
+        };
+        const disabled = await evalTrialStart(disabledParams, () => {});
+        assert.ok(disabled.run);
+        runIds.push(disabled.run.id);
+        assert.equal(disabled.run.engineState?.evalExperiment?.review, false);
+        for (const override of [{ reviewRunner: 'pi' }, { reviewModel: 'gpt-5.5' }])
+          await assert.rejects(
+            evalTrialStart({ ...withoutOverride, review: false, ...override }, () => {}),
+            /review:false cannot be combined with reviewRunner or reviewModel/,
+          );
+        for (const review of [true, null, 'false', 0])
+          await assert.rejects(
+            // @ts-expect-error Runtime RPC inputs must reject values other than false.
+            evalTrialStart({ ...withoutOverride, review }, () => {}),
+            /review must be false/,
+          );
+        await assert.rejects(
+          evalTrialStart({ ...withoutOverride, review: false }, () => {}),
+          /Reviewer override conflicts with retained trial/,
+        );
+        await persistRunNow(disabled.run);
+        const persistedRun = JSON.parse(await readFile(runRecordPath(disabled.run.id), 'utf8'));
+        assert.equal(persistedRun.engineState.evalExperiment.review, false);
+        const retained = await readFile(experimentManifestPath, 'utf8');
+        assert.equal(
+          JSON.parse(retained).trials.find(
+            (trial: { trialId: string }) => trial.trialId === disabled.trialId,
+          ).review,
+          false,
+        );
+        for (const params of [disabledParams, { ...disabledParams, review: undefined }]) {
+          const reused = await evalTrialStart(params, () => {});
+          assert.equal(reused.deduped, true);
+          assert.equal(reused.run?.id, disabled.run.id);
+          assert.equal(reused.run?.engineState?.evalExperiment?.review, false);
+        }
+        await assert.rejects(
+          evalTrialStart({ ...trialParams, trialId: 'worker-only' }, () => {}),
+          /Reviewer override conflicts with retained trial/,
+        );
+        assert.equal(await readFile(experimentManifestPath, 'utf8'), retained);
       },
-      () => {},
     );
   } finally {
     if (previousDisableEngine === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
     else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableEngine;
   }
-  if (result.run) runIds.push(result.run.id);
-
   assert.ok(result.run);
+  const reviewer = { reviewRunner: 'pi', model: 'litellm/claude-sonnet-5-5' };
+  const link = result.run.engineState!.evalExperiment!;
+  assert.deepEqual(
+    resolveReviewRunnerModel(
+      {},
+      {
+        reviewRunner: link.reviewRunner,
+        model: link.reviewModel,
+      },
+    ),
+    reviewer,
+    'the eval judge must use the trial override instead of codex/default',
+  );
+  const stored = JSON.parse(await readFile(experimentManifestPath, 'utf8'));
+  assert.equal(stored.trials[0].reviewRunner, reviewer.reviewRunner);
+  assert.equal(stored.trials[0].reviewModel, reviewer.model);
   const normalized = await normalizeEvalReplayForTaskWrite(result.run.id, result.run);
   assert.equal(normalized.ticketOrPr, result.run.ticketOrPr);
   assert.deepEqual(normalized.ticketData, result.run.ticketData);
@@ -617,7 +740,7 @@ test('evalTrialStart rejects auto replay when the Reference has no base commit',
           project: 'farmslot-farm',
           experimentManifestPath,
           axes: {
-            template: { path: 'templates/fix-bug.md', hash: 'candidate' },
+            template: { path: 'templates/fix-bug.md' },
             model: { name: 'gpt-5.5' },
           },
           runner: 'codex',
@@ -810,7 +933,7 @@ test('evalTrialStart automatically replays from the reference base commit when a
         project: 'farmslot-farm',
         experimentManifestPath,
         axes: {
-          template: { path: 'templates/fix-bug.md', hash: 'candidate' },
+          template: { path: 'templates/fix-bug.md' },
           model: { name: model },
         },
         label: `${runner} replay candidate`,
@@ -888,10 +1011,10 @@ test('evalTrialStart treats explicit trialId as an idempotency key', async () =>
       source: { kind: 'git-ref', ref: 'main', repository: 'owner/repo', baseSha },
       baseline: { baseSha, capturedAt: '2026-05-09T00:00:01.000Z', source: 'local-git' },
     });
-    const axes = {
-      template: { path: 'templates/fix-bug.md', hash: 'template-new' },
+    const { axes } = await resolveCandidateTemplateProvenance('farmslot-farm', 'fix-bug', {
+      template: { path: 'templates/fix-bug.md' },
       model: { name: 'gpt-5.5' },
-    };
+    });
     const candidateStrategyFingerprint = computeCandidateStrategyFingerprint({
       axes,
       taskProfile: 'fix-bug',
@@ -968,6 +1091,35 @@ test('evalTrialStart treats explicit trialId as an idempotency key', async () =>
     assert.equal(result.trialId, normalizedTrialId);
     assert.equal(result.candidatePackagePath, candidatePackagePath);
     assert.equal(result.candidatePackage.packageId, candidatePackage.packageId);
+    const retainedManifest = await readFile(experimentManifestPath, 'utf8');
+    for (const override of [
+      { reviewRunner: 'pi', reviewModel: 'litellm/claude-sonnet-5-5' },
+      { reviewModel: 'gpt-5.5' },
+      { review: false as const },
+    ]) {
+      await assert.rejects(
+        evalTrialStart(
+          { project: 'farmslot-farm', experimentManifestPath, axes, trialId, ...override },
+          () => {},
+        ),
+        /reviewer override conflicts with retained trial/i,
+      );
+    }
+    await assert.rejects(
+      evalTrialStart(
+        {
+          project: 'farmslot-farm',
+          experimentManifestPath,
+          axes,
+          trialId,
+          reviewRunner: 'codex',
+          reviewModel: 'opus',
+        },
+        () => {},
+      ),
+      /does not support model/,
+    );
+    assert.equal(await readFile(experimentManifestPath, 'utf8'), retainedManifest);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

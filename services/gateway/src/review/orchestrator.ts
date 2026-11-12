@@ -270,9 +270,7 @@ export function shouldSkipForDisabledReviewConfig(
     run && isInteractiveDevRun(run) && run.devInteractiveProfile === 'reviewed';
   return (
     !config.enabled &&
-    options.publicationReview !== true &&
-    !options.evalJudge &&
-    !explicitlyReviewed
+    (options.evalJudge || (options.publicationReview !== true && !explicitlyReviewed))
   );
 }
 
@@ -397,14 +395,24 @@ async function executeOwnedReview(
 
   const config = await getReviewConfig(run.project);
   const requestedEffort = options.effort === undefined ? (config.effort ?? null) : options.effort;
-  if (shouldSkipForDisabledReviewConfig(config, { ...options, evalJudge }, run)) {
-    debugReviewLog(`[review] run ${runId.slice(0, 8)} — disabled for project ${run.project}`);
+  if (
+    run.engineState?.evalExperiment?.review === false ||
+    shouldSkipForDisabledReviewConfig(config, { ...options, evalJudge }, run)
+  ) {
+    debugReviewLog(
+      `[review] run ${runId.slice(0, 8)} — disabled for ${run.engineState?.evalExperiment?.review === false ? 'trial' : `project ${run.project}`}`,
+    );
     return { skipped: true, reason: 'disabled-for-project', retryCount: 0 };
   }
 
   const vars = await loadSlotVars(slotId);
   const workerRunner = normalizeRunner(run.metrics.runner);
-  const { reviewRunner, model } = resolveReviewRunnerModel(config, options);
+  const trial = run.engineState?.evalExperiment;
+  const { reviewRunner, model } = resolveReviewRunnerModel(config, {
+    ...options,
+    ...(trial?.reviewRunner ? { reviewRunner: trial.reviewRunner } : {}),
+    ...(trial?.reviewModel ? { model: trial.reviewModel } : {}),
+  });
   const maxRetries = resolveReviewMaxRetries({
     publicationReview: options.publicationReview,
     configuredMaxRetries: config.max_retries,

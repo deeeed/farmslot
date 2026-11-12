@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  paginatedPrCommentOutputContainsRun,
   prCommentBelongsToRun,
   prCommentIdentityMarker,
   resolvePrReadyAction,
@@ -37,17 +36,6 @@ test('PR comment identity is stable per run and supports legacy comments', () =>
   );
   assert.equal(prCommentBelongsToRun(`unrelated commit ${runId.slice(0, 8)}`, runId), false);
   assert.equal(prCommentBelongsToRun('<!-- farmslot-run:another-run -->', runId), false);
-  assert.equal(
-    paginatedPrCommentOutputContainsRun(
-      `${JSON.stringify('older comment')}\n${JSON.stringify(`<!-- farmslot-run:${runId} -->`)}`,
-      runId,
-    ),
-    true,
-  );
-  assert.equal(
-    paginatedPrCommentOutputContainsRun(`null\nnot-json\n${JSON.stringify('another run')}`, runId),
-    false,
-  );
 });
 
 test('worker report comments default off and require a project opt-in', () => {

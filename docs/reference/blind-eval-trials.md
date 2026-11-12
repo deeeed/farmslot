@@ -63,6 +63,7 @@ Status: proposed contract for ADR-030 Amendment 4.
 - A GitHub CLI call that bypasses the stand-in, by absolute path or through a shell profile that reorders `PATH`, fails without credentials but is not recorded.
 - The worker runs under a macOS `sandbox-exec` profile generated from the pool at preparation. It cannot read the node's other slot checkouts, the original checkout a linked-worktree slot shares objects with, blind capsules other than its own boundary, or the GitHub CLI login.
 - Worker session reloads (recovery, parking and operator resume) start under the same boundary.
+- The worker environment and the initial frozen `ci.local_check` command export `FARMSLOT_CI_BASE_REF` as the trial's recorded `baseSha`. Changed-file checks use that local commit without fetching a remote ref. Reloads preserve it; existing frozen commands are not rewritten.
 - The network stays open. A blind trial on a source repository readable without credentials is not isolated by this boundary.
 - Preparation fails on a node without `sandbox-exec`. Dispatch fails for a native worker and for a runner tier that applies its own sandbox. Neither path starts the worker unsandboxed.
 
@@ -76,7 +77,7 @@ Status: proposed contract for ADR-030 Amendment 4.
 
 ## First-output judging
 
-- A valid completed first worker output receives exactly one configured/default reviewer as a judge, including when a review axis says none or production review is disabled. Invalid blind trials retain their package and reason without judging.
+- A valid completed first worker output receives exactly one configured/default reviewer as a judge, including when a review axis says none. `eval.trial.start` accepts optional `reviewRunner` and `reviewModel` overrides, validates them through normal review selection and stores the resolved pair on the trial and run for retries/resumes. An idempotent start validates explicit overrides before returning the retained trial; a different resolved reviewer, including an absent legacy override, conflicts and requires a new trial. Trial `review:false` is validated and stored on both trial and run, and conflicts with `reviewRunner`/`reviewModel`. Idempotent starts may omit the retained choice, but an explicit different choice, including disabling a legacy trial, requires a new trial. Unknown `eval.trial.start` parameters reject with the allowed parameter names. Project or trial `review:false` skips the judge with `reason: disabled-for-project` and finalizes with `metrics.outcome: unjudged`. Unjudged trials contribute neither success nor failure to outcome summaries. Invalid blind trials retain their package and reason without judging.
 - A worker that blocks itself has its first output frozen with the blocked reason as an outcome claim. The package finalizes without a judge or person decision, like a judged output.
 - Freeze worker evidence and native worker usage before the judge starts. Worker elapsed time ends at the first terminal output; reviewer time and usage remain separate. Missing measurements stay unknown.
 - Preserve the judge's verdict and findings by severity. Passing and issues verdicts both finalize the artifact-only package automatically. No worker fix, send-back decision or second review follows an eval judge.

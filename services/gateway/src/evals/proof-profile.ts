@@ -4,7 +4,6 @@ import path from 'node:path';
 
 import { executionTemplateReference } from '@farmslot/agent-runtime';
 import {
-  type CommandOutput,
   type EvalExperimentCreateParams,
   type EvalProofInput,
   type EvalProofSource,
@@ -15,7 +14,7 @@ import {
 } from '@farmslot/protocol';
 
 import { loadProjectVars } from '../core/config.js';
-import { ghRequest } from '../integrations/github-client.js';
+import { github, type GitHubService } from '../integrations/github-client.js';
 import type { ResolvedEvalSource } from '../methods/eval/source-resolution.js';
 import { readRetainedRunText } from '../run-completion/retained-artifacts.js';
 import { getRunWithArchived } from '../runs/store.js';
@@ -90,7 +89,7 @@ async function recordedDiff(resolved: ResolvedEvalSource): Promise<string | unde
 }
 
 export interface ProofInputDependencies {
-  request: (args: string[]) => Promise<Pick<CommandOutput, 'stdout'>>;
+  request: GitHubService;
   admitQa: (
     params: EvalExperimentCreateParams,
   ) => Promise<Pick<EvalProofInput, 'qa' | 'executionTemplate'>>;
@@ -111,20 +110,22 @@ export async function admitProofQa(
   return { qa, executionTemplate: executionTemplateReference(snapshot.entry) };
 }
 
-const defaults: ProofInputDependencies = { request: ghRequest, admitQa: admitProofQa };
+const defaults: ProofInputDependencies = { request: github, admitQa: admitProofQa };
 
 async function rejectKnownProofOverlap(
   resolved: ResolvedEvalSource,
   treeSha: string,
   repository: string,
-  request: ProofInputDependencies['request'],
+  request: GitHubService,
 ): Promise<void> {
   const known = resolved.packageArtifacts.filter((artifact) =>
     /(?:^|\/)recipe\.json$/i.test(artifact.path),
   );
   if (!known.length) return;
-  const response = await request(['api', `repos/${repository}/git/trees/${treeSha}?recursive=1`]);
-  const tree: unknown = JSON.parse(response.stdout);
+  const tree: unknown = await request.rest<unknown>(
+    'GET',
+    `repos/${repository}/git/trees/${treeSha}?recursive=1`,
+  );
   if (!isRecord(tree) || tree.truncated !== false || !Array.isArray(tree.tree))
     throw new Error(
       'Cannot inspect the complete implementation for known reference proof overlap.',
@@ -171,11 +172,10 @@ export async function resolveProofInput(
   )
     throw new Error('Proof profile requires explicit problem text and ordered acceptanceCriteria.');
   const anchors = proofSourceAnchors(resolved, retained);
-  const commitResponse = await dependencies.request([
-    'api',
+  const commit: unknown = await dependencies.request.rest<unknown>(
+    'GET',
     `repos/${anchors.repository}/git/commits/${anchors.headSha}`,
-  ]);
-  const commit: unknown = JSON.parse(commitResponse.stdout);
+  );
   if (
     !isRecord(commit) ||
     commit.sha !== anchors.headSha ||
@@ -190,24 +190,22 @@ export async function resolveProofInput(
     (isRecord(parent) && typeof parent.sha === 'string' ? parent.sha : undefined);
   if (!fullCommit(baseSha) || baseSha === anchors.headSha)
     throw new Error('Proof implementation requires a distinct committed QA base.');
-  const compare = await dependencies.request([
-    'api',
+  const metadata: unknown = await dependencies.request.rest<unknown>(
+    'GET',
     `repos/${anchors.repository}/compare/${baseSha}...${anchors.headSha}`,
-  ]);
-  const metadata: unknown = JSON.parse(compare.stdout);
+  );
   if (
     !isRecord(metadata) ||
     !isRecord(metadata.merge_base_commit) ||
     metadata.merge_base_commit.sha !== baseSha
   )
     throw new Error('Proof QA base must be an ancestor of the implementation.');
-  const diff = await dependencies.request([
-    'api',
+  const diff = await dependencies.request.rest<string>(
+    'GET',
     `repos/${anchors.repository}/compare/${baseSha}...${anchors.headSha}`,
-    '--header',
-    'Accept: application/vnd.github.diff',
-  ]);
-  const patch = await stablePatchId(diff.stdout);
+    { headers: { Accept: 'application/vnd.github.diff' }, raw: true },
+  );
+  const patch = await stablePatchId(diff);
   const expected = await recordedDiff(resolved);
   if (!patch || (expected !== undefined && patch !== (await stablePatchId(expected))))
     throw new Error(
@@ -224,11 +222,11 @@ export async function resolveProofInput(
     baseSha,
     headSha: anchors.headSha,
     treeSha: commit.tree.sha,
-    diffSha256: sha256Text(diff.stdout),
+    diffSha256: sha256Text(diff),
     ...(expected !== undefined ? { recordedDiffSha256: sha256Text(expected) } : {}),
   };
   return {
     proof: { version: 1, source, acceptanceCriteria: [...params.acceptanceCriteria], ...admitted },
-    diffText: diff.stdout,
+    diffText: diff,
   };
 }

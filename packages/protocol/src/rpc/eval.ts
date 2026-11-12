@@ -71,6 +71,11 @@ export interface EvalTrialStartParams {
   startRef?: string;
   runner?: string;
   model?: string;
+  /** Disable first-output judging for this trial; retained across retries and resumes. */
+  review?: false;
+  /** Optional judge reviewer override, resolved and frozen when the trial starts. */
+  reviewRunner?: string;
+  reviewModel?: string;
   effort?: string;
   app?: string;
   slotId?: string;

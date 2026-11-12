@@ -57,6 +57,7 @@ import {
 import { selectAgentContext, upsertAgentContext } from '../agents/contexts.js';
 import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { withFarmGitConfig } from '../core/farm-git.js';
 import {
   claimSlotStatusIf,
   readSlotRow,
@@ -68,7 +69,7 @@ import {
   runWithResourceLifecycleContext,
 } from '../core/resource-lifecycle-log.js';
 import { resolveTmuxSession, shellQuote } from '../core/tmux.js';
-import { blindTrialWorkerCapsule } from '../evals/blind-git.js';
+import { blindTrialWorkerBoundary } from '../evals/blind-git.js';
 import { readMachinePressure } from '../fleet/pressure-read.js';
 import {
   executeResourceControl,
@@ -514,7 +515,7 @@ export async function defaultReloadRunner(
     recoveryHandle: handle,
     initialPrompt: continuationPrompt,
     beforeRespawn: assertSessionCurrent,
-    blindTrialCapsule: blindTrialWorkerCapsule(
+    blindTrialBoundary: blindTrialWorkerBoundary(
       run,
       run.agentContexts?.find((context) => context.id === handle.contextId)?.role,
     ),
@@ -628,7 +629,9 @@ async function defaultDetachParkedWorkspace(
   const vars = await loadSlotVars(run.slotId!);
   const detached = await execOnSlot(
     vars,
-    `cd ${shellQuote(vars.remoteRepo)} && git checkout --detach ${shellQuote(expected.headSha)}`,
+    withFarmGitConfig(
+      `cd ${shellQuote(vars.remoteRepo)} && git checkout --detach ${shellQuote(expected.headSha)}`,
+    ),
     { timeout: 60_000 },
   );
   if (detached.exitCode !== 0) {
@@ -663,7 +666,7 @@ async function defaultReattachParkedWorkspace(
   }
   const checkout = await execOnSlot(
     vars,
-    `cd ${repo} && git checkout ${shellQuote(workspace.branch)}`,
+    withFarmGitConfig(`cd ${repo} && git checkout ${shellQuote(workspace.branch)}`),
     { timeout: 60_000 },
   );
   if (checkout.exitCode !== 0) {

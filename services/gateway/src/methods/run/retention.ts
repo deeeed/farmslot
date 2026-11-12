@@ -8,7 +8,7 @@ import { withRunBundleStoreLock } from '@farmslot/run-bundle';
 import { projectTaskRoots } from '../../core/config.js';
 import { ownsRunSlotCleanup, readSlotRow } from '../../core/index.js';
 import { loadProjectConfig } from '../../fleet/state.js';
-import { ghRequest } from '../../integrations/github-client.js';
+import { github } from '../../integrations/github-client.js';
 import { reviewPRIdentity } from '../../review/session-mode.js';
 import { reclaimReviewWorkspaceStorage } from '../../review-workspaces/storage-use.js';
 import {
@@ -75,24 +75,13 @@ export async function gatewayRetentionRoots(): Promise<RunRetentionRoots> {
 }
 
 async function readOpenPrs(repo: string): Promise<number[]> {
-  const { stdout } = await ghRequest(
-    [
-      'pr',
-      'list',
-      '--repo',
-      repo,
-      '--state',
-      'open',
-      '--limit',
-      String(OPEN_PR_PAGE),
-      '--json',
-      'number',
-      '--jq',
-      '.[].number',
-    ],
+  // Pages to the limit, newest first, like `gh pr list --limit`; a full page reads as possibly truncated.
+  const prs = await github.prList(
+    repo,
+    { state: 'open', limit: OPEN_PR_PAGE },
     { caller: 'run-retention' },
   );
-  return stdout.split('\n').filter(Boolean).map(Number);
+  return prs.flatMap((pr) => (typeof pr.number === 'number' ? [pr.number] : []));
 }
 
 async function projectRepo(project: string): Promise<string | undefined> {

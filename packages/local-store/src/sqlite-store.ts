@@ -13,6 +13,8 @@ import {
   type StoredResourceRow,
 } from '@farmslot/protocol/client-cache';
 
+import { sqliteTransaction } from './sqlite-transaction.js';
+
 export type SqliteValue = string | number | null | Uint8Array;
 export interface ResourceSqliteDatabase {
   run(sql: string, params?: readonly SqliteValue[]): Promise<void>;
@@ -134,8 +136,7 @@ class DatabaseOwner {
     const current = (await db.all<VersionRow>('PRAGMA user_version'))[0]?.user_version ?? 0;
     // Another worker may have rebuilt this file since this owner initialized it.
     if (this.schemaVersion === version && current === version) return;
-    await db.run('BEGIN IMMEDIATE');
-    try {
+    await sqliteTransaction(db, async () => {
       if (current !== version) {
         for (const id of this.handles.keys()) this.seal(id);
         await db.run('DROP TABLE IF EXISTS resource_rows');
@@ -195,12 +196,8 @@ class DatabaseOwner {
           REFERENCES resource_content(store_id, kind, id) ON DELETE CASCADE
       )`);
       await db.run(`PRAGMA user_version = ${version}`);
-      await db.run('COMMIT');
-      this.schemaVersion = version;
-    } catch (error) {
-      await db.run('ROLLBACK');
-      throw error;
-    }
+    });
+    this.schemaVersion = version;
   }
 }
 
@@ -486,8 +483,7 @@ export async function createSqliteResourceStore(
         return Promise.reject(new Error('A row merge writes its own entry'));
       return owner.serial(async () => {
         if (!available() || !(await sameIncarnation())) return;
-        await db.run('BEGIN IMMEDIATE');
-        try {
+        await sqliteTransaction(db, async () => {
           await db.run(...upsertQuery(merge.entry));
           for (const id of merge.deletes)
             await db.run(
@@ -515,11 +511,7 @@ export async function createSqliteResourceStore(
             (SELECT COALESCE(MAX(last_used), 0) + 1 FROM resource_stores) WHERE id = ?`,
             [row.id],
           );
-          await db.run('COMMIT');
-        } catch (error) {
-          await db.run('ROLLBACK');
-          throw error;
-        }
+        });
       });
     },
     touchQuery(id, accessedAt, origin) {

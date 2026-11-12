@@ -452,7 +452,75 @@ Adding an exception means amending this table. Offline, commands stay disabled,
 so previews, searches and diagnostics are unavailable until the client
 reconnects.
 
-## Amendment 3 (2026-11-12): Entity sync for the fleet, machine health and the PR list
+## Amendment 3 (2026-11-12): Slim run-list rows
+
+**Version basis unchanged; served row is now a narrower projection.**
+
+Amendment 1 stated that a row's `version` is a hash of the row as served. With
+slim rows the hash is `sha256(canonicalResourceJson(trimRunForList(run)))` —
+the same basis as before — while the row the gateway actually sends is
+`runListRow(run)`: the run without its heavy keys. It drops `resourcePosture`,
+`sessionUsage`, `visualJudgmentReceipts` and `templateProvenance` and leaves the
+output file manifest out as before. Steps lose their inputs, and their outputs
+keep each key a list surface reads in the bounded shape that view reads. Any
+other step-output value of at most 512 B is served as the step holds it. A
+larger one keeps only its videos, before/after visuals and diff files, each
+where the step held it (an entry as its path, purpose and size). A step that
+lost anything carries `outputsTrimmed: true`.
+Decisions are the ones `trimRunForList` serves, without the resolver's
+selection, the evidence attestation and the heavy keys of their payload (a
+ready gate's package, snapshots, report and summary; a review's text and line
+comments; a retrospective's gate summary), each named in `payloadTrimmed`.
+Engine state loses only the publish gate's summary. Agent contexts, metrics,
+the ticket, the review result and the review subject lose only their heavy
+keys. A heavy key averages over about 500 B per stored run and is read by no
+list surface; every other key is served as the run holds it, and a row that
+left a heavy key out carries `detailTrimmed: true`. Each served row carries
+`evidenceSummary`, which the gateway computes from the full run with the same
+`summarizeRunEvidence` clients use. Old cached fat rows and new slim rows
+coexist in a client; a row without `evidenceSummary` has its summary computed
+from the row's own fields (`runListEvidenceSummary`). Screens that render
+step outputs or decision payloads read `run.get`, never the list row.
+
+A client build older than the summary computes its list values from the row
+itself. On every stored run measured (74), it shows against this gateway the
+same video and compare chips, opens the same Diff file and shows the same
+catalog diff stat as before; its evidence counts (Companion's "Evidence N", the
+eval catalog's artifact, byte, validation and review counts) read lower or
+equal, never higher than that build showed before, and none falls to zero. The
+row holds a subset of what the step held, in the same places: of a value over
+512 B, the artifacts those chips and the Diff action are built from, not every
+entry (92 per stored run on average), and the first entry of a step's
+`artifacts` when none is of those kinds.
+
+Clients update with the gateway, so nothing more is done for an older build.
+Known differences for an older client build, each in a step-output value over
+512 B:
+
+- A path nested inside a kept artifact entry (a video's `metadata.diffPath`,
+  say) is not on the row, so the Diff action can open another file or none.
+- An entry recognised only by its `type` or `mimeType` is not counted: a kept
+  entry carries its path, purpose and size.
+- A pruned `attempts` or `reviews` element carries no scalars, so that build's
+  review-history stand-in shows loops without verdicts until its detail loads.
+- A video or diff file nested inside an `artifacts` entry that is not itself
+  kept stays without that entry, so the catalog's artifact count for the step
+  can read zero.
+
+The summary is computed from the stored run, as the list always was: the
+`liveRecipeContext` that `run.get` attaches when it presents a run was never
+part of a list row. It counts the run's whole output manifest and gate
+manifests, which the row before this change left out when large, so the current
+Companion's "Evidence N", which reads the summary, can read higher than the
+previous build's count.
+
+Measured on 74 stored runs, the average `run.list` row drops from 116 KB to 35 KB
+(p95 from 213 KB to 68 KB, largest from 421 KB to 97 KB). The version contract is
+otherwise unchanged: clients
+still compare versions from the versions list to decide which rows need a
+catch-up page fetch, and `run.get`/`run.forSlot` remain unaffected.
+
+## Amendment 4 (2026-11-12): Entity sync for the fleet, machine health and the PR list
 
 Accepted.
 

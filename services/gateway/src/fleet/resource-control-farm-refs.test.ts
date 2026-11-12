@@ -125,12 +125,16 @@ test('a slow support resolution leaves health and control their execution timeou
   sentTimeouts.length = 0;
   transportTimeouts.length = 0;
   await executeResourceControl('mini-p-1', 'probe', 'shutdown');
-  const { resourceControlTimeoutMs } = await import('./resource-manager.js');
+  const { resourceControlTimeoutMs, pollSlotResources } = await import('./resource-manager.js');
+  // A post-control health poll can finish before these assertions.
+  await pollSlotResources('mini-p-1');
   const budget = resourceControlTimeoutMs('process', 'shutdown');
-  const hookTimeout = sentTimeouts.at(-1)!;
+  const hookIndex = sent.findIndex((command) => command.endsWith('/scripts/stop.sh'));
+  assert(hookIndex >= 0);
+  const hookTimeout = sentTimeouts[hookIndex];
   assert.equal(sentTimeouts[0], 5_000);
   assert.equal(hookTimeout, budget);
-  assert.equal(transportTimeouts.at(-1), budget + 10_000);
+  assert.equal(transportTimeouts[hookIndex], budget + 10_000);
 });
 
 test('browser release keeps its command and RPC timeouts after slow support resolution', async (t) => {

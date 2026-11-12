@@ -9,7 +9,6 @@ import {
   canActivateRunOnSlot,
   type CancelledRunSlotChoices,
   type CiCheckUpdatedPayload,
-  deriveRunLifecycleView,
   type DevInteractiveCompletionAction,
   type FamilyObservabilityArtifact,
   isHeldForResultDecision,
@@ -28,16 +27,12 @@ import {
   type Run,
   type RunDecision,
   type RunGrade,
+  type RunListRow,
   runOutputCloseUnavailableReason,
   runRecoveryHints,
   type TaskProgressStructured,
 } from '@farmslot/protocol';
-import {
-  reviewHistoryView,
-  runActivityView,
-  runResultsSummary,
-  runTerminalView,
-} from '@farmslot/review-dispatch';
+import { reviewHistoryView, runResultsSummary, runTerminalView } from '@farmslot/review-dispatch';
 
 import '../slot-view/worker-session-history.js';
 import './review-history-panel.js';
@@ -67,6 +62,10 @@ import { renderRunTitle } from '../shared/run-title.js';
 import { isRecoverableBlockedWorkerRun } from './blocked-run-recovery-model.js';
 import { runSourceLinks, ticketUrlForRun } from './family-observability-link-model.js';
 import { familyRunHash } from './family-observability-url-state.js';
+import {
+  renderReviewExecutionLocation,
+  reviewExecutionLocations,
+} from './review-execution-location.js';
 import type { RunLifecycleAction } from './run-detail-actions.js';
 import { renderCancelledRunSlotChoices } from './run-detail-cancelled-slot-renderers.js';
 import {
@@ -77,6 +76,7 @@ import {
   isInteractiveCompletionAwaitingOperator,
   reviewTerminalUnavailableReason,
   RUN_OUTPUT_SCOPE,
+  runDetailHeaderModel,
 } from './run-detail-model.js';
 import type { RunDetailPanelId } from './run-detail-panels.js';
 import { runInventoryHashFromDetail } from './run-detail-url-state.js';
@@ -106,7 +106,7 @@ export interface RunDetailViewContext {
   embedded: boolean;
   run: Run | null;
   prStatus: PRStatus | null;
-  siblings: Run[];
+  siblings: RunListRow[];
   taskProgress: TaskProgressStructured | null;
   /** The run's acceptance ledger (ADR-060), rendered beside the pipeline progress. */
   evidenceModel?: EvidenceReviewModel | null;
@@ -129,6 +129,8 @@ export interface RunDetailViewContext {
   selectedStep: Run['steps'][number] | null;
   selectedStepProgress: TaskProgressStructured | null;
   _hydrating: boolean;
+  /** The run's list row, while run.get has not answered: it paints the header. */
+  standInRow: RunListRow | null;
   _bootstrapFailed: boolean;
   _connectionStale: boolean;
   _directRunRefreshing: boolean;
@@ -151,9 +153,9 @@ export interface RunDetailViewContext {
   /** Blocked review-pr run whose review is stale: start a continuity round on the current head. */
   _rereviewLatestHead: (run: Run) => void | Promise<void>;
   _rereviewInFlight: boolean;
-  _buildRerunAlongsideHref: (run: Run) => string;
-  _slotBranchForRun: (run: Run) => string;
-  _slotHealthForRun: (run: Run) => import('@farmslot/protocol').SlotHealth | null;
+  _buildRerunAlongsideHref: (run: RunListRow) => string;
+  _slotBranchForRun: (run: RunListRow) => string;
+  _slotHealthForRun: (run: RunListRow) => import('@farmslot/protocol').SlotHealth | null;
   /** The slot a cancelled run still holds for replay, with its two choices. */
   _cancelledRunSlot: CancelledRunSlotChoices | null;
   _setRunLinkedTickets: (run: Run, refs: string[]) => void | Promise<void>;
@@ -578,6 +580,10 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         &lt; Back to runs
       </div>`;
   if (!ctx.run) {
+    if (ctx._hydrating && ctx.standInRow) {
+      return html` ${backToRuns} ${renderRunDetailHeader(ctx, ctx.standInRow, null)}
+      ${renderRunDetailSkeleton('', false)}`;
+    }
     if (ctx._hydrating) {
       return html` ${backToRuns} ${renderRunDetailSkeleton()} `;
     }
@@ -596,9 +602,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
     return html`<div class="empty">Run not found</div>`;
   }
   const r = ctx.run;
-  const sc = runStatusColor(r.status);
-  const activityLabel = runActivityView(r)?.label ?? deriveRunLifecycleView(r).activityLabel;
-  const disposition = dispositionLabel(r.metrics.disposition);
+  const activityLabel = runDetailHeaderModel(r).activityLabel;
   const suggestedComparePartner = pickComparisonPartner(r, ctx.siblings);
   // ctx.siblings excludes the current run, so add it back when it is itself a
   // comparison lane to get the family's full comparison-lane count.
@@ -652,206 +656,10 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   const sessions = ctx._renderAgentSessions(r);
   const posture = ctx._renderPosture(r);
   const history = reviewHistoryView(r);
+  const reviewLocations = reviewExecutionLocations(r);
 
   return html`
-    ${backToRuns}
-    <source-status-panel
-      .context=${{ target: { scope: 'run', targetId: r.id }, actions: ['pin', 'unpin'] }}
-    ></source-status-panel>
-    <a
-      class="context-read-link"
-      href=${`#intelligence?tab=assessments&suggestion=copilot-context&run=${encodeURIComponent(r.id)}`}
-      >Suggest a next context read</a
-    >
-    ${r.redirectedToRunId
-      ? html`
-          <div
-            class="redirect-banner"
-            style="margin:8px 0; padding:10px 14px; border:1px solid ${colors.accent}; border-radius:4px; background:${colors.accent}11; color:${colors.textPrimary}; font-size:${fonts.sizeSm}"
-          >
-            This run was forked into a comparison-lane successor.
-            <a
-              href="#run/${r.redirectedToRunId}"
-              style="color:${colors.accent}; text-decoration:none; margin-left:6px"
-              >Open successor ${r.redirectedToRunId.slice(0, 8)} →</a
-            >
-          </div>
-        `
-      : nothing}
-    <div class="header">
-      <h2>
-        ${ticketUrl
-          ? html`<a
-              href=${ticketUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              style="color:inherit; text-decoration:none"
-              title="Open work item"
-              >${r.ticketOrPr}</a
-            >`
-          : r.ticketOrPr}
-      </h2>
-      <span
-        class="status-badge ${activityLabel ? 'run-activity-label' : ''}"
-        style="border:1px solid ${sc}; color:${sc}"
-        title=${activityLabel ?? nothing}
-        >${activityLabel ?? r.status}</span
-      >
-      ${disposition
-        ? html`<span
-            class="status-badge"
-            style="border:1px solid ${dispositionColor(
-              r.metrics.disposition,
-            )}; color:${dispositionColor(r.metrics.disposition)}"
-            >${disposition}</span
-          >`
-        : nothing}
-      ${isPrLinkageMissing(r)
-        ? html`
-            <button
-              class="gate-action-btn"
-              style="border-color:${colors.statusWarn}; color:${colors.statusWarn}; padding:4px 12px; font-size:11px"
-              title="Run done but no PR linked on branch ${r.branch}. Re-runs findPRNumber and kicks CI watch."
-              ?disabled=${actionsBlocked || ctx._rescueInProgress}
-              @click=${() => ctx._rescueLinkage(r.id)}
-            >
-              ${ctx._rescueInProgress ? 'Linking…' : 'Rescue PR linkage'}
-            </button>
-          `
-        : nothing}
-      ${r.links?.length
-        ? html`<span class="external-links"
-            >${r.links.map(
-              (l) =>
-                html`<a class="ext-link" href=${l.url} target="_blank" rel="noopener noreferrer"
-                  >${l.label}</a
-                >`,
-            )}</span
-          >`
-        : nothing}
-      ${keyed(
-        r.id,
-        html`<run-tag-editor
-          kind="tickets"
-          .disabled=${actionsBlocked}
-          .run=${r}
-          .saveTags=${(refs: string[]) => ctx._setRunLinkedTickets(r, refs)}
-        ></run-tag-editor>`,
-      )}
-      <run-tag-editor
-        .tags=${normalizeRunTags(r.tags)}
-        .disabled=${actionsBlocked}
-        .saveTags=${(tags: string[]) => ctx._setRunTags(r, tags)}
-        .filterTag=${(tag: string) => {
-          navigateHash(`runs?tag=${encodeURIComponent(tag)}`);
-        }}
-      ></run-tag-editor>
-      ${r.status === 'ci-watching' || r.status === 'failed'
-        ? html`
-            <button
-              class="gate-action-btn ${ctx._pendingConfirm === 'force-complete'
-                ? 'gate-confirming'
-                : ''}"
-              style="${ctx._pendingConfirm === 'force-complete'
-                ? ''
-                : `border-color:${colors.textMuted}; color:${colors.textMuted}; padding:4px 12px; font-size:11px`}"
-              ?disabled=${actionsBlocked}
-              @click=${() => ctx._confirmForceComplete(r)}
-            >
-              ${ctx._pendingConfirm === 'force-complete'
-                ? 'Confirm complete?'
-                : 'Complete Manually'}
-            </button>
-          `
-        : nothing}
-      ${r.status === 'blocked'
-        ? html`
-            <button
-              class="gate-action-btn ${ctx._pendingConfirm === `cancel:${r.id}`
-                ? 'gate-confirming'
-                : ''}"
-              style="border-color:${colors.statusFail}; color:${colors.statusFail}; padding:4px 12px; font-size:11px"
-              title="Stop this blocked run and release its slot (overwrites the blocked outcome; use Archive as blocked to keep it)"
-              ?disabled=${actionsBlocked}
-              @click=${() => ctx._confirmLifecycleAction(r, 'cancel')}
-            >
-              ${ctx._pendingConfirm === `cancel:${r.id}` ? 'Confirm cancel?' : 'Cancel run'}
-            </button>
-            ${isSettledBlockedRun(r)
-              ? html`
-                  <button
-                    class="gate-action-btn ${ctx._pendingConfirm === `archive:${r.id}`
-                      ? 'gate-confirming'
-                      : ''}"
-                    data-testid="run-archive-blocked"
-                    style="border-color:${colors.textMuted}; color:${colors.textMuted}; padding:4px 12px; font-size:11px"
-                    title="Nothing is left to advance. Keep the blocked outcome in history and remove the run from the active list (replay a step instead to retry)"
-                    ?disabled=${actionsBlocked}
-                    @click=${() => ctx._confirmLifecycleAction(r, 'archive')}
-                  >
-                    ${ctx._pendingConfirm === `archive:${r.id}`
-                      ? 'Confirm archive?'
-                      : 'Archive as blocked'}
-                  </button>
-                `
-              : nothing}
-          `
-        : isTerminal
-          ? html`
-              <button
-                class="gate-action-btn ${ctx._pendingConfirm === `delete:${r.id}`
-                  ? 'gate-confirming'
-                  : ''}"
-                style="border-color:${colors.statusFail}; color:${colors.statusFail}; padding:4px 12px; font-size:11px"
-                title="Permanently remove this terminal run from history"
-                ?disabled=${actionsBlocked}
-                @click=${() => ctx._confirmLifecycleAction(r, 'delete')}
-              >
-                ${ctx._pendingConfirm === `delete:${r.id}` ? 'Confirm delete?' : 'Delete run'}
-              </button>
-            `
-          : nothing}
-      ${canLaunchComparisonSibling(r.status)
-        ? html`
-            <a
-              class="gate-action-btn"
-              style="border:1px solid ${colors.accent}; color:${colors.accent}; padding:4px 12px; font-size:11px; text-decoration:none; border-radius:3px"
-              title="Fork a comparison-lane sibling on a different runner/model (grok, codex, cursor, …). Opens dispatch with this run as baseline; pick runner and slot before dispatch."
-              href=${ctx._buildRerunAlongsideHref(r)}
-            >
-              Launch comparison sibling →
-            </a>
-          `
-        : nothing}
-      ${boundSlotId && r.branch && canActivateRunOnSlot(r.status)
-        ? html`
-            <slot-prepare-popover
-              slot-id=${boundSlotId}
-              slot-branch=${ctx._slotBranchForRun(r)}
-              project=${r.project}
-              run-id=${r.id}
-              run-branch=${r.branch}
-              button-label="Load ${boundSlotId} with this run →"
-              button-style="border:1px solid ${colors.textMuted}; color:${colors.textMuted}; padding:4px 12px; font-size:11px; border-radius:3px"
-              .slotHealth=${ctx._slotHealthForRun(r)}
-              ?disabled=${actionsBlocked}
-            ></slot-prepare-popover>
-          `
-        : nothing}
-      ${r.status === 'failed'
-        ? html`
-            <button
-              class="gate-action-btn"
-              style="border-color:${colors.statusFail}; color:${colors.statusFail}; padding:4px 12px; font-size:11px"
-              title="Open Co-Pilot with a read-only failure diagnosis prompt"
-              @click=${() => ctx._requestCopilotRunDiagnosis(r)}
-            >
-              Diagnose failure
-            </button>
-          `
-        : nothing}
-    </div>
-    ${r.summary ? html`${renderRunTitle(r, 'header-summary')}` : nothing}
+    ${backToRuns} ${renderRunDetailHeader(ctx, r, r)}
     ${r.slotTeardownSkipped
       ? html`<p role="status" data-testid="run-slot-cleanup-hint">
           Workspace cleanup deferred: ${r.slotTeardownSkipped}
@@ -1088,8 +896,8 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         <div class="meta-label">Project</div>
         <div class="meta-value">${r.project}</div>
       </div>
-      <div class="meta-item">
-        <div class="meta-label">${r.reviewWorkspaceTarget ? 'Workspace' : 'Slot'}</div>
+      <div class="meta-item" style=${r.reviewWorkspace ? 'grid-column:1 / -1' : nothing}>
+        <div class="meta-label">${r.reviewWorkspaceTarget ? 'Review workspace' : 'Slot'}</div>
         <div class="meta-value">
           ${boundSlotId
             ? html`<a
@@ -1115,11 +923,8 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
                   onReplayStep: ctx._onReplayStep,
                 })}`
             : r.reviewWorkspace
-              ? html`<span
-                    data-testid="run-workspace-location"
-                    title=${r.reviewWorkspace.checkoutPath}
-                    >${r.reviewWorkspace.machine} ·
-                    ${r.reviewWorkspace.cleanedAt ? 'cleaned' : 'worktree'}</span
+              ? html`<span data-testid="run-workspace-location"
+                    >${renderReviewExecutionLocation(reviewLocations[0])}</span
                   >
                   <workspace-pin .runId=${r.id} .label=${r.ticketOrPr}></workspace-pin>
                   ${!r.reviewWorkspace.cleanedAt
@@ -1128,10 +933,16 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
                       >`
                     : nothing}`
               : r.reviewWorkspaceTarget
-                ? 'Allocating worktree…'
+                ? `${r.reviewWorkspaceTarget.machine} · ${isTerminal ? 'No worktree allocated' : 'Allocating worktree…'}`
                 : 'pending'}
         </div>
       </div>
+      ${!r.reviewWorkspace && reviewLocations.length
+        ? html`<div class="meta-item" style="grid-column:1 / -1">
+            <div class="meta-label">Review execution</div>
+            <div class="meta-value">${reviewLocations.map(renderReviewExecutionLocation)}</div>
+          </div>`
+        : nothing}
       ${r.branch
         ? html`<div class="meta-item">
             <div class="meta-label">Branch</div>
@@ -1552,17 +1363,237 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   `;
 }
 
-export function renderRunDetailSkeleton(error = '') {
+/**
+ * The header region of the run detail view: source status, the context link, the redirect
+ * banner, the header row with its controls, and the summary. One function renders it from
+ * the run.list row while run.get loads (`detail` null) and from the detail afterwards, so no
+ * element exists in only one state and nothing in it moves when the detail lands. Every
+ * action is disabled until the detail is ready and acts on the detail.
+ */
+function renderRunDetailHeader(ctx: RunDetailViewContext, r: RunListRow, detail: Run | null) {
+  const sc = runStatusColor(r.status);
+  const activityLabel = runDetailHeaderModel(r).activityLabel;
+  const disposition = dispositionLabel(r.metrics.disposition);
+  const actionsBlocked = ctx._actionsBlocked() || !detail;
+  const ticketUrl = ticketUrlForRun(r.ticketOrPr, r, ctx.siblings);
+  const isTerminal = isTerminalRunStatus(r.status);
+  const boundSlotId = resolveRunSlotId(r);
+  return html`
+    <source-status-panel
+      .context=${{ target: { scope: 'run', targetId: r.id }, actions: ['pin', 'unpin'] }}
+    ></source-status-panel>
+    <a
+      class="context-read-link"
+      href=${`#intelligence?tab=assessments&suggestion=copilot-context&run=${encodeURIComponent(r.id)}`}
+      >Suggest a next context read</a
+    >
+    ${r.redirectedToRunId
+      ? html`
+          <div
+            class="redirect-banner"
+            style="margin:8px 0; padding:10px 14px; border:1px solid ${colors.accent}; border-radius:4px; background:${colors.accent}11; color:${colors.textPrimary}; font-size:${fonts.sizeSm}"
+          >
+            This run was forked into a comparison-lane successor.
+            <a
+              href="#run/${r.redirectedToRunId}"
+              style="color:${colors.accent}; text-decoration:none; margin-left:6px"
+              >Open successor ${r.redirectedToRunId.slice(0, 8)} →</a
+            >
+          </div>
+        `
+      : nothing}
+    <div class="header">
+      <h2>
+        ${ticketUrl
+          ? html`<a
+              href=${ticketUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style="color:inherit; text-decoration:none"
+              title="Open work item"
+              >${r.ticketOrPr}</a
+            >`
+          : r.ticketOrPr}
+      </h2>
+      <span
+        class="status-badge ${activityLabel ? 'run-activity-label' : ''}"
+        style="border:1px solid ${sc}; color:${sc}"
+        title=${activityLabel ?? nothing}
+        >${activityLabel ?? r.status}</span
+      >
+      ${disposition
+        ? html`<span
+            class="status-badge"
+            style="border:1px solid ${dispositionColor(
+              r.metrics.disposition,
+            )}; color:${dispositionColor(r.metrics.disposition)}"
+            >${disposition}</span
+          >`
+        : nothing}
+      ${isPrLinkageMissing(r)
+        ? html`
+            <button
+              class="gate-action-btn"
+              style="border-color:${colors.statusWarn}; color:${colors.statusWarn}; padding:4px 12px; font-size:11px"
+              title="Run done but no PR linked on branch ${r.branch}. Re-runs findPRNumber and kicks CI watch."
+              ?disabled=${actionsBlocked || ctx._rescueInProgress}
+              @click=${() => ctx._rescueLinkage(r.id)}
+            >
+              ${ctx._rescueInProgress ? 'Linking…' : 'Rescue PR linkage'}
+            </button>
+          `
+        : nothing}
+      ${r.links?.length
+        ? html`<span class="external-links"
+            >${r.links.map(
+              (l) =>
+                html`<a class="ext-link" href=${l.url} target="_blank" rel="noopener noreferrer"
+                  >${l.label}</a
+                >`,
+            )}</span
+          >`
+        : nothing}
+      ${keyed(
+        r.id,
+        html`<run-tag-editor
+          kind="tickets"
+          .disabled=${actionsBlocked}
+          .run=${r}
+          .saveTags=${(refs: string[]) =>
+            detail ? ctx._setRunLinkedTickets(detail, refs) : undefined}
+        ></run-tag-editor>`,
+      )}
+      <run-tag-editor
+        .tags=${normalizeRunTags(r.tags)}
+        .disabled=${actionsBlocked}
+        .saveTags=${(tags: string[]) => (detail ? ctx._setRunTags(detail, tags) : undefined)}
+        .filterTag=${(tag: string) => {
+          navigateHash(`runs?tag=${encodeURIComponent(tag)}`);
+        }}
+      ></run-tag-editor>
+      ${r.status === 'ci-watching' || r.status === 'failed'
+        ? html`
+            <button
+              class="gate-action-btn ${ctx._pendingConfirm === 'force-complete'
+                ? 'gate-confirming'
+                : ''}"
+              style="${ctx._pendingConfirm === 'force-complete'
+                ? ''
+                : `border-color:${colors.textMuted}; color:${colors.textMuted}; padding:4px 12px; font-size:11px`}"
+              ?disabled=${actionsBlocked}
+              @click=${() => detail && ctx._confirmForceComplete(detail)}
+            >
+              ${ctx._pendingConfirm === 'force-complete'
+                ? 'Confirm complete?'
+                : 'Complete Manually'}
+            </button>
+          `
+        : nothing}
+      ${r.status === 'blocked'
+        ? html`
+            <button
+              class="gate-action-btn ${ctx._pendingConfirm === `cancel:${r.id}`
+                ? 'gate-confirming'
+                : ''}"
+              style="border-color:${colors.statusFail}; color:${colors.statusFail}; padding:4px 12px; font-size:11px"
+              title="Stop this blocked run and release its slot (overwrites the blocked outcome; use Archive as blocked to keep it)"
+              ?disabled=${actionsBlocked}
+              @click=${() => detail && ctx._confirmLifecycleAction(detail, 'cancel')}
+            >
+              ${ctx._pendingConfirm === `cancel:${r.id}` ? 'Confirm cancel?' : 'Cancel run'}
+            </button>
+            ${isSettledBlockedRun(r)
+              ? html`
+                  <button
+                    class="gate-action-btn ${ctx._pendingConfirm === `archive:${r.id}`
+                      ? 'gate-confirming'
+                      : ''}"
+                    data-testid="run-archive-blocked"
+                    style="border-color:${colors.textMuted}; color:${colors.textMuted}; padding:4px 12px; font-size:11px"
+                    title="Nothing is left to advance. Keep the blocked outcome in history and remove the run from the active list (replay a step instead to retry)"
+                    ?disabled=${actionsBlocked}
+                    @click=${() => detail && ctx._confirmLifecycleAction(detail, 'archive')}
+                  >
+                    ${ctx._pendingConfirm === `archive:${r.id}`
+                      ? 'Confirm archive?'
+                      : 'Archive as blocked'}
+                  </button>
+                `
+              : nothing}
+          `
+        : isTerminal
+          ? html`
+              <button
+                class="gate-action-btn ${ctx._pendingConfirm === `delete:${r.id}`
+                  ? 'gate-confirming'
+                  : ''}"
+                style="border-color:${colors.statusFail}; color:${colors.statusFail}; padding:4px 12px; font-size:11px"
+                title="Permanently remove this terminal run from history"
+                ?disabled=${actionsBlocked}
+                @click=${() => detail && ctx._confirmLifecycleAction(detail, 'delete')}
+              >
+                ${ctx._pendingConfirm === `delete:${r.id}` ? 'Confirm delete?' : 'Delete run'}
+              </button>
+            `
+          : nothing}
+      ${canLaunchComparisonSibling(r.status)
+        ? html`
+            <a
+              class="gate-action-btn"
+              style="border:1px solid ${colors.accent}; color:${colors.accent}; padding:4px 12px; font-size:11px; text-decoration:none; border-radius:3px"
+              title="Fork a comparison-lane sibling on a different runner/model (grok, codex, cursor, …). Opens dispatch with this run as baseline; pick runner and slot before dispatch."
+              href=${ctx._buildRerunAlongsideHref(r)}
+            >
+              Launch comparison sibling →
+            </a>
+          `
+        : nothing}
+      ${boundSlotId && r.branch && canActivateRunOnSlot(r.status)
+        ? html`
+            <slot-prepare-popover
+              slot-id=${boundSlotId}
+              slot-branch=${ctx._slotBranchForRun(r)}
+              project=${r.project}
+              run-id=${r.id}
+              run-branch=${r.branch}
+              button-label="Load ${boundSlotId} with this run →"
+              button-style="border:1px solid ${colors.textMuted}; color:${colors.textMuted}; padding:4px 12px; font-size:11px; border-radius:3px"
+              .slotHealth=${ctx._slotHealthForRun(r)}
+              ?disabled=${actionsBlocked}
+            ></slot-prepare-popover>
+          `
+        : nothing}
+      ${r.status === 'failed'
+        ? html`
+            <button
+              class="gate-action-btn"
+              style="border-color:${colors.statusFail}; color:${colors.statusFail}; padding:4px 12px; font-size:11px"
+              title="Open Co-Pilot with a read-only failure diagnosis prompt"
+              ?disabled=${!detail}
+              @click=${() => detail && ctx._requestCopilotRunDiagnosis(detail)}
+            >
+              Diagnose failure
+            </button>
+          `
+        : nothing}
+    </div>
+    ${r.summary ? html`${renderRunTitle(r, 'header-summary')}` : nothing}
+  `;
+}
+
+export function renderRunDetailSkeleton(error = '', withHeader = true) {
   return html`<farm-hydrating
     message="Run details"
     .error=${error}
     @retry=${() => location.reload()}
     ><div style="display:grid;gap:16px;min-height:520px">
-      <farm-skeleton width="65%" height="32"></farm-skeleton>
-      <div style="display:flex;gap:12px">
-        <farm-skeleton kind="button" width="120px"></farm-skeleton
-        ><farm-skeleton kind="button" width="144px"></farm-skeleton>
-      </div>
+      ${withHeader
+        ? html`<farm-skeleton width="65%" height="32"></farm-skeleton>
+            <div style="display:flex;gap:12px">
+              <farm-skeleton kind="button" width="120px"></farm-skeleton
+              ><farm-skeleton kind="button" width="144px"></farm-skeleton>
+            </div>`
+        : nothing}
       <farm-skeleton kind="block" height="120"></farm-skeleton
       ><farm-skeleton width="35%"></farm-skeleton>${Array.from(
         { length: 5 },

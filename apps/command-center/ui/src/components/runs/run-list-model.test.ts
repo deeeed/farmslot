@@ -5,6 +5,7 @@ import {
   type Run,
   runElapsedTimeView,
   runListProjection,
+  type RunListRow,
   type TaskProgressStructured,
 } from '@farmslot/protocol';
 import { runActivityView } from '@farmslot/review-dispatch';
@@ -43,7 +44,9 @@ function run(id: string, overrides: Partial<Run> = {}): Run {
   } as Run;
 }
 
-function filter(overrides: Partial<Parameters<typeof filterRunList>[0]> = {}): readonly Run[] {
+function filter(
+  overrides: Partial<Parameters<typeof filterRunList>[0]> = {},
+): readonly RunListRow[] {
   return filterRunList({
     familyFilter: '',
     familyRuns: null,
@@ -357,7 +360,7 @@ test('isArchivableRun accepts terminal runs and settled blocked runs only', () =
           description: 'd',
           actions: [],
           createdAt: '2026-09-19T00:00:00.000Z',
-        },
+        } as { resolvedAt?: string },
       ],
     }),
     false,

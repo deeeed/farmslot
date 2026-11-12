@@ -36,3 +36,45 @@ test('a run that ends done records partial only when its eval worker blocked its
   assert.equal(completedRunOutcome(steps({ workerSignal: { status: 'complete' } })), 'success');
   assert.equal(completedRunOutcome({ steps: [] }), 'success');
 });
+
+test('only eval judge skips produce unjudged completion; blocked workers retain partial', () => {
+  const steps = [
+    {
+      name: 'review' as const,
+      status: 'done' as const,
+      outputs: { skipped: true, reason: 'disabled-for-project' },
+    },
+  ];
+  assert.equal(completedRunOutcome({ steps }), 'success');
+  // The completion classifier only needs to know that the run is an eval trial.
+  const evalExperiment = {
+    experimentId: 'fixture',
+    experimentKey: 'fixture',
+    experimentManifestPath: 'fixture.json',
+    packagePath: 'candidate.json',
+    candidateStrategyFingerprint: 'fixture',
+    trialId: 'trial',
+  };
+  assert.equal(completedRunOutcome({ steps, engineState: { evalExperiment } }), 'unjudged');
+  assert.equal(
+    completedRunOutcome({
+      steps: [{ name: 'review', status: 'done', outputs: { verdict: 'pass' } }],
+      engineState: { evalExperiment },
+    }),
+    'success',
+  );
+  assert.equal(
+    completedRunOutcome({
+      steps: [
+        ...steps,
+        {
+          name: 'monitor',
+          status: 'done',
+          outputs: { [EVAL_WORKER_BLOCKED_OUTPUT]: 'No evidence' },
+        },
+      ],
+      engineState: { evalExperiment },
+    }),
+    'partial',
+  );
+});

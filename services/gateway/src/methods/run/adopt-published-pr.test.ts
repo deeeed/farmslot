@@ -12,6 +12,8 @@ import {
   type RunAdoptPublishedPrParams,
 } from '@farmslot/protocol';
 
+import type { GitHubService, RestServiceOpts } from '../../integrations/github-client.js';
+
 await import('../../runtime/mock-pty.test-support.js');
 const { runAdoptPublishedPr } = await import('./adopt-published-pr.js');
 const {
@@ -52,6 +54,44 @@ const approver = {
   displayName: 'Operator',
 };
 const noop = () => {};
+
+function notImpl(): never {
+  throw new Error('method not implemented in test fake');
+}
+
+function defaultPrFacts(): Record<string, unknown> {
+  return {
+    number: 192,
+    html_url: 'https://github.com/owner/repo/pull/192',
+    state: 'open',
+    merged_at: null,
+    draft: false,
+    base: { sha: 'e'.repeat(40), repo: { full_name: 'owner/repo' } },
+    head: { sha: newerHead, ref: 'fix/feature', repo: { full_name: 'owner/repo' } },
+  };
+}
+
+function makeGitHubFake(
+  restFn?: (method: string, path: string, opts?: RestServiceOpts) => unknown,
+): GitHubService {
+  return {
+    prView: notImpl,
+    prList: notImpl,
+    prListFields: notImpl,
+    prChecks: notImpl,
+    prCreate: notImpl,
+    prEdit: notImpl,
+    prComment: notImpl,
+    prReady: notImpl,
+    repoView: notImpl,
+    graphql: notImpl,
+    rest: async <T>(method: string, path: string, opts?: RestServiceOpts): Promise<T> => {
+      if (restFn) return restFn(method, path, opts) as T;
+      if (path.endsWith('/commits')) return [{ sha: reviewedHead }, { sha: newerHead }] as T;
+      return defaultPrFacts() as T;
+    },
+  };
+}
 
 function fixture(t: test.TestContext): Run {
   const run = createRun({
@@ -121,20 +161,7 @@ function dependencies(overrides: Partial<Dependencies> = {}): Dependencies {
     authorizeEvidenceAttestation: () => approver,
     repository: async () => 'owner/repo',
     discover: async () => 192,
-    github: async (args) => ({
-      stdout: args.some((arg) => arg.endsWith('/commits'))
-        ? `${reviewedHead}\n${newerHead}\n`
-        : JSON.stringify({
-            number: 192,
-            html_url: 'https://github.com/owner/repo/pull/192',
-            state: 'open',
-            merged_at: null,
-            draft: false,
-            base: { sha: 'e'.repeat(40), repo: { full_name: 'owner/repo' } },
-            head: { sha: newerHead, ref: 'fix/feature', repo: { full_name: 'owner/repo' } },
-          }),
-      stderr: '',
-    }),
+    github: makeGitHubFake(),
     readiness: async (run) => ({
       state: 'not-ready',
       identity: { runId: run.id, generation: 2 },
@@ -173,23 +200,15 @@ function settledFixture(t: test.TestContext): Run {
 test('merged publication settles a reconciled run with no remaining gate or execution steps', async (t) => {
   const run = settledFixture(t);
   const before = structuredClone(run);
-  const github = dependencies().github!;
   const result = await runAdoptPublishedPr(
     request(run),
     noop,
     dependencies({
-      github: async (args, options) => {
-        const response = await github(args, options);
-        if (args.some((arg) => arg.endsWith('/commits'))) return response;
-        return {
-          ...response,
-          stdout: JSON.stringify({
-            ...JSON.parse(response.stdout),
-            state: 'closed',
-            merged_at: '2026-10-21T07:38:00Z',
-          }),
-        };
-      },
+      github: makeGitHubFake((_method, path) =>
+        path.endsWith('/commits')
+          ? [{ sha: reviewedHead }, { sha: newerHead }]
+          : { ...defaultPrFacts(), state: 'closed', merged_at: '2026-10-21T07:38:00Z' },
+      ),
       continuationRefusals: async () => [],
     }),
   );
@@ -495,9 +514,9 @@ test('archived adoption preserves raw execution, old packages and every decision
     { ...request(run), reason: 'Different retry text' },
     noop,
     dependencies({
-      github: async () => {
+      github: makeGitHubFake(() => {
         throw new Error('Retry must not require GitHub');
-      },
+      }),
     }),
   );
   assert.deepEqual(retry.receipt, result.receipt);
@@ -572,19 +591,18 @@ test('GitHub branch/history failures, in-flight publication and conflicting link
     runAdoptPublishedPr({ ...request(run), headSha: 'd'.repeat(40) }, noop, dependencies()),
     /not in this PR history/,
   );
-  const normal = dependencies().github!;
   await assert.rejects(
     runAdoptPublishedPr(
       request(run),
       noop,
       dependencies({
-        github: async (args, opts) => {
-          const value = await normal(args, opts);
-          const facts = JSON.parse(value.stdout);
+        github: makeGitHubFake((_method, path) => {
+          if (path.endsWith('/commits')) return [{ sha: reviewedHead }, { sha: newerHead }];
+          const facts = defaultPrFacts();
           // A branch name may differ now (content or attestation decides); another repository never.
-          facts.head.repo = { full_name: 'fork/repo' };
-          return { ...value, stdout: JSON.stringify(facts) };
-        },
+          (facts.head as Record<string, unknown>).repo = { full_name: 'fork/repo' };
+          return facts;
+        }),
       }),
     ),
     /GitHub PR facts/,
@@ -605,7 +623,6 @@ test('generation and authority changes during GitHub verification cannot consume
   for (const revoked of [false, true]) {
     const run = fixture(t);
     let active = true;
-    const normal = dependencies().github!;
     await assert.rejects(
       runAdoptPublishedPr(
         request(run),
@@ -615,11 +632,12 @@ test('generation and authority changes during GitHub verification cannot consume
             if (!active) throw new Error('Credential revoked');
             return approver;
           },
-          github: async (args, opts) => {
+          github: makeGitHubFake((_method, path) => {
             if (revoked) active = false;
             else updateRun(run.id, { engineState: { ...run.engineState, generation: 3 } });
-            return normal(args, opts);
-          },
+            if (path.endsWith('/commits')) return [{ sha: reviewedHead }, { sha: newerHead }];
+            return defaultPrFacts();
+          }),
         }),
       ),
       revoked ? /Credential revoked/ : /changed during verification/,
@@ -745,20 +763,19 @@ test('adoption wakes the existing decision resolver without issuing an ordinary 
 test('verified draft, closed and merged PRs record their observed publication state', async (t) => {
   for (const state of ['draft', 'closed', 'merged']) {
     const run = fixture(t);
-    const normal = dependencies().github!;
     const result = await runAdoptPublishedPr(
       request(run),
       noop,
       dependencies({
-        github: async (args, opts) => {
-          const output = await normal(args, opts);
-          if (args.some((arg) => arg.endsWith('/commits'))) return output;
-          const facts = JSON.parse(output.stdout);
-          facts.draft = state === 'draft';
-          facts.state = state === 'draft' ? 'open' : 'closed';
-          facts.merged_at = state === 'merged' ? '2026-10-14T00:00:00Z' : null;
-          return { ...output, stdout: JSON.stringify(facts) };
-        },
+        github: makeGitHubFake((_method, path) => {
+          if (path.endsWith('/commits')) return [{ sha: reviewedHead }, { sha: newerHead }];
+          return {
+            ...defaultPrFacts(),
+            draft: state === 'draft',
+            state: state === 'draft' ? 'open' : 'closed',
+            merged_at: state === 'merged' ? '2026-10-14T00:00:00Z' : null,
+          };
+        }),
       }),
     );
     assert.equal(

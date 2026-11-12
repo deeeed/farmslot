@@ -179,6 +179,26 @@ test('QA task selects qa/default from a template root in the slot machine enviro
   );
 });
 
+test('task-init template drift names the supported pre-launch write-task replay', (t) => {
+  const { catalog, request: qa } = qaCatalog(t, true);
+  const template = path.join(
+    catalog.slot.machineEnv!.FIXTURE_COOK_ROOT,
+    'references/templates/qa/default.md',
+  );
+  fs.appendFileSync(template, '\nChanged after task selection.\n');
+  assert.throws(
+    () => selectHostedTaskTemplate(catalog, qa),
+    (error: unknown) =>
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 'TASK_TEMPLATE_CHANGED' &&
+      'userAction' in error &&
+      typeof error.userAction === 'string' &&
+      error.userAction.includes('run.replayStep') &&
+      error.userAction.includes('write-task'),
+  );
+});
+
 test('a template source whose root only the gateway has refuses with its name and variable', (t) => {
   const { catalog, request: qa } = qaCatalog(t, false);
   assert.throws(

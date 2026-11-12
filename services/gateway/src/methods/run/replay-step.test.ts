@@ -584,6 +584,164 @@ test('an adopted dispatch stays failed until the replay claims its slot', async 
   assert.equal(steps.find((step) => step.name === 'dispatch')?.status, 'failed');
 });
 
+for (const stepName of ['monitor', 'dispatch'] as const) {
+  test(`retained ${stepName} replay adopts a verified original attempt after a refused retry`, async (t) => {
+    const run = createRun({
+      flowType: 'dev',
+      project: 'farmslot-farm',
+      ticketOrPr: `PROJ-${Date.now()}`,
+      runner: 'claude',
+      model: 'sonnet',
+    });
+    const startedAt = new Date(Date.now() - 2000).toISOString();
+    const signal = {
+      status: 'running' as const,
+      attemptId: 'original-attempt',
+      timestamp: new Date(Date.now() - 1000).toISOString(),
+    };
+    updateRun(run.id, {
+      recordedEvidenceContractVersion: 0,
+      status: 'blocked',
+      slotId: 'macwork-ff-4',
+      taskFile: '/tmp/TASK.md',
+      metrics: {
+        ...run.metrics,
+        runnerSessionId: 'original-session',
+        runnerSessionPath: '/tmp/original-session',
+      },
+      agentContexts: [
+        {
+          id: 'dev',
+          role: 'dev',
+          label: 'Dev',
+          status: 'blocked',
+          runId: run.id,
+          slotId: 'macwork-ff-4',
+          runner: 'claude',
+          model: 'sonnet',
+          runnerSessionId: 'original-session',
+          runnerSessionPath: '/tmp/original-session',
+          signalAttemptId: 'original-attempt',
+        },
+      ],
+      steps: run.steps.map((s) => ({
+        ...s,
+        status:
+          s.name === 'dispatch'
+            ? 'failed'
+            : ['find-slot', 'write-task', 'prepare'].includes(s.name)
+              ? 'done'
+              : 'pending',
+        ...(s.name === 'dispatch' ? { startedAt } : {}),
+      })),
+    });
+    await holdOnlySlot(t, 'macwork-ff-4', {
+      lifecycle: 'busy',
+      phase: 'occupied',
+      current_run_id: run.id,
+      slot_epoch: 11,
+    });
+    t.after(() => evictTestRun(run.id, 'failed'));
+    const starts: string[] = [];
+    await runReplayStep({ runId: run.id, stepName }, () => {}, {
+      probeTaskSignal: async () => signal,
+      startEngine: async (id) => {
+        starts.push(id);
+      },
+    });
+    const after = getRun(run.id)!;
+    assert.equal(after.status, 'monitoring');
+    assert.equal(after.steps.find((s) => s.name === 'dispatch')?.status, 'done');
+    assert.equal(
+      after.steps.find((s) => s.name === 'dispatch')?.outputs?.acknowledgement,
+      'task-signal',
+    );
+    assert(
+      Date.parse(after.steps.find((s) => s.name === 'dispatch')!.completedAt!) >=
+        Date.parse(startedAt),
+    );
+    assert.equal(after.metrics.runnerSessionId, 'original-session');
+    assert.equal(after.agentContexts?.[0]?.runnerSessionId, 'original-session');
+    assert.equal(after.agentContexts?.[0]?.signalAttemptId, 'original-attempt');
+    assert.deepEqual(starts, [run.id]);
+  });
+}
+
+test('retained replay refuses unconfirmed liveness and a mismatched signal before run mutation', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  updateRun(run.id, {
+    status: 'blocked',
+    steps: run.steps.map((s) => ({ ...s, status: s.name === 'dispatch' ? 'failed' : 'done' })),
+  });
+  t.after(() => evictTestRun(run.id, 'failed'));
+  for (const reason of ['liveness is unconfirmed', 'signal does not match']) {
+    const before = structuredClone(getRun(run.id));
+    await assert.rejects(
+      runReplayStep({ runId: run.id, stepName: 'monitor' }, () => {}, {
+        probeTaskSignal: async () => {
+          throw new ReplayTaskSignalProbeError(reason);
+        },
+        startEngine: async () => {
+          throw new Error('A refused recovery must not start an engine');
+        },
+      }),
+      new RegExp(reason),
+    );
+    assert.deepEqual(getRun(run.id), before);
+  }
+});
+
+test('a worker runner override skips adoption and does not borrow the old session', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+    runner: 'claude',
+    model: 'sonnet',
+  });
+  updateRun(run.id, {
+    recordedEvidenceContractVersion: 0,
+    status: 'blocked',
+    slotId: 'macwork-ff-4',
+    taskFile: '/tmp/TASK.md',
+    steps: run.steps.map((s) => ({
+      ...s,
+      status:
+        s.name === 'dispatch'
+          ? 'failed'
+          : ['find-slot', 'write-task', 'prepare'].includes(s.name)
+            ? 'done'
+            : 'pending',
+    })),
+  });
+  await holdOnlySlot(t, 'macwork-ff-4', {
+    lifecycle: 'busy',
+    phase: 'occupied',
+    current_run_id: run.id,
+    slot_epoch: 11,
+  });
+  t.after(() => evictTestRun(run.id, 'failed'));
+  await runReplayStep(
+    { runId: run.id, stepName: 'dispatch', runner: 'codex', model: 'gpt-6.1-sol' },
+    () => {},
+    {
+      probeTaskSignal: async (_run, options) => {
+        assert.equal(options.freshDispatch, true);
+        return null;
+      },
+      startEngine: async () => {},
+    },
+  );
+  const after = getRun(run.id)!;
+  assert.equal(after.metrics.runner, 'codex');
+  assert.equal(after.metrics.runnerSessionId, null);
+  assert.equal(after.recoveryAttempts?.at(-1)?.stepName, 'dispatch');
+});
+
 test('an adopted live worker keeps an eval replay at monitor instead of prepare', () => {
   const base = { targetIdx: 2, prepareIdx: 0, monitorIdx: 2 };
   // Without adoption the eval harness reinstall still routes through prepare.

@@ -1,0 +1,1 @@
+- Leave tmux server options untouched when PTY support is imported or an existing session is reused; apply tuning only after creating a session.

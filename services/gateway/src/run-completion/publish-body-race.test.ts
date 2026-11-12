@@ -10,6 +10,7 @@ import { invalidateProjectVarsCache } from '@farmslot/slot-config';
 
 import type { ExecResult } from '../core/exec.js';
 import { farmslotRoot } from '../fleet/state.js';
+import { startGitHubFixture } from '../integrations/github-test-fixtures.js';
 import { deleteTestRunIfPresent } from '../run-engine/test-fixtures.js';
 import { createRun, getRun, updateRun } from '../runs/store.js';
 
@@ -367,42 +368,59 @@ test('the gate shows, publishes and records the current render while approval ke
 });
 
 /**
- * A local `gh` first on PATH: it copies every posted PR body to `capture`,
- * logs each call, answers `gh api` with a 404 and `pr view` with an open fixture.
- * Only `pr edit` writes are allowed. The test asserts this is the resolved `gh`, so no call
- * can reach GitHub.
+ * A local GitHub API fixture (FARMSLOT_GITHUB_API_URL) plus a `gh` first on PATH that only
+ * answers credential reads. The fixture copies every posted PR body to `capture`, records
+ * each PR edit, answers `pr view` with an open fixture and other reads with a 404. Only PR
+ * edits are allowed, so no call can reach GitHub.
  */
 async function installGhCapture(t: import('node:test').TestContext) {
   const dir = await mkdtemp(path.join(tmpdir(), 'farmslot-gh-capture-'));
   const capture = path.join(dir, 'posted-body.md');
-  const calls = path.join(dir, 'calls.log');
   const gh = path.join(dir, 'gh');
   await writeFile(
     gh,
     [
       '#!/bin/sh',
-      `echo "$*" >> '${calls}'`,
-      `if [ "$1" = api ]; then printf 'HTTP/2.0 404 Not Found\\r\\n\\r\\n{}'; exit 0; fi`,
-      `if [ "$1" = pr ] && [ "$2" = view ]; then printf '%s' '{"number":4242,"state":"OPEN","headRefOid":"abc123"}'; exit 0; fi`,
-      'if [ "$1" != pr ] || [ "$2" != edit ]; then exit 97; fi',
-      'while [ "$#" -gt 0 ]; do',
-      `  if [ "$1" = --body-file ]; then cp "$2" '${capture}'; exit $?; fi`,
-      '  shift',
-      'done',
-      'exit 0',
+      'if [ "$1" = auth ] && [ "$2" = token ]; then printf fixture-token; exit 0; fi',
+      'exit 97',
       '',
     ].join('\n'),
   );
   await chmod(gh, 0o700);
+  const edits: Array<{ title?: unknown; body?: unknown }> = [];
+  const github = await startGitHubFixture(async (request) => {
+    const query = (request.json as { query?: unknown } | undefined)?.query;
+    if (request.path === '/graphql' && String(query).includes('PullRequestByNumber'))
+      return {
+        body: {
+          data: {
+            repository: { pullRequest: { number: 4242, state: 'OPEN', headRefOid: 'abc123' } },
+          },
+        },
+      };
+    if (request.method === 'PATCH' && request.path === '/repos/owner/repo/pulls/4242') {
+      const edit = request.json as { title?: unknown; body?: unknown };
+      edits.push(edit);
+      if (typeof edit.body === 'string') await writeFile(capture, edit.body);
+      return { body: { html_url: 'https://github.com/owner/repo/pull/4242' } };
+    }
+    if (request.method === 'GET') return { status: 404, body: {} };
+    return { status: 500, body: { message: 'Fixture allows only PR edits' } };
+  });
   const originalPath = process.env.PATH;
+  const originalApi = process.env.FARMSLOT_GITHUB_API_URL;
   process.env.PATH = `${dir}:${originalPath}`;
+  process.env.FARMSLOT_GITHUB_API_URL = github.origin;
   t.after(async () => {
     process.env.PATH = originalPath;
+    if (originalApi === undefined) delete process.env.FARMSLOT_GITHUB_API_URL;
+    else process.env.FARMSLOT_GITHUB_API_URL = originalApi;
+    await github.close();
     await rm(dir, { recursive: true, force: true });
   });
   const resolved = execFileSync('sh', ['-c', 'command -v gh'], { encoding: 'utf-8' }).trim();
   assert.equal(resolved, gh);
-  return { capture, calls };
+  return { capture, edits };
 }
 
 function storedRunWithGate(t: import('node:test').TestContext, payload: unknown) {
@@ -525,7 +543,7 @@ test('a publish retry that posts nothing leaves the recorded description and its
 });
 
 test('a successful publication hands the posted body to the published-description record', async (t) => {
-  const { capture, calls } = await installGhCapture(t);
+  const { capture, edits } = await installGhCapture(t);
   const project = `.publish-body-test-${process.pid}`;
   const projectDir = path.join(farmslotRoot(), 'projects', project);
   await mkdir(projectDir, { recursive: true });
@@ -567,9 +585,8 @@ test('a successful publication hands the posted body to the published-descriptio
     publishedAt: '2026-10-09T00:02:00.000Z',
   });
   assert.equal(payload.prPackage?.packageHash, reviewed.packageHash);
-  const log = await readFile(calls, 'utf-8');
-  assert.match(log, /^pr edit 4242 --repo owner\/repo --body-file /m);
-  assert.match(log, /^pr edit 4242 --repo owner\/repo --title feat: fix the order form$/m);
+  assert(edits.some((edit) => edit.body === sent));
+  assert(edits.some((edit) => edit.title === 'feat: fix the order form'));
 });
 
 test('publication renders retained prose and inventory after the source task is removed', async (t) => {

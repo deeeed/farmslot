@@ -8,19 +8,23 @@ import { heldDataUsable } from '../../lib/resource-read-status';
 import { useHeldConnection } from '../../store/held-connection';
 import { useRunStore } from '../../store/runs';
 
+import { heldDetailWithNewerRow } from './run-detail-reads';
+
 /**
- * The run Run Detail renders: run.get's answer, or the run collections' row for that id while
- * run.get has nothing usable to show (loading, or saved data the screen would call saved). The
- * row, which the Review list already holds, stands in so a listed run never opens on a skeleton.
- * Over a saved run.get it shows only when it was updated later. Usable run.get data is not
- * replaced: a run write marks it stale and rereads it, and run.list can land first. A failed
- * reread stays quiet only while the last good read is under 60 s old (`heldDataUsable`); after
- * that a newer row shows. A refusal such as RUN_NOT_FOUND drops the row.
+ * What Run Detail screens read for one run:
+ * - `row`: the run.list row, present while the run is listed and its run.get was not refused.
+ * - `run`: run.get's run, never a list row; null until run.get has data (loading, or nothing
+ *   saved). When the row is newer than a held run.get (`fromList`), `run` is the held detail
+ *   with the row's own fields laid over it (`heldDetailWithNewerRow`): the header shows the
+ *   row's status, and the detail parts keep the held data until the reread lands, so nothing
+ *   already on screen goes empty. A run.list row alone never stands in: it lacks the detail
+ *   these screens render, so they show their loading state until run.get answers.
  *
- * Display and actions use different rules. A row is display data only: run.list leaves large
- * detail out (`runHasTrimmedDetail`), and run actions check run.get's own run
- * (`assertNativeRunReady`). `runActionable` (`canActOn`) says when actions may run, which a
- * failed reread already stops. `listObservation` dates the row while it shows.
+ * Display and actions use different rules. `runActionable` (`canActOn`) says when actions may
+ * run, which a failed reread already stops, and run actions check run.get's own run
+ * (`assertNativeRunReady`), which an overlaid run is not. A failed reread stays quiet only while
+ * the last good read is under 60 s old (`heldDataUsable`); after that a newer row's facts show.
+ * A refusal such as RUN_NOT_FOUND drops the row. `listObservation` dates the row.
  */
 export function useRunDetailRun(runId: string) {
   const runQuery = useMemo(
@@ -35,16 +39,13 @@ export function useRunDetailRun(runId: string) {
   const now = Date.now();
   const runActionable = canActOn(runObservation, connected, now);
   const directShown = heldDataUsable(runObservation, connected, now);
-  const row = readRefused(runObservation.error) ? undefined : listedRun;
+  const row = (readRefused(runObservation.error) ? undefined : listedRun) ?? null;
   const fromList = Boolean(
     row && !directShown && (!direct || Date.parse(row.updatedAt) > Date.parse(direct.updatedAt)),
   );
-  return {
-    runQuery,
-    runObservation,
-    runActionable,
-    listObservation,
-    fromList,
-    run: (fromList ? row : direct) ?? null,
-  };
+  const run = useMemo(
+    () => (direct && row && fromList ? heldDetailWithNewerRow(direct, row) : (direct ?? null)),
+    [direct, row, fromList],
+  );
+  return { runQuery, runObservation, runActionable, listObservation, fromList, row, run };
 }

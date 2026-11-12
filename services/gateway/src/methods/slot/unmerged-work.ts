@@ -1,10 +1,11 @@
 import { DEFAULT_BRANCH, remoteBranchRefspec } from '@farmslot/protocol';
 import { isRecord } from '@farmslot/protocol/recipe';
 
+import { withFarmGitConfig } from '../../core/farm-git.js';
 import { execOnSlot, type RawProjectJson, type SlotVars } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
 import { hasUserSlotChanges } from '../../fleet/slot-scaffolding.js';
-import { ghRequest } from '../../integrations/github-client.js';
+import { github } from '../../integrations/github-client.js';
 import { GitHubHttpError } from '../../integrations/github-errors.js';
 
 /** Git's refusal when another fetch in the same repository moved or holds a ref. */
@@ -47,12 +48,11 @@ export const readMergedPreparePullRequests: ReadMergedPreparePullRequests = asyn
   const endpoint = headBranch
     ? `repos/${repo}/pulls?state=closed&head=${encodeURIComponent(`${repo.split('/')[0]}:${headBranch}`)}&per_page=100`
     : `repos/${repo}/commits/${headSha}/pulls?per_page=100`;
-  const { stdout } = await ghRequest(['api', endpoint], {
+  const data: unknown = await github.rest<unknown>('GET', endpoint, {
     force,
     caller: 'slot.prepare-publication',
     signal: AbortSignal.timeout(timeoutMs),
   });
-  const data: unknown = JSON.parse(stdout);
   if (!Array.isArray(data))
     throw new Error('Cannot verify merged pull requests: expected an array');
   const merged: MergedPreparePullRequest[] = [];
@@ -104,16 +104,14 @@ interface MergedPullRequestReadOptions {
 }
 
 const readPublishedAncestry: PublishedAncestryReader = async (repo, base, head, timeoutMs) => {
-  const compared = await ghRequest(
-    [
-      'api',
-      `repos/${repo}/compare/${base}...${head}`,
-      '--jq',
-      '{status,base_commit:{sha:.base_commit.sha},merge_base_commit:{sha:.merge_base_commit.sha}}',
-    ],
-    { caller: 'slot.publication-coverage', signal: AbortSignal.timeout(timeoutMs) },
+  const data: unknown = await github.rest<unknown>(
+    'GET',
+    `repos/${repo}/compare/${base}...${head}`,
+    {
+      caller: 'slot.publication-coverage',
+      signal: AbortSignal.timeout(timeoutMs),
+    },
   );
-  const data: unknown = JSON.parse(compared.stdout);
   if (!isRecord(data) || !isRecord(data.base_commit) || !isRecord(data.merge_base_commit))
     throw new Error('Cannot verify published ancestry');
   return (
@@ -157,7 +155,11 @@ export async function refIncludedInMergedPullRequest(
     options.readAncestry ??
     (options.allowFetch === false ? readPassivePublishedAncestry : readPublishedAncestry);
   const read = (command: string) =>
-    exec(vars, command, options.timeoutMs ? { timeout: options.timeoutMs } : undefined);
+    exec(
+      vars,
+      withFarmGitConfig(command),
+      options.timeoutMs ? { timeout: options.timeoutMs } : undefined,
+    );
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
   const head = await read(`${git} rev-parse --verify ${shellQuote(`${ref}^{commit}`)}`);
   if (head.exitCode !== 0) throw new Error(`Cannot verify ${ref}: ${head.stderr || head.stdout}`);
@@ -189,13 +191,18 @@ export async function refIncludedInMergedPullRequest(
       // A later PR fix may have been pushed from another checkout before branch deletion.
       const fetched = await exec(
         vars,
-        `${git} fetch --no-tags origin ${shellQuote(`refs/pull/${pr.number}/head`)}`,
+        withFarmGitConfig(
+          `${git} fetch --no-tags origin ${shellQuote(`refs/pull/${pr.number}/head`)}`,
+        ),
       );
       if (fetched.exitCode !== 0)
         throw new Error(
           `Cannot fetch merged PR #${pr.number}: ${fetched.stderr || fetched.stdout}`,
         );
-      const fetchedHead = await exec(vars, `${git} rev-parse --verify FETCH_HEAD`);
+      const fetchedHead = await exec(
+        vars,
+        withFarmGitConfig(`${git} rev-parse --verify FETCH_HEAD`),
+      );
       if (fetchedHead.exitCode !== 0 || fetchedHead.stdout.trim() !== pr.headSha)
         throw new Error(`Cannot verify the retained head of merged PR #${pr.number}`);
     }
@@ -220,7 +227,9 @@ export async function findUnpushedSlotCommits(
 ): Promise<string[]> {
   const result = await exec(
     vars,
-    `git -C ${shellQuote(vars.remoteRepo)} log --format='%H %s'${options.patchBase ? '' : ' --max-count=5'} ${shellQuote(ref)} --not --remotes${options.preservedByLocalBranch ? ' --branches' : ''}`,
+    withFarmGitConfig(
+      `git -C ${shellQuote(vars.remoteRepo)} log --format='%H %s'${options.patchBase ? '' : ' --max-count=5'} ${shellQuote(ref)} --not --remotes${options.preservedByLocalBranch ? ' --branches' : ''}`,
+    ),
   );
   if (result.exitCode !== 0)
     throw new Error(
@@ -230,7 +239,9 @@ export async function findUnpushedSlotCommits(
   if (!commits.length || !options.patchBase) return commits;
   const cherry = await exec(
     vars,
-    `git -C ${shellQuote(vars.remoteRepo)} cherry ${shellQuote(options.patchBase)} ${shellQuote(ref)}`,
+    withFarmGitConfig(
+      `git -C ${shellQuote(vars.remoteRepo)} cherry ${shellQuote(options.patchBase)} ${shellQuote(ref)}`,
+    ),
   );
   if (cherry.exitCode !== 0)
     throw new Error(
@@ -261,7 +272,7 @@ export async function assertPrepareCommitsPublished(
   // Keep last-published tips reachable after upstream deletion/squash merge.
   // Already-pruned squash merges are verified by patch or merged-PR identity below.
   const fetchAll = () =>
-    exec(vars, `${git} fetch --all --no-prune --no-tags`, { timeout: 120_000 });
+    exec(vars, withFarmGitConfig(`${git} fetch --all --no-prune --no-tags`), { timeout: 120_000 });
   let fetch = await fetchAll();
   // Slots whose worktrees share one repository prepare concurrently. The fetch
   // that loses a remote-tracking ref update fails although the other stored the
@@ -280,7 +291,10 @@ export async function assertPrepareCommitsPublished(
     if (!options.githubRepo) throw refusal;
     // Slot clones retain explicit fetch refspecs for PR heads GitHub later deletes.
     // Recover that exact configuration, not arbitrary transport/refspec failures.
-    const configured = await exec(vars, `${git} config --get-all remote.origin.fetch`);
+    const configured = await exec(
+      vars,
+      withFarmGitConfig(`${git} config --get-all remote.origin.fetch`),
+    );
     const refspecs = configured.stdout.trim().split('\n');
     const missingBranches: string[] = [];
     const retainedRefspecs: string[] = [];
@@ -291,7 +305,9 @@ export async function assertPrepareCommitsPublished(
         throw refusal;
       const advertised = await exec(
         vars,
-        `${git} ls-remote --exit-code --heads origin ${shellQuote(`refs/heads/${headBranch}`)}`,
+        withFarmGitConfig(
+          `${git} ls-remote --exit-code --heads origin ${shellQuote(`refs/heads/${headBranch}`)}`,
+        ),
         { timeout: 30_000 },
       );
       if (advertised.exitCode === 0) retainedRefspecs.push(refspec);
@@ -300,7 +316,7 @@ export async function assertPrepareCommitsPublished(
       else throw refusal;
     }
     if (!missingBranches.length) throw refusal;
-    const remotes = await exec(vars, `${git} remote`);
+    const remotes = await exec(vars, withFarmGitConfig(`${git} remote`));
     if (remotes.exitCode !== 0) throw refusal;
     for (const remote of remotes.stdout
       .trim()
@@ -308,14 +324,16 @@ export async function assertPrepareCommitsPublished(
       .filter((name) => name !== 'origin')) {
       const refreshed = await exec(
         vars,
-        `${git} fetch --no-prune --no-tags ${shellQuote(remote)}`,
+        withFarmGitConfig(`${git} fetch --no-prune --no-tags ${shellQuote(remote)}`),
         { timeout: 120_000 },
       );
       if (refreshed.exitCode !== 0) throw refusal;
     }
     const refreshed = await exec(
       vars,
-      `${git} fetch --no-prune --no-tags origin ${[...retainedRefspecs, remoteBranchRefspec(defaultBranch)].map(shellQuote).join(' ')}`,
+      withFarmGitConfig(
+        `${git} fetch --no-prune --no-tags origin ${[...retainedRefspecs, remoteBranchRefspec(defaultBranch)].map(shellQuote).join(' ')}`,
+      ),
       { timeout: 120_000 },
     );
     if (refreshed.exitCode !== 0) throw refusal;
@@ -343,7 +361,7 @@ export async function assertPrepareCommitsPublished(
     }
     acceptedMergedWork = true;
   }
-  const head = await exec(vars, `${git} symbolic-ref --quiet --short HEAD`);
+  const head = await exec(vars, withFarmGitConfig(`${git} symbolic-ref --quiet --short HEAD`));
   if (head.exitCode !== 0 && head.exitCode !== 1)
     throw new Error(
       `Cannot inspect HEAD on ${vars.slotId}; prepare left branches untouched. ${head.stderr || head.stdout}`,
@@ -352,7 +370,7 @@ export async function assertPrepareCommitsPublished(
   if (branch) {
     const exists = await exec(
       vars,
-      `${git} show-ref --verify --quiet ${shellQuote(`refs/heads/${branch}`)}`,
+      withFarmGitConfig(`${git} show-ref --verify --quiet ${shellQuote(`refs/heads/${branch}`)}`),
     );
     if (exists.exitCode === 0) refs.push(`refs/heads/${branch}`);
     else if (exists.exitCode !== 1)
@@ -372,7 +390,9 @@ export async function assertPrepareCommitsPublished(
     if (localBranch) {
       const upstream = await exec(
         vars,
-        `${git} for-each-ref --format='%(upstream:remotename)%09%(upstream:remoteref)' ${shellQuote(`refs/heads/${localBranch}`)}`,
+        withFarmGitConfig(
+          `${git} for-each-ref --format='%(upstream:remotename)%09%(upstream:remoteref)' ${shellQuote(`refs/heads/${localBranch}`)}`,
+        ),
       );
       if (upstream.exitCode !== 0)
         throw new Error(`Cannot inspect published branch ${localBranch}`);
@@ -381,7 +401,9 @@ export async function assertPrepareCommitsPublished(
       const publishedRef = configuredRef || `refs/heads/${localBranch}`;
       const advertised = await exec(
         vars,
-        `${git} ls-remote --exit-code --heads ${shellQuote(publishedRemote)} ${shellQuote(publishedRef)}`,
+        withFarmGitConfig(
+          `${git} ls-remote --exit-code --heads ${shellQuote(publishedRemote)} ${shellQuote(publishedRef)}`,
+        ),
         { timeout: 30_000 },
       );
       if (advertised.exitCode !== 0 && advertised.exitCode !== 2)
@@ -392,7 +414,9 @@ export async function assertPrepareCommitsPublished(
         const tracking = `refs/remotes/${publishedRemote}/${publishedRef.replace(/^refs\/heads\//, '')}`;
         const fetched = await exec(
           vars,
-          `${git} fetch --no-prune --no-tags ${shellQuote(publishedRemote)} ${shellQuote(`+${publishedRef}:${tracking}`)}`,
+          withFarmGitConfig(
+            `${git} fetch --no-prune --no-tags ${shellQuote(publishedRemote)} ${shellQuote(`+${publishedRef}:${tracking}`)}`,
+          ),
           { timeout: 120_000 },
         );
         if (fetched.exitCode !== 0)
@@ -444,7 +468,10 @@ export async function assertPrepareCommitsPublished(
   // Only the new merged-work exemption needs this extra protection. Existing
   // published/start-ref prepares still clean fixture/deps leftovers after all refusals.
   if (acceptedMergedWork) {
-    const status = await exec(vars, `${git} status --porcelain -z --untracked-files=all`);
+    const status = await exec(
+      vars,
+      withFarmGitConfig(`${git} status --porcelain -z --untracked-files=all`),
+    );
     if (status.exitCode !== 0)
       throw new Error(
         `Cannot inspect work on ${vars.slotId}; prepare left branches untouched. ${status.stderr || status.stdout}`,
@@ -465,7 +492,9 @@ export async function assertPublishedPrepareBranchContained(
 ): Promise<void> {
   const result = await exec(
     vars,
-    `git -C ${shellQuote(vars.remoteRepo)} log --oneline --max-count=5 ${shellQuote(`refs/remotes/origin/${branch}`)} --not ${allowedBases.map(shellQuote).join(' ')}`,
+    withFarmGitConfig(
+      `git -C ${shellQuote(vars.remoteRepo)} log --oneline --max-count=5 ${shellQuote(`refs/remotes/origin/${branch}`)} --not ${allowedBases.map(shellQuote).join(' ')}`,
+    ),
   );
   if (result.exitCode !== 0)
     throw new Error(
@@ -493,7 +522,10 @@ export async function findUnmergedSlotWork(
   projectJson: RawProjectJson = {},
 ): Promise<string | null> {
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
-  const status = await exec(vars, `${git} status --porcelain -z --untracked-files=all`);
+  const status = await exec(
+    vars,
+    withFarmGitConfig(`${git} status --porcelain -z --untracked-files=all`),
+  );
   if (status.exitCode !== 0)
     throw new Error(`Cannot inspect slot work on ${vars.slotId}: ${status.stderr}`);
   const dirty = hasUserSlotChanges(status.stdout, projectJson);
@@ -508,11 +540,11 @@ export async function findUnmergedSlotWork(
   // that cannot be asked proves nothing either, so the work stays protected.
   const remoteConfig = await exec(
     vars,
-    `${git} config --get ${shellQuote(`branch.${branch}.remote`)}`,
+    withFarmGitConfig(`${git} config --get ${shellQuote(`branch.${branch}.remote`)}`),
   );
   const mergeConfig = await exec(
     vars,
-    `${git} config --get ${shellQuote(`branch.${branch}.merge`)}`,
+    withFarmGitConfig(`${git} config --get ${shellQuote(`branch.${branch}.merge`)}`),
   );
   if (![0, 1].includes(remoteConfig.exitCode) || ![0, 1].includes(mergeConfig.exitCode))
     return 'unpushed commits';
@@ -525,7 +557,7 @@ export async function findUnmergedSlotWork(
   if (remote === '.') return 'unpushed commits';
   const probe = await exec(
     vars,
-    `${git} ls-remote --heads ${shellQuote(remote)} ${shellQuote(ref)}`,
+    withFarmGitConfig(`${git} ls-remote --heads ${shellQuote(remote)} ${shellQuote(ref)}`),
     { timeout: 30_000 },
   );
   if (probe.exitCode !== 0) return 'unpushed commits';
@@ -540,11 +572,14 @@ export async function findUnmergedSlotWork(
     // Fetch only its advertised ref, without moving HEAD or pruning history.
     const fetched = await exec(
       vars,
-      `${git} fetch --no-tags ${shellQuote(remote)} ${shellQuote(ref)}`,
+      withFarmGitConfig(`${git} fetch --no-tags ${shellQuote(remote)} ${shellQuote(ref)}`),
       { timeout: 120_000 },
     );
     if (fetched.exitCode !== 0) return 'unpushed commits';
-    const contained = await exec(vars, `${git} merge-base --is-ancestor HEAD FETCH_HEAD`);
+    const contained = await exec(
+      vars,
+      withFarmGitConfig(`${git} merge-base --is-ancestor HEAD FETCH_HEAD`),
+    );
     if (contained.exitCode === 0) return null;
   }
   return 'unpushed commits';

@@ -30,20 +30,13 @@ test('authenticated discovery ignores a saved historical closed PR on a reused b
     path.join(projectRoot, 'project.json'),
     JSON.stringify({ ci: { repo: repository } }),
   );
-  const { ghRequest } = await import('./github-client.js');
-  const { stdout } = await ghRequest(
-    [
-      'pr',
-      'view',
-      String(number),
-      '--repo',
-      repository,
-      '--json',
-      'number,state,mergedAt,headRefName,headRefOid',
-    ],
+  const { github } = await import('./github-client.js');
+  const historical = await github.prView(
+    repository,
+    number,
+    ['number', 'state', 'mergedAt', 'headRefName', 'headRefOid'],
     { force: true },
   );
-  const historical = JSON.parse(stdout);
   assert.equal(historical.state, 'CLOSED');
   assert.equal(historical.mergedAt, null);
   assert.equal(historical.headRefName, branch);
@@ -60,7 +53,8 @@ test('authenticated discovery ignores a saved historical closed PR on a reused b
   });
   const connection = await fixture.client.connect();
   try {
-    updateRun(run.id, { prNumber: number, worktreeHeadAtDispatch: historical.headRefOid });
+    const headOid = typeof historical.headRefOid === 'string' ? historical.headRefOid : undefined;
+    updateRun(run.id, { prNumber: number, worktreeHeadAtDispatch: headOid });
     const before = structuredClone(getRun(run.id)!);
     const saved = await connection.call<RunInteractiveDevResolveResult>(
       Methods.RUN_INTERACTIVE_DEV_RESOLVE,

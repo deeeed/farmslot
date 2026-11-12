@@ -48,6 +48,7 @@ import { fileURLToPath } from 'node:url';
 
 import { disableMacCodeSignClone } from '../chrome-args.cjs';
 
+import { blindBrowserOptions } from './lib/blind-browser.mjs';
 import { hostResolverRules } from './lib/blocked-hosts.mjs';
 import { browserWebSocketUrl, CdpClient } from './lib/cdp-client.mjs';
 import {
@@ -61,6 +62,7 @@ import { clearHudState } from './lib/hud.mjs';
 import {
   cdpListenerPids,
   ownedBrowserPids,
+  ownedProcessIdentity,
   ownerMarker,
   ownsProcess,
   pidAlive,
@@ -239,7 +241,8 @@ async function launchInBackground(
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  for (const pid of ownedBrowserPids(runtime)) await terminate(pid, 3000);
+  for (const pid of ownedBrowserPids(runtime))
+    await terminate(pid, 3000, ownedProcessIdentity('browser', pid, runtime));
   throw new Error(
     `${path.basename(application)} started but no browser on this slot's profile listened on CDP ${cdpPort} within ${timeoutMs}ms.`,
   );
@@ -407,6 +410,7 @@ export async function launchWebDappBrowser(
   env = process.env,
   { timeouts = LAUNCH_TIMEOUTS, sessionLocked = macosSessionLocked } = {},
 ) {
+  const blindBrowser = blindBrowserOptions(env);
   const policy = webDappPolicy(env);
   const signerModule = args['signer-module'] ?? env[SIGNER_MODULE_ENV];
   const signerHooks = await loadSigners({
@@ -426,7 +430,9 @@ export async function launchWebDappBrowser(
     );
   }
   const target = path.resolve(args.target);
-  const cdpPort = Number(args['cdp-port']);
+  const cdpPort = Number(blindBrowser.direct ? env.RECIPE_CDP_PORT : args['cdp-port']);
+  if (!Number.isInteger(cdpPort) || cdpPort < 1 || cdpPort > 65535)
+    throw new Error('A valid browser CDP port is required; blind trials use RECIPE_CDP_PORT.');
   const appPort = Number(args['app-port']);
   const signer = args.signer;
   // Mainnet needs the real-funds confirmation. Testnet is enforced inside the
@@ -509,6 +515,7 @@ export async function launchWebDappBrowser(
     previous.account?.name === account.name &&
     previous.account?.address?.toLowerCase() === account.address.toLowerCase() &&
     previous.browser?.headless === headless &&
+    Boolean(previous.browser?.outerSeatbelt) === blindBrowser.direct &&
     (previous.network ?? 'testnet') === network &&
     previous.networkEnforcement?.fingerprint === enforcementFingerprint &&
     ownsProcess('browser', previous.browserPid, runtime) &&
@@ -540,6 +547,7 @@ export async function launchWebDappBrowser(
   writeProfileZoom(profile, placement?.zoom ?? 1);
 
   const browserArgs = [
+    ...blindBrowser.args,
     `--user-data-dir=${profile}`,
     '--remote-debugging-address=127.0.0.1',
     `--remote-debugging-port=${cdpPort}`,
@@ -564,7 +572,7 @@ export async function launchWebDappBrowser(
     return file;
   };
   let started = false;
-  const launchMethod = launchMethodFor(browser.bin);
+  const launchMethod = blindBrowser.direct ? SPAWN : launchMethodFor(browser.bin);
   // Focus is checked for a visible browser started in the background.
   const guardFocus = launchMethod === LAUNCH_SERVICES && !headless;
   // With no startup window, windows are created over CDP at these bounds; a
@@ -774,6 +782,7 @@ export async function launchWebDappBrowser(
         version: browser.version,
         source: browser.source,
         headless,
+        outerSeatbelt: blindBrowser.direct,
         launchMethod,
       },
       window: placement,
@@ -793,7 +802,8 @@ export async function launchWebDappBrowser(
       await stopWebDappBrowser(target, { cdpPort, log }).catch((stopError) =>
         log(`rollback incomplete: ${stopError.message}`),
       );
-      for (const pid of ownedBrowserPids(runtime)) await terminate(pid, 3000);
+      for (const pid of ownedBrowserPids(runtime))
+        await terminate(pid, 3000, ownedProcessIdentity('browser', pid, runtime));
     }
     throw error;
   } finally {

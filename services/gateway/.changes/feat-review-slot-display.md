@@ -1,0 +1,1 @@
+- Record native worker launch machine and canonical checkout so review placement survives slot reuse.

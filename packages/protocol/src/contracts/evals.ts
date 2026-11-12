@@ -340,6 +340,8 @@ export interface EvalBlindTrial {
     slotId: string;
     slotEpoch: number;
     capsulePath: string;
+    /** Separate endpoint for the browser spawned inside the worker seatbelt. */
+    browserCdpPort?: number;
     verifiedAt?: string;
   };
   firstOutput?: {
@@ -441,6 +443,11 @@ export interface CandidateStrategy {
 }
 
 export interface ExperimentTrial {
+  /** Trial-level judging opt-out, frozen at admission. */
+  review?: false;
+  /** Resolved judge override; omitted for trials using project review defaults. */
+  reviewRunner?: string;
+  reviewModel?: string;
   trialId: string;
   strategyId: string;
   caseId: string;
@@ -1044,6 +1051,13 @@ function isExperimentTrial(value: unknown): value is ExperimentTrial {
     typeof value.strategyId === 'string' &&
     typeof value.caseId === 'string' &&
     isExperimentTrialStatus(value.status) &&
+    (value.review === undefined || value.review === false) &&
+    !(
+      value.review === false &&
+      (value.reviewRunner !== undefined || value.reviewModel !== undefined)
+    ) &&
+    isOptionalString(value.reviewRunner) &&
+    isOptionalString(value.reviewModel) &&
     isOptionalString(value.runId) &&
     isOptionalString(value.packageId) &&
     isOptionalString(value.packageHash) &&

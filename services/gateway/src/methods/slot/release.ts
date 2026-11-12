@@ -20,6 +20,7 @@ import {
 } from '@farmslot/protocol';
 
 import { assertCleanupCurrent, withoutCleanupSignal } from '../../core/cleanup-scope.js';
+import { withFarmGitConfig } from '../../core/farm-git.js';
 import {
   execOnSlot,
   expandHook,
@@ -54,6 +55,7 @@ import {
 import { readBlindTrialMarker, restoreBlindTrialGit } from '../../evals/blind-trial.js';
 import {
   archiveSlotScaffolding,
+  cleanupSlotOwnedPaths,
   excludeSlotScaffolding,
   measureSlotRetention,
   retainTaskCheckouts,
@@ -142,7 +144,9 @@ async function logDiscardedWork(
 ): Promise<void> {
   const work = await execOnSlot(
     vars,
-    `cd ${shellQuote(vars.remoteRepo)} && { git rev-parse HEAD 2>/dev/null || echo unknown; git status --porcelain 2>/dev/null | wc -l; }`,
+    withFarmGitConfig(
+      `cd ${shellQuote(vars.remoteRepo)} && { git rev-parse HEAD 2>/dev/null || echo unknown; git status --porcelain 2>/dev/null | wc -l; }`,
+    ),
   );
   const [head, dirty] = work.stdout.trim().split('\n');
   console.log(
@@ -490,7 +494,9 @@ async function findReleaseUnmergedWork(
   const currentBranch = (
     await execOnSlot(
       vars,
-      `git -C ${shellQuote(vars.remoteRepo)} rev-parse --abbrev-ref HEAD 2>/dev/null`,
+      withFarmGitConfig(
+        `git -C ${shellQuote(vars.remoteRepo)} rev-parse --abbrev-ref HEAD 2>/dev/null`,
+      ),
     )
   ).stdout.trim();
   const linkedWorktree = await detectLinkedWorktree(vars);
@@ -880,13 +886,16 @@ async function slotReleaseImpl(
     if (!holdReason) {
       await assertReleaseClaim();
       try {
-        holdReason = await cleanupSlotRunnerRuntimes(vars, {
-          stillOwned: async () => {
-            await assertReleaseClaim();
-            return true;
-          },
-        });
-        if (!holdReason) holdReason = await reapSlotBrowserSession(vars);
+        const stillOwned = async () => {
+          await assertReleaseClaim();
+          return true;
+        };
+        holdReason = await cleanupSlotRunnerRuntimes(vars, { stillOwned });
+        if (!holdReason)
+          holdReason = await reapSlotBrowserSession(vars, {
+            stillOwned,
+            includeSlotProfiles: true,
+          });
       } catch (error) {
         holdReason = error instanceof Error ? error.message : String(error);
       }
@@ -1027,6 +1036,18 @@ async function slotReleaseImpl(
       const reclaimed = await holdAfterCleanupFailure(
         `Final result retention failed; cleanup stopped: ${(error as Error).message}`,
       );
+      if (reclaimed) return reclaimed;
+    }
+  }
+
+  if (!preserveAgents && !options?.workspaceRecovery) {
+    try {
+      const removed = await cleanupSlotOwnedPaths(vars, projectJson, {
+        beforeRemove: assertReleaseClaim,
+      });
+      if (removed.length) step('farm-files', `Removed ${removed.length} farm-owned support paths`);
+    } catch (error) {
+      const reclaimed = await holdAfterCleanupFailure((error as Error).message);
       if (reclaimed) return reclaimed;
     }
   }

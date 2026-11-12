@@ -42,7 +42,7 @@ export type PRRecommendation =
   | 'MERGED'
   | 'CLOSED_WITHOUT_MERGE';
 
-export type PRFamilyWorkflowState = 'active' | 'complete' | 'failed';
+export type PRFamilyWorkflowState = 'active' | 'complete' | 'failed' | 'unjudged';
 export type PRFamilyMergeState =
   | 'not_applicable'
   | 'waiting_for_merge'

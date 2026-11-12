@@ -7,6 +7,7 @@ import type {
 } from '@farmslot/protocol';
 
 import { execOnSlot } from '../core/exec.js';
+import { withFarmGitConfig } from '../core/farm-git.js';
 import { loadSlotVars } from '../core/index.js';
 import { shellQuote } from '../core/tmux.js';
 
@@ -122,11 +123,11 @@ export async function assertStartRefSkipPrepareEligible(
   const resolution = await resolveStartRefInRepo({
     repo: vars.remoteRepo,
     requestedRef,
-    exec: (command) => execOnSlot(vars, command, { timeout: 30_000 }),
+    exec: (command) => execOnSlot(vars, withFarmGitConfig(command), { timeout: 30_000 }),
   });
   const head = await execOnSlot(
     vars,
-    `git -C ${shellQuote(vars.remoteRepo)} rev-parse HEAD`,
+    withFarmGitConfig(`git -C ${shellQuote(vars.remoteRepo)} rev-parse HEAD`),
     { timeout: 10_000 },
   );
   if (head.exitCode !== 0) {

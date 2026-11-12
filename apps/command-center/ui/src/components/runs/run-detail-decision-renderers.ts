@@ -15,6 +15,7 @@ import {
   type ResourcePostureGateChoice,
   type Run,
   type RunDecision,
+  type RunListRow,
   runOutputCloseUnavailableReason,
   type SlotPickerPayload,
   slotPickerViewModel,
@@ -124,7 +125,7 @@ export interface RunDecisionRenderContext {
   evidenceModel?: EvidenceReviewModel | null;
   openOutputReport?: () => void;
   openEvidence?: (open: AcceptanceEvidenceOpen) => void;
-  allRuns: Run[];
+  allRuns: RunListRow[];
   /** Enriched `decision.list` snapshot (state.decisions) — source of lazy-backfilled gateSummary. */
   pendingDecisions: readonly PendingDecision[];
   bootstrapFailed: boolean;

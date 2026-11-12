@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import { type Run, runListRow, trimRunForList } from '@farmslot/protocol';
 
 import { ciWatchStatusView } from '../src/ci-watch-status.js';
 
@@ -113,4 +113,32 @@ test('legacy snapshots never invent a timeout from default limits or an old step
     now,
   );
   assert.match(view?.label ?? '', /checking now · timeout unavailable$/);
+});
+
+// A failing CI watch with a fix in progress: the line reads the same from the row the
+// gateway serves, the full run and a row cached before slim rows.
+test('the CI watch line is the same from the served slim row, the full run and an old cached row', () => {
+  const failing = run({
+    phase: 'fixing',
+    fixInProgress: true,
+    actionableBotCommentCount: 2,
+    fixProgress: { completed: 1, total: 3, currentLabel: 'Fix the scan finding' },
+    checkTimeline: Array.from({ length: 50 }, (_, index) => ({
+      timestamp: new Date(now - index * 60_000).toISOString(),
+      status: 'pending',
+      detail: 'poll '.repeat(40),
+    })),
+  });
+  const fromChecks = run({
+    failedNames: undefined,
+    failedChecks: ['lint', 'run-security-scan'],
+    phase: 'polling',
+  });
+  for (const full of [failing, fromChecks]) {
+    const expected = ciWatchStatusView(full, now);
+    assert.ok(expected?.label.includes('failed:'), expected?.label);
+    assert.deepEqual(ciWatchStatusView(runListRow(full), now), expected);
+    assert.deepEqual(ciWatchStatusView(trimRunForList(full), now), expected);
+  }
+  assert.equal('checkTimeline' in (runListRow(failing).steps[0]?.outputs ?? {}), false);
 });

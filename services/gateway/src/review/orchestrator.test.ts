@@ -1102,8 +1102,17 @@ test('disabled project review does not skip explicit publication reviews', () =>
   assert.equal(shouldSkipForDisabledReviewConfig({ enabled: true }), false);
 });
 
-test('eval judging overrides disabled production review and every worker-fix budget', () => {
-  assert.equal(shouldSkipForDisabledReviewConfig({ enabled: false }, { evalJudge: true }), false);
+test('disabled review skips eval judging while its worker-fix budget stays zero', () => {
+  assert.equal(shouldSkipForDisabledReviewConfig({ enabled: true }, { evalJudge: true }), false);
+  assert.equal(
+    shouldSkipForDisabledReviewConfig(
+      { enabled: false },
+      { evalJudge: true, publicationReview: true },
+      makeRun({ flowType: 'dev', mode: 'interactive', devInteractiveProfile: 'reviewed' }),
+    ),
+    true,
+  );
+  assert.equal(shouldSkipForDisabledReviewConfig({ enabled: false }, { evalJudge: true }), true);
   assert.equal(
     resolveReviewMaxRetries({
       evalJudge: true,

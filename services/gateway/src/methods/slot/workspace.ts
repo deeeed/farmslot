@@ -11,6 +11,7 @@ import {
 } from '@farmslot/protocol';
 import { isRecord } from '@farmslot/protocol/recipe';
 
+import { withFarmGitConfig } from '../../core/farm-git.js';
 import {
   execOnSlot,
   getProjectField,
@@ -133,7 +134,9 @@ async function remoteDefault(
   if (!fresh && !recoveryBudget && cached && cached.until > Date.now()) return cached.promise;
   const promise = readSlotProbe(
     vars,
-    `git -C ${shellQuote(vars.remoteRepo)} ls-remote --heads origin ${shellQuote(`refs/heads/${branch}`)}`,
+    withFarmGitConfig(
+      `git -C ${shellQuote(vars.remoteRepo)} ls-remote --heads origin ${shellQuote(`refs/heads/${branch}`)}`,
+    ),
     fresh || recoveryBudget ? 'workspace-recovery-default' : 'workspace-default',
     timeoutMs,
   ).then((result) => ({
@@ -171,7 +174,9 @@ export async function inspectSlotWorkspace(
   if (options.fetch) {
     const fetched = await execOnSlot(
       vars,
-      `${git} fetch --no-tags origin ${shellQuote(`+refs/heads/${branch}:refs/remotes/origin/${branch}`)}`,
+      withFarmGitConfig(
+        `${git} fetch --no-tags origin ${shellQuote(`+refs/heads/${branch}:refs/remotes/origin/${branch}`)}`,
+      ),
       { timeout: 120_000, noRetry: true },
     );
     if (fetched.exitCode !== 0)
@@ -238,13 +243,17 @@ export async function inspectSlotWorkspace(
     if (base) {
       const contains = await execOnSlot(
         vars,
-        `${git} merge-base --is-ancestor HEAD ${shellQuote(base)}`,
+        withFarmGitConfig(`${git} merge-base --is-ancestor HEAD ${shellQuote(base)}`),
         { timeout: timeoutMs },
       );
       if (contains.exitCode === 0) return { ...work, publication: 'merged' };
-      const cherry = await execOnSlot(vars, `${git} cherry ${shellQuote(base)} HEAD`, {
-        timeout: timeoutMs,
-      });
+      const cherry = await execOnSlot(
+        vars,
+        withFarmGitConfig(`${git} cherry ${shellQuote(base)} HEAD`),
+        {
+          timeout: timeoutMs,
+        },
+      );
       if (cherry.exitCode === 0 && cherry.stdout.trim()) {
         const patches = new Set(
           cherry.stdout
@@ -252,9 +261,13 @@ export async function inspectSlotWorkspace(
             .filter((line) => line.startsWith('- '))
             .map((line) => line.slice(2).trim()),
         );
-        const commits = await execOnSlot(vars, `${git} rev-list ${shellQuote(`${base}..HEAD`)}`, {
-          timeout: timeoutMs,
-        });
+        const commits = await execOnSlot(
+          vars,
+          withFarmGitConfig(`${git} rev-list ${shellQuote(`${base}..HEAD`)}`),
+          {
+            timeout: timeoutMs,
+          },
+        );
         // git cherry omits merge commits; an unverified merge resolution is not a merged patch.
         if (
           commits.exitCode === 0 &&
@@ -270,7 +283,9 @@ export async function inspectSlotWorkspace(
     if (probe.publicationRemote !== '.') {
       const published = await readSlotProbe(
         vars,
-        `${git} ls-remote --heads ${shellQuote(probe.publicationRemote)} ${shellQuote(probe.publicationRef)}`,
+        withFarmGitConfig(
+          `${git} ls-remote --heads ${shellQuote(probe.publicationRemote)} ${shellQuote(probe.publicationRef)}`,
+        ),
         timeoutMs > 5000 ? 'workspace-recovery-publication' : 'workspace-publication',
         timeoutMs,
       );
@@ -280,7 +295,9 @@ export async function inspectSlotWorkspace(
         if (options.fetch) {
           const fetched = await execOnSlot(
             vars,
-            `${git} fetch --no-tags ${shellQuote(probe.publicationRemote)} ${shellQuote(probe.publicationRef)}`,
+            withFarmGitConfig(
+              `${git} fetch --no-tags ${shellQuote(probe.publicationRemote)} ${shellQuote(probe.publicationRef)}`,
+            ),
             { timeout: 120_000, noRetry: true },
           );
           if (fetched.exitCode !== 0)
@@ -288,7 +305,7 @@ export async function inspectSlotWorkspace(
         }
         const contains = await execOnSlot(
           vars,
-          `${git} merge-base --is-ancestor HEAD ${shellQuote(sha)}`,
+          withFarmGitConfig(`${git} merge-base --is-ancestor HEAD ${shellQuote(sha)}`),
           { timeout: timeoutMs },
         );
         if (contains.exitCode === 0) return { ...work, publication: 'pushed' };
@@ -340,7 +357,7 @@ export async function inspectSlotWorkspace(
     }
     const commits = await execOnSlot(
       vars,
-      `${git} rev-list --count ${shellQuote(`origin/${branch}..HEAD`)}`,
+      withFarmGitConfig(`${git} rev-list --count ${shellQuote(`origin/${branch}..HEAD`)}`),
       { timeout: timeoutMs },
     );
     if (commits.exitCode !== 0)

@@ -1,4 +1,4 @@
-import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
+import { css, html, LitElement, nothing, type PropertyValues, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import {
@@ -6,19 +6,23 @@ import {
   isTerminalRunStatus,
   type MachineHealth,
   type MachineProviderAccountsSnapshot,
+  Methods,
   type NodeInfo,
   type ProviderRunnerAccountStatus,
-  type Run,
+  type RunGetResult,
+  type RunListRow,
   type SlotStatus,
   type TaskProgressStructured,
   viewTextField,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 import { fleetBehindDefaultIfBehind, fleetSlotBranch } from '@farmslot/review-dispatch';
 
 import './slot-card.js';
 import '../shared/cancelled-run-slot-release.js';
 import './machine-health-bar.js';
 import '../runs/run-pipeline.js';
+import '../runs/run-pipeline-mini.js';
 
 import { getProjectSlotTrackingConfigs } from '../../state.js';
 import {
@@ -32,6 +36,7 @@ import {
 import { navigateHash } from '../../utils/url-state.js';
 import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import { flowColor, flowLabel, formatElapsed, runStatusColor } from '../runs/run-utils.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import { renderRunTitle } from '../shared/run-title.js';
 import { renderRunnerAccountInventory } from '../shared/runner-account-inventory.js';
 import type { SlotPendingWork } from '../work-graph/work-graph-execution-overlay.js';
@@ -44,7 +49,7 @@ export class MachineGroup extends LitElement {
   @property({ type: Array }) slots: SlotStatus[] = [];
   @property({ attribute: false }) onlineMachines: Set<string> = new Set();
   @property({ attribute: false }) slotProgress: Map<string, TaskProgressStructured> = new Map();
-  @property({ attribute: false }) slotRuns: Map<string, Run> = new Map();
+  @property({ attribute: false }) slotRuns: Map<string, RunListRow> = new Map();
   @property({ attribute: false }) machineHealth?: MachineHealth;
   @property({ attribute: false }) slotThumbnails: Map<string, { data: string; ts: number }> =
     new Map();
@@ -66,6 +71,10 @@ export class MachineGroup extends LitElement {
   /** False while the gateway is disconnected; Retry and Refresh need a live probe. */
   @property({ type: Boolean }) providerAccountsActionable = true;
   @state() private expandedSlotId: string | null = null;
+  /** The expanded slot's run as run.get stores it: the full pipeline renders detail; the row's mini pipeline shows until it lands. */
+  private readonly expandedRunDetail = new ResourceQueryController<RunGetResult>(this, () =>
+    this.requestUpdate(),
+  );
   /** Accounts panel open (subscription matrix lives under a button, not header clutter). */
   @state() private accountsOpen = false;
 
@@ -925,6 +934,16 @@ ${deployHint}"
     });
   }
 
+  protected override willUpdate(changed: PropertyValues<this>): void {
+    super.willUpdate(changed);
+    const run = this.expandedSlotId ? this.slotRuns.get(this.expandedSlotId) : undefined;
+    this.expandedRunDetail.setQuery(
+      run
+        ? resourceQuery<RunGetResult>(Methods.RUN_GET, { runId: run.id, view: 'snapshot' })
+        : undefined,
+    );
+  }
+
   render() {
     const expandedRun = this.expandedSlotId ? this.slotRuns.get(this.expandedSlotId) : null;
     return html`
@@ -1174,7 +1193,10 @@ ${deployHint}"
     `;
   }
 
-  private renderRunPanel(run: Run, slotId: string) {
+  private renderRunPanel(run: RunListRow, slotId: string) {
+    const detail = this.expandedRunDetail.belongsToWorkspace
+      ? this.expandedRunDetail.state.data?.run
+      : undefined;
     const fc = flowColor(run.flowType);
     const sc = runStatusColor(run.status);
     const elapsed = run.createdAt ? formatElapsed(run.createdAt) : '';
@@ -1264,7 +1286,14 @@ ${deployHint}"
             </button>
           </div>
         </div>
-        <run-pipeline .run=${run} .taskProgress=${tp}></run-pipeline>
+        ${detail?.id === run.id
+          ? html`<run-pipeline .run=${detail} .taskProgress=${tp}></run-pipeline>`
+          : html`<run-pipeline-mini
+              .run=${run}
+              .steps=${run.steps}
+              .flowType=${run.flowType}
+              .taskProgress=${tp}
+            ></run-pipeline-mini>`}
       </div>
     `;
   }

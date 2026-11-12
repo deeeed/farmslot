@@ -22,6 +22,7 @@ import {
   type SlotVars,
 } from '../core/config.js';
 import { execLocal, execOnSlot, isLocal } from '../core/exec.js';
+import { withMachineEnv } from '../core/project-env.js';
 import { ownsRunSlotCleanup, readSlotRow } from '../core/state.js';
 import { atomicWriteTextFile } from '../run-engine/diff-artifact-utils.js';
 import { captureRunDiffSnapshot } from '../run-engine/diff-artifacts.js';
@@ -91,14 +92,35 @@ async function executeGit(
   spec: BlindGitSpec,
   signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
-  const result = await execOnSlot(vars, buildBlindGitCommand(action, spec), {
-    timeout: 15 * 60_000,
-    signal,
-  });
+  const command = buildBlindGitCommand(
+    action,
+    action === 'boundary'
+      ? {
+          ...spec,
+          slotResourcePorts: Object.fromEntries(
+            Object.entries(vars.resourceVars)
+              .filter(
+                ([name, value]) => (name === 'port' || name.endsWith('_port')) && value.trim(),
+              )
+              .map(([name, value]) => [name, Number(value)]),
+          ),
+        }
+      : spec,
+  );
+  // Resolve credential denials under the same pool-selected home as the worker.
+  const result = await execOnSlot(
+    vars,
+    action === 'boundary' ? withMachineEnv(command, vars) : command,
+    {
+      timeout: 15 * 60_000,
+      signal,
+    },
+  );
   if (result.exitCode !== 0)
     throw new Error(
       `Blind trial Git ${action} failed: ${result.stderr.trim() || result.stdout.trim()}`,
     );
+  if (action === 'boundary' && result.stderr.trim()) console.warn(result.stderr.trim());
   const value: unknown = JSON.parse(result.stdout);
   if (!isRecord(value) || typeof value.status !== 'string')
     throw new Error('Invalid blind trial Git receipt.');
@@ -154,12 +176,25 @@ export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal):
   const siblingRepos = await resolvedSiblingRepos(vars);
   const paths = await blindFarmPaths(vars);
   const farmConfigRoots = [paths.pool, paths.state.runs, paths.projects];
-  await executeGit('boundary', vars, { ...spec, siblingRepos, farmConfigRoots }, signal);
+  const boundary = await executeGit(
+    'boundary',
+    vars,
+    { ...spec, siblingRepos, farmConfigRoots },
+    signal,
+  );
+  const browserCdpPort = boundary.browserCdpPort;
+  if (
+    !Number.isInteger(browserCdpPort) ||
+    typeof browserCdpPort !== 'number' ||
+    browserCdpPort < 1 ||
+    browserCdpPort > 65535
+  )
+    throw new Error('Blind trial browser CDP port is missing or invalid.');
   await ownedEpoch(run, epoch);
   await persistRunNow(
     updateBlind(runId, {
       ...blind,
-      isolation: { ...isolation, verifiedAt: new Date().toISOString() },
+      isolation: { ...isolation, browserCdpPort, verifiedAt: new Date().toISOString() },
     }),
     'blind trial Git isolated',
   );

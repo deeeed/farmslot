@@ -294,13 +294,15 @@ try {
       if (countLaunches && this.pid) {
         if (options.args.some((arg) => arg.includes('FARMSLOT_WORKSPACE_PROBE')))
           launches.workspace++;
-        if (
-          path.basename(options.file) === 'gh' &&
-          options.args.some((arg) => arg.includes('/compare/'))
-        )
-          launches.compare++;
       }
       return result;
+    });
+    // GitHub compares run in-process over HTTP, so count the requests themselves.
+    const originalFetch = globalThis.fetch;
+    mock.method(globalThis, 'fetch', function (input, init) {
+      const url = input instanceof Request ? input.url : String(input);
+      if (countLaunches && url.includes('/compare/')) launches.compare++;
+      return originalFetch(input, init);
     });
   }
   store = await sourceModule('services/gateway/src/runs/store.ts');

@@ -91,7 +91,7 @@ export function isTerminalRunStatus(status: RunStatus): boolean {
 export function isSuccessfulRun(
   run: Pick<Run, 'status' | 'metrics'> & Partial<Pick<Run, 'resultDecisionReceipt'>>,
 ): boolean {
-  if (run.status !== 'done') return false;
+  if (run.status !== 'done' || run.metrics.outcome === 'unjudged') return false;
   // Only Accept and Close decide; after a send-back the later outcome does.
   if (run.resultDecisionReceipt?.action === 'accept-result') return true;
   if (run.resultDecisionReceipt?.action === 'close-result') return false;
@@ -136,7 +136,7 @@ export function supersedePendingResultDecisions(
 /** One label per result-decision action, for the gateway, the CLI and both clients. */
 export const RESULT_DECISION_ACTION_LABELS: Record<ResultDecisionActionId, string> = {
   'send-back': 'Send back for another fix',
-  'accept-result': 'Accept',
+  'accept-result': 'Accept and close without publishing',
   'close-result': 'Close',
 };
 
@@ -181,7 +181,9 @@ export function canActivateRunOnSlot(status: RunStatus): boolean {
  * outcome in history.
  * Shared by the gateway archive guard and the UI so both agree on eligibility.
  */
-export function isSettledBlockedRun(run: Pick<Run, 'status' | 'steps' | 'decisions'>): boolean {
+export function isSettledBlockedRun(
+  run: Pick<Run, 'status' | 'steps'> & { decisions?: ReadonlyArray<{ resolvedAt?: string }> },
+): boolean {
   if (run.status !== 'blocked') return false;
   const steps = run.steps ?? [];
   const decisions = run.decisions ?? [];
@@ -281,6 +283,12 @@ export interface RunStep {
   lastProgressAt?: string;
   inputs?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
+  /**
+   * Set only on a `run.list` row's step that left out inputs or output values
+   * (see `payloadTrimmed` on decisions). Absent on `run.get`, `run.forSlot` and
+   * run events, which carry the full step. A reader that needs them fetches the run.
+   */
+  outputsTrimmed?: true;
 }
 
 export type LiveRecipeSource =
@@ -879,7 +887,7 @@ export interface GateSummary {
   worker: {
     model: string | null;
     turns: number | null;
-    outcome?: 'success' | 'failure' | 'partial' | 'cancelled';
+    outcome?: 'success' | 'failure' | 'partial' | 'cancelled' | 'unjudged';
   };
   review: ReviewSummary;
   tokens: GateTokenSummary;
@@ -1448,7 +1456,7 @@ export interface FeedbackCandidateSummary {
 
 export interface RetrospectivePayload {
   kind: 'retrospective';
-  outcome: 'success' | 'failure' | 'partial' | 'cancelled' | 'unknown';
+  outcome: 'success' | 'failure' | 'partial' | 'cancelled' | 'unjudged' | 'unknown';
   whatThisIs: string;
   reviewVerdict?: string;
   reviewSummary?: string;
@@ -1909,7 +1917,7 @@ export interface RunMetrics {
    * (after any in-place failover). Label only — never an email, token, or home path.
    */
   providerAccountLabel?: string | null;
-  outcome?: 'success' | 'failure' | 'partial' | 'cancelled';
+  outcome?: 'success' | 'failure' | 'partial' | 'cancelled' | 'unjudged';
   disposition?: WorkerTerminalDisposition;
   terminalEvidence?: WorkerTerminalEvidence;
   /** Per-step checklist timing from the worker's SIGNAL.json, persisted at finalize so it survives task-dir pruning. */
@@ -3355,6 +3363,11 @@ export interface RunEngineState {
   };
   /** Artifact-first experiment trial linkage for artifact-only reference/template regression candidates. */
   evalExperiment?: {
+    /** Trial-level judging opt-out, retained across retries and resumes. */
+    review?: false;
+    /** Resolved trial judge override, retained across retries and resumes. */
+    reviewRunner?: string;
+    reviewModel?: string;
     blind?: import('./evals.js').EvalBlindTrial;
     /** Matrix/suite-wide cap group for eval queue accounting across per-case experiments. */
     capGroupId?: string;

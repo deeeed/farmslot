@@ -553,6 +553,34 @@ require('node:fs').renameSync = (from, to) => {
   assert(existsSync(support), 'another allocated workspace still needs its support');
 });
 
+test('support retirement does not inspect a workspace retention detached', (t) => {
+  const f = fixture(t);
+  const digest = 'b'.repeat(64);
+  const support = path.join(f.root, 'support', digest);
+  mkdirSync(support, { recursive: true });
+  writeFileSync(
+    path.join(support, 'manifest.json'),
+    JSON.stringify({ version: 1, sha256: digest }),
+  );
+  // Given-up storage being removed: as an ordinary workspace it would not be idle.
+  const detached = path.join(f.root, 'runs', '.retention-detached');
+  mkdirSync(path.join(detached, 'source'), { recursive: true });
+  writeFileSync(path.join(detached, 'allocation.json'), JSON.stringify({ state: 'ready' }));
+  const receipt: { retired: string[] } = JSON.parse(
+    execFileSync(
+      process.execPath,
+      [
+        '-e',
+        REVIEW_WORKSPACE_SCRIPT,
+        JSON.stringify({ root: f.root, action: 'reclaim-support', digests: [digest] }),
+      ],
+      { encoding: 'utf8' },
+    ),
+  );
+  assert.equal(receipt.retired.length, 1);
+  assert(!existsSync(support));
+});
+
 test('an unmounted configured external volume is rejected before directory creation', (t) => {
   const f = fixture(t);
   const root = '/Volumes/farmslot-unmounted-' + randomUUID();

@@ -13,6 +13,7 @@ import {
   deriveRunLifecycleView,
   type Run,
   runElapsedTimeView,
+  type RunListRow,
   type RunStep,
   runStepDisplayDetail,
   type RunStepDisplayStatus,
@@ -74,7 +75,7 @@ function usePipelineClock(running: boolean, intervalMs = 1000) {
   }, [running, intervalMs]);
 }
 
-function RunCIWatchStatus({ run }: { run: Run }) {
+function RunCIWatchStatus({ run }: { run: RunListRow }) {
   const view = ciWatchStatusView(run);
   return view ? (
     <Text
@@ -87,7 +88,7 @@ function RunCIWatchStatus({ run }: { run: Run }) {
   ) : null;
 }
 
-export function RunElapsedTime({ run }: { run: Run }) {
+export function RunElapsedTime({ run }: { run: RunListRow }) {
   const timing = runElapsedTimeView({ ...run, steps: runActivityView(run)?.steps ?? run.steps });
   usePipelineClock(timing.live, 60000);
   return (
@@ -120,7 +121,7 @@ interface RunPipelineMiniView {
   lifecycleLabel: string | undefined;
 }
 
-function runPipelineMiniView(run: Run): RunPipelineMiniView {
+function runPipelineMiniView(run: RunListRow): RunPipelineMiniView {
   const activity = runActivityView(run);
   const isCancelled = run.status === 'cancelled';
   const failures = runRecoveredReviewFailures(run);
@@ -200,7 +201,7 @@ function RunPipelineMiniSummary({ view, held }: { view: RunPipelineMiniView; hel
 }
 
 /** Checklist reads refresh on their own cadence; only this row re-renders for them. */
-function RunPipelineMiniChecklist({ run }: { run: Run }) {
+function RunPipelineMiniChecklist({ run }: { run: RunListRow }) {
   const live = useContext(RunPipelineLiveContext);
   const checklist = useRunChecklistProgress(run, live);
   return (
@@ -214,7 +215,7 @@ function RunPipelineMiniChecklist({ run }: { run: Run }) {
   );
 }
 
-export function RunPipelineMini({ run }: { run: Run }) {
+export function RunPipelineMini({ run }: { run: RunListRow }) {
   const view = useMemo(() => runPipelineMiniView(run), [run]);
   if (view.visible.length === 0) return null;
 

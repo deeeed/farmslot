@@ -428,6 +428,8 @@ function finishCleanup() {
         if (read(path.join(linkTarget(file),'state.json'))?.state !== 'complete') return false;
       }
       for (const name of fs.readdirSync(path.join(root,'runs'))) {
+        // A tree retention detached is given-up storage: never inspected, never counted for idleness.
+        if (name.startsWith('.retention-')) continue;
         const work = path.join(root,'runs',name);
         const stat = fs.lstatSync(work);
         if (!stat.isDirectory() || stat.isSymbolicLink() || read(path.join(work,'allocation.json'))?.state !== 'cleaned' || fs.existsSync(path.join(work,'source'))) return false;

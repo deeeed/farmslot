@@ -9,9 +9,9 @@ import type {
   FlowType,
   ProfileFitSuggestion,
   ProjectConfig,
-  Run,
   RunListParams,
   RunListResult,
+  RunListRow,
 } from '@farmslot/protocol';
 import { jiraTicketKey, Methods } from '@farmslot/protocol';
 import { type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
@@ -179,14 +179,14 @@ export function requestDispatchProjectMatch(
 
 export interface PriorRunsLookupRequest {
   mockMode: boolean;
-  stateRuns: readonly Run[];
+  stateRuns: readonly RunListRow[];
   search: string;
   normalizedTicket: string;
 }
 
 export async function lookupPriorRunsForDispatchWizard(
   input: PriorRunsLookupRequest,
-): Promise<Run[]> {
+): Promise<RunListRow[]> {
   if (input.mockMode) {
     return filterRunsByExactTicket(input.stateRuns, input.search, input.normalizedTicket);
   }

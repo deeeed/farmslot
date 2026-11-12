@@ -9,7 +9,7 @@ import type {
   QueueItem,
   ResultPackageManifest,
   ResultPackageProjection,
-  Run,
+  RunListRow,
   WorkerTemplateOption,
 } from '@farmslot/protocol';
 import { evalTaskProfileFlow, isTerminalRunStatus } from '@farmslot/protocol';
@@ -65,22 +65,7 @@ export const EVAL_REVIEW_MODE_OPTIONS: ReadonlyArray<{
     description: 'Tag this candidate for a named review strategy or external loop.',
   },
 ];
-export const CANDIDATE_TEMPLATE_OPTIONS: readonly CandidateTemplateChoice[] = [
-  {
-    path: 'templates/worker/fix-bug.md',
-    label: 'Bug fix template',
-    description: 'Use the project worker template for fixing a known bug.',
-    promptName: 'fix-bug',
-  },
-  {
-    path: 'templates/worker/dev.md',
-    label: 'Dev template',
-    description: 'Use the project worker template for implementing a feature/dev task.',
-    promptName: 'dev',
-  },
-];
-
-export function activeEvalRunCount(runs: readonly Run[], capGroupId: string): number {
+export function activeEvalRunCount(runs: readonly RunListRow[], capGroupId: string): number {
   return runs.filter(
     (run) =>
       run.engineState?.evalExperiment?.capGroupId === capGroupId &&
@@ -131,10 +116,12 @@ export function manualEvalProjectOptions(params: {
 export function candidateTemplateForTaskProfile(
   taskProfile: EvalTaskProfile,
 ): CandidateTemplateChoice {
-  return (
-    CANDIDATE_TEMPLATE_OPTIONS.find((entry) => entry.promptName === taskProfile) ??
-    CANDIDATE_TEMPLATE_OPTIONS[0]
-  );
+  return {
+    path: '',
+    label: 'Configured project default',
+    description: 'Resolve the project default template when the candidate launches.',
+    promptName: taskProfile,
+  };
 }
 
 export function defaultRows(): CandidateRow[] {
@@ -143,7 +130,7 @@ export function defaultRows(): CandidateRow[] {
       id: 'replay-candidate',
       enabled: true,
       label: '',
-      templatePath: 'templates/worker/fix-bug.md',
+      templatePath: '',
       templateHash: '',
       promptName: 'fix-bug',
       promptHash: '',
@@ -425,7 +412,7 @@ export function candidateTemplateChoices(
         : `Project worker template version: ${option.fileName}.`,
       promptName: taskProfile,
     }));
-  return dynamic.length > 0 ? dynamic : [...CANDIDATE_TEMPLATE_OPTIONS];
+  return [candidateTemplateForTaskProfile(taskProfile), ...dynamic];
 }
 
 /** Visible models for a runner. A selected model outside the visible set stays listed. */

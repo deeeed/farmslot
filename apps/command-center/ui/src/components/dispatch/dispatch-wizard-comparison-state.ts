@@ -1,4 +1,4 @@
-import type { FlowType, Run } from '@farmslot/protocol';
+import type { FlowType, RunListRow } from '@farmslot/protocol';
 import { buildComparisonVariant } from '@farmslot/protocol';
 
 import { detectVariantCollision, isVariantInputBlocked } from './dispatch-wizard-helpers.js';
@@ -26,7 +26,7 @@ export function exitedComparisonModeState(): ComparisonModeState {
 
 /** Copy baseline runner/model from a parent run when comparison hash prefill skips the picker. */
 export function hydrateComparisonEngineFromParent(
-  parent: Run,
+  parent: RunListRow,
   current: { runner: string; model: string },
   comparisonLaneRunners: ReadonlySet<string>,
 ): { runner: string; model: string } {
@@ -46,7 +46,7 @@ export function shouldHydrateComparisonParentEngine(input: {
 }
 
 export function forkComparisonStateFromRun(
-  run: Run,
+  run: RunListRow,
   current: { runner: string; model: string },
   comparisonLaneRunners: ReadonlySet<string>,
 ): Pick<
@@ -72,7 +72,7 @@ export function forkComparisonStateFromRun(
 export function deriveComparisonVariantState(input: {
   comparisonLane: boolean;
   comparisonFamilyId: string;
-  runs: readonly Run[];
+  runs: readonly RunListRow[];
   runner: string;
   model: string;
   variantInput: string;
@@ -93,7 +93,7 @@ export function deriveComparisonVariantState(input: {
 export function comparisonVariantInputBlocked(input: {
   comparisonLane: boolean;
   comparisonFamilyId: string;
-  runs: readonly Run[];
+  runs: readonly RunListRow[];
   variantInput: string;
   variantCollision: boolean;
 }): boolean {

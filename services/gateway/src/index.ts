@@ -81,6 +81,8 @@ import {
   startFileWatcher,
   statusFile,
 } from './fleet/state.js';
+import { backgroundHost } from './host-services/background/client.js';
+import secretScan from './host-services/secret-scan.js';
 import {
   startGitHubAccountsObservation,
   wakeGitHubAccountsObservation,
@@ -154,7 +156,7 @@ import { initRunMonitor } from './run-engine/run-monitor.js';
 import { scheduledGraphOf } from './run-engine/stack-base.js';
 import { withRunSettlementLane } from './run-lifecycle/broadcast-lanes.js';
 import { warmRunListVersions } from './runs/list-version.js';
-import { getAllRuns, loadAllRuns } from './runs/store.js';
+import { getAllRuns, getRun, loadAllRuns } from './runs/store.js';
 import { assertHostPressureAdmissionEnvValid } from './runtime-capabilities/host-pressure-config.js';
 import { reconcileRuntimeCapabilityLeases } from './runtime-capabilities/recovery.js';
 import {
@@ -297,6 +299,8 @@ async function main(): Promise<void> {
         stopPRDetailCollection(),
         stopRunnerModelCatalogCollection(),
         stopProviderAccountsCollection(),
+        backgroundHost.stop(),
+        secretScan.stop(),
       ]);
     } catch (error) {
       console.error('[gateway] Upstream observation shutdown failed:', error);
@@ -484,7 +488,7 @@ async function main(): Promise<void> {
   await loadAllRuns();
   // A row the warm-up could not derive is derived again by the versions read that needs it, which
   // reports the same failure to its caller; startup does not wait for, or fail on, the warm-up.
-  void warmRunListVersions(getAllRuns).catch((error: unknown) =>
+  void warmRunListVersions(getAllRuns, getRun).catch((error: unknown) =>
     console.warn(
       `[run-list] version warm-up stopped: ${error instanceof Error ? error.message : String(error)}`,
     ),
@@ -780,6 +784,10 @@ async function main(): Promise<void> {
         JSON.stringify({
           status: 'ok',
           uptime: process.uptime(),
+          // Unauthenticated: the process state only; gateway.doctor carries the failure detail.
+          background: (({ state, since, restarts }) => ({ state, since, restarts }))(
+            backgroundHost.status(),
+          ),
           ...(listen ? { listen } : {}),
         }),
       );
@@ -834,6 +842,10 @@ async function main(): Promise<void> {
   // listener below calls createWebSocketServer a second time, so any duplicate
   // registration there would double every fleet/PTY broadcast and auto-dispatch tick.
   initServerGlobals();
+
+  // Background probes (local fleet slot checks, the decision walk) run in a child process from
+  // here on; the pool watcher, the monitor and the startup refresh below already use it.
+  backgroundHost.start();
 
   // Start watching .farm-status.json for changes
   const stateObservation = startFileWatcher();
