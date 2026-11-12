@@ -1,0 +1,1 @@
+- Calculate LiteLLM session costs from daily model-info prices shared with dispatch, including cache reads and writes; label local models as unpriced.

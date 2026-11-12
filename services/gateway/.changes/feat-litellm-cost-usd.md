@@ -1,0 +1,1 @@
+- Report implementation and review costs without charging shared sessions twice; preserve incomplete family pricing and use the owning worker's pricing settings, including slotless native reviews with frozen domain recipe-library bindings.

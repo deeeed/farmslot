@@ -12,7 +12,7 @@ import {
   PIPELINE_VISUAL_RESULT_SCHEMA,
 } from '@farmslot/protocol';
 
-import { modelQuestionsOffByRunner } from './model-questions.js';
+import { claudeHeadlessDisallowedTools, claudeHeadlessEnvironment } from './claude-headless.js';
 import { JsonLineProcess } from './process.js';
 import type { NativeAdapter, NativeEventInput } from './types.js';
 
@@ -456,12 +456,13 @@ export const claudeNativeAdapter: NativeAdapter = {
           : []),
         ...(options.effort ? ['--effort', options.effort] : []),
         ...(options.model ? ['--model', options.model] : []),
-        ...(options.modelQuestions === 'off' ? modelQuestionsOffByRunner.claude.args : []),
+        '--disallowedTools',
+        ...claudeHeadlessDisallowedTools(options.modelQuestions),
         ...(options.resumeSessionId
           ? ['--resume', options.resumeSessionId]
           : ['--session-id', nativeSessionId]),
       ],
-      options,
+      { ...options, env: claudeHeadlessEnvironment(options.env) },
       onMessage,
       (error, processStopped, evidence) => {
         if (pendingApprovalMode) {

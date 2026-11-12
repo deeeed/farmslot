@@ -1,0 +1,1 @@
+- Record exclusive reviewer workspace transfers and explicit delta-review fallback when session continuation is unsupported.

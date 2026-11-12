@@ -18,6 +18,7 @@ import {
   type PressureOverrideAudit,
   primaryRoleForFlow,
   type ReviewSessionTrace,
+  type Run,
   type SubStepRecord,
 } from '@farmslot/protocol';
 import { resolveReviewMode } from '@farmslot/review-dispatch';
@@ -64,6 +65,7 @@ import {
   invalidateArtifactTextCache,
   invalidateLiveRecipeContextMemo,
 } from '../../live-recipe/context.js';
+import { usesPreviousReviewDelta } from '../../review/session-mode.js';
 import {
   dispatchAppFromTask,
   prepareDispatchRunCapabilities,
@@ -1056,6 +1058,12 @@ export async function enforceDispatchPressureGate(input: {
   }
 }
 
+/** A fresh conversation for a verified delta remains in the requested review lineage. */
+export function primaryReviewIdForDispatch(run: Run | null | undefined): string | undefined {
+  if (run?.flowType !== 'review-pr') return undefined;
+  return usesPreviousReviewDelta(run) ? run.repeatReviewContext?.session?.reviewId : randomUUID();
+}
+
 export async function dispatchExecute(
   params: DispatchExecuteParams,
   emit: EventEmitter,
@@ -1255,12 +1263,7 @@ export async function dispatchExecute(
   const priorReviewRun = currentRun?.repeatReviewContext?.priorRunId
     ? ((await getRunWithArchived(currentRun.repeatReviewContext.priorRunId)) ?? null)
     : null;
-  const primaryReviewId =
-    currentRun?.flowType === 'review-pr'
-      ? resolveReviewMode({ run: currentRun }) === 'warm'
-        ? currentRun.repeatReviewContext?.session?.reviewId
-        : randomUUID()
-      : undefined;
+  const primaryReviewId = primaryReviewIdForDispatch(currentRun);
   const repeatReviewMode = resolveReviewMode({ run: currentRun });
   const existingNativeBinding =
     currentRun?.transport === 'native'
@@ -1282,10 +1285,22 @@ export async function dispatchExecute(
     if (!latest?.repeatReviewContext) return;
     reviewSessionContinuity = trace.continuity;
     updateRunStore(currentRun.id, {
-      repeatReviewContext: { ...latest.repeatReviewContext, session: trace },
+      repeatReviewContext: {
+        ...latest.repeatReviewContext,
+        session: {
+          ...(latest.repeatReviewContext.session?.fallback
+            ? latest.repeatReviewContext.session
+            : {}),
+          ...trace,
+        },
+      },
     });
   };
 
+  if (repeatReviewResumePlan.kind === 'delta-cold')
+    throw new Error(
+      'Review continuation support changed after task freezing; regenerate the request before dispatch',
+    );
   if (transport === 'native' && currentRun?.repeatReviewContext && !existingNativeBinding) {
     if (repeatReviewResumePlan.kind === 'native-resume') {
       if (!params.skipPrepare)

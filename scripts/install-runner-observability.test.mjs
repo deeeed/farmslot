@@ -1612,12 +1612,31 @@ test('codex install fails closed when bound account auth path is missing', () =>
   );
 });
 
-test('pi install copies the Farmslot observability extension into the slot runtime dir', () => {
+test('pi install copies the Farmslot observability extension into the slot runtime dir', async () => {
   const home = temporaryDirectory(path.join(os.tmpdir(), 'pi-install-home-'));
   const { repo, obsDir } = installToTempDir('pi', undefined, { HOME: home });
   assert.equal(fs.existsSync(path.join(obsDir, 'bin', 'pi-farmslot-observability.ts')), true);
   assert.equal(fs.existsSync(path.join(obsDir, 'bin', 'pi-farmslot-hook-writer.mjs')), true);
   assert.equal(fs.existsSync(path.join(obsDir, 'bin', 'pi-farmslot-providers.mjs')), true);
+  assert.equal(fs.existsSync(path.join(obsDir, 'bin', 'litellm-model-info.mjs')), true);
+  const installed = await import(
+    new URL('file://' + path.join(obsDir, 'bin', 'pi-farmslot-providers.mjs'))
+  );
+  const [provider] = await installed.resolvePiProviderCatalog(
+    { FARMSLOT_PI_OLLAMA: '0', LITELLM_URL: 'http://fixture.invalid' },
+    {
+      fetchImpl: async (url) => ({
+        ok: true,
+        json: async () => ({
+          data: String(url).endsWith('/model/info')
+            ? [{ model_name: 'fixture', model_info: { input_cost_per_token: 0.000002 } }]
+            : [{ id: 'fixture' }],
+        }),
+      }),
+    },
+  );
+  assert.equal(provider.models[0].cost.input, 2);
+
   assert.equal(fs.existsSync(path.join(obsDir, 'bin', 'pi-farmslot-task.mjs')), true);
   const manifest = JSON.parse(fs.readFileSync(path.join(obsDir, 'install.json'), 'utf8'));
   assert.equal(manifest.runner, 'pi');

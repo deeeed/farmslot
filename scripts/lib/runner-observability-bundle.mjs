@@ -7,6 +7,7 @@ export const RUNNER_OBSERVABILITY_COPY_PATHS = [
   'scripts/runners/pi-farmslot-observability.ts',
   'scripts/runners/pi-farmslot-hook-writer.mjs',
   'scripts/runners/pi-farmslot-providers.mjs',
+  'packages/slot-config/src/litellm-model-info.mjs',
   'scripts/runners/pi-farmslot-task.mjs',
 ];
 export const RUNNER_OBSERVABILITY_SUPPORT_PATHS = [

@@ -41,6 +41,7 @@ export async function cleanupExpiredReviewWorkspaces(now = Date.now()): Promise<
     const history = await getAllRunsWithArchived();
     for (const snapshot of getAllRuns()) {
       const workspace = snapshot.reviewWorkspace;
+      if (workspace?.transferredTo) continue;
       const expiry = reviewWorkspaceExpiry(snapshot);
       if (workspace?.cleanedAt) {
         if (hasReviewWorkspaceRetirement(snapshot.id)) {

@@ -1,7 +1,6 @@
 import { readdir, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
-import { resolveConfiguredExecutionTemplateSources } from '@farmslot/agent-runtime';
 import { isRecord, type KnowledgeDestination, type Run } from '@farmslot/protocol';
 import { reviewHistoryArtifactPaths, reviewHistoryView } from '@farmslot/review-dispatch';
 import {
@@ -10,6 +9,7 @@ import {
   resolveSourceBinding,
 } from '@farmslot/slot-config';
 
+import { resolveConfiguredExecutionTemplateSources } from '../host-services/execution-template-sources.js';
 import { readOptionalRetainedRunText } from '../run-completion/retained-artifacts.js';
 import { getAllRunsWithArchived } from '../runs/store.js';
 
@@ -120,7 +120,7 @@ export async function loadLearningCurationContext(
     if (!selected)
       throw new Error('Knowledge destination has no configured readable library source');
     const sources = currentProjectSources();
-    const resolved = resolveConfiguredExecutionTemplateSources(
+    const resolved = await resolveConfiguredExecutionTemplateSources(
       {
         sources: [
           {

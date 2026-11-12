@@ -40,6 +40,7 @@ import {
   type RunnerPromptMutation,
   runnerRetainedSessionHandoff,
   type RunnerSendRecoveryContext,
+  runnerSupportsSessionContinuation,
   sendRunnerInstructionSafely,
   sendRunnerPostLaunchPrompt,
   withRunnerPromptMutationBoundary,
@@ -362,7 +363,7 @@ async function reactivateRunnerSessionWithPrompt(
   options: RunnerSessionReactivationOptions & { sessionId: string },
 ): Promise<RetainedSessionDeliveryResult> {
   const runner = normalizeRunner(options.runnerId);
-  if (runnerRetainedSessionHandoff(runner) !== 'resume-with-prompt') {
+  if (!runnerSupportsSessionContinuation(runner, 'tmux')) {
     return {
       delivered: false,
       disposition: 'safe-send',
@@ -572,7 +573,7 @@ export async function deliverPromptToRetainedRunnerSession(
     if (delivered) return delivered;
   }
   const handoff = runnerRetainedSessionHandoff(runner);
-  if (handoff === 'resume-with-prompt') {
+  if (runnerSupportsSessionContinuation(runner, 'tmux')) {
     const sessionId = options.sessionId?.trim();
     if (!sessionId) {
       return {

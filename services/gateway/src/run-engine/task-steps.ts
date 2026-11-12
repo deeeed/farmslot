@@ -1,5 +1,4 @@
 // task-steps.ts — GRADE and WRITE_TASK run-engine step owners.
-
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
@@ -18,7 +17,6 @@ import {
   type Run,
   type RunTicketData,
 } from '@farmslot/protocol';
-import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import {
   extractBacklogAcceptanceCriteria,
@@ -44,6 +42,7 @@ import {
   configuredPrepareProfileNames,
   resolvePrepareProfile,
 } from '../methods/slot/prepare-profile.js';
+import { usesPreviousReviewDelta } from '../review/session-mode.js';
 import { getRun, listRuns, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 import { CHECKLIST_MARKER_INPUT } from '../tasks/sidecars.js';
 import {
@@ -744,7 +743,7 @@ export async function executeWriteTaskStep(
           !isArtifactOnlyScriptedCommandRun(afterWrite),
       }),
     );
-    if (afterWrite.repeatReviewContext && resolveReviewMode({ run: afterWrite }) === 'warm') {
+    if (afterWrite.repeatReviewContext && usesPreviousReviewDelta(afterWrite)) {
       artifacts.push(
         { path: PREVIOUS_REVIEW_JSON_INPUT, purpose: 'previous-review-context' },
         { path: PREVIOUS_REVIEW_MD_INPUT, purpose: 'previous-review-summary' },

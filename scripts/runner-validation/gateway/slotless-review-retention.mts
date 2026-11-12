@@ -236,7 +236,7 @@ const { getRunnerDefinition } = await load('services/gateway/src/runners/registr
 const expectSession =
   rounds === 2 ||
   reviewTransport === 'native' ||
-  !!getRunnerDefinition(reviewRunner).workspaceTerminalSession;
+  !!getRunnerDefinition(reviewRunner).sessionContinuation.terminal;
 const { configureWorkspaceContinuity } = await load(
   'services/gateway/src/review-workspaces/continuity.ts',
 );
@@ -312,7 +312,7 @@ try {
       body: 'This is a private transport/retention proof. No app, network or publication work.',
       capturedAt: new Date().toISOString(),
     };
-    const template = resolveConfiguredExecutionTemplate(await loadProjectVars('fixture'), {
+    const template = await resolveConfiguredExecutionTemplate(await loadProjectVars('fixture'), {
       flow: 'review-pr',
       platform: 'cli',
       runMode: 'autonomous',

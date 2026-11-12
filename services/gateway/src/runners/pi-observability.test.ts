@@ -5,7 +5,50 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { buildPiSessionDiscoveryCommand } from './pi-observability.js';
+import {
+  buildPiPromptAcceptanceCommand,
+  buildPiSessionDiscoveryCommand,
+} from './pi-observability.js';
+
+test('Pi startup accepts only the exact latest native user message in its saved session', (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'pi-native-acceptance-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, 'session.jsonl');
+  const header = { type: 'session', id: 'saved-pi', cwd: root };
+  const prompt = 'Continue the saved review\nRead the new TASK.md';
+  const message = (text: string, timestamp = '2026-11-12T19:00:01Z', role = 'user') => ({
+    type: 'message',
+    id: 'input',
+    timestamp,
+    message: { role, content: [{ type: 'text', text }] },
+  });
+  const write = (rows: unknown[]) =>
+    writeFileSync(file, rows.map((row) => JSON.stringify(row)).join('\n') + '\n');
+  const read = (id = 'saved-pi', cwd = root) =>
+    JSON.parse(
+      execFileSync(
+        'bash',
+        [
+          '-c',
+          buildPiPromptAcceptanceCommand(cwd, id, file, prompt, Date.parse('2026-11-12T19:00:00Z')),
+        ],
+        { encoding: 'utf8' },
+      ),
+    );
+  write([header, message(prompt)]);
+  assert.equal(read().accepted, true);
+  assert.deepEqual(read('another-session'), {});
+  assert.deepEqual(read('saved-pi', path.join(root, 'foreign')), {});
+  write([header, message(prompt, '2026-11-12T18:59:59Z')]);
+  assert.deepEqual(read(), {});
+  write([header, message(prompt, undefined, 'toolResult')]);
+  assert.deepEqual(read(), {});
+  write([header, message(prompt), message(prompt + '\nLater input')]);
+  assert.equal(read().accepted, false);
+  write([header, message(prompt)]);
+  writeFileSync(file, readFileSync(file, 'utf8').trimEnd());
+  assert.deepEqual(read(), {});
+});
 
 test('Pi discovery and role recovery separate the real worker and later fix session in one pane', (t) => {
   const home = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'pi-session-binding-')));

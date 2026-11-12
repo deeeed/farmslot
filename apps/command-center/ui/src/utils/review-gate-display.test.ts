@@ -455,16 +455,27 @@ function gateSummaryWithChecklist(checklist: GateSummary['checklist']): GateSumm
       requiredReviews: 0,
       passingReviews: 0,
       totalUnresolved: 0,
+      didAnyReviewTriggerReWork: false,
       summaryText: '',
     },
     tokens: {
-      mainWorker: { id: 'worker', model: 'claude-opus-5', total: 100, turns: 12 },
+      mainWorker: {
+        model: 'claude-opus-5',
+        input: 90,
+        output: 10,
+        cacheRead: 0,
+        cacheCreation: 0,
+        total: 100,
+        turns: 12,
+      },
       reviews: [],
       byModel: [],
       familyTotalTokens: 100,
+      perTurnDetailsAvailable: false,
     },
     checklist,
-  } as unknown as GateSummary;
+    capturedAt: '2026-01-01T00:00:00Z',
+  };
 }
 
 test('checklist timing nests a child unit under the step it hangs off', () => {
@@ -583,6 +594,40 @@ test('a not-ready gate shows the reason a person can act on', () => {
   assert.equal(
     readyReviewBlockingDisplayReason(gated, [{ id: 'continue-review-fix' }, { id: 'hold' }]),
     'Review found 4 issues. Fix and pass review before publishing.',
+  );
+});
+
+test('gate display shows implementation and per-round dollars and preserves local unpriced status', () => {
+  const summary = gateSummaryWithChecklist(undefined);
+  summary.tokens.mainWorker.costUsd = 0.25;
+  summary.tokens.familyCostUsd = 0.375;
+  summary.tokens.reviewRounds = [
+    { id: 'review-fixture', model: 'litellm/reviewer', roundNumber: 1, total: 20, costUsd: 0.125 },
+    {
+      id: 'local-fixture',
+      model: 'ollama/fixture',
+      roundNumber: 2,
+      total: 20,
+      costUsd: null,
+      costReason: 'local, unpriced',
+    },
+  ];
+  const display = gateSummaryDisplay(summary);
+  assert.equal(display.tokens.mainWorker.label, 'Implementation');
+  assert.equal(display.tokens.mainWorker.cost, '$0.2500');
+  assert.equal(display.tokens.reviews[0].label, 'review-fixture round 1');
+  assert.equal(display.tokens.reviews[0].cost, '$0.1250');
+  assert.equal(display.tokens.reviews[1].cost, 'local, unpriced');
+  assert.equal(display.tokens.grandCost, '$0.3750');
+});
+
+test('gate display explains an incomplete family cost', () => {
+  const summary = gateSummaryWithChecklist(undefined);
+  summary.tokens.familyCostUsd = null;
+  summary.tokens.familyCostReason = 'Includes unpriced or uncaptured sessions';
+  assert.equal(
+    gateSummaryDisplay(summary).tokens.grandCost,
+    'Includes unpriced or uncaptured sessions',
   );
 });
 
