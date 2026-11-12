@@ -1,1 +1,0 @@
-- Allow catalog template selection before slot assignment while retaining platform compatibility checks when a platform is supplied.
