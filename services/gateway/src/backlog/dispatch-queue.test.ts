@@ -10,6 +10,7 @@ import { evalSuiteCapUsage, setEvalSuiteCap } from '../evals/suite-cap-store.js'
 import { farmslotRoot, setCachedFleetForTests } from '../fleet/state.js';
 import { findAffinitySlot } from '../methods/dispatch.js';
 import { dispatchQueueAdd } from '../methods/dispatch/queue.js';
+import { evalTrialStart } from '../methods/eval.js';
 import {
   buildRunRecord,
   createRun,
@@ -1317,6 +1318,63 @@ const readyFleetSlot = (slotId: string) =>
       warmCount: 0,
     },
   }) as const;
+
+test('unknown eval params cancel the queued cell permanently and later cells dispatch', async () => {
+  const trialParams = {
+    project: 'farmslot-farm',
+    experimentManifestPath: '/tmp/missing-eval-manifest.json',
+    axes: {},
+  };
+  const enqueue = (trialId: string, unknown: Record<string, unknown> = {}) =>
+    addItem(
+      {
+        queueKind: 'eval-cell',
+        flowType: 'fix-bug',
+        project: trialParams.project,
+        ticketOrPr: trialId,
+        autoDispatch: false,
+        allowedSlots: ['eval-queue-slot'],
+        evalCell: {
+          capGroupId: 'unknown-params-cap',
+          experimentId: 'unknown-params-experiment',
+          cellId: trialId,
+          experimentManifestPath: trialParams.experimentManifestPath,
+          trialId,
+          trialStartParams: { ...trialParams, ...unknown },
+        },
+      },
+      { kind: 'system' },
+    );
+  const invalid = enqueue('invalid-cell', { reveiw: false });
+  const later = enqueue('later-cell');
+  const attempted: string[] = [];
+  initDispatchQueue(
+    () => {},
+    async (item, claim) => {
+      assertQueueClaimHeld(claim, 'test-eval-start');
+      attempted.push(item.id);
+      if (item.id === invalid.id)
+        await evalTrialStart({ ...trialParams, ...item.evalCell!.trialStartParams }, () => {});
+    },
+  );
+  const fleet = readyFleetSlot('eval-queue-slot');
+  setCachedFleetForTests({ ...fleet, slots: [...fleet.slots] });
+
+  await tryDispatchNext();
+  assert.equal(getQueueSnapshot().find((item) => item.id === invalid.id)?.status, 'cancelled');
+  assert.equal(
+    listItems().some((item) => item.id === invalid.id),
+    false,
+  );
+
+  await tryDispatchNext();
+  await tryDispatchNext();
+  assert.deepEqual(attempted, [invalid.id, later.id]);
+  assert.equal(
+    getQueueSnapshot().some((item) => item.id === later.id),
+    false,
+  );
+});
 
 test('claimQueueItem records exclusive holder and rejects a second claimer', () => {
   const item = addItem(

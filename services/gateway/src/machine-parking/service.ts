@@ -57,6 +57,7 @@ import {
 import { selectAgentContext, upsertAgentContext } from '../agents/contexts.js';
 import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { withFarmGitConfig } from '../core/farm-git.js';
 import {
   claimSlotStatusIf,
   readSlotRow,
@@ -628,7 +629,9 @@ async function defaultDetachParkedWorkspace(
   const vars = await loadSlotVars(run.slotId!);
   const detached = await execOnSlot(
     vars,
-    `cd ${shellQuote(vars.remoteRepo)} && git checkout --detach ${shellQuote(expected.headSha)}`,
+    withFarmGitConfig(
+      `cd ${shellQuote(vars.remoteRepo)} && git checkout --detach ${shellQuote(expected.headSha)}`,
+    ),
     { timeout: 60_000 },
   );
   if (detached.exitCode !== 0) {
@@ -663,7 +666,7 @@ async function defaultReattachParkedWorkspace(
   }
   const checkout = await execOnSlot(
     vars,
-    `cd ${repo} && git checkout ${shellQuote(workspace.branch)}`,
+    withFarmGitConfig(`cd ${repo} && git checkout ${shellQuote(workspace.branch)}`),
     { timeout: 60_000 },
   );
   if (checkout.exitCode !== 0) {

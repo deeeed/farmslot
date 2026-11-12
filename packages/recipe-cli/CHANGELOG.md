@@ -6,6 +6,11 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.3 - 2026-11-12
+
+- Operation pruning also removes records left `running` by a process that died, so the operations directory stays bounded and `status` reads stay fast.
+- `status --watch` caches the checkout branch and head until HEAD or its ref changes, so an idle watch spawns no `git`.
+
 ## 0.35.2 - 2026-11-10
 
 - Republish against recipe-runner 0.46.12 so consumers load one copy of it, with the fixed-element visibility fix.

@@ -136,7 +136,7 @@ export function supersedePendingResultDecisions(
 /** One label per result-decision action, for the gateway, the CLI and both clients. */
 export const RESULT_DECISION_ACTION_LABELS: Record<ResultDecisionActionId, string> = {
   'send-back': 'Send back for another fix',
-  'accept-result': 'Accept',
+  'accept-result': 'Accept and close without publishing',
   'close-result': 'Close',
 };
 
@@ -3355,6 +3355,8 @@ export interface RunEngineState {
   };
   /** Artifact-first experiment trial linkage for artifact-only reference/template regression candidates. */
   evalExperiment?: {
+    /** Trial-level judging opt-out, retained across retries and resumes. */
+    review?: false;
     /** Resolved trial judge override, retained across retries and resumes. */
     reviewRunner?: string;
     reviewModel?: string;
