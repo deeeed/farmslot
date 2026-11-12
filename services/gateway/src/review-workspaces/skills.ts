@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
-import {} from '@farmslot/agent-runtime';
 import type {
   ExecutionTemplateSourceRoot,
   ReviewWorkspaceSupportBinding,
