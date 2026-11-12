@@ -355,6 +355,7 @@ describe('bridge core', () => {
   async function appBroker(root: Record<string, unknown>) {
     const context = vm.createContext({
       setTimeout: (callback: () => void) => setImmediate(callback),
+      clearTimeout: (handle: NodeJS.Immediate) => clearImmediate(handle),
       __REACT_DEVTOOLS_GLOBAL_HOOK__: {
         renderers: new Map([[1, {}]]),
         getFiberRoots: () => new Set([{ current: root }]),
@@ -397,7 +398,11 @@ describe('bridge core', () => {
 
   it('reports an into-view target with no scroll container as in view only while it shows', async () => {
     // A non-scrolling bottom sheet over an 800-tall window: nothing to scroll.
-    const placement = { y: 500, sheet: [0, 400, 400, 400] };
+    const placement: { y: number; sheet: number[]; sheetStyle?: unknown; sheetAnswers: boolean } = {
+      y: 500,
+      sheet: [0, 400, 400, 400],
+      sheetAnswers: true,
+    };
     const host = (rect: number[]) => ({
       measureLayout: () => undefined,
       measureInWindow: (done: (...values: number[]) => void) => done(...rect),
@@ -410,10 +415,15 @@ describe('bridge core', () => {
     const sheetFiber: Record<string, unknown> = {
       stateNode: {
         measureLayout: () => undefined,
-        measureInWindow: (done: (...values: number[]) => void) => done(...placement.sheet),
+        measureInWindow: (done: (...values: number[]) => void) => {
+          if (placement.sheetAnswers) done(...placement.sheet);
+        },
       },
       return: rootFiber,
     };
+    Object.defineProperty(sheetFiber, 'memoizedProps', {
+      get: () => ({ style: placement.sheetStyle }),
+    });
     const targetFiber = { stateNode: target, memoizedProps: { testID: 'liq' }, return: sheetFiber };
     rootFiber.child = sheetFiber;
     sheetFiber.child = targetFiber;
@@ -432,12 +442,23 @@ describe('bridge core', () => {
     const hidden = await runBridge(directory, port, args);
     assert.deepEqual(JSON.parse(hidden.stdout), refused);
 
-    // Inside the window but clipped away by a 100-tall sheet: measureInWindow still
-    // reports the child's own bounds, so the ancestors' frames decide.
+    // Past the bottom of a 100-tall sheet that does not clip (overflow defaults to
+    // visible on iOS): still drawn inside the window, so in view.
     placement.y = 550;
     placement.sheet = [0, 400, 400, 100];
+    const overflowing = await runBridge(directory, port, args);
+    assert.equal((JSON.parse(overflowing.stdout) as Record<string, unknown>).alreadyInView, true);
+
+    // The same sheet with overflow hidden clips it away; measureInWindow still reports
+    // the child's own bounds, so the clipping ancestor's frame decides.
+    placement.sheetStyle = [{ flex: 1 }, [{ overflow: 'hidden' }]];
     const clipped = await runBridge(directory, port, args);
     assert.deepEqual(JSON.parse(clipped.stdout), refused);
+
+    // A clipping ancestor that never answers (unmounted) refuses instead of hanging.
+    placement.sheetAnswers = false;
+    const unanswered = await runBridge(directory, port, args);
+    assert.deepEqual(JSON.parse(unanswered.stdout), refused);
   });
 
   it('prints help with the app label, built-ins and placed host lines', async () => {

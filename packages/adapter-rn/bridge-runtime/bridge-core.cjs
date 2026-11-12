@@ -705,23 +705,59 @@ function createBuiltinCommands({ routes, perfMarkerPrefixes, readyExpression }) 
         if (!opts.intoView) return false;
         if (tryScroll(anchor, false)) return true;
         // Nothing scrolls the target (a fixed sheet, say): it is in view when it shows
-        // whole inside the window and every measurable ancestor's frame (an ancestor
-        // can clip it while measureInWindow still reports the target's own bounds).
+        // whole inside the window and every ancestor that clips (overflow hidden or
+        // scroll, as scroll viewports are). measureInWindow reports the target's own
+        // bounds even where a clipping ancestor hides it; overflow defaults to visible
+        // on iOS, so other ancestors do not clip.
         var top = anchor;
         while (top.return) top = top.return;
         var windowNode = findMeasurable(top);
         if (!target || !windowNode) return false;
+        function overflowOf(style) {
+          if (Array.isArray(style)) {
+            for (var i = style.length - 1; i >= 0; i--) {
+              var nested = overflowOf(style[i]);
+              if (nested) return nested;
+            }
+            return undefined;
+          }
+          return style && typeof style === 'object' ? style.overflow : undefined;
+        }
         var frames = [windowNode];
         for (var up = anchor.return; up; up = up.return) {
           var raw = up.stateNode;
           var node = raw && raw.canonical && raw.canonical.publicInstance ? raw.canonical.publicInstance : raw;
-          if (node && node !== windowNode && typeof node.measureLayout === 'function' && typeof node.measureInWindow === 'function') frames.push(node);
+          var overflow = overflowOf(up.memoizedProps && up.memoizedProps.style);
+          if (
+            node && node !== windowNode && (overflow === 'hidden' || overflow === 'scroll') &&
+            typeof node.measureLayout === 'function' && typeof node.measureInWindow === 'function'
+          ) frames.push(node);
+        }
+        // One read per frame; a view that never answers (unmounted) counts as not shown.
+        function measureFrame(node, done) {
+          var answered = false;
+          var timer = setTimeout(function() {
+            if (answered) return;
+            answered = true;
+            done(null);
+          }, 500);
+          node.measureInWindow(function(x, y, width, height) {
+            if (answered) return;
+            answered = true;
+            clearTimeout(timer);
+            done({ x: x, y: y, width: width, height: height });
+          });
         }
         return new Promise(function(resolve) {
           var view = null;
           (function next(index) {
             if (index < frames.length) {
-              return frames[index].measureInWindow(function(x, y, width, height) {
+              return measureFrame(frames[index], function(frame) {
+                if (!frame) return resolve({ ok: false, error: 'No scrollable near testID=' + opts.testId });
+                var x = frame.x;
+                var y = frame.y;
+                var width = frame.width;
+                var height = frame.height;
                 var left = view ? Math.max(view.x, x) : x;
                 var topEdge = view ? Math.max(view.y, y) : y;
                 var right = view ? Math.min(view.x + view.width, x + width) : x + width;
