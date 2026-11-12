@@ -18,7 +18,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 
 import {
   AMBIENT_ACCOUNT_LABEL,

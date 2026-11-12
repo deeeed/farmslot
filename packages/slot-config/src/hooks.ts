@@ -10,7 +10,7 @@ import {
   normalizeRunner,
 } from '@farmslot/protocol';
 import { currentFarmPaths, legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
-import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 
 // Placeholder guard lives in @farmslot/protocol so agent-runtime renders with the
 // same rule; re-exported here for the gateway's existing imports.

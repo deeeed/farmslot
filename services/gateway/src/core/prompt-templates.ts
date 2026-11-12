@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
-import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 import { projectPackRoot } from '@farmslot/slot-config';
 
 import { assertNoUnknownPlaceholders } from './hooks.js';

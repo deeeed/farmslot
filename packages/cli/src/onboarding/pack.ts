@@ -14,7 +14,7 @@ import {
   packMachineNames,
   validatePackPortability,
 } from '@farmslot/protocol/node/pack-portability';
-import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 
 export interface PackProject {
   /** Project dir inside the pack, e.g. "projects/example-app-farm". Basename = project name. */

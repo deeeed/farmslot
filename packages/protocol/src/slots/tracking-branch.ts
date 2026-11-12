@@ -1,5 +1,4 @@
-import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
-
+import { literalReplacement } from '../../scripts/literal-replacement.mjs';
 import type { ExecResult } from '../contracts/common.js';
 import { DEFAULT_BRANCH } from '../contracts/runs.js';
 

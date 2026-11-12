@@ -4,7 +4,7 @@
  */
 import { spawn } from 'node:child_process';
 
-import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 
 import { loadProviderAccountsConfig, type ProviderAccountsConfig } from './provider-accounts.js';
 

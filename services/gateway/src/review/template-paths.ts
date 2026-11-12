@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import type { Run } from '@farmslot/protocol';
 import type { ChecklistTarget } from '@farmslot/protocol/checklist-target';
-import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 
 export interface ReviewTemplatePaths extends ChecklistTarget {
   /** Feedback path relative to the task directory. */

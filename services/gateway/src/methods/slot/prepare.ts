@@ -13,7 +13,7 @@ import {
   SLOT_DESTRUCTIVE_OPS,
   type SlotPrepareParams,
 } from '@farmslot/protocol';
-import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 import { loadMachineSlots, resolveEffectiveDomain } from '@farmslot/slot-config';
 
 import { withFarmGitConfig } from '../../core/farm-git.js';

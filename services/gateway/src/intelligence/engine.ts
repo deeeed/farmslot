@@ -9,7 +9,7 @@ import {
   type StepLLMUsage,
   taskTitleText,
 } from '@farmslot/protocol';
-import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 
 import { loadPromptTemplate } from '../core/prompt-templates.js';
 import { getLLMConfig } from '../llm/config.js';

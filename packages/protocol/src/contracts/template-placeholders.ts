@@ -1,5 +1,4 @@
-import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
-
+import { literalReplacement } from '../../scripts/literal-replacement.mjs';
 import { enumerateChecklistCheckboxes } from '../checklist-target.js';
 
 /**

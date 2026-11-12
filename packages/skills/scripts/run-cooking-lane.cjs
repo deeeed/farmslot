@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
-const { literalReplacement } = require('@farmslot/protocol/scripts/literal-replacement.cjs');
+const { literalReplacement } = require('@farmslot/protocol/scripts/literal-replacement.mjs');
 const { expandTemplate } = require('./lib.cjs');
 
 const DEFAULT_SCENARIO_CONFIG = path.resolve(__dirname, '../templates/recipe-cook/scenarios.json');

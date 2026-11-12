@@ -25,7 +25,7 @@ import {
   type WorkerSignalProbeResult,
   type WorkerTerminalContractDocument,
 } from '@farmslot/protocol';
-import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 
 import { resolveAgentTarget, selectAgentContext } from '../agents/contexts.js';
 import {

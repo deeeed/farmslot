@@ -5,7 +5,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 import type { SafetyTier, TmuxWorkerRef } from '@farmslot/protocol';
-import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 
 import { isLocal } from '../core/exec.js';
 import { assertNoUnknownPlaceholders } from '../core/hooks.js';

@@ -23,7 +23,7 @@ import {
   type SafetyTier,
   type ScriptedRunnerConfig,
 } from '@farmslot/protocol';
-import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 import { currentProjectSources, sourceWorkerEnvironment } from '@farmslot/slot-config';
 
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';

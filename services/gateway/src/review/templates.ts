@@ -18,7 +18,7 @@ import {
   type Run,
   ticketCriteriaAsRegistered,
 } from '@farmslot/protocol';
-import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 import { expandSourceBindings } from '@farmslot/slot-config';
 
 import {

@@ -3,7 +3,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { literalReplacement } = require('@farmslot/protocol/scripts/literal-replacement.cjs');
+const { literalReplacement } = require('@farmslot/protocol/scripts/literal-replacement.mjs');
 
 function readJsonIfExists(filePath) {
   if (!filePath || !fs.existsSync(filePath)) return null;

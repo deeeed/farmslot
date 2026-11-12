@@ -11,7 +11,7 @@ import {
   resolveReportedFarmPaths,
 } from '@farmslot/protocol/node/farm-paths';
 import { expandHome } from '@farmslot/protocol/node/farmslot-home';
-import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 import { shellQuote } from '@farmslot/recipe-cli/harness';
 
 import {

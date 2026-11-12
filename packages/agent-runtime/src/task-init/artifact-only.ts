@@ -1,4 +1,4 @@
-import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.cjs';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 
 import {
   assertArtifactOnlyTaskGuard,
