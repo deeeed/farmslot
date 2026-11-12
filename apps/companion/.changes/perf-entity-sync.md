@@ -1,0 +1,1 @@
+- Extend `resource-read-status` helpers used by entity-sync client caching for Companion connections.

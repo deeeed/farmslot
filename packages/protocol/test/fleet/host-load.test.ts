@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { MachineHealth, SlotEntity, SlotStatus } from '../../src/contracts/slots.js';
+import type { MachineHealth, SlotEntity } from '../../src/contracts/slots.js';
 import { reattachHostLoad } from '../../src/fleet/host-load.js';
 
 const baseEntity: SlotEntity = {
@@ -98,8 +98,11 @@ test('reattachHostLoad returns entities unchanged when machines list is empty', 
   const result = reattachHostLoad([baseEntity], []);
   assert.equal(result.length, 1);
   assert.ok(!('hostLoad' in result[0]), 'hostLoad absent with empty machines');
-  // Returns the original entity reference since no machines to look up
-  assert.equal(result[0] as SlotStatus, baseEntity as unknown as SlotStatus);
+  // Returns the original entity reference since no machines to look up.
+  assert.ok(
+    Object.is(result[0], baseEntity),
+    'returns original entity reference when machines list is empty',
+  );
 });
 
 test('reattachHostLoad full read equals assembled result for same input', () => {

@@ -656,8 +656,8 @@ test('tombstones purged when run expires (item 4b)', async () => {
   idx.markResolved('tomb-d');
   // Verify tombstone is active: the decision must not be in getAll() after resolve.
   assert.equal(idx.get('tomb-d'), undefined, 'tombstoned decision not visible');
-  // Track tombstone count via private bracket access (compile-only restriction).
-  const tombstones = (idx as unknown as { tombstones: Set<string> }).tombstones;
+  // Track tombstone count via Reflect.get (avoids double assertion; field is JS-private only).
+  const tombstones = Reflect.get(idx, 'tombstones') as Set<string>;
   assert.ok(tombstones.size > 0, 'tombstone added after markResolved');
 
   // Expire the run — should purge the tombstone.
