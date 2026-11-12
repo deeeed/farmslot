@@ -198,8 +198,11 @@ export class EntityGateway implements ResourceCacheTransport {
     for (const listener of this.connections) listener(this.connection);
   }
 
-  /** A new socket on a restarted gateway: revisions and markers start over. */
-  reconnect(epoch = this.epoch): void {
+  /**
+   * A new socket on a restarted gateway: revisions and markers start over. `entitySync` set says
+   * whether the restarted gateway advertises entity sync.
+   */
+  reconnect(epoch = this.epoch, entitySync?: boolean): void {
     if (epoch !== this.epoch) {
       this.revisions.clear();
       this.markers.clear();
@@ -212,7 +215,15 @@ export class EntityGateway implements ResourceCacheTransport {
         httpBearerAuth: true,
         voiceInstructionFormatting: false,
         ...this.connection.capabilities,
-        ...(resourceChanges ? { resourceChanges: { ...resourceChanges, epoch } } : {}),
+        ...(resourceChanges
+          ? {
+              resourceChanges: {
+                ...resourceChanges,
+                epoch,
+                ...(entitySync === undefined ? {} : { entitySync }),
+              },
+            }
+          : {}),
       },
     });
   }

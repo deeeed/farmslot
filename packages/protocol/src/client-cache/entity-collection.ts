@@ -67,8 +67,8 @@ export class EntityCollection<T> {
   /** The membership marker the listing reflects, and the highest one notified since. */
   private listedMarker?: number;
   private seenMarker?: number;
-  /** A collection change came without a marker: only a versions read can tell. */
-  private markerUnknown = false;
+  /** When membership last became a question only a versions read can answer (see `ask`). */
+  private membershipAskedAt?: number;
   /** Ids whose change came without a usable body. */
   private readonly pending = new Set<string>();
   /** Last local change per id, so a reply sent before it cannot overwrite it. */
@@ -98,7 +98,7 @@ export class EntityCollection<T> {
 
   private membershipStale(): boolean {
     return (
-      this.markerUnknown ||
+      this.membershipAskedAt !== undefined ||
       (this.seenMarker !== undefined &&
         (this.listedMarker === undefined || this.seenMarker > this.listedMarker))
     );
@@ -184,7 +184,8 @@ export class EntityCollection<T> {
     for (const id of [...this.pending]) if (!listed.has(id)) this.pending.delete(id);
     this.listed = listed;
     this.verified = true;
-    this.markerUnknown = false;
+    // A question raised after this request was sent needs a reply of its own.
+    if ((this.membershipAskedAt ?? 0) <= start) this.membershipAskedAt = undefined;
     const marker = reply.membershipRevision ?? markerAtStart;
     this.listedMarker = marker;
     if (marker !== undefined && (this.seenMarker === undefined || marker > this.seenMarker))
@@ -247,11 +248,22 @@ export class EntityCollection<T> {
     return missing;
   }
 
+  /** The listing must be read again: a change the client cannot place by itself. */
+  private ask(): void {
+    this.membershipAskedAt = ++this.sequence;
+  }
+
+  /** A change without a usable body: read the id, or the listing when it does not hold the id. */
+  private need(id: string): void {
+    if (this.listed && !this.listed.has(id)) this.ask();
+    else this.pending.add(id);
+  }
+
   /** A pushed body. Returns false when it was not admitted; that id is then read. */
   applyEntity(id: string, value: unknown, version: string): boolean {
     this.touch(id);
     if (!this.options.accept(value, id, version)) {
-      this.pending.add(id);
+      this.need(id);
       return false;
     }
     this.rows.set(id, { entity: value, version });
@@ -268,13 +280,13 @@ export class EntityCollection<T> {
     if (this.rows.get(id)?.version === version) {
       this.listed?.set(id, version);
       this.pending.delete(id);
-    } else this.pending.add(id);
+    } else this.need(id);
   }
 
   /** A change with no body at all: read that id. */
   applyUnknown(id: string): void {
     this.touch(id);
-    this.pending.add(id);
+    this.need(id);
   }
 
   applyDeleted(id: string): void {
@@ -289,7 +301,7 @@ export class EntityCollection<T> {
   /** A collection change: its marker says whether membership or collection fields moved. */
   noteMembership(marker: number | undefined): void {
     if (marker === undefined || !Number.isSafeInteger(marker)) {
-      this.markerUnknown = true;
+      this.ask();
       return;
     }
     if (this.seenMarker === undefined || marker > this.seenMarker) this.seenMarker = marker;
@@ -334,7 +346,7 @@ export class EntityCollection<T> {
     this.verified = false;
     this.listedMarker = undefined;
     this.seenMarker = undefined;
-    this.markerUnknown = false;
+    this.membershipAskedAt = undefined;
     this.pending.clear();
   }
 

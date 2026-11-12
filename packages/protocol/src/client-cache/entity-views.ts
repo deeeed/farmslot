@@ -45,6 +45,8 @@ export interface EntityViewAnswer {
 /** What the cache needs from any entity view, independent of its entity type. */
 export interface EntityView {
   readonly storeId: string;
+  /** The id of the collection key this view applies itself; its other dependencies are read. */
+  readonly collectionKeyId: string;
   /** Rows were hydrated from this store, if any. */
   hydratedFrom?: object;
   serves(query: ResourceQuery): boolean;
@@ -56,6 +58,10 @@ export interface EntityView {
   ): Promise<boolean>;
   answer(): EntityViewAnswer | undefined;
   hydrate(stored: StoredResourceRows): void;
+  /** Rows a full read already put on screen, when the view holds none of its own. */
+  seed(full: unknown): void;
+  /** Something this view cannot apply changed what the gateway serves: read the listing again. */
+  requireVersions(): void;
   /** Rows changed since the last call and the collection data, for one store merge. */
   takeUnstored(): {
     data: unknown;
@@ -121,12 +127,22 @@ interface ViewSpec<T, M> {
   guard(value: unknown): value is T;
   readMeta(data: Record<string, unknown>): M | undefined;
   isMeta(value: unknown): value is M;
-  /** Notifications other than the collection's own that change its non-entity fields. */
+  /**
+   * A notification other than the collection's own that changes one of its non-entity fields:
+   * the field's id and how it changes them, or `reread` when only a versions read can tell.
+   */
   applyOther?(
     change: ResourceChangeEntry,
     meta: M | undefined,
-  ): { meta?: M; reread?: boolean } | undefined;
+  ): { id: string; patch?: (meta: M) => M; reread?: boolean } | undefined;
+  /** The rows and non-entity fields of a full read's reply, both untrusted. */
+  fromFull(data: Record<string, unknown>): { rows: SeedRow[]; meta: unknown } | undefined;
   answer(rows: T[], meta: M, current: boolean): unknown;
+}
+
+interface SeedRow {
+  id: string;
+  body: unknown;
 }
 
 class SpecView<T, M> implements EntityView {
@@ -135,9 +151,12 @@ class SpecView<T, M> implements EntityView {
   private metaUnstored = false;
   /** Stored bytes per row, for the collection entry's size. */
   private readonly rowBytes = new Map<string, number>();
+  /** Non-entity changes notified since the outstanding versions request was sent, by field id. */
+  private readonly metaPatches = new Map<string, { at: number; patch: (meta: M) => M }>();
+  private metaSequence = 0;
   private request?: EntityViewRequest;
   private onPage?: (done: number, total: number) => void;
-  private readonly collectionKeyId: string;
+  readonly collectionKeyId: string;
   readonly collection: EntityCollection<T>;
 
   constructor(private readonly spec: ViewSpec<T, M>) {
@@ -147,12 +166,20 @@ class SpecView<T, M> implements EntityView {
       accept: (value, id, version): value is T =>
         admitEntity(spec.guard, spec.idOf, value, id, version),
       fetchVersions: async (signal) => {
+        const sent = this.metaSequence;
         const data = await this.send({ ...spec.viewParams, versions: true }, signal);
         const listing = versionsOf(data);
         const meta = isRecord(data) ? spec.readMeta(data) : undefined;
         if (!listing || meta === undefined) throw invalidReply(spec.method);
-        this.meta = meta;
-        this.metaUnstored = true;
+        if (!signal.aborted) {
+          // A change notified after the request was sent is newer than the reply's field.
+          let merged: M = meta;
+          for (const [id, change] of this.metaPatches)
+            if (change.at > sent) merged = change.patch(merged);
+            else this.metaPatches.delete(id);
+          this.meta = merged;
+          this.metaUnstored = true;
+        }
         return {
           versions: listing.versions,
           ...(listing.marker === undefined ? {} : { membershipRevision: listing.marker }),
@@ -197,13 +224,20 @@ class SpecView<T, M> implements EntityView {
     }
     const other = this.spec.applyOther?.(change, this.meta);
     if (!other) return false;
-    if (other.meta !== undefined) {
-      this.meta = other.meta;
-      this.metaUnstored = true;
+    if (other.patch) {
+      this.metaPatches.set(other.id, { at: ++this.metaSequence, patch: other.patch });
+      if (this.meta !== undefined) {
+        this.meta = other.patch(this.meta);
+        this.metaUnstored = true;
+      }
     }
     // Only a versions read carries these fields; the marker cannot say so.
-    if (other.reread) this.collection.noteMembership(undefined);
+    if (other.reread) this.requireVersions();
     return true;
+  }
+
+  requireVersions(): void {
+    this.collection.noteMembership(undefined);
   }
 
   async sync(
@@ -234,6 +268,17 @@ class SpecView<T, M> implements EntityView {
     if (this.meta === undefined && this.spec.isMeta(data)) this.meta = data;
   }
 
+  seed(full: unknown): void {
+    if (this.collection.held || !isRecord(full)) return;
+    const seeded = this.spec.fromFull(full);
+    if (!seeded) return;
+    // Admitted like any stored row, at the version of the body itself: the listing decides.
+    this.collection.hydrate(
+      seeded.rows.map(({ id, body }) => ({ id, version: entityContentVersion(body), body })),
+    );
+    if (this.meta === undefined && this.spec.isMeta(seeded.meta)) this.meta = seeded.meta;
+  }
+
   takeUnstored() {
     const { upserts, deletes } = this.collection.takeUnstored();
     const metaChanged = this.metaUnstored;
@@ -257,6 +302,7 @@ class SpecView<T, M> implements EntityView {
     this.collection.clear();
     this.meta = undefined;
     this.metaUnstored = false;
+    this.metaPatches.clear();
     this.rowBytes.clear();
     this.hydratedFrom = undefined;
   }
@@ -321,36 +367,58 @@ export function createFleetEntityView(): EntityView {
     },
     isMeta: isFleetMeta,
     applyOther: (change, meta) => {
-      if (change.key.family !== 'node' || !('nodeId' in change.key) || meta === undefined)
-        return undefined;
-      const nodeId = change.key.nodeId;
-      const machines = meta.machines ?? [];
-      const held = machines.find((row) => row.machine === nodeId);
+      if (change.key.family !== 'node' || !('nodeId' in change.key)) return undefined;
+      const id = change.key.nodeId;
       const pushed = change.changedEntity;
       if (change.kind === 'deleted')
-        return held
-          ? { meta: { ...meta, machines: machines.filter((row) => row !== held) } }
-          : undefined;
-      if (pushed?.family !== 'node' || typeof pushed.version !== 'string') return { reread: true };
-      if (pushed.entity === undefined)
-        return held && entityContentVersion(held) === pushed.version ? undefined : { reread: true };
+        return {
+          id,
+          patch: (held) => ({
+            ...held,
+            machines: (held.machines ?? []).filter((row) => row.machine !== id),
+          }),
+        };
+      if (pushed?.family !== 'node' || typeof pushed.version !== 'string')
+        return { id, reread: true };
+      if (pushed.entity === undefined) {
+        const held = meta?.machines?.find((row) => row.machine === id);
+        return held && entityContentVersion(held) === pushed.version
+          ? undefined
+          : { id, reread: true };
+      }
       if (
-        !admitEntity(
-          isMachineHealthEntity,
-          (row) => row.machine,
-          pushed.entity,
-          nodeId,
-          pushed.version,
-        )
+        !admitEntity(isMachineHealthEntity, (row) => row.machine, pushed.entity, id, pushed.version)
       )
-        return { reread: true };
+        return { id, reread: true };
       const entity = pushed.entity;
       return {
+        id,
+        patch: (held) => {
+          const machines = held.machines ?? [];
+          return {
+            ...held,
+            machines: machines.some((row) => row.machine === id)
+              ? machines.map((row) => (row.machine === id ? entity : row))
+              : [...machines, entity],
+          };
+        },
+      };
+    },
+    fromFull: (data) => {
+      const fleet = data.fleet;
+      if (!isRecord(fleet) || !Array.isArray(fleet.slots)) return undefined;
+      return {
+        rows: fleet.slots.flatMap((row): SeedRow[] => {
+          if (!isRecord(row) || typeof row.slot !== 'string') return [];
+          // Host load is the machine's; a slot entity never carries it.
+          const { hostLoad: _hostLoad, ...body } = row;
+          return [{ id: row.slot, body }];
+        }),
         meta: {
-          ...meta,
-          machines: held
-            ? machines.map((row) => (row === held ? entity : row))
-            : [...machines, entity],
+          summary: fleet.summary,
+          checkedAt: fleet.checkedAt,
+          ...(fleet.machines === undefined ? {} : { machines: fleet.machines }),
+          ...(fleet.poolErrors === undefined ? {} : { poolErrors: fleet.poolErrors }),
         },
       };
     },
@@ -449,6 +517,21 @@ export function createPREntityView(
       return isPRMeta(meta) ? meta : undefined;
     },
     isMeta: isPRMeta,
+    fromFull: (data) => {
+      if (!Array.isArray(data.prs)) return undefined;
+      return {
+        rows: data.prs.flatMap((row): SeedRow[] =>
+          isRecord(row) && typeof row.repo === 'string' && typeof row.pr === 'number'
+            ? [{ id: `${row.repo}/${row.pr}`, body: row }]
+            : [],
+        ),
+        meta: {
+          ...(data.observation === undefined ? {} : { observation: data.observation }),
+          ...(data.fetchedAt === undefined ? {} : { fetchedAt: data.fetchedAt }),
+          ...(data.refreshing === undefined ? {} : { refreshing: data.refreshing }),
+        },
+      };
+    },
     answer: (rows, meta): PRListResult => ({ prs: rows, ...meta }),
   });
 }

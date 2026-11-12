@@ -909,16 +909,19 @@ export function createGatewayResourceCache(
       revisions.set(id, change.revision);
       if (entitySync)
         for (const view of entityViews()) if (view.applyChange(change)) changedViews.add(view);
-      // Entity views learn of their changes above; their other dependencies change what the
-      // gateway pushes, never what they must read.
+      // An entity view applied its own collection's change above. Any other dependency changes
+      // what the gateway would serve without a push: the view is stale until it reads again.
       const affected = [...entries.values()].filter(
-        (entry) => entry.dependencyIds.has(id) && !(entitySync && ownedByEntityView(entry.query)),
+        (entry) =>
+          entry.dependencyIds.has(id) &&
+          !(entitySync && entityViewFor(entry.query)?.collectionKeyId === id),
       );
       // Coverage counts declared dependencies only, so a known key that no entry declares (another
       // slot, an unopened workspace) changes nothing held. Only a family this client cannot name might.
       if (!affected.length && isKnownResourceFamily(change.key?.family)) continue;
       const targets = affected.length ? affected : [...entries.values()];
       for (const entry of targets) {
+        if (entitySync) entityViewFor(entry.query)?.requireVersions();
         if (!affected.length) entry.unknownGeneration++;
         const floor =
           entry.query.rereadIntervalMs?.[change.key.family] ??
@@ -934,10 +937,6 @@ export function createGatewayResourceCache(
       }
     }
     for (const view of changedViews) refreshEntityView(view);
-  }
-
-  function ownedByEntityView(query: ResourceQuery): boolean {
-    return fleetView.serves(query) || prViewProject(query) !== undefined;
   }
 
   /** A notification changed an entity view: reassemble it now; a read follows only if needed. */
@@ -1261,6 +1260,8 @@ export function createGatewayResourceCache(
     signal: AbortSignal,
   ): Promise<ReadReply> {
     await hydrateEntityView(view);
+    // Rows a full read put on screen stay there: the listing alone says which have gone.
+    view.seed(entry.state.data);
     const publishPage = (done: number, total: number) => {
       const partial = view.answer();
       entry.state = {

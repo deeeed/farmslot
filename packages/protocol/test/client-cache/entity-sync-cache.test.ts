@@ -9,6 +9,7 @@ import { createMemoryResourceStore, type ResourceStore } from '../../src/client-
 import type { ResourceQueryState } from '../../src/client-cache/types.js';
 import type { PRStatus } from '../../src/contracts/reviews.js';
 import type { SlotEntity } from '../../src/contracts/slots.js';
+import { computeSummary } from '../../src/fleet/summary.js';
 import type { FleetStatusResult } from '../../src/rpc/fleet.js';
 import type { PRListResult } from '../../src/rpc/pr.js';
 import {
@@ -566,6 +567,241 @@ test('a refused fleet source reaches an entity-sync client as the error a full r
   } finally {
     await client.close();
     await fullClient.close();
+  }
+});
+
+test('N1: a machine push that lands while a versions read is outstanding wins over its reply', async () => {
+  const gateway = new EntityGateway();
+  gateway.slots.set('a', slot('a', { machine: 'mac-a' }));
+  gateway.machines.set('mac-a', machine('mac-a', 10));
+  const client = setup(gateway);
+  try {
+    client.watch(fleetQuery);
+    await flush();
+    // A membership change asks for a versions read; its reply is computed before the sample.
+    const versionsReply = gateway.hold((entry) => entry.params.versions === true);
+    gateway.writeSlot(slot('b', { machine: 'mac-a' }));
+    await within(versionsReply.arrived, 'the held read was sent');
+    gateway.writeMachine(machine('mac-a', 77));
+    await flush();
+    versionsReply.release();
+    await flush();
+    const fleet = client.read(fleetQuery).data?.fleet;
+    assert.equal(fleet?.machines?.[0].system?.cpuPercent, 77, 'the newer sample is kept');
+    assert.equal(fleet?.slots[0].hostLoad?.cpuPercent, 77);
+    assert.equal(client.read(fleetQuery).status, 'ready');
+  } finally {
+    await client.close();
+  }
+});
+
+test('N1: a machine push before the first versions reply wins over that reply', async () => {
+  const gateway = new EntityGateway();
+  gateway.slots.set('a', slot('a', { machine: 'mac-a' }));
+  gateway.machines.set('mac-a', machine('mac-a', 10));
+  const versionsReply = gateway.hold((entry) => entry.params.versions === true);
+  const client = setup(gateway);
+  try {
+    client.watch(fleetQuery);
+    await within(versionsReply.arrived, 'the held read was sent');
+    gateway.writeMachine(machine('mac-a', 77));
+    await flush();
+    versionsReply.release();
+    await flush();
+    assert.equal(client.read(fleetQuery).data?.fleet.machines?.[0].system?.cpuPercent, 77);
+    assert.equal(client.read(fleetQuery).status, 'ready');
+  } finally {
+    await client.close();
+  }
+});
+
+test('N8: a change for an id the listing does not hold costs one versions read, then settles', async () => {
+  const gateway = new EntityGateway();
+  gateway.slots.set('a', slot('a'));
+  const client = setup(gateway);
+  try {
+    client.watch(fleetQuery);
+    await flush();
+    const versions = gateway.requests('fleet.status', 'versions').length;
+    const ids = gateway.requests('fleet.status', 'ids').length;
+    // An overlay write for a slot that left the fleet: no body, no membership change.
+    gateway.publish([
+      { key: { family: 'slot', slotId: 'gone' } },
+      { key: { family: 'slots', scope: 'farm' } },
+    ]);
+    await flush();
+    assert.equal(client.read(fleetQuery).status, 'ready', 'the view is not left syncing');
+    assert.equal(gateway.requests('fleet.status', 'versions').length, versions + 1);
+    assert.equal(gateway.requests('fleet.status', 'ids').length, ids, 'nothing to fetch');
+    assert.deepEqual(slotsOf(client.read(fleetQuery)), ['a:main']);
+  } finally {
+    await client.close();
+  }
+});
+
+const manySlots = (branch: string) =>
+  Array.from({ length: 25 }, (_, index) => slot(`s${String(index).padStart(2, '0')}`, { branch }));
+
+test('N3: a gateway that starts entity sync keeps the rows a full read put on screen', async () => {
+  const gateway = new EntityGateway({ entitySync: false });
+  for (const row of manySlots('main')) gateway.slots.set(row.slot, row);
+  const client = setup(gateway);
+  try {
+    client.watch(fleetQuery);
+    await flush();
+    assert.equal(client.read(fleetQuery).data?.fleet.slots.length, 25);
+
+    gateway.setConnection({ connected: false });
+    await flush();
+    for (const row of manySlots('moved')) gateway.slots.set(row.slot, row);
+    const second = gateway.hold(
+      (entry) => Array.isArray(entry.params.ids) && (entry.params.ids as string[]).length === 5,
+    );
+    gateway.reconnect('epoch-2', true);
+    await within(second.arrived, 'the held read was sent');
+    await flush();
+    const partial = client.read(fleetQuery);
+    assert.equal(partial.data?.fleet.slots.length, 25, 'no displayed row leaves the screen');
+    assert.equal(slotsOf(partial).filter((row) => row.endsWith(':moved')).length, 20);
+    second.release();
+    await flush();
+    assert.equal(
+      slotsOf(client.read(fleetQuery)).filter((row) => row.endsWith(':moved')).length,
+      25,
+    );
+    assert.equal(client.read(fleetQuery).status, 'ready');
+  } finally {
+    await client.close();
+  }
+});
+
+test('N3: a stored full snapshot stays on screen while entity sync catches up', async () => {
+  const gateway = new EntityGateway();
+  for (const row of manySlots('moved')) gateway.slots.set(row.slot, row);
+  const memory = createMemoryResourceStore();
+  await memory.setMetadata({
+    scope: gateway.connection.scope,
+    authority: gateway.connection.authority!,
+  });
+  const stored = manySlots('main');
+  await memory.putQuery({
+    id: fleetQuery.id,
+    data: {
+      fleet: {
+        checkedAt: '2026-11-11T00:00:00.000Z',
+        slots: stored,
+        summary: computeSummary(stored),
+      },
+    },
+    observedAt: 1_000,
+    bytes: 10,
+  });
+  const second = gateway.hold(
+    (entry) => Array.isArray(entry.params.ids) && (entry.params.ids as string[]).length === 5,
+  );
+  const client = setup(gateway, { ...memory, persistent: true });
+  try {
+    client.watch(fleetQuery);
+    await within(second.arrived, 'the held read was sent');
+    await flush();
+    assert.equal(
+      client.read(fleetQuery).data?.fleet.slots.length,
+      25,
+      'stored rows stay displayed',
+    );
+    second.release();
+    await flush();
+    assert.equal(
+      slotsOf(client.read(fleetQuery)).filter((row) => row.endsWith(':moved')).length,
+      25,
+    );
+  } finally {
+    await client.close();
+  }
+});
+
+test('N3: rows a full read already holds at the listed version are not read again', async () => {
+  const gateway = new EntityGateway({ entitySync: false });
+  for (const row of manySlots('main')) gateway.slots.set(row.slot, row);
+  const client = setup(gateway);
+  try {
+    client.watch(fleetQuery);
+    await flush();
+    gateway.setConnection({ connected: false });
+    await flush();
+    gateway.slots.set('s03', slot('s03', { branch: 'moved' }));
+    gateway.reconnect('epoch-2', true);
+    await flush();
+    assert.deepEqual(
+      gateway.requests('fleet.status', 'ids').map((entry) => entry.params.ids),
+      [['s03']],
+      'only the changed slot is read',
+    );
+    assert.equal(client.read(fleetQuery).status, 'ready');
+  } finally {
+    await client.close();
+  }
+});
+
+for (const field of ['checks', 'botComments', 'actionableBotComments', 'failedNames'] as const)
+  test(`N2: a pushed PR whose ${field} holds a null is read instead of applied`, async () => {
+    const gateway = new EntityGateway();
+    gateway.writePR(pr('o/r', 1));
+    const client = setup(gateway);
+    try {
+      client.watch(prQuery());
+      await flush();
+      const real = pr('o/r', 1, { title: 'real' });
+      gateway.prs.get('')!.set(prId(real), real);
+      const collection = gateway.prKey();
+      if (collection.family !== 'upstream') throw new Error('PR list key must be upstream');
+      // The digest matches the body: only the guard can refuse an element consumers dereference.
+      const unusable = JSON.parse(
+        JSON.stringify({ ...pr('o/r', 1, { title: 'bad' }), [field]: [null] }),
+      );
+      gateway.publish([
+        {
+          key: { ...collection, prKey: prId(real) },
+          changedEntity: { family: 'upstream', entity: unusable, version: versionOf(unusable) },
+        },
+        { key: collection },
+      ]);
+      await flush();
+      assert.equal(client.read(prQuery()).data?.prs[0].title, 'real');
+    } finally {
+      await client.close();
+    }
+  });
+
+test('N4: a local input change leaves the PR view stale until one versions read at its floor', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1_000 });
+  t.mock.method(performance, 'now', () => Date.now());
+  const gateway = new EntityGateway();
+  const row = pr('o/r', 1);
+  gateway.writePR(row);
+  const client = setup(gateway);
+  try {
+    client.watch(prQuery());
+    await flush();
+    assert.equal(client.read(prQuery()).status, 'ready');
+    const reads = () => gateway.requests('pr.list').length;
+    const before = reads();
+
+    // A run moved the PR to a slot: the gateway would now answer differently, and pushes nothing.
+    gateway.prs.get('')!.set(prId(row), pr('o/r', 1, { slot: 'slot-9' }));
+    gateway.publish([{ key: { family: 'runs', scope: 'farm' } }]);
+    await flush();
+    assert.equal(client.read(prQuery()).status, 'stale', 'not ready for data that may have moved');
+    assert.equal(reads(), before, 'the read waits for the floor the view rereads runs at');
+
+    t.mock.timers.tick(30_000);
+    await flush();
+    assert.equal(gateway.requests('pr.list', 'versions').length, 2, 'one versions read');
+    assert.equal(client.read(prQuery()).data?.prs[0].slot, 'slot-9');
+    assert.equal(client.read(prQuery()).status, 'ready');
+    assert.equal(gateway.requests('pr.list', 'full').length, 0);
+  } finally {
+    await client.close();
   }
 });
 

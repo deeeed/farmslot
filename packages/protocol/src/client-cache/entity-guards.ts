@@ -68,7 +68,24 @@ function isCheckSummary(value: unknown): boolean {
   );
 }
 
-/** The fields of a PR row the board, its filters and the project scopes read without a check. */
+const everyOf = (value: unknown, each: (item: unknown) => boolean) =>
+  Array.isArray(value) && value.every(each);
+const absentOr = (value: unknown, check: (present: unknown) => boolean) =>
+  value === undefined || value === null || check(value);
+const isStrings = (value: unknown) => everyOf(value, isString);
+const isCheck = (value: unknown) =>
+  isRecord(value) && isString(value.name) && isString(value.status);
+const isBotComment = (value: unknown) =>
+  isRecord(value) && isString(value.author) && isString(value.createdAt);
+const isReviewVerdict = (value: unknown) =>
+  isRecord(value) && isString(value.reviewer) && isString(value.state);
+const isReviewRequests = (value: unknown) =>
+  isRecord(value) && isStrings(value.teams) && isStrings(value.users);
+
+/**
+ * The fields of a PR row the board, its filters and the project scopes read without a check,
+ * down to the elements they dereference: a check, a bot comment, a reviewer.
+ */
 export function isPRStatusEntity(value: unknown): value is PRStatus {
   return (
     isRecord(value) &&
@@ -85,11 +102,16 @@ export function isPRStatusEntity(value: unknown): value is PRStatus {
     typeof value.anyFailed === 'boolean' &&
     typeof value.merged === 'boolean' &&
     typeof value.mergeConflict === 'boolean' &&
-    Array.isArray(value.checks) &&
-    Array.isArray(value.failedNames) &&
-    Array.isArray(value.botComments) &&
-    Array.isArray(value.actionableBotComments) &&
-    isCheckSummary(value.checkSummary)
+    everyOf(value.checks, isCheck) &&
+    isStrings(value.failedNames) &&
+    everyOf(value.botComments, isBotComment) &&
+    everyOf(value.actionableBotComments, isBotComment) &&
+    isCheckSummary(value.checkSummary) &&
+    absentOr(value.allCheckSummary, isCheckSummary) &&
+    absentOr(value.allPendingNames, isStrings) &&
+    absentOr(value.allFailedNames, isStrings) &&
+    absentOr(value.reviewVerdicts, (verdicts) => everyOf(verdicts, isReviewVerdict)) &&
+    absentOr(value.reviewRequests, isReviewRequests)
   );
 }
 
