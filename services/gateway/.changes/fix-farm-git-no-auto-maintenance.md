@@ -1,0 +1,1 @@
+- Prevent farm slot Git operations, including blind trial isolation and restoration, from starting automatic garbage collection or maintenance that can block slot preparation.

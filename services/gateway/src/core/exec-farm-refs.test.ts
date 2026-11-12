@@ -3,6 +3,7 @@ import { mock, test } from 'node:test';
 
 import { withCleanupSignal } from './cleanup-scope.js';
 import type { SlotVars } from './config.js';
+import { withFarmGitConfig } from './farm-git.js';
 
 // execOnSlot is the seam every hook goes through on a remote slot. These pin
 // its wiring to the bundle resolver (ledger F15); the resolver itself is
@@ -87,7 +88,7 @@ test('a remote hook that calls a farm script runs the resolved command', async (
   });
   assert.deepEqual(
     sent.map((call) => call.cmd),
-    ['bash ~/farmslot-node/support/h/projects/x/scripts/unlock-wallet.sh'],
+    [withFarmGitConfig('bash ~/farmslot-node/support/h/projects/x/scripts/unlock-wallet.sh')],
   );
   assert.equal(resolved[0]!.budgetMs, 60_000, 'delivery retains its configured wait budget');
 });
@@ -122,7 +123,7 @@ test('commands without a farm reference skip the resolver', async () => {
   assert.equal(resolved.length, 0);
   assert.deepEqual(
     sent.map((call) => call.cmd),
-    ['git status'],
+    [withFarmGitConfig('git status')],
   );
 });
 
