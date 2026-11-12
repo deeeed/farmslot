@@ -1,14 +1,42 @@
 import { randomUUID } from 'node:crypto';
 
+import type { MachineHealth, PRStatus, SlotEntity } from '@farmslot/protocol';
 import {
+  CHANGED_ENTITY_MAX_BYTES,
   RESOURCE_PUBLISH_INTERVAL_MS,
   type ResourceKey,
   resourceKeyId,
   type ResourceReadStamp,
 } from '@farmslot/protocol/client-cache';
-import type { ResourceChangedPayload } from '@farmslot/protocol/transport/events';
+import type { ChangedEntity, ResourceChangedPayload } from '@farmslot/protocol/transport/events';
 
 type Change = ResourceChangedPayload['changes'][number];
+
+/** A maintained entity as its owner stores it: body, content version and UTF-8 JSON size. */
+export type EntitySnapshot =
+  | { family: 'slot'; version: string; bytes: number; entity: SlotEntity }
+  | { family: 'upstream'; version: string; bytes: number; entity: PRStatus }
+  | { family: 'node'; version: string; bytes: number; entity: MachineHealth };
+
+/** Looks a maintained entity up; never derives one. */
+export type EntityProvider = (key: ResourceKey) => EntitySnapshot | undefined;
+
+function changedEntity(snapshot: EntitySnapshot, withBody: boolean): ChangedEntity {
+  switch (snapshot.family) {
+    case 'slot':
+      return withBody
+        ? { family: 'slot', version: snapshot.version, entity: snapshot.entity }
+        : { family: 'slot', version: snapshot.version };
+    case 'upstream':
+      return withBody
+        ? { family: 'upstream', version: snapshot.version, entity: snapshot.entity }
+        : { family: 'upstream', version: snapshot.version };
+    case 'node':
+      return withBody
+        ? { family: 'node', version: snapshot.version, entity: snapshot.entity }
+        : { family: 'node', version: snapshot.version };
+  }
+}
 
 interface InvalidationDeadline {
   at: number;
@@ -27,8 +55,24 @@ export class GatewayResourceRevisions {
   >();
   private publisher?: (payload: ResourceChangedPayload) => void;
   private readonly deadlines = new Map<string, InvalidationDeadline>();
-
   private readonly listeners = new Set<(payload: ResourceChangedPayload) => void>();
+
+  /** Entity-sync collection keys: their marker advances with membership or collection fields. */
+  private readonly membershipRevisions = new Map<string, number>();
+  private readonly entityCollections: Array<(key: ResourceKey) => boolean> = [];
+  private readonly entityProviders = new Map<ResourceKey['family'], EntityProvider>();
+  /** The version each per-entity key last published, so an unchanged body is not sent again. */
+  private readonly publishedVersions = new Map<string, string>();
+
+  /** One provider per family looks maintained entities up at publication; no I/O, no hashing. */
+  setEntityProvider(family: ResourceKey['family'], provider: EntityProvider): void {
+    this.entityProviders.set(family, provider);
+  }
+
+  /** Keys this predicate accepts carry their membership marker on every notification. */
+  registerEntityCollection(isCollectionKey: (key: ResourceKey) => boolean): void {
+    this.entityCollections.push(isCollectionKey);
+  }
 
   /** Internal consumers share the same coalesced changes as connected clients. */
   subscribe(listener: (payload: ResourceChangedPayload) => void): () => void {
@@ -79,6 +123,18 @@ export class GatewayResourceRevisions {
     } else queueMicrotask(() => this.publish(key.family));
   }
 
+  /** A collection's id set, order or non-entity fields changed: advance it and its marker. */
+  advanceMembership(key: ResourceKey, kind: Change['kind'] = 'updated'): void {
+    const id = resourceKeyId(key);
+    this.membershipRevisions.set(id, (this.membershipRevisions.get(id) ?? 0) + 1);
+    this.advance(key, kind);
+  }
+
+  /** The collection key's current membership marker; 0 before its first membership change. */
+  membershipRevision(key: ResourceKey): number {
+    return this.membershipRevisions.get(resourceKeyId(key)) ?? 0;
+  }
+
   /** A time-dependent projection has no write at its boundary; its owner schedules that change. */
   scheduleInvalidation(ownerId: string, key: ResourceKey, at: number | undefined): void {
     this.scheduleDeadline(`${resourceKeyId(key)}\0${ownerId}`, [key], at);
@@ -122,11 +178,37 @@ export class GatewayResourceRevisions {
   private publish(family: ResourceKey['family']): void {
     this.scheduled.delete(family);
     const changes: Change[] = [];
+    const provider = this.entityProviders.get(family);
+    /** Changed entities that fit the bound, by their place in `changes`. */
+    const bodies: Array<{ index: number; snapshot: EntitySnapshot }> = [];
     for (const [id, change] of this.pending) {
       if (change.key.family !== family) continue;
-      changes.push(change);
+      let entry: Change = change;
+      if (change.kind === 'deleted') this.publishedVersions.delete(id);
+      else {
+        const snapshot = provider?.(change.key);
+        if (snapshot) {
+          // Every client current before this change holds the last published version: a body
+          // that did not change, or exceeds the bound, is named by version only.
+          const changed = this.publishedVersions.get(id) !== snapshot.version;
+          this.publishedVersions.set(id, snapshot.version);
+          if (changed && snapshot.bytes <= CHANGED_ENTITY_MAX_BYTES)
+            bodies.push({ index: changes.length, snapshot });
+          entry = { ...change, changedEntity: changedEntity(snapshot, false) };
+        }
+      }
+      if (this.entityCollections.some((isCollection) => isCollection(change.key)))
+        entry = { ...entry, membershipRevision: this.membershipRevisions.get(id) ?? 0 };
+      changes.push(entry);
       this.pending.delete(id);
     }
+    // Bodies are for small changes. A gateway start or a bulk change would attach more than a
+    // full read returns: past the bound of one entity the publication names versions only, and
+    // a client reads by ids what it lacks.
+    const attached = bodies.reduce((sum, { snapshot }) => sum + snapshot.bytes, 0);
+    if (attached <= CHANGED_ENTITY_MAX_BYTES)
+      for (const { index, snapshot } of bodies)
+        changes[index] = { ...changes[index], changedEntity: changedEntity(snapshot, true) };
     // Before server initialization there are no client sockets to notify.
     if (changes.length) {
       const payload: ResourceChangedPayload = { version: 1, epoch: this.epoch, changes };
@@ -148,6 +230,8 @@ export class GatewayResourceRevisions {
     for (const timer of this.scheduled.values()) if (timer) clearTimeout(timer);
     this.pending.clear();
     this.scheduled.clear();
+    this.membershipRevisions.clear();
+    this.publishedVersions.clear();
   }
 }
 

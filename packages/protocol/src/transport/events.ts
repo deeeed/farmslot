@@ -17,6 +17,7 @@ import type {
   RuntimeCapabilityLifecycleEvent,
   ScriptComplete,
   ScriptOutput,
+  SlotEntity,
   SlotStatus,
   StreamFrame,
   StreamStatus,
@@ -156,12 +157,38 @@ export const Events = {
 // ─── Event payload types ───
 // Every event subscriber gets a typed payload via GatewayClient.subscribe<T>()
 
-/** Invalidation-only change notice; clients reread through existing methods. */
+/**
+ * The entity behind a per-entity key on resource.changed (ADR-071 Amendment 4). `version` is the
+ * entity's content version after this change. `entity` is present when the version changed since
+ * the key's previous notification and the bodies of the publication fit
+ * CHANGED_ENTITY_MAX_BYTES together; without it a client holding `version` has nothing to do
+ * and any other client reads the id. Bodies are untrusted: clients admit them only through the
+ * client-cache entity guards.
+ */
+export type ChangedEntity =
+  | { family: 'slot'; version: string; entity?: SlotEntity }
+  | { family: 'upstream'; version: string; entity?: PRStatus }
+  | { family: 'node'; version: string; entity?: MachineHealth };
+
+export interface ResourceChangeEntry {
+  key: ResourceKey;
+  revision: ResourceRevision;
+  kind: 'updated' | 'deleted';
+  /** Per-entity keys of entity-sync collections only; absent on deletions. */
+  changedEntity?: ChangedEntity;
+  /**
+   * Entity-sync collection keys only: advances when the collection's id set or its non-entity
+   * fields change. A client whose listing reflects this marker needs no versions read.
+   */
+  membershipRevision?: number;
+}
+
+/** Change notification; clients reread through existing methods or apply a pushed entity. */
 export interface ResourceChangedPayload {
   version: 1;
   /** Opaque gateway process identity; revisions are never compared across epochs. */
   epoch: string;
-  changes: Array<{ key: ResourceKey; revision: ResourceRevision; kind: 'updated' | 'deleted' }>;
+  changes: ResourceChangeEntry[];
 }
 
 export interface FleetUpdatedPayload {
@@ -392,9 +419,8 @@ export interface MachinePauseUpdatedPayload {
   record: MachineParkRecord;
 }
 
-export interface HelloPayload {
-  fleet: FleetStatus | null;
-}
+/** The connection is admitted. Clients read the fleet themselves; `hello` carries nothing. */
+export type HelloPayload = Record<string, never>;
 
 export interface ChatResponsePayload {
   sessionId: string;
