@@ -64,6 +64,8 @@ async function allocatorIsIdle(ownerRoot: string): Promise<boolean> {
   }
   // Cleanup receipts cover historical workspaces whose run record is no longer live.
   for (const name of await entries(path.join(ownerRoot, 'runs'))) {
+    // A tree retention detached is given-up storage: never inspected, never counted for idleness.
+    if (name.startsWith('.retention-')) continue;
     const workspace = path.join(ownerRoot, 'runs', name);
     if (
       !(await directory(workspace)) ||

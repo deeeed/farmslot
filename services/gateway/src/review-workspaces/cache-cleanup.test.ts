@@ -271,6 +271,10 @@ test('completed allocator pointers permit reclamation while unfinished receipts 
   await f.json(receipt, { state: 'ready' });
   assert.deepEqual(await cleanupReviewWorkspaceCaches(false, f.storage), []);
   await f.json(receipt, { state: 'cleaned' });
+  // A workspace retention detached is not inspected: an unfinished one changes nothing.
+  await f.json(path.join(f.ownerRoot, 'runs', '.retention-detached', 'allocation.json'), {
+    state: 'ready',
+  });
   assert.deepEqual(await cleanupReviewWorkspaceCaches(false, f.storage), [native]);
   assert(existsSync(repository));
 });

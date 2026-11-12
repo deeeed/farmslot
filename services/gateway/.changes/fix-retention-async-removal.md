@@ -1,0 +1,1 @@
+- Retention no longer freezes the gateway while it deletes a run's task pins or review workspace: each is moved aside at once and removed without blocking other requests, and an interrupted removal is finished on the next pass.
