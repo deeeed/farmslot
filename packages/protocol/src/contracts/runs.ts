@@ -136,7 +136,7 @@ export function supersedePendingResultDecisions(
 /** One label per result-decision action, for the gateway, the CLI and both clients. */
 export const RESULT_DECISION_ACTION_LABELS: Record<ResultDecisionActionId, string> = {
   'send-back': 'Send back for another fix',
-  'accept-result': 'Accept',
+  'accept-result': 'Accept and close without publishing',
   'close-result': 'Close',
 };
 

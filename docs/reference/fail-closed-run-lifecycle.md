@@ -593,16 +593,31 @@ Acknowledging an output snapshot MUST retain a pending close-only action for tha
 snapshot. Recapture of the same bytes keeps it; changed bytes require a new review.
 Acknowledgement does not approve proof, publish work or resume execution.
 
+## Result decisions
+
 A `needs-decision` run holds one result decision: send back (needs a review round,
-never grants one; after a refused completion, its completion replay), accept
-(artifact-only runs after REVIEW; the named `accept-result` transition; a written
-reason) and close (the named `close-result` transition). Each records a
-result-decision receipt; `metrics.outcome` is unchanged. While the run is held, its
+never grants one; after a refused completion, its completion replay),
+"Accept and close without publishing" (`accept-result`, requires a written
+reason) and close (`close-result`). Acceptance is available after REVIEW on
+artifact-only runs or when review budget exhaustion caused the hold. Other
+publishing REVIEW holds and refused completion prerequisites cannot be accepted.
+Acceptance settles the run as done without publishing or advancing to its
+publication gate. Each action records a result-decision receipt;
+`metrics.outcome` is unchanged. While the run is held, its
 output review keeps its snapshot but its actions MUST be refused; changed bytes
 re-present the result decision on the new snapshot and an action on the old one is
 refused. `accept-result` resolves the output review as reviewed and `close-result`
 as `close-run`, keeping no close-only action. Cancel MUST refuse a held run; the
 named discard performs Close.
+
+A human publication gate offers "Accept Review Findings and Publish" only when
+its prerequisites allow it. That approval requires a reason and the displayed
+findings digest and records the accepted findings, package head and operator.
+
+Review summary counts use the prepared head. A qualifying pass for that package
+supersedes issues completed earlier, regardless of source array order. Unknown
+or equal completion times retain their findings. Stored verdicts and publication
+prerequisites keep their existing meaning.
 
 ## Public surface
 
