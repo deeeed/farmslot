@@ -128,12 +128,17 @@ function stringEntriesOutput(value: unknown): unknown {
     : undefined;
 }
 
+/** A recorded object whose values are read by key. */
+function isKeyed(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
 /** A ci-watch check summary: only its counts. */
 function checkSummaryOutput(value: unknown): unknown {
-  if (!value || typeof value !== 'object') return undefined;
+  if (!isKeyed(value)) return undefined;
   const counts: Record<string, number> = {};
   for (const key of ['passed', 'failed', 'pending', 'skipped', 'total']) {
-    const count: unknown = Reflect.get(value, key);
+    const count = value[key];
     if (typeof count === 'number') counts[key] = count;
   }
   return counts;
@@ -141,10 +146,8 @@ function checkSummaryOutput(value: unknown): unknown {
 
 /** A ci-watch fix's progress: completed and total steps, and the current step's label. */
 function fixProgressOutput(value: unknown): unknown {
-  if (!value || typeof value !== 'object') return undefined;
-  const completed: unknown = Reflect.get(value, 'completed');
-  const total: unknown = Reflect.get(value, 'total');
-  const currentLabel: unknown = Reflect.get(value, 'currentLabel');
+  if (!isKeyed(value)) return undefined;
+  const { completed, total, currentLabel } = value;
   return {
     ...(typeof completed === 'number' ? { completed } : {}),
     ...(typeof total === 'number' ? { total } : {}),
@@ -162,45 +165,57 @@ function presenceOutput(value: unknown): unknown {
   return scalar !== undefined ? scalar : value === undefined ? undefined : {};
 }
 
-const keepOutput = (value: unknown) => value;
-
 /**
- * Step output keys list surfaces read, each in the bounded shape those views read:
- * slot resolution and run activity (dispatch keys); the mini pipeline's tone and step
- * tooltip (`verdict`, `reviewVerdict`, `maxRetriesExhausted`, `packageHash`,
- * `reviewSatisfied`, `resolvedAction`, `publicationStatus`); the CI watch line and the
- * CI-fix checklist (ci-watch keys); the active and split-view filters, which test only
- * whether a completion prerequisite was refused (`gatePrerequisiteRefusal`).
+ * One step output as a list row carries it, or undefined when no list surface reads the key.
+ * Kept keys, each in the bounded shape its views read: slot resolution and run activity
+ * (dispatch keys); the mini pipeline's tone and step tooltip (`verdict`, `reviewVerdict`,
+ * `maxRetriesExhausted`, `packageHash`, `reviewSatisfied`, `resolvedAction`,
+ * `publicationStatus`); the CI watch line and the CI-fix checklist (ci-watch keys); the
+ * active and split-view filters, which test only whether a completion prerequisite was
+ * refused (`gatePrerequisiteRefusal`).
+ *
+ * Each projection is called by name, so the authorization guard can follow run.list's
+ * call graph through this function.
  */
-const STEP_OUTPUT_PROJECTIONS: Record<string, (value: unknown) => unknown> = {
-  awaitingOperator: keepOutput,
-  reason: keepOutput,
-  selectedSlot: keepOutput,
-  runner: keepOutput,
-  model: keepOutput,
-  templateName: keepOutput,
-  gatePrerequisiteDiscardedAt: keepOutput,
-  gatePrerequisiteRefusal: presenceOutput,
-  promptDeliveryUncertain: keepOutput,
-  nativeWorkerOperationUncertain: keepOutput,
-  verdict: scalarOutput,
-  reviewVerdict: scalarOutput,
-  maxRetriesExhausted: scalarOutput,
-  packageHash: scalarOutput,
-  reviewSatisfied: scalarOutput,
-  resolvedAction: scalarOutput,
-  publicationStatus: scalarOutput,
-  phase: scalarOutput,
-  fixInProgress: scalarOutput,
-  nextPollAt: scalarOutput,
-  progressTimeoutAt: scalarOutput,
-  totalTimeoutAt: scalarOutput,
-  actionableBotCommentCount: scalarOutput,
-  checkSummary: checkSummaryOutput,
-  failedNames: stringEntriesOutput,
-  failedChecks: stringEntriesOutput,
-  fixProgress: fixProgressOutput,
-};
+function listStepOutput(key: string, value: unknown): unknown {
+  switch (key) {
+    case 'awaitingOperator':
+    case 'reason':
+    case 'selectedSlot':
+    case 'runner':
+    case 'model':
+    case 'templateName':
+    case 'gatePrerequisiteDiscardedAt':
+    case 'promptDeliveryUncertain':
+    case 'nativeWorkerOperationUncertain':
+      return value;
+    case 'gatePrerequisiteRefusal':
+      return presenceOutput(value);
+    case 'verdict':
+    case 'reviewVerdict':
+    case 'maxRetriesExhausted':
+    case 'packageHash':
+    case 'reviewSatisfied':
+    case 'resolvedAction':
+    case 'publicationStatus':
+    case 'phase':
+    case 'fixInProgress':
+    case 'nextPollAt':
+    case 'progressTimeoutAt':
+    case 'totalTimeoutAt':
+    case 'actionableBotCommentCount':
+      return scalarOutput(value);
+    case 'checkSummary':
+      return checkSummaryOutput(value);
+    case 'failedNames':
+    case 'failedChecks':
+      return stringEntriesOutput(value);
+    case 'fixProgress':
+      return fixProgressOutput(value);
+    default:
+      return undefined;
+  }
+}
 
 /** Whether the list form of a step's outputs left out or reshaped any value. */
 function stepOutputsLost(
@@ -213,15 +228,14 @@ function stepOutputsLost(
   );
 }
 
-/** A step's outputs as a list row carries them (see STEP_OUTPUT_PROJECTIONS). */
+/** A step's outputs as a list row carries them (see listStepOutput). */
 export function listStepOutputs(
   outputs: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
   if (!outputs) return outputs;
   const slim: Record<string, unknown> = {};
   for (const key of Object.keys(outputs)) {
-    const project = STEP_OUTPUT_PROJECTIONS[key];
-    const value = project ? project(outputs[key]) : undefined;
+    const value = listStepOutput(key, outputs[key]);
     if (value !== undefined) slim[key] = value;
   }
   return slim;
