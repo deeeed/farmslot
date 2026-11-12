@@ -19,10 +19,12 @@ import type {
 } from '@farmslot/protocol';
 import {
   buildComparisonVariant,
+  deriveRunLifecycleView,
   isTerminalRunStatus,
   resolveRunSlotId,
   shouldAcceptTaskProgressUpdate as shouldAcceptTaskProgressForActiveChecklist,
 } from '@farmslot/protocol';
+import { runActivityView } from '@farmslot/review-dispatch';
 
 import { readFailureText } from '../../utils/resource-read-status.js';
 import { artifactLightboxItem } from '../shared/artifact-lightbox-model.js';
@@ -34,6 +36,27 @@ import { collectRunEvidenceArtifacts } from './run-utils.js';
 
 function recordValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+}
+
+/** What Run Detail's header shows: values a run.list row carries, so a held row paints it. */
+export interface RunDetailHeaderModel {
+  ticketOrPr: string;
+  /** The current activity ("reviewing · round 2"); absent when the status says it. */
+  activityLabel: string | undefined;
+  status: RunListRow['status'];
+  disposition: RunListRow['metrics']['disposition'];
+  summary: string | null;
+}
+
+/** The header from a run.list row or a full run: the same values from either. */
+export function runDetailHeaderModel(run: RunListRow): RunDetailHeaderModel {
+  return {
+    ticketOrPr: run.ticketOrPr,
+    activityLabel: runActivityView(run)?.label ?? deriveRunLifecycleView(run).activityLabel,
+    status: run.status,
+    disposition: run.metrics.disposition,
+    summary: run.summary ?? null,
+  };
 }
 
 export function reviewTerminalUnavailableReason(

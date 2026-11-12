@@ -29,6 +29,8 @@ export abstract class RunDetailState extends LitElement {
     | ((path: string) => Promise<string>)
     | null = null;
   @state() run: Run | null = null;
+  /** The run's list row, shown as the header until run.get answers. */
+  @state() standInRow: RunListRow | null = null;
   @state() prStatus: PRStatus | null = null;
   @state() siblings: RunListRow[] = [];
   @state() taskProgress: TaskProgressStructured | null = null;

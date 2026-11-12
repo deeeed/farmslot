@@ -1,20 +1,19 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { createEvidenceReviewModel, runEvidencePending } from '@farmslot/adapter-sdk/evidence';
 import {
-  deriveRunLifecycleView,
   extractRunArtifactManifest,
-  isSlotFreedByPark,
   isTerminalRunStatus,
   liveGateParkView,
   Methods,
   type RecipeRunArtifactGroup,
   reviewChainForRun,
   runHasTrimmedDetail,
+  type RunListRow,
   type RunStep,
   type TaskProgressResult,
   viewTextField,
@@ -23,7 +22,6 @@ import { resourceQuery } from '@farmslot/protocol/client-cache';
 import {
   humanGateBlockingReason,
   pendingOutputReview,
-  runActivityView,
   runResultsSummary,
   runTerminalView,
 } from '@farmslot/review-dispatch';
@@ -31,7 +29,7 @@ import {
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunLinkedTickets } from '../../components/RunLinkedTickets';
 import { RunOutputReportViewer } from '../../components/RunOutputReportViewer';
-import { RunPipelineFull } from '../../components/RunPipeline';
+import { RunPipelineFull, RunPipelineMini } from '../../components/RunPipeline';
 import { RunTitle } from '../../components/RunTitle';
 import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
 import { TaskProgressPanel } from '../../components/TaskProgressPanel';
@@ -105,6 +103,7 @@ import { RunDetailSkeleton } from './components/RunDetailSkeleton';
 import { RunPosturePanel } from './components/RunPosturePanel';
 import { RunResultsCard } from './components/RunResultsCard';
 import { runDetailStyles as styles } from './styles/run-detail.styles';
+import { type RunDetailHeaderModel, runDetailHeaderModel } from './run-detail-header';
 import { retryRunDetailReads, runDetailReadObservations } from './run-detail-reads';
 import {
   assertRunEvidenceReady,
@@ -153,7 +152,7 @@ export default function RunDetailScreen() {
   const requestedRecipeRunId = Array.isArray(recipeRun)
     ? (recipeRun[0] ?? null)
     : (recipeRun ?? null);
-  const { runQuery, runObservation, runActionable, listObservation, fromList, run } =
+  const { runQuery, runObservation, runActionable, listObservation, fromList, run, row } =
     useRunDetailRun(resolvedRunId);
   const outputReview = useMemo(() => pendingOutputReview(run), [run]);
   const recipeQuery = useMemo(
@@ -406,6 +405,39 @@ export default function RunDetailScreen() {
     [recipeRuns, run, selectedRecipeRunId, evidenceModel],
   );
 
+  // No run.get yet: the list row paints the header at once; the sections wait for the detail.
+  if (!run && row) {
+    const standIn = runDetailHeaderModel(row);
+    return (
+      <View style={baseStyles.container}>
+        <Animated.ScrollView
+          testID="companion-screen-run-detail"
+          collapsable={false}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: styles.scrollContent.paddingBottom + insets.bottom },
+          ]}
+        >
+          <View style={styles.headerCard}>
+            <RunDetailHeaderLines
+              header={standIn}
+              row={row}
+              linkedTickets={<RunLinkedTickets key={row.id} run={row} disabled />}
+            />
+            <RunDetailSlotLine header={standIn} />
+          </View>
+          <RunPipelineMini run={row} />
+          <RunDetailSkeleton
+            error={
+              error ?? (connectionStatus !== 'connected' ? 'Connect to the gateway' : undefined)
+            }
+            retry={() => void retryRun()}
+          />
+        </Animated.ScrollView>
+      </View>
+    );
+  }
+
   if (!run)
     return (
       <View style={[baseStyles.container, { paddingBottom: insets.bottom }]}>
@@ -419,16 +451,7 @@ export default function RunDetailScreen() {
       </View>
     );
 
-  const lifecycle = deriveRunLifecycleView(run);
-  const statusColor =
-    STATUS_COLORS[run.status] ??
-    {
-      ok: colors.statusOk,
-      fail: colors.statusFail,
-      warn: colors.statusWarn,
-      running: colors.lifecycleWorking,
-      muted: colors.textMuted,
-    }[lifecycle.tone];
+  const header = runDetailHeaderModel(run);
   const replayAllowed =
     isTerminalRunStatus(run.status) &&
     !run.engineState?.operatorForceCompleted &&
@@ -572,36 +595,32 @@ export default function RunDetailScreen() {
         ]}
       >
         <View style={styles.headerCard}>
-          <View style={styles.row}>
-            <View style={[styles.flowBadge, { backgroundColor: colors.accent + '30' }]}>
-              <Text style={[styles.flowText, { color: colors.accent }]}>{run.flowType}</Text>
-            </View>
-            <View style={[styles.statusBadge, { backgroundColor: statusColor + '30' }]}>
-              <Text style={[styles.statusText, { color: statusColor }]} numberOfLines={1}>
-                {runActivityView(run)?.label ?? lifecycle.activityLabel ?? lifecycle.label}
-              </Text>
-            </View>
-          </View>
-          <Text style={styles.ticketText}>{run.ticketOrPr}</Text>
-          <RunLinkedTickets
-            key={run.id}
-            run={run}
-            disabled={runObservation.status !== 'ready' || connectionStatus !== 'connected'}
-            onSave={
-              client
-                ? async (linkedTicketRefs) => {
-                    if (!currentFarmConnection(client)())
-                      throw new Error('Wait for the current connection before editing tickets.');
-                    assertNativeRunReady(run.id, run);
-                    await client.request(Methods.RUN_LINKED_TICKETS_SET, {
-                      runId: run.id,
-                      linkedTicketRefs,
-                    });
-                  }
-                : undefined
+          <RunDetailHeaderLines
+            header={header}
+            row={run}
+            linkedTickets={
+              <RunLinkedTickets
+                key={run.id}
+                run={run}
+                disabled={runObservation.status !== 'ready' || connectionStatus !== 'connected'}
+                onSave={
+                  client
+                    ? async (linkedTicketRefs) => {
+                        if (!currentFarmConnection(client)())
+                          throw new Error(
+                            'Wait for the current connection before editing tickets.',
+                          );
+                        assertNativeRunReady(run.id, run);
+                        await client.request(Methods.RUN_LINKED_TICKETS_SET, {
+                          runId: run.id,
+                          linkedTicketRefs,
+                        });
+                      }
+                    : undefined
+                }
+              />
             }
           />
-          {run.summary && <RunTitle style={baseStyles.textSecondary} title={run.summary} />}
           <CockpitTile
             testID="companion-run-open-terminal"
             label={terminal.label}
@@ -620,25 +639,7 @@ export default function RunDetailScreen() {
               QA profile: {run.qa.profile.title} ({run.qa.profile.id})
             </Text>
           )}
-          <View style={[styles.row, { marginTop: spacing.lg }]}>
-            {run.slotId && (
-              <Text style={baseStyles.textMuted} testID="companion-run-detail-slot">
-                Slot: {run.slotId}
-                {/*
-                  `isSlotFreedByPark` ignores `phase`, and cancel skips slot
-                  release for a park-freed run, so this marker outlives the run.
-                  On a terminal run the release is still a fact but no restore
-                  is coming, and the wording must not imply one.
-                */}
-                {isSlotFreedByPark(run)
-                  ? isTerminalRunStatus(run.status)
-                    ? ' (released to dispatch; no restore pending)'
-                    : ' (freed for dispatch)'
-                  : ''}
-              </Text>
-            )}
-            <Text style={baseStyles.textMuted}>{formatDuration(run.metrics?.durationMs)}</Text>
-          </View>
+          <RunDetailSlotLine header={header} />
           {cancelledSlot ? (
             <CancelledRunSlotRelease
               hold={cancelledSlot.hold}
@@ -1190,6 +1191,77 @@ export default function RunDetailScreen() {
         onOpenEvidence={openAcceptanceEvidence}
         onOpenArtifact={(path) => openRunEvidenceArtifact(path, DECISION_EVIDENCE_RECIPE_RUN_PARAM)}
       />
+    </View>
+  );
+}
+
+/** The status badge's colour: the status's own, else its lifecycle tone's. */
+function headerStatusColor(header: RunDetailHeaderModel): string {
+  return (
+    STATUS_COLORS[header.status] ??
+    {
+      ok: colors.statusOk,
+      fail: colors.statusFail,
+      warn: colors.statusWarn,
+      running: colors.lifecycleWorking,
+      muted: colors.textMuted,
+    }[header.tone]
+  );
+}
+
+/** The header's first lines: flow, status, ref, linked tickets and title, from row or detail. */
+function RunDetailHeaderLines({
+  header,
+  row,
+  linkedTickets,
+}: {
+  header: RunDetailHeaderModel;
+  row: RunListRow;
+  linkedTickets: ReactNode;
+}) {
+  const statusColor = headerStatusColor(header);
+  return (
+    <>
+      <View style={styles.row}>
+        <View style={[styles.flowBadge, { backgroundColor: colors.accent + '30' }]}>
+          <Text style={[styles.flowText, { color: colors.accent }]}>{header.flowType}</Text>
+        </View>
+        <View style={[styles.statusBadge, { backgroundColor: statusColor + '30' }]}>
+          <Text style={[styles.statusText, { color: statusColor }]} numberOfLines={1}>
+            {header.statusLabel}
+          </Text>
+        </View>
+      </View>
+      <Text style={styles.ticketText}>{header.ticketOrPr}</Text>
+      {linkedTickets}
+      {header.summary ? (
+        <RunTitle key={row.id} style={baseStyles.textSecondary} title={header.summary} />
+      ) : null}
+    </>
+  );
+}
+
+/** The header's slot and duration line. */
+function RunDetailSlotLine({ header }: { header: RunDetailHeaderModel }) {
+  return (
+    <View style={[styles.row, { marginTop: spacing.lg }]}>
+      {header.slotId && (
+        <Text style={baseStyles.textMuted} testID="companion-run-detail-slot">
+          Slot: {header.slotId}
+          {/*
+            `isSlotFreedByPark` ignores `phase`, and cancel skips slot
+            release for a park-freed run, so this marker outlives the run.
+            On a terminal run the release is still a fact but no restore
+            is coming, and the wording must not imply one.
+          */}
+          {header.slotFreedByPark
+            ? header.terminal
+              ? ' (released to dispatch; no restore pending)'
+              : ' (freed for dispatch)'
+            : ''}
+        </Text>
+      )}
+      <Text style={baseStyles.textMuted}>{formatDuration(header.durationMs)}</Text>
     </View>
   );
 }

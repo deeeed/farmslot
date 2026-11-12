@@ -164,6 +164,7 @@ function context(): RunDetailViewContext {
     selectedStep: null,
     selectedStepProgress: null,
     _hydrating: false,
+    standInRow: null,
     _bootstrapFailed: false,
     _connectionStale: false,
     _directRunRefreshing: false,

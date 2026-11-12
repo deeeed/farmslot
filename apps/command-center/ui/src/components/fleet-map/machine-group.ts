@@ -22,6 +22,7 @@ import './slot-card.js';
 import '../shared/cancelled-run-slot-release.js';
 import './machine-health-bar.js';
 import '../runs/run-pipeline.js';
+import '../runs/run-pipeline-mini.js';
 
 import { getProjectSlotTrackingConfigs } from '../../state.js';
 import {
@@ -70,7 +71,7 @@ export class MachineGroup extends LitElement {
   /** False while the gateway is disconnected; Retry and Refresh need a live probe. */
   @property({ type: Boolean }) providerAccountsActionable = true;
   @state() private expandedSlotId: string | null = null;
-  /** The expanded slot's run as run.get stores it: the full pipeline renders detail, not a list row. */
+  /** The expanded slot's run as run.get stores it: the full pipeline renders detail; the row's mini pipeline shows until it lands. */
   private readonly expandedRunDetail = new ResourceQueryController<RunGetResult>(this, () =>
     this.requestUpdate(),
   );
@@ -199,10 +200,6 @@ export class MachineGroup extends LitElement {
       flex-shrink: 0;
     }
     .run-panel-elapsed {
-      color: ${unsafeCSS(colors.textMuted)};
-      font-size: ${unsafeCSS(fonts.sizeXs)};
-    }
-    .run-panel-pending {
       color: ${unsafeCSS(colors.textMuted)};
       font-size: ${unsafeCSS(fonts.sizeXs)};
     }
@@ -1291,7 +1288,12 @@ ${deployHint}"
         </div>
         ${detail?.id === run.id
           ? html`<run-pipeline .run=${detail} .taskProgress=${tp}></run-pipeline>`
-          : html`<div class="run-panel-pending">Loading pipeline…</div>`}
+          : html`<run-pipeline-mini
+              .run=${run}
+              .steps=${run.steps}
+              .flowType=${run.flowType}
+              .taskProgress=${tp}
+            ></run-pipeline-mini>`}
       </div>
     `;
   }

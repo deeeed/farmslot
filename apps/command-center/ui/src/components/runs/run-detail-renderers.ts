@@ -9,7 +9,6 @@ import {
   canActivateRunOnSlot,
   type CancelledRunSlotChoices,
   type CiCheckUpdatedPayload,
-  deriveRunLifecycleView,
   type DevInteractiveCompletionAction,
   type FamilyObservabilityArtifact,
   isHeldForResultDecision,
@@ -33,12 +32,7 @@ import {
   runRecoveryHints,
   type TaskProgressStructured,
 } from '@farmslot/protocol';
-import {
-  reviewHistoryView,
-  runActivityView,
-  runResultsSummary,
-  runTerminalView,
-} from '@farmslot/review-dispatch';
+import { reviewHistoryView, runResultsSummary, runTerminalView } from '@farmslot/review-dispatch';
 
 import '../slot-view/worker-session-history.js';
 import './review-history-panel.js';
@@ -78,6 +72,7 @@ import {
   isInteractiveCompletionAwaitingOperator,
   reviewTerminalUnavailableReason,
   RUN_OUTPUT_SCOPE,
+  runDetailHeaderModel,
 } from './run-detail-model.js';
 import type { RunDetailPanelId } from './run-detail-panels.js';
 import { runInventoryHashFromDetail } from './run-detail-url-state.js';
@@ -130,6 +125,8 @@ export interface RunDetailViewContext {
   selectedStep: Run['steps'][number] | null;
   selectedStepProgress: TaskProgressStructured | null;
   _hydrating: boolean;
+  /** The run's list row, while run.get has not answered: it paints the header. */
+  standInRow: RunListRow | null;
   _bootstrapFailed: boolean;
   _connectionStale: boolean;
   _directRunRefreshing: boolean;
@@ -579,6 +576,10 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         &lt; Back to runs
       </div>`;
   if (!ctx.run) {
+    if (ctx._hydrating && ctx.standInRow) {
+      return html` ${backToRuns} ${renderStandInHeader(ctx.standInRow)}
+      ${renderRunDetailSkeleton('', false)}`;
+    }
     if (ctx._hydrating) {
       return html` ${backToRuns} ${renderRunDetailSkeleton()} `;
     }
@@ -598,7 +599,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   }
   const r = ctx.run;
   const sc = runStatusColor(r.status);
-  const activityLabel = runActivityView(r)?.label ?? deriveRunLifecycleView(r).activityLabel;
+  const activityLabel = runDetailHeaderModel(r).activityLabel;
   const disposition = dispositionLabel(r.metrics.disposition);
   const suggestedComparePartner = pickComparisonPartner(r, ctx.siblings);
   // ctx.siblings excludes the current run, so add it back when it is itself a
@@ -1553,17 +1554,57 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   `;
 }
 
-export function renderRunDetailSkeleton(error = '') {
+/**
+ * The header a run.list row paints while run.get loads: the title, status, tags and mini
+ * pipeline the full header shows in the same places. Actions wait for the detail.
+ */
+function renderStandInHeader(row: RunListRow) {
+  const header = runDetailHeaderModel(row);
+  const sc = runStatusColor(header.status);
+  const disposition = dispositionLabel(header.disposition);
+  return html`
+    <div class="header">
+      <h2>${header.ticketOrPr}</h2>
+      <span
+        class="status-badge ${header.activityLabel ? 'run-activity-label' : ''}"
+        style="border:1px solid ${sc}; color:${sc}"
+        title=${header.activityLabel ?? nothing}
+        >${header.activityLabel ?? header.status}</span
+      >
+      ${disposition
+        ? html`<span
+            class="status-badge"
+            style="border:1px solid ${dispositionColor(
+              header.disposition,
+            )}; color:${dispositionColor(header.disposition)}"
+            >${disposition}</span
+          >`
+        : nothing}
+      <run-tag-editor kind="tickets" .disabled=${true} .run=${row}></run-tag-editor>
+      <run-tag-editor .tags=${normalizeRunTags(row.tags)} .disabled=${true}></run-tag-editor>
+    </div>
+    ${header.summary ? html`${renderRunTitle(row, 'header-summary')}` : nothing}
+    <run-pipeline-mini
+      .run=${row}
+      .steps=${row.steps}
+      .flowType=${row.flowType}
+    ></run-pipeline-mini>
+  `;
+}
+
+export function renderRunDetailSkeleton(error = '', withHeader = true) {
   return html`<farm-hydrating
     message="Run details"
     .error=${error}
     @retry=${() => location.reload()}
     ><div style="display:grid;gap:16px;min-height:520px">
-      <farm-skeleton width="65%" height="32"></farm-skeleton>
-      <div style="display:flex;gap:12px">
-        <farm-skeleton kind="button" width="120px"></farm-skeleton
-        ><farm-skeleton kind="button" width="144px"></farm-skeleton>
-      </div>
+      ${withHeader
+        ? html`<farm-skeleton width="65%" height="32"></farm-skeleton>
+            <div style="display:flex;gap:12px">
+              <farm-skeleton kind="button" width="120px"></farm-skeleton
+              ><farm-skeleton kind="button" width="144px"></farm-skeleton>
+            </div>`
+        : nothing}
       <farm-skeleton kind="block" height="120"></farm-skeleton
       ><farm-skeleton width="35%"></farm-skeleton>${Array.from(
         { length: 5 },
