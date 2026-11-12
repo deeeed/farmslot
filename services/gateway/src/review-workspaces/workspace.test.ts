@@ -4,7 +4,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   readlinkSync,
@@ -12,13 +11,13 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
 
 import type { ReviewWorkspaceAdmission } from './admission.js';
+import { workspaceGitFixture as fixture } from './workspace-git.test-support.js';
 
 const runs = new Map<string, Run>();
 const persisted: Run[] = [];
@@ -30,6 +29,11 @@ let nativeStateRoot = '';
 mock.module('../runs/store.js', {
   namedExports: {
     getRun: (id: string) => runs.get(id),
+    getAllRuns: () => [...runs.values()],
+    getRunWithArchived: async (id: string) => runs.get(id),
+    claimReviewWorkspaceTransfer: () => {
+      throw new Error('Unexpected workspace transfer');
+    },
     updateRun: (id: string, patch: Partial<Run>) => Object.assign(runs.get(id)!, patch),
     persistRunNow: async (run: Run) => {
       persisted.push(structuredClone(run));
@@ -69,76 +73,6 @@ mock.module('../fleet/node-rpc.js', {
 process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'owner';
 const { REVIEW_WORKSPACE_SCRIPT, allocateReviewWorkspace, cleanupReviewWorkspace } =
   await import('./workspace.js');
-
-function fixture(t: { after: (fn: () => void) => void }) {
-  const directory = mkdtempSync(path.join(tmpdir(), 'review-workspace-git-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const source = path.join(directory, 'upstream');
-  const root = path.join(directory, 'managed');
-  mkdirSync(source);
-  const git = (...args: string[]) =>
-    execFileSync('git', args, {
-      cwd: source,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim();
-  git('init');
-  writeFileSync(path.join(source, 'source.txt'), 'base\n');
-  writeFileSync(path.join(source, '.gitignore'), 'ignored.tmp\n.agent/\n');
-  git('add', '.');
-  git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-m', 'base');
-  const baseSha = git('rev-parse', 'HEAD');
-  writeFileSync(path.join(source, 'source.txt'), 'head\n');
-  git('add', '.');
-  git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-m', 'head');
-  const headSha = git('rev-parse', 'HEAD');
-  const identity = {
-    runId: 'review-run',
-    workspaceId: randomUUID(),
-    owner: 'owner',
-    project: 'farm',
-    machine: 'machine',
-    executionNodeId: 'local',
-    repositoryUrl: source,
-    headSha,
-    baseSha,
-  };
-  const workspace = path.join(root, 'runs', identity.workspaceId);
-  const cacheKey = createHash('sha256')
-    .update(
-      JSON.stringify({
-        owner: identity.owner,
-        project: identity.project,
-        repositoryUrl: identity.repositoryUrl,
-      }),
-    )
-    .digest('hex');
-  const cache = path.join(root, 'repositories', cacheKey);
-  const execute = (
-    action = 'allocate',
-    changes: Record<string, unknown> = {},
-    allowCancelled = false,
-    extra: Record<string, unknown> = {},
-  ) =>
-    JSON.parse(
-      execFileSync(
-        process.execPath,
-        [
-          '-e',
-          REVIEW_WORKSPACE_SCRIPT,
-          JSON.stringify({
-            root,
-            identity: { ...identity, ...changes },
-            action,
-            allowCancelled,
-            ...extra,
-          }),
-        ],
-        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-      ),
-    );
-  return { directory, source, root, git, identity, workspace, cache, cacheKey, execute };
-}
 
 test('cancellation before allocation is durable, idempotent and cleanable without a cache', (t) => {
   const f = fixture(t);

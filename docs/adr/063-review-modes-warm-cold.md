@@ -664,7 +664,7 @@ requests reject this policy.
 
 ## Amendment 13: adapter-owned WARM continuation, 2026-11-12
 
-**Status:** Proposed.
+**Status:** Accepted, approved 2026-11-12.
 
 ### Decision
 

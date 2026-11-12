@@ -8,10 +8,7 @@ import {
 import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { primaryReviewedHeadForSession } from '../review/session-mode.js';
-import {
-  runnerRetainedSessionHandoff,
-  runnerSupportsNativeTaskReuse,
-} from '../runners/registry.js';
+import { runnerSupportsSessionContinuation } from '../runners/registry.js';
 import {
   deliverPromptToRetainedRunnerSession,
   type RunnerSessionReactivationOptions,
@@ -33,6 +30,7 @@ export type RepeatReviewResumePlan =
   | { kind: 'fresh' }
   | { kind: 'resume'; binding: RepeatReviewResumeBinding }
   | { kind: 'native-resume'; binding: Omit<RepeatReviewResumeBinding, 'runnerSessionPath'> }
+  | { kind: 'delta-cold'; trace: ReviewSessionTrace }
   | { kind: 'refused'; reason: ReviewSessionRefusalReason };
 
 export type RepeatReviewResumeAttempt =
@@ -78,13 +76,6 @@ export function resolveRepeatReviewResumePlan(
   const reviewId = context.session?.reviewId;
   if (!reviewId) return { kind: 'refused', reason: 'missing-session' };
   const native = current.transport === 'native';
-  if (
-    native
-      ? !runnerSupportsNativeTaskReuse(runner)
-      : runnerRetainedSessionHandoff(runner) !== 'resume-with-prompt'
-  ) {
-    return { kind: 'refused', reason: 'unsupported-runner' };
-  }
   if (
     !prior ||
     prior.id !== context.priorRunId ||
@@ -208,6 +199,27 @@ export function resolveRepeatReviewResumePlan(
     );
   if (!reviewedHead || !context.currentHeadSha || !headProvenance)
     return { kind: 'refused', reason: 'missing-session' };
+  if (!runnerSupportsSessionContinuation(runner, native ? 'native' : 'tmux')) {
+    return {
+      kind: 'delta-cold',
+      trace: {
+        mode: 'cold',
+        continuity: 'fresh',
+        reviewId,
+        priorRunId: prior.id,
+        priorSessionId: reviewer.runnerSessionId,
+        repository: context.repository,
+        prNumber: context.prNumber,
+        lastReviewedHeadSha: reviewedHead,
+        fallback: {
+          reason: 'session-resume-unsupported',
+          detail:
+            'The runner cannot continue its saved session; reviewing the retained delta in a fresh session.',
+          comparedRanges: [`${reviewedHead}..${context.currentHeadSha}`],
+        },
+      },
+    };
+  }
   if (native)
     return {
       kind: 'native-resume',

@@ -502,13 +502,29 @@ range. The successor becomes the retained session for that lineage.
 
 Selection, subject freezing, task generation and result ingestion MUST preserve
 that delta scope even though the effective mode is COLD. Ownership generation,
-project, repository/PR, lineage, runner/model/effort, ancestry, retained workspace,
-busy-session, capacity and publication fences MUST still pass. Missing or foreign
-identity MUST NOT use the unsupported-adapter fallback. Expiry retains its
+project, repository/PR, lineage, runner/model/effort, ancestry, busy-session,
+capacity and publication fences MUST still pass. A retained checkout is required
+only when resuming it; unsupported continuation uses a newly allocated checkout.
+Missing or foreign lineage identity MUST NOT use the unsupported-adapter fallback.
+A missing saved conversation is distinct from missing lineage identity and keeps
+its existing delta fallback. Unsupported capability MUST NOT emit an
+`unsupported-runner` refusal; that reason remains readable in historical traces.
+This fallback uses normal verdict accounting and grants no refund. Expiry retains its
 existing full-contribution COLD contract.
+
+The gateway records `ReviewWorkspaceBinding.transferredTo` on the predecessor
+before moving execution authority, including archived predecessors. It records
+`continuedFrom` and a separate task path on the successor before node allocation.
+The node verifies the former immutable source identity and stop receipt before
+advancing that same checkout. Retry reuses this transfer; prior task artifacts
+are preserved. A transferred predecessor cannot replay execution or reclaim the
+successor's source. The current owner alone starts a new retention period.
 
 ### Public surface
 
+`ReviewWorkspaceBinding` in `@farmslot/protocol` adds optional `continuedFrom`
+and `transferredTo` receipts for gateway allocation, replay and retention readers.
+Existing bindings omit both. These additive fields grant no caller authority.
 `ReviewSessionRefusalReason` in `@farmslot/protocol` adds
 `session-resume-unsupported` for the existing fallback trace, consumed by the
 review result and gate displays. No command, flag, RPC or harness extension is added.

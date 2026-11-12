@@ -213,6 +213,18 @@ export interface NativeRunnerChoices {
   defaultEffort?: string | null;
 }
 
+/** Exact saved-conversation continuation; active-process handoff remains a separate operation. */
+export interface RunnerSessionContinuation {
+  /** Native protocol adapter implements exact saved-session loading. */
+  native: boolean;
+  terminal: {
+    /** Resume argv ending with the exact saved session ID. */
+    args: (sessionId: string) => string[];
+    workspace: 'retained' | 'current';
+    reservation?: 'create-chat';
+  } | null;
+}
+
 export interface RunnerDefinition {
   /** Hook destination for a read-only terminal review, shared by launch and observation. */
   reviewObservabilityDir?: (taskDir: string) => string;
@@ -235,8 +247,8 @@ export interface RunnerDefinition {
   /** Finite workers need no terminal settling windows. */
   teardownSettleMs?: number;
   feedbackTiming?: RunnerFeedbackTiming;
-  /** Empty-session reservation and explicit resume are available for managed worktree terminals. */
-  workspaceTerminalSession?: 'create-chat' | 'resume-session';
+  /** Shared support gate for saved-session continuation on either transport. */
+  sessionContinuation: RunnerSessionContinuation;
   /** Exact, metadata-verified conversation files eligible for owned review expiry cleanup. */
   workspaceSessionFileCleanup?: 'codex-jsonl';
   /** Opt-in native protocol. Missing means structured sessions are unavailable. */
@@ -248,8 +260,6 @@ export interface RunnerDefinition {
     | 'opencode-acp'
     | 'pi-rpc'
     | 'acp';
-  /** Native task leases and saved-conversation recovery have been implemented for this runner. */
-  supportsNativeTaskReuse?: boolean;
   nativeChoices?: NativeRunnerChoices;
   /** Protocol-only agents cannot be launched as a terminal CLI. */
   nativeOnly?: boolean;
@@ -295,8 +305,6 @@ export interface RunnerDefinition {
    * `persistsSessionFiles`: a runner can persist files we still refuse to archive.
    */
   sessionArchive: SessionArchiveCapability;
-  /** Whether persisted sessions can be reloaded with an initial prompt in argv. */
-  sessionReload: SessionReloadCapability;
   /**
    * Whether a persisted session resolves from a working directory other than
    * the one it was recorded in. Declared per runner rather than inferred, and
@@ -400,8 +408,11 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     usesObservabilityBundle: true,
     supportsInitialPromptArg: true,
     id: 'claude',
+    sessionContinuation: {
+      native: true,
+      terminal: { args: (sessionId) => ['--resume', sessionId], workspace: 'retained' },
+    },
     nativeTransport: 'claude-stream-json',
-    supportsNativeTaskReuse: true,
     nativeChoices: { models: [...RUNNER_PICKER_MODELS.claude], modes: ['default'] },
     defaultLaunchMode: 'interactive',
     headlessPrintExecutables: ['claude'],
@@ -418,7 +429,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: '/clear',
     persistsSessionFiles: true,
     sessionArchive: 'jsonl',
-    sessionReload: 'with-prompt',
     // Sessions live under a cwd-slug directory, so `--resume <id>` from another
     // slot's worktree does not see this conversation.
     sessionPortability: 'workspace',
@@ -448,10 +458,13 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   codex: {
     usesObservabilityBundle: true,
     id: 'codex',
+    sessionContinuation: {
+      native: true,
+      terminal: { args: (sessionId) => ['resume', '--all', sessionId], workspace: 'current' },
+    },
     cleanupSlotRuntime: async (vars, options) =>
       (await import('./codex-daemon.js')).cleanupCodexSlotRuntime(vars, options),
     nativeTransport: 'codex-app-server',
-    supportsNativeTaskReuse: true,
     nativeChoices: { models: [...RUNNER_PICKER_MODELS.codex], modes: ['default', 'plan'] },
     modelCatalog: {
       relativePath: '.codex/models_cache.json',
@@ -473,9 +486,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: null,
     persistsSessionFiles: true,
     sessionArchive: 'jsonl',
-    workspaceTerminalSession: 'resume-session',
     workspaceSessionFileCleanup: 'codex-jsonl',
-    sessionReload: 'with-prompt',
     // `codex resume` indexes sessions by cwd; a rollout recorded in another
     // slot's worktree is not offered there.
     sessionPortability: 'workspace',
@@ -512,15 +523,21 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   cursor: {
     usesObservabilityBundle: true,
     id: 'cursor',
+    sessionContinuation: {
+      native: true,
+      terminal: {
+        args: (sessionId) => ['--resume', sessionId],
+        workspace: 'current',
+        reservation: 'create-chat',
+      },
+    },
     modelCatalog: {
       command: 'cursor-agent',
       poolPathKey: 'cursor_path',
       args: ['--list-models'],
       parse: parseCursorModelCatalog,
     },
-    workspaceTerminalSession: 'create-chat',
     nativeTransport: 'cursor-acp',
-    supportsNativeTaskReuse: true,
     nativeChoices: {
       models: [
         DEFAULT_CURSOR_MODEL,
@@ -554,7 +571,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: null,
     persistsSessionFiles: false,
     sessionArchive: 'none',
-    sessionReload: 'none',
     // No persisted session reload at all; declared closed rather than left to a
     // default nobody checked.
     sessionPortability: 'workspace',
@@ -582,8 +598,11 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   grok: {
     usesObservabilityBundle: true,
     id: 'grok',
+    sessionContinuation: {
+      native: true,
+      terminal: { args: (sessionId) => ['--resume', sessionId], workspace: 'retained' },
+    },
     nativeTransport: 'grok-acp',
-    supportsNativeTaskReuse: true,
     nativeChoices: { models: [...RUNNER_PICKER_MODELS.grok], modes: ['default'] },
     modelCatalog: {
       relativePath: '.grok/models_cache.json',
@@ -607,7 +626,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: null,
     persistsSessionFiles: true,
     sessionArchive: 'jsonl',
-    sessionReload: 'with-prompt',
     // Reload resumes by id from the slot's repo directory; nothing declares that
     // id resolves from a different one.
     sessionPortability: 'workspace',
@@ -633,9 +651,12 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     usesObservabilityBundle: true,
     reviewObservabilityDir: (taskDir) => path.posix.join(taskDir, '.observability'),
     id: 'pi',
+    sessionContinuation: {
+      native: true,
+      terminal: { args: (sessionId) => ['--session', sessionId], workspace: 'retained' },
+    },
     requiresInitialPromptAck: true,
     nativeTransport: 'pi-rpc',
-    supportsNativeTaskReuse: true,
     // Native sessions name Pi's own provider-qualified model IDs. No seed: each
     // execution node lists its own models (modelCatalog below).
     nativeChoices: {
@@ -663,7 +684,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: null,
     persistsSessionFiles: true,
     sessionArchive: 'jsonl',
-    sessionReload: 'none',
     sessionPortability: 'workspace',
     gracefulExit: null,
     // Pi receives each task through its startup extension. Reuse the guarded
@@ -693,8 +713,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   },
   opencode: {
     id: 'opencode',
+    sessionContinuation: { native: true, terminal: null },
     nativeTransport: 'opencode-acp',
-    supportsNativeTaskReuse: true,
     // No seed: a new session uses the model OpenCode is configured with.
     nativeChoices: { models: [], modes: ['default'] },
     modelCatalog: {
@@ -714,7 +734,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: null,
     persistsSessionFiles: false,
     sessionArchive: 'none',
-    sessionReload: 'none',
     // No persisted session reload at all.
     sessionPortability: 'workspace',
     gracefulExit: null,
@@ -732,6 +751,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   },
   none: {
     id: 'none',
+    sessionContinuation: { native: false, terminal: null },
     defaultLaunchMode: 'exec',
     processMatchers: [],
     supportsInteractivePrompt: false,
@@ -743,7 +763,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: null,
     persistsSessionFiles: false,
     sessionArchive: 'none',
-    sessionReload: 'none',
     // No runner process, so nothing to carry.
     sessionPortability: 'workspace',
     gracefulExit: null,
@@ -761,6 +780,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   },
   scripted: {
     id: 'scripted',
+    sessionContinuation: { native: false, terminal: null },
     deliverPrompt: async (options) =>
       (await import('./scripted-session.js')).deliverScriptedPrompt(options),
     teardownSettleMs: 0,
@@ -779,7 +799,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: null,
     persistsSessionFiles: false,
     sessionArchive: 'none',
-    sessionReload: 'none',
     // The scripted harness persists no session files.
     sessionPortability: 'workspace',
     gracefulExit: null,
@@ -803,7 +822,7 @@ KNOWN_RUNNERS['claude-acp'] = {
   defaultModel: DEFAULT_CLAUDE_MODEL,
   acceptsModel: KNOWN_RUNNERS.claude.acceptsModel,
   sessionUsageProvider: KNOWN_RUNNERS.claude.sessionUsageProvider,
-  supportsNativeTaskReuse: true,
+  sessionContinuation: { native: true, terminal: null },
   id: 'claude-acp',
   nativeTransport: 'acp',
   nativeOnly: true,
@@ -1055,7 +1074,7 @@ export function runnerArgumentValueIsSafe(value: string | null | undefined): boo
 }
 
 export function assertSafeRunnerArgumentValue(
-  kind: 'model' | 'effort',
+  kind: 'model' | 'effort' | 'sessionId',
   value: string | null | undefined,
 ): void {
   if (runnerArgumentValueIsSafe(value)) return;
@@ -1128,8 +1147,18 @@ export function runnerSupportsNativeTaskReuse(runnerId?: string | null): boolean
   return (
     isKnownRunner(runnerId) &&
     Boolean(getRunnerDefinition(runnerId).nativeTransport) &&
-    getRunnerDefinition(runnerId).supportsNativeTaskReuse === true
+    getRunnerDefinition(runnerId).sessionContinuation.native
   );
+}
+
+/** Support is declared once; runtime ownership and exact session checks still apply. */
+export function runnerSupportsSessionContinuation(
+  runnerId: string | null | undefined,
+  transport: 'tmux' | 'native',
+): boolean {
+  if (!isKnownRunner(runnerId)) return false;
+  const capability = getRunnerDefinition(runnerId).sessionContinuation;
+  return transport === 'native' ? capability.native : capability.terminal !== null;
 }
 
 /** Interrupt an active turn using only the registered runner capability. */
@@ -1341,8 +1370,8 @@ export function retainedReviewerDeliveryPlan(
   _loopNumber: number,
 ): RetainedReviewerDeliveryPlan {
   if (mode === 'cold') return { kind: 'cold-relaunch', resetContext: false };
-  if (runnerRetainedSessionHandoff(runnerId) !== 'resume-with-prompt')
-    throw new Error(`WARM review is unsupported by ${runnerId}`);
+  if (!runnerSupportsSessionContinuation(runnerId, 'tmux'))
+    return { kind: 'cold-relaunch', resetContext: false };
   return { kind: 'in-place', resetContext: false };
 }
 
@@ -1365,8 +1394,7 @@ export function runnerRetainedSessionHandoff(runnerId?: string | null): Retained
 }
 
 export function runnerSessionReloadCapability(runnerId?: string | null): SessionReloadCapability {
-  if (!isKnownRunner(runnerId)) return 'none';
-  return getRunnerDefinition(runnerId).sessionReload;
+  return runnerSupportsSessionContinuation(runnerId, 'tmux') ? 'with-prompt' : 'none';
 }
 
 /**

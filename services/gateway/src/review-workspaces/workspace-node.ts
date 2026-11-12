@@ -321,14 +321,14 @@ async function git(args, phase = 'inspect') {
   if (result !== 0) throw new Error(stderr || 'Git command failed');
   return stdout.trim();
 }
-async function verifyCheckout() {
+async function verifyCheckout(expectedHead = identity.headSha) {
   directory(checkout);
   const gitFile = path.join(checkout, '.git');
   const stat = fs.lstatSync(gitFile);
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Checkout has no owned worktree binding');
   const common = await git(['-C',checkout,'rev-parse','--path-format=absolute','--git-common-dir']);
   if (fs.realpathSync(common) !== fs.realpathSync(cache)) throw new Error('Checkout belongs to another repository');
-  if (await git(['-C',checkout,'rev-parse','HEAD']) !== identity.headSha) throw new Error('Checkout HEAD no longer matches frozen review');
+  if (await git(['-C',checkout,'rev-parse','HEAD']) !== expectedHead) throw new Error('Checkout HEAD no longer matches frozen review');
   const changes = (await git(['-C',checkout,'status','--porcelain','-z','--untracked-files=normal','--ignored=matching'])).split('\0').filter(Boolean);
   // Ignored tool runtime state is not reviewed source. Preserve every other change.
   if (changes.some((entry) => !entry.startsWith('!! .agent/'))) throw new Error('Review checkout changed; refusing to discard files');
@@ -456,7 +456,29 @@ function finishCleanup() {
   const identityPath = path.join(workspace,'identity.json');
   if (fs.existsSync(workspace) && !fs.existsSync(identityPath) && fs.readdirSync(workspace).length) throw new Error('Workspace directory has no ownership marker');
   directory(workspace);
+  const previousIdentity = input.previousIdentity;
+  const transferPath = path.join(workspace,'transfer.json');
+  const recordedIdentity = read(identityPath);
+  if (previousIdentity && input.action === 'allocate' && !same(recordedIdentity,identity)) {
+    for (const key of ['workspaceId','owner','project','machine','executionNodeId','repositoryUrl'])
+      if(previousIdentity[key] !== identity[key]) throw new Error('Review transfer changed '+key);
+    if(previousIdentity.runId === identity.runId || previousIdentity.headSha !== identity.baseSha)
+      throw new Error('Review transfer does not match its previous reviewed head');
+    marker(identityPath,previousIdentity,false);
+    await verifyCheckout(previousIdentity.headSha);
+    const priorTask = path.resolve(input.previousTaskPath || '');
+    if(![path.join(workspace,'task'),path.join(workspace,'tasks',previousIdentity.runId)].includes(priorTask) ||
+       fs.realpathSync(priorTask) !== path.join(fs.realpathSync(workspace),path.relative(workspace,priorTask)) ||
+       fs.readFileSync(path.join(priorTask,'.terminal-cancelled'),'utf8') !== previousIdentity.runId)
+      throw new Error('Previous review terminal has no owned stop receipt');
+    write(transferPath,{from:previousIdentity,to:identity});
+    write(path.join(workspace,'allocation.json'),{state:'transferring',operationId:operation.id});
+    write(identityPath,identity);
+  }
   marker(identityPath,identity,input.action === 'allocate');
+  const transfer = read(transferPath);
+  if(previousIdentity && (!transfer || !same(transfer.from,previousIdentity) || !same(transfer.to,identity)))
+    throw new Error('Review transfer receipt does not match the frozen source');
   const receiptPath = path.join(workspace,'allocation.json');
   const previous = read(receiptPath);
   if(purge)validateCleanupSession();
@@ -481,8 +503,11 @@ function finishCleanup() {
     finishCleanup();
   } else if (input.action === 'allocate') {
     if (['cleaned','cleaning'].includes(previous?.state)) throw new Error('Workspace was cleaned; create a new review run');
-    directory(path.join(workspace,'task'));
-    directory(path.join(workspace,'task','artifacts'));
+    const task = input.taskPath || path.join(workspace,'task');
+    if(![path.join(workspace,'task'),path.join(workspace,'tasks',identity.runId)].includes(task))
+      throw new Error('Review task directory does not match its owner');
+    directory(task);
+    directory(path.join(task,'artifacts'));
     if (previous?.state !== 'ready') write(receiptPath,{state:'allocating',operationId:operation.id});
     // Reinitialization repairs interrupted creation and preserves existing bare-cache objects/refs.
     if (fs.existsSync(cache)) directory(cache);
@@ -502,7 +527,14 @@ function finishCleanup() {
         await git(['--git-dir',cache,'update-ref','refs/reviews/'+identity.workspaceId+'/'+kind,sha], 'retain-ref');
       }
     }
-    if (!fs.existsSync(checkout)) await git(['--git-dir',cache,'worktree','add','--detach',checkout,identity.headSha], 'add-worktree');
+    if (!fs.existsSync(checkout)) {
+      if(previousIdentity) throw new Error('Retained review checkout is missing');
+      await git(['--git-dir',cache,'worktree','add','--detach',checkout,identity.headSha], 'add-worktree');
+    }
+    if(previousIdentity && await git(['-C',checkout,'rev-parse','HEAD']) !== identity.headSha) {
+      await verifyCheckout(previousIdentity.headSha);
+      await git(['-C',checkout,'checkout','--detach',identity.headSha], 'continue-worktree');
+    }
     await verifyCheckout();
     assertWorkspaceOperationCurrent();
     write(receiptPath,{state:'ready',operationId:operation.id,updatedAt:new Date().toISOString()});

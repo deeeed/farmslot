@@ -1,0 +1,25 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Saved reviewer session continuation",
+  "description": "Verify exact-session startup and delta task execution on retained reviewer runs through their owning gateway, plus exclusive source transfer and prior-report preservation. Publication stays disabled.",
+  "workflow": {
+    "entry": "retained-runners",
+    "nodes": {
+      "retained-runners": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/saved-session-continuation.mts",
+        "timeout_ms": 120000,
+        "intent": "Read the owning gateway's real runner receipts and task progress to prove two exact saved conversations execute their delta-scoped successor tasks.",
+        "next": "source-transfer"
+      },
+      "source-transfer": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test services/gateway/src/review-workspaces/workspace-transfer.live.ts",
+        "timeout_ms": 180000,
+        "intent": "Reuse a stopped review's source path, preserve its reports, reject old-owner cleanup, and retry the same transfer.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

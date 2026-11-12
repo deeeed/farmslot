@@ -72,7 +72,7 @@ export async function recoverReviewTmuxSession(run: Run, assertCurrent: () => vo
     !run.reviewWorkspace ||
     !context ||
     context.runnerSessionId ||
-    getRunnerDefinition(context.runner).workspaceTerminalSession !== 'create-chat'
+    getRunnerDefinition(context.runner).sessionContinuation.terminal?.reservation !== 'create-chat'
   )
     return;
   const startedAt = Date.parse(context.attemptStartedAt ?? context.startedAt ?? '');
@@ -221,6 +221,8 @@ export async function reviewTmuxOperation(
   resumeCommandId?: string,
 ): Promise<ReviewTmuxOperationResult> {
   assertNativeRunOwner(run);
+  if ((getRun(run.id) ?? run).reviewWorkspace?.transferredTo)
+    throw new Error('Review workspace belongs to its successor');
   const w = run.reviewWorkspace!;
   const runner = run.metrics.runner!;
   const input: Record<string, unknown> = {

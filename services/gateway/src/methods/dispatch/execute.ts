@@ -1261,7 +1261,7 @@ export async function dispatchExecute(
         ? currentRun.repeatReviewContext?.session?.reviewId
         : randomUUID()
       : undefined;
-  const repeatReviewMode = resolveReviewMode({ run: currentRun });
+  let repeatReviewMode = resolveReviewMode({ run: currentRun });
   const existingNativeBinding =
     currentRun?.transport === 'native'
       ? selectAgentContext(currentRun, { role: primaryRoleForFlow(currentRun.flowType) })
@@ -1286,6 +1286,20 @@ export async function dispatchExecute(
     });
   };
 
+  if (repeatReviewResumePlan.kind === 'delta-cold' && currentRun?.repeatReviewContext) {
+    repeatReviewMode = 'cold';
+    updateRunStore(currentRun.id, {
+      reviewMode: 'cold',
+      repeatReviewContext: {
+        ...currentRun.repeatReviewContext,
+        mode: 'cold',
+        session: repeatReviewResumePlan.trace,
+      },
+    });
+    const { persistRunNow } = await import('../../runs/store.js');
+    await persistRunNow(getRun(currentRun.id)!, 'unsupported runner delta review fallback');
+    recordReviewSession(repeatReviewResumePlan.trace);
+  }
   if (transport === 'native' && currentRun?.repeatReviewContext && !existingNativeBinding) {
     if (repeatReviewResumePlan.kind === 'native-resume') {
       if (!params.skipPrepare)
@@ -1303,9 +1317,13 @@ export async function dispatchExecute(
       });
     } else {
       recordReviewSession({
-        mode: repeatReviewMode,
-        continuity: 'fresh',
-        priorRunId: currentRun.repeatReviewContext.priorRunId,
+        ...(repeatReviewResumePlan.kind === 'delta-cold'
+          ? repeatReviewResumePlan.trace
+          : {
+              mode: repeatReviewMode,
+              continuity: 'fresh',
+              priorRunId: currentRun.repeatReviewContext.priorRunId,
+            }),
       });
     }
   }
@@ -2191,6 +2209,7 @@ export async function dispatchExecute(
         throw new Error('WARM review unavailable: retained session was not resumed');
       } else if (!resumedReviewSession) {
         recordReviewSession({
+          ...(repeatReviewResumePlan.kind === 'delta-cold' ? repeatReviewResumePlan.trace : {}),
           mode: 'cold',
           reviewId: primaryReviewId,
           continuity: 'fresh',

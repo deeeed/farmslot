@@ -225,3 +225,102 @@ test('explicit cold after expiry may use another authorized machine while preser
   assert.equal(result.mode, 'cold');
   assert.match(result.session?.fallback?.detail ?? '', /expired/);
 });
+
+test('every resumable terminal adapter preserves the exact retained conversation', () => {
+  for (const runner of ['claude', 'codex', 'pi', 'cursor', 'grok']) {
+    const source = { ...prior, agentContexts: prior.agentContexts!.map((c) => ({ ...c, runner })) };
+    const result = context();
+    configureWorkspaceContinuity(
+      { ...current, metrics: { runner, model: 'model' } },
+      source,
+      result,
+    );
+    assert.equal(result.session?.sessionId, 'chat');
+    assert.equal(result.session?.continuity, 'resumed');
+  }
+});
+
+test('an unsupported adapter keeps the delta and prior findings in a fresh session', () => {
+  const source = {
+    ...prior,
+    agentContexts: prior.agentContexts!.map((c) => ({ ...c, runner: 'opencode' })),
+  };
+  const run = { ...current, metrics: { runner: 'opencode', model: 'model' } };
+  const result = {
+    ...context(),
+    currentHeadSha: 'b'.repeat(40),
+    unresolvedFindings: [{ file: 'src/file.ts', line: 1, description: 'Earlier finding' }],
+  };
+  configureWorkspaceContinuity(run, source, result);
+  assert.equal(result.mode, 'cold');
+  assert.equal(result.session?.continuity, 'fresh');
+  assert.equal(result.session?.reviewId, 'lineage');
+  assert.equal(result.session?.sessionId, undefined);
+  assert.equal(result.session?.fallback?.reason, 'session-resume-unsupported');
+  assert.deepEqual(result.session?.fallback?.comparedRanges, [
+    `${'a'.repeat(40)}..${'b'.repeat(40)}`,
+  ]);
+  assert.equal(result.unresolvedFindings[0].description, 'Earlier finding');
+  assert.throws(
+    () =>
+      configureWorkspaceContinuity(run, { ...source, createdByPrincipalId: 'foreign' }, context()),
+    /WARM review unavailable/,
+  );
+});
+
+test('a stopped transferred attempt without a verdict preserves the validated delta baseline', () => {
+  const source = {
+    ...prior,
+    reviewWorkspace: {
+      ...prior.reviewWorkspace!,
+      workspaceId: 'source',
+      transferredTo: { runId: 'interrupted', generation: 1 },
+    },
+  };
+  const interrupted: Run = {
+    ...prior,
+    id: 'interrupted',
+    status: 'cancelled',
+    metrics: { ...current.metrics },
+    reviewResult: undefined,
+    reviewWorkspace: {
+      ...source.reviewWorkspace,
+      transferredTo: undefined,
+      executionStoppedAt: '2026-11-12T00:00:00Z',
+      continuedFrom: {
+        runId: prior.id,
+        headSha: 'a'.repeat(40),
+        baseSha: '0'.repeat(40),
+        taskPath: '/prior/task',
+      },
+    },
+    repeatReviewContext: {
+      ...context(),
+      session: { mode: 'warm', continuity: 'resumed', reviewId: 'lineage', priorSessionId: 'chat' },
+    },
+  };
+  const result = { ...context(), currentHeadSha: 'b'.repeat(40) };
+  configureWorkspaceContinuity({ ...current, id: 'next' }, source, result, undefined, [
+    interrupted,
+  ]);
+  assert.equal(result.session?.fallback?.reason, 'session-unavailable');
+  assert.equal(result.priorReviewedHeadSha, 'a'.repeat(40));
+  assert.equal(result.mode, 'cold');
+  for (const other of [
+    { ...interrupted, status: 'monitoring' as const },
+    { ...interrupted, nativeOwnerPrincipalId: 'foreign' },
+    { ...interrupted, effort: 'high' },
+  ]) {
+    assert.throws(
+      () =>
+        configureWorkspaceContinuity(
+          { ...current, id: 'next' },
+          source,
+          { ...context(), currentHeadSha: 'b'.repeat(40) },
+          undefined,
+          [other],
+        ),
+      /held by its successor/,
+    );
+  }
+});

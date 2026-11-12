@@ -241,13 +241,15 @@ Case-insensitive whole-word "runner" or "runners", excluding tests, on main b41c
 
 ## Amendment 2: saved-session continuation, 2026-11-12
 
-**Status:** Proposed.
+**Status:** Accepted, approved 2026-11-12.
 
 ### Decision
 
-Each runner adapter declares one saved-session continuation capability, including
-its exact resume arguments and whether it requires the retained workspace.
-Launch and recovery consume that declaration. Unsupported continuation is explicit;
+Each runner adapter declares one saved-session continuation capability for its
+tmux and native transports, including exact resume arguments and workspace
+requirements. WARM selection replaces workspace, reload, handoff and native-reuse
+allowlists with this declaration; runtime identity checks remain authoritative.
+Launch and recovery consume it. Unsupported continuation is explicit;
 workflow code never chooses resume syntax by runner name.
 
 ### Rationale and consequences

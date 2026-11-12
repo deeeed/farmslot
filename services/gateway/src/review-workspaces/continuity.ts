@@ -9,13 +9,14 @@ import {
 import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { incrementalReviewAvailable } from '../run-engine/engine-decisions.js';
-import { getRunnerDefinition } from '../runners/registry.js';
+import { runnerSupportsSessionContinuation } from '../runners/registry.js';
 import { runPrincipalOwner, samePrincipalOwner } from '../security/work-originator.js';
 
-import { reviewWorkspaceExpiry } from './retention-policy.js';
+import { reviewWorkspaceExpiry, sameReviewPR } from './retention-policy.js';
 
 type WorkspaceReviewerRun = Pick<
   Run,
+  | 'id'
   | 'project'
   | 'ticketOrPr'
   | 'effort'
@@ -42,7 +43,6 @@ export function compatibleWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Ru
   const compatible =
     run.transport === 'tmux' &&
     prior.transport === 'tmux' &&
-    Boolean(getRunnerDefinition(run.metrics.runner).workspaceTerminalSession) &&
     isTerminalRunStatus(prior.status) &&
     (!prior.reviewWorkspace?.retainedAt || !!prior.reviewWorkspace.executionStoppedAt) &&
     sameOwner &&
@@ -62,6 +62,7 @@ export function configureWorkspaceContinuity(
   prior: Run,
   context: RepeatReviewContext,
   subject?: import('@farmslot/protocol').ReviewWorkspaceSubject,
+  history: readonly Run[] = [],
 ): void {
   const mode = resolveReviewMode({ run });
   context.mode = mode;
@@ -116,6 +117,68 @@ export function configureWorkspaceContinuity(
   const reviewer = compatibleWorkspaceReviewer(run, prior);
   if (!context.session?.reviewId || reviewer?.reviewId !== context.session.reviewId)
     throw new Error('WARM review unavailable: missing or foreign reviewId lineage');
+  let fallbackReason: 'session-resume-unsupported' | 'session-unavailable' | undefined;
+  const successorId = prior.reviewWorkspace?.transferredTo?.runId;
+  if (successorId && successorId !== run.id) {
+    const successor = history.find((candidate) => candidate.id === successorId);
+    const successorOwner = successor && runPrincipalOwner(successor);
+    const owner = runPrincipalOwner(run);
+    if (
+      !successor ||
+      !isTerminalRunStatus(successor.status) ||
+      successor.reviewResult ||
+      !successor.reviewWorkspace?.executionStoppedAt ||
+      successor.reviewWorkspace.continuedFrom?.runId !== prior.id ||
+      successor.reviewWorkspace.workspaceId !== prior.reviewWorkspace?.workspaceId ||
+      successor.transport !== 'tmux' ||
+      successor.nativeOwnerPrincipalId !== run.nativeOwnerPrincipalId ||
+      successor.reviewWorkspace.machine !== run.reviewWorkspaceTarget?.machine ||
+      !sameReviewPR(successor, run) ||
+      successor.agentContexts?.some(
+        (context) => !['complete', 'failed', 'idle'].includes(context.status),
+      ) ||
+      Object.values(successor.reviewRoundSettlements ?? {}).some(
+        (settlement) => settlement.kind === 'pending' || settlement.kind === 'verdict',
+      ) ||
+      successor.project !== run.project ||
+      !owner ||
+      !successorOwner ||
+      !samePrincipalOwner(owner, successorOwner) ||
+      successor.metrics.runner !== run.metrics.runner ||
+      successor.metrics.model !== run.metrics.model ||
+      (successor.effort ?? null) !== (run.effort ?? null) ||
+      successor.repeatReviewContext?.session?.reviewId !== reviewer.reviewId ||
+      successor.repeatReviewContext.session.priorSessionId !== reviewer.runnerSessionId
+    )
+      throw new Error('WARM review unavailable: retained workspace is held by its successor');
+    fallbackReason = 'session-unavailable';
+  }
+  if (!runnerSupportsSessionContinuation(run.metrics.runner, 'tmux'))
+    fallbackReason = 'session-resume-unsupported';
+  if (fallbackReason) {
+    const currentHead = context.currentHeadSha ?? subject?.headSha;
+    if (!currentHead) throw new Error('WARM review unavailable: missing current reviewed head');
+    context.mode = 'cold';
+    context.session = {
+      mode: 'cold',
+      continuity: 'fresh',
+      reviewId: reviewer.reviewId,
+      priorRunId: prior.id,
+      priorSessionId: reviewer.runnerSessionId ?? undefined,
+      repository: context.repository,
+      prNumber: context.prNumber,
+      lastReviewedHeadSha: context.priorReviewedHeadSha,
+      fallback: {
+        reason: fallbackReason,
+        detail:
+          fallbackReason === 'session-resume-unsupported'
+            ? 'The runner cannot continue a saved terminal session; reviewing the retained delta in a fresh session.'
+            : 'A stopped attempt holds the former workspace without a verdict; reviewing the retained delta in a fresh session.',
+        comparedRanges: [`${context.priorReviewedHeadSha}..${currentHead}`],
+      },
+    };
+    return;
+  }
   if (!reviewer?.runnerSessionId)
     throw new Error(
       'WARM review unavailable: retained session is missing, foreign or incompatible',

@@ -94,3 +94,15 @@ test('retained dispatch continues only the recorded reviewer in the same workspa
     ),
   );
 });
+
+test('a transferred predecessor cannot replay against the successor source', () => {
+  const transferred = {
+    ...active,
+    reviewWorkspace: {
+      ...active.reviewWorkspace,
+      transferredTo: { runId: 'successor', generation: 1 },
+    },
+  };
+  for (const stepName of ['find-slot', 'write-task', 'prepare', 'dispatch', 'monitor'])
+    assert.match(staticReviewReplayBlock(transferred, { stepName }) ?? '', /successor/);
+});

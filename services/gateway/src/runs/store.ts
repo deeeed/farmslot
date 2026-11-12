@@ -1946,6 +1946,38 @@ export async function getRunWithArchived(id: string): Promise<Run | undefined> {
   return getRun(id) ?? archived;
 }
 
+/** Claim the stopped source once, including when its result record was archived. */
+export async function claimReviewWorkspaceTransfer(
+  id: string,
+  expected: NonNullable<Run['reviewWorkspace']>,
+  successor: NonNullable<NonNullable<Run['reviewWorkspace']>['transferredTo']>,
+  assertCurrent: (prior: Run) => void,
+): Promise<Run> {
+  const check = (run: Run) => {
+    assertCurrent(run);
+    const { transferredTo, ...binding } = run.reviewWorkspace ?? {};
+    const expectedBinding = { ...expected };
+    delete expectedBinding.transferredTo;
+    if (
+      !isTerminalRunStatus(run.status) ||
+      !run.reviewWorkspace?.executionStoppedAt ||
+      run.reviewWorkspace.cleanedAt ||
+      run.reviewWorkspace.retirement ||
+      !isDeepStrictEqual(binding, expectedBinding) ||
+      (transferredTo && !isDeepStrictEqual(transferredTo, successor))
+    )
+      throw new Error('Retained review workspace is unavailable or already transferred');
+  };
+  return commitRetainedRunMutation(
+    id,
+    (run) => ({
+      ...run,
+      reviewWorkspace: { ...run.reviewWorkspace!, transferredTo: successor },
+    }),
+    check,
+  );
+}
+
 /** Retention records the restore manifest without evicting live or archived history. */
 export async function recordRunStorageArchive(id: string, manifest: string): Promise<void> {
   const url = pathToFileURL(manifest).href;
