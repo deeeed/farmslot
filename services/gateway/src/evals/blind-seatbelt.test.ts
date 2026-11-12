@@ -334,11 +334,15 @@ with patch.dict(os.environ, {'HOME': str(root / 'home')}, clear=True), \
 test('blind boundary strips gateway credentials, routing, tmux and SSH agent variables, keeps tools and pane identity', (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'seatbelt-env-'));
   t.after(() => rmSync(root, { recursive: true }));
-  const command = withBlindTrialBoundary('env', {
-    capsule: root,
-    baseSha: 'a'.repeat(40),
-    browserCdpPort: 19444,
-  });
+  const command = withBlindTrialBoundary(
+    'env',
+    {
+      capsule: root,
+      baseSha: 'a'.repeat(40),
+      browserCdpPort: 19444,
+    },
+    ['OPENAI_API_KEY'],
+  );
   // Inspect the shell setup on every platform without launching a real sandbox.
   const setup = command.slice(0, command.indexOf('/usr/bin/sandbox-exec'));
   const worker = spawnSync('/bin/sh', ['-c', `${setup} env`], {

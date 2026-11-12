@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { shSingleQuote as q } from '../../../../scripts/lib/shell-quote.mjs';
 
 import { withBlindTrialBoundary } from './blind-git.js';
+import { getRunnerDefinition } from '../runners/registry.js';
 
 const python = fileURLToPath(new URL('./blind-git.py', import.meta.url));
 const adapter = fileURLToPath(new URL('../../../../packages/adapter-web/', import.meta.url));
@@ -91,17 +92,22 @@ function worker(
   command: string,
   launchEnv: NodeJS.ProcessEnv = env,
   timeout = 45_000,
+  modelEnvironment: readonly string[] = [],
 ) {
   return spawnSync(
     '/bin/sh',
     [
       '-c',
-      withBlindTrialBoundary(command, {
-        capsule: root,
-        baseSha: 'a'.repeat(40),
-        browserCdpPort: JSON.parse(readFileSync(path.join(root, 'state.json'), 'utf8'))
-          .browserCdpPort,
-      }).replace('/usr/bin/sandbox-exec', 'exec /usr/bin/sandbox-exec'),
+      withBlindTrialBoundary(
+        command,
+        {
+          capsule: root,
+          baseSha: 'a'.repeat(40),
+          browserCdpPort: JSON.parse(readFileSync(path.join(root, 'state.json'), 'utf8'))
+            .browserCdpPort,
+        },
+        modelEnvironment,
+      ).replace('/usr/bin/env -i', 'exec /usr/bin/env -i'),
     ],
     {
       env: launchEnv,
@@ -110,6 +116,70 @@ function worker(
     },
   );
 }
+
+test(
+  'blind launch admits tooling and provider config without ambient secrets',
+  { skip: process.platform !== 'darwin' },
+  (t) => {
+    const root = fixture();
+    t.after(() => rmSync(root, { recursive: true }));
+    profile(root);
+    const agent = path.join(root, 'synthetic-agent');
+    mkdirSync(agent);
+    writeFileSync(
+      path.join(agent, 'models.json'),
+      '{"providers":{"fixture":{"apiKey":"fixture-only"}}}',
+    );
+    const secrets = [
+      'GH_REGISTRY_PAT',
+      'GITHUB_TOKEN',
+      'NPM_TOKEN',
+      'FOO_SECRET',
+      'AWS_ACCESS_KEY_ID',
+      'AWS_SECRET_ACCESS_KEY',
+      'npm_config_auth',
+      'GH_OTHER',
+      'OTHER_API_KEY',
+      'OPENAI_API_KEY',
+    ];
+    const probe = path.join(root, 'env-probe.mjs');
+    writeFileSync(
+      probe,
+      `
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+for (const name of ${JSON.stringify(secrets)}) assert.equal(process.env[name], undefined, name + ' leaked into blind worker');
+assert.equal(process.env.LITELLM_API_KEY, 'fixture-provider');
+assert.equal(process.env.PI_CODING_AGENT_DIR, ${JSON.stringify(agent)});
+assert.equal(JSON.parse(readFileSync(process.env.PI_CODING_AGENT_DIR + '/models.json')).providers.fixture.apiKey, 'fixture-only');
+assert.equal(process.env.TMUX_PANE, '%42');
+assert.equal(process.env.FARMSLOT_TASK_DIR, ${JSON.stringify(root)});
+assert.equal(process.env.ANDROID_HOME, '/synthetic/android');
+assert.ok(process.env.PATH);
+assert.ok(process.env.HOME);
+console.log('ambient secrets absent; tooling, task, pane and synthetic model config available');
+`,
+    );
+    const result = worker(
+      root,
+      `exec ${q(process.execPath)} ${q(probe)}`,
+      {
+        ...env,
+        ...Object.fromEntries(secrets.map((name) => [name, 'fixture-only'])),
+        PI_CODING_AGENT_DIR: agent,
+        TMUX_PANE: '%42',
+        FARMSLOT_TASK_DIR: root,
+        ANDROID_HOME: '/synthetic/android',
+        LITELLM_API_KEY: 'fixture-provider',
+      },
+      45_000,
+      getRunnerDefinition('pi').blindModelEnvironment?.('litellm/fixture'),
+    );
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    t.diagnostic(result.stdout.trim());
+  },
+);
 
 test(
   'gateway network is denied even with a readable valid token; browser stores and operator CDP are denied',
@@ -936,7 +1006,7 @@ try {
             withBlindTrialBoundary(
               `exec ${q(process.execPath)} ${q(probe)} ${q(mode)} ${parent.pid}`,
               { capsule: root, baseSha: 'a'.repeat(40), browserCdpPort: allocatedPort },
-            ).replace('/usr/bin/sandbox-exec', 'exec /usr/bin/sandbox-exec'),
+            ).replace('/usr/bin/env -i', 'exec /usr/bin/env -i'),
           ],
           { env, stdio: ['ignore', 'pipe', 'pipe'] },
         );
@@ -1132,7 +1202,7 @@ try {
               withBlindTrialBoundary(
                 `exec ${q(process.execPath)} ${q(piProbe)} ${q(mode)} ${parent.pid}`,
                 { capsule: root, baseSha: 'a'.repeat(40) },
-              ).replace('/usr/bin/sandbox-exec', 'exec /usr/bin/sandbox-exec'),
+              ).replace('/usr/bin/env -i', 'exec /usr/bin/env -i'),
             ],
             { env, stdio: ['ignore', 'pipe', 'pipe'] },
           );
