@@ -30,6 +30,7 @@ import {
   resolveTaskRelDir,
 } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { withFarmGitConfig } from '../core/farm-git.js';
 import {
   assertNoUnknownPlaceholders,
   expandTemplate,
@@ -105,7 +106,9 @@ async function runDescriptionPreCheck(
 ): Promise<DescriptionCheckFinding[] | { unavailable: string }> {
   const base = `origin/${baseBranch}`;
   const inRepo = (command: string) =>
-    execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && ${command}`, { timeout: 60_000 });
+    execOnSlot(vars, withFarmGitConfig(`cd ${shellQuote(vars.remoteRepo)} && ${command}`), {
+      timeout: 60_000,
+    });
   try {
     // A failed fetch still leaves the remote-tracking ref the checkout has.
     await inRepo(`git fetch origin ${shellQuote(remoteBranchRefspec(baseBranch))}`);

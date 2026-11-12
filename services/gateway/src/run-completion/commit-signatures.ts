@@ -7,6 +7,7 @@ import {
 
 import { getProjectField, loadProjectVars, loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { withFarmGitConfig } from '../core/farm-git.js';
 import { shellQuote } from '../core/tmux.js';
 import { isGitTrue, loadGitIdentity, readGitIdentity } from '../methods/slot/git-identity.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
@@ -46,13 +47,15 @@ export async function assertCommitSignatures(
     const git = `git -C ${shellQuote(vars.remoteRepo)}`;
     const present = await execOnSlot(
       vars,
-      `${git} show-ref --verify --quiet ${shellQuote(baseRef)}`,
+      withFarmGitConfig(`${git} show-ref --verify --quiet ${shellQuote(baseRef)}`),
       { timeout: 10_000 },
     );
     if (present.exitCode === 1) {
       const fetched = await execOnSlot(
         vars,
-        `${git} fetch origin ${shellQuote(remoteBranchRefspec(fetchMissingBranch))}`,
+        withFarmGitConfig(
+          `${git} fetch origin ${shellQuote(remoteBranchRefspec(fetchMissingBranch))}`,
+        ),
         { timeout: 30_000 },
       );
       if (fetched.exitCode !== 0)
@@ -70,7 +73,9 @@ export async function assertCommitSignatures(
   // missing signatures. GitHub still owns account/signature verification.
   const result = await execOnSlot(
     vars,
-    buildCommitSignatureProbeCommand(vars.remoteRepo, baseRef, headRef, inheritedHeadSha),
+    withFarmGitConfig(
+      buildCommitSignatureProbeCommand(vars.remoteRepo, baseRef, headRef, inheritedHeadSha),
+    ),
     { timeout: 30_000 },
   );
   if (result.exitCode !== 0)

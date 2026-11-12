@@ -18,6 +18,7 @@ import {
   slotWorkspaceIdentity,
 } from '@farmslot/protocol';
 
+import { withFarmGitConfig } from '../../core/farm-git.js';
 import {
   execOnSlot,
   getProjectField,
@@ -325,7 +326,9 @@ export async function recoverSlotWorkspace(
       : defaultBranch;
     const targetHead = await execOnSlot(
       vars,
-      `git -C ${shellQuote(vars.remoteRepo)} rev-parse --verify --quiet ${shellQuote(`refs/heads/${targetBranch}`)}`,
+      withFarmGitConfig(
+        `git -C ${shellQuote(vars.remoteRepo)} rev-parse --verify --quiet ${shellQuote(`refs/heads/${targetBranch}`)}`,
+      ),
       { noRetry: true },
     );
     if (targetHead.exitCode !== 0 && targetHead.exitCode !== 1)

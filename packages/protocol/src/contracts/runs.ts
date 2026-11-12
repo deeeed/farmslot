@@ -3357,6 +3357,8 @@ export interface RunEngineState {
   };
   /** Artifact-first experiment trial linkage for artifact-only reference/template regression candidates. */
   evalExperiment?: {
+    /** Trial-level judging opt-out, retained across retries and resumes. */
+    review?: false;
     /** Resolved trial judge override, retained across retries and resumes. */
     reviewRunner?: string;
     reviewModel?: string;

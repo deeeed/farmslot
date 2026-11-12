@@ -62,7 +62,7 @@ const execute = async (_vars: SlotVars, command: string) => {
   commands.push(command);
   const ok = (stdout = '') => ({ stdout, stderr: '', exitCode: 0 });
   if (command.startsWith('for k in ')) return ok('commit.gpgsign\ttrue\n');
-  if (command.startsWith('commits='))
+  if (command.includes('commits=$('))
     return ok(afterNudge && ++signatures === 1 ? '' : unsigned + '\n');
   if (command.includes('rev-parse HEAD')) return ok(head);
   if (!afterNudge)
@@ -128,7 +128,7 @@ test('completion rejects unsigned commits before accepting a complete signal', a
     verifyWorkerPushedBranch(run.id, vars.slotId),
     /Unsigned outgoing commit\(s\): bbbbbbbbbbbb/,
   );
-  assert.ok(commands.some((command) => command.startsWith('commits=')));
+  assert.ok(commands.some((command) => command.includes('commits=$(')));
 });
 
 test('completion checks the new commit made after its commit nudge', async (t) => {
@@ -196,7 +196,7 @@ test('a blind eval trial checks its contribution from the frozen base, not a rem
     },
   });
   await assert.rejects(assertRunCommitSignatures(blindRun), /Unsigned outgoing commit/);
-  const probe = commands.find((command) => command.startsWith('commits='));
+  const probe = commands.find((command) => command.includes('commits=$('));
   assert.ok(probe?.includes(`${baseSha}..HEAD`));
   assert.ok(!probe?.includes('refs/remotes/origin'));
 });

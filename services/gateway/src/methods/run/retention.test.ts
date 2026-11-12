@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import fs, { existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import fsPromises, {
   mkdir,
   mkdtemp,
@@ -648,11 +648,15 @@ test(
       assert.deepEqual(Object.keys(entry).sort(), [
         'bytes',
         'deletedAt',
+        'detached',
         'plannedAt',
         'source',
         'state',
         'store',
       ]);
+      // The source was moved to a sibling before its removal; that sibling is gone too.
+      assert.equal(path.dirname(entry.detached), path.dirname(source));
+      assert.equal(existsSync(entry.detached), false);
       assert.equal(entry.state, 'deleted');
       assert.equal(entry.store, store);
       assert.ok(entry.bytes > 0);
@@ -794,7 +798,7 @@ test(
   },
 );
 
-/** Stop after the durable intent, or after rm but before the completion save. */
+/** Stop after the durable intent, or after the first detached tree's rm but before the completion save. */
 async function interruptedDeletion(
   t: test.TestContext,
   f: Awaited<ReturnType<typeof recreatableRun>>,
@@ -802,7 +806,7 @@ async function interruptedDeletion(
 ) {
   const manifestPath = storageArchiveManifest(f.roots.archiveRoot, f.run.id);
   const renameFile = fsPromises.rename;
-  const remove = fs.rmSync;
+  const remove = fsPromises.rm;
   const fault =
     phase === 'intent'
       ? t.mock.method(
@@ -817,9 +821,9 @@ async function interruptedDeletion(
             }
           },
         )
-      : t.mock.method(fs, 'rmSync', (...args: Parameters<typeof fs.rmSync>) => {
-          remove(...args);
-          throw new Error('crash after removal');
+      : t.mock.method(fsPromises, 'rm', async (...args: Parameters<typeof fsPromises.rm>) => {
+          await remove(...args);
+          if (String(args[0]).includes('.retention-')) throw new Error('crash after removal');
         });
   syncBuiltinESMExports();
   t.after(() => {
@@ -941,8 +945,13 @@ test(
     const intents = (await f.manifest()).entries;
     assert.equal(intents.length, 2);
     assert.ok(intents.every((entry: { state: string }) => entry.state === 'deleting'));
+    // Both sources were detached before any removal; the crash came after the first one's rm.
     assert.equal(existsSync(f.review), false);
-    assert.ok(existsSync(f.taskPin));
+    assert.equal(existsSync(f.taskPin), false);
+    const detached = (source: string) =>
+      intents.find((entry: { source: string }) => entry.source === source).detached;
+    assert.equal(existsSync(detached(f.review)), false);
+    assert.ok(existsSync(detached(f.taskPin)));
     const recoveryStarted = Date.now();
     await runRetentionPass(f.options, privateDeps);
     const completed = await f.manifest();
@@ -954,10 +963,12 @@ test(
     assert.equal(entries[0].recovered, true);
     assert.ok(Date.parse(entries[0].deletedAt) >= recoveryStarted);
     assert.equal(entries[0].plannedAt, intents[0].plannedAt);
-    assert.equal(
-      completed.entries.filter((entry: { source: string }) => entry.source === f.taskPin).length,
-      1,
+    const pins = completed.entries.filter(
+      (entry: { source: string }) => entry.source === f.taskPin,
     );
+    assert.equal(pins.length, 1);
+    assert.equal(pins[0].state, 'deleted');
+    assert.equal(existsSync(detached(f.taskPin)), false);
     await runRetentionPass(f.options, privateDeps);
     assert.deepEqual(await f.manifest(), completed);
   },

@@ -70,6 +70,8 @@ test('eval harness materialization records resolved git checkout command', () =>
     '/tmp/harness-source/checkout/domains/coding/skills/recipe-harness',
   );
   assert.match(materialized.command, /git .*fetch --depth 1 origin 'main'/);
+  assert.match(materialized.command, /^\(export GIT_CONFIG_PARAMETERS=/);
+  assert.ok(materialized.command.endsWith('\n)'));
   assert.match(materialized.resolvedShaCommand ?? '', /git .*rev-parse HEAD/);
 });
 test('eval harness materialization rejects abbreviated commit refs', () => {
