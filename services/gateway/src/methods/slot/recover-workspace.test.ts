@@ -59,13 +59,33 @@ let head = 'a'.repeat(40),
 let fixtures = 'OK',
   probeError: string | undefined;
 let fetchExitCode = 0;
+let ownedSupport = false;
+let ownedCleanupFailure = false;
 let onFixtures = async () => {};
 let moves = 0;
 const calls: string[] = [];
 mock.module('../../core/index.js', {
   namedExports: {
     ...core,
+    loadProjectVars: async (name: string) => {
+      const project = await core.loadProjectVars(name);
+      return ownedSupport
+        ? {
+            ...project,
+            projectJson: {
+              ...project.projectJson,
+              fixtures: { owned_paths: [{ path: 'CLAUDE.local.md', state: 'retired' as const }] },
+            },
+          }
+        : project;
+    },
     execOnSlot: async (_vars: SlotVars, command: string) => {
+      if (command.includes('FARMSLOT_OWNED_PATH_CLEANUP')) {
+        calls.push('owned-support');
+        return ownedCleanupFailure
+          ? { exitCode: 1, stdout: '', stderr: 'support cleanup refused' }
+          : { exitCode: 0, stdout: JSON.stringify({ removed: ['CLAUDE.local.md'] }), stderr: '' };
+      }
       if (command.includes(' fetch --no-tags '))
         return { exitCode: fetchExitCode, stdout: '', stderr: '' };
       if (command.includes('refs/heads/main^{commit}'))
@@ -237,6 +257,8 @@ beforeEach(async () => {
   fixtures = 'OK';
   probeError = undefined;
   fetchExitCode = 0;
+  ownedSupport = false;
+  ownedCleanupFailure = false;
   moves = 0;
   calls.length = 0;
   onFixtures = async () => {};
@@ -248,6 +270,30 @@ test('recovery inspects without a fleet identity using its own timeout', async (
   assert.equal(result.refreshed, true, result.detail);
   assert.equal((await core.readSlotRow('example-slot'))?.lifecycle, 'ready');
 });
+test('recovery cleans declared support before fixture refresh and final verification', async () => {
+  ownedSupport = true;
+  onFixtures = async () => {
+    assert.ok(calls.includes('owned-support'));
+  };
+  const result = await recover();
+  assert.equal(result.refreshed, true, result.detail);
+  assert.equal(calls.filter((call) => call === 'owned-support').length, 1);
+});
+
+test('unconfirmed support cleanup leaves recovery held', async () => {
+  ownedSupport = true;
+  ownedCleanupFailure = true;
+  let refreshed = false;
+  onFixtures = async () => {
+    refreshed = true;
+  };
+  const result = await recover();
+  assert.equal(result.refreshed, false);
+  assert.match(result.detail ?? '', /support cleanup refused/);
+  assert.equal(refreshed, false);
+  assert.equal((await core.readSlotRow('example-slot'))?.lifecycle, 'held');
+});
+
 test('malformed recovery is replaced after inspection instead of trapping a held slot', async () => {
   await seed({ workspace_recovery: { id: 'broken' } });
   const result = await recover();
