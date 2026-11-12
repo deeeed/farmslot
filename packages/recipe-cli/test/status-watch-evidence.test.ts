@@ -201,7 +201,23 @@ test('status --watch says when no recipe run exists yet', async (t) => {
   await session.ready();
   session.key('v');
   await settle(() => session.frames.length === 2);
-  assert.match(session.frames[1]!, /no recipe run yet under .*temp\/recipe\/runs/u);
+  assert.match(session.frames[1]!, /no recipe run or call yet under .*temp\/recipe\/runs/u);
+});
+
+test('status --watch opens the newest call made during the task before any recipe run', async (t) => {
+  taskEnv(t, undefined);
+  const target = tempDir(t);
+  const active = path.join(target, 'temp/tasks/dev/task');
+  writeTask(active, 'running');
+  const calls = path.join(target, 'temp/recipe/calls');
+  writeRun(calls, 'read-positions', new Date().toISOString());
+  const session = watch(t, target);
+  await session.ready();
+  session.key('v');
+  await settle(() => session.frames.length === 2);
+  assert.deepEqual(session.served, [calls]);
+  assert.deepEqual(session.opened, ['http://127.0.0.1:4100/runs/read-positions/#story']);
+  assert.match(session.frames[1]!, /evidence \(latest call, no recipe run yet\)/u);
 });
 
 test('status --watch --task opens the runs of the task it was asked to show', async (t) => {

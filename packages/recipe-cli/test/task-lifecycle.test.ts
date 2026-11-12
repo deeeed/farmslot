@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -175,6 +176,22 @@ test('a watch retains the bound run through task-file cleanup while review conti
   );
   assert.equal(ticks, 2);
   assert.equal(JSON.parse(frames.at(-1)!).run.status, 'done');
+});
+
+test('status shows the approved plan a task was started with', (t) => {
+  const { target, dir } = task(t, 'comparison/profile');
+  fs.mkdirSync(path.join(dir, 'inputs'), { recursive: true });
+  const plan =
+    '# T-1 · fix-bug\nApproved by @engineer · 2026-11-12 · planned against origin/main@abc1234\n';
+  fs.writeFileSync(path.join(dir, 'inputs', 'plan.md'), plan);
+  const view = collectTaskView(target, dir, Date.now());
+  assert.equal(view.plan?.approvedBy, '@engineer');
+  assert.equal(view.plan?.base, 'origin/main@abc1234');
+  assert.equal(view.plan?.sha256, createHash('sha256').update(plan).digest('hex'));
+  assert.match(
+    renderTaskView(view, 'status', true).join('\n'),
+    /plan approved inputs\/plan\.md · sha [0-9a-f]{8} · by @engineer · base origin\/main@abc1234/,
+  );
 });
 
 test('an unavailable lifecycle is explicit without treating the worker signal as run completion', (t) => {

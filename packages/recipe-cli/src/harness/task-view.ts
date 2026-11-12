@@ -6,6 +6,7 @@
 // secrets included — can never reach the view model or the rendered output.
 
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -174,8 +175,17 @@ export interface TaskView {
   currentStep?: number;
   elapsedMs?: number;
   activity: TaskViewActivity;
+  /** An engineer-approved implementation plan the task was started with. */
+  plan?: TaskViewPlan;
   binding?: { target: string; matchesCheckout: boolean };
   run?: TaskRunBinding & { status?: string; terminal?: boolean };
+}
+
+export interface TaskViewPlan {
+  path: string;
+  sha256: string;
+  approvedBy?: string;
+  base?: string;
 }
 
 export interface TaskViewPrepare {
@@ -377,6 +387,7 @@ export function collectTaskView(
       }),
       sandbox: section({ ready: pickBoolean(sandbox, 'ready') }),
       ...(prepare ? { prepare } : {}),
+      ...readPlan(taskDir),
       checklist,
       subtasks: readSubtasks(taskDir),
       signal: section({
@@ -634,6 +645,28 @@ function trimLabel(text: string): string {
     .trim();
   if (plain.length <= CHECKLIST_LABEL_LIMIT) return plain;
   return `${plain.slice(0, CHECKLIST_LABEL_LIMIT).trimEnd()}…`;
+}
+
+/** The approved plan copied into the task's inputs, with who approved it and its base. */
+function readPlan(taskDir: string): { plan?: TaskViewPlan } {
+  const relative = path.join('inputs', 'plan.md');
+  let bytes: Buffer;
+  try {
+    bytes = fs.readFileSync(path.join(taskDir, relative));
+  } catch {
+    return {};
+  }
+  const text = bytes.toString('utf8');
+  const approvedBy = /Approved by (@?[\w.-]+)/.exec(text)?.[1];
+  const base = /planned against (\S+)/.exec(text)?.[1];
+  return {
+    plan: {
+      path: relative,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      ...(approvedBy ? { approvedBy } : {}),
+      ...(base ? { base } : {}),
+    },
+  };
 }
 
 function readCheckout(target: string): TaskViewCheckout {
