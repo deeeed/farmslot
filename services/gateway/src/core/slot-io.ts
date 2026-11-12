@@ -50,6 +50,7 @@ import {
 } from './file-transfer.js';
 import { assertHeavyWriteRoom } from './heavy-write-room.js';
 import { replaceReadOnlyDestination } from './owned-copy.js';
+import { nodePathParams } from './remote-paths.js';
 
 export const MAX_ARTIFACT_TREE_DEPTH = 12;
 // Subset of SlotVars — SlotVars satisfies this via structural typing
@@ -166,18 +167,6 @@ async function readChunkAcrossReconnect(
     if (!ctx.nodeRequest) await waitForNode(ctx.machine);
     return read();
   }
-}
-
-function nodePathParams(fullPath: string): { root: string; relPath: string } {
-  // '~' is resolved by the node's own expandTilde (commands/fs.ts confinedPath),
-  // so home-relative paths like ~/farmslot-node/support/... are valid remote
-  // roots — the gateway cannot expand them because the remote home is unknown here.
-  if (fullPath === '~' || fullPath.startsWith('~/')) {
-    return { root: '~', relPath: fullPath === '~' ? '' : fullPath.slice(2) };
-  }
-  const root = path.parse(fullPath).root;
-  if (!root) throw new Error(`Remote slot path must be absolute: ${fullPath}`);
-  return { root, relPath: path.relative(root, fullPath) };
 }
 
 async function assertConcreteDirRoot(

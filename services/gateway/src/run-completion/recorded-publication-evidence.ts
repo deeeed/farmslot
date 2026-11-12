@@ -237,16 +237,16 @@ export async function readFrozenPublicationManifest(
 }
 
 /** The selected evidence, after publication's secret scan of the selection itself. */
-function scannedFrozenSelection(
+async function scannedFrozenSelection(
   inventory: readonly ArtifactRef[],
   selectedEvidenceKeys: readonly string[],
-): ArtifactRef[] {
-  assertPublicationTextSafe(JSON.stringify(selectedEvidenceKeys));
+): Promise<ArtifactRef[]> {
+  await assertPublicationTextSafe(JSON.stringify(selectedEvidenceKeys));
   const selected = selectedEvidenceKeys.flatMap((key) => {
     const artifact = resolveSelectedEvidenceRef(key, [...inventory]);
     return artifact ? [artifact] : [];
   });
-  assertPublicationTextSafe(JSON.stringify(selected));
+  await assertPublicationTextSafe(JSON.stringify(selected));
   return selected;
 }
 
@@ -308,7 +308,7 @@ async function scanFrozenPublicationText(
   // The canonical closure above and retained reader check the byte identities.
   // Its valid empty logs must not inherit the selected-media non-empty rule.
   for (const artifact of textEntries) {
-    assertPublicationTextSafe(await readRetainedRunText(run, artifact.path, bundleRef));
+    await assertPublicationTextSafe(await readRetainedRunText(run, artifact.path, bundleRef));
   }
 }
 
@@ -326,7 +326,7 @@ export async function scanFrozenPublicationEvidence(
   comparison?: ReviewDiffSnapshot,
 ): Promise<void> {
   if (!inventory.length && !selectedEvidenceKeys.length) return;
-  const selected = scannedFrozenSelection(inventory, selectedEvidenceKeys);
+  const selected = await scannedFrozenSelection(inventory, selectedEvidenceKeys);
   const { textEntries } = await frozenPublicationTextClosure(
     run,
     inventory,
@@ -348,7 +348,7 @@ export async function verifyFrozenPublicationEvidence(
   comparison?: ReviewDiffSnapshot,
 ): Promise<void> {
   if (!inventory.length && !selectedEvidenceKeys.length) return;
-  const selected = scannedFrozenSelection(inventory, selectedEvidenceKeys);
+  const selected = await scannedFrozenSelection(inventory, selectedEvidenceKeys);
   await verifyReadyGateSelectedEvidenceFiles(
     run,
     { evidenceManifest: [...inventory], artifactBundle: bundleRef },

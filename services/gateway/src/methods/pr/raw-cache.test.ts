@@ -7,7 +7,6 @@ import { matchCheckGroups } from '../pr.js';
 
 import {
   buildBatchQuery,
-  buildPRChecksArgs,
   chunkPRsByRepo,
   isPRBatchTruncated,
   isUsablePRRawSnapshot,
@@ -19,20 +18,6 @@ import {
   retainedPRRawObservations,
   synthesizeRawSnapshotFromGraphQL,
 } from './raw-cache.js';
-
-test('buildPRChecksArgs uses JSON buckets so pending checks remain data, not command failure', () => {
-  assert.deepEqual(buildPRChecksArgs(41949, 'example-org/example-browser'), [
-    'pr',
-    'checks',
-    '41949',
-    '--repo',
-    'example-org/example-browser',
-    '--json',
-    'name,bucket,startedAt,completedAt,state,link',
-    '--jq',
-    '.[] | [.name, .bucket, (.startedAt // ""), (.completedAt // ""), (.state // ""), (.link // "")] | @tsv',
-  ]);
-});
 
 // ─── ADR-028 GraphQL batch tests ───
 
