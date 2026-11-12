@@ -71,6 +71,9 @@ export interface EvalTrialStartParams {
   startRef?: string;
   runner?: string;
   model?: string;
+  /** Optional judge reviewer override, resolved and frozen when the trial starts. */
+  reviewRunner?: string;
+  reviewModel?: string;
   effort?: string;
   app?: string;
   slotId?: string;
