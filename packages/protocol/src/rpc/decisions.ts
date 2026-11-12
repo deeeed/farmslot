@@ -8,17 +8,6 @@ export interface DecisionListResult {
   decisions: PendingDecision[];
 }
 
-/** Entity-sync versions read: id/version pairs for all live decisions. */
-export interface DecisionVersionsResult {
-  versions: Array<{ id: string; version: string }>;
-}
-
-/** Entity-sync ids read: requested decision entities plus their versions. */
-export interface DecisionEntityPage {
-  entities: PendingDecision[];
-  versions: Array<{ id: string; version: string }>;
-}
-
 /** An explicitly requested, advisory-only assessment of existing gateway actions. */
 export interface DecisionAdviceGetParams {
   runId: string;

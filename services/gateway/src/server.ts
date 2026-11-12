@@ -41,7 +41,6 @@ import { autoDispatchBacklogReady, listBacklogItems } from './backlog/store.js';
 import { ChatActionRejectError } from './chat/chat-actions.js';
 import { GatewayInternalError, GatewayMethodError } from './core/method-error.js';
 import { setSlotUpdateHook } from './core/state.js';
-import { decisionIndex } from './decisions/index.js';
 import { slotEntityProvider } from './fleet/entity-version.js';
 import { unregisterByWs } from './fleet/machine-registry.js';
 import {
@@ -74,7 +73,6 @@ import { unsubscribeWorkerTerminalPty } from './methods/terminal-worker.js';
 import { tmuxWorkerObservedList } from './methods/tmux-workers.js';
 import { workerSessionHistorySubscriptionKey } from './methods/worker-session-history.js';
 import { metroUnsubscribeAll } from './methods/workspace.js';
-import { setFileDecisionScanHook } from './observability/fleet-monitor.js';
 import {
   measureGatewayRequest,
   recordGatewayResponse,
@@ -95,7 +93,6 @@ import {
   revokeNodeFileObservations,
 } from './resources/node-file-observations.js';
 import { readWithResourceState, resourceRevisions } from './resources/revisions.js';
-import { setDecisionHooks } from './resources/run-changes.js';
 import { upstreamObservers } from './resources/upstream-observers.js';
 import { acceptWorkerObservation } from './resources/worker-observations.js';
 import {
@@ -623,30 +620,6 @@ export function initServerGlobals(): void {
     if (!entity || !version) return undefined;
     return { family: 'node', entity, version };
   });
-  resourceRevisions.setEntityProvider('decision', (key) => {
-    if (key.family !== 'decision' || !('decisionId' in key)) return undefined;
-    const typedKey = key as { decisionId: string };
-    const entity = decisionIndex.get(typedKey.decisionId);
-    const version = decisionIndex.getVersion(typedKey.decisionId);
-    if (!entity || !version) return undefined;
-    return { family: 'decision', entity, version };
-  });
-  // Wire decision lifecycle hooks: run-changes.ts triggers a per-run rebuild (not per-decision).
-  setDecisionHooks(
-    (runId) => void decisionIndex.scheduleRebuildForRun(runId),
-    (decisionId) => decisionIndex.markResolved(decisionId),
-  );
-  // Wire file-decision scan hook: fleet-monitor calls this after each scan with the full set.
-  setFileDecisionScanHook((decisions) => decisionIndex.reconcileFileDecisions(decisions));
-  // Gap trigger 1: review round file changed → rebuild all decisions in the run.
-  resourceRevisions.subscribe((payload) => {
-    for (const change of payload.changes) {
-      if (change.key.family === 'review' && 'runId' in change.key) {
-        decisionIndex.scheduleRebuildForRun((change.key as { runId: string }).runId);
-      }
-    }
-  });
-  decisionIndex.startWarmup();
 
   // Watch for fleet state changes and broadcast
   const publishFleetChange = (fleet: FleetStatus) => {

@@ -1171,12 +1171,6 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     maxBytes: 10 * mb,
     retention: { maxEntries: Number.MAX_SAFE_INTEGER, maxBytes: 10 * mb },
     live: true,
-    // Strip entity-sync params so versions/ids reads fold to the same cache key.
-    normalizeParams: (params: unknown): unknown => {
-      if (params == null || typeof params !== 'object') return {};
-      const { versions: _v, ids: _i, ...rest } = params as Record<string, unknown>;
-      return rest;
-    },
     dependencies: () => [{ family: 'decisions', scope: 'farm' }],
   },
   [Methods.FAMILY_OBSERVABILITY_GET]: {

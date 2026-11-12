@@ -160,12 +160,11 @@ export const Events = {
 /**
  * Typed, family-discriminated entity carried on a per-entity resource.changed entry.
  * Clients narrow by `family` and validate required fields with a type guard before use.
- * Only present on per-entity keys (slot, decision, upstream PR) under 16 KB; absent on
+ * Only present on per-entity keys (slot, upstream PR, node) under 16 KB; absent on
  * collection keys.
  */
 export type ChangedEntity =
   | { family: 'slot'; entity: SlotEntity; version: string }
-  | { family: 'decision'; entity: PendingDecision; version: string }
   | { family: 'upstream'; entity: PRStatus; version: string }
   /** Machine health entity pushed on every sample; full MachineHealth including system. */
   | { family: 'node'; entity: MachineHealth; version: string };
@@ -180,13 +179,6 @@ export function isSlotEntity(
     e.entity !== null &&
     typeof (e.entity as Record<string, unknown>).slot === 'string'
   );
-}
-
-/** Runtime guard: narrow a pushed entity to a decision. */
-export function isDecisionEntity(
-  e: ChangedEntity,
-): e is { family: 'decision'; entity: PendingDecision; version: string } {
-  return e.family === 'decision' && typeof e.entity === 'object' && e.entity !== null;
 }
 
 /** Runtime guard: narrow a pushed entity to a PR. */

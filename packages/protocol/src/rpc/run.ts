@@ -69,12 +69,7 @@ export type {
   RunRecoveryProposalParams,
   RunRecoveryProposalResult,
 } from './chat.js';
-export type {
-  DecisionEntityPage,
-  DecisionListResult,
-  DecisionResolveParams,
-  DecisionVersionsResult,
-} from './decisions.js';
+export type { DecisionListResult, DecisionResolveParams } from './decisions.js';
 
 // ─── Run param/result types ───
 

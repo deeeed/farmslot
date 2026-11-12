@@ -155,29 +155,3 @@ test('visible-model owner keys reach only that principal, with or without native
     false,
   );
 });
-
-// ADR-071 Amendment 3: node entity and decision entity keys are operator-only.
-test('node health and decision entity keys require operator authorization (ADR-071 §a)', async (t) => {
-  const home = await mkdtemp(join(tmpdir(), 'node-decision-key-authorization-'));
-  t.after(() => rm(home, { recursive: true, force: true }));
-  const runtime = createGatewayAuthRuntime({ FARMSLOT_HOME: home });
-  allow = true;
-  methods.length = 0;
-
-  const operatorOnlyKeys: ResourceKey[] = [
-    { family: 'node', nodeId: 'macwork' },
-    { family: 'decision', decisionId: 'd-1' },
-    { family: 'decisions', scope: 'farm' },
-  ];
-  for (const key of operatorOnlyKeys) assert.equal(canReadResourceKey(runtime, state, key), true);
-  assert.deepEqual(methods, ['node.health', 'decision.list', 'decision.list']);
-
-  // allow=false: AUTH_FORBIDDEN → false for all three keys (operator-only gate).
-  allow = false;
-  for (const key of operatorOnlyKeys)
-    assert.equal(
-      canReadResourceKey(runtime, state, key),
-      false,
-      `${JSON.stringify(key)} must deny when auth revoked`,
-    );
-});

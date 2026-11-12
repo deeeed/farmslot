@@ -2,18 +2,12 @@ import type {
   FleetPoolReadError,
   FleetSummary,
   MachineHealth,
-  PendingDecision,
   PRStatus,
   SlotEntity,
 } from '../contracts/index.js';
 import { reattachHostLoad } from '../fleet/host-load.js';
 import { computeSummary } from '../fleet/summary.js';
 import { afterForegroundPaint } from '../performance/paint.js';
-import type {
-  DecisionEntityPage,
-  DecisionListResult,
-  DecisionVersionsResult,
-} from '../rpc/decisions.js';
 import type { FleetEntityPage, FleetStatusResult, FleetVersionsResult } from '../rpc/fleet.js';
 import type { NativeSessionReadResult, NativeSessionTargetParams } from '../rpc/native-session.js';
 import type { PREntityPage, PRListParams, PRListResult, PRVersionsResult } from '../rpc/pr.js';
@@ -22,7 +16,6 @@ import type { UpstreamObservation } from '../rpc/resource-observers.js';
 import type { RunGetResult, RunListParams, RunListResult } from '../rpc/run.js';
 import { runListVersion } from '../runs/list-version.js';
 import {
-  isDecisionEntity,
   isNodeHealthEntity,
   isPREntity,
   isSlotEntity,
@@ -615,107 +608,6 @@ export function createGatewayResourceCache(
     return request<PRListResult>(Methods.PR_LIST, entry.query.params, signal);
   }
 
-  // ─── Decision entity collection (ADR-071 Amendment 3) ───────────────────────
-
-  interface DecisionCollectionState {
-    collection: EntityCollection<PendingDecision>;
-    membershipStale: boolean;
-    /** Entry currently driving a catch-up refresh; cleared on completion. */
-    progressEntry?: QueryEntry;
-  }
-  let decisionCollection: DecisionCollectionState | undefined;
-
-  function getOrCreateDecisionCollection(): DecisionCollectionState {
-    if (decisionCollection) return decisionCollection;
-    const colState: DecisionCollectionState = { collection: null!, membershipStale: false };
-    const col = new EntityCollection<PendingDecision>({
-      idOf: (d) => d.id,
-      sort: (a, b) => a.id.localeCompare(b.id),
-      fetchVersions: async (signal) => {
-        const result = await request<DecisionVersionsResult>(
-          Methods.DECISION_LIST,
-          { versions: true as const },
-          signal,
-        );
-        colState.membershipStale = false;
-        return { versions: result.data.versions };
-      },
-      fetchPage: async (ids, signal) => {
-        const result = await request<DecisionEntityPage>(Methods.DECISION_LIST, { ids }, signal);
-        return result.data;
-      },
-      onProgress: (done, total) => {
-        const e = colState.progressEntry;
-        if (!e) return;
-        e.state = { ...e.state, catchUpProgress: { done, total } };
-        notify(e);
-      },
-    });
-    colState.collection = col;
-    decisionCollection = colState;
-    return colState;
-  }
-
-  function forgetDecisionCollection(): void {
-    if (decisionCollection) {
-      decisionCollection.collection.clear();
-      decisionCollection.membershipStale = false;
-      decisionCollection = undefined;
-    }
-  }
-
-  /** True for plain decision.list reads (not versions read, not page reads). */
-  function isDecisionListView(query: ResourceQuery): boolean {
-    if (query.method !== Methods.DECISION_LIST) return false;
-    const p = query.params;
-    if (p == null) return true;
-    if (typeof p !== 'object') return true;
-    const r = p as Record<string, unknown>;
-    return r.versions !== true && r.ids === undefined;
-  }
-
-  /** Entity-sync decision list view: assemble from held decision entities. */
-  async function readDecisionListView(entry: QueryEntry, signal: AbortSignal): Promise<ReadReply> {
-    const colState = getOrCreateDecisionCollection();
-    colState.progressEntry = entry;
-    try {
-      if (!colState.collection.held || !colState.collection.complete || colState.membershipStale) {
-        await colState.collection.refresh();
-      }
-    } catch (error) {
-      if (evictionCodes.has(queryError(error).code)) {
-        colState.collection.clear();
-        colState.membershipStale = false;
-      }
-      throw error;
-    } finally {
-      colState.progressEntry = undefined;
-      if (entry.state.catchUpProgress !== undefined) {
-        entry.state = { ...entry.state, catchUpProgress: undefined };
-      }
-    }
-    const decisions = colState.collection.assemble();
-    if (decisions) {
-      const epoch = connection.capabilities?.resourceChanges?.epoch;
-      const coveredState = epoch
-        ? {
-            epoch,
-            dependencies: entry.query.dependencies.map((key) => ({
-              key,
-              revision: revisions.get(resourceKeyId(key)) ?? 0,
-            })),
-          }
-        : undefined;
-      return {
-        data: { decisions } satisfies DecisionListResult,
-        resourceState: coveredState,
-        observedAt: Date.now(),
-      };
-    }
-    // Fallback: entity data not yet available; fall through to full read.
-    return request<DecisionListResult>(Methods.DECISION_LIST, entry.query.params, signal);
-  }
-
   /** Persist fleet entity rows to the store after a successful refresh (fire-and-forget). */
   function persistFleetCollection(): void {
     const writingStore = store;
@@ -773,7 +665,6 @@ export function createGatewayResourceCache(
     forgetRunList();
     forgetFleetCollection();
     forgetPRCollections();
-    forgetDecisionCollection();
     for (const entry of entries.values()) invalidate(entry, true);
     transport.resynchronize();
   }
@@ -886,7 +777,6 @@ export function createGatewayResourceCache(
     forgetRunList();
     forgetFleetCollection();
     forgetPRCollections();
-    forgetDecisionCollection();
     for (const entry of entries.values()) invalidate(entry);
     if (
       needsStore &&
@@ -1144,7 +1034,6 @@ export function createGatewayResourceCache(
       forgetRunList();
       forgetFleetCollection();
       forgetPRCollections();
-      forgetDecisionCollection();
     }
     connection = next;
     conversations?.connectionChanged(revoke || scopeChanged || authorityChanged);
@@ -1196,7 +1085,6 @@ export function createGatewayResourceCache(
           forgetRunList();
           forgetFleetCollection();
           forgetPRCollections();
-          forgetDecisionCollection();
           for (const entry of entries.values()) invalidate(entry, true);
           // Switching profiles retains the old profile's store; revoked authority deletes it.
           if (!switchingProfile || revoke || deletionRequired) {
@@ -1424,58 +1312,6 @@ export function createGatewayResourceCache(
             }
           }
         }
-      }
-      // Decision entity sync: apply pushed decision entities; track membership changes.
-      if (change.key.family === 'decision') {
-        const decKey = change.key as { family: 'decision'; decisionId: string };
-        const col = decisionCollection;
-        if (col) {
-          if (change.kind === 'deleted') {
-            // Remove from collection so assemble() excludes it immediately.
-            col.collection.applyDeleted(decKey.decisionId);
-          } else if (change.changedEntity && isDecisionEntity(change.changedEntity)) {
-            // Per-decision entity push: update held entity.
-            col.collection.applyEntity(
-              decKey.decisionId,
-              change.changedEntity.entity,
-              change.changedEntity.version,
-            );
-          }
-          // Dirty all decision list views so they reassemble.
-          for (const entry of entries.values()) {
-            if (isDecisionListView(entry.query)) {
-              entry.dirty = true;
-              entry.state = { ...entry.state, status: 'stale' };
-              notify(entry);
-              if (!entry.pending) schedule(entry);
-            }
-          }
-        }
-      }
-      if (
-        change.key.family === 'decisions' &&
-        'scope' in change.key &&
-        change.key.scope === 'farm'
-      ) {
-        // Collection membership change: re-read versions on next fetch.
-        const col = decisionCollection;
-        if (col?.collection.needsVersionsRead(change.membershipRevision)) {
-          col.membershipStale = true;
-          for (const entry of entries.values()) {
-            if (isDecisionListView(entry.query) && !entry.pending && !entry.queued) {
-              entry.dirty = true;
-              entry.state = { ...entry.state, status: 'stale' };
-              notify(entry);
-              entry.queued = true;
-              queueMicrotask(() => {
-                entry.queued = false;
-                if (entry.listeners.size && usable && !disposed) void fetchEntry(entry, false);
-              });
-            }
-          }
-        }
-        if (change.membershipRevision !== undefined)
-          col?.collection.storeMembershipRevision(change.membershipRevision);
       }
       const affected = [...entries.values()].filter((entry) => entry.dependencyIds.has(id));
       // Coverage counts declared dependencies only, so a known key that no entry declares (another
@@ -2013,10 +1849,7 @@ export function createGatewayResourceCache(
         const fromPRList =
           isPRListView(entry.query) &&
           connection.capabilities?.resourceChanges?.entitySync === true;
-        const fromDecisionList =
-          isDecisionListView(entry.query) &&
-          connection.capabilities?.resourceChanges?.entitySync === true;
-        const fromEntitySync = fromFleetCollection || fromPRList || fromDecisionList;
+        const fromEntitySync = fromFleetCollection || fromPRList;
         if (entry.query.collector && !fromEntitySync) {
           await collectors.require(entry.query, !observedOnly);
           if (disposed || pending.version !== version || pending.controller.signal.aborted) return;
@@ -2029,27 +1862,17 @@ export function createGatewayResourceCache(
           ? await readFleetStatusView(entry, pending.controller.signal)
           : fromPRList
             ? await readPRListView(entry, pending.controller.signal)
-            : fromDecisionList
-              ? await readDecisionListView(entry, pending.controller.signal)
-              : fromRunList
-                ? await readRunListView(entry, pending.controller.signal)
-                : entry.query.method === Methods.NATIVE_SESSION_READ
-                  ? await readNativeHistory(
-                      entry.query.params as NativeSessionTargetParams,
-                      entry.state.data as NativeSessionReadResult | undefined,
-                      (params, signal) =>
-                        request<NativeSessionReadResult>(
-                          Methods.NATIVE_SESSION_READ,
-                          params,
-                          signal,
-                        ),
-                      pending.controller.signal,
-                    )
-                  : await request(
-                      entry.query.method,
-                      entry.query.params,
-                      pending.controller.signal,
-                    );
+            : fromRunList
+              ? await readRunListView(entry, pending.controller.signal)
+              : entry.query.method === Methods.NATIVE_SESSION_READ
+                ? await readNativeHistory(
+                    entry.query.params as NativeSessionTargetParams,
+                    entry.state.data as NativeSessionReadResult | undefined,
+                    (params, signal) =>
+                      request<NativeSessionReadResult>(Methods.NATIVE_SESSION_READ, params, signal),
+                    pending.controller.signal,
+                  )
+                : await request(entry.query.method, entry.query.params, pending.controller.signal);
         if (
           disposed ||
           store.deleted ||

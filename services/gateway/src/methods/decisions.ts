@@ -1,10 +1,20 @@
 // methods/decisions.ts — decision.list, decision.resolve
 // Unified: merges file-based decisions + run decisions into one list.
 
-import type { DecisionListResult, DecisionResolveParams, Run } from '@farmslot/protocol';
+import type {
+  DecisionListResult,
+  DecisionResolveParams,
+  PendingDecision,
+  Run,
+} from '@farmslot/protocol';
 
-import { decisionIndex } from '../decisions/index.js';
-import { resolveFileDecision } from '../observability/fleet-monitor.js';
+import { refreshRetrospectiveFeedback } from '../intelligence/feedback-candidates.js';
+import { loadPendingDecisions, resolveFileDecision } from '../observability/fleet-monitor.js';
+import { attachReviewRoundBudget } from '../review/review-round-budget.js';
+import { buildRetrospectivePayload } from '../run-completion/orchestrator.js';
+import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
+import { inspectedRun } from '../run-engine/gate-inspection.js';
+import { enrichDecisionsWithGateSummary } from '../run-engine/gate-summary.js';
 import { completedDecisionExpiresAt } from '../runs/decision-inbox.js';
 import { listRuns } from '../runs/store.js';
 
@@ -20,10 +30,35 @@ function getRunsWithDecisions(): Run[] {
   return [...activeRuns, ...recentDoneRuns];
 }
 
-/** Returns all live decisions from the pre-enriched index. */
 export async function decisionList(): Promise<DecisionListResult> {
-  await decisionIndex.ready();
-  return { decisions: decisionIndex.getAll() };
+  // File-based decisions (legacy)
+  const fileDecisions = await loadPendingDecisions();
+
+  // Run decisions (from run-engine)
+  const runs = getRunsWithDecisions();
+
+  const runDecisions: PendingDecision[] = [];
+  for (const run of runs) {
+    // Lazy gate-summary backfill so historical gate/retrospective decisions
+    // carry the consolidated narrative without a migration.
+    const enrichedRun = enrichDecisionsWithGateSummary(
+      await attachReviewRoundBudget(inspectedRun(run)),
+    );
+    for (const d of enrichedRun.decisions) {
+      if (d.resolvedAt) continue;
+      let payload =
+        d.type === 'retrospective' && !d.payload
+          ? await buildRetrospectivePayload(enrichedRun, null)
+          : d.payload;
+      // Stored retrospectives froze their feedback consumption state; a rule
+      // landed since must show as consumed.
+      if (payload?.kind === 'retrospective')
+        payload = await refreshRetrospectiveFeedback(payload, enrichedRun);
+      runDecisions.push(pendingDecisionForRun(run, d, payload));
+    }
+  }
+
+  return { decisions: [...fileDecisions, ...runDecisions] };
 }
 
 export async function decisionResolve(

@@ -10,7 +10,6 @@ import type { FeedbackConsumption } from '@farmslot/protocol';
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
-import { decisionIndex } from '../decisions/index.js';
 import { resourceRevisions } from '../resources/revisions.js';
 
 export interface FeedbackLedgerEntry extends FeedbackConsumption {
@@ -144,7 +143,6 @@ export function appendFeedbackConsumptions(
     if (added.length > 0) {
       await writeAtomicJSON(file, ledger);
       resourceRevisions.advance({ family: 'decisions', scope: 'farm' });
-      decisionIndex.rebuildAllRetrospectiveDecisions();
     }
     return added;
   };

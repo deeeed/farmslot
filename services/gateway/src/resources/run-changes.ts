@@ -2,21 +2,6 @@ import type { Run } from '@farmslot/protocol';
 
 import { completedDecisionExpiresAt, type RunDecisionInboxRecord } from '../runs/decision-inbox.js';
 
-/**
- * Registered by server.ts to trigger the decision index.
- * onRunUpdated fires once per run update — the index enriches the whole run in one pass.
- * onDecisionRemoved fires per removed decision so the index can tombstone it immediately.
- */
-let runUpdatedHook: ((runId: string) => void) | undefined;
-let decisionRemovedHook: ((decisionId: string) => void) | undefined;
-export function setDecisionHooks(
-  onRunUpdated: (runId: string) => void,
-  onRemoved: (decisionId: string) => void,
-): void {
-  runUpdatedHook = onRunUpdated;
-  decisionRemovedHook = onRemoved;
-}
-
 import { resourceRevisions } from './revisions.js';
 import { publishWorkerResources } from './worker-changes.js';
 
@@ -81,11 +66,7 @@ export function publishRunResources(
   const retained = new Set(current.decisionIds);
   for (const decisionId of new Set([...retained, ...(previous?.decisionIds ?? [])])) {
     const removed = kind === 'deleted' || !retained.has(decisionId);
-    if (removed) {
-      // Tombstone the index entry and immediately notify with 'deleted' kind.
-      decisionRemovedHook?.(decisionId);
-      revisions.advance({ family: 'decision', decisionId }, 'deleted');
-    }
+    revisions.advance({ family: 'decision', decisionId }, removed ? 'deleted' : 'updated');
     revisions.advance(
       { family: 'gate', runId: current.id, decisionId },
       removed ? 'deleted' : 'updated',
@@ -95,6 +76,4 @@ export function publishRunResources(
       removed ? 'deleted' : 'updated',
     );
   }
-  // Trigger a per-run rebuild once — the index enriches all of this run's decisions in one pass.
-  if (kind !== 'deleted') runUpdatedHook?.(current.id);
 }

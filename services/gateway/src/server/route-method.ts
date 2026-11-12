@@ -338,7 +338,6 @@ import {
   copilotStop,
 } from '../methods/copilot-runtime.js';
 import { decisionAdviceAnalyze, decisionAdviceGet } from '../methods/decision-advice.js';
-import { decisionListIds, decisionListVersions } from '../methods/decision-entity-sync.js';
 import { decisionList, decisionResolve } from '../methods/decisions.js';
 import { diagnosticsRun } from '../methods/diagnostics.js';
 import {
@@ -1426,19 +1425,8 @@ async function routeAuthorizedMethod(
       return acceptanceEvidenceAnalyze(p as AcceptanceEvidenceAnalyzeParams);
 
     // Decisions
-    case Methods.DECISION_LIST: {
-      const raw: Record<string, unknown> =
-        p != null && typeof p === 'object' ? (p as Record<string, unknown>) : {};
-      if (raw.versions !== undefined && raw.versions !== true)
-        throw new GatewayMethodError(
-          'INVALID_PARAMS',
-          'decision.list versions must be true or absent',
-        );
-      const ids = toStringArray(raw.ids, 'decision.list ids must be a string array');
-      if (raw.versions === true) return decisionListVersions();
-      if (ids !== undefined) return decisionListIds(ids);
+    case Methods.DECISION_LIST:
       return decisionList();
-    }
     case Methods.DECISION_ADVICE_GET:
       return decisionAdviceGet(p as DecisionAdviceGetParams);
     case Methods.DECISION_ADVICE_ANALYZE:

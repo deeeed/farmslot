@@ -31,19 +31,7 @@ test('a run moving families invalidates both memberships and removed decision pr
     const changes = packets.flatMap((packet) => packet.changes);
     assert(changes.some(({ key }) => key.family === 'runs' && key.scope === 'farm'));
     assert(changes.some(({ key }) => key.family === 'decisions'));
-    // Per-decision 'deleted' fires immediately (tombstone + direct advance).
-    // Per-decision 'updated' is now async via decisionIndex.scheduleRebuild.
-    assert(
-      changes.some(
-        ({ key, kind }) =>
-          key.family === 'decision' &&
-          'decisionId' in key &&
-          key.decisionId === 'resolved' &&
-          kind === 'deleted',
-      ),
-    );
-    // gate and package per-decision keys still advance immediately.
-    for (const family of ['gate', 'package']) {
+    for (const family of ['decision', 'gate', 'package']) {
       assert(
         changes.some(
           ({ key, kind }) =>
