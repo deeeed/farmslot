@@ -1,0 +1,1 @@
+- Document pack-owned support path retirement and guarded untracked-only cleanup.

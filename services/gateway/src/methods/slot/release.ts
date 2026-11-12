@@ -55,6 +55,7 @@ import {
 import { readBlindTrialMarker, restoreBlindTrialGit } from '../../evals/blind-trial.js';
 import {
   archiveSlotScaffolding,
+  cleanupSlotOwnedPaths,
   excludeSlotScaffolding,
   measureSlotRetention,
   retainTaskCheckouts,
@@ -1035,6 +1036,18 @@ async function slotReleaseImpl(
       const reclaimed = await holdAfterCleanupFailure(
         `Final result retention failed; cleanup stopped: ${(error as Error).message}`,
       );
+      if (reclaimed) return reclaimed;
+    }
+  }
+
+  if (!preserveAgents && !options?.workspaceRecovery) {
+    try {
+      const removed = await cleanupSlotOwnedPaths(vars, projectJson, {
+        beforeRemove: assertReleaseClaim,
+      });
+      if (removed.length) step('farm-files', `Removed ${removed.length} farm-owned support paths`);
+    } catch (error) {
+      const reclaimed = await holdAfterCleanupFailure((error as Error).message);
       if (reclaimed) return reclaimed;
     }
   }

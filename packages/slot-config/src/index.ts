@@ -3,6 +3,7 @@ export * from './error.js';
 export * from './fixtures.js';
 export * from './hooks.js';
 export { machinePoolFileName, resolveMachinePool } from './machine-pool.js';
+export * from './owned-paths.js';
 export {
   farmslotRoot,
   readWorkspaceState,

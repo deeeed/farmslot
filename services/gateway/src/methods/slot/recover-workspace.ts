@@ -32,7 +32,7 @@ import {
 } from '../../core/index.js';
 import { assertNoNativeWorkerRecovery } from '../../core/native-worker-exclusion.js';
 import { shellQuote } from '../../core/tmux.js';
-import { excludeSlotScaffolding } from '../../fleet/slot-scaffolding.js';
+import { cleanupSlotOwnedPaths, excludeSlotScaffolding } from '../../fleet/slot-scaffolding.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 import {
   beginTerminalTeardown,
@@ -437,6 +437,7 @@ export async function recoverSlotWorkspace(
     // A retry re-syncs fixtures, but never repeats a verified destructive cleanup/reset.
     await assertFence();
     await save('fixtures');
+    await cleanupSlotOwnedPaths(vars, project.projectJson, { beforeRemove: verifyWork });
     await slotFixtureRefresh({ slotId: params.slotId, requestId }, emit);
     await advanceIdentity();
     await save('verify', 'fixtures');

@@ -484,8 +484,10 @@ test('production gateway publishes off-diff findings once through the publicatio
   });
   const token = testGatewayIdentity(path.join(gatewayRoot, 'home'));
   let logs = '';
-  const server = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {
-    cwd: repo,
+  // Own the Gateway process directly: Yarn can exit before its child cleans up.
+  const gatewayEntry = path.join(repo, 'services/gateway/src/index.ts');
+  const server = spawn(process.execPath, ['--import', 'tsx', gatewayEntry], {
+    cwd: path.join(repo, 'services/gateway'),
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
@@ -502,6 +504,7 @@ test('production gateway publishes off-diff findings once through the publicatio
       GATEWAY_PORT: String(port),
     },
   });
+  const serverClosed = once(server, 'close');
   server.stdout.on('data', (chunk) => {
     logs += chunk;
   });
@@ -537,7 +540,7 @@ test('production gateway publishes off-diff findings once through the publicatio
     connection?.close();
     if (server.exitCode === null && server.signalCode === null) {
       process.kill(-server.pid!, 'SIGTERM');
-      await once(server, 'exit');
     }
+    await serverClosed;
   }
 });
