@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { mergeDecisionHistoryFile } from './decision-history.js';
+import {
+  mergeDecisionHistoryFile,
+  readDecisionHistoryFile,
+  readDecisionHistoryFileAsync,
+} from './decision-history.js';
 
 test('history merge keeps target bytes and compares incoming rows by exact line', (t) => {
   const root = mkdtempSync(path.join(tmpdir(), 'history-merge-'));
@@ -53,3 +57,17 @@ for (const side of ['source', 'target', 'both'] as const) {
     assert.equal(readFileSync(source, 'utf8'), incoming);
   });
 }
+
+test('async history preserves synchronous missing, complete and torn-tail behavior', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'history-async-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, 'journal');
+  assert.deepEqual(await readDecisionHistoryFileAsync(file), readDecisionHistoryFile(file));
+  for (const body of ['', '{"id":"one"}\n', '{"id":"one"}\n{"id":', '{"id":"one"}\n{"id":"two"}']) {
+    writeFileSync(file, body);
+    assert.deepEqual(await readDecisionHistoryFileAsync(file), readDecisionHistoryFile(file));
+  }
+  writeFileSync(file, 'invalid\n{"id":"two"}\n');
+  assert.throws(() => readDecisionHistoryFile(file), SyntaxError);
+  await assert.rejects(readDecisionHistoryFileAsync(file), SyntaxError);
+});
