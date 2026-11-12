@@ -973,10 +973,12 @@ export async function executeReviewStep(
   );
   const cliCommand = `farmslot rpc review.run '{"runId":"${runId}"}'`;
   if (evalJudge) {
+    const disabledByConfig = result.skipped && result.reason === 'disabled-for-project';
     if (
-      result.skipped ||
-      (result.verdict !== 'pass' && result.verdict !== 'issues') ||
-      result.retryCount !== 0
+      !disabledByConfig &&
+      (result.skipped ||
+        (result.verdict !== 'pass' && result.verdict !== 'issues') ||
+        result.retryCount !== 0)
     )
       throw new Error(
         `Eval judge did not complete: ${result.reason ?? result.verdict ?? 'unknown'}`,

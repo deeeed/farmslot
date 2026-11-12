@@ -230,7 +230,11 @@ export function buildAnalyticsRecord(
         ? 'closed'
         : null;
   // A run held for its decision is not a failure either.
-  const notFailed = isSuccessfulRun(run) || resultDecision || isHeldForResultDecision(run);
+  const notFailed =
+    run.metrics?.outcome === 'unjudged' ||
+    isSuccessfulRun(run) ||
+    resultDecision ||
+    isHeldForResultDecision(run);
   const failedStep = notFailed ? null : failingStep(run);
   const failureReason = notFailed ? null : classifyFailureReason(run, failedStep);
   const ci = ciOutputs(run);

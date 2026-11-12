@@ -4,6 +4,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { afterEach, describe, it, mock } from 'node:test';
 
 import {
+  clearSimctlListings,
   type DeviceDiscoveryError,
   findAvailableIosSimulatorById,
   listConnectedDevices,
@@ -18,6 +19,7 @@ function mockExecFileSync(implementation: (...args: unknown[]) => string) {
 }
 
 afterEach(() => {
+  clearSimctlListings();
   mock.restoreAll();
   syncBuiltinESMExports();
 });

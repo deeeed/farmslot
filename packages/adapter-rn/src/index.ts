@@ -8,6 +8,7 @@ export {
   DEFAULT_EXPO_RECIPE_PATH,
 } from './constants.js';
 export {
+  clearSimctlListings,
   type ConnectedDevice,
   type DeviceDiscoveryError,
   type DevicePlatform,
