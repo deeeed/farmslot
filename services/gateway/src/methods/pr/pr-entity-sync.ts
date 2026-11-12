@@ -1,99 +1,48 @@
-/**
- * Entity-sync handlers for pr.list (ADR-071 Amendment 3).
- * Routes: pr.list { versions: true } and pr.list { ids: string[] }.
- */
-import type { PREntityPage, PRStatus, PRVersionsResult } from '@farmslot/protocol';
-import type { ResourceKey } from '@farmslot/protocol/client-cache';
-import type { ChangedEntity } from '@farmslot/protocol/transport/events';
+// pr.list entity reads (ADR-071 Amendment 3): `{ versions: true }` and `{ ids }` answer from the
+// scope's served list, after starting its collector exactly as the full read does.
+import type { PREntityPage, PRVersionsResult } from '@farmslot/protocol';
 
-import { GatewayMethodError } from '../../core/method-error.js';
 import { resourceRevisions } from '../../resources/revisions.js';
+import { servedPRListFor } from '../pr.js';
 
-import {
-  getCollectorSnapshotByQueryId,
-  getPRListCollectorState,
-  prListResourceKey,
-} from './list-cache.js';
-import { prEntityVersion, prPrKey } from './pr-entity-keys.js';
+import { type PRListClientInterest, prListResourceKey } from './list-cache.js';
 
-const PAGE_MAX_BYTES = 2 * 1024 * 1024;
+/** An ids page stops before the row that would take it past this many UTF-8 JSON bytes. */
+export const PR_ENTITY_PAGE_MAX_BYTES = 2 * 1024 * 1024;
 
-/**
- * Synchronous entity provider for all upstream/github per-PR keys.
- * A single instance handles all project scopes: it reads queryId from the key.
- * Collection keys (no prKey) are skipped — they carry no entity.
- * Registered at startup by server.ts for the 'upstream' family.
- */
-export function prEntityProvider(): (key: ResourceKey) => ChangedEntity | undefined {
-  return (key: ResourceKey): ChangedEntity | undefined => {
-    if (key.family !== 'upstream' || !('integration' in key) || key.integration !== 'github')
-      return undefined;
-    if (!('prKey' in key)) return undefined; // collection key — skip
-    const typedKey = key as { queryId: string; prKey: string };
-    const snapshot = getCollectorSnapshotByQueryId(typedKey.queryId);
-    if (!snapshot) return undefined;
-    const slashIdx = typedKey.prKey.lastIndexOf('/');
-    if (slashIdx < 0) return undefined;
-    const repo = typedKey.prKey.slice(0, slashIdx);
-    const prNum = typedKey.prKey.slice(slashIdx + 1);
-    const pr = snapshot.prs.find((p) => p.repo === repo && String(p.pr) === prNum);
-    if (!pr) return undefined;
-    return { family: 'upstream', entity: pr, version: prEntityVersion(pr) };
-  };
-}
+type ServedDeps = Parameters<typeof servedPRListFor>[2];
 
-/**
- * pr.list { versions: true }
- * Returns id/version pairs plus non-entity fields (fetchedAt, truncated).
- */
-export async function prListVersions(project?: string): Promise<PRVersionsResult> {
-  const collectionKey = prListResourceKey(project);
-  const queryId = (collectionKey as { queryId: string }).queryId;
-  const snapshot = getCollectorSnapshotByQueryId(queryId);
-  if (!snapshot) {
-    throw new GatewayMethodError('NOT_READY', 'PR list not yet available');
-  }
-  const versions = snapshot.prs.map((pr) => ({
-    id: prPrKey(pr),
-    version: prEntityVersion(pr),
-  }));
-  const collectorState = getPRListCollectorState(queryId);
+/** `pr.list { versions: true }`: stored versions and the list's freshness fields. */
+export async function prListVersions(
+  project: string | undefined,
+  interest: PRListClientInterest = {},
+  deps: ServedDeps = {},
+): Promise<PRVersionsResult> {
+  const list = await servedPRListFor(project, interest, deps);
   return {
-    versions,
-    ...(snapshot.fetchedAt ? { fetchedAt: snapshot.fetchedAt } : {}),
-    ...(collectorState ? { observation: collectorState.observation } : {}),
-    ...(collectorState?.refreshing ? { refreshing: collectorState.refreshing } : {}),
-    membershipRevision: resourceRevisions.membershipRevision(collectionKey),
+    versions: [...list.rows].map(([id, row]) => ({ id, version: row.version })),
+    ...list.meta,
+    membershipRevision: resourceRevisions.membershipRevision(prListResourceKey(project)),
   };
 }
 
-/**
- * pr.list { ids: string[] }
- * Returns only the named PR entities (by prKey `${repo}/${pr}`) plus their versions.
- */
-export async function prListIds(project: string | undefined, ids: string[]): Promise<PREntityPage> {
-  const collectionKey = prListResourceKey(project);
-  const queryId = (collectionKey as { queryId: string }).queryId;
-  const snapshot = getCollectorSnapshotByQueryId(queryId);
-  if (!snapshot) {
-    throw new GatewayMethodError('NOT_READY', 'PR list not yet available');
-  }
-  const prMap = new Map<string, PRStatus>();
-  for (const pr of snapshot.prs) prMap.set(prPrKey(pr), pr);
-
-  const entities: PRStatus[] = [];
-  const versions: Array<{ id: string; version: string }> = [];
+/** `pr.list { ids }`: the named PRs that exist, in request order, within the byte cap. */
+export async function prListIds(
+  project: string | undefined,
+  ids: readonly string[],
+  interest: PRListClientInterest = {},
+  deps: ServedDeps = {},
+): Promise<PREntityPage> {
+  const list = await servedPRListFor(project, interest, deps);
+  const page: PREntityPage = { entities: [], versions: [] };
   let bytes = 0;
-
   for (const id of ids) {
-    const pr = prMap.get(id);
-    if (!pr) continue;
-    const version = prEntityVersion(pr);
-    const entryBytes = JSON.stringify(pr).length;
-    if (bytes + entryBytes > PAGE_MAX_BYTES && entities.length > 0) break;
-    bytes += entryBytes;
-    entities.push(pr);
-    versions.push({ id, version });
+    const row = list.rows.get(id);
+    if (!row) continue;
+    if (page.entities.length > 0 && bytes + row.bytes > PR_ENTITY_PAGE_MAX_BYTES) break;
+    bytes += row.bytes;
+    page.entities.push(row.pr);
+    page.versions.push({ id, version: row.version });
   }
-  return { entities, versions };
+  return page;
 }

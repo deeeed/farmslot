@@ -12,7 +12,7 @@ import WebSocket from 'ws';
 import { Methods, type RequestFrame, type ResponseFrame } from '@farmslot/protocol';
 
 await import('../../runtime/mock-pty.test-support.js');
-const { resetPRListCacheForTests } = await import('./list-cache.js');
+const { resetPRListCacheForTests, servePRList } = await import('./list-cache.js');
 const { createGatewayAuthRuntime, initializeGatewayIdentity } =
   await import('../../security/auth.js');
 const { createWebSocketServer } = await import('../../server.js');
@@ -26,10 +26,20 @@ test(
     const home = mkdtempSync(path.join(tmpdir(), 'pr-entity-auth-'));
     t.after(() => rmSync(home, { recursive: true, force: true }));
 
-    // Prevent disk cache loading; no snapshot is seeded — admin will get NOT_READY,
-    // confirming authorization passed and the method body was reached.
+    // Both scopes hold an empty collected list, so an admitted read answers without GitHub.
+    const previousFarm = process.env.FARMSLOT_DIR;
+    process.env.FARMSLOT_DIR = home;
+    t.after(() => {
+      if (previousFarm === undefined) delete process.env.FARMSLOT_DIR;
+      else process.env.FARMSLOT_DIR = previousFarm;
+    });
     resetPRListCacheForTests();
     t.after(() => resetPRListCacheForTests());
+    for (const project of [undefined, 'myproject'])
+      await servePRList(async () => ({ prs: [], truncated: false }), {
+        project,
+        legacyInterest: false,
+      });
 
     const runtime = createGatewayAuthRuntime({ FARMSLOT_HOME: home, GATEWAY_HOST: '127.0.0.1' });
     initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
@@ -96,18 +106,13 @@ test(
             `outsider must get AUTH_FORBIDDEN for ${JSON.stringify(params)}`,
           );
         } else {
-          // Admin reaches the method body — gets NOT_READY (no snapshot loaded),
-          // not AUTH_FORBIDDEN, proving the authorization gate admitted them.
+          // The admin is admitted and the entity read answers from the collected list.
           assert.equal(
             reply.ok,
-            false,
-            `admin gets NOT_READY (no snapshot) for ${JSON.stringify(params)}`,
+            true,
+            `admin reads ${JSON.stringify(params)}: ${JSON.stringify(reply.error)}`,
           );
-          assert.notEqual(
-            reply.error?.code,
-            'AUTH_FORBIDDEN',
-            `admin must not get AUTH_FORBIDDEN for ${JSON.stringify(params)}`,
-          );
+          assert.deepEqual(Reflect.get(Object(reply.payload), 'versions'), []);
         }
       }
 

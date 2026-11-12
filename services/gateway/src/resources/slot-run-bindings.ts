@@ -23,8 +23,20 @@ export class SlotResourceChanges {
   private previousCheckedAt?: string;
   private ghosts = new Set<string>();
   private failed = false;
+  /** Recomputes served slot entities before their keys advance; undefined ids means every slot. */
+  private entityRefresh?: (slotIds: readonly string[] | undefined) => void;
 
   constructor(private readonly revisions: GatewayResourceRevisions = resourceRevisions) {}
+
+  /** Entity sync maintains each served slot where it is written (ADR-071 Amendment 3). */
+  setEntityRefresh(refresh: (slotIds: readonly string[] | undefined) => void): void {
+    this.entityRefresh = refresh;
+  }
+
+  /** The committed rows were replaced outside a status write (test fixtures). */
+  refreshEntities(): void {
+    this.entityRefresh?.(undefined);
+  }
 
   observe(slots: readonly SlotResourceSnapshot[], checkedAt?: string): void {
     const current = new Map(slots.map((row) => [row.slot, { ...row }]));
@@ -35,9 +47,7 @@ export class SlotResourceChanges {
     );
     const metadataChanged = !previous || this.failed || this.previousCheckedAt !== checkedAt;
     if (metadataChanged || changed.length) {
-      // Membership changes: slot added or removed from the id set.
-      const membershipChanged = ids.some((id) => !previous?.has(id) || !current.has(id));
-      this.invalidateSlots(metadataChanged ? ids : changed, current, previous, membershipChanged);
+      this.invalidateSlots(metadataChanged ? ids : changed, current, previous);
       if (changed.length) publishWorkerResources(undefined, this.revisions);
     }
     if (
@@ -60,9 +70,7 @@ export class SlotResourceChanges {
   observePool(liveIds: ReadonlySet<string>): void {
     const ghosts = new Set([...(this.previous?.keys() ?? [])].filter((id) => !liveIds.has(id)));
     for (const id of new Set([...this.ghosts, ...ghosts]))
-      if (this.previous?.has(id) && this.ghosts.has(id) !== ghosts.has(id))
-        // Ghost change = effective membership change (slot appears/disappears from dispatch).
-        this.overlayChanged(id, true);
+      if (this.previous?.has(id) && this.ghosts.has(id) !== ghosts.has(id)) this.overlayChanged(id);
     this.ghosts = ghosts;
   }
 
@@ -75,11 +83,9 @@ export class SlotResourceChanges {
     this.revisions.scheduleInvalidations('fleet-status', [], undefined);
   }
 
-  /**
-   * In-memory enrichments change slot facts without changing persisted run ownership.
-   * Pass `isMembership = true` for ghost/pool changes that affect which slots are dispatchable.
-   */
-  overlayChanged(slotId: string, isMembership = false): void {
+  /** In-memory enrichments change slot facts without changing persisted run ownership. */
+  overlayChanged(slotId: string): void {
+    this.entityRefresh?.([slotId]);
     const row = this.previous?.get(slotId);
     const keys: ResourceKey[] = [
       { family: 'slots', scope: 'farm' },
@@ -87,29 +93,20 @@ export class SlotResourceChanges {
     ];
     if (row?.project) keys.push({ family: 'slots', scope: 'farm', project: row.project });
     if (row?.nodeId) keys.push({ family: 'slots', scope: 'farm', nodeId: row.nodeId });
-    for (const key of keys) {
-      if (isMembership && key.family !== 'slot') {
-        this.revisions.advanceMembership(key);
-      } else {
-        this.revisions.advance(key);
-      }
-    }
+    for (const key of keys) this.revisions.advance(key);
   }
 
   private invalidateSlots(
     ids: readonly string[],
     current?: ReadonlyMap<string, SlotResourceSnapshot>,
     previous?: ReadonlyMap<string, SlotResourceSnapshot>,
-    membershipChanged = false,
   ): void {
-    for (const key of this.slotKeys(ids, current, previous)) {
-      const kind = key.family === 'slot' && !current?.has(key.slotId) ? 'deleted' : 'updated';
-      if (membershipChanged && key.family !== 'slot') {
-        this.revisions.advanceMembership(key, kind);
-      } else {
-        this.revisions.advance(key, kind);
-      }
-    }
+    this.entityRefresh?.(ids);
+    for (const key of this.slotKeys(ids, current, previous))
+      this.revisions.advance(
+        key,
+        key.family === 'slot' && !current?.has(key.slotId) ? 'deleted' : 'updated',
+      );
   }
 
   private slotKeys(

@@ -127,3 +127,37 @@ export function admitEntity<T>(
     entityContentVersion(value) === version
   );
 }
+
+/** Most ids one entity read may name. */
+export const ENTITY_READ_MAX_IDS = 10_000;
+
+/** A fleet.status or pr.list read: the view it reads and, for entity sync, its read shape. */
+export type EntitySyncRead =
+  | { ok: true; view: Record<string, unknown>; shape?: { versions: true } | { ids: string[] } }
+  | { ok: false; message: string };
+
+/**
+ * Splits `{ versions: true }` or `{ ids }` from the view params they read. Both shapes read the
+ * same resource as the view, so the gateway stamps and authorizes them as the view.
+ */
+export function entitySyncRead(params: unknown): EntitySyncRead {
+  if (params === undefined || params === null) return { ok: true, view: {} };
+  if (!isRecord(params)) return { ok: false, message: 'Read params must be an object' };
+  const { versions, ids, ...view } = params;
+  if (versions !== undefined && versions !== true)
+    return { ok: false, message: 'versions must be true or absent' };
+  if (ids !== undefined) {
+    if (versions !== undefined) return { ok: false, message: 'Ask for versions or ids, not both' };
+    if (
+      !Array.isArray(ids) ||
+      ids.length > ENTITY_READ_MAX_IDS ||
+      !ids.every((id) => typeof id === 'string' && id.length > 0 && id.length <= 1024)
+    )
+      return {
+        ok: false,
+        message: `ids must be at most ${ENTITY_READ_MAX_IDS} non-empty strings`,
+      };
+    return { ok: true, view, shape: { ids } };
+  }
+  return versions === true ? { ok: true, view, shape: { versions: true } } : { ok: true, view };
+}

@@ -1277,11 +1277,7 @@ export function createGatewayResourceCache(
         publishPage,
       );
     } catch (error) {
-      const failure = queryError(error);
-      // A gateway that cannot answer this shape yet still answers the full read.
-      if (failure.code === 'NOT_READY')
-        return request(entry.query.method, entry.query.params, signal);
-      if (evictionCodes.has(failure.code)) {
+      if (evictionCodes.has(queryError(error).code)) {
         const evictingStore = store;
         view.clear();
         void updateStore(

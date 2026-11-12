@@ -24,6 +24,7 @@ import {
   ReviewQaConfigurationError,
 } from '@farmslot/protocol';
 import {
+  entitySyncRead,
   resourceCollectorReadMethods,
   resourceDependenciesForRead,
   resourceQuery,
@@ -41,14 +42,8 @@ import { autoDispatchBacklogReady, listBacklogItems } from './backlog/store.js';
 import { ChatActionRejectError } from './chat/chat-actions.js';
 import { GatewayInternalError, GatewayMethodError } from './core/method-error.js';
 import { setSlotUpdateHook } from './core/state.js';
-import { slotEntityProvider } from './fleet/entity-version.js';
 import { unregisterByWs } from './fleet/machine-registry.js';
-import {
-  getMachineEntityVersion,
-  getMachineHealth,
-  markMachineOffline,
-  updateMachineMetrics,
-} from './fleet/node-health.js';
+import { getMachineHealth, markMachineOffline, updateMachineMetrics } from './fleet/node-health.js';
 import { acceptNodeLinkStream } from './fleet/node-link.js';
 import { failRequestsBoundTo, handleNodeExecOutput, handleNodeResponse } from './fleet/node-rpc.js';
 import { pairingExchange } from './fleet/pairing.js';
@@ -59,12 +54,17 @@ import {
 } from './fleet/resource-manager.js';
 import { loadFleetStatus, onStateChange } from './fleet/state.js';
 import { forgetGitHubAccountsClientInterest } from './integrations/github-accounts.js';
-import { observedFleetStatus, setFleetWorkspacePublisher } from './methods/fleet.js';
+import {
+  observedFleetStatus,
+  setFleetWorkspacePublisher,
+  slotsPublishedToViewers,
+  stopServedWorkspaceObservations,
+} from './methods/fleet.js';
 import { forgetGatewayUpdateClientInterest } from './methods/gateway-status.js';
 import { resolveObservedNativeWorkspace } from './methods/native-workspace.js';
 import { forgetPRDetailClientInterest } from './methods/pr/detail-observations.js';
 import { forgetPRListClientInterest } from './methods/pr/list-cache.js';
-import { prEntityProvider } from './methods/pr/pr-entity-sync.js';
+import { startServedPRListMaintenance } from './methods/pr/served-list.js';
 import { forgetProviderAccountsClientInterest } from './methods/provider-accounts.js';
 import { resetClientResourceIndex, streamUnsubscribe } from './methods/stream-feed.js';
 import { taskProgress } from './methods/task.js';
@@ -606,20 +606,13 @@ export function initServerGlobals(): void {
       )
     )
       nativeCatalogChanges.catalogChanged();
+    // A viewer on entity sync applies pushed slots without the read that inspected workspaces.
+    if (payload.changes.some(({ key }) => key.family === 'slot') && hasConnectedViewers())
+      slotsPublishedToViewers();
     broadcastEvent(Events.RESOURCE_CHANGED, payload);
   });
-  resourceRevisions.setEntityProvider('slot', (key) => {
-    if (key.family !== 'slot') return undefined;
-    return slotEntityProvider(key.slotId);
-  });
-  resourceRevisions.setEntityProvider('upstream', prEntityProvider());
-  resourceRevisions.setEntityProvider('node', (key) => {
-    if (key.family !== 'node' || !('nodeId' in key)) return undefined;
-    const entity = getMachineHealth(key.nodeId);
-    const version = getMachineEntityVersion(key.nodeId);
-    if (!entity || !version) return undefined;
-    return { family: 'node', entity, version };
-  });
+  // Served PR lists follow their local inputs for the gateway's lifetime; its timers are unref'd.
+  startServedPRListMaintenance();
 
   // Watch for fleet state changes and broadcast
   const publishFleetChange = (fleet: FleetStatus) => {
@@ -663,6 +656,7 @@ export function resetServerGlobalsForTests(): void {
   serverGlobalsInitialized = false;
   disposeServerResourceObservations();
   setFleetWorkspacePublisher(undefined);
+  stopServedWorkspaceObservations();
   if (backlogAutoDispatchInterval) {
     clearInterval(backlogAutoDispatchInterval);
     backlogAutoDispatchInterval = null;
@@ -952,11 +946,25 @@ async function dispatchMessage(
     // Real history cursor pages keep after/limit on the route; durable query identity excludes them.
     const nativeInterests =
       observed && reader ? nativeReadInterests(frame.method, frame.params, reader.id) : undefined;
+    // Entity sync (ADR-071 Amendment 3): a versions or ids read of fleet.status or pr.list reads
+    // the resource its view reads, so it is stamped and admitted as that view.
+    const entityRead =
+      observed && (frame.method === Methods.FLEET_STATUS || frame.method === Methods.PR_LIST)
+        ? entitySyncRead(frame.params)
+        : undefined;
+    if (entityRead && !entityRead.ok)
+      throw new GatewayMethodError('INVALID_PARAMS', entityRead.message);
+    const entityShape = entityRead?.ok ? entityRead.shape : undefined;
     const query =
       observed && !nativeInterests
-        ? resourceQuery(frame.method as ResourceReadMethod, frame.params, reader?.id)
+        ? resourceQuery(
+            frame.method as ResourceReadMethod,
+            entityShape && entityRead?.ok ? entityRead.view : frame.params,
+            reader?.id,
+          )
         : undefined;
-    const params = query?.params ?? frame.params;
+    // The read shape stays on the dispatched params; the query names only the view.
+    const params = entityShape ? frame.params : (query?.params ?? frame.params);
     if (query && reader && frame.method === Methods.RUNNER_VISIBLE_MODELS_GET)
       nativeObservations.observeVisibleModels(state.ws, reader);
     const workspace =
@@ -989,7 +997,7 @@ async function dispatchMessage(
         )
       : undefined;
     const read = () =>
-      observed && frame.method === Methods.FLEET_STATUS
+      observed && frame.method === Methods.FLEET_STATUS && !entityShape
         ? loadFleetStatus(false, true).then(observedFleetStatus)
         : observed && frame.method === Methods.TASK_PROGRESS
           ? taskProgress(params as import('@farmslot/protocol').TaskProgressParams, {

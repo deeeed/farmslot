@@ -12,7 +12,7 @@ import WebSocket from 'ws';
 import { Methods, type RequestFrame, type ResponseFrame } from '@farmslot/protocol';
 
 await import('../runtime/mock-pty.test-support.js');
-const { FLEET_ENTITY_PAGE_MAX_BYTES } = await import('./fleet-entity-sync.js');
+const { FLEET_ENTITY_PAGE_MAX_BYTES } = await import('../fleet/slot-entities.js');
 const { createGatewayAuthRuntime, initializeGatewayIdentity } = await import('../security/auth.js');
 const { createWebSocketServer } = await import('../server.js');
 const { setCachedFleetForTests } = await import('../fleet/state.js');

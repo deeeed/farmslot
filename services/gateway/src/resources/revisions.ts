@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
+import type { MachineHealth, PRStatus, SlotEntity } from '@farmslot/protocol';
 import {
+  CHANGED_ENTITY_MAX_BYTES,
   RESOURCE_PUBLISH_INTERVAL_MS,
   type ResourceKey,
   resourceKeyId,
@@ -9,6 +11,32 @@ import {
 import type { ChangedEntity, ResourceChangedPayload } from '@farmslot/protocol/transport/events';
 
 type Change = ResourceChangedPayload['changes'][number];
+
+/** A maintained entity as its owner stores it: body, content version and UTF-8 JSON size. */
+export type EntitySnapshot =
+  | { family: 'slot'; version: string; bytes: number; entity: SlotEntity }
+  | { family: 'upstream'; version: string; bytes: number; entity: PRStatus }
+  | { family: 'node'; version: string; bytes: number; entity: MachineHealth };
+
+/** Looks a maintained entity up; never derives one. */
+export type EntityProvider = (key: ResourceKey) => EntitySnapshot | undefined;
+
+function changedEntity(snapshot: EntitySnapshot, withBody: boolean): ChangedEntity {
+  switch (snapshot.family) {
+    case 'slot':
+      return withBody
+        ? { family: 'slot', version: snapshot.version, entity: snapshot.entity }
+        : { family: 'slot', version: snapshot.version };
+    case 'upstream':
+      return withBody
+        ? { family: 'upstream', version: snapshot.version, entity: snapshot.entity }
+        : { family: 'upstream', version: snapshot.version };
+    case 'node':
+      return withBody
+        ? { family: 'node', version: snapshot.version, entity: snapshot.entity }
+        : { family: 'node', version: snapshot.version };
+  }
+}
 
 interface InvalidationDeadline {
   at: number;
@@ -29,30 +57,21 @@ export class GatewayResourceRevisions {
   private readonly deadlines = new Map<string, InvalidationDeadline>();
   private readonly listeners = new Set<(payload: ResourceChangedPayload) => void>();
 
-  /**
-   * Per-key membership revision counters. Incremented by advanceMembership().
-   * Attached to collection-key changes so entity-sync clients can detect data-only changes.
-   */
+  /** Entity-sync collection keys: their marker advances with membership or collection fields. */
   private readonly membershipRevisions = new Map<string, number>();
+  private readonly entityCollections: Array<(key: ResourceKey) => boolean> = [];
+  private readonly entityProviders = new Map<ResourceKey['family'], EntityProvider>();
+  /** The version each per-entity key last published, so an unchanged body is not sent again. */
+  private readonly publishedVersions = new Map<string, string>();
 
-  /**
-   * Per-family synchronous entity providers.
-   * publish() calls the provider for per-entity keys to attach ChangedEntity inline.
-   */
-  private readonly entityProviders = new Map<
-    ResourceKey['family'],
-    (key: ResourceKey) => ChangedEntity | undefined
-  >();
-
-  /**
-   * Register a synchronous entity provider for a resource family.
-   * Called once at gateway startup per entity type. No I/O on the event loop.
-   */
-  setEntityProvider(
-    family: ResourceKey['family'],
-    provider: (key: ResourceKey) => ChangedEntity | undefined,
-  ): void {
+  /** One provider per family looks maintained entities up at publication; no I/O, no hashing. */
+  setEntityProvider(family: ResourceKey['family'], provider: EntityProvider): void {
     this.entityProviders.set(family, provider);
+  }
+
+  /** Keys this predicate accepts carry their membership marker on every notification. */
+  registerEntityCollection(isCollectionKey: (key: ResourceKey) => boolean): void {
+    this.entityCollections.push(isCollectionKey);
   }
 
   /** Internal consumers share the same coalesced changes as connected clients. */
@@ -104,15 +123,11 @@ export class GatewayResourceRevisions {
     } else queueMicrotask(() => this.publish(key.family));
   }
 
-  /**
-   * Advance a collection key AND increment its membershipRevision.
-   * Use for slot-set changes (slot added or removed) and PR membership changes.
-   * Entity-sync clients skip a versions read when the membershipRevision is unchanged.
-   */
+  /** A collection's id set, order or non-entity fields changed: advance it and its marker. */
   advanceMembership(key: ResourceKey, kind: Change['kind'] = 'updated'): void {
-    this.advance(key, kind);
     const id = resourceKeyId(key);
     this.membershipRevisions.set(id, (this.membershipRevisions.get(id) ?? 0) + 1);
+    this.advance(key, kind);
   }
 
   /** The collection key's current membership marker; 0 before its first membership change. */
@@ -166,15 +181,26 @@ export class GatewayResourceRevisions {
     const provider = this.entityProviders.get(family);
     for (const [id, change] of this.pending) {
       if (change.key.family !== family) continue;
-      // Attach entity for per-entity keys (not collection keys, not deletions).
-      const pushed = provider && change.kind !== 'deleted' ? provider(change.key) : undefined;
-      // Attach membershipRevision for collection keys that have one.
-      const membershipRev = this.membershipRevisions.get(id);
-      const entry: Change = {
-        ...change,
-        ...(pushed ? { changedEntity: pushed } : {}),
-        ...(membershipRev !== undefined ? { membershipRevision: membershipRev } : {}),
-      };
+      let entry: Change = change;
+      if (change.kind === 'deleted') this.publishedVersions.delete(id);
+      else {
+        const snapshot = provider?.(change.key);
+        if (snapshot) {
+          // Every client current before this change holds the last published version: a body
+          // that did not change, or exceeds the bound, is named by version only.
+          const changed = this.publishedVersions.get(id) !== snapshot.version;
+          this.publishedVersions.set(id, snapshot.version);
+          entry = {
+            ...change,
+            changedEntity: changedEntity(
+              snapshot,
+              changed && snapshot.bytes <= CHANGED_ENTITY_MAX_BYTES,
+            ),
+          };
+        }
+      }
+      if (this.entityCollections.some((isCollection) => isCollection(change.key)))
+        entry = { ...entry, membershipRevision: this.membershipRevisions.get(id) ?? 0 };
       changes.push(entry);
       this.pending.delete(id);
     }
@@ -200,7 +226,7 @@ export class GatewayResourceRevisions {
     this.pending.clear();
     this.scheduled.clear();
     this.membershipRevisions.clear();
-    this.entityProviders.clear();
+    this.publishedVersions.clear();
   }
 }
 

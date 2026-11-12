@@ -18,6 +18,7 @@ import {
   type Run,
   type RunStatus,
 } from '@farmslot/protocol';
+import { RESOURCE_REREAD_INTERVAL_MS } from '@farmslot/protocol/client-cache';
 import { poolDirectory } from '@farmslot/slot-config';
 
 import { summarizeAgentContexts } from '../agents/contexts.js';
@@ -43,7 +44,12 @@ import {
 } from '../core/index.js';
 import { shellQuote, tmuxSessionCandidates, tmuxShellSnippet } from '../core/tmux.js';
 import { fleetStaleThresholdMs, isFleetCheckedAtStale } from '../fleet/freshness.js';
-import { loadFleetStatus, loadPoolConfigs } from '../fleet/state.js';
+import {
+  loadFleetStatus,
+  loadPoolConfigs,
+  overlaySlotEntity,
+  slotEntityBase,
+} from '../fleet/state.js';
 import { slotResourceChanges } from '../resources/slot-run-bindings.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
 import { isRunArchiving } from '../run-lifecycle/archive-fence.js';
@@ -160,6 +166,57 @@ export function observedFleetStatus(loaded: FleetStatus): FleetStatusResult {
   // The refresh compares against main's plain rows, so a failing slot cannot loop.
   refreshWorkspaceObservations(observed, defaultFleetStatusDeps, workspacePublisher);
   return { fleet: markFailedWorkspacesUnverified(loaded, observed) };
+}
+
+/** The committed rows as inspections read them: overlays and completed inspections, no host load. */
+function observedFleetRows(): FleetStatus | undefined {
+  const base = slotEntityBase();
+  return base
+    ? observedFleetWorkspaces({ ...base, slots: base.slots.map(overlaySlotEntity) })
+    : undefined;
+}
+
+const servedWorkspaceDeps: FleetStatusDeps = {
+  ...defaultFleetStatusDeps,
+  load: async () => {
+    const rows = observedFleetRows();
+    if (!rows) throw new Error('The fleet has no committed rows');
+    return rows;
+  },
+  // Those rows already carry their completed inspections.
+  workspaces: { read: (fleet) => fleet, refresh: enrichFleetWorkspaces },
+};
+let servedWorkspacesRefreshedAt = 0;
+let servedWorkspacesTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * Starts the workspace inspections an observed fleet read starts (ADR-071 Amendment 3). A viewer
+ * on entity sync applies pushed slots without that read, so its versions read calls this.
+ */
+export function refreshServedWorkspaceObservations(): void {
+  servedWorkspacesRefreshedAt = Date.now();
+  const rows = observedFleetRows();
+  // A changed inspection advances its slot key; this path assembles no fleet.updated payload.
+  if (rows) refreshWorkspaceObservations(rows, servedWorkspaceDeps);
+}
+
+/** Slot changes reached viewers: inspect as their reread did, no more often than that reread. */
+export function slotsPublishedToViewers(): void {
+  if (servedWorkspacesTimer) return;
+  const floor = RESOURCE_REREAD_INTERVAL_MS.slots ?? 0;
+  servedWorkspacesTimer = setTimeout(
+    () => {
+      servedWorkspacesTimer = undefined;
+      refreshServedWorkspaceObservations();
+    },
+    Math.max(0, servedWorkspacesRefreshedAt + floor - Date.now()),
+  );
+  servedWorkspacesTimer.unref();
+}
+
+export function stopServedWorkspaceObservations(): void {
+  clearTimeout(servedWorkspacesTimer);
+  servedWorkspacesTimer = undefined;
 }
 
 export async function fleetStatus(

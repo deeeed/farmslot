@@ -134,6 +134,7 @@ import {
   type PrincipalRetireParams,
   type PrincipalReuseRetiredIdParams,
   type PrincipalRevokeRoleParams,
+  type PRListParams,
   PROTOCOL_VERSION,
   type ProviderAccountsSnapshotParams,
   type PRResolveThreadParams,
@@ -238,6 +239,7 @@ import {
   type WorkspaceMetroSubscribeParams,
   type WorkspaceMetroUnsubscribeParams,
 } from '@farmslot/protocol';
+import { entitySyncRead, resourceCollectorQuery } from '@farmslot/protocol/client-cache';
 import { isNodeFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { isClientPerformanceReport } from '@farmslot/protocol/performance';
 
@@ -254,6 +256,7 @@ import {
   shouldAutoStartResourceWatches,
 } from '../fleet/resource-manager.js';
 import { slotCleanup } from '../fleet/slot-cleanup.js';
+import { fleetStatusIds, fleetStatusVersions } from '../fleet/slot-entities.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { forgetGitHubAccountsClientInterest } from '../integrations/github-accounts.js';
 import {
@@ -375,8 +378,7 @@ import {
   fsWrite,
 } from '../methods/filesystem.js';
 import { finetuneExportDPO, finetuneExportSFT, finetuneIndex } from '../methods/finetune.js';
-import { fleetRefresh, fleetStatus } from '../methods/fleet.js';
-import { fleetStatusIds, fleetStatusVersions } from '../methods/fleet-entity-sync.js';
+import { fleetRefresh, fleetStatus, refreshServedWorkspaceObservations } from '../methods/fleet.js';
 import {
   fleetPrSummary,
   fleetRefreshSlots,
@@ -659,20 +661,20 @@ export function forgetTerminalRedraws(state: ClientState): void {
   terminalRedraws.cancelAll(state);
 }
 
-/**
- * Validate and return a string array from an unknown param field.
- * Throws INVALID_PARAMS if the value is present but not a string array.
- * Returns undefined when the value is absent.
- */
-function toStringArray(raw: unknown, errorMsg: string): string[] | undefined {
-  if (raw === undefined) return undefined;
-  if (!Array.isArray(raw)) throw new GatewayMethodError('INVALID_PARAMS', errorMsg);
-  const result: string[] = [];
-  for (const item of raw) {
-    if (typeof item !== 'string') throw new GatewayMethodError('INVALID_PARAMS', errorMsg);
-    result.push(item);
+/** The pr.list scope an entity read names; the same selectors the view accepts. */
+function prListEntityScope(view: Record<string, unknown>): string | undefined {
+  let scope: unknown;
+  try {
+    scope = resourceCollectorQuery(Methods.PR_LIST, view).params;
+  } catch (error) {
+    // The registry's own validation is the answer: the caller sent an invalid selector.
+    throw new GatewayMethodError(
+      'INVALID_PARAMS',
+      error instanceof Error ? error.message : String(error),
+    );
   }
-  return result;
+  const project = scope && typeof scope === 'object' ? Reflect.get(scope, 'project') : undefined;
+  return typeof project === 'string' ? project : undefined;
 }
 
 export async function routeMethod(
@@ -926,23 +928,15 @@ async function routeAuthorizedMethod(
 
     // Fleet
     case Methods.FLEET_STATUS: {
-      const raw: Record<string, unknown> =
-        p != null && typeof p === 'object' ? (p as Record<string, unknown>) : {};
-      if (raw.versions !== undefined && raw.versions !== true)
-        throw new GatewayMethodError(
-          'INVALID_PARAMS',
-          'fleet.status versions must be true or absent',
-        );
-      const ids = toStringArray(raw.ids, 'fleet.status ids must be a string array');
-      const fp: FleetStatusParams = {
-        ...(raw.versions === true ? { versions: true as const } : {}),
-        ...(ids !== undefined ? { ids } : {}),
-        ...(raw.forceRefresh === true ? { forceRefresh: true } : {}),
-        ...(typeof raw.visibleCount === 'number' ? { visibleCount: raw.visibleCount } : {}),
-      };
-      if (fp.versions === true) return fleetStatusVersions();
-      if (fp.ids !== undefined) return fleetStatusIds(fp.ids);
-      return fleetStatus(fp, undefined, (fleet) =>
+      const read = entitySyncRead(p);
+      if (!read.ok) throw new GatewayMethodError('INVALID_PARAMS', `fleet.status ${read.message}`);
+      if (read.shape && 'versions' in read.shape) {
+        const listing = await fleetStatusVersions();
+        refreshServedWorkspaceObservations();
+        return listing;
+      }
+      if (read.shape) return fleetStatusIds(read.shape.ids);
+      return fleetStatus(p as FleetStatusParams, undefined, (fleet) =>
         context.broadcast({
           type: 'event',
           event: Events.FLEET_UPDATED,
@@ -1382,18 +1376,17 @@ async function routeAuthorizedMethod(
         legacyInterest: !upstreamObservers.manages(state, Methods.PR_STATUS),
       });
     case Methods.PR_LIST: {
-      const raw: Record<string, unknown> =
-        p != null && typeof p === 'object' ? (p as Record<string, unknown>) : {};
-      const project = typeof raw.project === 'string' ? raw.project : undefined;
-      const ids = toStringArray(raw.ids, 'pr.list ids must be a string array');
-      if (raw.versions !== undefined && raw.versions !== true)
-        throw new GatewayMethodError('INVALID_PARAMS', 'pr.list versions must be true or absent');
-      if (raw.versions === true) return prListVersions(project);
-      if (ids !== undefined) return prListIds(project, ids);
-      return prList({ project, ...(raw.force === true ? { force: true } : {}) }, undefined, {
+      const interest = {
         legacyClientId: state.id,
         legacyInterest: !upstreamObservers.manages(state, Methods.PR_LIST),
-      });
+      };
+      const read = entitySyncRead(p);
+      if (!read.ok) throw new GatewayMethodError('INVALID_PARAMS', `pr.list ${read.message}`);
+      if (!read.shape) return prList(p as PRListParams, undefined, interest);
+      const project = prListEntityScope(read.view);
+      return 'versions' in read.shape
+        ? prListVersions(project, interest)
+        : prListIds(project, read.shape.ids, interest);
     }
     case Methods.PR_MONITOR:
       return prMonitor(p as PRStatusParams | undefined, emit);

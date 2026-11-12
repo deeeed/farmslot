@@ -6,6 +6,7 @@ export { runResourceStoreConformance } from './conformance.js';
 export * from './content.js';
 export * from './diff-apply.js';
 export * from './entity-collection.js';
+export * from './entity-guards.js';
 export * from './held-data.js';
 export * from './keys.js';
 export * from './native-conversation.js';

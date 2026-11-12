@@ -18,7 +18,6 @@ import { githubQueryBudget } from '../../integrations/github-query-budget.js';
 import { resourceRevisions } from '../../resources/revisions.js';
 import { upstreamObservers } from '../../resources/upstream-observers.js';
 
-import { prEntityKey, prEntityVersion, prPrKey } from './pr-entity-keys.js';
 import {
   onPRRawObservation,
   restoreRetainedPRRawObservations,
@@ -85,8 +84,6 @@ const collectors = new Map<string, CollectorState>();
 let broadcastFn: Broadcast = () => {};
 let lastReserveLogAt = 0;
 let useSerial = 0;
-/** Set by resetPRListCacheForTests to prevent disk-cache loading in unit tests. */
-let disableDiskLoadForTests = false;
 let wakeCollector: (() => void) | undefined;
 let wakeQueued = false;
 
@@ -250,9 +247,7 @@ export function loadPRListCache(project?: string): void {
 }
 
 function ensureLoaded(state: CollectorState): void {
-  if (state.loaded) return;
-  state.loaded = true;
-  if (!disableDiskLoadForTests) loadPRListCache(state.project);
+  if (!state.loaded) loadPRListCache(state.project);
 }
 
 function persist(state: CollectorState): void {
@@ -278,35 +273,40 @@ function persist(state: CollectorState): void {
   }
 }
 
-/**
- * Look up the in-memory snapshot for a collector by its queryId.
- * Used by pr-entity-sync.ts providers without creating a new collector state.
- */
-export function getCollectorSnapshotByQueryId(queryId: string): PRListSnapshot | null {
-  return collectors.get(queryId)?.snapshot ?? null;
+/** Entity sync recomputes a scope's served list after each change of its collector. */
+let collectorChanged: ((queryId: string) => void) | undefined;
+
+export function onPRListCollectorChange(listener: (queryId: string) => void): void {
+  collectorChanged = listener;
 }
 
-/**
- * Return the current non-entity fields (observation, refreshing) for a collector.
- * Used by prListVersions to include them in the versions read reply.
- */
-export function getPRListCollectorState(
-  queryId: string,
-): { observation: UpstreamObservation; refreshing: boolean } | undefined {
+function publish(state: CollectorState): void {
+  resourceRevisions.advance(prListResourceKey(state.project));
+  collectorChanged?.(state.id);
+}
+
+/** A scope's collector as servePRList answers, without starting or refreshing anything. */
+export function peekServedPRList(queryId: string): ServedPRList | undefined {
   const state = collectors.get(queryId);
-  if (!state) return undefined;
+  return state?.snapshot ? served(state, state.snapshot) : undefined;
+}
+
+function served(state: CollectorState, snapshot: PRListSnapshot): ServedPRList {
   return {
-    observation: observation(state),
+    prs: snapshot.prs,
+    fetchedAt: snapshot.fetchedAt,
     refreshing: Boolean(state.inflight),
+    truncated: snapshot.truncated === true,
+    observation: observation(state),
   };
 }
 
-function publish(state: CollectorState, membershipChanged = false): void {
-  if (membershipChanged) {
-    resourceRevisions.advanceMembership(prListResourceKey(state.project));
-  } else {
-    resourceRevisions.advance(prListResourceKey(state.project));
-  }
+/** Some reader still wants this scope collected. */
+export function prListHasInterest(queryId: string): boolean {
+  const state = collectors.get(queryId);
+  return Boolean(
+    state && (hasLegacyInterest(state, Date.now()) || observerInterest(state.project)),
+  );
 }
 
 export function setPRListBroadcast(broadcast: Broadcast): void {
@@ -318,7 +318,6 @@ export function resetPRListCacheForTests(): void {
   broadcastFn = () => {};
   lastReserveLogAt = 0;
   useSerial = 0;
-  disableDiskLoadForTests = true;
 }
 
 export function forgetPRListClientInterest(clientId: string): void {
@@ -396,7 +395,6 @@ function runRefresh(
   // The in-progress/freshness transition is readable before its notice.
   publish(state);
   (async () => {
-    let membershipChanged = false;
     try {
       const fetched = await fetch(force);
       if (collectors.get(state.id) !== state)
@@ -424,31 +422,6 @@ function runRefresh(
           }
         : undefined;
       state.unchangedStreak = changed ? 0 : state.unchangedStreak + 1;
-      // Advance per-PR entity keys for entity-sync clients.
-      const collectionKey = prListResourceKey(state.project);
-      const queryId = (collectionKey as { queryId: string }).queryId;
-      if (previous) {
-        const prevKeyMap = new Map(previous.prs.map((p) => [prPrKey(p), p]));
-        const nextKeys = new Set(next.prs.map((p) => prPrKey(p)));
-        for (const pr of next.prs) {
-          const key = prPrKey(pr);
-          const prev = prevKeyMap.get(key);
-          if (!prev || prEntityVersion(prev) !== prEntityVersion(pr)) {
-            resourceRevisions.advance(prEntityKey(queryId, pr));
-          }
-          if (!prevKeyMap.has(key)) membershipChanged = true;
-        }
-        for (const pr of previous.prs) {
-          if (!nextKeys.has(prPrKey(pr))) {
-            resourceRevisions.advance(prEntityKey(queryId, pr), 'deleted');
-            membershipChanged = true;
-          }
-        }
-      } else {
-        // First load: all PRs are new; treat as membership change.
-        for (const pr of next.prs) resourceRevisions.advance(prEntityKey(queryId, pr));
-        membershipChanged = true;
-      }
       persist(state);
       announce(state, changed);
       return next;
@@ -465,7 +438,7 @@ function runRefresh(
       throw error;
     } finally {
       if (state.inflight === entry) state.inflight = undefined;
-      if (collectors.get(state.id) === state) publish(state, membershipChanged);
+      if (collectors.get(state.id) === state) publish(state);
     }
   })().then(settle.resolve, settle.reject);
   return entry.promise;
@@ -540,14 +513,7 @@ export async function servePRList(
     !budgetReserved(now)
   )
     refresh(state, fetch, false, now, clock).catch(backgroundFailure);
-  const snapshot = state.snapshot!;
-  return {
-    prs: snapshot.prs,
-    fetchedAt: snapshot.fetchedAt,
-    refreshing: Boolean(state.inflight),
-    truncated: snapshot.truncated === true,
-    observation: observation(state),
-  };
+  return served(state, state.snapshot!);
 }
 
 export function peekPRList(project?: string): PRListSnapshot | null {

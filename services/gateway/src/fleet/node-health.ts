@@ -27,14 +27,14 @@ import { collectTcpMetrics, formatTcpSnapshotDetail } from '@farmslot/protocol/n
 import { reportGatewayWarning } from '../chat/copilot-observer.js';
 import { execFileArgv } from '../core/exec.js';
 import { entityVersionHash } from '../resources/entity-version-hash.js';
-import { resourceRevisions } from '../resources/revisions.js';
+import { type EntitySnapshot, resourceRevisions } from '../resources/revisions.js';
 
 import { loadPressureHistory, savePressureHistory } from './pressure-history-store.js';
 import { getCachedFleet } from './state.js';
 
 const healthMap = new Map<string, MachineHealth>();
-/** Content-hash versions for pushed machine entities; keyed by nodeId (machine name). */
-const nodeEntityVersions = new Map<string, string>();
+/** Machine entities for entity sync: the version and size of each sample, set when it is published. */
+const machineEntities = new Map<string, { version: string; bytes: number }>();
 const pressureHistory = new Map<string, NodePressureHistorySample[]>();
 const processInventoryMap = new Map<string, NodeProcessInventory>();
 const processSamplerHealthMap = new Map<string, NodeProcessSamplerHealth>();
@@ -59,22 +59,24 @@ function publishMachineObservation(machine: string): void {
   });
   if (observationFingerprints.get(machine) === fingerprint) return;
   observationFingerprints.set(machine, fingerprint);
-  // Compute and store the machine entity version hash (full MachineHealth, system included)
-  // so the entity provider can attach it synchronously at publish time.
+  // The pushed machine entity (full MachineHealth) is versioned here, once per sample.
   const health = healthMap.get(machine);
-  if (health) {
-    nodeEntityVersions.set(machine, entityVersionHash(health));
-  }
+  if (health)
+    machineEntities.set(machine, {
+      version: entityVersionHash(health),
+      bytes: Buffer.byteLength(JSON.stringify(health)),
+    });
+  else machineEntities.delete(machine);
   const keys = new Map<string, ResourceKey>();
   const add = (key: ResourceKey) => keys.set(resourceKeyId(key), key);
   add({ family: 'node', nodeId: machine });
   add({ family: 'pressure', nodeId: machine });
+  // Full fleet reads embed host load; slot entities do not, so no slot key advances.
   add({ family: 'slots', scope: 'farm' });
   add({ family: 'slots', scope: 'farm', nodeId: machine });
   for (const slot of getCachedFleet()?.slots ?? []) {
-    if (slot.machine !== machine) continue;
-    add({ family: 'slot', slotId: slot.slot });
-    if (slot.project) add({ family: 'slots', scope: 'farm', project: slot.project });
+    if (slot.machine === machine && slot.project)
+      add({ family: 'slots', scope: 'farm', project: slot.project });
   }
   for (const key of keys.values()) resourceRevisions.advance(key);
   const latest = pressureHistory.get(machine)?.at(-1);
@@ -541,10 +543,14 @@ export function getMachineHealth(machine: string): MachineHealth | undefined {
   return healthMap.get(machine);
 }
 
-/** Entity version hash for the machine health entity; undefined until first sample. */
-export function getMachineEntityVersion(machine: string): string | undefined {
-  return nodeEntityVersions.get(machine);
+/** The published machine entity behind a node key; undefined until its first sample. */
+function machineEntityProvider(key: ResourceKey): EntitySnapshot | undefined {
+  if (key.family !== 'node' || !('nodeId' in key)) return undefined;
+  const entity = healthMap.get(key.nodeId);
+  const stored = machineEntities.get(key.nodeId);
+  return entity && stored ? { family: 'node', entity, ...stored } : undefined;
 }
+resourceRevisions.setEntityProvider('node', machineEntityProvider);
 
 export function getAllMachineHealth(): MachineHealth[] {
   return Array.from(healthMap.values());

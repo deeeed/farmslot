@@ -1,0 +1,206 @@
+// Slot entities for entity sync (ADR-071 Amendment 3): maintained where slots are written,
+// published and read by lookup, never derived from the whole fleet on a read or a push.
+import assert from 'node:assert/strict';
+import test, { mock } from 'node:test';
+
+import type { FleetStatus, SlotStatus } from '@farmslot/protocol';
+import type { ResourceChangedPayload } from '@farmslot/protocol/transport/events';
+
+let hashes = 0;
+// Entity versions are hashed only through this helper.
+const realHash = await import('../resources/entity-version-hash.js');
+mock.module('../resources/entity-version-hash.js', {
+  namedExports: {
+    ...realHash,
+    entityVersionHash: (entity: object) => {
+      hashes++;
+      return realHash.entityVersionHash(entity);
+    },
+  },
+});
+const realState = await import('./state.js');
+let fleetBuilds = 0;
+mock.module('./state.js', {
+  namedExports: {
+    ...realState,
+    getCachedFleet: () => {
+      fleetBuilds++;
+      return realState.getCachedFleet();
+    },
+  },
+});
+
+const { setCachedFleetForTests, setTaskProgressOverlay } = realState;
+const { slotEntityProvider, fleetStatusIds, fleetStatusVersions, FLEET_ENTITY_PAGE_MAX_BYTES } =
+  await import('./slot-entities.js');
+const { resourceRevisions } = await import('../resources/revisions.js');
+const { updateMachineMetrics } = await import('./node-health.js');
+const { observedFleetStatus } = await import('../methods/fleet.js');
+
+function slot(id: string, patch: Partial<SlotStatus> = {}): SlotStatus {
+  return {
+    slot: id,
+    machine: 'mac-a',
+    platform: 'macos',
+    project: 'demo',
+    health: { ssh: 'OK', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
+    branch: 'main',
+    agent: 'idle',
+    enabled: true,
+    dispatchable: true,
+    lifecycle: 'ready',
+    phase: null,
+    warm: false,
+    taskId: null,
+    taskFile: null,
+    dispatchedAt: null,
+    completedAt: null,
+    runner: null,
+    model: null,
+    deviceName: null,
+    taskPhase: null,
+    taskStepProgress: null,
+    ...patch,
+  };
+}
+
+function fleetOf(slots: SlotStatus[]): FleetStatus {
+  return {
+    checkedAt: '2026-11-12T00:00:00.000Z',
+    slots,
+    summary: {
+      total: slots.length,
+      ready: slots.length,
+      busy: 0,
+      held: 0,
+      manual: 0,
+      disabled: 0,
+      blocked: 0,
+      warmCount: 0,
+    },
+  };
+}
+
+async function published(run: () => void): Promise<ResourceChangedPayload['changes']> {
+  const changes: ResourceChangedPayload['changes'] = [];
+  const stop = resourceRevisions.subscribe((payload) => changes.push(...payload.changes));
+  try {
+    run();
+    for (let i = 0; i < 5; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+  } finally {
+    stop();
+  }
+  return changes;
+}
+
+test('finding 16: publishing a slot is a lookup, not a fleet rebuild', async (t) => {
+  setCachedFleetForTests(fleetOf([slot('a'), slot('b'), slot('c')]));
+  t.after(() => setCachedFleetForTests(null));
+  await fleetStatusVersions();
+  fleetBuilds = 0;
+  for (const slotId of ['a', 'b', 'c'])
+    assert.ok(slotEntityProvider({ family: 'slot', slotId }), `slot ${slotId} is published`);
+  assert.equal(fleetBuilds, 0, 'no provider call assembles the served fleet');
+});
+
+test('finding 16: a machine sample advances the machine, not its slots', async (t) => {
+  setCachedFleetForTests(
+    fleetOf([slot('a', { machine: 'mac-s' }), slot('b', { machine: 'mac-s' })]),
+  );
+  t.after(() => setCachedFleetForTests(null));
+  const changes = await published(() =>
+    updateMachineMetrics('mac-s', {
+      cpuPercent: 42,
+      memoryPercent: 10,
+      memoryUsedGb: 1,
+      memoryTotalGb: 16,
+      diskPercent: 5,
+      loadAvg1: 1,
+      loadAvg5: 1,
+      collectedAt: new Date().toISOString(),
+    }),
+  );
+  const sample = changes.find(({ key }) => key.family === 'node')?.changedEntity;
+  assert.equal(
+    sample?.family === 'node' ? sample.entity?.system?.cpuPercent : undefined,
+    42,
+    'the sample rides on the machine key',
+  );
+  assert.deepEqual(
+    changes.filter(({ key }) => key.family === 'slot').map(({ key }) => key),
+    [],
+    'no slot key advances for a machine sample',
+  );
+});
+
+test('a slot change is pushed on its key and leaves the membership marker', async (t) => {
+  setCachedFleetForTests(fleetOf([slot('a'), slot('b')]));
+  t.after(() => setCachedFleetForTests(null));
+  const { membershipRevision } = await fleetStatusVersions();
+  const changes = await published(() => setTaskProgressOverlay('b', 'Build', 1, 3));
+  t.after(() => setTaskProgressOverlay('b', null, 0, 0));
+  const pushed = changes.find(({ key }) => key.family === 'slot' && key.slotId === 'b');
+  const entity = pushed?.changedEntity;
+  assert.equal(entity?.family === 'slot' ? entity.entity?.taskPhase : undefined, 'Build 1/3');
+  const collection = changes.find(
+    ({ key }) => key.family === 'slots' && Object.keys(key).length === 2,
+  );
+  assert.equal(collection?.membershipRevision, membershipRevision, 'a data change moves no marker');
+});
+
+test('finding 21: versions and ids reads hash nothing', async (t) => {
+  setCachedFleetForTests(fleetOf([slot('a'), slot('b'), slot('c')]));
+  t.after(() => setCachedFleetForTests(null));
+  await fleetStatusVersions();
+  hashes = 0;
+  const versions = await fleetStatusVersions();
+  const page = await fleetStatusIds(['a', 'b', 'c']);
+  assert.equal(versions.versions.length, 3);
+  assert.equal(page.entities.length, 3);
+  assert.equal(hashes, 0, 'reads look versions up');
+});
+
+test('finding 23: an ids page is bounded by UTF-8 bytes, not string length', async (t) => {
+  // Each slot is ~1.2 MB of UTF-8 but only ~400 K characters.
+  const wide = '€'.repeat(400_000);
+  setCachedFleetForTests(
+    fleetOf([slot('a', { heldReason: wide }), slot('b', { heldReason: wide })]),
+  );
+  t.after(() => setCachedFleetForTests(null));
+  const page = await fleetStatusIds(['a', 'b']);
+  assert.ok(Buffer.byteLength(JSON.stringify(page.entities[0])) * 2 > FLEET_ENTITY_PAGE_MAX_BYTES);
+  assert.deepEqual(
+    page.entities.map((row) => row.slot),
+    ['a'],
+    'the second slot waits for the next page',
+  );
+});
+
+test('an overlay write changes the maintained entity and the full read alike', async (t) => {
+  setCachedFleetForTests(fleetOf([slot('a'), slot('b')]));
+  t.after(() => setCachedFleetForTests(null));
+  const before = await fleetStatusVersions();
+  setTaskProgressOverlay('a', 'Validate', 2, 4);
+  const after = await fleetStatusVersions();
+  const changed = after.versions.filter(
+    (entry, index) => entry.version !== before.versions[index].version,
+  );
+  assert.deepEqual(
+    changed.map((entry) => entry.id),
+    ['a'],
+  );
+  const full = observedFleetStatus(await realState.loadFleetStatus(false, true)).fleet.slots;
+  const page = await fleetStatusIds(['a', 'b']);
+  for (const row of page.entities) {
+    const read = full.find((entry) => entry.slot === row.slot);
+    assert.ok(read, `slot ${row.slot} is in the full read`);
+    const { hostLoad: _hostLoad, ...served } = read;
+    // Compared as sent: JSON drops undefined fields on both sides.
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(row)),
+      JSON.parse(JSON.stringify(served)),
+      `slot ${row.slot} equals the full read without host load`,
+    );
+  }
+  assert.equal(page.entities[0].taskPhase, 'Validate 2/4');
+});

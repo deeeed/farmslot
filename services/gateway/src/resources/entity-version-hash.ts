@@ -1,15 +1,10 @@
-/**
- * Shared entity version hash for entity-sync (ADR-071 Amendment 3).
- *
- * All four entity types (fleet nodes, PRs, run list rows, decisions) use the
- * same full sha256 hex (64 chars) of their canonical JSON.  Import this helper
- * instead of inlining the hash call.
- */
+// Entity versions (ADR-071 Amendments 1 and 3): slots, machines, PRs and run-list rows share one
+// content version, the full sha256 hex of the entity's canonical JSON.
 import { createHash } from 'node:crypto';
 
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 
-/** Content-hash version for an entity.  Full sha256 hex (64 chars). */
+/** The entity's content version; the client cache derives the same digest to verify a body. */
 export function entityVersionHash(entity: object): string {
   return createHash('sha256').update(canonicalResourceJson(entity)).digest('hex');
 }
