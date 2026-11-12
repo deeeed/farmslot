@@ -3781,24 +3781,37 @@ describe('call', () => {
     assert.deepEqual(calls.runners, []);
   });
 
-  test('refuses several key=value inputs quoted into one argument', async () => {
+  test('hints at key=value inputs quoted into one argument only when the value fails', async () => {
     const target = checkout();
-    const base = ['--adapter', 'web', '--target', target, '--heal', 'off', '--json'];
-    // The shell hands `"mode=fast count=2"` over as one token: it used to become mode="fast count=2".
-    await assert.rejects(
-      capture(() => handleCall(['shop.ping', 'mode=fast count=2', ...base], callOptions)),
-      {
-        name: 'CliError',
-        exitCode: 2,
-        message:
-          'inputs mode, count were quoted into one argument; pass each key=value as its own argument',
-      },
+    const base = ['--target', target, '--heal', 'off', '--json'];
+    // The shell hands `"mode=fast count=2"` over as one token: mode then fails its enum.
+    const packed = await capture(() =>
+      handleCall(['shop.ping', 'mode=fast count=2', '--adapter', 'web', ...base], callOptions),
     );
-    assert.deepEqual(calls.runners, []);
-    // Text whose extra keys are not parameters, and a JSON-quoted literal, stay one value.
-    for (const value of ['Set leverage=10x', '"mode=fast count=2"']) {
+    assert.equal(packed.value, 5);
+    assert.deepEqual(lastJson(packed.stdout).packedInputs, [{ name: 'mode', keys: ['count'] }]);
+    const human = await capture(() =>
+      handleCall(
+        ['shop.ping', 'mode=fast count=2', '--adapter', 'web', '--target', target],
+        callOptions,
+      ),
+    );
+    assert.match(
+      human.stderr.join('\n'),
+      /mode looks like several inputs \(mode, count\) quoted into one argument; pass each key=value as its own argument\./u,
+    );
+    // A value its parameter accepts runs as given, even when it reads like more inputs.
+    const command = await capture(() =>
+      handleCall(['command', 'cmd=echo timeout_ms=1000', '--adapter', 'api', ...base], callOptions),
+    );
+    assert.equal(command.value, 0, command.stderr.join('\n'));
+    assert.deepEqual(lastJson(command.stdout).args, { cmd: 'echo timeout_ms=1000' });
+    for (const value of ['Set leverage=10x', '"mode=fast count=2"', 'mode=fast count=2']) {
       const call = await capture(() =>
-        handleCall(['shop.ping', 'mode=fast', `password=${value}`, ...base], callOptions),
+        handleCall(
+          ['shop.ping', 'mode=fast', `password=${value}`, '--adapter', 'web', ...base],
+          callOptions,
+        ),
       );
       assert.equal(call.value, 0, `${value}: ${call.stderr.join('\n')}`);
     }

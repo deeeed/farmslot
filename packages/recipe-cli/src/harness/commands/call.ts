@@ -356,17 +356,6 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
   const describedAction = describeManifestActions(engine, manifest, actionSources).find(
     (entry) => entry.name === resolvedAction,
   );
-  // Refuse only when every later key is a parameter of this action: other text stays one value.
-  const actionSchema = isRecord(describedAction?.schema) ? describedAction.schema : {};
-  const actionProperties = isRecord(actionSchema.properties) ? actionSchema.properties : {};
-  const folded = packed.find(({ keys }) =>
-    keys.every((key) => Object.hasOwn(actionProperties, key)),
-  );
-  if (folded) {
-    throw usageError(
-      `inputs ${[folded.name, ...folded.keys].join(', ')} were quoted into one argument; pass each key=value as its own argument`,
-    );
-  }
   const defaultsUsed = actionDefaultsUsed(describedAction, args);
   const depsBlock =
     (await harnessAdapter(adapter).run?.dependencyBlock?.(target, { action: resolvedAction })) ??
@@ -401,6 +390,11 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
   if (validation.status === 'invalid') {
     const message = `call ${resolvedAction}: recipe validation failed`;
     const parameterHelp = parameterValidationHelp(describedAction, validation.findings, args);
+    // A value its parameter accepts runs as given; only a failing one that reads like
+    // several quoted inputs gets the hint.
+    const packedInputs = packed.filter(({ name }) =>
+      validation.findings.some((finding) => directInput(finding.path) === name),
+    );
     const actionsCommand = `${host} actions --action ${resolvedAction} --adapter ${adapter}`;
     const userAction = describedAction
       ? (actionExampleCommand(describedAction, adapter, target, invokedHostCommand(), args) ??
@@ -419,6 +413,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
             args: redactCallValue(args),
             findings: validation.findings,
             ...(parameterHelp.length > 0 ? { parameterHelp } : {}),
+            ...(packedInputs.length > 0 ? { packedInputs } : {}),
             error: { code: 'RECIPE_VALIDATION_FAILED', message, userAction },
           },
           null,
@@ -429,6 +424,11 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
       console.error(`✗ ${message}`);
       const taught = new Set(parameterHelp.map((entry) => `${entry.issue}:${entry.name}`));
       for (const entry of parameterHelp) console.error(renderParameterValidationHelp(entry));
+      for (const { name, keys } of packedInputs) {
+        console.error(
+          `  ${name} looks like several inputs (${[name, ...keys].join(', ')}) quoted into one argument; pass each key=value as its own argument.`,
+        );
+      }
       for (const finding of validation.findings) {
         const name = finding.path.split('.').at(-1);
         const issue = parameterIssue(finding.code);
@@ -786,6 +786,13 @@ function parameterValidationHelp(
       },
     ];
   });
+}
+
+// The input name a finding is about, when it is a direct input of the call node.
+function directInput(findingPath: string): string | undefined {
+  const prefix = 'workflow.nodes.call.';
+  const name = findingPath.startsWith(prefix) ? findingPath.slice(prefix.length) : '';
+  return name && !name.includes('.') ? name : undefined;
 }
 
 function parameterIssue(code: string): ParameterValidationHelp['issue'] | undefined {
