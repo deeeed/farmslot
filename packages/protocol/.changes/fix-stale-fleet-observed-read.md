@@ -1,0 +1,1 @@
+- The client cache applies the stale-fleet rule (`staleFleet`) to the entity-sync fleet when the versions reply says the snapshot is stale.

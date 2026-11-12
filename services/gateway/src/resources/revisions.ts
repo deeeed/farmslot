@@ -166,7 +166,13 @@ export class GatewayResourceRevisions {
           this.deadlines.delete(id);
           // Node timers have a signed 32-bit delay; a future timestamp can need another chunk.
           if (Date.now() < at) this.scheduleDeadline(id, deadline.keys, at);
-          else for (const key of deadline.keys) this.advance(key);
+          else
+            for (const key of deadline.keys)
+              // A time boundary changes a collection's non-entity fields (the fleet's `stale`),
+              // which an entity-sync client reads again only when the marker moves.
+              if (this.entityCollections.some((isCollection) => isCollection(key)))
+                this.advanceMembership(key);
+              else this.advance(key);
         },
         Math.min(at - Date.now(), 2_147_483_647),
       ),

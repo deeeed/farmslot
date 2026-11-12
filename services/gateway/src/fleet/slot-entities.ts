@@ -15,6 +15,7 @@ import { entityVersionHash } from '../resources/entity-version-hash.js';
 import { type EntitySnapshot, resourceRevisions } from '../resources/revisions.js';
 import { slotResourceChanges } from '../resources/slot-run-bindings.js';
 
+import { isFleetCheckedAtStale } from './freshness.js';
 import { getAllMachineHealth } from './node-health.js';
 import {
   ensureFleetLoaded,
@@ -158,6 +159,9 @@ export async function fleetStatusVersions(): Promise<FleetVersionsResult> {
     ...(machines.length ? { machines } : {}),
     checkedAt: fleet.checkedAt,
     ...(fleet.poolErrors?.length ? { poolErrors: fleet.poolErrors } : {}),
+    // Decided here, applied by the client to the slots it holds (the collection marker moves at
+    // each crossing of the threshold, so a connected client reads this again then).
+    ...(isFleetCheckedAtStale(fleet.checkedAt) ? { stale: true as const } : {}),
     membershipRevision: resourceRevisions.membershipRevision(FLEET_COLLECTION_KEY),
   };
 }

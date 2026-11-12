@@ -65,9 +65,10 @@ function slot(id: string, patch: Partial<SlotStatus> = {}): SlotStatus {
   };
 }
 
-function fleetOf(slots: SlotStatus[]): FleetStatus {
+/** A fresh snapshot unless `checkedAt` says otherwise: a stale one is served stale. */
+function fleetOf(slots: SlotStatus[], checkedAt = new Date().toISOString()): FleetStatus {
   return {
-    checkedAt: '2026-11-12T00:00:00.000Z',
+    checkedAt,
     slots,
     summary: {
       total: slots.length,
@@ -279,4 +280,33 @@ test("N9: a failed inspection's fallback workspace leaves the entity when it lea
   for (let turn = 0; turn < 20; turn++) await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal((await entity()).workspace, undefined, 'the entity follows the same expiry');
   assert.equal((await full()).workspace, undefined);
+});
+
+test('a stale snapshot is served stale by the observed read and named stale by the versions read', async (t) => {
+  // Older than any freshness threshold: the plain read has always served this as stale.
+  setCachedFleetForTests(fleetOf([slot('a'), slot('b')], '2000-01-01T00:00:00.000Z'));
+  t.after(() => setCachedFleetForTests(null));
+  const observed = observedFleetStatus(await realState.loadFleetStatus(false, true)).fleet;
+  assert.equal(observed.stale, true);
+  assert.deepEqual(
+    observed.slots.map((row) => row.dispatchable),
+    [false, false],
+    'no slot of a stale fleet is dispatchable',
+  );
+  assert.equal((await fleetStatusVersions()).stale, true);
+  // The entities keep their own facts; the client applies the same rule to what it holds.
+  const page = await fleetStatusIds(['a', 'b']);
+  assert.deepEqual(
+    page.entities.map((row) => row.dispatchable),
+    [true, true],
+  );
+
+  setCachedFleetForTests(fleetOf([slot('a'), slot('b')]));
+  const fresh = observedFleetStatus(await realState.loadFleetStatus(false, true)).fleet;
+  assert.equal(fresh.stale, undefined);
+  assert.deepEqual(
+    fresh.slots.map((row) => row.dispatchable),
+    [true, true],
+  );
+  assert.equal((await fleetStatusVersions()).stale, undefined);
 });

@@ -4,7 +4,7 @@ import {
   resourceKeyId,
 } from '@farmslot/protocol/client-cache';
 
-import { fleetStaleDeadline } from '../fleet/freshness.js';
+import { fleetStaleDeadline, isFleetCheckedAtStale } from '../fleet/freshness.js';
 
 import { type GatewayResourceRevisions, resourceRevisions } from './revisions.js';
 import { publishWorkerResources } from './worker-changes.js';
@@ -56,6 +56,15 @@ export class SlotResourceChanges {
       ids.some((id) => previous.get(id)?.currentRunId !== current.get(id)?.currentRunId)
     )
       this.invalidateBindings();
+    // The first commit after the stale boundary ends staleness: entity-sync clients learn it from
+    // the collection marker, as they learned the boundary (revisions' deadline).
+    if (
+      this.previousCheckedAt !== undefined &&
+      isFleetCheckedAtStale(this.previousCheckedAt) &&
+      checkedAt !== undefined &&
+      !isFleetCheckedAtStale(checkedAt)
+    )
+      this.revisions.advanceMembership({ family: 'slots', scope: 'farm' });
     this.previous = current;
     this.previousCheckedAt = checkedAt;
     this.failed = false;

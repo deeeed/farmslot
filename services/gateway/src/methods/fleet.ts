@@ -17,6 +17,7 @@ import {
   type ReadinessRecord,
   type Run,
   type RunStatus,
+  staleFleet,
 } from '@farmslot/protocol';
 import { RESOURCE_REREAD_INTERVAL_MS } from '@farmslot/protocol/client-cache';
 import { poolDirectory } from '@farmslot/slot-config';
@@ -118,14 +119,7 @@ const monitorFleetStatusDeps: FleetStatusDeps = {
 };
 
 function fleetStatusResult(fleet: FleetStatus): FleetStatusResult {
-  if (!isFleetCheckedAtStale(fleet.checkedAt)) return { fleet };
-  return {
-    fleet: {
-      ...fleet,
-      stale: true,
-      slots: fleet.slots.map((slot) => ({ ...slot, dispatchable: false })),
-    },
-  };
+  return { fleet: isFleetCheckedAtStale(fleet.checkedAt) ? staleFleet(fleet) : fleet };
 }
 
 /**
@@ -178,7 +172,8 @@ export function observedFleetStatus(loaded: FleetStatus): FleetStatusResult {
   const observed = observedFleetWorkspaces(loaded);
   // The refresh compares against main's plain rows, so a failing slot cannot loop.
   refreshWorkspaceObservations(observed, defaultFleetStatusDeps, workspacePublisher);
-  return { fleet: markFailedWorkspacesUnverified(loaded, observed) };
+  // The same stale rule as the plain read: clients refuse commands on a stale fleet.
+  return fleetStatusResult(markFailedWorkspacesUnverified(loaded, observed));
 }
 
 /** The committed rows as inspections read them: overlays and completed inspections, no host load. */

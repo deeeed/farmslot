@@ -1,0 +1,1 @@
+- A fleet whose snapshot is past the freshness threshold is now served stale, with no slot dispatchable, to the clients that read it through the shared cache and entity sync, and they learn it at the threshold and at recovery without a reload.

@@ -216,3 +216,36 @@ test('bursts publish only resource keys and the latest slot revision', async () 
     revisions.dispose();
   }
 });
+
+test('the fleet collection marker moves at the stale boundary and at recovery, and not otherwise', async (t) => {
+  const previousThreshold = process.env.FARMSLOT_FLEET_STALE_MS;
+  process.env.FARMSLOT_FLEET_STALE_MS = '1000';
+  t.after(() => {
+    if (previousThreshold === undefined) delete process.env.FARMSLOT_FLEET_STALE_MS;
+    else process.env.FARMSLOT_FLEET_STALE_MS = previousThreshold;
+  });
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 10000 });
+  const revisions = new GatewayResourceRevisions();
+  const collection = { family: 'slots', scope: 'farm' } as const;
+  // As slot-entities registers it: an entity-sync collection.
+  revisions.registerEntityCollection(
+    (key) => key.family === 'slots' && Object.keys(key).length === 2,
+  );
+  const slots = new SlotResourceChanges(revisions);
+  const snapshot = statusSlotResources({
+    slots: [{ slot: 'proof', project: 'project', machine: 'node', current_run_id: null }],
+  });
+  slots.observe(snapshot, new Date().toISOString());
+  const marker = revisions.membershipRevision(collection);
+  t.mock.timers.tick(500);
+  slots.observe(snapshot, new Date().toISOString());
+  assert.equal(revisions.membershipRevision(collection), marker, 'a fresh commit moves no marker');
+  t.mock.timers.tick(1001);
+  assert.equal(revisions.membershipRevision(collection), marker + 1, 'the stale boundary');
+  t.mock.timers.tick(5000);
+  assert.equal(revisions.membershipRevision(collection), marker + 1, 'once per boundary');
+  slots.observe(snapshot, new Date().toISOString());
+  assert.equal(revisions.membershipRevision(collection), marker + 2, 'the commit that ends it');
+  slots.observe(snapshot, new Date().toISOString());
+  assert.equal(revisions.membershipRevision(collection), marker + 2, 'a fresh commit again');
+});

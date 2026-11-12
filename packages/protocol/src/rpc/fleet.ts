@@ -34,6 +34,8 @@ export interface FleetVersionsResult {
   machines?: MachineHealth[];
   checkedAt: string;
   poolErrors?: FleetPoolReadError[];
+  /** The snapshot is past the freshness threshold: the client applies `staleFleet`. */
+  stale?: true;
   /** The farm slots key's membership marker this listing reflects. */
   membershipRevision: number;
 }
