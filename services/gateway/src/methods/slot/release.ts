@@ -880,13 +880,16 @@ async function slotReleaseImpl(
     if (!holdReason) {
       await assertReleaseClaim();
       try {
-        holdReason = await cleanupSlotRunnerRuntimes(vars, {
-          stillOwned: async () => {
-            await assertReleaseClaim();
-            return true;
-          },
-        });
-        if (!holdReason) holdReason = await reapSlotBrowserSession(vars);
+        const stillOwned = async () => {
+          await assertReleaseClaim();
+          return true;
+        };
+        holdReason = await cleanupSlotRunnerRuntimes(vars, { stillOwned });
+        if (!holdReason)
+          holdReason = await reapSlotBrowserSession(vars, {
+            stillOwned,
+            includeSlotProfiles: true,
+          });
       } catch (error) {
         holdReason = error instanceof Error ? error.message : String(error);
       }
