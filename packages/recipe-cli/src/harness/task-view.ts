@@ -186,6 +186,8 @@ export interface TaskViewPlan {
   sha256: string;
   approvedBy?: string;
   base?: string;
+  /** The file still hashes to the value recorded when the task was started with it. */
+  approved: boolean;
 }
 
 export interface TaskViewPrepare {
@@ -657,12 +659,24 @@ function readPlan(taskDir: string): { plan?: TaskViewPlan } {
     return {};
   }
   const text = bytes.toString('utf8');
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  // init-template records the approved hash in TASK.md; the file counts as approved only
+  // while it still matches that hash.
+  let recorded: string | undefined;
+  try {
+    recorded = /## Approved plan[\s\S]*?sha256 ([0-9a-f]{64})/.exec(
+      fs.readFileSync(path.join(taskDir, 'TASK.md'), 'utf8'),
+    )?.[1];
+  } catch {
+    recorded = undefined;
+  }
   const approvedBy = /Approved by (@?[\w.-]+)/.exec(text)?.[1];
   const base = /planned against (\S+)/.exec(text)?.[1];
   return {
     plan: {
       path: relative,
-      sha256: createHash('sha256').update(bytes).digest('hex'),
+      sha256,
+      approved: recorded === sha256,
       ...(approvedBy ? { approvedBy } : {}),
       ...(base ? { base } : {}),
     },

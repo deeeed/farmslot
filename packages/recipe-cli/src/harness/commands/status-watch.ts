@@ -14,7 +14,6 @@ import { harnessContext, harnessContextField } from '../context-state.js';
 import { listRunEvidenceHistory } from '../evidence-view.js';
 import { loadRunEvidenceTemplate } from '../evidence-view-page.js';
 import { harnessHost, withRecipeSignals } from '../host.js';
-import { recipeRuntimeDir } from '../paths.js';
 import { EXIT } from '../shared.js';
 import { observeTaskRun, type TaskRunBinding, type TaskRunObserver } from '../task-run.js';
 import {
@@ -187,7 +186,8 @@ export async function runStatusWatch(
       ...(options.taskDir ? { explicit: options.taskDir } : {}),
       ...(view.activity.ongoing && view.taskDir ? { active: view.taskDir } : {}),
     });
-    let page = newestEvidence([root]);
+    const latestRun = fs.existsSync(root) ? listRunEvidenceHistory(root)[0] : undefined;
+    let page = latestRun && { root, id: latestRun.id };
     let kind = 'run';
     if (!page) {
       // Before the first recipe run a task usually proves single actions with `call`; they
@@ -196,7 +196,7 @@ export async function runStatusWatch(
       page = newestEvidence(
         [
           ...(view.taskDir ? [path.join(view.taskDir, 'artifacts', 'calls')] : []),
-          path.join(options.target, path.dirname(recipeRuntimeDir()), 'calls'),
+          path.join(path.dirname(recipeRunAttemptsRoot(options.target, {})), 'calls'),
         ],
         startedAt,
       );
@@ -294,7 +294,7 @@ export async function runStatusWatch(
               ]
             : [];
         deps.write(
-          `${deps.isTty && options.watch ? CLEAR_SCREEN : ''}${[...renderTaskView(view, title, options.taskDir !== undefined), ...footer].join('\n')}\n`,
+          `${deps.isTty && options.watch ? CLEAR_SCREEN : ''}${[...renderTaskView(view, title, options.taskDir !== undefined, deps.isTty && options.watch ? process.stdout.columns : undefined), ...footer].join('\n')}\n`,
         );
       }
 
@@ -363,7 +363,12 @@ function defaultServeEvidence(dir: string): Promise<RunEvidenceServer> {
 
 // `explicitTask` is true when the caller named the task directory: its rows are
 // shown even when it is not in progress, because that is what was asked for.
-export function renderTaskView(view: TaskView, title: string, explicitTask = false): string[] {
+export function renderTaskView(
+  view: TaskView,
+  title: string,
+  explicitTask = false,
+  width?: number,
+): string[] {
   const out = (style: string, text: string) => color(style, text, { stream: process.stdout });
   // Details of a task that is not in progress are history; they would read as
   // the current run, so they appear only for a live task or one named explicitly.
@@ -436,12 +441,12 @@ export function renderTaskView(view: TaskView, title: string, explicitTask = fal
   // Sections, each under a colored heading, so the page reads as task, now,
   // acceptance and checklist instead of one stream of lines.
   if (showTask && (taskLine || templateLine || view.plan)) {
-    lines.push('', `${out('label', 'task')}  ${taskLine}`);
+    lines.push('', taskLine ? `${out('label', 'task')}  ${taskLine}` : out('label', 'task'));
     if (templateLine) lines.push(`  ${templateLine}`);
     if (view.plan) {
       lines.push(
         `  ${joinParts([
-          `plan ${out('ok', 'approved')} ${out('info', view.plan.path)}`,
+          `plan ${view.plan.approved ? out('ok', 'approved') : out('warn', 'not matching its approval')} ${out('info', view.plan.path)}`,
           `sha ${out('dim', view.plan.sha256.slice(0, 8))}`,
           view.plan.approvedBy && `by ${out('info', view.plan.approvedBy)}`,
           view.plan.base && `base ${out('dim', view.plan.base)}`,
@@ -483,7 +488,7 @@ export function renderTaskView(view: TaskView, title: string, explicitTask = fal
     now.push(`  run ${view.run.id.slice(0, 8)} ${view.run.status ?? 'lifecycle unavailable'}`);
   if (now.length > 0) lines.push('', out('label', 'now'), ...now);
 
-  if (showTask && view.acceptance?.length) lines.push('', ...renderAcceptanceLines(view));
+  if (showTask && view.acceptance?.length) lines.push('', ...renderAcceptanceLines(view, width));
   lines.push('');
   if (!view.activity.ongoing) {
     if (view.activity.reason !== 'run-unavailable')
@@ -527,16 +532,21 @@ export function renderTaskView(view: TaskView, title: string, explicitTask = fal
   return lines;
 }
 
-export function renderAcceptanceLines(view: TaskView): string[] {
+export function renderAcceptanceLines(
+  view: Pick<TaskView, 'acceptance'>,
+  width?: number,
+): string[] {
   if (!view.acceptance?.length) return [];
   const out = (style: string, text: string) => color(style, text, { stream: process.stdout });
   const proven = view.acceptance.filter((row) => row.status?.verdict === 'proven').length;
-  // In a terminal each criterion keeps to one line; the full text is in TASK.md.
-  const width = process.stdout.isTTY ? process.stdout.columns : undefined;
-  const fit = (text: string, used: number) =>
-    width && text.length > width - used - 1
-      ? `${text.slice(0, Math.max(10, width - used - 2))}…`
-      : text;
+  // The interactive watch keeps each criterion to one line; the full text stays in TASK.md.
+  const fit = (text: string, used: number) => {
+    if (!width) return text;
+    const chars = [...text.replace(/\s+/g, ' ').trim()];
+    const room = width - used - 1;
+    if (room < 1) return '…';
+    return chars.length > room ? `${chars.slice(0, room - 1).join('')}…` : chars.join('');
+  };
   return [
     `${out('label', 'acceptance')}  ${proven}/${view.acceptance.length} proven`,
     ...view.acceptance.map((row) => {

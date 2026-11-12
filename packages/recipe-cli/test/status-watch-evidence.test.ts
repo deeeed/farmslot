@@ -204,6 +204,25 @@ test('status --watch says when no recipe run exists yet', async (t) => {
   assert.match(session.frames[1]!, /no recipe run or call yet under .*temp\/recipe\/runs/u);
 });
 
+test('status --watch ignores calls made before the task started', async (t) => {
+  taskEnv(t, undefined);
+  const target = tempDir(t);
+  const calls = path.join(target, 'temp/recipe/calls');
+  writeRun(calls, 'earlier', '2026-01-01T00:00:00.000Z');
+  const old = new Date(Date.now() - 3_600_000);
+  fs.utimesSync(path.join(calls, 'earlier', 'recipe-invocation.json'), old, old);
+  fs.utimesSync(path.join(calls, 'earlier'), old, old);
+  writeTask(path.join(target, 'temp/tasks/dev/task'), 'running');
+  const session = watch(t, target, {
+    serveEvidence: async () => assert.fail('a call from before the task must not open'),
+    openUrl: () => assert.fail('nothing to open'),
+  });
+  await session.ready();
+  session.key('v');
+  await settle(() => session.frames.length === 2);
+  assert.match(session.frames[1]!, /no recipe run or call yet/u);
+});
+
 test('status --watch opens the newest call made during the task before any recipe run', async (t) => {
   taskEnv(t, undefined);
   const target = tempDir(t);
