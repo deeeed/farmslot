@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -10,13 +10,16 @@ import type { ParkedRunCommits, Run } from '@farmslot/protocol';
 
 import type { SlotVars } from '../core/config.js';
 import type { execOnSlot } from '../core/exec.js';
+import { claimSlotStatusIf, statusFile } from '../core/state.js';
 import { resetSlotRepoToIdle } from '../methods/slot/slot-tracking.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 import { makeVars } from '../runners/test-fixtures.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import {
+  captureSlotWork,
   dropParkedBranch,
+  mutateSlotGit,
   parkRunBranchCommits,
   parksBranchCommits,
   parkSlotBranch,
@@ -59,6 +62,11 @@ async function fixture(t: test.TestContext) {
   git('commit', '-q', '--allow-empty', '-m', 'validation two');
   const head = git('rev-parse', 'HEAD');
   const vars: SlotVars = makeVars({ slotId: 'proof-slot', remoteRepo: repo, repo });
+  await claimSlotStatusIf(vars.slotId, () => true, {
+    lifecycle: 'ready',
+    agent: 'idle',
+    phase: 'idle',
+  });
   const created = createRun({
     flowType: 'dev',
     project: 'farmslot-farm',
@@ -88,7 +96,7 @@ test("a finished artifact-only run's own commits are parked under a ref that nev
   );
   const parked = await parkRunBranchCommits(validation, vars, localExec, checks);
   assert.ok(parked);
-  assert.equal(parked.ref, `refs/farmslot/parked/${validation.id}/${head}`);
+  assert.ok(parked.ref.startsWith(`refs/farmslot/parked/proof-slot/${validation.id}/`));
   assert.equal(git('rev-parse', parked.ref), head);
   assert.equal(parked.baseSha, base);
   assert.equal(parked.commits.length, 2, 'both unpushed commits, not the published base');
@@ -155,13 +163,26 @@ test('cleanup may drop a fully published unchanged branch', async (t) => {
   assert.equal(git('rev-parse', parked.ref), head);
 });
 
+test('parking retains staged, working and untracked content before a reset', async (t) => {
+  const { git, vars, validation } = await fixture(t);
+  await writeFile(path.join(vars.remoteRepo, 'staged.txt'), 'index version\n');
+  git('add', 'staged.txt');
+  await writeFile(path.join(vars.remoteRepo, 'staged.txt'), 'working version\n');
+  await writeFile(path.join(vars.remoteRepo, 'untracked.txt'), 'untracked work\n');
+  const parked = await parkRunBranchCommits(validation, vars, localExec, checks);
+  assert.ok(parked, 'dirty work must be parked instead of refused');
+  assert.equal(git('show', `${parked.ref}:staged.txt`), 'working version');
+  assert.equal(git('show', `${parked.ref}:untracked.txt`), 'untracked work');
+  assert.equal(
+    await readFile(path.join(vars.remoteRepo, 'staged.txt'), 'utf8'),
+    'working version\n',
+  );
+  assert.equal(git('show', ':staged.txt'), 'index version', 'capture never changes the real index');
+});
+
 test("a checkout that isn't the run's own is never parked", async (t) => {
   const { git, vars, base, validation } = await fixture(t);
-  // Dirty files, another branch, and history that doesn't descend from the run's baseline.
-  git('commit', '-q', '--allow-empty', '-m', 'x');
-  execFileSync('sh', ['-c', `echo edit > ${path.join(vars.remoteRepo, 'note.txt')}`]);
-  assert.equal(await parkRunBranchCommits(validation, vars, localExec, checks), null, 'dirty');
-  execFileSync('rm', [path.join(vars.remoteRepo, 'note.txt')]);
+  // Another branch and history outside the baseline are never run checkpoints.
   git('checkout', '-q', '-b', 'someone-else');
   assert.equal(
     await parkRunBranchCommits(validation, vars, localExec, checks),
@@ -283,7 +304,7 @@ test("an ownerless slot's unpushed commits are parked under a manual ref before 
     now: new Date('2026-11-02T10:00:00.000Z'),
   });
   assert.deepEqual(parked, {
-    ref: `refs/farmslot/parked/manual-proof-slot-20261102T100000000Z/${head}`,
+    ref: parked!.ref,
     branch: 'main',
     commits: 2,
   });
@@ -309,10 +330,7 @@ test('an ownerless park names a valid ref for any slot id and never moves an exi
   const now = new Date('2026-11-02T10:00:00.000Z');
   const odd = { ...vars, slotId: 'team/a.b..lock' };
   const parked = await parkSlotCommits(odd, localExec, { ...checks, headSha: head, now });
-  assert.equal(
-    parked?.ref,
-    `refs/farmslot/parked/manual-team-a-b-lock-20261102T100000000Z/${head}`,
-  );
+  assert.ok(parked?.ref.startsWith('refs/farmslot/parked/key-'));
   git('check-ref-format', parked!.ref);
   // Parking the same head again keeps the same ref, as the run park does.
   assert.deepEqual(
@@ -320,11 +338,11 @@ test('an ownerless park names a valid ref for any slot id and never moves an exi
     parked,
   );
   // A ref already naming another head is never moved: the park refuses before any reset.
-  const taken = `refs/farmslot/parked/manual-proof-slot-20261102T100000000Z/${head}`;
+  const taken = (await parkSlotCommits(vars, localExec, { ...checks, headSha: head, now }))!.ref;
   git('update-ref', taken, base);
   await assert.rejects(
     parkSlotCommits(vars, localExec, { ...checks, headSha: head, now }),
-    /Cannot park/,
+    /identity changed/,
   );
   assert.equal(git('rev-parse', taken), base);
 });
@@ -485,4 +503,135 @@ test('historical retention never attributes an unrecorded reused branch to the o
     (await restoreParkedBranch(getRun(ended.id), vars, ended.branch!, localExec))?.headSha,
     head,
   );
+});
+
+test('a successor claiming the slot after capture prevents reset without losing its owner', async (t) => {
+  const { vars, git, head } = await fixture(t);
+  await assert.rejects(
+    mutateSlotGit(
+      vars,
+      {},
+      {
+        defaultBranch: 'main',
+        verifyWork: async () => {
+          await claimSlotStatusIf(vars.slotId, () => true, {
+            current_run_id: 'successor',
+            lifecycle: 'busy',
+          });
+        },
+      },
+      'git reset --hard origin/main',
+      localExec,
+    ),
+    /ownership changed after parking/,
+  );
+  assert.equal(git('rev-parse', 'HEAD'), head);
+  assert.ok(git('for-each-ref', 'refs/farmslot/parked/'));
+});
+
+test('an incoming run prior-work receipt cannot become a replay checkpoint', async (t) => {
+  const { vars, git, validation, head, base } = await fixture(t);
+  await captureSlotWork(vars, {}, { defaultBranch: 'main', runId: validation.id }, localExec);
+  assert.equal(getRun(validation.id)?.parkedCommits?.[0].purpose, 'prior-work');
+  assert.equal(
+    await parkRunBranchCommits(getRun(validation.id)!, vars, localExec, {
+      ...checks,
+      dataOnly: true,
+    }),
+    null,
+    'retention must not promote prior work into a checkpoint',
+  );
+  git('checkout', '-q', 'main');
+  git('branch', '-D', validation.branch!);
+  assert.equal(
+    await restoreParkedBranch(getRun(validation.id), vars, validation.branch!, localExec),
+    null,
+  );
+  assert.equal(git('rev-parse', 'HEAD'), base);
+  assert.equal(getRun(validation.id)?.parkedCommits?.[0].headSha, head);
+});
+
+test('a dirty checkpoint restores its original branch, index and working contents', async (t) => {
+  const { vars, git, validation, head } = await fixture(t);
+  await writeFile(path.join(vars.remoteRepo, 'note'), 'index');
+  git('add', 'note');
+  await writeFile(path.join(vars.remoteRepo, 'note'), 'working');
+  const receipt = await parkRunBranchCommits(validation, vars, localExec, checks);
+  assert.equal(receipt?.kind, 'worktree');
+  git('reset', '--hard', 'HEAD');
+  git('clean', '-fd');
+  git('checkout', '-q', 'main');
+  git('branch', '-D', validation.branch!);
+  await restoreParkedBranch(getRun(validation.id), vars, validation.branch!, localExec);
+  assert.equal(git('symbolic-ref', '--short', 'HEAD'), validation.branch);
+  assert.equal(git('rev-parse', 'HEAD'), head);
+  assert.equal(git('show', ':note'), 'index');
+  assert.equal(await readFile(path.join(vars.remoteRepo, 'note'), 'utf8'), 'working');
+});
+
+test('a missing checkpoint is an explicit replay refusal', async (t) => {
+  const { vars, git, validation } = await fixture(t);
+  const receipt = await parkRunBranchCommits(validation, vars, localExec, checks);
+  assert.ok(receipt);
+  git('checkout', '-q', 'main');
+  git('branch', '-D', validation.branch!);
+  git('update-ref', '-d', receipt.ref);
+  await assert.rejects(
+    restoreParkedBranch(getRun(validation.id), vars, validation.branch!, localExec),
+    /missing or pruned/,
+  );
+});
+
+test('failed slot receipt persistence leaves current work intact and the Git backup recoverable', async (t) => {
+  const { vars, git, head } = await fixture(t);
+  let moved = false;
+  const failingExec: typeof execOnSlot = async (...args) => {
+    const result = await localExec(...args);
+    if (!moved && args[1].includes('"op":"park"')) {
+      await rename(statusFile, `${statusFile}.offline`);
+      moved = true;
+    }
+    return result;
+  };
+  try {
+    await assert.rejects(
+      mutateSlotGit(
+        vars,
+        {},
+        { defaultBranch: 'main' },
+        'git reset --hard origin/main',
+        failingExec,
+      ),
+      /disappeared before parking registration/,
+    );
+    assert.equal(git('rev-parse', 'HEAD'), head);
+    assert.ok(git('for-each-ref', 'refs/farmslot/parked/'));
+  } finally {
+    if (moved) await rename(`${statusFile}.offline`, statusFile);
+  }
+});
+
+test('prior-work and a verified checkpoint at the same head keep distinct immutable receipts', async (t) => {
+  const { vars, validation, head, git } = await fixture(t);
+  const prior = await captureSlotWork(
+    vars,
+    {},
+    { defaultBranch: 'main', runId: validation.id },
+    localExec,
+  );
+  const checkpoint = await parkRunBranchCommits(validation, vars, localExec, checks);
+  assert.equal(prior.receipts[0].purpose, 'prior-work');
+  assert.equal(checkpoint?.purpose, 'checkpoint');
+  assert.notEqual(checkpoint?.ref, prior.receipts[0].ref);
+  assert.equal(getRun(validation.id)?.parkedCommits?.length, 2);
+  git('checkout', '-q', 'main');
+  git('branch', '-D', validation.branch!);
+  const restored = await restoreParkedBranch(
+    getRun(validation.id),
+    vars,
+    validation.branch!,
+    localExec,
+  );
+  assert.equal(restored?.ref, checkpoint?.ref);
+  assert.equal(git('rev-parse', validation.branch!), head);
 });

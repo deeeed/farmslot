@@ -1972,7 +1972,16 @@ export async function recordParkedRunCommits(
   await commitRetainedRunMutation(
     id,
     (run) => {
-      if (run.parkedCommits?.some((entry) => entry.ref === record.ref)) return run;
+      const existing = run.parkedCommits?.find((entry) => entry.ref === record.ref);
+      if (existing)
+        return record.prunedAt
+          ? {
+              ...run,
+              parkedCommits: run.parkedCommits?.map((entry) =>
+                entry.ref === record.ref ? record : entry,
+              ),
+            }
+          : run;
       const records = [...(run.parkedCommits ?? [])];
       // Historical backfill must not replace the already authoritative replay head.
       const before = beforeRef ? records.findIndex((entry) => entry.ref === beforeRef) : -1;

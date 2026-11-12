@@ -69,7 +69,8 @@ function atVerifiedDefault(workspace: SlotWorkspace): boolean {
     !workspace.currentRunId &&
     !workspace.recoveryId &&
     workspace.branch === workspace.defaultBranch &&
-    workspace.publication === 'baseline'
+    workspace.publication === 'baseline' &&
+    !workspace.dirtyCount
   );
 }
 
@@ -145,43 +146,21 @@ export async function reuseSafeIdleSlot(
     const eligibility = slotRecoveryEligibility(slot ? { ...slot, workspace } : undefined);
     if (!eligibility.allowed)
       return { kind: 'unavailable', reason: eligibility.detail ?? 'Slot is protected' };
-    // A finished artifact-only run's own commits are retained output: the release parks them
-    // (durable ref, SHAs on the run) and refuses if they turn out not to be the run's own.
+    // Publication and dirt never grant ownership; the fenced recovery saves them first.
     let parkRunId: string | undefined;
     let parkHeadSha: string | undefined;
-    // Automatic reuse never parks an ownerless checkout's commits: that is an operator release.
-    const localWork = eligibility.confirmationRequired || workspace.publication === 'unpushed';
-    if (localWork && !expected?.retainedCandidate) {
+    if (expected?.recordRunId && !workspace.dirtyCount) {
       const { getRunWithArchived } = await import('../runs/store.js');
-      const owner = expected?.recordRunId
-        ? await getRunWithArchived(expected.recordRunId)
-        : undefined;
-      const recordedHead =
-        expected?.parkHeadSha ??
-        (owner?.releasedCheckout?.slotId === slotId &&
-        owner.releasedCheckout.branch === workspace.branch
-          ? owner.releasedCheckout.headSha
-          : undefined) ??
-        owner?.parkedCommits
-          ?.filter((entry) => entry.slotId === slotId && entry.branch === workspace.branch)
-          .at(-1)?.headSha;
+      const owner = await getRunWithArchived(expected.recordRunId);
+      const recordedHead = expected.parkHeadSha ?? owner?.releasedCheckout?.headSha;
       if (
         parksBranchCommits(owner) &&
-        // An old branch name is not ownership: ownerless reuse needs its recorded head.
-        (workspace.currentRunId === owner.id || recordedHead === workspace.headSha) &&
-        !workspace.dirtyCount &&
-        workspace.publication === 'unpushed' &&
         workspace.branch === owner.branch &&
-        workspace.branch !== workspace.defaultBranch &&
-        (!expected?.parkHeadSha || workspace.headSha === expected.parkHeadSha)
+        (workspace.currentRunId === owner.id || recordedHead === workspace.headSha)
       ) {
         parkRunId = owner.id;
         parkHeadSha = workspace.headSha;
-      } else
-        return {
-          kind: 'local-work',
-          reason: workspace.dirtyCount ? 'dirty files' : 'unpushed commits',
-        };
+      }
     }
     if (atVerifiedDefault(workspace)) return { kind: 'ready' };
     await retainCheckout(slotId, workspace, expected?.recordRunId);
@@ -190,7 +169,7 @@ export async function reuseSafeIdleSlot(
       {
         slotId,
         release: true,
-        mode: localWork ? 'force' : 'safe',
+        mode: 'safe',
         expectedWorkspace: workspace,
       },
       emit,

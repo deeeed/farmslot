@@ -1,4 +1,12 @@
+import type { ParkedRunCommits } from './runs.js';
 import type { SlotStatus } from './slots.js';
+
+/** A bounded observation, not the full saved-work inventory. */
+export interface SlotParkedWorkSummary {
+  count: number | null;
+  latestRef: string | null;
+  latestAt: string | null;
+}
 
 export type SlotWorkPublication = 'baseline' | 'merged' | 'pushed' | 'unpushed' | 'unknown';
 export type SlotRecoveryPhase = 'inspect' | 'cleanup' | 'reset' | 'fixtures' | 'verify';
@@ -116,20 +124,14 @@ export function slotRecoveryEligibility(
     !(work.terminalOwner && slot.phase !== 'occupied' && !slot.heldReason)
   )
     return blocked(slot.heldReason ?? 'Slot is held');
-  if (work.publication === 'unknown')
-    return blocked(work.error ?? 'Publication is unknown', 'unknown');
-  // An operator release parks an ownerless slot's unpushed commits under a durable ref first.
-  const confirmationRequired =
-    work.dirtyCount > 0 || (work.publication === 'unpushed' && !parksSlotCommits(work));
+  // Readable local work is captured before reset even if remote publication is unknown.
+  if (!work.headSha || !work.dirtyFingerprint)
+    return blocked(work.error ?? 'Local workspace is unreadable', 'unknown');
   return {
     allowed: true,
     bulkInspectable,
-    bulkAllowed:
-      slot.lifecycle === 'ready' && !work.currentRunId && !work.recovery && !confirmationRequired,
-    confirmationRequired,
-    ...(confirmationRequired
-      ? { reason: work.dirtyCount > 0 ? ('dirty' as const) : ('unpushed' as const) }
-      : {}),
+    bulkAllowed: slot.lifecycle === 'ready' && !work.currentRunId && !work.recovery,
+    confirmationRequired: false,
   };
 }
 
@@ -143,18 +145,29 @@ export function parksSlotCommits(
   );
 }
 
-/** Unpushed commits a release kept reachable at `ref` before resetting the slot. */
+/** Progress for local work retained before resetting the checkout. */
 export interface SlotParkedCommits {
+  kind?: 'worktree';
   ref: string;
   branch: string;
   commits: number;
 }
 
+export function slotParkedSummary(receipt: ParkedRunCommits): SlotParkedCommits {
+  return {
+    ref: receipt.ref,
+    branch: receipt.branch,
+    commits: receipt.commits.length,
+    ...(receipt.kind === 'worktree' ? { kind: receipt.kind } : {}),
+  };
+}
+
 export function slotParkedDetail(parked: readonly SlotParkedCommits[]): string {
   return parked
-    .map(
-      (entry) =>
-        `Parked ${entry.commits} unpushed commit${entry.commits === 1 ? '' : 's'} of ${entry.branch} at ${entry.ref}`,
+    .map((entry) =>
+      entry.kind === 'worktree'
+        ? `Saved working tree on ${entry.branch} at ${entry.ref}`
+        : `Parked ${entry.commits} unpushed commit${entry.commits === 1 ? '' : 's'} of ${entry.branch} at ${entry.ref}`,
     )
     .join('; ');
 }

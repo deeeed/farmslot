@@ -1953,7 +1953,7 @@ export type RunCompletionPolicy = 'default' | 'artifact-only';
 export function isRunCompletionPolicy(value: unknown): value is RunCompletionPolicy {
   return value === 'default' || value === 'artifact-only';
 }
-/** One parking of an artifact-only run's own branch commits (see `Run.parkedCommits`). */
+/** Local work retained before a checkout mutation; also used for ownerless work. */
 export interface ParkedRunCommits {
   slotId: string;
   ref: string;
@@ -1963,6 +1963,19 @@ export interface ParkedRunCommits {
   /** The parked commits not on any remote, newest first. */
   commits: string[];
   parkedAt: string;
+  kind?: 'commits' | 'worktree';
+  purpose?: 'checkpoint' | 'prior-work';
+  sourceHeadSha?: string;
+  indexArchiveSha?: string;
+  fingerprint?: string;
+  operationKey?: string;
+  repoKey?: string;
+  metadataRef?: string;
+  worktreeTreeSha?: string;
+  runId?: string;
+  storageVersion?: number;
+  prunedAt?: string;
+  pruneReason?: 'age' | 'remote';
 }
 
 /** `none`: the REVIEW step's pipeline code review does not run. Only for artifact-only dev runs. */
@@ -3026,8 +3039,8 @@ export interface Run {
   /** A cancelled replay hold was released on demand for another run, preserving its record. */
   slotReclaimed?: { slotId: string; byRunId: string; at: string };
   /**
-   * Branch commits of this artifact-only run, parked when its slot returned to idle (append-only).
-   * Each `ref` (`refs/farmslot/parked/<run>/<head>`) keeps `headSha` reachable on the slot.
+   * Canonical retained-work receipts recorded before checkout mutation. Prior work is not a replay checkpoint.
+   * Immutable slot/run/snapshot refs keep the commits and saved index/worktree state reachable.
    */
   parkedCommits?: ParkedRunCommits[];
   /**

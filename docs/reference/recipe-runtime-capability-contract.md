@@ -766,7 +766,7 @@ historical commits. Injection does not change ownership boundaries:
 
 ## Fleet slot recovery
 
-The original contract shipped in PR #1490 under Amendment 1 and PR #1515 under Amendment 2. Status: Proposed local-work amendment under [ADR-042 Amendment 3](../adr/042-slot-tracking-branches.md#amendment-3-park-before-reset-2026-11-13). Existing ownership, source, resource and readiness requirements remain authoritative.
+The original contract shipped in PR #1490 under Amendment 1 and PR #1515 under Amendment 2. Status: Accepted local-work amendment under [ADR-042 Amendment 3](../adr/042-slot-tracking-branches.md#amendment-3-park-before-reset-2026-11-13). Existing ownership, source, resource and readiness requirements remain authoritative.
 
 ### Workspace evidence and shared model
 
@@ -813,7 +813,7 @@ The same `slot.refresh` release mode, bound to the held recovery ID and a fresh 
 ### Automatic safe reuse
 
 The existing automatic-reuse contract shipped under ADR-042 Amendment 2 and
-ADR-054 in PR #1515. Its revised local-work clauses below are Proposed under
+ADR-054 in PR #1515. Its revised local-work clauses below are Accepted under
 Amendment 3; protected-owner and admission rules remain Accepted.
 
 Before a stale-work decision, automatic find-slot MUST inspect the selected free

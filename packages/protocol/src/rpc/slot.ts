@@ -1,8 +1,10 @@
 import type {
   ExecResult,
+  ParkedRunCommits,
   RuntimeCapabilityTarget,
   SlotActionPlacement,
   SlotParkedCommits,
+  SlotParkedWorkSummary,
   SlotRecoveryRefusal,
   SlotStatus,
   SlotWorkspaceIdentity,
@@ -15,6 +17,7 @@ export const SlotMethods = {
   check: Methods.SLOT_CHECK,
   prepare: Methods.SLOT_PREPARE,
   release: Methods.SLOT_RELEASE,
+  parked: Methods.SLOT_PARKED,
   recycle: Methods.SLOT_RECYCLE,
   refresh: Methods.SLOT_REFRESH,
   cleanup: Methods.SLOT_CLEANUP,
@@ -36,6 +39,25 @@ export const SlotMethods = {
   reopen: Methods.SLOT_REOPEN,
   autoRefresh: Methods.SLOT_AUTO_REFRESH,
 } as const;
+
+export type SlotParkedParams =
+  | { action: 'list'; slotId: string }
+  | { action: 'restore'; slotId: string; ref: string };
+
+export interface LegacyParkedWork {
+  ref: string;
+  headSha: string;
+  reason: string;
+}
+
+export type SlotParkedResult =
+  | {
+      action: 'list';
+      receipts: ParkedRunCommits[];
+      legacy: LegacyParkedWork[];
+      summary: SlotParkedWorkSummary;
+    }
+  | { action: 'restore'; ref: string; branch: string; headSha: string };
 
 /** One structured prepare sub-step (ADR-037) — phase, profile resolution, or
  * fallback reason. Mirrors the `slot.prepare.step` event payload. */

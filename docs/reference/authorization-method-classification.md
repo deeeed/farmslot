@@ -327,6 +327,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `slot.fixtureRefresh`                   | admin                |                                                                                    |
 | `slot.monitor`                          | admin                |                                                                                    |
 | `slot.openEditor`                       | admin                |                                                                                    |
+| `slot.parked`                           | admin                |                                                                                    |
 | `slot.prepare`                          | admin                |                                                                                    |
 | `slot.prepareStatus`                    | admin                |                                                                                    |
 | `slot.recycle`                          | admin                |                                                                                    |

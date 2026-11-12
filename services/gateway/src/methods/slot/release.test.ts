@@ -463,28 +463,31 @@ async function fixtureSlot(t: test.TestContext, label: string, branch: string): 
   return slotId;
 }
 
-test('slotRelease refuses unmerged work before it fences the slot or stops the agent', async (t) => {
+test('slotRelease parks dirty unpublished work and continues through the guarded reset', async (t) => {
   const { writeFileSync } = await import('node:fs');
   const path = await import('node:path');
   const { loadSlotVars, readSlotField } = await import('../../core/index.js');
   const slotId = await fixtureSlot(t, 'unmerged', 'PROJ-1-unmerged');
+  const { execFileSync } = await import('node:child_process');
+  const vars = await loadSlotVars(slotId);
+  const remote = path.join(path.dirname(vars.remoteRepo), 'origin.git');
+  t.after(async () => {
+    const { rm } = await import('node:fs/promises');
+    await rm(remote, { recursive: true, force: true });
+  });
+  execFileSync('git', ['clone', '--bare', vars.remoteRepo, remote]);
+  execFileSync('git', ['-C', vars.remoteRepo, 'remote', 'add', 'origin', remote]);
+  execFileSync('git', ['-C', vars.remoteRepo, 'push', 'origin', 'HEAD:main']);
   writeFileSync(
     path.join((await loadSlotVars(slotId)).remoteRepo, 'fix.txt'),
     'work in progress\n',
   );
   await seedSlotRow(t, slotId, { lifecycle: 'busy', phase: 'working', agent: 'working' });
-  const steps: string[] = [];
-
-  await assert.rejects(
-    () =>
-      slotRelease({ slotId }, (event, payload) => {
-        if (event === 'slot.release.step') steps.push((payload as { name: string }).name);
-      }),
-    /^Error: UNMERGED_WORK:PROJ-1-unmerged:dirty files/,
-  );
-  assert.deepEqual(steps, [], 'no teardown step ran: no posture reconcile, no agent kill');
-  assert.equal(await readSlotField(slotId, 'phase'), 'working', 'the slot was never fenced');
-  assert.equal(await readSlotField(slotId, 'agent'), 'working');
+  const result = await slotRelease({ slotId }, noopEmit);
+  assert.equal(result.released, true);
+  assert.equal(await readSlotField(slotId, 'lifecycle'), 'ready');
+  const saved = await readSlotField(slotId, 'parked_work');
+  assert.ok(saved && typeof saved === 'object' && 'count' in saved && Number(saved.count) > 0);
 });
 
 test('only a named force release detaches an active find-slot owner', async (t) => {

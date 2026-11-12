@@ -39,6 +39,7 @@ export const Methods = {
   SLOT_CHECK: 'slot.check',
   SLOT_PREPARE: 'slot.prepare',
   SLOT_RELEASE: 'slot.release',
+  SLOT_PARKED: 'slot.parked',
   SLOT_RECYCLE: 'slot.recycle',
   SLOT_REFRESH: 'slot.refresh',
   SLOT_CLEANUP: 'slot.cleanup',

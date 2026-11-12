@@ -5,7 +5,7 @@
 **Relates to:** [ADR-022](022-slot-lifecycle-simplification.md), [ADR-024](024-run-lanes-and-run-family-model.md), [ADR-037](037-prepare-profiles.md), [ADR-039](039-run-portable-bundles.md)
 **Reference:** [Worktree operator model](../operations/worktree-operator-model.md)
 
-Amendment 3 and its revised local-work clauses below are Proposed, not yet implemented. Existing owner/resource contracts remain Accepted.
+Amendment 3 is Accepted under Arthur's approved rule and paired text review `428c9b94`; implementation is in progress in PR #2066.
 
 ## Context
 
@@ -305,7 +305,7 @@ action or daemon is introduced.
 
 ## Amendment 3: park before reset (2026-11-13)
 
-**Status:** Proposed text. Arthur approved the rule and ADR routing on 2026-11-12; paired text review precedes implementation.
+**Status:** Accepted. Arthur approved the rule and routing; both text reviews approved `428c9b94074165ec02d5b4a703ce8ce6bc418909`. Implementation: PR #2066.
 **Specification:** [Fleet slot recovery](../reference/recipe-runtime-capability-contract.md#fleet-slot-recovery).
 
 ### Decision
