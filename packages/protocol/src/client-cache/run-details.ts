@@ -2,6 +2,7 @@ import { openHumanGateDecision } from '../contracts/run-lifecycle-view.js';
 import { isActiveListRun, type Run } from '../contracts/runs.js';
 import { Methods } from '../rpc/registry.js';
 import type { RunGetResult } from '../rpc/run.js';
+import type { RunListRow } from '../runs/list-row.js';
 import { trimRunForList } from '../runs/list-trim.js';
 import { runListVersion } from '../runs/list-version.js';
 import type { RunListProjection } from '../runs/run-list-filter.js';
@@ -18,7 +19,10 @@ export interface RunDetailTarget {
   updatedAt: string;
 }
 
-export function runDetailTarget(run: Run | RunListProjection, version: string): RunDetailTarget {
+export function runDetailTarget(
+  run: Run | RunListRow | RunListProjection,
+  version: string,
+): RunDetailTarget {
   return {
     runId: run.id,
     version,

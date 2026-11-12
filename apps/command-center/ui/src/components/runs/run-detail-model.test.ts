@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type {
-  FamilyObservabilityArtifact,
-  PRStatus,
-  RecipeRunArtifactGroup,
-  Run,
-  RunStep,
+import {
+  type FamilyObservabilityArtifact,
+  type PRStatus,
+  type RecipeRunArtifactGroup,
+  type Run,
+  runListRow,
+  type RunStep,
+  trimRunForList,
 } from '@farmslot/protocol';
 import {
   CI_FIX_CHECKLIST,
@@ -35,6 +37,7 @@ import {
   reviewTerminalUnavailableReason,
   runArtifactsWithOperationLogs,
   runDetailDesiredRecipeRunId,
+  runDetailHeaderModel,
   runEvidenceLightboxItems,
   runFamilyPrStatus,
   shouldAcceptTaskProgressUpdate,
@@ -761,4 +764,104 @@ test('a step-owned artifact link reopens in the step inspector, or says why it c
   assert.deepEqual(locateStepArtifact(owned, stepFiles, { ...ctx, urlStepName: 'write-task' }), {
     index: 0,
   });
+});
+
+// With no run.get held, Run Detail paints its header from the list row; the detail, when it
+// lands, gives the same header values, so the header neither flashes nor changes.
+test('the run detail header is the same from the served row, the full run and an old cached row', () => {
+  const base: Run = {
+    id: 'run-header',
+    familyId: 'family-header',
+    lane: 'production',
+    flowType: 'fix-bug',
+    status: 'monitoring',
+    project: 'farm',
+    ticketOrPr: 'owner/repo#9',
+    summary: 'Fix the banner',
+    slotId: 'slot-2',
+    branch: 'fix/banner',
+    taskFile: '/repo/TASK.md',
+    steps: [
+      {
+        name: 'dispatch',
+        status: 'done',
+        outputs: { selectedSlot: 'slot-2', notes: 'n'.repeat(500) },
+      },
+      { name: 'monitor', status: 'running', startedAt: '2026-11-01T00:00:00.000Z' },
+    ],
+    decisions: [],
+    metrics: { nudgeCount: 0, model: 'opus', runner: 'claude', disposition: 'fixed' },
+    createdAt: '2026-11-01T00:00:00.000Z',
+    updatedAt: '2026-11-01T00:05:00.000Z',
+  };
+  const states: Run[] = [
+    base,
+    {
+      ...base,
+      status: 'reviewing',
+      agentContexts: [
+        {
+          id: 'review',
+          label: 'Reviewer',
+          role: 'review',
+          status: 'working',
+          slotId: 'slot-2',
+          runId: 'run-header',
+          runner: 'codex',
+          startedAt: '2026-11-01T00:04:00.000Z',
+          reviewId: 'rev-1',
+          reviewLoopNumber: 2,
+        },
+      ],
+    },
+    { ...base, status: 'done', steps: [{ name: 'monitor', status: 'done' }] },
+    {
+      ...base,
+      status: 'blocked',
+      steps: [
+        { name: 'dispatch', status: 'done' },
+        { name: 'human-gate', status: 'running' },
+      ],
+      decisions: [
+        {
+          id: 'gate',
+          type: 'engine_human_gate',
+          title: 'Publish',
+          description: '',
+          createdAt: '2026-11-01T00:00:00.000Z',
+          actions: [{ id: 'approve-publish', label: 'Approve', style: 'primary' }],
+          payload: {
+            kind: 'ready',
+            prNumber: null,
+            repo: null,
+            branch: 'fix/banner',
+            workerReport: 'w'.repeat(3000),
+            diffStat: { files: 1, additions: 1, deletions: 0 },
+            gateReadiness: {
+              state: 'not-ready',
+              identity: { runId: 'run-header', generation: 1 },
+              reasons: [
+                {
+                  code: 'evidence-policy-unsatisfied',
+                  prerequisite: 'evidence',
+                  evidencePolicy: 'execution-verdict',
+                  message: 'Evidence policy needs attestation.',
+                },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  ];
+  for (const full of states) {
+    const expected = runDetailHeaderModel(full);
+    assert.deepEqual(runDetailHeaderModel(runListRow(full)), expected, full.status);
+    assert.deepEqual(runDetailHeaderModel(trimRunForList(full)), expected, full.status);
+  }
+  assert.equal(runDetailHeaderModel(base).disposition, 'fixed');
+  assert.equal(
+    runDetailHeaderModel(states[3]).activityLabel,
+    'Needs your decision: Evidence policy needs attestation.',
+  );
 });

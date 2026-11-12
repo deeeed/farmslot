@@ -8,6 +8,7 @@ import type {
   PRStatus,
   RecipeRunArtifactGroup,
   Run,
+  RunListRow,
   RunStep,
   TaskProgressStructured,
 } from '@farmslot/protocol';
@@ -28,8 +29,10 @@ export abstract class RunDetailState extends LitElement {
     | ((path: string) => Promise<string>)
     | null = null;
   @state() run: Run | null = null;
+  /** The run's list row, shown as the header until run.get answers. */
+  @state() standInRow: RunListRow | null = null;
   @state() prStatus: PRStatus | null = null;
-  @state() siblings: Run[] = [];
+  @state() siblings: RunListRow[] = [];
   @state() taskProgress: TaskProgressStructured | null = null;
   /** The run's acceptance ledger (ADR-060), from the same progress read. */
   @state() acceptanceStatus: AcceptanceStatusLedger | null = null;

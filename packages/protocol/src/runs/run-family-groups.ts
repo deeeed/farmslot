@@ -1,16 +1,17 @@
-import { isActiveListRun, type Run } from '../contracts/runs.js';
+import { isActiveListRun } from '../contracts/runs.js';
 import { compareText } from '../text-order.js';
 
 import { buildFamilySummary } from './family-readiness.js';
+import type { RunListRow } from './list-row.js';
 
 export interface RunFamilyGroup {
   familyId: string;
   project: string;
   familyRootTicketOrPr: string;
-  rootRun: Run | null;
-  representativeRun: Run;
+  rootRun: RunListRow | null;
+  representativeRun: RunListRow;
   familySummary: string;
-  runs: Run[];
+  runs: RunListRow[];
   latestCreatedAt: string;
   activeCount: number;
   comparisonCount: number;
@@ -19,15 +20,15 @@ export interface RunFamilyGroup {
   variants: string[];
 }
 
-function isFamilyRoot(run: Run): boolean {
+function isFamilyRoot(run: RunListRow): boolean {
   return run.id === run.familyId || run.parentRunId == null;
 }
 
-function sortByCreatedAtDesc(runs: readonly Run[]): Run[] {
+function sortByCreatedAtDesc(runs: readonly RunListRow[]): RunListRow[] {
   return [...runs].sort((left, right) => compareText(right.createdAt, left.createdAt));
 }
 
-export function sortRunsForFamilyView(runs: readonly Run[]): Run[] {
+export function sortRunsForFamilyView(runs: readonly RunListRow[]): RunListRow[] {
   return [...runs].sort((left, right) => {
     if (isFamilyRoot(left) !== isFamilyRoot(right)) return isFamilyRoot(left) ? -1 : 1;
     if ((left.variant ?? null) !== (right.variant ?? null)) {
@@ -38,8 +39,8 @@ export function sortRunsForFamilyView(runs: readonly Run[]): Run[] {
 }
 
 /** Runs grouped by project and family, newest family first; Command Center and Companion share it. */
-export function groupRunsByFamily(runs: readonly Run[]): RunFamilyGroup[] {
-  const grouped = new Map<string, { familyId: string; project: string; runs: Run[] }>();
+export function groupRunsByFamily(runs: readonly RunListRow[]): RunFamilyGroup[] {
+  const grouped = new Map<string, { familyId: string; project: string; runs: RunListRow[] }>();
   for (const run of runs) {
     const familyId = run.familyId || run.id;
     const key = `${run.project}::${familyId}`;
@@ -93,7 +94,10 @@ export function groupRunsByFamily(runs: readonly Run[]): RunFamilyGroup[] {
     .sort((left, right) => compareText(right.latestCreatedAt, left.latestCreatedAt));
 }
 
-export function selectRecentRunFamilyGroups(runs: readonly Run[], limit: number): RunFamilyGroup[] {
+export function selectRecentRunFamilyGroups(
+  runs: readonly RunListRow[],
+  limit: number,
+): RunFamilyGroup[] {
   if (limit <= 0) return [];
   return groupRunsByFamily(runs).slice(0, limit);
 }

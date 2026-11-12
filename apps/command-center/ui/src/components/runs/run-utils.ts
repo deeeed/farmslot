@@ -5,7 +5,9 @@ import type {
   FamilyObservabilityArtifact,
   FlowType,
   Run,
+  RunEngineState,
   RunFamilyReadinessSummary,
+  RunListRow,
   RunProjectAnalyticsSummary,
   RunSelfLearningEligibilityState,
   RunStatus,
@@ -252,10 +254,15 @@ export function flowLabel(flow: FlowType): string {
 }
 
 type EvalRunDisplayInput = Pick<Run, 'flowType' | 'lane' | 'ticketOrPr'> &
-  Partial<Pick<Run, 'completionPolicy' | 'engineState' | 'mode'>>;
+  Partial<Pick<Run, 'completionPolicy' | 'mode'>> & {
+    engineState?: { evalExperiment?: RunEngineState['evalExperiment'] };
+  };
 
 export function isEvalCandidateRun(
-  run: Pick<Run, 'lane' | 'ticketOrPr'> & Partial<Pick<Run, 'completionPolicy' | 'engineState'>>,
+  run: Pick<Run, 'lane' | 'ticketOrPr'> &
+    Partial<Pick<Run, 'completionPolicy'>> & {
+      engineState?: { evalExperiment?: RunEngineState['evalExperiment'] };
+    },
 ): boolean {
   return (
     Boolean(run.engineState?.evalExperiment) ||
@@ -687,11 +694,11 @@ export function prLinkForRun(
   };
 }
 
-function sortByCreatedAtDesc(runs: Run[]): Run[] {
+function sortByCreatedAtDesc(runs: RunListRow[]): RunListRow[] {
   return [...runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-export function pickFamilyComparePair(runs: Run[]): [Run, Run] | null {
+export function pickFamilyComparePair(runs: RunListRow[]): [RunListRow, RunListRow] | null {
   const comparisonRuns = sortByCreatedAtDesc(runs.filter((run) => run.lane === 'comparison'));
   if (comparisonRuns.length < 2) return null;
 
@@ -705,7 +712,10 @@ export function pickFamilyComparePair(runs: Run[]): [Run, Run] | null {
     : [comparisonRuns[0], comparisonRuns[1]];
 }
 
-export function pickComparisonPartner(currentRun: Run, runs: Run[]): Run | null {
+export function pickComparisonPartner(
+  currentRun: RunListRow,
+  runs: RunListRow[],
+): RunListRow | null {
   if (currentRun.lane !== 'comparison') return null;
   const familyPair = pickFamilyComparePair([currentRun, ...runs]);
   if (!familyPair) return null;

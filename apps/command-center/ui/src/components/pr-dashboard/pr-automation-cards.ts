@@ -11,7 +11,7 @@ import {
   type PRRuleNotification,
   type PRTeamProfile,
   type QueueItem,
-  type Run,
+  type RunListRow,
   workspacePolicyTargetLabel,
 } from '@farmslot/protocol';
 
@@ -311,7 +311,7 @@ export function monitorCard(
 export function reviewCard(
   intent: PRReviewIntent,
   teams: PRTeamProfile[],
-  runs: Run[],
+  runs: RunListRow[],
   queue: QueueItem[],
   disabled: boolean,
   decide: (id: string, action: 'accept' | 'defer') => void,

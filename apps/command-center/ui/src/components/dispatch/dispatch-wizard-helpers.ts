@@ -9,8 +9,8 @@ import {
   Methods,
   nextFreeComparisonVariant,
   resolveRunSlotId,
-  type Run,
   type RunListResult,
+  type RunListRow,
 } from '@farmslot/protocol';
 import { type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
 
@@ -18,8 +18,8 @@ import { resolveRunEngine } from '../runs/run-utils.js';
 
 /** Group prior runs by familyId; root runs without a familyId fall back to their own id
  *  so the banner still shows them under a stable bucket. Each group is sorted newest-first. */
-export function groupPriorRunsByFamily(runs: ReadonlyArray<Run>): Map<string, Run[]> {
-  const groups = new Map<string, Run[]>();
+export function groupPriorRunsByFamily(runs: ReadonlyArray<RunListRow>): Map<string, RunListRow[]> {
+  const groups = new Map<string, RunListRow[]>();
   for (const r of runs) {
     const key = r.familyId || r.id;
     const list = groups.get(key) ?? [];
@@ -37,10 +37,10 @@ export function groupPriorRunsByFamily(runs: ReadonlyArray<Run>): Map<string, Ru
  *  OR summary, so the banner narrows post-response to avoid surfacing unrelated families
  *  whose summary happens to mention the typed key. */
 export function filterRunsByExactTicket(
-  runs: ReadonlyArray<Run>,
+  runs: ReadonlyArray<RunListRow>,
   ticket: string,
   normalizedTicket: string,
-): Run[] {
+): RunListRow[] {
   const candidate = ticket.trim();
   if (!candidate) return [];
   return runs.filter(
@@ -49,7 +49,7 @@ export function filterRunsByExactTicket(
 }
 
 /** Newest-first ordering for the comparison-flow run picker. */
-export function sortRunsNewestFirst(runs: ReadonlyArray<Run>): Run[] {
+export function sortRunsNewestFirst(runs: ReadonlyArray<RunListRow>): RunListRow[] {
   return [...runs].sort(
     (a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id),
   );
@@ -74,12 +74,12 @@ export function comparisonPickerRunsQuery(
 
 /** Restrict comparison picker rows to active global project/machine filters when set. */
 export function filterRunsForComparisonPicker(
-  runs: ReadonlyArray<Run>,
+  runs: ReadonlyArray<RunListRow>,
   filters: {
     projectFilters: readonly string[];
     machineFilters: readonly string[];
   },
-): Run[] {
+): RunListRow[] {
   let result = sortRunsNewestFirst(runs);
   if (filters.projectFilters.length > 0) {
     result = result.filter((run) => filters.projectFilters.includes(run.project));
@@ -96,7 +96,7 @@ export function filterRunsForComparisonPicker(
   return result;
 }
 
-export function compareRunSearchText(run: Run): string {
+export function compareRunSearchText(run: RunListRow): string {
   const slotId = resolveRunSlotId(run);
   const engine = resolveRunEngine(run);
   return [
@@ -119,12 +119,15 @@ export function compareRunSearchText(run: Run): string {
     .toLowerCase();
 }
 
-export function familyKeyForRun(run: Pick<Run, 'familyId' | 'id'>): string {
+export function familyKeyForRun(run: Pick<RunListRow, 'familyId' | 'id'>): string {
   return run.familyId || run.id;
 }
 
 /** Runs in the same family as `run`, oldest-first for lane timeline display. */
-export function familyRunsForComparePicker(run: Run, runs: ReadonlyArray<Run>): Run[] {
+export function familyRunsForComparePicker(
+  run: RunListRow,
+  runs: ReadonlyArray<RunListRow>,
+): RunListRow[] {
   const key = familyKeyForRun(run);
   return runs
     .filter((candidate) => familyKeyForRun(candidate) === key)
@@ -144,8 +147,8 @@ export interface ComparePickerFamilyLaneSummary {
 }
 
 export function summarizeComparePickerFamilyLane(
-  run: Run,
-  familyRuns: ReadonlyArray<Run>,
+  run: RunListRow,
+  familyRuns: ReadonlyArray<RunListRow>,
 ): ComparePickerFamilyLaneSummary {
   const familyId = familyKeyForRun(run);
   const productionCount = familyRuns.filter((member) => member.lane !== 'comparison').length;
@@ -174,7 +177,7 @@ export function summarizeComparePickerFamilyLane(
   };
 }
 
-export function comparePickerFamilyChipLabel(run: Run): string {
+export function comparePickerFamilyChipLabel(run: RunListRow): string {
   if (run.lane === 'comparison') return run.variant?.trim() || 'comparison';
   return 'production';
 }
@@ -189,7 +192,7 @@ export interface VariantCollisionState {
  *  an existing sibling in the family. When it does, returns a suggested next-free suffix
  *  the wizard can pre-fill into the variant input. */
 export function detectVariantCollision(
-  familyRuns: ReadonlyArray<Run>,
+  familyRuns: ReadonlyArray<RunListRow>,
   runner: string | null | undefined,
   model: string | null | undefined,
 ): VariantCollisionState {
@@ -206,7 +209,7 @@ export function detectVariantCollision(
 /** Return true when a comparison-mode dispatch should be blocked because the operator-supplied
  *  variant input is empty or duplicates an existing sibling within the family. */
 export function isVariantInputBlocked(
-  familyRuns: ReadonlyArray<Run>,
+  familyRuns: ReadonlyArray<RunListRow>,
   variantInput: string,
   collides: boolean,
 ): boolean {

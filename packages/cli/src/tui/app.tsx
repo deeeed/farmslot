@@ -16,6 +16,7 @@ import {
   type PendingDecision,
   type RoadmapItem,
   type Run,
+  type RunListRow,
 } from '@farmslot/protocol';
 
 import type { GatewayConnection } from '../gateway-client.js';
@@ -52,7 +53,7 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
   const [surface, setSurface] = useState<Surface>('fleet');
   const [fleet, setFleet] = useState<FleetStatus | null>(null);
   const [items, setItems] = useState<BacklogItem[]>([]);
-  const [runs, setRuns] = useState<Run[]>([]);
+  const [runs, setRuns] = useState<RunListRow[]>([]);
   const [roadmapItems, setRoadmapItems] = useState<RoadmapItem[]>([]);
   const [decisions, setDecisions] = useState<PendingDecision[]>([]);
   const [cursor, setCursor] = useState(0);
@@ -87,7 +88,7 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
         await Promise.all([
           connection.call<{ fleet: FleetStatus }>('fleet.status'),
           connection.call<{ items: BacklogItem[] }>('backlog.list'),
-          connection.call<{ runs: Run[] }>('run.list', { limit: 15 }),
+          connection.call<{ runs: RunListRow[] }>('run.list', { limit: 15 }),
           connection.call<{ items: RoadmapItem[] }>('roadmap.list', {}),
           connection.call<{ decisions: PendingDecision[] }>('decision.list', {}),
         ]);

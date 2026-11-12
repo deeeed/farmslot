@@ -1,20 +1,19 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { createEvidenceReviewModel, runEvidencePending } from '@farmslot/adapter-sdk/evidence';
 import {
-  deriveRunLifecycleView,
   extractRunArtifactManifest,
-  isSlotFreedByPark,
   isTerminalRunStatus,
   liveGateParkView,
   Methods,
   type RecipeRunArtifactGroup,
   reviewChainForRun,
   runHasTrimmedDetail,
+  type RunListRow,
   type RunStep,
   type TaskProgressResult,
   viewTextField,
@@ -23,7 +22,6 @@ import { resourceQuery } from '@farmslot/protocol/client-cache';
 import {
   humanGateBlockingReason,
   pendingOutputReview,
-  runActivityView,
   runResultsSummary,
   runTerminalView,
 } from '@farmslot/review-dispatch';
@@ -105,6 +103,7 @@ import { RunDetailSkeleton } from './components/RunDetailSkeleton';
 import { RunPosturePanel } from './components/RunPosturePanel';
 import { RunResultsCard } from './components/RunResultsCard';
 import { runDetailStyles as styles } from './styles/run-detail.styles';
+import { type RunDetailHeaderModel, runDetailHeaderModel } from './run-detail-header';
 import { retryRunDetailReads, runDetailReadObservations } from './run-detail-reads';
 import {
   assertRunEvidenceReady,
@@ -153,7 +152,7 @@ export default function RunDetailScreen() {
   const requestedRecipeRunId = Array.isArray(recipeRun)
     ? (recipeRun[0] ?? null)
     : (recipeRun ?? null);
-  const { runQuery, runObservation, runActionable, listObservation, fromList, run } =
+  const { runQuery, runObservation, runActionable, listObservation, fromList, run, row } =
     useRunDetailRun(resolvedRunId);
   const outputReview = useMemo(() => pendingOutputReview(run), [run]);
   const recipeQuery = useMemo(
@@ -406,6 +405,67 @@ export default function RunDetailScreen() {
     [recipeRuns, run, selectedRecipeRunId, evidenceModel],
   );
 
+  const focusedArtifactPath = requestedArtifactPath.trim() || null;
+  // The terminal tile opens from the row as well: it shows before run.get lands.
+  const openTerminal = () => {
+    const shown = run ?? row;
+    if (!shown) return;
+    const terminal = runTerminalView(shown);
+    if (!terminal.target || terminal.disabledReason) return;
+    router.push({
+      pathname: terminal.target.slotId ? '/workspace/slot/[slotId]/terminal' : '/terminal/worker',
+      params: {
+        ...terminal.target,
+        ...targetRouteContext('terminal'),
+        details: '1',
+        ...(workspaceRecipeRunId ? { recipeRun: workspaceRecipeRunId } : {}),
+        ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
+      },
+    });
+  };
+
+  // Ticket edits act on the detail. The control is in the header from the first paint and
+  // stays disabled until run.get is ready.
+  const saveLinkedTickets = client
+    ? async (linkedTicketRefs: string[]) => {
+        if (!currentFarmConnection(client)())
+          throw new Error('Wait for the current connection before editing tickets.');
+        if (!run) throw new Error('Wait for the run to load before editing tickets.');
+        assertNativeRunReady(run.id, run);
+        await client.request(Methods.RUN_LINKED_TICKETS_SET, { runId: run.id, linkedTicketRefs });
+      }
+    : undefined;
+
+  // No run.get yet: the list row paints the header card at once; the sections wait for the
+  // detail. The loaded screen renders the same card, so nothing in it moves when run.get lands.
+  if (!run && row) {
+    return (
+      <View style={baseStyles.container}>
+        <Animated.ScrollView
+          testID="companion-screen-run-detail"
+          collapsable={false}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: styles.scrollContent.paddingBottom + insets.bottom },
+          ]}
+        >
+          <RunDetailHeaderCard
+            row={row}
+            ticketsDisabled
+            onSaveTickets={saveLinkedTickets}
+            onOpenTerminal={openTerminal}
+          />
+          <RunDetailSkeleton
+            error={
+              error ?? (connectionStatus !== 'connected' ? 'Connect to the gateway' : undefined)
+            }
+            retry={() => void retryRun()}
+          />
+        </Animated.ScrollView>
+      </View>
+    );
+  }
+
   if (!run)
     return (
       <View style={[baseStyles.container, { paddingBottom: insets.bottom }]}>
@@ -419,16 +479,6 @@ export default function RunDetailScreen() {
       </View>
     );
 
-  const lifecycle = deriveRunLifecycleView(run);
-  const statusColor =
-    STATUS_COLORS[run.status] ??
-    {
-      ok: colors.statusOk,
-      fail: colors.statusFail,
-      warn: colors.statusWarn,
-      running: colors.lifecycleWorking,
-      muted: colors.textMuted,
-    }[lifecycle.tone];
   const replayAllowed =
     isTerminalRunStatus(run.status) &&
     !run.engineState?.operatorForceCompleted &&
@@ -436,7 +486,6 @@ export default function RunDetailScreen() {
     connectionStatus === 'connected' &&
     runObservation.status === 'ready';
   const cancelledSlot = offeredSlotRelease(run, fleetSlots ?? [], runActionable);
-  const focusedArtifactPath = requestedArtifactPath.trim() || null;
   const focusedArtifactIsDiff = Boolean(
     focusedArtifactPath && diffArtifactCandidate([{ path: focusedArtifactPath }]),
   );
@@ -536,20 +585,6 @@ export default function RunDetailScreen() {
 
   const reviewStatus = humanGateBlockingReason(run);
   const terminal = runTerminalView(run);
-  const openTerminal = () => {
-    if (terminal.disabledReason) return;
-    if (!terminal.target) return;
-    router.push({
-      pathname: terminal.target.slotId ? '/workspace/slot/[slotId]/terminal' : '/terminal/worker',
-      params: {
-        ...terminal.target,
-        ...targetRouteContext('terminal'),
-        details: '1',
-        ...(workspaceRecipeRunId ? { recipeRun: workspaceRecipeRunId } : {}),
-        ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
-      },
-    });
-  };
 
   return (
     <View style={baseStyles.container}>
@@ -571,74 +606,12 @@ export default function RunDetailScreen() {
           { paddingBottom: styles.scrollContent.paddingBottom + insets.bottom },
         ]}
       >
-        <View style={styles.headerCard}>
-          <View style={styles.row}>
-            <View style={[styles.flowBadge, { backgroundColor: colors.accent + '30' }]}>
-              <Text style={[styles.flowText, { color: colors.accent }]}>{run.flowType}</Text>
-            </View>
-            <View style={[styles.statusBadge, { backgroundColor: statusColor + '30' }]}>
-              <Text style={[styles.statusText, { color: statusColor }]} numberOfLines={1}>
-                {runActivityView(run)?.label ?? lifecycle.activityLabel ?? lifecycle.label}
-              </Text>
-            </View>
-          </View>
-          <Text style={styles.ticketText}>{run.ticketOrPr}</Text>
-          <RunLinkedTickets
-            key={run.id}
-            run={run}
-            disabled={runObservation.status !== 'ready' || connectionStatus !== 'connected'}
-            onSave={
-              client
-                ? async (linkedTicketRefs) => {
-                    if (!currentFarmConnection(client)())
-                      throw new Error('Wait for the current connection before editing tickets.');
-                    assertNativeRunReady(run.id, run);
-                    await client.request(Methods.RUN_LINKED_TICKETS_SET, {
-                      runId: run.id,
-                      linkedTicketRefs,
-                    });
-                  }
-                : undefined
-            }
-          />
-          {run.summary && <RunTitle style={baseStyles.textSecondary} title={run.summary} />}
-          <CockpitTile
-            testID="companion-run-open-terminal"
-            label={terminal.label}
-            value={
-              terminal.disabledReason ??
-              (terminal.target?.slotId ||
-                terminal.context?.nativeSession?.executionNodeId ||
-                run.reviewWorkspace?.machine ||
-                'Current session')
-            }
-            disabled={Boolean(terminal.disabledReason)}
-            onPress={openTerminal}
-          />
-          {run.qa && (
-            <Text style={baseStyles.textSecondary} testID="companion-run-qa-profile">
-              QA profile: {run.qa.profile.title} ({run.qa.profile.id})
-            </Text>
-          )}
-          <View style={[styles.row, { marginTop: spacing.lg }]}>
-            {run.slotId && (
-              <Text style={baseStyles.textMuted} testID="companion-run-detail-slot">
-                Slot: {run.slotId}
-                {/*
-                  `isSlotFreedByPark` ignores `phase`, and cancel skips slot
-                  release for a park-freed run, so this marker outlives the run.
-                  On a terminal run the release is still a fact but no restore
-                  is coming, and the wording must not imply one.
-                */}
-                {isSlotFreedByPark(run)
-                  ? isTerminalRunStatus(run.status)
-                    ? ' (released to dispatch; no restore pending)'
-                    : ' (freed for dispatch)'
-                  : ''}
-              </Text>
-            )}
-            <Text style={baseStyles.textMuted}>{formatDuration(run.metrics?.durationMs)}</Text>
-          </View>
+        <RunDetailHeaderCard
+          row={run}
+          ticketsDisabled={runObservation.status !== 'ready' || connectionStatus !== 'connected'}
+          onSaveTickets={saveLinkedTickets}
+          onOpenTerminal={openTerminal}
+        >
           {cancelledSlot ? (
             <CancelledRunSlotRelease
               hold={cancelledSlot.hold}
@@ -649,7 +622,7 @@ export default function RunDetailScreen() {
               }}
             />
           ) : null}
-        </View>
+        </RunDetailHeaderCard>
 
         {reviewStatus ? (
           <Text accessibilityLiveRegion="polite" style={baseStyles.textSecondary}>
@@ -1190,6 +1163,143 @@ export default function RunDetailScreen() {
         onOpenEvidence={openAcceptanceEvidence}
         onOpenArtifact={(path) => openRunEvidenceArtifact(path, DECISION_EVIDENCE_RECIPE_RUN_PARAM)}
       />
+    </View>
+  );
+}
+
+/** The status badge's colour: the status's own, else its lifecycle tone's. */
+function headerStatusColor(header: RunDetailHeaderModel): string {
+  return (
+    STATUS_COLORS[header.status] ??
+    {
+      ok: colors.statusOk,
+      fail: colors.statusFail,
+      warn: colors.statusWarn,
+      running: colors.lifecycleWorking,
+      muted: colors.textMuted,
+    }[header.tone]
+  );
+}
+
+/**
+ * Run Detail's header card: title lines with the ticket control, the terminal tile, the slot
+ * line, then `children`. The same component renders it from the run.list row while run.get
+ * loads and from the detail afterwards, so no element of it exists in only one state.
+ */
+function RunDetailHeaderCard({
+  row,
+  ticketsDisabled,
+  onSaveTickets,
+  onOpenTerminal,
+  children,
+}: {
+  row: RunListRow;
+  ticketsDisabled: boolean;
+  onSaveTickets?: (refs: string[]) => Promise<void>;
+  onOpenTerminal: () => void;
+  children?: ReactNode;
+}) {
+  const header = runDetailHeaderModel(row);
+  return (
+    <View style={styles.headerCard}>
+      <RunDetailHeaderLines
+        header={header}
+        row={row}
+        linkedTickets={
+          <RunLinkedTickets
+            key={row.id}
+            run={row}
+            disabled={ticketsDisabled}
+            onSave={onSaveTickets}
+          />
+        }
+      />
+      <RunDetailTerminalTile header={header} onPress={onOpenTerminal} />
+      <RunDetailSlotLine header={header} />
+      {children}
+    </View>
+  );
+}
+
+/** The header's first lines: flow, status, ref, linked tickets and title, from row or detail. */
+function RunDetailHeaderLines({
+  header,
+  row,
+  linkedTickets,
+}: {
+  header: RunDetailHeaderModel;
+  row: RunListRow;
+  linkedTickets: ReactNode;
+}) {
+  const statusColor = headerStatusColor(header);
+  return (
+    <>
+      <View style={styles.row}>
+        <View style={[styles.flowBadge, { backgroundColor: colors.accent + '30' }]}>
+          <Text style={[styles.flowText, { color: colors.accent }]}>{header.flowType}</Text>
+        </View>
+        <View style={[styles.statusBadge, { backgroundColor: statusColor + '30' }]}>
+          <Text style={[styles.statusText, { color: statusColor }]} numberOfLines={1}>
+            {header.statusLabel}
+          </Text>
+        </View>
+      </View>
+      <Text style={styles.ticketText}>{header.ticketOrPr}</Text>
+      {linkedTickets}
+      {header.summary ? (
+        <RunTitle key={row.id} style={baseStyles.textSecondary} title={header.summary} />
+      ) : null}
+    </>
+  );
+}
+
+/** The terminal tile and QA profile line, between the title and the slot line. */
+function RunDetailTerminalTile({
+  header,
+  onPress,
+}: {
+  header: RunDetailHeaderModel;
+  onPress: () => void;
+}) {
+  return (
+    <>
+      <CockpitTile
+        testID="companion-run-open-terminal"
+        label={header.terminalLabel}
+        value={header.terminalValue}
+        disabled={header.terminalDisabled}
+        onPress={onPress}
+      />
+      {header.qaProfile ? (
+        <Text style={baseStyles.textSecondary} testID="companion-run-qa-profile">
+          QA profile: {header.qaProfile}
+        </Text>
+      ) : null}
+    </>
+  );
+}
+
+/** The header's slot and duration line. */
+function RunDetailSlotLine({ header }: { header: RunDetailHeaderModel }) {
+  return (
+    <View style={[styles.row, { marginTop: spacing.lg }]}>
+      {header.slotId && (
+        <Text style={baseStyles.textMuted} testID="companion-run-detail-slot">
+          Slot: {header.slotId}
+          {/*
+            `isSlotFreedByPark` ignores `phase`, and cancel skips slot
+            release for a park-freed run, so this marker outlives the run.
+            On a terminal run the release is still a fact but no restore
+            is coming, and the wording must not imply one.
+          */}
+          {header.slotFreedByPark
+            ? header.terminal
+              ? ' (released to dispatch; no restore pending)'
+              : ' (freed for dispatch)'
+            : ''}
+        </Text>
+      )}
+      <Text style={baseStyles.textMuted}>{formatDuration(header.durationMs)}</Text>
     </View>
   );
 }

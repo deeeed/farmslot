@@ -1,4 +1,4 @@
-import type { FleetStatus, RunGetResult } from '@farmslot/protocol';
+import type { FleetStatus, RunGetResult, RunListRow } from '@farmslot/protocol';
 import { canActOn, resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { useConnectionStore } from '../store/connection';
@@ -31,7 +31,7 @@ const collections = new NativeRunCollections((snapshot) => {
     fleet: snapshot.fleet.data?.fleet ?? null,
     loading: snapshot.fleet.status === 'loading',
   });
-  const runs = snapshot.runs.data?.runs ?? [];
+  const runs: RunListRow[] = snapshot.runs.data?.runs ?? [];
   const previousRuns = useRunStore.getState().runs;
   useRunStore.setState({
     observation: snapshot.runs,

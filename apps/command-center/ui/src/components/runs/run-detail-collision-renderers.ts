@@ -5,8 +5,8 @@ import { marked } from 'marked';
 import type {
   CollisionPayload,
   ReviewContinuationPayload,
-  Run,
   RunDecision,
+  RunListRow,
 } from '@farmslot/protocol';
 
 import './run-pipeline-mini.js';
@@ -30,7 +30,7 @@ export function formatRelativeFromNow(iso?: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-export function collisionLastStepLabel(run: Run): string {
+export function collisionLastStepLabel(run: RunListRow): string {
   // Surface where the run stopped: failed > running > last done > created.
   // Single linear walk: failed/running short-circuit immediately; otherwise
   // track the last done step seen. Cheaper than three Array.find passes when
@@ -48,11 +48,11 @@ export function collisionLastStepLabel(run: Run): string {
 
 export function resolveCollisionDirOwners(
   payload: CollisionPayload,
-  runs: readonly Run[],
+  runs: readonly RunListRow[],
   currentProject: string,
-): Map<string, Run> {
+): Map<string, RunListRow> {
   const runsById = new Map(runs.map((run) => [run.id, run]));
-  const dirToRun = new Map<string, Run>();
+  const dirToRun = new Map<string, RunListRow>();
   if (payload.dirOwners) {
     for (const [dir, runId] of Object.entries(payload.dirOwners)) {
       const owner = runsById.get(runId);
@@ -85,7 +85,7 @@ export function resolveCollisionDirOwners(
 export function renderCollisionDescription(
   decision: RunDecision,
   currentProject: string,
-  runs: readonly Run[],
+  runs: readonly RunListRow[],
 ) {
   const payload = decision.payload as CollisionPayload | undefined;
   if (!payload) {
@@ -123,7 +123,7 @@ export function renderCollisionDescription(
   `;
 }
 
-export function renderCollisionPriorRuns(decision: RunDecision, runs: readonly Run[]) {
+export function renderCollisionPriorRuns(decision: RunDecision, runs: readonly RunListRow[]) {
   const payload = decision.payload as CollisionPayload | undefined;
   const priorIds = payload?.priorRunIds ?? [];
   if (priorIds.length === 0) {
@@ -137,7 +137,9 @@ export function renderCollisionPriorRuns(decision: RunDecision, runs: readonly R
   // O(N) build of id→run map so resolving M priorIds stays linear in M instead
   // of O(N*M) for each render of the panel.
   const runsById = new Map(runs.map((run) => [run.id, run]));
-  const priorRuns = priorIds.map((id) => runsById.get(id)).filter((run): run is Run => !!run);
+  const priorRuns = priorIds
+    .map((id) => runsById.get(id))
+    .filter((run): run is RunListRow => !!run);
   const missingCount = priorIds.length - priorRuns.length;
 
   return html`
