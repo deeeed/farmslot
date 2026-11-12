@@ -1,5 +1,14 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  type Stats,
+} from 'node:fs';
+import { lstat, readFile, readlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -47,21 +56,111 @@ export interface PackGitResult {
 /** Runs `git` with these arguments. The gateway passes one that does not block its event loop. */
 export type PackGitRunner = (args: string[]) => Promise<PackGitResult>;
 
-/** The ownership walk yields each `git` call it needs; a driver runs it and sends the answer back. */
-type PackWalk<T> = Generator<string[], T, PackGitResult>;
+/** What a listed path is, without following links: a tracked deletion is missing. */
+type PackPathKind = 'missing' | 'file' | 'directory' | 'other' | { link: string };
+
+/**
+ * The ownership walk's requests: run `git`, say what some paths are, or remove its temporary
+ * repository. A driver answers each in place, so nothing the walk starts outlives its step.
+ */
+type PackStep = { git: string[] } | { paths: string[] } | { remove: string };
+type PackReply = PackGitResult | PackPathKind[] | 'removed';
+type PackWalk<T> = Generator<PackStep, T, PackReply>;
+
+function* gitStep(args: string[]): PackWalk<PackGitResult> {
+  const reply = yield { git: args };
+  if (Array.isArray(reply) || reply === 'removed')
+    throw new Error('The pack walk asked for git and got another answer');
+  return reply;
+}
+
+function* pathsStep(paths: string[]): PackWalk<PackPathKind[]> {
+  const reply = yield { paths };
+  if (!Array.isArray(reply))
+    throw new Error('The pack walk asked for paths and got another answer');
+  return reply;
+}
+
+function* removeStep(dir: string): PackWalk<void> {
+  const reply = yield { remove: dir };
+  if (reply !== 'removed')
+    throw new Error('The pack walk asked for a removal and got another answer');
+}
+
+function isMissing(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === 'ENOENT';
+}
+
+function pathKindSync(file: string): PackPathKind {
+  let stat: Stats;
+  try {
+    stat = lstatSync(file);
+  } catch (error) {
+    if (isMissing(error)) return 'missing';
+    throw error;
+  }
+  if (stat.isSymbolicLink()) return { link: readlinkSync(file) };
+  return stat.isDirectory() ? 'directory' : stat.isFile() ? 'file' : 'other';
+}
+
+async function pathKind(file: string): Promise<PackPathKind> {
+  let stat: Stats;
+  try {
+    stat = await lstat(file);
+  } catch (error) {
+    if (isMissing(error)) return 'missing';
+    throw error;
+  }
+  if (stat.isSymbolicLink()) return { link: await readlink(file) };
+  return stat.isDirectory() ? 'directory' : stat.isFile() ? 'file' : 'other';
+}
+
+/** Concurrent file system calls on one pack in the asynchronous driver. */
+const PACK_IO_CONCURRENCY = 8;
+
+/**
+ * `items.map(map)`, at most PACK_IO_CONCURRENCY at a time, in order. After a failure nothing new
+ * starts, the calls in flight finish, and the failure of the earliest item is thrown: the one the
+ * synchronous driver, which goes in order, would have met first.
+ */
+async function mapBounded<T, R>(items: readonly T[], map: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = [];
+  const failures = new Map<number, unknown>();
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length && !failures.size) {
+      const index = next++;
+      try {
+        results[index] = await map(items[index]);
+      } catch (error) {
+        // Recorded, not dropped: thrown below once the calls in flight have settled.
+        failures.set(index, error);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PACK_IO_CONCURRENCY, items.length) }, worker));
+  if (failures.size) throw failures.get(Math.min(...failures.keys()));
+  return results;
+}
 
 function runPackWalk<T>(walk: PackWalk<T>): T {
   let step = walk.next();
   while (!step.done) {
-    let result: PackGitResult;
+    const request = step.value;
+    let reply: PackReply;
     try {
-      result = spawnSync('git', step.value);
+      if ('git' in request) reply = spawnSync('git', request.git);
+      else if ('paths' in request) reply = request.paths.map(pathKindSync);
+      else {
+        rmSync(request.remove, { recursive: true, force: true });
+        reply = 'removed';
+      }
     } catch (error) {
       // Raised inside the walk so its cleanup runs; the walk does not catch it.
       step = walk.throw(error);
       continue;
     }
-    step = walk.next(result);
+    step = walk.next(reply);
   }
   return step.value;
 }
@@ -69,26 +168,35 @@ function runPackWalk<T>(walk: PackWalk<T>): T {
 async function runPackWalkAsync<T>(walk: PackWalk<T>, git: PackGitRunner): Promise<T> {
   let step = walk.next();
   while (!step.done) {
-    let result: PackGitResult;
+    const request = step.value;
+    let reply: PackReply;
     try {
-      result = await git(step.value);
+      if ('git' in request) reply = await git(request.git);
+      else if ('paths' in request) reply = await mapBounded(request.paths, pathKind);
+      else {
+        await rm(request.remove, { recursive: true, force: true });
+        reply = 'removed';
+      }
     } catch (error) {
       // Raised inside the walk so its cleanup runs; the walk does not catch it.
       step = walk.throw(error);
       continue;
     }
-    step = walk.next(result);
+    step = walk.next(reply);
   }
   return step.value;
 }
+
+/** A pack-owned file whose bytes the driver reads after the walk; links carry their target. */
+type PackOwnedPath = { rel: string; file: string } | (PackOwnedEntry & { content: string });
 
 /** A copied pack still owns its ignore rules, even without its original Git index. */
 function* listUnindexedPackFiles(dir: string, prefix: string): PackWalk<string[]> {
   const gitDir = mkdtempSync(path.join(tmpdir(), 'pack-ignore-'));
   try {
-    const initialized = yield ['init', '--bare', '--quiet', gitDir];
+    const initialized = yield* gitStep(['init', '--bare', '--quiet', gitDir]);
     if (initialized.status !== 0) throw new Error('Cannot initialize pack ownership scan');
-    const listed = yield [
+    const listed = yield* gitStep([
       '--git-dir',
       gitDir,
       '--work-tree',
@@ -99,7 +207,7 @@ function* listUnindexedPackFiles(dir: string, prefix: string): PackWalk<string[]
       '--others',
       '--exclude-standard',
       '-z',
-    ];
+    ]);
     if (listed.status !== 0) throw new Error('Cannot list copied pack-owned files');
     return listed.stdout
       .toString()
@@ -107,29 +215,47 @@ function* listUnindexedPackFiles(dir: string, prefix: string): PackWalk<string[]
       .filter(Boolean)
       .filter((name) => prefix !== '' || !RUNTIME_DIRS.has(name.split('/')[0]));
   } finally {
-    rmSync(gitDir, { recursive: true, force: true });
+    yield* removeStep(gitDir);
   }
 }
 
 /** One ownership boundary for pack hashing, admission and gateway sync. */
 export function listPackOwnedEntries(root: string): PackOwnedEntry[] {
-  return runPackWalk(walkPackOwnedEntries(root));
+  return runPackWalk(walkPackOwnedEntries(root)).map((entry) =>
+    'file' in entry ? { rel: entry.rel, content: readFileSync(entry.file) } : entry,
+  );
 }
 
-/** `listPackOwnedEntries` with its `git` calls run by `git`, off the caller's event loop. */
-export function listPackOwnedEntriesAsync(
+/**
+ * `listPackOwnedEntries` off the caller's event loop: `git` runs through `git`, and the paths are
+ * read, the files read and the temporary repository removed with `fs/promises`.
+ */
+export async function listPackOwnedEntriesAsync(
   root: string,
   git: PackGitRunner,
 ): Promise<PackOwnedEntry[]> {
-  return runPackWalkAsync(walkPackOwnedEntries(root), git);
+  const owned = await runPackWalkAsync(walkPackOwnedEntries(root), git);
+  return mapBounded(owned, async (entry) =>
+    'file' in entry ? { rel: entry.rel, content: await readFile(entry.file) } : entry,
+  );
 }
 
-function* walkPackOwnedEntries(root: string): PackWalk<PackOwnedEntry[]> {
-  const entries: PackOwnedEntry[] = [];
+function* walkPackOwnedEntries(root: string): PackWalk<PackOwnedPath[]> {
+  const entries: PackOwnedPath[] = [];
   const walk = function* (dir: string, prefix: string): PackWalk<void> {
     // Git scopes this to dir and honors its owning repository. Submodule entries
     // are directories, so the recursive call switches to the submodule's index.
-    const git = yield ['-C', dir, 'ls-files', '-c', '-o', '--exclude-standard', '-z', '--', '.'];
+    const git = yield* gitStep([
+      '-C',
+      dir,
+      'ls-files',
+      '-c',
+      '-o',
+      '--exclude-standard',
+      '-z',
+      '--',
+      '.',
+    ]);
     let names: string[];
     if (git.status === 0 && git.stdout.length) {
       names = [...new Set(git.stdout.toString().split('\0').filter(Boolean))];
@@ -140,24 +266,21 @@ function* walkPackOwnedEntries(root: string): PackWalk<PackOwnedEntry[]> {
     } else {
       throw new Error('Cannot list pack-owned files for portability validation');
     }
-    for (const name of names.sort()) {
-      if (name.split('/').some((part) => part === '.git' || part === 'node_modules')) continue;
-      const full = path.join(dir, name);
-      if (!existsSync(full)) {
-        // A tracked deletion has no shipped bytes. Dangling links still have a target.
-        try {
-          lstatSync(full);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
-          throw error;
-        }
-      }
+    const owned = names
+      .sort()
+      .filter(
+        (name) => !name.split('/').some((part) => part === '.git' || part === 'node_modules'),
+      );
+    const kinds = yield* pathsStep(owned.map((name) => path.join(dir, name)));
+    for (const [index, name] of owned.entries()) {
+      const kind = kinds[index];
+      // A tracked deletion has no shipped bytes. Dangling links still have a target.
+      if (kind === 'missing' || kind === 'other') continue;
       const cleanName = name.replace(/\/+$/, '');
       const rel = prefix ? `${prefix}/${cleanName}` : cleanName;
-      const stat = lstatSync(full);
-      if (stat.isSymbolicLink()) entries.push({ rel, content: `symlink:${readlinkSync(full)}` });
-      else if (stat.isDirectory()) yield* walk(full, rel);
-      else if (stat.isFile()) entries.push({ rel, content: readFileSync(full) });
+      if (typeof kind === 'object') entries.push({ rel, content: `symlink:${kind.link}` });
+      else if (kind === 'directory') yield* walk(path.join(dir, name), rel);
+      else entries.push({ rel, file: path.join(dir, name) });
     }
   };
   yield* walk(root, '');
