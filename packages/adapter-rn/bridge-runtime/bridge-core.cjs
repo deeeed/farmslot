@@ -623,7 +623,7 @@ function createBuiltinCommands({ routes, perfMarkerPrefixes, readyExpression }) 
         var sn = rawStateNode && rawStateNode.canonical && rawStateNode.canonical.publicInstance
           ? rawStateNode.canonical.publicInstance
           : rawStateNode;
-        if (sn && typeof sn.measureLayout === 'function') return sn;
+        if (sn && typeof sn.measureLayout === 'function' && typeof sn.measureInWindow === 'function') return sn;
         return findMeasurable(fiber.child);
       }
       // A window rect once two reads agree (bounded), so a scroll has settled.

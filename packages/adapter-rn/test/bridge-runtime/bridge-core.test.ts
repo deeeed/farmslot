@@ -304,7 +304,7 @@ describe('bridge core', () => {
   // A scroll container whose window frame starts at y=100 (under a fixed header) and is 600
   // tall, holding a 50-tall row at layout offset 1000. The scroller clamps like a native one,
   // and an inverted list draws its layout bottom-up.
-  function intoViewApp({ contentHeight = 2000, inverted = false } = {}) {
+  function intoViewApp({ contentHeight = 2000, inverted = false, wrappedTarget = false } = {}) {
     const app = { scrollY: 0 };
     // As in React Native: the scroll component instance scrolls, its host view measures.
     const scroller = {
@@ -329,9 +329,25 @@ describe('bridge core', () => {
     };
     const containerFiber: Record<string, unknown> = { stateNode: scroller, memoizedProps: {} };
     const hostFiber: Record<string, unknown> = { stateNode: scrollHost, return: containerFiber };
-    const targetFiber = { stateNode: target, memoizedProps: { testID: 'row' }, return: hostFiber };
+    const targetFiber: Record<string, unknown> = {
+      stateNode: target,
+      memoizedProps: { testID: 'row' },
+      return: hostFiber,
+    };
     containerFiber.child = hostFiber;
     hostFiber.child = targetFiber;
+    if (wrappedTarget) {
+      // The testID sits on a node that lays out but cannot measure in the window.
+      targetFiber.memoizedProps = {};
+      const wrapperFiber = {
+        stateNode: { measureLayout: target.measureLayout },
+        memoizedProps: { testID: 'row' },
+        return: hostFiber,
+        child: targetFiber,
+      };
+      targetFiber.return = wrapperFiber;
+      hostFiber.child = wrapperFiber;
+    }
     return { app, root: containerFiber };
   }
 
@@ -357,6 +373,7 @@ describe('bridge core', () => {
     ['a list too short to reach the row offset', { contentHeight: 1400 }],
     // Inverted: scrolling further down the layout moves the row up the screen.
     ['an inverted list', { inverted: true }],
+    ['a list whose testID node cannot measure in the window', { wrappedTarget: true }],
   ] as const) {
     it(`scrolls an into-view target to the centre of its container frame in ${name}`, async () => {
       const { app, root } = intoViewApp(options);
