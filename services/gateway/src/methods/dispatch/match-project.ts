@@ -4,8 +4,8 @@ import {
   parseGitHubRef,
 } from '@farmslot/protocol';
 
-import { execFileArgv } from '../../core/index.js';
 import { loadProjectConfigs } from '../../fleet/state.js';
+import { github } from '../../integrations/github-client.js';
 
 import { normalizeTicketRef } from './ticket-ref.js';
 
@@ -15,11 +15,9 @@ export async function dispatchMatchProject(
   params: DispatchMatchProjectParams,
   deps: {
     loadConfigs?: typeof loadProjectConfigs;
-    runArgv?: typeof execFileArgv;
   } = {},
 ): Promise<DispatchMatchProjectResult> {
   const configs = await (deps.loadConfigs ?? loadProjectConfigs)();
-  const runArgv = deps.runArgv ?? execFileArgv;
   const { flowType } = params;
   // Normalize: extract ticket key from URLs
   const ticketOrPr = normalizeTicketRef(params.ticketOrPr);
@@ -79,19 +77,11 @@ export async function dispatchMatchProject(
 
     for (const proj of withRepo) {
       try {
-        const result = await runArgv([
-          'gh',
-          'pr',
-          'view',
-          prNum,
-          '--repo',
-          proj.ci.repo,
-          '--json',
-          'number',
-          '--jq',
-          '.number',
-        ]);
-        if (result.exitCode === 0 && result.stdout.trim() === prNum) {
+        // Forced like the former direct gh lookups: a cached failure must not answer a dispatch.
+        const prData = await github.prView(proj.ci.repo, Number(prNum), ['number'], {
+          force: true,
+        });
+        if (String(prData.number) === prNum) {
           return {
             project: proj.name,
             repo: proj.ci.repo,
@@ -103,7 +93,7 @@ export async function dispatchMatchProject(
         // Log so an outright auth/network outage doesn't silently degrade every dispatch to
         // `project: null`.
         console.warn(
-          `[dispatch] gh pr view ${prNum} failed for ${proj.ci.repo}: ${(err as Error).message}`,
+          `[dispatch] pr view ${prNum} failed for ${proj.ci.repo}: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
@@ -114,21 +104,15 @@ export async function dispatchMatchProject(
     const withRepo = configs.filter((p) => p.ci?.repo);
     for (const proj of withRepo) {
       try {
-        const result = await runArgv([
-          'gh',
-          'pr',
-          'list',
-          '--head',
-          ticketOrPr,
-          '--repo',
+        // Forced like the former direct gh lookups: a cached failure must not answer a dispatch.
+        const prs = (await github.prListFields(
           proj.ci.repo,
-          '--json',
-          'number',
-          '--jq',
-          '.[0].number',
-        ]);
-        const prNum = result.stdout.trim();
-        if (result.exitCode === 0 && /^\d+$/.test(prNum)) {
+          ['number'],
+          { head: ticketOrPr, limit: 1 },
+          { force: true },
+        )) as Array<{ number?: number }>;
+        const prNum = prs[0]?.number;
+        if (prNum != null) {
           return {
             project: proj.name,
             repo: proj.ci.repo,
@@ -139,7 +123,7 @@ export async function dispatchMatchProject(
         // Same recovery contract as the PR-number probe above — branch/repo mismatch is the
         // expected miss path; a real failure (auth/offline) deserves a log.
         console.warn(
-          `[dispatch] gh pr list head=${ticketOrPr} failed for ${proj.ci.repo}: ${(err as Error).message}`,
+          `[dispatch] pr list head=${ticketOrPr} failed for ${proj.ci.repo}: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }

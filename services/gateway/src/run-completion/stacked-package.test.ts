@@ -18,6 +18,7 @@ import {
 
 import '../runtime/mock-pty.test-support.js';
 
+import type { GitHubService } from '../integrations/github-client.js';
 import type { RecordedEvidenceSource } from '../run-engine/recorded-evidence-sources.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
@@ -55,14 +56,51 @@ mock.module('../core/config.js', {
     }),
   },
 });
-mock.module('../integrations/github-client.js', {
-  namedExports: {
-    ...nativeGithub,
-    ghRequest: async () => {
-      githubRequests++;
-      throw new Error('Publication must refuse before contacting GitHub');
-    },
+const guardFakeGithub: GitHubService = {
+  ...nativeGithub.github,
+  prView: async () => {
+    githubRequests++;
+    throw new Error('Publication must refuse before contacting GitHub');
   },
+  prList: async () => {
+    githubRequests++;
+    throw new Error('Publication must refuse before contacting GitHub');
+  },
+  prListFields: async () => {
+    githubRequests++;
+    throw new Error('Publication must refuse before contacting GitHub');
+  },
+  prChecks: async () => {
+    githubRequests++;
+    throw new Error('Publication must refuse before contacting GitHub');
+  },
+  prCreate: async () => {
+    githubRequests++;
+    throw new Error('Publication must refuse before contacting GitHub');
+  },
+  prEdit: async () => {
+    githubRequests++;
+    throw new Error('Publication must refuse before contacting GitHub');
+  },
+  prComment: async () => {
+    githubRequests++;
+    throw new Error('Publication must refuse before contacting GitHub');
+  },
+  prReady: async () => {
+    githubRequests++;
+    throw new Error('Publication must refuse before contacting GitHub');
+  },
+  graphql: async () => {
+    githubRequests++;
+    throw new Error('Publication must refuse before contacting GitHub');
+  },
+  rest: async () => {
+    githubRequests++;
+    throw new Error('Publication must refuse before contacting GitHub');
+  },
+};
+mock.module('../integrations/github-client.js', {
+  namedExports: { ...nativeGithub, github: guardFakeGithub },
 });
 mock.module('../core/exec.js', {
   namedExports: {

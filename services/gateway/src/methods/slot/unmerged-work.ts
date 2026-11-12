@@ -4,7 +4,7 @@ import { isRecord } from '@farmslot/protocol/recipe';
 import { execOnSlot, type RawProjectJson, type SlotVars } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
 import { hasUserSlotChanges } from '../../fleet/slot-scaffolding.js';
-import { ghRequest } from '../../integrations/github-client.js';
+import { github } from '../../integrations/github-client.js';
 import { GitHubHttpError } from '../../integrations/github-errors.js';
 
 /** Git's refusal when another fetch in the same repository moved or holds a ref. */
@@ -47,12 +47,11 @@ export const readMergedPreparePullRequests: ReadMergedPreparePullRequests = asyn
   const endpoint = headBranch
     ? `repos/${repo}/pulls?state=closed&head=${encodeURIComponent(`${repo.split('/')[0]}:${headBranch}`)}&per_page=100`
     : `repos/${repo}/commits/${headSha}/pulls?per_page=100`;
-  const { stdout } = await ghRequest(['api', endpoint], {
+  const data: unknown = await github.rest<unknown>('GET', endpoint, {
     force,
     caller: 'slot.prepare-publication',
     signal: AbortSignal.timeout(timeoutMs),
   });
-  const data: unknown = JSON.parse(stdout);
   if (!Array.isArray(data))
     throw new Error('Cannot verify merged pull requests: expected an array');
   const merged: MergedPreparePullRequest[] = [];
@@ -104,16 +103,14 @@ interface MergedPullRequestReadOptions {
 }
 
 const readPublishedAncestry: PublishedAncestryReader = async (repo, base, head, timeoutMs) => {
-  const compared = await ghRequest(
-    [
-      'api',
-      `repos/${repo}/compare/${base}...${head}`,
-      '--jq',
-      '{status,base_commit:{sha:.base_commit.sha},merge_base_commit:{sha:.merge_base_commit.sha}}',
-    ],
-    { caller: 'slot.publication-coverage', signal: AbortSignal.timeout(timeoutMs) },
+  const data: unknown = await github.rest<unknown>(
+    'GET',
+    `repos/${repo}/compare/${base}...${head}`,
+    {
+      caller: 'slot.publication-coverage',
+      signal: AbortSignal.timeout(timeoutMs),
+    },
   );
-  const data: unknown = JSON.parse(compared.stdout);
   if (!isRecord(data) || !isRecord(data.base_commit) || !isRecord(data.merge_base_commit))
     throw new Error('Cannot verify published ancestry');
   return (

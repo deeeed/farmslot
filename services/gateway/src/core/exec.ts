@@ -1,7 +1,8 @@
 // core/exec.ts — Local/remote command execution
 // TypeScript port of lib/slot-common.sh: is_local, run_on, remote
 // Uses node-rpc.ts for remote execution via connected nodes.
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
+import { accessSync, constants, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -103,6 +104,85 @@ export interface ExecOptions {
   noRetry?: boolean;
 }
 
+// ─── Process groups ───
+
+/**
+ * A process that owns every local command it starts: the gateway-background process, whose
+ * commands must not outlive it. Each command gets its own process group and is handed to
+ * `started`, so the owner can kill the group of any command that has not exited when it exits.
+ * Each also carries a guard (GUARD_PRELUDE) that kills its group if the owner dies outright.
+ */
+export interface LocalCommandOwner {
+  started(command: ChildProcess): void;
+  /** The owner's pid, which each command's guard watches. */
+  pid: number;
+}
+let localCommandOwner: LocalCommandOwner | undefined;
+
+export function ownLocalCommands(owner: LocalCommandOwner | undefined): void {
+  localCommandOwner = owner;
+}
+
+/**
+ * Run as `sh -c PRELUDE sh <owner pid> <executable> <argv...>` (POSIX sh: dash on Linux). A guard
+ * subshell joins the command's process group, then the shell execs the command, which keeps the
+ * shell's pid: the exit status, signal, output and group are the command's own. Once a second the
+ * guard exits if the command (`$$`, the parent shell's pid, now the command's) is gone, and
+ * SIGKILLs its own group (`kill 0`) if the owner is gone, however the owner died.
+ * - It ignores TERM (in the subshell only, so the command's own dispositions are untouched): the
+ *   owner's timeout sends TERM to the group, and the guard must outlive that until KILL.
+ * - It only ever signals its own group, whose id is not reused while the guard is in it.
+ * - A reused owner pid can only look alive and delay the kill (a leak in a rare case); a pid that
+ *   now belongs to another user fails `kill -0`, which is right, as the owner is then gone.
+ * - Its stdio is /dev/null, so it never holds the command's pipes.
+ */
+const GUARD_PRELUDE =
+  'o=$1; shift; (trap \'\' TERM; while kill -0 "$$" 2>/dev/null; do kill -0 "$o" 2>/dev/null || kill -KILL 0; sleep 1; done) </dev/null >/dev/null 2>&1 & exec "$@"';
+
+/**
+ * Whether the prelude's `exec` runs what spawn would: an existing cwd, and an executable spawn
+ * would find (a path, or a name on the command's PATH). Otherwise the command starts unwrapped, so
+ * its spawn error stays exactly today's.
+ */
+function preludeRunsExactly(executable: string, cwd: string | undefined, envPath: string): boolean {
+  const accessible = (file: string, kind: 'directory' | 'executable') => {
+    try {
+      if (kind === 'directory') return statSync(file).isDirectory();
+      accessSync(file, constants.X_OK);
+      return statSync(file).isFile();
+    } catch (error) {
+      // Missing or not permitted: spawn would fail too, and reports it in its own words.
+      if (
+        ['ENOENT', 'ENOTDIR', 'EACCES', 'ELOOP'].includes(
+          (error as NodeJS.ErrnoException).code ?? '',
+        )
+      )
+        return false;
+      throw error;
+    }
+  };
+  const base = cwd === undefined ? process.cwd() : path.resolve(cwd);
+  if (cwd !== undefined && !accessible(base, 'directory')) return false;
+  if (executable.includes('/')) return accessible(path.resolve(base, executable), 'executable');
+  return envPath
+    .split(':')
+    .some((directory) =>
+      accessible(path.resolve(base, directory || '.', executable), 'executable'),
+    );
+}
+
+/** Signals every process in a command's group; false when none is left (ESRCH). */
+export function signalProcessGroup(pgid: number, signal: NodeJS.Signals): boolean {
+  try {
+    process.kill(-pgid, signal);
+    return true;
+  } catch (error) {
+    // The group's processes have all exited: there is nothing left to signal.
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
 // ─── execLocal ───
 // Run a command locally via child_process.spawn.
 // When onOutput is provided, invokes it per chunk (streaming).
@@ -140,13 +220,27 @@ function spawnLocalProcess(
 ): Promise<ExecResult> {
   return trackCleanupCommand(
     new Promise((resolve) => {
-      const useProcessGroup = opts?.signal != null || opts?.timeout != null;
-      const proc = spawn(executable, argv, {
-        cwd: opts?.cwd,
-        env: localCommandEnvironment(),
-        stdio: ['ignore', 'pipe', 'pipe'],
-        detached: useProcessGroup,
-      });
+      const owner = localCommandOwner;
+      const useProcessGroup = owner !== undefined || opts?.signal != null || opts?.timeout != null;
+      const env = localCommandEnvironment();
+      // A command that would fail to start runs unwrapped: it fails as spawn reports it, and
+      // leaves no process to guard.
+      const guarded =
+        owner !== undefined && preludeRunsExactly(executable, opts?.cwd, env.PATH ?? '');
+      const proc = guarded
+        ? spawn('/bin/sh', ['-c', GUARD_PRELUDE, 'sh', String(owner.pid), executable, ...argv], {
+            cwd: opts?.cwd,
+            env,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            detached: true,
+          })
+        : spawn(executable, argv, {
+            cwd: opts?.cwd,
+            env,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            detached: useProcessGroup,
+          });
+      if (proc.pid !== undefined) owner?.started(proc);
 
       let stdout = '';
       let stderr = '';
@@ -156,21 +250,25 @@ function spawnLocalProcess(
       let aborted = false;
       let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
 
+      const group = useProcessGroup ? proc.pid : undefined;
+
       const killProcessTree = (sig: NodeJS.Signals) => {
-        if (useProcessGroup && proc.pid) {
+        if (group !== undefined) {
+          let groupError: string;
           try {
-            process.kill(-proc.pid, sig);
+            if (signalProcessGroup(group, sig)) return;
+            groupError = 'no process left in the group';
+          } catch (error) {
+            groupError = (error as Error).message;
+          }
+          try {
+            proc.kill(sig);
             return;
-          } catch (groupError) {
-            try {
-              proc.kill(sig);
-              return;
-            } catch (processError) {
-              console.warn(
-                `[execSpawn] ${sig} after process exit: group=${(groupError as Error).message}; process=${(processError as Error).message}`,
-              );
-              return;
-            }
+          } catch (processError) {
+            console.warn(
+              `[execSpawn] ${sig} after process exit: group=${groupError}; process=${(processError as Error).message}`,
+            );
+            return;
           }
         }
         proc.kill(sig);

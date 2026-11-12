@@ -26,7 +26,7 @@ import {
   inferArtifactPurpose,
   sanitizeLatestValidRecipeRunPointer,
 } from '../core/index.js';
-import { ghRequest } from '../integrations/github-client.js';
+import { github } from '../integrations/github-client.js';
 
 import { markerBaselineVerifier } from './baseline-debug-marker.js';
 import { withPublicationProvenance } from './evidence-attestation.js';
@@ -99,7 +99,7 @@ ${body}`;
 
   const { getLLMConfig } = await import('../llm/config.js');
   const cfgLLM = getLLMConfig();
-  assertPublicationTextSafe(systemPrompt, userPrompt);
+  await assertPublicationTextSafe(systemPrompt, userPrompt);
   const result = await callLLM({
     model: cfgLLM.intelligenceModel,
     provider: cfgLLM.defaultProvider,
@@ -109,7 +109,7 @@ ${body}`;
   });
 
   const rewritten = result.text.trim();
-  assertPublicationTextSafe(rewritten);
+  await assertPublicationTextSafe(rewritten);
   if (rewritten.length < body.length * 0.3) {
     console.warn(
       `[run-completion] LLM rewrite suspiciously short (${rewritten.length} vs ${body.length}), rejecting`,
@@ -472,7 +472,7 @@ export async function publishSelectedEvidence(
   comparison?: ReviewDiffSnapshot,
 ): Promise<PublishedEvidence> {
   const selectedEvidenceKeys = expandPublicationEvidenceSelection(selection);
-  assertPublicationTextSafe(JSON.stringify(selection.trustedEvidenceManifest ?? null));
+  await assertPublicationTextSafe(JSON.stringify(selection.trustedEvidenceManifest ?? null));
   await verifyFrozenPublicationEvidence(
     run,
     selection.evidenceManifest,
@@ -1451,21 +1451,11 @@ export async function postProcessPRBody(
     if (options.baseBody !== undefined) {
       body = options.baseBody;
     } else {
-      const result = await ghRequest([
-        'pr',
-        'view',
-        String(prNumber),
-        '--repo',
-        ciRepo,
-        '--json',
-        'body',
-        '--jq',
-        '.body',
-      ]);
-      body = result.stdout;
+      const prData = await github.prView(ciRepo, prNumber, ['body'], { force: true });
+      body = typeof prData.body === 'string' ? prData.body : '';
     }
 
-    assertPublicationTextSafe(body);
+    await assertPublicationTextSafe(body);
 
     const humanBody = body;
     if (options.adoptedEvidence) {
@@ -1485,7 +1475,7 @@ export async function postProcessPRBody(
       options.evidenceManifest !== undefined
         ? options.evidenceManifest
         : await readEvidenceManifest(run);
-    assertPublicationTextSafe(JSON.stringify(rawManifest));
+    await assertPublicationTextSafe(JSON.stringify(rawManifest));
     if (options.failOnError) {
       assertPublicationEvidenceSelection({
         selectedEvidenceKeys: selectedEvidenceKeys ?? [...(selectedArtifactUrls?.keys() ?? [])],
@@ -1567,34 +1557,9 @@ export async function postProcessPRBody(
     body = withPublicationProvenance(run, body);
     if (options.adoptedEvidence)
       body = mergeOwnedEvidenceBody(run.id, humanBody, options.adoptedEvidence.previousBody, body);
-    assertPublicationTextSafe(body);
-    const tmpFile = `/tmp/farmslot-pr-body-${prNumber}-${randomUUID()}.md`;
-    const { writeFile: writeF } = await import('node:fs/promises');
-    await writeF(tmpFile, body, 'utf-8');
-    let editError: unknown = null;
-    let cleanupError: unknown = null;
-    try {
-      await options.validateBody?.(body);
-      await ghRequest(['pr', 'edit', String(prNumber), '--repo', ciRepo, '--body-file', tmpFile], {
-        force: true,
-      });
-    } catch (err) {
-      editError = err;
-    }
-    try {
-      await rm(tmpFile, { force: true });
-    } catch (err) {
-      cleanupError = err;
-    }
-    if (editError) {
-      if (cleanupError) {
-        console.warn(
-          `[run-completion] failed to remove temporary PR body after edit failure: ${(cleanupError as Error).message}`,
-        );
-      }
-      throw editError;
-    }
-    if (cleanupError) throw cleanupError;
+    await assertPublicationTextSafe(body);
+    await options.validateBody?.(body);
+    await github.prEdit(ciRepo, prNumber, { body }, { force: true });
     console.log(`[run-completion] post-processed PR #${prNumber} body (sanitized + checklist)`);
     return body;
   } catch (err) {

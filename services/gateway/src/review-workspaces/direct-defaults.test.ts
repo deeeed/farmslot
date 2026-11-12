@@ -15,6 +15,7 @@ import { executionModelFromSelection } from '@farmslot/review-dispatch';
 import '../runtime/mock-pty.test-support.js';
 
 import { GatewayMethodError } from '../core/method-error.js';
+import { startGitHubFixture } from '../integrations/github-test-fixtures.js';
 
 const unhealthyMachines = new Set<string>();
 mock.module('../runners/native/review-health.js', {
@@ -47,13 +48,29 @@ writeFileSync(
   path.join(root, 'bin/gh'),
   String.raw`#!/usr/bin/env node
 const args=process.argv.slice(2);
-if(args[0]!=='api'||args.some(arg=>['POST','PATCH','PUT','DELETE'].includes(arg))) throw new Error('Fixture refuses non-read GitHub commands');
-const body={number:42,title:'Fixture change',state:'open',body:'',user:{login:'fixture'},labels:[],head:{sha:'a'.repeat(40)},base:{sha:'b'.repeat(40)}};
-if(args.includes('--include')) process.stdout.write('HTTP/2.0 200 OK\r\ncontent-type: application/json\r\n\r\n');
-process.stdout.write(JSON.stringify(body));
+if(args[0]!=='auth'||args[1]!=='token') throw new Error('Fixture answers credential reads only');
+process.stdout.write('fixture-token');
 `,
   { mode: 0o700 },
 );
+// GitHub reads arrive here through FARMSLOT_GITHUB_API_URL; writes are refused.
+const github = await startGitHubFixture((request) =>
+  request.method === 'GET' || request.path === '/graphql'
+    ? {
+        body: {
+          number: 42,
+          title: 'Fixture change',
+          state: 'open',
+          body: '',
+          user: { login: 'fixture' },
+          labels: [],
+          head: { sha: 'a'.repeat(40) },
+          base: { sha: 'b'.repeat(40) },
+        },
+      }
+    : { status: 500, body: { message: 'Fixture refuses non-read GitHub commands' } },
+);
+after(() => github.close());
 for (const flow of ['review-pr', 'validation'])
   writeFileSync(
     path.join(root, `projects/farm/shared/${flow}/default.md`),
@@ -143,6 +160,7 @@ Object.assign(process.env, {
   FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
   FARMSLOT_TEST_STATUS_FILE: path.join(root, 'fixture-status.json'),
   PATH: `${path.join(root, 'bin')}${path.delimiter}${process.env.PATH}`,
+  FARMSLOT_GITHUB_API_URL: github.origin,
 });
 after(() => rmSync(root, { recursive: true, force: true }));
 const { constrainDirectWorkflowExecution, resolveDirectWorkflowDefaults } =

@@ -1,8 +1,8 @@
-// external/github.ts — GitHub API via `gh` CLI
+// external/github.ts — GitHub API via typed service
 
 import type { RunTicketData } from '@farmslot/protocol';
 
-import { ghRequest, type GhRequestOpts } from '../integrations/github-client.js';
+import { type GhRequestOpts, github } from '../integrations/github-client.js';
 
 import { acceptanceCriteriaFromMarkdown, extractSection, sectionItems } from './ticket-markdown.js';
 
@@ -35,8 +35,7 @@ export async function fetchGitHubIssue(issueRef: string): Promise<Partial<RunTic
   const number = match[2];
   if (!repo) throw new Error(`GitHub issue ref needs repo: owner/repo#number`);
 
-  const result = await ghRequest(['api', `repos/${repo}/issues/${number}`]);
-  const issue = JSON.parse(result.stdout) as GitHubIssue;
+  const issue = await github.rest<GitHubIssue>('GET', `repos/${repo}/issues/${number}`);
   const body = issue.body || '';
   const ac = acceptanceCriteriaFromMarkdown(body, ['acceptance criteria', 'expected behavior']);
   const area = extractSection(body, ['affected area', 'component']);
@@ -93,21 +92,13 @@ export async function fetchGitHubPR(
   const repo = match[1] || '';
   const number = match[2];
 
-  const result = await ghRequest(['api', `repos/${repo}/pulls/${number}`], opts);
-  const pr = JSON.parse(result.stdout) as GitHubPR;
+  const pr = await github.rest<GitHubPR>('GET', `repos/${repo}/pulls/${number}`, opts);
   let mergeable: string | null = null;
   let mergeStateStatus: string | null = null;
   try {
-    const viewResult = await ghRequest(
-      ['pr', 'view', number, '--repo', repo, '--json', 'mergeable,mergeStateStatus'],
-      opts,
-    );
-    const view = JSON.parse(viewResult.stdout) as {
-      mergeable?: string | null;
-      mergeStateStatus?: string | null;
-    };
-    mergeable = view.mergeable ?? null;
-    mergeStateStatus = view.mergeStateStatus ?? null;
+    const view = await github.prView(repo, Number(number), ['mergeable', 'mergeStateStatus'], opts);
+    mergeable = (view.mergeable as string | null | undefined) ?? null;
+    mergeStateStatus = (view.mergeStateStatus as string | null | undefined) ?? null;
   } catch (err) {
     console.warn(
       `[github] merge state fetch for ${repo}#${number} failed (non-fatal): ${(err as Error).message}`,
@@ -159,17 +150,15 @@ export async function fetchPRDiffFiles(
   if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repo)) {
     throw new Error(`Invalid repo format: ${repo}. Expected owner/repo.`);
   }
-  const result = await ghRequest(
-    ['api', `repos/${repo}/pulls/${prNumber}/files`, '--paginate'],
-    opts,
-  );
-  const files = JSON.parse(result.stdout) as Array<{
-    filename: string;
-    status: string;
-    additions: number;
-    deletions: number;
-    patch?: string;
-  }>;
+  const files = await github.rest<
+    Array<{
+      filename: string;
+      status: string;
+      additions: number;
+      deletions: number;
+      patch?: string;
+    }>
+  >('GET', `repos/${repo}/pulls/${prNumber}/files`, { ...opts, paginate: true });
 
   return files.map((f) => ({
     filename: f.filename,
@@ -193,11 +182,12 @@ export async function isGitHubAncestor(
   if (!/^[0-9a-f]{7,40}$/i.test(ancestorSha) || !/^[0-9a-f]{7,40}$/i.test(headSha)) {
     throw new Error('GitHub ancestry check requires concrete commit SHAs.');
   }
-  const result = await ghRequest(
-    ['api', `repos/${repo}/compare/${ancestorSha}...${headSha}`, '--jq', '.status'],
+  const result = await github.rest<{ status?: string }>(
+    'GET',
+    `repos/${repo}/compare/${ancestorSha}...${headSha}`,
     opts,
   );
-  const status = result.stdout.trim();
+  const status = result.status ?? '';
   return status === 'ahead' || status === 'identical';
 }
 
@@ -213,8 +203,7 @@ export async function fetchGitHubCompareFiles(
   if (!/^[0-9a-f]{7,40}$/i.test(baseSha) || !/^[0-9a-f]{7,40}$/i.test(headSha)) {
     throw new Error('GitHub compare requires concrete base and head commit SHAs.');
   }
-  const result = await ghRequest(['api', `repos/${repo}/compare/${baseSha}...${headSha}`], opts);
-  const comparison = JSON.parse(result.stdout) as {
+  const comparison = await github.rest<{
     files?: Array<{
       filename: string;
       status: string;
@@ -222,7 +211,7 @@ export async function fetchGitHubCompareFiles(
       deletions: number;
       patch?: string;
     }>;
-  };
+  }>('GET', `repos/${repo}/compare/${baseSha}...${headSha}`, opts);
   return (comparison.files ?? []).map((file) => ({
     filename: file.filename,
     status: file.status,
