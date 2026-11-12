@@ -513,10 +513,24 @@ test('evalTrialStart persists its judge override and creates a catalog candidate
       );
     }
     result = await evalTrialStart(trialParams, () => {});
-    const resumed = await evalTrialStart(
-      { ...trialParams, reviewRunner: 'claude', reviewModel: 'opus' },
-      () => {},
+    if (result.run) runIds.push(result.run.id);
+    const retainedReview = structuredClone(getRun(result.run!.id)?.engineState?.evalExperiment);
+    const retainedManifest = await readFile(experimentManifestPath, 'utf8');
+    await assert.rejects(
+      evalTrialStart({ ...trialParams, reviewRunner: 'claude', reviewModel: 'opus' }, () => {}),
+      /reviewer override conflicts with retained trial/i,
     );
+    await assert.rejects(
+      evalTrialStart({ ...trialParams, reviewRunner: 'codex', reviewModel: 'opus' }, () => {}),
+      /does not support model/,
+    );
+    assert.deepEqual(getRun(result.run!.id)?.engineState?.evalExperiment, retainedReview);
+    assert.equal(await readFile(experimentManifestPath, 'utf8'), retainedManifest);
+    const resumed = await evalTrialStart(trialParams, () => {});
+    const withoutOverride = { ...trialParams };
+    delete withoutOverride.reviewRunner;
+    delete withoutOverride.reviewModel;
+    assert.equal((await evalTrialStart(withoutOverride, () => {})).deduped, true);
     assert.equal(resumed.deduped, true);
     assert.equal(resumed.run?.id, result.run?.id);
     assert.equal(resumed.run?.engineState?.evalExperiment?.reviewRunner, 'pi');
@@ -528,8 +542,6 @@ test('evalTrialStart persists its judge override and creates a catalog candidate
     if (previousDisableEngine === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
     else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableEngine;
   }
-  if (result.run) runIds.push(result.run.id);
-
   assert.ok(result.run);
   const reviewer = { reviewRunner: 'pi', model: 'litellm/claude-sonnet-5-5' };
   const link = result.run.engineState!.evalExperiment!;
@@ -1009,6 +1021,34 @@ test('evalTrialStart treats explicit trialId as an idempotency key', async () =>
     assert.equal(result.trialId, normalizedTrialId);
     assert.equal(result.candidatePackagePath, candidatePackagePath);
     assert.equal(result.candidatePackage.packageId, candidatePackage.packageId);
+    const retainedManifest = await readFile(experimentManifestPath, 'utf8');
+    for (const override of [
+      { reviewRunner: 'pi', reviewModel: 'litellm/claude-sonnet-5-5' },
+      { reviewModel: 'gpt-5.5' },
+    ]) {
+      await assert.rejects(
+        evalTrialStart(
+          { project: 'farmslot-farm', experimentManifestPath, axes, trialId, ...override },
+          () => {},
+        ),
+        /reviewer override conflicts with retained trial/i,
+      );
+    }
+    await assert.rejects(
+      evalTrialStart(
+        {
+          project: 'farmslot-farm',
+          experimentManifestPath,
+          axes,
+          trialId,
+          reviewRunner: 'codex',
+          reviewModel: 'opus',
+        },
+        () => {},
+      ),
+      /does not support model/,
+    );
+    assert.equal(await readFile(experimentManifestPath, 'utf8'), retainedManifest);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

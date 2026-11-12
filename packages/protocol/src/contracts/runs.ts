@@ -91,7 +91,7 @@ export function isTerminalRunStatus(status: RunStatus): boolean {
 export function isSuccessfulRun(
   run: Pick<Run, 'status' | 'metrics'> & Partial<Pick<Run, 'resultDecisionReceipt'>>,
 ): boolean {
-  if (run.status !== 'done') return false;
+  if (run.status !== 'done' || run.metrics.outcome === 'unjudged') return false;
   // Only Accept and Close decide; after a send-back the later outcome does.
   if (run.resultDecisionReceipt?.action === 'accept-result') return true;
   if (run.resultDecisionReceipt?.action === 'close-result') return false;
@@ -879,7 +879,7 @@ export interface GateSummary {
   worker: {
     model: string | null;
     turns: number | null;
-    outcome?: 'success' | 'failure' | 'partial' | 'cancelled';
+    outcome?: 'success' | 'failure' | 'partial' | 'cancelled' | 'unjudged';
   };
   review: ReviewSummary;
   tokens: GateTokenSummary;
@@ -1448,7 +1448,7 @@ export interface FeedbackCandidateSummary {
 
 export interface RetrospectivePayload {
   kind: 'retrospective';
-  outcome: 'success' | 'failure' | 'partial' | 'cancelled' | 'unknown';
+  outcome: 'success' | 'failure' | 'partial' | 'cancelled' | 'unjudged' | 'unknown';
   whatThisIs: string;
   reviewVerdict?: string;
   reviewSummary?: string;
@@ -1909,7 +1909,7 @@ export interface RunMetrics {
    * (after any in-place failover). Label only — never an email, token, or home path.
    */
   providerAccountLabel?: string | null;
-  outcome?: 'success' | 'failure' | 'partial' | 'cancelled';
+  outcome?: 'success' | 'failure' | 'partial' | 'cancelled' | 'unjudged';
   disposition?: WorkerTerminalDisposition;
   terminalEvidence?: WorkerTerminalEvidence;
   /** Per-step checklist timing from the worker's SIGNAL.json, persisted at finalize so it survives task-dir pruning. */

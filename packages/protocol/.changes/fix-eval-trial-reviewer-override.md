@@ -1,1 +1,1 @@
-- Allow eval trials to retain a reviewer runner/model override and honor disabled review configuration for judge reviews.
+- Retain eval trial reviewer overrides, reject conflicting retries, and finalize disabled judge reviews as unjudged without counting success or failure.

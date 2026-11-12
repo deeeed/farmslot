@@ -712,17 +712,6 @@ export async function evalTrialStart(
       trial.strategyId === strategyId &&
       trial.trialId === trialId,
   );
-  const dedupedResult = await existingTrialStartResult({
-    existingTrial,
-    params,
-    explicitTrialId,
-    experimentManifest,
-    strategyId,
-    trialId,
-    candidateStrategyFingerprint,
-  });
-  if (dedupedResult) return dedupedResult;
-
   const reviewer =
     params.reviewRunner !== undefined || params.reviewModel !== undefined
       ? resolveReviewRunnerModel(await getReviewConfig(params.project), {
@@ -733,6 +722,26 @@ export async function evalTrialStart(
   const reviewOverride = reviewer
     ? { reviewRunner: reviewer.reviewRunner, reviewModel: reviewer.model }
     : {};
+
+  if (
+    existingTrial &&
+    reviewer &&
+    (existingTrial.reviewRunner !== reviewer.reviewRunner ||
+      existingTrial.reviewModel !== reviewer.model)
+  )
+    throw new Error(
+      `Reviewer override conflicts with retained trial ${trialId}; start a new trial to change its reviewer.`,
+    );
+  const dedupedResult = await existingTrialStartResult({
+    existingTrial,
+    params,
+    explicitTrialId,
+    experimentManifest,
+    strategyId,
+    trialId,
+    candidateStrategyFingerprint,
+  });
+  if (dedupedResult) return dedupedResult;
 
   const evalRoot = path.dirname(path.dirname(params.experimentManifestPath));
   const allowed = proof

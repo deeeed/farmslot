@@ -385,3 +385,12 @@ test('findFollowUpParentRun respects project boundary when project is set', () =
   );
   assert.equal(parent?.id, 'b');
 });
+
+test('unjudged eval completion is neither family success nor failure', () => {
+  const run = makeRun();
+  run.metrics.outcome = 'unjudged';
+  assert.equal(buildFamilyStateSummary([run])?.workflowState, 'unjudged');
+  const successful = makeRun({ id: 'successful' });
+  successful.metrics.outcome = 'success';
+  assert.equal(buildFamilyStateSummary([run, successful])?.workflowState, 'complete');
+});
