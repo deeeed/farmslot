@@ -1,0 +1,1 @@
+- iOS simulator discovery reuses a `simctl list` result for 5 s, so one command that asks for the device inventory twice runs `simctl` once.
