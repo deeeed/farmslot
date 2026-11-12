@@ -151,7 +151,7 @@ export default [
     },
   },
   {
-    // Host work (commands, processes, host file and git reads) goes through the typed services in
+    // Host work (commands, processes, host file reads) goes through the typed services in
     // services/gateway/src/host-services. Existing direct callers are grandfathered in the ESLint
     // baseline; a new one fails the ratchet.
     files: ['services/gateway/src/**/*.ts'],

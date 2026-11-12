@@ -190,10 +190,6 @@
       "count": 1
     },
     {
-      "key": "services/gateway/src/methods/slot/check.ts:@typescript-eslint/no-restricted-imports",
-      "count": 1
-    },
-    {
       "key": "services/gateway/src/methods/slot/editor.ts:@typescript-eslint/no-restricted-imports",
       "count": 1
     },

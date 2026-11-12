@@ -7,7 +7,6 @@ import { DEFAULT_BRANCH, type SlotCheckParams, type SlotCheckResult } from '@far
 import { isMissingProjectConfigError } from '@farmslot/slot-config';
 
 import { assertCleanupCurrent } from '../../core/cleanup-scope.js';
-import { slotFilesReadInProcess } from '../../core/exec.js';
 import {
   execOnSlot,
   type ExecResult,
@@ -28,6 +27,7 @@ import {
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { isOptionalFixtureAbsence } from '../../fleet/fixture-absence.js';
 import { loadFleetStatus } from '../../fleet/state.js';
+import { slotFilesReadInProcess } from '../../host-services/slot-files.js';
 import { fixtureCheckVars } from '../../node-support/ensure.js';
 import {
   resolveClaudeBinary,

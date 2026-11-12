@@ -40,7 +40,7 @@ export interface GitHubCliService {
 }
 
 /**
- * One measured `gh` command under its host operation, counted in the exec metrics like git.run.
+ * One measured `gh` command under its host operation, counted in the exec metrics.
  * core/exec cannot scrub the token variables, so the measurement wraps the process call here.
  */
 function runGh(

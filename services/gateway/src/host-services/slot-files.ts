@@ -23,6 +23,9 @@ import {
 } from './slot-files-node.js';
 
 /** Stable operation-name constants for per-operation metric attribution. */
+/** Whether this slot's files are read in this process (a local slot with no node link). */
+export { slotFilesReadInProcess };
+
 export const OP_SLOT_FILES_READ = 'slotFiles.read' as const;
 export const OP_SLOT_FILES_TAIL = 'slotFiles.tail' as const;
 export const OP_SLOT_FILES_IS_FILE = 'slotFiles.isFile' as const;
