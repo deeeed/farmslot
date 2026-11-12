@@ -81,8 +81,7 @@ ws.on('open', async () => {
   // ─── Hello event ───────────────────────────────────────────────
   console.log('0. Hello event (on connect)');
   assert('hello received', helloPayload !== null, 'no hello event');
-  assert('hello.fleet exists', helloPayload?.fleet !== null, 'fleet is null');
-  assert('hello.fleet.slots is array', Array.isArray(helloPayload?.fleet?.slots), 'not array');
+  assert('hello carries no fleet', helloPayload?.fleet === undefined, 'fleet present');
 
   // ─── Flow 1: fleet.status ─────────────────────────────────────
   // UI: state.ts:137 — gateway.request<FleetStatusResult>(Methods.FLEET_STATUS)

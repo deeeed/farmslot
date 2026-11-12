@@ -9,9 +9,9 @@ import { watch } from 'chokidar';
 
 import {
   type ActiveResourcePointer,
+  computeSummary,
   type FleetPoolReadError,
   type FleetStatus,
-  type FleetSummary,
   isScriptedCommandRuntime,
   normalizeProjectWorkflowDefaults,
   parseProjectVisualClaimReviewPolicy,
@@ -299,6 +299,12 @@ onStatusCommit((snapshot) => {
   cachedFleet = null;
   fleetReadVersion++;
   try {
+    // Entity sync serves the committed rows before their slot keys advance (ADR-071 Amd. 4).
+    if (entityLiveIds) {
+      // A JSON copy, exactly as a later read of the committed text would parse it.
+      const raw: RawStatus = JSON.parse(JSON.stringify(snapshot));
+      setEntityBase(markGhostSlots(transformFleet(raw), entityLiveIds), raw);
+    }
     slotResources.observe(statusSlotResources(snapshot), statusCheckedAt(snapshot));
   } catch (error) {
     // The file committed, but cannot serve trustworthy slot facts or bindings.
@@ -308,6 +314,38 @@ onStatusCommit((snapshot) => {
   }
 });
 const changeHandlers: StateChangeHandler[] = [];
+
+// ─── Entity sync base (ADR-071 Amendment 4) ───
+// The rows entity sync serves slot entities from. A status commit replaces them before its slot
+// keys advance and a load replaces them too, so publication never waits for the next load.
+let entityBase: { fleet: FleetStatus; recovery: ReadonlyMap<string, string | null> } | null = null;
+let entityLiveIds: ReadonlySet<string> | undefined;
+
+function setEntityBase(fleet: FleetStatus, raw?: RawStatus): void {
+  entityBase = {
+    fleet,
+    recovery: raw
+      ? new Map(
+          raw.slots.map((s): [string, string | null] => [s.slot, s.workspace_recovery?.id ?? null]),
+        )
+      : (workspaceRecoveryIds.get(fleet) ?? new Map()),
+  };
+}
+
+/** The committed fleet rows, before overlays; null until the first load. */
+export function slotEntityBase(): FleetStatus | null {
+  return entityBase?.fleet ?? null;
+}
+
+/** One base row with the in-memory overlays every fleet read applies, except host load. */
+export function overlaySlotEntity(base: SlotStatus): SlotStatus {
+  return overlaySlot(base, entityBase?.recovery);
+}
+
+/** Loads the fleet when no read since the last commit has; refused like a full read. */
+export async function ensureFleetLoaded(): Promise<void> {
+  if (!cachedFleet) await loadFleetStatus(false, true);
+}
 
 // ─── Task progress overlay (enriched by task-watcher, not persisted to disk) ───
 
@@ -556,43 +594,6 @@ function transformSlot(raw: RawSlot): SlotStatus {
   };
 }
 
-function computeSummary(slots: SlotStatus[]): FleetSummary {
-  const summary: FleetSummary = {
-    total: slots.length,
-    ready: 0,
-    busy: 0,
-    held: 0,
-    manual: 0,
-    disabled: 0,
-    blocked: 0,
-    warmCount: 0,
-  };
-  for (const s of slots) {
-    switch (s.lifecycle) {
-      case 'ready': {
-        const healthy = s.health.ssh !== 'FAIL' && s.health.devserver !== 'FAIL';
-        if (healthy) summary.ready++;
-        else summary.blocked++;
-        if (s.warm) summary.warmCount++;
-        break;
-      }
-      case 'busy':
-        summary.busy++;
-        break;
-      case 'held':
-        summary.held++;
-        break;
-      case 'manual':
-        summary.manual++;
-        break;
-      case 'disabled':
-        summary.disabled++;
-        break;
-    }
-  }
-  return summary;
-}
-
 function computeResourceRollup(slot: SlotStatus): ResourceRollup {
   const statuses = getCachedSlotResources(slot.slot);
   if (!statuses || statuses.size === 0) return 'none';
@@ -629,50 +630,57 @@ const localSlotRepos = new Map<string, string>();
 const localStorageAvailability = new Map<string, string | undefined>();
 const storageBindingHandlers = new Set<() => void>();
 
+/** A row's workspace overlay describes the slot for this long after it was observed. */
+export const WORKSPACE_OVERLAY_MAX_AGE_MS = 30_000;
+
+function overlaySlot(
+  base: SlotStatus,
+  recoveryIds: ReadonlyMap<string, string | null> | undefined,
+): SlotStatus {
+  const slot = { ...base };
+  const workspace = workspaceOverlayCache.get(slot.slot);
+  if (
+    workspace &&
+    (!slot.workspace || Date.parse(workspace.observedAt) > Date.parse(slot.workspace.observedAt)) &&
+    Date.now() - Date.parse(workspace.observedAt) < WORKSPACE_OVERLAY_MAX_AGE_MS &&
+    workspace.branch === slot.branch &&
+    workspace.epoch === (slot.slotEpoch ?? 0) &&
+    workspace.currentRunId === slot.currentRunId &&
+    workspace.cleanupRunId === (slot.cleanupRunId ?? null) &&
+    workspace.handoffRunId === (slot.handoffRunId ?? null) &&
+    workspace.recoveryId === (recoveryIds?.get(slot.slot) ?? null) &&
+    (!slot.headSha || slot.headSha === workspace.headSha)
+  )
+    slot.workspace = workspace;
+
+  const overlay = taskProgressCache.get(slot.slot);
+  if (overlay) {
+    slot.taskPhase = overlay.taskPhase;
+    slot.taskStepProgress = overlay.taskStepProgress;
+  }
+  const prHealth = prHealthCache.get(slot.slot);
+  if (prHealth) {
+    slot.prHealth = prHealth;
+  }
+  const branchOverride = branchOverlayCache.get(slot.slot);
+  if (branchOverride) {
+    slot.branch = branchOverride;
+  }
+  const repo = localSlotRepos.get(slot.slot);
+  const storageError = repo && storageVolumeError(repo);
+  if (storageError) {
+    slot.enabled = false;
+    slot.dispatchable = false;
+    slot.lifecycle = 'disabled';
+    slot.repoBlocker = storageError;
+  }
+  slot.resourceRollup = computeResourceRollup(slot);
+  return slot;
+}
+
 function withFleetOverlays(fleet: FleetStatus): FleetStatus {
   const recoveryIds = workspaceRecoveryIds.get(fleet);
-  const slots = fleet.slots.map((base) => {
-    const slot = { ...base };
-    const workspace = workspaceOverlayCache.get(slot.slot);
-    if (
-      workspace &&
-      (!slot.workspace ||
-        Date.parse(workspace.observedAt) > Date.parse(slot.workspace.observedAt)) &&
-      Date.now() - Date.parse(workspace.observedAt) < 30_000 &&
-      workspace.branch === slot.branch &&
-      workspace.epoch === (slot.slotEpoch ?? 0) &&
-      workspace.currentRunId === slot.currentRunId &&
-      workspace.cleanupRunId === (slot.cleanupRunId ?? null) &&
-      workspace.handoffRunId === (slot.handoffRunId ?? null) &&
-      workspace.recoveryId === (recoveryIds?.get(slot.slot) ?? null) &&
-      (!slot.headSha || slot.headSha === workspace.headSha)
-    )
-      slot.workspace = workspace;
-
-    const overlay = taskProgressCache.get(slot.slot);
-    if (overlay) {
-      slot.taskPhase = overlay.taskPhase;
-      slot.taskStepProgress = overlay.taskStepProgress;
-    }
-    const prHealth = prHealthCache.get(slot.slot);
-    if (prHealth) {
-      slot.prHealth = prHealth;
-    }
-    const branchOverride = branchOverlayCache.get(slot.slot);
-    if (branchOverride) {
-      slot.branch = branchOverride;
-    }
-    const repo = localSlotRepos.get(slot.slot);
-    const storageError = repo && storageVolumeError(repo);
-    if (storageError) {
-      slot.enabled = false;
-      slot.dispatchable = false;
-      slot.lifecycle = 'disabled';
-      slot.repoBlocker = storageError;
-    }
-    slot.resourceRollup = computeResourceRollup(slot);
-    return slot;
-  });
+  const slots = fleet.slots.map((base) => overlaySlot(base, recoveryIds));
   enrichSlotHostLoad(slots);
   return { ...fleet, slots, summary: computeSummary(slots), machines: getAllMachineHealth() };
 }
@@ -749,6 +757,8 @@ export async function loadFleetStatus(
     );
     if (version === fleetReadVersion) {
       cachedFleet = next;
+      entityLiveIds = liveIds;
+      setEntityBase(next);
       slotResources.observe(resources, statusCheckedAt(raw));
       slotResources.observePool(liveIds);
     }
@@ -790,6 +800,8 @@ export function setCachedFleetForTests(fleet: FleetStatus | null): void {
     throw new Error('setCachedFleetForTests is only available during tests');
   }
   cachedFleet = fleet;
+  entityBase = fleet ? { fleet, recovery: new Map() } : null;
+  slotResources.refreshEntities();
 }
 
 export function onStateChange(handler: StateChangeHandler): void {

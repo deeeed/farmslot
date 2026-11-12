@@ -15,6 +15,26 @@ export interface PRListParams {
   project?: string;
   /** Bypass the gateway's warm list and refetch every PR from GitHub before answering. */
   force?: boolean;
+  /** Entity sync: the PR id/version listing and the list's freshness fields, no PR bodies. */
+  versions?: true;
+  /** Entity sync: only these PRs (ids are `owner/repo/number`), as `PREntityPage`. */
+  ids?: string[];
+}
+
+/** `pr.list { versions: true }`: the same freshness fields as the full read. */
+export interface PRVersionsResult {
+  versions: Array<{ id: string; version: string }>;
+  observation?: UpstreamObservation;
+  fetchedAt?: string;
+  refreshing?: boolean;
+  /** The list key's membership marker this listing reflects. */
+  membershipRevision: number;
+}
+
+/** `pr.list { ids }`: the requested PRs that exist, in request order, with their versions. */
+export interface PREntityPage {
+  entities: PRStatus[];
+  versions: Array<{ id: string; version: string }>;
 }
 
 export interface PRReviewCommentsParams {

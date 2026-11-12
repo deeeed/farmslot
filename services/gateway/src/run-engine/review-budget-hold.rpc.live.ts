@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { isRecord, type RunExtendReviewBudgetResult, type RunGetResult } from '@farmslot/protocol';
@@ -13,8 +13,12 @@ import { createNativeProofFixture } from '../runtime/native-proof-fixture.live-s
 
 import type { PostDispatchStepContext } from './post-dispatch-steps.js';
 
+const blockedReview = process.env.FARMSLOT_REVIEW_BUDGET_HOLD_CASE === 'blocked-review';
+
 test(
-  'spent budget keeps its owned source across the operator extension RPC',
+  blockedReview
+    ? 'a blocked delivered review exposes its result decision over RPC'
+    : 'spent budget keeps its owned source across the operator extension RPC',
   { timeout: 60_000 },
   async (t) => {
     assert.equal(process.env.FARMSLOT_REVIEW_BUDGET_HOLD_LIVE, '1');
@@ -23,7 +27,12 @@ test(
     const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
     const root = await mkdtemp(path.join(os.tmpdir(), 'review-budget-hold-'));
     Object.assign(process.env, {
+      NODE_TEST_CONTEXT: '1',
+      FARMSLOT_ROOT: root,
       FARMSLOT_HOME: root,
+      FARMSLOT_RUNS_DIR: path.join(root, 'runs'),
+      FARMSLOT_POOL_DIR: path.join(root, 'pool'),
+      FARMSLOT_PROJECTS_DIR: path.join(root, 'projects'),
       FARMSLOT_TEST_STATUS_FILE: path.join(root, 'status.json'),
       FARMSLOT_DISABLE_ORCHESTRATION: '1',
     });
@@ -76,6 +85,15 @@ test(
       JSON.stringify({ name: 'budget', hooks: {}, review: { enabled: true } }),
     );
     await import('../runtime/mock-pty.test-support.js');
+    const scheduled: string[] = [];
+    if (blockedReview) {
+      const engine = await import('./orchestrator.js');
+      const startRun = async (runId: string) => {
+        scheduled.push(runId);
+      };
+      mock.module('./orchestrator.js', { namedExports: { ...engine, startRun } });
+      assert.equal((await import('./orchestrator.js')).startRun, startRun);
+    }
     const fixture = await createNativeProofFixture(t, root);
     const store = await import('../runs/store.js');
     const { statusFile } = await import('../core/state.js');
@@ -83,7 +101,7 @@ test(
       await import('../review/recorded-review-rounds.test-support.js');
     const { assertReviewRoundAvailable } = await import('../review/review-round-budget.js');
     const { executeReviewStep } = await import('./post-dispatch-steps.js');
-    const { ResultDecisionHoldError, holdRunForResultDecision } =
+    const { ResultDecisionHoldError, holdRunForResultDecision, takeSendBackReview } =
       await import('../run-completion/result-decision.js');
     const { retainRunFixture } = await import('./test-fixtures.js');
     const run = store.createRun({
@@ -105,7 +123,9 @@ test(
         slotId: slot,
         branch: 'owned-change',
         taskFile: path.join(task, 'TASK.md'),
-        ...recordedReviewRounds(Array.from({ length: 5 }, (_, i) => `spent-${i}`)),
+        ...recordedReviewRounds(
+          Array.from({ length: blockedReview ? 3 : 5 }, (_, i) => `spent-${i}`),
+        ),
         steps: [
           {
             name: 'monitor',
@@ -114,6 +134,9 @@ test(
           },
           { name: 'review', status: 'running' },
           { name: 'complete', status: 'pending' },
+          { name: 'human-gate', status: 'pending' },
+          { name: 'finalize', status: 'pending' },
+          { name: 'ci-watch', status: 'pending' },
         ],
         output: {
           workerFinished: true,
@@ -161,6 +184,21 @@ test(
         stepPartialIO: new Map(),
         deferTerminalSlotRelease: () => assert.fail('budget stop must not release'),
         executeReviewForRun: async () => {
+          if (blockedReview)
+            return {
+              verdict: 'blocked',
+              reason: 'The remaining fix requires an operator decision.',
+              issues: [
+                { file: 'README.md', description: 'The remaining fix needs an upstream change.' },
+              ],
+              retryCount: 3,
+              maxRetries: 3,
+              reviewSnapshot: {
+                source: 'local-git',
+                headSha: head,
+                capturedAt: new Date().toISOString(),
+              },
+            };
           const current = store.getRun(run.id);
           assert(current);
           await assertReviewRoundAvailable(current);
@@ -174,7 +212,7 @@ test(
         assert(error instanceof ResultDecisionHoldError);
         refusal = error;
       }
-      assert(refusal);
+      assert(refusal, 'REVIEW must stop at the result-decision hold boundary');
       store.updateRunStep(run.id, 'review', {
         status: 'failed',
         detail: refusal.message,
@@ -200,6 +238,77 @@ test(
       );
       assert(card?.payload?.kind === 'result-decision');
       const accept = card.payload.actions.find((a) => a.id === 'accept-result');
+      if (blockedReview) {
+        assert(accept && !accept.available && accept.requiresReason);
+        assert.equal(before.reviewResult ?? null, null);
+        assert.equal(before.error, 'The remaining fix requires an operator decision.');
+        assert.equal(before.steps.find((step) => step.name === 'review')?.status, 'failed');
+        assert.equal(
+          before.steps.find((step) => step.name === 'review')?.outputs?.verdict,
+          'blocked',
+        );
+        for (const name of ['complete', 'human-gate', 'finalize', 'ci-watch'])
+          assert.equal(before.steps.find((step) => step.name === name)?.status, 'pending');
+        assert.deepEqual(card.payload.findings, [
+          { file: 'README.md', description: 'The remaining fix needs an upstream change.' },
+        ]);
+        assert(card.payload.actions.find((action) => action.id === 'send-back')?.available);
+        assert(card.payload.actions.find((action) => action.id === 'close-result')?.available);
+        assert.equal(git('rev-parse', 'HEAD'), head);
+        await fixture.client.call('run.resolveDecision', {
+          runId: run.id,
+          decisionId: card.id,
+          actionId: 'send-back',
+        });
+        const after = (await fixture.client.call<RunGetResult>('run.get', { runId: run.id })).run;
+        assert.equal(after.status, 'reviewing');
+        assert.equal(after.resultDecisionReceipt?.action, 'send-back');
+        assert.equal(
+          after.steps.find((step) => step.name === 'review')?.outputs?.verdict,
+          'blocked',
+        );
+        const resume = takeSendBackReview(run.id);
+        assert.equal(resume?.verdict, 'issues');
+        assert.deepEqual(resume?.issues, card.payload.findings);
+        assert.equal(resume?.retryCount, 3);
+        assert.equal(resume?.reviewSnapshot?.headSha, head);
+        assert.deepEqual(scheduled, [run.id]);
+        await writeFile(
+          path.join(out, 'receipt.json'),
+          JSON.stringify(
+            {
+              pass: true,
+              sourceHead: execFileSync('git', ['rev-parse', 'HEAD'], {
+                cwd: source,
+                encoding: 'utf8',
+              }).trim(),
+              runId: run.id,
+              fixtureRoot: root,
+              status: before.status,
+              pendingDecisionId: card.id,
+              stoppedAt: card.payload.stoppedAt,
+              verdict: 'blocked',
+              reasonPreserved: true,
+              findingsPreserved: true,
+              sendBackAvailable: true,
+              closeAvailable: true,
+              acceptUnavailable: true,
+              primaryReviewResultAbsent: true,
+              laterStepsPending: true,
+              sendBackApplied: true,
+              retainedFindingsQueued: true,
+              scheduledLaunches: scheduled.length,
+              slotOwnerUnchanged: true,
+              checkoutHeadUnchanged: true,
+              modelCalls: 0,
+              reviewerStarted: false,
+            },
+            null,
+            2,
+          ) + '\n',
+        );
+        return;
+      }
       assert(accept?.available && accept.requiresReason);
       const grant = await fixture.client.call<RunExtendReviewBudgetResult>(
         'run.extendReviewBudget',

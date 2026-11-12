@@ -519,3 +519,116 @@ Measured on 74 stored runs, the average `run.list` row drops from 116 KB to 35 K
 otherwise unchanged: clients
 still compare versions from the versions list to decide which rows need a
 catch-up page fetch, and `run.get`/`run.forSlot` remain unaffected.
+
+## Amendment 4 (2026-11-12): Entity sync for the fleet, machine health and the PR list
+
+Accepted.
+
+A change notification names a resource, and the client answered by reading the
+whole collection again. One slot changing re-sent every slot (207 KB for 107
+slots); one PR re-sent every PR (212 KB for 66).
+
+### Decision
+
+`fleet.status` and every `pr.list` scope are collections of entities with
+content versions. Decisions are not part of this amendment.
+
+**Versions.** An entity's version is the full sha256 hex of its canonical JSON.
+It survives a gateway restart, and the client derives the same digest to check
+a body it receives or has stored. Slot entities carry no `hostLoad`: host load
+belongs to the machine, and the client reattaches it from the machine entities.
+
+**Read shapes.** Both are opt-in through
+`capabilities.resourceChanges.entitySync`. Old clients and old gateways keep the
+full read.
+
+| Params               | Reply                                                                                             |
+| -------------------- | ------------------------------------------------------------------------------------------------- |
+| `{ versions: true }` | Every id with its version, the collection's non-entity fields, and its `membershipRevision`.      |
+| `{ ids: string[] }`  | Those entities that exist, in request order, with their versions. A page stops at 2 MiB of UTF-8. |
+
+**Pushed entities.** A notification for a slot key, a per-PR key
+(`{ family: 'upstream', integration: 'github', queryId, prKey }`) or a machine
+key carries `changedEntity`: the family and the version, plus the body when the
+version changed since that key's previous notification and the body is at most
+16 KiB of UTF-8. The bodies of one publication share that bound: a gateway
+start or a bulk change names versions only. A client that holds the named
+version does nothing; any other client without a usable body reads that id. A
+deletion carries no entity.
+
+**Membership marker.** A collection key carries `membershipRevision`. It
+advances when the id set, the order or a non-entity field changes: for the PR
+list that includes `observation`, `refreshing` and `fetchedAt`, so a refresh
+that starts, completes or fails reaches the client. A client whose listing
+reflects the marker needs no versions read.
+
+A fleet read is refused while a slot's branch source has failed. That source
+moves the fleet marker when it settles refused or admitted again, so the
+versions read meets the same refusal; an update in progress moves no marker.
+
+**Gateway.** Entities and versions are stored where they are written; a
+publication or a read looks them up and hashes nothing.
+
+- Slots: a status commit or load and every overlay write recompute the slots
+  they touch. A machine sample advances the machine and the fleet keys, not its
+  slots.
+- PRs: entity reads and pushes serve the projection the full read computes. A
+  versions read projects it again, as the full read does on every read, so its
+  listing is never older than the full read's, and it carries the marker that
+  was committed with those rows. An ids read serves the rows that listing named.
+  A collector refresh projects the list and pushes the rows that changed. One
+  observed PR (a CI result) projects and hashes its own row. The observations of
+  one list refresh project another scope once, when the refresh ends.
+- Workspace inspections were started by the observed full read. A versions read
+  starts them too, and so do slot publications while a viewer is connected, no
+  more often than the fleet view's reread floor.
+- `fleet.updated` still carries the whole fleet, which the CLI and the TUI
+  render, and `pr.list.updated` the whole PR list when it changed. A connection
+  that has read the fleet as entities is on entity sync and receives those
+  events as notices without the list. A frame is serialized only for a
+  connection that receives it. `hello` carries no fleet.
+
+**Client.** One implementation in `@farmslot/protocol/client-cache`:
+
+- Rows stay on screen across a reconnect. After every connection or epoch change
+  a collection is verified by a versions read before it is current again.
+- A push or deletion that arrives after a read was sent wins over that read's
+  entry for the id. The same holds for a machine pushed while a versions read is
+  outstanding.
+- A view's own collection key and entity keys are applied without a read. Any
+  other dependency of the view (for the PR list: runs, slots, workers,
+  configuration, sources) changes what the gateway would serve without a push:
+  the view is stale, as it is on the full read, until one versions read at the
+  floor the view rereads that dependency at.
+- Rows a full read put on screen (an older gateway, a stored snapshot) seed the
+  collection. They leave the screen only when the listing says they are gone,
+  and those already at the listed version are not read again.
+- A change for an id the listing does not hold costs one versions read.
+- An id the versions read listed but the ids page did not return ends in a fresh
+  versions read, at most twice per sync.
+- Stored, paged and pushed bodies are untrusted: one set of guards checks the
+  fields consumers read, the id and the version. A refused body is read again.
+- Rows are kept in the offline store, each as it changes. The assembled view is
+  stored after a read that used the network, and at most once per 10 s while
+  rows are pushed. A cold start begins from that stored view: with unchanged
+  versions it reads no bodies, except rows pushed after the view was stored.
+- A view nobody observes still applies pushes and is marked stale. Observing it
+  again assembles it from the held rows, with a versions read only if its
+  marker moved.
+- `ResourceSyncState` gains `catch-up` with `{ done, total }`. Each ids page
+  publishes its rows with the progress.
+
+**Authorization.** Unchanged. The gateway filters every change per principal by
+the read that owns its key (`fleet.status` for slot keys, `pr.list` for PR keys,
+`node.health` for machine keys), and a pushed entity is the row that read
+returns.
+
+### Consequences
+
+- A data-only change costs no read. A membership change costs one versions read.
+  A reconnect costs one versions read per observed collection, and ids reads for
+  the entities that changed.
+- Old clients still receive every collection key advance they received before
+  and read the full collection.
+- `checkedAt` and `poolErrors` reach an entity-sync client with a versions read,
+  not with every status commit.

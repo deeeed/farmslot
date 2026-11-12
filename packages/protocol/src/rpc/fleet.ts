@@ -1,5 +1,9 @@
 import type {
+  FleetPoolReadError,
   FleetStatus,
+  FleetSummary,
+  MachineHealth,
+  SlotEntity,
   SlotParkedCommits,
   SlotRecoveryRefusal,
   SlotWorkspaceIdentity,
@@ -17,6 +21,27 @@ export const FleetMethods = {
 
 export interface FleetStatusParams {
   forceRefresh?: boolean;
+  /** Entity sync: the slot id/version listing and the fleet's non-entity fields, no slot bodies. */
+  versions?: true;
+  /** Entity sync: only these slots, as `FleetEntityPage`. */
+  ids?: string[];
+}
+
+/** `fleet.status { versions: true }`. */
+export interface FleetVersionsResult {
+  versions: Array<{ id: string; version: string }>;
+  summary: FleetSummary;
+  machines?: MachineHealth[];
+  checkedAt: string;
+  poolErrors?: FleetPoolReadError[];
+  /** The farm slots key's membership marker this listing reflects. */
+  membershipRevision: number;
+}
+
+/** `fleet.status { ids }`: the requested slots that exist, in request order, with their versions. */
+export interface FleetEntityPage {
+  entities: SlotEntity[];
+  versions: Array<{ id: string; version: string }>;
 }
 export type FleetRefreshSlotStatus =
   | 'pending'

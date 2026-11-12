@@ -18,6 +18,7 @@ import {
   type Run,
   type RunStatus,
 } from '@farmslot/protocol';
+import { RESOURCE_REREAD_INTERVAL_MS } from '@farmslot/protocol/client-cache';
 import { poolDirectory } from '@farmslot/slot-config';
 
 import { summarizeAgentContexts } from '../agents/contexts.js';
@@ -44,7 +45,12 @@ import {
 import { shellQuote, tmuxSessionCandidates, tmuxShellSnippet } from '../core/tmux.js';
 import { fleetStaleThresholdMs, isFleetCheckedAtStale } from '../fleet/freshness.js';
 import { usesNodeLink } from '../fleet/node-link-policy.js';
-import { loadFleetStatus, loadPoolConfigs } from '../fleet/state.js';
+import {
+  loadFleetStatus,
+  loadPoolConfigs,
+  overlaySlotEntity,
+  slotEntityBase,
+} from '../fleet/state.js';
 import { backgroundHost } from '../host-services/background/client.js';
 import { BACKGROUND_OPERATIONS } from '../host-services/background/protocol.js';
 import { slotResourceChanges } from '../resources/slot-run-bindings.js';
@@ -76,6 +82,7 @@ const SLOT_CHECK_TIMEOUT_MS = 5_000;
 
 type FleetWorkspacePublisher = (fleet: FleetStatus) => void;
 let workspacePublisher: FleetWorkspacePublisher | undefined;
+let workspaceRefreshInFlight: Promise<void> | null = null;
 
 export function setFleetWorkspacePublisher(publish: FleetWorkspacePublisher | undefined): void {
   workspacePublisher = publish;
@@ -97,6 +104,7 @@ export interface FleetStatusDeps {
 }
 
 interface WorkspaceRefreshRequest {
+  generation: number;
   fleet: FleetStatus;
   deps: FleetStatusDeps;
   publish?: FleetWorkspacePublisher;
@@ -104,16 +112,20 @@ interface WorkspaceRefreshRequest {
 let workspaceRequest: WorkspaceRefreshRequest | undefined;
 const workspaceRefreshes = withFollowUpRefresh(async () => {
   const request = workspaceRequest;
-  if (!request) return;
-  const { deps, fleet, publish } = request;
+  if (!request || request.generation !== servedWorkspacesGeneration) return;
+  const { deps, fleet, publish, generation } = request;
   const workspaces = deps.workspaces;
   if (!workspaces?.refresh) return;
   const previous = new Map(fleet.slots.map((slot) => [slot.slot, slot]));
   try {
     // A queued force request may follow an older health generation. Inspect
     // the current rows when this owner starts, not the earlier captured rows.
-    await workspaces.refresh(await deps.load());
+    const loaded = await deps.load();
+    if (generation !== servedWorkspacesGeneration) return;
+    await workspaces.refresh(loaded);
+    if (generation !== servedWorkspacesGeneration) return;
     const current = workspaces.read(await deps.load());
+    if (generation !== servedWorkspacesGeneration) return;
     const changed = current.slots.filter((slot) => {
       const before = previous.get(slot.slot);
       return before?.workspace !== slot.workspace || before?.workspaceError !== slot.workspaceError;
@@ -150,6 +162,12 @@ function fleetStatusResult(fleet: FleetStatus): FleetStatusResult {
   };
 }
 
+/**
+ * Advances when the observations are stopped: a refresh queued before then does not start, and a
+ * round running then publishes nothing.
+ */
+let servedWorkspacesGeneration = 0;
+
 function refreshWorkspaceObservations(
   fleet: FleetStatus,
   deps: FleetStatusDeps,
@@ -157,10 +175,16 @@ function refreshWorkspaceObservations(
   fresh = false,
 ): void {
   if (!deps.workspaces?.refresh) return;
-  workspaceRequest = { fleet, deps, publish };
+  workspaceRequest = { fleet, deps, publish, generation: servedWorkspacesGeneration };
   // Ordinary readers join. A forced health generation requests one coalesced
   // follow-up without making the foreground health response wait for it.
-  void (fresh ? workspaceRefreshes.refresh() : workspaceRefreshes.join());
+  const pending = fresh ? workspaceRefreshes.refresh() : workspaceRefreshes.join();
+  // Entity viewers wait for this same owner, including a forced follow-up.
+  if (workspaceRefreshInFlight === pending || (!fresh && workspaceRefreshInFlight)) return;
+  workspaceRefreshInFlight = pending;
+  void pending.finally(() => {
+    if (workspaceRefreshInFlight === pending) workspaceRefreshInFlight = null;
+  });
 }
 
 /** The cached fleet read: completed observations now, never waiting for background probes. */
@@ -169,6 +193,72 @@ export function observedFleetStatus(loaded: FleetStatus): FleetStatusResult {
   // The refresh compares against main's plain rows, so a failing slot cannot loop.
   refreshWorkspaceObservations(observed, defaultFleetStatusDeps, workspacePublisher);
   return { fleet: markFailedWorkspacesUnverified(loaded, observed) };
+}
+
+/** The committed rows as inspections read them: overlays and completed inspections, no host load. */
+function observedFleetRows(): FleetStatus | undefined {
+  const base = slotEntityBase();
+  return base
+    ? observedFleetWorkspaces({ ...base, slots: base.slots.map(overlaySlotEntity) })
+    : undefined;
+}
+
+const servedWorkspaceDeps: FleetStatusDeps = {
+  ...defaultFleetStatusDeps,
+  load: async () => {
+    const rows = observedFleetRows();
+    if (!rows) throw new Error('The fleet has no committed rows');
+    return rows;
+  },
+  // Those rows already carry their completed inspections.
+  workspaces: { read: (fleet) => fleet, refresh: enrichFleetWorkspaces },
+};
+let servedWorkspacesRefreshedAt = 0;
+let servedWorkspacesTimer: ReturnType<typeof setTimeout> | undefined;
+let servedWorkspacesWaiting = false;
+
+/**
+ * Starts the workspace inspections an observed fleet read starts (ADR-071 Amendment 4). A viewer
+ * on entity sync applies pushed slots without that read, so its versions read calls this.
+ */
+export function refreshServedWorkspaceObservations(): void {
+  const running = workspaceRefreshInFlight;
+  if (running) {
+    // A full reader asks again with its next read; nothing asks again for a pushed viewer, so
+    // one refresh waits for the running round: the slots it inspected may have changed owner.
+    if (servedWorkspacesWaiting) return;
+    servedWorkspacesWaiting = true;
+    const generation = servedWorkspacesGeneration;
+    void running.then(() => {
+      servedWorkspacesWaiting = false;
+      if (generation === servedWorkspacesGeneration) refreshServedWorkspaceObservations();
+    });
+    return;
+  }
+  servedWorkspacesRefreshedAt = Date.now();
+  const rows = observedFleetRows();
+  // A changed inspection advances its slot key; this path assembles no fleet.updated payload.
+  if (rows) refreshWorkspaceObservations(rows, servedWorkspaceDeps);
+}
+
+/** Slot changes reached viewers: inspect as their reread did, no more often than that reread. */
+export function slotsPublishedToViewers(): void {
+  if (servedWorkspacesTimer) return;
+  const floor = RESOURCE_REREAD_INTERVAL_MS.slots ?? 0;
+  servedWorkspacesTimer = setTimeout(
+    () => {
+      servedWorkspacesTimer = undefined;
+      refreshServedWorkspaceObservations();
+    },
+    Math.max(0, servedWorkspacesRefreshedAt + floor - Date.now()),
+  );
+  servedWorkspacesTimer.unref();
+}
+
+export function stopServedWorkspaceObservations(): void {
+  clearTimeout(servedWorkspacesTimer);
+  servedWorkspacesTimer = undefined;
+  servedWorkspacesGeneration++;
 }
 
 export async function fleetStatus(

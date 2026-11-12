@@ -273,8 +273,46 @@ function persist(state: CollectorState): void {
   }
 }
 
-function publish(state: CollectorState): void {
+/** One PR of a scope, named by its collected row, whose raw observation is newer. */
+export type ObservedPR = Pick<PRStatus, 'repo' | 'pr'>;
+
+/**
+ * Entity sync follows each change of a scope's collector. `observed` names the one PR whose raw
+ * observation is newer; without it the collector itself changed (a refresh began or ended).
+ */
+let collectorChanged: ((queryId: string, observed?: ObservedPR) => void) | undefined;
+
+export function onPRListCollectorChange(
+  listener: (queryId: string, observed?: ObservedPR) => void,
+): void {
+  collectorChanged = listener;
+}
+
+function publish(state: CollectorState, observed?: ObservedPR): void {
   resourceRevisions.advance(prListResourceKey(state.project));
+  collectorChanged?.(state.id, observed);
+}
+
+/** Some scope is refreshing from GitHub, reading its PRs one at a time. */
+export function prListRefreshInFlight(): boolean {
+  for (const state of collectors.values()) if (state.inflight) return true;
+  return false;
+}
+
+/** A scope's collector as servePRList answers, without starting or refreshing anything. */
+export function peekServedPRList(queryId: string): ServedPRList | undefined {
+  const state = collectors.get(queryId);
+  return state?.snapshot ? served(state, state.snapshot) : undefined;
+}
+
+function served(state: CollectorState, snapshot: PRListSnapshot): ServedPRList {
+  return {
+    prs: snapshot.prs,
+    fetchedAt: snapshot.fetchedAt,
+    refreshing: Boolean(state.inflight),
+    truncated: snapshot.truncated === true,
+    observation: observation(state),
+  };
 }
 
 export function setPRListBroadcast(broadcast: Broadcast): void {
@@ -481,14 +519,7 @@ export async function servePRList(
     !budgetReserved(now)
   )
     refresh(state, fetch, false, now, clock).catch(backgroundFailure);
-  const snapshot = state.snapshot!;
-  return {
-    prs: snapshot.prs,
-    fetchedAt: snapshot.fetchedAt,
-    refreshing: Boolean(state.inflight),
-    truncated: snapshot.truncated === true,
-    observation: observation(state),
-  };
+  return served(state, state.snapshot!);
 }
 
 export function peekPRList(project?: string): PRListSnapshot | null {
@@ -540,15 +571,13 @@ export function startPRListRefresher(
 
 onPRRawObservation((repo, pr) => {
   for (const state of collectors.values()) {
-    if (
-      state.inflight ||
-      !state.snapshot?.prs.some(
-        (row) => row.repo.toLowerCase() === repo.toLowerCase() && row.pr === pr,
-      )
-    )
-      continue;
+    if (state.inflight) continue;
+    const observed = state.snapshot?.prs.find(
+      (row) => row.repo.toLowerCase() === repo.toLowerCase() && row.pr === pr,
+    );
+    if (!observed) continue;
     // Active CI can observe newer raw bytes without changing its own scheduling policy.
     persist(state);
-    publish(state);
+    publish(state, observed);
   }
 });

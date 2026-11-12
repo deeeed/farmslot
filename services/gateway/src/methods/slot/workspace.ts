@@ -25,6 +25,7 @@ import { readSlotProbe } from '../../core/read-probes.js';
 import { shellQuote } from '../../core/tmux.js';
 import { setWorkspaceOverlay } from '../../fleet/state.js';
 import { GitHubHttpError } from '../../integrations/github-errors.js';
+import { slotResourceChanges } from '../../resources/slot-run-bindings.js';
 import {
   findActiveGateHeldRunForSlot,
   findGateParkedRunForSlot,
@@ -390,6 +391,8 @@ export function invalidateSlotWorkspaceObservations(slotId: string): void {
   const cached = inspections.get(slotId);
   if (cached) cached.until = 0;
   setWorkspaceOverlay(slotId, undefined);
+  // The observed read no longer serves that inspection, overlay or not.
+  slotResourceChanges.overlayChanged(slotId);
 }
 
 function workspaceObservationKey(slot: SlotStatus): string {
@@ -415,23 +418,23 @@ function workspaceObservable(slot: SlotStatus): boolean {
   return !slot.missingFromPool && slot.enabled && slot.health.ssh !== 'FAIL';
 }
 
+/** One slot with its completed observation only. Its original age and ownership still apply. */
+export function observedSlotWorkspace(slot: SlotStatus): SlotStatus {
+  const cached = inspections.get(slot.slot);
+  const usable =
+    workspaceObservable(slot) &&
+    cached?.key === workspaceObservationKey(slot) &&
+    cached.until !== 0;
+  return {
+    ...slot,
+    workspace: usable ? cached.workspace : undefined,
+    workspaceError: usable ? cached.error : slot.workspaceError,
+  };
+}
+
 /** Read completed observations only. Their original age and ownership still apply. */
 export function observedFleetWorkspaces(fleet: FleetStatus): FleetStatus {
-  return {
-    ...fleet,
-    slots: fleet.slots.map((slot) => {
-      const cached = inspections.get(slot.slot);
-      const usable =
-        workspaceObservable(slot) &&
-        cached?.key === workspaceObservationKey(slot) &&
-        cached.until !== 0;
-      return {
-        ...slot,
-        workspace: usable ? cached.workspace : undefined,
-        workspaceError: usable ? cached.error : slot.workspaceError,
-      };
-    }),
-  };
+  return { ...fleet, slots: fleet.slots.map(observedSlotWorkspace) };
 }
 
 export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promise<SlotStatus[]> {
@@ -553,6 +556,26 @@ export async function enrichFleetWorkspaces(fleet: FleetStatus): Promise<FleetSt
   return { ...fleet, slots: await observeSlotWorkspaces(fleet.slots) };
 }
 
+/** One slot: a failed inspection keeps the row's own workspace, marked unverified. */
+export function markFailedSlotUnverified(
+  row: SlotStatus | undefined,
+  slot: SlotStatus,
+): SlotStatus {
+  // Only an inspection's own error counts; skipped slots and row errors stay as they are.
+  const failed =
+    !slot.workspace && !!slot.workspaceError && slot.workspaceError !== row?.workspaceError;
+  return failed && row?.workspace
+    ? {
+        ...slot,
+        workspace: {
+          ...row.workspace,
+          publication: 'unknown' as const,
+          error: slot.workspaceError,
+        },
+      }
+    : slot;
+}
+
 /**
  * Cached fleet rows: a slot whose last inspection failed still shows the workspace its loaded
  * row verifies (the overlay), marked unverified, so release stays refused until an inspection
@@ -564,21 +587,6 @@ export function markFailedWorkspacesUnverified(
 ): FleetStatus {
   return {
     ...observed,
-    slots: observed.slots.map((slot, index) => {
-      const row = loaded.slots[index];
-      // Only an inspection's own error counts; skipped slots and row errors stay as they are.
-      const failed =
-        !slot.workspace && !!slot.workspaceError && slot.workspaceError !== row?.workspaceError;
-      return failed && row?.workspace
-        ? {
-            ...slot,
-            workspace: {
-              ...row.workspace,
-              publication: 'unknown' as const,
-              error: slot.workspaceError,
-            },
-          }
-        : slot;
-    }),
+    slots: observed.slots.map((slot, index) => markFailedSlotUnverified(loaded.slots[index], slot)),
   };
 }

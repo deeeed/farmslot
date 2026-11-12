@@ -61,6 +61,23 @@ test('a connected reread in flight or a fresh superseded read stays quiet', () =
   assert.equal(read(superseded, 111_000).length, 2);
 });
 
+test('an entity catch-up shows its count while connected, and nothing once complete', () => {
+  const partial = {
+    status: 'stale' as const,
+    data: { fleet: {} },
+    observedAt: 1_000,
+    catchUpProgress: { done: 20, total: 107 },
+  };
+  assert.deepEqual(resourceReadMessages([{ label: 'fleet', observation: partial }], 1_000, true), [
+    'Syncing fleet · 20 of 107',
+  ]);
+  const complete = { status: 'ready' as const, data: { fleet: {} }, observedAt: 1_000 };
+  assert.deepEqual(
+    resourceReadMessages([{ label: 'fleet', observation: complete }], 1_000, true),
+    [],
+  );
+});
+
 // A screen with no banner (a stack route over the tabs) still says why it is empty.
 test('offline, a read with nothing to show says Offline once, unless the banner does', () => {
   const failed = {

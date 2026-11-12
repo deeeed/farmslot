@@ -239,6 +239,7 @@ import {
   type WorkspaceMetroSubscribeParams,
   type WorkspaceMetroUnsubscribeParams,
 } from '@farmslot/protocol';
+import { entitySyncRead, resourceCollectorQuery } from '@farmslot/protocol/client-cache';
 import { isNodeFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { isClientPerformanceReport } from '@farmslot/protocol/performance';
 
@@ -255,6 +256,7 @@ import {
   shouldAutoStartResourceWatches,
 } from '../fleet/resource-manager.js';
 import { slotCleanup } from '../fleet/slot-cleanup.js';
+import { fleetStatusIds, fleetStatusVersions } from '../fleet/slot-entities.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { forgetGitHubAccountsClientInterest } from '../integrations/github-accounts.js';
 import {
@@ -376,7 +378,7 @@ import {
   fsWrite,
 } from '../methods/filesystem.js';
 import { finetuneExportDPO, finetuneExportSFT, finetuneIndex } from '../methods/finetune.js';
-import { fleetRefresh, fleetStatus } from '../methods/fleet.js';
+import { fleetRefresh, fleetStatus, refreshServedWorkspaceObservations } from '../methods/fleet.js';
 import {
   fleetPrSummary,
   fleetRefreshSlots,
@@ -412,6 +414,7 @@ import { nativeSessionRoute } from '../methods/native-session.js';
 import { prList, prMonitor, readPRForSlot, readPRStatus } from '../methods/pr.js';
 import { forgetPRDetailClientInterest } from '../methods/pr/detail-observations.js';
 import { forgetPRListClientInterest } from '../methods/pr/list-cache.js';
+import { prListIds, prListVersions } from '../methods/pr/pr-entity-sync.js';
 import {
   prAddComment,
   prDeleteComment,
@@ -656,6 +659,22 @@ const terminalRedraws = createTerminalRedraws<ClientState>((key) => {
 /** A disconnected client's pending repaints are dropped with its terminal subscriptions. */
 export function forgetTerminalRedraws(state: ClientState): void {
   terminalRedraws.cancelAll(state);
+}
+
+/** The pr.list scope an entity read names; the same selectors the view accepts. */
+function prListEntityScope(view: Record<string, unknown>): string | undefined {
+  let scope: unknown;
+  try {
+    scope = resourceCollectorQuery(Methods.PR_LIST, view).params;
+  } catch (error) {
+    // The registry's own validation is the answer: the caller sent an invalid selector.
+    throw new GatewayMethodError(
+      'INVALID_PARAMS',
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  const project = scope && typeof scope === 'object' ? Reflect.get(scope, 'project') : undefined;
+  return typeof project === 'string' ? project : undefined;
 }
 
 export async function routeMethod(
@@ -908,7 +927,15 @@ async function routeAuthorizedMethod(
       return credentialRevoke(p as CredentialRevokeParams, authRuntime);
 
     // Fleet
-    case Methods.FLEET_STATUS:
+    case Methods.FLEET_STATUS: {
+      const read = entitySyncRead(p);
+      if (!read.ok) throw new GatewayMethodError('INVALID_PARAMS', `fleet.status ${read.message}`);
+      if (read.shape && 'versions' in read.shape) {
+        const listing = await fleetStatusVersions();
+        refreshServedWorkspaceObservations();
+        return listing;
+      }
+      if (read.shape) return fleetStatusIds(read.shape.ids);
       return fleetStatus(p as FleetStatusParams, undefined, (fleet) =>
         context.broadcast({
           type: 'event',
@@ -917,6 +944,7 @@ async function routeAuthorizedMethod(
           seq: context.nextEventSeq(),
         }),
       );
+    }
     case Methods.FLEET_REFRESH:
       return fleetRefresh();
 
@@ -1347,11 +1375,19 @@ async function routeAuthorizedMethod(
         legacyClientId: state.id,
         legacyInterest: !upstreamObservers.manages(state, Methods.PR_STATUS),
       });
-    case Methods.PR_LIST:
-      return prList(p as PRListParams, undefined, {
+    case Methods.PR_LIST: {
+      const interest = {
         legacyClientId: state.id,
         legacyInterest: !upstreamObservers.manages(state, Methods.PR_LIST),
-      });
+      };
+      const read = entitySyncRead(p);
+      if (!read.ok) throw new GatewayMethodError('INVALID_PARAMS', `pr.list ${read.message}`);
+      if (!read.shape) return prList(p as PRListParams, undefined, interest);
+      const project = prListEntityScope(read.view);
+      return 'versions' in read.shape
+        ? prListVersions(project, interest)
+        : prListIds(project, read.shape.ids, interest);
+    }
     case Methods.PR_MONITOR:
       return prMonitor(p as PRStatusParams | undefined, emit);
     case Methods.PR_REVIEW_COMMENTS:
