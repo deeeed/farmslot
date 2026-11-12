@@ -26,6 +26,39 @@ export function processIdentity(pid: number): string | null | undefined {
   }
 }
 
+// One `ps` listing answers a burst of liveness checks: callers check many records at
+// once, and one `ps` per record cost seconds. Only a match is trusted from the listing;
+// a miss or a different start time is confirmed with a fresh `ps` before it counts.
+const IDENTITY_SNAPSHOT_MS = 2_000;
+let identitySnapshot: { at: number; byPid: Map<number, string> | null } | undefined;
+
+function snapshotIdentity(pid: number): string | null | undefined {
+  if (!identitySnapshot || Date.now() - identitySnapshot.at >= IDENTITY_SNAPSHOT_MS) {
+    identitySnapshot = readIdentitySnapshot();
+  }
+  return identitySnapshot.byPid === null ? null : identitySnapshot.byPid.get(pid);
+}
+
+function readIdentitySnapshot(): { at: number; byPid: Map<number, string> | null } {
+  try {
+    const output = execFileSync('ps', ['-Ao', 'pid=,lstart='], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    const byPid = new Map<number, string>();
+    for (const line of output.split('\n')) {
+      const match = /^\s*(\d+)\s+(.+?)\s*$/.exec(line);
+      if (match) byPid.set(Number(match[1]), match[2]);
+    }
+    return { at: Date.now(), byPid };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'EPERM' || code === 'EACCES') return { at: Date.now(), byPid: null };
+    throw error;
+  }
+}
+
 export function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -40,8 +73,14 @@ export function processAlive(pid: number): boolean {
  * identity is unknown, only liveness can be checked, so a live pid counts as the owner.
  */
 export function processStillRunning(pid: number, startedAt: string | undefined): boolean {
-  const identity = startedAt === undefined ? null : processIdentity(pid);
-  return identity === null ? processAlive(pid) : identity === startedAt;
+  // A dead pid needs no `ps`: checkouts keep hundreds of stale running records,
+  // and spawning `ps` for each one made every `status` call take minutes.
+  if (!processAlive(pid)) return false;
+  if (startedAt === undefined) return true;
+  const listed = snapshotIdentity(pid);
+  if (listed === null || listed === startedAt) return true;
+  const identity = processIdentity(pid);
+  return identity === null || identity === startedAt;
 }
 
 export class OperationRecord {

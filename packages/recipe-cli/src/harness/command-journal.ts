@@ -219,7 +219,13 @@ function pruneCompletedJournals(
   directory: string,
   operations: ReturnType<typeof readOperations>,
 ): void {
-  const completed = operations.filter((operation) => operation.status !== 'running');
+  // A record left `running` by a process that died is finished too; keeping it made the
+  // directory grow without bound and every reader slower.
+  const completed = operations.filter(
+    (operation) =>
+      operation.status !== 'running' ||
+      !processStillRunning(operation.pid, operation.processStartedAt),
+  );
   for (const operation of completed.slice(0, -100)) {
     for (const suffix of ['.json', '.journal.json', '.log']) {
       fs.rmSync(path.join(directory, `${operation.id}${suffix}`), { force: true });
