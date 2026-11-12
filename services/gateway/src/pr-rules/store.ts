@@ -180,11 +180,11 @@ export class PRRuleStore {
             return { kind: 'deferred', prs };
           }
           for (const pr of prs) assertReviewWorkspaceAdmissionOpen(pr);
-          const changed =
-            this.sourceUnavailable ||
-            this.validatedRetirementReload ||
-            (data !== this.data && !isDeepStrictEqual(data, this.data));
-          if (data !== this.data) {
+          // A file that changed only in formatting keeps the committed state: readers keep sharing
+          // the same snapshot, and it is not frozen again.
+          const dataChanged = data !== this.data && !isDeepStrictEqual(data, this.data);
+          const changed = this.sourceUnavailable || this.validatedRetirementReload || dataChanged;
+          if (dataChanged) {
             this.data = freezeStoreState(data);
             this.text = JSON.stringify(data);
           }

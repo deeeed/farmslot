@@ -546,6 +546,25 @@ test('a reload of the store own write is not decoded again; an external edit sti
   );
 });
 
+test('a reload that changes only formatting keeps the shared snapshot; a changed one replaces it', async (t) => {
+  const { store, file } = await fixture(t);
+  await store.saveTeam('owner', teamConfig);
+  const first = store.snapshot();
+  await writeFile(file, JSON.stringify(first, null, 2));
+  assert.equal(await store.reloadFromFile(), false);
+  assert.equal(await store.reloadFromFile(), false);
+  assert.equal(store.snapshot(), first, 'the same data keeps the same snapshot');
+
+  const edited = structuredClone(first);
+  edited.teams[0].config.name = 'External edit';
+  await writeFile(file, JSON.stringify(edited, null, 2));
+  assert.equal(await store.reloadFromFile(), true);
+  const replaced = store.snapshot();
+  assert.notEqual(replaced, first, 'changed data replaces the snapshot');
+  assert.equal(replaced.teams[0].config.name, 'External edit');
+  assert.ok(Object.isFrozen(replaced.teams[0].config), 'the replacement is frozen too');
+});
+
 test('an unchanged transaction leaves the store file untouched', async (t) => {
   const { store, file } = await fixture(t);
   const { team, rule } = await ruleFor(store, 'owner', true);
