@@ -464,7 +464,8 @@ the same basis as before — while the row the gateway actually sends is
 output file manifest out as before. Steps lose their inputs, and their outputs
 keep each key a list surface reads in the bounded shape that view reads, plus
 the diff stat and the videos, before/after visuals and diff files among their
-artifacts (path, purpose, size); such a step carries `outputsTrimmed: true`.
+artifacts, each where the step held it (an entry as its path, purpose and
+size); such a step carries `outputsTrimmed: true`.
 Decisions are the ones `trimRunForList` serves, without the resolver's
 selection, the evidence attestation and the heavy keys of their payload (a
 ready gate's package, snapshots, report and summary; a review's text and line
@@ -484,16 +485,22 @@ A client build older than the summary computes its list values from the row
 itself. Against this gateway it shows the same video and compare chips, opens
 the same Diff file and shows the same catalog diff stat as before; its evidence
 counts (Companion's "Evidence N", the eval catalog's artifact, byte, validation
-and review counts) read lower, never zero for a run with evidence, until it is
-updated. The row keeps the artifacts those chips and the Diff action are built
-from, not every entry (92 per stored run on average), and at most 100 of them
-per run. The summary is computed from the stored run, as the list always was:
-the `liveRecipeContext` that `run.get` attaches when it presents a run was never
+and review counts) read lower or equal, never higher than that build showed
+before and never zero for a run with evidence, until it is updated. The row
+holds a subset of what the step held, in the same places: the artifacts those
+chips and the Diff action are built from, not every entry (92 per stored run on
+average). Videos and before/after visuals stop at 100 per run; diff files are
+always kept.
+
+The summary is computed from the stored run, as the list always was: the
+`liveRecipeContext` that `run.get` attaches when it presents a run was never
 part of a list row. It counts the run's whole output manifest and gate
-manifests, which the row before this change left out when large.
+manifests, which the row before this change left out when large, so the current
+Companion's "Evidence N", which reads the summary, can read higher than the
+previous build's count.
 
 Measured on 74 stored runs, the average `run.list` row drops from 116 KB to 31 KB
-(p95 from 213 KB to 59 KB, largest from 421 KB to 90 KB). The version contract is
+(p95 from 213 KB to 62 KB, largest from 421 KB to 92 KB). The version contract is
 otherwise unchanged: clients
 still compare versions from the versions list to decide which rows need a
 catch-up page fetch, and `run.get`/`run.forSlot` remain unaffected.

@@ -122,15 +122,12 @@ test('a slim row, its full run and an old cached row show the same evidence sign
     expected.map(({ label }) => label),
     ['Video 1', 'Compare 1'],
   );
-  // The served row's signals come from the gateway's summary. Its step outputs keep only the
-  // video and the before/after pair, as compact entries, for a client older than the summary.
+  // The served row's signals come from the gateway's summary. Its step outputs keep the video
+  // and the before/after pair where the step held them, for a client older than the summary.
   const served = runListRow(full);
   assert.deepEqual(served.steps[0]?.outputs, {
-    artifacts: [
-      { path: 'artifacts/demo-after.mp4', purpose: 'video' },
-      { path: 'evidence/before-login.png', purpose: 'image' },
-      { path: 'evidence/after-login.png', purpose: 'image' },
-    ],
+    video: 'artifacts/demo-after.mp4',
+    screenshots: ['evidence/before-login.png', 'evidence/after-login.png'],
   });
   assert.deepEqual(summarizeRunEvidenceSignals(served), expected);
   // A row cached before slim rows has no summary and still carries the step outputs.

@@ -20,7 +20,7 @@ import { utf8ByteLength } from '../utf8-byte-length.js';
 
 import { CI_SNAPSHOT_TRIM_KEY } from './ci-decision-context.js';
 import {
-  listStepArtifacts,
+  listStepArtifactPaths,
   RUN_LIST_STEP_ARTIFACT_LIMIT,
   summarizeRunEvidence,
 } from './evidence-summary.js';
@@ -231,21 +231,60 @@ function stepOutputsLost(
   );
 }
 
-/** A step's outputs as a list row carries them (see listStepOutput). */
-export function listStepOutputs(
-  outputs: Record<string, unknown> | undefined,
-  artifactLimit = RUN_LIST_STEP_ARTIFACT_LIMIT,
-): Record<string, unknown> | undefined {
-  if (!outputs) return outputs;
+/**
+ * `value` with only the artifacts at `paths` left, each where it was: an entry as its path,
+ * purpose and size, a bare path as itself. Undefined when nothing is left.
+ */
+function keptArtifacts(value: unknown, paths: ReadonlySet<string>): unknown {
+  if (typeof value === 'string') return paths.has(value) ? value : undefined;
+  if (Array.isArray(value)) {
+    const kept = value
+      .map((item) => keptArtifacts(item, paths))
+      .filter((item) => item !== undefined);
+    return kept.length > 0 ? kept : undefined;
+  }
+  if (!isKeyed(value)) return undefined;
+  const { path, purpose, sizeBytes } = value;
+  if (typeof path === 'string' && paths.has(path)) {
+    return {
+      path,
+      ...(typeof purpose === 'string' ? { purpose } : {}),
+      ...(typeof sizeBytes === 'number' ? { sizeBytes } : {}),
+    };
+  }
+  const kept: Record<string, unknown> = {};
+  for (const key of Object.keys(value)) {
+    const child = keptArtifacts(value[key], paths);
+    if (child !== undefined) kept[key] = child;
+  }
+  return Object.keys(kept).length > 0 ? kept : undefined;
+}
+
+/**
+ * A step's outputs as a list row carries them, and how many of its kept artifacts count
+ * against the row's artifact limit. A key a list surface reads keeps its bounded shape (see
+ * listStepOutput); any other key keeps only the artifacts an older client's own evidence scan
+ * needs, where the step held them (see listStepArtifactPaths).
+ */
+function stepOutputsForList(
+  outputs: Record<string, unknown>,
+  artifactLimit: number,
+): { outputs: Record<string, unknown>; capped: number } {
+  const { paths, capped } = listStepArtifactPaths(outputs, artifactLimit);
   const slim: Record<string, unknown> = {};
   for (const key of Object.keys(outputs)) {
-    const value = listStepOutput(key, outputs[key]);
+    const read = listStepOutput(key, outputs[key]);
+    const value = read !== undefined ? read : keptArtifacts(outputs[key], paths);
     if (value !== undefined) slim[key] = value;
   }
-  // What an older client's own evidence scan needs from this step (see listStepArtifacts).
-  const artifacts = listStepArtifacts(outputs, artifactLimit);
-  if (artifacts.length > 0) slim.artifacts = artifacts;
-  return slim;
+  return { outputs: slim, capped };
+}
+
+/** A step's outputs as a list row carries them (see stepOutputsForList). */
+export function listStepOutputs(
+  outputs: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  return outputs ? stepOutputsForList(outputs, RUN_LIST_STEP_ARTIFACT_LIMIT).outputs : outputs;
 }
 
 /** A decision's payload as a list row carries it: the heavy keys of its kind left out. */
@@ -342,8 +381,9 @@ export function runListRow(run: Run): RunListRow {
   // says so (`outputsTrimmed`), so runHasTrimmedDetail reports the row as trimmed.
   let artifactsLeft = RUN_LIST_STEP_ARTIFACT_LIMIT;
   const steps = run.steps.map(({ inputs, outputs, ...step }) => {
-    const slim = listStepOutputs(outputs, artifactsLeft);
-    if (Array.isArray(slim?.artifacts)) artifactsLeft -= slim.artifacts.length;
+    const listed = outputs ? stepOutputsForList(outputs, artifactsLeft) : undefined;
+    artifactsLeft -= listed?.capped ?? 0;
+    const slim = listed?.outputs;
     const lost = inputs !== undefined || stepOutputsLost(outputs, slim);
     return { ...step, outputs: slim, ...(lost ? { outputsTrimmed: true as const } : {}) };
   });

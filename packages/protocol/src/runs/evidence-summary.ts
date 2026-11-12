@@ -50,13 +50,12 @@ export interface RunEvidenceSummary {
   diffArtifactPath?: string;
 }
 
-/** A step-output artifact as a run.list row carries it. */
-export type RunListStepArtifact = Pick<RunArtifactManifestEntry, 'path' | 'purpose' | 'sizeBytes'>;
-
 /**
- * The most step-output artifacts one run.list row keeps, across its steps. The stored run with
- * the most keeps 60 (95 in 100 keep 35 or fewer), so the cap changes no known run; it bounds
- * what one unusual run can add to a row at about 11 KB.
+ * The most videos and before/after visuals one run.list row keeps among its step outputs,
+ * across its steps. The stored run with the most keeps 60 (95 in 100 keep 35 or fewer), so the
+ * cap changes no known run; it bounds what one unusual run can add to a row at about 11 KB.
+ * Diff files do not count against it: a step has one or two, and a cut one would change the
+ * file an older client's Diff action opens.
  */
 export const RUN_LIST_STEP_ARTIFACT_LIMIT = 100;
 
@@ -184,36 +183,41 @@ export function runCatalogCounts(
 }
 
 /**
- * The step-output artifacts a run.list row keeps for a client that computes list values from
- * the row itself (a build from before the served summary): videos, before/after visuals and
- * diff files, each as its path, purpose and size. From them such a client shows the same video
- * and compare chips and opens the same Diff file as from the row it used to get; its artifact
- * counts read lower until it updates. A step whose artifacts are of none of those kinds keeps
- * its first one, so those counts are never zero for a step that has evidence. At most `limit`
- * entries are kept.
+ * The artifact paths of one step's outputs that a run.list row keeps, for a client that
+ * computes list values from the row itself (a build from before the served summary): every diff
+ * file; videos and before/after visuals, the first `limit` of them; the first entry of the
+ * step's `artifacts` when none of those is among them; and the step's first artifact when
+ * nothing else is kept. The row keeps each of these where the step held it, so such a client
+ * finds a subset of what it found before: the same video and compare chips and the same Diff
+ * file, and artifact counts that are lower, never higher, and never zero for a step that has
+ * evidence. `capped` is how many of the paths count against the limit.
  */
-export function listStepArtifacts(
+export function listStepArtifactPaths(
   outputs: Record<string, unknown> | undefined,
   limit: number,
-): RunListStepArtifact[] {
-  const entries: RunArtifactManifestEntry[] = [];
-  collectRunArtifactEntries(outputs, entries);
-  const kept = dedupeRunArtifacts(entries).filter(
-    (entry) =>
-      isRunEvidenceVideoArtifact(entry) ||
-      (isRunEvidenceVisualArtifact(entry) && runEvidenceVisualArtifactKind(entry) !== null) ||
-      diffArtifactScore(entry) > 0,
-  );
-  if (kept.length === 0) {
-    const recorded: RunArtifactManifestEntry[] = [];
-    collectRunArtifactEntries(outputs?.artifacts, recorded);
-    kept.push(...recorded.slice(0, 1));
+): { paths: ReadonlySet<string>; capped: number } {
+  const scanned: RunArtifactManifestEntry[] = [];
+  collectRunArtifactEntries(outputs, scanned);
+  const paths = new Set<string>();
+  let capped = 0;
+  for (const entry of dedupeRunArtifacts(scanned)) {
+    if (diffArtifactScore(entry) > 0) {
+      paths.add(entry.path);
+    } else if (
+      capped < limit &&
+      (isRunEvidenceVideoArtifact(entry) ||
+        (isRunEvidenceVisualArtifact(entry) && runEvidenceVisualArtifactKind(entry) !== null))
+    ) {
+      paths.add(entry.path);
+      capped += 1;
+    }
   }
-  return kept.slice(0, limit).map(({ path, purpose, sizeBytes }) => ({
-    path,
-    purpose,
-    ...(sizeBytes !== undefined ? { sizeBytes } : {}),
-  }));
+  const recorded: RunArtifactManifestEntry[] = [];
+  collectRunArtifactEntries(outputs?.artifacts, recorded);
+  if (recorded.length > 0 && !recorded.some((entry) => paths.has(entry.path)))
+    paths.add(recorded[0].path);
+  if (paths.size === 0 && scanned.length > 0) paths.add(scanned[0].path);
+  return { paths, capped };
 }
 
 /**

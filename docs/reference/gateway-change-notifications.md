@@ -343,7 +343,8 @@ totalCount, summaryMeta, familySummaries, projectAnalytics }` for every live
    Amendment 3). Rows returned by `run.list`, plain or `{ ids }`, are
    `runListRow(run)`: the run without its heavy keys, plus the run's
    `evidenceSummary`. Steps keep the outputs list surfaces read, the diff stat
-   and their videos, before/after visuals and diff files. Decisions, engine
+   and their videos, before/after visuals and diff files, each where the step
+   held it. Decisions, engine
    state, agent contexts, metrics, the ticket, the review result and the review
    subject leave out only their heavy keys (a gate's package, snapshots, report
    and summary; a decision's selection and attestation; visual-review blobs,
@@ -357,8 +358,11 @@ totalCount, summaryMeta, familySummaries, projectAnalytics }` for every live
 
    A client build older than the served summary, against this gateway, shows
    the same video and compare chips, opens the same Diff file and shows the
-   same catalog diff stat as before; its evidence counts read lower, never zero
-   for a run with evidence, until it is updated.
+   same catalog diff stat as before; its evidence counts read lower or equal,
+   never higher than that build showed before and never zero for a run with
+   evidence, until it is updated. The current Companion's "Evidence N" reads
+   the summary, which counts the whole stored run and can therefore read higher
+   than the previous build's count.
 
 3. Only the version reply decides which rows exist. Stored rows it does not list
    are removed.
