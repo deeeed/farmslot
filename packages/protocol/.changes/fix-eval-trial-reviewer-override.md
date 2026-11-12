@@ -1,0 +1,1 @@
+- Allow eval trials to retain a reviewer runner/model override and honor disabled review configuration for judge reviews.

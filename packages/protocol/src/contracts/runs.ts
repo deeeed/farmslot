@@ -3355,6 +3355,9 @@ export interface RunEngineState {
   };
   /** Artifact-first experiment trial linkage for artifact-only reference/template regression candidates. */
   evalExperiment?: {
+    /** Resolved trial judge override, retained across retries and resumes. */
+    reviewRunner?: string;
+    reviewModel?: string;
     blind?: import('./evals.js').EvalBlindTrial;
     /** Matrix/suite-wide cap group for eval queue accounting across per-case experiments. */
     capGroupId?: string;

@@ -70,7 +70,10 @@ import {
 import { resolveProofInput } from '../evals/proof-profile.js';
 import { evalSuiteCapUsage, setEvalSuiteCap } from '../evals/suite-cap-store.js';
 import { buildSmartBranch, ticketSlug } from '../intelligence/engine.js';
+import { resolveReviewRunnerModel } from '../review/orchestrator.js';
+import { getReviewConfig } from '../review/templates.js';
 import { resolveProjectSourceDiffFilter } from '../run-engine/diff-artifacts.js';
+import { isKnownRunner } from '../runners/registry.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { TEMPLATE_PROVENANCE_INPUT } from '../tasks/writer.js';
 
@@ -646,6 +649,13 @@ export async function evalTrialStart(
   } = {},
 ): Promise<EvalTrialStartResult> {
   assertEvalTrialStartParams(params);
+  for (const key of ['reviewRunner', 'reviewModel'] as const) {
+    const value = params[key];
+    if (value !== undefined && (typeof value !== 'string' || !value.trim()))
+      throw new Error(`Invalid eval.trial.start params: ${key} must be a non-empty string`);
+  }
+  if (params.reviewRunner !== undefined && !isKnownRunner(params.reviewRunner))
+    throw new Error(`Unknown review runner: ${params.reviewRunner}`);
   const experimentManifest = await readEvalExperimentManifest(params.experimentManifestPath);
   if (experimentManifest.project !== params.project)
     throw new Error(
@@ -712,6 +722,17 @@ export async function evalTrialStart(
     candidateStrategyFingerprint,
   });
   if (dedupedResult) return dedupedResult;
+
+  const reviewer =
+    params.reviewRunner !== undefined || params.reviewModel !== undefined
+      ? resolveReviewRunnerModel(await getReviewConfig(params.project), {
+          reviewRunner: params.reviewRunner,
+          model: params.reviewModel,
+        })
+      : undefined;
+  const reviewOverride = reviewer
+    ? { reviewRunner: reviewer.reviewRunner, reviewModel: reviewer.model }
+    : {};
 
   const evalRoot = path.dirname(path.dirname(params.experimentManifestPath));
   const allowed = proof
@@ -818,6 +839,7 @@ export async function evalTrialStart(
   const ticketData = buildBlindTicketData(problem, proof?.acceptanceCriteria);
   const evalEngineState = {
     evalExperiment: {
+      ...reviewOverride,
       blind,
       capGroupId: params.capGroupId,
       suiteId: params.suiteId,
@@ -913,6 +935,7 @@ export async function evalTrialStart(
     candidateStrategyFingerprint,
   };
   const trial: ExperimentTrial = {
+    ...reviewOverride,
     trialId,
     strategyId,
     caseId: evalCase.caseId,

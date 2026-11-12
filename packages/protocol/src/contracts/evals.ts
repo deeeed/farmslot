@@ -443,6 +443,9 @@ export interface CandidateStrategy {
 }
 
 export interface ExperimentTrial {
+  /** Resolved judge override; omitted for trials using project review defaults. */
+  reviewRunner?: string;
+  reviewModel?: string;
   trialId: string;
   strategyId: string;
   caseId: string;
@@ -1046,6 +1049,8 @@ function isExperimentTrial(value: unknown): value is ExperimentTrial {
     typeof value.strategyId === 'string' &&
     typeof value.caseId === 'string' &&
     isExperimentTrialStatus(value.status) &&
+    isOptionalString(value.reviewRunner) &&
+    isOptionalString(value.reviewModel) &&
     isOptionalString(value.runId) &&
     isOptionalString(value.packageId) &&
     isOptionalString(value.packageHash) &&
