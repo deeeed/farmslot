@@ -1,0 +1,1 @@
+- An iOS simulator recording that stops without writing its file now fails with "simctl recordVideo produced no file", the exit code or signal and the tail of simctl's stderr, instead of a bare ENOENT.
