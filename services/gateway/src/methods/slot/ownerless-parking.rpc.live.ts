@@ -7,14 +7,18 @@ import path from 'node:path';
 import { mock, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import type { FleetRefreshSlotUpdateEvent, SlotRefreshResult } from '@farmslot/protocol';
+import type {
+  FleetRefreshSlotUpdateEvent,
+  SlotRefreshResult,
+  SlotReleaseResult,
+} from '@farmslot/protocol';
 import { isRecord } from '@farmslot/protocol/recipe';
 
 import { createNativeProofFixture } from '../../runtime/native-proof-fixture.live-support.js';
 
 const source = fileURLToPath(new URL('../../../../../', import.meta.url));
 test(
-  'ownerless releases park every overwritten branch and retain their report across failure and retry',
+  'releases retain ownerless backups and unpushed run branches across archive and retry',
   { timeout: 120_000 },
   async (t) => {
     const output = process.env.FARMSLOT_WORKSPACE_PROOF_OUT;
@@ -312,6 +316,100 @@ test(
     assert.ok(
       raceRetry.parked?.some((entry) => git(repo, 'rev-parse', entry.ref) === movedDuringFetch),
     );
+    // Run-owned cleanup also keeps the original branch available to a new run.
+    const { createRun, getRunWithArchived, updateRun } = await import('../../runs/store.js');
+    const runBranches = [];
+    for (const scenario of [
+      { status: 'cancelled', inheritedBaseline: true },
+      { status: 'cancelled', inheritedBaseline: false },
+      { status: 'failed', inheritedBaseline: false },
+    ] as const) {
+      const { status, inheritedBaseline } = scenario;
+      const branch = `proof-${status}${inheritedBaseline ? '-inherited' : ''}`;
+      git(repo, 'checkout', '-qb', branch, 'origin/main');
+      const base = git(repo, 'rev-parse', 'HEAD');
+      git(repo, 'commit', '--allow-empty', '-qm', 'test: unpublished one');
+      git(repo, 'commit', '--allow-empty', '-qm', 'test: unpublished two');
+      const head = git(repo, 'rev-parse', 'HEAD');
+      const run = createRun({
+        flowType: 'dev',
+        project: 'proof',
+        ticketOrPr: branch,
+        slotId: 'proof-slot',
+      });
+      updateRun(run.id, {
+        status,
+        branch,
+        worktreeHeadAtDispatch: inheritedBaseline ? head : base,
+        completedAt: new Date().toISOString(),
+      });
+      const bind = async (runId: string) => {
+        updateRun(runId, { slotId: 'proof-slot' });
+        const current = await core.readSlotRow('proof-slot');
+        await core.updateSlotStatus('proof-slot', {
+          current_run_id: runId,
+          slot_epoch: Number(current?.slot_epoch ?? 0) + 1,
+          branch,
+          head_sha: head,
+          lifecycle: 'held',
+          phase: 'occupied',
+          agent: 'idle',
+        });
+      };
+      await bind(run.id);
+      const initialKeep = await call<SlotReleaseResult>('slot.release', {
+        slotId: 'proof-slot',
+        expectedRunId: run.id,
+        keepWork: true,
+      });
+      assert.equal(initialKeep.released, true, initialKeep.reason);
+      assert.equal(git(repo, 'symbolic-ref', '--short', 'HEAD'), branch);
+      assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+      await bind(run.id);
+      const archived = await call<{ ok: boolean }>('run.archive', { runId: run.id });
+      assert.equal(archived.ok, true);
+      assert.equal(
+        git(repo, 'rev-parse', `refs/heads/${branch}`),
+        head,
+        'run cleanup preserves the original unpushed branch',
+      );
+      const parked = (await getRunWithArchived(run.id))?.parkedCommits?.at(-1);
+      assert.ok(parked);
+      assert.equal(parked.headSha, head);
+      assert.equal(git(repo, 'rev-parse', parked.ref), head);
+
+      // A following run can reuse the branch without relying on the old run record.
+      git(repo, 'checkout', '-q', branch);
+      const follow = createRun({
+        flowType: 'dev',
+        project: 'proof',
+        ticketOrPr: branch,
+        slotId: 'proof-slot',
+      });
+      updateRun(follow.id, {
+        status: 'failed',
+        branch,
+        worktreeHeadAtDispatch: base,
+        completedAt: new Date().toISOString(),
+      });
+      await bind(follow.id);
+      const kept = await call<SlotReleaseResult>('slot.release', {
+        slotId: 'proof-slot',
+        expectedRunId: follow.id,
+        keepWork: true,
+      });
+      assert.equal(kept.released, true, kept.reason);
+      assert.equal(git(repo, 'symbolic-ref', '--short', 'HEAD'), branch);
+      assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+      runBranches.push({
+        status,
+        inheritedBaseline,
+        branch,
+        head,
+        parkedRef: parked.ref,
+        keepWork: true,
+      });
+    }
     await writeFile(
       path.join(output, 'ownerless-parking.json'),
       JSON.stringify(parkingCases, null, 2) + '\n',
@@ -320,7 +418,13 @@ test(
     await writeFile(
       path.join(output, 'rpc.json'),
       JSON.stringify(
-        { pass: true, bulk: update, cases: parkingCases, head: git(repo, 'rev-parse', 'HEAD') },
+        {
+          pass: true,
+          bulk: update,
+          cases: parkingCases,
+          runBranches,
+          head: git(repo, 'rev-parse', 'HEAD'),
+        },
         null,
         2,
       ) + '\n',
