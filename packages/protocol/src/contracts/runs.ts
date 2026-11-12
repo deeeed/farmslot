@@ -514,6 +514,7 @@ export function reviewValidationDepthForLoop(
 export type ReviewSessionContinuity = 'fresh' | 'resumed' | 'resume-unconfirmed' | 'refused';
 
 export type ReviewSessionRefusalReason =
+  | 'session-resume-unsupported'
   | 'unsupported-runner'
   | 'repository-mismatch'
   | 'pr-mismatch'

@@ -1685,7 +1685,7 @@ function assertNativeWorkersReleased(run: Run): void {
     throw new Error(
       'Review workspace ownership cannot leave the run store before durable cleanup closeout',
     );
-  if (run.reviewWorkspace && !run.reviewWorkspace.cleanedAt) {
+  if (run.reviewWorkspace && !run.reviewWorkspace.cleanedAt && !run.reviewWorkspace.transferredTo) {
     throw new Error(
       'Review workspace ownership cannot leave the run store before checkout cleanup',
     );
@@ -1944,6 +1944,39 @@ export async function getRunWithArchived(id: string): Promise<Run | undefined> {
   if (live) return live;
   const archived = (await getArchivedRuns()).find((run) => run.id === id);
   return getRun(id) ?? archived;
+}
+
+/** Claim the stopped source once, including when its result record was archived. */
+export async function claimReviewWorkspaceTransfer(
+  id: string,
+  expected: NonNullable<Run['reviewWorkspace']>,
+  successor: NonNullable<NonNullable<Run['reviewWorkspace']>['transferredTo']>,
+  assertCurrent: (prior: Run) => void,
+): Promise<Run> {
+  const check = (run: Run) => {
+    assertRunNotArchiving(id);
+    assertCurrent(run);
+    const { transferredTo, ...binding } = run.reviewWorkspace ?? {};
+    const expectedBinding = { ...expected };
+    delete expectedBinding.transferredTo;
+    if (
+      !isTerminalRunStatus(run.status) ||
+      !run.reviewWorkspace?.executionStoppedAt ||
+      run.reviewWorkspace.cleanedAt ||
+      run.reviewWorkspace.retirement ||
+      !isDeepStrictEqual(binding, expectedBinding) ||
+      (transferredTo && !isDeepStrictEqual(transferredTo, successor))
+    )
+      throw new Error('Retained review workspace is unavailable or already transferred');
+  };
+  return commitRetainedRunMutation(
+    id,
+    (run) => ({
+      ...run,
+      reviewWorkspace: { ...run.reviewWorkspace!, transferredTo: successor },
+    }),
+    check,
+  );
 }
 
 /** Retention records the restore manifest without evicting live or archived history. */

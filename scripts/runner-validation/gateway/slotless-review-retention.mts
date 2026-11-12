@@ -236,7 +236,7 @@ const { getRunnerDefinition } = await load('services/gateway/src/runners/registr
 const expectSession =
   rounds === 2 ||
   reviewTransport === 'native' ||
-  !!getRunnerDefinition(reviewRunner).workspaceTerminalSession;
+  !!getRunnerDefinition(reviewRunner).sessionContinuation.terminal;
 const { configureWorkspaceContinuity } = await load(
   'services/gateway/src/review-workspaces/continuity.ts',
 );

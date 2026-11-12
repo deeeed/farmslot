@@ -46,9 +46,9 @@ import {
   runnerDefaultSafetyTier,
   runnerFlagsForTier,
   runnerNeedsPostLaunchPrompt,
-  runnerSessionReloadCapability,
   runnerSupportsInitialPromptArg,
   runnerSupportsInteractivePrompt,
+  runnerSupportsSessionContinuation,
   WORKER_ENV_PREFIX,
 } from './registry.js';
 import {
@@ -306,8 +306,23 @@ export function buildPiLaunch(options: {
  */
 /** Reserve an empty native CLI chat without running a model. */
 export function workspaceTerminalSessionCreateArgv(runner: string, repo: string): string[] | null {
-  if (getRunnerDefinition(runner).workspaceTerminalSession !== 'create-chat') return null;
+  if (getRunnerDefinition(runner).sessionContinuation.terminal?.reservation !== 'create-chat')
+    return null;
   return [resolveCursorAgentBinary(), '--trust', '--workspace', repo, 'create-chat'];
+}
+
+/** CLI syntax comes only from the runner's continuation declaration. */
+export function runnerSessionContinuationArgs(runner: string, sessionId: string): string[] {
+  const capability = getRunnerDefinition(runner).sessionContinuation.terminal;
+  if (!runnerSupportsSessionContinuation(runner, 'tmux') || !capability)
+    throw new Error(`Runner '${runner}' cannot continue a terminal session`);
+  assertSafeRunnerArgumentValue('sessionId', sessionId);
+  return capability.args(sessionId);
+}
+
+function renderSessionContinuationArgs(args: readonly string[]): string {
+  // Adapter syntax is fixed; the final session argument is the opaque saved identity.
+  return [...args.slice(0, -1), shellQuote(args[args.length - 1]!)].join(' ');
 }
 
 const SECRET_ENV_NAME = /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/i;
@@ -415,6 +430,11 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   const modelFlag = options.model?.trim() ? ` --model ${shellQuote(options.model.trim())}` : '';
   const promptArg = `"$(cat ${shellQuote(options.promptPath)})"`;
   const safetyFlags = runnerFlagsForTier(runnerId, options.safetyTier).map(shellQuote).join(' ');
+  const resume = options.resumeSessionId
+    ? renderSessionContinuationArgs(
+        runnerSessionContinuationArgs(runnerId, options.resumeSessionId),
+      )
+    : '';
   const reviewFlags =
     options.workspaceTrust === 'untrusted'
       ? (nativeRunnerDefinitions[runnerId]?.reviewStartupArgs ?? []).map(shellQuote).join(' ')
@@ -436,7 +456,7 @@ export function buildInteractiveRefinementRunnerCommand(options: {
       questionsArgs.trim(),
       modelFlag.trim(),
       options.effort ? codexReasoningEffortFlag(options.effort, options.model).trim() : '',
-      options.resumeSessionId ? `resume --all ${shellQuote(options.resumeSessionId)}` : '',
+      resume,
       promptArg,
     ]
       .filter(Boolean)
@@ -444,15 +464,12 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   }
   if (runnerId === 'cursor') {
     const flags = safetyFlags ? ` ${safetyFlags}` : '';
-    const resume = options.resumeSessionId
-      ? ` --resume ${shellQuote(options.resumeSessionId)}`
-      : '';
-    return `${shellQuote(binary)}${options.trustWorkspace ? ' --trust' : ''} --workspace ${shellQuote(options.repo)}${flags}${modelFlag}${resume} ${promptArg}`;
+    return `${shellQuote(binary)}${options.trustWorkspace ? ' --trust' : ''} --workspace ${shellQuote(options.repo)}${flags}${modelFlag}${resume ? ` ${resume}` : ''} ${promptArg}`;
   }
   if (runnerId === 'grok') {
     const isolated = options.workspaceTrust === 'untrusted' ? ' --no-leader' : '';
     const flags = safetyFlags ? ` ${safetyFlags}` : '';
-    return `${shellQuote(binary)}${isolated}${flags}${modelFlag} ${promptArg}`;
+    return `${shellQuote(binary)}${isolated}${flags}${modelFlag}${resume ? ` ${resume}` : ''} ${promptArg}`;
   }
   if (runnerId === 'opencode' && options.workspaceTrust === 'untrusted') {
     const environment = opencodeEnvironment({
@@ -488,6 +505,7 @@ export function buildInteractiveRefinementRunnerCommand(options: {
         piThinkingFlag(options.effort).trim(),
         `-e ${shellQuote(path.posix.join(support, 'bin/pi-farmslot-observability.ts'))}`,
         `--model ${shellQuote(cliModel)}`,
+        resume,
         promptArg,
       ]
         .filter(Boolean)
@@ -499,7 +517,7 @@ export function buildInteractiveRefinementRunnerCommand(options: {
       repo: options.repo,
       safetyTier: options.safetyTier,
       effort: options.effort,
-    })} ${promptArg}`;
+    })}${resume ? ` ${resume}` : ''} ${promptArg}`;
     return withRequiredRunnerInstall(
       launch,
       gatewayRunnerObservabilityInstallCommand('pi', options.repo),
@@ -508,12 +526,12 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   const flags = safetyFlags ? ` ${safetyFlags}` : '';
   const effortFlag = runnerId === 'claude' ? runnerEffortFlag('claude', options.effort) : '';
   // Claude's list-valued switch goes ahead of the review and safety options, never before the prompt.
-  return `${shellQuote(binary || runnerId)}${questionsArgs}${reviewFlags ? ` ${reviewFlags}` : ''}${flags}${modelFlag}${effortFlag} ${promptArg}`;
+  return `${shellQuote(binary || runnerId)}${questionsArgs}${reviewFlags ? ` ${reviewFlags}` : ''}${flags}${modelFlag}${effortFlag}${resume ? ` ${resume}` : ''} ${promptArg}`;
 }
 
 /** Runners whose persisted sessions can be resumed via buildRunnerSessionReloadCommand. */
 export function runnerSupportsSessionReload(runnerId: string): boolean {
-  return runnerSessionReloadCapability(runnerId) !== 'none';
+  return runnerSupportsSessionContinuation(runnerId, 'tmux');
 }
 
 /**
@@ -567,7 +585,8 @@ export function buildRunnerSessionReloadCommand(
   assertRunnerTransport(runner, 'tmux');
   const repo = opts.repo ?? vars.remoteRepo;
   const tier = opts.safetyTier ?? runnerDefaultSafetyTier(runner);
-  const quotedSessionId = shellQuote(sessionId);
+  const resumeArgs = runnerSessionContinuationArgs(runner, sessionId);
+  const resume = renderSessionContinuationArgs(resumeArgs);
   const initialPrompt = opts.initialPrompt?.trim()
     ? ` ${shellQuote(opts.initialPrompt.trim())}`
     : '';
@@ -596,7 +615,7 @@ export function buildRunnerSessionReloadCommand(
       withTaskRecipeTrustEnvironment(
         blind(
           withRunnerObservabilityInstall(
-            `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags}${modelFlag}${effortFlag}${modelQuestionsArgs(runner, opts.modelQuestions)}${settingsFlag} --resume ${quotedSessionId}${initialPrompt}`,
+            `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags}${modelFlag}${effortFlag}${modelQuestionsArgs(runner, opts.modelQuestions)}${settingsFlag} ${resume}${initialPrompt}`,
             installCommand,
             settingsFallback,
           ),
@@ -633,7 +652,7 @@ export function buildRunnerSessionReloadCommand(
           withRunnerObservabilityInstall(
             `unset CLAUDECODE && cd ${shellQuote(repo)} && ${codexHomeSetup} && ${resolveCodexBinary(
               vars.codexPath,
-            )}${CODEX_PLUGIN_HOOK_ARGS} resume${flags}${effortFlag}${workerConfigFlags}${modelFlag} ${quotedSessionId}${initialPrompt}`,
+            )}${CODEX_PLUGIN_HOOK_ARGS} ${resumeArgs[0]}${flags}${effortFlag}${workerConfigFlags}${modelFlag} ${renderSessionContinuationArgs(resumeArgs.slice(1))}${initialPrompt}`,
             installCommand,
           ),
         ),
@@ -662,7 +681,7 @@ export function buildRunnerSessionReloadCommand(
             withRequiredRunnerInstall(
               `cd ${shellQuote(repo)} && ${resolveGrokBinary(
                 vars.grokPath,
-              )}${flags}${effortFlag}${modelFlag} --resume ${quotedSessionId}${initialPrompt}`,
+              )}${flags}${effortFlag}${modelFlag} ${resume}${initialPrompt}`,
               installCommand,
             ),
             runner,
@@ -676,6 +695,38 @@ export function buildRunnerSessionReloadCommand(
     );
   }
 
+  if (runner === 'pi' || runner === 'cursor') {
+    const command =
+      runner === 'pi'
+        ? `${buildPiLaunch({
+            binary: resolvePiBinary(vars.piPath),
+            model,
+            repo,
+            runtimeDir: opts.runtimeDir,
+            slotId: vars.slotId,
+            safetyTier: tier,
+            effort: opts.effort,
+            taskFile: opts.taskDir ? path.posix.join(opts.taskDir, 'TASK.md') : undefined,
+          })} ${resume}${initialPrompt}`
+        : `cd ${shellQuote(repo)} && ${shellQuote(resolveCursorAgentBinary(vars.cursorPath))} --trust --workspace ${shellQuote(repo)} ${runnerFlagsForTier(runner, tier).map(shellQuote).join(' ')}${runnerModelFlag(model)} ${resume}${initialPrompt}`;
+    return withMachineEnv(
+      withTaskRecipeTrustEnvironment(
+        blind(
+          withModelQuestionsEnvironment(
+            withRequiredRunnerInstall(
+              command,
+              buildRunnerObservabilityInstallCommand(vars, runner, repo, opts.runtimeDir),
+            ),
+            runner,
+            opts.modelQuestions,
+          ),
+        ),
+        repo,
+        opts.taskDir,
+      ),
+      vars,
+    );
+  }
   throw new Error(`Runner '${runner}' does not support persisted session reload`);
 }
 

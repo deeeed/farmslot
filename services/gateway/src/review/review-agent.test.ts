@@ -36,7 +36,7 @@ test('review recovery rejects in-place handoff for argv-first runners', () => {
   assert.match(source, /abandonRecoveredReviewer\(`\$\{delivery\} recovered reviewer cleanup`\)/);
 });
 
-test('COLD creates a new conversation and unsupported WARM refuses', () => {
+test('COLD creates a new conversation and WARM uses the shared continuation capability', () => {
   for (const runner of ['claude', 'codex', 'cursor'])
     assert.deepEqual(retainedReviewerDeliveryPlan(runner, 'cold', 1), {
       kind: 'cold-relaunch',
@@ -46,7 +46,15 @@ test('COLD creates a new conversation and unsupported WARM refuses', () => {
     kind: 'in-place',
     resetContext: false,
   });
-  assert.throws(() => retainedReviewerDeliveryPlan('cursor', 'warm', 1), /WARM/);
+  for (const runner of ['claude', 'cursor', 'pi', 'grok'])
+    assert.deepEqual(retainedReviewerDeliveryPlan(runner, 'warm', 1), {
+      kind: 'in-place',
+      resetContext: false,
+    });
+  assert.deepEqual(retainedReviewerDeliveryPlan('opencode', 'warm', 1), {
+    kind: 'cold-relaunch',
+    resetContext: false,
+  });
 });
 
 test('restart recovery reclaims only the newest matching in-flight reviewer', () => {

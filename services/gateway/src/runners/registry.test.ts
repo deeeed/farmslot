@@ -92,6 +92,7 @@ import {
   runnerResolvesPreTaskLaunchBlockers,
   runnerSessionArchiveKind,
   runnerSessionPortability,
+  runnerSessionReloadCapability,
   runnerSignalShowsCompletion,
   runnerSupportsEffort,
   runnerSupportsInteractivePrompt,
@@ -2231,11 +2232,11 @@ describe('buildLaunchCommand', () => {
   });
 
   describe('pi runner', () => {
-    it('is interactive, event-driven, fail-closed on session reload, and accepts any model', () => {
+    it('is interactive, event-driven, resumable through its saved-session capability, and accepts any model', () => {
       const def = getRunnerDefinition('pi');
       assert.equal(def.defaultLaunchMode, 'interactive');
       assert.equal(def.observabilityScope, 'event-driven');
-      assert.equal(def.sessionReload, 'none');
+      assert.equal(runnerSessionReloadCapability('pi'), 'with-prompt');
       assert.equal(def.retainedSessionHandoff, 'argv-relaunch');
       assert.equal(def.defaultModel, DEFAULT_PI_MODEL);
       assert.equal(runnerDefaultModel('pi'), DEFAULT_PI_MODEL);
@@ -2707,7 +2708,7 @@ describe('buildRunnerSessionReloadCommand', () => {
     assert.match(cmd, /export CODEX_HOME='\/tmp\/\.farmslot-runtime\/repo\/runtime\/codex-home'/);
     assert.match(
       cmd,
-      /\/opt\/bin\/codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" resume --sandbox workspace-write --ask-for-approval never --config 'model_reasoning_effort="high"' --config 'check_for_update_on_startup=false' --model gpt-5 'codex-session'$/,
+      /\/opt\/bin\/codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" resume --sandbox workspace-write --ask-for-approval never --config 'model_reasoning_effort="high"' --config 'check_for_update_on_startup=false' --model gpt-5 --all 'codex-session'$/,
     );
   });
 
@@ -2730,25 +2731,24 @@ describe('buildRunnerSessionReloadCommand', () => {
   it('rejects runners without persisted-session reload support', () => {
     const vars = makeVars({ dispatchCmd: '' });
     assert.throws(
-      () => buildRunnerSessionReloadCommand(vars, 'cursor', 'auto', 'session-123'),
+      () => buildRunnerSessionReloadCommand(vars, 'opencode', 'auto', 'session-123'),
       /does not support persisted session reload/,
     );
   });
 
   it('declares retained handoff and reload behavior in the runner capability registry', () => {
     assert.equal(getRunnerDefinition('claude').retainedSessionHandoff, 'resume-with-prompt');
-    assert.equal(getRunnerDefinition('claude').sessionReload, 'with-prompt');
+    assert.equal(runnerSessionReloadCapability('claude'), 'with-prompt');
     assert.equal(getRunnerDefinition('codex').retainedSessionHandoff, 'resume-with-prompt');
-    assert.equal(getRunnerDefinition('codex').sessionReload, 'with-prompt');
+    assert.equal(runnerSessionReloadCapability('codex'), 'with-prompt');
     assert.equal(getRunnerDefinition('cursor').retainedSessionHandoff, 'argv-relaunch');
-    assert.equal(getRunnerDefinition('cursor').sessionReload, 'none');
+    assert.equal(runnerSessionReloadCapability('cursor'), 'with-prompt');
   });
 
-  it('aligns every static session-reload declaration with graceful exit and command support', () => {
+  it('builds every declared continuation independently of graceful park support', () => {
     const vars = makeVars({ dispatchCmd: '' });
     for (const [runnerId, definition] of Object.entries(KNOWN_RUNNERS)) {
-      if (definition.sessionReload === 'with-prompt') {
-        assert.ok(definition.gracefulExit?.command, `${runnerId} needs a graceful park exit`);
+      if (definition.sessionContinuation.terminal) {
         assert.doesNotThrow(
           () =>
             buildRunnerSessionReloadCommand(vars, runnerId, 'unknown', `${runnerId}-session`, {
