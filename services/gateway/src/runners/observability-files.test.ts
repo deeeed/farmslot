@@ -516,3 +516,28 @@ test('session delivery retains structured tool progress separately from active-t
     null,
   );
 });
+
+test('input startup grace preserves the effective deadline and rejects invalid durations', () => {
+  for (const startupGraceMs of [630_000, 990_000, null, undefined, -1, NaN, Infinity]) {
+    const reading = deriveRunnerSessionDeliveryState(
+      {
+        session_id: 'pi-task',
+        event: 'UserPromptSubmit',
+        observedAt: NOW,
+        turnStartedAt: NOW,
+        turnActive: true,
+        startupGraceMs,
+      },
+      'pi-task',
+    );
+    assert.equal(
+      reading?.startupGraceMs,
+      startupGraceMs === null ||
+        (typeof startupGraceMs === 'number' &&
+          Number.isSafeInteger(startupGraceMs) &&
+          startupGraceMs > 0)
+        ? startupGraceMs
+        : undefined,
+    );
+  }
+});

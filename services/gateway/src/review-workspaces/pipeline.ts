@@ -45,7 +45,7 @@ import {
 import { getRunnerDefinition } from '../runners/registry.js';
 import {
   observeReviewPromptAcceptance,
-  observeReviewRunnerFailure,
+  observeReviewRunnerState,
 } from '../runners/review-startup.js';
 import {
   launchReviewTmux,
@@ -1157,15 +1157,15 @@ async function executeOwnedReviewWorkspaceStep(
               },
             };
           }
-          const failure = await observe(() =>
-            observeReviewRunnerFailure(currentWorkspaceRun(runId, generation), acceptance),
+          const runnerState = await observe(() =>
+            observeReviewRunnerState(currentWorkspaceRun(runId, generation), acceptance),
           );
           check();
-          if (failure) {
+          if (runnerState?.failure) {
             await upsertAgentContext(runId, 'review', { id: 'review', status: 'failed' });
-            throw new RunnerExecutionError(failure);
+            throw new RunnerExecutionError(runnerState.failure);
           }
-          if (startup === 'blocked')
+          if (startup === 'blocked' && !runnerState?.startupPending)
             throw new BlockedRunError(
               'Reviewer has not acknowledged its task. Check its terminal for a startup prompt, sign-in or usage limit. This run will resume when the original reviewer starts or finishes.',
               'review-startup-unacknowledged',

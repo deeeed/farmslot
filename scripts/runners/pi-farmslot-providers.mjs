@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
 
 const DEFAULT_OLLAMA = '127.0.0.1:11434';
+export const PI_REQUEST_TIMEOUT_RETRIES = 1;
 const PI_REASONING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const PRICE_TIER =
   /^(input_cost_per_token|output_cost_per_token|cache_read_input_token_cost|cache_creation_input_token_cost)_above_(\d+)k_tokens$/;
@@ -23,7 +24,7 @@ export function deadlinePiFetch(fetchImpl, timeoutMs = 5 * 60_000, onExhausted, 
     const expire = () => {
       if (upstream?.aborted) return;
       deadline.abort();
-      if (++consecutiveTimeouts >= 2) onExhausted?.();
+      if (++consecutiveTimeouts > PI_REQUEST_TIMEOUT_RETRIES) onExhausted?.();
     };
     let timer = setTimeout(expire, timeoutMs);
     const failure = (error) =>

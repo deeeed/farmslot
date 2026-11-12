@@ -10,6 +10,7 @@ import { piMessageTokenUsage, piTurnFailure, writePiHook } from './pi-farmslot-h
 import {
   assertPiModelThinking,
   deadlinePiFetch,
+  PI_REQUEST_TIMEOUT_RETRIES,
   PiProviderConfigurationError,
   piSdkModels,
   preservePiStaticModels,
@@ -125,6 +126,12 @@ export default async function (pi: {
   const timeoutMode = process.env.FARMSLOT_PI_REQUEST_TIMEOUT_MODE ?? 'total';
   if (timeoutMode !== 'total' && timeoutMode !== 'idle')
     throw new Error('FARMSLOT_PI_REQUEST_TIMEOUT_MODE must be total or idle');
+  // Allow retry backoff, terminal-hook persistence and gateway observation after exhaustion.
+  const retrySettlementMarginMs = 30_000;
+  const startupGraceMs =
+    timeoutMode === 'idle'
+      ? null // Response chunks can extend an idle deadline until the overall review deadline.
+      : timeoutMs * (PI_REQUEST_TIMEOUT_RETRIES + 1) + retrySettlementMarginMs;
   let timeoutFailure: string | null = null;
   let abortOperation: (() => void) | undefined;
   const originalFetch = globalThis.fetch;
@@ -372,6 +379,7 @@ export default async function (pi: {
       writePiHook({
         obsDir: obsDir(),
         event: 'UserPromptSubmit',
+        startupGraceMs,
         ...sessionFrom(ctx),
         promptText: text,
         cwd: ctx.cwd,

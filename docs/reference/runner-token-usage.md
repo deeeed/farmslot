@@ -41,6 +41,13 @@ while a stalled stream or missing headers still times out. Successful response
 completion resets the consecutive-timeout budget. The timeout value, default,
 and retry limit are unchanged.
 
+Before the first task mark, a current-pane input hook keeps a static review
+monitored for both request deadlines plus 30 seconds for retry settlement and
+observation. Pi records this grace using its effective timeout configuration,
+including node overrides. Idle mode keeps the active input monitored until its
+terminal hook or the overall review deadline, since streaming can extend each
+request. Launches with no proven current input still use the startup gate.
+
 An active worker with no native token-usage progress for five minutes gets a
 warning in its existing monitor or review-fix step. The warning clears when usage
 advances or the turn stops. It does not stop the process or change its lease.

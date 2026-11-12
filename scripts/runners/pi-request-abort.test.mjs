@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
-async function checkAbort(extensionUrl) {
+async function checkAbort(extensionUrl, mode) {
   const assert = (await import('node:assert/strict')).default;
   const { mkdtempSync, readFileSync, rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
@@ -19,6 +19,7 @@ async function checkAbort(extensionUrl) {
       FARMSLOT_PI_OLLAMA: '0',
       FARMSLOT_OBS_DIR: root,
       FARMSLOT_PI_REQUEST_TIMEOUT_MS: '100',
+      FARMSLOT_PI_REQUEST_TIMEOUT_MODE: mode,
     };
     globalThis.fetch = (_input, { signal }) =>
       new Promise((_resolve, reject) => {
@@ -45,6 +46,8 @@ async function checkAbort(extensionUrl) {
       },
     };
     await events.get('input')({ text: 'Synthetic task' }, ctx);
+    const input = JSON.parse(readFileSync(path.join(root, 'sessions/session.json'), 'utf8'));
+    assert.equal(input.startupGraceMs, mode === 'idle' ? null : 100 * 2 + 30_000);
     for (let attempt = 0; attempt < 2; attempt++) {
       const request = assert.rejects(globalThis.fetch('http://fixture.test/v1/chat/completions'));
       t.mock.timers.tick(100);
@@ -57,18 +60,20 @@ async function checkAbort(extensionUrl) {
   });
 }
 
-test('retry exhaustion emits StopFailure before abort without waiting for settlement', () => {
-  const extension = new URL('./pi-farmslot-observability.ts', import.meta.url).href;
-  const result = spawnSync(
-    process.execPath,
-    [
-      '--experimental-strip-types',
-      '--input-type=module',
-      '--eval',
-      `await (${checkAbort.toString()})(${JSON.stringify(extension)});`,
-    ],
-    { encoding: 'utf8', timeout: 4000 },
-  );
-  assert.equal(result.error, undefined);
-  assert.equal(result.status, 0, result.stdout + result.stderr);
-});
+for (const mode of ['total', 'idle']) {
+  test(`retry exhaustion in ${mode} mode emits StopFailure before abort without settlement`, () => {
+    const extension = new URL('./pi-farmslot-observability.ts', import.meta.url).href;
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--input-type=module',
+        '--eval',
+        `await (${checkAbort.toString()})(${JSON.stringify(extension)}, ${JSON.stringify(mode)});`,
+      ],
+      { encoding: 'utf8', timeout: 4000 },
+    );
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+  });
+}

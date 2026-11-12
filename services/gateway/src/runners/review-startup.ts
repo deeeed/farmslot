@@ -11,11 +11,16 @@ import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 import { getRunnerObservability } from './registry.js';
 import { reviewWorkspaceRunnerVars as workspaceRunnerVars } from './review-workspace-context.js';
 
-/** A failed turn remains terminal even while its interactive session survives. */
-export async function observeReviewRunnerFailure(
+export interface ReviewRunnerState {
+  failure: string | null;
+  startupPending: boolean;
+}
+
+/** Current input may still be retrying before its first mark, or fail with a live session. */
+export async function observeReviewRunnerState(
   run: Run,
   acceptance: RunnerPromptAcceptance | null,
-): Promise<string | null> {
+): Promise<ReviewRunnerState | null> {
   const context = run.agentContexts?.find((entry) => entry.id === 'review');
   const since = Date.parse(context?.promptDeliveryStartedAt ?? '');
   if (!context || !Number.isFinite(since)) return null;
@@ -39,13 +44,13 @@ export async function observeReviewRunnerFailure(
     return state;
   });
   if (
-    !reading?.failure ||
-    reading.failureKind === 'transport' ||
+    !reading ||
     reading.confidence !== 'high' ||
     !['hook', 'signal'].includes(reading.source) ||
     reading.observedAt < since
   )
     return null;
+  const turnStartedAt = Number(reading.turnToken?.slice(reading.turnToken.lastIndexOf(':') + 1));
   if (acceptance) {
     if (
       acceptance.runner !== context.runner ||
@@ -57,10 +62,17 @@ export async function observeReviewRunnerFailure(
     )
       return null;
   } else {
-    const turnStartedAt = Number(reading.turnToken?.slice(reading.turnToken.lastIndexOf(':') + 1));
     if (!Number.isFinite(turnStartedAt) || turnStartedAt < since) return null;
   }
-  return reading.failure;
+  return {
+    failure: reading.failureKind === 'transport' ? null : (reading.failure ?? null),
+    startupPending:
+      reading.value === 'active' &&
+      Number.isFinite(turnStartedAt) &&
+      (reading.startupGraceMs === null ||
+        (typeof reading.startupGraceMs === 'number' &&
+          Date.now() < turnStartedAt + reading.startupGraceMs)),
+  };
 }
 
 /** Existing progress/control readers retain their owner authorization check. */

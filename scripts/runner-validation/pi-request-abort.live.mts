@@ -35,7 +35,7 @@ async function until(check: () => Promise<boolean>, label: string) {
 }
 
 test(
-  'Pi retry exhaustion reports a worker error and fails a static review through RPC',
+  'Pi first-request retry exhaustion fails a monitored static review without a task mark',
   { timeout: 60_000 },
   async (t) => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'pi-abort-rpc-'));
@@ -186,11 +186,7 @@ test(
     const taskApi = await import('../../services/gateway/src/review-workspaces/task.js');
     const materialized = await taskApi.materializeReviewWorkspaceTask(run.id, subject);
     const started = new Date().toISOString();
-    execFileSync(path.join(task, 'mark'), ['start'], {
-      cwd: task,
-      env: { ...process.env, FARMSLOT_MARK_CMD: '' },
-    });
-    const signal = JSON.parse(await readFile(path.join(task, 'SIGNAL.json'), 'utf8'));
+    assert.equal(await taskApi.readReviewWorkspaceSignal(run.id), null);
     store.updateRun(run.id, {
       status: 'paused',
       taskFile: materialized.taskFile,
@@ -210,13 +206,12 @@ test(
           label: 'Synthetic Pi reviewer',
           slotId: null,
           runId: run.id,
-          status: 'working',
+          status: 'launching',
           runner: 'pi',
           model: 'router/synthetic-model',
           target: { session: 'review-fixture-workspace', target: 'review-fixture-workspace' },
           promptDeliveryStartedAt: started,
           attemptStartedAt: started,
-          signalAttemptId: signal.attemptId,
         },
       ],
     });
@@ -266,8 +261,8 @@ test(
       FARMSLOT_PI_OLLAMA: '0',
       FARMSLOT_PI_ROUTER_URL: `http://127.0.0.1:${address.port}/v1`,
       FARMSLOT_PI_ROUTER_KEY: 'synthetic-key',
-      FARMSLOT_PI_REQUEST_TIMEOUT_MS: '1000',
-      FARMSLOT_PI_REQUEST_TIMEOUT_MODE: 'idle',
+      FARMSLOT_PI_REQUEST_TIMEOUT_MS: '3000',
+      FARMSLOT_PI_REQUEST_TIMEOUT_MODE: 'total',
       FARMSLOT_OBS_DIR: path.join(task, '.observability'),
     };
     const command = [
@@ -300,52 +295,29 @@ test(
     tmux('send-keys', '-t', 'review-fixture-workspace', 'Enter');
     const hooksFile = path.join(task, '.observability/hooks.jsonl');
     let hooks: Array<Record<string, unknown>> = [];
-    await until(async () => {
-      try {
-        hooks = (await readFile(hooksFile, 'utf8'))
-          .trim()
-          .split('\n')
-          .map((line) => JSON.parse(line));
-      } catch (error) {
-        if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error;
-        return false;
-      }
-      return hooks.some((hook) => hook.event === 'StopFailure');
-    }, 'Pi did not emit StopFailure');
-    console.log(
-      JSON.stringify({
-        requests,
-        failure: hooks.find((hook) => hook.event === 'StopFailure')?.failure,
-      }),
-    );
-    assert.equal(requests, 2, 'one retry, no paid requests');
-    const failure = hooks.find((hook) => hook.event === 'StopFailure')!;
-    assert.match(String(failure.failure), /timed out after 1000ms and one retry/);
-    // The same production worker liveness reader must surface the structured failure
-    // while the actual interactive process remains alive, before the static engine closes it.
-    const vars = await (
-      await import('../../services/gateway/src/runners/review-workspace-context.js')
-    ).reviewWorkspaceRunnerVars(store.getRun(run.id)!);
-    assert.ok(vars);
-    const panePid = tmux('display-message', '-p', '-t', vars.session, '#{pane_pid}').trim();
-    const { probeRunnerDescendantPid } =
-      await import('../../services/gateway/src/runners/session-process.js');
-    assert.equal(
-      (await probeRunnerDescendantPid(vars, panePid, 'pi')).state,
-      'present',
-      'real Pi remains alive after its aborted turn',
-    );
-    const monitor = await import('../../services/gateway/src/run-engine/run-monitor.js');
-    await assert.rejects(
-      monitor.checkAgentLive(vars.slotId, 'pi', undefined, undefined, undefined, {
-        slot: async () => vars,
-        target: async () => ({ target: vars.session, session: vars.session }),
-      }),
-      { name: 'RunnerExecutionError', message: String(failure.failure) },
-    );
     const read = async () =>
       (await connection.call<RunGetResult>('run.get', { runId: run.id })).run;
+    await until(async () => requests === 1, 'Pi did not start its first request');
     await connection.call('run.resume', { runId: run.id });
+    await until(
+      async () => (await read()).status === 'monitoring',
+      'Review did not begin monitoring',
+    );
+    await until(async () => requests === 2, 'Pi did not retry its stalled first request');
+    const retrying = await read();
+    assert.equal(retrying.status, 'monitoring', retrying.error);
+    assert.equal(await taskApi.readReviewWorkspaceSignal(run.id), null, 'no pre-seeded mark start');
+    assert.equal(retrying.agentContexts?.[0].promptAcceptance, undefined);
+    await until(async () => {
+      hooks = (await readFile(hooksFile, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      return hooks.some((hook) => hook.event === 'StopFailure');
+    }, 'Pi did not emit StopFailure');
+    assert.equal(requests, 2, 'one retry, no paid requests');
+    const failure = hooks.find((hook) => hook.event === 'StopFailure')!;
+    assert.match(String(failure.failure), /timed out after 3000ms and one retry/);
     const { isRunEngineDriven } =
       await import('../../services/gateway/src/run-engine/orchestrator.js');
     try {
@@ -361,7 +333,7 @@ test(
     }
     const observed = await read();
     assert.equal(observed.status, 'failed', observed.error);
-    assert.match(observed.error ?? '', /timed out after 1000ms and one retry/);
+    assert.match(observed.error ?? '', /timed out after 3000ms and one retry/);
     assert.equal(observed.steps.find((step) => step.name === 'monitor')?.status, 'failed');
 
     await until(async () => !isRunEngineDriven(run.id), 'Fixture engine did not finish cleanup');
@@ -369,7 +341,9 @@ test(
     console.log(
       JSON.stringify({
         requests,
-        worker: 'RunnerExecutionError',
+        firstRequest: 'monitoring',
+        retry: retrying.status,
+        taskMark: 'absent',
         staticReview: observed.status,
         reason: observed.error,
         hook: failure.event,

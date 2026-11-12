@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { after, test } from 'node:test';
+import { after, test, type TestContext } from 'node:test';
 
 import type { RunnerPromptAcceptance } from '@farmslot/protocol';
 
@@ -27,7 +27,7 @@ writeFileSync(
 );
 after(() => rmSync(root, { recursive: true, force: true }));
 const { createRun, updateRun } = await import('../runs/store.js');
-const { observeReviewRunnerFailure } = await import('./review-startup.js');
+const { observeReviewRunnerState } = await import('./review-startup.js');
 const { getRunnerObservability } = await import('./registry.js');
 const observer = getRunnerObservability('pi');
 assert.ok(observer);
@@ -74,14 +74,22 @@ const reading: ObservabilityReading<RunnerSessionDeliveryState> = {
   failure,
 };
 
-test('a digest-hook reviewer fails on its current input, without a native acceptance API or task mark', async (t) => {
+function mockTurnState(t: TestContext, initial: ObservabilityReading<RunnerSessionDeliveryState>) {
+  assert.ok(observer);
   const original = observer.getTurnState;
-  const getTurnState = t.mock.fn(async () => reading);
+  const getTurnState = t.mock.fn(
+    async (): Promise<ObservabilityReading<RunnerSessionDeliveryState>> => initial,
+  );
   observer.getTurnState = getTurnState;
   t.after(() => {
     observer.getTurnState = original;
   });
-  assert.equal(await observeReviewRunnerFailure(run, null), failure);
+  return getTurnState;
+}
+
+test('a digest-hook reviewer fails on its current input, without a native acceptance API or task mark', async (t) => {
+  const getTurnState = mockTurnState(t, reading);
+  assert.equal((await observeReviewRunnerState(run, null))?.failure ?? null, failure);
   for (const patch of [
     { turnToken: `session:${since - 1}` },
     { turnToken: undefined },
@@ -92,7 +100,11 @@ test('a digest-hook reviewer fails on its current input, without a native accept
     { failure: undefined },
   ]) {
     getTurnState.mock.mockImplementation(async () => ({ ...reading, ...patch }));
-    assert.equal(await observeReviewRunnerFailure(run, null), null, JSON.stringify(patch));
+    assert.equal(
+      (await observeReviewRunnerState(run, null))?.failure ?? null,
+      null,
+      JSON.stringify(patch),
+    );
   }
 });
 
@@ -106,7 +118,7 @@ test('a native acceptance restricts the failure to its exact session and turn', 
     turnToken: reading.turnToken,
   };
   t.mock.method(observer, 'getSessionDeliveryState', async () => reading);
-  assert.equal(await observeReviewRunnerFailure(run, acceptance), failure);
+  assert.equal((await observeReviewRunnerState(run, acceptance))?.failure ?? null, failure);
   for (const patch of [
     { turnToken: 'session:old-turn' },
     { sessionId: 'other-session' },
@@ -114,6 +126,59 @@ test('a native acceptance restricts the failure to its exact session and turn', 
     { failureKind: 'transport' as const },
   ]) {
     t.mock.method(observer, 'getSessionDeliveryState', async () => ({ ...reading, ...patch }));
-    assert.equal(await observeReviewRunnerFailure(run, acceptance), null);
+    assert.equal((await observeReviewRunnerState(run, acceptance))?.failure ?? null, null);
   }
+});
+
+for (const timeoutMs of [300_000, 480_000]) {
+  test(`current input keeps startup pending through both ${timeoutMs}ms request deadlines and margin`, async (t) => {
+    const turnStartedAt = since + 1;
+    const active = {
+      ...reading,
+      value: 'active' as const,
+      failure: undefined,
+      observedAt: turnStartedAt,
+      startupGraceMs: timeoutMs * 2 + 30_000,
+    };
+    const getTurnState = mockTurnState(t, active);
+    const now = t.mock.method(Date, 'now', () => turnStartedAt);
+    for (const elapsed of [0, timeoutMs, timeoutMs * 2, active.startupGraceMs - 1]) {
+      now.mock.mockImplementation(() => turnStartedAt + elapsed);
+      assert.deepEqual(await observeReviewRunnerState(run, null), {
+        failure: null,
+        startupPending: true,
+      });
+    }
+    now.mock.mockImplementation(() => turnStartedAt + active.startupGraceMs);
+    assert.equal((await observeReviewRunnerState(run, null))?.startupPending, false);
+    for (const patch of [
+      { turnToken: `session:${since - 1}` },
+      { turnToken: undefined },
+      { observedAt: since - 1 },
+      { source: 'pane' as const },
+      { confidence: 'low' as const },
+    ]) {
+      getTurnState.mock.mockImplementation(async () => ({ ...active, ...patch }));
+      assert.equal(await observeReviewRunnerState(run, null), null);
+    }
+  });
+}
+
+test('idle deadlines keep current active input monitored until a structured terminal event', async (t) => {
+  t.mock.method(Date, 'now', () => since + 3_600_000);
+  const getTurnState = mockTurnState(t, {
+    ...reading,
+    value: 'active',
+    failure: undefined,
+    startupGraceMs: null,
+  });
+  assert.deepEqual(await observeReviewRunnerState(run, null), {
+    failure: null,
+    startupPending: true,
+  });
+  getTurnState.mock.mockImplementation(async () => ({ ...reading, startupGraceMs: null }));
+  assert.deepEqual(await observeReviewRunnerState(run, null), {
+    failure,
+    startupPending: false,
+  });
 });
