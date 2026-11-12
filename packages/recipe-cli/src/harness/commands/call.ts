@@ -882,13 +882,19 @@ function readCallOutput(tracePath: string): unknown {
 }
 
 // Absolute paths of the screenshots the call wrote, so an agent never guesses where they are.
+// Stills taken from a recording (metadata.recordedEvidence) are not the call's own screenshots.
 function callScreenshots(manifestPath: string): string[] {
   try {
     const manifest: unknown = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     const entries =
       isRecord(manifest) && Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
     return entries.flatMap((entry: unknown) => {
-      if (!isRecord(entry) || entry.type !== 'screenshot' || typeof entry.path !== 'string')
+      if (
+        !isRecord(entry) ||
+        entry.type !== 'screenshot' ||
+        typeof entry.path !== 'string' ||
+        (isRecord(entry.metadata) && entry.metadata.recordedEvidence !== undefined)
+      )
         return [];
       const absolute = path.resolve(path.dirname(manifestPath), entry.path);
       return fs.existsSync(absolute) ? [absolute] : [];

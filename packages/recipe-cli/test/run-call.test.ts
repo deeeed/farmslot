@@ -198,6 +198,23 @@ const pingAdapter: ActionHandler = {
   action: 'shop.ping',
   source: { kind: 'bundled', trust: 'trusted', name: 'shop' },
   async execute(node, context) {
+    if (node.count === -1) {
+      // count -1: a screenshot plus a still taken from the recording, as a recorded run reports.
+      fs.writeFileSync(path.join(context.artifactsDir, 'shot.png'), 'png');
+      fs.writeFileSync(path.join(context.artifactsDir, 'still.png'), 'png');
+      return {
+        output: { pong: -1, mode: node.mode },
+        artifacts: [
+          { path: 'shot.png', type: 'screenshot', label: 'Ping shot' },
+          {
+            path: 'still.png',
+            type: 'screenshot',
+            category: 'evidence',
+            metadata: { recordedEvidence: { videoPath: 'run.mp4', traceIndex: 0, frameMs: 0 } },
+          },
+        ],
+      };
+    }
     if (node.count !== 0) return { output: { pong: node.count ?? 1, mode: node.mode } };
     // count 0: report a screenshot taken through a fallback provider, as a platform action would.
     fs.writeFileSync(path.join(context.artifactsDir, 'shot.png'), 'png');
@@ -3695,13 +3712,14 @@ describe('call', () => {
       '--heal',
       'off',
     ];
-    const json = await capture(() => handleCall([...args, 'count=0', '--json'], callOptions));
+    const json = await capture(() => handleCall([...args, 'count=-1', '--json'], callOptions));
     assert.equal(json.value, 0, json.stderr.join('\n'));
     const envelope = lastJson(json.stdout);
     const shot = path.join(path.dirname(String(envelope.summaryPath)), 'shot.png');
     assert.deepEqual(envelope.screenshots, [shot]);
-    const human = await capture(() => handleCall([...args, 'count=0'], callOptions));
+    const human = await capture(() => handleCall([...args, 'count=-1'], callOptions));
     assert.match(human.stdout.join('\n'), /Screenshot: \/.*\/shot\.png\n/u);
+    assert.doesNotMatch(human.stdout.join('\n'), /still\.png/u);
     const none = await capture(() => handleCall([...args, '--json'], callOptions));
     assert.equal(lastJson(none.stdout).screenshots, undefined);
   });
