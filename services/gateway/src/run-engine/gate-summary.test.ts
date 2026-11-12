@@ -215,6 +215,21 @@ for (const scenario of [
   });
 }
 
+test('buildReviewSummary counts qualified reviewer sessions without a prepared package', () => {
+  const reviews: ReviewStatus[] = [
+    { ...passingReview, id: 'legacy-pass', reviewerSessionId: null },
+    { ...passingReview, id: 'qualified-pass' },
+    { ...passingReview, id: 'same-session-pass' },
+  ];
+  const run = makeRun({ engineState: { publishGate: { reviews } } });
+  const before = structuredClone(reviews);
+  const summary = buildReviewSummary(run);
+  assert.equal(summary.passingReviews, 1);
+  assert.equal(summary.reviews.length, 3, 'Historical rows remain visible without counting twice');
+  assert.equal(summary.totalUnresolved, 0);
+  assert.deepEqual(reviews, before);
+});
+
 test('buildReviewSummary counts settled findings without rewriting the original verdict', () => {
   const issue = {
     file: 'artifacts/evidence-manifest.json',

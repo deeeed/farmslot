@@ -616,8 +616,10 @@ findings digest and records the accepted findings, package head and operator.
 
 Review summary counts use the prepared head. A qualifying pass for that package
 supersedes issues completed earlier, regardless of source array order. Unknown
-or equal completion times retain their findings. Stored verdicts and publication
-prerequisites keep their existing meaning.
+or equal completion times retain their findings. Passing counts require a
+reviewer session and captured head, counting each session once, including when
+no prepared package is available. Historical rows remain visible. Stored
+verdicts and publication prerequisites keep their existing meaning.
 
 ## Public surface
 

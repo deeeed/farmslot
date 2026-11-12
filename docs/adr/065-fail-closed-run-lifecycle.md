@@ -897,7 +897,8 @@ keep their meaning (attested, same branch).
 
 ## Amendment 13: distinguish accepted closure from publication, 2026-11-12
 
-**Status:** Accepted scope, 2026-11-12. Implementation pending.
+**Status:** Accepted scope, 2026-11-12.
+**Implementation:** [#2039](https://github.com/deeeed/farmslot/pull/2039).
 **Specification:** [Result decisions](../reference/fail-closed-run-lifecycle.md#result-decisions).
 
 ### Decision
@@ -915,6 +916,9 @@ and reason and records the accepted findings, package head and operator identity
 Review summaries use the prepared head and completion times, rather than source
 array order. A later qualifying pass for the prepared package supersedes older
 issues in summary counts. Equal or unknown completion times retain their findings.
+The passing count uses qualified reviewer sessions even without a prepared
+package: a pass needs a reviewer session and captured head, and each session
+counts once. Unqualified and repeated-session rows remain historical evidence.
 Raw verdicts, review history and publication prerequisite checks remain unchanged.
 
 ### Rationale and consequences
