@@ -37,6 +37,7 @@ export function runFarmslotMark(action, env = process.env) {
   const mark = path.join(dir, 'mark');
   if (!fs.existsSync(mark)) throw new Error(`mark shim missing at ${mark}`);
   const args = [String(action)];
+  if (args[0].toLowerCase() === 'complete') args.push('--mark-last');
   const result = execFileSync(mark, args, {
     encoding: 'utf8',
     cwd: dir,
