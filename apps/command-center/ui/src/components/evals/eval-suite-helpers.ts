@@ -330,11 +330,7 @@ function previewFieldsFromRun(
     runHref: runHref(run),
     familyHref: familyHref(run),
     diffStat: evidence.diffStat,
-    artifactCount: evidence.artifactCount,
-    artifactBytes: evidence.artifactBytes,
-    visualEvidenceCount: evidence.visualEvidenceCount,
-    validationEvidenceCount: evidence.validationEvidenceCount,
-    reviewEvidenceCount: evidence.reviewEvidenceCount,
+    ...evidence.stepArtifacts,
   };
 }
 

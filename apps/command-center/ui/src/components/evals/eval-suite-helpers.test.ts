@@ -4,6 +4,11 @@ import test from 'node:test';
 import { type PRStatus, type Run, runListRow, trimRunForList } from '@farmslot/protocol';
 
 import {
+  diffStatFromRun,
+  evidenceSummaryFromRun,
+} from '../../../../../../packages/protocol/test/runs/default-branch-readers.fixtures.js';
+
+import {
   addCasesToBasket,
   buildCaseCatalog,
   canonicalSourceIdentity,
@@ -384,7 +389,9 @@ test('launch matrix and summary aggregate operational fields only', () => {
   assert.equal(summary.missingDataCount, 1);
 });
 
-test('catalog preview fields are the same from the full run, the served row and an old cached row', () => {
+// The catalog shows the default branch's numbers: its two helpers (reference copies in the
+// protocol test fixtures) run on the row that branch serves give the expected values.
+test("catalog preview fields are the default branch's from the full run, the served row and an old cached row", () => {
   const fullRun = makeRun({
     steps: [
       {
@@ -397,6 +404,7 @@ test('catalog preview fields are the same from the full run, the served row and 
             { path: 'evidence/after-login.png', purpose: 'after screenshot', sizeBytes: 500 },
             { path: 'reports/recipe-report.md', purpose: 'report', sizeBytes: 100 },
             { path: 'reviews/final-review.md', purpose: 'review', sizeBytes: 200 },
+            { path: 'artifacts/check.txt', purpose: 'validation', sizeBytes: 50 },
           ],
         },
       },
@@ -429,21 +437,24 @@ test('catalog preview fields are the same from the full run, the served row and 
     validationEvidenceCount: item.validationEvidenceCount,
     reviewEvidenceCount: item.reviewEvidenceCount,
   });
-  const fromFull = preview(catalogItemFromRun(fullRun));
-  assert.deepEqual(fromFull, {
-    diffStat: { files: 2, additions: 10, deletions: 3 },
-    artifactCount: 5,
-    artifactBytes: 2100,
-    visualEvidenceCount: 3,
-    validationEvidenceCount: 1,
-    reviewEvidenceCount: 1,
-  });
-  // The row the gateway serves: no step artifacts, no gate manifest, only its evidence summary.
-  const served = runListRow(fullRun);
-  assert.deepEqual(served.steps[0]?.outputs, {});
-  assert.deepEqual(preview(catalogItemFromRun(served)), fromFull);
-  // A row cached before slim rows: the trimmed full run, without a summary.
+  // A row cached before slim rows, which is also the row the default branch serves.
   const cached = trimRunForList(fullRun);
   assert.equal('evidenceSummary' in cached, false);
-  assert.deepEqual(preview(catalogItemFromRun(cached)), fromFull);
+  const expected = { diffStat: diffStatFromRun(cached), ...evidenceSummaryFromRun(cached) };
+  // Step-output artifacts only, the gate's video not among them; the `validation` purpose counts.
+  assert.deepEqual(expected, {
+    diffStat: { files: 2, additions: 10, deletions: 3 },
+    artifactCount: 5,
+    artifactBytes: 1250,
+    visualEvidenceCount: 2,
+    validationEvidenceCount: 2,
+    reviewEvidenceCount: 1,
+  });
+  assert.deepEqual(preview(catalogItemFromRun(fullRun)), expected);
+  assert.deepEqual(preview(catalogItemFromRun(cached)), expected);
+  // The row the gateway serves keeps two of the five step artifacts; the numbers come from
+  // its evidence summary.
+  const served = runListRow(fullRun);
+  assert.equal(Array.isArray(served.steps[0]?.outputs?.artifacts), true);
+  assert.deepEqual(preview(catalogItemFromRun(served)), expected);
 });

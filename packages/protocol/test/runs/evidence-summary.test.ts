@@ -18,10 +18,13 @@ const zeroSummary: RunEvidenceSummary = {
   artifactCount: 0,
   videoCount: 0,
   visualPairCount: 0,
-  artifactBytes: 0,
-  visualEvidenceCount: 0,
-  validationEvidenceCount: 0,
-  reviewEvidenceCount: 0,
+  stepArtifacts: {
+    artifactCount: 0,
+    artifactBytes: 0,
+    visualEvidenceCount: 0,
+    validationEvidenceCount: 0,
+    reviewEvidenceCount: 0,
+  },
 };
 
 function run(
@@ -240,10 +243,15 @@ test('summarizeRunEvidence computes diffStat and per-purpose evidence counts fro
   const summary = summarizeRunEvidence(fullRun);
 
   assert.deepEqual(summary.diffStat, { files: 3, additions: 20, deletions: 5 });
-  assert.equal(summary.artifactBytes, 800);
-  assert.equal(summary.visualEvidenceCount, 1); // screenshots/after.png is visual
-  assert.equal(summary.validationEvidenceCount, 1); // purpose 'report' matches /report/
-  assert.equal(summary.reviewEvidenceCount, 1); // purpose 'review' matches /review/
+  // The eval catalog's counts of the step-output artifacts: one visual (the screenshot), one
+  // validation (the report), one review.
+  assert.deepEqual(summary.stepArtifacts, {
+    artifactCount: 3,
+    artifactBytes: 800,
+    visualEvidenceCount: 1,
+    validationEvidenceCount: 1,
+    reviewEvidenceCount: 1,
+  });
   assert.equal(summary.artifactCount, 3);
 });
 

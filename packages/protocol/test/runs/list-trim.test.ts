@@ -562,7 +562,20 @@ test('runListRow serves exactly the kept fields of a rich run, and its evidence 
         outputs: { selectedSlot: 'slot-a', reason: 'picked best slot' },
         outputsTrimmed: true,
       },
-      { name: 'work', status: 'done', outputs: {}, outputsTrimmed: true },
+      // The work step keeps its diff stat and the artifacts an older client's list readers
+      // need (the before/after pair), not the transcript, the report or the review file.
+      {
+        name: 'work',
+        status: 'done',
+        outputs: {
+          diffStat: { files: 2, additions: 10, deletions: 3 },
+          artifacts: [
+            { path: 'evidence/before-login.png', purpose: 'before screenshot', sizeBytes: 400 },
+            { path: 'evidence/after-login.png', purpose: 'after screenshot', sizeBytes: 500 },
+          ],
+        },
+        outputsTrimmed: true,
+      },
     ],
     decisions: [
       {
@@ -648,10 +661,13 @@ test('runListRow serves exactly the kept fields of a rich run, and its evidence 
       videoCount: 1,
       visualPairCount: 1,
       diffStat: { files: 2, additions: 10, deletions: 3 },
-      artifactBytes: 2100,
-      visualEvidenceCount: 3,
-      validationEvidenceCount: 1,
-      reviewEvidenceCount: 1,
+      stepArtifacts: {
+        artifactCount: 4,
+        artifactBytes: 1200,
+        visualEvidenceCount: 2,
+        validationEvidenceCount: 1,
+        reviewEvidenceCount: 1,
+      },
     },
   });
 });
@@ -677,10 +693,11 @@ test('the served evidence summary is computed from the full run, not from the sl
   const run = richRun();
   const row = runListRow(run);
   assert.deepEqual(row.evidenceSummary, summarizeRunEvidence(run));
-  // The slim row alone has lost the step and output artifacts the summary counts.
+  // The slim row alone has lost most of the step and output artifacts the summary counts: it
+  // keeps the before/after pair of the run's five.
   const { evidenceSummary, ...withoutSummary } = row;
-  assert.ok(evidenceSummary);
-  assert.equal(summarizeRunEvidence(withoutSummary).artifactCount, 0);
+  assert.equal(evidenceSummary?.artifactCount, 5);
+  assert.equal(summarizeRunEvidence(withoutSummary).artifactCount, 2);
   assert.equal(runListEvidenceSummary(row), evidenceSummary);
 });
 

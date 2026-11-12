@@ -1,4 +1,4 @@
-import type { DiffStat, EvidenceManifestEntry, Run } from '../contracts/runs.js';
+import type { DiffStat, EvidenceManifestEntry, Run, RunStep } from '../contracts/runs.js';
 import { isRelativeArtifactPath } from '../recipe/common.js';
 import { isInternalRunArtifactPath } from '../recipes/step-io.js';
 
@@ -22,23 +22,33 @@ export interface RunArtifactManifestEntry extends EvidenceManifestEntry {
   bundleDigest?: string;
 }
 
+/** A run's step-output artifacts as the eval catalog counts them. */
+export interface RunStepArtifactSummary {
+  artifactCount: number;
+  /** Total recorded bytes. */
+  artifactBytes: number;
+  /** Screenshot, video and visual purposes, and media paths. */
+  visualEvidenceCount: number;
+  /** Recipe, validation, report, summary, trace, coverage and manifest artifacts. */
+  validationEvidenceCount: number;
+  /** Review and comment artifacts. */
+  reviewEvidenceCount: number;
+}
+
 export interface RunEvidenceSummary {
   artifactCount: number;
   videoCount: number;
   visualPairCount: number;
   /** Diff stat from the run's latest step that reported one. */
   diffStat?: DiffStat;
-  /** Total recorded bytes across the run's artifacts. */
-  artifactBytes: number;
-  /** Image and video artifacts. */
-  visualEvidenceCount: number;
-  /** Recipe, report, summary, trace, coverage and manifest artifacts. */
-  validationEvidenceCount: number;
-  /** Review and comment artifacts. */
-  reviewEvidenceCount: number;
+  /** The eval catalog's counts of the run's step-output artifacts. */
+  stepArtifacts: RunStepArtifactSummary;
   /** The diff file a run's Diff button opens (`diffArtifactCandidate` over its artifacts). */
   diffArtifactPath?: string;
 }
+
+/** A step-output artifact as a run.list row carries it. */
+export type RunListStepArtifact = Pick<RunArtifactManifestEntry, 'path' | 'purpose' | 'sizeBytes'>;
 
 /**
  * Every artifact a run reports: gate and review payloads, the captured run
@@ -54,8 +64,8 @@ export function extractRunArtifactManifest(
   for (const decision of run.decisions ?? []) {
     const payload = decision.payload;
     if (payload?.kind === 'ready') {
-      // slim RunListReadyGatePayload omits artifactManifest and prPackage
-      if ('artifactManifest' in payload) entries.push(...(payload.artifactManifest ?? []));
+      entries.push(...(payload.artifactManifest ?? []));
+      // A run.list row leaves the package out.
       if ('prPackage' in payload) {
         entries.push(...(payload.prPackage?.evidenceManifest ?? []));
         for (const check of payload.prPackage?.deterministicChecks ?? []) {
@@ -70,11 +80,8 @@ export function extractRunArtifactManifest(
         }
       }
     } else if (payload?.kind === 'review') {
-      // slim RunListReviewGatePayload omits artifactManifest and reviewInputArtifactPaths
-      if ('artifactManifest' in payload) entries.push(...(payload.artifactManifest ?? []));
-      if ('reviewInputArtifactPaths' in payload) {
-        entries.push(...runArtifactPathsToManifest(payload.reviewInputArtifactPaths ?? []));
-      }
+      entries.push(...(payload.artifactManifest ?? []));
+      entries.push(...runArtifactPathsToManifest(payload.reviewInputArtifactPaths ?? []));
     } else if (payload?.kind === 'no-change') {
       entries.push(...(payload.artifactManifest ?? []));
     }
@@ -121,6 +128,78 @@ function extractDiffStatFromSteps(
 }
 
 /**
+ * The eval catalog's counts of a run's artifacts: each step's `outputs.artifacts` entries, once
+ * per step and path, classified by purpose and path. The catalog counted this way before
+ * run.list rows left step artifacts out; the gateway now counts for it from the full run.
+ */
+export function summarizeStepArtifacts(
+  steps: readonly Pick<RunStep, 'name' | 'outputs'>[],
+): RunStepArtifactSummary {
+  const seen = new Set<string>();
+  const summary: RunStepArtifactSummary = {
+    artifactCount: 0,
+    artifactBytes: 0,
+    visualEvidenceCount: 0,
+    validationEvidenceCount: 0,
+    reviewEvidenceCount: 0,
+  };
+  for (const step of steps) {
+    const artifacts = step.outputs?.artifacts;
+    if (!Array.isArray(artifacts)) continue;
+    for (const artifact of artifacts) {
+      if (!artifact || typeof artifact !== 'object' || !('path' in artifact)) continue;
+      const path: unknown = artifact.path;
+      if (typeof path !== 'string' || !path.trim()) continue;
+      const key = `${step.name}:${path}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      summary.artifactCount += 1;
+      const sizeBytes: unknown = 'sizeBytes' in artifact ? artifact.sizeBytes : undefined;
+      if (typeof sizeBytes === 'number') summary.artifactBytes += sizeBytes;
+      const recorded: unknown = 'purpose' in artifact ? artifact.purpose : undefined;
+      const purpose = typeof recorded === 'string' ? recorded.toLowerCase() : '';
+      const pathLower = path.toLowerCase();
+      if (/screenshot|video|visual/.test(purpose) || isRunArtifactMediaPath(pathLower))
+        summary.visualEvidenceCount += 1;
+      if (
+        /recipe|validation|report|summary|trace|coverage|manifest/.test(purpose) ||
+        /recipe|validation|report|summary|trace|coverage|manifest/.test(pathLower)
+      )
+        summary.validationEvidenceCount += 1;
+      if (/review|comment/.test(purpose) || /review|comment/.test(pathLower))
+        summary.reviewEvidenceCount += 1;
+    }
+  }
+  return summary;
+}
+
+/**
+ * The step-output artifacts a run.list row keeps for a client that computes list values from
+ * the row itself (a build from before the served summary): videos, before/after visuals and
+ * diff files, each as its path, purpose and size. From them such a client shows the same video
+ * and compare chips and opens the same Diff file as from the row it used to get; its artifact
+ * counts read lower until it updates.
+ */
+export function listStepArtifacts(
+  outputs: Record<string, unknown> | undefined,
+): RunListStepArtifact[] {
+  const entries: RunArtifactManifestEntry[] = [];
+  collectRunArtifactEntries(outputs, entries);
+  return dedupeRunArtifacts(entries)
+    .filter(
+      (entry) =>
+        isRunEvidenceVideoArtifact(entry) ||
+        (isRunEvidenceVisualArtifact(entry) && runEvidenceVisualArtifactKind(entry) !== null) ||
+        diffArtifactScore(entry) > 0,
+    )
+    .map(({ path, purpose, sizeBytes }) => ({
+      path,
+      purpose,
+      ...(sizeBytes !== undefined ? { sizeBytes } : {}),
+    }));
+}
+
+/**
  * The evidence summary computed from what `run` carries. The gateway computes it from the full
  * run and serves it on each run.list row; clients read a row's summary with
  * `runListEvidenceSummary`.
@@ -132,32 +211,12 @@ export function summarizeRunEvidence(run: RunEvidenceSource): RunEvidenceSummary
     ...(run.liveRecipeContext?.artifactManifest ?? []),
     ...runArtifacts,
   ]);
-  let artifactBytes = 0;
-  let visualEvidenceCount = 0;
-  let validationEvidenceCount = 0;
-  let reviewEvidenceCount = 0;
-  for (const artifact of artifacts) {
-    if (typeof artifact.sizeBytes === 'number') artifactBytes += artifact.sizeBytes;
-    if (isRunEvidenceVisualArtifact(artifact)) visualEvidenceCount += 1;
-    const p = artifact.purpose.toLowerCase();
-    const path = artifact.path.toLowerCase();
-    if (
-      /recipe|report|summary|trace|coverage|manifest/.test(p) ||
-      /recipe|validation|report|summary|trace|coverage|manifest/.test(path)
-    ) {
-      validationEvidenceCount += 1;
-    }
-    if (/review|comment/.test(p) || /review|comment/.test(path)) reviewEvidenceCount += 1;
-  }
   return {
     artifactCount: artifacts.length,
     videoCount: artifacts.filter(isRunEvidenceVideoArtifact).length,
     visualPairCount: countRunEvidenceVisualPairs(artifacts),
     diffStat: extractDiffStatFromSteps(run.steps),
-    artifactBytes,
-    visualEvidenceCount,
-    validationEvidenceCount,
-    reviewEvidenceCount,
+    stepArtifacts: summarizeStepArtifacts(run.steps),
     diffArtifactPath: diffArtifactCandidate(runArtifacts)?.path,
   };
 }

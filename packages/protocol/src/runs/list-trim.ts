@@ -10,7 +10,7 @@
 // `payloadTrimmed`; run.get, run.forSlot and run events stay complete.
 //
 // `runListRow` (step 2 slim rows, 2026-11-11) reduces a row further — from
-// 110 KB to 19 KB on average over 81 stored runs — by dropping four heavy optional
+// 116 KB to 31 KB on average over 74 stored runs — by dropping four heavy optional
 // fields (resourcePosture, sessionUsage, visualJudgmentReceipts, templateProvenance),
 // keeping only the step outputs list surfaces read, and leaving the heavy keys out of
 // decisions, the publish gate, agent contexts, metrics, the ticket, the review result
@@ -19,7 +19,7 @@ import type { Run, RunDecision, RunDecisionPayload } from '../contracts/runs.js'
 import { utf8ByteLength } from '../utf8-byte-length.js';
 
 import { CI_SNAPSHOT_TRIM_KEY } from './ci-decision-context.js';
-import { summarizeRunEvidence } from './evidence-summary.js';
+import { listStepArtifacts, summarizeRunEvidence } from './evidence-summary.js';
 import type { RunListDecision, RunListDecisionPayload, RunListRow } from './list-row.js';
 
 /** JSON size in UTF-8 bytes above which a single decision payload value is left out of run.list. */
@@ -146,6 +146,15 @@ function fixProgressOutput(value: unknown): unknown {
   };
 }
 
+/** A step's diff stat: its three counts. */
+function diffStatOutput(value: unknown): unknown {
+  if (!isKeyed(value)) return undefined;
+  const { files, additions, deletions } = value;
+  return typeof files === 'number' && typeof additions === 'number' && typeof deletions === 'number'
+    ? { files, additions, deletions }
+    : undefined;
+}
+
 /** A recorded value whose presence lists test, not its body: a scalar, or `{}` for an object. */
 function presenceOutput(value: unknown): unknown {
   const scalar = scalarOutput(value);
@@ -159,7 +168,8 @@ function presenceOutput(value: unknown): unknown {
  * `maxRetriesExhausted`, `packageHash`, `reviewSatisfied`, `resolvedAction`,
  * `publicationStatus`); the CI watch line and the CI-fix checklist (ci-watch keys); the
  * active and split-view filters, which test only whether a completion prerequisite was
- * refused (`gatePrerequisiteRefusal`).
+ * refused (`gatePrerequisiteRefusal`); the diff stat an older client's eval catalog reads
+ * (`diffStat`).
  *
  * Each projection is called by name, so the authorization guard can follow run.list's
  * call graph through this function.
@@ -199,6 +209,8 @@ function listStepOutput(key: string, value: unknown): unknown {
       return stringEntriesOutput(value);
     case 'fixProgress':
       return fixProgressOutput(value);
+    case 'diffStat':
+      return diffStatOutput(value);
     default:
       return undefined;
   }
@@ -225,6 +237,9 @@ export function listStepOutputs(
     const value = listStepOutput(key, outputs[key]);
     if (value !== undefined) slim[key] = value;
   }
+  // What an older client's own evidence scan needs from this step (see listStepArtifacts).
+  const artifacts = listStepArtifacts(outputs);
+  if (artifacts.length > 0) slim.artifacts = artifacts;
   return slim;
 }
 

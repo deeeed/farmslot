@@ -440,8 +440,10 @@ function RecentFamilyShortcut({
     artifactUrlForEntry(gatewayUrl, run.id, artifact),
   );
   const primaryVisualPair = visualPairSummary.pairs[0] ?? null;
-  // The gateway's summary names the diff file; a row cached before slim rows computes it.
-  const diffArtifactPath = runListEvidenceSummary(run).diffArtifactPath ?? null;
+  // The gateway's summary names the diff file and counts the run's artifacts; a row cached
+  // before slim rows computes both.
+  const evidence = runListEvidenceSummary(run);
+  const diffArtifactPath = evidence.diffArtifactPath ?? null;
   const canOpenDiff = Boolean(diffArtifactPath || run.slotId);
   const readyDecision = selectReadyWorkspaceDecision(run);
   const reviewGateDecision = selectReviewGateWorkspaceDecision(run);
@@ -541,7 +543,7 @@ function RecentFamilyShortcut({
           </>
         ) : null}
         <RunQuickAction
-          label={artifactManifest.length ? `Evidence ${artifactManifest.length}` : 'Evidence files'}
+          label={evidence.artifactCount ? `Evidence ${evidence.artifactCount}` : 'Evidence files'}
           onPress={() =>
             router.push({
               pathname: '/workspace/run/[runId]/files',
