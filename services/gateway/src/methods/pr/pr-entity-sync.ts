@@ -7,6 +7,7 @@ import type { ResourceKey } from '@farmslot/protocol/client-cache';
 import type { ChangedEntity } from '@farmslot/protocol/transport/events';
 
 import { GatewayMethodError } from '../../core/method-error.js';
+import { resourceRevisions } from '../../resources/revisions.js';
 
 import {
   getCollectorSnapshotByQueryId,
@@ -60,9 +61,9 @@ export async function prListVersions(project?: string): Promise<PRVersionsResult
   return {
     versions,
     ...(snapshot.fetchedAt ? { fetchedAt: snapshot.fetchedAt } : {}),
-    ...(snapshot.truncated ? { truncated: snapshot.truncated } : {}),
     ...(collectorState ? { observation: collectorState.observation } : {}),
     ...(collectorState?.refreshing ? { refreshing: collectorState.refreshing } : {}),
+    membershipRevision: resourceRevisions.membershipRevision(collectionKey),
   };
 }
 

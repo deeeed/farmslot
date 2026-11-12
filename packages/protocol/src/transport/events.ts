@@ -158,67 +158,31 @@ export const Events = {
 // Every event subscriber gets a typed payload via GatewayClient.subscribe<T>()
 
 /**
- * Typed, family-discriminated entity carried on a per-entity resource.changed entry.
- * Clients narrow by `family` and validate required fields with a type guard before use.
- * Only present on per-entity keys (slot, upstream PR, node) under 16 KB; absent on
- * collection keys.
+ * The entity behind a per-entity key on resource.changed (ADR-071 Amendment 3). `version` is the
+ * entity's content version after this change. `entity` is present when the version changed since
+ * the key's previous notification and the body fits CHANGED_ENTITY_MAX_BYTES; without it a
+ * client holding `version` has nothing to do and any other client reads the id. Bodies are
+ * untrusted: clients admit them only through the client-cache entity guards.
  */
 export type ChangedEntity =
-  | { family: 'slot'; entity: SlotEntity; version: string }
-  | { family: 'upstream'; entity: PRStatus; version: string }
-  /** Machine health entity pushed on every sample; full MachineHealth including system. */
-  | { family: 'node'; entity: MachineHealth; version: string };
-
-/** Runtime guard: narrow a pushed entity to a slot. */
-export function isSlotEntity(
-  e: ChangedEntity,
-): e is { family: 'slot'; entity: SlotEntity; version: string } {
-  return (
-    e.family === 'slot' &&
-    typeof e.entity === 'object' &&
-    e.entity !== null &&
-    typeof (e.entity as Record<string, unknown>).slot === 'string'
-  );
-}
-
-/** Runtime guard: narrow a pushed entity to a PR. */
-export function isPREntity(
-  e: ChangedEntity,
-): e is { family: 'upstream'; entity: PRStatus; version: string } {
-  return e.family === 'upstream' && typeof e.entity === 'object' && e.entity !== null;
-}
-
-/** Runtime guard: narrow a pushed entity to a machine health sample. */
-export function isNodeHealthEntity(
-  e: ChangedEntity,
-): e is { family: 'node'; entity: MachineHealth; version: string } {
-  if (e.family !== 'node') return false;
-  const entity: unknown = e.entity;
-  return (
-    typeof entity === 'object' &&
-    entity !== null &&
-    typeof (entity as { machine?: unknown }).machine === 'string'
-  );
-}
+  | { family: 'slot'; version: string; entity?: SlotEntity }
+  | { family: 'upstream'; version: string; entity?: PRStatus }
+  | { family: 'node'; version: string; entity?: MachineHealth };
 
 export interface ResourceChangeEntry {
   key: ResourceKey;
   revision: ResourceRevision;
   kind: 'updated' | 'deleted';
-  /**
-   * Typed entity pushed inline for per-entity keys under 16 KB.
-   * Absent for collection keys and for deleted entities.
-   */
+  /** Per-entity keys of entity-sync collections only; absent on deletions. */
   changedEntity?: ChangedEntity;
   /**
-   * Advances only when the collection id-set or non-entity fields change.
-   * Present only on collection-key changes. Entity-sync clients skip a versions
-   * read when this value matches what they last stored (data-only change).
+   * Entity-sync collection keys only: advances when the collection's id set or its non-entity
+   * fields change. A client whose listing reflects this marker needs no versions read.
    */
   membershipRevision?: number;
 }
 
-/** Change notification; clients reread through existing methods or apply inline entity. */
+/** Change notification; clients reread through existing methods or apply a pushed entity. */
 export interface ResourceChangedPayload {
   version: 1;
   /** Opaque gateway process identity; revisions are never compared across epochs. */

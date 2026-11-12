@@ -15,30 +15,23 @@ export interface PRListParams {
   project?: string;
   /** Bypass the gateway's warm list and refetch every PR from GitHub before answering. */
   force?: boolean;
-  /**
-   * Entity-sync: return id/version pairs instead of full PR entities.
-   * Non-entity fields (fetchedAt, truncated) are carried in the result.
-   */
+  /** Entity sync: the PR id/version listing and the list's freshness fields, no PR bodies. */
   versions?: true;
-  /**
-   * Entity-sync: return only the named PR entities (by prKey `${repo}/${pr}`).
-   * Returns PREntityPage, not PRListResult.
-   */
+  /** Entity sync: only these PRs (ids are `owner/repo/number`), as `PREntityPage`. */
   ids?: string[];
 }
 
-/** Versions reply for pr.list { versions: true }. Non-entity fields plus the id/version list. */
+/** `pr.list { versions: true }`: the same freshness fields as the full read. */
 export interface PRVersionsResult {
   versions: Array<{ id: string; version: string }>;
-  fetchedAt?: string;
-  truncated?: boolean;
-  /** Upstream observation state; absent until a successful gateway collection. */
   observation?: UpstreamObservation;
-  /** True when the gateway answered from its warm list while a GitHub refresh runs. */
+  fetchedAt?: string;
   refreshing?: boolean;
+  /** The list key's membership marker this listing reflects. */
+  membershipRevision: number;
 }
 
-/** ids page for pr.list { ids: string[] }. Only the requested PR entities plus their versions. */
+/** `pr.list { ids }`: the requested PRs that exist, in request order, with their versions. */
 export interface PREntityPage {
   entities: PRStatus[];
   versions: Array<{ id: string; version: string }>;

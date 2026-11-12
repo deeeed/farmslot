@@ -115,6 +115,11 @@ export class GatewayResourceRevisions {
     this.membershipRevisions.set(id, (this.membershipRevisions.get(id) ?? 0) + 1);
   }
 
+  /** The collection key's current membership marker; 0 before its first membership change. */
+  membershipRevision(key: ResourceKey): number {
+    return this.membershipRevisions.get(resourceKeyId(key)) ?? 0;
+  }
+
   /** A time-dependent projection has no write at its boundary; its owner schedules that change. */
   scheduleInvalidation(ownerId: string, key: ResourceKey, at: number | undefined): void {
     this.scheduleDeadline(`${resourceKeyId(key)}\0${ownerId}`, [key], at);

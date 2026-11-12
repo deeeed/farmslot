@@ -1,1 +1,1 @@
-- Update `resource-store-notice` equality guard to re-render on `catch-up` progress increments (done/total changes)
+- The store notice counts a fleet or PR list catch-up ("Syncing 20 of 107") and updates as each page lands.

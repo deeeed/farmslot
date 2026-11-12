@@ -21,33 +21,26 @@ export const FleetMethods = {
 
 export interface FleetStatusParams {
   forceRefresh?: boolean;
-  /**
-   * Entity-sync: return id/version pairs instead of full slots.
-   * Non-entity fields (summary, machines, checkedAt) are carried in the result.
-   */
+  /** Entity sync: the slot id/version listing and the fleet's non-entity fields, no slot bodies. */
   versions?: true;
-  /**
-   * Entity-sync: return only the named slot entities (by slot id).
-   * Returns FleetEntityPage, not FleetStatusResult.
-   */
+  /** Entity sync: only these slots, as `FleetEntityPage`. */
   ids?: string[];
-  /** Visible-entity hint for first-page sizing. */
-  visibleCount?: number;
 }
 
-/** Versions reply for fleet.status { versions: true }. Non-entity fields plus the id/version list. */
+/** `fleet.status { versions: true }`. */
 export interface FleetVersionsResult {
   versions: Array<{ id: string; version: string }>;
   summary: FleetSummary;
   machines?: MachineHealth[];
   checkedAt: string;
   poolErrors?: FleetPoolReadError[];
+  /** The farm slots key's membership marker this listing reflects. */
+  membershipRevision: number;
 }
 
-/** ids page for fleet.status { ids: string[] }. Only the requested entities plus their versions. */
+/** `fleet.status { ids }`: the requested slots that exist, in request order, with their versions. */
 export interface FleetEntityPage {
   entities: SlotEntity[];
-  /** id/version pairs for each served entity (may differ from requested when entity changed during page). */
   versions: Array<{ id: string; version: string }>;
 }
 export type FleetRefreshSlotStatus =

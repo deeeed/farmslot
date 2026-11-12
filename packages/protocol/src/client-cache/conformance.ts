@@ -39,12 +39,7 @@ const capabilities: GatewayAuthConnectResult['capabilities'] = {
 };
 const stamp = (revision = 0): ResourceReadStamp => ({
   epoch: 'conformance-epoch',
-  dependencies: [
-    { key: { family: 'sources', scope: 'farm' }, revision },
-    // fleet.status declares a 'slots' dependency; include it so full-RPC fleet reads
-    // reach 'ready' (covered) in tests that use the conformance transport.
-    { key: { family: 'slots', scope: 'farm' }, revision },
-  ],
+  dependencies: [{ key: { family: 'sources', scope: 'farm' }, revision }],
 });
 
 function verify(condition: unknown, message: string): void {

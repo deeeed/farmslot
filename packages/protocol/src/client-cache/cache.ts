@@ -1,26 +1,9 @@
-import type {
-  FleetPoolReadError,
-  FleetSummary,
-  MachineHealth,
-  PRStatus,
-  SlotEntity,
-} from '../contracts/index.js';
-import { reattachHostLoad } from '../fleet/host-load.js';
-import { computeSummary } from '../fleet/summary.js';
 import { afterForegroundPaint } from '../performance/paint.js';
-import type { FleetEntityPage, FleetStatusResult, FleetVersionsResult } from '../rpc/fleet.js';
 import type { NativeSessionReadResult, NativeSessionTargetParams } from '../rpc/native-session.js';
-import type { PREntityPage, PRListParams, PRListResult, PRVersionsResult } from '../rpc/pr.js';
 import { Methods } from '../rpc/registry.js';
-import type { UpstreamObservation } from '../rpc/resource-observers.js';
 import type { RunGetResult, RunListParams, RunListResult } from '../rpc/run.js';
 import { runListVersion } from '../runs/list-version.js';
-import {
-  isNodeHealthEntity,
-  isPREntity,
-  isSlotEntity,
-  type ResourceChangedPayload,
-} from '../transport/events.js';
+import type { ResourceChangedPayload } from '../transport/events.js';
 
 import { ResourceCollectorAdmission } from './collector-admission.js';
 import {
@@ -29,7 +12,14 @@ import {
   verifyResourceContent,
   verifyResourceContentInSlices,
 } from './content.js';
-import { EntityCollection } from './entity-collection.js';
+import {
+  createFleetEntityView,
+  createPREntityView,
+  type EntityView,
+  isEntityStoreId,
+  prEntityStoreId,
+  prViewProject,
+} from './entity-views.js';
 import {
   canonicalResourceJson,
   isKnownResourceFamily,
@@ -53,12 +43,7 @@ import {
   readNativeHistory,
   storedNativeHistoryMatches,
 } from './native-history.js';
-import {
-  resourceCollectorQuery,
-  type ResourceQuery,
-  resourceQuery,
-  type ResourceReadMethod,
-} from './registry.js';
+import { type ResourceQuery, resourceQuery, type ResourceReadMethod } from './registry.js';
 import { createRunDetailSync, type RunDetailTarget, runDetailTarget } from './run-details.js';
 import {
   isRunListCollectionRead,
@@ -77,7 +62,6 @@ import {
   sameResourceAuthority,
   type StoredResourceContent,
   type StoredResourceQuery,
-  type StoredResourceRow,
 } from './store.js';
 import { type ResourceSyncState, resourceSyncState } from './sync-state.js';
 import type {
@@ -329,71 +313,32 @@ export function createGatewayResourceCache(
   });
   let runListLoad: { store: ResourceStore; promise: Promise<void> } | undefined;
 
-  // ─── Fleet entity collection (ADR-071 Amendment 3) ───
-  // Active only when gateway advertises entitySync in resourceChanges capabilities.
-  // Stable store key for the fleet entity collection rows.
-  // Not derived from resourceQuery (fleet.status rejects non-empty params); matches the
-  // id format `${method}:${canonicalResourceJson(params)}` used by all stored queries.
-  const FLEET_COLLECTION_ID = 'fleet.status:{"versions":true}';
-  interface FleetNonEntityFields {
-    summary: FleetSummary;
-    machines?: MachineHealth[];
-    checkedAt: string;
-    poolErrors?: FleetPoolReadError[];
+  // Entity sync (ADR-071 Amendment 3): fleet.status and each pr.list scope are answered from
+  // entity collections when the gateway advertises entitySync. Rows outlive a connection; their
+  // listing is verified by a versions read on every connection before the view is current.
+  const fleetView = createFleetEntityView();
+  const prViews = new Map<string, EntityView>();
+  const entitySyncOn = () => connection.capabilities?.resourceChanges?.entitySync === true;
+  const entityViews = () => [fleetView, ...prViews.values()];
+  /** The view a query reads through, created on first use; undefined without entity sync. */
+  function entityViewFor(query: ResourceQuery): EntityView | undefined {
+    if (!entitySyncOn()) return undefined;
+    if (fleetView.serves(query)) return fleetView;
+    const scope = prViewProject(query);
+    const collectionKey = query.dependencies.find((key) => key.family === 'upstream');
+    if (!scope || !collectionKey) return undefined;
+    const storeId = prEntityStoreId(scope.project);
+    let view = prViews.get(storeId);
+    if (!view) {
+      view = createPREntityView(scope.project, collectionKey);
+      prViews.set(storeId, view);
+    }
+    return view;
   }
-  /** Runtime guard for stored FleetNonEntityFields (untrusted offline store rows). */
-  function isFleetNonEntityFields(x: unknown): x is FleetNonEntityFields {
-    if (x == null || typeof x !== 'object') return false;
-    const r = x as Record<string, unknown>;
-    return (
-      typeof r.checkedAt === 'string' &&
-      r.summary != null &&
-      typeof r.summary === 'object' &&
-      typeof (r.summary as Record<string, unknown>).total === 'number'
-    );
+  function forgetEntityViews(): void {
+    for (const view of entityViews()) view.clear();
+    prViews.clear();
   }
-  /** Runtime guard for stored SlotEntity body (untrusted offline store rows). */
-  function isStoredSlotEntity(x: unknown): x is SlotEntity {
-    return (
-      x != null && typeof x === 'object' && typeof (x as Record<string, unknown>).slot === 'string'
-    );
-  }
-  let fleetNonEntityFields: FleetNonEntityFields | undefined;
-  let fleetResourceState: ResourceReadStamp | undefined;
-  /** True when a membership change arrived but no versions read has been done since. */
-  let fleetMembershipStale = false;
-  /** Entry currently driving a fleet catch-up refresh; cleared on completion. */
-  let fleetProgressEntry: QueryEntry | undefined;
-  const fleetCollection = new EntityCollection<SlotEntity>({
-    idOf: (entity) => entity.slot,
-    sort: (a, b) => a.slot.localeCompare(b.slot),
-    fetchVersions: async (signal) => {
-      const result = await request<FleetVersionsResult>(
-        Methods.FLEET_STATUS,
-        { versions: true },
-        signal,
-      );
-      fleetNonEntityFields = {
-        summary: result.data.summary,
-        checkedAt: result.data.checkedAt,
-        ...(result.data.machines ? { machines: result.data.machines } : {}),
-        ...(result.data.poolErrors ? { poolErrors: result.data.poolErrors } : {}),
-      };
-      if (result.resourceState) fleetResourceState = result.resourceState;
-      fleetMembershipStale = false;
-      return { versions: result.data.versions };
-    },
-    fetchPage: async (ids, signal) => {
-      const result = await request<FleetEntityPage>(Methods.FLEET_STATUS, { ids }, signal);
-      return result.data;
-    },
-    onProgress: (done, total) => {
-      if (!fleetProgressEntry) return;
-      fleetProgressEntry.state = { ...fleetProgressEntry.state, catchUpProgress: { done, total } };
-      notify(fleetProgressEntry);
-    },
-  });
-
   const fallbackDetailTargets = new Map<string, RunDetailTarget>();
   const detailSync = createRunDetailSync({
     connection: () => connection,
@@ -443,208 +388,6 @@ export function createGatewayResourceCache(
     detailSync.reset();
   }
 
-  function forgetFleetCollection(): void {
-    fleetCollection.clear();
-    fleetNonEntityFields = undefined;
-    fleetResourceState = undefined;
-    fleetMembershipStale = false;
-  }
-
-  // ─── PR entity collection (ADR-071 Amendment 3) ───
-  // Keyed by resourceCollectorQuery(PR_LIST, params).id; one collection per project scope.
-  interface PRListNonEntityFields {
-    observation?: UpstreamObservation;
-    fetchedAt?: string;
-    refreshing?: boolean;
-  }
-  interface PRCollectionState {
-    collection: EntityCollection<PRStatus>;
-    nonEntityFields?: PRListNonEntityFields;
-    membershipStale: boolean;
-    project?: string;
-    /** Entry currently driving a catch-up refresh; cleared on completion. */
-    progressEntry?: QueryEntry;
-  }
-  const prCollections = new Map<string, PRCollectionState>();
-
-  function getOrCreatePRCollection(
-    queryId: string,
-    project: string | undefined,
-  ): PRCollectionState {
-    const existing = prCollections.get(queryId);
-    if (existing) return existing;
-    // Create colState first so fetchVersions closure can reference it.
-    const colState: PRCollectionState = { collection: null!, membershipStale: false, project };
-    const col = new EntityCollection<PRStatus>({
-      idOf: (pr) => `${pr.repo}/${pr.pr}`,
-      sort: (a, b) => `${a.repo}/${a.pr}`.localeCompare(`${b.repo}/${b.pr}`),
-      fetchVersions: async (signal) => {
-        const result = await request<PRVersionsResult>(
-          Methods.PR_LIST,
-          { versions: true as const, ...(project !== undefined ? { project } : {}) },
-          signal,
-        );
-        colState.nonEntityFields = {
-          observation: result.data.observation,
-          fetchedAt: result.data.fetchedAt,
-          refreshing: result.data.refreshing,
-        };
-        colState.membershipStale = false;
-        return { versions: result.data.versions };
-      },
-      fetchPage: async (ids, signal) => {
-        const result = await request<PREntityPage>(
-          Methods.PR_LIST,
-          { ids, ...(project !== undefined ? { project } : {}) },
-          signal,
-        );
-        return result.data;
-      },
-      onProgress: (done, total) => {
-        const e = colState.progressEntry;
-        if (!e) return;
-        e.state = { ...e.state, catchUpProgress: { done, total } };
-        notify(e);
-      },
-    });
-    colState.collection = col;
-    prCollections.set(queryId, colState);
-    return colState;
-  }
-
-  function forgetPRCollections(): void {
-    for (const state of prCollections.values()) {
-      state.collection.clear();
-      state.nonEntityFields = undefined;
-      state.membershipStale = false;
-    }
-    prCollections.clear();
-  }
-
-  /**
-   * Narrow query.params to PRListParams by validating the shape.
-   * Returns undefined when params is absent or structurally wrong.
-   */
-  function prListParamsOf(query: ResourceQuery): PRListParams | undefined {
-    if (query.method !== Methods.PR_LIST) return undefined;
-    const p = query.params;
-    if (p == null) return undefined;
-    if (typeof p !== 'object') return undefined;
-    const r = p as Record<string, unknown>;
-    return {
-      ...(typeof r.project === 'string' ? { project: r.project } : {}),
-      ...(r.versions === true ? { versions: true as const } : {}),
-      ...(Array.isArray(r.ids) ? { ids: r.ids as string[] } : {}),
-      ...(r.force === true ? { force: true as const } : {}),
-    };
-  }
-
-  /** Extract the queryId from a plain pr.list view query. */
-  function prQueryId(query: ResourceQuery): string {
-    const params = prListParamsOf(query);
-    const project = params?.project;
-    return resourceCollectorQuery(Methods.PR_LIST, project !== undefined ? { project } : {}).id;
-  }
-
-  /** True for plain pr.list reads (not versions read, not page reads). */
-  function isPRListView(query: ResourceQuery): boolean {
-    const params = prListParamsOf(query);
-    return (
-      query.method === Methods.PR_LIST && params?.versions !== true && params?.ids === undefined
-    );
-  }
-
-  /** Entity-sync PR list view (ADR-071 Amendment 3): assemble from held PR entities. */
-  async function readPRListView(entry: QueryEntry, signal: AbortSignal): Promise<ReadReply> {
-    const params = prListParamsOf(entry.query);
-    const project = params?.project;
-    const queryId = resourceCollectorQuery(
-      Methods.PR_LIST,
-      project !== undefined ? { project } : {},
-    ).id;
-    const colState = getOrCreatePRCollection(queryId, project);
-    colState.progressEntry = entry;
-    try {
-      if (!colState.collection.held || !colState.collection.complete || colState.membershipStale) {
-        await colState.collection.refresh();
-      }
-    } catch (error) {
-      if (evictionCodes.has(queryError(error).code)) {
-        colState.collection.clear();
-        colState.nonEntityFields = undefined;
-      }
-      throw error;
-    } finally {
-      colState.progressEntry = undefined;
-      if (entry.state.catchUpProgress !== undefined) {
-        entry.state = { ...entry.state, catchUpProgress: undefined };
-      }
-    }
-    const prs = colState.collection.assemble();
-    const non = colState.nonEntityFields;
-    if (prs && non !== undefined) {
-      const epoch = connection.capabilities?.resourceChanges?.epoch;
-      const coveredState = epoch
-        ? {
-            epoch,
-            dependencies: entry.query.dependencies.map((key) => ({
-              key,
-              revision: revisions.get(resourceKeyId(key)) ?? 0,
-            })),
-          }
-        : undefined;
-      return {
-        data: {
-          prs,
-          ...(non.observation !== undefined ? { observation: non.observation } : {}),
-          ...(non.fetchedAt !== undefined ? { fetchedAt: non.fetchedAt } : {}),
-          ...(non.refreshing ? { refreshing: non.refreshing } : {}),
-        } satisfies PRListResult,
-        resourceState: coveredState,
-        observedAt: non.fetchedAt ? Date.parse(non.fetchedAt) || Date.now() : Date.now(),
-      };
-    }
-    // Fallback: entity data not yet available; fall back to full read.
-    return request<PRListResult>(Methods.PR_LIST, entry.query.params, signal);
-  }
-
-  /** Persist fleet entity rows to the store after a successful refresh (fire-and-forget). */
-  function persistFleetCollection(): void {
-    const writingStore = store;
-    const incarnation = storeVersion;
-    if (!writingStore.mergeRows || !canPersist(connection)) return;
-    const entities = fleetCollection.assemble();
-    const versions = fleetCollection.listedVersions();
-    const non = fleetNonEntityFields;
-    if (!entities || !versions || !non) return;
-    const current = () =>
-      !disposed && writingStore === store && incarnation === storeVersion && !writingStore.deleted;
-    const enc = new TextEncoder();
-    const upserts: StoredResourceRow[] = entities.map((entity) => {
-      const json = JSON.stringify(entity);
-      return {
-        id: entity.slot,
-        version: versions.get(entity.slot) ?? '',
-        projection: { slot: entity.slot },
-        body: entity,
-        bytes: enc.encode(json).byteLength,
-      };
-    });
-    const entryJson = JSON.stringify(non);
-    void updateStore(writingStore, current, () =>
-      writingStore.mergeRows!(FLEET_COLLECTION_ID, {
-        entry: {
-          id: FLEET_COLLECTION_ID,
-          data: non,
-          observedAt: Date.parse(non.checkedAt) || Date.now(),
-          bytes: enc.encode(entryJson).byteLength,
-        },
-        upserts,
-        deletes: [],
-      }),
-    );
-  }
-
   function updateCollectors(): void {
     collectors.update(
       { ...connection, foreground: usable && connection.foreground !== false },
@@ -663,8 +406,7 @@ export function createGatewayResourceCache(
     hydrationOwnerVersion++;
     version++;
     forgetRunList();
-    forgetFleetCollection();
-    forgetPRCollections();
+    forgetEntityViews();
     for (const entry of entries.values()) invalidate(entry, true);
     transport.resynchronize();
   }
@@ -775,8 +517,8 @@ export function createGatewayResourceCache(
     // An I/O failure may have lost a collection merge. Keep visible values, but
     // require a full gateway versions read and never hydrate its old disk rows.
     forgetRunList();
-    forgetFleetCollection();
-    forgetPRCollections();
+    // Entity rows are admitted only at a version the gateway lists, so a lost merge costs reads.
+    forgetEntityViews();
     for (const entry of entries.values()) invalidate(entry);
     if (
       needsStore &&
@@ -938,7 +680,8 @@ export function createGatewayResourceCache(
       for (const saved of batch) {
         if (saved.bytes > remaining) continue;
         remaining -= saved.bytes;
-        if (saved.id !== RUN_LIST_COLLECTION_ID) startupQueries.set(saved.id, saved);
+        if (saved.id !== RUN_LIST_COLLECTION_ID && !isEntityStoreId(saved.id))
+          startupQueries.set(saved.id, saved);
       }
       // Restore small aliased report bodies before exposing their cached run. Network
       // prefetch can be queued behind other gates, even when these bytes are already held.
@@ -957,21 +700,6 @@ export function createGatewayResourceCache(
         for (const name of info.aliases ?? []) rememberResident(name, saved, saved.data);
       }
       if (rows) runList.hydrate(rows);
-      // Fleet entity collection: hydrate from stored rows on cold start.
-      const fleetCollectionEntry = batch.find((saved) => saved.id === FLEET_COLLECTION_ID);
-      const fleetRows =
-        fleetCollectionEntry && readingStore.getRows
-          ? await readingStore.getRows(FLEET_COLLECTION_ID)
-          : undefined;
-      if (!current()) return;
-      if (fleetRows?.rows.length) {
-        if (isFleetNonEntityFields(fleetRows.entry?.data))
-          fleetNonEntityFields = fleetRows.entry.data;
-        for (const row of fleetRows.rows) {
-          if (isStoredSlotEntity(row.body))
-            fleetCollection.applyEntity(row.id, row.body, row.version);
-        }
-      }
       startupStore = readingStore;
       startupOwnerVersion = ownerVersion;
     } catch (error) {
@@ -1023,8 +751,8 @@ export function createGatewayResourceCache(
     const ticket = ++version;
     recoveryAttempted = false;
     runList.abort();
-    fleetCollection.abort();
-    for (const col of prCollections.values()) col.collection.abort();
+    // A new connection or epoch: rows stay displayed, unverified until a versions read.
+    for (const view of entityViews()) view.unverify();
     // Stored facts belong to an owner, not a socket attempt. Fence a revoked
     // owner's pending I/O synchronously, before queued deletion can run.
     if (revoke || scopeChanged || authorityChanged) {
@@ -1032,8 +760,7 @@ export function createGatewayResourceCache(
       residentContent.clear();
       hydrationOwnerVersion++;
       forgetRunList();
-      forgetFleetCollection();
-      forgetPRCollections();
+      forgetEntityViews();
     }
     connection = next;
     conversations?.connectionChanged(revoke || scopeChanged || authorityChanged);
@@ -1083,8 +810,7 @@ export function createGatewayResourceCache(
           residentContent.clear();
           storeVersion++;
           forgetRunList();
-          forgetFleetCollection();
-          forgetPRCollections();
+          forgetEntityViews();
           for (const entry of entries.values()) invalidate(entry, true);
           // Switching profiles retains the old profile's store; revoked authority deletes it.
           if (!switchingProfile || revoke || deletionRequired) {
@@ -1162,13 +888,14 @@ export function createGatewayResourceCache(
       updateCollectors();
       version++;
       runList.abort();
-      fleetCollection.abort();
-      for (const col of prCollections.values()) col.collection.abort();
+      for (const view of entityViews()) view.unverify();
       for (const entry of entries.values()) invalidate(entry);
       transport.resynchronize();
       return;
     }
     conversations?.resourcesChanged(payload);
+    const entitySync = entitySyncOn();
+    const changedViews = new Set<EntityView>();
     for (const change of payload.changes) {
       if (!Number.isSafeInteger(change.revision) || change.revision < 0) {
         usable = false;
@@ -1180,140 +907,13 @@ export function createGatewayResourceCache(
       const id = resourceKeyId(change.key);
       if (change.revision <= (revisions.get(id) ?? -1)) continue;
       revisions.set(id, change.revision);
-      // Fleet entity sync: apply pushed slot entities; track collection membership changes.
-      if (connection.capabilities?.resourceChanges?.entitySync === true) {
-        if (
-          change.key.family === 'slot' &&
-          change.changedEntity &&
-          isSlotEntity(change.changedEntity)
-        ) {
-          fleetCollection.applyEntity(
-            change.key.slotId,
-            change.changedEntity.entity,
-            change.changedEntity.version,
-          );
-          // Mark fleet view entries stale so readFleetStatusView reassembles with the new entity.
-          // The 'slot' family is typically a known key that no fleet.status entry declares
-          // as a direct dependency, so we must dirty them explicitly here.
-          for (const entry of entries.values()) {
-            if (isFleetStatusView(entry.query)) {
-              entry.dirty = true;
-              entry.state = { ...entry.state, status: 'stale' };
-              notify(entry);
-              if (!entry.pending) schedule(entry);
-            }
-          }
-        } else if (change.key.family === 'slots') {
-          if (fleetCollection.needsVersionsRead(change.membershipRevision)) {
-            fleetMembershipStale = true;
-            // The standard path (below) sets rereadFloor = RESOURCE_REREAD_INTERVAL_MS['slots']
-            // = 10 s, which throttles the follow-up read when called with observedOnly=true.
-            // Entity-sync membership pushes are explicit gateway signals; read immediately by
-            // using fetchEntry(entry, false) which bypasses the observedOnly throttle guard.
-            for (const entry of entries.values()) {
-              if (isFleetStatusView(entry.query) && !entry.pending && !entry.queued) {
-                entry.dirty = true;
-                entry.state = { ...entry.state, status: 'stale' };
-                notify(entry);
-                entry.queued = true;
-                queueMicrotask(() => {
-                  entry.queued = false;
-                  if (entry.listeners.size && usable && !disposed) void fetchEntry(entry, false);
-                });
-              }
-            }
-          }
-          if (change.membershipRevision !== undefined)
-            fleetCollection.storeMembershipRevision(change.membershipRevision);
-        }
-        // Machine health entity sync: update the machines array so reattachHostLoad
-        // picks up the new data without waiting for the next versions read.
-        if (
-          change.key.family === 'node' &&
-          'nodeId' in change.key &&
-          change.changedEntity &&
-          isNodeHealthEntity(change.changedEntity)
-        ) {
-          if (fleetNonEntityFields) {
-            const nodeId = change.key.nodeId;
-            const updatedMachine = change.changedEntity.entity;
-            const existing = fleetNonEntityFields.machines ?? [];
-            const idx = existing.findIndex((m) => m.machine === nodeId);
-            const machines =
-              idx >= 0
-                ? [...existing.slice(0, idx), updatedMachine, ...existing.slice(idx + 1)]
-                : [...existing, updatedMachine];
-            fleetNonEntityFields = { ...fleetNonEntityFields, machines };
-          }
-          // Dirty fleet.status view entries so readFleetStatusView reassembles with updated hostLoad.
-          for (const entry of entries.values()) {
-            if (isFleetStatusView(entry.query)) {
-              entry.dirty = true;
-              entry.state = { ...entry.state, status: 'stale' };
-              notify(entry);
-              if (!entry.pending) schedule(entry);
-            }
-          }
-        }
-        // PR entity sync: apply pushed PR entities; track collection membership changes.
-        if (change.key.family === 'upstream') {
-          const upKey = change.key as {
-            family: 'upstream';
-            integration: string;
-            queryId: string;
-            prKey?: string;
-          };
-          if (upKey.integration === 'github') {
-            if (upKey.prKey && change.changedEntity && isPREntity(change.changedEntity)) {
-              // Per-PR entity push: apply to the matching collection if held.
-              // isPREntity is the runtime guard from events.ts; it validates family + object shape.
-              const colState = prCollections.get(upKey.queryId);
-              if (colState) {
-                colState.collection.applyEntity(
-                  upKey.prKey,
-                  change.changedEntity.entity, // narrowed to PRStatus by isPREntity
-                  change.changedEntity.version,
-                );
-                for (const entry of entries.values()) {
-                  if (isPRListView(entry.query) && prQueryId(entry.query) === upKey.queryId) {
-                    entry.dirty = true;
-                    entry.state = { ...entry.state, status: 'stale' };
-                    notify(entry);
-                    if (!entry.pending) schedule(entry);
-                  }
-                }
-              }
-            } else if (!upKey.prKey) {
-              // Collection membership change.
-              const colState = prCollections.get(upKey.queryId);
-              if (colState?.collection.needsVersionsRead(change.membershipRevision)) {
-                colState.membershipStale = true;
-                for (const entry of entries.values()) {
-                  if (
-                    isPRListView(entry.query) &&
-                    prQueryId(entry.query) === upKey.queryId &&
-                    !entry.pending &&
-                    !entry.queued
-                  ) {
-                    entry.dirty = true;
-                    entry.state = { ...entry.state, status: 'stale' };
-                    notify(entry);
-                    entry.queued = true;
-                    queueMicrotask(() => {
-                      entry.queued = false;
-                      if (entry.listeners.size && usable && !disposed)
-                        void fetchEntry(entry, false);
-                    });
-                  }
-                }
-              }
-              if (change.membershipRevision !== undefined)
-                colState?.collection.storeMembershipRevision(change.membershipRevision);
-            }
-          }
-        }
-      }
-      const affected = [...entries.values()].filter((entry) => entry.dependencyIds.has(id));
+      if (entitySync)
+        for (const view of entityViews()) if (view.applyChange(change)) changedViews.add(view);
+      // Entity views learn of their changes above; their other dependencies change what the
+      // gateway pushes, never what they must read.
+      const affected = [...entries.values()].filter(
+        (entry) => entry.dependencyIds.has(id) && !(entitySync && ownedByEntityView(entry.query)),
+      );
       // Coverage counts declared dependencies only, so a known key that no entry declares (another
       // slot, an unopened workspace) changes nothing held. Only a family this client cannot name might.
       if (!affected.length && isKnownResourceFamily(change.key?.family)) continue;
@@ -1332,6 +932,26 @@ export function createGatewayResourceCache(
         notify(entry);
         if (!entry.pending) schedule(entry);
       }
+    }
+    for (const view of changedViews) refreshEntityView(view);
+  }
+
+  function ownedByEntityView(query: ResourceQuery): boolean {
+    return fleetView.serves(query) || prViewProject(query) !== undefined;
+  }
+
+  /** A notification changed an entity view: reassemble it now; a read follows only if needed. */
+  function refreshEntityView(view: EntityView): void {
+    for (const entry of entries.values()) {
+      if (!entry.listeners.size || !view.serves(entry.query)) continue;
+      entry.dirty = true;
+      if (entry.queued) continue;
+      entry.queued = true;
+      queueMicrotask(() => {
+        entry.queued = false;
+        // Pushed changes are not paced: assembling them costs no read.
+        if (entry.listeners.size && usable && !disposed) void fetchEntry(entry, false);
+      });
     }
   }
 
@@ -1560,6 +1180,133 @@ export function createGatewayResourceCache(
     })();
   }
 
+  /** The stamp of an entity view: the revisions this client has applied on this connection. */
+  function appliedRevisionStamp(entry: QueryEntry): ResourceReadStamp | undefined {
+    const epoch = connection.capabilities?.resourceChanges?.epoch;
+    // Sound only for a verified collection: its versions reply came after every notification
+    // published before it, and every notification since was applied to the collection.
+    return epoch
+      ? {
+          epoch,
+          dependencies: entry.query.dependencies.map((key) => ({
+            key,
+            revision: revisions.get(resourceKeyId(key)) ?? 0,
+          })),
+        }
+      : undefined;
+  }
+
+  /** Rows a previous session stored, loaded once per store before the view's first versions read. */
+  async function hydrateEntityView(view: EntityView): Promise<void> {
+    const readingStore = store;
+    if (view.hydratedFrom === readingStore || !readingStore.getRows) return;
+    view.hydratedFrom = readingStore;
+    const incarnation = storeVersion;
+    const owner = hydrationOwnerVersion;
+    let stored: Awaited<ReturnType<NonNullable<ResourceStore['getRows']>>>;
+    try {
+      stored = await readingStore.getRows(view.storeId);
+    } catch (error) {
+      // A failed store read falls back to memory, as every other store read does.
+      await recoverStore(error, readingStore);
+      return;
+    }
+    if (
+      disposed ||
+      store !== readingStore ||
+      readingStore.deleted ||
+      incarnation !== storeVersion ||
+      owner !== hydrationOwnerVersion
+    )
+      return;
+    view.hydrate(stored);
+  }
+
+  /** Writes the rows a view changed since its last write, fenced to the current store. */
+  function persistEntityView(view: EntityView): void {
+    const writingStore = store;
+    const incarnation = storeVersion;
+    const changes = view.takeUnstored();
+    const mergeRows = writingStore.mergeRows?.bind(writingStore);
+    if (!mergeRows || !canPersist(connection) || changes.data === undefined) return;
+    if (!changes.metaChanged && !changes.upserts.length && !changes.deletes.length) return;
+    const current = () =>
+      !disposed && writingStore === store && incarnation === storeVersion && !writingStore.deleted;
+    const now = Date.now();
+    void updateStore(writingStore, current, () =>
+      mergeRows(view.storeId, {
+        entry: {
+          id: view.storeId,
+          data: changes.data,
+          observedAt: now,
+          accessedAt: now,
+          bytes: changes.bytes,
+        },
+        upserts: changes.upserts.map(({ id, version, body, bytes }) => ({
+          id,
+          version,
+          projection: {},
+          body,
+          bytes,
+        })),
+        deletes: changes.deletes,
+      }),
+    );
+  }
+
+  /** An entity view after one sync: pages publish their rows as they land. */
+  async function readEntityView(
+    entry: QueryEntry,
+    view: EntityView,
+    signal: AbortSignal,
+  ): Promise<ReadReply> {
+    await hydrateEntityView(view);
+    const publishPage = (done: number, total: number) => {
+      const partial = view.answer();
+      entry.state = {
+        ...entry.state,
+        ...(partial ? { data: partial.data } : {}),
+        catchUpProgress: { done, total },
+      };
+      notify(entry);
+    };
+    try {
+      await view.sync(
+        async (params, readSignal) =>
+          (await request<unknown>(entry.query.method, params, readSignal)).data,
+        publishPage,
+      );
+    } catch (error) {
+      const failure = queryError(error);
+      // A gateway that cannot answer this shape yet still answers the full read.
+      if (failure.code === 'NOT_READY')
+        return request(entry.query.method, entry.query.params, signal);
+      if (evictionCodes.has(failure.code)) {
+        const evictingStore = store;
+        view.clear();
+        void updateStore(
+          evictingStore,
+          () => evictingStore === store && !evictingStore.deleted,
+          () => evictingStore.deleteQuery(view.storeId),
+          false,
+        );
+      }
+      throw error;
+    } finally {
+      if (entry.state.catchUpProgress !== undefined)
+        entry.state = { ...entry.state, catchUpProgress: undefined };
+    }
+    persistEntityView(view);
+    const answer = view.answer();
+    if (!answer) return request(entry.query.method, entry.query.params, signal);
+    return {
+      data: answer.data,
+      resourceState: appliedRevisionStamp(entry),
+      ...(answer.current ? {} : { incomplete: true }),
+      observedAt: Date.now(),
+    };
+  }
+
   function isRunListView(query: ResourceQuery): boolean {
     return query.method === Methods.RUN_LIST && !isRunListCollectionRead(query.params);
   }
@@ -1632,78 +1379,6 @@ export function createGatewayResourceCache(
       };
     // A view whose summaries the version reply cannot answer keeps its own full read.
     return request<RunListResult>(Methods.RUN_LIST, params, signal);
-  }
-
-  /** True for plain fleet.status reads (not versions read, not page reads). */
-  function isFleetStatusView(query: ResourceQuery): boolean {
-    const params = query.params as { versions?: boolean; ids?: string[] } | undefined;
-    return (
-      query.method === Methods.FLEET_STATUS &&
-      params?.versions !== true &&
-      params?.ids === undefined
-    );
-  }
-
-  /** Entity-sync fleet view (ADR-071 Amendment 3): assemble from held entities when complete. */
-  async function readFleetStatusView(entry: QueryEntry, signal: AbortSignal): Promise<ReadReply> {
-    fleetProgressEntry = entry;
-    try {
-      if (!fleetCollection.held || !fleetCollection.complete || fleetMembershipStale) {
-        await fleetCollection.refresh();
-        persistFleetCollection();
-      }
-    } catch (error) {
-      if (evictionCodes.has(queryError(error).code)) {
-        const evictingStore = store;
-        forgetFleetCollection();
-        void updateStore(
-          evictingStore,
-          () => evictingStore === store && !evictingStore.deleted,
-          () => evictingStore.deleteQuery(FLEET_COLLECTION_ID),
-          false,
-        );
-      }
-      throw error;
-    } finally {
-      fleetProgressEntry = undefined;
-      if (entry.state.catchUpProgress !== undefined) {
-        entry.state = { ...entry.state, catchUpProgress: undefined };
-      }
-    }
-    const entities = fleetCollection.assemble();
-    const non = fleetNonEntityFields;
-    if (entities && non) {
-      const slots = reattachHostLoad(entities, non.machines);
-      // Build a stamp covering the fleet.status dependencies at their current known revisions.
-      // Entity-sync reads do not go through a full RPC, so fleetResourceState (from the versions
-      // read) only covers the sources dependency — not the slots dependency required by this query.
-      // Constructing the stamp here lets stampCovers succeed and marks the entry as 'ready'.
-      const epoch = connection.capabilities?.resourceChanges?.epoch;
-      const coveredState = epoch
-        ? {
-            epoch,
-            dependencies: entry.query.dependencies.map((key) => ({
-              key,
-              revision: revisions.get(resourceKeyId(key)) ?? 0,
-            })),
-          }
-        : fleetResourceState;
-      return {
-        data: {
-          fleet: {
-            checkedAt: non.checkedAt,
-            slots,
-            summary: computeSummary(slots),
-            ...(non.machines ? { machines: non.machines } : {}),
-            ...(non.poolErrors ? { poolErrors: non.poolErrors } : {}),
-          },
-        } satisfies FleetStatusResult,
-        resourceState: coveredState,
-        observedAt: Date.parse(non.checkedAt) || Date.now(),
-      };
-    }
-    // Fallback: entity data not yet available; fall back to full read.
-    return request<FleetStatusResult>(Methods.FLEET_STATUS, entry.query.params, signal);
   }
 
   function stampCovers(entry: QueryEntry, stamp: ResourceReadStamp | undefined): boolean {
@@ -1842,15 +1517,7 @@ export function createGatewayResourceCache(
     pending.promise = (async () => {
       try {
         if (disposed || pending.version !== version || pending.controller.signal.aborted) return;
-        // Entity-sync views bypass the collector gate: the gateway pushes entities directly.
-        const fromFleetCollection =
-          isFleetStatusView(entry.query) &&
-          connection.capabilities?.resourceChanges?.entitySync === true;
-        const fromPRList =
-          isPRListView(entry.query) &&
-          connection.capabilities?.resourceChanges?.entitySync === true;
-        const fromEntitySync = fromFleetCollection || fromPRList;
-        if (entry.query.collector && !fromEntitySync) {
+        if (entry.query.collector) {
           await collectors.require(entry.query, !observedOnly);
           if (disposed || pending.version !== version || pending.controller.signal.aborted) return;
         }
@@ -1858,21 +1525,20 @@ export function createGatewayResourceCache(
         const fromRunList =
           isRunListView(entry.query) &&
           connection.capabilities?.resourceChanges?.versionLists === true;
-        const reply: ReadReply = fromFleetCollection
-          ? await readFleetStatusView(entry, pending.controller.signal)
-          : fromPRList
-            ? await readPRListView(entry, pending.controller.signal)
-            : fromRunList
-              ? await readRunListView(entry, pending.controller.signal)
-              : entry.query.method === Methods.NATIVE_SESSION_READ
-                ? await readNativeHistory(
-                    entry.query.params as NativeSessionTargetParams,
-                    entry.state.data as NativeSessionReadResult | undefined,
-                    (params, signal) =>
-                      request<NativeSessionReadResult>(Methods.NATIVE_SESSION_READ, params, signal),
-                    pending.controller.signal,
-                  )
-                : await request(entry.query.method, entry.query.params, pending.controller.signal);
+        const entityView = entityViewFor(entry.query);
+        const reply: ReadReply = entityView
+          ? await readEntityView(entry, entityView, pending.controller.signal)
+          : fromRunList
+            ? await readRunListView(entry, pending.controller.signal)
+            : entry.query.method === Methods.NATIVE_SESSION_READ
+              ? await readNativeHistory(
+                  entry.query.params as NativeSessionTargetParams,
+                  entry.state.data as NativeSessionReadResult | undefined,
+                  (params, signal) =>
+                    request<NativeSessionReadResult>(Methods.NATIVE_SESSION_READ, params, signal),
+                  pending.controller.signal,
+                )
+              : await request(entry.query.method, entry.query.params, pending.controller.signal);
         if (
           disposed ||
           store.deleted ||
@@ -1888,8 +1554,7 @@ export function createGatewayResourceCache(
         const covered =
           supported &&
           stampCovers(entry, reply.resourceState) &&
-          // Entity-sync reads bypass the collector, so skip the collector-has check for them.
-          (!entry.query.collector || collectors.has(entry.query) || fromEntitySync) &&
+          (!entry.query.collector || collectors.has(entry.query)) &&
           entry.unknownGeneration === unknownGeneration &&
           // A view is current only once every listed run is held at its listed version.
           !reply.incomplete;
@@ -2025,6 +1690,8 @@ export function createGatewayResourceCache(
                     value.id !== saved.id &&
                     // The run collection is bounded by its own body budget, never by its views.
                     value.id !== RUN_LIST_COLLECTION_ID &&
+                    // Entity rows are bounded by their collection, never by its views.
+                    !isEntityStoreId(value.id) &&
                     (retention.cohort === 'upstream'
                       ? isUpstreamStoredQuery(value.id)
                       : value.id.startsWith(`${entry.query.method}:`)),

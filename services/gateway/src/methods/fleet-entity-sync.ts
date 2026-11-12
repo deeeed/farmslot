@@ -6,6 +6,7 @@ import type { FleetEntityPage, FleetVersionsResult } from '@farmslot/protocol';
 
 import { slotEntityBody, slotEntityVersion } from '../fleet/entity-version.js';
 import { getCachedFleet, loadFleetStatus } from '../fleet/state.js';
+import { resourceRevisions } from '../resources/revisions.js';
 
 export const FLEET_ENTITY_PAGE_MAX_BYTES = 2 * 1024 * 1024;
 
@@ -27,6 +28,7 @@ export async function fleetStatusVersions(): Promise<FleetVersionsResult> {
     ...(fleet.machines?.length ? { machines: fleet.machines } : {}),
     checkedAt: fleet.checkedAt,
     ...(fleet.poolErrors?.length ? { poolErrors: fleet.poolErrors } : {}),
+    membershipRevision: resourceRevisions.membershipRevision({ family: 'slots', scope: 'farm' }),
   };
 }
 

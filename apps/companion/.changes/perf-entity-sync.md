@@ -1,1 +1,1 @@
-- Extend `resource-read-status` helpers used by entity-sync client caching for Companion connections.
+- Show sync progress ("Syncing fleet · 20 of 107") while a fleet or PR list catches up after a reconnect.
