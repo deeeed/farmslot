@@ -8,6 +8,7 @@ import {
   type SlotStatus,
 } from '@farmslot/protocol';
 
+import { withFarmGitConfig } from '../../core/farm-git.js';
 import {
   execOnSlot,
   getProjectField,
@@ -194,7 +195,10 @@ export async function slotRefresh(
 
     // 2. Snapshot HEAD before any sync so we can report whether origin moved.
     const headBefore = (
-      await execOnSlot(vars, `git -C ${shellQuote(vars.remoteRepo)} rev-parse HEAD 2>/dev/null`)
+      await execOnSlot(
+        vars,
+        withFarmGitConfig(`git -C ${shellQuote(vars.remoteRepo)} rev-parse HEAD 2>/dev/null`),
+      )
     ).stdout.trim();
 
     // 3. Safe-mode pre-checks. Emit sentinel strings (DIRTY_TREE: / STALE_BRANCH:)
@@ -203,7 +207,9 @@ export async function slotRefresh(
       const currentBranch = (
         await execOnSlot(
           vars,
-          `git -C ${shellQuote(vars.remoteRepo)} rev-parse --abbrev-ref HEAD 2>/dev/null`,
+          withFarmGitConfig(
+            `git -C ${shellQuote(vars.remoteRepo)} rev-parse --abbrev-ref HEAD 2>/dev/null`,
+          ),
         )
       ).stdout.trim();
       const staleDetail = refreshStaleBranchDetail(
@@ -226,7 +232,10 @@ export async function slotRefresh(
         };
       }
       const dirty = (
-        await execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && git status --porcelain`)
+        await execOnSlot(
+          vars,
+          withFarmGitConfig(`cd ${shellQuote(vars.remoteRepo)} && git status --porcelain`),
+        )
       ).stdout.trim();
       if (dirty) {
         const detail = `DIRTY_TREE: ${dirty.split('\n').length} change(s) in working tree`;
@@ -248,12 +257,16 @@ export async function slotRefresh(
     step('origin-head', `Resetting origin/HEAD to ${defaultBranch}...`);
     await execOnSlot(
       vars,
-      `cd ${shellQuote(vars.remoteRepo)} && git remote set-head origin ${shellQuote(defaultBranch)} 2>/dev/null`,
+      withFarmGitConfig(
+        `cd ${shellQuote(vars.remoteRepo)} && git remote set-head origin ${shellQuote(defaultBranch)} 2>/dev/null`,
+      ),
     );
     const originHead = (
       await execOnSlot(
         vars,
-        `cd ${shellQuote(vars.remoteRepo)} && git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null`,
+        withFarmGitConfig(
+          `cd ${shellQuote(vars.remoteRepo)} && git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null`,
+        ),
       )
     ).stdout.trim();
     const expectedHead = `refs/remotes/origin/${defaultBranch}`;
@@ -272,7 +285,7 @@ export async function slotRefresh(
     if (mode === 'force') {
       const flagSweep = await execOnSlot(
         vars,
-        `cd ${shellQuote(vars.remoteRepo)} && { ${CLEAR_INDEX_FLAGS_COMMAND}; }`,
+        withFarmGitConfig(`cd ${shellQuote(vars.remoteRepo)} && { ${CLEAR_INDEX_FLAGS_COMMAND}; }`),
       );
       if (flagSweep.exitCode !== 0) {
         reportRefreshFailure(
@@ -282,14 +295,19 @@ export async function slotRefresh(
       step('clean', 'reset --hard HEAD + clean -fd');
       const resetR = await execOnSlot(
         vars,
-        `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard HEAD; }`,
+        withFarmGitConfig(
+          `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard HEAD; }`,
+        ),
       );
       if (resetR.exitCode !== 0) {
         reportRefreshFailure(
           `reset --hard HEAD failed: ${resetR.stderr.slice(-200) || resetR.stdout.slice(-200)}`,
         );
       }
-      const cleanR = await execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && git clean -fd`);
+      const cleanR = await execOnSlot(
+        vars,
+        withFarmGitConfig(`cd ${shellQuote(vars.remoteRepo)} && git clean -fd`),
+      );
       if (cleanR.exitCode !== 0) {
         reportRefreshFailure(
           `git clean -fd failed: ${cleanR.stderr.slice(-200) || cleanR.stdout.slice(-200)}`,
@@ -320,11 +338,15 @@ export async function slotRefresh(
       step('fetch', `git fetch origin ${defaultBranch}`);
       await execOnSlot(
         vars,
-        `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_REMOTE_REF_LOCKS_COMMAND}; }`,
+        withFarmGitConfig(
+          `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_REMOTE_REF_LOCKS_COMMAND}; }`,
+        ),
       );
       const fetchR = await execOnSlot(
         vars,
-        `cd ${shellQuote(vars.remoteRepo)} && git fetch origin ${shellQuote(defaultBranchRefspec)}`,
+        withFarmGitConfig(
+          `cd ${shellQuote(vars.remoteRepo)} && git fetch origin ${shellQuote(defaultBranchRefspec)}`,
+        ),
       );
       if (fetchR.exitCode !== 0) {
         reportRefreshFailure(
@@ -334,7 +356,9 @@ export async function slotRefresh(
       step('reset', `git reset --hard origin/${defaultBranch}`);
       const ffR = await execOnSlot(
         vars,
-        `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard origin/${defaultBranch}; }`,
+        withFarmGitConfig(
+          `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard origin/${defaultBranch}; }`,
+        ),
       );
       if (ffR.exitCode !== 0) {
         reportRefreshFailure(
@@ -345,7 +369,10 @@ export async function slotRefresh(
 
     // 7. Verify clean.
     const dirtyAfter = (
-      await execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && git status --porcelain`)
+      await execOnSlot(
+        vars,
+        withFarmGitConfig(`cd ${shellQuote(vars.remoteRepo)} && git status --porcelain`),
+      )
     ).stdout.trim();
     if (dirtyAfter) {
       reportRefreshFailure(
@@ -354,7 +381,10 @@ export async function slotRefresh(
     }
 
     const headAfter = (
-      await execOnSlot(vars, `git -C ${shellQuote(vars.remoteRepo)} rev-parse HEAD 2>/dev/null`)
+      await execOnSlot(
+        vars,
+        withFarmGitConfig(`git -C ${shellQuote(vars.remoteRepo)} rev-parse HEAD 2>/dev/null`),
+      )
     ).stdout.trim();
     const advanced = headBefore !== '' && headAfter !== '' && headBefore !== headAfter;
 

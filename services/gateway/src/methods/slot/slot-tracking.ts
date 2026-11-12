@@ -18,6 +18,7 @@ import {
 } from '@farmslot/protocol';
 
 import { isLocal } from '../../core/exec.js';
+import { withFarmGitConfig } from '../../core/farm-git.js';
 import {
   execOnSlot,
   expandTemplate,
@@ -127,7 +128,7 @@ export async function probeDefaultBranch(
 ): Promise<DefaultBranchProbe> {
   const output = await execOnSlot(
     vars,
-    defaultBranchProbeCommand(vars.remoteRepo, defaultBranch),
+    withFarmGitConfig(defaultBranchProbeCommand(vars.remoteRepo, defaultBranch)),
     options,
   );
   return readDefaultBranchProbe(output, defaultBranch);
@@ -167,7 +168,9 @@ export async function isOperatorRootSlot(vars: SlotVars): Promise<boolean> {
   const top = (
     await execOnSlot(
       vars,
-      `git -C ${shellQuote(vars.remoteRepo)} rev-parse --show-toplevel 2>/dev/null`,
+      withFarmGitConfig(
+        `git -C ${shellQuote(vars.remoteRepo)} rev-parse --show-toplevel 2>/dev/null`,
+      ),
     )
   ).stdout.trim();
   return top.length > 0 && canonical(top) === opRoot;
@@ -217,11 +220,13 @@ export async function resetSlotRepoToIdle(
   const target = linkedWorktree ? trackingBranch : defaultBranch;
   const baseRef = `origin/${defaultBranch}`;
   const currentBranch = (
-    await execOnSlot(vars, `git -C ${repo} rev-parse --abbrev-ref HEAD`)
+    await execOnSlot(vars, withFarmGitConfig(`git -C ${repo} rev-parse --abbrev-ref HEAD`))
   ).stdout.trim();
   const fetched = await execOnSlot(
     vars,
-    `git -C ${repo} fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+    withFarmGitConfig(
+      `git -C ${repo} fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+    ),
   );
   if (fetched.exitCode !== 0)
     throw new Error(
@@ -281,7 +286,7 @@ export async function resetSlotRepoToIdle(
       : []),
     `{ ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard "$base"; }`,
   ].join(' && ');
-  const reset = await execOnSlot(vars, script, { noRetry: true });
+  const reset = await execOnSlot(vars, withFarmGitConfig(script), { noRetry: true });
   if (reset.exitCode !== 0)
     throw new Error(`Idle reset refused on ${vars.slotId}: ${reset.stderr || reset.stdout}`);
   return { trackingBranch, previousBranch: currentBranch, linkedWorktree };

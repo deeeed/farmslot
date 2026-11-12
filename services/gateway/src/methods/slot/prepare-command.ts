@@ -5,6 +5,7 @@ import path from 'node:path';
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { EXEC_TIMEOUT_EXIT_CODE } from '../../core/exec.js';
+import { withFarmGitConfig } from '../../core/farm-git.js';
 import {
   execLocal,
   execOnSlot,
@@ -588,9 +589,8 @@ export function buildPrepareWrappedCommand(
     // trade for /dev/null. An asynchronous command also starts with SIGINT
     // ignored, so Ctrl-C in the pane reaches the command through the INT
     // trap's TERM cleanup rather than directly.
-    '(',
-    cmd,
-    ') <&0 &',
+    // The staged payload runs in the server environment, not the tmux client's.
+    `${withFarmGitConfig(cmd)} <&0 &`,
     'wait "$!"',
     '__farmslot_status=$?',
     'if [ "$__farmslot_status" -ne 0 ]; then',

@@ -7,6 +7,7 @@ import { FARM_INSTANCE_CLAIM } from '@farmslot/protocol/node/farm-paths';
 import { parseProjectOwnedPaths } from '@farmslot/slot-config';
 
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
+import { withFarmGitConfig } from '../core/farm-git.js';
 import { assertHeavyWriteRoom } from '../core/heavy-write-room.js';
 import {
   execOnSlot,
@@ -273,7 +274,7 @@ async function inventoryRebuildableScaffolding(
     'probe="$base"; [ -e "$probe" ] || probe="$(dirname "$base")"',
     'printf "V\\t%s\\t%s\\t%s\\n" "$(pwd -P)" "$(df -P "$probe" | awk \'NR==2{print $1}\')" "$base"',
   ].join('\n');
-  const result = await execOnSlot(vars, script, { timeout: 120_000 });
+  const result = await execOnSlot(vars, withFarmGitConfig(script), { timeout: 120_000 });
   if (result.exitCode !== 0) throw new Error(`Cannot inventory scaffolding: ${result.stderr}`);
   const skipped: SkippedScaffolding[] = [];
   const devices = new Map<string, string>();
@@ -351,16 +352,18 @@ async function retainNestedCheckouts(
   });
   const result = await execOnSlot(
     vars,
-    [
-      'set -e',
-      `cd ${shellQuote(vars.remoteRepo)}`,
-      ...moved.flatMap(({ entry, to }) => [
-        `mkdir -p ${shellQuote(path.posix.dirname(to))}`,
-        `mv ${shellQuote(entry.path)} ${shellQuote(to)}`,
-        `printf '%s\\t%s\\n' ${shellQuote(entry.path)} ${shellQuote(to)} >> ${shellQuote(path.posix.join(retainedDir, 'RETAINED.tsv'))}`,
-      ]),
-      ...repairs,
-    ].join('\n'),
+    withFarmGitConfig(
+      [
+        'set -e',
+        `cd ${shellQuote(vars.remoteRepo)}`,
+        ...moved.flatMap(({ entry, to }) => [
+          `mkdir -p ${shellQuote(path.posix.dirname(to))}`,
+          `mv ${shellQuote(entry.path)} ${shellQuote(to)}`,
+          `printf '%s\\t%s\\n' ${shellQuote(entry.path)} ${shellQuote(to)} >> ${shellQuote(path.posix.join(retainedDir, 'RETAINED.tsv'))}`,
+        ]),
+        ...repairs,
+      ].join('\n'),
+    ),
     { timeout: 120_000 },
   );
   if (result.exitCode !== 0)

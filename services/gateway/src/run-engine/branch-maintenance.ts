@@ -12,6 +12,7 @@ import {
 import { emptyCiWatchState } from '../ci-monitor/state.js';
 import { loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { withFarmGitConfig } from '../core/farm-git.js';
 import { shellQuote } from '../core/tmux.js';
 import { captureCurrentReviewSnapshot } from '../review/snapshots.js';
 import {
@@ -42,7 +43,9 @@ export async function runtimeOperation<T>(
   const script = await agentRuntimeScriptForSlot(vars, 'branch-update.mjs');
   const result = await execOnSlot(
     vars,
-    `node ${shellQuote(script)} ${shellQuote(phase)} ${shellQuote(JSON.stringify(input))}`,
+    withFarmGitConfig(
+      `node ${shellQuote(script)} ${shellQuote(phase)} ${shellQuote(JSON.stringify(input))}`,
+    ),
     { timeout: 60_000, maxBuffer: 1024 * 1024 },
   );
   if (result.exitCode !== 0) {
@@ -81,7 +84,8 @@ async function initialComparisonBase(
   defaultBranch: string,
   headSha: string,
 ): Promise<string> {
-  const exec = (command: string) => execOnSlot(vars, command, { timeout: 15_000 });
+  const exec = (command: string) =>
+    execOnSlot(vars, withFarmGitConfig(command), { timeout: 15_000 });
   const base = await settleStackedDiffBase(
     exec,
     defaultBranch,
