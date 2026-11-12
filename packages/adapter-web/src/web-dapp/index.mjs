@@ -471,7 +471,9 @@ export function createWebDappAdapter(factoryOptions = {}) {
     async launch({ options, target, jsonOutput, stream, usage }) {
       const adapterId = webDappAdapterId();
       const cdpPort =
-        str(options, 'cdpPort') ?? process.env.RECIPE_CDP_PORT ?? process.env.CDP_PORT;
+        process.env.FARMSLOT_BLIND_SEATBELT === '1'
+          ? process.env.RECIPE_CDP_PORT
+          : (str(options, 'cdpPort') ?? process.env.RECIPE_CDP_PORT ?? process.env.CDP_PORT);
       // Same precedence as the web-dapp surface and live actions.
       const appPort =
         str(options, 'watcherPort') ??
