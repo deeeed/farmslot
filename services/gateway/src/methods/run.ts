@@ -77,6 +77,7 @@ import {
   assertReviewSequence,
   assertWarmReviewContext,
   parseReviewRequestContext,
+  reviewSequenceFromRequest,
 } from '@farmslot/review-dispatch';
 import { currentProjectSources } from '@farmslot/slot-config';
 
@@ -199,6 +200,7 @@ import { assertScriptedRunnerConfig } from '../runners/scripted-config.js';
 import {
   createRun,
   getAllRuns,
+  getAllRunsWithArchived,
   getRun,
   listRuns,
   normalizeRunClassification,
@@ -514,8 +516,14 @@ export async function planRunCreation(
   if (params.reviewSequence) assertReviewSequence(params.reviewSequence, { maxRows: 5 });
   assertPrimaryReviewContext(params);
   if (params.reviewPolicy) assertReviewPolicy(params.reviewPolicy);
-  if (params.reviewSequenceContext)
-    parseReviewRequestContext(params.reviewSequenceContext, params.reviewSequence?.length ?? 0);
+  if (params.reviewSequenceContext) {
+    const context = parseReviewRequestContext(
+      params.reviewSequenceContext,
+      params.reviewSequence?.length ?? 0,
+    );
+    if (context.freshChain)
+      throw new Error('A fresh review chain applies only to a new review-pr request');
+  }
   if (params.reviewSequence)
     assertWarmReviewContext(params.reviewSequence, params.reviewSequenceContext);
 
@@ -2328,7 +2336,10 @@ export async function resolveRunDecision(
     const reviewRequest = params.selectionData?.reviewRequest;
     assertReviewRequestPayload(reviewRequest, { maxRows: 5 });
     await assertReviewRoundAvailable(getRun(params.runId)!);
-    assertWarmReviewRequestAvailable(existing, reviewRequest, getAllRuns(), {
+    const history = reviewSequenceFromRequest(reviewRequest).some((row) => row.mode === 'warm')
+      ? await getAllRunsWithArchived()
+      : [];
+    assertWarmReviewRequestAvailable(existing, reviewRequest, history, {
       requireRetainedSession: true,
     });
   }

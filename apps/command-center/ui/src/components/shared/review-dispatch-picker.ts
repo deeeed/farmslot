@@ -97,6 +97,11 @@ export class ReviewDispatchPicker extends LitElement {
       min-width: 0;
       flex: 1 1 150px;
     }
+    label.fresh-chain {
+      flex-direction: row;
+      align-items: center;
+      min-height: 44px;
+    }
     .model-effort {
       display: flex;
       flex-wrap: wrap;
@@ -291,6 +296,19 @@ export class ReviewDispatchPicker extends LitElement {
     const vm = this.viewModel;
     if (!vm) return nothing;
     return html`<div class="rows">
+      ${vm.canStartFreshChain
+        ? html`<label class="fresh-chain">
+            <input
+              type="checkbox"
+              data-testid="review-dispatch-fresh-chain"
+              .checked=${vm.freshChain}
+              ?disabled=${this.disabled}
+              @change=${(event: Event) =>
+                this.change(() => vm.setFreshChain((event.target as HTMLInputElement).checked))}
+            />
+            ${vm.freshChainLabel}
+          </label>`
+        : nothing}
       ${vm.rows.map((row, index) => {
         const selected = row.selection;
         const executionDisabled = this.disabled || vm.executionLocked(row.id);
@@ -506,7 +524,7 @@ export class ReviewDispatchPicker extends LitElement {
                   labels: { cold: 'COLD', warm: 'WARM' },
                   value: selected.mode,
                   testId: 'review-dispatch-mode',
-                  disabled: this.disabled,
+                  disabled: this.disabled || vm.freshChain,
                   onSelect: (value) => this.change(() => vm.setMode(row.id, value)),
                 })}
                 <span class="hint"

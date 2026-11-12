@@ -4,7 +4,7 @@ import {
   type FlowType,
   type ProfileFitSuggestion,
   resolveRunSlotId,
-  type Run,
+  type RunListRow,
 } from '@farmslot/protocol';
 
 import '../runs/run-pipeline-mini.js';
@@ -92,7 +92,7 @@ export function renderReplayEntryPoint(ctx: ReplayEntryPointRenderContext) {
 
 export interface CompareRunPickerModalContext {
   open: boolean;
-  runs: readonly Run[];
+  runs: readonly RunListRow[];
   pickerSearch: string;
   title: string;
   subtitle: string;
@@ -101,7 +101,7 @@ export interface CompareRunPickerModalContext {
   error?: string;
   savedAge?: string;
   retry?: () => void;
-  onSelectRun: (run: Run) => void;
+  onSelectRun: (run: RunListRow) => void;
   setPickerOpen: (open: boolean) => void;
   setPickerSearch: (value: string) => void;
 }
@@ -171,7 +171,7 @@ export function renderCompareRunPickerModal(ctx: CompareRunPickerModalContext) {
 
 const MAX_FAMILY_CHIPS = 5;
 
-function renderCompareRunPickerRow(ctx: CompareRunPickerModalContext, run: Run) {
+function renderCompareRunPickerRow(ctx: CompareRunPickerModalContext, run: RunListRow) {
   const familyRuns = familyRunsForComparePicker(run, ctx.runs);
   const lane = summarizeComparePickerFamilyLane(run, familyRuns);
   const flowColor = runDisplayColor(run);
@@ -271,7 +271,7 @@ export interface ComparisonFlowPanelRenderContext {
   comparisonBaselineSelected: boolean;
   pickerOpen: boolean;
   pickerSearch: string;
-  pickerRuns: readonly Run[];
+  pickerRuns: readonly RunListRow[];
   pickerLoading: boolean;
   pickerReady?: boolean;
   pickerError?: string;
@@ -280,7 +280,7 @@ export interface ComparisonFlowPanelRenderContext {
   enterComparisonFlow: () => void;
   enterNormalFlow: () => void;
   openComparisonPicker: () => void;
-  onSelectBaselineRun: (run: Run) => void;
+  onSelectBaselineRun: (run: RunListRow) => void;
   setPickerOpen: (open: boolean) => void;
   setPickerSearch: (value: string) => void;
 }

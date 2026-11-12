@@ -9,7 +9,7 @@ import type { ReviewMode, ReviewRequestContext } from './runs.js';
 /** Review mode plus host-owned publication and QA controls. */
 export interface PRReviewOptions {
   mode: ReviewMode;
-  /** Selected reviewer lineage provenance, aligned with execution model rows. */
+  /** Request policy and reviewer lineage provenance, aligned with execution model rows. */
   reviewContext?: ReviewRequestContext;
   workflow?: 'review' | 'qa';
   /** Publish the static verdict to its PR after authority/head checks. Omitted inherits defaults. */
@@ -51,7 +51,9 @@ export function samePRReviewOptions(a?: PRReviewOptions, b?: PRReviewOptions): b
   const right = b ?? DEFAULT_PR_REVIEW_OPTIONS;
   return (
     left.mode === right.mode &&
-    JSON.stringify(left.reviewContext ?? null) === JSON.stringify(right.reviewContext ?? null) &&
+    (left.reviewContext?.freshChain === true) === (right.reviewContext?.freshChain === true) &&
+    JSON.stringify(left.reviewContext?.reviewLineages ?? null) ===
+      JSON.stringify(right.reviewContext?.reviewLineages ?? null) &&
     (left.publishReview === true) === (right.publishReview === true) &&
     (left.autoFinish === true) === (right.autoFinish === true) &&
     prReviewPurpose(left) === prReviewPurpose(right)

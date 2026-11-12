@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Surface terminal Pi request aborts in static reviews and worker decisions; add opt-in streaming idle deadlines while preserving total deadlines by default.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.39.1 - 2026-11-08

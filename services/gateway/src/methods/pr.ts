@@ -76,6 +76,12 @@ import {
   retainPRRawNotFound,
   shouldPrefetchPRRawData,
 } from './pr/raw-cache.js';
+import {
+  projectedPRList,
+  type PRRowProjector,
+  servedPRList,
+  type ServedPRProjection,
+} from './pr/served-list.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -320,25 +326,59 @@ export async function prList(
       ...interest,
     },
   );
-  const projected = await projectRows(served.prs, project);
-  const { truncated: _truncated, ...result } = served;
-  const incomplete = projected.failed.length > 0 || projected.truncated;
-  return {
-    ...result,
-    prs: projected.prs.filter((row) => project === undefined || row.project === project),
-    ...(incomplete
-      ? {
-          observation: {
-            ...result.observation,
-            status: 'stale',
-            error: result.observation?.error ?? {
-              code: 'UPSTREAM_INCOMPLETE',
-              message: 'Some current PR identities have no retained upstream observation',
-            },
-          },
-        }
-      : {}),
-  };
+  return projectedPRList(served, await projectRows(served.prs, project), project);
+}
+
+/**
+ * The served list an entity read answers from (ADR-071 Amendment 4): its collector started
+ * exactly as the full read starts it, its projection maintained in served-list.ts.
+ */
+export async function servedPRListFor(
+  project: string | undefined,
+  fresh: boolean,
+  interest: PRListClientInterest = {},
+  deps: {
+    fetchList?: typeof fetchPRList;
+    projectRows?: PRListProjector;
+    projectRow?: PRRowProjector;
+  } = {},
+): Promise<ServedPRProjection> {
+  const fetchList = deps.fetchList ?? fetchPRList;
+  await servePRList(
+    (force) => fetchList({ force, ...(project === undefined ? {} : { project }) }),
+    { project, ...interest },
+  );
+  return servedPRList(
+    project,
+    deps.projectRows ?? projectRetainedPRList,
+    deps.projectRow ?? projectRetainedPRRow,
+    fresh,
+  );
+}
+
+/**
+ * One served row again from its retained observation, placed as the list projection placed it
+ * (project, slot, worker, summary): no fleet load and no candidate discovery. Never invokes GitHub.
+ */
+export async function projectRetainedPRRow(served: PRStatus): Promise<PRStatus | undefined> {
+  const raw = peekRetainedPRRawData(served.repo, served.pr);
+  if (!raw) return undefined;
+  const projects = await loadProjectConfigs(true);
+  const row = projectPRData(
+    raw,
+    {
+      prNum: served.pr,
+      runs: getAllRuns(),
+      project: served.project,
+      repo: served.repo,
+      slot: served.slot ?? undefined,
+      workerActive: served.workerActive,
+      summary: served.summary,
+      rejectIncomplete: true,
+    },
+    projects.find((project) => project.name === served.project) ?? null,
+  );
+  return shouldIncludePRInDashboard(row) ? row : undefined;
 }
 
 /** Reads only gateway/node-owned local facts and retained raw observations. Never invokes GitHub. */

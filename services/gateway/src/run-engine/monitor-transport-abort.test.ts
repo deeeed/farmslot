@@ -173,28 +173,32 @@ test(
 );
 
 // #1427: a failure the runner itself reported is prompt and visible, and keeps the worker.
-test(
-  'a runner-reported failure blocks the monitor on runner_unavailable with the worker kept',
-  { timeout: 4000 },
-  async (t) => {
-    const f = await fixture(t);
-    const pane = f.paneEndedOn('OAuth refresh failed for anthropic: invalid_grant');
-    const execution = f.start({
-      workerStatus: (slot, runner, runId, role, contextId) =>
-        checkAgentLive(slot, runner, runId, role, contextId, pane),
-      violations: async () => [],
-    });
-    const card = () => getRun(f.run.id)?.decisions.find((decision) => !decision.resolvedAt);
-    await until(() => card() !== undefined);
+for (const failure of [
+  'OAuth refresh failed for anthropic: invalid_grant',
+  'Pi model request timed out after 300000ms and one retry',
+])
+  test(
+    `a runner-reported failure blocks the monitor on runner_unavailable with the worker kept: ${failure}`,
+    { timeout: 4000 },
+    async (t) => {
+      const f = await fixture(t);
+      const pane = f.paneEndedOn(failure);
+      const execution = f.start({
+        workerStatus: (slot, runner, runId, role, contextId) =>
+          checkAgentLive(slot, runner, runId, role, contextId, pane),
+        violations: async () => [],
+      });
+      const card = () => getRun(f.run.id)?.decisions.find((decision) => !decision.resolvedAt);
+      await until(() => card() !== undefined);
 
-    assert.equal(card()?.type, 'monitor_runner_unavailable');
-    assert.match(card()?.description ?? '', /^OAuth refresh failed for anthropic: invalid_grant/);
-    assert.equal(getRun(f.run.id)?.status, 'blocked');
-    assert.equal(getRun(f.run.id)?.slotId, f.slotId, 'the worker keeps its slot');
-    resolveMonitorDecision(card()!.id, 'abort');
-    assert.equal((await execution).exitReason, 'aborted');
-  },
-);
+      assert.equal(card()?.type, 'monitor_runner_unavailable');
+      assert.ok(card()?.description.startsWith(failure));
+      assert.equal(getRun(f.run.id)?.status, 'blocked');
+      assert.equal(getRun(f.run.id)?.slotId, f.slotId, 'the worker keeps its slot');
+      resolveMonitorDecision(card()!.id, 'abort');
+      assert.equal((await execution).exitReason, 'aborted');
+    },
+  );
 
 // R2: Continue answers that failed turn. Its record stays until the next hook event.
 test(

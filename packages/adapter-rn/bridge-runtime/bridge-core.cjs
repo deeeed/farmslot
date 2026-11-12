@@ -623,8 +623,52 @@ function createBuiltinCommands({ routes, perfMarkerPrefixes, readyExpression }) 
         var sn = rawStateNode && rawStateNode.canonical && rawStateNode.canonical.publicInstance
           ? rawStateNode.canonical.publicInstance
           : rawStateNode;
-        if (sn && typeof sn.measureLayout === 'function') return sn;
+        if (sn && typeof sn.measureLayout === 'function' && typeof sn.measureInWindow === 'function') return sn;
         return findMeasurable(fiber.child);
+      }
+      // A window rect once two reads agree (bounded), so a scroll has settled.
+      function settledRect(node, done) {
+        var last = null;
+        var reads = 0;
+        (function read() {
+          node.measureInWindow(function(x, y, width, height) {
+            var rect = { x: x, y: y, width: width, height: height };
+            reads += 1;
+            var still = last && last.x === x && last.y === y && last.width === width && last.height === height;
+            if (still || reads >= 30) return done(rect);
+            last = rect;
+            setTimeout(read, 32);
+          });
+        })();
+      }
+      // Centre the target in its scroll container's visible frame: the offset that
+      // puts its layout centre on the frame centre. Layout coordinates make this hold
+      // for inverted lists too, and it does not depend on where a scroll stops. The
+      // scroll component instance rarely measures itself; its first host view carries
+      // the visible frame. Resolves with the settled target rect, or fails when the
+      // target still does not show inside the frame.
+      function scrollTargetIntoView(target, containerFiber, container, scrollToOffset) {
+        var frameNode = typeof container.measureInWindow === 'function' ? container : findMeasurable(containerFiber);
+        return new Promise(function(resolve) {
+          target.measureLayout(
+            frameNode,
+            function(x, y, width, height) {
+              settledRect(frameNode, function(frame) {
+                var offset = Math.max(0, y + height / 2 - frame.height / 2);
+                scrollToOffset(offset);
+                settledRect(target, function(targetRect) {
+                  var visible = targetRect.y < frame.y + frame.height && targetRect.y + targetRect.height > frame.y;
+                  resolve(visible
+                    ? { ok: true, testId: opts.testId, measuredOffset: offset, animated: opts.animated, targetRect: targetRect, containerRect: frame }
+                    : { ok: false, error: 'testID=' + opts.testId + ' is still outside its scroll container after scrolling', targetRect: targetRect, containerRect: frame });
+                });
+              });
+            },
+            function() {
+              resolve({ ok: false, error: 'Unable to measure testID=' + opts.testId + ' relative to its scroll container' });
+            }
+          );
+        });
       }
       function tryScrollNear(anchor) {
         if (!opts.intoView && tryScroll(anchor, false)) return true;
@@ -639,17 +683,8 @@ function createBuiltinCommands({ routes, perfMarkerPrefixes, readyExpression }) 
           if (sn) {
             if (typeof sn.scrollTo === 'function' && !(currentProps && currentProps.horizontal === true)) {
               if (target) {
-                return new Promise(function(resolve) {
-                  target.measureLayout(
-                    sn,
-                    function(x, y) {
-                      sn.scrollTo({ y: y, animated: opts.animated });
-                      resolve({ ok: true, testId: opts.testId, measuredOffset: y, animated: opts.animated });
-                    },
-                    function() {
-                      resolve({ ok: false, error: 'Unable to measure testID=' + opts.testId + ' relative to its scroll container' });
-                    }
-                  );
+                return scrollTargetIntoView(target, current, sn, function(offset) {
+                  sn.scrollTo({ y: offset, animated: opts.animated });
                 });
               }
               sn.scrollTo({ y: opts.offset, animated: opts.animated });
@@ -657,17 +692,8 @@ function createBuiltinCommands({ routes, perfMarkerPrefixes, readyExpression }) 
             }
             if (typeof sn.scrollToOffset === 'function' && !(currentProps && currentProps.horizontal === true)) {
               if (target) {
-                return new Promise(function(resolve) {
-                  target.measureLayout(
-                    sn,
-                    function(x, y) {
-                      sn.scrollToOffset({ offset: y, animated: opts.animated });
-                      resolve({ ok: true, testId: opts.testId, measuredOffset: y, animated: opts.animated });
-                    },
-                    function() {
-                      resolve({ ok: false, error: 'Unable to measure testID=' + opts.testId + ' relative to its scroll container' });
-                    }
-                  );
+                return scrollTargetIntoView(target, current, sn, function(offset) {
+                  sn.scrollToOffset({ offset: offset, animated: opts.animated });
                 });
               }
               sn.scrollToOffset({ offset: opts.offset, animated: opts.animated });
@@ -676,7 +702,84 @@ function createBuiltinCommands({ routes, perfMarkerPrefixes, readyExpression }) 
           }
           current = current.return;
         }
-        return opts.intoView ? tryScroll(anchor, false) : false;
+        if (!opts.intoView) return false;
+        if (tryScroll(anchor, false)) return true;
+        // Nothing scrolls the target (a fixed sheet, say): it is in view when it shows
+        // whole inside the window and every ancestor that clips (overflow hidden or
+        // scroll, as scroll viewports are). measureInWindow reports the target's own
+        // bounds even where a clipping ancestor hides it; overflow defaults to visible
+        // on iOS, so other ancestors do not clip.
+        var top = anchor;
+        while (top.return) top = top.return;
+        var windowNode = findMeasurable(top);
+        if (!target || !windowNode) return false;
+        // Flatten like React Native: entries apply in order and the last one that sets
+        // overflow wins, an explicit undefined (visible) included. Numeric style IDs
+        // predate StyleSheet.create returning objects and are not resolvable here.
+        function overflowOf(style) {
+          var overflow;
+          (function apply(entry) {
+            if (Array.isArray(entry)) {
+              for (var i = 0; i < entry.length; i++) apply(entry[i]);
+            } else if (entry && typeof entry === 'object' && 'overflow' in entry) {
+              overflow = entry.overflow;
+            }
+          })(style);
+          return overflow;
+        }
+        var frames = [windowNode];
+        for (var up = anchor.return; up; up = up.return) {
+          var raw = up.stateNode;
+          var node = raw && raw.canonical && raw.canonical.publicInstance ? raw.canonical.publicInstance : raw;
+          var overflow = overflowOf(up.memoizedProps && up.memoizedProps.style);
+          if (
+            node && node !== windowNode && (overflow === 'hidden' || overflow === 'scroll') &&
+            typeof node.measureLayout === 'function' && typeof node.measureInWindow === 'function'
+          ) frames.push(node);
+        }
+        // One read per frame; a view that never answers (unmounted) counts as not shown.
+        function measureFrame(node, done) {
+          var answered = false;
+          var timer = setTimeout(function() {
+            if (answered) return;
+            answered = true;
+            done(null);
+          }, 500);
+          node.measureInWindow(function(x, y, width, height) {
+            if (answered) return;
+            answered = true;
+            clearTimeout(timer);
+            done({ x: x, y: y, width: width, height: height });
+          });
+        }
+        return new Promise(function(resolve) {
+          var view = null;
+          (function next(index) {
+            if (index < frames.length) {
+              return measureFrame(frames[index], function(frame) {
+                if (!frame) return resolve({ ok: false, error: 'No scrollable near testID=' + opts.testId });
+                var x = frame.x;
+                var y = frame.y;
+                var width = frame.width;
+                var height = frame.height;
+                var left = view ? Math.max(view.x, x) : x;
+                var topEdge = view ? Math.max(view.y, y) : y;
+                var right = view ? Math.min(view.x + view.width, x + width) : x + width;
+                var bottom = view ? Math.min(view.y + view.height, y + height) : y + height;
+                view = { x: left, y: topEdge, width: Math.max(0, right - left), height: Math.max(0, bottom - topEdge) };
+                next(index + 1);
+              });
+            }
+            settledRect(target, function(rect) {
+              var shows = rect.width > 0 && rect.height > 0 &&
+                rect.x >= view.x && rect.x + rect.width <= view.x + view.width &&
+                rect.y >= view.y && rect.y + rect.height <= view.y + view.height;
+              resolve(shows
+                ? { ok: true, testId: opts.testId, alreadyInView: true, targetRect: rect }
+                : { ok: false, error: 'No scrollable near testID=' + opts.testId });
+            });
+          })(0);
+        });
       }
       function findTestId(fiber) {
         if (!fiber) return null;

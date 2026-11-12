@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { RunDecision } from '@farmslot/protocol';
@@ -16,6 +17,21 @@ export function readDecisionHistoryFile(file: string): RunDecision[] {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw error;
   }
+  return parseDecisionHistory(text);
+}
+
+export async function readDecisionHistoryFileAsync(file: string): Promise<RunDecision[]> {
+  let text: string;
+  try {
+    text = await readFile(file, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+  return parseDecisionHistory(text);
+}
+
+function parseDecisionHistory(text: string): RunDecision[] {
   const lines = text.split('\n');
   return lines.flatMap((line, index) => {
     if (index === lines.length - 1 && !line) return [];

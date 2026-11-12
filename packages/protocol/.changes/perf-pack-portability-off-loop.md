@@ -1,0 +1,1 @@
+- Add `validatePackPortabilityAsync` and `listPackOwnedEntriesAsync`, which run the pack ownership scan's Git calls through a caller-supplied runner; the synchronous functions are unchanged.

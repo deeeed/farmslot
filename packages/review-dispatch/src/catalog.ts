@@ -41,6 +41,7 @@ export function resolveReviewMode({
     run?.reviewMode ??
     run?.prWork?.review?.options.mode ??
     run?.repeatReviewContext?.mode ??
+    (run?.reviewContext?.freshChain ? 'cold' : undefined) ??
     defaultMode ??
     DEFAULT_REVIEW_MODE
   );

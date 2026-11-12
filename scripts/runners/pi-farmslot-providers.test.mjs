@@ -1551,3 +1551,89 @@ test('dispatch and accounting share normalization, including invalid rates and s
   assert.deepEqual(provider.models[0].cost, cost);
   assert.equal(cost.tiers[1].input, null, 'sparse tiers inherit base rates');
 });
+
+test('idle deadlines reset on response bytes while total deadlines retain their original cap', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const mode of ['total', 'idle']) {
+    let source;
+    const fetch = deadlinePiFetch(
+      async (_url, { signal }) =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              source = controller;
+              signal.addEventListener('abort', () => controller.error(signal.reason), {
+                once: true,
+              });
+            },
+          }),
+        ),
+      100,
+      undefined,
+      mode,
+    );
+    const reader = (await fetch('http://fixture')).body.getReader();
+    t.mock.timers.tick(80);
+    source.enqueue(new Uint8Array([1]));
+    assert.equal((await reader.read()).value[0], 1);
+    const next = reader.read();
+    if (mode === 'total') {
+      const rejected = assert.rejects(next, /timed out after 100ms/);
+      t.mock.timers.tick(20);
+      await rejected;
+    } else {
+      t.mock.timers.tick(80);
+      source.enqueue(new Uint8Array([2]));
+      assert.equal((await next).value[0], 2, 'stream outlives the total deadline');
+      const rejected = assert.rejects(reader.read(), /timed out after 100ms/);
+      t.mock.timers.tick(100);
+      await rejected;
+    }
+  }
+});
+
+test('idle deadlines bound missing headers and empty chunks; cancellation does not exhaust retries', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let exhausted = 0;
+  let source;
+  const fetch = deadlinePiFetch(
+    async (_url, { signal }) =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            source = controller;
+            signal.addEventListener('abort', () => controller.error(signal.reason), { once: true });
+          },
+        }),
+      ),
+    100,
+    () => exhausted++,
+    'idle',
+  );
+  const reader = (await fetch('http://fixture')).body.getReader();
+  t.mock.timers.tick(80);
+  source.enqueue(new Uint8Array());
+  await reader.read();
+  const rejected = assert.rejects(reader.read(), /timed out/);
+  t.mock.timers.tick(20);
+  await rejected;
+  const operator = new AbortController();
+  const response = await fetch('http://fixture', { signal: operator.signal });
+  const cancelled = assert.rejects(response.text(), { name: 'AbortError' });
+  operator.abort();
+  await cancelled;
+  t.mock.timers.tick(100);
+  assert.equal(exhausted, 0);
+  const noHeaders = deadlinePiFetch(
+    (_url, { signal }) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      }),
+    100,
+    undefined,
+    'idle',
+  );
+  const headerFailure = assert.rejects(noHeaders('http://fixture'), /timed out/);
+  t.mock.timers.tick(100);
+  await headerFailure;
+});

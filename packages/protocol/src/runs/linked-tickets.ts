@@ -5,7 +5,7 @@ const EXACT_JIRA_KEY = /^[A-Z][A-Z0-9]*-\d+$/;
 
 export interface RunTicketSource {
   ticketOrPr: string;
-  ticketData?: RunTicketData;
+  ticketData?: Pick<RunTicketData, 'jiraKey' | 'linkedTickets'>;
   linkedTicketRefs?: string[];
   links?: Run['links'];
 }

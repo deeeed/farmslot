@@ -2,11 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { URL } from 'node:url';
 
-import type { Run } from '@farmslot/protocol';
+import { type Run, type RunListRow, runListRow } from '@farmslot/protocol';
 import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import { Methods } from '../../../../../packages/protocol/src/rpc/registry';
-import { savedReviewView } from '../../../../../packages/protocol/src/runs/review-chain';
+import {
+  savedReviewExpected,
+  savedReviewView,
+} from '../../../../../packages/protocol/src/runs/review-chain';
 import {
   refreshReviewGateView,
   reviewGateRefreshBlocksPost,
@@ -56,7 +59,7 @@ function publicationHook(
   status = 'connected',
   dependencies: Record<string, unknown> = {},
 ) {
-  const hook = mountHook<[Run, null, 'saved']>(
+  const hook = mountHook<[Run | RunListRow, null, 'saved']>(
     new URL('./use-review-publication.ts', import.meta.url),
     'useReviewPublication',
     {
@@ -66,6 +69,7 @@ function publicationHook(
         Methods,
         reviewCurationView: () => null,
         reviewPostingFingerprint: () => '',
+        savedReviewExpected,
         savedReviewView,
         toggleReviewFinding: () => null,
       },
@@ -101,7 +105,11 @@ function publicationHook(
   return hook;
 }
 
-function savedState(shown: Run, observation: ResourceQueryState, status = 'connected') {
+function savedState(
+  shown: Run | RunListRow,
+  observation: ResourceQueryState,
+  status = 'connected',
+) {
   const hook = publicationHook(observation, status);
   const result = hook.render(shown, null, 'saved');
   if (!isSavedState(result)) throw new Error('useReviewPublication returned no saved state');
@@ -128,6 +136,20 @@ test('a finished review run gets the loading card, then a retry that can be pres
   assert.equal(afterFailure.savedError, 'Request run.get timed out');
   assert.equal(afterFailure.readDisabled, false);
   assert.equal(savedState(run('review-pr'), failed, 'disconnected').readDisabled, true);
+});
+
+// Run Detail hands over the run.list row while run.get loads; the row leaves the review text
+// out, and still says a saved review is coming.
+test('a list row of a run with a saved review gets the loading card as its full run does', () => {
+  const reviewed: Run = {
+    ...run('fix-bug'),
+    reviewResult: { recommendation: 'COMMENT', reviewMd: 'Looks good', lineComments: [] },
+  };
+  const row = runListRow(reviewed);
+  assert.equal(row.reviewResult && 'reviewMd' in row.reviewResult, false);
+  assert.equal(savedState(reviewed, loading).savedLoading, true);
+  assert.equal(savedState(row, loading).savedLoading, true);
+  assert.equal(savedState(runListRow(run('fix-bug')), loading).savedLoading, false);
 });
 
 test('refresh stays pending for the server result and reports a disconnect', async () => {

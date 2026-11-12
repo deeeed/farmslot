@@ -16,7 +16,6 @@ import path from 'node:path';
 import {
   packMachineNames,
   validatePackBytesPortability,
-  validatePackPortability,
 } from '@farmslot/protocol/node/pack-portability';
 import { currentProjectSources, poolDirectory, projectsDirectory } from '@farmslot/slot-config';
 
@@ -40,6 +39,7 @@ import {
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { farmPathsForSlot, farmslotDirForSlot } from '../fleet/farm-paths.js';
 import { usesNodeLink } from '../fleet/node-link-policy.js';
+import { validateProjectPackPortability } from '../host-services/pack-portability.js';
 import {
   nodeSupportHashPath,
   nodeSupportSelectionCommand,
@@ -158,9 +158,16 @@ export async function collectNodeSupportBundle(projectName: string, supportPaths
     ...supportPaths.filter((p) => p.startsWith('projects/')).map((p) => p.split('/')[1]),
   ]);
   const machines = packMachineNames(poolDirectory());
-  const portabilityErrors = [...projects].flatMap((name) =>
-    validatePackPortability(path.join(projectsDirectory(), name), `projects/${name}`, machines),
-  );
+  // One project at a time, in insertion order: the primary pack's failure surfaces first.
+  const portabilityErrors: string[] = [];
+  for (const name of projects)
+    portabilityErrors.push(
+      ...(await validateProjectPackPortability(
+        path.join(projectsDirectory(), name),
+        `projects/${name}`,
+        machines,
+      )),
+    );
   if (portabilityErrors.length)
     throw new Error(`Project pack is not portable:\n${portabilityErrors.join('\n')}`);
   const farmslotRootRealPath = await realpath(farmslotRoot());

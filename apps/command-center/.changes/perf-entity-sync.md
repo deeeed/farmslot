@@ -1,0 +1,1 @@
+- Make the upstream-collectors proof fixture answer the status-check query in the shape the gateway reads, so the PR list can be proven against it again.

@@ -10,7 +10,7 @@ import type {
 
 export interface ResolveReviewModeOptions {
   explicitMode?: ReviewMode | null;
-  run?: Pick<Run, 'reviewMode' | 'prWork' | 'repeatReviewContext'> | null;
+  run?: Pick<Run, 'reviewMode' | 'prWork' | 'repeatReviewContext' | 'reviewContext'> | null;
   defaultMode?: ReviewMode | null;
 }
 
@@ -57,6 +57,8 @@ export interface ReviewDispatchContext extends ReviewValidationOptions {
   workflow?: 'review' | 'qa';
   defaults?: Partial<ReviewSelection>;
   showMode?: boolean;
+  /** New static review-pr requests may omit all predecessor input. */
+  allowFreshChain?: boolean;
   minRows?: number;
   /** Caller-supplied reviewed lineages. They never derive from the selected runner. */
   reviewLineages?: readonly ReviewContinuationContext[];

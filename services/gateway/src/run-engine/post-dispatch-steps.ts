@@ -1042,13 +1042,16 @@ export async function executeReviewStep(
       throw new Error(`Self-review did not complete: ${result.reason ?? 'unknown'}`);
     }
     if (!result.skipped && result.verdict === 'blocked') {
+      const reason = result.reason ?? 'Self-review fix blocked';
+      if (runDeliveredResult(getRun(runId) ?? current))
+        throw new ResultDecisionHoldError(reason, inputs, { ...result, cliCommand });
       updateRun(runId, {
         status: 'blocked',
         metrics: {
           ...current.metrics,
           outcome: 'partial',
         },
-        error: result.reason ?? 'Self-review fix blocked',
+        error: reason,
       });
     }
     if (!result.skipped && result.verdict === 'issues') {

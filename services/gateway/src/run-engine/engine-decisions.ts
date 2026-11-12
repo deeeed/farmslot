@@ -35,6 +35,7 @@ import {
   type RunProgressObservation,
 } from '../runners/run-progress.js';
 import {
+  getAllRunsWithArchived,
   getRun,
   getRunWithArchived,
   listRuns,
@@ -195,14 +196,21 @@ function terminalReviewTimestamp(run: Run): string {
   return run.completedAt ?? run.updatedAt ?? run.createdAt;
 }
 
+/** Fresh requests have no predecessor input, so callers need not read review history. */
+export function startsFreshReviewChain(current: Pick<Run, 'reviewContext' | 'prWork'>): boolean {
+  return (
+    (current.reviewContext ?? current.prWork?.review?.options.reviewContext)?.freshChain === true
+  );
+}
+
 export function findLatestPriorReviewRun(
   current: Pick<Run, 'id' | 'project' | 'ticketOrPr' | 'flowType' | 'prWork' | 'reviewContext'>,
   allRuns: readonly Run[],
 ): Run | null {
   const identity = canonicalReviewIdentity(current);
-  const requestedLineages =
-    current.reviewContext?.reviewLineages ??
-    current.prWork?.review?.options.reviewContext?.reviewLineages;
+  const requestContext = current.reviewContext ?? current.prWork?.review?.options.reviewContext;
+  if (startsFreshReviewChain(current)) return null;
+  const requestedLineages = requestContext?.reviewLineages;
   const lineageIds = [
     ...new Set(requestedLineages?.flatMap((lineage) => (lineage ? [lineage.reviewId] : [])) ?? []),
   ];
@@ -485,7 +493,7 @@ export async function handleRepeatReviewDecision(
   ) {
     return current.repeatReviewContext;
   }
-  const allRuns = listRuns({}).runs;
+  const allRuns = startsFreshReviewChain(current) ? [] : await getAllRunsWithArchived();
   const prior = findLatestPriorReviewRun(current, allRuns);
   if (!prior) {
     if (requestedMode === 'warm')

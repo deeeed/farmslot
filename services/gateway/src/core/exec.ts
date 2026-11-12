@@ -9,7 +9,7 @@ import path from 'node:path';
 import { createNodeExecCloseout, type ExecResult, observeNodeExecAbort } from '@farmslot/protocol';
 import { currentProjectSources, sourceExecutionEnvironment } from '@farmslot/slot-config';
 
-import { currentFarmPaths, farmPathsForSlot } from '../fleet/farm-paths.js';
+import { commandIncludesFarmPath, currentFarmPaths } from '../fleet/farm-paths.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { usesNodeLink } from '../fleet/node-link-policy.js';
 import { nodeExec, nodeExecArgv } from '../fleet/node-rpc.js';
@@ -18,7 +18,6 @@ import { executionKind, measureManagedOperation } from '../observability/perform
 import { assertCleanupCurrent, cleanupSignal, trackCleanupCommand } from './cleanup-scope.js';
 import type { SlotVars } from './config.js';
 import { currentSlotCommandExecutor } from './exec-scope.js';
-import { commandIncludesRemotePath } from './remote-paths.js';
 
 export type { ExecResult };
 
@@ -425,7 +424,7 @@ export async function execOnSlot(
   // bundle matching this gateway's config, never from the node's last deploy
   // (ledger F15). Loaded lazily: node-support itself executes through here.
   const timeout = opts.timeout;
-  if (commandIncludesRemotePath(cmd, farmPathsForSlot(slotVars).code.node)) {
+  if (commandIncludesFarmPath(cmd, slotVars)) {
     const { NodeSupportPendingError, resolveRemoteFarmCommand } =
       await import('../node-support/remote-command.js');
     try {

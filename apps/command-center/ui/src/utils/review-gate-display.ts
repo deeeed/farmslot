@@ -15,6 +15,7 @@ import {
   reviewSourceLabel,
   type ReviewStatus,
   type Run,
+  type RunListRow,
   summarizeReviewCounts,
 } from '@farmslot/protocol';
 
@@ -74,7 +75,7 @@ export function activePublicationReviewLabel(
 }
 
 export function compactHumanGateLabel(
-  run: Pick<Run, 'agentContexts' | 'decisions' | 'engineState'> | undefined,
+  run: Pick<RunListRow, 'agentContexts' | 'decisions' | 'engineState'> | undefined,
 ): string {
   const activeReview = activePublicationReviewLabel(run);
   if (activeReview) return activeReview.toLowerCase();
@@ -88,7 +89,7 @@ export function compactHumanGateLabel(
   const decision = [...(run?.decisions ?? [])]
     .reverse()
     .find((candidate) => candidate.type === 'engine_human_gate' && !candidate.resolvedAt);
-  if (decision?.actions.some((action) => action.id === 'approve-publish')) {
+  if (decision?.actions?.some((action) => action.id === 'approve-publish')) {
     return 'publish ready';
   }
 

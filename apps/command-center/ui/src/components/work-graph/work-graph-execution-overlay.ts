@@ -1,7 +1,7 @@
 import type {
   BacklogItem,
   QueueItem,
-  Run,
+  RunListRow,
   SlotStatus,
   WorkGraphProjection,
   WorkNode,
@@ -70,7 +70,7 @@ export interface WorkGraphNodeExecutionView {
   blockers: WorkGraphNodeBlocker[];
   backlogItem?: BacklogItem;
   queueItem?: QueueItem;
-  run?: Run;
+  run?: RunListRow;
   visibleCandidateSlots: SlotExecutionView[];
   editableConfig: boolean;
 }
@@ -79,7 +79,7 @@ export interface WorkGraphExecutionOverlayInput {
   graph: WorkGraphProjection;
   backlogItems: BacklogItem[];
   queueItems: QueueItem[];
-  runs: Run[];
+  runs: RunListRow[];
   slots: SlotStatus[];
 }
 
@@ -149,7 +149,7 @@ function queueMatchesNode(item: QueueItem, node: WorkNode, backlogItem?: Backlog
   );
 }
 
-function runMatchesNode(run: Run, node: WorkNode, backlogItem?: BacklogItem): boolean {
+function runMatchesNode(run: RunListRow, node: WorkNode, backlogItem?: BacklogItem): boolean {
   return Boolean(
     (run.workGraphId === node.graphId && run.workNodeId === node.id) ||
     (backlogItem?.id && run.backlogItemId === backlogItem.id) ||
@@ -159,7 +159,11 @@ function runMatchesNode(run: Run, node: WorkNode, backlogItem?: BacklogItem): bo
   );
 }
 
-function chooseRun(runs: Run[], node: WorkNode, backlogItem?: BacklogItem): Run | undefined {
+function chooseRun(
+  runs: RunListRow[],
+  node: WorkNode,
+  backlogItem?: BacklogItem,
+): RunListRow | undefined {
   const matches = runs.filter((run) => runMatchesNode(run, node, backlogItem));
   return (
     matches.find((run) => !isTerminalRunStatus(run.status)) ??
@@ -178,7 +182,7 @@ function buildSlotViews(
   allowedSlots: string[] | null | undefined,
   slots: SlotStatus[],
   queueItem?: QueueItem,
-  run?: Run,
+  run?: RunListRow,
 ): SlotExecutionView[] {
   const wantedIds = queueItem
     ? new Set(queueSlotIds(queueItem, slots))
@@ -208,7 +212,7 @@ function pushBlocker(
   return blockers;
 }
 
-function statusForRun(run: Run): WorkGraphExecutionStatus {
+function statusForRun(run: RunListRow): WorkGraphExecutionStatus {
   if (run.status === 'done') return 'succeeded';
   if (run.status === 'failed' || run.status === 'cancelled') return 'failed';
   if (run.status === 'blocked' || run.status === 'human-gating') return 'gated';
@@ -544,7 +548,7 @@ function queueTitle(item: QueueItem, backlogById: Map<string, BacklogItem>): str
 export function buildSlotPendingWork(params: {
   slots: SlotStatus[];
   queueItems: QueueItem[];
-  runs: Run[];
+  runs: RunListRow[];
   backlogItems: BacklogItem[];
   workGraphs: WorkGraphProjection[];
   includeSchedulerReady?: boolean;

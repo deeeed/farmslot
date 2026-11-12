@@ -8,6 +8,7 @@ import {
 import type { RunListParams } from '../rpc/run.js';
 
 import { runLinkedTicketRefs } from './linked-tickets.js';
+import type { RunListRow } from './list-row.js';
 import { resolveRunSlotId } from './slot-resolution.js';
 
 /** The run fields `run.list` filters, search and sorting read, on a full run or a projection. */
@@ -53,7 +54,7 @@ export type RunListFilter = Pick<
   | 'sort'
 >;
 
-export function runListProjection(run: Run): RunListProjection {
+export function runListProjection(run: RunListRow): RunListProjection {
   return {
     projected: true,
     id: run.id,

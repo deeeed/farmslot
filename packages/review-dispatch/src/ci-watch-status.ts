@@ -1,4 +1,4 @@
-import { isTerminalRunStatus, type Run } from '@farmslot/protocol';
+import { isTerminalRunStatus, type RunListRow } from '@farmslot/protocol';
 
 export interface CIWatchStatusView {
   label: string;
@@ -33,7 +33,7 @@ export function isCIWatchWorkerFixActive(phase: unknown, fixInProgress: unknown)
 
 /** The same recorded check snapshot and engine deadlines on web and native run cards. */
 export function ciWatchStatusView(
-  run: Run | null | undefined,
+  run: RunListRow | null | undefined,
   nowMs = Date.now(),
 ): CIWatchStatusView | null {
   if (!run || isTerminalRunStatus(run.status)) return null;

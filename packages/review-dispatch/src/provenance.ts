@@ -3,7 +3,7 @@ import type {
   ReviewRequestContext,
   ReviewSequence,
   ReviewSessionTrace,
-  Run,
+  RunListRow,
 } from '@farmslot/protocol';
 
 import type { ReviewDispatchSequenceRole } from './types.js';
@@ -18,7 +18,10 @@ export function reviewLineageKey(context: ReviewContinuationContext): string {
 /** Only retained session/head evidence can seed WARM context; a PR is recorded once present. */
 export function reviewLineagesForRun(
   run:
-    | Pick<Run, 'familyId' | 'engineState' | 'decisions' | 'reviewResult' | 'repeatReviewContext'>
+    | Pick<
+        RunListRow,
+        'familyId' | 'engineState' | 'decisions' | 'reviewResult' | 'repeatReviewContext'
+      >
     | null
     | undefined,
 ): ReviewContinuationContext[] {
@@ -46,7 +49,7 @@ export function reviewLineagesForRun(
   // A refused request's row runs no session; its earlier attempts keep the lineage's.
   for (const review of run.engineState?.publishGate?.reviews ?? [])
     for (const result of [...(review.attempts ?? []), review]) add(result.session);
-  for (const decision of run.decisions) {
+  for (const decision of run.decisions ?? []) {
     if (decision.payload?.kind === 'review') add(decision.payload.session);
     if (decision.payload?.kind === 'ready')
       for (const review of decision.payload.reviews ?? []) add(review.session);

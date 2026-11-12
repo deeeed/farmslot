@@ -29,7 +29,7 @@ import {
   type PersonDeviceSession,
   personSessionCaption,
   type PrincipalListResult,
-  type Run,
+  type RunListRow,
   type SlotStatus,
   sourceObservationAge,
   type TmuxWorkerListResult,
@@ -281,7 +281,7 @@ export class FarmApp extends LitElement {
   @state() private alphaEnabled = getAlphaFeaturesEnabled();
   @state() private decisionCount = 0;
   @state() private violationCount = 0;
-  @state() private runs: Run[] = [];
+  @state() private runs: RunListRow[] = [];
   @state() private terminalRunParam = '';
   @state() private terminalLaunchParam = '';
   @state() private decisionGateParam = '';
@@ -1741,7 +1741,7 @@ export class FarmApp extends LitElement {
     slotId: string,
     currentRunId?: string | null,
     slotBusy = false,
-  ): Run | null {
+  ): RunListRow | null {
     if (currentRunId) {
       const current = this.runs.find((candidate) => candidate.id === currentRunId);
       // During a slot's run transition, current_run_id can still point at the
@@ -1781,7 +1781,7 @@ export class FarmApp extends LitElement {
       pin.label?.trim() || (runId ? run?.ticketOrPr || `Review ${runId.slice(0, 8)}` : slotId);
     const needsAttention =
       this.pinnedSlotNeedsAttention(worker) ||
-      Boolean(runId && run?.decisions.some((decision) => !decision.resolvedAt));
+      Boolean(runId && run?.decisions?.some((decision) => !decision.resolvedAt));
     const workerStatus = runId
       ? (run?.status ?? 'unavailable')
       : needsAttention

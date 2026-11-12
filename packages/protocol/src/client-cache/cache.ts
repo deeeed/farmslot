@@ -13,6 +13,14 @@ import {
   verifyResourceContentInSlices,
 } from './content.js';
 import {
+  createFleetEntityView,
+  createPREntityView,
+  type EntityView,
+  isEntityStoreId,
+  prEntityStoreId,
+  prViewProject,
+} from './entity-views.js';
+import {
   canonicalResourceJson,
   isKnownResourceFamily,
   RESOURCE_PUBLISH_INTERVAL_MS,
@@ -107,6 +115,8 @@ interface QueryEntry {
   retryAt?: number;
   /** How long after the last read the changes since it may wait; any unpaced key lifts it. */
   rereadFloor?: number;
+  /** When this entry's whole snapshot was last handed to the store. */
+  snapshotStoredAt?: number;
   readTimer?: ReturnType<typeof setTimeout>;
 }
 
@@ -174,7 +184,18 @@ function profileId(connection: ResourceCacheConnection): string {
 
 /** Experimental ADR-071 controller. It opens no sockets and never accepts a command. */
 /** A read's reply; a run list view served from the collection carries the collection's time. */
-type ReadReply = ResourceReadResult<unknown> & { incomplete?: boolean; observedAt?: number };
+type ReadReply = ResourceReadResult<unknown> & {
+  incomplete?: boolean;
+  observedAt?: number;
+  /** An entity view put together from what the client holds, without a request. */
+  assembled?: boolean;
+};
+
+/**
+ * A view assembled from pushed entities stores its whole snapshot at most this often; each
+ * pushed row is stored at once. It is the floor a full read of the fleet rereads at.
+ */
+const ENTITY_SNAPSHOT_INTERVAL_MS = RESOURCE_REREAD_INTERVAL_MS.slots ?? 10_000;
 
 export function createGatewayResourceCache(
   options: GatewayResourceCacheOptions,
@@ -309,6 +330,36 @@ export function createGatewayResourceCache(
     maxBodyBytes: resourceQuery(Methods.RUN_LIST).maxBytes,
   });
   let runListLoad: { store: ResourceStore; promise: Promise<void> } | undefined;
+
+  // Entity sync (ADR-071 Amendment 4): fleet.status and each pr.list scope are answered from
+  // entity collections when the gateway advertises entitySync. Rows outlive a connection; their
+  // listing is verified by a versions read on every connection before the view is current.
+  const fleetView = createFleetEntityView();
+  const prViews = new Map<string, EntityView>();
+  const entitySyncOn = () => connection.capabilities?.resourceChanges?.entitySync === true;
+  const entityViews = () => [fleetView, ...prViews.values()];
+  /** The view a query reads through, created on first use; undefined without entity sync. */
+  function entityViewFor(query: ResourceQuery): EntityView | undefined {
+    if (!entitySyncOn()) return undefined;
+    if (fleetView.serves(query)) return fleetView;
+    const scope = prViewProject(query);
+    const collectionKey = query.dependencies.find((key) => key.family === 'upstream');
+    if (!scope || !collectionKey) return undefined;
+    const storeId = prEntityStoreId(scope.project);
+    let view = prViews.get(storeId);
+    if (!view) {
+      view = createPREntityView(scope.project, collectionKey);
+      prViews.set(storeId, view);
+    }
+    return view;
+  }
+  /** Advances when the views are discarded: stored rows read for an earlier one are dropped. */
+  let entityViewGeneration = 0;
+  function forgetEntityViews(): void {
+    entityViewGeneration++;
+    for (const view of entityViews()) view.clear();
+    prViews.clear();
+  }
   const fallbackDetailTargets = new Map<string, RunDetailTarget>();
   const detailSync = createRunDetailSync({
     connection: () => connection,
@@ -376,6 +427,7 @@ export function createGatewayResourceCache(
     hydrationOwnerVersion++;
     version++;
     forgetRunList();
+    forgetEntityViews();
     for (const entry of entries.values()) invalidate(entry, true);
     transport.resynchronize();
   }
@@ -496,6 +548,8 @@ export function createGatewayResourceCache(
     // An I/O failure may have lost a collection merge. Keep visible values, but
     // require a full gateway versions read and never hydrate its old disk rows.
     forgetRunList();
+    // Entity rows are admitted only at a version the gateway lists, so a lost merge costs reads.
+    forgetEntityViews();
     for (const entry of entries.values()) invalidate(entry);
     if (
       needsStore &&
@@ -658,7 +712,8 @@ export function createGatewayResourceCache(
       for (const saved of batch) {
         if (saved.bytes > remaining) continue;
         remaining -= saved.bytes;
-        if (saved.id !== RUN_LIST_COLLECTION_ID) startupQueries.set(saved.id, saved);
+        if (saved.id !== RUN_LIST_COLLECTION_ID && !isEntityStoreId(saved.id))
+          startupQueries.set(saved.id, saved);
       }
       // Restore small aliased report bodies before exposing their cached run. Network
       // prefetch can be queued behind other gates, even when these bytes are already held.
@@ -729,6 +784,12 @@ export function createGatewayResourceCache(
     recoveryAttempted = false;
     failedWriteKey = undefined;
     runList.abort();
+    // A new connection or epoch: rows stay displayed, unverified until a versions read. A gateway
+    // without entity sync replaces the screen with full reads, which a view held from before
+    // would be older than: the next entity sync starts from what is displayed then.
+    if (next.connected && next.capabilities?.resourceChanges?.entitySync !== true)
+      forgetEntityViews();
+    else for (const view of entityViews()) view.unverify();
     // Stored facts belong to an owner, not a socket attempt. Fence a revoked
     // owner's pending I/O synchronously, before queued deletion can run.
     if (revoke || scopeChanged || authorityChanged) {
@@ -736,6 +797,7 @@ export function createGatewayResourceCache(
       residentContent.clear();
       hydrationOwnerVersion++;
       forgetRunList();
+      forgetEntityViews();
     }
     connection = next;
     conversations?.connectionChanged(revoke || scopeChanged || authorityChanged);
@@ -785,6 +847,7 @@ export function createGatewayResourceCache(
           residentContent.clear();
           storeVersion++;
           forgetRunList();
+          forgetEntityViews();
           for (const entry of entries.values()) invalidate(entry, true);
           // Switching profiles retains the old profile's store; revoked authority deletes it.
           if (!switchingProfile || revoke || deletionRequired) {
@@ -862,11 +925,14 @@ export function createGatewayResourceCache(
       updateCollectors();
       version++;
       runList.abort();
+      for (const view of entityViews()) view.unverify();
       for (const entry of entries.values()) invalidate(entry);
       transport.resynchronize();
       return;
     }
     conversations?.resourcesChanged(payload);
+    const entitySync = entitySyncOn();
+    const changedViews = new Set<EntityView>();
     for (const change of payload.changes) {
       if (!Number.isSafeInteger(change.revision) || change.revision < 0) {
         usable = false;
@@ -878,12 +944,21 @@ export function createGatewayResourceCache(
       const id = resourceKeyId(change.key);
       if (change.revision <= (revisions.get(id) ?? -1)) continue;
       revisions.set(id, change.revision);
-      const affected = [...entries.values()].filter((entry) => entry.dependencyIds.has(id));
+      if (entitySync)
+        for (const view of entityViews()) if (view.applyChange(change)) changedViews.add(view);
+      // An entity view applied its own collection's change above. Any other dependency changes
+      // what the gateway would serve without a push: the view is stale until it reads again.
+      const affected = [...entries.values()].filter(
+        (entry) =>
+          entry.dependencyIds.has(id) &&
+          !(entitySync && entityViewFor(entry.query)?.collectionKeyId === id),
+      );
       // Coverage counts declared dependencies only, so a known key that no entry declares (another
       // slot, an unopened workspace) changes nothing held. Only a family this client cannot name might.
       if (!affected.length && isKnownResourceFamily(change.key?.family)) continue;
       const targets = affected.length ? affected : [...entries.values()];
       for (const entry of targets) {
+        if (entitySync) entityViewFor(entry.query)?.requireVersions();
         if (!affected.length) entry.unknownGeneration++;
         const floor =
           entry.query.rereadIntervalMs?.[change.key.family] ??
@@ -897,6 +972,27 @@ export function createGatewayResourceCache(
         notify(entry);
         if (!entry.pending) schedule(entry);
       }
+    }
+    for (const view of changedViews) refreshEntityView(view);
+  }
+
+  /** A notification changed an entity view: reassemble it now; a read follows only if needed. */
+  function refreshEntityView(view: EntityView): void {
+    for (const entry of entries.values()) {
+      if (!view.serves(entry.query)) continue;
+      entry.dirty = true;
+      if (!entry.listeners.size) {
+        // Nobody observes it now: it is stale until someone does, and reassembled then.
+        if (entry.state.status === 'ready') entry.state = { ...entry.state, status: 'stale' };
+        continue;
+      }
+      if (entry.queued) continue;
+      entry.queued = true;
+      queueMicrotask(() => {
+        entry.queued = false;
+        // Pushed changes are not paced: assembling them costs no read.
+        if (entry.listeners.size && usable && !disposed) void fetchEntry(entry, false);
+      });
     }
   }
 
@@ -1123,6 +1219,142 @@ export function createGatewayResourceCache(
         }
       }
     })();
+  }
+
+  /** The stamp of an entity view: the revisions this client has applied on this connection. */
+  function appliedRevisionStamp(entry: QueryEntry): ResourceReadStamp | undefined {
+    const epoch = connection.capabilities?.resourceChanges?.epoch;
+    // Sound only for a verified collection: its versions reply came after every notification
+    // published before it, and every notification since was applied to the collection.
+    return epoch
+      ? {
+          epoch,
+          dependencies: entry.query.dependencies.map((key) => ({
+            key,
+            revision: revisions.get(resourceKeyId(key)) ?? 0,
+          })),
+        }
+      : undefined;
+  }
+
+  /** Rows a previous session stored, loaded once per store before the view's first versions read. */
+  async function hydrateEntityView(view: EntityView): Promise<void> {
+    const readingStore = store;
+    if (view.hydratedFrom === readingStore || !readingStore.getRows) return;
+    view.hydratedFrom = readingStore;
+    const incarnation = storeVersion;
+    const owner = hydrationOwnerVersion;
+    const generation = entityViewGeneration;
+    let stored: Awaited<ReturnType<NonNullable<ResourceStore['getRows']>>>;
+    try {
+      stored = await readingStore.getRows(view.storeId);
+    } catch (error) {
+      // A failed store read falls back to memory, as every other store read does.
+      await recoverStore(error, readingStore);
+      return;
+    }
+    if (
+      disposed ||
+      store !== readingStore ||
+      readingStore.deleted ||
+      incarnation !== storeVersion ||
+      owner !== hydrationOwnerVersion ||
+      // The view was discarded meanwhile (a gateway without entity sync): these rows are older
+      // than the full read that replaced the screen.
+      generation !== entityViewGeneration
+    )
+      return;
+    view.hydrate(stored);
+  }
+
+  /** Writes the rows a view changed since its last write, fenced to the current store. */
+  function persistEntityView(view: EntityView): void {
+    const writingStore = store;
+    const incarnation = storeVersion;
+    const changes = view.takeUnstored();
+    const mergeRows = writingStore.mergeRows?.bind(writingStore);
+    if (!mergeRows || !canPersist(connection) || changes.data === undefined) return;
+    if (!changes.metaChanged && !changes.upserts.length && !changes.deletes.length) return;
+    const current = () =>
+      !disposed && writingStore === store && incarnation === storeVersion && !writingStore.deleted;
+    const now = Date.now();
+    void updateStore(writingStore, current, () =>
+      mergeRows(view.storeId, {
+        entry: {
+          id: view.storeId,
+          data: changes.data,
+          observedAt: now,
+          accessedAt: now,
+          bytes: changes.bytes,
+        },
+        upserts: changes.upserts.map(({ id, version, body, bytes }) => ({
+          id,
+          version,
+          projection: {},
+          body,
+          bytes,
+        })),
+        deletes: changes.deletes,
+      }),
+    );
+  }
+
+  /** An entity view after one sync: pages publish their rows as they land. */
+  async function readEntityView(
+    entry: QueryEntry,
+    view: EntityView,
+    signal: AbortSignal,
+  ): Promise<ReadReply> {
+    // What a full read put on screen is the newest this client holds: it seeds an empty view,
+    // and the listing alone says which rows have gone. Stored rows fill a view nothing seeded.
+    view.seed(entry.state.data);
+    if (!view.held) await hydrateEntityView(view);
+    // The read was cancelled while the store answered (a new connection): it sends nothing.
+    if (signal.aborted)
+      throw Object.assign(new Error('Entity view read superseded'), {
+        code: 'RESOURCE_READ_SUPERSEDED',
+      });
+    let requested = false;
+    const publishPage = (done: number, total: number) => {
+      const partial = view.answer();
+      entry.state = {
+        ...entry.state,
+        ...(partial ? { data: partial.data } : {}),
+        catchUpProgress: { done, total },
+      };
+      notify(entry);
+    };
+    try {
+      await view.sync(async (params, readSignal) => {
+        requested = true;
+        return (await request<unknown>(entry.query.method, params, readSignal)).data;
+      }, publishPage);
+    } catch (error) {
+      if (evictionCodes.has(queryError(error).code)) {
+        const evictingStore = store;
+        view.clear();
+        void updateStore(
+          evictingStore,
+          () => evictingStore === store && !evictingStore.deleted,
+          () => evictingStore.deleteQuery(view.storeId),
+          false,
+        );
+      }
+      throw error;
+    } finally {
+      if (entry.state.catchUpProgress !== undefined)
+        entry.state = { ...entry.state, catchUpProgress: undefined };
+    }
+    persistEntityView(view);
+    const answer = view.answer();
+    if (!answer) return request(entry.query.method, entry.query.params, signal);
+    return {
+      data: answer.data,
+      resourceState: appliedRevisionStamp(entry),
+      ...(answer.current ? {} : { incomplete: true }),
+      ...(requested ? {} : { assembled: true }),
+      observedAt: Date.now(),
+    };
   }
 
   function isRunListView(query: ResourceQuery): boolean {
@@ -1354,17 +1586,20 @@ export function createGatewayResourceCache(
         const fromRunList =
           isRunListView(entry.query) &&
           connection.capabilities?.resourceChanges?.versionLists === true;
-        const reply: ReadReply = fromRunList
-          ? await readRunListView(entry, pending.controller.signal)
-          : entry.query.method === Methods.NATIVE_SESSION_READ
-            ? await readNativeHistory(
-                entry.query.params as NativeSessionTargetParams,
-                entry.state.data as NativeSessionReadResult | undefined,
-                (params, signal) =>
-                  request<NativeSessionReadResult>(Methods.NATIVE_SESSION_READ, params, signal),
-                pending.controller.signal,
-              )
-            : await request(entry.query.method, entry.query.params, pending.controller.signal);
+        const entityView = entityViewFor(entry.query);
+        const reply: ReadReply = entityView
+          ? await readEntityView(entry, entityView, pending.controller.signal)
+          : fromRunList
+            ? await readRunListView(entry, pending.controller.signal)
+            : entry.query.method === Methods.NATIVE_SESSION_READ
+              ? await readNativeHistory(
+                  entry.query.params as NativeSessionTargetParams,
+                  entry.state.data as NativeSessionReadResult | undefined,
+                  (params, signal) =>
+                    request<NativeSessionReadResult>(Methods.NATIVE_SESSION_READ, params, signal),
+                  pending.controller.signal,
+                )
+              : await request(entry.query.method, entry.query.params, pending.controller.signal);
         if (
           disposed ||
           store.deleted ||
@@ -1432,8 +1667,17 @@ export function createGatewayResourceCache(
         entry.retryAt = undefined;
         entry.lastUsed = ++lastUsed;
         // Version-list views are derived from the run collection, which is stored on its own.
+        // A view assembled from pushed entities already stored the rows that changed; its whole
+        // snapshot follows no more often than a full read would have been reread.
+        const paced =
+          reply.assembled === true &&
+          Date.now() - (entry.snapshotStoredAt ?? 0) < ENTITY_SNAPSHOT_INTERVAL_MS;
         const persistResult =
-          entry.query.persisted && canPersist(connection) && reply.incomplete === undefined;
+          entry.query.persisted &&
+          canPersist(connection) &&
+          reply.incomplete === undefined &&
+          !paced;
+        if (persistResult) entry.snapshotStoredAt = Date.now();
         const serialized = persistResult
           ? JSON.stringify(
               entry.query.persistedData ? entry.query.persistedData(reply.data) : reply.data,
@@ -1520,6 +1764,8 @@ export function createGatewayResourceCache(
                       value.id !== saved.id &&
                       // The run collection is bounded by its own body budget, never by its views.
                       value.id !== RUN_LIST_COLLECTION_ID &&
+                      // Entity rows are bounded by their collection, never by its views.
+                      !isEntityStoreId(value.id) &&
                       (retention.cohort === 'upstream'
                         ? isUpstreamStoredQuery(value.id)
                         : value.id.startsWith(`${entry.query.method}:`)),
@@ -1558,8 +1804,18 @@ export function createGatewayResourceCache(
         if (store.persistent && entry.query.method === Methods.RUN_LIST) {
           const listed = reply.data as RunListResult;
           if (Array.isArray(listed.runs)) {
-            for (const run of listed.runs)
+            for (const run of listed.runs) {
+              // A slim row (it carries the gateway's evidenceSummary) hashes to no version the
+              // gateway serves: its version comes only from the version list, and until that is
+              // held its detail is not treated as changed. An older gateway's trimmed full row is
+              // the version basis itself, so it keeps the derived version. Trim markers cannot
+              // tell the two apart: trimRunForList rows carry payloadTrimmed too.
+              if (run.evidenceSummary !== undefined) {
+                fallbackDetailTargets.delete(run.id);
+                continue;
+              }
               fallbackDetailTargets.set(run.id, runDetailTarget(run, runListVersion(run)));
+            }
           }
           refreshDetailTargets();
         }

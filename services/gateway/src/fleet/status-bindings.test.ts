@@ -260,7 +260,8 @@ test('node observations invalidate scoped fleet facts after writes and refresh c
   };
   updateMachineMetrics(machine, metrics);
   assert.equal(resourceRevisions.revision(node), 2);
-  assert.equal(resourceRevisions.revision(slot), beforeSlot + 1);
+  // Host load is the machine's: its sample advances the machine and the fleet keys, no slot.
+  assert.equal(resourceRevisions.revision(slot), beforeSlot);
   assert.equal(getCachedFleet()?.slots[0].hostLoad?.cpuPercent, 20);
   assert.equal((await loadFleetStatus(false, true)).slots[0].hostLoad?.memoryPercent, 30);
   const beforePressure = resourceRevisions.revision(pressure);

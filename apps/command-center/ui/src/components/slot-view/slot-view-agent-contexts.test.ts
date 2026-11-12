@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { AgentContextSummary } from '@farmslot/protocol';
+import { isSlotEntity } from '@farmslot/protocol/client-cache';
 
 import {
   agentContextKey,
@@ -274,5 +275,63 @@ test('selectSlotViewTaskContext uses gateway identity for configured task roots'
       '/prepared/different-root/review/547/REVIEW.md',
     )?.id,
     'review',
+  );
+});
+
+/**
+ * An entity-sync slot row taken as the slot view takes it: admission, derivation, then the task
+ * context for `activeTaskFile`. 'refused' when admission refuses the row.
+ */
+function admittedTaskContext(contexts: unknown[], activeTaskFile: string) {
+  const row: unknown = JSON.parse(
+    JSON.stringify({
+      slot: 'slot-1',
+      machine: 'mac-a',
+      platform: 'macos',
+      project: 'demo',
+      branch: 'main',
+      agent: 'busy',
+      lifecycle: 'ready',
+      phase: null,
+      enabled: true,
+      dispatchable: false,
+      warm: false,
+      health: { ssh: 'OK', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
+      agentContexts: contexts,
+    }),
+  );
+  if (!isSlotEntity(row)) return 'refused';
+  const derived = deriveSlotViewAgentContexts({
+    linkedRun: run(),
+    slot: slot({ agentContexts: row.agentContexts }),
+  });
+  return selectSlotViewTaskContext(derived, 'fix-bug', activeTaskFile)?.id;
+}
+
+test('agent contexts with wrong-typed task paths are refused before the slot view reads them', () => {
+  const dev = {
+    id: 'dev',
+    label: 'Dev',
+    role: 'dev',
+    status: 'working',
+    target: { session: 'session-1', target: 'pane-a' },
+  };
+  const active = '/farm/temp/tasks/mine/TASK.md';
+  assert.equal(admittedTaskContext([{ ...dev, taskFile: 42 }], active), 'refused');
+  assert.equal(
+    admittedTaskContext(
+      [{ ...dev, taskFile: 'temp/tasks/other/TASK.md', taskIdentity: 42 }],
+      active,
+    ),
+    'refused',
+  );
+  // The same contexts with string paths are admitted and selected by their task.
+  assert.equal(admittedTaskContext([{ ...dev, taskFile: active }], active), 'dev');
+  assert.equal(
+    admittedTaskContext(
+      [{ ...dev, taskFile: 'temp/tasks/other/TASK.md', taskIdentity: 'mine/TASK.md' }],
+      active,
+    ),
+    'dev',
   );
 });

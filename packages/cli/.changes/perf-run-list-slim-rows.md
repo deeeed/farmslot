@@ -1,0 +1,1 @@
+- `farmslot run list --json` prints the gateway's slim `run.list` rows: a run's heavy detail (step inputs and most step outputs, gate packages and reports, the review text, the ticket description) is left out. `farmslot run get` still prints the full run.

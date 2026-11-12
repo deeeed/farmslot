@@ -61,7 +61,12 @@ export class ResourceStoreNotice extends LitElement {
         if (
           state.status === this.syncState.status &&
           (state.status !== 'cached' ||
-            (this.syncState.status === 'cached' && state.observedAt === this.syncState.observedAt))
+            (this.syncState.status === 'cached' &&
+              state.observedAt === this.syncState.observedAt)) &&
+          (state.status !== 'catch-up' ||
+            (this.syncState.status === 'catch-up' &&
+              state.done === this.syncState.done &&
+              state.total === this.syncState.total))
         )
           return;
         this.syncState = state;

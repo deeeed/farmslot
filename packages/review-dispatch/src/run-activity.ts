@@ -9,6 +9,7 @@ import {
   reviewRoundAdmissionId,
   reviewRoundBudgetForRun,
   type Run,
+  type RunListRow,
   type RunStep,
   type RunStepDisplayStatus,
   runStepDisplayStatus,
@@ -19,7 +20,7 @@ import {
 import { nativeWorkerTarget } from './native-worker-target.js';
 
 /** An open blocked gate waits for a person; its recorded running step is not a running actor. */
-export function runActivityStepStatus(run: Run, step: RunStep): RunStepDisplayStatus {
+export function runActivityStepStatus(run: RunListRow, step: RunStep): RunStepDisplayStatus {
   return step.name === 'human-gate' && isBlockedAtOpenHumanGate(run)
     ? 'blocked'
     : runStepDisplayStatus(run, step);
@@ -45,7 +46,7 @@ export interface RunActivityView {
 }
 
 export function runReviewActivityContext(
-  run: Run,
+  run: RunListRow,
   roles: readonly AgentRole[] = ['review', 'review-fix'],
 ): AgentContext | undefined {
   return (run.agentContexts ?? [])
@@ -61,7 +62,7 @@ export function runReviewActivityContext(
 }
 
 /** Both run views open the same current actor; the gateway resolves its exact node and pane. */
-export function runTerminalView(run: Run, contextId?: string) {
+export function runTerminalView(run: RunListRow, contextId?: string) {
   const contexts = run.agentContexts ?? [];
   if (contextId && !contexts.some((entry) => entry.id === contextId))
     return {
@@ -150,7 +151,7 @@ export function runTerminalTargetMatches(
 }
 
 /** Presentation only: the gateway's run status and actor records determine what is running. */
-export function runActivityView(run: Run): RunActivityView | null {
+export function runActivityView(run: RunListRow): RunActivityView | null {
   if (
     isTerminalRunStatus(run.status) ||
     ['blocked', 'paused', 'needs-decision', 'review-failed'].includes(run.status) ||

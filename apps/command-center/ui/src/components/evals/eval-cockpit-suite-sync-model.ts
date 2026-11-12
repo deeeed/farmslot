@@ -1,4 +1,4 @@
-import type { ResultPackageManifest, Run } from '@farmslot/protocol';
+import type { ResultPackageManifest, RunListRow } from '@farmslot/protocol';
 
 import { evalRunTrialMatchesCell, FAILED_RUN_STATUSES } from './eval-cockpit-model.js';
 import {
@@ -15,17 +15,17 @@ export interface EvalPackageSnapshot {
 
 export interface EvalSuiteCellsSyncInput {
   cells: readonly EvalLaunchCell[];
-  runs: readonly Run[];
+  runs: readonly RunListRow[];
   packageSnapshots: ReadonlyMap<string, EvalPackageSnapshot>;
 }
 
 export interface EvalSuiteCellsSyncResult {
   cells: EvalLaunchCell[];
-  packageRunsToLoad: Run[];
+  packageRunsToLoad: RunListRow[];
 }
 
 export function evalRunStatusForLaunchCell(
-  run: Run,
+  run: RunListRow,
   pkg?: ResultPackageManifest,
 ): EvalLaunchCellStatus {
   if (FAILED_RUN_STATUSES.has(run.status)) return 'failed';
@@ -33,7 +33,7 @@ export function evalRunStatusForLaunchCell(
   return 'running';
 }
 
-export function evalRunMatchesLaunchCell(run: Run, cell: EvalLaunchCell): boolean {
+export function evalRunMatchesLaunchCell(run: RunListRow, cell: EvalLaunchCell): boolean {
   const evalState = run.engineState?.evalExperiment;
   if (!evalState) return false;
   if (cell.runId && run.id === cell.runId) return true;
@@ -43,7 +43,7 @@ export function evalRunMatchesLaunchCell(run: Run, cell: EvalLaunchCell): boolea
 
 export function applyEvalPackageToLaunchCells(
   cells: readonly EvalLaunchCell[],
-  run: Run,
+  run: RunListRow,
   pkg: ResultPackageManifest,
   packagePath: string,
 ): EvalLaunchCell[] {

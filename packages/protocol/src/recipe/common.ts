@@ -252,7 +252,8 @@ export function isNonEmptyString(value: unknown): value is string {
 export function isRelativeArtifactPath(value: string): boolean {
   if (value.startsWith('/') || value.startsWith('\\')) return false;
   if (/^[A-Za-z]:/.test(value)) return false;
-  return !value.split(/[\\/]+/).some((segment) => segment === '..');
+  // Only a value that holds `..` at all can have it as a segment.
+  return !value.includes('..') || !value.split(/[\\/]+/).some((segment) => segment === '..');
 }
 
 export function finishResult(ctx: MutableValidationContext): RecipeValidationResult {
