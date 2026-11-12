@@ -71,7 +71,7 @@ import {
   slotProbeScript,
 } from './slot-probe-batch.js';
 
-const LOCAL_SLOT_CHECK_CONCURRENCY = 4;
+const SLOT_CHECK_CONCURRENCY = 4;
 const SLOT_CHECK_TIMEOUT_MS = 5_000;
 
 let workspaceRefreshInFlight: Promise<void> | null = null;
@@ -174,10 +174,10 @@ export async function fleetStatus(
   // cached status file — that re-read is what produced ghost prepare hints.
   // Ghost marking happens inside loadFleetStatus, so both branches are honest.
   const loaded = params?.forceRefresh ? (await deps.refresh()).fleet : await deps.load();
-  const fleet = params?.forceRefresh
-    ? ((await deps.workspaces?.refresh?.(loaded)) ?? loaded)
-    : (deps.workspaces?.read(loaded) ?? loaded);
-  if (!params?.forceRefresh) refreshWorkspaceObservations(fleet, deps, publish);
+  const fleet = deps.workspaces?.read(loaded) ?? loaded;
+  // Fresh health must not wait for optional Git/workspace inspection. Forced
+  // and cached reads use the same background owner and completion publication.
+  refreshWorkspaceObservations(fleet, deps, publish);
   if (!isFleetCheckedAtStale(fleet.checkedAt)) return { fleet };
   // Still stale: serve it honestly (stale flag, nothing dispatchable). Kick a
   // background re-probe only when this call did not just refresh AND probeable
@@ -503,10 +503,6 @@ export function withFollowUpRefresh<T>(run: () => Promise<T>): {
 }
 
 const machineHealthRefreshes = withFollowUpRefresh(runFleetHealthRefresh);
-const fleetRefreshes = withFollowUpRefresh(async () => {
-  const { fleet } = await machineHealthRefreshes.refresh();
-  return { fleet: await enrichFleetWorkspaces(fleet) };
-});
 
 /** Background callers need current machine health without viewer-only workspace inspection. */
 export function fleetHealthRefresh(): Promise<FleetStatusResult> {
@@ -515,12 +511,12 @@ export function fleetHealthRefresh(): Promise<FleetStatusResult> {
 
 /** Re-probe the fleet; a call made while a refresh runs gets one more run after it. */
 export function fleetRefresh(): Promise<FleetStatusResult> {
-  return fleetRefreshes.refresh();
+  return machineHealthRefreshes.refresh();
 }
 
 /** Re-probe the fleet, or share the refresh already running. */
 export function joinFleetRefresh(): Promise<FleetStatusResult> {
-  return fleetRefreshes.join();
+  return machineHealthRefreshes.join();
 }
 
 async function runFleetHealthRefresh(): Promise<FleetStatusResult> {
@@ -965,21 +961,16 @@ async function checkAllSlots(
               // Each slot runs at most three sequential command stages, each under its own
               // timeout; the deadline only catches a background process that stopped answering.
               deadlineMs:
-                Math.ceil(machineEntries.length / LOCAL_SLOT_CHECK_CONCURRENCY) *
+                Math.ceil(machineEntries.length / SLOT_CHECK_CONCURRENCY) *
                   3 *
                   SLOT_CHECK_TIMEOUT_MS +
                 10_000,
             },
           );
-        return checkLocalMachineSlots(machineEntries, sshStatus);
+        return checkMachineSlots(machineEntries, sshStatus);
       }
-      const agents = machineAgents(machineEntries, sshStatus);
-      // Remote: run sequentially (node-rpc is per-machine)
-      const results: SlotCheckResult[] = [];
-      for (const e of machineEntries) {
-        results.push(await checkSingleSlot(e.pool, e.slotIdx, sshStatus, agents));
-      }
-      return results;
+      // Node RPCs are multiplexed; use the same bounded admission on every host.
+      return checkMachineSlots(machineEntries, sshStatus);
     },
   );
 
@@ -1016,13 +1007,13 @@ export interface PoolSlotEntry {
   slotIdx: number;
 }
 
-/** Every slot of one local machine, a few at a time (the background `fleet.probeMachine` body). */
-export function checkLocalMachineSlots(
+/** One host's slots, a few at a time; also the local background `fleet.probeMachine` body. */
+export function checkMachineSlots(
   entries: PoolSlotEntry[],
   sshStatus: Map<string, HostCheck>,
 ): Promise<SlotCheckResult[]> {
   const agents = machineAgents(entries, sshStatus);
-  return mapWithConcurrency(entries, LOCAL_SLOT_CHECK_CONCURRENCY, (e) =>
+  return mapWithConcurrency(entries, SLOT_CHECK_CONCURRENCY, (e) =>
     checkSingleSlot(e.pool, e.slotIdx, sshStatus, agents),
   );
 }
