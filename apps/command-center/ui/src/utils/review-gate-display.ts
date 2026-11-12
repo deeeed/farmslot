@@ -387,7 +387,7 @@ export function gateSummaryDisplay(
         turns: m.turns,
       })),
       grandTotal: formatTokenCount(t.familyTotalTokens),
-      grandCost: formatUsageCost(t.familyCostUsd),
+      grandCost: formatUsageCost(t.familyCostUsd, t.familyCostReason),
       sessionPaths: t.runnerSessionPaths ?? [],
     },
   };

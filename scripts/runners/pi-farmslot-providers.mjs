@@ -8,10 +8,12 @@ import { stripVTControlCharacters } from 'node:util';
 
 const DEFAULT_OLLAMA = '127.0.0.1:11434';
 const PI_REASONING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
-const PRICE_TIER =
-  /^(input_cost_per_token|output_cost_per_token|cache_read_input_token_cost|cache_creation_input_token_cost)_above_(\d+)k_tokens$/;
-
-/** @typedef {import('@farmslot/slot-config').PiModelCostMetadata} PiModelCostMetadata */
+// Installed observability bundles keep the normalizer beside this reader.
+const { normalizeLiteLlmModelInfo } = await import(
+  existsSync(new URL('./litellm-model-info.mjs', import.meta.url))
+    ? './litellm-model-info.mjs'
+    : '../../packages/slot-config/src/litellm-model-info.mjs'
+);
 
 /** Bound worker HTTP requests through the final response byte. Pi owns retries. */
 export function deadlinePiFetch(fetchImpl, timeoutMs = 5 * 60_000, onExhausted) {
@@ -452,47 +454,6 @@ function modelLimit(reported, cap, fallback, name) {
   return cap === undefined ? (real ?? fallback) : Math.min(real ?? cap, cap);
 }
 
-/** @returns {PiModelCostMetadata | null} */
-function modelCost(info, reasoning) {
-  const fields = {
-    input_cost_per_token: 'input',
-    output_cost_per_token: 'output',
-    cache_read_input_token_cost: 'cacheRead',
-    cache_creation_input_token_cost: 'cacheWrite',
-  };
-  const rate = (value) => {
-    const numeric = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
-    return typeof numeric === 'number' && Number.isFinite(numeric) ? numeric * 1_000_000 : null;
-  };
-  const cost = {
-    input: rate(info.input_cost_per_token),
-    output: rate(info.output_cost_per_token),
-    cacheRead: rate(info.cache_read_input_token_cost),
-    cacheWrite: rate(info.cache_creation_input_token_cost),
-    ...(info.cache_creation_input_token_cost_above_1hr != null
-      ? { cacheWrite1h: rate(info.cache_creation_input_token_cost_above_1hr) }
-      : {}),
-    ...(reasoning && info.output_cost_per_reasoning_token != null
-      ? { reasoningOutput: rate(info.output_cost_per_reasoning_token) }
-      : {}),
-  };
-  const tiers = new Map();
-  for (const [key, value] of Object.entries(info)) {
-    const match = PRICE_TIER.exec(key);
-    if (!match || value === null || value === undefined) continue;
-    const threshold = Number(match[2]) * 1000;
-    const tier = tiers.get(threshold) ?? { ...cost, inputTokensAbove: threshold };
-    tier[fields[match[1]]] = rate(value);
-    tiers.set(threshold, tier);
-  }
-  if (tiers.size)
-    return {
-      ...cost,
-      tiers: [...tiers.values()].sort((a, b) => a.inputTokensAbove - b.inputTokensAbove),
-    };
-  return Object.values(cost).some((value) => value !== null) ? cost : null;
-}
-
 /** @returns {Record<string, string | null> | undefined} */
 function reportedThinkingMap(info) {
   /** @type {Record<string, string | null>} */
@@ -568,7 +529,7 @@ function modelEntry(row, source, defaults, info = {}, configured = {}) {
         ? { thinkingLevelMap: reportedThinkingMap(info) }
         : {}),
     input: ['text', 'image'],
-    cost: modelCost(info, reasoning),
+    cost: normalizeLiteLlmModelInfo(info, reasoning),
     contextWindow: modelLimit(
       context,
       configured.contextWindow,

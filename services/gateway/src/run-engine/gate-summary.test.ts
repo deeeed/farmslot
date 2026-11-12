@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ReviewStatus, RunMetrics } from '@farmslot/protocol';
+import type { ReviewStatus, Run, RunMetrics, RunnerSessionUsage } from '@farmslot/protocol';
 
 import { buildFamilyObservabilityTokenSummary } from '../family-observability/token-summary.js';
 
@@ -955,4 +955,65 @@ test('gate review rounds keep a reused conversation charge out of individual rou
     ],
   );
   assert.equal(result.familyCostUsd, 0.02);
+});
+
+for (const role of ['review', 'dev']) {
+  test(`gate family cost is incomplete when a ${role} session is unavailable or uncaptured`, () => {
+    const priced: RunnerSessionUsage = {
+      runner: 'pi',
+      runnerSessionId: 'priced',
+      role: 'dev',
+      source: 'runner-transcript',
+      measuredAt: '2026-01-01T00:00:00Z',
+      totalTokens: 100,
+      costUsd: 0.25,
+    };
+    for (const source of ['unavailable', 'runner-transcript'] as const) {
+      const run = makeRun();
+      run.sessionUsage = [
+        priced,
+        {
+          runner: 'pi',
+          runnerSessionId: `missing-${role}`,
+          role,
+          source,
+          measuredAt: priced.measuredAt,
+          totalTokens: null,
+          costUsd: null,
+          ...(source === 'unavailable' ? { error: 'Node offline' } : {}),
+        },
+      ];
+      const summary = buildTokenSummary(run);
+      assert.equal(summary.familyCostUsd, null);
+      assert.match(summary.familyCostReason ?? '', /unpriced or uncaptured/);
+      assert.equal(summary.familyTotalTokens, 100);
+      if (role === 'dev') assert.equal(summary.mainWorker.costUsd, null);
+    }
+  });
+}
+
+test('gate review rounds use family participation for a warm review in a later run', () => {
+  const snapshot = (costUsd: number): RunnerSessionUsage => ({
+    runner: 'pi',
+    runnerSessionId: 'warm-across-runs',
+    role: 'review',
+    source: 'runner-transcript',
+    measuredAt: '2026-01-01T00:00:00Z',
+    totalTokens: costUsd * 1000,
+    costUsd,
+  });
+  const earlier = makeRun({ id: 'earlier', createdAt: '2026-01-01T00:00:00Z' });
+  earlier.sessionUsage = [snapshot(0.1)];
+  const later = makeRun({
+    id: 'later',
+    flowType: 'update-branch',
+    createdAt: '2026-01-02T00:00:00Z',
+    engineState: { publishGate: { reviews: [{ ...passingReview, usage: snapshot(0.15) }] } },
+  });
+  const family: Run[] = [earlier, later];
+  const summary = buildTokenSummary(later, family);
+  assert.equal(summary.reviewRounds?.length, 1);
+  assert.equal(summary.reviewRounds?.[0].costScope, 'shared-session');
+  assert.equal(summary.reviewRounds?.[0].costUsd, null);
+  assert.match(summary.reviewRounds?.[0].costReason ?? '', /Shared session/);
 });

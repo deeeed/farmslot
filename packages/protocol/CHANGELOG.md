@@ -4,7 +4,6 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Expose implementation, per-round review, and family dollar costs with explicit unpriced reasons in gate summaries.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.83.1 - 2026-11-09

@@ -1528,3 +1528,26 @@ test('shared Pi table decoder rejects missing headers and empty tables before di
     ['xai/grok-4.7'],
   );
 });
+
+test('dispatch and accounting share normalization, including invalid rates and sparse tiers', async () => {
+  const { parseLiteLlmPrices } = await import('../../packages/slot-config/src/session-usage.ts');
+  const info = {
+    input_cost_per_token: -1,
+    output_cost_per_token: '0.00001',
+    cache_read_input_token_cost: 'Infinity',
+    cache_creation_input_token_cost_above_1hr: '0.000004',
+    output_cost_per_reasoning_token: '0.00002',
+    input_cost_per_token_above_200k_tokens: '0.000004',
+    cache_read_input_token_cost_above_272k_tokens: '0.000001',
+  };
+  const [provider] = await resolvePiProviderCatalog(
+    { FARMSLOT_PI_OLLAMA: '0', LITELLM_URL: 'http://litellm.test/v1' },
+    { fetchImpl: modelInfoFetch({ fixture: { ...info, supports_reasoning: true } }) },
+  );
+  const cost = parseLiteLlmPrices({ data: [{ model_name: 'fixture', model_info: info }] }).get(
+    'fixture',
+  );
+  assert.equal(provider.models[0].cost.input, null);
+  assert.deepEqual(provider.models[0].cost, cost);
+  assert.equal(cost.tiers[1].input, null, 'sparse tiers inherit base rates');
+});

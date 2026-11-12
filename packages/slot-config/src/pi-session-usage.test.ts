@@ -16,6 +16,7 @@ test('Pi extraction keeps tokens but rejects unquoted LiteLLM SDK cost', async (
     action: 'total',
     forcedPath: fixture,
     forcedRunner: 'pi',
+    environment: {},
   });
   assert.match(output, /turns=3\n/);
   assert.match(output, /input_tokens=8\n/);
@@ -43,6 +44,7 @@ test('Pi without a price quote preserves missing cost and rejects absent usage',
     action: 'total',
     forcedPath: file,
     forcedRunner: 'pi',
+    environment: {},
   });
   assert.doesNotMatch(output, /cost_usd=/);
   await writeFile(file, JSON.stringify(records[0]) + '\n');
@@ -53,6 +55,7 @@ test('Pi without a price quote preserves missing cost and rejects absent usage',
       action: 'total',
       forcedPath: file,
       forcedRunner: 'pi',
+      environment: {},
     }),
     /no assistant usage/,
   );
@@ -99,6 +102,7 @@ test('unknown provider pricing cannot turn Pi SDK placeholder zeros into a compl
       action: 'total',
       forcedPath: file,
       forcedRunner: 'pi',
+      environment: {},
     });
   };
   assert.doesNotMatch(await summarize(null, message.message.usage), /cost_usd=/);

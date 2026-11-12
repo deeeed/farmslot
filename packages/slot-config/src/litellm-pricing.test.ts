@@ -51,8 +51,8 @@ test('model/info prices compute every token category without trusting SDK placeh
   assert.equal(
     parseLiteLlmPrices({
       data: [{ model_name: 'bad', model_info: { input_cost_per_token: -1 } }],
-    }).get('bad')?.input,
-    null,
+    }).has('bad'),
+    false,
   );
   const incomplete = parseLiteLlmPrices({
     data: [{ model_name: 'fixture-sonnet', model_info: { input_cost_per_token: 0.000002 } }],
@@ -185,4 +185,28 @@ test('gateway context tiers and one-hour cache-write rates keep their units', ()
     )?.costUsd,
     0.000448,
   );
+});
+
+test('pricing honors an explicit empty environment and the base URL alias', async (t) => {
+  const cacheDir = await mkdtemp(path.join(os.tmpdir(), 'litellm-env-'));
+  t.after(() => rm(cacheDir, { recursive: true, force: true }));
+  let calls = 0;
+  const fetchImpl = async (url: string | URL | Request) => {
+    calls++;
+    assert.equal(String(url), 'http://alias.invalid/v1/model/info');
+    return Response.json(payload);
+  };
+  assert.equal((await loadLiteLlmPrices({ environment: {}, cacheDir, fetchImpl })).size, 0);
+  assert.equal(calls, 0);
+  const prices = await loadLiteLlmPrices({
+    environment: {
+      LITELLM_URL: '',
+      LITELLM_BASE_URL: 'http://alias.invalid',
+      LITELLM_API_KEY: 'synthetic-key',
+    },
+    cacheDir,
+    fetchImpl,
+  });
+  assert.equal(prices.get('fixture-sonnet')?.input, 2);
+  assert.equal(calls, 1);
 });

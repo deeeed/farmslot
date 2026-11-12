@@ -19,6 +19,14 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 
+import {
+  isLiteLlmPriceField,
+  normalizeLiteLlmModelInfo,
+  type PiModelCostMetadata,
+  type PiModelCostRates,
+} from './litellm-model-info.mjs';
+export type { PiModelCostMetadata, PiModelCostRates } from './litellm-model-info.mjs';
+
 export type SessionAction = 'snapshot' | 'report' | 'total';
 
 // ─── Pricing tables ──────────────────────────────────────────────────────────
@@ -484,85 +492,27 @@ async function summarizeCodex(filePath: string): Promise<SessionTotals> {
   return totals;
 }
 
-export interface PiModelCostRates {
-  input: number | null;
-  output: number | null;
-  cacheRead: number | null;
-  cacheWrite: number | null;
-  cacheWrite1h?: number | null;
-  reasoningOutput?: number | null;
-}
-
-/** USD per million tokens; null is an unreported price, not a free category. */
-export interface PiModelCostMetadata extends PiModelCostRates {
-  tiers?: Array<PiModelCostRates & { inputTokensAbove: number }>;
-}
-
-// Native accounting imports this file directly with Node's type stripper.
-// Keep pricing dependency-free so source and packaged readers use the same code.
+// Native readers load this module directly with Node's type stripper.
 const DAY_MS = 86_400_000;
-const fields = {
-  input_cost_per_token: 'input',
-  output_cost_per_token: 'output',
-  cache_read_input_token_cost: 'cacheRead',
-  cache_creation_input_token_cost: 'cacheWrite',
-} as const;
 
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function rate(value: unknown): number | null {
-  const number = typeof value === 'string' && value.trim() ? Number(value) : value;
-  return typeof number === 'number' && Number.isFinite(number) && number >= 0
-    ? number * 1_000_000
-    : null;
-}
-
-/** Gateway rates are per token; the existing Pi accounting type uses USD per million. */
+/** Gateway rates are per token; accounting uses USD per million tokens. */
 export function parseLiteLlmPrices(payload: unknown): Map<string, PiModelCostMetadata> {
   const prices = new Map<string, PiModelCostMetadata>();
   if (!object(payload) || !Array.isArray(payload.data)) return prices;
   for (const row of payload.data) {
     if (!object(row) || typeof row.model_name !== 'string' || !object(row.model_info)) continue;
-    const info = row.model_info;
-    const cost: PiModelCostMetadata = {
-      input: rate(info.input_cost_per_token),
-      output: rate(info.output_cost_per_token),
-      cacheRead: rate(info.cache_read_input_token_cost),
-      cacheWrite: rate(info.cache_creation_input_token_cost),
-      ...(info.cache_creation_input_token_cost_above_1hr != null
-        ? { cacheWrite1h: rate(info.cache_creation_input_token_cost_above_1hr) }
-        : {}),
-      ...(info.output_cost_per_reasoning_token != null
-        ? { reasoningOutput: rate(info.output_cost_per_reasoning_token) }
-        : {}),
-    };
-    const thresholds = new Set<number>();
-    for (const key of Object.keys(info)) {
-      const match =
-        /^(?:input_cost_per_token|output_cost_per_token|cache_read_input_token_cost|cache_creation_input_token_cost)_above_(\d+)k_tokens$/.exec(
-          key,
-        );
-      if (match && info[key] != null) thresholds.add(Number(match[1]));
-    }
-    if (thresholds.size)
-      cost.tiers = [...thresholds]
-        .sort((a, b) => a - b)
-        .map((threshold) => {
-          const tier = { ...cost, inputTokensAbove: threshold * 1000 };
-          for (const [field, category] of Object.entries(fields)) {
-            const value = info[`${field}_above_${threshold}k_tokens`];
-            if (value != null) tier[category] = rate(value);
-          }
-          return tier;
-        });
-    prices.set(row.model_name, cost);
+    const cost = normalizeLiteLlmModelInfo(row.model_info);
+    if (cost) prices.set(row.model_name, cost);
   }
   return prices;
 }
 
 interface LiteLlmPricingOptions {
+  environment?: NodeJS.ProcessEnv;
   baseUrl?: string;
   apiKey?: string;
   cacheDir?: string;
@@ -574,16 +524,16 @@ interface LiteLlmPricingOptions {
 export async function loadLiteLlmPrices(
   options: LiteLlmPricingOptions = {},
 ): Promise<Map<string, PiModelCostMetadata>> {
+  const environment = options.environment ?? process.env;
   const baseUrl = (
     options.baseUrl ??
-    process.env.LITELLM_URL ??
-    process.env.LITELLM_BASE_URL
+    (environment.LITELLM_URL || environment.LITELLM_BASE_URL)
   )?.replace(/\/+$/, '');
-  const apiKey = options.apiKey ?? process.env.LITELLM_API_KEY;
+  const apiKey = options.apiKey ?? environment.LITELLM_API_KEY;
   if (!baseUrl || !apiKey) return new Map();
   const cacheDir =
     options.cacheDir ??
-    process.env.FARMSLOT_LITELLM_PRICING_CACHE_DIR ??
+    environment.FARMSLOT_LITELLM_PRICING_CACHE_DIR ??
     path.join(os.homedir(), '.cache', 'farmslot', 'litellm-prices');
   const identity = createHash('sha256').update(`${baseUrl}\n${apiKey}`).digest('hex');
   const file = path.join(cacheDir, `${identity}.json`);
@@ -621,15 +571,7 @@ export async function loadLiteLlmPrices(
     model_name: row.model_name,
     model_info: object(row.model_info)
       ? Object.fromEntries(
-          Object.entries(row.model_info).filter(
-            ([key]) =>
-              key in fields ||
-              key === 'cache_creation_input_token_cost_above_1hr' ||
-              key === 'output_cost_per_reasoning_token' ||
-              /^(input_cost_per_token|output_cost_per_token|cache_read_input_token_cost|cache_creation_input_token_cost)_above_\d+k_tokens$/.test(
-                key,
-              ),
-          ),
+          Object.entries(row.model_info).filter(([key]) => isLiteLlmPriceField(key)),
         )
       : {},
   }));
@@ -849,12 +791,13 @@ export function readPiAssistantUsage(
 async function summarizePi(
   filePath: string,
   environment: NodeJS.ProcessEnv,
+  liteLlmPrices?: Map<string, PiModelCostMetadata>,
 ): Promise<SessionTotals> {
   const totals = emptyTotals();
   let cost = 0;
   let completeCost = true;
   const prices = new Map<string, PiRequestCost>();
-  let gatewayPrices: Map<string, PiModelCostMetadata> | undefined;
+  let gatewayPrices = liteLlmPrices;
   for await (const record of safeJsonLines(filePath)) {
     const quote = piRequestCost(record);
     if (quote) {
@@ -870,9 +813,7 @@ async function summarizePi(
       (environment.LITELLM_URL || environment.LITELLM_BASE_URL)
     )
       gatewayPrices ??= await loadLiteLlmPrices({
-        baseUrl: environment.LITELLM_URL || environment.LITELLM_BASE_URL,
-        apiKey: environment.LITELLM_API_KEY,
-        cacheDir: environment.FARMSLOT_LITELLM_PRICING_CACHE_DIR,
+        environment,
       });
     const usage = readPiAssistantUsage(record, prices, gatewayPrices);
     if (!usage) continue;
@@ -998,10 +939,11 @@ async function summarize(
   sessionPath: string,
   home: string,
   environment: NodeJS.ProcessEnv,
+  liteLlmPrices?: Map<string, PiModelCostMetadata>,
 ): Promise<SessionTotals> {
   if (runner === 'claude') return summarizeClaude(sessionPath);
   if (runner === 'codex') return summarizeCodex(sessionPath);
-  if (runner === 'pi') return summarizePi(sessionPath, environment);
+  if (runner === 'pi') return summarizePi(sessionPath, environment, liteLlmPrices);
   if (runner === 'grok') return summarizeGrok(sessionPath, home);
   if (runner === 'cursor') return summarizeCursor(sessionPath);
   throw new Error(`ERROR: Unsupported runner for usage extraction: ${runner}`);
@@ -1501,6 +1443,8 @@ export async function runSessionUsage(params: {
   forcedRunner?: string | null;
   /** Worker pool environment for in-process pricing; never written to the transcript. */
   environment?: NodeJS.ProcessEnv;
+  /** Credential-free prices resolved through the owning worker's environment. */
+  liteLlmPrices?: Map<string, PiModelCostMetadata>;
 }): Promise<string> {
   const { repo, slotId, action, forcedPath, forcedRunner, environment = process.env } = params;
 
@@ -1527,7 +1471,7 @@ export async function runSessionUsage(params: {
   const name = await sessionName(sessionFile);
 
   if (action === 'snapshot') {
-    const totals = await summarize(runner, sessionFile, home, environment);
+    const totals = await summarize(runner, sessionFile, home, environment, params.liteLlmPrices);
     const data: SnapshotData = { runner, session: name, path: sessionFile, totals };
     await writeFile(snapshotFile, JSON.stringify(data), 'utf-8');
     return `Snapshot saved: ${name}\n`;
@@ -1545,7 +1489,7 @@ export async function runSessionUsage(params: {
       throw err;
     }
     const snapData = JSON.parse(snapshotRaw) as SnapshotData;
-    const current = await summarize(runner, sessionFile, home, environment);
+    const current = await summarize(runner, sessionFile, home, environment, params.liteLlmPrices);
     const base = snapData.totals;
     const header = [
       `Session:  ${name}`,
@@ -1572,7 +1516,7 @@ export async function runSessionUsage(params: {
   }
 
   if (action === 'total') {
-    const current = await summarize(runner, sessionFile, home, environment);
+    const current = await summarize(runner, sessionFile, home, environment, params.liteLlmPrices);
     const lines = await sessionLineCount(sessionFile);
     const header = [`Session:  ${name}`, `Runner:   ${runner}`, `Lines:    ${lines}`, `---`];
     return [...header, ...formatTotals(current)].join('\n') + '\n';

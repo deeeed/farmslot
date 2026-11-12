@@ -613,3 +613,13 @@ test('gate display shows implementation and per-round dollars and preserves loca
   assert.equal(display.tokens.reviews[1].cost, 'local, unpriced');
   assert.equal(display.tokens.grandCost, '$0.3750');
 });
+
+test('gate display explains an incomplete family cost', () => {
+  const summary = gateSummaryWithChecklist(undefined);
+  summary.tokens.familyCostUsd = null;
+  summary.tokens.familyCostReason = 'Includes unpriced or uncaptured sessions';
+  assert.equal(
+    gateSummaryDisplay(summary).tokens.grandCost,
+    'Includes unpriced or uncaptured sessions',
+  );
+});

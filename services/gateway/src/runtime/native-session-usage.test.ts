@@ -6,6 +6,22 @@ import '../runtime/mock-pty.test-support.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
 let returnedSession = 'conversation';
+const config = await import('../core/config.js');
+let poolEnvironment: Record<string, string> = {};
+const poolReads: string[] = [];
+mock.module('../core/config.js', {
+  namedExports: {
+    ...config,
+    loadMachinePool: async (machine: string) => {
+      poolReads.push(machine);
+      return { env: poolEnvironment };
+    },
+    loadProjectVars: async () => ({
+      projectJson: { command_env: { set: { LITELLM_URL: 'http://project.invalid' } } },
+    }),
+  },
+});
+
 const calls: Array<{ owner: string; node: string; argv: string[] }> = [];
 mock.module('../runners/native/node.js', {
   namedExports: {
@@ -66,4 +82,44 @@ test('native accounting follows the recorded reviewer owner/node rather than the
   assert.equal(failed.source, 'unavailable');
   assert.equal(failed.totalTokens, undefined);
   assert.match(failed.error ?? '', /identity changed/);
+});
+
+test('native accounting prices through the owning pool environment without sending credentials to the node', async (t) => {
+  returnedSession = 'conversation';
+  const directory = await (await import('node:fs/promises')).mkdtemp('/tmp/native-pricing-');
+  t.after(() =>
+    import('node:fs/promises').then((fs) => fs.rm(directory, { recursive: true, force: true })),
+  );
+  poolEnvironment = {
+    LITELLM_URL: 'http://owning-pool.invalid',
+    LITELLM_API_KEY: 'synthetic-key',
+    FARMSLOT_LITELLM_PRICING_CACHE_DIR: directory,
+  };
+  t.after(() => {
+    poolEnvironment = {};
+  });
+  const urls: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
+    urls.push(String(input));
+    return Response.json({
+      data: [{ model_name: 'fixture', model_info: { input_cost_per_token: 0.000002 } }],
+    });
+  });
+  const usage = await extractNativeAgentSessionUsage({
+    vars: {
+      ...makeVars(),
+      machine: 'producing-node',
+      machineEnv: { LITELLM_URL: 'http://wrong.invalid' },
+      projectName: 'fixture',
+    },
+    runner: 'pi',
+    runnerSessionId: 'conversation',
+    nativeSession: { sessionId: 'host', ownerPrincipalId: 'owner', executionNodeId: 'owning-node' },
+  });
+  assert.equal(usage.source, 'runner-transcript');
+  assert.equal(poolReads.at(-1), 'owning-node');
+  assert.deepEqual(urls, ['http://owning-pool.invalid/v1/model/info']);
+  const request = JSON.parse(calls.at(-1)!.argv.at(-2)!)[0];
+  assert.equal(request.liteLlmPrices[0][1].input, 2);
+  assert.ok(!calls.at(-1)!.argv.join(' ').includes('synthetic-key'));
 });

@@ -1,9 +1,17 @@
 import { execFile } from 'node:child_process';
+import os from 'node:os';
 import { promisify } from 'node:util';
 
 import type { NativeWorkerSessionBinding, RunnerSessionUsage } from '@farmslot/protocol';
+import { loadLiteLlmPrices } from '@farmslot/slot-config';
 
-import type { SlotVars } from '../core/config.js';
+import {
+  loadMachinePool,
+  loadProjectVars,
+  SlotConfigError,
+  type SlotVars,
+} from '../core/config.js';
+import { machineShellEnv, resolveProjectCommandEnv } from '../core/project-env.js';
 import {
   nativeSessionUsageArgv,
   type NativeSessionUsageIdentity,
@@ -48,6 +56,32 @@ export async function extractNativeAgentSessionUsage(
     },
   };
   try {
+    const machine =
+      nativeSession.executionNodeId === 'local'
+        ? os.hostname().split('.')[0]
+        : nativeSession.executionNodeId;
+    const poolEnv =
+      vars.machine === machine && vars.machineEnv !== undefined
+        ? vars.machineEnv
+        : await loadMachinePool(machine)
+            .then((pool) => pool.env)
+            .catch((error: unknown) => {
+              // Retained native sessions can outlive their pool registration. With no pool,
+              // project/process pricing still applies; malformed or unreadable pools remain errors.
+              if (error instanceof SlotConfigError && error.code === 'SLOT_NOT_FOUND') return {};
+              throw error;
+            });
+    const environment = { ...process.env };
+    if (vars.projectName) {
+      const project = await loadProjectVars(vars.projectName);
+      const mutation = resolveProjectCommandEnv(project.projectJson, {
+        domain: vars.domain,
+      });
+      for (const name of mutation.unset) delete environment[name];
+      Object.assign(environment, mutation.set);
+    }
+    Object.assign(environment, machineShellEnv({ machineEnv: poolEnv }));
+    request.liteLlmPrices = [...(await loadLiteLlmPrices({ environment }))];
     const argv = nativeSessionUsageArgv([request]);
     const result =
       nativeSession.executionNodeId === 'local'

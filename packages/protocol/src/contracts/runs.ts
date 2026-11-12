@@ -1035,6 +1035,7 @@ export interface GateTokenSummary {
   /** mainWorker + reviews + all familyChainedLoops. */
   familyTotalTokens: number;
   familyCostUsd?: number | null;
+  familyCostReason?: string;
   perTurnDetailsAvailable: boolean;
   /** All runner-session JSONL paths backing this summary, for per-turn drill-down. */
   runnerSessionPaths?: string[];

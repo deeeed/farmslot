@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "LiteLLM cost accounting",
+  "description": "Synthetic model-info and native transcript extraction through an isolated production gateway. Proves incomplete family pricing, shared review rounds and owning-worker prices without provider inference.",
+  "workflow": {
+    "entry": "cost-accounting",
+    "nodes": {
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "cost-accounting": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/litellm-cost-accounting.mts \"$FARMSLOT_COST_PROOF_OUTPUT\"",
+        "timeout_ms": 120000,
+        "intent": "Synthetic model-info and native transcript extraction reach authenticated run.get with incomplete worker/review totals, deduplicated family costs and shared review-round labels. No provider inference.",
+        "next": "done"
+      }
+    }
+  }
+}

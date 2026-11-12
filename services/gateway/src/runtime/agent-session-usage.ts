@@ -73,7 +73,7 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
       return completedMeasurement(
         row,
         await extractNativeAgentSessionUsage({
-          vars: { slotId, remoteRepo: '' },
+          vars: { slotId, remoteRepo: '', projectName: run.project, domain: run.domain },
           runner: row.runner ?? '',
           runnerSessionId: row.runnerSessionId ?? null,
           runnerSessionPath: row.runnerSessionPath,
