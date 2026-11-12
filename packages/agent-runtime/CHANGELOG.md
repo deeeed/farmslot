@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.45.10 - 2026-11-12
+
+- Republish against recipe-runner 0.46.13 so consumers load one copy of it, with the faster `status` on checkouts that hold many stale operation records.
+
 ## 0.45.9 - 2026-11-11
 
 - Expose de-indented checklist step instructions while preserving mark step positions and completion behavior.

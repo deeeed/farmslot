@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.25.1 - 2026-11-12
+
+- Preserve checklist step detail across structured and raw progress views with scoped disclosure choices.
+
 ## 0.25.0 - 2026-11-07
 
 - Use registered native-agent effort choices in the shared launch picker.
