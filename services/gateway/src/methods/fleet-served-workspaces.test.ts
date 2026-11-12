@@ -27,6 +27,7 @@ const { disposeServerResourceObservations } = await import('../server.js');
 const { fleetStatusIds } = await import('../fleet/slot-entities.js');
 const { resourceRevisions } = await import('../resources/revisions.js');
 const {
+  fleetStatus,
   refreshServedWorkspaceObservations,
   slotsPublishedToViewers,
   stopServedWorkspaceObservations,
@@ -296,5 +297,57 @@ test('E: an inspection that completes after disposal publishes nothing and arms 
     changes.filter(({ key }) => key.family === 'slot' && key.slotId === slot.slot),
     [],
     'nothing is published after disposal',
+  );
+});
+
+test('disposal while the reloaded fleet is awaited publishes nothing and arms no expiry', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() + 360_000 });
+  const id = 'held-reload';
+  setCachedFleetForTests(fleetOf(id));
+  t.after(() => setCachedFleetForTests(null));
+  // The inspection finishes before disposal; the reload that follows it is held.
+  let release = () => {};
+  const heldReload = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  t.after(release);
+  let loads = 0;
+  let reloading = false;
+  const published: FleetStatus[] = [];
+  await fleetStatus(
+    undefined,
+    {
+      load: async () => {
+        if (++loads === 1) return fleetOf(id);
+        reloading = true;
+        await heldReload;
+        // The reloaded row differs from the inspected one: without the fence it is published.
+        return fleetOf(id, { workspaceError: 'Observation unavailable' });
+      },
+      // The fixture's checkedAt is stale under the mocked clock: the status read kicks this.
+      refresh: async () => ({ fleet: fleetOf(id) }),
+      workspaces: { read: (fleet) => fleet, refresh: async (fleet) => fleet },
+    },
+    (fleet) => published.push(fleet),
+  );
+  const ceiling = performance.now() + 3000;
+  while (!reloading && performance.now() < ceiling)
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.ok(reloading, 'the reload is awaited');
+
+  disposeServerResourceObservations();
+  const changes: ResourceChangedPayload['changes'] = [];
+  t.after(resourceRevisions.subscribe((payload) => changes.push(...payload.changes)));
+  release();
+  for (let turn = 0; turn < 50; turn++) await new Promise<void>((resolve) => setImmediate(resolve));
+  // Past the fallback's expiry: a timer armed by a recomputed entity would publish the slot now.
+  t.mock.timers.tick(30_001);
+  for (let turn = 0; turn < 50; turn++) await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(published, [], 'no fleet.updated');
+  assert.deepEqual(
+    changes.filter(({ key }) => key.family === 'slot' && key.slotId === id),
+    [],
+    'no slot is published after disposal',
   );
 });

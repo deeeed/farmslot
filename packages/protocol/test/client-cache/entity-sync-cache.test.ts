@@ -381,39 +381,107 @@ test('finding 5: stored rows that fail the guard are dropped and read again', as
   }
 });
 
+/** A stored slot carrying these agent contexts, its digest matching and listed by the gateway. */
+async function storedSlotWithContexts(contexts: unknown[]) {
+  const gateway = new EntityGateway();
+  // Only the guard can refuse it: the digest matches the body and the gateway lists it.
+  const stored: unknown = JSON.parse(JSON.stringify({ ...slot('a'), agentContexts: contexts }));
+  gateway.slots.set('a', slot('a'));
+  gateway.listedVersions.set('a', versionOf(stored));
+  const store = await seededStore(gateway, [
+    { collection: FLEET_ROWS_ID, id: 'a', body: stored, version: versionOf(stored), data: {} },
+  ]);
+  const client = setup(gateway, store);
+  try {
+    client.watch(fleetQuery);
+    await flush();
+    return {
+      idsReads: gateway.requests('fleet.status', 'ids').map((entry) => entry.params.ids),
+      shown: client.read(fleetQuery).data?.fleet.slots[0].agentContexts,
+    };
+  } finally {
+    await client.close();
+  }
+}
+
+const validContext = {
+  id: 'dev',
+  label: 'Dev',
+  role: 'dev',
+  status: 'working',
+  runId: 'run-1',
+  taskFile: 'temp/tasks/t1/TASK.md',
+  nudgeCount: 0,
+  ctxPct: null,
+  target: { session: 's', window: 'dev', pane: '0', paneId: '%1', target: 's:dev.0' },
+  nativeSession: {
+    sessionId: 'native',
+    executionNodeId: 'node',
+    ownerPrincipalId: 'owner',
+    leaseId: 'lease',
+    commandId: 'command',
+  },
+  nativeSessionOwner: { contextId: 'fix', sessionId: 'native', leaseId: 'lease' },
+};
+
+test('R2: a stored slot whose agent contexts have their declared types is shown without a read', async () => {
+  const { idsReads, shown } = await storedSlotWithContexts([validContext]);
+  assert.deepEqual(idsReads, []);
+  assert.deepEqual(shown, [validContext]);
+});
+
+/** One field of an otherwise valid context with a value of the wrong type. */
+const wrongTyped: Array<[string, Record<string, unknown>]> = [
+  ['id', { id: 1 }],
+  ['label', { label: 1 }],
+  ['role', { role: 'nobody' }],
+  ['status', { status: 1 }],
+  ...[
+    'runId',
+    'taskFile',
+    'taskIdentity',
+    'signalFile',
+    'runner',
+    'model',
+    'nativeCommandId',
+    'lastSignalAt',
+    'updatedAt',
+  ].map((field): [string, Record<string, unknown>] => [field, { [field]: 42 }]),
+  ['nudgeCount', { nudgeCount: '1' }],
+  ['ctxPct', { ctxPct: '50%' }],
+  ['target', { target: 's:dev.0' }],
+  ...['session', 'target', 'window', 'pane', 'paneId'].map(
+    (field): [string, Record<string, unknown>] => [
+      `target.${field}`,
+      { target: { ...validContext.target, [field]: 1 } },
+    ],
+  ),
+  ['nativeSession', { nativeSession: 'native' }],
+  ...['sessionId', 'executionNodeId', 'leaseId', 'closedAt', 'releasedAt'].map(
+    (field): [string, Record<string, unknown>] => [
+      `nativeSession.${field}`,
+      { nativeSession: { ...validContext.nativeSession, [field]: 1 } },
+    ],
+  ),
+  ['nativeSessionOwner', { nativeSessionOwner: 'fix' }],
+  ...['contextId', 'sessionId', 'leaseId'].map((field): [string, Record<string, unknown>] => [
+    `nativeSessionOwner.${field}`,
+    { nativeSessionOwner: { ...validContext.nativeSessionOwner, [field]: 1 } },
+  ]),
+];
+
 for (const [what, contexts] of [
   ['hold a null', [null]],
   ['lack the label the slot view sorts by', [{ id: 'a', role: 'review', status: 'working' }]],
+  ...wrongTyped.map(([field, override]): [string, unknown[]] => [
+    `carry a ${field} of the wrong type`,
+    [{ ...validContext, ...override }],
+  ]),
 ] as const)
   test(`R2: a stored slot whose agent contexts ${what} is read again`, async () => {
-    const gateway = new EntityGateway();
-    // The digest matches the body and the gateway lists it: only the guard can refuse the element
-    // the slot view dereferences.
-    const unusable: unknown = JSON.parse(JSON.stringify({ ...slot('a'), agentContexts: contexts }));
-    gateway.slots.set('a', slot('a'));
-    gateway.listedVersions.set('a', versionOf(unusable));
-    const store = await seededStore(gateway, [
-      {
-        collection: FLEET_ROWS_ID,
-        id: 'a',
-        body: unusable,
-        version: versionOf(unusable),
-        data: {},
-      },
-    ]);
-    const client = setup(gateway, store);
-    try {
-      client.watch(fleetQuery);
-      await flush();
-      assert.deepEqual(
-        gateway.requests('fleet.status', 'ids').map((entry) => entry.params.ids),
-        [['a']],
-        'the rejected row is read',
-      );
-      assert.equal(client.read(fleetQuery).data?.fleet.slots[0].agentContexts, undefined);
-    } finally {
-      await client.close();
-    }
+    const { idsReads, shown } = await storedSlotWithContexts([...contexts]);
+    assert.deepEqual(idsReads, [['a']], 'the rejected row is read');
+    assert.equal(shown, undefined);
   });
 
 test('finding 5: a pushed PR that fails the guard is read instead', async () => {

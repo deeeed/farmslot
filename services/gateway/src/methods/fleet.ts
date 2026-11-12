@@ -151,6 +151,7 @@ function refreshWorkspaceObservations(
       // Owners may have changed while Git/network reads ran. Publish current
       // rows, never the captured fleet that started the observation.
       const current = workspaces.read(await deps.load());
+      if (generation !== servedWorkspacesGeneration) return;
       const changed = current.slots.filter((slot) => {
         const before = previous.get(slot.slot);
         return (

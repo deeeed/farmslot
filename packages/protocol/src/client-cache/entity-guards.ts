@@ -3,6 +3,7 @@
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex } from '@noble/hashes/utils';
 
+import { AGENT_ROLES } from '../contracts/agents.js';
 import type { PRStatus } from '../contracts/reviews.js';
 import type { MachineHealth, SlotEntity } from '../contracts/slots.js';
 
@@ -32,12 +33,65 @@ const everyOf = (value: unknown, each: (item: unknown) => boolean) =>
 const absentOr = (value: unknown, check: (present: unknown) => boolean) =>
   value === undefined || value === null || check(value);
 
+const AGENT_CONTEXT_STRINGS = [
+  'runId',
+  'taskFile',
+  'taskIdentity',
+  'signalFile',
+  'runner',
+  'model',
+  'nativeCommandId',
+  'lastSignalAt',
+  'updatedAt',
+] as const;
+
+const isAgentContextTarget = (value: unknown) =>
+  isRecord(value) &&
+  isString(value.session) &&
+  isString(value.target) &&
+  absentOr(value.window, isString) &&
+  absentOr(value.pane, isString) &&
+  absentOr(value.paneId, isString);
+
+/** The fields of a native binding the slot view and its session lookups read. */
+const isNativeSessionBinding = (value: unknown) =>
+  isRecord(value) &&
+  isString(value.sessionId) &&
+  isString(value.executionNodeId) &&
+  isString(value.leaseId) &&
+  absentOr(value.closedAt, isString) &&
+  absentOr(value.releasedAt, isString);
+
+const isNativeSessionOwner = (value: unknown) =>
+  isRecord(value) &&
+  isString(value.contextId) &&
+  isString(value.sessionId) &&
+  isString(value.leaseId);
+
+/** An agent context summary, field by field by its declared type (AgentContextSummary). */
+function isAgentContextSummary(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isString(value.id) &&
+    isString(value.label) &&
+    AGENT_ROLES.some((role) => role === value.role) &&
+    isString(value.status) &&
+    AGENT_CONTEXT_STRINGS.every((field) => absentOr(value[field], isString)) &&
+    absentOr(value.nudgeCount, isNumber) &&
+    absentOr(value.ctxPct, isNumber) &&
+    absentOr(value.target, isAgentContextTarget) &&
+    absentOr(value.nativeSession, isNativeSessionBinding) &&
+    absentOr(value.nativeSessionOwner, isNativeSessionOwner)
+  );
+}
+
 /**
  * The fields of a slot that summary, host-load reattachment, sorting and the slot views read
  * without a check of their own; the gateway's row transform always fills them.
  *
- * This is the boundary of admission: identity, and the fields list consumers dereference
- * unguarded. Everything else is trusted from the current gateway. A refused row is read again.
+ * This is the boundary of admission: identity, the fields list consumers dereference unguarded,
+ * and agent contexts by their declared type. Everything else is trusted from the current
+ * gateway. A refused row is read again.
  */
 export function isSlotEntity(value: unknown): value is SlotEntity {
   if (!isRecord(value) || !isRecord(value.health)) return false;
@@ -60,13 +114,7 @@ export function isSlotEntity(value: unknown): value is SlotEntity {
     isString(health.devserver) &&
     isString(health.cdp) &&
     isString(health.fixtures) &&
-    // The slot view keys each agent context by its id and sorts them by label.
-    absentOr(value.agentContexts, (contexts) =>
-      everyOf(
-        contexts,
-        (context) => isRecord(context) && isString(context.id) && isString(context.label),
-      ),
-    ) &&
+    absentOr(value.agentContexts, (contexts) => everyOf(contexts, isAgentContextSummary)) &&
     // Host load is reattached from machine samples and never part of a slot entity.
     value.hostLoad === undefined
   );
