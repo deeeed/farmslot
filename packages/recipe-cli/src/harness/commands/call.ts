@@ -704,7 +704,9 @@ interface ParameterValidationHelp {
   type?: string;
   validValues?: unknown[];
   description?: string;
+  // Redacted when the parameter or the suggested one is sensitive.
   received?: unknown;
+  receivedType?: string;
   suggestion?: string;
   // The parameter the received value belongs to: a near name, or one whose enum holds it.
   suggestedParameter?: string;
@@ -717,13 +719,24 @@ function parameterValidationHelp(
 ): ParameterValidationHelp[] {
   const schema = isRecord(action?.schema) ? action.schema : {};
   const properties = isRecord(schema.properties) ? schema.properties : {};
+  const shown = (value: unknown, ...keys: Array<string | undefined>) =>
+    redactCallValue(value, keys.find((key) => key && isSensitiveKey(key)) ?? '');
   return findings.flatMap((finding): ParameterValidationHelp[] => {
     const issue = parameterIssue(finding.code);
     if (!issue) return [];
     const name = finding.path.split('.').at(-1);
     if (name && issue === 'unknown') {
       const suggestedParameter = closest(name, Object.keys(properties));
-      return suggestedParameter ? [{ issue, name, received: args[name], suggestedParameter }] : [];
+      return suggestedParameter
+        ? [
+            {
+              issue,
+              name,
+              received: shown(args[name], name, suggestedParameter),
+              suggestedParameter,
+            },
+          ]
+        : [];
     }
     const property = name && isRecord(properties[name]) ? properties[name] : undefined;
     if (!name || !property) return [];
@@ -756,7 +769,18 @@ function parameterValidationHelp(
         ...(type ? { type } : {}),
         ...(validValues ? { validValues } : {}),
         ...(typeof property.description === 'string' ? { description: property.description } : {}),
-        ...(issue !== 'missing' && received !== undefined ? { received } : {}),
+        ...(issue !== 'missing' && received !== undefined
+          ? { received: shown(received, name, suggestedParameter) }
+          : {}),
+        ...(issue === 'type' && received !== undefined
+          ? {
+              receivedType: Array.isArray(received)
+                ? 'array'
+                : received === null
+                  ? 'null'
+                  : typeof received,
+            }
+          : {}),
         ...(suggestion ? { suggestion } : {}),
         ...(suggestedParameter ? { suggestedParameter } : {}),
       },
@@ -780,24 +804,26 @@ function renderParameterValidationHelp(parameter: ParameterValidationHelp): stri
       : parameter.issue === 'unknown'
         ? `${out('cmd', parameter.name)} is not a parameter of this action`
         : parameter.issue === 'type'
-          ? `${out('cmd', parameter.name)} expects a ${parameter.type ?? 'different type'}; got ${Array.isArray(parameter.received) ? 'array' : parameter.received === null ? 'null' : typeof parameter.received} ${out('err', JSON.stringify(parameter.received) ?? String(parameter.received))}`
+          ? `${out('cmd', parameter.name)} expects a ${parameter.type ?? 'different type'}; got ${parameter.receivedType} ${out('err', JSON.stringify(parameter.received) ?? String(parameter.received))}`
           : `${out('cmd', parameter.name)} received ${out('err', JSON.stringify(parameter.received) ?? String(parameter.received))}`;
   const values = parameter.validValues?.length
     ? ` Valid values: ${parameter.validValues.map((value) => out('accent', String(value))).join(', ')}.`
     : '';
   // A JSON-encoded value in a shell-quoted assignment reaches the call with its type intact.
+  // A redacted value shows as <value>.
+  const hidden = parameter.received === '<redacted>';
   const assignment = (name: string, value: unknown) =>
     out('cmd', shellQuote(`${name}=${JSON.stringify(value) ?? String(value)}`));
   const quoteHint =
     parameter.issue === 'type' &&
     parameter.type === 'string' &&
-    typeof parameter.received !== 'object'
-      ? ` Quote it: ${assignment(parameter.name, String(parameter.received))}.`
+    !['object', 'array', 'null'].includes(parameter.receivedType ?? 'object')
+      ? ` Quote it: ${assignment(parameter.name, hidden ? '<value>' : String(parameter.received))}.`
       : '';
   const suggestion =
     quoteHint ||
     (parameter.suggestedParameter
-      ? ` Did you mean ${assignment(parameter.suggestedParameter, parameter.received)}?`
+      ? ` Did you mean ${hidden ? out('cmd', shellQuote(`${parameter.suggestedParameter}=<value>`)) : assignment(parameter.suggestedParameter, parameter.received)}?`
       : parameter.suggestion
         ? ` Did you mean ${out('accent', JSON.stringify(parameter.suggestion))}?`
         : '');

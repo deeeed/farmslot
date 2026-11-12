@@ -4001,13 +4001,22 @@ describe('call', () => {
     const json = await capture(() => handleCall([...args, '--json'], callOptions));
     assert.equal(json.value, 5);
     assert.deepEqual(lastJson(json.stdout).parameterHelp, [
-      { issue: 'type', name: 'password', type: 'string', received: 2400 },
+      {
+        issue: 'type',
+        name: 'password',
+        type: 'string',
+        received: '<redacted>',
+        receivedType: 'number',
+      },
     ]);
     const human = await capture(() => handleCall(args, callOptions));
     assert.match(
       human.stderr.join('\n'),
-      /password expects a string; got number 2400\. Quote it: 'password="2400"'\./u,
+      /password expects a string; got number "<redacted>"\. Quote it: 'password="<value>"'\./u,
     );
+    // A sensitive key's value never reaches the output.
+    for (const output of [json, human])
+      assert.doesNotMatch([...output.stdout, ...output.stderr].join('\n'), /2400/u);
   });
 
   test('suggests the parameter a misnamed or misplaced input belongs to', async () => {
@@ -4070,9 +4079,25 @@ describe('call', () => {
     );
     // A quoted string keeps its quotes in the suggestion, so it stays a string.
     const quoted = await capture(() =>
-      handleCall(['shop.ping', 'mode=fast', 'noet="2400"', ...base], callOptions),
+      handleCall(['shop.ping', 'mode=fast', 'noet="2400"', 'note=2400', ...base], callOptions),
     );
     assert.match(quoted.stderr.join('\n'), /Did you mean 'note="2400"'\?/u);
+    assert.match(
+      quoted.stderr.join('\n'),
+      /note expects a string; got number 2400\. Quote it: 'note="2400"'\./u,
+    );
+    // A near name that is sensitive hides the value behind a placeholder.
+    const secret = await capture(() =>
+      handleCall(['shop.ping', 'mode=fast', 'pasword=hunter2', ...base, '--json'], callOptions),
+    );
+    assert.deepEqual(lastJson(secret.stdout).parameterHelp, [
+      { issue: 'unknown', name: 'pasword', received: '<redacted>', suggestedParameter: 'password' },
+    ]);
+    const secretHuman = await capture(() =>
+      handleCall(['shop.ping', 'mode=fast', 'pasword=hunter2', ...base], callOptions),
+    );
+    assert.match(secretHuman.stderr.join('\n'), /Did you mean 'password=<value>'\?/u);
+    assert.doesNotMatch(secretHuman.stderr.join('\n'), /hunter2/u);
   });
 
   test('resolves names against --action-manifest and the --library sources', async () => {
