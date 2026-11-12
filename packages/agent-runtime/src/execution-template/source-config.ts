@@ -36,23 +36,76 @@ function isWithin(base: string, candidate: string): boolean {
   );
 }
 
-export function executionTemplateSourceRevision(root: string): string | undefined {
-  const result = spawnSync('git', ['-C', root, 'rev-parse', 'HEAD'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'ignore'],
-  });
+/** A git answer matches spawnSync, including unavailable status on launch/output failure. */
+export interface ExecutionTemplateGitResult {
+  status: number | null;
+  stdout: string;
+}
+export type ExecutionTemplateGitRunner = (args: string[]) => Promise<ExecutionTemplateGitResult>;
+type SourceWalk<T> = Generator<string[], T, ExecutionTemplateGitResult>;
+
+function runSourceWalk<T>(walk: SourceWalk<T>): T {
+  let step = walk.next();
+  while (!step.done) {
+    let result: ExecutionTemplateGitResult;
+    try {
+      result = spawnSync('git', step.value, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+    } catch (error) {
+      step = walk.throw(error);
+      continue;
+    }
+    step = walk.next(result);
+  }
+  return step.value;
+}
+async function runSourceWalkAsync<T>(
+  walk: SourceWalk<T>,
+  git: ExecutionTemplateGitRunner,
+): Promise<T> {
+  let step = walk.next();
+  while (!step.done) {
+    let result: ExecutionTemplateGitResult;
+    try {
+      result = await git(step.value);
+    } catch (error) {
+      step = walk.throw(error);
+      continue;
+    }
+    step = walk.next(result);
+  }
+  return step.value;
+}
+function* sourceRevision(root: string): SourceWalk<string | undefined> {
+  const result = yield ['-C', root, 'rev-parse', 'HEAD'];
   if (result.status !== 0) return undefined;
   const revision = result.stdout.trim();
   return /^[0-9a-f]{40}$/i.test(revision) ? revision : undefined;
 }
-
-export function executionTemplateSourceDirty(root: string): boolean | undefined {
-  const result = spawnSync('git', ['-C', root, 'status', '--porcelain', '--', '.'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'ignore'],
-  });
+function* sourceDirty(root: string): SourceWalk<boolean | undefined> {
+  const result = yield ['-C', root, 'status', '--porcelain', '--', '.'];
   if (result.status !== 0) return undefined;
   return result.stdout.trim().length > 0;
+}
+export function executionTemplateSourceRevision(root: string): string | undefined {
+  return runSourceWalk(sourceRevision(root));
+}
+export function executionTemplateSourceRevisionAsync(
+  root: string,
+  git: ExecutionTemplateGitRunner,
+): Promise<string | undefined> {
+  return runSourceWalkAsync(sourceRevision(root), git);
+}
+export function executionTemplateSourceDirty(root: string): boolean | undefined {
+  return runSourceWalk(sourceDirty(root));
+}
+export function executionTemplateSourceDirtyAsync(
+  root: string,
+  git: ExecutionTemplateGitRunner,
+): Promise<boolean | undefined> {
+  return runSourceWalkAsync(sourceDirty(root), git);
 }
 
 function configuredRoot(
@@ -88,6 +141,22 @@ export function resolveConfiguredExecutionTemplateSources(
   config: ProjectExecutionTemplatesConfig | undefined,
   options: ResolveConfiguredExecutionTemplateSourcesOptions,
 ): ResolvedExecutionTemplateSources {
+  return runSourceWalk(configuredSources(config, options));
+}
+
+/** The same ordered source resolution, with git supplied by the async host driver. */
+export function resolveConfiguredExecutionTemplateSourcesAsync(
+  config: ProjectExecutionTemplatesConfig | undefined,
+  options: ResolveConfiguredExecutionTemplateSourcesOptions,
+  git: ExecutionTemplateGitRunner,
+): Promise<ResolvedExecutionTemplateSources> {
+  return runSourceWalkAsync(configuredSources(config, options), git);
+}
+
+function* configuredSources(
+  config: ProjectExecutionTemplatesConfig | undefined,
+  options: ResolveConfiguredExecutionTemplateSourcesOptions,
+): SourceWalk<ResolvedExecutionTemplateSources> {
   const resolved: ExecutionTemplateSource[] = [];
   const unavailable: UnavailableExecutionTemplateSource[] = [];
 
@@ -124,8 +193,8 @@ export function resolveConfiguredExecutionTemplateSources(
       unavailable.push({ id: source.id, reason: 'invalid-root' });
       continue;
     }
-    const sourceRevision = executionTemplateSourceRevision(canonicalScanPath);
-    const sourceDirty = executionTemplateSourceDirty(canonicalScanPath);
+    const revision = yield* sourceRevision(canonicalScanPath);
+    const dirty = yield* sourceDirty(canonicalScanPath);
 
     resolved.push({
       id: source.id,
@@ -133,8 +202,8 @@ export function resolveConfiguredExecutionTemplateSources(
       root: canonicalScanPath,
       layout: 'flow-tree',
       ...(source.domains ? { domains: source.domains } : {}),
-      ...(sourceRevision ? { sourceRevision } : {}),
-      ...(sourceDirty === undefined ? {} : { sourceDirty }),
+      ...(revision ? { sourceRevision: revision } : {}),
+      ...(dirty === undefined ? {} : { sourceDirty: dirty }),
     });
   }
 

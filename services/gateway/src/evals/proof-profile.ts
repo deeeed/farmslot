@@ -100,13 +100,13 @@ export async function admitProofQa(
 ): Promise<Pick<EvalProofInput, 'qa' | 'executionTemplate'>> {
   const vars = await loadProjectVars(params.project);
   const qa = selectQaProfile(vars.projectJson.qa, params.qaProfileId, params.qaInputs);
-  const catalog = configuredExecutionTemplateOptions(vars, {
+  const catalog = await configuredExecutionTemplateOptions(vars, {
     flow: 'qa',
     explicitId: qa.profile.template_id,
   });
   const template = catalog.options.find((option) => option.id === qa.profile.template_id);
   if (!template) throw new Error('Proof profile requires its admitted farm QA execution template.');
-  const snapshot = readConfiguredExecutionTemplateSnapshot(vars, { ...template, flow: 'qa' });
+  const snapshot = await readConfiguredExecutionTemplateSnapshot(vars, { ...template, flow: 'qa' });
   return { qa, executionTemplate: executionTemplateReference(snapshot.entry) };
 }
 

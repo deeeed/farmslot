@@ -268,14 +268,14 @@ test('proof trials retain a package template admitted by the farm QA preset', as
     }),
   );
   const vars = await loadProjectVars(name);
-  const catalog = configuredExecutionTemplateOptions(vars, {
+  const catalog = await configuredExecutionTemplateOptions(vars, {
     flow: 'qa',
     explicitId: 'qa/default',
   });
   const entry = catalog.options.find((option) => option.id === 'qa/default');
   assert.ok(entry);
   assert.equal(entry.sourceKind, 'package');
-  const snapshot = readConfiguredExecutionTemplateSnapshot(vars, { ...entry, flow: 'qa' });
+  const snapshot = await readConfiguredExecutionTemplateSnapshot(vars, { ...entry, flow: 'qa' });
   const admitted = await admitProofQa({
     project: name,
     taskProfile: 'proof',
