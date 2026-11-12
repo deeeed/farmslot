@@ -2910,6 +2910,103 @@ for (const mode of ['autonomous', 'interactive'] as const) {
   });
 }
 
+for (const scenario of [
+  { flowType: 'dev', delivered: true },
+  { flowType: 'fix-bug', delivered: true },
+  { flowType: 'fix-bug', delivered: false },
+] as const) {
+  test(`a blocked ${scenario.flowType} review ${scenario.delivered ? 'holds its delivered result' : 'does not offer an uncaptured result'}`, async (t) => {
+    const run = createRun({
+      flowType: scenario.flowType,
+      project: 'blocked-review-result',
+      ticketOrPr: 'BLOCKED-RESULT',
+      mode: 'autonomous',
+      slotId: 'blocked-review-slot',
+    });
+    t.after(() => deleteTestRunIfPresent(run.id));
+    updateRun(run.id, {
+      status: 'reviewing',
+      ...recordedReviewRounds(['blocked-first', 'blocked-second']),
+      steps: [
+        {
+          name: 'monitor',
+          status: 'done',
+          outputs: {
+            workerSignal: { status: 'complete' },
+            pushVerification: { verified: true },
+          },
+        },
+        { name: 'review', status: 'running' },
+      ],
+      ...(scenario.delivered
+        ? {
+            output: {
+              capturedAt: new Date().toISOString(),
+              workerFinished: true,
+              manifestDigest: 'a'.repeat(64),
+              artifactManifest: [],
+              reportPath: 'artifacts/report.md',
+            },
+          }
+        : {}),
+    });
+    const issues = [{ file: 'a.ts', description: 'The remaining fix needs an upstream change.' }];
+    const reason = 'The remaining fix requires an operator decision.';
+    const context: PostDispatchStepContext = {
+      ...restartReplayContext(),
+      executeReviewForRun: async () => ({
+        verdict: 'blocked',
+        reason,
+        issues,
+        retryCount: 2,
+        maxRetries: 2,
+        reviewSnapshot: {
+          source: 'local-git',
+          headSha: rowOneHead,
+          capturedAt: new Date().toISOString(),
+        },
+      }),
+    };
+    if (!scenario.delivered) {
+      const io = await executeReviewStep(run.id, context);
+      assert.equal(io.outputs?.verdict, 'blocked');
+      assert.equal(getRun(run.id)?.status, 'blocked');
+      assert.equal(getRun(run.id)?.decisions.length, 0);
+      return;
+    }
+    let held: ResultDecisionHoldError | undefined;
+    await assert.rejects(executeReviewStep(run.id, context), (error: unknown) => {
+      assert(error instanceof ResultDecisionHoldError);
+      held = error;
+      return true;
+    });
+    assert(held);
+    const stopped = held;
+    assert.equal(stopped.message, reason);
+    assert.deepEqual(stopped.stepOutputs.issues, issues);
+    assert.equal(stopped.stepOutputs.reason, reason);
+    const latest = getRun(run.id)!;
+    const decision = await buildResultDecision(
+      {
+        ...latest,
+        steps: latest.steps.map((step) =>
+          step.name === 'review'
+            ? { ...step, status: 'failed', outputs: stopped.stepOutputs }
+            : step,
+        ),
+      },
+      'review',
+    );
+    assert.equal(decision.type, 'engine_result_decision');
+    assert(decision.payload?.kind === 'result-decision');
+    assert.deepEqual(decision.payload.findings, issues);
+    assert(decision.payload.actions.some((action) => action.id === 'send-back'));
+    assert(
+      decision.payload.actions.some((action) => action.id === 'close-result' && action.available),
+    );
+  });
+}
+
 test('an undelivered fix becomes a visible result decision with its findings preserved', async (t) => {
   const runId = await publicationGateRun(t, {});
   const issues = [{ file: 'a.ts', line: 1, description: 'Retained finding' }];

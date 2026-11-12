@@ -212,18 +212,26 @@ test('observations survive restart, failed reads preserve facts and stale reads 
   assert.equal((await PRMonitorStore.load(file)).get(monitor.id, 'owner').lifecycle, 'paused');
 });
 
-test('snapshot projection filters before copying and keeps monitor state private', async (t) => {
+test('readers share one frozen monitor snapshot until a write, which later reads see', async (t) => {
   const { store } = await fixture(t);
   const wanted = await store.subscribe('owner', config);
-  await store.subscribe('other-owner', { ...config, pr: { ...config.pr, number: 43 } });
+  const first = store.snapshot();
+  assert.equal(store.snapshot(), first, 'an unchanged store hands out the same state');
   const selected = store.snapshot((data) =>
     data.monitors.filter((monitor) => monitor.id === wanted.id),
   );
   assert.deepEqual(selected, [wanted]);
-  selected[0].config.project = 'Outside mutation';
-  selected.pop();
+  assert.equal(selected[0], first.monitors[0], 'a selection is not copied');
+  // A reader that changes shared state fails at the write instead of corrupting the store.
+  assert.throws(() => {
+    selected[0].config.project = 'Outside mutation';
+  }, TypeError);
   assert.equal(store.get(wanted.id, 'owner').config.project, config.project);
-  assert.equal(store.snapshot().monitors.length, 2);
+  await store.subscribe('other-owner', { ...config, pr: { ...config.pr, number: 43 } });
+  const later = store.snapshot();
+  assert.notEqual(later, first, 'a write commits a new state');
+  assert.equal(later.monitors.length, 2);
+  assert.equal(first.monitors.length, 1, 'the earlier state is unchanged');
 });
 
 test('a transaction that changes nothing neither clones the store nor rewrites its file', async (t) => {

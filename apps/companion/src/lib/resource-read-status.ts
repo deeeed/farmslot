@@ -61,8 +61,12 @@ export function resourceReadMessages(
   offlineNotice = true,
 ): string[] {
   const messages = reads.flatMap(({ label, observation }) => {
-    if (observation.status === 'ready' || observation.status === 'loading') return [];
     const messages: string[] = [];
+    // Entity-sync catch-up: show determinate progress while paging through id catch-up.
+    const catchUp = observation.catchUpProgress;
+    if (catchUp && catchUp.done < catchUp.total)
+      messages.push(`Syncing ${label} · ${catchUp.done} of ${catchUp.total}`);
+    if (observation.status === 'ready' || observation.status === 'loading') return messages;
     const saved = savedForDisplay(observation, connected, now);
     const observedAt = observation.sourceObservation
       ? observation.sourceObservation.observedAt

@@ -96,7 +96,13 @@ import {
 } from '../run-completion/ready-gate-package.js';
 import { runnerDefaultModel } from '../runners/registry.js';
 import { readRunProgress } from '../runners/run-progress.js';
-import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
+import {
+  getAllRunsWithArchived,
+  getRun,
+  persistRunNow,
+  updateRun,
+  updateRunStep,
+} from '../runs/store.js';
 import {
   ACCEPTANCE_STATUS_FILENAME,
   acceptanceCoverageMarkdown,
@@ -1392,7 +1398,7 @@ export async function executeReadyGate(
   // ADR-063 Amendment 5: Request Review preselects the lineages it can continue.
   const reviewLineageOptions = await reviewLineageOptionsForRun(
     getRun(runId)!,
-    getAllRuns(),
+    await getAllRunsWithArchived(),
     preparedPackage?.headSha ?? headSha,
     async (ancestor, head) => {
       if (!current.slotId) throw new Error('the run has no slot to compare the reviewed head on');

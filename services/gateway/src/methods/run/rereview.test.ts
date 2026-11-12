@@ -11,6 +11,9 @@ const runs = new Map<string, Run>();
 let releaseAncestry: () => void = () => {};
 let ancestryCalls = 0;
 let ancestor = true;
+let holdHistory = false;
+let historyCalls = 0;
+let releaseHistory: () => void = () => {};
 
 const prior = {
   id: 'prior-review',
@@ -113,6 +116,18 @@ mock.module('../../runs/store.js', {
     persistRunNow: async () => {},
     getRun: (id: string) => runs.get(id),
     getAllRuns: () => [...runs.values()],
+    getAllRunsWithArchived: async () => {
+      historyCalls += 1;
+      if (holdHistory)
+        await new Promise<void>((resolve) => {
+          const previous = releaseHistory;
+          releaseHistory = () => {
+            previous();
+            resolve();
+          };
+        });
+      return [...runs.values()];
+    },
     listRuns: () => ({ runs: [...runs.values()] }),
     createRun: (params: RunCreateParams) => {
       assertPrimaryReviewContext(params);
@@ -158,6 +173,9 @@ beforeEach(() => {
   ancestryCalls = 0;
   ancestor = true;
   releaseAncestry = () => {};
+  holdHistory = false;
+  historyCalls = 0;
+  releaseHistory = () => {};
   resetWarmReviewerSessionsForTest();
 });
 
@@ -179,6 +197,23 @@ test('a retried click during ancestry lookup reuses the WARM child with its prim
   assert.deepEqual(children[0]!.repeatReviewContext?.unresolvedFindings, [
     { file: 'src/a.ts', line: 7, description: 'Fix this.' },
   ]);
+});
+
+test('concurrent clicks waiting on archive history create only one WARM child', async () => {
+  holdHistory = true;
+  const first = runRereviewLatestHead({ runId: prior.id });
+  const second = runRereviewLatestHead({ runId: prior.id });
+  while (ancestryCalls < 2) await new Promise((resolve) => setImmediate(resolve));
+  releaseAncestry();
+  while (historyCalls < 2) await new Promise((resolve) => setImmediate(resolve));
+  releaseHistory();
+  const results = await Promise.allSettled([first, second]);
+  const children = [...runs.values()].filter((run) => run.parentRunId === prior.id);
+  assert.equal(children.length, 1, 'archive I/O cannot separate duplicate check from creation');
+  assert.equal(results[0].status, 'fulfilled');
+  assert.equal(results[1].status, 'fulfilled');
+  assert(results[0].status === 'fulfilled' && results[1].status === 'fulfilled');
+  assert.equal(results[0].value.runId, results[1].value.runId);
 });
 
 test('a standalone posting decision supplies retained provenance without a publication registry', async () => {

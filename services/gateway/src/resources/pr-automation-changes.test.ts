@@ -476,7 +476,7 @@ test('external PR rule reload is serialized, publishes readable changes, and ref
   const file = join(dir, 'rules.json');
   const store = await PRRuleStore.load(file);
   const team = await store.saveTeam('owner', teamConfig);
-  const changed = store.snapshot();
+  const changed = structuredClone(store.snapshot());
   changed.teams[0].revision += 1;
   changed.teams[0].config.name = 'Externally migrated team';
   await writeFile(file, JSON.stringify(changed));

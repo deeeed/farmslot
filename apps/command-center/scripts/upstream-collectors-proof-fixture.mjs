@@ -444,33 +444,43 @@ if (process.argv[2] === 'fake') {
               data: {
                 repository: {
                   pullRequest: {
-                    statusCheckRollup:
-                      pr.checks.length === 0
-                        ? null
-                        : {
-                            state: pr.checks.every((c) => c.bucket === 'pass')
-                              ? 'SUCCESS'
-                              : 'PENDING',
-                            contexts: {
-                              nodes: pr.checks.map((c) => ({
-                                __typename: 'CheckRun',
-                                name: c.name,
-                                status: c.state === 'IN_PROGRESS' ? 'IN_PROGRESS' : 'COMPLETED',
-                                conclusion:
-                                  c.bucket === 'pass'
-                                    ? 'SUCCESS'
-                                    : c.state === 'IN_PROGRESS'
-                                      ? null
+                    headRefName: pr.head,
+                    statusCheckRollup: {
+                      nodes: [
+                        {
+                          commit: {
+                            statusCheckRollup:
+                              pr.checks.length === 0
+                                ? null
+                                : {
+                                    state: pr.checks.every((c) => c.bucket === 'pass')
+                                      ? 'SUCCESS'
                                       : 'PENDING',
-                                startedAt: c.startedAt,
-                                completedAt: c.completedAt || null,
-                                detailsUrl: null,
-                                url: null,
-                                checkSuite: { workflowRun: { workflow: { name: c.name } } },
-                              })),
-                              pageInfo: { hasNextPage: false, endCursor: null },
-                            },
+                                    contexts: {
+                                      nodes: pr.checks.map((c) => ({
+                                        __typename: 'CheckRun',
+                                        name: c.name,
+                                        status:
+                                          c.state === 'IN_PROGRESS' ? 'IN_PROGRESS' : 'COMPLETED',
+                                        conclusion:
+                                          c.bucket === 'pass'
+                                            ? 'SUCCESS'
+                                            : c.state === 'IN_PROGRESS'
+                                              ? null
+                                              : 'PENDING',
+                                        startedAt: c.startedAt,
+                                        completedAt: c.completedAt || null,
+                                        detailsUrl: null,
+                                        url: null,
+                                        checkSuite: { workflowRun: { workflow: { name: c.name } } },
+                                      })),
+                                      pageInfo: { hasNextPage: false, endCursor: null },
+                                    },
+                                  },
                           },
+                        },
+                      ],
+                    },
                   },
                 },
                 rateLimit: { cost: 1 },

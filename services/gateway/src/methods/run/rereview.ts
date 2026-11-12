@@ -41,7 +41,14 @@ import {
   terminalTransitionDeps,
 } from '../../run-lifecycle/terminal-transition.js';
 import { routeRunTransition } from '../../run-lifecycle/transition-router.js';
-import { createRun, getAllRuns, getRun, persistRunNow, updateRun } from '../../runs/store.js';
+import {
+  createRun,
+  getAllRuns,
+  getAllRunsWithArchived,
+  getRun,
+  persistRunNow,
+  updateRun,
+} from '../../runs/store.js';
 import { withSourcePlanning } from '../../sources/runtime.js';
 import { submitRereviewRequest } from '../pr-rules.js';
 
@@ -130,7 +137,9 @@ async function rereviewWithSources(
         )
       : undefined;
 
-  // The parent may have been cancelled or superseded while GitHub answered.
+  const reviewerHistory =
+    runner && model && !run.reviewWorkspaceTarget ? await getAllRunsWithArchived() : [];
+  // The parent may have been cancelled or superseded while history or GitHub answered.
   const parent = getRun(run.id);
   if (!parent) throw new Error(`Run not found: ${params.runId}`);
   assertRereviewable(parent);
@@ -150,7 +159,7 @@ async function rereviewWithSources(
     assertWarmReviewRequestAvailable(
       parent,
       { runner, model, effort: run.effort ?? null, mode: 'warm', context: reviewContext },
-      getAllRuns(),
+      reviewerHistory,
     );
 
   if (!slot || !runner || !model || !context) {

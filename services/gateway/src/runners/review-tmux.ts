@@ -22,7 +22,7 @@ import {
   bindReviewWorkspaceSupportValue,
   reviewWorkspaceReadOnlyRoots,
 } from '../review-workspaces/skills.js';
-import { getAllRuns, getRun, persistRunNow } from '../runs/store.js';
+import { getAllRuns, getRun, getRunWithArchived, persistRunNow } from '../runs/store.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 
 import { execNativeNodeArgv } from './native/node.js';
@@ -344,10 +344,10 @@ export async function launchReviewTmux(
   if (previous?.nativeSession)
     throw new Error('Stop the native reviewer before changing execution transport');
   const runnerSessionId = previous?.runnerSessionId ?? (await reserveReviewSession(run));
-  await assertCurrent();
   const prior = run.repeatReviewContext?.priorRunId
-    ? getRun(run.repeatReviewContext.priorRunId)
+    ? await getRunWithArchived(run.repeatReviewContext.priorRunId)
     : undefined;
+  await assertCurrent();
   const retained = prior?.agentContexts?.find(
     (context) =>
       context.id === 'review' &&

@@ -132,7 +132,7 @@ restoreRetainedPRRawObservations(
     },
   })),
 );
-const { projectRetainedPRList } = await import('../pr.js');
+const { projectRetainedPRList, projectRetainedPRRow } = await import('../pr.js');
 
 test(
   'retained projection loads projects once and each slot remote once',
@@ -152,3 +152,10 @@ test(
     assert.equal(remoteReads, 3);
   },
 );
+
+test('a served row projected alone equals its row in the list projection', async () => {
+  const list = await projectRetainedPRList([]);
+  assert.equal(list.prs.length, 60);
+  // One observed PR updates its served row with this projector instead of the whole list.
+  for (const row of list.prs) assert.deepEqual(await projectRetainedPRRow(row), row);
+});

@@ -1105,7 +1105,11 @@ export async function dispatchExecute(
   const taskDir = path.dirname(taskFilePath);
   const taskFolderId = path.basename(taskDir);
   const flowSubdir = path.basename(path.dirname(taskDir));
-  const { getRun, updateRun: updateRunStore } = await import('../../runs/store.js');
+  const {
+    getRun,
+    getRunWithArchived,
+    updateRun: updateRunStore,
+  } = await import('../../runs/store.js');
   const currentRun = params.runId ? getRun(params.runId) : null;
   const nativeDispatchBoundary = currentRun?.steps.find(
     (entry) => entry.name === 'dispatch',
@@ -1249,7 +1253,7 @@ export async function dispatchExecute(
   const taskDirName = resolveProjectTaskDirName(projectJson);
   const workerTaskDir = `${taskDirName}/${flowSubdir}/${taskFolderId}`;
   const priorReviewRun = currentRun?.repeatReviewContext?.priorRunId
-    ? (getRun(currentRun.repeatReviewContext.priorRunId) ?? null)
+    ? ((await getRunWithArchived(currentRun.repeatReviewContext.priorRunId)) ?? null)
     : null;
   const primaryReviewId =
     currentRun?.flowType === 'review-pr'

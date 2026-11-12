@@ -42,7 +42,7 @@ import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
 import { PromptDeliveryUncertainError, runnerDefaultSafetyTier } from '../runners/registry.js';
 import {
   clearRunActiveTaskFile,
-  getAllRuns,
+  getAllRunsWithArchived,
   getRun,
   persistRunNow,
   updateRun,
@@ -321,8 +321,8 @@ async function runNativeReviewAttempt(
     warm = undefined;
     warmRunId = undefined;
   };
-  const resolveRetained = () => {
-    const runs = getAllRuns();
+  const resolveRetained = async () => {
+    const runs = await getAllRunsWithArchived();
     const session = resolveWarmReviewerSession(scope, runs);
     if (!session)
       throw new WarmReviewRefusal(
@@ -340,7 +340,7 @@ async function runNativeReviewAttempt(
     const deadline = Date.now() + input.reviewTimeoutMs;
     for (;;) {
       try {
-        const found = resolveRetained();
+        const found = await resolveRetained();
         retained = found.session;
         warm = found.context;
         warmRunId = found.session.runId;
