@@ -661,7 +661,7 @@ test('runListRow serves exactly the kept fields of a rich run, and its evidence 
       videoCount: 1,
       visualPairCount: 1,
       diffStat: { files: 2, additions: 10, deletions: 3 },
-      stepArtifacts: {
+      catalogCounts: {
         artifactCount: 4,
         artifactBytes: 1200,
         visualEvidenceCount: 2,

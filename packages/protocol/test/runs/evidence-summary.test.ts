@@ -18,7 +18,7 @@ const zeroSummary: RunEvidenceSummary = {
   artifactCount: 0,
   videoCount: 0,
   visualPairCount: 0,
-  stepArtifacts: {
+  catalogCounts: {
     artifactCount: 0,
     artifactBytes: 0,
     visualEvidenceCount: 0,
@@ -245,7 +245,7 @@ test('summarizeRunEvidence computes diffStat and per-purpose evidence counts fro
   assert.deepEqual(summary.diffStat, { files: 3, additions: 20, deletions: 5 });
   // The eval catalog's counts of the step-output artifacts: one visual (the screenshot), one
   // validation (the report), one review.
-  assert.deepEqual(summary.stepArtifacts, {
+  assert.deepEqual(summary.catalogCounts, {
     artifactCount: 3,
     artifactBytes: 800,
     visualEvidenceCount: 1,

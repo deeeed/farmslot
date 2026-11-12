@@ -481,14 +481,19 @@ from the row's own fields (`runListEvidenceSummary`). Screens that render
 step outputs or decision payloads read `run.get`, never the list row.
 
 A client build older than the summary computes its list values from the row
-itself. From the served row it shows the same video and compare chips, opens
-the same Diff file and reads the same diff stat as before. Its artifact counts
-(Companion's "Evidence N", the eval catalog's counts) read lower than before
-until it updates, because the row keeps those artifacts and not every entry
-(92 per stored run on average).
+itself. Against this gateway it shows the same video and compare chips, opens
+the same Diff file and shows the same catalog diff stat as before; its evidence
+counts (Companion's "Evidence N", the eval catalog's artifact, byte, validation
+and review counts) read lower, never zero for a run with evidence, until it is
+updated. The row keeps the artifacts those chips and the Diff action are built
+from, not every entry (92 per stored run on average), and at most 100 of them
+per run. The summary is computed from the stored run, as the list always was:
+the `liveRecipeContext` that `run.get` attaches when it presents a run was never
+part of a list row. It counts the run's whole output manifest and gate
+manifests, which the row before this change left out when large.
 
 Measured on 74 stored runs, the average `run.list` row drops from 116 KB to 31 KB
-(p95 from 213 KB to 59 KB, largest from 421 KB to 89 KB). The version contract is
+(p95 from 213 KB to 59 KB, largest from 421 KB to 90 KB). The version contract is
 otherwise unchanged: clients
 still compare versions from the versions list to decide which rows need a
 catch-up page fetch, and `run.get`/`run.forSlot` remain unaffected.

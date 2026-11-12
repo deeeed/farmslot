@@ -457,4 +457,28 @@ test("catalog preview fields are the default branch's from the full run, the ser
   const served = runListRow(fullRun);
   assert.equal(Array.isArray(served.steps[0]?.outputs?.artifacts), true);
   assert.deepEqual(preview(catalogItemFromRun(served)), expected);
+
+  // The same run without the `validation` artifact: the default branch's 4 / 1200 B / 2, where
+  // counting every run artifact once gave 5 / 2100 B / 3.
+  const step = fullRun.steps[0];
+  const artifacts = step?.outputs?.artifacts;
+  if (!step || !Array.isArray(artifacts)) throw new Error('Expected step artifacts');
+  const plain = makeRun({
+    decisions: fullRun.decisions,
+    steps: [{ ...step, outputs: { ...step.outputs, artifacts: artifacts.slice(0, 4) } }],
+  });
+  const plainExpected = {
+    diffStat: diffStatFromRun(plain),
+    ...evidenceSummaryFromRun(plain),
+  };
+  assert.deepEqual(plainExpected, {
+    diffStat: { files: 2, additions: 10, deletions: 3 },
+    artifactCount: 4,
+    artifactBytes: 1200,
+    visualEvidenceCount: 2,
+    validationEvidenceCount: 1,
+    reviewEvidenceCount: 1,
+  });
+  assert.deepEqual(preview(catalogItemFromRun(plain)), plainExpected);
+  assert.deepEqual(preview(catalogItemFromRun(runListRow(plain))), plainExpected);
 });

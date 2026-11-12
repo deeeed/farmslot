@@ -19,7 +19,11 @@ import type { Run, RunDecision, RunDecisionPayload } from '../contracts/runs.js'
 import { utf8ByteLength } from '../utf8-byte-length.js';
 
 import { CI_SNAPSHOT_TRIM_KEY } from './ci-decision-context.js';
-import { listStepArtifacts, summarizeRunEvidence } from './evidence-summary.js';
+import {
+  listStepArtifacts,
+  RUN_LIST_STEP_ARTIFACT_LIMIT,
+  summarizeRunEvidence,
+} from './evidence-summary.js';
 import type { RunListDecision, RunListDecisionPayload, RunListRow } from './list-row.js';
 
 /** JSON size in UTF-8 bytes above which a single decision payload value is left out of run.list. */
@@ -230,6 +234,7 @@ function stepOutputsLost(
 /** A step's outputs as a list row carries them (see listStepOutput). */
 export function listStepOutputs(
   outputs: Record<string, unknown> | undefined,
+  artifactLimit = RUN_LIST_STEP_ARTIFACT_LIMIT,
 ): Record<string, unknown> | undefined {
   if (!outputs) return outputs;
   const slim: Record<string, unknown> = {};
@@ -238,7 +243,7 @@ export function listStepOutputs(
     if (value !== undefined) slim[key] = value;
   }
   // What an older client's own evidence scan needs from this step (see listStepArtifacts).
-  const artifacts = listStepArtifacts(outputs);
+  const artifacts = listStepArtifacts(outputs, artifactLimit);
   if (artifacts.length > 0) slim.artifacts = artifacts;
   return slim;
 }
@@ -335,8 +340,10 @@ export function runListRow(run: Run): RunListRow {
   // Steps keep their timing (list durations, queue waits, progress age) and leave out
   // their inputs; outputs keep only what list surfaces read. A step that lost anything
   // says so (`outputsTrimmed`), so runHasTrimmedDetail reports the row as trimmed.
+  let artifactsLeft = RUN_LIST_STEP_ARTIFACT_LIMIT;
   const steps = run.steps.map(({ inputs, outputs, ...step }) => {
-    const slim = listStepOutputs(outputs);
+    const slim = listStepOutputs(outputs, artifactsLeft);
+    if (Array.isArray(slim?.artifacts)) artifactsLeft -= slim.artifacts.length;
     const lost = inputs !== undefined || stepOutputsLost(outputs, slim);
     return { ...step, outputs: slim, ...(lost ? { outputsTrimmed: true as const } : {}) };
   });

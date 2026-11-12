@@ -15,7 +15,7 @@ function summary(
 ) {
   const full: RunEvidenceSummary = {
     ...counts,
-    stepArtifacts: {
+    catalogCounts: {
       artifactCount: 0,
       artifactBytes: 0,
       visualEvidenceCount: 0,

@@ -354,6 +354,12 @@ totalCount, summaryMeta, familySummaries, projectAnalytics }` for every live
    `detailTrimmed: true` marks a row that left out any other heavy key, and
    `output.artifactManifestOmitted` the output manifest; `runHasTrimmedDetail`
    reads all four. Full runs come from `run.get` / `run.forSlot`.
+
+   A client build older than the served summary, against this gateway, shows
+   the same video and compare chips, opens the same Diff file and shows the
+   same catalog diff stat as before; its evidence counts read lower, never zero
+   for a run with evidence, until it is updated.
+
 3. Only the version reply decides which rows exist. Stored rows it does not list
    are removed.
 4. The client reads changed and missing ids with `run.list { ids }`, in pages of

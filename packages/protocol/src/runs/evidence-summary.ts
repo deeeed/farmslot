@@ -22,8 +22,11 @@ export interface RunArtifactManifestEntry extends EvidenceManifestEntry {
   bundleDigest?: string;
 }
 
-/** A run's step-output artifacts as the eval catalog counts them. */
-export interface RunStepArtifactSummary {
+/**
+ * The eval catalog's counts of a run's step-output artifacts. They follow the catalog's own
+ * rules and are not the list chips' counts (`artifactCount`, `videoCount`, `visualPairCount`).
+ */
+export interface RunCatalogCounts {
   artifactCount: number;
   /** Total recorded bytes. */
   artifactBytes: number;
@@ -41,14 +44,21 @@ export interface RunEvidenceSummary {
   visualPairCount: number;
   /** Diff stat from the run's latest step that reported one. */
   diffStat?: DiffStat;
-  /** The eval catalog's counts of the run's step-output artifacts. */
-  stepArtifacts: RunStepArtifactSummary;
+  /** The eval catalog's counts (`runCatalogCounts`); the catalog reads these, the chips do not. */
+  catalogCounts: RunCatalogCounts;
   /** The diff file a run's Diff button opens (`diffArtifactCandidate` over its artifacts). */
   diffArtifactPath?: string;
 }
 
 /** A step-output artifact as a run.list row carries it. */
 export type RunListStepArtifact = Pick<RunArtifactManifestEntry, 'path' | 'purpose' | 'sizeBytes'>;
+
+/**
+ * The most step-output artifacts one run.list row keeps, across its steps. The stored run with
+ * the most keeps 60 (95 in 100 keep 35 or fewer), so the cap changes no known run; it bounds
+ * what one unusual run can add to a row at about 11 KB.
+ */
+export const RUN_LIST_STEP_ARTIFACT_LIMIT = 100;
 
 /**
  * Every artifact a run reports: gate and review payloads, the captured run
@@ -132,11 +142,11 @@ function extractDiffStatFromSteps(
  * per step and path, classified by purpose and path. The catalog counted this way before
  * run.list rows left step artifacts out; the gateway now counts for it from the full run.
  */
-export function summarizeStepArtifacts(
+export function runCatalogCounts(
   steps: readonly Pick<RunStep, 'name' | 'outputs'>[],
-): RunStepArtifactSummary {
+): RunCatalogCounts {
   const seen = new Set<string>();
-  const summary: RunStepArtifactSummary = {
+  const summary: RunCatalogCounts = {
     artifactCount: 0,
     artifactBytes: 0,
     visualEvidenceCount: 0,
@@ -178,25 +188,32 @@ export function summarizeStepArtifacts(
  * the row itself (a build from before the served summary): videos, before/after visuals and
  * diff files, each as its path, purpose and size. From them such a client shows the same video
  * and compare chips and opens the same Diff file as from the row it used to get; its artifact
- * counts read lower until it updates.
+ * counts read lower until it updates. A step whose artifacts are of none of those kinds keeps
+ * its first one, so those counts are never zero for a step that has evidence. At most `limit`
+ * entries are kept.
  */
 export function listStepArtifacts(
   outputs: Record<string, unknown> | undefined,
+  limit: number,
 ): RunListStepArtifact[] {
   const entries: RunArtifactManifestEntry[] = [];
   collectRunArtifactEntries(outputs, entries);
-  return dedupeRunArtifacts(entries)
-    .filter(
-      (entry) =>
-        isRunEvidenceVideoArtifact(entry) ||
-        (isRunEvidenceVisualArtifact(entry) && runEvidenceVisualArtifactKind(entry) !== null) ||
-        diffArtifactScore(entry) > 0,
-    )
-    .map(({ path, purpose, sizeBytes }) => ({
-      path,
-      purpose,
-      ...(sizeBytes !== undefined ? { sizeBytes } : {}),
-    }));
+  const kept = dedupeRunArtifacts(entries).filter(
+    (entry) =>
+      isRunEvidenceVideoArtifact(entry) ||
+      (isRunEvidenceVisualArtifact(entry) && runEvidenceVisualArtifactKind(entry) !== null) ||
+      diffArtifactScore(entry) > 0,
+  );
+  if (kept.length === 0) {
+    const recorded: RunArtifactManifestEntry[] = [];
+    collectRunArtifactEntries(outputs?.artifacts, recorded);
+    kept.push(...recorded.slice(0, 1));
+  }
+  return kept.slice(0, limit).map(({ path, purpose, sizeBytes }) => ({
+    path,
+    purpose,
+    ...(sizeBytes !== undefined ? { sizeBytes } : {}),
+  }));
 }
 
 /**
@@ -216,7 +233,7 @@ export function summarizeRunEvidence(run: RunEvidenceSource): RunEvidenceSummary
     videoCount: artifacts.filter(isRunEvidenceVideoArtifact).length,
     visualPairCount: countRunEvidenceVisualPairs(artifacts),
     diffStat: extractDiffStatFromSteps(run.steps),
-    stepArtifacts: summarizeStepArtifacts(run.steps),
+    catalogCounts: runCatalogCounts(run.steps),
     diffArtifactPath: diffArtifactCandidate(runArtifacts)?.path,
   };
 }

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { Run } from '../../src/contracts/runs.js';
+import { RUN_LIST_STEP_ARTIFACT_LIMIT } from '../../src/runs/evidence-summary.js';
 import { runListRow, trimRunForList } from '../../src/runs/list-trim.js';
 
 import {
@@ -68,6 +69,20 @@ function evidenceRun(): Run {
         },
       },
     ],
+    // A stored live recipe context, which both rows carry: its video counts on a list. (run.get
+    // attaches one when it presents a run; run.list never did, on either branch.)
+    liveRecipeContext: {
+      source: 'recipe-run-artifacts',
+      recipeRunId: 'recipe-1',
+      artifactRoot: 'recipe-runs/recipe-1',
+      artifactManifest: [{ path: 'recipe-runs/recipe-1/checkout.mp4', purpose: 'video' }],
+      recipeJson: null,
+      recipeQualityArtifact: null,
+      qualityReport: null,
+      workerLearnings: null,
+      isStale: false,
+      selectionReason: 'latest-run',
+    },
     metrics: { nudgeCount: 0, model: 'opus', runner: 'claude' },
     createdAt: '2026-11-01T00:00:00.000Z',
     updatedAt: '2026-11-01T00:12:00.000Z',
@@ -92,8 +107,14 @@ test('default-branch readers show the same chips, Diff file and diff stat from t
     const { videoCount, visualPairCount } = summarizeRunEvidence(row);
     return { videoCount, visualPairCount };
   };
-  assert.deepEqual(chips(before), { videoCount: 1, visualPairCount: 1 });
+  assert.deepEqual(chips(before), { videoCount: 2, visualPairCount: 1 });
   assert.deepEqual(chips(served), chips(before));
+  // A current build reads the gateway's summary: the same chips.
+  const summary = runListRow(run).evidenceSummary;
+  assert.deepEqual(
+    { videoCount: summary?.videoCount, visualPairCount: summary?.visualPairCount },
+    chips(before),
+  );
 
   // Companion run cards: the file the Diff action opens.
   const diffPath = (row: Run) => diffArtifactCandidate(extractRunArtifactManifest(row))?.path;
@@ -105,36 +126,117 @@ test('default-branch readers show the same chips, Diff file and diff stat from t
   assert.deepEqual(diffStatFromRun(served), diffStatFromRun(before));
 });
 
+// (The before/after thumbnail on Companion's cards is not asserted: on the default branch
+// `groupVisualArtifactPairs` pairs artifacts only through an evidence model, the cards pass
+// none, and so the pair never rendered there.)
+
 // The served row keeps a step's videos, before/after visuals and diff files, not every
 // artifact entry (stored runs average 92 of them). So the counts an older build derives are
-// lower than before until it updates; a current build reads the gateway's summary.
-test('default-branch readers count fewer artifacts from the served row, never more', () => {
+// lower than before until it updates: never zero for a run with evidence, never higher than
+// the truth. A current build reads the gateway's summary.
+test('default-branch readers count fewer artifacts from the served row, never more and not none', () => {
   const run = evidenceRun();
   const before = received(trimRunForList(run));
   const served = received(runListRow(run));
 
   // Companion "Evidence N".
-  assert.equal(extractRunArtifactManifest(before).length, 9);
-  assert.equal(extractRunArtifactManifest(served).length, 6);
+  const truth = extractRunArtifactManifest(before).length;
+  const shown = extractRunArtifactManifest(served).length;
+  assert.equal(truth, 9);
+  assert.equal(shown, 6);
+  assert.ok(shown > 0 && shown <= truth);
 
   // Eval catalog preview counts.
-  assert.deepEqual(evidenceSummaryFromRun(before), {
+  const catalogTruth = evidenceSummaryFromRun(before);
+  const catalogShown = evidenceSummaryFromRun(served);
+  assert.deepEqual(catalogTruth, {
     artifactCount: 6,
     artifactBytes: 10250,
     visualEvidenceCount: 3,
     validationEvidenceCount: 2,
     reviewEvidenceCount: 1,
   });
-  assert.deepEqual(evidenceSummaryFromRun(served), {
+  assert.deepEqual(catalogShown, {
     artifactCount: 4,
     artifactBytes: 9900,
     visualEvidenceCount: 3,
     validationEvidenceCount: 0,
     reviewEvidenceCount: 0,
   });
+  assert.ok(catalogShown.artifactCount > 0 && catalogShown.artifactBytes > 0);
+  for (const key of [
+    'artifactCount',
+    'artifactBytes',
+    'visualEvidenceCount',
+    'validationEvidenceCount',
+    'reviewEvidenceCount',
+  ] as const)
+    assert.ok(catalogShown[key] <= catalogTruth[key], key);
+
+  // A step with only reports keeps its first one, so those counts are never zero for it.
+  const reports: Run = {
+    ...run,
+    liveRecipeContext: undefined,
+    decisions: [],
+    steps: [
+      {
+        name: 'monitor',
+        status: 'done',
+        outputs: {
+          artifacts: [
+            { path: 'reports/recipe-report.md', purpose: 'report', sizeBytes: 100 },
+            { path: 'reports/coverage.md', purpose: 'coverage', sizeBytes: 300 },
+          ],
+        },
+      },
+    ],
+  };
+  const reportsServed = received(runListRow(reports));
+  assert.equal(extractRunArtifactManifest(reportsServed).length, 1);
+  assert.deepEqual(evidenceSummaryFromRun(reportsServed), {
+    artifactCount: 1,
+    artifactBytes: 100,
+    visualEvidenceCount: 0,
+    validationEvidenceCount: 1,
+    reviewEvidenceCount: 0,
+  });
 
   // A current build shows the default branch's catalog numbers from the gateway's summary.
-  assert.deepEqual(runListRow(run).evidenceSummary?.stepArtifacts, evidenceSummaryFromRun(before));
+  assert.deepEqual(runListRow(run).evidenceSummary?.catalogCounts, catalogTruth);
   assert.deepEqual(runListRow(run).evidenceSummary?.diffStat, diffStatFromRun(before));
   assert.equal(runListRow(run).evidenceSummary?.diffArtifactPath, 'artifacts/changes.patch');
+});
+
+// One unusual run cannot bring tens of KB back: a row keeps a bounded number of step artifacts
+// across its steps, and a step that lost any is marked trimmed.
+test('a row keeps at most the artifact limit across its steps', () => {
+  const videos = (step: string, count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      path: `evidence/${step}-${index}.mp4`,
+      purpose: 'video',
+      sizeBytes: 1000,
+    }));
+  const run: Run = {
+    ...evidenceRun(),
+    liveRecipeContext: undefined,
+    decisions: [],
+    steps: [
+      { name: 'monitor', status: 'done', outputs: { artifacts: videos('monitor', 70) } },
+      { name: 'recipe', status: 'done', outputs: { artifacts: videos('recipe', 70) } },
+      { name: 'review', status: 'done', outputs: { artifacts: videos('review', 5) } },
+    ],
+  };
+  const row = runListRow(run);
+  const kept = row.steps.map((step) =>
+    Array.isArray(step.outputs?.artifacts) ? step.outputs.artifacts.length : 0,
+  );
+  assert.deepEqual(kept, [70, RUN_LIST_STEP_ARTIFACT_LIMIT - 70, 0]);
+  // The first step lost nothing; the two the cap cut say so.
+  assert.deepEqual(
+    row.steps.map((step) => step.outputsTrimmed),
+    [undefined, true, true],
+  );
+  // The gateway's summary still counts every video; only an older build's own count is capped.
+  assert.equal(row.evidenceSummary?.videoCount, 145);
+  assert.equal(summarizeRunEvidence(received(row)).videoCount, RUN_LIST_STEP_ARTIFACT_LIMIT);
 });

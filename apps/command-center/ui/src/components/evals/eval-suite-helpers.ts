@@ -330,7 +330,7 @@ function previewFieldsFromRun(
     runHref: runHref(run),
     familyHref: familyHref(run),
     diffStat: evidence.diffStat,
-    ...evidence.stepArtifacts,
+    ...evidence.catalogCounts,
   };
 }
 
