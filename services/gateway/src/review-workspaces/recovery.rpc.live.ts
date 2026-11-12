@@ -111,7 +111,7 @@ test(
     t.after(() => connection.close());
     const call = <T>(method: string, params: unknown) => connection.call<T>(method, params);
     const project = await (await import('../core/config.js')).loadProjectVars('fixture');
-    const selection = (
+    const selection = await (
       await import('../tasks/execution-template-catalog.js')
     ).resolveConfiguredExecutionTemplate(project, {
       flow: 'review-pr',

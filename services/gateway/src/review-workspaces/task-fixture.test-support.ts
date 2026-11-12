@@ -35,7 +35,7 @@ async function fixture() {
     artifactDir: 'artifacts',
   };
   await writeFile(project.projectConfig, JSON.stringify(project.projectJson));
-  const selection = resolveConfiguredExecutionTemplate(project, {
+  const selection = await resolveConfiguredExecutionTemplate(project, {
     flow: 'review-pr',
     platform: 'web',
     runMode: 'autonomous',

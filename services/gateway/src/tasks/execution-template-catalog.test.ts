@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import childProcess from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -21,7 +23,7 @@ import {
   resolveWorkerTerminalContract,
 } from './worker-terminal-contract.js';
 
-function withProject(fn: (projectVars: ProjectVars) => void): void {
+async function withProject(fn: (projectVars: ProjectVars) => Promise<void>): Promise<void> {
   const root = mkdtempSync(path.join(tmpdir(), 'farmslot-gateway-catalog-'));
   try {
     const templatesDir = path.join(root, 'templates');
@@ -57,7 +59,7 @@ platforms: [ios]
 - [ ] Validate the issue.
 `,
     );
-    fn({
+    await fn({
       projectName: 'example-farm',
       projectConfig: path.join(root, 'project.json'),
       projectFixturesDir: path.join(root, 'fixtures'),
@@ -106,9 +108,9 @@ platforms: [ios]
   }
 }
 
-test('configured capability lists domains, sources, selection, and unavailable roots', () => {
-  withProject((projectVars) => {
-    const capability = configuredExecutionTemplateOptions(projectVars, {
+test('configured capability lists domains, sources, selection, and unavailable roots', async () => {
+  await withProject(async (projectVars) => {
+    const capability = await configuredExecutionTemplateOptions(projectVars, {
       flow: 'fix-bug',
       platform: 'ios',
       runMode: 'autonomous',
@@ -151,7 +153,7 @@ test('configured capability lists domains, sources, selection, and unavailable r
 
     // Without a domain both gates must surface loudly — the source-level perps
     // drop AND the entry-label money-movement drop — instead of vanishing.
-    const noDomain = configuredExecutionTemplateOptions(projectVars, {
+    const noDomain = await configuredExecutionTemplateOptions(projectVars, {
       flow: 'fix-bug',
       platform: 'ios',
       runMode: 'autonomous',
@@ -170,7 +172,7 @@ test('configured capability lists domains, sources, selection, and unavailable r
     );
 
     // A query matching every gate reports an empty filtered list.
-    const moneyMovement = configuredExecutionTemplateOptions(projectVars, {
+    const moneyMovement = await configuredExecutionTemplateOptions(projectVars, {
       flow: 'fix-bug',
       platform: 'ios',
       runMode: 'autonomous',
@@ -188,7 +190,7 @@ test('configured capability lists domains, sources, selection, and unavailable r
       undefined,
     );
 
-    const unfiltered = configuredExecutionTemplateOptions(projectVars, { unfiltered: true });
+    const unfiltered = await configuredExecutionTemplateOptions(projectVars, { unfiltered: true });
     const unfilteredIds = unfiltered.options.map((option) => option.id).sort();
     assert.ok(unfilteredIds.includes('fix-bug/perps-mobile'));
     assert.ok(unfilteredIds.includes('fix-bug/mm'));
@@ -201,14 +203,14 @@ test('configured capability lists domains, sources, selection, and unavailable r
   });
 });
 
-test('the catalog run mode selects a default rule and never filters the offered options', () => {
-  withProject((projectVars) => {
+test('the catalog run mode selects a default rule and never filters the offered options', async () => {
+  await withProject(async (projectVars) => {
     const base = { flow: 'fix-bug', platform: 'ios', domain: 'perps' } as const;
-    const autonomous = configuredExecutionTemplateOptions(projectVars, {
+    const autonomous = await configuredExecutionTemplateOptions(projectVars, {
       ...base,
       runMode: 'autonomous',
     });
-    const interactive = configuredExecutionTemplateOptions(projectVars, {
+    const interactive = await configuredExecutionTemplateOptions(projectVars, {
       ...base,
       runMode: 'interactive',
     });
@@ -226,15 +228,15 @@ test('the catalog run mode selects a default rule and never filters the offered 
   });
 });
 
-test('configured resolution snapshots the same source digest exposed by capability options', () => {
-  withProject((projectVars) => {
-    const capability = configuredExecutionTemplateOptions(projectVars, {
+test('configured resolution snapshots the same source digest exposed by capability options', async () => {
+  await withProject(async (projectVars) => {
+    const capability = await configuredExecutionTemplateOptions(projectVars, {
       flow: 'fix-bug',
       platform: 'ios',
       runMode: 'autonomous',
       domain: 'perps',
     });
-    const resolved = resolveConfiguredExecutionTemplate(projectVars, {
+    const resolved = await resolveConfiguredExecutionTemplate(projectVars, {
       flow: 'fix-bug',
       platform: 'ios',
       runMode: 'autonomous',
@@ -248,16 +250,16 @@ test('configured resolution snapshots the same source digest exposed by capabili
   });
 });
 
-test('configured preview reads only the exact catalog source and digest', () => {
-  withProject((projectVars) => {
-    const capability = configuredExecutionTemplateOptions(projectVars, {
+test('configured preview reads only the exact catalog source and digest', async () => {
+  await withProject(async (projectVars) => {
+    const capability = await configuredExecutionTemplateOptions(projectVars, {
       flow: 'fix-bug',
       platform: 'ios',
       runMode: 'autonomous',
       domain: 'perps',
     });
     const option = capability.options[0]!;
-    const snapshot = readConfiguredExecutionTemplateSnapshot(projectVars, {
+    const snapshot = await readConfiguredExecutionTemplateSnapshot(projectVars, {
       flow: 'fix-bug',
       id: option.id,
       sourceId: option.sourceId,
@@ -266,7 +268,7 @@ test('configured preview reads only the exact catalog source and digest', () => 
 
     assert.equal(snapshot.entry.sourceId, 'team:perps');
     assert.match(snapshot.markdown, /Validate the issue/);
-    assert.throws(
+    await assert.rejects(
       () =>
         readConfiguredExecutionTemplateSnapshot(projectVars, {
           flow: 'fix-bug',
@@ -279,8 +281,8 @@ test('configured preview reads only the exact catalog source and digest', () => 
   });
 });
 
-test('configured preview can read an offered source shadowed outside the active domain', () => {
-  withProject((projectVars) => {
+test('configured preview can read an offered source shadowed outside the active domain', async () => {
+  await withProject(async (projectVars) => {
     const root = path.dirname(projectVars.projectConfig);
     const canonicalRoot = path.join(root, 'canonical', 'checklists', 'fix-bug');
     mkdirSync(canonicalRoot, { recursive: true });
@@ -303,7 +305,7 @@ platforms: [ios]
       subpath: 'checklists',
     });
 
-    const capability = configuredExecutionTemplateOptions(projectVars, {
+    const capability = await configuredExecutionTemplateOptions(projectVars, {
       flow: 'fix-bug',
       platform: 'ios',
       runMode: 'autonomous',
@@ -314,7 +316,7 @@ platforms: [ios]
     );
     assert.ok(option);
 
-    const snapshot = readConfiguredExecutionTemplateSnapshot(projectVars, {
+    const snapshot = await readConfiguredExecutionTemplateSnapshot(projectVars, {
       flow: 'fix-bug',
       id: option.id,
       sourceId: option.sourceId,
@@ -323,7 +325,7 @@ platforms: [ios]
     assert.equal(snapshot.entry.sourceId, 'package:canonical');
     assert.match(snapshot.markdown, /Validate the canonical journey/);
 
-    const unfiltered = configuredExecutionTemplateOptions(projectVars, {
+    const unfiltered = await configuredExecutionTemplateOptions(projectVars, {
       unfiltered: true,
       flow: 'fix-bug',
     });
@@ -344,15 +346,15 @@ platforms: [ios]
   });
 });
 
-test('slot resolution uses explicit domain before the slot or pool default', () => {
-  withProject((projectVars) => {
-    const fromSlotDefault = resolveConfiguredExecutionTemplateForSlot(projectVars, {
+test('slot resolution uses explicit domain before the slot or pool default', async () => {
+  await withProject(async (projectVars) => {
+    const fromSlotDefault = await resolveConfiguredExecutionTemplateForSlot(projectVars, {
       flow: 'fix-bug',
       platform: 'ios',
       runMode: 'autonomous',
       slotDomain: 'perps',
     });
-    const fromExplicitDomain = resolveConfiguredExecutionTemplateForSlot(projectVars, {
+    const fromExplicitDomain = await resolveConfiguredExecutionTemplateForSlot(projectVars, {
       flow: 'fix-bug',
       platform: 'ios',
       runMode: 'autonomous',
@@ -366,22 +368,25 @@ test('slot resolution uses explicit domain before the slot or pool default', () 
   });
 });
 
-test('catalog resolution before slot assignment preserves platform checks when a slot is supplied', () => {
-  withProject((vars) => {
+test('catalog resolution before slot assignment preserves platform checks when a slot is supplied', async () => {
+  await withProject(async (vars) => {
     const query = { flow: 'fix-bug', runMode: 'autonomous', domain: 'perps' } as const;
-    const pendingSlot = resolveConfiguredExecutionTemplate(vars, query);
+    const pendingSlot = await resolveConfiguredExecutionTemplate(vars, query);
     assert.equal(pendingSlot.entry.relativePath, 'fix-bug/perps.mobile.md');
-    const assignedSlot = resolveConfiguredExecutionTemplate(vars, { ...query, platform: 'ios' });
+    const assignedSlot = await resolveConfiguredExecutionTemplate(vars, {
+      ...query,
+      platform: 'ios',
+    });
     assert.equal(assignedSlot.entry.sha256, pendingSlot.entry.sha256);
-    assert.throws(
+    await assert.rejects(
       () => resolveConfiguredExecutionTemplate(vars, { ...query, platform: 'cli' }),
       /No compatible execution template/,
     );
   });
 });
 
-test('catalog read uses verified project vars without an async source context', () => {
-  withProject((vars) => {
+test('catalog read uses verified project vars without an async source context', async () => {
+  await withProject(async (vars) => {
     const sourceRoot = path.dirname(vars.projectConfig);
     const lock: SourceMaterialization['lock'] = {
       schemaVersion: 1,
@@ -426,7 +431,7 @@ test('catalog read uses verified project vars without an async source context', 
       },
     };
     vars.projectJson.execution_templates!.sources![0].root = { sourceId: 'team', entry: 'team' };
-    const options = configuredExecutionTemplateOptions(vars, {
+    const options = await configuredExecutionTemplateOptions(vars, {
       flow: 'fix-bug',
       platform: 'ios',
       runMode: 'autonomous',
@@ -437,7 +442,7 @@ test('catalog read uses verified project vars without an async source context', 
   });
 });
 
-test('Farmslot static review selects the adapter and freezes the canonical review guidance', () => {
+test('Farmslot static review selects the adapter and freezes the canonical review guidance', async () => {
   const projectRoot = path.resolve(import.meta.dirname, '../../../../projects/farmslot-farm');
   const projectJson: ProjectVars['projectJson'] = JSON.parse(
     readFileSync(path.join(projectRoot, 'project.json'), 'utf8'),
@@ -447,7 +452,7 @@ test('Farmslot static review selects the adapter and freezes the canonical revie
   assert.equal(projectJson.repo_url, `https://github.com/${projectJson.ci?.repo}.git`);
   assert.ok(projectJson.static_review?.template_id);
   assert.deepEqual(projectJson.static_review.instruction_files, ['runtime/review-quality.md']);
-  const selected = resolveConfiguredExecutionTemplateForSlot(
+  const selected = await resolveConfiguredExecutionTemplateForSlot(
     {
       projectName: 'farmslot-farm',
       projectConfig: path.join(projectRoot, 'project.json'),
@@ -473,4 +478,28 @@ test('Farmslot static review selects the adapter and freezes the canonical revie
   assert.deepEqual(lintWorkerTemplateAgainstContract(selected.markdown, contract), []);
   assert.match(selected.markdown, /From the task directory[^\n]+\.\/mark complete --mark-last/);
   assert.equal(projectJson.workflow_defaults?.['review-pr']?.review?.publishReview, false);
+});
+
+test("the catalog reads its sources' git state without a blocking git call", async (t) => {
+  const blocking: string[][] = [];
+  const spawnSync = childProcess.spawnSync;
+  t.mock.method(childProcess, 'spawnSync', (...args: Parameters<typeof spawnSync>) => {
+    if (args[0] === 'git') blocking.push([...(Array.isArray(args[1]) ? args[1] : [])]);
+    return spawnSync(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  await withProject(async (projectVars) => {
+    const capability = await configuredExecutionTemplateOptions(projectVars, { unfiltered: true });
+    assert.ok(capability.options.length > 0);
+    await resolveConfiguredExecutionTemplate(projectVars, {
+      flow: 'fix-bug',
+      runMode: 'autonomous',
+      domain: 'perps',
+    });
+  });
+  assert.deepEqual(blocking, [], 'no git call blocks the event loop');
 });

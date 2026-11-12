@@ -92,6 +92,35 @@ function processes(pid?: number): Map<number, ProcessIdentity> {
   return parseProcesses(output);
 }
 
+/** `processes` off the event loop, with the same answers and errors. */
+function processesAsync(pid?: number): Promise<Map<number, ProcessIdentity>> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      'ps',
+      pid === undefined ? ['-axo', columns] : ['-p', String(pid), '-o', columns],
+      {
+        encoding: 'utf8',
+        maxBuffer: 16 * 1024 * 1024,
+        timeout: censusTimeoutMs,
+        killSignal: 'SIGKILL',
+      },
+      (error, output) => {
+        if (!error) return resolve(parseProcesses(output));
+        // `ps -p` exits 1 when the process is gone; only a confirmed absence is an empty answer.
+        if (pid !== undefined && error.code === 1) {
+          try {
+            process.kill(pid, 0);
+          } catch (probeError) {
+            if ((probeError as NodeJS.ErrnoException).code === 'ESRCH') return resolve(new Map());
+            return reject(probeError);
+          }
+        }
+        reject(error);
+      },
+    );
+  });
+}
+
 /** Shared OS census for stopped-host reconciliation; failed reads remain unknown. */
 export function readNativeProcessSnapshot(): Map<number, ProcessIdentity> {
   return processes();
@@ -233,14 +262,26 @@ export class NativeProcessTree {
    */
   constructor(
     private readonly root: number,
-    { gated = false }: { gated?: boolean } = {},
+    {
+      gated = false,
+      snapshot = processes(gated ? root : undefined),
+    }: { gated?: boolean; snapshot?: Map<number, ProcessIdentity> } = {},
   ) {
-    const snapshot = processes(gated ? root : undefined);
     const observation = snapshot.get(root);
     if (!observation?.identity) throw new Error('Native process identity is unavailable');
     this.rootIdentity = observation.identity;
     this.rootObservation = { ...observation };
     this.applySnapshot(snapshot);
+  }
+  /** The constructor's census off the caller's event loop: for callers that can await it. */
+  static async create(
+    root: number,
+    { gated = false }: { gated?: boolean } = {},
+  ): Promise<NativeProcessTree> {
+    return new NativeProcessTree(root, {
+      gated,
+      snapshot: await processesAsync(gated ? root : undefined),
+    });
   }
   async capture(): Promise<Map<number, ProcessIdentity>> {
     const snapshot = await cleanupProcesses();

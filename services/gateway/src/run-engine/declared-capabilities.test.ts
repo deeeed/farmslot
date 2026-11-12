@@ -80,7 +80,7 @@ test('dispatch of an initialized task keeps its frozen template after a pack edi
     artifactDir: 'artifacts',
     runtimeDir: '.agent',
   };
-  const selected = resolveConfiguredExecutionTemplate(project, {
+  const selected = await resolveConfiguredExecutionTemplate(project, {
     flow: 'dev',
     platform: 'cli',
     runMode: 'autonomous',

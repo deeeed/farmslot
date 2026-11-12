@@ -187,14 +187,16 @@ export async function dispatchQueueAdd(
       );
     }
     const slotVars = templateSlotId ? await loadSlotVars(templateSlotId) : undefined;
-    executionTemplate = resolveConfiguredExecutionTemplateForSlot(projectVars, {
-      flow: params.flowType,
-      platform: slotVars?.platform ?? workspaceAdmission!.pool.platform,
-      runMode: params.mode,
-      ...(params.domain ? { explicitDomain: params.domain } : {}),
-      ...(slotVars?.domain ? { slotDomain: slotVars.domain } : {}),
-      ...(params.executionTemplateId ? { explicitId: params.executionTemplateId } : {}),
-    }).reference;
+    executionTemplate = (
+      await resolveConfiguredExecutionTemplateForSlot(projectVars, {
+        flow: params.flowType,
+        platform: slotVars?.platform ?? workspaceAdmission!.pool.platform,
+        runMode: params.mode,
+        ...(params.domain ? { explicitDomain: params.domain } : {}),
+        ...(slotVars?.domain ? { slotDomain: slotVars.domain } : {}),
+        ...(params.executionTemplateId ? { explicitId: params.executionTemplateId } : {}),
+      })
+    ).reference;
   }
   authorizeSourceSelections?.();
   const item = addItem(

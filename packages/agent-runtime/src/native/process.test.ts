@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 import test, { type TestContext } from 'node:test';
 
 import { JsonLineProcess } from './process.js';
@@ -373,3 +375,37 @@ cp.spawn = (...args) => {
     },
   );
 }
+
+test('launch reads the root identity without a blocking ps and delivers records written before the gate', async (t) => {
+  const blocking: string[] = [];
+  const execFileSync = childProcess.execFileSync;
+  t.mock.method(childProcess, 'execFileSync', (...args: Parameters<typeof execFileSync>) => {
+    blocking.push(String(args[0]));
+    return execFileSync(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  const spawned: number[] = [];
+  const child = new JsonLineProcess(
+    process.execPath,
+    [
+      '-e',
+      // Answers each request with its own params, in arrival order.
+      `require('node:readline').createInterface({input:process.stdin}).on('line',(line)=>{const m=JSON.parse(line);process.stdout.write(JSON.stringify({id:m.id,result:m.params})+'\\n');});`,
+    ],
+    { cwd: process.cwd(), onSpawn: (pid) => spawned.push(pid) },
+    () => {},
+    () => {},
+  );
+  t.after(() => child.close());
+  // Written while the root's identity is still being read: they wait behind the gate.
+  const first = child.request('echo', { order: 1 });
+  const second = child.request('echo', { order: 2 });
+  assert.deepEqual(spawned, [], 'the launch is registered after the identity read');
+  assert.deepEqual(await Promise.all([first, second]), [{ order: 1 }, { order: 2 }]);
+  assert.deepEqual(spawned, [child.child.pid]);
+  assert.deepEqual(blocking, [], 'no ps blocks the event loop');
+});

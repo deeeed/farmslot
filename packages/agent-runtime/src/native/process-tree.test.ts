@@ -410,3 +410,37 @@ test('a gated tree reads only its root; the next census adds its descendants', a
     if (root.pid && alive(root.pid)) root.kill('SIGKILL');
   }
 });
+
+test('the asynchronous root census answers as the synchronous one and starts no blocking ps', async (t) => {
+  const blocking: string[] = [];
+  const execFileSync = childProcess.execFileSync;
+  t.mock.method(childProcess, 'execFileSync', (...args: Parameters<typeof execFileSync>) => {
+    blocking.push(String(args[0]));
+    return execFileSync(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  const created = await NativeProcessTree.create(process.pid, { gated: true });
+  assert.deepEqual(blocking, [], 'no ps blocks the event loop');
+  t.mock.restoreAll();
+  syncBuiltinESMExports();
+  assert.deepEqual(
+    created.snapshot(),
+    new NativeProcessTree(process.pid, { gated: true }).snapshot(),
+  );
+
+  // A process that is gone is refused the same way by both.
+  const gone = spawn(process.execPath, ['-e', '']);
+  await once(gone, 'exit');
+  assert.throws(
+    () => new NativeProcessTree(gone.pid!, { gated: true }),
+    /Native process identity is unavailable/,
+  );
+  await assert.rejects(
+    NativeProcessTree.create(gone.pid!, { gated: true }),
+    /Native process identity is unavailable/,
+  );
+});

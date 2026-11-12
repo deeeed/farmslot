@@ -7,14 +7,14 @@ import {
   executionTemplateReference,
   ExecutionTemplateSelectionError,
   type ExecutionTemplateSource,
-  executionTemplateSourceDirty,
+  executionTemplateSourceDirtyAsync,
   executionTemplateSourceParticipates,
-  executionTemplateSourceRevision,
+  executionTemplateSourceRevisionAsync,
   listCompatibleExecutionTemplates,
   listExecutionTemplates,
   projectWorkerTemplateSource,
   readExecutionTemplateSnapshot,
-  resolveConfiguredExecutionTemplateSources,
+  resolveConfiguredExecutionTemplateSourcesAsync,
   type SelectedExecutionTemplate,
   selectExecutionTemplate,
 } from '@farmslot/agent-runtime';
@@ -31,6 +31,7 @@ import {
 } from '@farmslot/slot-config';
 
 import type { ProjectVars } from '../core/config.js';
+import { runExecutionTemplateGit } from '../host-services/execution-template-git.js';
 
 export interface ExecutionTemplateCatalogQuery {
   flow?: string;
@@ -63,13 +64,14 @@ function projectPackRoot(projectVars: ProjectVars): string {
   return path.dirname(projectVars.projectConfig);
 }
 
-function configuredCatalog(projectVars: ProjectVars): {
+/** Each source's revision and dirty state come from `git`, run off the event loop. */
+async function configuredCatalog(projectVars: ProjectVars): Promise<{
   sources: ExecutionTemplateSource[];
   unavailable: ExecutionTemplateOptions['unavailableSources'];
-} {
+}> {
   const root = projectPackRoot(projectVars);
   const sources = currentProjectSources() ?? projectVars.sourceContext;
-  const configured = resolveConfiguredExecutionTemplateSources(
+  const configured = await resolveConfiguredExecutionTemplateSourcesAsync(
     projectVars.projectJson.execution_templates,
     {
       projectPackRoot: root,
@@ -77,14 +79,15 @@ function configuredCatalog(projectVars: ProjectVars): {
         ? (selection) => resolveSourceBinding(selection, sources.materialization)
         : undefined,
     },
+    runExecutionTemplateGit,
   );
   return {
     sources: [
       projectWorkerTemplateSource(
         projectVars.projectName,
         projectVars.projectTemplatesDir,
-        executionTemplateSourceRevision(root),
-        executionTemplateSourceDirty(root),
+        await executionTemplateSourceRevisionAsync(root, runExecutionTemplateGit),
+        await executionTemplateSourceDirtyAsync(root, runExecutionTemplateGit),
       ),
       ...configured.sources,
     ],
@@ -173,15 +176,15 @@ export function availableExecutionTemplateDomains(projectVars: ProjectVars): str
   return [...domains].sort((a, b) => a.localeCompare(b));
 }
 
-export function configuredExecutionTemplateOptions(
+export async function configuredExecutionTemplateOptions(
   projectVars: ProjectVars,
   query: ExecutionTemplateCatalogQuery,
-): ExecutionTemplateOptions {
+): Promise<ExecutionTemplateOptions> {
   if (!projectUsesExecutionTemplateCatalog(projectVars)) {
     throw new Error(`Project "${projectVars.projectName}" has no execution-template catalog.`);
   }
 
-  const { sources, unavailable } = configuredCatalog(projectVars);
+  const { sources, unavailable } = await configuredCatalog(projectVars);
   const sourceById = new Map(sources.map((source) => [source.id, source]));
   const defaults = projectVars.projectJson.execution_templates?.defaults;
   const toOptions = (entries: ExecutionTemplateEntry[]): ExecutionTemplateCatalogOption[] =>
@@ -268,15 +271,15 @@ export function configuredExecutionTemplateOptions(
   };
 }
 
-export function resolveConfiguredExecutionTemplate(
+export async function resolveConfiguredExecutionTemplate(
   projectVars: ProjectVars,
   query: Required<Pick<ExecutionTemplateCatalogQuery, 'flow' | 'runMode'>> &
     Pick<ExecutionTemplateCatalogQuery, 'platform' | 'domain' | 'explicitId'>,
-): ResolvedConfiguredExecutionTemplate {
+): Promise<ResolvedConfiguredExecutionTemplate> {
   if (!projectUsesExecutionTemplateCatalog(projectVars)) {
     throw new Error(`Project "${projectVars.projectName}" has no execution-template catalog.`);
   }
-  const { sources } = configuredCatalog(projectVars);
+  const { sources } = await configuredCatalog(projectVars);
   const selected = selectExecutionTemplate({
     sources,
     flow: executionTemplateCatalogFlow(
@@ -295,18 +298,18 @@ export function resolveConfiguredExecutionTemplate(
   return { ...selected, markdown: snapshot.markdown };
 }
 
-export function readConfiguredExecutionTemplateSnapshot(
+export async function readConfiguredExecutionTemplateSnapshot(
   projectVars: ProjectVars,
   query: Pick<ExecutionTemplateCatalogQuery, 'flow'> & {
     id: string;
     sourceId: string;
     sha256: string;
   },
-): ConfiguredExecutionTemplateSnapshot {
+): Promise<ConfiguredExecutionTemplateSnapshot> {
   if (!projectUsesExecutionTemplateCatalog(projectVars)) {
     throw new Error(`Project "${projectVars.projectName}" has no execution-template catalog.`);
   }
-  const { sources } = configuredCatalog(projectVars);
+  const { sources } = await configuredCatalog(projectVars);
   const entry = listExecutionTemplates({
     sources,
     ...(query.flow
@@ -334,7 +337,7 @@ export function readConfiguredExecutionTemplateSnapshot(
   return { entry, markdown: readExecutionTemplateSnapshot(entry).markdown };
 }
 
-export function resolveConfiguredExecutionTemplateForSlot(
+export async function resolveConfiguredExecutionTemplateForSlot(
   projectVars: ProjectVars,
   query: {
     flow: string;
@@ -344,16 +347,16 @@ export function resolveConfiguredExecutionTemplateForSlot(
     slotDomain?: string;
     explicitId?: string;
   },
-): ResolvedSlotExecutionTemplate {
+): Promise<ResolvedSlotExecutionTemplate> {
   const effectiveDomain = resolveEffectiveDomain(query.explicitDomain, query.slotDomain);
   return {
-    ...resolveConfiguredExecutionTemplate(projectVars, {
+    ...(await resolveConfiguredExecutionTemplate(projectVars, {
       flow: query.flow,
       platform: query.platform,
       runMode: query.runMode,
       ...(effectiveDomain ? { domain: effectiveDomain } : {}),
       ...(query.explicitId ? { explicitId: query.explicitId } : {}),
-    }),
+    })),
     ...(effectiveDomain ? { effectiveDomain } : {}),
   };
 }

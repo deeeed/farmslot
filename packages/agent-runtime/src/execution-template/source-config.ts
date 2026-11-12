@@ -36,23 +36,56 @@ function isWithin(base: string, candidate: string): boolean {
   );
 }
 
-export function executionTemplateSourceRevision(root: string): string | undefined {
-  const result = spawnSync('git', ['-C', root, 'rev-parse', 'HEAD'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'ignore'],
-  });
+/** One `git` call's answer, as `spawnSync` reports it: exit status (null if it did not run) and stdout. */
+export interface ExecutionTemplateGitResult {
+  status: number | null;
+  stdout: string;
+}
+
+/** Runs `git` with these arguments. The gateway passes one that does not block its event loop. */
+export type ExecutionTemplateGitRunner = (args: string[]) => Promise<ExecutionTemplateGitResult>;
+
+const revisionArgs = (root: string) => ['-C', root, 'rev-parse', 'HEAD'];
+const dirtyArgs = (root: string) => ['-C', root, 'status', '--porcelain', '--', '.'];
+
+function gitSync(args: string[]): ExecutionTemplateGitResult {
+  const result = spawnSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  return { status: result.status, stdout: result.stdout ?? '' };
+}
+
+function sourceRevision(result: ExecutionTemplateGitResult): string | undefined {
   if (result.status !== 0) return undefined;
   const revision = result.stdout.trim();
   return /^[0-9a-f]{40}$/i.test(revision) ? revision : undefined;
 }
 
-export function executionTemplateSourceDirty(root: string): boolean | undefined {
-  const result = spawnSync('git', ['-C', root, 'status', '--porcelain', '--', '.'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'ignore'],
-  });
+function sourceDirty(result: ExecutionTemplateGitResult): boolean | undefined {
   if (result.status !== 0) return undefined;
   return result.stdout.trim().length > 0;
+}
+
+export function executionTemplateSourceRevision(root: string): string | undefined {
+  return sourceRevision(gitSync(revisionArgs(root)));
+}
+
+export function executionTemplateSourceDirty(root: string): boolean | undefined {
+  return sourceDirty(gitSync(dirtyArgs(root)));
+}
+
+/** `executionTemplateSourceRevision` with its `git` call run by `git`. */
+export async function executionTemplateSourceRevisionAsync(
+  root: string,
+  git: ExecutionTemplateGitRunner,
+): Promise<string | undefined> {
+  return sourceRevision(await git(revisionArgs(root)));
+}
+
+/** `executionTemplateSourceDirty` with its `git` call run by `git`. */
+export async function executionTemplateSourceDirtyAsync(
+  root: string,
+  git: ExecutionTemplateGitRunner,
+): Promise<boolean | undefined> {
+  return sourceDirty(await git(dirtyArgs(root)));
 }
 
 function configuredRoot(
@@ -80,15 +113,17 @@ function configuredRoot(
     : { reason: 'invalid-root' };
 }
 
-/**
- * Resolve optional configured sources only when catalog options are requested.
- * Missing roots are diagnostics, not project-load failures.
- */
-export function resolveConfiguredExecutionTemplateSources(
+interface ConfiguredSourceRoot {
+  source: ConfiguredExecutionTemplateSource;
+  root: string;
+}
+
+/** The configured sources whose roots exist and stay inside their bounds, in configured order. */
+function configuredSourceRoots(
   config: ProjectExecutionTemplatesConfig | undefined,
   options: ResolveConfiguredExecutionTemplateSourcesOptions,
-): ResolvedExecutionTemplateSources {
-  const resolved: ExecutionTemplateSource[] = [];
+): { roots: ConfiguredSourceRoot[]; unavailable: UnavailableExecutionTemplateSource[] } {
+  const roots: ConfiguredSourceRoot[] = [];
   const unavailable: UnavailableExecutionTemplateSource[] = [];
 
   for (const source of config?.sources ?? []) {
@@ -124,19 +159,64 @@ export function resolveConfiguredExecutionTemplateSources(
       unavailable.push({ id: source.id, reason: 'invalid-root' });
       continue;
     }
-    const sourceRevision = executionTemplateSourceRevision(canonicalScanPath);
-    const sourceDirty = executionTemplateSourceDirty(canonicalScanPath);
-
-    resolved.push({
-      id: source.id,
-      kind: source.kind,
-      root: canonicalScanPath,
-      layout: 'flow-tree',
-      ...(source.domains ? { domains: source.domains } : {}),
-      ...(sourceRevision ? { sourceRevision } : {}),
-      ...(sourceDirty === undefined ? {} : { sourceDirty }),
-    });
+    roots.push({ source, root: canonicalScanPath });
   }
 
-  return { sources: resolved, unavailable };
+  return { roots, unavailable };
+}
+
+function configuredSource(
+  { source, root }: ConfiguredSourceRoot,
+  sourceRevision: string | undefined,
+  sourceDirty: boolean | undefined,
+): ExecutionTemplateSource {
+  return {
+    id: source.id,
+    kind: source.kind,
+    root,
+    layout: 'flow-tree',
+    ...(source.domains ? { domains: source.domains } : {}),
+    ...(sourceRevision ? { sourceRevision } : {}),
+    ...(sourceDirty === undefined ? {} : { sourceDirty }),
+  };
+}
+
+/**
+ * Resolve optional configured sources only when catalog options are requested.
+ * Missing roots are diagnostics, not project-load failures.
+ */
+export function resolveConfiguredExecutionTemplateSources(
+  config: ProjectExecutionTemplatesConfig | undefined,
+  options: ResolveConfiguredExecutionTemplateSourcesOptions,
+): ResolvedExecutionTemplateSources {
+  const { roots, unavailable } = configuredSourceRoots(config, options);
+  return {
+    sources: roots.map((entry) =>
+      configuredSource(
+        entry,
+        executionTemplateSourceRevision(entry.root),
+        executionTemplateSourceDirty(entry.root),
+      ),
+    ),
+    unavailable,
+  };
+}
+
+/** `resolveConfiguredExecutionTemplateSources` with its `git` calls run by `git`. */
+export async function resolveConfiguredExecutionTemplateSourcesAsync(
+  config: ProjectExecutionTemplatesConfig | undefined,
+  options: ResolveConfiguredExecutionTemplateSourcesOptions,
+  git: ExecutionTemplateGitRunner,
+): Promise<ResolvedExecutionTemplateSources> {
+  const { roots, unavailable } = configuredSourceRoots(config, options);
+  const sources: ExecutionTemplateSource[] = [];
+  for (const entry of roots)
+    sources.push(
+      configuredSource(
+        entry,
+        await executionTemplateSourceRevisionAsync(entry.root, git),
+        await executionTemplateSourceDirtyAsync(entry.root, git),
+      ),
+    );
+  return { sources, unavailable };
 }

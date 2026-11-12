@@ -55,8 +55,12 @@ export class JsonLineProcess {
   readonly child: ChildProcessWithoutNullStreams;
   private nextId = 0;
   private tree?: NativeProcessTree;
+  /** The root's identity read; cleanup that starts before it lands waits for it. */
+  private treeCreation?: Promise<NativeProcessTree>;
   private stopObservingTree?: () => void;
   private stopObservingAbort?: () => void;
+  /** Records written before the launch gate opened; undefined once it is open. */
+  private gateRecords?: string[] = [];
   private closed = false;
   private finish!: () => void;
   private finished = new Promise<void>((resolve) => {
@@ -196,17 +200,36 @@ export class JsonLineProcess {
       this.beginStop();
     });
     try {
-      if (this.child.pid) {
-        // The registered launch waits for the newline written below before starting the runner.
-        this.tree = new NativeProcessTree(this.child.pid, { gated: true });
-        this.stopObservingTree = this.tree.observe((error) => {
-          // Loss of process ownership evidence fails this session and its cleanup claim.
-          this.beginCleanup(new Error('Native process census failed', { cause: error }));
-        }, options.onProcessSnapshot);
-        options.onSpawn?.(this.child.pid, identity);
-        options.onProcessSnapshot?.(this.tree.snapshot());
-      }
-      this.child.stdin.write('\n');
+      const pid = this.child.pid;
+      if (pid) {
+        // The registered launch waits for the gate newline before starting the runner. Reading
+        // the root's identity is a `ps` that a loaded host makes slow, so it runs off the event
+        // loop and records written meanwhile wait behind the gate.
+        this.treeCreation = NativeProcessTree.create(pid, { gated: true });
+        void this.treeCreation.then(
+          (tree) => {
+            // Stopped or failed meanwhile: cleanup kills the gated root, and the runner never starts.
+            if (this.closed) return;
+            try {
+              this.tree = tree;
+              this.stopObservingTree = tree.observe((error) => {
+                // Loss of process ownership evidence fails this session and its cleanup claim.
+                this.beginCleanup(new Error('Native process census failed', { cause: error }));
+              }, options.onProcessSnapshot);
+              options.onSpawn?.(pid, identity);
+              options.onProcessSnapshot?.(tree.snapshot());
+              this.openGate();
+            } catch (error) {
+              this.fail(error instanceof Error ? error : new Error(String(error)));
+              this.beginCleanup();
+            }
+          },
+          (error: unknown) => {
+            this.fail(error instanceof Error ? error : new Error(String(error)));
+            this.beginCleanup();
+          },
+        );
+      } else this.openGate();
       if (options.signal) {
         const abort = () => this.beginStop();
         options.signal.addEventListener('abort', abort, { once: true });
@@ -237,7 +260,15 @@ export class JsonLineProcess {
     const record = JSON.stringify(message).replace(/[\u2028\u2029]/g, (separator) =>
       separator === '\u2028' ? '\\u2028' : '\\u2029',
     );
-    this.child.stdin.write(`${record}\n`);
+    if (this.gateRecords) this.gateRecords.push(`${record}\n`);
+    else this.child.stdin.write(`${record}\n`);
+  }
+
+  /** The launch gate's newline, then the records written while it was closed, in order. */
+  private openGate(): void {
+    const records = this.gateRecords ?? [];
+    this.gateRecords = undefined;
+    this.child.stdin.write(`\n${records.join('')}`);
   }
 
   request(method: string, params: unknown): Promise<unknown> {
@@ -270,6 +301,8 @@ export class JsonLineProcess {
     if (this.closing || this.cleanupStarted) return;
     this.closing = true;
     this.fail(undefined);
+    // The runner has not started behind the closed gate: there is nothing to stop gracefully.
+    if (this.gateRecords) return this.beginCleanup();
     void (this.tree?.terminate() ?? Promise.resolve()).then(
       () => {
         if (!this.cleanupStarted) this.stopTimer = setTimeout(() => this.beginCleanup(), 3_000);
@@ -325,6 +358,15 @@ export class JsonLineProcess {
 
   private async cleanGroup(): Promise<void> {
     if (!this.child.pid) return;
+    if (!this.tree && this.treeCreation) {
+      try {
+        // Stopped while the gated root's identity was being read: own it once the read lands.
+        this.tree = await this.treeCreation;
+      } catch {
+        // The read failed and the session already failed with that error; the gated root is
+        // killed below and cleanup reports that ownership could not be established.
+      }
+    }
     if (!this.tree) {
       // The launch gate is still closed, so no native descendants have started.
       this.child.kill('SIGKILL');

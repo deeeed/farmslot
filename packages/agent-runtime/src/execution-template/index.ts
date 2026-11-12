@@ -46,14 +46,19 @@ export {
   sha256Text,
 } from './snapshot.js';
 export type {
+  ExecutionTemplateGitResult,
+  ExecutionTemplateGitRunner,
   ResolveConfiguredExecutionTemplateSourcesOptions,
   ResolvedExecutionTemplateSources,
   UnavailableExecutionTemplateSource,
 } from './source-config.js';
 export {
   executionTemplateSourceDirty,
+  executionTemplateSourceDirtyAsync,
   executionTemplateSourceRevision,
+  executionTemplateSourceRevisionAsync,
   resolveConfiguredExecutionTemplateSources,
+  resolveConfiguredExecutionTemplateSourcesAsync,
 } from './source-config.js';
 export type {
   CreateExecutionTemplateOptions,

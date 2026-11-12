@@ -1,0 +1,1 @@
+- Execution-template catalog reads (options, previews, run and dispatch template selection) run their source `git rev-parse` and `git status` off the event loop, counted under `farmslot_exec_*`; native runner launches no longer block on `ps`.

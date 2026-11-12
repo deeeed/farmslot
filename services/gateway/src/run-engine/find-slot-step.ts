@@ -493,7 +493,7 @@ async function claimAdmittedSlot(
     if (!run.mode) {
       throw new Error('Configured execution-template selection requires an explicit run mode.');
     }
-    const selected = resolveConfiguredExecutionTemplateForSlot(projectVars, {
+    const selected = await resolveConfiguredExecutionTemplateForSlot(projectVars, {
       flow: run.flowType,
       platform: slotVars.platform,
       runMode: run.mode,
