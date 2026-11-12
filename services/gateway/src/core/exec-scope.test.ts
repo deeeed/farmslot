@@ -6,7 +6,6 @@ import { makeVars } from '../runners/test-fixtures.js';
 
 import { execOnSlot } from './exec.js';
 import { withSlotCommandExecutor } from './exec-scope.js';
-import { withFarmGitConfig } from './farm-git.js';
 
 const vars = makeVars({ remoteRepo: tmpdir() });
 
@@ -31,7 +30,7 @@ test('owned execution scopes remain isolated across concurrent workspaces and re
   try {
     const second = await withSlotCommandExecutor(
       async (_vars, command, options) => {
-        assert.equal(command, withFarmGitConfig('second'));
+        assert.equal(command, 'second');
         assert.equal(options.cwd, vars.remoteRepo);
         return { exitCode: 0, stdout: 'owner-b', stderr: '' };
       },

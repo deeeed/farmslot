@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -37,12 +38,13 @@ test('blind isolate and restore suppress automatic maintenance without persistin
   // Two loose objects in Git's sampled bucket exceed gc.auto=1's threshold.
   let sampled = 0;
   for (let i = 0; sampled < 2; i++) {
-    const hash = execFileSync('git', ['-C', repo, 'hash-object', '-w', '--stdin'], {
-      env,
-      input: `synthetic loose object ${i}`,
-      encoding: 'utf8',
-    }).trim();
-    if (hash.startsWith('17')) sampled++;
+    const content = `synthetic loose object ${i}`;
+    const hash = createHash('sha1')
+      .update(`blob ${Buffer.byteLength(content)}\0${content}`)
+      .digest('hex');
+    if (!hash.startsWith('17')) continue;
+    execFileSync('git', ['-C', repo, 'hash-object', '-w', '--stdin'], { env, input: content });
+    sampled++;
   }
   // Prove the fixture is eligible without allowing the control to detach or pack.
   const hook = path.join(repo, '.git/hooks/pre-auto-gc');

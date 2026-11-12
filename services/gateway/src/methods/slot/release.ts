@@ -20,6 +20,7 @@ import {
 } from '@farmslot/protocol';
 
 import { assertCleanupCurrent, withoutCleanupSignal } from '../../core/cleanup-scope.js';
+import { withFarmGitConfig } from '../../core/farm-git.js';
 import {
   execOnSlot,
   expandHook,
@@ -142,7 +143,9 @@ async function logDiscardedWork(
 ): Promise<void> {
   const work = await execOnSlot(
     vars,
-    `cd ${shellQuote(vars.remoteRepo)} && { git rev-parse HEAD 2>/dev/null || echo unknown; git status --porcelain 2>/dev/null | wc -l; }`,
+    withFarmGitConfig(
+      `cd ${shellQuote(vars.remoteRepo)} && { git rev-parse HEAD 2>/dev/null || echo unknown; git status --porcelain 2>/dev/null | wc -l; }`,
+    ),
   );
   const [head, dirty] = work.stdout.trim().split('\n');
   console.log(
@@ -490,7 +493,9 @@ async function findReleaseUnmergedWork(
   const currentBranch = (
     await execOnSlot(
       vars,
-      `git -C ${shellQuote(vars.remoteRepo)} rev-parse --abbrev-ref HEAD 2>/dev/null`,
+      withFarmGitConfig(
+        `git -C ${shellQuote(vars.remoteRepo)} rev-parse --abbrev-ref HEAD 2>/dev/null`,
+      ),
     )
   ).stdout.trim();
   const linkedWorktree = await detectLinkedWorktree(vars);

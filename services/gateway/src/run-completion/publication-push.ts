@@ -2,6 +2,7 @@ import type { Run } from '@farmslot/protocol';
 
 import { loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot, type ExecResult } from '../core/exec.js';
+import { withFarmGitConfig } from '../core/farm-git.js';
 import { shellQuote } from '../core/tmux.js';
 import { probeSlotBranchFreshness } from '../run-engine/branch-freshness.js';
 
@@ -27,7 +28,9 @@ export async function assertPublicationRemoteHead(
   const ref = `refs/heads/${branch}`;
   const remote = await execOnSlot(
     vars,
-    `git -C ${shellQuote(vars.remoteRepo)} ls-remote --exit-code origin ${shellQuote(ref)}`,
+    withFarmGitConfig(
+      `git -C ${shellQuote(vars.remoteRepo)} ls-remote --exit-code origin ${shellQuote(ref)}`,
+    ),
     { timeout: 30_000 },
   );
   const actual = remote.stdout
@@ -54,7 +57,7 @@ export async function pushPublicationBranch(
   await assertPublicationMergeable(vars, headSha, baseBranch);
   const push = await execOnSlot(
     vars,
-    `git -C ${shellQuote(vars.remoteRepo)} push -u origin ${shellQuote(branch)}`,
+    withFarmGitConfig(`git -C ${shellQuote(vars.remoteRepo)} push -u origin ${shellQuote(branch)}`),
     { timeout: PUBLICATION_PUSH_TIMEOUT_MS },
   );
   assertPublicationBranchPushed(push, branch, run.id);

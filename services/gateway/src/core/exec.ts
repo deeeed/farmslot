@@ -18,7 +18,6 @@ import { executionKind, measureManagedOperation } from '../observability/perform
 import { assertCleanupCurrent, cleanupSignal, trackCleanupCommand } from './cleanup-scope.js';
 import type { SlotVars } from './config.js';
 import { currentSlotCommandExecutor } from './exec-scope.js';
-import { withFarmGitConfig } from './farm-git.js';
 import { commandIncludesRemotePath } from './remote-paths.js';
 
 export type { ExecResult };
@@ -386,7 +385,6 @@ export async function execOnSlot(
   assertCleanupCurrent();
   const opts: ExecOnSlotOptions =
     typeof optsOrCwd === 'string' ? { cwd: optsOrCwd } : (optsOrCwd ?? {});
-  cmd = withFarmGitConfig(cmd);
   const scoped = currentSlotCommandExecutor();
   if (scoped) {
     // The workspace owner supplies the complete execution contract, including authority
@@ -473,8 +471,6 @@ export async function execArgvOnSlot(
   assertCleanupCurrent();
   const signal = cleanupSignal(opts.signal);
   const cwd = opts.cwd ?? slotVars.remoteRepo;
-  // Keep argv boundaries while applying the same policy as shell slot commands.
-  argv = ['bash', '-c', withFarmGitConfig('exec "$@"'), 'farm-git', ...argv];
   if (isLocal(slotVars.host, slotVars.machine) && !usesNodeLink(slotVars.machine)) {
     return execFileArgv(argv, { ...opts, cwd, signal });
   }

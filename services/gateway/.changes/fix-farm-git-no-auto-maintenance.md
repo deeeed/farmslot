@@ -1,1 +1,1 @@
-- Prevent farm slot Git operations, including blind trial isolation and restoration, from starting automatic garbage collection or maintenance that can block slot preparation.
+- Prevent farm-owned slot Git payloads, including prepare hooks and blind trial isolation/restoration, from starting automatic maintenance that blocks preparation, while preserving ordinary worker Git settings.

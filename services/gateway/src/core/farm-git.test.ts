@@ -8,9 +8,9 @@ import test from 'node:test';
 import { makeVars } from '../runners/test-fixtures.js';
 
 import { execArgvOnSlot, execLocal, execOnSlot } from './exec.js';
-import { withFarmGitConfig } from './farm-git.js';
+import { withFarmGitArgv, withFarmGitConfig } from './farm-git.js';
 
-test('slot shell, argv and script Git override local maintenance config only for their command', async (t) => {
+test('only explicit farm Git payloads override maintenance config', async (t) => {
   const repo = mkdtempSync(path.join(tmpdir(), 'slot-git-maintenance-'));
   t.after(() => rmSync(repo, { recursive: true, force: true }));
   const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
@@ -21,13 +21,22 @@ test('slot shell, argv and script Git override local maintenance config only for
   const config = readFileSync(path.join(repo, '.git/config'), 'utf8');
   const vars = makeVars({ host: 'localhost', machine: 'fixture', remoteRepo: repo });
   const command = 'git config --get gc.auto && git config --get maintenance.auto';
-  assert.equal((await execOnSlot(vars, command)).stdout, '0\nfalse\n');
-  assert.equal((await execArgvOnSlot(vars, ['git', 'config', '--get', 'gc.auto'])).stdout, '0\n');
+  assert.equal((await execOnSlot(vars, command)).stdout, '1\ntrue\n');
+  assert.equal((await execOnSlot(vars, withFarmGitConfig(command))).stdout, '0\nfalse\n');
+  assert.equal((await execArgvOnSlot(vars, ['git', 'config', '--get', 'gc.auto'])).stdout, '1\n');
   const python =
     "import subprocess; subprocess.run(['git', 'config', '--get', 'maintenance.auto'], check=True)";
-  assert.equal((await execArgvOnSlot(vars, ['python3', '-c', python])).stdout, 'false\n');
+  assert.equal((await execArgvOnSlot(vars, ['python3', '-c', python])).stdout, 'true\n');
+  assert.equal(
+    (await execArgvOnSlot(vars, withFarmGitArgv(['python3', '-c', python]))).stdout,
+    'false\n',
+  );
   const payload = 'literal ; `exit 3` $(exit 4) "quotes"\nnewline';
   assert.equal((await execArgvOnSlot(vars, ['printf', '%s', payload])).stdout, payload);
+  assert.equal(
+    (await execArgvOnSlot(vars, withFarmGitArgv(['printf', '%s', payload]))).stdout,
+    payload,
+  );
   assert.equal((await execOnSlot(vars, 'exit 17')).exitCode, 17);
   assert.equal((await execLocal(command, { cwd: repo })).stdout, '1\ntrue\n');
   assert.equal(readFileSync(path.join(repo, '.git/config'), 'utf8'), config);
