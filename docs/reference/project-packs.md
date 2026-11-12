@@ -195,7 +195,8 @@ quotes in workspace, repo, and hook paths.
 Each entry MUST contain a literal checkout-relative `path` and `state`, either
 `current` or `retired`. Paths MUST be nonempty, normalized and unique; absolute
 paths, globs, traversal, Git metadata and checkout-root ownership are forbidden.
-A directory declares ownership of its untracked descendants. Packs MUST declare
+A directory declares ownership of its untracked descendants. A retired path MUST
+NOT contain a separately declared current path. Packs MUST declare
 only regenerable farm-installed support files, not user content or task/runtime
 data already governed by archive and retention rules.
 

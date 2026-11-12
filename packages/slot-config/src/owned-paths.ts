@@ -10,7 +10,8 @@ export function parseProjectOwnedPaths(value: unknown): ProjectOwnedPath[] | und
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) throw new Error('fixtures.owned_paths must be an array');
   const seen = new Set<string>();
-  return value.map((entry: unknown, index) => {
+  const retired = new Set<string>();
+  const entries: ProjectOwnedPath[] = value.map((entry: unknown, index) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry))
       throw new Error(`Invalid fixtures.owned_paths[${index}]`);
     if (
@@ -32,6 +33,21 @@ export function parseProjectOwnedPaths(value: unknown): ProjectOwnedPath[] | und
       );
     if (seen.has(entry.path)) throw new Error(`Duplicate fixtures.owned_paths path: ${entry.path}`);
     seen.add(entry.path);
+    if (entry.state === 'retired') retired.add(entry.path);
     return { path: entry.path, state: entry.state };
   });
+  for (const entry of entries) {
+    if (entry.state !== 'current') continue;
+    for (
+      let parent = path.posix.dirname(entry.path);
+      parent !== '.';
+      parent = path.posix.dirname(parent)
+    ) {
+      if (retired.has(parent))
+        throw new Error(
+          `fixtures.owned_paths retired path ${parent} contains current path ${entry.path}`,
+        );
+    }
+  }
+  return entries;
 }

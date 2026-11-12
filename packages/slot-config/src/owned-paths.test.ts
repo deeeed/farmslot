@@ -48,3 +48,20 @@ test('ownership rejects duplicate paths, missing states and misspelled metadata'
   ])
     assert.throws(() => parseProjectOwnedPaths(list), /fixtures.owned_paths/);
 });
+
+test('retired-only cleanup cannot claim a current descendant', () => {
+  assert.throws(
+    () =>
+      parseProjectOwnedPaths([
+        { path: 'support', state: 'retired' },
+        { path: 'support/current.md', state: 'current' },
+      ]),
+    /retired path support contains current path/,
+  );
+  assert.doesNotThrow(() =>
+    parseProjectOwnedPaths([
+      { path: 'support', state: 'current' },
+      { path: 'support/old', state: 'retired' },
+    ]),
+  );
+});
