@@ -3984,6 +3984,29 @@ describe('call', () => {
     ]);
   });
 
+  test('teaches a value of the wrong type and how to quote it', async () => {
+    const target = checkout();
+    const args = [
+      'shop.ping',
+      'mode=fast',
+      'password=2400',
+      '--adapter',
+      'web',
+      '--target',
+      target,
+    ];
+    const json = await capture(() => handleCall([...args, '--json'], callOptions));
+    assert.equal(json.value, 5);
+    assert.deepEqual(lastJson(json.stdout).parameterHelp, [
+      { issue: 'type', name: 'password', type: 'string', received: 2400 },
+    ]);
+    const human = await capture(() => handleCall(args, callOptions));
+    assert.match(
+      human.stderr.join('\n'),
+      /password expects a string; got number 2400\. Quote it: password='"2400"'\./u,
+    );
+  });
+
   test('suggests the parameter a misnamed or misplaced input belongs to', async () => {
     const target = checkout();
     const override = path.join(tempRoot('recipe-cli-override-'), 'web.action-manifest.json');

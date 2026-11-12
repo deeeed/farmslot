@@ -687,7 +687,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
 }
 
 interface ParameterValidationHelp {
-  issue: 'missing' | 'invalid' | 'unknown';
+  issue: 'missing' | 'invalid' | 'unknown' | 'type';
   name: string;
   type?: string;
   validValues?: unknown[];
@@ -744,7 +744,7 @@ function parameterValidationHelp(
         ...(type ? { type } : {}),
         ...(validValues ? { validValues } : {}),
         ...(typeof property.description === 'string' ? { description: property.description } : {}),
-        ...(issue === 'invalid' && received !== undefined ? { received } : {}),
+        ...(issue !== 'missing' && received !== undefined ? { received } : {}),
         ...(suggestion ? { suggestion } : {}),
         ...(suggestedParameter ? { suggestedParameter } : {}),
       },
@@ -756,6 +756,7 @@ function parameterIssue(code: string): ParameterValidationHelp['issue'] | undefi
   if (code === 'recipe.missing_param') return 'missing';
   if (code === 'recipe.invalid_param_value_enum') return 'invalid';
   if (code === 'recipe.unknown_param') return 'unknown';
+  if (code === 'recipe.invalid_param_value_type') return 'type';
   return undefined;
 }
 
@@ -766,7 +767,9 @@ function renderParameterValidationHelp(parameter: ParameterValidationHelp): stri
       ? `${out('cmd', parameter.name)}${parameter.type ? ` (${parameter.type}, required)` : ' (required)'}`
       : parameter.issue === 'unknown'
         ? `${out('cmd', parameter.name)} is not a parameter of this action`
-        : `${out('cmd', parameter.name)} received ${out('err', JSON.stringify(parameter.received) ?? String(parameter.received))}`;
+        : parameter.issue === 'type'
+          ? `${out('cmd', parameter.name)} expects a ${parameter.type ?? 'different type'}; got ${Array.isArray(parameter.received) ? 'array' : parameter.received === null ? 'null' : typeof parameter.received} ${out('err', JSON.stringify(parameter.received) ?? String(parameter.received))}`
+          : `${out('cmd', parameter.name)} received ${out('err', JSON.stringify(parameter.received) ?? String(parameter.received))}`;
   const values = parameter.validValues?.length
     ? ` Valid values: ${parameter.validValues.map((value) => out('accent', String(value))).join(', ')}.`
     : '';
@@ -774,11 +777,20 @@ function renderParameterValidationHelp(parameter: ParameterValidationHelp): stri
     typeof parameter.received === 'string'
       ? parameter.received
       : (JSON.stringify(parameter.received) ?? String(parameter.received));
-  const suggestion = parameter.suggestedParameter
-    ? ` Did you mean ${out('cmd', `${parameter.suggestedParameter}=${received}`)}?`
-    : parameter.suggestion
-      ? ` Did you mean ${out('accent', JSON.stringify(parameter.suggestion))}?`
+  // The shell strips plain quotes, so the JSON string quotes go inside single quotes.
+  const quoteHint =
+    parameter.issue === 'type' &&
+    parameter.type === 'string' &&
+    typeof parameter.received !== 'object'
+      ? ` Quote it: ${out('cmd', `${parameter.name}='${JSON.stringify(received)}'`)}.`
       : '';
+  const suggestion =
+    quoteHint ||
+    (parameter.suggestedParameter
+      ? ` Did you mean ${out('cmd', `${parameter.suggestedParameter}=${received}`)}?`
+      : parameter.suggestion
+        ? ` Did you mean ${out('accent', JSON.stringify(parameter.suggestion))}?`
+        : '');
   const description = parameter.description ? ` ${parameter.description}` : '';
   return `  ${heading}.${values}${suggestion}${description}`;
 }
