@@ -181,7 +181,13 @@ export function formatTokenCount(value: number): string {
   return `${value}`;
 }
 
+export function formatUsageCost(value: number | null | undefined, reason?: string): string {
+  if (value == null) return reason ?? 'Unpriced';
+  return `$${value.toFixed(value !== 0 && value < 1 ? 4 : 2)}`;
+}
+
 export interface GateSummaryTokenRow {
+  cost: string;
   label: string;
   model: string;
   total: string;
@@ -189,6 +195,7 @@ export interface GateSummaryTokenRow {
 
 /** Per-model token rollup row — raw `totalRaw` retained for bar widths / sorting. */
 export interface GateSummaryModelRow {
+  cost: string;
   model: string;
   input: string;
   output: string;
@@ -257,6 +264,7 @@ export interface GateSummaryDisplay {
     chainedLoops: Array<GateSummaryTokenRow & { flowType: string }>;
     byModel: GateSummaryModelRow[];
     grandTotal: string;
+    grandCost: string;
     sessionPaths: string[];
   };
 }
@@ -350,22 +358,26 @@ export function gateSummaryDisplay(
     checklist: checklistRows(summary),
     tokens: {
       mainWorker: {
-        label: 'Worker',
+        label: 'Implementation',
+        cost: formatUsageCost(t.mainWorker.costUsd, t.mainWorker.costReason),
         model: t.mainWorker.model ?? 'unknown',
         total: formatTokenCount(t.mainWorker.total),
       },
-      reviews: t.reviews.map((r) => ({
-        label: r.id,
+      reviews: (t.reviewRounds ?? t.reviews).map((r) => ({
+        label: r.roundNumber != null ? `${r.id} round ${r.roundNumber}` : r.id,
+        cost: formatUsageCost(r.costUsd, r.costReason),
         model: r.model ?? 'unknown',
         total: formatTokenCount(r.total),
       })),
       chainedLoops: (t.familyChainedLoops ?? []).map((c) => ({
         label: c.runId.slice(0, 8),
+        cost: formatUsageCost(c.costUsd, c.costReason),
         flowType: c.flowType,
         model: c.model ?? 'unknown',
         total: formatTokenCount(c.tokens.total),
       })),
       byModel: t.byModel.map((m) => ({
+        cost: formatUsageCost(m.costUsd, m.costReason),
         model: m.model ?? 'unknown',
         input: formatTokenCount(m.input),
         output: formatTokenCount(m.output),
@@ -375,6 +387,7 @@ export function gateSummaryDisplay(
         turns: m.turns,
       })),
       grandTotal: formatTokenCount(t.familyTotalTokens),
+      grandCost: formatUsageCost(t.familyCostUsd),
       sessionPaths: t.runnerSessionPaths ?? [],
     },
   };

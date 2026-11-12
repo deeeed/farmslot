@@ -19,6 +19,7 @@ import {
   deriveChecklistStepDurations,
   type FlowType,
   GATE_SUMMARY_KINDS,
+  type GateCostSummary,
   type GatePolicy,
   type GateSummary,
   type GateTokenSummary,
@@ -27,8 +28,10 @@ import {
   type ReviewStatus,
   type ReviewSummary,
   type Run,
+  type RunnerSessionUsage,
 } from '@farmslot/protocol';
 
+import { buildFamilyUsage } from '../family-observability/usage.js';
 import { inferReviewSourceKind } from '../quality/review-sources.js';
 import { listRuns } from '../runs/store.js';
 import { reviewerUsageReceipts } from '../runtime/reviewer-usage.js';
@@ -48,8 +51,27 @@ function num(value: number | null | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
+function sessionCosts(
+  rows: readonly Pick<RunnerSessionUsage, 'costUsd' | 'costReason'>[],
+): GateCostSummary {
+  const complete =
+    rows.length > 0 &&
+    rows.every(
+      (row) => typeof row.costUsd === 'number' && Number.isFinite(row.costUsd) && row.costUsd >= 0,
+    );
+  return complete
+    ? { costUsd: rows.reduce((sum, row) => sum + num(row.costUsd), 0) }
+    : {
+        costUsd: null,
+        costReason:
+          rows.length && rows.every((row) => row.costReason === 'local, unpriced')
+            ? 'local, unpriced'
+            : 'Includes unpriced or uncaptured sessions',
+      };
+}
+
 /** One token-bearing entry folded into the per-model rollup. */
-interface TokenContribution {
+interface TokenContribution extends GateCostSummary {
   model: string | null;
   input: number;
   output: number;
@@ -78,7 +100,9 @@ function rollupByModel(contributions: readonly TokenContribution[]): GateTokenSu
       cacheCreation: 0,
       total: 0,
       turns: 0,
+      ...sessionCosts([c]),
     };
+    if (byKey.has(key)) Object.assign(acc, sessionCosts([acc, c]));
     acc.input += c.input;
     acc.output += c.output;
     acc.cacheRead += c.cacheRead;
@@ -328,6 +352,7 @@ export function aggregateFamilyChainedLoops(
     const sessionPath = rows.find((row) => row.runnerSessionPath)?.runnerSessionPath;
     return [
       {
+        ...sessionCosts(rows),
         runId: other.id,
         flowType: other.flowType,
         role: 'fix-loop' as const,
@@ -356,6 +381,7 @@ export function buildTokenSummary(run: Run): GateTokenSummary {
     field: 'inputTokens' | 'outputTokens' | 'cacheRead' | 'cacheCreation' | 'totalTokens' | 'turns',
   ) => workerSessions.reduce((sum, row) => sum + num(row[field]), 0);
   const mainWorker = {
+    ...sessionCosts(workerSessions),
     model: workerModel(run),
     input: workerTotal('inputTokens'),
     output: workerTotal('outputTokens'),
@@ -369,6 +395,7 @@ export function buildTokenSummary(run: Run): GateTokenSummary {
   const reviewTokens = reviews
     .filter((r) => r.usage && num(r.usage.totalTokens) > 0)
     .map((r) => ({
+      ...sessionCosts([r.usage]),
       id: r.id,
       model: r.usage?.actualModel ?? r.model ?? null,
       input: num(r.usage?.inputTokens),
@@ -377,6 +404,21 @@ export function buildTokenSummary(run: Run): GateTokenSummary {
       cacheCreation: num(r.usage?.cacheCreation),
       total: num(r.usage?.totalTokens),
     }));
+
+  const reviewRounds = buildFamilyUsage([run]).rounds.map((round) => ({
+    id: round.reviewId ?? round.id,
+    roundNumber: round.roundNumber,
+    costScope: round.costScope,
+    model: round.model,
+    input: num(round.usage?.inputTokens),
+    output: num(round.usage?.outputTokens),
+    cacheRead: num(round.usage?.cacheRead),
+    cacheCreation: num(round.usage?.cacheCreation),
+    total: num(round.usage?.totalTokens),
+    ...(round.costScope === 'shared-session'
+      ? { costUsd: null, costReason: 'Shared session, round cost unavailable' }
+      : sessionCosts(round.usage ? [round.usage] : [])),
+  }));
 
   const family = run.familyId ? listRuns({ familyId: run.familyId }).runs : [];
   const familyChainedLoops = aggregateFamilyChainedLoops(run, family) ?? [];
@@ -397,6 +439,7 @@ export function buildTokenSummary(run: Run): GateTokenSummary {
   ];
   const byModel = rollupByModel(
     familyRows.map((row) => ({
+      ...sessionCosts([row]),
       model: row.actualModel ?? row.model ?? null,
       input: num(row.inputTokens),
       output: num(row.outputTokens),
@@ -423,6 +466,8 @@ export function buildTokenSummary(run: Run): GateTokenSummary {
   return {
     mainWorker,
     reviews: reviewTokens,
+    ...(reviewRounds.length ? { reviewRounds } : {}),
+    familyCostUsd: sessionCosts(familyRows).costUsd,
     byModel,
     ...(reWork ? { reWork } : {}),
     ...(familyChainedLoops.length ? { familyChainedLoops } : {}),

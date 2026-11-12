@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Carry session costs into gate summaries by implementation, review round, and model without counting shared review sessions twice.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.39.1 - 2026-11-08

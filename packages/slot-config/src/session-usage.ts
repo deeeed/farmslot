@@ -9,6 +9,8 @@ import { open, readdir, readFile, realpath as fsRealpath, stat, writeFile } from
 import os from 'node:os';
 import path from 'node:path';
 
+import { loadLiteLlmPrices } from './litellm-pricing.js';
+
 export type SessionAction = 'snapshot' | 'report' | 'total';
 
 // ─── Pricing tables ──────────────────────────────────────────────────────────
@@ -61,6 +63,7 @@ interface SessionTotals {
   model: string;
   total_tokens: number;
   cost_usd: number | null;
+  cost_reason?: string;
 }
 
 function emptyTotals(): SessionTotals {
@@ -550,13 +553,12 @@ function piAmountsMatch(a: number | null | undefined, b: number | null): boolean
   );
 }
 
-function piCostMatchesPrices(
+function piQuotedCost(
   cost: PiModelCostMetadata | null,
   tokens: { inputTokens: number; outputTokens: number; cacheCreation: number; cacheRead: number },
   longWrites: number,
-  recorded: number | null,
-): boolean {
-  if (cost === null || recorded === null) return false;
+): number | null {
+  if (cost === null) return null;
   let rates: PiModelCostRates = cost;
   let threshold = -1;
   const input = tokens.inputTokens + tokens.cacheCreation + tokens.cacheRead;
@@ -572,8 +574,9 @@ function piCostMatchesPrices(
     'reasoningOutput' in rates &&
     !piAmountsMatch(rates.reasoningOutput, rates.output)
   )
-    return false;
+    return null;
   const shortWrites = tokens.cacheCreation - longWrites;
+  if (longWrites < 0 || shortWrites < 0) return null;
   if (
     (tokens.inputTokens > 0 && rates.input === null) ||
     (tokens.outputTokens > 0 && rates.output === null) ||
@@ -581,8 +584,7 @@ function piCostMatchesPrices(
     (shortWrites > 0 && rates.cacheWrite === null) ||
     (longWrites > 0 && rates.cacheWrite1h == null)
   )
-    return false;
-  // This quote validates an existing native cost; it never fills a missing cost.
+    return null;
   const quoted =
     (tokens.inputTokens * (rates.input ?? 0) +
       tokens.outputTokens * (rates.output ?? 0) +
@@ -590,7 +592,7 @@ function piCostMatchesPrices(
       shortWrites * (rates.cacheWrite ?? 0) +
       longWrites * (rates.cacheWrite1h ?? 0)) /
     1_000_000;
-  return piAmountsMatch(recorded, quoted);
+  return quoted;
 }
 
 export interface PiAssistantUsage {
@@ -600,13 +602,15 @@ export interface PiAssistantUsage {
   cacheRead: number;
   totalTokens: number;
   costUsd: number | null;
+  costReason?: string;
   model: string | null;
 }
 
-/** Pi reports separate, per-message token categories and its own dollar cost. */
+/** Pi token categories are disjoint; LiteLLM costs can be quoted from gateway prices. */
 export function readPiAssistantUsage(
   record: Record<string, unknown>,
   prices?: ReadonlyMap<string, PiRequestCost>,
+  gatewayPrices?: ReadonlyMap<string, PiModelCostMetadata>,
 ): PiAssistantUsage | null {
   const message = record.message;
   if (record.type !== 'message' || !message || typeof message !== 'object') return null;
@@ -639,38 +643,88 @@ export function readPiAssistantUsage(
     if (
       pricing === 'legacy'
         ? costUsd === 0
-        : !piCostMatchesPrices(
-            pricing,
-            { inputTokens, outputTokens, cacheCreation, cacheRead },
-            piNumber('cacheWrite1h' in usage ? usage.cacheWrite1h : null) ?? 0,
+        : !piAmountsMatch(
             costUsd,
+            piQuotedCost(
+              pricing,
+              { inputTokens, outputTokens, cacheCreation, cacheRead },
+              piNumber('cacheWrite1h' in usage ? usage.cacheWrite1h : null) ?? 0,
+            ),
           )
     )
       costUsd = null;
   }
+  if (
+    provider === 'litellm' &&
+    gatewayPrices === undefined &&
+    pricing === undefined &&
+    !providerCharge
+  )
+    costUsd = null;
+  if (provider === 'litellm' && gatewayPrices !== undefined && !providerCharge) {
+    costUsd =
+      inputTokens + outputTokens + cacheCreation + cacheRead > 0
+        ? piQuotedCost(
+            gatewayPrices.get(model ?? '') ?? null,
+            { inputTokens, outputTokens, cacheCreation, cacheRead },
+            piNumber('cacheWrite1h' in usage ? usage.cacheWrite1h : null) ?? 0,
+          )
+        : null;
+  }
+  if (
+    provider &&
+    ['ollama', 'sparks', 'localsparks', 'lmstudio'].includes(provider) &&
+    !providerCharge
+  )
+    costUsd = null;
   return {
     inputTokens,
     outputTokens,
     cacheCreation,
     cacheRead,
+    ...(costUsd === null
+      ? {
+          costReason:
+            provider && ['ollama', 'sparks', 'localsparks', 'lmstudio'].includes(provider)
+              ? 'local, unpriced'
+              : 'No verified model price for all used token categories',
+        }
+      : {}),
     totalTokens: inputTokens + outputTokens + cacheCreation + cacheRead,
     costUsd,
     model,
   };
 }
 
-async function summarizePi(filePath: string): Promise<SessionTotals> {
+async function summarizePi(
+  filePath: string,
+  environment: NodeJS.ProcessEnv,
+): Promise<SessionTotals> {
   const totals = emptyTotals();
   let cost = 0;
   let completeCost = true;
   const prices = new Map<string, PiRequestCost>();
+  let gatewayPrices: Map<string, PiModelCostMetadata> | undefined;
   for await (const record of safeJsonLines(filePath)) {
     const quote = piRequestCost(record);
     if (quote) {
       prices.set(quote.key, quote.cost);
       continue;
     }
-    const usage = readPiAssistantUsage(record, prices);
+    const message = record.message;
+    if (
+      message &&
+      typeof message === 'object' &&
+      'provider' in message &&
+      message.provider === 'litellm' &&
+      (environment.LITELLM_URL || environment.LITELLM_BASE_URL)
+    )
+      gatewayPrices ??= await loadLiteLlmPrices({
+        baseUrl: environment.LITELLM_URL || environment.LITELLM_BASE_URL,
+        apiKey: environment.LITELLM_API_KEY,
+        cacheDir: environment.FARMSLOT_LITELLM_PRICING_CACHE_DIR,
+      });
+    const usage = readPiAssistantUsage(record, prices, gatewayPrices);
     if (!usage) continue;
     totals.turns += 1;
     totals.input_tokens += usage.inputTokens;
@@ -679,8 +733,10 @@ async function summarizePi(filePath: string): Promise<SessionTotals> {
     totals.cache_read += usage.cacheRead;
     totals.total_tokens += usage.totalTokens;
     if (usage.model) totals.model = usage.model;
-    if (usage.costUsd === null) completeCost = false;
-    else cost += usage.costUsd;
+    if (usage.costUsd === null) {
+      completeCost = false;
+      totals.cost_reason = usage.costReason;
+    } else cost += usage.costUsd;
   }
   if (totals.turns === 0) throw new Error('ERROR: Pi transcript contains no assistant usage');
   totals.cost_usd = completeCost ? cost : null;
@@ -791,10 +847,11 @@ async function summarize(
   runner: string,
   sessionPath: string,
   home: string,
+  environment: NodeJS.ProcessEnv,
 ): Promise<SessionTotals> {
   if (runner === 'claude') return summarizeClaude(sessionPath);
   if (runner === 'codex') return summarizeCodex(sessionPath);
-  if (runner === 'pi') return summarizePi(sessionPath);
+  if (runner === 'pi') return summarizePi(sessionPath, environment);
   if (runner === 'grok') return summarizeGrok(sessionPath, home);
   if (runner === 'cursor') return summarizeCursor(sessionPath);
   throw new Error(`ERROR: Unsupported runner for usage extraction: ${runner}`);
@@ -852,8 +909,9 @@ function formatTotals(totals: SessionTotals): string[] {
     `total_tokens=${totals.total_tokens}`,
   ];
   if (totals.cost_usd !== null) {
-    lines.push(`cost_usd=${totals.cost_usd.toFixed(4)}`);
+    lines.push(`cost_usd=${totals.cost_usd.toFixed(10)}`);
   }
+  if (totals.cost_reason) lines.push(`cost_reason=${totals.cost_reason}`);
   return lines;
 }
 
@@ -1291,8 +1349,10 @@ export async function runSessionUsage(params: {
   forcedPath?: string;
   /** Override: runner name when forcedPath is set. Falls back to path-based heuristic. */
   forcedRunner?: string | null;
+  /** Worker pool environment for in-process pricing; never written to the transcript. */
+  environment?: NodeJS.ProcessEnv;
 }): Promise<string> {
-  const { repo, slotId, action, forcedPath, forcedRunner } = params;
+  const { repo, slotId, action, forcedPath, forcedRunner, environment = process.env } = params;
 
   // Read HOME at call time — not at module load — so tests that set
   // process.env.HOME before invoking see the correct temp directory.
@@ -1317,7 +1377,7 @@ export async function runSessionUsage(params: {
   const name = await sessionName(sessionFile);
 
   if (action === 'snapshot') {
-    const totals = await summarize(runner, sessionFile, home);
+    const totals = await summarize(runner, sessionFile, home, environment);
     const data: SnapshotData = { runner, session: name, path: sessionFile, totals };
     await writeFile(snapshotFile, JSON.stringify(data), 'utf-8');
     return `Snapshot saved: ${name}\n`;
@@ -1335,7 +1395,7 @@ export async function runSessionUsage(params: {
       throw err;
     }
     const snapData = JSON.parse(snapshotRaw) as SnapshotData;
-    const current = await summarize(runner, sessionFile, home);
+    const current = await summarize(runner, sessionFile, home, environment);
     const base = snapData.totals;
     const header = [
       `Session:  ${name}`,
@@ -1344,6 +1404,7 @@ export async function runSessionUsage(params: {
       `---`,
     ];
     const diff: SessionTotals = {
+      cost_reason: current.cost_reason ?? base.cost_reason,
       model: current.model,
       turns: current.turns - base.turns,
       input_tokens: current.input_tokens - base.input_tokens,
@@ -1361,7 +1422,7 @@ export async function runSessionUsage(params: {
   }
 
   if (action === 'total') {
-    const current = await summarize(runner, sessionFile, home);
+    const current = await summarize(runner, sessionFile, home, environment);
     const lines = await sessionLineCount(sessionFile);
     const header = [`Session:  ${name}`, `Runner:   ${runner}`, `Lines:    ${lines}`, `---`];
     return [...header, ...formatTotals(current)].join('\n') + '\n';

@@ -879,3 +879,80 @@ test('review totals include replaced and failed contexts once per exact conversa
     510,
   );
 });
+
+test('gate cost separates implementation and review without treating unpriced work as free', () => {
+  const run = makeRun({
+    familyId: undefined,
+    metrics: metrics({
+      model: 'litellm/fixture-worker',
+      sessionTotalTokens: 100,
+      costEstimate: 0.25,
+    }),
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            ...passingReview,
+            model: 'litellm/fixture-review',
+            usage: {
+              runner: 'pi',
+              runnerSessionId: 'review-cost-fixture',
+              measuredAt: '2026-01-01T00:00:00Z',
+              source: 'runner-transcript',
+              totalTokens: 50,
+              costUsd: 0.125,
+            },
+          },
+        ],
+      },
+    },
+  });
+  const summary = buildTokenSummary(run);
+  assert.equal(summary.mainWorker.costUsd, 0.25);
+  assert.equal(summary.reviews[0].costUsd, 0.125);
+  assert.equal(summary.familyCostUsd, 0.375);
+  delete run.metrics.costEstimate;
+  assert.equal(buildTokenSummary(run).familyCostUsd, null);
+});
+
+test('gate review rounds keep a reused conversation charge out of individual rounds', () => {
+  const usage = {
+    runner: 'pi',
+    runnerSessionId: 'shared-review-fixture',
+    measuredAt: '2026-01-01T00:00:00Z',
+    source: 'runner-transcript' as const,
+    totalTokens: 200,
+    costUsd: 0.02,
+  };
+  const run = makeRun({
+    familyId: 'synthetic-cost-family',
+    metrics: metrics(),
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            ...passingReview,
+            reviewerSessionId: 'shared-review-fixture',
+            usage,
+            loopNumber: 2,
+            attempts: [
+              { mode: 'cold', loopNumber: 1, verdict: 'issues', unresolvedCount: 1, usage },
+              { mode: 'warm', loopNumber: 2, verdict: 'pass', unresolvedCount: 0, usage },
+            ],
+          },
+        ],
+      },
+    },
+  });
+  const result = buildTokenSummary(run);
+  assert.equal(result.reviews[0].costUsd, 0.02);
+  assert.equal(result.reviewRounds?.length, 2);
+  assert.deepEqual(
+    result.reviewRounds?.map((round) => [round.costUsd, round.costScope]),
+    [
+      [null, 'shared-session'],
+      [null, 'shared-session'],
+    ],
+  );
+  assert.equal(result.familyCostUsd, 0.02);
+});

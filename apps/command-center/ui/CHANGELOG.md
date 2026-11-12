@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show implementation and review-round dollar costs in gate summaries and explicit local unpriced labels in usage tables.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.36.1 - 2026-11-08

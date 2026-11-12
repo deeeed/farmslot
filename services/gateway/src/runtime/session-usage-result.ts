@@ -30,6 +30,9 @@ export function parseSessionUsageOutput(
     reasoningOutputTokens: parseNumberLine(lines, 'reasoning_output_tokens='),
     totalTokens: parseNumberLine(lines, 'total_tokens='),
     costUsd: parseNumberLine(lines, 'cost_usd='),
+    ...(parseStringLine(lines, 'cost_reason=')
+      ? { costStatus: 'unpriced', costReason: parseStringLine(lines, 'cost_reason=') ?? undefined }
+      : {}),
     measuredAt: new Date().toISOString(),
     source: 'runner-transcript',
     scope: 'session-total',
