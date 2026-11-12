@@ -773,21 +773,19 @@ function renderParameterValidationHelp(parameter: ParameterValidationHelp): stri
   const values = parameter.validValues?.length
     ? ` Valid values: ${parameter.validValues.map((value) => out('accent', String(value))).join(', ')}.`
     : '';
-  const received =
-    typeof parameter.received === 'string'
-      ? parameter.received
-      : (JSON.stringify(parameter.received) ?? String(parameter.received));
-  // The shell strips plain quotes, so the JSON string quotes go inside single quotes.
+  // A JSON-encoded value in a shell-quoted assignment reaches the call with its type intact.
+  const assignment = (name: string, value: unknown) =>
+    out('cmd', shellQuote(`${name}=${JSON.stringify(value) ?? String(value)}`));
   const quoteHint =
     parameter.issue === 'type' &&
     parameter.type === 'string' &&
     typeof parameter.received !== 'object'
-      ? ` Quote it: ${out('cmd', `${parameter.name}='${JSON.stringify(received)}'`)}.`
+      ? ` Quote it: ${assignment(parameter.name, String(parameter.received))}.`
       : '';
   const suggestion =
     quoteHint ||
     (parameter.suggestedParameter
-      ? ` Did you mean ${out('cmd', `${parameter.suggestedParameter}=${received}`)}?`
+      ? ` Did you mean ${assignment(parameter.suggestedParameter, parameter.received)}?`
       : parameter.suggestion
         ? ` Did you mean ${out('accent', JSON.stringify(parameter.suggestion))}?`
         : '');

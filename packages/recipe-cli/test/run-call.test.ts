@@ -4003,7 +4003,7 @@ describe('call', () => {
     const human = await capture(() => handleCall(args, callOptions));
     assert.match(
       human.stderr.join('\n'),
-      /password expects a string; got number 2400\. Quote it: password='"2400"'\./u,
+      /password expects a string; got number 2400\. Quote it: 'password="2400"'\./u,
     );
   });
 
@@ -4025,6 +4025,7 @@ describe('call', () => {
               properties: {
                 ...PING_ACTION.schema.properties,
                 market_mode: { type: 'string', enum: ['pro', 'lite'] },
+                note: { type: 'string' },
               },
             },
           },
@@ -4056,11 +4057,19 @@ describe('call', () => {
     const human = await capture(() =>
       handleCall(['shop.ping', 'mode=pro', 'cuont=2', ...base], callOptions),
     );
-    assert.match(human.stderr.join('\n'), /mode received "pro"\..*Did you mean market_mode=pro\?/u);
     assert.match(
       human.stderr.join('\n'),
-      /cuont is not a parameter of this action\. Did you mean count=2\?/u,
+      /mode received "pro"\..*Did you mean 'market_mode="pro"'\?/u,
     );
+    assert.match(
+      human.stderr.join('\n'),
+      /cuont is not a parameter of this action\. Did you mean 'count=2'\?/u,
+    );
+    // A quoted string keeps its quotes in the suggestion, so it stays a string.
+    const quoted = await capture(() =>
+      handleCall(['shop.ping', 'mode=fast', 'noet="2400"', ...base], callOptions),
+    );
+    assert.match(quoted.stderr.join('\n'), /Did you mean 'note="2400"'\?/u);
   });
 
   test('resolves names against --action-manifest and the --library sources', async () => {

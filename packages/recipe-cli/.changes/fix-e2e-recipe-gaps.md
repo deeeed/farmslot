@@ -1,3 +1,3 @@
-- `call` refuses several `key=value` inputs quoted into one argument (such as `"provider=hyperliquid network=testnet"`) instead of reading them as one value, and validation help suggests the nearest parameter for an unknown input and the parameter whose values include a misplaced one (`Did you mean market_mode=pro?`).
+- `call` refuses several `key=value` inputs quoted into one argument (such as `"provider=hyperliquid network=testnet"`) instead of reading them as one value, and validation help suggests the nearest parameter for an unknown input and the parameter whose values include a misplaced one (`Did you mean 'market_mode="pro"'?`); a suggested assignment keeps its value's type and is quoted for the shell.
 - `call` prints the absolute path of each screenshot it wrote (`Screenshot:` lines, and `screenshots` in `--json`).
-- `call` teaches a value of the wrong type with parameter help, for example `value expects a string; got number 2400. Quote it: value='"2400"'`.
+- `call` teaches a value of the wrong type with parameter help, for example `value expects a string; got number 2400. Quote it: 'value="2400"'`.
