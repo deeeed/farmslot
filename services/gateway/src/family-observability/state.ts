@@ -12,7 +12,7 @@ export interface FamilyStateSummary {
   activeRunCount: number;
   latestRunId: string;
   latestPrNumber: number | null;
-  workflowState: 'active' | 'complete' | 'failed';
+  workflowState: 'active' | 'complete' | 'failed' | 'unjudged';
   ownedPrFamily: boolean;
 }
 
@@ -62,7 +62,9 @@ export function buildFamilyStateSummary(familyRuns: Run[]): FamilyStateSummary |
       ? 'active'
       : orderedRuns.some(isSuccessfulRun)
         ? 'complete'
-        : 'failed',
+        : orderedRuns.every((run) => run.metrics.outcome === 'unjudged')
+          ? 'unjudged'
+          : 'failed',
     ownedPrFamily,
   };
 }

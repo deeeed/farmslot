@@ -124,6 +124,15 @@ test('an accepted result succeeds and a closed one does not, whatever the worker
     false,
   );
   assert.equal(isSuccessfulRun({ ...done, metrics: metrics('success') }), true);
+  assert.equal(isSuccessfulRun({ ...done, metrics: metrics('unjudged') }), false);
+  assert.equal(
+    isSuccessfulRun({
+      ...done,
+      metrics: metrics('unjudged'),
+      resultDecisionReceipt: receipt('accept-result'),
+    }),
+    false,
+  );
 });
 
 test('a send-back receipt leaves success to the outcome the run later reaches', () => {
