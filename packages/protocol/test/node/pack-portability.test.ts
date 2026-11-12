@@ -333,6 +333,64 @@ test('the asynchronous scan finds what the synchronous scan finds, through the g
   );
 });
 
+/** `git` without blocking, reporting the exit status as spawnSync does. */
+const runGit: PackGitRunner = (args) =>
+  new Promise((resolve) => {
+    execFile('git', args, { encoding: 'buffer' }, (error, stdout) => {
+      resolve({ status: !error ? 0 : typeof error.code === 'number' ? error.code : null, stdout });
+    });
+  });
+
+test('a failed removal of the temporary repository rejects the scan, never unhandled', async (t) => {
+  // A standalone pack: its ownership scan uses a temporary repository.
+  const pack = mkdtempSync(join(tmpdir(), 'pack-rm-'));
+  writeFileSync(join(pack, 'task.md'), '{{repo}}');
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  const removals: string[] = [];
+  t.mock.method(fs.promises, 'rm', async (dir: unknown) => {
+    removals.push(String(dir));
+    throw new Error('rm failed');
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    process.off('unhandledRejection', onUnhandled);
+    for (const dir of [pack, ...removals]) rmSync(dir, { recursive: true, force: true });
+  });
+  await assert.rejects(validatePackPortabilityAsync(pack, '', [], runGit), /rm failed/);
+  // A rejection nothing awaits surfaces within a few turns.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(removals.length, 1);
+  assert.deepEqual(unhandled, [], 'no unhandled rejection');
+});
+
+test('of two unreadable files the asynchronous scan reports the earlier one', async (t) => {
+  const pack = mkdtempSync(join(tmpdir(), 'pack-read-order-'));
+  writeFileSync(join(pack, 'a.md'), 'first');
+  writeFileSync(join(pack, 'b.md'), 'second');
+  const readFile = fs.promises.readFile;
+  // The later file fails first in time.
+  t.mock.method(fs.promises, 'readFile', async (file: Parameters<typeof readFile>[0]) => {
+    const name = String(file).split('/').at(-1);
+    if (name === 'a.md') {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      throw new Error('a.md unreadable');
+    }
+    if (name === 'b.md') throw new Error('b.md unreadable');
+    return readFile(file);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    rmSync(pack, { recursive: true, force: true });
+  });
+  await assert.rejects(listPackOwnedEntriesAsync(pack, runGit), /a\.md unreadable/);
+});
+
 test('project packs require a valid farm-owned QA preset with a fix hint', () => {
   const qa = {
     default_profile: 'smoke',

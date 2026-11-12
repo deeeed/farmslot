@@ -59,20 +59,32 @@ export type PackGitRunner = (args: string[]) => Promise<PackGitResult>;
 /** What a listed path is, without following links: a tracked deletion is missing. */
 type PackPathKind = 'missing' | 'file' | 'directory' | 'other' | { link: string };
 
-/** The ownership walk's requests: run `git`, or say what some paths are. A driver answers each. */
-type PackStep = { git: string[] } | { paths: string[] };
-type PackWalk<T> = Generator<PackStep, T, PackGitResult | PackPathKind[]>;
+/**
+ * The ownership walk's requests: run `git`, say what some paths are, or remove its temporary
+ * repository. A driver answers each in place, so nothing the walk starts outlives its step.
+ */
+type PackStep = { git: string[] } | { paths: string[] } | { remove: string };
+type PackReply = PackGitResult | PackPathKind[] | 'removed';
+type PackWalk<T> = Generator<PackStep, T, PackReply>;
 
 function* gitStep(args: string[]): PackWalk<PackGitResult> {
   const reply = yield { git: args };
-  if (Array.isArray(reply)) throw new Error('The pack walk asked for git and got paths');
+  if (Array.isArray(reply) || reply === 'removed')
+    throw new Error('The pack walk asked for git and got another answer');
   return reply;
 }
 
 function* pathsStep(paths: string[]): PackWalk<PackPathKind[]> {
   const reply = yield { paths };
-  if (!Array.isArray(reply)) throw new Error('The pack walk asked for paths and got git');
+  if (!Array.isArray(reply))
+    throw new Error('The pack walk asked for paths and got another answer');
   return reply;
+}
+
+function* removeStep(dir: string): PackWalk<void> {
+  const reply = yield { remove: dir };
+  if (reply !== 'removed')
+    throw new Error('The pack walk asked for a removal and got another answer');
 }
 
 function isMissing(error: unknown): boolean {
@@ -106,17 +118,28 @@ async function pathKind(file: string): Promise<PackPathKind> {
 /** Concurrent file system calls on one pack in the asynchronous driver. */
 const PACK_IO_CONCURRENCY = 8;
 
-/** `items.map(map)`, at most PACK_IO_CONCURRENCY at a time, in order. */
+/**
+ * `items.map(map)`, at most PACK_IO_CONCURRENCY at a time, in order. After a failure nothing new
+ * starts, the calls in flight finish, and the failure of the earliest item is thrown: the one the
+ * synchronous driver, which goes in order, would have met first.
+ */
 async function mapBounded<T, R>(items: readonly T[], map: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = [];
+  const failures = new Map<number, unknown>();
   let next = 0;
   const worker = async () => {
-    while (next < items.length) {
+    while (next < items.length && !failures.size) {
       const index = next++;
-      results[index] = await map(items[index]);
+      try {
+        results[index] = await map(items[index]);
+      } catch (error) {
+        // Recorded, not dropped: thrown below once the calls in flight have settled.
+        failures.set(index, error);
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(PACK_IO_CONCURRENCY, items.length) }, worker));
+  if (failures.size) throw failures.get(Math.min(...failures.keys()));
   return results;
 }
 
@@ -124,9 +147,14 @@ function runPackWalk<T>(walk: PackWalk<T>): T {
   let step = walk.next();
   while (!step.done) {
     const request = step.value;
-    let reply: PackGitResult | PackPathKind[];
+    let reply: PackReply;
     try {
-      reply = 'git' in request ? spawnSync('git', request.git) : request.paths.map(pathKindSync);
+      if ('git' in request) reply = spawnSync('git', request.git);
+      else if ('paths' in request) reply = request.paths.map(pathKindSync);
+      else {
+        rmSync(request.remove, { recursive: true, force: true });
+        reply = 'removed';
+      }
     } catch (error) {
       // Raised inside the walk so its cleanup runs; the walk does not catch it.
       step = walk.throw(error);
@@ -141,9 +169,14 @@ async function runPackWalkAsync<T>(walk: PackWalk<T>, git: PackGitRunner): Promi
   let step = walk.next();
   while (!step.done) {
     const request = step.value;
-    let reply: PackGitResult | PackPathKind[];
+    let reply: PackReply;
     try {
-      reply = 'git' in request ? await git(request.git) : await mapBounded(request.paths, pathKind);
+      if ('git' in request) reply = await git(request.git);
+      else if ('paths' in request) reply = await mapBounded(request.paths, pathKind);
+      else {
+        await rm(request.remove, { recursive: true, force: true });
+        reply = 'removed';
+      }
     } catch (error) {
       // Raised inside the walk so its cleanup runs; the walk does not catch it.
       step = walk.throw(error);
@@ -157,17 +190,8 @@ async function runPackWalkAsync<T>(walk: PackWalk<T>, git: PackGitRunner): Promi
 /** A pack-owned file whose bytes the driver reads after the walk; links carry their target. */
 type PackOwnedPath = { rel: string; file: string } | (PackOwnedEntry & { content: string });
 
-/** Removes the walk's temporary repository; each driver removes it its own way. */
-type RemoveTemp = (dir: string) => void;
-
-const removeTempSync: RemoveTemp = (dir) => rmSync(dir, { recursive: true, force: true });
-
 /** A copied pack still owns its ignore rules, even without its original Git index. */
-function* listUnindexedPackFiles(
-  dir: string,
-  prefix: string,
-  removeTemp: RemoveTemp,
-): PackWalk<string[]> {
+function* listUnindexedPackFiles(dir: string, prefix: string): PackWalk<string[]> {
   const gitDir = mkdtempSync(path.join(tmpdir(), 'pack-ignore-'));
   try {
     const initialized = yield* gitStep(['init', '--bare', '--quiet', gitDir]);
@@ -191,13 +215,13 @@ function* listUnindexedPackFiles(
       .filter(Boolean)
       .filter((name) => prefix !== '' || !RUNTIME_DIRS.has(name.split('/')[0]));
   } finally {
-    removeTemp(gitDir);
+    yield* removeStep(gitDir);
   }
 }
 
 /** One ownership boundary for pack hashing, admission and gateway sync. */
 export function listPackOwnedEntries(root: string): PackOwnedEntry[] {
-  return runPackWalk(walkPackOwnedEntries(root, removeTempSync)).map((entry) =>
+  return runPackWalk(walkPackOwnedEntries(root)).map((entry) =>
     'file' in entry ? { rel: entry.rel, content: readFileSync(entry.file) } : entry,
   );
 }
@@ -210,22 +234,13 @@ export async function listPackOwnedEntriesAsync(
   root: string,
   git: PackGitRunner,
 ): Promise<PackOwnedEntry[]> {
-  const removals: Promise<void>[] = [];
-  let owned: PackOwnedPath[];
-  try {
-    owned = await runPackWalkAsync(
-      walkPackOwnedEntries(root, (dir) => removals.push(rm(dir, { recursive: true, force: true }))),
-      git,
-    );
-  } finally {
-    await Promise.all(removals);
-  }
+  const owned = await runPackWalkAsync(walkPackOwnedEntries(root), git);
   return mapBounded(owned, async (entry) =>
     'file' in entry ? { rel: entry.rel, content: await readFile(entry.file) } : entry,
   );
 }
 
-function* walkPackOwnedEntries(root: string, removeTemp: RemoveTemp): PackWalk<PackOwnedPath[]> {
+function* walkPackOwnedEntries(root: string): PackWalk<PackOwnedPath[]> {
   const entries: PackOwnedPath[] = [];
   const walk = function* (dir: string, prefix: string): PackWalk<void> {
     // Git scopes this to dir and honors its owning repository. Submodule entries
@@ -247,7 +262,7 @@ function* walkPackOwnedEntries(root: string, removeTemp: RemoveTemp): PackWalk<P
     } else if (git.status === 0 || git.status === 128) {
       // A standalone pack, or an untracked pack ignored by its parent repo,
       // still owns its source files. Its top-level runtime state is not source.
-      names = yield* listUnindexedPackFiles(dir, prefix, removeTemp);
+      names = yield* listUnindexedPackFiles(dir, prefix);
     } else {
       throw new Error('Cannot list pack-owned files for portability validation');
     }
