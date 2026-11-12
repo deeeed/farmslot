@@ -16,6 +16,7 @@ import type { NativeEventInput } from './types.js';
 const fixture = `#!/usr/bin/env node
 if(process.argv.includes('--version')) { console.log('fixture 1'); process.exit(0); }
 const fs=require('node:fs');
+fs.writeFileSync('claude-background',process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS??'unset');
 if(process.env.OPENCODE_PERMISSION!==undefined)fs.writeFileSync('opencode-permission',process.env.OPENCODE_PERMISSION);
 let session='fixture-session',prompt,authenticated=process.env.ACP_FIXTURE_EXISTING_LOGIN==='1';
 const configOptions=process.env.ACP_FIXTURE_CONFIG?JSON.parse(process.env.ACP_FIXTURE_CONFIG):[{id:'model',currentValue:'specific-model',options:[{value:'specific-model'}]}];
@@ -877,7 +878,12 @@ test('read-only ACP reviews disable user hooks while ordinary sessions preserve 
       if (review) {
         assert.deepEqual(policy?.settingSources, ['user']);
         assert.equal(policy?.settings?.disableAllHooks, true);
-      } else assert.equal(policy, undefined);
+      } else {
+        assert.equal(policy?.settingSources, undefined);
+        assert.equal(policy?.settings, undefined);
+      }
+      assert.deepEqual(policy?.disallowedTools, ['Monitor']);
+      assert.equal(readFileSync(join(f.cwd, 'claude-background'), 'utf8'), '1');
     } finally {
       await session.close();
     }

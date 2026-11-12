@@ -6,7 +6,11 @@ import type {
   FamilyUsageSession,
 } from '@farmslot/protocol';
 
-import { formatDurationMs, formatTokenCount } from '../../utils/review-gate-display.js';
+import {
+  formatDurationMs,
+  formatTokenCount,
+  formatUsageCost,
+} from '../../utils/review-gate-display.js';
 
 import {
   buildUsageAttribution,
@@ -18,10 +22,7 @@ import {
   usageIntervalSummary,
 } from './family-observability-usage-model.js';
 
-export function usageCost(value: number | null | undefined): string {
-  if (value == null) return 'Unpriced';
-  return `$${value.toFixed(value !== 0 && value < 1 ? 4 : 2)}`;
-}
+export const usageCost = formatUsageCost;
 
 function tokens(value: number | null | undefined): string {
   return value == null ? 'Not captured' : formatTokenCount(value);
@@ -135,7 +136,7 @@ function breakdown(title: string, rows: UsageBreakdown[]): TemplateResult {
               html`<tr>
                 <td>${row.label}</td>
                 <td class="num">${tokens(row.tokens)}</td>
-                <td class="num">${usageCost(row.cost)}</td>
+                <td class="num">${usageCost(row.cost, row.costReason)}</td>
                 <td>${row.missing} missing · ${row.unpriced} unpriced</td>
               </tr>`,
           )}
@@ -219,7 +220,9 @@ function sessionRows(
                 </div>
               </td>
               <td class="num">
-                ${total.cost != null || total.measured ? usageCost(total.cost) : 'Not captured'}
+                ${total.cost != null || total.measured
+                  ? usageCost(total.cost, usage.costReason)
+                  : 'Not captured'}
               </td>
               <td title=${gaps.join('; ')}>${gaps.length ? gaps.join(' · ') : usage.source}</td>
             </tr>`;
@@ -316,7 +319,7 @@ export function renderFamilyUsageBody(
                     ${roundUsageTotals(round).reviewCost != null
                       ? usageCost(roundUsageTotals(round).reviewCost)
                       : roundUsageTotals(round).tokens != null
-                        ? 'Unpriced'
+                        ? usageCost(null, round.usage?.costReason)
                         : 'Not captured'}
                   </td>
                   <td class="num">

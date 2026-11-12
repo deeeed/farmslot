@@ -32,7 +32,7 @@ import { loadMachinePool, type RawProjectJson } from '../../core/config.js';
 import { resolveProjectCommandEnv } from '../../core/project-env.js';
 import { isNodeTransportUnavailableError } from '../../fleet/node-rpc.js';
 import {
-  bindReviewWorkspaceSupportValue,
+  reviewWorkspaceCommandEnvOptions,
   reviewWorkspaceReadOnlyRoots,
 } from '../../review-workspaces/skills.js';
 import { getRun, persistRunNow, updateRun } from '../../runs/store.js';
@@ -304,18 +304,9 @@ export async function launchReviewWorkspaceWorker(input: {
     );
     binding = structuredClone(context.nativeSession!);
   }
-  const supportSettings = workspace.support
-    ? Object.fromEntries(
-        Object.entries(workspace.support.environment).map(([name, value]) => [
-          name,
-          bindReviewWorkspaceSupportValue(value, workspace.support!),
-        ]),
-      )
-    : undefined;
-  const environment = resolveProjectCommandEnv(input.project, {
-    domain: input.domain,
-    overrides: supportSettings,
-  });
+  const environmentOptions = reviewWorkspaceCommandEnvOptions(workspace, input.domain);
+  const supportSettings = environmentOptions.overrides;
+  const environment = resolveProjectCommandEnv(input.project, environmentOptions);
   environment.set = { ...environment.set, ...input.machineEnv };
   const sources = currentProjectSources();
   if (sources) environment.set = { ...environment.set, ...sourceWorkerEnvironment(sources) };

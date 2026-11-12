@@ -66,6 +66,7 @@ export async function extractRunnerSessionUsage({
       action: 'total',
       forcedPath: runnerSessionPath,
       forcedRunner: runner ?? null,
+      environment: { ...process.env, ...vars?.machineEnv },
     });
     return parseSessionUsageOutput(output, {
       runner: runner ?? null,
@@ -86,6 +87,7 @@ async function archivedSessionUsage(
   run: Run,
   archived: string,
   session: Pick<RunnerSessionUsage, 'runnerSessionId' | 'runnerSessionPath'> = {},
+  vars?: SlotVars,
 ): Promise<RunnerSessionUsage> {
   return parseSessionUsageOutput(
     await runSessionUsage({
@@ -94,6 +96,7 @@ async function archivedSessionUsage(
       action: 'total',
       forcedPath: archived,
       forcedRunner: run.metrics.runner,
+      environment: { ...process.env, ...vars?.machineEnv },
     }),
     { runner: run.metrics.runner, ...session },
   );
@@ -128,7 +131,7 @@ export async function extractRunWorkerSessionUsage(
       if (!usage.error) return usage;
       const archived = await provider?.recoverArchive?.(run, session);
       if (!archived) return usage;
-      return archivedSessionUsage(run, archived, session);
+      return archivedSessionUsage(run, archived, session, slotVars);
     }),
   );
   usages.forEach((usage, index) => record?.(unique[index], usage));
@@ -153,7 +156,10 @@ export async function extractRunWorkerSessionUsage(
     cacheCreation: total('cacheCreation'),
     cacheRead: total('cacheRead'),
     totalTokens: total('totalTokens'),
-    costUsd: cost == null ? null : Number(cost.toFixed(4)),
+    costUsd: cost == null ? null : Number(cost.toFixed(10)),
+    costStatus: cost == null ? 'unpriced' : 'estimated',
+    costReason:
+      cost == null ? usages.find((usage) => usage.costUsd == null)?.costReason : undefined,
   };
 }
 

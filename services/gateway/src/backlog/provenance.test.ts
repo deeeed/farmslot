@@ -9,7 +9,11 @@ import test, { after } from 'node:test';
 import type { PressureAdmissionDecision } from '@farmslot/protocol';
 
 const root = mkdtempSync(join(tmpdir(), 'farmslot-provenance-'));
-after(() => rmSync(root, { recursive: true, force: true }));
+after(async () => {
+  await queue.persistQueueNow();
+  await backlog.flushBacklogForTests();
+  rmSync(root, { recursive: true, force: true });
+});
 const queueFile = join(root, 'dispatch-queue.json');
 const backlogFile = join(root, 'backlog.json');
 const graphDir = join(root, 'work-graphs');

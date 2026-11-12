@@ -260,7 +260,9 @@ export function recoveredWorkerSessionReceipt(
     costUsd: usage.costUsd ?? null,
     costStatus: usage.costUsd == null ? 'unpriced' : 'estimated',
     costReason:
-      usage.costUsd == null ? 'Runner accounting has no verified price for this model' : undefined,
+      usage.costUsd == null
+        ? (usage.costReason ?? 'Runner accounting has no verified price for this model')
+        : undefined,
     captureGaps: [
       ...(usage.error ? [usage.error] : []),
       ...(previous?.model == null || previous?.effort == null
