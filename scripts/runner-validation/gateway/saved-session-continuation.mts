@@ -47,7 +47,7 @@ for (const runId of ids) {
   assert.equal(reviewer.model, previous.model);
   assert.equal(reviewer.effort ?? null, previous.effort ?? null);
   assert.equal(run.nativeOwnerPrincipalId, prior.nativeOwnerPrincipalId);
-  assert.equal(run.createdByPrincipalGeneration, prior.createdByPrincipalGeneration);
+  assert.equal(run.createdByPrincipalGeneration ?? 0, prior.createdByPrincipalGeneration ?? 0);
   assert.equal(run.project, prior.project);
   assert.equal(run.ticketOrPr, prior.ticketOrPr);
   assert.equal(run.reviewWorkspaceSubject?.baseSha, run.repeatReviewContext?.priorReviewedHeadSha);

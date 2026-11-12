@@ -76,6 +76,10 @@ export function resolveRepeatReviewResumePlan(
   const reviewId = context.session?.reviewId;
   if (!reviewId) return { kind: 'refused', reason: 'missing-session' };
   const native = current.transport === 'native';
+  const supportsContinuation = runnerSupportsSessionContinuation(
+    runner,
+    native ? 'native' : 'tmux',
+  );
   if (
     !prior ||
     prior.id !== context.priorRunId ||
@@ -142,20 +146,21 @@ export function resolveRepeatReviewResumePlan(
         candidate.reviewId === reviewId &&
         candidate.runner === runner &&
         candidate.slotId === current.slotId &&
-        candidate.runnerSessionId?.trim() &&
-        (native
-          ? candidate.nativeSession?.generation &&
-            candidate.nativeSession.acceptedAt &&
-            !candidate.nativeSession.releasedAt &&
-            !candidate.nativeSession.recovery
-          : candidate.runnerSessionPath?.trim()),
+        (!supportsContinuation ||
+          (candidate.runnerSessionId?.trim() &&
+            (native
+              ? candidate.nativeSession?.generation &&
+                candidate.nativeSession.acceptedAt &&
+                !candidate.nativeSession.releasedAt &&
+                !candidate.nativeSession.recovery
+              : candidate.runnerSessionPath?.trim()))),
     )
     .sort((left, right) => {
       const leftAt = left.completedAt ?? left.updatedAt ?? left.startedAt ?? '';
       const rightAt = right.completedAt ?? right.updatedAt ?? right.startedAt ?? '';
       return rightAt.localeCompare(leftAt) || right.id.localeCompare(left.id);
     })[0];
-  if (!reviewer?.runnerSessionId?.trim() || (!native && !reviewer.runnerSessionPath?.trim())) {
+  if (!reviewer) {
     const anotherRunner = (prior.agentContexts ?? []).some(
       (candidate) => candidate.role === 'review' && candidate.runner !== runner,
     );
@@ -169,12 +174,16 @@ export function resolveRepeatReviewResumePlan(
     return { kind: 'refused', reason: 'effort-mismatch' };
   const reviewedHead = context.priorReviewedHeadSha;
   const headProvenance =
-    primaryReviewedHeadForSession(prior, {
-      reviewId,
-      runnerSessionId: reviewer.runnerSessionId,
-      repository: context.repository,
-      prNumber: context.prNumber,
-    }) === reviewedHead ||
+    (reviewer.runnerSessionId &&
+      primaryReviewedHeadForSession(prior, {
+        reviewId,
+        runnerSessionId: reviewer.runnerSessionId,
+        repository: context.repository,
+        prNumber: context.prNumber,
+      }) === reviewedHead) ||
+    (!supportsContinuation &&
+      (!prior.reviewResult?.session || prior.reviewResult.session.reviewId === reviewId) &&
+      prior.reviewResult?.reviewSnapshot?.headSha === reviewedHead) ||
     prior.decisions?.some((decision) => {
       const payload = decision.payload as
         | {
@@ -199,7 +208,7 @@ export function resolveRepeatReviewResumePlan(
     );
   if (!reviewedHead || !context.currentHeadSha || !headProvenance)
     return { kind: 'refused', reason: 'missing-session' };
-  if (!runnerSupportsSessionContinuation(runner, native ? 'native' : 'tmux')) {
+  if (!supportsContinuation) {
     return {
       kind: 'delta-cold',
       trace: {
@@ -207,7 +216,7 @@ export function resolveRepeatReviewResumePlan(
         continuity: 'fresh',
         reviewId,
         priorRunId: prior.id,
-        priorSessionId: reviewer.runnerSessionId,
+        priorSessionId: reviewer.runnerSessionId?.trim() || undefined,
         repository: context.repository,
         prNumber: context.prNumber,
         lastReviewedHeadSha: reviewedHead,
@@ -220,6 +229,8 @@ export function resolveRepeatReviewResumePlan(
       },
     };
   }
+  if (!reviewer.runnerSessionId?.trim() || (!native && !reviewer.runnerSessionPath?.trim()))
+    return { kind: 'refused', reason: 'missing-session' };
   if (native)
     return {
       kind: 'native-resume',

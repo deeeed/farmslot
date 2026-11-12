@@ -458,6 +458,13 @@ export async function cleanupReviewWorkspaceForArchive(runId: string): Promise<v
   const run = getRun(runId);
   const workspace = run?.reviewWorkspace;
   if (!run || !workspace || workspace.cleanedAt) return;
+  if (workspace.transferredTo) {
+    assertRunArchivable(run);
+    assertNativeRunOwner(run);
+    if (!isRunArchiving(runId))
+      throw new Error('Review history archive no longer owns its request');
+    return;
+  }
   const generation = run.engineState?.generation ?? 0;
   const check = () => {
     const current = currentWorkspaceRun(runId, generation, true);

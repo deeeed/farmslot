@@ -3,7 +3,7 @@
   "title": "Saved reviewer session continuation",
   "description": "Verify exact-session startup and delta task execution on retained reviewer runs through their owning gateway, plus exclusive source transfer and prior-report preservation. Publication stays disabled.",
   "workflow": {
-    "entry": "retained-runners",
+    "entry": "unsupported-continuation",
     "nodes": {
       "retained-runners": {
         "action": "command",
@@ -19,7 +19,17 @@
         "intent": "Reuse a stopped review's source path, preserve its reports, reject old-owner cleanup, and retry the same transfer.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "unsupported-continuation": {
+        "action": "command",
+        "cmd": "FARMSLOT_UNSUPPORTED_CONTINUATION_RPC_OUT=temp/saved-session-continuation/unsupported.json TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks --test services/gateway/src/review-workspaces/unsupported-continuation.rpc.live.ts",
+        "timeout_ms": 180000,
+        "intent": "An authenticated WARM request must obey a declared unsupported capability and keep its exact delta and earlier finding in a fresh COLD session trace, without launching a provider.",
+        "next": "retained-runners"
+      }
     }
   }
 }

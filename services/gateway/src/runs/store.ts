@@ -1685,7 +1685,7 @@ function assertNativeWorkersReleased(run: Run): void {
     throw new Error(
       'Review workspace ownership cannot leave the run store before durable cleanup closeout',
     );
-  if (run.reviewWorkspace && !run.reviewWorkspace.cleanedAt) {
+  if (run.reviewWorkspace && !run.reviewWorkspace.cleanedAt && !run.reviewWorkspace.transferredTo) {
     throw new Error(
       'Review workspace ownership cannot leave the run store before checkout cleanup',
     );
