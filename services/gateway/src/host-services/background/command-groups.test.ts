@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { type ChildProcess, fork } from 'node:child_process';
+import { type ChildProcess, execFileSync, fork } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,7 +12,10 @@ import { ForkedBackgroundHost } from './client.js';
 import type { FixtureCommand } from './command-groups.test-support.js';
 
 // The background child runs every command in its own process group and owns it: however the child
-// goes away, none of its commands may outlive it, and the supervisor never signals a group.
+// goes away, none of its commands may outlive it, and the supervisor never signals a group. When
+// the child exits it kills its commands itself; when it is killed outright, each command's guard
+// does, within about a second. Tests of the child's own cleanup point the guards at this process
+// (FIXTURE_GUARD_OWNER), so only the child can have killed the command.
 const entry = fileURLToPath(new URL('./command-groups.test-support.ts', import.meta.url));
 const directory = await mkdtemp(path.join(os.tmpdir(), 'background-groups-'));
 after(() => rm(directory, { recursive: true, force: true }));
@@ -20,15 +23,16 @@ after(() => rm(directory, { recursive: true, force: true }));
 /** Every command pid this file started; killed on every exit path, by group or else alone. */
 const started = new Set<number>();
 after(() => {
-  for (const pid of started) {
-    if (signalProcessGroup(pid, 'SIGKILL')) continue;
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch (error) {
-      // Already exited: nothing to clean up.
-      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+  for (const pid of started)
+    for (const target of [-pid, pid]) {
+      try {
+        process.kill(target, 'SIGKILL');
+      } catch (error) {
+        // Gone, or only an adopted zombie is left (see alive()): nothing of ours to clean up.
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== 'ESRCH' && code !== 'EPERM') throw error;
+      }
     }
-  }
 });
 
 let fixtures = 0;
@@ -73,12 +77,16 @@ function watchGroupSignals(t: TestContext): () => void {
     );
 }
 
-function alive(pid: number): boolean {
+/** Whether `target` (a pid, or a negated group id) still names a live process of ours. */
+function alive(target: number): boolean {
   try {
-    process.kill(pid, 0);
+    process.kill(target, 0);
     return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    // ESRCH: none left. EPERM: only a process we may not signal, which is none of ours: macOS
+    // reports it for a zombie launchd has adopted but not yet reaped.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ESRCH' || code === 'EPERM') return false;
     throw error;
   }
 }
@@ -114,12 +122,26 @@ async function pids(pidFile: string, count = 2): Promise<number[]> {
   return found;
 }
 
-/** Killed by the child itself, so at once: well before any watchdog could act. */
+/** The group's processes other than its leader and the leader's own children: the guard. */
+function guards(leader: number): number[] {
+  return execFileSync('ps', ['-axww', '-o', 'pid=,ppid=,pgid=,command='], { encoding: 'utf8' })
+    .split('\n')
+    .map((line) => line.trim().split(/\s+/))
+    .filter(
+      ([pid, , pgid, command]) =>
+        Number(pgid) === leader && Number(pid) !== leader && command === '/bin/sh',
+    )
+    .map(([pid]) => Number(pid));
+}
+
+/** Killed by the child itself (the guards watch this process), within the 5 s ceiling. */
 async function goneAtOnce(found: number[], cause: string): Promise<void> {
   for (const pid of found) await until(() => !alive(pid), `${pid} to die after ${cause}`, 5_000);
 }
 
 const probe = { entries: [], ssh: [] };
+/** The guards watch this process, which outlives the child: only the child can kill its commands. */
+const ownCleanup = { FIXTURE_GUARD_OWNER: String(process.pid) };
 
 test('a command run by the child answers exactly as without the child, and leaves no process', async () => {
   const strayFile = path.join(directory, 'stray');
@@ -152,41 +174,50 @@ test('a command run by the child answers exactly as without the child, and leave
   assert.equal(expected[4].exitCode, 124);
   // The watchdog leaves with its command: nothing of the group remains.
   const [leader] = await pids(strayFile, 1);
-  await until(() => {
-    try {
-      process.kill(-leader, 0);
-      return false;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return true;
-      throw error;
-    }
-  }, 'the finished command group to empty');
+  await until(() => !alive(-leader), 'the finished command group to empty');
 });
 
-test('a command outlives a SIGKILLed child only until its timeout and grace', async (t) => {
+test('a command that survives TERM dies with a child SIGKILLed between its TERM and KILL', async (t) => {
   const groupSignals = watchGroupSignals(t);
-  // Watchdog after ceil((1 500 + 200 closeout + 200 grace) / 1 000) = 2 s.
-  const timeoutMs = 1_500;
-  const { env, pidFile } = fixtureEnv('hang', { FIXTURE_TIMEOUT_MS: String(timeoutMs) });
+  // The timeout sends TERM to the group after 300 ms; KILL would follow 30 s later.
+  const { env, pidFile } = fixtureEnv('resistant', {
+    FIXTURE_TIMEOUT_MS: '300',
+    FIXTURE_CLOSEOUT_MS: '30000',
+  });
   const background = host(env);
   background.start();
   const pending = background.request('fleet.probeMachine', probe, { deadlineMs: 120_000 });
-  const found = await pids(pidFile);
-  const startedAt = Date.now();
+  const [leader] = await pids(pidFile, 1);
+  await until(async () => (await readOptional(`${pidFile}.term`)) !== '', 'the timeout TERM');
+  // TERM reached the whole group: the command lived through it, and so did its guard.
+  assert.equal(alive(leader), true);
+  assert.equal(guards(leader).length, 1, 'the guard survives the group TERM');
   const child = background.status().pid;
   assert.ok(child);
   process.kill(child, 'SIGKILL');
   await assert.rejects(pending, /signal SIGKILL/);
-  // Killed before the command's own timeout: from here only its watchdog can stop it.
-  assert.ok(Date.now() - startedAt < timeoutMs, 'the child died before the timeout');
-  assert.equal(alive(found[0]), true);
-  for (const pid of found) await until(() => !alive(pid), `${pid} to die by its watchdog`, 6_000);
+  await until(() => !alive(leader), 'the command to die by its guard', 5_000);
+  groupSignals();
+});
+
+test('an untimed command and its descendant die with a SIGKILLed child', async (t) => {
+  const groupSignals = watchGroupSignals(t);
+  const { env, pidFile } = fixtureEnv('untimed');
+  const background = host(env);
+  background.start();
+  const pending = background.request('fleet.probeMachine', probe, { deadlineMs: 120_000 });
+  const found = await pids(pidFile);
+  const child = background.status().pid;
+  assert.ok(child);
+  process.kill(child, 'SIGKILL');
+  await assert.rejects(pending, /signal SIGKILL/);
+  for (const pid of found) await until(() => !alive(pid), `${pid} to die by its guard`, 5_000);
   groupSignals();
 });
 
 test('stopping the child kills the commands it is running at once', async (t) => {
   const groupSignals = watchGroupSignals(t);
-  const { env, pidFile } = fixtureEnv('hang');
+  const { env, pidFile } = fixtureEnv('hang', ownCleanup);
   const background = host(env);
   background.start();
   const pending = background.request('fleet.probeMachine', probe, { deadlineMs: 120_000 });
@@ -200,7 +231,7 @@ test('stopping the child kills the commands it is running at once', async (t) =>
 
 test('a command with no timeout is killed when the child stops', async (t) => {
   const groupSignals = watchGroupSignals(t);
-  const { env, pidFile } = fixtureEnv('untimed');
+  const { env, pidFile } = fixtureEnv('untimed', ownCleanup);
   const background = host(env);
   background.start();
   const pending = background.request('fleet.probeMachine', probe, { deadlineMs: 120_000 });
@@ -213,7 +244,7 @@ test('a command with no timeout is killed when the child stops', async (t) => {
 
 test('a child whose process exits kills its commands on the way out', async (t) => {
   const groupSignals = watchGroupSignals(t);
-  const { env, pidFile } = fixtureEnv('hang');
+  const { env, pidFile } = fixtureEnv('hang', ownCleanup);
   const background = host(env);
   background.start();
   const pending = background.request('fleet.probeMachine', probe, { deadlineMs: 120_000 });
@@ -225,7 +256,7 @@ test('a child whose process exits kills its commands on the way out', async (t) 
 });
 
 test('a child whose gateway disconnects kills its commands itself', async () => {
-  const { env, pidFile } = fixtureEnv('hang');
+  const { env, pidFile } = fixtureEnv('hang', ownCleanup);
   // No supervisor: only the child can clean up.
   const child: ChildProcess = fork(entry, [], {
     env,

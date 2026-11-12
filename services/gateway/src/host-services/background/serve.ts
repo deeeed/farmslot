@@ -39,12 +39,12 @@ function execCounters(): ExecCounters {
   return counters;
 }
 
-/** After a command's own timeout and closeout, how long its watchdog waits to kill its group. */
-const WATCHDOG_GRACE_MS = 3_000;
-
 export interface ServeOptions {
-  /** Tests shorten it; the default leaves the command's own timeout path well ahead. */
-  watchdogGraceMs?: number;
+  /**
+   * The pid each command's guard watches; this process by default. Tests point it at a process
+   * that outlives this one, to prove this process's own cleanup without the guards.
+   */
+  guardOwnerPid?: number;
 }
 
 /**
@@ -112,15 +112,15 @@ export function serveBackgroundRequests(
   // Every command this process starts runs in its own process group. However this process exits
   // (shutdown, a closed IPC channel, process.exit, an uncaught exception), the groups of commands
   // that have not exited are killed, through their handles: a command that has not emitted `exit`
-  // has not been reaped, so its pid still names its group. A command with a timeout also carries a
-  // watchdog that kills its group if this process is killed outright (SIGKILL, a native crash).
+  // has not been reaped, so its pid still names its group. Each command also carries a guard that
+  // kills its group within about a second if this process dies outright (SIGKILL, a native crash).
   const running = new Set<ChildProcess>();
   ownLocalCommands({
     started(command) {
       running.add(command);
       command.once('exit', () => running.delete(command));
     },
-    watchdogGraceMs: options.watchdogGraceMs ?? WATCHDOG_GRACE_MS,
+    pid: options.guardOwnerPid ?? process.pid,
   });
   process.on('exit', () => {
     for (const command of running) if (command.pid) signalProcessGroup(command.pid, 'SIGKILL');

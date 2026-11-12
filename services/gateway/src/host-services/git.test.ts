@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -20,6 +30,7 @@ for (const name of Object.keys(process.env)) if (name.startsWith('GIT_')) delete
 process.env.GIT_CONFIG_SYSTEM = path.join(root, 'system-gitconfig');
 
 const gitSvc = await import('./git.js');
+const { gatewayPerformance } = await import('../observability/performance.js');
 const { gitHeadProbeCommand, parseGitHeadProbe, readLocalSlotGit } =
   await import('../methods/fleet.js');
 
@@ -107,7 +118,11 @@ test('a detached HEAD reports HEAD and its commit; an unborn branch is left to g
 
   const unborn = path.join(root, 'unborn');
   git(root, 'init', '-q', '-b', 'main', unborn);
-  const empty = await open(unborn);
+  // `git rev-parse HEAD` fails on an unborn HEAD, so git is not asked to vouch for the config and
+  // every read goes to git. The readers still answer as git would for such a checkout.
+  assert.equal(await gitSvc.openGitCheckout(unborn), undefined);
+  const gitDir = path.join(unborn, '.git');
+  const empty = { worktree: unborn, gitDir, commonDir: gitDir };
   assert.deepEqual(await gitSvc.readGitHead(empty), {
     kind: 'branch',
     ref: 'refs/heads/main',
@@ -198,7 +213,10 @@ test('missing, unreadable and non-root checkouts are left to git', async () => {
   }
 
   const broken = await repo();
+  await open(broken);
   await writeFile(path.join(broken, '.git', 'refs', 'heads', 'main'), 'not a sha\n');
+  // git's verdict was about the config, which did not change: the checkout still opens, and the
+  // reader leaves the broken ref to git.
   assert.equal(await gitSvc.readHeadProbe(await open(broken)), undefined);
 });
 
@@ -429,15 +447,20 @@ function configEntry(name: string, value: string | null): string {
   return `${header}\n\t${name.slice(dot + 1)}${value === null ? '' : ` = ${value}`}\n`;
 }
 
-test('a config value git refuses leaves every read to git', async () => {
+test('each config value is judged by the installed git: refused leaves every read to git', async () => {
   const dir = await repo();
   const localFile = path.join(dir, '.git', 'config');
   const globalFile = path.join(home, '.gitconfig');
   const local = await readFile(localFile, 'utf8');
   assert.ok(await gitSvc.openGitCheckout(dir));
-  // Each makes git exit 128 at startup (temp/git-config-probe.zsh, git 2.54). The repository
+  // Each makes git 2.54 exit 128 at startup (temp/git-config-probe.zsh, temp/oracle-probe.zsh).
+  // Other git versions accept some of them (CI's accepts a bare core.logallrefupdates), so each
+  // row asks the installed git and the service must give the same verdict. The repository
   // format variables only count in the repository's own config.
   const refused: Array<[scope: 'global' | 'local' | 'both', name: string, value: string | null]> = [
+    // Review round 3: a color subsection, and a home directory of a user that does not exist.
+    ['both', 'color.advice.hint', 'garbage'],
+    ['both', 'core.excludesfile', '~nonexistent_review_user/file'],
     ['both', 'core.bare', 'garbage'],
     ['both', 'core.bare', '99999999999'],
     ['both', 'core.compression', '10'],
@@ -469,15 +492,24 @@ test('a config value git refuses leaves every read to git', async () => {
     ['both', 'sparse.expectfilesoutsideofpatterns', 'garbage'],
     ['both', 'fetch.negotiationalgorithm', 'garbage'],
     ['both', 'gc.writecommitgraph', 'garbage'],
+    ['both', 'core.attributesfile', '~nonexistent_review_user/file'],
+    ['both', 'core.abbrev', '0'],
+    ['both', 'core.loosecompression', '1k'],
+    ['both', 'user.email', null],
   ];
+  let refusals = 0;
   try {
     for (const [scope, name, value] of refused)
       for (const where of scope === 'both' ? (['global', 'local'] as const) : [scope]) {
         const label = `${where} ${name}=${value ?? '(bare)'}`;
         if (where === 'global') await replaceConfig(globalFile, configEntry(name, value));
         else await replaceConfig(localFile, local + configEntry(name, value));
-        assert.equal(sh(`git -C '${dir}' rev-parse HEAD`).exitCode, 128, `git: ${label}`);
-        assert.equal(await gitSvc.openGitCheckout(dir), undefined, `service: ${label}`);
+        const refusedByGit = sh(`git -C '${dir}' rev-parse HEAD`).exitCode !== 0;
+        const opened = await gitSvc.openGitCheckout(dir);
+        if (refusedByGit) {
+          refusals++;
+          assert.equal(opened, undefined, `service: ${label}`);
+        } else assert.ok(opened, `service follows a git that accepts: ${label}`);
         if (where === 'global') await rm(globalFile);
         else await replaceConfig(localFile, local);
       }
@@ -485,6 +517,8 @@ test('a config value git refuses leaves every read to git', async () => {
     await rm(globalFile, { force: true });
     await replaceConfig(localFile, local);
   }
+  // The table must exercise the fallback on any git: a non-boolean core.bare is refused by all.
+  assert.ok(refusals >= 4, `the installed git refused only ${refusals} rows`);
 });
 
 test('a usual config is read from its files, with the answers git gives', async () => {
@@ -525,4 +559,53 @@ test('a usual config is read from its files, with the answers git gives', async 
   } finally {
     await rm(globalFile, { force: true });
   }
+});
+
+/** Git processes this test process started through the service (git.run, outside a request). */
+function gitRuns(): number {
+  return gatewayPerformance
+    .snapshot()
+    .counters.filter(
+      ({ name, labels }) =>
+        name === 'farmslot_exec_calls_total' &&
+        labels.method === 'host:git.run' &&
+        labels.kind === 'git',
+    )
+    .reduce((total, { value }) => total + value, 0);
+}
+
+test('git is asked once per configuration, again only when a config file changes', async () => {
+  const dir = await repo();
+  assert.ok(await gitSvc.openGitCheckout(dir));
+  const asked = gitRuns();
+  assert.ok(await gitSvc.openGitCheckout(dir));
+  assert.ok(await gitSvc.openGitCheckout(dir));
+  assert.equal(gitRuns(), asked, 'a warm open starts no git process');
+  // A new mtime alone is a new identity.
+  const localFile = path.join(dir, '.git', 'config');
+  const later = new Date(Date.now() + 60_000);
+  await utimes(localFile, later, later);
+  assert.ok(await gitSvc.openGitCheckout(dir));
+  assert.equal(gitRuns(), asked + 1, 'a touched local config asks git again');
+  git(dir, 'config', 'farmslot.blindRun', 'trial-2');
+  assert.ok(await gitSvc.openGitCheckout(dir));
+  assert.ok(await gitSvc.openGitCheckout(dir));
+  assert.equal(gitRuns(), asked + 2, 'changed content asks git once more');
+  // A global config that appears is in scope too.
+  const globalFile = path.join(home, '.gitconfig');
+  await replaceConfig(globalFile, configEntry('user.name', 'Proof'));
+  try {
+    assert.ok(await gitSvc.openGitCheckout(dir));
+    assert.equal(gitRuns(), asked + 3, 'a new global config asks git again');
+  } finally {
+    await rm(globalFile, { force: true });
+  }
+});
+
+test('concurrent opens of one checkout share a single question to git', async () => {
+  const dir = await repo();
+  const before = gitRuns();
+  const opened = await Promise.all(Array.from({ length: 20 }, () => gitSvc.openGitCheckout(dir)));
+  assert.ok(opened.every(Boolean));
+  assert.equal(gitRuns(), before + 1);
 });

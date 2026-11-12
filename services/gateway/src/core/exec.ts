@@ -6,12 +6,7 @@ import { accessSync, constants, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import {
-  createNodeExecCloseout,
-  type ExecResult,
-  NODE_EXEC_CLOSEOUT_MS,
-  observeNodeExecAbort,
-} from '@farmslot/protocol';
+import { createNodeExecCloseout, type ExecResult, observeNodeExecAbort } from '@farmslot/protocol';
 import { currentProjectSources, sourceExecutionEnvironment } from '@farmslot/slot-config';
 
 import { currentFarmPaths, farmPathsForSlot } from '../fleet/farm-paths.js';
@@ -114,12 +109,12 @@ export interface ExecOptions {
  * A process that owns every local command it starts: the gateway-background process, whose
  * commands must not outlive it. Each command gets its own process group and is handed to
  * `started`, so the owner can kill the group of any command that has not exited when it exits.
- * A command with a timeout also carries a watchdog (WATCHDOG_PRELUDE) for an owner killed outright.
+ * Each also carries a guard (GUARD_PRELUDE) that kills its group if the owner dies outright.
  */
 export interface LocalCommandOwner {
   started(command: ChildProcess): void;
-  /** How long after a command's timeout and closeout its watchdog kills the group. */
-  watchdogGraceMs: number;
+  /** The owner's pid, which each command's guard watches. */
+  pid: number;
 }
 let localCommandOwner: LocalCommandOwner | undefined;
 
@@ -128,15 +123,20 @@ export function ownLocalCommands(owner: LocalCommandOwner | undefined): void {
 }
 
 /**
- * Run as `sh -c PRELUDE sh <seconds> <executable> <argv...>`. A watchdog subshell joins the
- * command's process group, then the shell execs the command, which keeps the shell's pid: the
- * exit status, signal, output and group are the command's own. Once a second the watchdog checks
- * its leader (`$$` in a subshell is the parent shell's pid, now the command's; a group's id is not
- * reused while the watchdog is in it). It exits when the leader is gone, or SIGKILLs its own group
- * (`kill 0`) after <seconds>. Its stdio is /dev/null, so it never holds the command's pipes.
+ * Run as `sh -c PRELUDE sh <owner pid> <executable> <argv...>` (POSIX sh: dash on Linux). A guard
+ * subshell joins the command's process group, then the shell execs the command, which keeps the
+ * shell's pid: the exit status, signal, output and group are the command's own. Once a second the
+ * guard exits if the command (`$$`, the parent shell's pid, now the command's) is gone, and
+ * SIGKILLs its own group (`kill 0`) if the owner is gone, however the owner died.
+ * - It ignores TERM (in the subshell only, so the command's own dispositions are untouched): the
+ *   owner's timeout sends TERM to the group, and the guard must outlive that until KILL.
+ * - It only ever signals its own group, whose id is not reused while the guard is in it.
+ * - A reused owner pid can only look alive and delay the kill (a leak in a rare case); a pid that
+ *   now belongs to another user fails `kill -0`, which is right, as the owner is then gone.
+ * - Its stdio is /dev/null, so it never holds the command's pipes.
  */
-const WATCHDOG_PRELUDE =
-  'w=$1; shift; (n=0; while kill -0 "$$" 2>/dev/null; do if [ "$n" -ge "$w" ]; then kill -KILL 0; fi; sleep 1; n=$((n+1)); done) </dev/null >/dev/null 2>&1 & exec "$@"';
+const GUARD_PRELUDE =
+  'o=$1; shift; (trap \'\' TERM; while kill -0 "$$" 2>/dev/null; do kill -0 "$o" 2>/dev/null || kill -KILL 0; sleep 1; done) </dev/null >/dev/null 2>&1 & exec "$@"';
 
 /**
  * Whether the prelude's `exec` runs what spawn would: an existing cwd, and an executable spawn
@@ -222,28 +222,23 @@ function spawnLocalProcess(
       const owner = localCommandOwner;
       const useProcessGroup = owner !== undefined || opts?.signal != null || opts?.timeout != null;
       const env = localCommandEnvironment();
-      const watchdogSeconds =
-        owner && opts?.timeout != null && preludeRunsExactly(executable, opts.cwd, env.PATH ?? '')
-          ? Math.ceil(
-              (opts.timeout +
-                (opts.closeoutTimeoutMs ?? NODE_EXEC_CLOSEOUT_MS) +
-                owner.watchdogGraceMs) /
-                1000,
-            )
-          : undefined;
-      const proc =
-        watchdogSeconds === undefined
-          ? spawn(executable, argv, {
-              cwd: opts?.cwd,
-              env,
-              stdio: ['ignore', 'pipe', 'pipe'],
-              detached: useProcessGroup,
-            })
-          : spawn(
-              '/bin/sh',
-              ['-c', WATCHDOG_PRELUDE, 'sh', String(watchdogSeconds), executable, ...argv],
-              { cwd: opts?.cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true },
-            );
+      // A command that would fail to start runs unwrapped: it fails as spawn reports it, and
+      // leaves no process to guard.
+      const guarded =
+        owner !== undefined && preludeRunsExactly(executable, opts?.cwd, env.PATH ?? '');
+      const proc = guarded
+        ? spawn('/bin/sh', ['-c', GUARD_PRELUDE, 'sh', String(owner.pid), executable, ...argv], {
+            cwd: opts?.cwd,
+            env,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            detached: true,
+          })
+        : spawn(executable, argv, {
+            cwd: opts?.cwd,
+            env,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            detached: useProcessGroup,
+          });
       if (proc.pid !== undefined) owner?.started(proc);
 
       let stdout = '';
