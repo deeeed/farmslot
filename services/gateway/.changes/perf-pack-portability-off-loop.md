@@ -1,0 +1,1 @@
+- Check a project pack's portability without blocking the gateway: its Git ownership scan no longer stalls requests while a node-support bundle is collected.
