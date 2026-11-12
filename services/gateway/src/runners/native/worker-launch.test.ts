@@ -266,3 +266,25 @@ test('a bound worker launch resolves RECIPE_LIBRARY_PATH to its pinned libraries
   });
   assert.equal(launch.environment.set.RECIPE_LIBRARY_PATH, `perps=${pin}:/plain`);
 });
+
+test('native pi workers carry pool reasoning limits after project defaults and unsets', async () => {
+  const name = 'FARMSLOT_PI_LITELLM_MODEL_LIMITS';
+  const limits = JSON.stringify({ 'glm-5p3-flash': { reasoning: true } });
+  const { launch } = await prepareNativeWorkerLaunch({
+    vars: makeVars({ machineEnv: { [name]: limits } }),
+    project: { command_env: { unset: [name], set: { [name]: '{}' } } },
+    runner: 'pi',
+    model: 'litellm/glm-5p3-flash',
+    effort: 'medium',
+    role: 'primary',
+    safetyTier: 'sandboxed',
+    taskDir: 'tasks/proof',
+    leaseId: 'proof-lease',
+    sessionId: 'proof-session',
+    prepareAccount: false,
+  });
+  assert.equal(launch.effort, 'medium');
+  assert.equal(launch.environment.set[name], limits);
+  assert.ok(!launch.environment.unset.includes(name));
+  assert.equal(nativeWorkerEnvironment(launch)[name], limits);
+});

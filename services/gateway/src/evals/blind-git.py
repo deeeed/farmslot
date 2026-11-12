@@ -12,10 +12,14 @@ import sys
 from urllib.parse import urlsplit
 
 os.umask(0o077)
+# buildBlindGitCommand inherits maintenance suppression from farm-git.ts.
+# Keep submodule traversal explicit and avoid optional index writes while reading
+# retained stores; apply these controls to every Python Git subprocess.
+GIT = ['git', '-c', 'submodule.recurse=false', '--no-optional-locks']
 
 
 def git(repo, *args, git_dir=None, check=True, input=None):
-    command = ['git', '-C', str(repo)]
+    command = GIT + ['-C', str(repo)]
     if git_dir:
         command += ['--git-dir=' + str(git_dir), '--work-tree=' + str(repo)]
     result = subprocess.run(command + list(args), input=input, capture_output=True)
@@ -30,9 +34,13 @@ def save(path, value):
     temporary.replace(path)
 
 
-def pack_into(repo, directory, arguments, source_file):
-    command = ['git', '-C', str(repo), 'pack-objects', '--quiet', '--stdout'] + arguments
-    destination = ['git', '-C', str(repo), '--git-dir=' + str(directory), 'index-pack', '--stdin']
+def pack_into(repo, directory, arguments, source_file, git_dir=None):
+    command = GIT + ['-C', str(repo)]
+    if git_dir:
+        command += ['--git-dir=' + str(git_dir), '--work-tree=' + str(repo)]
+    command += ['pack-objects', '--quiet', '--stdout'] + arguments
+    destination = GIT + ['-C', str(repo), '--git-dir=' + str(directory),
+                         '--work-tree=' + str(repo), 'index-pack', '--stdin']
     with source_file.open('rb') as source:
         with subprocess.Popen(command, stdin=source, stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE) as pack:
@@ -41,7 +49,7 @@ def pack_into(repo, directory, arguments, source_file):
             error = pack.stderr.read()
             code = pack.wait()
             if code or indexed.returncode:
-                raise RuntimeError((indexed.stderr or error).decode(errors='replace').strip()
+                raise RuntimeError((error or indexed.stderr).decode(errors='replace').strip()
                                    or 'Blind trial object transfer failed')
 
 
@@ -521,6 +529,179 @@ def copy_local_commit_settings(repo, source, destination):
         git(repo, 'config', '--local', key, result.stdout.decode().rstrip('\n'), git_dir=destination)
 
 
+def gitlinks(repo, commit, git_dir=None):
+    links = {}
+    for entry in git(repo, 'ls-tree', '-rz', commit, git_dir=git_dir).stdout.split(b'\0'):
+        if entry.startswith(b'160000 '):
+            metadata, path = entry.split(b'\t', 1)
+            links[os.fsdecode(path)] = metadata.split()[2].decode()
+    return links
+
+
+def require_clean_submodules(repo, root):
+    for path in gitlinks(repo, 'HEAD'):
+        worktree = repo / path
+        if not (worktree / '.git').exists():
+            if worktree.is_dir() and any(worktree.iterdir()):
+                raise RuntimeError('Blind trial refuses dirty submodule ' + str(worktree.relative_to(root)))
+            continue  # An uninitialized, empty worktree has no local edits.
+        require_clean_submodules(worktree, root)
+        if git(worktree, 'status', '--porcelain', '--untracked-files=all',
+               '--ignore-submodules=none').stdout.strip():
+            raise RuntimeError('Blind trial refuses dirty submodule ' + str(worktree.relative_to(root)))
+
+
+def prepare_submodules(repo, source, destination, snapshots, state, capsule):
+    context = repo if repo.is_dir() else source
+    links = [gitlinks(context, commit, git_dir=source) for commit in snapshots]
+    if set(gitlinks(context, 'HEAD', git_dir=source)) - set(links[0]):
+        raise RuntimeError('Blind trial cannot retain reference-only submodule worktrees')
+    if not any(links):
+        return
+    if any(set(item) != set(links[0]) for item in links):
+        raise RuntimeError('Blind trial requires matching submodule paths in admitted snapshots')
+    # Read names from the admitted tree, not the reference checkout's .gitmodules.
+    config = git(context, 'config', '--null', '--blob', snapshots[0] + ':.gitmodules',
+                 '--get-regexp', r'^submodule\..*\.path$', git_dir=source).stdout
+    names = {os.fsdecode(value): key.decode()[10:-5]
+             for key, value in (entry.split(b'\n', 1) for entry in config.split(b'\0') if entry)}
+    for path, commit in links[0].items():
+        worktree = (repo / path).resolve()
+        name = names[path]
+        target = destination / 'modules' / name
+        if not inside(worktree, repo.resolve()) or worktree == repo.resolve() or not inside(
+                target.resolve(), (destination / 'modules').resolve()):
+            raise RuntimeError('Blind trial submodule path escapes its repository')
+        entry = worktree / '.git'
+        if entry.is_symlink():
+            raise RuntimeError('Blind trial submodule Git entry must not be a symlink')
+        module_source = (Path(git(worktree, 'rev-parse', '--absolute-git-dir').stdout.decode().strip())
+                         if entry.exists() else source / 'modules' / name)
+        if not entry.is_dir() and not inside(module_source.resolve(), Path(state['originalDirectory']).resolve()):
+            raise RuntimeError('Blind trial submodule Git directory is outside the retained metadata')
+        # Never clone an unprepared module: that would import reference history.
+        module_snapshots = list(dict.fromkeys(item[path] for item in links))
+        for sha in module_snapshots:
+            if git(context, 'cat-file', '-e', sha + '^{commit}',
+                   git_dir=module_source, check=False).returncode:
+                raise RuntimeError('Blind trial submodule %s is missing admitted commit %s '
+                                   'from its local cache; populate that module cache before isolation'
+                                   % (worktree.relative_to(Path(state['repo']).resolve()), sha))
+        git(context, 'init', '-q', '--bare', '--template=',
+            '--object-format=' + ('sha256' if len(commit) == 64 else 'sha1'), str(target))
+        objects = capsule / 'module.objects'
+        objects.write_bytes(git(context, 'rev-list', '--objects', '--no-object-names', '--no-walk',
+                                *module_snapshots, git_dir=module_source).stdout)
+        # pack-objects needs the source module's object store, not the superproject's.
+        pack_into(context, target, [], objects, git_dir=module_source)
+        objects.unlink()
+        for key, value in [('core.bare', 'false'), ('core.worktree', str(worktree)),
+                           ('protocol.allow', 'never')]:
+            git(context, 'config', key, value, git_dir=target)
+        copy_local_commit_settings(context, module_source, target)
+        (target / 'shallow').write_text('\n'.join(sorted(module_snapshots)) + '\n')
+        (target / 'HEAD').write_text(commit + '\n')
+        if (module_source / 'index').exists():
+            shutil.copyfile(module_source / 'index', target / 'index')
+        state.setdefault('submodules', []).append({
+            'worktree': str(worktree), 'originalDirectory': str(module_source), 'directory': str(target.relative_to(capsule / 'prepared.git')),
+            'commit': commit, 'gitfile': entry.read_bytes().hex() if entry.is_file() else None,
+            'embedded': str(capsule / ('module-entry-' + str(len(state['submodules']))))
+                        if entry.is_dir() else None})
+        prepare_submodules(worktree, module_source, target, module_snapshots, state, capsule)
+
+
+def connect_submodules(repo, state):
+    for module in state.get('submodules', []):
+        worktree = Path(module['worktree'])
+        worktree.mkdir(parents=True, exist_ok=True)
+        entry = worktree / '.git'
+        if module['embedded']:
+            entry.rename(module['embedded'])
+        directory = repo / '.git' / module['directory']
+        entry.write_text('gitdir: ' + os.path.relpath(directory, worktree) + '\n')
+        # Use only the copied index to remove reference-only tracked files.
+        git(worktree, 'read-tree', '--reset', '-u', module['commit'])
+
+
+def preserve_submodule_candidates(repo, capsule, state, candidate):
+    # Git does not traverse gitlinks when packing the superproject. Walk every
+    # retained candidate revision explicitly, including earlier recorded gitlinks.
+    histories = {str(repo.resolve()): (candidate, [])}
+    originals = {str(repo.resolve()): (Path(state['originalDirectory']), Path('.'))}
+    trial = hashlib.sha256((state['runId'] + ':' + str(state['slotEpoch'])).encode()).hexdigest()
+    for module in state.get('submodules', []):
+        worktree = Path(module['worktree'])
+        parent = max((Path(p) for p in histories if inside(worktree, Path(p))
+                      and worktree != Path(p)), key=lambda p: len(p.parts))
+        parent_source, parent_roots = histories[str(parent)]
+        roots = set()
+        for revision in git(repo, 'rev-list', '--all', 'HEAD', *parent_roots,
+                            git_dir=parent_source).stdout.decode().splitlines():
+            sha = gitlinks(repo, revision, git_dir=parent_source).get(str(worktree.relative_to(parent)))
+            if sha:
+                roots.add(sha)
+        source = candidate / module['directory']
+        roots.update(git(repo, 'for-each-ref', '--format=%(objectname)',
+                         git_dir=source).stdout.decode().splitlines())
+        roots.add(git(repo, 'rev-parse', 'HEAD', git_dir=source).stdout.decode().strip())
+        histories[str(worktree)] = (source, sorted(roots))
+        # Older journals omit originalDirectory, and deinitialized modules also
+        # have no gitfile. Their recorded directory uses module names, not paths
+        # in the worktree, and is relative to the retained root Git directory.
+        original_path = module.get('originalDirectory')
+        if original_path is not None:
+            destination = Path(original_path)
+        elif module['embedded']:
+            destination = worktree / '.git'
+        elif module['gitfile'] is not None:
+            destination = (worktree / bytes.fromhex(module['gitfile']).decode().strip()[8:]).resolve()
+        else:
+            parent_directory, parent_relative = originals[str(parent)]
+            destination = parent_directory / Path(module['directory']).relative_to(parent_relative)
+        originals[str(worktree)] = (destination, Path(module['directory']))
+        admitted = set((source / 'shallow').read_text().split())
+        exported = sorted(roots - admitted)
+        if not exported:
+            continue
+        # Resolve original stores across both root-entry renames and embedded
+        # module-entry moves.
+        if module['embedded'] and Path(module['embedded']).exists():
+            destination = Path(module['embedded'])
+        elif state['originalIsDirectory'] and (capsule / 'original.entry').exists():
+            original_root = Path(state['originalDirectory'])
+            if inside(destination, original_root):
+                destination = capsule / 'original.entry' / destination.relative_to(original_root)
+        if not (destination / 'objects').is_dir():
+            raise RuntimeError('Cannot locate original submodule store for %s; '
+                               'restore the cached store at %s and retry restoration. '
+                               'Candidate store retained at %s'
+                               % (worktree.relative_to(repo.resolve()), destination, source))
+        objects = capsule / 'module-candidate.objects'
+        objects.write_text('\n'.join(exported) + '\n')
+        pack_into(repo, destination, ['--revs'], objects, git_dir=source)
+        for sha in exported:
+            # Suppress even an operator's logAllRefUpdates=always preference.
+            # Only object packs and these refs may be added to original stores.
+            git(repo, '-c', 'core.logAllRefUpdates=false', 'update-ref',
+                'refs/farmslot/candidate/' + trial + '/' + sha, sha, git_dir=destination)
+        objects.unlink()
+
+
+def restore_submodule_entries(state):
+    for module in reversed(state.get('submodules', [])):
+        entry = Path(module['worktree']) / '.git'
+        if module['embedded']:
+            original = Path(module['embedded'])
+            if original.exists():
+                entry.unlink(missing_ok=True)
+                original.rename(entry)
+        elif module['gitfile'] is not None:
+            entry.write_bytes(bytes.fromhex(module['gitfile']))
+        else:
+            entry.unlink(missing_ok=True)
+
+
 def isolate(spec):
     repo, capsule = Path(spec['repo']), Path(spec['capsule'])
     journal = capsule / 'state.json'
@@ -537,7 +718,9 @@ def isolate(spec):
         raise RuntimeError('Blind trial requires a full base commit')
     git(repo, 'check-ref-format', '--branch', spec['branch'])
     git(repo, 'cat-file', '-e', spec['baseSha'] + '^{commit}')
-    if git(repo, 'status', '--porcelain').stdout.strip():
+    require_clean_submodules(repo, repo)
+    if git(repo, 'status', '--porcelain', '--untracked-files=all',
+           '--ignore-submodules=none').stdout.strip():
         raise RuntimeError('Blind trial requires a clean checkout before isolation')
     if git(repo, 'show-ref', '--verify', '--quiet', 'refs/heads/' + spec['branch'], check=False).returncode == 0:
         raise RuntimeError('Blind trial branch already exists')
@@ -568,12 +751,17 @@ def isolate(spec):
     git(repo, 'update-ref', 'refs/heads/' + spec['branch'], spec['baseSha'], git_dir=prepared)
     git(repo, 'symbolic-ref', 'HEAD', 'refs/heads/' + spec['branch'], git_dir=prepared)
     git(repo, 'read-tree', spec['baseSha'], git_dir=prepared)
+    prepare_submodules(repo, original_directory, prepared,
+                       [spec['baseSha']] + ([spec['proof']['baseSha']] if spec.get('proof') else []),
+                       state, capsule)
+    save(journal, state)
     try:
         (repo / '.git').rename(original)
         source = original if state['originalIsDirectory'] else original_directory
         # The original index knows which later tracked files must disappear.
         git(repo, 'read-tree', '--reset', '-u', spec['baseSha'], git_dir=source)
         prepared.rename(repo / '.git')
+        connect_submodules(repo, state)
         result = verify(spec, worker_boundary=False)
         state['phase'] = 'isolated'
         save(journal, state)
@@ -583,6 +771,7 @@ def isolate(spec):
             if (repo / '.git').exists():
                 (repo / '.git').rename(capsule / 'failed.git')
             original.rename(repo / '.git')
+            restore_submodule_entries(state)
             git(repo, 'reset', '--hard', state['originalHead'])
         state['phase'] = 'restored'
         save(journal, state)
@@ -612,6 +801,7 @@ def restore(spec):
             git(repo, 'reset', '--hard', state['originalHead'])
         elif git(repo, 'config', '--get', 'farmslot.blindRun', check=False).stdout.strip():
             raise RuntimeError('Blind trial interrupted preparation lost original Git metadata')
+        restore_submodule_entries(state)
         state['phase'] = 'restored'
         save(journal, state)
         return {'status': 'restored', 'runId': spec['runId']}
@@ -638,6 +828,11 @@ def restore(spec):
         state['candidateHead'] = head
         save(journal, state)
     head = state['candidateHead']
+    if not state.get('submodulesExported'):
+        preserve_submodule_candidates(repo, capsule, state,
+                                      retained if retained.exists() else repo / '.git')
+        state['submodulesExported'] = True
+        save(journal, state)
     if original.exists():
         if (repo / '.git').exists():
             if git(repo, 'config', '--get', 'farmslot.blindRun').stdout.decode().strip() != spec['runId']:
@@ -648,6 +843,7 @@ def restore(spec):
     if git(repo, 'rev-parse', 'HEAD').stdout.decode().strip() != head:
         raise RuntimeError('Restored candidate branch does not match its retained head')
     directory = Path(git(repo, 'rev-parse', '--absolute-git-dir').stdout.decode().strip())
+    restore_submodule_entries(state)
     if retained.exists():
         shutil.copyfile(retained / 'index', directory / 'index')
         shutil.rmtree(retained)
