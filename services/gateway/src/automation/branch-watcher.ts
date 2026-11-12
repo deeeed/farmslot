@@ -46,6 +46,8 @@ interface BranchWatch {
   // after a reconnect). Mirrors services/gateway/src/tasks/watcher.ts.
   nodeWatchRequestId?: string;
   nodeWatchArmed?: boolean;
+  /** What entity-sync clients last heard a fleet read of this source is told: '' when admitted. */
+  announcedOutcome: string;
 }
 
 const activeWatches = new Map<string, BranchWatch>();
@@ -117,6 +119,7 @@ export async function watchBranch(slotId: string): Promise<void> {
     host: vars.host,
     sshTarget: vars.sshTarget,
     lastBranch: slot.branch || undefined,
+    announcedOutcome: '',
   };
 
   // Prefer the machine's node — local and remote alike (ADR-046). Fallbacks when absent:
@@ -200,6 +203,8 @@ export async function unwatchBranch(slotId: string): Promise<void> {
     }
   }
   activeWatches.delete(slotId);
+  // A refusal clients heard of leaves with its source.
+  if (bw.announcedOutcome) resourceRevisions.advanceMembership(fleetKey);
   console.log(`[branch-watcher] stopped watching ${slotId}`);
 }
 
@@ -336,9 +341,41 @@ export async function stopAllBranchWatches(): Promise<void> {
   }
 }
 
+const fleetKey = { family: 'slots', scope: 'farm' } as const;
+
 function invalidateBranchObservation(watch: BranchWatch): void {
-  resourceRevisions.advance({ family: 'slots', scope: 'farm' });
+  resourceRevisions.advance(fleetKey);
   resourceRevisions.advance({ family: 'slot', slotId: watch.slotId });
+  // Whoever invalidated may start a read in this same turn: judge the outcome after it.
+  queueMicrotask(() => announceSettledOutcome(watch));
+}
+
+/** What a fleet read is told about this source once it has settled; undefined while it updates. */
+function settledOutcome(watch: BranchWatch): string | undefined {
+  if (watch.reading || debounceTimers.has(watch.slotId)) return undefined;
+  if (watch.observationError) return watch.observationError;
+  if (!watch.nodeWatchRequestId) return '';
+  try {
+    assertFileObservationsAdmitted([watch.nodeWatchRequestId]);
+    return '';
+  } catch (error) {
+    // The refusal a read would get is the outcome recorded here; anything else is a fault.
+    if (error instanceof GatewayMethodError) return error.message;
+    throw error;
+  }
+}
+
+/**
+ * A client on entity sync reads nothing for an unchanged slot (ADR-071 Amendment 4). When this
+ * source settles refused or admitted again, the fleet's marker moves, so that client's versions
+ * read meets the admission a full read meets. An update in progress moves no marker.
+ */
+function announceSettledOutcome(watch: BranchWatch): void {
+  if (activeWatches.get(watch.slotId) !== watch) return;
+  const outcome = settledOutcome(watch);
+  if (outcome === undefined || outcome === watch.announcedOutcome) return;
+  watch.announcedOutcome = outcome;
+  resourceRevisions.advanceMembership(fleetKey);
 }
 
 /** Admit only fleet/slot projections with armed, healthy branch sources. */
