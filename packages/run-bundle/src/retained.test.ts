@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import fs from 'node:fs';
-import {
+import fsp, {
   mkdir,
   mkdtemp,
   readdir,
@@ -17,6 +16,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 
 import lockfile, { type LockOptions } from 'proper-lockfile';
 
@@ -1646,11 +1646,11 @@ test('housekeeping parses a settled run record once, and again only after it cha
   f.run.engineState = { generation: 1 };
   const first = await capture('generation-1:package');
 
-  const readFileSync = fs.readFileSync;
+  const originalReadFile = fsp.readFile;
   let reads = 0;
-  const mocked = t.mock.method(fs, 'readFileSync', (...args: Parameters<typeof readFileSync>) => {
+  const mocked = t.mock.method(fsp, 'readFile', (...args: Parameters<typeof originalReadFile>) => {
     if (String(args[0]) === recordPath) reads += 1;
-    return readFileSync(...args);
+    return originalReadFile(...args);
   });
   syncBuiltinESMExports();
   t.after(() => {
@@ -1681,11 +1681,37 @@ test('housekeeping parses a settled run record once, and again only after it cha
 
   // A changed record is parsed again and its references count at once.
   f.run.engineState = { generation: 2 };
-  await capture('generation-2:package');
+  const newest = await capture('generation-2:package');
   clock = settle();
   const superseded = [legacy.ref.bundleDigest, first.ref.bundleDigest].sort();
   assert.deepEqual(await pass(), { reads: 1, selected: superseded });
   assert.deepEqual(await pass(), { reads: 0, selected: superseded });
+  clock.mock.restore();
+
+  appendDecisionHistoryFile(decisionHistoryFile(recordPath), [
+    {
+      id: 'retired',
+      type: 'engine_human_gate',
+      title: 'Audit',
+      description: '',
+      actions: [],
+      createdAt: f.run.createdAt,
+    },
+  ]);
+  assert.equal((await pass()).reads, 1, 'a new journal invalidates the entry');
+  assert.equal((await pass()).reads, 1, 'a racy journal is never trusted');
+  clock = settle();
+  assert.equal((await pass()).reads, 1);
+  assert.equal((await pass()).reads, 0);
+  await rm(recordPath);
+  const removed = await pass();
+  assert.equal(removed.reads, 0, 'a removed record is not read');
+  assert(
+    removed.selected.includes(newest.ref.bundleDigest),
+    'its former bundle is no longer referenced',
+  );
+  await writeFile(recordPath, JSON.stringify(f.run));
+  assert.equal((await pass()).reads, 1, 'a recreated record is read');
   clock.mock.restore();
 });
 
@@ -1731,4 +1757,87 @@ test('expiry after media admission removes the copied payload and its charged re
   const retained = await readRetainedRunBundle(f.store, f.refs[0]!, f.run.id);
   await assert.rejects(retained.resolveEntry('artifacts/capture.mp4'), { code: 'ENOENT' });
   assert.equal(await withRunBundleStoreLock(f.store, async () => 'available'), 'available');
+});
+
+test('housekeeping yields during gated run reads and preserves bundle selection and pins', async (t) => {
+  const f = await fixture(t);
+  const record = path.join(f.store.runsDir, `${f.run.id}.json`);
+  const capture = (key: string) =>
+    materializeRunBundle({
+      ...f.request,
+      captureKey: key,
+      manifestDigest: key,
+      commit: async (ref) => {
+        f.run.artifactBundle = ref;
+        await writeFile(record, JSON.stringify(f.run));
+      },
+    });
+  const old = await capture('inventory-old');
+  const current = await capture('inventory-current');
+  for (const id of ['inventory-second', 'inventory-third']) {
+    await writeFile(
+      path.join(f.store.runsDir, `${id}.json`),
+      JSON.stringify({ ...f.run, id, artifactBundle: undefined }),
+    );
+  }
+  const expected = await runBundleHousekeepingPaths(f.store);
+  assert.deepEqual(
+    expected.filter((row) => row.store === 'run-bundles').map((row) => path.basename(row.path)),
+    [old.ref.bundleDigest],
+  );
+  await writeFile(record, JSON.stringify(f.run));
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let notify!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    notify = resolve;
+  });
+  const original = fsp.readFile;
+  let beforeRead = async () => {
+    notify();
+    await gate;
+  };
+  let gated = false;
+  const mocked = t.mock.method(fsp, 'readFile', async (...args: Parameters<typeof original>) => {
+    if (String(args[0]) === record && !gated) {
+      gated = true;
+      await beforeRead();
+    }
+    return original(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    mocked.mock.restore();
+    syncBuiltinESMExports();
+  });
+  let finished = false;
+  const scan = withRunBundleStoreLock(f.store, () => runBundleHousekeepingPaths(f.store));
+  const completed = scan.then((result) => {
+    finished = true;
+    return { kind: 'complete', result };
+  });
+  try {
+    const first = await Promise.race([entered.then(() => ({ kind: 'read' })), completed]);
+    assert.equal(first.kind, 'read', 'the inventory must await asynchronous record reads');
+    await setImmediate();
+    assert.equal(finished, false, 'other loop work runs while the record read is gated');
+  } finally {
+    release();
+    await scan;
+  }
+  assert.deepEqual(await scan, expected, 'entries and retained bundle pins are unchanged');
+  await writeFile(record, JSON.stringify(f.run));
+  beforeRead = () => rm(record);
+  gated = false;
+  const removed = await runBundleHousekeepingPaths(f.store);
+  assert.deepEqual(
+    removed
+      .filter((row) => row.store === 'run-bundles')
+      .map((row) => path.basename(row.path))
+      .sort(),
+    [old.ref.bundleDigest, current.ref.bundleDigest].sort(),
+    'a record moved after its stamp cannot leave a stale inventory entry',
+  );
 });

@@ -1,14 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomUUID } from 'node:crypto';
-import {
-  constants,
-  createWriteStream,
-  existsSync,
-  readdirSync,
-  readFileSync,
-  type Stats,
-  statSync,
-} from 'node:fs';
+import { constants, createWriteStream, existsSync, readFileSync, type Stats } from 'node:fs';
 import {
   chmod,
   copyFile,
@@ -63,7 +55,7 @@ import {
 import {
   captureDecisionHistoryPrefix,
   decisionHistoryFile,
-  readDecisionHistoryFile,
+  readDecisionHistoryFileAsync,
 } from './decision-history.js';
 import { sha256Text } from './hashing.js';
 import { parseManifest } from './import.js';
@@ -1866,9 +1858,14 @@ const runInventoryCache = new Map<
 >();
 
 /** A file's stat stamp, and whether it changed too recently for the stamp to be trusted. */
-function fileStamp(file: string, now: number): { key: string; racy: boolean } {
-  const stats = statSync(file, { throwIfNoEntry: false });
-  if (!stats) return { key: 'missing', racy: false };
+async function fileStamp(file: string, now: number): Promise<{ key: string; racy: boolean }> {
+  let stats: Stats;
+  try {
+    stats = await stat(file);
+  } catch (error) {
+    if (hasCode(error, 'ENOENT')) return { key: 'missing', racy: false };
+    throw error;
+  }
   const changedAtMs = Math.max(stats.mtimeMs, stats.ctimeMs);
   return {
     key: `${stats.ino}:${stats.mtimeMs}:${stats.ctimeMs}:${stats.size}`,
@@ -1876,8 +1873,8 @@ function fileStamp(file: string, now: number): { key: string; racy: boolean } {
   };
 }
 
-function runInventoryEntry(file: string, journal: string): RunInventoryEntry | null {
-  const run = parseRunRecordFile(path.basename(file), readFileSync(file, 'utf-8'));
+async function runInventoryEntry(file: string, journal: string): Promise<RunInventoryEntry | null> {
+  const run = parseRunRecordFile(path.basename(file), await readFile(file, 'utf-8'));
   if (!run) return null;
   const active = isActiveListRun(run);
   const refs = runBundleRefs(run).map(({ ref, decision }) => ({
@@ -1893,7 +1890,7 @@ function runInventoryEntry(file: string, journal: string): RunInventoryEntry | n
         : false),
   }));
   // Retired approvals/attestations remain audit dependencies after replay removes the card.
-  for (const decision of readDecisionHistoryFile(journal)) {
+  for (const decision of await readDecisionHistoryFileAsync(journal)) {
     const ref =
       decision.publicationApproval || decision.evidenceAttestation
         ? decisionArtifactBundleRef(run, decision.payload)
@@ -1903,27 +1900,40 @@ function runInventoryEntry(file: string, journal: string): RunInventoryEntry | n
   return { runId: run.id, active, generation: run.engineState?.generation, refs };
 }
 
-function runInventoryEntries(runsDir: string): RunInventoryEntry[] {
-  if (!existsSync(runsDir)) return [];
+async function runInventoryEntries(runsDir: string): Promise<RunInventoryEntry[]> {
+  let names: string[];
+  try {
+    names = await readdir(runsDir);
+  } catch (error) {
+    if (!hasCode(error, 'ENOENT')) throw error;
+    names = [];
+  }
   const now = Date.now();
   const seen = new Set<string>();
   const entries: RunInventoryEntry[] = [];
-  for (const name of readdirSync(runsDir)) {
+  for (const name of names) {
     if (!name.endsWith('.json')) continue;
     const file = path.join(runsDir, name);
     const journal = decisionHistoryFile(file);
-    // Stamp before reading: a write landing mid-read changes the stamp, so the next pass rereads.
-    const record = fileStamp(file, now);
-    const history = fileStamp(journal, now);
+    // The bundle lock does not freeze run/journal writers. Cache the pre-read
+    // stamp: writes during an await change it or leave a racy entry for the next pass.
+    const record = await fileStamp(file, now);
+    if (record.key === 'missing') continue;
+    const history = await fileStamp(journal, now);
     const stamp = `${record.key}|${history.key}`;
     seen.add(file);
     let cached = runInventoryCache.get(file);
     if (!cached?.trusted || cached.stamp !== stamp) {
-      cached = {
-        stamp,
-        trusted: !record.racy && !history.racy,
-        entry: runInventoryEntry(file, journal),
-      };
+      let entry: RunInventoryEntry | null;
+      try {
+        entry = await runInventoryEntry(file, journal);
+      } catch (error) {
+        // Run archival can move a listed record while this asynchronous scan yields.
+        if (!hasCode(error, 'ENOENT')) throw error;
+        seen.delete(file);
+        continue;
+      }
+      cached = { stamp, trusted: !record.racy && !history.racy, entry };
       runInventoryCache.set(file, cached);
     }
     if (cached.entry) entries.push(cached.entry);
@@ -1945,7 +1955,7 @@ async function runBundleHousekeepingInventory(store: RunBundleStore, now: number
     if (pin) pinned.add(ref.bundleDigest);
   };
   for (const runsDir of [store.runsDir, path.join(store.runsDir, 'archive')]) {
-    for (const run of runInventoryEntries(runsDir)) {
+    for (const run of await runInventoryEntries(runsDir)) {
       if (run.active) activeRuns.set(run.runId, run.generation);
       for (const { ref, pin } of run.refs) retainReference(ref, pin);
     }
