@@ -56,6 +56,10 @@ for (const layout of [
   'candidate-reconnected',
   'candidate-export-interrupted',
   'candidate-legacy-retry',
+  'candidate-legacy-deinit-retry',
+  'candidate-legacy-deinit-nested-retry',
+  'candidate-legacy-deinit-linked-retry',
+  'candidate-legacy-deinit-missing-retry',
 ] as const) {
   test(`blind Git preserves ${layout} submodules without reference objects`, (t) => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'blind-submodules-'));
@@ -112,17 +116,27 @@ for (const layout of [
         location,
       );
     const upstream = init('module-upstream');
-    const nested = ['nested', 'dirty-nested', 'untracked-nested', 'candidate-nested'].includes(
-      layout,
-    );
+    const nested = [
+      'nested',
+      'dirty-nested',
+      'untracked-nested',
+      'candidate-nested',
+      'candidate-legacy-deinit-nested-retry',
+    ].includes(layout);
     const embedded = layout === 'embedded' || layout === 'candidate-embedded';
     const candidate = layout.startsWith('candidate');
+    const legacy = layout.startsWith('candidate-legacy');
+    const deinitialized = layout.includes('deinit');
     if (nested) {
       add(upstream, init('leaf-upstream'), 'leaf-name', 'deps/leaf');
       commit(upstream, 'nested dependency');
     }
     const source = init('source');
-    const linked = layout === 'linked' || layout === 'preparing' || layout === 'candidate-linked';
+    const linked =
+      layout === 'linked' ||
+      layout === 'preparing' ||
+      layout === 'candidate-linked' ||
+      layout === 'candidate-legacy-deinit-linked-retry';
     const repo = linked ? path.join(root, 'linked') : source;
     if (linked) git(source, 'worktree', 'add', '-q', '--detach', repo);
     add(repo, upstream, 'sdk-name', 'deps/sdk');
@@ -163,6 +177,7 @@ for (const layout of [
     }
     if (candidate) modules.forEach((p) => git(p, 'config', 'core.logAllRefUpdates', 'always'));
     const moduleDirectories = modules.map((p) => git(p, 'rev-parse', '--absolute-git-dir'));
+    if (deinitialized) git(repo, 'submodule', 'deinit', '-f', '--all');
     const metadata = (directory: string) =>
       Object.fromEntries(
         Object.entries(snapshot(directory)).filter(([name]) => !name.startsWith('modules/')),
@@ -172,7 +187,11 @@ for (const layout of [
     let candidateHead: string | undefined;
     const originalModules = snapshot(path.join(originalDirectory, 'modules'));
     const originalGitfiles = modules.map((p) =>
-      embedded ? snapshot(path.join(p, '.git')) : readFileSync(path.join(p, '.git')),
+      deinitialized
+        ? null
+        : embedded
+          ? snapshot(path.join(p, '.git'))
+          : readFileSync(path.join(p, '.git')),
     );
     const spec: BlindGitSpec = {
       slotId: 'synthetic-slot',
@@ -298,6 +317,15 @@ module['isolate'](json.loads(sys.argv[2]))
         return;
       }
       assert.equal(command('isolate').status, 'isolated');
+      if (legacy) {
+        const journal = path.join(spec.capsule, 'state.json');
+        const state = JSON.parse(readFileSync(journal, 'utf8'));
+        for (const item of state.submodules) {
+          delete item.originalDirectory;
+          if (deinitialized) assert.equal(item.gitfile, null);
+        }
+        writeFileSync(journal, JSON.stringify(state));
+      }
       // This is the prepare command that failed on an initialized slot checkout.
       git(repo, 'submodule', 'update', '--init');
       git(repo, 'submodule', 'update', '--init', '--recursive');
@@ -379,6 +407,7 @@ module['isolate'](json.loads(sys.argv[2]))
         });
       }
       if (
+        legacy ||
         [
           'interrupted',
           'candidate-interrupted',
@@ -405,11 +434,11 @@ def interrupt(source, target):
         raise RuntimeError('fixture interrupted restore')
     return rename(source, target)
 Path.rename = interrupt
-if sys.argv[3] in ['candidate-reconnected', 'candidate-legacy-retry']:
-    if sys.argv[3] == 'candidate-legacy-retry':
+if sys.argv[3] == 'candidate-reconnected' or sys.argv[3].startswith('candidate-legacy'):
+    if sys.argv[3].startswith('candidate-legacy'):
         module['restore'].__globals__['preserve_submodule_candidates'] = lambda *args: None
     def reject(state):
-        if sys.argv[3] == 'candidate-legacy-retry':
+        if sys.argv[3].startswith('candidate-legacy'):
             state.pop('submodulesExported', None)
             for item in state['submodules']:
                 item.pop('originalDirectory', None)
@@ -437,6 +466,29 @@ module['restore'](json.loads(sys.argv[2]))
           assert.equal(existsSync(path.join(repo, '.git')), false);
         }
       }
+      if (layout === 'candidate-legacy-deinit-missing-retry') {
+        const destination = path.join(originalDirectory, 'modules/sdk-name');
+        const moved = destination + '.retained';
+        const retained = path.join(spec.capsule, 'candidate.git');
+        const before = snapshot(retained);
+        renameSync(destination, moved);
+        try {
+          assert.throws(
+            () => command('restore'),
+            (error: Error) => {
+              assert.ok('stderr' in error && typeof error.stderr === 'string');
+              assert.match(error.stderr, /Cannot locate original submodule store/);
+              assert.ok(error.stderr.includes(destination), error.stderr);
+              assert.ok(error.stderr.includes(retained), error.stderr);
+              assert.match(error.stderr, /restore.*retry/i);
+              return true;
+            },
+          );
+          assert.deepEqual(snapshot(retained), before, 'failed recovery retains candidate bytes');
+        } finally {
+          renameSync(moved, destination);
+        }
+      }
     } finally {
       if (layout === 'preparing') {
         const result = spawnSync(
@@ -460,6 +512,8 @@ module['restore'](json.loads(sys.argv[2]))
         assert.match(result.stderr, /fixture interrupted Git entry restoration/);
       }
       assert.equal(command('restore').status, 'restored');
+      const restoredGit = (p: string, ...args: string[]) =>
+        git(p, '--git-dir=' + moduleDirectories[modules.indexOf(p)], ...args);
       if (!candidate) {
         assert.deepEqual(snapshot(path.join(originalDirectory, 'modules')), originalModules);
       } else {
@@ -478,31 +532,35 @@ module['restore'](json.loads(sys.argv[2]))
             originalMetadata[i],
             'original metadata bytes and modes are unchanged',
           );
-          const preserved = git(
+          const preserved = restoredGit(
             p,
             'for-each-ref',
             '--format=%(objectname)',
             'refs/farmslot/candidate/',
           ).split('\n');
           for (const sha of candidateCommits[i]) {
-            assert.equal(git(p, 'cat-file', '-t', sha), 'commit');
+            assert.equal(restoredGit(p, 'cat-file', '-t', sha), 'commit');
             assert.ok(preserved.includes(sha), 'retain each candidate root with a ref');
           }
           const parent = i === modules.length - 1 ? repo : module;
           const parentHead = i === modules.length - 1 ? candidateHead! : candidateCommits[i + 1][0];
-          const gitlink = git(parent, 'ls-tree', parentHead, path.relative(parent, p)).split(
-            /\s+/,
-          )[2];
-          assert.equal(git(p, 'cat-file', '-t', gitlink), 'commit');
+          const gitlink = (parent === repo ? git : restoredGit)(
+            parent,
+            'ls-tree',
+            parentHead,
+            path.relative(parent, p),
+          ).split(/\s+/)[2];
+          assert.equal(restoredGit(p, 'cat-file', '-t', gitlink), 'commit');
         });
       }
       modules.forEach((p, i) => {
-        if (!(candidate && embedded))
+        if (deinitialized) assert.equal(existsSync(path.join(p, '.git')), false);
+        else if (!(candidate && embedded))
           assert.deepEqual(
             embedded ? snapshot(path.join(p, '.git')) : readFileSync(path.join(p, '.git')),
             originalGitfiles[i],
           );
-        assert.equal(git(p, 'cat-file', '-t', referenceCommits[i]), 'commit');
+        assert.equal(restoredGit(p, 'cat-file', '-t', referenceCommits[i]), 'commit');
       });
     }
   });

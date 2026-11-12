@@ -626,6 +626,7 @@ def preserve_submodule_candidates(repo, capsule, state, candidate):
     # Git does not traverse gitlinks when packing the superproject. Walk every
     # retained candidate revision explicitly, including earlier recorded gitlinks.
     histories = {str(repo.resolve()): (candidate, [])}
+    originals = {str(repo.resolve()): (Path(state['originalDirectory']), Path('.'))}
     trial = hashlib.sha256((state['runId'] + ':' + str(state['slotEpoch'])).encode()).hexdigest()
     for module in state.get('submodules', []):
         worktree = Path(module['worktree'])
@@ -643,23 +644,37 @@ def preserve_submodule_candidates(repo, capsule, state, candidate):
                          git_dir=source).stdout.decode().splitlines())
         roots.add(git(repo, 'rev-parse', 'HEAD', git_dir=source).stdout.decode().strip())
         histories[str(worktree)] = (source, sorted(roots))
+        # Older journals omit originalDirectory, and deinitialized modules also
+        # have no gitfile. Their recorded directory uses module names, not paths
+        # in the worktree, and is relative to the retained root Git directory.
+        original_path = module.get('originalDirectory')
+        if original_path is not None:
+            destination = Path(original_path)
+        elif module['embedded']:
+            destination = worktree / '.git'
+        elif module['gitfile'] is not None:
+            destination = (worktree / bytes.fromhex(module['gitfile']).decode().strip()[8:]).resolve()
+        else:
+            parent_directory, parent_relative = originals[str(parent)]
+            destination = parent_directory / Path(module['directory']).relative_to(parent_relative)
+        originals[str(worktree)] = (destination, Path(module['directory']))
         admitted = set((source / 'shallow').read_text().split())
         exported = sorted(roots - admitted)
         if not exported:
             continue
         # Resolve original stores across both root-entry renames and embedded
-        # module-entry moves. The gitfile fallback also handles older journals.
-        original_path = module.get('originalDirectory')
-        if original_path is None:
-            original_path = (str(worktree / '.git') if module['embedded'] else
-                             str((worktree / bytes.fromhex(module['gitfile']).decode().strip()[8:]).resolve()))
-        destination = Path(original_path)
+        # module-entry moves.
         if module['embedded'] and Path(module['embedded']).exists():
             destination = Path(module['embedded'])
         elif state['originalIsDirectory'] and (capsule / 'original.entry').exists():
             original_root = Path(state['originalDirectory'])
             if inside(destination, original_root):
                 destination = capsule / 'original.entry' / destination.relative_to(original_root)
+        if not (destination / 'objects').is_dir():
+            raise RuntimeError('Cannot locate original submodule store for %s; '
+                               'restore the cached store at %s and retry restoration. '
+                               'Candidate store retained at %s'
+                               % (worktree.relative_to(repo.resolve()), destination, source))
         objects = capsule / 'module-candidate.objects'
         objects.write_text('\n'.join(exported) + '\n')
         pack_into(repo, destination, ['--revs'], objects, git_dir=source)
