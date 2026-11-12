@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json FARMSLOT_REVIEW_BUDGET_HOLD_LIVE=1 FARMSLOT_REVIEW_BUDGET_HOLD_CASE=blocked-review FARMSLOT_REVIEW_BUDGET_HOLD_OUT=temp/blocked-review-result-decision node --import tsx --experimental-test-module-mocks --test services/gateway/src/run-engine/review-budget-hold.rpc.live.ts",
         "timeout_ms": 180000,
-        "intent": "Stop a delivered fixture review with residual findings, hold it for a result decision, and verify needs-decision, send-back/close, preserved reason/findings and pending later steps through authenticated RPC without a worker or publication.",
+        "intent": "Hold a delivered blocked fixture review for a result decision; verify its reason/findings, send-back/close and pending later steps over RPC, then apply Send back and verify retained fix input with engine start recorded and no worker or publication.",
         "next": "done"
       },
       "done": { "action": "end", "status": "pass" }

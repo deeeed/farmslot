@@ -261,7 +261,11 @@ function stepsAt(flowType: Run['flowType'], at: PipelineStep, outputs: RunStep['
 }
 
 /** 8cff6e80 held after REVIEW: 1/2 fix attempts, all review rounds spent. */
-async function heldOpus(admissions = 5): Promise<Run> {
+async function heldOpus(
+  admissions = 5,
+  verdict: 'issues' | 'blocked' = 'issues',
+  issues = findings,
+): Promise<Run> {
   run = makeRun({
     id: '8cff6e80-6b53-44a0-9834-9f0a44631aad',
     flowType: 'dev',
@@ -273,8 +277,8 @@ async function heldOpus(admissions = 5): Promise<Run> {
     branch: 'feat/tat-4145-opus',
     engineState: { generation: 3 },
     steps: stepsAt('dev', S.REVIEW, {
-      verdict: 'issues',
-      issues: findings,
+      verdict,
+      issues,
       retryCount: 1,
       maxRetries: 2,
       reviewId: 'pipeline-review-1',
@@ -397,6 +401,27 @@ test('Send back after REVIEW resumes the fix loop from the recorded findings', a
   assert.deepEqual(resumed?.issues, findings);
   assert.equal(resumed?.retryCount, 1);
   assert.equal(takeSendBackReview(run.id), undefined, 'read once');
+});
+
+test('Send back resumes retained findings from a blocked review without rewriting its outcome', async () => {
+  await heldOpus(1, 'blocked');
+  await resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' });
+  assert.equal(run.status, 'reviewing');
+  assert.deepEqual(starts, [run.id]);
+  assert.equal(run.steps.find((step) => step.name === S.REVIEW)?.outputs?.verdict, 'blocked');
+  const resumed = takeSendBackReview(run.id);
+  assert.equal(resumed?.verdict, 'issues');
+  assert.deepEqual(resumed?.issues, findings);
+  assert.equal(resumed?.retryCount, 1);
+  assert.equal(resumed?.reviewId, 'pipeline-review-1');
+});
+
+test('a blocked review without resumable findings keeps Close and disables Send back', async () => {
+  await heldOpus(1, 'blocked', []);
+  const card = pending().payload;
+  assert(card?.kind === 'result-decision');
+  assert.equal(card.actions.find((action) => action.id === 'send-back')?.available, false);
+  assert.equal(card.actions.find((action) => action.id === 'close-result')?.available, true);
 });
 
 test('Close of a refused completion is the named discard and is not a success', async () => {

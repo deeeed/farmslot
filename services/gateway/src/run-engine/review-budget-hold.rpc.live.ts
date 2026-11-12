@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { isRecord, type RunExtendReviewBudgetResult, type RunGetResult } from '@farmslot/protocol';
@@ -27,7 +27,12 @@ test(
     const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
     const root = await mkdtemp(path.join(os.tmpdir(), 'review-budget-hold-'));
     Object.assign(process.env, {
+      NODE_TEST_CONTEXT: '1',
+      FARMSLOT_ROOT: root,
       FARMSLOT_HOME: root,
+      FARMSLOT_RUNS_DIR: path.join(root, 'runs'),
+      FARMSLOT_POOL_DIR: path.join(root, 'pool'),
+      FARMSLOT_PROJECTS_DIR: path.join(root, 'projects'),
       FARMSLOT_TEST_STATUS_FILE: path.join(root, 'status.json'),
       FARMSLOT_DISABLE_ORCHESTRATION: '1',
     });
@@ -80,6 +85,15 @@ test(
       JSON.stringify({ name: 'budget', hooks: {}, review: { enabled: true } }),
     );
     await import('../runtime/mock-pty.test-support.js');
+    const scheduled: string[] = [];
+    if (blockedReview) {
+      const engine = await import('./orchestrator.js');
+      const startRun = async (runId: string) => {
+        scheduled.push(runId);
+      };
+      mock.module('./orchestrator.js', { namedExports: { ...engine, startRun } });
+      assert.equal((await import('./orchestrator.js')).startRun, startRun);
+    }
     const fixture = await createNativeProofFixture(t, root);
     const store = await import('../runs/store.js');
     const { statusFile } = await import('../core/state.js');
@@ -87,7 +101,7 @@ test(
       await import('../review/recorded-review-rounds.test-support.js');
     const { assertReviewRoundAvailable } = await import('../review/review-round-budget.js');
     const { executeReviewStep } = await import('./post-dispatch-steps.js');
-    const { ResultDecisionHoldError, holdRunForResultDecision } =
+    const { ResultDecisionHoldError, holdRunForResultDecision, takeSendBackReview } =
       await import('../run-completion/result-decision.js');
     const { retainRunFixture } = await import('./test-fixtures.js');
     const run = store.createRun({
@@ -241,6 +255,24 @@ test(
         assert(card.payload.actions.find((action) => action.id === 'send-back')?.available);
         assert(card.payload.actions.find((action) => action.id === 'close-result')?.available);
         assert.equal(git('rev-parse', 'HEAD'), head);
+        await fixture.client.call('run.resolveDecision', {
+          runId: run.id,
+          decisionId: card.id,
+          actionId: 'send-back',
+        });
+        const after = (await fixture.client.call<RunGetResult>('run.get', { runId: run.id })).run;
+        assert.equal(after.status, 'reviewing');
+        assert.equal(after.resultDecisionReceipt?.action, 'send-back');
+        assert.equal(
+          after.steps.find((step) => step.name === 'review')?.outputs?.verdict,
+          'blocked',
+        );
+        const resume = takeSendBackReview(run.id);
+        assert.equal(resume?.verdict, 'issues');
+        assert.deepEqual(resume?.issues, card.payload.findings);
+        assert.equal(resume?.retryCount, 3);
+        assert.equal(resume?.reviewSnapshot?.headSha, head);
+        assert.deepEqual(scheduled, [run.id]);
         await writeFile(
           path.join(out, 'receipt.json'),
           JSON.stringify(
@@ -263,6 +295,9 @@ test(
               acceptUnavailable: true,
               primaryReviewResultAbsent: true,
               laterStepsPending: true,
+              sendBackApplied: true,
+              retainedFindingsQueued: true,
+              scheduledLaunches: scheduled.length,
               slotOwnerUnchanged: true,
               checkoutHeadUnchanged: true,
               modelCalls: 0,
