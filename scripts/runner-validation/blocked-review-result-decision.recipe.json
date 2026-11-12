@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Blocked review result decision",
+  "description": "A delivered worker result whose review stops blocked stays at an actionable result decision. The isolated production REVIEW boundary and hold preserve its reason, findings, owned slot and checkout; an authenticated GatewayClient verifies the pending decision and available actions. No model runs.",
+  "workflow": {
+    "entry": "blocked-review",
+    "nodes": {
+      "blocked-review": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json FARMSLOT_REVIEW_BUDGET_HOLD_LIVE=1 FARMSLOT_REVIEW_BUDGET_HOLD_CASE=blocked-review FARMSLOT_REVIEW_BUDGET_HOLD_OUT=temp/blocked-review-result-decision node --import tsx --experimental-test-module-mocks --test services/gateway/src/run-engine/review-budget-hold.rpc.live.ts",
+        "timeout_ms": 180000,
+        "intent": "Hold a delivered blocked fixture review for a result decision; verify its reason/findings, send-back/close and pending later steps over RPC, then apply Send back and verify retained fix input with engine start recorded and no worker or publication.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
