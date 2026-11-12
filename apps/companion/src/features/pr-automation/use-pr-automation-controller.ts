@@ -20,6 +20,7 @@ import {
   type PRTriggerRule,
   type PRWatchListResult,
   type Run,
+  type RunGetResult,
   type RunListRow,
   type SlotStatus,
   viewChoiceField,
@@ -341,6 +342,53 @@ export function usePRAutomationController(
     setEditor({ kind: 'request' });
     setActionError('');
   };
+  /**
+   * Run QA links its source review from the run's detail: a run.list row leaves the review
+   * out. The held run.get serves when it is at least as new as the row; otherwise one run.get
+   * is read through the shared cache. When the detail cannot be read, no draft opens.
+   */
+  const openQA = async (intent: PRReviewIntent, row?: RunListRow) => {
+    if (mutation.current) return;
+    let run: Run | undefined;
+    if (row) {
+      const captured = scope.current;
+      const stillCurrent = () =>
+        scope.current.client === captured.client &&
+        scope.current.profileId === captured.profileId &&
+        scope.current.generation === captured.generation;
+      const token = Symbol();
+      mutation.current = token;
+      setBusy(true);
+      setActionError('');
+      try {
+        const cache = getResourceCache();
+        if (!cache) throw new Error('The offline store is not open yet');
+        const query = resourceQuery<RunGetResult>(Methods.RUN_GET, { runId: row.id });
+        const held = (await cache.readStored?.(query, false))?.data?.run;
+        if (held && Date.parse(held.updatedAt) >= Date.parse(row.updatedAt)) run = held;
+        else {
+          const state = await cache.retry(query);
+          if (!state.data || state.error)
+            throw new Error(state.error?.message ?? 'The review run could not be read.');
+          run = state.data.run;
+        }
+        if (!stillCurrent()) return;
+      } catch (error) {
+        // Shown as this controller shows every failed action; the Run QA button stays usable.
+        if (stillCurrent()) fail(error);
+        return;
+      } finally {
+        if (mutation.current === token) {
+          mutation.current = undefined;
+          setBusy(false);
+        }
+      }
+    }
+    setRequestDraft(qaRequestFromReview(intent, run, useConnectionStore.getState().principalId));
+    requestKey.current = undefined;
+    setEditor({ kind: 'request' });
+    setActionError('');
+  };
   const editRequest = (patch: Partial<PRRequestDraft>) => {
     setRequestDraft((draft) => {
       const effective = effectivePRRequest(
@@ -554,13 +602,8 @@ export function usePRAutomationController(
       openPolicy,
       openRepair,
       openRequest,
-      openQA: (intent: PRReviewIntent, run?: Run | RunListRow) => {
-        setRequestDraft(
-          qaRequestFromReview(intent, run, useConnectionStore.getState().principalId),
-        );
-        requestKey.current = undefined;
-        setEditor({ kind: 'request' });
-        setActionError('');
+      openQA: (intent: PRReviewIntent, row?: RunListRow) => {
+        void openQA(intent, row);
       },
       editMonitor: (patch: Partial<PRMonitorDraft>) =>
         setMonitorDraft((draft) => ({ ...draft, ...patch })),

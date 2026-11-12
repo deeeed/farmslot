@@ -23,7 +23,6 @@ import {
   resolveQaProfileId,
   reviewResultForRun,
   type Run,
-  type RunListRow,
   selectQaProfile,
   workspacePolicyTargetLabel,
 } from '@farmslot/protocol';
@@ -284,7 +283,7 @@ export function prMonitorFreshness(monitor: PRMonitor, now = Date.now()): string
 
 export function qaRequestFromReview(
   intent: PRReviewIntent,
-  run: Run | RunListRow | undefined,
+  run: Run | undefined,
   principalId: string | null,
 ): PRRequestDraft {
   const draft = newPRRequestDraft();
