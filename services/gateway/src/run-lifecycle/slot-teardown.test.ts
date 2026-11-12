@@ -73,6 +73,7 @@ interface SlotProcess {
 }
 const STARTED = 'Sun Oct 18 08:48:13 2026';
 let slotProcesses: SlotProcess[] = [];
+let configuredCdpPort: string | undefined;
 let daemonRecords: Array<{ pid: number; start: string; updater: boolean }> = [];
 let onDaemonCensus: (() => void) | null = null;
 let leases: Array<Record<string, unknown>> = [];
@@ -140,7 +141,7 @@ mock.module('../core/index.js', {
       host: 'localhost',
       projectName: 'mm',
       session: 'mmt-1',
-      resourceVars: { cdp_port: '9542' },
+      resourceVars: { cdp_port: configuredCdpPort },
     }),
     loadProjectVars: async () => ({
       runtimeDir: '.agent',
@@ -485,6 +486,7 @@ const run = {
 const reaps = () => commands.filter((cmd) => cmd.includes(`identityfile='${IDENTITY}'`));
 
 beforeEach(() => {
+  configuredCdpPort = '9542';
   blindRestores = [];
   blindRestoreResult = null;
   onBlindRestore = undefined;
@@ -1282,6 +1284,89 @@ test("cancel stops the browser session its run left on the slot's CDP port", asy
   );
 });
 
+// Blind-trial diagnostics started Chrome directly on port9557, outside managed9544.
+function leftDiagnosticBrowser(): SlotProcess[] {
+  return [
+    {
+      pid: 60370,
+      ppid: 1,
+      pgid: 60370,
+      cwd: '/slot',
+      args: '/cache/Google Chrome for Testing --user-data-dir=/slot/temp/diag --remote-debugging-port=9557',
+      alive: true,
+    },
+    {
+      pid: 60371,
+      ppid: 60370,
+      pgid: 60370,
+      cwd: '/slot',
+      args: '/cache/Google Chrome for Testing Helper --type=renderer',
+      alive: true,
+    },
+  ];
+}
+
+for (const cdpPort of ['9542', undefined]) {
+  test(`teardown reaps an orphan diagnostic browser with ${cdpPort ? 'a different' : 'no configured'} CDP port`, async () => {
+    configuredCdpPort = cdpPort;
+    slotProcesses = leftDiagnosticBrowser();
+    if (!cdpPort)
+      slotProcesses[0].args = slotProcesses[0].args.replace(
+        '--remote-debugging-port=9557',
+        '--remote-debugging-pipe',
+      );
+
+    assert.equal(await stopRunOwnedTmuxAndWatches(run), null);
+    assert.equal(await slotTeardownBlocker(run), null);
+    assert.deepEqual(alivePids(), []);
+  });
+}
+
+for (const profile of ['/personal/profile', '/slot-2/temp/diag', '/slot/../other/diag']) {
+  test(`diagnostic cleanup preserves a browser using ${profile}`, async () => {
+    slotProcesses = leftDiagnosticBrowser();
+    slotProcesses[0].args = slotProcesses[0].args.replace('/slot/temp/diag', profile);
+    assert.equal(await stopRunOwnedTmuxAndWatches(run), null);
+    assert.match(
+      (await slotTeardownBlocker(run)) ?? '',
+      /Process 60370 still uses the slot repository/,
+    );
+    assert.deepEqual(alivePids(), [60370, 60371]);
+  });
+}
+
+test('diagnostic cleanup preserves a browser attached to a live worker', async () => {
+  slotProcesses = leftDiagnosticBrowser();
+  slotProcesses[0].ppid = 5000;
+  assert.equal(await stopRunOwnedTmuxAndWatches(run), null);
+  assert.match(
+    (await slotTeardownBlocker(run)) ?? '',
+    /Process 60370 still uses the slot repository/,
+  );
+  assert.deepEqual(alivePids(), [60370, 60371]);
+});
+
+test('diagnostic cleanup accepts a profile flag with a space separator', async () => {
+  slotProcesses = leftDiagnosticBrowser();
+  slotProcesses[0].args = slotProcesses[0].args.replace(
+    '--user-data-dir=/slot/temp/diag',
+    '--user-data-dir /slot/temp/diag',
+  );
+  assert.equal(await stopRunOwnedTmuxAndWatches(run), null);
+  assert.equal(await slotTeardownBlocker(run), null);
+  assert.deepEqual(alivePids(), []);
+});
+
+test('a diagnostic browser that survives signals keeps a profile-specific hold', async () => {
+  slotProcesses = leftDiagnosticBrowser();
+  slotProcesses[0].survives = true;
+  assert.match(
+    (await slotTeardownBlocker(run)) ?? '',
+    /Browser session process 60370 .*with a profile in the slot repository did not stop$/,
+  );
+  assert.deepEqual(alivePids(), [60370]);
+});
+
 function leftManagedRunnerDaemons() {
   slotProcesses = [
     {
@@ -1377,6 +1462,18 @@ test('done cleanup preserves an unrecorded worker for another task and its manag
   assert.equal(result.released, false);
   assert.match(result.skipped ?? '', /Unrecorded pane %3.*not quiescent/);
   assert.deepEqual(alivePids(), [55354, 55559]);
+});
+
+test('done cleanup preserves diagnostic Chrome while an unrecorded worker protects the checkout', async () => {
+  run.status = 'done';
+  slotProcesses = leftDiagnosticBrowser();
+  closedRunUnrecordedWorker('.task/dev/manual-000164-1102-090112');
+
+  const result = await releaseCompletedRunSlot(run);
+
+  assert.equal(result.released, false);
+  assert.match(result.skipped ?? '', /Unrecorded pane %3.*not quiescent/);
+  assert.deepEqual(alivePids(), [60370, 60371]);
 });
 
 test('a dev server the gateway does not watch still holds the slot', async () => {

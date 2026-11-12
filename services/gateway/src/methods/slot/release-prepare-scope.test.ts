@@ -86,7 +86,7 @@ const execForTest = async (_vars: unknown, cmd: string) => {
       [
         ...pids.map((pid) => `${pid} 1 ${pid} ${STARTED} ${BROWSER_ARGS[pid]}`),
         '--repo-- /slot',
-        `--cdp-- ${pids.join(',')}`,
+        `--cdp-- ${cdpPort === '9542' ? pids.join(',') : ''}`,
         '',
       ].join('\n'),
     );
@@ -745,6 +745,18 @@ test("a release stops the browser session a run left on the slot's CDP port", as
     [11425, false],
     [20419, false],
   ]);
+
+  assert.deepEqual(await slotRelease({ slotId: SLOT_ID, keepWork: true }, emit), {
+    released: true,
+  });
+
+  assert.equal(browserSession.size, 0);
+  assert.ok(events.indexOf('browser-session-reap') < events.indexOf('reset'));
+});
+
+test('explicit release stops a checkout-profile browser outside the managed CDP port', async () => {
+  cdpPort = '9543';
+  browserSession = new Map([[20419, false]]);
 
   assert.deepEqual(await slotRelease({ slotId: SLOT_ID, keepWork: true }, emit), {
     released: true,
