@@ -1,2 +1,0 @@
-- `status --watch` groups the page into task, now, acceptance and checklist sections with colored headings, shows the approved implementation plan (`inputs/plan.md`, its hash, approver and base) and the active step, leads "now" with the innermost running operation, and keeps acceptance criteria to one line in a terminal.
-- Pressing `v` answers with a highlighted, short-lived message, and before the first recipe run it opens the newest `call` evidence made during the task.
