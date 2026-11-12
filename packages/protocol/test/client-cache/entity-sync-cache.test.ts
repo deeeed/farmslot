@@ -1165,6 +1165,47 @@ test('a gateway without entity sync keeps the full read', async () => {
   }
 });
 
+test('F4: slots named by version only cost no read when held and one ids read when older', async () => {
+  const gateway = new EntityGateway();
+  for (const row of manySlots('main')) gateway.slots.set(row.slot, row);
+  const client = setup(gateway);
+  // A gateway start or a bulk change names every slot by its version, without a body.
+  const nameEverySlot = () =>
+    gateway.publish(
+      [...gateway.slots.values()].map((row) => ({
+        key: { family: 'slot' as const, slotId: row.slot },
+        changedEntity: { family: 'slot' as const, version: versionOf(row) },
+      })),
+    );
+  try {
+    client.watch(fleetQuery);
+    await flush();
+    assert.equal(client.read(fleetQuery).status, 'ready');
+    const before = gateway.log.length;
+
+    nameEverySlot();
+    await flush();
+    assert.equal(gateway.log.length, before, 'every version is held: no read');
+    assert.equal(client.read(fleetQuery).status, 'ready');
+
+    for (const id of ['s03', 's04', 's05']) gateway.slots.set(id, slot(id, { branch: 'bulk' }));
+    nameEverySlot();
+    await flush();
+    assert.deepEqual(
+      gateway.log.slice(before).map((entry) => entry.params.ids),
+      [['s03', 's04', 's05']],
+      'one ids read for the slots that changed, and nothing else',
+    );
+    assert.deepEqual(slotsOf(client.read(fleetQuery)).slice(3, 6), [
+      's03:bulk',
+      's04:bulk',
+      's05:bulk',
+    ]);
+  } finally {
+    await client.close();
+  }
+});
+
 test('a cold start with unchanged slot versions reads no slot bodies', async () => {
   const gateway = new EntityGateway();
   const rows: SlotEntity[] = [slot('a'), slot('b')];

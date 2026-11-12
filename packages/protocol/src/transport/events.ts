@@ -160,9 +160,10 @@ export const Events = {
 /**
  * The entity behind a per-entity key on resource.changed (ADR-071 Amendment 4). `version` is the
  * entity's content version after this change. `entity` is present when the version changed since
- * the key's previous notification and the body fits CHANGED_ENTITY_MAX_BYTES; without it a
- * client holding `version` has nothing to do and any other client reads the id. Bodies are
- * untrusted: clients admit them only through the client-cache entity guards.
+ * the key's previous notification and the bodies of the publication fit
+ * CHANGED_ENTITY_MAX_BYTES together; without it a client holding `version` has nothing to do
+ * and any other client reads the id. Bodies are untrusted: clients admit them only through the
+ * client-cache entity guards.
  */
 export type ChangedEntity =
   | { family: 'slot'; version: string; entity?: SlotEntity }
@@ -418,9 +419,8 @@ export interface MachinePauseUpdatedPayload {
   record: MachineParkRecord;
 }
 
-export interface HelloPayload {
-  fleet: FleetStatus | null;
-}
+/** The connection is admitted. Clients read the fleet themselves; `hello` carries nothing. */
+export type HelloPayload = Record<string, never>;
 
 export interface ChatResponsePayload {
   sessionId: string;

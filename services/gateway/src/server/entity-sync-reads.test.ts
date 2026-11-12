@@ -22,7 +22,7 @@ import {
 
 await import('../runtime/mock-pty.test-support.js');
 const { createGatewayAuthRuntime } = await import('../security/auth.js');
-const { broadcastEvent, createWebSocketServer } = await import('../server.js');
+const { broadcastEvent, createWebSocketServer, hasConnectedViewers } = await import('../server.js');
 const { setCachedFleetForTests } = await import('../fleet/state.js');
 
 function slot(id: string): SlotStatus {
@@ -120,14 +120,14 @@ async function startServer() {
     const ws = new WebSocket(`ws://127.0.0.1:${address.port}/ws`);
     sockets.push(ws);
     const changes: ResourceChangedPayload[] = [];
-    /** Each `fleet.updated` frame as it crossed the socket. */
-    const fleetUpdates: string[] = [];
+    /** Every other event frame as it crossed the socket. */
+    const events: Array<{ event: string; text: string }> = [];
     ws.on('message', (data) => {
       const frame: EventFrame = JSON.parse(data.toString());
-      if (frame.type === 'event' && frame.event === Events.RESOURCE_CHANGED)
+      if (frame.type !== 'event') return;
+      if (frame.event === Events.RESOURCE_CHANGED)
         changes.push(frame.payload as ResourceChangedPayload);
-      if (frame.type === 'event' && frame.event === Events.FLEET_UPDATED)
-        fleetUpdates.push(data.toString());
+      else events.push({ event: frame.event, text: data.toString() });
     });
     await new Promise<void>((resolve, reject) => {
       ws.once('open', resolve);
@@ -138,7 +138,10 @@ async function startServer() {
       token: credential.secret,
     });
     assert.equal(connected.ok, true, JSON.stringify(connected.error));
-    return { ws, changes, fleetUpdates };
+    /** The frames of one event received so far. */
+    const received = (event: string) =>
+      events.filter((frame) => frame.event === event).map((frame) => frame.text);
+    return { ws, changes, events, received };
   };
   return {
     request,
@@ -209,7 +212,17 @@ test('observed fleet.status versions and ids reads answer with a stamp', async (
   assert.equal(invalid.error?.code, 'INVALID_PARAMS');
 });
 
-test('F1: fleet.updated carries no fleet to a connection that reads the fleet as entities', async (t) => {
+const payloadsOf = (frames: string[]) =>
+  frames.map((frame) => (JSON.parse(frame) as EventFrame).payload);
+
+/** Lets the sockets deliver what was broadcast, until `arrived()` or a short ceiling. */
+async function delivered(arrived: () => boolean): Promise<void> {
+  const ceiling = performance.now() + 3000;
+  while (!arrived() && performance.now() < ceiling)
+    await new Promise<void>((resolve) => setImmediate(resolve));
+}
+
+test('F1: fleet.updated and pr.list.updated carry no list to a connection that reads entities', async (t) => {
   setCachedFleetForTests(fleet);
   const harness = await startServer();
   t.after(async () => {
@@ -223,22 +236,90 @@ test('F1: fleet.updated carries no fleet to a connection that reads the fleet as
   const versions = await harness.request(viewer.ws, 'fleet.status', { versions: true }, true);
   assert.equal(versions.ok, true, JSON.stringify(versions.error));
   assert.equal((await harness.request(whole.ws, 'fleet.status', {})).ok, true);
-  viewer.fleetUpdates.length = 0;
-  whole.fleetUpdates.length = 0;
+  viewer.events.length = 0;
+  whole.events.length = 0;
 
   broadcastEvent(Events.FLEET_UPDATED, { fleet });
-  const ceiling = performance.now() + 3000;
-  while (!(viewer.fleetUpdates.length && whole.fleetUpdates.length) && performance.now() < ceiling)
-    await new Promise<void>((resolve) => setImmediate(resolve));
-
-  const payloads = (frames: string[]) =>
-    frames.map((frame) => (JSON.parse(frame) as EventFrame).payload);
-  assert.deepEqual(payloads(viewer.fleetUpdates), [{}], 'the notice arrives without the fleet');
-  assert.deepEqual(payloads(whole.fleetUpdates), [JSON.parse(JSON.stringify({ fleet }))]);
-  assert.ok(
-    Buffer.byteLength(viewer.fleetUpdates[0]) < 100,
-    `the notice is ${Buffer.byteLength(viewer.fleetUpdates[0])} B`,
+  broadcastEvent(Events.PR_LIST_UPDATED, { fetchedAt: 'now', prs: [pr] });
+  await delivered(
+    () =>
+      viewer.received(Events.PR_LIST_UPDATED).length > 0 &&
+      whole.received(Events.PR_LIST_UPDATED).length > 0,
   );
+
+  const notices = viewer.received(Events.FLEET_UPDATED);
+  assert.deepEqual(payloadsOf(notices), [{}], 'the notice arrives without the fleet');
+  assert.ok(
+    Buffer.byteLength(notices[0]) < 100,
+    `the notice is ${Buffer.byteLength(notices[0])} B`,
+  );
+  assert.deepEqual(payloadsOf(whole.received(Events.FLEET_UPDATED)), [
+    JSON.parse(JSON.stringify({ fleet })),
+  ]);
+  assert.deepEqual(
+    payloadsOf(viewer.received(Events.PR_LIST_UPDATED)),
+    [{ fetchedAt: 'now' }],
+    'the refresh notice arrives without the list',
+  );
+  assert.deepEqual(payloadsOf(whole.received(Events.PR_LIST_UPDATED)), [
+    JSON.parse(JSON.stringify({ fetchedAt: 'now', prs: [pr] })),
+  ]);
+});
+
+test('a frame nobody receives is never serialized, and each variant at most once', async (t) => {
+  setCachedFleetForTests(fleet);
+  const harness = await startServer();
+  t.after(async () => {
+    setCachedFleetForTests(null);
+    await harness.close();
+  });
+  // Sockets of earlier tests in this file are gone before the count starts.
+  await delivered(() => !hasConnectedViewers());
+  let serialized = 0;
+  const counted = () => ({
+    fleet: {
+      ...fleet,
+      toJSON() {
+        serialized++;
+        return fleet;
+      },
+    },
+  });
+
+  broadcastEvent(Events.FLEET_UPDATED, counted());
+  assert.equal(serialized, 0, 'nobody is connected');
+
+  const viewer = await harness.connect(['admin']);
+  assert.equal(
+    (await harness.request(viewer.ws, 'fleet.status', { versions: true }, true)).ok,
+    true,
+  );
+  viewer.events.length = 0;
+  broadcastEvent(Events.FLEET_UPDATED, counted());
+  await delivered(() => viewer.received(Events.FLEET_UPDATED).length > 0);
+  assert.equal(viewer.received(Events.FLEET_UPDATED).length, 1);
+  assert.equal(serialized, 0, 'every recipient reads entities: the fleet is not serialized');
+
+  const first = await harness.connect(['admin']);
+  const second = await harness.connect(['admin']);
+  broadcastEvent(Events.FLEET_UPDATED, counted());
+  await delivered(() => second.received(Events.FLEET_UPDATED).length > 0);
+  assert.equal(first.received(Events.FLEET_UPDATED).length, 1);
+  assert.equal(serialized, 1, 'two whole-fleet readers share one serialization');
+});
+
+test('hello carries no fleet', async (t) => {
+  setCachedFleetForTests(fleet);
+  const harness = await startServer();
+  t.after(async () => {
+    setCachedFleetForTests(null);
+    await harness.close();
+  });
+  const { received } = await harness.connect(['admin']);
+  await delivered(() => received(Events.HELLO).length > 0);
+  const hellos = received(Events.HELLO);
+  assert.deepEqual(payloadsOf(hellos), [{}]);
+  assert.ok(Buffer.byteLength(hellos[0]) < 1024, `hello is ${Buffer.byteLength(hellos[0])} B`);
 });
 
 test('pushed entities reach only principals whose read would return them', async (t) => {

@@ -179,6 +179,8 @@ export class GatewayResourceRevisions {
     this.scheduled.delete(family);
     const changes: Change[] = [];
     const provider = this.entityProviders.get(family);
+    /** Changed entities that fit the bound, by their place in `changes`. */
+    const bodies: Array<{ index: number; snapshot: EntitySnapshot }> = [];
     for (const [id, change] of this.pending) {
       if (change.key.family !== family) continue;
       let entry: Change = change;
@@ -190,13 +192,9 @@ export class GatewayResourceRevisions {
           // that did not change, or exceeds the bound, is named by version only.
           const changed = this.publishedVersions.get(id) !== snapshot.version;
           this.publishedVersions.set(id, snapshot.version);
-          entry = {
-            ...change,
-            changedEntity: changedEntity(
-              snapshot,
-              changed && snapshot.bytes <= CHANGED_ENTITY_MAX_BYTES,
-            ),
-          };
+          if (changed && snapshot.bytes <= CHANGED_ENTITY_MAX_BYTES)
+            bodies.push({ index: changes.length, snapshot });
+          entry = { ...change, changedEntity: changedEntity(snapshot, false) };
         }
       }
       if (this.entityCollections.some((isCollection) => isCollection(change.key)))
@@ -204,6 +202,13 @@ export class GatewayResourceRevisions {
       changes.push(entry);
       this.pending.delete(id);
     }
+    // Bodies are for small changes. A gateway start or a bulk change would attach more than a
+    // full read returns: past the bound of one entity the publication names versions only, and
+    // a client reads by ids what it lacks.
+    const attached = bodies.reduce((sum, { snapshot }) => sum + snapshot.bytes, 0);
+    if (attached <= CHANGED_ENTITY_MAX_BYTES)
+      for (const { index, snapshot } of bodies)
+        changes[index] = { ...changes[index], changedEntity: changedEntity(snapshot, true) };
     // Before server initialization there are no client sockets to notify.
     if (changes.length) {
       const payload: ResourceChangedPayload = { version: 1, epoch: this.epoch, changes };

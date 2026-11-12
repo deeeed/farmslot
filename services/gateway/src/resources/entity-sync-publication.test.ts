@@ -100,3 +100,41 @@ test('an entity collection key always carries its membership marker', async (t) 
     'other collection keys are not entity collections',
   );
 });
+
+test('F4: a publication whose changed bodies exceed the bound names every entity by version', async (t) => {
+  const revisions = new GatewayResourceRevisions();
+  t.after(() => revisions.dispose());
+  const packets: ResourceChangedPayload[] = [];
+  revisions.setPublisher((payload) => packets.push(payload));
+  let generation = 1;
+  revisions.setEntityProvider('node', (key) =>
+    key.family === 'node' && 'nodeId' in key
+      ? {
+          family: 'node',
+          version: `${key.nodeId}-v${generation}`,
+          bytes: 1000,
+          entity: { machine: key.nodeId, online: true, headroom: 'green' },
+        }
+      : undefined,
+  );
+  const publish = async (count: number) => {
+    for (let index = 0; index < count; index++)
+      revisions.advance({ family: 'node', nodeId: `m${index}` });
+    await Promise.resolve();
+    return packets.shift()?.changes ?? [];
+  };
+
+  // A few changed entities ride on their notification.
+  const few = await publish(3);
+  assert.equal(few.filter((change) => change.changedEntity?.entity).length, 3);
+
+  // A gateway start or a bulk change: 20 bodies of 1000 B are more than one entity may be.
+  generation = 2;
+  const many = await publish(20);
+  assert.deepEqual(
+    many.map((change) => change.changedEntity),
+    Array.from({ length: 20 }, (_, index) => ({ family: 'node', version: `m${index}-v2` })),
+    'versions only: a client reads by ids what it lacks',
+  );
+  assert.ok(20 * 1000 > CHANGED_ENTITY_MAX_BYTES);
+});

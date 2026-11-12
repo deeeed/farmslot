@@ -551,8 +551,10 @@ full read.
 (`{ family: 'upstream', integration: 'github', queryId, prKey }`) or a machine
 key carries `changedEntity`: the family and the version, plus the body when the
 version changed since that key's previous notification and the body is at most
-16 KiB of UTF-8. A client that holds the named version does nothing; any other
-client without a usable body reads that id. A deletion carries no entity.
+16 KiB of UTF-8. The bodies of one publication share that bound: a gateway
+start or a bulk change names versions only. A client that holds the named
+version does nothing; any other client without a usable body reads that id. A
+deletion carries no entity.
 
 **Membership marker.** A collection key carries `membershipRevision`. It
 advances when the id set, the order or a non-entity field changes: for the PR
@@ -581,8 +583,10 @@ publication or a read looks them up and hashes nothing.
   starts them too, and so do slot publications while a viewer is connected, no
   more often than the fleet view's reread floor.
 - `fleet.updated` still carries the whole fleet, which the CLI and the TUI
-  render. A connection that has read the fleet as entities holds it already and
-  receives the event as a notice with an empty payload.
+  render, and `pr.list.updated` the whole PR list when it changed. A connection
+  that has read the fleet as entities is on entity sync and receives those
+  events as notices without the list. A frame is serialized only for a
+  connection that receives it. `hello` carries no fleet.
 
 **Client.** One implementation in `@farmslot/protocol/client-cache`:
 

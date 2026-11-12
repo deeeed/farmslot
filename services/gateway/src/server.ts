@@ -670,14 +670,9 @@ function handleNodeBinaryFrame(raw: Buffer): void {
   ingestNodeFrame(decoded.slotId, decoded.payload, decoded.keyFrame, decoded.width, decoded.height);
 }
 
-async function sendHello(ws: WebSocket): Promise<void> {
-  try {
-    const fleet = await loadFleetStatus();
-    sendEvent(ws, Events.HELLO, { fleet });
-  } catch (err) {
-    console.warn(`[server] sendHello fleet load failed: ${(err as Error).message}`);
-    sendEvent(ws, Events.HELLO, { fleet: null });
-  }
+/** The connection is admitted. Clients read the fleet themselves; nothing reads this payload. */
+function sendHello(ws: WebSocket): void {
+  sendEvent(ws, Events.HELLO, {});
 }
 
 async function handleMessage(
@@ -868,7 +863,7 @@ async function dispatchMessage(
     });
     const changes = currentSourceResourceChanges();
     if (changes) await broadcastResourceChanges(changes, state.ws);
-    if (canReceiveBroadcast(authRuntime, state, Events.HELLO)) await sendHello(state.ws);
+    if (canReceiveBroadcast(authRuntime, state, Events.HELLO)) sendHello(state.ws);
     return;
   }
 
@@ -954,7 +949,7 @@ async function dispatchMessage(
     if (entityRead && !entityRead.ok)
       throw new GatewayMethodError('INVALID_PARAMS', entityRead.message);
     const entityShape = entityRead?.ok ? entityRead.shape : undefined;
-    if (entityShape && frame.method === Methods.FLEET_STATUS) state.fleetEntitySync = true;
+    if (entityShape && frame.method === Methods.FLEET_STATUS) state.entitySync = true;
     const query =
       observed && !nativeInterests
         ? resourceQuery(
@@ -1251,6 +1246,25 @@ async function deliverResourceChanges(
   }
 }
 
+/**
+ * `fleet.updated` carries the whole fleet, which the CLI and the TUI render, and
+ * `pr.list.updated` the whole PR list when it changed. A connection on entity sync holds those
+ * rows already and uses the events only as notices: this is the frame it gets. Undefined for
+ * every other event.
+ */
+function withoutHeldList(frame: EventFrame): EventFrame | undefined {
+  if (frame.event === Events.FLEET_UPDATED) return { ...frame, payload: {} };
+  if (frame.event !== Events.PR_LIST_UPDATED) return undefined;
+  const payload: unknown = frame.payload;
+  return {
+    ...frame,
+    payload:
+      payload && typeof payload === 'object'
+        ? Object.fromEntries(Object.entries(payload).filter(([field]) => field !== 'prs'))
+        : payload,
+  };
+}
+
 export function broadcast(frame: EventFrame, ownerId?: string, ownerGeneration?: number): void {
   if (frame.event === Events.RESOURCE_CHANGED) {
     broadcastResourceChanges(frame.payload as import('@farmslot/protocol').ResourceChangedPayload);
@@ -1258,11 +1272,10 @@ export function broadcast(frame: EventFrame, ownerId?: string, ownerGeneration?:
   }
   const payload: unknown = frame.payload;
   noteRunEvent(frame.event, payload);
-  const msg = JSON.stringify(frame);
-  // The CLI and the TUI render this event's fleet. A connection that reads the fleet as entities
-  // already holds it, and its apps use the event only as a notice.
-  const notice =
-    frame.event === Events.FLEET_UPDATED ? JSON.stringify({ ...frame, payload: {} }) : undefined;
+  // Each variant is serialized once, and only when a connection receives it.
+  let whole: string | undefined;
+  let notice: string | undefined;
+  const withoutList = withoutHeldList(frame);
   let authorizationFaultLogged = false;
   for (const [ws, state] of clients) {
     if (ws.readyState !== WebSocket.OPEN || activeAuthRuntime === null) continue;
@@ -1288,7 +1301,9 @@ export function broadcast(frame: EventFrame, ownerId?: string, ownerGeneration?:
       }
       continue;
     }
-    if (canReceive) ws.send(notice !== undefined && state.fleetEntitySync ? notice : msg);
+    if (!canReceive) continue;
+    if (withoutList && state.entitySync) ws.send((notice ??= JSON.stringify(withoutList)));
+    else ws.send((whole ??= JSON.stringify(frame)));
   }
 }
 

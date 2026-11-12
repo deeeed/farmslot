@@ -46,8 +46,9 @@ export interface ClientState extends TerminalSubscriptionState {
   authenticatedAt?: number;
   authentication?: AuthenticationRef;
   /**
-   * This connection has read the fleet as entities (ADR-071 Amendment 4): it holds the slots a
-   * `fleet.updated` would carry, so it gets that event as a notice without the fleet.
+   * This connection has read the fleet as entities (ADR-071 Amendment 4): its client holds the
+   * slots and PRs that `fleet.updated` and `pr.list.updated` would carry, so it gets those
+   * events as notices without the list.
    */
-  fleetEntitySync?: boolean;
+  entitySync?: boolean;
 }
