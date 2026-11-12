@@ -641,29 +641,26 @@ function createBuiltinCommands({ routes, perfMarkerPrefixes, readyExpression }) 
           });
         })();
       }
-      // Scroll to the target's content offset, then centre it in the container's
-      // window frame (top-aligned with a margin when taller), so overlays at the
-      // container's edges do not cover it. Resolves with the settled target rect.
-      // The scroll component instance rarely measures itself; its first host view
-      // carries the visible frame.
+      // Centre the target in its scroll container's visible frame: the offset that
+      // puts its layout centre on the frame centre. Layout coordinates make this hold
+      // for inverted lists too, and it does not depend on where a scroll stops. The
+      // scroll component instance rarely measures itself; its first host view carries
+      // the visible frame. Resolves with the settled target rect, or fails when the
+      // target still does not show inside the frame.
       function scrollTargetIntoView(target, containerFiber, container, scrollToOffset) {
         var frameNode = typeof container.measureInWindow === 'function' ? container : findMeasurable(containerFiber);
         return new Promise(function(resolve) {
           target.measureLayout(
             frameNode,
-            function(x, y) {
-              scrollToOffset(y);
+            function(x, y, width, height) {
               settledRect(frameNode, function(frame) {
-                settledRect(target, function(rect) {
-                  var margin = 16;
-                  var delta = rect.height + 2 * margin <= frame.height
-                    ? rect.y + rect.height / 2 - (frame.y + frame.height / 2)
-                    : rect.y - (frame.y + margin);
-                  var offset = Math.max(0, y + delta);
-                  scrollToOffset(offset);
-                  settledRect(target, function(targetRect) {
-                    resolve({ ok: true, testId: opts.testId, measuredOffset: offset, animated: opts.animated, targetRect: targetRect, containerRect: frame });
-                  });
+                var offset = Math.max(0, y + height / 2 - frame.height / 2);
+                scrollToOffset(offset);
+                settledRect(target, function(targetRect) {
+                  var visible = targetRect.y < frame.y + frame.height && targetRect.y + targetRect.height > frame.y;
+                  resolve(visible
+                    ? { ok: true, testId: opts.testId, measuredOffset: offset, animated: opts.animated, targetRect: targetRect, containerRect: frame }
+                    : { ok: false, error: 'testID=' + opts.testId + ' is still outside its scroll container after scrolling', targetRect: targetRect, containerRect: frame });
                 });
               });
             },

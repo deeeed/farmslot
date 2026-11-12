@@ -301,14 +301,15 @@ describe('bridge core', () => {
     );
   });
 
-  it('scrolls an into-view target to the centre of its scroll container frame', async () => {
-    // A container whose window frame starts at y=100 (under a fixed header) and is 600 tall,
-    // holding a 50-tall row at content offset 1000. Every measure reflects the scroll position.
+  // A scroll container whose window frame starts at y=100 (under a fixed header) and is 600
+  // tall, holding a 50-tall row at layout offset 1000. The scroller clamps like a native one,
+  // and an inverted list draws its layout bottom-up.
+  function intoViewApp({ contentHeight = 2000, inverted = false } = {}) {
     const app = { scrollY: 0 };
     // As in React Native: the scroll component instance scrolls, its host view measures.
     const scroller = {
       scrollTo({ y }: { y: number }) {
-        app.scrollY = y;
+        app.scrollY = Math.min(Math.max(0, y), contentHeight - 600);
       },
     };
     const scrollHost = {
@@ -319,41 +320,63 @@ describe('bridge core', () => {
       measureLayout: (_parent: unknown, done: (...rect: number[]) => void) =>
         done(0, 1000, 400, 50),
       measureInWindow: (done: (...rect: number[]) => void) =>
-        done(0, 100 + 1000 - app.scrollY, 400, 50),
+        done(
+          0,
+          inverted ? 100 + 600 - (1000 + 50 - app.scrollY) : 100 + 1000 - app.scrollY,
+          400,
+          50,
+        ),
     };
     const containerFiber: Record<string, unknown> = { stateNode: scroller, memoizedProps: {} };
     const hostFiber: Record<string, unknown> = { stateNode: scrollHost, return: containerFiber };
     const targetFiber = { stateNode: target, memoizedProps: { testID: 'row' }, return: hostFiber };
     containerFiber.child = hostFiber;
     hostFiber.child = targetFiber;
+    return { app, root: containerFiber };
+  }
+
+  /** A broker whose app is a vm holding `root`; the app's timers run on the next turn. */
+  async function appBroker(root: Record<string, unknown>) {
     const context = vm.createContext({
-      // The app's own timers: settle reads run on the next turn, never on a wall clock.
       setTimeout: (callback: () => void) => setImmediate(callback),
       __REACT_DEVTOOLS_GLOBAL_HOOK__: {
         renderers: new Map([[1, {}]]),
-        getFiberRoots: () => new Set([{ current: containerFiber }]),
+        getFiberRoots: () => new Set([{ current: root }]),
       },
     });
-    const { directory, port } = await startBroker((expression) =>
+    return startBroker((expression) =>
       expression.includes('__AGENTIC__?.platform')
         ? 'android'
         : vm.runInContext(expression, context),
     );
+  }
 
-    const result = await runBridge(directory, port, [
-      'scroll-view',
-      '--test-id',
-      'row',
-      '--into-view',
-    ]);
+  for (const [name, options] of [
+    ['a list', {}],
+    // Clamped: the first scroll to 1000 stops at 800, so a correction from 1000 is off.
+    ['a list too short to reach the row offset', { contentHeight: 1400 }],
+    // Inverted: scrolling further down the layout moves the row up the screen.
+    ['an inverted list', { inverted: true }],
+  ] as const) {
+    it(`scrolls an into-view target to the centre of its container frame in ${name}`, async () => {
+      const { app, root } = intoViewApp(options);
+      const { directory, port } = await appBroker(root);
 
-    assert.equal(result.code, 0, result.stderr);
-    const output = JSON.parse(result.stdout) as Record<string, unknown>;
-    // Row centre (y + 25) lands on the frame centre (100 + 300): offset 1000 + 25 - 300.
-    assert.equal(app.scrollY, 725);
-    assert.equal(output.ok, true);
-    assert.deepEqual(output.targetRect, { x: 0, y: 375, width: 400, height: 50 });
-  });
+      const result = await runBridge(directory, port, [
+        'scroll-view',
+        '--test-id',
+        'row',
+        '--into-view',
+      ]);
+
+      assert.equal(result.code, 0, result.stderr);
+      const output = JSON.parse(result.stdout) as Record<string, unknown>;
+      // Row centre (1000 + 25) on the frame centre (300 into a 600 frame): offset 725.
+      assert.equal(app.scrollY, 725);
+      assert.equal(output.ok, true);
+      assert.deepEqual(output.targetRect, { x: 0, y: 375, width: 400, height: 50 });
+    });
+  }
 
   it('prints help with the app label, built-ins and placed host lines', async () => {
     const directory = await tempDir();
