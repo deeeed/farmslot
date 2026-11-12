@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
 
@@ -372,18 +375,29 @@ test('buildPrepareWrappedCommand disarms traps before writing the final child st
   assert(finalTrapIdx > signalTrapIdx);
 });
 
-test('buildPrepareWrappedCommand runs cmd in a subshell so `exec` inside the hook cannot strand the sentinel', () => {
-  const command = buildPrepareWrappedCommand(
-    'exec bash preflight.sh',
-    '/tmp/prep.exit',
-    '/tmp/prep',
-  );
+for (const exitCode of [0, 23]) {
+  test(`buildPrepareWrappedCommand isolates an exec'ing hook in a subshell and writes its sentinel (exit ${exitCode})`, () => {
+    const root = mkdtempSync(join(tmpdir(), 'prepare-exec-'));
+    const sentinel = join(root, 'prepare.exit');
+    try {
+      const command = buildPrepareWrappedCommand(
+        `printf '%s\\n' "$BASH_SUBSHELL"; exec bash -c 'exit ${exitCode}'`,
+        sentinel,
+        root,
+      );
+      const result = spawnSync('bash', ['-c', command], {
+        encoding: 'utf8',
+        timeout: 10_000,
+      });
 
-  assert.match(
-    command,
-    /\(\nexec bash preflight\.sh\n\) <&0 &\nwait "\$!"\n__farmslot_status=\$\?/,
-  );
-});
+      assert.equal(result.status, exitCode, result.stderr);
+      assert.equal(result.stdout.trim(), '1', 'the hook must run in a subshell');
+      assert.equal(readFileSync(sentinel, 'utf8').trim(), String(exitCode));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
 
 test('buildPrepareWrappedCommand without keepAliveOnSuccess exits normally after sentinel write', () => {
   const command = buildPrepareWrappedCommand('echo ok', '/tmp/prep.exit', '/tmp/prep');
