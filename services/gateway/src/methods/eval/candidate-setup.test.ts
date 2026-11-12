@@ -18,6 +18,90 @@ import {
 
 import { resolveCandidateTemplateProvenance } from './candidate-setup.js';
 
+test('catalog eval resolves the configured fix-bug default before a slot is assigned', async (t) => {
+  const name = `eval-nested-catalog-${process.pid}-farm`;
+  const root = path.join(farmslotRoot(), 'projects', name);
+  await mkdir(path.join(root, 'catalog/fix-bug'), { recursive: true });
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(
+    path.join(root, 'project.json'),
+    JSON.stringify({
+      name,
+      execution_templates: {
+        sources: [{ id: 'package:synthetic', kind: 'package', root: { projectPath: 'catalog' } }],
+        defaults: [{ when: { flow: 'fix-bug' }, templateId: 'fix-bug/variant' }],
+      },
+    }),
+  );
+  const content =
+    '---\nplatforms: [ios]\n---\n\n# Synthetic variant\n\n- [ ] Check the example behavior.\n';
+  await writeFile(path.join(root, 'catalog/fix-bug/variant.md'), content);
+  await writeFile(
+    path.join(root, 'catalog/fix-bug/alternate.md'),
+    '# Synthetic alternate\n\n- [ ] Check the alternate behavior.\n',
+  );
+
+  const result = await resolveCandidateTemplateProvenance(name, 'fix-bug', {});
+  assert.equal(result.executionTemplate?.relativePath, 'fix-bug/variant.md');
+  assert.equal(result.executionTemplate?.sourceId, 'package:synthetic');
+  assert.equal(result.templateContent, content);
+  assert.equal(result.provenance?.contentHash, result.executionTemplate?.sha256);
+  assert.equal(result.provenance?.templateName, 'fix-bug/variant.md');
+  assert.equal(result.provenance?.source, 'external');
+  assert.equal(result.axes.template?.path, 'fix-bug/variant.md');
+  assert.equal(result.mode, 'autonomous');
+
+  for (const selection of ['fix-bug/alternate.md', 'templates/worker/alternate.md']) {
+    const explicit = await resolveCandidateTemplateProvenance(name, 'fix-bug', {
+      template: { path: selection },
+    });
+    assert.equal(explicit.executionTemplate?.relativePath, 'fix-bug/alternate.md');
+    assert.equal(explicit.axes.template?.path, selection);
+  }
+
+  await mkdir(path.join(root, 'catalog/other'), { recursive: true });
+  await writeFile(
+    path.join(root, 'catalog/other/alternate.md'),
+    '---\nid: fix-bug/other\nflow: fix-bug\n---\n\n# Synthetic duplicate\n\n- [ ] Check another behavior.\n',
+  );
+  const exact = await resolveCandidateTemplateProvenance(name, 'fix-bug', {
+    template: { path: 'fix-bug/alternate.md' },
+  });
+  assert.equal(exact.executionTemplate?.relativePath, 'fix-bug/alternate.md');
+  await assert.rejects(
+    resolveCandidateTemplateProvenance(name, 'fix-bug', {
+      template: { path: 'alternate.md' },
+    }),
+    /Candidate template path is ambiguous: alternate\.md.*fix-bug\/alternate\.md.*other\/alternate\.md/,
+  );
+  await assert.rejects(
+    resolveCandidateTemplateProvenance(name, 'fix-bug', {
+      template: { path: 'missing.md' },
+    }),
+    /Candidate template is unavailable in the project catalog: missing\.md/,
+  );
+});
+
+test('catalog eval preserves the project-owned fix-bug default', async (t) => {
+  const name = `eval-owned-catalog-${process.pid}-farm`;
+  const root = path.join(farmslotRoot(), 'projects', name);
+  await mkdir(path.join(root, 'templates/worker'), { recursive: true });
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(
+    path.join(root, 'project.json'),
+    JSON.stringify({ name, execution_templates: { sources: [] } }),
+  );
+  await writeFile(
+    path.join(root, 'templates/worker/fix-bug.md'),
+    '# Synthetic fix\n\n- [ ] Check the example behavior.\n',
+  );
+  const result = await resolveCandidateTemplateProvenance(name, 'fix-bug', {});
+  assert.equal(result.executionTemplate?.relativePath, 'fix-bug.md');
+  assert.equal(result.provenance?.source, 'current-project');
+  assert.equal(result.provenance?.templateIsDefault, true);
+  assert.equal(result.mode, 'autonomous');
+});
+
 test('catalog eval keeps a selected local variant and its exact template snapshot', async (t) => {
   const name = `eval-catalog-${process.pid}-farm`;
   const root = path.join(farmslotRoot(), 'projects', name);

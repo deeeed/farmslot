@@ -1,0 +1,1 @@
+- Resolve eval candidate templates through the project's configured catalog defaults, preserving nested paths and rejecting ambiguous basename selections.

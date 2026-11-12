@@ -1,11 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import {
-  executionTemplateReference,
-  listExecutionTemplates,
-  projectWorkerTemplateSource,
-} from '@farmslot/agent-runtime';
+import { executionTemplateReference } from '@farmslot/agent-runtime';
 import {
   type EvalExperimentCreateParams,
   type EvalPackageAxes,
@@ -25,8 +21,10 @@ import { fileExists } from '../../evals/package-store.js';
 import { harnessRoot } from '../../projects/harness-root.js';
 import { assertFetchableHarnessRef } from '../../run-engine/eval-harness-lifecycle.js';
 import {
+  configuredExecutionTemplateOptions,
   projectUsesExecutionTemplateCatalog,
   readConfiguredExecutionTemplateSnapshot,
+  resolveConfiguredExecutionTemplate,
 } from '../../tasks/execution-template-catalog.js';
 import {
   listWorkerTemplateOptions,
@@ -163,32 +161,55 @@ export async function resolveCandidateTemplateProvenance(
   if (axes.template?.hash?.trim() && !catalog) {
     return { axes, missingData };
   }
-  const fileName = resolveTemplateFileName(taskProfile, axes.template);
+  let fileName = resolveTemplateFileName(taskProfile, axes.template);
   const parsedProjectOwnedTemplate = parseWorkerTemplateFileName(taskProfile, fileName);
   let templatePath = path.join(projectVars.projectTemplatesDir, 'worker', fileName);
   let templateContent: string;
   let templateVariant: string | null = null;
   let templateIsDefault = false;
+  let templateSource: TemplateProvenance['source'] = 'current-project';
   let executionTemplate: ExecutionTemplateReference | undefined;
   let taskTemplate: TaskTemplateSelection | undefined;
   if (catalog) {
-    const entry = listExecutionTemplates({
-      sources: [projectWorkerTemplateSource(project, projectVars.projectTemplatesDir)],
+    const requestedPath =
+      axes.template?.path?.trim() ||
+      (axes.template?.name?.trim().endsWith('.md') ? axes.template.name.trim() : undefined);
+    let explicitId: string | undefined;
+    if (requestedPath) {
+      const { options } = configuredExecutionTemplateOptions(projectVars, { flow: taskProfile });
+      const exact = options.filter((entry) => entry.relativePath === requestedPath);
+      const matches = exact.length
+        ? exact
+        : options.filter(
+            (entry) => path.basename(entry.relativePath) === path.basename(requestedPath),
+          );
+      if (matches.length > 1)
+        throw new Error(
+          `Candidate template path is ambiguous: ${requestedPath}. Candidates: ${matches
+            .map((entry) => `${entry.relativePath} (${entry.sourceId})`)
+            .sort()
+            .join(', ')}`,
+        );
+      const entry = matches[0];
+      if (!entry)
+        throw new Error(
+          `Candidate template is unavailable in the project catalog: ${requestedPath}`,
+        );
+      explicitId = entry.id;
+    }
+    const snapshot = resolveConfiguredExecutionTemplate(projectVars, {
       flow: taskProfile,
-    }).find((candidate) => candidate.relativePath === fileName);
-    if (!entry)
-      throw new Error(`Candidate template is unavailable in the project catalog: ${fileName}`);
-    const snapshot = readConfiguredExecutionTemplateSnapshot(projectVars, {
-      flow: taskProfile,
-      id: entry.id,
-      sourceId: entry.sourceId,
-      sha256: entry.sha256,
+      runMode: 'autonomous',
+      explicitId,
     });
+    fileName = snapshot.entry.relativePath;
     templatePath = snapshot.entry.path;
     templateContent = snapshot.markdown;
     executionTemplate = executionTemplateReference(snapshot.entry);
-    templateVariant = parsedProjectOwnedTemplate?.variant ?? null;
-    templateIsDefault = fileName === FLOW_TO_TEMPLATE[taskProfile];
+    templateSource = snapshot.entry.sourceKind === 'project' ? 'current-project' : 'external';
+    const identity = parseWorkerTemplateFileName(taskProfile, fileName);
+    templateVariant = identity?.variant ?? null;
+    templateIsDefault = !requestedPath || identity?.isDefault === true;
   } else if (parsedProjectOwnedTemplate) {
     if (!(await fileExists(templatePath))) {
       missingData.push('template-provenance-missing');
@@ -218,6 +239,7 @@ export async function resolveCandidateTemplateProvenance(
     templateVariant,
     templateIsDefault,
     role: 'eval-candidate',
+    source: templateSource,
   });
   return {
     provenance,
@@ -241,7 +263,9 @@ export async function resolveCandidateTemplateProvenance(
           ...axes,
           template: {
             ...axes.template,
-            path: axes.template?.path ?? `templates/worker/${fileName}`,
+            path:
+              axes.template?.path ??
+              (executionTemplate ? fileName : `templates/worker/${fileName}`),
             name: axes.template?.name ?? fileName.replace(/\.md$/, ''),
             hash: axes.template?.hash ?? provenance.contentHash,
             ref: provenance.projectRepoHeadSha ?? axes.template?.ref,
