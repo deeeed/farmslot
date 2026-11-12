@@ -257,7 +257,7 @@ import {
 } from '../fleet/resource-manager.js';
 import { slotCleanup } from '../fleet/slot-cleanup.js';
 import { fleetStatusIds, fleetStatusVersions } from '../fleet/slot-entities.js';
-import { loadFleetStatus } from '../fleet/state.js';
+import { loadFleetStatus, slotEntityBase } from '../fleet/state.js';
 import { forgetGitHubAccountsClientInterest } from '../integrations/github-accounts.js';
 import {
   machinePauseExecute,
@@ -378,7 +378,12 @@ import {
   fsWrite,
 } from '../methods/filesystem.js';
 import { finetuneExportDPO, finetuneExportSFT, finetuneIndex } from '../methods/finetune.js';
-import { fleetRefresh, fleetStatus, refreshServedWorkspaceObservations } from '../methods/fleet.js';
+import {
+  fleetRefresh,
+  fleetStatus,
+  refreshServedWorkspaceObservations,
+  refreshStaleFleet,
+} from '../methods/fleet.js';
 import {
   fleetPrSummary,
   fleetRefreshSlots,
@@ -933,6 +938,8 @@ async function routeAuthorizedMethod(
       if (read.shape && 'versions' in read.shape) {
         const listing = await fleetStatusVersions();
         refreshServedWorkspaceObservations();
+        const served = slotEntityBase();
+        if (served) refreshStaleFleet(served);
         return listing;
       }
       if (read.shape) return fleetStatusIds(read.shape.ids);

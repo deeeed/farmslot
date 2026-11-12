@@ -44,7 +44,11 @@ import {
   type SlotVars,
 } from '../core/index.js';
 import { shellQuote, tmuxSessionCandidates, tmuxShellSnippet } from '../core/tmux.js';
-import { fleetStaleThresholdMs, isFleetCheckedAtStale } from '../fleet/freshness.js';
+import {
+  fleetStaleThresholdMs,
+  isFleetCheckedAtStale,
+  isFleetRefreshDue,
+} from '../fleet/freshness.js';
 import { usesNodeLink } from '../fleet/node-link-policy.js';
 import {
   loadFleetStatus,
@@ -120,6 +124,26 @@ const monitorFleetStatusDeps: FleetStatusDeps = {
 
 function fleetStatusResult(fleet: FleetStatus): FleetStatusResult {
   return { fleet: isFleetCheckedAtStale(fleet.checkedAt) ? staleFleet(fleet) : fleet };
+}
+
+/**
+ * Starts a background re-probe, or joins the running one. Only when probeable slots exist: with
+ * zero live pool slots a refresh can never freshen the snapshot, so re-kicking on every read
+ * would spin no-op refreshes.
+ */
+function kickFleetRefresh(fleet: FleetStatus, join: () => Promise<FleetStatusResult>): void {
+  if (!fleet.slots.some((slot) => !slot.missingFromPool)) return;
+  join().catch((err) => {
+    console.error(`[fleet.status] background stale refresh failed: ${(err as Error).message}`);
+  });
+}
+
+/** Every fleet read served stale starts the refresh that can end it. */
+export function refreshStaleFleet(
+  fleet: FleetStatus,
+  join: () => Promise<FleetStatusResult> = joinFleetRefresh,
+): void {
+  if (isFleetCheckedAtStale(fleet.checkedAt)) kickFleetRefresh(fleet, join);
 }
 
 /**
@@ -256,28 +280,26 @@ export async function fleetStatus(
     : (deps.workspaces?.read(loaded) ?? loaded);
   if (!params?.forceRefresh) refreshWorkspaceObservations(fleet, deps, publish);
   if (!isFleetCheckedAtStale(fleet.checkedAt)) return { fleet };
-  // Still stale: serve it honestly (stale flag, nothing dispatchable). Kick a
-  // background re-probe only when this call did not just refresh AND probeable
-  // slots exist — with zero live pool slots a refresh can never freshen the
-  // snapshot, so re-kicking on every status call would spin no-op refreshes.
-  const probeable = fleet.slots.some((slot) => !slot.missingFromPool);
-  if (!params?.forceRefresh && probeable) {
-    (deps.join ?? deps.refresh)().catch((err) => {
-      console.error(`[fleet.status] background stale refresh failed: ${(err as Error).message}`);
-    });
-  }
+  // Still stale: serve it honestly (stale flag, nothing dispatchable), and re-probe unless this
+  // call just did.
+  if (!params?.forceRefresh) refreshStaleFleet(fleet, deps.join ?? deps.refresh);
   return fleetStatusResult(fleet);
 }
 
 /** Health/violation monitoring consumes held workspace observations; viewers own their probes. */
-export function fleetMonitorStatus(
+export async function fleetMonitorStatus(
   deps: FleetStatusDeps = monitorFleetStatusDeps,
 ): Promise<FleetStatusResult> {
   const workspaces = deps.workspaces;
-  return fleetStatus(undefined, {
+  const result = await fleetStatus(undefined, {
     ...deps,
     workspaces: workspaces ? { read: (fleet) => workspaces.read(fleet) } : undefined,
   });
+  // Ahead of the threshold, so stale means the machines or the refresh are failing. A stale fleet
+  // was already kicked by the read.
+  if (!result.fleet.stale && isFleetRefreshDue(result.fleet.checkedAt))
+    kickFleetRefresh(result.fleet, deps.join ?? deps.refresh);
+  return result;
 }
 
 // ─── fleetRefresh — native TS port of farm-status.sh collect mode ───

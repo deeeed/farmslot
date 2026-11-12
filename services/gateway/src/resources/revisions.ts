@@ -41,6 +41,8 @@ function changedEntity(snapshot: EntitySnapshot, withBody: boolean): ChangedEnti
 interface InvalidationDeadline {
   at: number;
   keys: ResourceKey[];
+  /** The owner's own check at the boundary, run before the keys advance. */
+  onDeadline?: () => void;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -145,14 +147,21 @@ export class GatewayResourceRevisions {
     ownerId: string,
     keys: readonly ResourceKey[],
     at: number | undefined,
+    onDeadline?: () => void,
   ): void {
-    this.scheduleDeadline(`cohort\0${ownerId}`, keys, at);
+    this.scheduleDeadline(`cohort\0${ownerId}`, keys, at, onDeadline);
   }
 
-  private scheduleDeadline(id: string, keys: readonly ResourceKey[], at: number | undefined): void {
+  private scheduleDeadline(
+    id: string,
+    keys: readonly ResourceKey[],
+    at: number | undefined,
+    onDeadline?: () => void,
+  ): void {
     const previous = this.deadlines.get(id);
     if (previous && previous.at === at) {
       previous.keys = keys.map((key) => ({ ...key }));
+      previous.onDeadline = onDeadline;
       return;
     }
     if (previous) clearTimeout(previous.timer);
@@ -161,18 +170,20 @@ export class GatewayResourceRevisions {
     const deadline: InvalidationDeadline = {
       at,
       keys: keys.map((key) => ({ ...key })),
+      onDeadline,
       timer: setTimeout(
         () => {
           this.deadlines.delete(id);
           // Node timers have a signed 32-bit delay; a future timestamp can need another chunk.
-          if (Date.now() < at) this.scheduleDeadline(id, deadline.keys, at);
-          else
-            for (const key of deadline.keys)
-              // A time boundary changes a collection's non-entity fields (the fleet's `stale`),
-              // which an entity-sync client reads again only when the marker moves.
-              if (this.entityCollections.some((isCollection) => isCollection(key)))
-                this.advanceMembership(key);
-              else this.advance(key);
+          if (Date.now() < at) this.scheduleDeadline(id, deadline.keys, at, deadline.onDeadline);
+          else {
+            // A key the owner's check already advanced at this boundary advances once.
+            const before = deadline.keys.map((key) => this.revision(key));
+            deadline.onDeadline?.();
+            deadline.keys.forEach((key, index) => {
+              if (this.revision(key) === before[index]) this.advance(key);
+            });
+          }
         },
         Math.min(at - Date.now(), 2_147_483_647),
       ),

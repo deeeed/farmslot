@@ -23,6 +23,8 @@ export class SlotResourceChanges {
   private previousCheckedAt?: string;
   private ghosts = new Set<string>();
   private failed = false;
+  /** Whether clients were last told the fleet is stale; undefined before the first snapshot. */
+  private publishedStale?: boolean;
   /** Recomputes served slot entities before their keys advance; undefined ids means every slot. */
   private entityRefresh?: (slotIds: readonly string[] | undefined) => void;
 
@@ -56,22 +58,15 @@ export class SlotResourceChanges {
       ids.some((id) => previous.get(id)?.currentRunId !== current.get(id)?.currentRunId)
     )
       this.invalidateBindings();
-    // The first commit after the stale boundary ends staleness: entity-sync clients learn it from
-    // the collection marker, as they learned the boundary (revisions' deadline).
-    if (
-      this.previousCheckedAt !== undefined &&
-      isFleetCheckedAtStale(this.previousCheckedAt) &&
-      checkedAt !== undefined &&
-      !isFleetCheckedAtStale(checkedAt)
-    )
-      this.revisions.advanceMembership({ family: 'slots', scope: 'farm' });
     this.previous = current;
     this.previousCheckedAt = checkedAt;
     this.failed = false;
+    this.publishStale();
     this.revisions.scheduleInvalidations(
       'fleet-status',
       this.slotKeys([...current.keys()], current),
       fleetStaleDeadline(checkedAt),
+      () => this.publishStale(),
     );
   }
 
@@ -89,7 +84,22 @@ export class SlotResourceChanges {
       this.invalidateBindings();
     }
     this.failed = true;
+    this.publishStale();
     this.revisions.scheduleInvalidations('fleet-status', [], undefined);
+  }
+
+  /**
+   * The fleet's `stale` is not an entity field: an entity-sync client reads it again only when the
+   * collection marker moves. Stale means no readable source, no `checked_at`, or one past the
+   * threshold. Compared with what was last published, so a replacement snapshot, a missing or
+   * repaired timestamp and a clock moved back each move the marker exactly when the state changes.
+   */
+  private publishStale(): void {
+    // An absent timestamp does not parse, which the rule reads as stale.
+    const stale = this.failed || isFleetCheckedAtStale(this.previousCheckedAt ?? '');
+    if (this.publishedStale !== undefined && stale !== this.publishedStale)
+      this.revisions.advanceMembership({ family: 'slots', scope: 'farm' });
+    this.publishedStale = stale;
   }
 
   /** In-memory enrichments change slot facts without changing persisted run ownership. */

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
 
-import type { FleetStatus } from '@farmslot/protocol';
+import type { FleetStatus, SlotStatus } from '@farmslot/protocol';
 
 const root = await mkdtemp(path.join(os.tmpdir(), 'fleet-monitor-refresh-'));
 for (const directory of ['pool', 'projects/proof', 'scripts', 'services/gateway', 'runs', 'home'])
@@ -75,7 +75,8 @@ mock.module('./slot/workspace.js', {
     observeSlotWorkspaces: forbidden,
   },
 });
-const { fleetMonitorStatus, fleetRefresh, fleetHealthRefresh } = await import('./fleet.js');
+const { fleetMonitorStatus, fleetRefresh, fleetHealthRefresh, isFleetCheckedAtStale } =
+  await import('./fleet.js');
 
 test('a stale monitor refreshes real machine state without borrowing viewer enrichment', async () => {
   assert.equal((await fleetMonitorStatus()).fleet.stale, true);
@@ -93,4 +94,74 @@ test('startup and configuration refreshes use the shared health-only producer', 
   const result = await fleetHealthRefresh();
   assert.equal(result.fleet.slots.length, 1);
   assert.equal(workspaceRefreshes, before);
+});
+
+test('the monitor refreshes ahead of the threshold: answering machines never turn stale, failing ones do', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-01-01T00:00:00Z') });
+  const row: SlotStatus = {
+    slot: 'monitor-slot',
+    machine: 'mac-a',
+    platform: 'cli',
+    project: 'proof',
+    health: { ssh: 'OK', device: '-', devserver: '-', cdp: '-', fixtures: '-' },
+    branch: 'main',
+    agent: 'idle',
+    enabled: true,
+    dispatchable: true,
+    lifecycle: 'ready',
+    phase: null,
+    warm: false,
+    taskId: null,
+    taskFile: null,
+    dispatchedAt: null,
+    completedAt: null,
+    runner: null,
+    model: null,
+    deviceName: null,
+    taskPhase: null,
+    taskStepProgress: null,
+  };
+  let checkedAt = new Date().toISOString();
+  let answering = true;
+  let refreshes = 0;
+  const snapshot = (): FleetStatus => ({
+    checkedAt,
+    slots: [row],
+    summary: {
+      total: 1,
+      ready: 1,
+      busy: 0,
+      held: 0,
+      manual: 0,
+      disabled: 0,
+      blocked: 0,
+      warmCount: 0,
+    },
+  });
+  // A machine probe: it records a new checked_at when the machines answer.
+  const probe = async () => {
+    refreshes++;
+    if (!answering) throw new Error('machines unreachable');
+    checkedAt = new Date().toISOString();
+    return { fleet: snapshot() };
+  };
+  const deps = { load: async () => snapshot(), refresh: probe, join: probe };
+  const errors = t.mock.method(console, 'error', () => {});
+  // The monitor's 30 s loop for 20 minutes: the snapshot never reaches the default threshold.
+  for (let turn = 0; turn < 40; turn++) {
+    assert.equal((await fleetMonitorStatus(deps)).fleet.stale, undefined, `turn ${turn}`);
+    for (let i = 0; i < 3; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(30_000);
+    assert.equal(isFleetCheckedAtStale(checkedAt), false, `after turn ${turn}`);
+  }
+  assert.ok(refreshes >= 6 && refreshes <= 8, `one refresh per 150-180 s, saw ${refreshes}`);
+  // The machines stop answering: the fleet turns stale at the threshold.
+  answering = false;
+  let turns = 0;
+  while (!(await fleetMonitorStatus(deps)).fleet.stale) {
+    for (let i = 0; i < 3; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(30_000);
+    assert.ok(++turns <= 11, 'stale within the threshold and one loop turn');
+  }
+  assert.ok(errors.mock.callCount() > 0, 'each failed refresh is reported');
 });
