@@ -96,7 +96,7 @@ export async function observeReviewPromptAcceptance(
   )
     return context.promptAcceptance;
   const observability = getRunnerObservability(run.metrics.runner);
-  if (!observability?.getSessionBinding || !observability.promptAcceptedInSession) return null;
+  if (!observability?.promptAcceptedInSession) return null;
   const vars = await reviewWorkspaceRunnerVars(run);
   if (!vars) return null;
   const since = Date.parse(deliveryStartedAt);
@@ -106,7 +106,7 @@ export async function observeReviewPromptAcceptance(
   const binding =
     context.runnerSessionId && context.runnerSessionPath
       ? { sessionId: context.runnerSessionId, sessionPath: context.runnerSessionPath }
-      : await observability.getSessionBinding(vars, vars.session, since);
+      : await observability.getSessionBinding?.(vars, vars.session, since);
   if (!binding) return null;
   const prompt = await execOnSlot(
     vars,
