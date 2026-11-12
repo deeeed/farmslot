@@ -1,7 +1,7 @@
 import { css, html, LitElement, nothing, type PropertyValues, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import type { Run } from '@farmslot/protocol';
+import type { RunListRow } from '@farmslot/protocol';
 import { ciWatchStatusView } from '@farmslot/review-dispatch';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
@@ -9,7 +9,7 @@ import { colors, fonts } from '../../styles/theme-tokens.js';
 /** One compact renderer for run cards and detail pipelines. */
 @customElement('run-ci-watch-status')
 export class RunCIWatchStatus extends LitElement {
-  @property({ attribute: false }) run?: Run;
+  @property({ attribute: false }) run?: RunListRow;
   @state() private nowMs = Date.now();
   private timer?: ReturnType<typeof setInterval>;
 

@@ -10,6 +10,7 @@ import {
   type NativeWorkerSessionBinding,
   PipelineSteps,
   type Run,
+  type RunnerPromptAcceptance,
   type RunReviewResult,
   type WorkerSignal,
 } from '@farmslot/protocol';
@@ -25,6 +26,10 @@ const { GatewayMethodError } = await import('../core/method-error.js');
 let clock = Date.now();
 let afterWait: (() => void) | undefined;
 let reviewerExists = true;
+let runnerFailure: string | null = null;
+let runnerStartupPending = false;
+let acceptance: RunnerPromptAcceptance | null = null;
+let monitorTimeout: number | undefined;
 mock.method(Date, 'now', () => clock);
 mock.module('node:timers/promises', {
   namedExports: {
@@ -81,7 +86,11 @@ const startup = await import('../runners/review-startup.js');
 mock.module('../runners/review-startup.js', {
   namedExports: {
     ...startup,
-    observeReviewPromptAcceptance: async () => null,
+    observeReviewPromptAcceptance: async () => acceptance,
+    observeReviewRunnerState: async () => ({
+      failure: runnerFailure,
+      startupPending: runnerStartupPending,
+    }),
   },
 });
 const terminal = await import('../runners/review-tmux.js');
@@ -100,7 +109,12 @@ mock.module('../runners/review-tmux.js', {
 });
 const config = await import('../core/config.js');
 mock.module('../core/config.js', {
-  namedExports: { ...config, loadProjectVars: async () => ({ projectJson: {} }) },
+  namedExports: {
+    ...config,
+    loadProjectVars: async () => ({
+      projectJson: { monitoring: { total_timeout_min: monitorTimeout } },
+    }),
+  },
 });
 const support = await import('./support.js');
 mock.module('./support.js', {
@@ -229,6 +243,10 @@ beforeEach(() => {
   nativeRepairReads = 0;
   afterWait = undefined;
   reviewerExists = true;
+  runnerFailure = null;
+  runnerStartupPending = false;
+  acceptance = null;
+  monitorTimeout = undefined;
   terminalFailure = undefined;
   repairResolves = true;
   instructions.length = 0;
@@ -601,4 +619,97 @@ test('dispatch continuation uses the same live reviewer without rematerializing 
   assert.equal(getRun(run.id)?.reviewWorkspace?.workspaceId, original.reviewWorkspace?.workspaceId);
   assert.deepEqual(getRun(run.id)?.reviewRoundAdmissions, rounds);
   assert.equal(launches, 0);
+});
+
+test('a static reviewer with an open tmux session surfaces its terminal runner failure', async (t) => {
+  const { run } = await fixture(t);
+  updateRun(run.id, { status: 'monitoring' });
+  updateRunStep(run.id, PipelineSteps.MONITOR, { startedAt: new Date(clock).toISOString() });
+  monitorTimeout = 0.01;
+  acceptance = {
+    runner: 'pi',
+    deliveryStartedAt: new Date(clock).toISOString(),
+    sessionId: 'session',
+    sessionPath: '/fixture/session.jsonl',
+    observedAt: clock,
+    turnToken: 'session:1',
+  };
+  runnerFailure = 'Pi model request timed out after 300000ms and one retry';
+  await assert.rejects(
+    executeReviewWorkspaceStep(run.id, PipelineSteps.MONITOR, 0, () => {}),
+    { name: 'RunnerExecutionError', message: runnerFailure },
+  );
+  assert.equal(reviewerExists, true, 'session existence must not hide a failed turn');
+  assert.equal(getRun(run.id)?.agentContexts?.[0].status, 'failed');
+  assert.equal(getRun(run.id)?.reviewResult, undefined);
+});
+
+test('the first Pi request and its stalled retry stay monitored without a task mark, then fail', async (t) => {
+  const { run } = await fixture(t);
+  const started = clock;
+  const timeoutMs = 300_000;
+  const reason = `Pi model request timed out after ${timeoutMs}ms and one retry`;
+  const { FLOW_STEPS } = await import('@farmslot/protocol');
+  const names = FLOW_STEPS['review-pr'];
+  const monitorIndex = names.indexOf(PipelineSteps.MONITOR);
+  updateRun(run.id, {
+    status: 'monitoring',
+    error: undefined,
+    metrics: { ...run.metrics, runner: 'pi' },
+    steps: names.map((name, index) => ({
+      name,
+      status: index < monitorIndex ? 'done' : 'pending',
+      ...(name === PipelineSteps.MONITOR ? { startedAt: new Date(started).toISOString() } : {}),
+    })),
+    agentContexts: run.agentContexts?.map((context) => ({
+      ...context,
+      runner: 'pi',
+      status: 'launching',
+      promptDeliveryStartedAt: new Date(started).toISOString(),
+      signalAttemptId: undefined,
+    })),
+  });
+  runnerStartupPending = true;
+  let sawRetry = false;
+  afterWait = () => {
+    assert.equal(signal, null, 'the model has never reached mark start');
+    assert.equal(acceptance, null, 'Pi has no native acceptance API');
+    assert.equal(getRun(run.id)?.status, 'monitoring');
+    if (clock - started >= timeoutMs) sawRetry = true;
+    if (clock - started >= timeoutMs * 2 + 1000) {
+      runnerFailure = reason;
+      runnerStartupPending = false;
+      afterWait = undefined;
+    }
+  };
+  const { startRun } = await import('../run-engine/orchestrator.js');
+  await startRun(run.id);
+  assert(sawRetry, 'monitoring must survive the first request deadline');
+  assert.equal(clock - started, timeoutMs * 2 + 1000);
+  assert.equal(getRun(run.id)?.status, 'failed');
+  assert.equal(getRun(run.id)?.error, reason);
+  assert.equal(getRun(run.id)?.agentContexts?.[0].status, 'failed');
+  assert.equal(getRun(run.id)?.reviewResult, undefined);
+});
+
+test('a launch without current input still hits the existing startup gate', async (t) => {
+  const { run } = await fixture(t);
+  const started = clock;
+  updateRun(run.id, {
+    status: 'monitoring',
+    agentContexts: run.agentContexts?.map((context) => ({
+      ...context,
+      promptDeliveryStartedAt: new Date(started).toISOString(),
+    })),
+  });
+  updateRunStep(run.id, PipelineSteps.MONITOR, { startedAt: new Date(started).toISOString() });
+  await assert.rejects(
+    executeReviewWorkspaceStep(run.id, PipelineSteps.MONITOR, 0, () => {}),
+    {
+      name: 'BlockedRunError',
+      detail: 'review-startup-unacknowledged',
+    },
+  );
+  assert.equal(clock - started, 300_000);
+  assert.equal(getRun(run.id)?.agentContexts?.[0].status, 'launching');
 });

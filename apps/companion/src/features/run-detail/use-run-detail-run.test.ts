@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { URL } from 'node:url';
 
-import type { Run, RunGetResult } from '@farmslot/protocol';
+import type { Run, RunGetResult, RunListRow } from '@farmslot/protocol';
 import {
   canActOn,
   createGatewayResourceCache,
@@ -17,6 +17,16 @@ import {
 import { ResourceCacheConformanceTransport } from '../../../../../packages/protocol/src/client-cache/conformance';
 import { mountHook } from '../../hooks/hook-harness.fixtures';
 import { heldDataUsable } from '../../lib/resource-read-status';
+
+import {
+  HELD_CHECKLIST_TIMING,
+  HELD_EVIDENCE_MANIFEST,
+  HELD_PACKAGE_HASH,
+  HELD_TICKET_DESCRIPTION,
+  heldGateRun,
+  newerSlimRow,
+} from './held-detail.fixtures';
+import { heldDetailWithNewerRow } from './run-detail-reads';
 
 const scope = { gatewayUrl: 'ws://run-detail.invalid/', principalId: 'p', principalGeneration: 0 };
 const authority = { roles: [], workspaceAccess: 'farm' as const };
@@ -43,6 +53,7 @@ function run(summary: string, updatedAt = '2026-11-01T00:00:00.000Z'): Run {
 }
 
 type Rendered = {
+  row: RunListRow | null;
   run: Run | null;
   fromList: boolean;
   runActionable: boolean;
@@ -53,6 +64,7 @@ function isRendered(value: unknown): value is Rendered {
   return (
     typeof value === 'object' &&
     value !== null &&
+    'row' in value &&
     'run' in value &&
     'fromList' in value &&
     'runObservation' in value
@@ -70,7 +82,7 @@ type Answer = Run | 'pending' | { fail: string };
  * The cold start Run Detail opens on: a run.get saved by an earlier session, and a gateway
  * that is offline unless `online`. Online, each run.get read takes the next of `answers`.
  */
-async function mount(listed: Run[], saved?: Run, online = false, answers: Answer[] = []) {
+async function mount(listed: RunListRow[], saved?: Run, online = false, answers: Answer[] = []) {
   const store = createMemoryResourceStore();
   await store.setMetadata({ scope, authority });
   if (saved)
@@ -113,6 +125,7 @@ async function mount(listed: Run[], saved?: Run, online = false, answers: Answer
     {
       '@farmslot/protocol/client-cache': { canActOn, readRefused, resourceQuery },
       '../../lib/resource-read-status': { heldDataUsable },
+      './run-detail-reads': { heldDetailWithNewerRow },
       '../../store/held-connection': { useHeldConnection: () => held },
       '../../hooks/useResourceQuery': {
         useResourceQuery<T>(query: ResourceQuery<T> | undefined): ResourceQueryState<T> {
@@ -123,7 +136,7 @@ async function mount(listed: Run[], saved?: Run, online = false, answers: Answer
       },
       '../../store/runs': {
         useRunStore: (
-          select: (state: { runs: Run[]; observation: ResourceQueryState }) => unknown,
+          select: (state: { runs: RunListRow[]; observation: ResourceQueryState }) => unknown,
         ) => select({ runs: listed, observation: { status: 'stale' } }),
       },
     },
@@ -170,7 +183,7 @@ test('a listed run renders on the first render while its saved run.get hydrates 
     const first = detail.render();
     // The saved run.get is read from the store asynchronously, so the first render has none.
     assert.equal(first.runObservation.status, 'loading');
-    assert.equal(first.run, row);
+    assert.equal(first.row, row);
     await turns();
     const hydrated = detail.render();
     assert.equal(hydrated.runObservation.status, 'stale');
@@ -181,13 +194,15 @@ test('a listed run renders on the first render while its saved run.get hydrates 
   }
 });
 
-test('a listed run that was never opened renders offline from its row alone', async () => {
-  const row = run('listed row');
+test('a listed run that was never opened has its row offline and no detail to stand in', async () => {
+  const row = newerSlimRow(heldGateRun());
   const detail = await mount([row]);
   try {
-    assert.equal(detail.render().run, row);
+    assert.equal(detail.render().row, row);
     await turns();
-    assert.equal(detail.render().run, row);
+    const offline = detail.render();
+    assert.equal(offline.row, row);
+    assert.equal(offline.run, null);
     assert.equal(detail.transport.requestCount, 0);
   } finally {
     await detail.dispose();
@@ -213,13 +228,13 @@ test('a refused run.get drops the row; a failed one keeps it', async () => {
     const row = run('listed row');
     const detail = await mount([row], undefined, true);
     try {
-      assert.equal(detail.render().run, row);
+      assert.equal(detail.render().row, row);
       const read = await detail.transport.nextRead();
       read.reject(code);
       await turns();
       const after = detail.render();
       assert.equal(after.runObservation.error?.code, code);
-      assert.equal(after.run, kept ? row : null, code);
+      assert.equal(after.row, kept ? row : null, code);
     } finally {
       await detail.dispose();
     }
@@ -239,11 +254,41 @@ test('the newer of the row and the saved run.get is the one shown', async () => 
       await turns();
       const hydrated = detail.render();
       assert.equal(hydrated.runObservation.status, 'stale');
-      assert.equal(hydrated.run?.summary, shown);
+      assert.equal((shown === 'listed row' ? hydrated.row : hydrated.run)?.summary, shown);
       assert.equal(hydrated.fromList, shown === 'listed row');
     } finally {
       await detail.dispose();
     }
+  }
+});
+
+test('a newer slim row over a held run.get shows the row status and keeps the held package', async () => {
+  const held = heldGateRun();
+  const row = newerSlimRow(held);
+  const detail = await mount([row], held);
+  try {
+    detail.render();
+    await turns();
+    const shown = detail.render();
+    assert.equal(shown.fromList, true);
+    assert.equal(shown.row, row);
+    assert.equal(shown.run?.status, 'needs-decision');
+    assert.equal(shown.run?.summary, 'newer listed row');
+    const payload = shown.run?.decisions[0]?.payload;
+    assert.equal(payload?.kind, 'ready');
+    if (payload?.kind !== 'ready') return;
+    assert.equal(payload.prPackage?.packageHash, HELD_PACKAGE_HASH);
+    assert.deepEqual(payload.prPackage?.evidenceManifest, HELD_EVIDENCE_MANIFEST);
+    assert.deepEqual(shown.run?.steps[0]?.outputs, { transcript: 'worker transcript' });
+    // The row left the ticket description and checklist timing out; the held detail keeps
+    // them, takes the row's newer metrics, and is not marked trimmed.
+    assert.equal(row.detailTrimmed, true);
+    assert.equal(shown.run?.ticketData?.description, HELD_TICKET_DESCRIPTION);
+    assert.deepEqual(shown.run?.metrics.checklistTiming, HELD_CHECKLIST_TIMING);
+    assert.equal(shown.run?.metrics.durationMs, 240_000);
+    assert.equal(shown.run && 'detailTrimmed' in shown.run, false);
+  } finally {
+    await detail.dispose();
   }
 });
 
@@ -319,7 +364,7 @@ test('a connection drop keeps run.get through the grace, then shows a newer row'
     assert.equal(held.run?.summary, 'run.get');
     detail.drop(false);
     const dropped = detail.render();
-    assert.equal(dropped.run?.summary, 'newer listed row');
+    assert.equal(dropped.row?.summary, 'newer listed row');
     assert.equal(dropped.fromList, true);
     assert.equal(dropped.runActionable, false);
   } finally {
@@ -333,7 +378,7 @@ test('online, a failed reread of a read over 60 s old shows a newer row', async 
     assert.equal(detail.render().run?.summary, 'run.get');
     detail.age(120_000);
     const aged = detail.render();
-    assert.equal(aged.run?.summary, 'newer listed row');
+    assert.equal(aged.row?.summary, 'newer listed row');
     assert.equal(aged.fromList, true);
     assert.equal(aged.runActionable, false);
   } finally {

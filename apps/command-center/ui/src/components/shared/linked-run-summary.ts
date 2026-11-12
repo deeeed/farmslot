@@ -1,7 +1,7 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
-import type { Run } from '@farmslot/protocol';
+import type { RunListRow } from '@farmslot/protocol';
 
 import '../runs/run-pipeline-mini.js';
 
@@ -10,7 +10,7 @@ import { routeForRun, runStatusColor } from '../runs/run-utils.js';
 
 @customElement('linked-run-summary')
 export class LinkedRunSummary extends LitElement {
-  @property({ attribute: false }) run?: Run;
+  @property({ attribute: false }) run?: RunListRow;
   @property() label = 'Linked run';
   @property({ type: Boolean }) compact = false;
 

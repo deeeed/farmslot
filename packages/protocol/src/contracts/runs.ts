@@ -181,7 +181,9 @@ export function canActivateRunOnSlot(status: RunStatus): boolean {
  * outcome in history.
  * Shared by the gateway archive guard and the UI so both agree on eligibility.
  */
-export function isSettledBlockedRun(run: Pick<Run, 'status' | 'steps' | 'decisions'>): boolean {
+export function isSettledBlockedRun(
+  run: Pick<Run, 'status' | 'steps'> & { decisions?: ReadonlyArray<{ resolvedAt?: string }> },
+): boolean {
   if (run.status !== 'blocked') return false;
   const steps = run.steps ?? [];
   const decisions = run.decisions ?? [];
@@ -281,6 +283,12 @@ export interface RunStep {
   lastProgressAt?: string;
   inputs?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
+  /**
+   * Set only on a `run.list` row's step that left out inputs or output values
+   * (see `payloadTrimmed` on decisions). Absent on `run.get`, `run.forSlot` and
+   * run events, which carry the full step. A reader that needs them fetches the run.
+   */
+  outputsTrimmed?: true;
 }
 
 export type LiveRecipeSource =

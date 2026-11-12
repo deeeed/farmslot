@@ -38,6 +38,8 @@ const EVIDENCE_KEY = 'v';
 /** Raw mode delivers Ctrl-C as this key instead of SIGINT. */
 const CTRL_C = '\u0003';
 const EVIDENCE_HINT = `${EVIDENCE_KEY}  open the live run evidence page`;
+const EVIDENCE_MESSAGE_MS = 6000;
+const CALL_START_SLACK_MS = 2000;
 
 export interface StatusWatchOptions {
   target: string;
@@ -166,7 +168,7 @@ export async function runStatusWatch(
   let wake = new AbortController();
   let wantEvidence = false;
   let evidence: { root: string; server: Pick<RunEvidenceServer, 'url' | 'close'> } | undefined;
-  let evidenceLine: string | undefined;
+  let evidenceLine: { text: string; ok: boolean; at: number } | undefined;
   const offKeys = interactive
     ? deps.keys?.((keys) => {
         for (const key of keys) {
@@ -180,21 +182,46 @@ export async function runStatusWatch(
     : undefined;
   // The newest run of the task this watch shows, served live: the task it was asked for or
   // sees in progress, else the writer's binding. Retained history never stands in for it.
-  const openEvidence = async (view: TaskView): Promise<string> => {
+  const openEvidence = async (view: TaskView): Promise<{ text: string; ok: boolean }> => {
     const root = recipeRunAttemptsRoot(options.target, {
       ...(options.taskDir ? { explicit: options.taskDir } : {}),
       ...(view.activity.ongoing && view.taskDir ? { active: view.taskDir } : {}),
     });
-    const current = fs.existsSync(root) ? listRunEvidenceHistory(root)[0] : undefined;
-    if (!current) return `no recipe run yet under ${root}`;
-    if (evidence?.root !== root) {
+    const latestRun = fs.existsSync(root) ? listRunEvidenceHistory(root)[0] : undefined;
+    let page = latestRun && { root, id: latestRun.id };
+    let kind = 'run';
+    if (!page) {
+      // Before the first recipe run a task usually proves single actions with `call`; they
+      // leave the same evidence package, so show the newest one made during this task.
+      const startedAt = taskStartedAt(view.taskDir);
+      page = newestEvidence(
+        [
+          ...(view.taskDir ? [path.join(view.taskDir, 'artifacts', 'calls')] : []),
+          path.join(path.dirname(recipeRunAttemptsRoot(options.target, {})), 'calls'),
+        ],
+        startedAt,
+      );
+      kind = 'call';
+    }
+    if (!page)
+      return {
+        text: `${EVIDENCE_KEY}: no recipe run or call yet under ${root}; the evidence page opens after the first one`,
+        ok: false,
+      };
+    if (evidence?.root !== page.root) {
       await evidence?.server.close();
       evidence = undefined;
-      evidence = { root, server: await (deps.serveEvidence ?? defaultServeEvidence)(root) };
+      evidence = {
+        root: page.root,
+        server: await (deps.serveEvidence ?? defaultServeEvidence)(page.root),
+      };
     }
-    const url = `${evidence.server.url}runs/${encodeURIComponent(current.id)}/#story`;
+    const url = `${evidence.server.url}runs/${encodeURIComponent(page.id)}/#story`;
     deps.openUrl?.(url);
-    return `evidence ${url}`;
+    return {
+      text: `evidence ${kind === 'call' ? `(latest call, no recipe run yet) ` : ''}${url}`,
+      ok: true,
+    };
   };
   try {
     for (;;) {
@@ -226,11 +253,14 @@ export async function runStatusWatch(
       if (control.signal.aborted) return EXIT.ok;
       if (wantEvidence) {
         wantEvidence = false;
-        evidenceLine = await openEvidence(view).catch(
+        const result = await openEvidence(view).catch(
           // A page that cannot start is reported in the footer; the watch itself goes on.
-          (error: unknown) =>
-            `evidence page failed: ${error instanceof Error ? error.message : String(error)}`,
+          (error: unknown) => ({
+            text: `evidence page failed: ${error instanceof Error ? error.message : String(error)}`,
+            ok: false,
+          }),
         );
+        evidenceLine = { ...result, at: deps.now() };
       }
       const changes = changedLines(previous, view);
 
@@ -242,12 +272,30 @@ export async function runStatusWatch(
       } else if (options.watch && !deps.isTty) {
         for (const line of changes) deps.write(`${line}\n`);
       } else {
+        // A key press answers in the footer, highlighted so it reads as a reaction,
+        // and clears after a few seconds instead of looking like part of the page.
+        if (evidenceLine && deps.now() - evidenceLine.at > EVIDENCE_MESSAGE_MS)
+          evidenceLine = undefined;
         const footer =
           interactive && offKeys
-            ? ['', ...(evidenceLine ? [evidenceLine] : []), EVIDENCE_HINT]
+            ? [
+                '',
+                ...(evidenceLine
+                  ? [
+                      color(
+                        evidenceLine.ok ? 'ok' : 'warn',
+                        `${evidenceLine.ok ? '✓' : '!'} ${evidenceLine.text}`,
+                        {
+                          stream: process.stdout,
+                        },
+                      ),
+                    ]
+                  : []),
+                color('dim', EVIDENCE_HINT, { stream: process.stdout }),
+              ]
             : [];
         deps.write(
-          `${deps.isTty && options.watch ? CLEAR_SCREEN : ''}${[...renderTaskView(view, title, options.taskDir !== undefined), ...footer].join('\n')}\n`,
+          `${deps.isTty && options.watch ? CLEAR_SCREEN : ''}${[...renderTaskView(view, title, options.taskDir !== undefined, deps.isTty && options.watch ? process.stdout.columns : undefined), ...footer].join('\n')}\n`,
         );
       }
 
@@ -277,13 +325,58 @@ export async function runStatusWatch(
   }
 }
 
+/** When the task started, from its handoff; unknown counts as the beginning of time. */
+function taskStartedAt(taskDir: string | undefined): number {
+  if (!taskDir) return Number.NEGATIVE_INFINITY;
+  try {
+    const handoff = JSON.parse(
+      fs.readFileSync(path.join(taskDir, 'inputs', 'handoff.json'), 'utf8'),
+    ) as {
+      startedAt?: unknown;
+    };
+    const at = typeof handoff.startedAt === 'string' ? Date.parse(handoff.startedAt) : Number.NaN;
+    return Number.isNaN(at) ? Number.NEGATIVE_INFINITY : at;
+  } catch {
+    return Number.NEGATIVE_INFINITY;
+  }
+}
+
+/**
+ * The newest evidence package across `roots`, optionally only ones made at or after `since`.
+ * A package's recorded start is compared exactly; without one, its file time is used with
+ * slack, because file times come from a coarse clock that can trail the process clock.
+ */
+function newestEvidence(
+  roots: string[],
+  since = Number.NEGATIVE_INFINITY,
+): { root: string; id: string } | undefined {
+  let best: { root: string; id: string; at: string } | undefined;
+  for (const root of roots) {
+    if (!fs.existsSync(root)) continue;
+    for (const entry of listRunEvidenceHistory(root)) {
+      const made = entry.startedAt
+        ? Date.parse(entry.startedAt) >= since
+        : Date.parse(entry.updatedAt) >= since - CALL_START_SLACK_MS;
+      if (!made) continue;
+      const at = entry.startedAt ?? entry.updatedAt;
+      if (!best || at > best.at) best = { root, id: entry.id, at };
+    }
+  }
+  return best && { root: best.root, id: best.id };
+}
+
 function defaultServeEvidence(dir: string): Promise<RunEvidenceServer> {
   return serveRunEvidence({ dir });
 }
 
 // `explicitTask` is true when the caller named the task directory: its rows are
 // shown even when it is not in progress, because that is what was asked for.
-export function renderTaskView(view: TaskView, title: string, explicitTask = false): string[] {
+export function renderTaskView(
+  view: TaskView,
+  title: string,
+  explicitTask = false,
+  width?: number,
+): string[] {
   const out = (style: string, text: string) => color(style, text, { stream: process.stdout });
   // Details of a task that is not in progress are history; they would read as
   // the current run, so they appear only for a live task or one named explicitly.
@@ -328,16 +421,16 @@ export function renderTaskView(view: TaskView, title: string, explicitTask = fal
     template?.domain && `domain ${out('info', template.domain)}`,
     template?.surface && `via ${out('info', template.surface)}`,
   ]);
-  if (templateLine) lines.push(templateLine);
-
+  // Titles often start with the ticket key; print the key once.
+  const taskTitle = template?.title?.trim();
+  const titleText =
+    taskTitle && template?.ticket && taskTitle.startsWith(template.ticket)
+      ? taskTitle.slice(template.ticket.length).replace(/^[\s:·-]+/, '')
+      : taskTitle;
   const taskLine = joinParts(
-    [
-      template?.ticket && out('bold', template.ticket),
-      template?.title && out('info', template.title.trim()),
-    ],
+    [template?.ticket && out('bold', template.ticket), titleText && out('info', titleText)],
     ' ',
   );
-  if (taskLine) lines.push(`${out('label', 'task')} ${taskLine}`);
 
   const contextLine = joinParts([
     view.libraries.length > 0 &&
@@ -353,30 +446,57 @@ export function renderTaskView(view: TaskView, title: string, explicitTask = fal
   ]);
   if (contextLine) lines.push(contextLine);
 
-  if (showTask && view.acceptance?.length) lines.push('', ...renderAcceptanceLines(view));
-
-  if (showTask && view.prepare) {
-    lines.push(
-      `prepare ${out('info', view.prepare.step)} · ${view.prepare.completed}/${view.prepare.total} steps · ${formatDuration(view.prepare.elapsedMs)} elapsed`,
-    );
+  // Sections, each under a colored heading, so the page reads as task, now,
+  // acceptance and checklist instead of one stream of lines.
+  if (showTask && (taskLine || templateLine || view.plan)) {
+    lines.push('', taskLine ? `${out('label', 'task')}  ${taskLine}` : out('label', 'task'));
+    if (templateLine) lines.push(`  ${templateLine}`);
+    if (view.plan) {
+      lines.push(
+        `  ${joinParts([
+          `plan ${view.plan.approved ? out('ok', 'approved') : out('warn', 'not matching its approval')} ${out('info', view.plan.path)}`,
+          `sha ${out('dim', view.plan.sha256.slice(0, 8))}`,
+          view.plan.approvedBy && `by ${out('info', view.plan.approvedBy)}`,
+          view.plan.base && `base ${out('dim', view.plan.base)}`,
+        ])}`,
+      );
+    }
+    const step = view.checklist.find((row) => row.number === view.currentStep);
+    if (step && !step.checked) {
+      lines.push(
+        `  step ${out('accent', '▶')} ${out('bold', `${step.number} ${step.label}`)}${step.runningMs !== undefined ? out('dim', ` · ${formatDuration(step.runningMs)}`) : ''}`,
+      );
+    }
   }
 
+  const now = [
+    ...(showTask && view.prepare
+      ? [
+          `  prepare ${out('info', view.prepare.step)} · ${view.prepare.completed}/${view.prepare.total} steps · ${formatDuration(view.prepare.elapsedMs)}`,
+        ]
+      : []),
+    ...renderOperations(view, out),
+  ];
   // A step that runs many harness commands without ticking a row is still live;
   // the journal is the proof, so show it.
   const last = view.lastCommand;
   if (showTask && last) {
-    lines.push(
-      joinParts([
-        `last command ${out('info', joinParts([last.command, last.subject], ' '))}`,
-        last.verdict && statusWord(out, last.verdict),
-        last.ageMs !== undefined && `${formatDuration(last.ageMs)} ago`,
-      ]),
+    now.push(
+      out(
+        'dim',
+        `  ${joinParts([
+          `last command ${joinParts([last.command, last.subject], ' ')}`,
+          last.verdict,
+          last.ageMs !== undefined && `${formatDuration(last.ageMs)} ago`,
+        ])}`,
+      ),
     );
   }
-
   if (view.run)
-    lines.push(`run ${view.run.id.slice(0, 8)} ${view.run.status ?? 'lifecycle unavailable'}`);
-  lines.push(...renderOperations(view));
+    now.push(`  run ${view.run.id.slice(0, 8)} ${view.run.status ?? 'lifecycle unavailable'}`);
+  if (now.length > 0) lines.push('', out('label', 'now'), ...now);
+
+  if (showTask && view.acceptance?.length) lines.push('', ...renderAcceptanceLines(view, width));
   lines.push('');
   if (!view.activity.ongoing) {
     if (view.activity.reason !== 'run-unavailable')
@@ -385,6 +505,7 @@ export function renderTaskView(view: TaskView, title: string, explicitTask = fal
     if (!view.taskDir || !explicitTask) return lines;
     lines.push('');
   }
+  if (view.checklist.length > 0) lines.push(out('label', 'checklist'));
   let phase: string | undefined;
   for (const row of view.checklist) {
     if (row.phase && row.phase !== phase) {
@@ -419,12 +540,23 @@ export function renderTaskView(view: TaskView, title: string, explicitTask = fal
   return lines;
 }
 
-export function renderAcceptanceLines(view: TaskView): string[] {
+export function renderAcceptanceLines(
+  view: Pick<TaskView, 'acceptance'>,
+  width?: number,
+): string[] {
   if (!view.acceptance?.length) return [];
   const out = (style: string, text: string) => color(style, text, { stream: process.stdout });
   const proven = view.acceptance.filter((row) => row.status?.verdict === 'proven').length;
+  // The interactive watch keeps each criterion to one line; the full text stays in TASK.md.
+  const fit = (text: string, used: number) => {
+    if (!width) return text;
+    const chars = [...text.replace(/\s+/g, ' ').trim()];
+    const room = width - used - 1;
+    if (room < 1) return '…';
+    return chars.length > room ? `${chars.slice(0, room - 1).join('')}…` : chars.join('');
+  };
   return [
-    `acceptance criteria ${proven}/${view.acceptance.length} proven`,
+    `${out('label', 'acceptance')}  ${proven}/${view.acceptance.length} proven`,
     ...view.acceptance.map((row) => {
       const verdict = row.status?.verdict ?? 'no verdict';
       const style =
@@ -435,7 +567,7 @@ export function renderAcceptanceLines(view: TaskView): string[] {
             : verdict === 'no verdict'
               ? 'dim'
               : 'err';
-      return `  ${row.id} [${out(style, verdict)}] ${row.text}`;
+      return `  ${row.id} [${out(style, verdict)}] ${fit(row.text, row.id.length + verdict.length + 6)}`;
     }),
   ];
 }
@@ -649,30 +781,42 @@ function joinParts(parts: Array<string | false | undefined>, separator = ' · ')
   return parts.filter((part): part is string => Boolean(part)).join(separator);
 }
 
-function renderOperations(view: TaskView): string[] {
+function renderOperations(view: TaskView, out: (style: string, text: string) => string): string[] {
   const active = view.operations.filter(
     (operation) => operation.status === 'running' && operation.ownerAlive,
   );
-  const selected = active.length ? active : view.operations.slice(-1);
-  return selected.flatMap((operation) => {
-    const elapsed =
+  const elapsedOf = (operation: (typeof view.operations)[number]) =>
+    formatDuration(
       Date.parse(operation.finishedAt ?? new Date().toISOString()) -
-      Date.parse(operation.startedAt);
-    const state =
-      operation.status === 'running'
-        ? operation.ownerAlive
-          ? 'owner alive'
-          : 'owner exited; outcome unknown'
-        : operation.status;
-    const age = operation.lastOutputAt
-      ? formatDuration(Date.now() - Date.parse(operation.lastOutputAt)) + ' ago'
-      : 'none recorded';
-    const quoted = "'" + operation.logPath.replace(/'/g, "'\\''") + "'";
-    return [
-      `${operation.parentId ? '  ' : ''}operation ${operation.command} · ${state} · ${formatDuration(elapsed)} elapsed`,
-      ...(operation.stage ? [`  stage ${operation.stage}`] : []),
-      `  last output ${age}`,
-      `  follow: tail -n 50 -F ${quoted}`,
-    ];
-  });
+        Date.parse(operation.startedAt),
+    );
+  if (active.length === 0) {
+    const last = view.operations.at(-1);
+    if (!last) return [];
+    const state = last.status === 'running' ? 'owner exited; outcome unknown' : last.status;
+    return [out('dim', `  last operation ${last.command} · ${state} · ${elapsedOf(last)}`)];
+  }
+  // The innermost running operation is what is happening now; its parents are context.
+  const innermost =
+    active.find((operation) => !active.some((other) => other.parentId === operation.id)) ??
+    active.at(-1)!;
+  const lines: string[] = [];
+  for (const operation of active) {
+    if (operation === innermost) continue;
+    lines.push(
+      out(
+        'dim',
+        `  ${operation.command} · ${operation.stage ?? 'running'} · ${elapsedOf(operation)}`,
+      ),
+    );
+  }
+  const age = innermost.lastOutputAt
+    ? `output ${formatDuration(Date.now() - Date.parse(innermost.lastOutputAt))} ago`
+    : 'no output yet';
+  lines.push(
+    `  ${out('accent', '▶')} ${out('bold', innermost.command)} · ${out('info', innermost.stage ?? 'running')} · ${elapsedOf(innermost)} · ${out('dim', age)}`,
+  );
+  const quoted = "'" + innermost.logPath.replace(/'/g, "'\\''") + "'";
+  lines.push(out('dim', `    log: tail -n 50 -F ${quoted}`));
+  return lines;
 }

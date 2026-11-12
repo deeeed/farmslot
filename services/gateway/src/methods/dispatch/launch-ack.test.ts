@@ -70,6 +70,7 @@ test('dispatch rejects a configuration failure delayed past its first process ch
     {
       env: {
         PATH: process.env.PATH,
+        PI_CODING_AGENT_DIR: join(f.obs, 'synthetic-agent'),
         FARMSLOT_PI_OLLAMA: '0',
         LITELLM_URL: 'http://synthetic.test/v1',
         FARMSLOT_THINKING: 'medium',

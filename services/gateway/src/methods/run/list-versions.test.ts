@@ -17,14 +17,17 @@ import {
   type ResponseFrame,
   type Run,
   type RunListParams,
+  type RunListRow,
+  runListRow,
   type RunListVersion,
   trimRunForList,
 } from '@farmslot/protocol';
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 
 await import('../../runtime/mock-pty.test-support.js');
-const { RUN_LIST_PAGE_MAX_BYTES, warmRunListVersions } = await import('../../runs/list-version.js');
-const { archiveRun, createRun, deleteRun, getAllRuns, getRun, updateRun } =
+const { RUN_LIST_PAGE_MAX_BYTES, runListRowHeld, warmRunListVersions } =
+  await import('../../runs/list-version.js');
+const { archiveRun, createRun, deleteRun, discardUndurableRun, getAllRuns, getRun, updateRun } =
   await import('../../runs/store.js');
 const { runList } = await import('./context.js');
 const { createGatewayAuthRuntime, initializeGatewayIdentity } =
@@ -45,13 +48,34 @@ function fixtureRun(t: TestContext, ticketOrPr: string, summary?: string): Run {
   return getRun(run.id)!;
 }
 
-// The contract, computed here rather than through the gateway's helper: sha256 of the served row.
-const rowVersion = (row: Run) =>
+const rowVersion = (row: Run | RunListRow) =>
   createHash('sha256').update(canonicalResourceJson(row)).digest('hex');
+// The contract: version = sha256 of trimRunForList(run), unchanged from before slim rows;
+// row = runListRow(run), the slim row with the run's evidence summary.
 const servedVersion = (id: string): RunListVersion => ({
   id,
   version: rowVersion(trimRunForList(getRun(id)!)),
 });
+const servedRow = (id: string): RunListRow => runListRow(getRun(id)!);
+
+/** Gives a run a large step output and session usage, which a served row leaves out. */
+function addDroppedDetail(id: string, bytes: number): void {
+  const run = getRun(id)!;
+  updateRun(id, {
+    steps: [
+      ...run.steps,
+      { name: 'work', status: 'done', outputs: { transcript: 't'.repeat(bytes), runner: 'codex' } },
+    ],
+    sessionUsage: [
+      {
+        runner: 'codex',
+        totalTokens: 10,
+        measuredAt: new Date().toISOString(),
+        source: 'runner-transcript',
+      },
+    ],
+  });
+}
 
 // A hang fails its test instead of holding the lane's test lock; cleanup lives in t.after.
 const TEST_TIMEOUT = { timeout: 15_000 };
@@ -118,13 +142,15 @@ test(
     const page = async (ids: string[]) => {
       const reply = await runList({ ids });
       assert.equal(reply.totalCount, reply.runs.length, 'an ids page counts the rows it served');
+      // Version is sha256(trimRunForList(run)), not sha256(servedRow) — the slim
+      // projection (runListRow) differs from the version basis (trimRunForList).
       assert.deepEqual(
         reply.versions,
-        reply.runs.map((row) => ({ id: row.id, version: rowVersion(row) })),
+        reply.runs.map((row) => servedVersion(row.id)),
       );
       assert.deepEqual(
         reply.runs,
-        reply.runs.map((row) => trimRunForList(getRun(row.id)!)),
+        reply.runs.map((row) => servedRow(row.id)),
       );
       return reply.runs.map((row) => row.id);
     };
@@ -154,6 +180,45 @@ test(
     await assert.rejects(runList({ ids: [1] } as unknown as RunListParams), {
       code: 'INVALID_PARAMS',
     });
+  },
+);
+
+test('a plain run.list serves slim rows with evidenceSummary attached', TEST_TIMEOUT, async (t) => {
+  const run = fixtureRun(t, 'PLAIN-LIST-SLIM');
+  addDroppedDetail(run.id, 10_000);
+  const reply = await runList({});
+  const served = reply.runs?.find((row) => row.id === run.id);
+  assert.ok(served, 'run appears in plain list');
+  assert.deepEqual(served, servedRow(run.id), 'row matches slim projection with evidenceSummary');
+  assert.equal('sessionUsage' in served, false, 'sessionUsage dropped');
+  assert.deepEqual(served.steps.at(-1)?.outputs, { runner: 'codex' }, 'step output slimmed');
+  assert.ok(served.evidenceSummary !== undefined, 'evidenceSummary attached');
+});
+
+test(
+  'an ids page caps the bytes of the rows it serves, not of the full runs',
+  TEST_TIMEOUT,
+  async (t) => {
+    // Each run is ~900 KB in full and trimmed, a few KB served: three fit one 2 MB page.
+    const runs = ['PAGE-SERVED-A', 'PAGE-SERVED-B', 'PAGE-SERVED-C'].map((ticket) => {
+      const run = fixtureRun(t, ticket);
+      addDroppedDetail(run.id, 900_000);
+      return run.id;
+    });
+    const trimmedBytes = runs.reduce(
+      (total, id) => total + Buffer.byteLength(JSON.stringify(trimRunForList(getRun(id)!))),
+      0,
+    );
+    assert.ok(trimmedBytes > RUN_LIST_PAGE_MAX_BYTES, `trimmed rows ${trimmedBytes} B`);
+    const reply = await runList({ ids: runs });
+    assert.deepEqual(
+      reply.runs.map((row) => row.id),
+      runs,
+    );
+    assert.deepEqual(
+      reply.runs,
+      runs.map((id) => servedRow(id)),
+    );
   },
 );
 
@@ -196,13 +261,38 @@ test(
     const run = fixtureRun(t, 'VERSIONS-WARMED', 'warmed');
     updateRun(run.id, { summary: 'changed before the warm-up' });
     const expected = servedVersion(run.id);
-    await warmRunListVersions(getAllRuns);
+    await warmRunListVersions(getAllRuns, getRun);
     // An unpublished in-place write after the warm-up is invisible: the read used the warmed row.
     const live = getRun(run.id)!;
     live.summary = 'unpublished in-place write';
     const listed = (await runList({ versions: true })).versions!.find(({ id }) => id === run.id);
+    const page = await runList({ ids: [run.id] });
     live.summary = 'changed before the warm-up';
     assert.deepEqual(listed, expected);
+    // The warm-up derived the served row as well, not only its version.
+    assert.equal(page.runs[0]?.summary, 'changed before the warm-up');
+  },
+);
+
+test(
+  'the startup warm-up skips a run that left the live store while it waited',
+  TEST_TIMEOUT,
+  async (t) => {
+    const kept = fixtureRun(t, 'WARM-UP-KEPT');
+    const removed = fixtureRun(t, 'WARM-UP-REMOVED');
+    // The warm-up takes its snapshot of both runs now and yields before each of them.
+    const warming = warmRunListVersions(() => [kept, removed], getRun);
+    // One yield later it has derived the first run and waits before the second.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(runListRowHeld(kept.id), true);
+    assert.equal(runListRowHeld(removed.id), false);
+    // The second run leaves the live store before the warm-up reaches it.
+    const discarded = discardUndurableRun(removed.id);
+    assert.equal(getRun(removed.id), undefined);
+    await warming;
+    await discarded;
+    assert.equal(runListRowHeld(removed.id), false);
+    assert.equal(runListRowHeld(kept.id), true);
   },
 );
 
@@ -240,6 +330,71 @@ test(
     const changed = await runList({ ids: [run.id] });
     assert.deepEqual(changed.versions, [servedVersion(run.id)]);
     assert.notDeepEqual(changed.versions, first.versions);
+  },
+);
+
+test(
+  'a row is derived once per run change and shared by the plain list and the ids page',
+  TEST_TIMEOUT,
+  async (t) => {
+    const changed = fixtureRun(t, 'ROW-MEMO-CHANGED', 'before');
+    const untouched = fixtureRun(t, 'ROW-MEMO-UNTOUCHED', 'kept');
+    addDroppedDetail(untouched.id, 10_000);
+    const rowOf = (reply: { runs: RunListRow[] }, id: string) =>
+      reply.runs.find((row) => row.id === id);
+
+    const plain = await runList({});
+    const page = await runList({ ids: [changed.id, untouched.id] });
+    assert.deepEqual(rowOf(plain, changed.id), servedRow(changed.id));
+    assert.deepEqual(rowOf(plain, untouched.id), servedRow(untouched.id));
+    // The ids page serves the very objects the plain list derived: no row is derived twice.
+    assert.equal(rowOf(page, changed.id), rowOf(plain, changed.id));
+    assert.equal(rowOf(page, untouched.id), rowOf(plain, untouched.id));
+
+    // A run change derives that run's row again, and no other run's.
+    updateRun(changed.id, { summary: 'after' });
+    const next = await runList({ ids: [changed.id, untouched.id] });
+    assert.notEqual(rowOf(next, changed.id), rowOf(plain, changed.id));
+    assert.deepEqual(rowOf(next, changed.id), servedRow(changed.id));
+    assert.equal(rowOf(next, changed.id)?.summary, 'after');
+    assert.equal(rowOf(next, untouched.id), rowOf(plain, untouched.id));
+    assert.equal(rowOf(await runList({}), changed.id), rowOf(next, changed.id));
+  },
+);
+
+test(
+  'a run that leaves the live store leaves the row memo without a versions read',
+  TEST_TIMEOUT,
+  async (t) => {
+    const kept = fixtureRun(t, 'ROW-MEMO-KEPT');
+    const deleted = fixtureRun(t, 'ROW-MEMO-DELETED');
+    const archived = fixtureRun(t, 'ROW-MEMO-ARCHIVED');
+    // Plain lists only, as from the CLI: no versions read ever prunes the memo.
+    const keptRow = (await runList({})).runs.find((row) => row.id === kept.id);
+    assert.ok(keptRow);
+    for (const run of [kept, deleted, archived]) assert.equal(runListRowHeld(run.id), true);
+
+    for (const run of [deleted, archived])
+      updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await runList({});
+    assert.equal(await deleteRun(deleted.id), true);
+    assert.equal(await archiveRun(archived.id), true);
+    // The rows are gone with their runs, before any other read.
+    assert.equal(runListRowHeld(deleted.id), false);
+    assert.equal(runListRowHeld(archived.id), false);
+
+    const after = await runList({});
+    assert.equal(
+      after.runs.some((row) => row.id === deleted.id || row.id === archived.id),
+      false,
+    );
+    assert.equal(runListRowHeld(deleted.id), false);
+    assert.equal(runListRowHeld(archived.id), false);
+    // The live run next to them keeps its row object.
+    assert.equal(
+      after.runs.find((row) => row.id === kept.id),
+      keptRow,
+    );
   },
 );
 

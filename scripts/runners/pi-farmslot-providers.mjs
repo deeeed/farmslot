@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
 
 const DEFAULT_OLLAMA = '127.0.0.1:11434';
+export const PI_REQUEST_TIMEOUT_RETRIES = 1;
 const PI_REASONING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const PRICE_TIER =
   /^(input_cost_per_token|output_cost_per_token|cache_read_input_token_cost|cache_creation_input_token_cost)_above_(\d+)k_tokens$/;
@@ -14,17 +15,18 @@ const PRICE_TIER =
 /** @typedef {import('@farmslot/slot-config').PiModelCostMetadata} PiModelCostMetadata */
 
 /** Bound worker HTTP requests through the final response byte. Pi owns retries. */
-export function deadlinePiFetch(fetchImpl, timeoutMs = 5 * 60_000, onExhausted) {
+export function deadlinePiFetch(fetchImpl, timeoutMs = 5 * 60_000, onExhausted, mode = 'total') {
   let consecutiveTimeouts = 0;
   const boundedFetch = async (input, options = {}) => {
     const upstream = options.signal ?? (input instanceof Request ? input.signal : undefined);
     const deadline = new AbortController();
     const signal = upstream ? AbortSignal.any([upstream, deadline.signal]) : deadline.signal;
-    const timer = setTimeout(() => {
+    const expire = () => {
       if (upstream?.aborted) return;
       deadline.abort();
-      if (++consecutiveTimeouts >= 2) onExhausted?.();
-    }, timeoutMs);
+      if (++consecutiveTimeouts > PI_REQUEST_TIMEOUT_RETRIES) onExhausted?.();
+    };
+    let timer = setTimeout(expire, timeoutMs);
     const failure = (error) =>
       deadline.signal.aborted && !upstream?.aborted
         ? new Error(`Pi model request timed out after ${timeoutMs}ms`)
@@ -45,7 +47,13 @@ export function deadlinePiFetch(fetchImpl, timeoutMs = 5 * 60_000, onExhausted) 
               clearTimeout(timer);
               consecutiveTimeouts = 0;
               controller.close();
-            } else controller.enqueue(next.value);
+            } else {
+              if (mode === 'idle' && next.value.byteLength > 0) {
+                clearTimeout(timer);
+                timer = setTimeout(expire, timeoutMs);
+              }
+              controller.enqueue(next.value);
+            }
           } catch (error) {
             clearTimeout(timer);
             controller.error(failure(error));
@@ -362,9 +370,9 @@ export async function fetchOpenAiModels(
 export class PiProviderConfigurationError extends Error {}
 
 /** Pi replaces extension model arrays; retain the statically composed models for workers too. */
-export async function preservePiStaticModels(catalog, loadStaticRuntime) {
+export async function preservePiStaticModels(catalog, loadStaticRuntime, env = process.env) {
   if (catalog.length === 0) return catalog;
-  const configuredDir = process.env.PI_CODING_AGENT_DIR;
+  const configuredDir = env.PI_CODING_AGENT_DIR;
   const agentDir = configuredDir
     ? configuredDir.replace(/^~(?=\/|$)/, homedir())
     : path.join(homedir(), '.pi', 'agent');
@@ -375,15 +383,30 @@ export async function preservePiStaticModels(catalog, loadStaticRuntime) {
     // overrides without refreshing catalogs or looking up credentials.
     const runtime = await loadStaticRuntime(modelsPath);
     if (runtime.getError()) throw new PiProviderConfigurationError('Invalid pi static models');
-    return catalog.map((source) => ({
-      ...source,
-      models: [
-        ...new Map([
-          ...source.models.map((model) => [model.id, model]),
-          ...runtime.getModels(source.id).map((model) => [model.id, model]),
-        ]).values(),
-      ],
-    }));
+    return catalog.map((source) => {
+      const name = `FARMSLOT_PI_${source.kind.toUpperCase()}_MODEL_LIMITS`;
+      const limits = configuredModelLimits(env[name], name);
+      const discovered = new Map(source.models.map((model) => [model.id, model]));
+      return {
+        ...source,
+        models: [
+          ...new Map([
+            ...discovered,
+            ...runtime.getModels(source.id).map((model) => {
+              // Static defaults must not erase the pool's declared reasoning support.
+              // Keep discovery's endpoint validation and supported effort levels.
+              const live = discovered.get(model.id);
+              return [
+                model.id,
+                live && limits.get(model.id)?.reasoning !== undefined
+                  ? { ...model, reasoning: live.reasoning, thinkingLevelMap: live.thinkingLevelMap }
+                  : model,
+              ];
+            }),
+          ]).values(),
+        ],
+      };
+    });
   } catch {
     // Do not let optional discovery hide a failed static-model composition or
     // include configuration contents in a public catalog error.

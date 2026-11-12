@@ -1,7 +1,11 @@
 import { useState } from 'react';
 import { Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { parseRunLinkedTicketRefs, type Run, runLinkedTicketsView } from '@farmslot/protocol';
+import {
+  parseRunLinkedTicketRefs,
+  runLinkedTicketsView,
+  type RunListRow,
+} from '@farmslot/protocol';
 
 import { colors, fonts } from '../lib/theme';
 
@@ -12,7 +16,7 @@ export function RunLinkedTickets({
   disabled = false,
   compact = false,
 }: {
-  run: Run;
+  run: RunListRow;
   onSave?: (refs: string[]) => Promise<void>;
   disabled?: boolean;
   compact?: boolean;

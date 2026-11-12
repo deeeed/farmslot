@@ -1,6 +1,6 @@
 import { useMemo, useRef } from 'react';
 
-import { Methods, type Run, type TaskProgressResult } from '@farmslot/protocol';
+import { Methods, type RunListRow, type TaskProgressResult } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 import { runChecklistProgressTarget } from '@farmslot/review-dispatch';
 
@@ -13,7 +13,7 @@ import { useResourceQuery } from './useResourceQuery';
  * List rows share the current owner's canonical checklist observation. A row that is not `live`
  * (its list is hidden) stops observing and keeps the last answer it showed.
  */
-export function useRunChecklistProgress(run: Run, live = true) {
+export function useRunChecklistProgress(run: RunListRow, live = true) {
   const target = runChecklistProgressTarget(run);
   const key = target?.key;
   const query = useMemo(

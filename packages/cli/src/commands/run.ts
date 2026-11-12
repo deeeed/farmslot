@@ -47,6 +47,7 @@ import {
   type RunForceCompleteResult,
   type RunGetGradeResult,
   type RunGradeResult,
+  type RunListRow,
   type RunPauseResult,
   type RunRecipeRunsForRunResult,
   type RunResumeResult,
@@ -268,7 +269,7 @@ export function buildReviewChainResult(run: Run): { chain: ReviewChainEntry[] } 
  * `run list` rows. A long status, such as a blocked run's reason, is clamped
  * so the columns stay aligned.
  */
-export function formatRunListLines(runs: readonly Run[]): string[] {
+export function formatRunListLines(runs: readonly RunListRow[]): string[] {
   const rows = runs.map((r) => {
     const label = deriveRunLifecycleView(r).activityLabel ?? r.status;
     return { r, label: label.length > 40 ? `${label.slice(0, 39)}…` : label };
@@ -847,7 +848,7 @@ export function registerRunCommand(program: Command): void {
         const result = await withProgress(
           'Loading runs',
           () =>
-            client.call<{ runs: Run[] }>('run.list', {
+            client.call<{ runs: RunListRow[] }>('run.list', {
               limit: Number(opts.limit),
               ...(opts.active ? { active: true } : {}),
               ...(opts.project ? { project: opts.project } : {}),

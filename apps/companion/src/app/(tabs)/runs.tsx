@@ -9,9 +9,10 @@ import {
   extractRunArtifactManifest,
   groupRunsByFamily,
   normalizeRunTags,
-  type Run,
   runDisplayStatus,
   type RunFamilyGroup,
+  runListEvidenceSummary,
+  type RunListRow,
   selectRecentRunFamilyGroups,
   selectRunList,
   slotMachineMap,
@@ -39,7 +40,6 @@ import {
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
   groupVisualArtifactPairs,
 } from '../../lib/artifact-url';
-import { diffArtifactCandidate } from '../../lib/diff';
 import { runWorkspacePathnameForStatus } from '../../lib/legacy-run-route';
 import { openNativeRunHistory } from '../../lib/run-collections';
 import {
@@ -106,7 +106,7 @@ type RunsListRow =
   | { kind: 'family'; group: RunFamilyGroup; familyIndex: number; familyCount: number }
   | {
       kind: 'run';
-      run: Run;
+      run: RunListRow;
       familyRunIndex: number;
       familyRunCount: number;
       isFamilyRoot: boolean;
@@ -123,7 +123,7 @@ const RunCard = React.memo(function RunCard({
   gatewayUrl,
   artifactAuthHeaders,
 }: {
-  run: Run;
+  run: RunListRow;
   familyRunIndex: number;
   familyRunCount: number;
   isFamilyRoot: boolean;
@@ -274,7 +274,7 @@ const RunCard = React.memo(function RunCard({
   );
 });
 
-function RunEvidenceSignals({ run, compact = false }: { run: Run; compact?: boolean }) {
+function RunEvidenceSignals({ run, compact = false }: { run: RunListRow; compact?: boolean }) {
   const router = useRouter();
   const signals = useMemo(() => summarizeRunEvidenceSignals(run), [run]);
   if (signals.length === 0) return null;
@@ -440,7 +440,10 @@ function RecentFamilyShortcut({
     artifactUrlForEntry(gatewayUrl, run.id, artifact),
   );
   const primaryVisualPair = visualPairSummary.pairs[0] ?? null;
-  const diffArtifactPath = diffArtifactCandidate(artifactManifest)?.path ?? null;
+  // The gateway's summary names the diff file and counts the run's artifacts; a row cached
+  // before slim rows computes both.
+  const evidence = runListEvidenceSummary(run);
+  const diffArtifactPath = evidence.diffArtifactPath ?? null;
   const canOpenDiff = Boolean(diffArtifactPath || run.slotId);
   const readyDecision = selectReadyWorkspaceDecision(run);
   const reviewGateDecision = selectReviewGateWorkspaceDecision(run);
@@ -540,7 +543,7 @@ function RecentFamilyShortcut({
           </>
         ) : null}
         <RunQuickAction
-          label={artifactManifest.length ? `Evidence ${artifactManifest.length}` : 'Evidence files'}
+          label={evidence.artifactCount ? `Evidence ${evidence.artifactCount}` : 'Evidence files'}
           onPress={() =>
             router.push({
               pathname: '/workspace/run/[runId]/files',

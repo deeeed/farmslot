@@ -16,10 +16,9 @@ import {
   type SlotVars,
 } from '../../core/index.js';
 import { PREPARE_PREFLIGHT_TIMEOUT_MS } from '../../core/project-timeouts.js';
-import { commandIncludesRemotePath } from '../../core/remote-paths.js';
 import { ORCHESTRATOR_LOCALITY, slotWriteFiles } from '../../core/slot-io.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
-import { farmPathsForSlot } from '../../fleet/farm-paths.js';
+import { commandIncludesFarmPath, farmPathsForSlot } from '../../fleet/farm-paths.js';
 import { withoutNodeReconnectWait } from '../../fleet/node-rpc.js';
 import { resolveWorkspaceRoot } from '../../projects/repo-root.js';
 
@@ -860,11 +859,7 @@ export async function runPrepareCommand(
   // call can exec it directly without going through a host-shell parser.
   const stageTimeout = 10_000;
   let stagedCommand = wrappedCmd;
-  if (
-    !useLocal &&
-    !slotIsLocal &&
-    commandIncludesRemotePath(wrappedCmd, farmPathsForSlot(vars).code.node)
-  ) {
+  if (!useLocal && !slotIsLocal && commandIncludesFarmPath(wrappedCmd, vars)) {
     const { NodeSupportPendingError, resolveRemoteFarmCommand } =
       await import('../../node-support/remote-command.js');
     try {

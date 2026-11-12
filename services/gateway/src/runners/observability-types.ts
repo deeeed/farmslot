@@ -27,6 +27,8 @@ export interface ObservabilityReading<T> {
   sessionId?: string;
   /** Stable identity of the runner turn that emitted the reading. */
   turnToken?: string;
+  /** Active input's startup grace from its turn clock; null means wait for turn completion. */
+  startupGraceMs?: number | null;
 }
 
 export type RunnerActivity = 'idle' | 'composing' | 'tool-running' | 'awaiting-input' | 'unknown';
@@ -49,6 +51,7 @@ export type RunnerTaskProgressReader = (
 ) => Promise<MonitorProgressKind | null>;
 
 export interface HookRecord {
+  startupGraceMs?: number | null;
   /** Pi's current turn baseline or latest nonzero native assistant usage. */
   lastTokenProgressAt?: number;
   /** Error emitted by this exact native terminal turn. */

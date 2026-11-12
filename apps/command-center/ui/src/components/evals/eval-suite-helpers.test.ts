@@ -1,13 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { PRStatus, Run } from '@farmslot/protocol';
+import { type PRStatus, type Run, runListRow, trimRunForList } from '@farmslot/protocol';
+
+import {
+  diffStatFromRun,
+  evidenceSummaryFromRun,
+} from '../../../../../../packages/protocol/test/runs/default-branch-readers.fixtures.js';
 
 import {
   addCasesToBasket,
   buildCaseCatalog,
   canonicalSourceIdentity,
   catalogItemFromManual,
+  catalogItemFromRun,
   datasetIdFor,
   datasetItemIdFor,
   filterCaseCatalog,
@@ -381,4 +387,98 @@ test('launch matrix and summary aggregate operational fields only', () => {
   assert.equal(summary.costEstimate, 1.25);
   assert.equal(summary.validationEvidenceCount, 2);
   assert.equal(summary.missingDataCount, 1);
+});
+
+// The catalog shows the default branch's numbers: its two helpers (reference copies in the
+// protocol test fixtures) run on the row that branch serves give the expected values.
+test("catalog preview fields are the default branch's from the full run, the served row and an old cached row", () => {
+  const fullRun = makeRun({
+    steps: [
+      {
+        name: 'work',
+        status: 'done',
+        outputs: {
+          diffStat: { files: 2, additions: 10, deletions: 3 },
+          artifacts: [
+            { path: 'evidence/before-login.png', purpose: 'before screenshot', sizeBytes: 400 },
+            { path: 'evidence/after-login.png', purpose: 'after screenshot', sizeBytes: 500 },
+            { path: 'reports/recipe-report.md', purpose: 'report', sizeBytes: 100 },
+            { path: 'reviews/final-review.md', purpose: 'review', sizeBytes: 200 },
+            { path: 'artifacts/check.txt', purpose: 'validation', sizeBytes: 50 },
+          ],
+        },
+      },
+    ],
+    decisions: [
+      {
+        id: 'gate',
+        type: 'engine_human_gate',
+        title: 'Publish',
+        description: '',
+        createdAt: '2026-05-09T00:00:00.000Z',
+        actions: [],
+        payload: {
+          kind: 'ready',
+          prNumber: null,
+          repo: null,
+          branch: 'fix/crash',
+          workerReport: 'done',
+          diffStat: { files: 2, additions: 10, deletions: 3 },
+          artifactManifest: [{ path: 'artifacts/demo.mp4', purpose: 'video', sizeBytes: 900 }],
+        },
+      },
+    ],
+  });
+  const preview = (item: ReturnType<typeof catalogItemFromRun>) => ({
+    diffStat: item.diffStat,
+    artifactCount: item.artifactCount,
+    artifactBytes: item.artifactBytes,
+    visualEvidenceCount: item.visualEvidenceCount,
+    validationEvidenceCount: item.validationEvidenceCount,
+    reviewEvidenceCount: item.reviewEvidenceCount,
+  });
+  // A row cached before slim rows, which is also the row the default branch serves.
+  const cached = trimRunForList(fullRun);
+  assert.equal('evidenceSummary' in cached, false);
+  const expected = { diffStat: diffStatFromRun(cached), ...evidenceSummaryFromRun(cached) };
+  // Step-output artifacts only, the gate's video not among them; the `validation` purpose counts.
+  assert.deepEqual(expected, {
+    diffStat: { files: 2, additions: 10, deletions: 3 },
+    artifactCount: 5,
+    artifactBytes: 1250,
+    visualEvidenceCount: 2,
+    validationEvidenceCount: 2,
+    reviewEvidenceCount: 1,
+  });
+  assert.deepEqual(preview(catalogItemFromRun(fullRun)), expected);
+  assert.deepEqual(preview(catalogItemFromRun(cached)), expected);
+  // The row the gateway serves carries the gateway's evidence summary; the numbers come from
+  // it, not from the row's own step outputs.
+  const served = runListRow(fullRun);
+  assert.equal(Array.isArray(served.steps[0]?.outputs?.artifacts), true);
+  assert.deepEqual(preview(catalogItemFromRun(served)), expected);
+
+  // The same run without the `validation` artifact: the default branch's 4 / 1200 B / 2, where
+  // counting every run artifact once gave 5 / 2100 B / 3.
+  const step = fullRun.steps[0];
+  const artifacts = step?.outputs?.artifacts;
+  if (!step || !Array.isArray(artifacts)) throw new Error('Expected step artifacts');
+  const plain = makeRun({
+    decisions: fullRun.decisions,
+    steps: [{ ...step, outputs: { ...step.outputs, artifacts: artifacts.slice(0, 4) } }],
+  });
+  const plainExpected = {
+    diffStat: diffStatFromRun(plain),
+    ...evidenceSummaryFromRun(plain),
+  };
+  assert.deepEqual(plainExpected, {
+    diffStat: { files: 2, additions: 10, deletions: 3 },
+    artifactCount: 4,
+    artifactBytes: 1200,
+    visualEvidenceCount: 2,
+    validationEvidenceCount: 1,
+    reviewEvidenceCount: 1,
+  });
+  assert.deepEqual(preview(catalogItemFromRun(plain)), plainExpected);
+  assert.deepEqual(preview(catalogItemFromRun(runListRow(plain))), plainExpected);
 });

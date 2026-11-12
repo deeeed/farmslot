@@ -6,7 +6,7 @@ import type {
   FleetStatus,
   PendingDecision,
   RoadmapItem,
-  Run,
+  RunListRow,
   SlotStatus,
 } from '@farmslot/protocol';
 
@@ -89,7 +89,7 @@ export interface RunRow {
   pendingDecisions: Array<{ id: string; title: string; actions: string[] }>;
 }
 
-export function runsViewModel(runs: Run[]): RunRow[] {
+export function runsViewModel(runs: RunListRow[]): RunRow[] {
   return runs.map((run) => ({
     id: run.id,
     shortId: run.id.slice(0, 8),

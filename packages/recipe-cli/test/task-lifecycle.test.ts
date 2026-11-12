@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,6 +9,7 @@ import { test, type TestContext } from 'node:test';
 import {
   changedLines,
   readTaskView,
+  renderAcceptanceLines,
   renderTaskView,
   runStatusWatch,
 } from '../src/harness/commands/status-watch.js';
@@ -175,6 +177,55 @@ test('a watch retains the bound run through task-file cleanup while review conti
   );
   assert.equal(ticks, 2);
   assert.equal(JSON.parse(frames.at(-1)!).run.status, 'done');
+});
+
+test('status shows the approved plan a task was started with', (t) => {
+  const { target, dir } = task(t, 'comparison/profile');
+  fs.mkdirSync(path.join(dir, 'inputs'), { recursive: true });
+  const plan =
+    '# T-1 · fix-bug\nApproved by @engineer · 2026-11-12 · planned against origin/main@abc1234\n';
+  fs.writeFileSync(path.join(dir, 'inputs', 'plan.md'), plan);
+  const view = collectTaskView(target, dir, Date.now());
+  assert.equal(view.plan?.approvedBy, '@engineer');
+  assert.equal(view.plan?.base, 'origin/main@abc1234');
+  assert.equal(view.plan?.sha256, createHash('sha256').update(plan).digest('hex'));
+  assert.equal(view.plan?.approved, false);
+  assert.match(
+    renderTaskView(view, 'status', true).join('\n'),
+    /plan not matching its approval inputs\/plan\.md/,
+  );
+  const sha = createHash('sha256').update(plan).digest('hex');
+  fs.appendFileSync(
+    path.join(dir, 'TASK.md'),
+    `\n## Approved plan\n\nThe engineer approved \`inputs/plan.md\` (sha256 ${sha}) for this task.\n`,
+  );
+  const approved = collectTaskView(target, dir, Date.now());
+  assert.equal(approved.plan?.approved, true);
+  assert.match(
+    renderTaskView(approved, 'status', true).join('\n'),
+    /plan approved inputs\/plan\.md · sha [0-9a-f]{8} · by @engineer · base origin\/main@abc1234/,
+  );
+});
+
+test('the watch keeps each acceptance criterion to one line of the terminal', () => {
+  const view = {
+    acceptance: [
+      {
+        id: 'AC-1',
+        text: 'first line\nsecond line that is long enough to need cutting here',
+        status: null,
+      },
+    ],
+  };
+  const [, row] = renderAcceptanceLines(view, 50);
+  const plain = row!.replace(/\x1b\[[0-9;]*m/g, '');
+  assert.ok(!plain.includes('\n'), plain);
+  assert.ok([...plain].length <= 50, plain);
+  assert.match(plain, /…$/);
+  assert.match(
+    renderAcceptanceLines(view)[1]!,
+    /second line that is long enough to need cutting here/,
+  );
 });
 
 test('an unavailable lifecycle is explicit without treating the worker signal as run completion', (t) => {

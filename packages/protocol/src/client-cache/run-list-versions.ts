@@ -1,6 +1,7 @@
 import { isActiveListRun, normalizeRunTags, type Run } from '../contracts/runs.js';
 import { Methods } from '../rpc/registry.js';
 import type { RunListParams, RunListResult } from '../rpc/run.js';
+import type { RunListRow } from '../runs/list-row.js';
 import {
   runListPage,
   type RunListProjection,
@@ -41,7 +42,7 @@ export interface RunListCollectionOptions {
 interface HeldRow {
   version: string;
   projection: RunListProjection;
-  body?: Run;
+  body?: RunListRow;
   projectionBytes: number;
   bodyBytes: number;
   storedBody: boolean;
@@ -214,7 +215,7 @@ export class RunListCollection {
     if (!committed) await this.commit([]);
   }
 
-  private put(run: Run, version: string): void {
+  private put(run: RunListRow, version: string): void {
     const projection = runListProjection(run);
     this.rows.set(run.id, {
       version,

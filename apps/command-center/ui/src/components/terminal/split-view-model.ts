@@ -1,5 +1,5 @@
 import type {
-  Run,
+  RunListRow,
   RunStatus,
   SlotStatus,
   TmuxWorkerRef,
@@ -46,7 +46,10 @@ export type TerminalPane =
   | { type: 'slot'; slotId: string; index: number };
 export type WorkerPaneFilter = 'adhoc' | 'all' | 'farmslot';
 
-export function selectWorkspaceRuns(runs: readonly Run[], filters: GlobalFilters): Run[] {
+export function selectWorkspaceRuns(
+  runs: readonly RunListRow[],
+  filters: GlobalFilters,
+): RunListRow[] {
   return runs
     .filter(
       (run) =>
@@ -212,7 +215,7 @@ export function filterSlotsByGlobalFilters(
   });
 }
 
-function runById(runs: readonly Run[]): Map<string, Run> {
+function runById(runs: readonly RunListRow[]): Map<string, RunListRow> {
   return new Map(runs.map((run) => [run.id, run]));
 }
 
@@ -220,7 +223,7 @@ function activeRunTerminalPriority(status: RunStatus): number {
   return ACTIVE_RUN_TERMINAL_PRIORITY[status] ?? 0;
 }
 
-function compareTerminalRuns(a: Run, b: Run): number {
+function compareTerminalRuns(a: RunListRow, b: RunListRow): number {
   const priorityDiff = activeRunTerminalPriority(b.status) - activeRunTerminalPriority(a.status);
   if (priorityDiff !== 0) return priorityDiff;
   return Date.parse(b.updatedAt || b.createdAt) - Date.parse(a.updatedAt || a.createdAt);
@@ -228,10 +231,10 @@ function compareTerminalRuns(a: Run, b: Run): number {
 
 function activeRunForSlot(
   slot: SlotStatus,
-  runs: readonly Run[],
-  runsById: Map<string, Run>,
-): Run | null {
-  let best: Run | null = null;
+  runs: readonly RunListRow[],
+  runsById: Map<string, RunListRow>,
+): RunListRow | null {
+  let best: RunListRow | null = null;
   for (const run of runs) {
     if (run.slotId !== slot.slot || !hasUnsettledRunExecution(run)) continue;
     if (!best || compareTerminalRuns(run, best) > 0) best = run;
@@ -252,7 +255,10 @@ function activeRunForSlot(
   return best;
 }
 
-export function slotHasActiveRunTerminal(slot: SlotStatus, runsById: Map<string, Run>): boolean {
+export function slotHasActiveRunTerminal(
+  slot: SlotStatus,
+  runsById: Map<string, RunListRow>,
+): boolean {
   if (slot.currentRunId) {
     const run = runsById.get(slot.currentRunId);
     if (run) return hasUnsettledRunExecution(run);
@@ -267,8 +273,8 @@ export function slotHasActiveRunTerminal(slot: SlotStatus, runsById: Map<string,
 
 export function isActiveRunTerminalSlot(
   slot: SlotStatus,
-  runs: readonly Run[],
-  runsById: Map<string, Run> = runById(runs),
+  runs: readonly RunListRow[],
+  runsById: Map<string, RunListRow> = runById(runs),
 ): boolean {
   if (slot.lifecycle === 'manual') {
     return Boolean(slot.taskFile && slot.agent === 'working');
@@ -281,8 +287,8 @@ export function isActiveRunTerminalSlot(
 
 function activeRunSlotSortKey(
   slot: SlotStatus,
-  runs: readonly Run[],
-  runsById: Map<string, Run>,
+  runs: readonly RunListRow[],
+  runsById: Map<string, RunListRow>,
 ): [priority: number, updatedAt: number] {
   if (slot.lifecycle === 'manual') return [0, 0];
 
@@ -300,8 +306,8 @@ function activeRunSlotSortKey(
 function compareActiveRunSlots(
   a: SlotStatus,
   b: SlotStatus,
-  runs: readonly Run[],
-  runsById: Map<string, Run>,
+  runs: readonly RunListRow[],
+  runsById: Map<string, RunListRow>,
 ): number {
   const [priorityA, updatedA] = activeRunSlotSortKey(a, runs, runsById);
   const [priorityB, updatedB] = activeRunSlotSortKey(b, runs, runsById);
@@ -312,7 +318,7 @@ function compareActiveRunSlots(
 
 export function selectActiveRunSlotIds(
   slots: readonly SlotStatus[],
-  runs: readonly Run[],
+  runs: readonly RunListRow[],
   filters: GlobalFilters,
   limit = ACTIVE_RUN_SLOT_LIMIT,
 ): string[] {

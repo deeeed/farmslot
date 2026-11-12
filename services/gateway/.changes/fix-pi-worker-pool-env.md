@@ -1,0 +1,1 @@
+- Preserve pool-declared Pi reasoning support when static model definitions are composed at worker startup.

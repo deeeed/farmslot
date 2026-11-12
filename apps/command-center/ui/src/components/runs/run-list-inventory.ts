@@ -1,4 +1,4 @@
-import type { Run } from '@farmslot/protocol';
+import type { RunListRow } from '@farmslot/protocol';
 import { resolveRunSlotId } from '@farmslot/protocol';
 
 import {
@@ -38,7 +38,7 @@ export const RUN_INVENTORY_COLUMNS: WorkInventoryColumnDef<RunInventorySortKey>[
   },
 ];
 
-export function runInventorySortValue(run: Run, key: RunInventorySortKey): string {
+export function runInventorySortValue(run: RunListRow, key: RunInventorySortKey): string {
   switch (key) {
     case 'status':
       return run.status;
@@ -63,7 +63,7 @@ export function runInventorySortValue(run: Run, key: RunInventorySortKey): strin
  * Compact pipeline/review label for inventory cells.
  * Active review must never read as a human publication gate.
  */
-export function compactRunPipelineLabel(run: Run): string {
+export function compactRunPipelineLabel(run: RunListRow): string {
   const activeReview = activePublicationReviewLabel(run);
   if (activeReview) return activeReview;
   if (isInteractiveCompletionAwaitingOperator(run)) return 'awaiting operator action';
