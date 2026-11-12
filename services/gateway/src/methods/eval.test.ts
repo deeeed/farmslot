@@ -22,7 +22,10 @@ import { normalizeEvalReplayForTaskWrite } from '../run-engine/eval-replay-norma
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 import { writeTaskFixture } from '../tasks/writer.test-support.js';
 
-import { harnessLifecycleForAxes } from './eval/candidate-setup.js';
+import {
+  harnessLifecycleForAxes,
+  resolveCandidateTemplateProvenance,
+} from './eval/candidate-setup.js';
 import { candidateVariant, evalExperimentCreate, evalTrialStart } from './eval.js';
 
 // These tests resolve the committed demo pool's slots (demo-ff-1), which the
@@ -617,7 +620,7 @@ test('evalTrialStart rejects auto replay when the Reference has no base commit',
           project: 'farmslot-farm',
           experimentManifestPath,
           axes: {
-            template: { path: 'templates/fix-bug.md', hash: 'candidate' },
+            template: { path: 'templates/fix-bug.md' },
             model: { name: 'gpt-5.5' },
           },
           runner: 'codex',
@@ -810,7 +813,7 @@ test('evalTrialStart automatically replays from the reference base commit when a
         project: 'farmslot-farm',
         experimentManifestPath,
         axes: {
-          template: { path: 'templates/fix-bug.md', hash: 'candidate' },
+          template: { path: 'templates/fix-bug.md' },
           model: { name: model },
         },
         label: `${runner} replay candidate`,
@@ -888,10 +891,10 @@ test('evalTrialStart treats explicit trialId as an idempotency key', async () =>
       source: { kind: 'git-ref', ref: 'main', repository: 'owner/repo', baseSha },
       baseline: { baseSha, capturedAt: '2026-05-09T00:00:01.000Z', source: 'local-git' },
     });
-    const axes = {
-      template: { path: 'templates/fix-bug.md', hash: 'template-new' },
+    const { axes } = await resolveCandidateTemplateProvenance('farmslot-farm', 'fix-bug', {
+      template: { path: 'templates/fix-bug.md' },
       model: { name: 'gpt-5.5' },
-    };
+    });
     const candidateStrategyFingerprint = computeCandidateStrategyFingerprint({
       axes,
       taskProfile: 'fix-bug',

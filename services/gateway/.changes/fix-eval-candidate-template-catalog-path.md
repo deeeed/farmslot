@@ -1,1 +1,1 @@
-- Resolve eval candidate templates through the project's configured catalog defaults, preserving nested paths and rejecting ambiguous basename selections.
+- Resolve eval candidate templates through the project's catalog defaults and nested paths, reject ambiguous names, and reject saved strategies whose template digest no longer matches.

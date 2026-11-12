@@ -202,6 +202,12 @@ export async function resolveCandidateTemplateProvenance(
       runMode: 'autonomous',
       explicitId,
     });
+    const expectedHash = axes.template?.hash?.trim();
+    if (expectedHash && expectedHash !== snapshot.entry.sha256) {
+      throw new Error(
+        `Candidate template hash mismatch for ${snapshot.entry.relativePath}: expected ${expectedHash}, resolved ${snapshot.entry.sha256}. Refresh the candidate strategy to use the current template.`,
+      );
+    }
     fileName = snapshot.entry.relativePath;
     templatePath = snapshot.entry.path;
     templateContent = snapshot.markdown;
@@ -258,7 +264,7 @@ export async function resolveCandidateTemplateProvenance(
     taskTemplate,
     missingData,
     axes: axes.template?.hash?.trim()
-      ? axes
+      ? { ...axes, template: { ...axes.template, hash: provenance.contentHash } }
       : {
           ...axes,
           template: {
@@ -267,7 +273,7 @@ export async function resolveCandidateTemplateProvenance(
               axes.template?.path ??
               (executionTemplate ? fileName : `templates/worker/${fileName}`),
             name: axes.template?.name ?? fileName.replace(/\.md$/, ''),
-            hash: axes.template?.hash ?? provenance.contentHash,
+            hash: provenance.contentHash,
             ref: provenance.projectRepoHeadSha ?? axes.template?.ref,
           },
         },
