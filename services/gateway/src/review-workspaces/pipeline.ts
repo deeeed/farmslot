@@ -43,13 +43,17 @@ import {
   sendNativeWorkerInstruction,
 } from '../runners/native/worker-control.js';
 import { getRunnerDefinition } from '../runners/registry.js';
-import { observeReviewPromptAcceptance } from '../runners/review-startup.js';
+import {
+  observeReviewPromptAcceptance,
+  observeReviewRunnerFailure,
+} from '../runners/review-startup.js';
 import {
   launchReviewTmux,
   recoverReviewTmuxSession,
   reviewTmuxOperation,
   reviewTmuxStartupState,
 } from '../runners/review-tmux.js';
+import { RunnerExecutionError } from '../runners/runner-execution-error.js';
 import {
   assertRunArchivable,
   getAllRuns,
@@ -1075,11 +1079,6 @@ async function executeOwnedReviewWorkspaceStep(
               ? { retainedSessionId: current.repeatReviewContext?.session?.priorSessionId }
               : {}),
           });
-          if (startup === 'blocked')
-            throw new BlockedRunError(
-              'Reviewer has not acknowledged its task. Check its terminal for a startup prompt, sign-in or usage limit. This run will resume when the original reviewer starts or finishes.',
-              'review-startup-unacknowledged',
-            );
           const status = startup === 'acknowledged' ? 'working' : 'launching';
           if (
             context &&
@@ -1158,6 +1157,19 @@ async function executeOwnedReviewWorkspaceStep(
               },
             };
           }
+          const failure = await observe(() =>
+            observeReviewRunnerFailure(currentWorkspaceRun(runId, generation), acceptance),
+          );
+          check();
+          if (failure) {
+            await upsertAgentContext(runId, 'review', { id: 'review', status: 'failed' });
+            throw new RunnerExecutionError(failure);
+          }
+          if (startup === 'blocked')
+            throw new BlockedRunError(
+              'Reviewer has not acknowledged its task. Check its terminal for a startup prompt, sign-in or usage limit. This run will resume when the original reviewer starts or finishes.',
+              'review-startup-unacknowledged',
+            );
           const state = await observe(() =>
             reviewTmuxOperation(currentWorkspaceRun(runId, generation), 'inspect'),
           );

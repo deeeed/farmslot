@@ -26,7 +26,20 @@ There does not appear to be one stable cross-runner token-extraction library or 
 Pi worker requests have a five-minute deadline through the last response byte.
 `FARMSLOT_PI_REQUEST_TIMEOUT_MS` overrides that deadline in milliseconds. One
 consecutive timeout retry is allowed; a second timeout aborts the current
-operation and records a structured failure. Operator cancellation stays cancelled.
+operation and records a structured `StopFailure` before requesting cancellation.
+The worker monitor raises its existing runner-unavailable operator decision; a
+static review fails with the recorded reason, even if its tmux session survives.
+Operator cancellation stays cancelled.
+
+The default `FARMSLOT_PI_REQUEST_TIMEOUT_MODE=total` preserves the existing total
+request deadline, including time before response headers and streamed response
+bytes. Set `FARMSLOT_PI_REQUEST_TIMEOUT_MODE=idle` to use the same
+`FARMSLOT_PI_REQUEST_TIMEOUT_MS` value as an inactivity deadline instead. Each
+nonempty response chunk resets that timer; response headers and empty chunks do
+not. A continuously streaming response may then exceed the configured duration,
+while a stalled stream or missing headers still times out. Successful response
+completion resets the consecutive-timeout budget. The timeout value, default,
+and retry limit are unchanged.
 
 An active worker with no native token-usage progress for five minutes gets a
 warning in its existing monitor or review-fix step. The warning clears when usage

@@ -10,6 +10,7 @@ import {
   type NativeWorkerSessionBinding,
   PipelineSteps,
   type Run,
+  type RunnerPromptAcceptance,
   type RunReviewResult,
   type WorkerSignal,
 } from '@farmslot/protocol';
@@ -25,6 +26,9 @@ const { GatewayMethodError } = await import('../core/method-error.js');
 let clock = Date.now();
 let afterWait: (() => void) | undefined;
 let reviewerExists = true;
+let runnerFailure: string | null = null;
+let acceptance: RunnerPromptAcceptance | null = null;
+let monitorTimeout: number | undefined;
 mock.method(Date, 'now', () => clock);
 mock.module('node:timers/promises', {
   namedExports: {
@@ -81,7 +85,8 @@ const startup = await import('../runners/review-startup.js');
 mock.module('../runners/review-startup.js', {
   namedExports: {
     ...startup,
-    observeReviewPromptAcceptance: async () => null,
+    observeReviewPromptAcceptance: async () => acceptance,
+    observeReviewRunnerFailure: async () => runnerFailure,
   },
 });
 const terminal = await import('../runners/review-tmux.js');
@@ -100,7 +105,12 @@ mock.module('../runners/review-tmux.js', {
 });
 const config = await import('../core/config.js');
 mock.module('../core/config.js', {
-  namedExports: { ...config, loadProjectVars: async () => ({ projectJson: {} }) },
+  namedExports: {
+    ...config,
+    loadProjectVars: async () => ({
+      projectJson: { monitoring: { total_timeout_min: monitorTimeout } },
+    }),
+  },
 });
 const support = await import('./support.js');
 mock.module('./support.js', {
@@ -229,6 +239,9 @@ beforeEach(() => {
   nativeRepairReads = 0;
   afterWait = undefined;
   reviewerExists = true;
+  runnerFailure = null;
+  acceptance = null;
+  monitorTimeout = undefined;
   terminalFailure = undefined;
   repairResolves = true;
   instructions.length = 0;
@@ -601,4 +614,27 @@ test('dispatch continuation uses the same live reviewer without rematerializing 
   assert.equal(getRun(run.id)?.reviewWorkspace?.workspaceId, original.reviewWorkspace?.workspaceId);
   assert.deepEqual(getRun(run.id)?.reviewRoundAdmissions, rounds);
   assert.equal(launches, 0);
+});
+
+test('a static reviewer with an open tmux session surfaces its terminal runner failure', async (t) => {
+  const { run } = await fixture(t);
+  updateRun(run.id, { status: 'monitoring' });
+  updateRunStep(run.id, PipelineSteps.MONITOR, { startedAt: new Date(clock).toISOString() });
+  monitorTimeout = 0.01;
+  acceptance = {
+    runner: 'pi',
+    deliveryStartedAt: new Date(clock).toISOString(),
+    sessionId: 'session',
+    sessionPath: '/fixture/session.jsonl',
+    observedAt: clock,
+    turnToken: 'session:1',
+  };
+  runnerFailure = 'Pi model request timed out after 300000ms and one retry';
+  await assert.rejects(
+    executeReviewWorkspaceStep(run.id, PipelineSteps.MONITOR, 0, () => {}),
+    { name: 'RunnerExecutionError', message: runnerFailure },
+  );
+  assert.equal(reviewerExists, true, 'session existence must not hide a failed turn');
+  assert.equal(getRun(run.id)?.agentContexts?.[0].status, 'failed');
+  assert.equal(getRun(run.id)?.reviewResult, undefined);
 });

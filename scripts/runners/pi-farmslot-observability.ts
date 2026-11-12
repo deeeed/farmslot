@@ -122,15 +122,23 @@ export default async function (pi: {
   const timeoutMs = Number(process.env.FARMSLOT_PI_REQUEST_TIMEOUT_MS ?? 300_000);
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)
     throw new Error('FARMSLOT_PI_REQUEST_TIMEOUT_MS must be a positive integer');
+  const timeoutMode = process.env.FARMSLOT_PI_REQUEST_TIMEOUT_MODE ?? 'total';
+  if (timeoutMode !== 'total' && timeoutMode !== 'idle')
+    throw new Error('FARMSLOT_PI_REQUEST_TIMEOUT_MODE must be total or idle');
   let timeoutFailure: string | null = null;
   let abortOperation: (() => void) | undefined;
   const originalFetch = globalThis.fetch;
-  const boundedFetch = deadlinePiFetch(originalFetch, timeoutMs, () => {
-    if (abortOperation) {
-      timeoutFailure = `Pi model request timed out after ${timeoutMs}ms and one retry`;
-      abortOperation();
-    }
-  });
+  const boundedFetch = deadlinePiFetch(
+    originalFetch,
+    timeoutMs,
+    () => {
+      if (abortOperation) {
+        timeoutFailure = `Pi model request timed out after ${timeoutMs}ms and one retry`;
+        abortOperation();
+      }
+    },
+    timeoutMode,
+  );
   let requestFetch: typeof globalThis.fetch = boundedFetch;
   const ownedFetch: typeof globalThis.fetch = (input, options) => requestFetch(input, options);
   globalThis.fetch = ownedFetch;
@@ -350,7 +358,17 @@ export default async function (pi: {
       if (!text) return;
       boundedFetch.reset();
       timeoutFailure = null;
-      abortOperation = () => ctx.abort();
+      abortOperation = () => {
+        // Persist before cancellation: settling can be delayed or skipped by the runner.
+        writePiHook({
+          obsDir: obsDir(),
+          event: 'StopFailure',
+          failure: timeoutFailure,
+          ...sessionFrom(ctx),
+          cwd: ctx.cwd,
+        });
+        ctx.abort();
+      };
       writePiHook({
         obsDir: obsDir(),
         event: 'UserPromptSubmit',

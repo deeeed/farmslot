@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Pi request abort ends monitoring",
+  "description": "Use a real Pi TUI on a private tmux server with a synthetic loopback provider that stalls after headers. Verify two requests exhaust the deadline retry, emit StopFailure, reach the production worker failure reader, and fail a static review through gateway run.resume and run.get. Uses a disposable home and gateway; no paid calls or operator runs.",
+  "workflow": {
+    "entry": "pi-request-abort",
+    "nodes": {
+      "pi-request-abort": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks --test --test-force-exit scripts/runner-validation/pi-request-abort.live.mts",
+        "timeout_ms": 90000,
+        "intent": "A stalled Pi request exhausts one retry and produces a structured failure that ends the static review, even though the interactive session survived the abort.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

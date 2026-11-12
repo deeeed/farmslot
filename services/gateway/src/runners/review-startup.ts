@@ -5,10 +5,63 @@ import type { Run, RunnerPromptAcceptance } from '@farmslot/protocol';
 import type { SlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
+import { withReviewWorkspaceExecutor } from '../runtime/workspace-terminal.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 
 import { getRunnerObservability } from './registry.js';
 import { reviewWorkspaceRunnerVars as workspaceRunnerVars } from './review-workspace-context.js';
+
+/** A failed turn remains terminal even while its interactive session survives. */
+export async function observeReviewRunnerFailure(
+  run: Run,
+  acceptance: RunnerPromptAcceptance | null,
+): Promise<string | null> {
+  const context = run.agentContexts?.find((entry) => entry.id === 'review');
+  const since = Date.parse(context?.promptDeliveryStartedAt ?? '');
+  if (!context || !Number.isFinite(since)) return null;
+  const observer = getRunnerObservability(context.runner);
+  const vars = await reviewWorkspaceRunnerVars(run);
+  if (!observer || !vars) return null;
+  // Native histories bind to the accepted session. Digest hooks bind to the current
+  // pane and the input clock, including when the runner failed before its first mark.
+  const reading = await withReviewWorkspaceExecutor(run, async (check) => {
+    const state = acceptance
+      ? await observer.getSessionDeliveryState(
+          vars,
+          vars.session,
+          acceptance.sessionId,
+          acceptance.sessionPath,
+        )
+      : observer.promptAcceptanceMode === 'hook-digest'
+        ? await observer.getTurnState?.(vars, vars.session)
+        : null;
+    check();
+    return state;
+  });
+  if (
+    !reading?.failure ||
+    reading.failureKind === 'transport' ||
+    reading.confidence !== 'high' ||
+    !['hook', 'signal'].includes(reading.source) ||
+    reading.observedAt < since
+  )
+    return null;
+  if (acceptance) {
+    if (
+      acceptance.runner !== context.runner ||
+      acceptance.deliveryStartedAt !== context.promptDeliveryStartedAt ||
+      !acceptance.turnToken ||
+      reading.turnToken !== acceptance.turnToken ||
+      reading.sessionId !== acceptance.sessionId ||
+      reading.observedAt < acceptance.observedAt
+    )
+      return null;
+  } else {
+    const turnStartedAt = Number(reading.turnToken?.slice(reading.turnToken.lastIndexOf(':') + 1));
+    if (!Number.isFinite(turnStartedAt) || turnStartedAt < since) return null;
+  }
+  return reading.failure;
+}
 
 /** Existing progress/control readers retain their owner authorization check. */
 export async function reviewWorkspaceRunnerVars(run: Run): Promise<SlotVars | null> {
