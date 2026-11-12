@@ -20,6 +20,7 @@ import {
   lookupParkedGitWork,
   type ParkedCapture,
   type ParkedCaptureOptions,
+  parkedRestoreTargets,
   ParkedWorkError,
   parkGitWork,
   pruneParkedGitWork,
@@ -439,13 +440,14 @@ export async function restoreParkedBranch(
     if (local.exitCode === 0) return null;
     if (local.exitCode !== 1)
       throw new ParkedWorkError('GIT_FAILED', 'Cannot inspect the replay branch');
+    const targetTrees = parkedRestoreTargets(parked);
     const capture = await captureSlotWork(
       vars,
       options.project,
       {
         defaultBranch: options.defaultBranch,
         targetBranches: [branch],
-        targetTrees: [parked.worktreeTreeSha!],
+        targetTrees,
       },
       exec,
     );
@@ -455,7 +457,7 @@ export async function restoreParkedBranch(
       {
         slotId: vars.slotId,
         extraRefs: [`refs/heads/${branch}`],
-        targetTrees: [parked.worktreeTreeSha!],
+        targetTrees,
         restoreBranch: branch,
       },
       capture,
@@ -601,9 +603,7 @@ export async function restoreSlotParkedWork(
       'SNAPSHOT_MISSING',
       'Select a retained snapshot from this slot inventory',
     );
-  const target =
-    'kind' in receipt && receipt.kind === 'worktree' ? receipt.worktreeTreeSha : receipt.headSha;
-  const options = { defaultBranch, targetTrees: target ? [target] : [] };
+  const options = { defaultBranch, targetTrees: parkedRestoreTargets(receipt) };
   const capture = await captureSlotWork(vars, project, options, exec);
   await verifyWork();
   await capture.assertOwner();

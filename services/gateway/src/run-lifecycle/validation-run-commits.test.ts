@@ -26,6 +26,8 @@ import {
   parkSlotCommits,
   recordReleasedCheckout,
   restoreParkedBranch,
+  restoreSlotParkedWork,
+  slotParkedInventory,
 } from './validation-run-commits.js';
 
 const run = promisify(execFile);
@@ -635,3 +637,38 @@ test('prior-work and a verified checkpoint at the same head keep distinct immuta
   assert.equal(restored?.ref, checkpoint?.ref);
   assert.equal(git('rev-parse', validation.branch!), head);
 });
+
+for (const action of ['operator', 'replay'] as const) {
+  test(`${action} restore preserves ignored current bytes overwritten by the intermediate source checkout`, async (t) => {
+    const { vars, git, validation, base } = await fixture(t);
+    await writeFile(path.join(vars.remoteRepo, '.gitignore'), 'generated-note\n');
+    await writeFile(path.join(vars.remoteRepo, 'generated-note'), 'old generated contents');
+    git('add', '.gitignore');
+    git('add', '-f', 'generated-note');
+    git('commit', '-qm', 'tracked generated file');
+    git('rm', 'generated-note');
+    const saved = await parkRunBranchCommits(validation, vars, localExec, checks);
+    assert.equal(saved?.kind, 'worktree');
+    git('reset', '--hard', base);
+    git('clean', '-fd');
+    git('checkout', '-q', 'main');
+    git('branch', '-D', validation.branch!);
+    await writeFile(path.join(vars.remoteRepo, '.gitignore'), 'generated-note\n');
+    git('add', '.gitignore');
+    git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'current ignore rules');
+    await writeFile(path.join(vars.remoteRepo, 'generated-note'), 'current ignored contents');
+    if (action === 'operator')
+      await restoreSlotParkedWork(vars, {}, 'main', saved!.ref, async () => {}, localExec);
+    else await restoreParkedBranch(getRun(validation.id), vars, validation.branch!, localExec);
+    const inventory = await slotParkedInventory(vars, localExec);
+    const prior = inventory.receipts.find(
+      (receipt) => receipt.purpose === 'prior-work' && receipt.branch === 'main',
+    );
+    assert.ok(prior, 'the threatened current checkout has a receipt');
+    assert.equal(
+      git('show', `${prior.ref}:generated-note`),
+      'current ignored contents',
+      'intermediate checkout may not discard ignored current data',
+    );
+  });
+}

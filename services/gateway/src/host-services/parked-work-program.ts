@@ -60,8 +60,8 @@ function exposedIgnoredPaths(targets) {
   const ignored=nul(git(['ls-files','--others','--ignored','--exclude-standard','--directory','-z']).stdout);
   if(!ignored.length)return [];
   const gitdir=text(['rev-parse','--absolute-git-dir']), exposed=new Set();
-  for(const [n,target] of [...new Set(targets)].entries()) {
-    const directory=path.join(temporary,'ignore-rules-'+n); fs.mkdirSync(directory);
+  for(const target of new Set(targets)) {
+    const directory=fs.mkdtempSync(path.join(temporary,'ignore-rules-'));
     const entries=nul(git(['ls-tree','-r','-z',target]).stdout).flatMap(line => {
       const tab=line.indexOf('\t'), file=line.slice(tab+1), fields=line.slice(0,tab).split(' ');
       return path.posix.basename(file)==='.gitignore' && ['100644','100755'].includes(fields[0]) ? [{file,sha:fields[2]}] : [];

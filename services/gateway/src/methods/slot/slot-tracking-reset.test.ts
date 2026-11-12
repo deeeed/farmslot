@@ -220,3 +220,25 @@ test('idle reset on its target branch clears an unmerged index', async (t) => {
   assert.equal(git(repo, 'status', '--porcelain'), '');
   assert.equal(git(repo, 'rev-parse', 'HEAD'), git(repo, 'rev-parse', 'origin/main'));
 });
+
+test('idle refresh repairs an old unowned remote-ref lock before fetching', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'idle-stale-remote-lock-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'slot');
+  initPrimaryRepo(repo, path.join(root, 'origin.git'));
+  const previous = git(repo, 'rev-parse', 'HEAD');
+  git(repo, '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-qm', 'remote advanced');
+  git(repo, 'push', 'origin', 'main');
+  git(repo, 'reset', '--hard', previous);
+  git(repo, 'update-ref', 'refs/remotes/origin/main', previous);
+  const lock = path.join(
+    repo,
+    git(repo, 'rev-parse', '--git-path', 'refs/remotes/origin/main.lock'),
+  );
+  writeFileSync(lock, '');
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(lock, old, old);
+  await reset(slotVars(repo, 'stale-ref'), {}, undefined, 'main');
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), git(repo, 'rev-parse', 'origin/main'));
+  git(repo, 'fetch', 'origin', 'main');
+});

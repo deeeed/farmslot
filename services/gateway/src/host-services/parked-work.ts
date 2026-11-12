@@ -254,13 +254,23 @@ export async function executeParkedGitMutation(
   return { stdout: value.stdout, stderr: value.stderr, exitCode: value.exitCode };
 }
 
+export type ParkedRestoreSource = Pick<ParkedRunCommits, 'ref' | 'headSha'> &
+  Partial<ParkedRunCommits>;
+
+/** Restore visits the source commit before applying a saved working tree. */
+export function parkedRestoreTargets(receipt: ParkedRestoreSource): string[] {
+  const targets = [receipt.sourceHeadSha ?? receipt.headSha];
+  if (receipt.kind === 'worktree' && receipt.worktreeTreeSha) targets.push(receipt.worktreeTreeSha);
+  return targets;
+}
+
 export async function restoreParkedGitWork(
   vars: SlotVars,
   options: Pick<ParkedCaptureOptions, 'slotId' | 'extraRefs' | 'targetTrees'> & {
     restoreBranch?: string;
   },
   capture: ParkedCapture,
-  receipt: Pick<ParkedRunCommits, 'ref' | 'headSha'> & Partial<ParkedRunCommits>,
+  receipt: ParkedRestoreSource,
   exec: Executor = execOnSlot,
 ): Promise<ParkedInspection> {
   const value = await request(

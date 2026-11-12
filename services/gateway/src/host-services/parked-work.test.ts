@@ -243,3 +243,23 @@ test('an ignored file that reset would expose to clean is retained in the origin
   assert.equal(await readFile(path.join(repo, 'private-note'), 'utf8'), 'local note');
   assert.equal(await readFile(path.join(repo, '.gitignore'), 'utf8'), 'private-note\n');
 });
+
+test('restore evaluates ignored paths before and after checkout without sharing temporary rule state', async (t) => {
+  const { vars, repo, git, options } = await fixture(t);
+  await writeFile(path.join(repo, '.gitignore'), 'ignored-note\n');
+  git('add', '.gitignore');
+  git('commit', '-qm', 'stable ignore rules');
+  await writeFile(path.join(repo, 'ignored-note'), 'must stay untouched');
+  await writeFile(path.join(repo, 'tracked'), 'restored working content');
+  const saved = await parkGitWork(vars, options, localExec);
+  const restored = await restoreParkedGitWork(
+    vars,
+    { slotId: 'proof' },
+    saved,
+    saved.receipts[0],
+    localExec,
+  );
+  assert.match(restored.branch, /^restored\//);
+  assert.equal(await readFile(path.join(repo, 'tracked'), 'utf8'), 'restored working content');
+  assert.equal(await readFile(path.join(repo, 'ignored-note'), 'utf8'), 'must stay untouched');
+});

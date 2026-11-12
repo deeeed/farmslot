@@ -323,11 +323,72 @@ test(
       JSON.stringify({ receipt: dirtyReceipt, restored, inventory: inventory.summary }, null, 2),
     );
 
+    git(repo, 'checkout', '-qb', 'dirty-deletion-snapshot');
+    await writeFile(path.join(repo, '.gitignore'), 'fixture.txt\n.agent/\ngenerated-note\n');
+    await writeFile(path.join(repo, 'generated-note'), 'old generated content\n');
+    git(repo, 'add', '.gitignore');
+    git(repo, 'add', '-f', 'generated-note');
+    git(repo, 'commit', '-qm', 'test: tracked generated file');
+    git(repo, 'rm', 'generated-note');
+    const deletionPark = await releaseOwnedProof('dirty-deletion-snapshot');
+    assert.equal(deletionPark.refreshed, true, deletionPark.detail);
+    const deletionInventory = await call<SlotParkedResult>('slot.parked', {
+      action: 'list',
+      slotId: 'proof-slot',
+    });
+    assert.ok(deletionInventory.action === 'list');
+    const deletionReceipt = deletionInventory.receipts.find(
+      (receipt) => receipt.branch === 'dirty-deletion-snapshot' && receipt.kind === 'worktree',
+    );
+    assert.ok(deletionReceipt);
+    await writeFile(path.join(repo, '.gitignore'), 'fixture.txt\n.agent/\ngenerated-note\n');
+    git(repo, 'add', '.gitignore');
+    git(repo, 'commit', '-qm', 'test: current ignore rules');
+    await writeFile(path.join(repo, 'generated-note'), 'current ignored user content\n');
+    const deletionRestore = await call<SlotParkedResult>('slot.parked', {
+      action: 'restore',
+      slotId: 'proof-slot',
+      ref: deletionReceipt.ref,
+    });
+    assert.ok(deletionRestore.action === 'restore');
+    const currentInventory = await call<SlotParkedResult>('slot.parked', {
+      action: 'list',
+      slotId: 'proof-slot',
+    });
+    assert.ok(currentInventory.action === 'list');
+    const currentBackup = currentInventory.receipts.find(
+      (receipt) =>
+        receipt.kind === 'worktree' &&
+        receipt.branch === 'main' &&
+        git(repo, 'ls-tree', receipt.ref, 'generated-note'),
+    );
+    assert.ok(currentBackup, 'intermediate checkout must retain ignored current contents');
+    assert.equal(
+      git(repo, 'show', currentBackup.ref + ':generated-note'),
+      'current ignored user content',
+    );
+    await writeFile(
+      path.join(output, 'intermediate-restore.json'),
+      JSON.stringify({ deletionReceipt, currentBackup, deletionRestore }, null, 2),
+    );
+    const deletionCleanup = await releaseOwnedProof('dirty-deletion-restored-cleanup');
+    assert.equal(deletionCleanup.refreshed, true, deletionCleanup.detail);
+
     await writeFile(path.join(repo, 'legacy-refresh.txt'), 'ordinary refresh local work\n');
     const posture = (await core.readSlotRow('proof-slot'))?.warm;
+    git(seed, 'remote', 'add', 'origin', remote);
+    git(seed, 'commit', '--allow-empty', '-qm', 'test: remote main advanced');
+    git(seed, 'push', '-q', 'origin', 'main');
+    const remoteLock = path.join(
+      repo,
+      git(repo, 'rev-parse', '--git-path', 'refs/remotes/origin/main.lock'),
+    );
+    await writeFile(remoteLock, '');
+    const oldRemoteLock = new Date(Date.now() - 60_000);
+    await utimes(remoteLock, oldRemoteLock, oldRemoteLock);
     const ordinary = await call<SlotRefreshResult>('slot.refresh', {
       slotId: 'proof-slot',
-      mode: 'force',
+      mode: 'safe',
     });
     assert.equal(ordinary.refreshed, true, ordinary.detail);
     assert.equal((await core.readSlotRow('proof-slot'))?.warm, posture);
