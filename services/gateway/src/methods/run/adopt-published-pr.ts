@@ -18,7 +18,7 @@ import {
 
 import { loadProjectVars } from '../../core/config.js';
 import { GatewayMethodError } from '../../core/method-error.js';
-import { ghRequest } from '../../integrations/github-client.js';
+import { github, type GitHubService } from '../../integrations/github-client.js';
 import { findPRNumber, recordRunPRPublication } from '../../integrations/pr-linkage.js';
 import { adoptedPublicationContinuationRefusals } from '../../run-completion/human-publication.js';
 import { collectRunGateReadiness } from '../../run-engine/gate-prerequisites.js';
@@ -54,7 +54,7 @@ interface PublishedPrFacts {
 export interface PublicationAdoptionDependencies {
   authorizeEvidenceAttestation?: () => EvidenceAttestationApprover;
   repository?: (run: Run) => Promise<string | undefined>;
-  github?: typeof ghRequest;
+  github?: GitHubService;
   discover?: typeof findPRNumber;
   readiness?: typeof collectRunGateReadiness;
   continuationRefusals?: typeof adoptedPublicationContinuationRefusals;
@@ -209,9 +209,11 @@ export async function runAdoptPublishedPr(
     if (!repository || repository.toLowerCase() !== ref.repo.toLowerCase())
       throw new Error('The PR does not match the run declared repository');
     assertMatchingPublication(initial, repository, ref.number);
-    const github = dependencies.github ?? ghRequest;
-    const facts: PublishedPrFacts = JSON.parse(
-      (await github(['api', `repos/${repository}/pulls/${ref.number}`], { force: true })).stdout,
+    const svc = dependencies.github ?? github;
+    const facts = await svc.rest<PublishedPrFacts>(
+      'GET',
+      `repos/${repository}/pulls/${ref.number}`,
+      { force: true },
     );
     // Same repository only, base and head: a fork or another repository is never adopted. The branch
     // name may differ (a republished PR); the content match or the attestation decides.
@@ -229,19 +231,13 @@ export async function runAdoptPublishedPr(
       throw new Error('GitHub PR facts do not match the retained repository');
     const observedHead = facts.head.sha.toLowerCase();
     if (headSha !== undefined && headSha !== observedHead) {
-      const commits = (
-        await github(
-          [
-            'api',
-            `repos/${repository}/pulls/${ref.number}/commits`,
-            '--paginate',
-            '--jq',
-            '.[].sha',
-          ],
-          { force: true },
-        )
-      ).stdout.split(/\s+/);
-      if (!commits.some((sha) => sha.toLowerCase() === headSha))
+      const commitItems = await svc.rest<Array<{ sha: string }>>(
+        'GET',
+        `repos/${repository}/pulls/${ref.number}/commits`,
+        { paginate: true, force: true },
+      );
+      const commits = commitItems.map((c) => c.sha.toLowerCase());
+      if (!commits.some((sha) => sha === headSha))
         throw new Error('The attested head is not in this PR history');
     }
     const discovered = await (dependencies.discover ?? findPRNumber)(initial, repository, {
@@ -265,7 +261,7 @@ export async function runAdoptPublishedPr(
       initial,
       prepared,
       { repository, ...compared },
-      github,
+      svc,
     );
     const contentMatch = !('unavailable' in content) && content.differingFiles.length === 0;
     const prUrl = githubPullUrl({ repo: repository, number: ref.number });

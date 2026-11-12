@@ -1,18 +1,24 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
+import type { GitHubService, RestServiceOpts } from '../../integrations/github-client.js';
+
 await import('../../runtime/mock-pty.test-support.js');
-const github = await import('../../integrations/github-client.js');
+const githubModule = await import('../../integrations/github-client.js');
 const forceFlags: Array<boolean | undefined> = [];
 const endpoints: string[] = [];
-let response = '[]';
-const request: typeof github.ghRequest = async (args, options) => {
-  forceFlags.push(options?.force);
-  endpoints.push(args[1] ?? '');
-  return { stdout: response, stderr: '' };
+let response: unknown = [];
+const restFake = async <T>(_method: string, path: string, opts?: RestServiceOpts): Promise<T> => {
+  forceFlags.push(opts?.force);
+  endpoints.push(path);
+  return response as T;
+};
+const fakeGithub: GitHubService = {
+  ...githubModule.github,
+  rest: restFake,
 };
 mock.module('../../integrations/github-client.js', {
-  namedExports: { ...github, ghRequest: request },
+  namedExports: { ...githubModule, github: fakeGithub },
 });
 const { readMergedPreparePullRequests } = await import('./unmerged-work.js');
 
@@ -32,13 +38,13 @@ test('deleted-head lookup requires the exact branch and matches repository case 
     head: { sha: 'a'.repeat(40), ref: headBranch, repo: { full_name: 'Example/App' } },
     merge_commit_sha: 'b'.repeat(40),
   };
-  response = JSON.stringify([
+  response = [
     { ...merged, merged_at: null },
     { ...merged, state: 'open' },
     { ...merged, head: { ...merged.head, ref: 'other-branch' } },
     { ...merged, head: { ...merged.head, repo: { full_name: 'other/app' } } },
     merged,
-  ]);
+  ];
   assert.deepEqual(
     await readMergedPreparePullRequests('example/app', 'a'.repeat(40), 5000, true, headBranch),
     [

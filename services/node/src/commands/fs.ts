@@ -14,11 +14,15 @@ import {
   FILE_TRANSFER_CHUNK_MAX_BYTES,
   type FsConflictDetails,
   FsErrorCodes,
+  NODE_FS_READ_TEXT_MAX_BYTES,
   type NodeFsDeleteParams,
+  type NodeFsIsFileResult,
   type NodeFsPathParams,
   type NodeFsReadBase64Params,
   type NodeFsReadChunkParams,
   type NodeFsReadChunkResult,
+  type NodeFsReadTextParams,
+  type NodeFsReadTextResult,
   type NodeFsRenameParams,
   type NodeFsWriteFileEntry,
   type NodeFsWriteFilesParams,
@@ -415,6 +419,62 @@ export async function fsStat(
     isDirectory: info.isDirectory(),
     mtimeMs: info.mtimeMs,
   };
+}
+
+// The gateway's shell reads discarded these failures (`2>/dev/null || true`, `[ -f ]`): the
+// file reads as empty or not-a-file. ELOOP is the O_NOFOLLOW refusal of a final symlink.
+const UNREADABLE = new Set(['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'EISDIR', 'ELOOP']);
+const unreadable = (error: unknown) => UNREADABLE.has((error as NodeJS.ErrnoException).code ?? '');
+
+export async function fsReadText(params: NodeFsReadTextParams): Promise<NodeFsReadTextResult> {
+  const { tailBytes } = params;
+  if (
+    tailBytes !== undefined &&
+    (!Number.isInteger(tailBytes) || tailBytes <= 0 || tailBytes > NODE_FS_READ_TEXT_MAX_BYTES)
+  ) {
+    throw new Error(
+      `fs.readText tailBytes must be an integer from 1 to ${NODE_FS_READ_TEXT_MAX_BYTES}`,
+    );
+  }
+  const { target } = confinedPath(params);
+  let handle;
+  try {
+    // O_NONBLOCK keeps a FIFO from holding the read open; it does not affect regular files.
+    handle = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const info = await handle.stat();
+    if (!info.isFile()) return { content: '' };
+    const { size } = info;
+    const length = tailBytes === undefined ? size : Math.min(size, tailBytes);
+    if (length > NODE_FS_READ_TEXT_MAX_BYTES) {
+      throw new Error(
+        `fs.readText refuses ${params.relPath}: ${size} bytes exceeds ${NODE_FS_READ_TEXT_MAX_BYTES}`,
+      );
+    }
+    const buffer = Buffer.alloc(length);
+    let read = 0;
+    while (read < length) {
+      const { bytesRead } = await handle.read(buffer, read, length - read, size - length + read);
+      if (bytesRead === 0) break; // truncated while reading: return what was there
+      read += bytesRead;
+    }
+    return { content: buffer.subarray(0, read).toString('utf8') };
+  } catch (error) {
+    if (unreadable(error)) return { content: '' };
+    throw error;
+  } finally {
+    await handle?.close();
+  }
+}
+
+export async function fsIsFile(params: NodeFsPathParams): Promise<NodeFsIsFileResult> {
+  const { target } = confinedPath(params);
+  try {
+    // Follows symlinks, as `[ -f ]` and fs.exists do; it reveals only the boolean.
+    return { isFile: (await stat(target)).isFile() };
+  } catch (error) {
+    if (unreadable(error)) return { isFile: false };
+    throw error;
+  }
 }
 
 export async function fsRealpath(params: NodeFsPathParams): Promise<{ path: string }> {

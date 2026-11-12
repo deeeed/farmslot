@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 
-import { parseReviewPages, reviewersToRerequest } from './review-rerequest.js';
+import * as githubClient from '../integrations/github-client.js';
+
+let reviewRows: unknown[] = [];
+mock.module('../integrations/github-client.js', {
+  namedExports: {
+    ...githubClient,
+    github: { ...githubClient.github, rest: async () => reviewRows },
+  },
+});
+const { listPrReviews, reviewersToRerequest } = await import('./review-rerequest.js');
 
 const review = (author: string, state: string, submittedAt: string) => ({
   author,
@@ -30,29 +39,25 @@ test('only reviewers whose latest verdict is still CHANGES_REQUESTED are re-requ
   assert.deepEqual(reviewersToRerequest([], 'me'), []);
 });
 
-test('paginated review pages are flattened and app reviewers tagged as bots', () => {
-  const stdout = JSON.stringify([
-    [
-      {
-        user: { login: 'alice', type: 'User' },
-        state: 'CHANGES_REQUESTED',
-        submitted_at: '2026-09-10T10:00:00Z',
-      },
-      {
-        user: { login: 'cursor', type: 'Bot' },
-        state: 'COMMENTED',
-        submitted_at: '2026-09-10T11:00:00Z',
-      },
-    ],
-    [
-      {
-        user: { login: 'bob', type: 'User' },
-        state: 'APPROVED',
-        submitted_at: '2026-09-11T10:00:00Z',
-      },
-    ],
-  ]);
-  const reviews = parseReviewPages(stdout);
+test('listed reviews tag app reviewers as bots', async () => {
+  reviewRows = [
+    {
+      user: { login: 'alice', type: 'User' },
+      state: 'CHANGES_REQUESTED',
+      submitted_at: '2026-09-10T10:00:00Z',
+    },
+    {
+      user: { login: 'cursor', type: 'Bot' },
+      state: 'COMMENTED',
+      submitted_at: '2026-09-10T11:00:00Z',
+    },
+    {
+      user: { login: 'bob', type: 'User' },
+      state: 'APPROVED',
+      submitted_at: '2026-09-11T10:00:00Z',
+    },
+  ];
+  const reviews = await listPrReviews('owner/repo', 1);
   assert.deepEqual(
     reviews.map((review) => review.author),
     ['alice', 'cursor[bot]', 'bob'],

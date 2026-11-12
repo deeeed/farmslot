@@ -1,11 +1,25 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { fsDelete, fsExists, fsHash, fsList, fsRead, fsStat, fsWrite, fsWriteFiles } from './fs.js';
+import { NODE_FS_READ_TEXT_MAX_BYTES } from '@farmslot/protocol';
+
+import {
+  fsDelete,
+  fsExists,
+  fsHash,
+  fsIsFile,
+  fsList,
+  fsRead,
+  fsReadText,
+  fsStat,
+  fsWrite,
+  fsWriteFiles,
+} from './fs.js';
 
 test('fsList classifies symlinked directories as directories', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-node-fs-'));
@@ -228,4 +242,83 @@ test('fsReadChunk and fsWriteChunk fail closed above FILE_TRANSFER_CHUNK_MAX_BYT
       }),
     /exceeds FILE_TRANSFER_CHUNK_MAX_BYTES/,
   );
+});
+
+test('fsReadText returns a whole file or its tail, as cat and tail -c did', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-node-fs-text-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const hooks = `${'x'.repeat(70_000)}\n{"event":"Stop"}\n`;
+  await writeFile(path.join(root, 'hooks.jsonl'), hooks);
+  await writeFile(path.join(root, 'short.json'), '{"ctx":1}');
+
+  assert.deepEqual(await fsReadText({ root, relPath: 'hooks.jsonl', tailBytes: 65536 }), {
+    content: hooks.slice(-65536),
+  });
+  assert.deepEqual(await fsReadText({ root, relPath: 'short.json', tailBytes: 65536 }), {
+    content: '{"ctx":1}',
+  });
+  assert.deepEqual(await fsReadText({ root, relPath: 'short.json' }), { content: '{"ctx":1}' });
+});
+
+test('fsReadText reads anything it cannot read as a regular file as empty', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-node-fs-text-empty-'));
+  t.after(async () => {
+    await chmod(path.join(root, 'locked.json'), 0o600);
+    await rm(root, { recursive: true, force: true });
+  });
+  await mkdir(path.join(root, 'dir'));
+  await writeFile(path.join(root, 'target.json'), 'secret');
+  await symlink(path.join(root, 'target.json'), path.join(root, 'link.json'));
+  await writeFile(path.join(root, 'locked.json'), 'locked');
+  await chmod(path.join(root, 'locked.json'), 0o000);
+  execFileSync('mkfifo', [path.join(root, 'pipe')]);
+
+  for (const relPath of ['missing.json', 'missing/inner.json', 'dir', 'link.json', 'pipe']) {
+    assert.deepEqual(await fsReadText({ root, relPath }), { content: '' }, relPath);
+  }
+  // root ignores file modes, so the refusal is observable only for other users.
+  if (process.getuid?.() !== 0)
+    assert.deepEqual(await fsReadText({ root, relPath: 'locked.json' }), { content: '' });
+});
+
+test('fsReadText caps what it returns', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-node-fs-text-cap-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, 'big.log'), Buffer.alloc(NODE_FS_READ_TEXT_MAX_BYTES + 1, 'x'));
+
+  await assert.rejects(fsReadText({ root, relPath: 'big.log' }), /exceeds/);
+  assert.equal(
+    (await fsReadText({ root, relPath: 'big.log', tailBytes: 10 })).content,
+    'x'.repeat(10),
+    'a tail of a large file stays readable',
+  );
+  for (const tailBytes of [0, -1, 1.5, NODE_FS_READ_TEXT_MAX_BYTES + 1]) {
+    await assert.rejects(fsReadText({ root, relPath: 'big.log', tailBytes }), /tailBytes/);
+  }
+});
+
+test('fsReadText and fsIsFile keep the node path confinement', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-node-fs-text-scope-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, '.git'));
+  await writeFile(path.join(root, '.git', 'config'), 'x');
+
+  for (const relPath of ['../outside.json', '/etc/hosts', '.git/config']) {
+    await assert.rejects(fsReadText({ root, relPath }), { code: 'EACCES' }, relPath);
+    await assert.rejects(fsIsFile({ root, relPath }), { code: 'EACCES' }, relPath);
+  }
+});
+
+test('fsIsFile answers as [ -f ] did', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-node-fs-isfile-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'dir'));
+  await writeFile(path.join(root, 'install.json'), '{}');
+  await symlink(path.join(root, 'install.json'), path.join(root, 'link.json'));
+
+  assert.deepEqual(await fsIsFile({ root, relPath: 'install.json' }), { isFile: true });
+  assert.deepEqual(await fsIsFile({ root, relPath: 'link.json' }), { isFile: true });
+  for (const relPath of ['dir', 'missing.json', 'install.json/inner']) {
+    assert.deepEqual(await fsIsFile({ root, relPath }), { isFile: false }, relPath);
+  }
 });

@@ -18,6 +18,7 @@ import { getGatewayListenSnapshot, remotePairingBlockedHint } from '../core/list
 import { gatewayStorageVolumeErrors, storageVolumeError } from '../core/storage-volume.js';
 import { getAllNodes } from '../fleet/machine-registry.js';
 import { loadPoolConfigs, loadProjectConfigs } from '../fleet/state.js';
+import { backgroundHost, type BackgroundHostStatus } from '../host-services/background/client.js';
 import type { GatewayAuthRuntime } from '../security/auth.js';
 import { activeAdminCredentialCount } from '../security/credential-store.js';
 
@@ -194,6 +195,7 @@ async function gatewaySection(): Promise<GatewayDoctorSection> {
       ? undefined
       : 'Live branch/file/screen/resource watches are off until a node connects. `farmslot up` co-launches the local node; remote machines: bash scripts/deploy-node.sh <machine>.',
   });
+  checks.push(backgroundHostCheck(backgroundHost.status()));
   const orphanedQueueItems = listOrphanedBacklogQueueItems();
   checks.push({
     id: 'queue-orphans',
@@ -209,6 +211,54 @@ async function gatewaySection(): Promise<GatewayDoctorSection> {
         : undefined,
   });
   return { id: 'gateway', label: 'Gateway', checks };
+}
+
+/** Whether background probes (local fleet checks, the decision walk) can run, and why not. */
+export function backgroundHostCheck(status: BackgroundHostStatus): GatewayDoctorCheck {
+  const base = { id: 'background-host', label: 'Background process' };
+  const failures = Object.entries(status.failures)
+    .filter(([, failure]) => failure.at >= status.since)
+    .map(([operation, failure]) => `${operation}: ${failure.message}`);
+  switch (status.state) {
+    case 'disabled':
+      return {
+        ...base,
+        ok: true,
+        warn: true,
+        detail: 'disabled: fleet probes and the decision walk run on the request loop',
+        hint: 'Unset FARMSLOT_GATEWAY_BACKGROUND=0 and restart the gateway to move them off it.',
+      };
+    case 'stopped':
+      return { ...base, ok: true, detail: 'not started: background probes run in-process' };
+    case 'restarting': {
+      const exit = status.lastExit
+        ? ` (exit code ${status.lastExit.code}, signal ${status.lastExit.signal})`
+        : '';
+      return {
+        ...base,
+        ok: false,
+        detail:
+          `down since ${status.since}${exit}, restart ${status.restarts} pending. ` +
+          'Fleet refreshes fail until it is back, so the fleet stays stale and nothing is dispatchable.',
+        hint: 'Read the [background] lines in the gateway log. FARMSLOT_GATEWAY_BACKGROUND=0 runs these probes in-process after a restart.',
+      };
+    }
+    case 'starting':
+    case 'ready': {
+      const memory =
+        status.rssBytes === undefined ? '' : `, ${Math.round(status.rssBytes / 1_048_576)} MB`;
+      const process =
+        status.state === 'starting'
+          ? `starting since ${status.since}`
+          : `running (pid ${status.pid}${memory}, ${status.restarts} restart(s))`;
+      return {
+        ...base,
+        ok: true,
+        ...(failures.length || status.state === 'starting' ? { warn: true } : {}),
+        detail: failures.length ? `${process}; failed: ${failures.join('; ')}` : process,
+      };
+    }
+  }
 }
 
 async function workspaceSection(): Promise<GatewayDoctorSection> {

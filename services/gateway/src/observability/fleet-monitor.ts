@@ -15,6 +15,8 @@ import type {
 
 import { projectTaskRoots } from '../core/config.js';
 import { farmslotRoot } from '../fleet/state.js';
+import { backgroundHost, BackgroundHostError } from '../host-services/background/client.js';
+import { BACKGROUND_OPERATIONS } from '../host-services/background/protocol.js';
 import { fleetMonitorStatus } from '../methods/fleet.js';
 import { resourceRevisions } from '../resources/revisions.js';
 import { getRun } from '../runs/store.js';
@@ -56,7 +58,7 @@ let resolutionSeq = 0;
 const resolvedAt = new Map<string, number>();
 let handler: MonitorEventHandler | null = null;
 
-interface FileDecision {
+export interface FileDecision {
   path: string;
   decision: PendingDecision;
   signature: string;
@@ -172,12 +174,26 @@ export function stopMonitor(): void {
 
 // ─── Decision scanning ───
 
+/**
+ * Every walk of the decision files: the background process runs it when started, so the gateway
+ * only diffs. While the process is down the walk rejects with its error (fail closed); only
+ * FARMSLOT_GATEWAY_BACKGROUND=0, or a gateway that never started the host, walks in-process.
+ */
+function walkFileDecisions(): Promise<FileDecision[]> {
+  return backgroundHost.active()
+    ? backgroundHost.request(BACKGROUND_OPERATIONS.decisionsScan, {}, { deadlineMs: 30_000 })
+    : loadFileDecisions();
+}
+
 export async function scanDecisions(): Promise<void> {
   const since = resolutionSeq;
   let files: FileDecision[];
   try {
-    files = (await loadFileDecisions()).filter((file) => (resolvedAt.get(file.path) ?? 0) <= since);
+    files = (await walkFileDecisions()).filter((file) => (resolvedAt.get(file.path) ?? 0) <= since);
   } catch (error) {
+    // A background process that is down says nothing about the decision files: readers keep the
+    // last scan, the host status reports the outage, and the next tick scans again.
+    if (error instanceof BackgroundHostError) throw error;
     lastDecisionScan = { error };
     const failure = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
     // Invalidate once so readers retain stale facts with the real read error.
@@ -224,13 +240,13 @@ export async function loadPendingDecisions(): Promise<PendingDecision[]> {
     return lastDecisionScan.files.map((file) => file.decision);
   }
   // Concurrent list calls share one scan instead of stacking walks.
-  listingFileDecisions ??= loadFileDecisions().finally(() => {
+  listingFileDecisions ??= walkFileDecisions().finally(() => {
     listingFileDecisions = null;
   });
   return (await listingFileDecisions).map((file) => file.decision);
 }
 
-async function loadFileDecisions(): Promise<FileDecision[]> {
+export async function loadFileDecisions(): Promise<FileDecision[]> {
   const decisions: FileDecision[] = [];
 
   // Scan all project task directories for .pending_decision.json files
@@ -243,7 +259,7 @@ async function loadFileDecisions(): Promise<FileDecision[]> {
 
 /** Resolve through the owning reader so explicit ids delete their actual source file. */
 export async function resolveFileDecision(decisionId: string, actionId: string): Promise<void> {
-  const file = (await loadFileDecisions()).find((entry) => entry.decision.id === decisionId);
+  const file = (await walkFileDecisions()).find((entry) => entry.decision.id === decisionId);
   if (!file) throw new Error(`Decision not found: ${decisionId}`);
   if (!file.decision.actions.some((action) => action.id === actionId))
     throw new Error(`Action not found: ${actionId}`);

@@ -5,6 +5,7 @@ import type { Run, RunnerSessionUsage } from '@farmslot/protocol';
 
 import '../runtime/mock-pty.test-support.js';
 
+import { fakeGitHubService } from '../integrations/github-test-fixtures.js';
 import type { FinalizeStepContext } from '../run-engine/finalize-step.js';
 import { makeReadyGatePackage } from '../run-engine/test-fixtures.js';
 import { makeVars } from '../runners/test-fixtures.js';
@@ -135,14 +136,49 @@ mock.module('./pr-template.js', {
   namedExports: { ...template, readGitHubPrTemplate: async () => null },
 });
 const github = await import('../integrations/github-client.js');
-mock.module('../integrations/github-client.js', {
-  namedExports: {
-    ...github,
-    ghRequest: async () => {
-      mutations.push('github');
-      return ok();
-    },
+const remoteFakeGithub = fakeGitHubService(github.github, {
+  prView: async () => {
+    mutations.push('github');
+    return {};
   },
+  prList: async () => {
+    mutations.push('github');
+    return [];
+  },
+  prListFields: async () => {
+    mutations.push('github');
+    return [];
+  },
+  prChecks: async () => {
+    mutations.push('github');
+    return [];
+  },
+  prCreate: async () => {
+    mutations.push('github');
+    return '';
+  },
+  prEdit: async () => {
+    mutations.push('github');
+    return '';
+  },
+  prComment: async () => {
+    mutations.push('github');
+    return '';
+  },
+  prReady: async () => {
+    mutations.push('github');
+  },
+  graphql: async () => {
+    mutations.push('github');
+    return {};
+  },
+  rest: async () => {
+    mutations.push('github');
+    return {};
+  },
+});
+mock.module('../integrations/github-client.js', {
+  namedExports: { ...github, github: remoteFakeGithub },
 });
 const rerequest = await import('./review-rerequest.js');
 mock.module('./review-rerequest.js', {

@@ -19,6 +19,7 @@ import {
 
 import { GatewayMethodError } from '../../core/method-error.js';
 import * as fleet from '../../fleet/state.js';
+import type { PRListFilters } from '../../integrations/github-client.js';
 import * as githubClient from '../../integrations/github-client.js';
 import { readWithResourceState, resourceRevisions } from '../../resources/revisions.js';
 import { readRunnerModelCatalog } from '../../runners/model-catalog.js';
@@ -73,47 +74,87 @@ const project = {
   ci: { repo: 'org/app', checkGroups: [], botPatterns: [] },
 };
 
-function respond(args: string[]): string {
-  const [command, sub] = args;
-  if (command === 'pr' && sub === 'view') {
+const fakeGithub = {
+  ...githubClient.github,
+  prChecks: async (_repo: string, number: number) => {
+    calls.push(['pr', 'checks', String(number)]);
+    return [];
+  },
+  prView: async (_repo: string, number: number) => {
+    calls.push(['pr', 'view', String(number)]);
     if (github.prView === 'gone') throw new Error('HTTP 404: Not Found (https://api.github.com)');
     if (github.prView === 'down') throw new Error('connect ECONNREFUSED /tmp/gh.sock');
-    return `OPEN\tMERGEABLE\tCLEAN\tAPPROVED\tfeat/a\t2026-01-01\t2026-01-02\t\t\t${github.title}\nauthor\n`;
-  }
-  if (command === 'pr' && sub === 'list') {
-    if (github.discoveryDown) throw new Error('gh: connection reset');
-    const found = github.branches[args[args.indexOf('--head') + 1]];
-    return found ? JSON.stringify(found) : '';
-  }
-  if (command === 'api' && sub === 'user') return 'reviewer\n';
-  if (command === 'api' && sub === 'graphql') {
-    const query = args.find((arg) => arg.startsWith('query=')) ?? '';
-    if (!query.includes('updatedAt') || query.includes('mutation')) return '';
-    return JSON.stringify({
-      data: {
-        repository: {
-          pullRequest: github.threadsMissing ? null : { reviewThreads: { nodes: github.threads } },
-        },
-      },
-    });
-  }
-  const pull = /^repos\/org\/app\/pulls\/(\d+)$/.exec(sub ?? '');
-  if (command === 'api' && pull) {
-    const [head, found] =
-      Object.entries(github.branches).find(([, entry]) => entry.pr === Number(pull[1])) ?? [];
-    return JSON.stringify({ state: 'open', head, base: found?.baseRef });
-  }
-  return '';
-}
-
-mock.module('../../integrations/github-client.js', {
-  namedExports: {
-    ...githubClient,
-    ghRequest: async (args: string[]) => {
-      calls.push(args);
-      return { stdout: respond(args), stderr: '' };
-    },
+    return {
+      state: 'OPEN',
+      mergeable: 'MERGEABLE',
+      mergeStateStatus: 'CLEAN',
+      reviewDecision: 'APPROVED',
+      headRefName: 'feat/a',
+      createdAt: '2026-01-01',
+      updatedAt: '2026-01-02',
+      closedAt: null,
+      mergedAt: null,
+      title: github.title,
+      author: { login: 'author' },
+    };
   },
+  prListFields: async (_repo: string, _fields: string[], params: PRListFilters) => {
+    calls.push(['pr', 'list', '--head', params.head ?? '']);
+    if (github.discoveryDown) throw new Error('gh: connection reset');
+    const found = params.head ? github.branches[params.head] : undefined;
+    return found
+      ? [
+          {
+            number: found.pr,
+            state: 'OPEN',
+            headRefOid: 'a'.repeat(40),
+            baseRefName: found.baseRef,
+          },
+        ]
+      : [];
+  },
+  graphql: async (doc: string, vars: Record<string, string | number | null>) => {
+    if (doc.includes('mutation')) {
+      calls.push(['api', 'graphql', 'mutation']);
+      return {};
+    }
+    calls.push(['api', 'graphql']);
+    // The pr.status thread and verdict reads answer empty; the review-threads method reads the threads.
+    if ('endCursor' in vars)
+      return {
+        repository: {
+          pullRequest: {
+            reviewThreads: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+          },
+        },
+      };
+    if (!doc.includes('updatedAt')) return { repository: { pullRequest: {} } };
+    return {
+      repository: {
+        pullRequest: github.threadsMissing ? null : { reviewThreads: { nodes: github.threads } },
+      },
+    };
+  },
+  rest: async (_method: string, path: string) => {
+    calls.push(['api', path]);
+    if (path === 'user') return { login: 'reviewer' };
+    const pull = /^repos\/org\/app\/pulls\/(\d+)$/.exec(path);
+    if (pull) {
+      const prNum = Number(pull[1]);
+      const [headBranch, found] =
+        Object.entries(github.branches).find(([, e]) => e.pr === prNum) ?? [];
+      return {
+        state: 'open',
+        head: { ref: headBranch ?? '' },
+        base: { ref: found?.baseRef ?? '' },
+      };
+    }
+    // Issue comments and the commit list answer empty.
+    return [];
+  },
+};
+mock.module('../../integrations/github-client.js', {
+  namedExports: { ...githubClient, github: fakeGithub },
 });
 mock.module('../../fleet/state.js', {
   namedExports: {
