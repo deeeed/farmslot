@@ -1,0 +1,1 @@
+- Make the Pi completion tool close the final checklist row and refuse unfinished earlier rows before reporting success.
