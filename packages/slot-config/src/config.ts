@@ -60,6 +60,7 @@ import {
 import { SlotConfigError } from './error.js';
 import { referenceRepoKeysIn, referenceRepoPlaceholder } from './hooks.js';
 import { machinePoolFileName, resolveMachinePoolEntry } from './machine-pool.js';
+import { parseProjectOwnedPaths, type ProjectOwnedPath } from './owned-paths.js';
 import { farmslotRoot } from './repo-root.js';
 import {
   type ProjectSourceContext,
@@ -367,6 +368,7 @@ export interface RawProjectJson {
     }>;
   };
   fixtures?: {
+    owned_paths?: ProjectOwnedPath[];
     templates?: Array<{
       src?: string;
       dst: string;
@@ -913,6 +915,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
     throw new Error(`Failed to read project config ${projectConfig}: ${(err as Error).message}`);
   }
 
+  parseProjectOwnedPaths(projectJson.fixtures?.owned_paths);
   validateAutoRecoveryConfig(projectJson, projectConfig);
   validateBacklogConfig(projectJson, projectConfig);
   normalizeRawSlotSelection(projectJson.slot_selection, projectConfig);

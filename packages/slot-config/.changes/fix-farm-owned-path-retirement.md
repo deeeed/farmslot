@@ -1,0 +1,1 @@
+- Validate one pack-owned support path list with current entries and permanent retired tombstones.

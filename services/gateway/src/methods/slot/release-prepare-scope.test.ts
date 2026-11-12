@@ -28,6 +28,7 @@ const IDENTITY = '/slot/.agent/preflight.identity';
 let fixtureRuns: Run[] = [];
 let slotRow: Record<string, unknown>;
 let recycleStartsRuntime = false;
+let ownedSupport = false;
 let recycledRuntime: ChildProcess | undefined;
 let events: string[];
 let reapFails: boolean;
@@ -66,6 +67,10 @@ const applies = (
 
 const execForTest = async (_vars: unknown, cmd: string) => {
   slotCommands.push(cmd);
+  if (cmd.includes('FARMSLOT_OWNED_PATH_CLEANUP')) {
+    events.push('owned-support');
+    return ok(JSON.stringify({ removed: ['CLAUDE.local.md'] }));
+  }
   if (cmd === '__proof_runtime__') {
     recycledRuntime = spawn(
       process.execPath,
@@ -149,6 +154,8 @@ const realScaffolding = await import('../../fleet/slot-scaffolding.js');
 mock.module('../../fleet/slot-scaffolding.js', {
   namedExports: {
     ...realScaffolding,
+    cleanupSlotOwnedPaths: (...args: Parameters<typeof realScaffolding.cleanupSlotOwnedPaths>) =>
+      realScaffolding.cleanupSlotOwnedPaths(args[0], args[1], args[2], execForTest),
     excludeSlotScaffolding: async () => undefined,
     archiveSlotScaffolding: async (
       _vars: unknown,
@@ -181,7 +188,12 @@ mock.module('../../core/index.js', {
     }),
     loadProjectVars: async () => ({
       runtimeDir: '.agent',
-      projectJson: recycleStartsRuntime ? { hooks: { recycle: '__proof_runtime__' } } : {},
+      projectJson: {
+        ...(recycleStartsRuntime ? { hooks: { recycle: '__proof_runtime__' } } : {}),
+        ...(ownedSupport
+          ? { fixtures: { owned_paths: [{ path: 'CLAUDE.local.md', state: 'retired' as const }] } }
+          : {}),
+      },
     }),
     readSlotField: async (_slotId: string, field: string) => slotRow[field] ?? null,
     readSlotRow: async () => slotRow,
@@ -302,6 +314,7 @@ afterEach(async () => {
 beforeEach(async () => {
   fixtureRuns = [];
   recycleStartsRuntime = false;
+  ownedSupport = false;
   recycledRuntime = undefined;
   slotRow = { slot: SLOT_ID, lifecycle: 'ready', phase: null, slot_epoch: 1 };
   events = [];
@@ -737,6 +750,24 @@ test('a claim during prepare reaping stops attachment cleanup and session archiv
     0,
   );
   assert.equal(slotRow.current_run_id, 'incoming');
+});
+
+test('keep-work release removes declared support after ending workers', async () => {
+  ownedSupport = true;
+  assert.deepEqual(await slotRelease({ slotId: SLOT_ID, keepWork: true }, emit), {
+    released: true,
+  });
+  assert.equal(events.filter((event) => event === 'owned-support').length, 1);
+  assert.ok(events.indexOf('owned-support') < events.indexOf('reset'));
+});
+
+test('release preserving workers keeps their declared support files', async () => {
+  ownedSupport = true;
+  assert.deepEqual(
+    await slotRelease({ slotId: SLOT_ID, keepWork: true, preserveAgents: true }, emit),
+    { released: true },
+  );
+  assert.ok(!events.includes('owned-support'));
 });
 
 test("a release stops the browser session a run left on the slot's CDP port", async () => {
