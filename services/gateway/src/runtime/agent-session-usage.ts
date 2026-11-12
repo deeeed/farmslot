@@ -1,6 +1,7 @@
 import type { Run, RunnerSessionUsage } from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';
+import { reviewWorkspaceCommandEnvOptions } from '../review-workspaces/skills.js';
 import { reviewWorkspaceRunnerVars } from '../runners/review-workspace-context.js';
 import { recoverWorkspaceUsageBindings } from '../runners/session-usage-recovery.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
@@ -70,16 +71,19 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
   try {
     const slotId = row.slotId ?? run.slotId ?? run.id;
     if (row.nativeSession) {
-      const reviewVars =
-        row.role === 'review' && run.reviewWorkspace
-          ? await reviewWorkspaceRunnerVars(run)
-          : undefined;
+      const workspace = row.role === 'review' ? run.reviewWorkspace : undefined;
       return completedMeasurement(
         row,
         await extractNativeAgentSessionUsage({
-          vars: reviewVars
-            ? { ...reviewVars, domain: run.domain }
-            : { slotId, remoteRepo: '', projectName: run.project, domain: run.domain },
+          vars: {
+            slotId,
+            remoteRepo: workspace?.checkoutPath ?? '',
+            projectName: run.project,
+            domain: run.domain,
+          },
+          commandEnvOptions: workspace
+            ? reviewWorkspaceCommandEnvOptions(workspace, run.domain)
+            : undefined,
           runner: row.runner ?? '',
           runnerSessionId: row.runnerSessionId ?? null,
           runnerSessionPath: row.runnerSessionPath,

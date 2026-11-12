@@ -18,6 +18,7 @@ import {
 } from '../core/config.js';
 import {
   machineShellEnv,
+  type ProjectCommandEnvOptions,
   projectCommandEnvOptions,
   resolveProjectCommandEnv,
 } from '../core/project-env.js';
@@ -37,6 +38,7 @@ type NativeSessionUsageVars =
 
 export interface NativeAgentUsageInput {
   vars: NativeSessionUsageVars;
+  commandEnvOptions?: ProjectCommandEnvOptions;
   runner: string;
   runnerSessionId: string | null;
   runnerSessionPath?: string | null;
@@ -94,13 +96,15 @@ export async function extractNativeAgentSessionUsage(
       const needsSlotContext = Object.values(domainEnvironment?.set ?? {}).some(
         (value) => collectPlaceholderTokens(value).size > 0,
       );
-      const options = needsSlotContext
-        ? projectCommandEnvOptions(
-            'resourceVars' in vars ? vars : await loadSlotVars(vars.slotId),
-            project,
-            vars.domain,
-          )
-        : { domain: vars.domain };
+      const options =
+        input.commandEnvOptions ??
+        (needsSlotContext
+          ? projectCommandEnvOptions(
+              'resourceVars' in vars ? vars : await loadSlotVars(vars.slotId),
+              project,
+              vars.domain,
+            )
+          : { domain: vars.domain });
       const mutation = resolveProjectCommandEnv(project.projectJson, options);
       for (const name of mutation.unset) delete environment[name];
       Object.assign(environment, mutation.set);

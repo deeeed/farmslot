@@ -12,8 +12,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { Run, RunGetResult, RunnerSessionUsage } from '@farmslot/protocol';
+import { CredentialStoreRuntime, CredentialStoreWriter } from '@farmslot/credential-store';
 
-import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 import {
   cleanupOnExit,
   connectGateway,
@@ -56,6 +56,7 @@ const env: NodeJS.ProcessEnv = {
   FARMSLOT_PROJECTS_DIR: path.join(fixture, 'projects'),
   FARMSLOT_RUNS_DIR: path.join(fixture, 'runs'),
   FARMSLOT_NATIVE_STATE_DIR: path.join(fixture, 'native'),
+  FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'fixture-owner',
   FARMSLOT_DISABLE_ORCHESTRATION: '1',
   FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
   FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
@@ -324,10 +325,87 @@ try {
   const native = run('native');
   native.sessionUsage = [{ ...usage, role: 'dev' }];
   runs.push(native);
+  const slotless = run('native-slotless-review');
+  slotless.flowType = 'review-pr';
+  slotless.transport = 'native';
+  slotless.domain = 'trading';
+  slotless.nativeOwnerPrincipalId = 'fixture-owner';
+  slotless.reviewWorkspaceTarget = { machine };
+  slotless.reviewWorkspace = {
+    workspaceId: slotless.id,
+    machine,
+    executionNodeId: 'local',
+    checkoutPath: fixture,
+    taskPath: path.join(fixture, 'task'),
+    artifactPath: path.join(fixture, 'task/artifacts'),
+    support: {
+      path: path.join(fixture, 'support'),
+      sha256: 'a'.repeat(64),
+      sources: [],
+      skills: [],
+      environment: { RECIPE_LIBRARY_PATH: 'trading={{support}}/libraries/trading' },
+    },
+  };
+  slotless.agentContexts = [
+    {
+      id: 'review',
+      role: 'review',
+      label: 'Review',
+      runId: slotless.id,
+      slotId: null,
+      runner: 'pi',
+      runnerSessionId: 'native-conversation',
+      runnerSessionPath: transcript,
+      status: 'complete',
+      startedAt: now,
+      completedAt: now,
+      nativeSession: {
+        sessionId: 'fixture-host',
+        ownerPrincipalId: 'fixture-owner',
+        executionNodeId: 'local',
+        leaseId: 'fixture-lease',
+        commandId: 'fixture-command',
+        releasedAt: now,
+      },
+    },
+  ];
+  slotless.sessionUsage = [
+    {
+      runner: 'pi',
+      runnerSessionId: 'native-conversation',
+      runnerSessionPath: transcript,
+      role: 'review',
+      source: 'unavailable',
+      measuredAt: now,
+      startedAt: now,
+      completedAt: now,
+      nativeSession: slotless.agentContexts[0].nativeSession,
+    },
+  ];
+  runs.push(slotless);
   for (const entry of runs) await writeJson(path.join(fixture, 'runs', `${entry.id}.json`), entry);
+  const { loadAllRuns, getRun } = await import('../../../services/gateway/src/runs/store.js');
+  const { captureRunSessionUsage } =
+    await import('../../../services/gateway/src/runtime/agent-session-usage.js');
+  await loadAllRuns();
+  await captureRunSessionUsage(slotless.id);
+  const slotlessUsage = getRun(slotless.id)?.sessionUsage?.[0];
+  assert.equal(slotlessUsage?.source, 'runner-transcript', slotlessUsage?.error);
+  assert.equal(slotlessUsage.totalTokens, 38203);
+  assert.equal(slotlessUsage.costUsd, 0.007687);
+  assert.equal(requests, 1, 'slotless native review reuses the cached metadata without inference');
   const port = await freePort();
   const url = `ws://127.0.0.1:${port}`;
-  const token = testGatewayIdentity(path.join(fixture, 'home'));
+  const credentials = new CredentialStoreWriter(
+    new CredentialStoreRuntime({ FARMSLOT_HOME: path.join(fixture, 'home') }),
+    true,
+  );
+  const owner = credentials.createPrincipal(
+    { type: 'service', displayName: 'Fixture owner' },
+    [{ role: 'admin', scope: { kind: 'global' } }],
+    'fixture-owner',
+  );
+  const token = credentials.issueCredential(owner.id, 'protocol-proof').secret;
   gateway = startWorkspaceProcess(
     { root, evidence, env: { ...env, GATEWAY_HOST: '127.0.0.1', GATEWAY_PORT: String(port) } },
     '@farmslot/gateway',

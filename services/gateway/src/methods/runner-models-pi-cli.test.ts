@@ -54,8 +54,10 @@ const { getRunnerDefinition } = await import('../runners/registry.js');
 const { ModelCatalogFormatError, parsePiModelCatalog } =
   await import('../runners/model-catalog.js');
 const { RUNNER_OBSERVABILITY_COPY_PATHS } = await import('../runners/runner-observability.js');
-for (const relative of RUNNER_OBSERVABILITY_COPY_PATHS)
+for (const relative of RUNNER_OBSERVABILITY_COPY_PATHS) {
+  mkdirSync(path.dirname(path.join(root, relative)), { recursive: true });
   copyFileSync(path.join(checkout, relative), path.join(root, relative));
+}
 const { piObservabilityExtensionPath } = await import('../runners/launch-command.js');
 const source = getRunnerDefinition('pi').modelCatalog;
 assert.ok(source && 'nodeCommand' in source);

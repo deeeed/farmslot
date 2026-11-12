@@ -13,7 +13,7 @@
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/litellm-cost-accounting.mts \"$FARMSLOT_COST_PROOF_OUTPUT\"",
         "timeout_ms": 120000,
-        "intent": "Synthetic model-info and native transcript extraction reach authenticated run.get with incomplete worker/review totals, deduplicated family costs and shared review-round labels. Native accounting must expand the unrelated trading recipe-library placeholder. No provider inference.",
+        "intent": "Synthetic model-info and native transcript extraction reach authenticated run.get with incomplete worker/review totals, deduplicated family costs and shared review-round labels. Native accounting must expand the unrelated trading recipe-library placeholder and capture a slotless native review through its frozen launch bindings without a tmux target or slot lookup. No provider inference.",
         "next": "done"
       }
     }
