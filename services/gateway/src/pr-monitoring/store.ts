@@ -15,7 +15,7 @@ import {
 } from '@farmslot/protocol';
 
 import { writeAtomicText } from '../core/atomic-json.js';
-import { cloneStoreSnapshot } from '../core/store-snapshot.js';
+import { freezeStoreState } from '../core/store-snapshot.js';
 import { publishPRAutomationResources } from '../resources/pr-automation-changes.js';
 import { resourceRevisions } from '../resources/revisions.js';
 import {
@@ -70,7 +70,7 @@ export class PRMonitorStore {
     private readonly file: string,
     data: PRMonitorStoreData,
   ) {
-    this.data = data;
+    this.data = freezeStoreState(data);
     this.text = JSON.stringify(data);
   }
 
@@ -195,7 +195,8 @@ export class PRMonitorStore {
   snapshot<Result>(
     select?: (data: Readonly<PRMonitorStoreData>) => Result,
   ): PRMonitorStoreData | Result {
-    return cloneStoreSnapshot(this.data, this.text, select);
+    // The committed state is frozen: readers share it, and one that changes a value copies it.
+    return select ? select(this.data) : this.data;
   }
 
   get(id: string, ownerId: string): PRMonitor {
@@ -673,7 +674,7 @@ export class PRMonitorStore {
     const text = JSON.stringify(draft);
     await writeAtomicText(this.file, text);
     // Committed state is exactly what a restart would load: no keys the file drops.
-    this.data = JSON.parse(text);
+    this.data = freezeStoreState(JSON.parse(text));
     this.text = text;
     publishPRAutomationResources();
     // Retrospective inbox and family projections consume the current observations/incidents.
