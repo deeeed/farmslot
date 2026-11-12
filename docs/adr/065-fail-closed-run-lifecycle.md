@@ -894,3 +894,42 @@ becomes a union of the content and attested requests;
 `HumanPublicationAdoptionReceipt.match` and `RunDecision.publicationAdoption`
 are optional additions in `@farmslot/protocol`. Old receipts without `match`
 keep their meaning (attested, same branch).
+
+## Amendment 13: distinguish accepted closure from publication, 2026-11-12
+
+**Status:** Accepted scope, 2026-11-12.
+**Implementation:** [#2039](https://github.com/deeeed/farmslot/pull/2039).
+**Specification:** [Result decisions](../reference/fail-closed-run-lifecycle.md#result-decisions).
+
+### Decision
+
+Label `accept-result` "Accept and close without publishing" in the shared
+protocol presentation. It still requires a reason, records the acceptance and
+settles the run without publication. A REVIEW hold caused by exhausted review
+budget may offer it on a publishing run. Other publishing REVIEW holds keep
+it unavailable. Refused completion prerequisites cannot be accepted away.
+
+Publishing with unresolved findings remains a separate human gate approval,
+"Accept Review Findings and Publish". It requires the displayed findings digest
+and reason and records the accepted findings, package head and operator identity.
+
+Review summaries use the prepared head and completion times, rather than source
+array order. A later qualifying pass for the prepared package supersedes older
+issues in summary counts. Equal or unknown completion times retain their findings.
+The passing count uses qualified reviewer sessions even without a prepared
+package: a pass needs a reviewer session and captured head, and each session
+counts once. Unqualified and repeated-session rows remain historical evidence.
+Raw verdicts, review history and publication prerequisite checks remain unchanged.
+
+### Rationale and consequences
+
+"Accept" hid the terminal effect when review budget ran out. The explicit label
+states that effect across clients without adding a second publication route.
+Summary supersession corrects historical counts without granting publication.
+
+### Public surface
+
+The existing `RESULT_DECISION_ACTION_LABELS` export in `@farmslot/protocol`
+changes its `accept-result` label. The gateway, CLI and shared Command Center
+and Companion view model consume it. No action id, RPC, SDK field or harness
+extension changes. Release fragments record the presentation change.
