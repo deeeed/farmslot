@@ -5,6 +5,8 @@
 **Relates to:** [ADR-022](022-slot-lifecycle-simplification.md), [ADR-024](024-run-lanes-and-run-family-model.md), [ADR-037](037-prepare-profiles.md), [ADR-039](039-run-portable-bundles.md)
 **Reference:** [Worktree operator model](../operations/worktree-operator-model.md)
 
+Amendment 3 and its revised local-work clauses below are Proposed, not yet implemented. Existing owner/resource contracts remain Accepted.
+
 ## Context
 
 Farmslot slots map 1:1 to git checkouts — either a **primary clone** (standalone repo, can checkout `main`) or a **linked worktree** (`.git` is a file; `main` may be checked out elsewhere and cannot be checked out in the worktree).
@@ -108,7 +110,7 @@ Rebase is opt-in because some runner templates and operator habits assume merge 
 
 - Existing pools must ensure each worktree has its tracking branch created once (`git branch wt/ff-N origin/main` or let first release create it).
 - Brief window where `release.ts` still uses old path until implementation lands — treat as known bug until ADR-042 implementation PR merges.
-- Rebase strategy can rewrite local-only commits on the feature branch if release safety checks were bypassed; keep existing dirty/unpushed guards.
+- Before rewriting local work, retain it through the park-before-reset rule below; ownership guards still apply.
 
 ## Implementation plan
 
@@ -238,7 +240,7 @@ Keep stale-slot selection a human decision. Command Center and Companion expose 
 
 The action composes existing release, idle reset and fixture-sync implementations under one fence. A primary clone ends on its configured default branch; a linked worktree ends on its tracking branch at the same remote commit. An unowned baseline checkout takes the same dispatch-blocking fence but skips teardown, preserving warm resources. Success requires free ownership, verified checkout/fixtures and zero branch/fixture stale penalty. Pressure, device, profile and source-admission rules remain unchanged.
 
-Bulk processes all safe idle rows in the explicitly displayed project, machine and text-search scope. It never forces dirty, unpushed, unknown or held work. A single-slot discard requires confirmation bound to the actual dirty/untracked work. Discard permission bypasses only the local-work refusal, never the [protected-owner guards](../reference/recipe-runtime-capability-contract.md#recovery-ownership-and-confirmation). Existing cancelled-hold release remains a separate, owner-bound operation.
+Bulk keeps its explicitly displayed scope and existing owner/hold guards. Dirty or unpublished local work follows Amendment 3: park it before reset, without a discard choice. Unreadable local work or failed durable parking cannot authorize destruction. Existing cancelled-hold release remains a separate, owner-bound operation.
 
 A failed or interrupted operation remains held across reconciliation and restart. The same refresh action retries against its recovery identity and fresh workspace evidence; the slot becomes ready only after verification succeeds.
 
@@ -250,11 +252,11 @@ Extend the existing Command Center fleet and refresh UI; Companion adds the corr
 
 ### Public surface
 
-Reuse `fleet.status` / `fleet.refresh`, `slot.release`, `slot.refresh` and `fleet.refreshSlots`. Add optional workspace/recovery status and an opt-in release mode with expected workspace identity to the existing refresh contracts. Default refresh remains available. `@farmslot/protocol` owns the additive types and shared pure eligibility predicate; gateway and client model consume that predicate. `FleetRefreshViewModel` owns both clients' rows, scope, confirmations, requests and progress. These are additive minor package changes. No new CLI command, harness action or provider contract; projects still own fixture contents. Activation ordering belongs to the implementation's release plan.
+Reuse `fleet.status` / `fleet.refresh`, `slot.release`, `slot.refresh` and `fleet.refreshSlots`. Add optional workspace/recovery status and an opt-in release mode with expected workspace identity to the existing refresh contracts. Default refresh remains available. `@farmslot/protocol` owns the additive types and shared pure eligibility predicate; gateway and client model consume that predicate. `FleetRefreshViewModel` owns both clients' rows, scope, confirmations, requests and progress. These are additive minor package changes. Amendment 3 defines the parked-work CLI/RPC. Existing harness/provider extension points and project-owned fixture contents remain unchanged. Activation ordering belongs to the implementation's release plan.
 
 ### Required proof
 
-Use real Git/fixtures and both authenticated fleet renderers. Before recovery, every eligible free fixture slot must be stale and an unpinned selection must show `all_stale`. Recover one through the fleet action; the next unpinned, unrestricted selection must choose it by scoring without a slot-picker decision. Also prove safe bulk scope, content-bound discard, protected-owner refusal and failed-operation retry after restart. No product orders, funds or model worker are needed.
+Use real Git/fixtures and both authenticated fleet renderers. Seed stale eligible fixtures. Recover one through the fleet action; the next unpinned, unrestricted selection must choose it by scoring without a slot-picker decision. Also prove safe bulk scope, durable parking, protected-owner refusal and failed-operation retry after restart. No product orders, funds or model worker are needed.
 
 ## Amendment 2: automatic safe slot reuse (2026-10-27)
 
@@ -263,36 +265,28 @@ Use real Git/fixtures and both authenticated fleet renderers. Before recovery, e
 
 ### Decision
 
-Automatic selection uses the existing guarded release and idle reset when a free
-checkout is clean and its work is baseline, merged or verifiably pushed. Inspect
-actual work even on the default branch. A stale score alone cannot require a
-human choice. Preserve the existing default/tracking branch contract.
+Automatic selection uses the existing guarded release and idle reset. A free
+checkout's dirty or unpublished work is parked under Amendment 3 before the
+incoming task is written. Local work alone does not require a picker or refusal.
+Preserve the existing default/tracking branch contract.
 
-Try candidates in the existing admission/ranking order. A candidate's unavailable
-Git or node evidence is recorded and does not prevent trying another candidate.
-The work-preservation picker is needed only when every otherwise eligible free
-candidate has verified dirty or unpublished work. Unknown evidence grants no
-reset authority. Load, source, resource and ownership admission still apply.
+Try candidates in admission/ranking order. Unavailable Git/node evidence or
+failed parking is reported and does not prevent trying another candidate. If
+none can be safely normalized, refuse with the actual reasons. Unknown ownership
+never grants reset authority; unknown publication requires conservative parking
+of readable local work, not a guessed publication verdict.
 
-If none is reusable and any candidate is unavailable, refuse find-slot with the
-recorded candidate reasons. Replay find-slot after the evidence returns. This is
-not a work-preservation choice and adds no protocol field or reason enum.
-
-Both automatic paths use Amendment 1 release-mode evidence and
-`slotRecoveryEligibility`, fetched and rechecked inside the existing fence. The
-legacy release preflight, a deleted upstream or a default-branch name alone does
-not authorize reset. A park record protects its owner or an ownerless workspace;
-a named finished successor is judged on its own work, preserving the parked ref.
-This aligns the shared workspace guard with owner-bound slot release.
+Use the existing recovery eligibility and owner/epoch fences. Git parked-work
+receipts grant no ownership and never block checkout. Machine parking, run gate
+parking and protected workspace holds retain their existing authority.
 
 Pinned slot and skip-prepare/warm selections keep their existing paths. Never
 reset a checkout still required by an active pinned warm, native or skip-prepare
 successor. A post-prepare replay must verify its recorded checkout, or refuse
 with an instruction to replay from prepare or earlier.
 
-This supersedes Amendment 1's human stale-slot choice and its `all_stale` proof
-precondition for clean published work. The manual-action proof instead seeds
-dirty or unpublished work that requires a human recovery choice.
+Manual and automatic proofs seed dirty/unpublished work, verify parking before
+recovery, and proceed without a local-work picker or refusal.
 The fleet recovery action and its shared model remain available. Normal prepare
 continues to own task-specific fixture setup.
 
@@ -300,10 +294,47 @@ continues to own task-specific fixture setup.
 
 Published ticket branches and old default-branch heads must not strand otherwise
 usable capacity. Recovery precedes the incoming task write, preserves run evidence
-and never force-resets local work. A failed recovery retains its existing hold.
+and never resets local work before durable parking. A failed recovery retains its existing hold.
 Returning to the idle branch removes target-branch affinity for later follow-ups.
 
 ### Public surface
 
 Existing find-slot, slot release/refresh and terminal cleanup consume the same
-safety checks. No new RPC, CLI flag, SDK export, harness action or daemon.
+safety checks. Amendment 3 defines the parked-work interface; no new harness
+action or daemon is introduced.
+
+## Amendment 3: park before reset (2026-11-13)
+
+**Status:** Proposed text. Arthur approved the rule and ADR routing on 2026-11-12; paired text review precedes implementation.
+**Specification:** [Fleet slot recovery](../reference/recipe-runtime-capability-contract.md#fleet-slot-recovery).
+
+### Decision
+
+Use one park-before-reset rule for release, refresh, archive/close, recovery,
+automatic reuse and fresh prepare. Before a permitted operation would overwrite,
+delete, move off or reset unpublished commits or dirty work, extend the existing
+parking owner to retain every threatened head and a stash-style snapshot of
+staged, unstaged and relevant untracked work. Verify the immutable local ref
+`refs/farmslot/parked/<slot>/<run-or-timestamp>` and durably record its receipt
+on the run when present and in the slot's inventory before destruction starts.
+A new snapshot gets a new key; exact retries reuse their recorded parking.
+
+Then proceed. Local-work classifications, stale Git evidence and #2060's
+same-branch refusal no longer block eligible work. Existing owner, held-slot,
+source, resource and branch-holder guards remain. Failed capture/persistence or
+changing ownership still stops the operation safely. `--keep-work` keeps the
+checkout; a later archive parks before its own reset. Git parking is not machine
+or run ownership.
+
+Restore verifies the retained snapshot, parks threatened current work first,
+and recovers into a fresh local branch. It does not revive a run, worker, review
+or evidence verdict, and never writes a remote. Prune through existing retention: default 14 days or verified
+reachability from a remote branch, excluding backups required by protected or
+in-flight operations. Unknown legacy age is not inferred from commit age.
+
+### Public surface
+
+- `farmslot slot parked list <slot>` and `farmslot slot parked restore <slot> <ref>` consume one `slot.parked` RPC with `list`/`restore` actions, scoped and authorized like slot release.
+- `@farmslot/protocol` owns proposed `SlotParkedParams`, `SlotParkedResult`, `SlotParkedWorkSummary` and the extended existing parked receipt. The SDK transport, CLI and shared fleet model consume them; Command Center adds a slot-row line, not another Git controller.
+- Existing retention consumes `FARMSLOT_PARKED_WORK_RETENTION_DAYS`, default 14. No new daemon or harness hook. Harnesses inherit parking through prepare/release.
+- Contracts are additive and experimental, released with matching protocol, gateway, CLI/SDK and client readers. Old records keep only proven facts; missing snapshot/age data is not fabricated.
