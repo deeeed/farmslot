@@ -1,3 +1,5 @@
+import { diffArtifactCandidate } from '@farmslot/protocol';
+
 export interface DiffFileEntry {
   path: string;
   diff: string;
@@ -164,13 +166,7 @@ export function fileCategory(path: string): Exclude<DiffFileFilter, 'all'> {
   return 'source';
 }
 
-export function diffArtifactCandidate(artifacts: Array<{ path: string; purpose?: string }>) {
-  const ranked = artifacts
-    .map((artifact) => ({ artifact, score: diffArtifactScore(artifact) }))
-    .filter((entry) => entry.score > 0)
-    .sort((a, b) => b.score - a.score);
-  return ranked[0]?.artifact;
-}
+export { diffArtifactCandidate };
 
 export function diffFocusedFilePathFromRequest(
   requestedPath: string | null | undefined,
@@ -181,15 +177,4 @@ export function diffFocusedFilePathFromRequest(
   if (diffArtifactCandidate([{ path: normalizedPath }])) return '';
   if (artifacts.some((artifact) => artifact.path === normalizedPath)) return '';
   return normalizedPath;
-}
-
-function diffArtifactScore(artifact: { path: string; purpose?: string }): number {
-  const lowerPath = artifact.path.toLowerCase();
-  const lowerPurpose = artifact.purpose?.toLowerCase() ?? '';
-  if (lowerPath === 'artifacts/diff.txt') return 100;
-  if (lowerPath.endsWith('/diff.txt')) return 95;
-  if (/\.(diff|patch)$/.test(lowerPath)) return 90;
-  if (lowerPath.endsWith('.json')) return 0;
-  if (lowerPurpose.includes('diff')) return 60;
-  return 0;
 }

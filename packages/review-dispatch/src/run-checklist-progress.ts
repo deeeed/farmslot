@@ -1,6 +1,7 @@
 import {
   isTerminalRunStatus,
   type Run,
+  type RunListRow,
   shouldAcceptTaskProgressUpdate,
   type TaskProgressStructured,
   type TaskProgressUpdatedPayload,
@@ -15,7 +16,7 @@ export interface RunChecklistProgressTarget {
 }
 
 /** Checklist identity changes with the actor/attempt, even when the run id does not. */
-export function runChecklistProgressTarget(run: Run): RunChecklistProgressTarget | null {
+export function runChecklistProgressTarget(run: RunListRow): RunChecklistProgressTarget | null {
   if (isTerminalRunStatus(run.status) || run.waitingForOperator) return null;
   if (!run.slotId && !run.reviewWorkspace) return null;
   const activity = runActivityView(run);
@@ -63,7 +64,7 @@ export interface RunChecklistProgressView {
 
 /** Both clients render the gateway's checklist counts without inferring totals from hint text. */
 export function runChecklistProgressView(
-  run: Run,
+  run: RunListRow,
   progress: TaskProgressStructured | null | undefined,
 ): RunChecklistProgressView | null {
   if (!runChecklistProgressTarget(run)) return null;

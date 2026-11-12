@@ -10,7 +10,7 @@ import type {
   DispatchQueueListResult,
   ProjectConfig,
   QueueItem,
-  Run,
+  RunListRow,
   SlotStatus,
   WorkEdge,
   WorkerTemplateOption,
@@ -124,12 +124,12 @@ const WORK_GRAPH_DISPATCH_CONFIG_CONTROLS: DispatchConfigEditorControls = {
 export class WorkGraphPanel extends LitElement {
   @property({ attribute: false }) demoGraphs: WorkGraphProjection[] | null = null;
   @property({ attribute: false }) demoBacklogItems: BacklogItem[] | null = null;
-  @property({ attribute: false }) demoRuns: Run[] | null = null;
+  @property({ attribute: false }) demoRuns: RunListRow[] | null = null;
 
   @state() private graphs: WorkGraphProjection[] = [];
   @state() private backlogItems: BacklogItem[] = [];
   @state() private queueItems: QueueItem[] = [];
-  @state() private runs: Run[] = [];
+  @state() private runs: RunListRow[] = [];
   @state() private slots: SlotStatus[] = [];
   @state() private globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private configBusyItemId = '';
@@ -387,7 +387,7 @@ export class WorkGraphPanel extends LitElement {
     return this.demoBacklogItems ?? this.backlogItems;
   }
 
-  private activeRuns(): Run[] {
+  private activeRuns(): RunListRow[] {
     return this.demoRuns ?? this.runs;
   }
 

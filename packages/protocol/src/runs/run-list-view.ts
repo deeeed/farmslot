@@ -11,6 +11,7 @@ import type { SlotStatus } from '../contracts/slots.js';
 import { compareText } from '../text-order.js';
 
 import { runLinkedTicketRefs } from './linked-tickets.js';
+import type { RunListRow } from './list-row.js';
 import type { RunListProjection } from './run-list-filter.js';
 import { resolveRunSlotId } from './slot-resolution.js';
 
@@ -34,14 +35,14 @@ export interface RunListQuery {
  * The runs a run list shows, in input order. Command Center and Companion both list through this.
  * A version-list projection selects exactly as the run it was made from.
  */
-export function selectRunList<R extends Run | RunListProjection>(
+export function selectRunList<R extends Run | RunListRow | RunListProjection>(
   runs: readonly R[],
   query: RunListQuery,
 ): R[] {
   const [tag] = normalizeRunTags(query.tag ? [query.tag] : []);
   const search = query.search?.trim().toLowerCase();
   return runs.filter(
-    (run: Run | RunListProjection) =>
+    (run: Run | RunListRow | RunListProjection) =>
       inScope(run, query.scope) &&
       (!query.projects?.length || query.projects.includes(run.project)) &&
       (!query.machines?.length || onMachines(run, query.machines, query.slotMachines)) &&
@@ -61,24 +62,27 @@ export function slotMachineMap(
 }
 
 /** Incoming runs replace stored runs with the same id; newest first. */
-export function mergeRunsById(existing: readonly Run[], incoming: readonly Run[]): Run[] {
+export function mergeRunsById(
+  existing: readonly RunListRow[],
+  incoming: readonly RunListRow[],
+): RunListRow[] {
   const byId = new Map(existing.map((run) => [run.id, run]));
   for (const run of incoming) byId.set(run.id, run);
   return [...byId.values()].sort((left, right) => compareText(right.createdAt, left.createdAt));
 }
 
-function slotOf(run: Run | RunListProjection): string | null {
+function slotOf(run: Run | RunListRow | RunListProjection): string | null {
   return 'projected' in run ? run.slotId : resolveRunSlotId(run);
 }
 
-function inScope(run: Run | RunListProjection, scope: RunListScope): boolean {
+function inScope(run: Run | RunListRow | RunListProjection, scope: RunListScope): boolean {
   if (scope === 'active') return isActiveListRun(run);
   if (scope === 'history') return isTerminalRunStatus(run.status);
   return true;
 }
 
 function onMachines(
-  run: Run | RunListProjection,
+  run: Run | RunListRow | RunListProjection,
   machines: readonly string[],
   slotMachines: ReadonlyMap<string, string> | undefined,
 ): boolean {
@@ -89,7 +93,7 @@ function onMachines(
   return machines.some((name) => slotId === name || slotId.startsWith(`${name}-`));
 }
 
-function matchesSearch(run: Run | RunListProjection, search: string): boolean {
+function matchesSearch(run: Run | RunListRow | RunListProjection, search: string): boolean {
   return [
     run.ticketOrPr,
     run.summary,

@@ -1,7 +1,7 @@
 import type { ResourceQueryState } from '../client-cache/types.js';
-import type { Run } from '../contracts/runs.js';
 import type { RunListResult } from '../rpc/run.js';
 
+import type { RunListRow } from './list-row.js';
 import { mergeRunsById } from './run-list-view.js';
 
 /** A list's history and active queries remain individually owned by the shared cache. */
@@ -23,7 +23,7 @@ export function mergeRunListObservations(
         : states.some((state) => state.status === 'error')
           ? 'error'
           : 'loading';
-  const rows = new Map<string, Run>();
+  const rows = new Map<string, RunListRow>();
   for (const state of states) {
     for (const run of state.data?.runs ?? []) {
       const previous = rows.get(run.id);

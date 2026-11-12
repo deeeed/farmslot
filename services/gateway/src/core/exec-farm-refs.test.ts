@@ -26,7 +26,9 @@ mock.module('../node-support/remote-command.js', {
       resolved.push({ cmd, budgetMs: options.budgetMs });
       if (pending) throw new NodeSupportPendingError('still being delivered');
       now += resolveElapsedMs;
-      return cmd.replaceAll('~/farmslot-node/', '~/farmslot-node/support/h/');
+      return cmd
+        .replaceAll('~/farmslot-node/', '~/farmslot-node/support/h/')
+        .replaceAll('/configured/farm-node/', '~/farmslot-node/support/h/');
     },
   },
 });
@@ -90,6 +92,14 @@ test('a remote hook that calls a farm script runs the resolved command', async (
     ['bash ~/farmslot-node/support/h/projects/x/scripts/unlock-wallet.sh'],
   );
   assert.equal(resolved[0]!.budgetMs, 60_000, 'delivery retains its configured wait budget');
+});
+
+test('a configured workspace hook passes through the shared support resolver', async () => {
+  reset();
+  const vars = { ...remote, machineEnv: { FARMSLOT_WORKSPACE: '/configured/farm-node' } };
+  await execOnSlot(vars, 'bash /configured/farm-node/projects/x/scripts/preflight.sh');
+  assert.equal(resolved.length, 1);
+  assert.equal(sent[0]?.cmd, 'bash ~/farmslot-node/support/h/projects/x/scripts/preflight.sh');
 });
 
 for (const elapsedMs of [0, 9_998, 9_999, 10_000, 54_524, 465_238]) {

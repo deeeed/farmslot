@@ -1,7 +1,7 @@
 import {
   isSettledBlockedRun,
-  type Run,
   type RunListResult,
+  type RunListRow,
   TERMINAL_RUN_STATUSES,
 } from '@farmslot/protocol';
 import type { GatewayResourceCache, ResourceQuery } from '@farmslot/protocol/client-cache';
@@ -41,7 +41,7 @@ export async function archiveRunSelection(
           failed.set(rest, 'Wait for current runs before acting.');
         return failed;
       }
-      let run: Run | undefined;
+      let run: RunListRow | undefined;
       for (const state of states) {
         const candidate = state.data?.runs.find((row) => row.id === id);
         if (candidate && (!run || candidate.updatedAt >= run.updatedAt)) run = candidate;

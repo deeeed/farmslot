@@ -2,7 +2,12 @@ import { useRouter } from 'expo-router';
 import {} from 'react';
 import { Text, View } from 'react-native';
 
-import { REVIEW_POST_RECOMMENDATIONS, type Run, viewNullableTextField } from '@farmslot/protocol';
+import {
+  REVIEW_POST_RECOMMENDATIONS,
+  type Run,
+  type RunListRow,
+  viewNullableTextField,
+} from '@farmslot/protocol';
 import { runReviewerView } from '@farmslot/review-dispatch';
 
 import { DocumentViewer } from '../../components/DocumentViewer';
@@ -227,7 +232,7 @@ export function ReviewPublication({
   run,
   context = 'publication',
 }: {
-  run: Run;
+  run: Run | RunListRow;
   context?: ReviewPublicationContext;
 }) {
   const controller = useReviewPublication(run, undefined, context);

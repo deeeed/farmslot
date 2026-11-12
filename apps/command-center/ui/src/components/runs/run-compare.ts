@@ -11,6 +11,7 @@ import {
   type Run,
   type RunGetResult,
   type RunListResult,
+  type RunListRow,
   type RunStep,
   sortRunsForFamilyView,
   sourceObservationAge,
@@ -61,7 +62,7 @@ export class RunCompare extends LitElement {
   @property() runIdB = '';
   @state() private runA: Run | null = null;
   @state() private runB: Run | null = null;
-  @state() private siblings: Run[] = [];
+  @state() private siblings: RunListRow[] = [];
   @state() private hydrating = false;
   @state() private familySnapshot: FamilyObservabilitySnapshot | null = null;
   @state() private familySnapshotError = '';
@@ -188,15 +189,15 @@ export class RunCompare extends LitElement {
     return this.familySnapshot?.runs.find((r) => r.runId === this.runIdB) ?? null;
   }
 
-  private get familyRuns(): Run[] {
-    const byId = new Map<string, Run>();
+  private get familyRuns(): RunListRow[] {
+    const byId = new Map<string, RunListRow>();
     for (const run of [this.runA, this.runB, ...this.siblings]) {
       if (run) byId.set(run.id, run);
     }
     return sortRunsForFamilyView([...byId.values()]);
   }
 
-  private runOptionLabel(run: Run): string {
+  private runOptionLabel(run: RunListRow): string {
     return [
       run.variant || run.metrics.runner || run.id.slice(0, 8),
       run.status,
@@ -378,7 +379,12 @@ export class RunCompare extends LitElement {
     `;
   }
 
-  private renderRunPicker(side: 'a' | 'b', selectedId: string, otherId: string, runs: Run[]) {
+  private renderRunPicker(
+    side: 'a' | 'b',
+    selectedId: string,
+    otherId: string,
+    runs: RunListRow[],
+  ) {
     return html`
       <div class="picker-card">
         <label>${side === 'a' ? 'Left run' : 'Right run'}</label>

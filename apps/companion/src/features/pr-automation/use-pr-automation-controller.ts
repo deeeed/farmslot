@@ -5,6 +5,7 @@ import { Linking } from 'react-native';
 import {
   type ConfigProjectsResult,
   type DispatchQueueListResult,
+  isTerminalRunStatus,
   Methods,
   monitoredPRUrl,
   parseGitHubPullUrl,
@@ -20,6 +21,8 @@ import {
   type PRTriggerRule,
   type PRWatchListResult,
   type Run,
+  type RunGetResult,
+  type RunListRow,
   type SlotStatus,
   viewChoiceField,
 } from '@farmslot/protocol';
@@ -340,6 +343,59 @@ export function usePRAutomationController(
     setEditor({ kind: 'request' });
     setActionError('');
   };
+  /**
+   * Run QA links its source review from the detail of the intent's run, listed or not: a
+   * run.list row leaves the review out. The stored run.get serves when it is at least as new
+   * as the row or, without a row, when its run has finished; otherwise one run.get is read
+   * through the shared cache. When the detail cannot be read, no draft opens.
+   */
+  const openQA = async (intent: PRReviewIntent, row?: RunListRow) => {
+    if (mutation.current) return;
+    let run: Run | undefined;
+    if (intent.runId) {
+      const captured = scope.current;
+      const stillCurrent = () =>
+        scope.current.client === captured.client &&
+        scope.current.profileId === captured.profileId &&
+        scope.current.generation === captured.generation;
+      const token = Symbol();
+      mutation.current = token;
+      setBusy(true);
+      setActionError('');
+      try {
+        const cache = getResourceCache();
+        if (!cache) throw new Error('The offline store is not open yet');
+        const query = resourceQuery<RunGetResult>(Methods.RUN_GET, { runId: intent.runId });
+        const held = (await cache.readStored?.(query, false))?.data?.run;
+        const current =
+          held &&
+          (row
+            ? Date.parse(held.updatedAt) >= Date.parse(row.updatedAt)
+            : isTerminalRunStatus(held.status));
+        if (held && current) run = held;
+        else {
+          const state = await cache.retry(query);
+          if (!state.data || state.error)
+            throw new Error(state.error?.message ?? 'The review run could not be read.');
+          run = state.data.run;
+        }
+        if (!stillCurrent()) return;
+      } catch (error) {
+        // Shown as this controller shows every failed action; the Run QA button stays usable.
+        if (stillCurrent()) fail(error);
+        return;
+      } finally {
+        if (mutation.current === token) {
+          mutation.current = undefined;
+          setBusy(false);
+        }
+      }
+    }
+    setRequestDraft(qaRequestFromReview(intent, run, useConnectionStore.getState().principalId));
+    requestKey.current = undefined;
+    setEditor({ kind: 'request' });
+    setActionError('');
+  };
   const editRequest = (patch: Partial<PRRequestDraft>) => {
     setRequestDraft((draft) => {
       const effective = effectivePRRequest(
@@ -553,13 +609,8 @@ export function usePRAutomationController(
       openPolicy,
       openRepair,
       openRequest,
-      openQA: (intent: PRReviewIntent, run?: Run) => {
-        setRequestDraft(
-          qaRequestFromReview(intent, run, useConnectionStore.getState().principalId),
-        );
-        requestKey.current = undefined;
-        setEditor({ kind: 'request' });
-        setActionError('');
+      openQA: (intent: PRReviewIntent, row?: RunListRow) => {
+        void openQA(intent, row);
       },
       editMonitor: (patch: Partial<PRMonitorDraft>) =>
         setMonitorDraft((draft) => ({ ...draft, ...patch })),

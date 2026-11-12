@@ -12,6 +12,8 @@ import {
   type Run,
   type RunDecision,
   type RunGetResult,
+  type RunListRow,
+  savedReviewExpected,
   savedReviewView,
   toggleReviewFinding,
 } from '@farmslot/protocol';
@@ -31,7 +33,7 @@ import { heldConnectionCurrent } from '../../store/held-connection';
 export type ReviewPublicationContext = 'publication' | 'saved';
 
 export function useReviewPublication(
-  run: Run | null,
+  run: Run | RunListRow | null,
   selectedDecision?: RunDecision | null,
   context: ReviewPublicationContext = 'publication',
 ) {
@@ -105,7 +107,7 @@ export function useReviewPublication(
   const savedCandidate = !payload && effectiveRun ? savedReviewView(effectiveRun) : null;
   // Run Detail can pass a run.list row while run.get loads. Only a run that has a saved
   // review gets the saved-review card's loading and failure states; any other run gets none.
-  const savedExpected = Boolean(!payload && run && savedReviewView(effectiveRun ?? run));
+  const savedExpected = Boolean(!payload && run && savedReviewExpected(effectiveRun ?? run));
   const viewModel = effectiveRun ? reviewPublicationView(effectiveRun) : null;
   const captureCurrent = (bindSelection = true) => {
     const capturedScope = scope.current;
