@@ -41,7 +41,7 @@ function treeFromEntries(entries, name) {
 }
 function makeTree(entries) { return text(['mktree','-z','--missing'], {input:Buffer.from(entries.map(e => e.mode+' '+e.type+' '+e.sha+'\t'+e.file+'\0').join(''))}); }
 function commit(tree, parents, message) {
-  return text(['commit-tree',tree].concat(parents.flatMap(p => ['-p',p])), {input:Buffer.from(message+'\n')});
+  return text(['-c','user.name=Farmslot','-c','user.email=parked-work@farmslot.invalid','commit-tree',tree].concat(parents.flatMap(p => ['-p',p])), {input:Buffer.from(message+'\n')});
 }
 function readObjects(names) {
   if(!names.length)return [];

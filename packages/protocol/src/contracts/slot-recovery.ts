@@ -105,6 +105,7 @@ export function slotRecoveryEligibility(
   bulkInspectable = slot.lifecycle === 'ready' && !slot.currentRunId;
   const work = slot.workspace;
   if (!work) return blocked(slot.workspaceError ?? 'Workspace has not been inspected', 'unknown');
+  if (slot.workspaceError) return blocked(slot.workspaceError, 'unknown');
   const observed = Date.parse(work.observedAt);
   if (!Number.isFinite(observed) || now - observed > SLOT_WORKSPACE_MAX_AGE_MS)
     return blocked('Workspace inspection expired', 'unknown');

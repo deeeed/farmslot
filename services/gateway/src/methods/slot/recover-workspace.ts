@@ -171,7 +171,9 @@ export async function recoverSlotWorkspace(
     const fleet = await loadFleetStatus(true);
     const status = fleet.slots.find((slot) => slot.slot === params.slotId);
     let keepWarm = status?.warm ?? false;
-    const eligibility = slotRecoveryEligibility(status ? { ...status, workspace } : undefined);
+    const eligibility = slotRecoveryEligibility(
+      status ? { ...status, workspace, workspaceError: undefined } : undefined,
+    );
     if (!eligibility.allowed)
       return refuse(
         eligibility.reason ?? 'protected',

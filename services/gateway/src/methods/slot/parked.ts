@@ -67,7 +67,9 @@ export async function slotParked(value: unknown, emit: EventEmitter): Promise<Sl
     const project = await loadProjectVars(vars.projectName);
     const workspace = await inspectSlotWorkspace(slotId, { network: false });
     const status = (await loadFleetStatus(true)).slots.find((slot) => slot.slot === slotId);
-    const eligible = slotRecoveryEligibility(status ? { ...status, workspace } : undefined);
+    const eligible = slotRecoveryEligibility(
+      status ? { ...status, workspace, workspaceError: undefined } : undefined,
+    );
     if (!eligible.allowed || workspace.currentRunId || workspace.recoveryId)
       throw new Error(
         eligible.detail ?? 'Release the current owner or finish recovery before restoring',

@@ -8,6 +8,8 @@ import { promisify } from 'node:util';
 
 import type { ExecResult } from '@farmslot/protocol';
 
+import { claimSlotStatusIf } from '../core/state.js';
+
 // Real tmux only on the test runner's private server (scripts/quality/run-tsx-tests.mjs):
 // no $TMUX, and plain `tmux` (from the code under test) resolving to that socket.
 const tmuxSandbox =
@@ -122,6 +124,12 @@ async function slotFixture(
       2,
     )}\n`,
   );
+  await claimSlotStatusIf(slotId, () => true, {
+    lifecycle: 'ready',
+    phase: null,
+    agent: 'idle',
+    current_run_id: null,
+  });
   return { slotId, slotRepo, frozenHead, laterHead };
 }
 

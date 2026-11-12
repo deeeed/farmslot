@@ -106,7 +106,9 @@ async function readCleanIdleSlot(slotId: string): Promise<boolean> {
     const { loadFleetStatus } = await import('../fleet/state.js');
     const workspace = await inspectSlotWorkspace(slotId, { baselineOnly: true });
     const slot = (await loadFleetStatus(true)).slots.find((candidate) => candidate.slot === slotId);
-    const eligibility = slotRecoveryEligibility(slot ? { ...slot, workspace } : undefined);
+    const eligibility = slotRecoveryEligibility(
+      slot ? { ...slot, workspace, workspaceError: undefined } : undefined,
+    );
     return eligibility.allowed && !eligibility.confirmationRequired && atVerifiedDefault(workspace);
   } catch (error) {
     console.warn(`[find-slot] clean probe of ${slotId} failed: ${(error as Error).message}`);
@@ -143,7 +145,9 @@ export async function reuseSafeIdleSlot(
       return { kind: 'unavailable', reason: 'Slot ownership changed before idle return' };
     const fleet = await loadFleetStatus(true);
     const slot = fleet.slots.find((candidate) => candidate.slot === slotId);
-    const eligibility = slotRecoveryEligibility(slot ? { ...slot, workspace } : undefined);
+    const eligibility = slotRecoveryEligibility(
+      slot ? { ...slot, workspace, workspaceError: undefined } : undefined,
+    );
     if (!eligibility.allowed)
       return { kind: 'unavailable', reason: eligibility.detail ?? 'Slot is protected' };
     // Publication and dirt never grant ownership; the fenced recovery saves them first.

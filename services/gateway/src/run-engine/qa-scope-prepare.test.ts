@@ -359,33 +359,38 @@ test(
   },
 );
 
-test('a slot detached at a local-only commit is still refused', budget, async (t) => {
-  git(repo, 'checkout', '-q', 'main');
-  const localOnly = git(
-    repo,
-    '-c',
-    'user.name=Fixture',
-    '-c',
-    'user.email=fixture@example.invalid',
-    'commit-tree',
-    'HEAD^{tree}',
-    '-p',
-    'HEAD',
-    '-m',
-    'local only',
-  );
-  git(repo, 'checkout', '-q', '--detach', localOnly);
-  const run = qaRun(t, selection({ kind: 'ref', ref: later, expectedHeadSha: later }));
+test(
+  'a slot detached at a local-only commit parks it before exact QA prepare',
+  budget,
+  async (t) => {
+    git(repo, 'checkout', '-q', 'main');
+    const localOnly = git(
+      repo,
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.invalid',
+      'commit-tree',
+      'HEAD^{tree}',
+      '-p',
+      'HEAD',
+      '-m',
+      'local only',
+    );
+    git(repo, 'checkout', '-q', '--detach', localOnly);
+    const run = qaRun(t, selection({ kind: 'ref', ref: later, expectedHeadSha: later }));
 
-  // The refusal names why the remote does not show it.
-  await assert.rejects(
-    prepare(run.id),
-    new RegExp(
-      `Slot is detached at ${localOnly.slice(0, 12)}, which origin does not show \\(startRef commit '${localOnly}' is not reachable`,
-    ),
-  );
-  assert.equal(git(repo, 'rev-parse', 'HEAD'), localOnly);
-});
+    assert.equal((await prepare(run.id)).outputs?.success, true);
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), later);
+    const parkedHeads = git(
+      repo,
+      'for-each-ref',
+      '--format=%(objectname)',
+      'refs/farmslot/parked/',
+    ).split('\n');
+    assert.ok(parkedHeads.includes(localOnly), 'the original local-only commit remains reachable');
+  },
+);
 
 // A start-ref prepare that refuses keeps the slot, and any changes on it, where
 // the earlier run left them; only its reset to its own head may discard them.

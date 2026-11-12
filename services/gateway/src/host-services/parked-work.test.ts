@@ -78,8 +78,10 @@ async function fixture(t: test.TestContext) {
   return { root, repo, vars, git, options, base, mutate };
 }
 
-test('dirty capture survives reset and GC, then restores index, working files, symlinks and modes', async (t) => {
+test('identity-free dirty capture survives reset and GC, then restores index, files and modes', async (t) => {
   const { vars, repo, git, options, mutate } = await fixture(t);
+  git('config', 'user.name', '');
+  git('config', 'user.email', '');
   await writeFile(path.join(repo, 'tracked'), 'staged\n');
   git('add', 'tracked');
   await writeFile(path.join(repo, 'tracked'), 'working\n');
@@ -91,6 +93,8 @@ test('dirty capture survives reset and GC, then restores index, working files, s
   const index = git('show', ':tracked');
   const capture = await parkGitWork(vars, options, localExec);
   const receipt = capture.receipts[0];
+  assert.equal(git('config', 'user.name'), '', 'parking leaves repository identity unchanged');
+  assert.equal(git('config', 'user.email'), '');
   assert.equal(receipt.kind, 'worktree');
   assert.equal(git('status', '--porcelain=v1', '-z'), before);
   assert.equal(git('show', ':tracked'), index);
