@@ -24,7 +24,11 @@ import {
   renderRoleTemplate,
 } from '../tasks/agent-runtime-script.js';
 
-import { farmPathsForSlot } from './farm-paths.js';
+import {
+  commandIncludesFarmPath,
+  farmCommandRootsForSlot,
+  farmPathsForSlot,
+} from './farm-paths.js';
 import { getNode, registerNode, unregisterByWs } from './machine-registry.js';
 
 // A real typed fixture keeps this test honest when SlotVars gains required fields.
@@ -101,6 +105,7 @@ test('node report stays with its connection, selects remote helpers, and replace
   assert.equal(env.FARMSLOT_PROJECTS_DIR, report.projects);
   assert.equal(env.FARMSLOT_CLI, path.join(report.code.bin, 'farmslot'));
   assert.equal(farmPathsForSlot(vars).code.support, path.join(root, 'code/support'));
+  assert.deepEqual(farmCommandRootsForSlot(vars), [report.code.node]);
   assert.equal(await farmslotDirectoryForSlot(vars), report.code.node);
   assert.equal(
     await agentRuntimeScriptForSlot(vars, 'task-init-cli.mjs'),
@@ -141,6 +146,17 @@ test('reported paths with apostrophes still remap quoted helpers to immutable su
     remapRemoteFarmRefs(command, support, ['scripts'], root),
     `node ${shellExpressionForRemotePath(`${support}/scripts/helper.mjs`)}`,
   );
+});
+
+test('configured legacy workspace and node-install commands share support admission', () => {
+  const configured = { ...vars, machineEnv: { FARMSLOT_WORKSPACE: '/configured/farm-node' } };
+  const hook = expandTemplate('bash {{farmslot_dir}}/scripts/dev.sh', configured);
+  assert.equal(commandIncludesFarmPath(hook, configured), true);
+  assert.equal(
+    commandIncludesFarmPath('bash ~/farmslot-node/scripts/helper.mjs', configured),
+    true,
+  );
+  assert.equal(commandIncludesFarmPath('git status', configured), false);
 });
 
 test('layout-2 status writes require the same gateway authority as the legacy status store', (t) => {

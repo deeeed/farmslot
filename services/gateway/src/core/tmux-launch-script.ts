@@ -2,13 +2,13 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
-import { farmPathsForSlot } from '../fleet/farm-paths.js';
+import { commandIncludesFarmPath } from '../fleet/farm-paths.js';
 import { usesNodeLink } from '../fleet/node-link-policy.js';
 
 import type { SlotVars } from './config.js';
 import { isLocal } from './exec.js';
 import { currentSlotCommandExecutor } from './exec-scope.js';
-import { commandIncludesRemotePath, shellExpressionForRemotePath } from './remote-paths.js';
+import { shellExpressionForRemotePath } from './remote-paths.js';
 import { slotMkdir, slotWriteFileAtomic } from './slot-io.js';
 
 /** Keep launch bytes out of tmux's size-limited client command transport. */
@@ -23,7 +23,7 @@ export async function writeTmuxLaunchScript(
   if (
     !currentSlotCommandExecutor() &&
     (!isLocal(vars.host, vars.machine) || usesNodeLink(vars.machine)) &&
-    commandIncludesRemotePath(command, farmPathsForSlot(vars).code.node)
+    commandIncludesFarmPath(command, vars)
   ) {
     const { resolveRemoteFarmCommand } = await import('../node-support/remote-command.js');
     command = await resolveRemoteFarmCommand(vars, command);
