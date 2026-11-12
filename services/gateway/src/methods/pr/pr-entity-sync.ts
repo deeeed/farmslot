@@ -1,5 +1,6 @@
 // pr.list entity reads (ADR-071 Amendment 3): `{ versions: true }` and `{ ids }` answer from the
-// scope's served list, after starting its collector exactly as the full read does.
+// scope's served list, after starting its collector exactly as the full read does. A versions
+// read projects the list again; an ids read serves the rows that listing named.
 import type { PREntityPage, PRVersionsResult } from '@farmslot/protocol';
 
 import { resourceRevisions } from '../../resources/revisions.js';
@@ -10,7 +11,7 @@ import { type PRListClientInterest, prListResourceKey } from './list-cache.js';
 /** An ids page stops before the row that would take it past this many UTF-8 JSON bytes. */
 export const PR_ENTITY_PAGE_MAX_BYTES = 2 * 1024 * 1024;
 
-type ServedDeps = Parameters<typeof servedPRListFor>[2];
+type ServedDeps = Parameters<typeof servedPRListFor>[3];
 
 /** `pr.list { versions: true }`: stored versions and the list's freshness fields. */
 export async function prListVersions(
@@ -18,7 +19,7 @@ export async function prListVersions(
   interest: PRListClientInterest = {},
   deps: ServedDeps = {},
 ): Promise<PRVersionsResult> {
-  const list = await servedPRListFor(project, interest, deps);
+  const list = await servedPRListFor(project, true, interest, deps);
   return {
     versions: [...list.rows].map(([id, row]) => ({ id, version: row.version })),
     ...list.meta,
@@ -33,7 +34,7 @@ export async function prListIds(
   interest: PRListClientInterest = {},
   deps: ServedDeps = {},
 ): Promise<PREntityPage> {
-  const list = await servedPRListFor(project, interest, deps);
+  const list = await servedPRListFor(project, false, interest, deps);
   const page: PREntityPage = { entities: [], versions: [] };
   let bytes = 0;
   for (const id of ids) {

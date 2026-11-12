@@ -16,7 +16,12 @@ import { type EntitySnapshot, resourceRevisions } from '../resources/revisions.j
 import { slotResourceChanges } from '../resources/slot-run-bindings.js';
 
 import { getAllMachineHealth } from './node-health.js';
-import { ensureFleetLoaded, overlaySlotEntity, slotEntityBase } from './state.js';
+import {
+  ensureFleetLoaded,
+  overlaySlotEntity,
+  slotEntityBase,
+  WORKSPACE_OVERLAY_MAX_AGE_MS,
+} from './state.js';
 
 /** An ids page stops before the slot that would take it past this many UTF-8 JSON bytes. */
 export const FLEET_ENTITY_PAGE_MAX_BYTES = 2 * 1024 * 1024;
@@ -35,13 +40,36 @@ let listing: string | undefined;
 let servedBase: object | undefined;
 const baseIndex = new WeakMap<object, Map<string, SlotStatus>>();
 
+/** Slots whose entity shows a failed inspection's fallback, recomputed when that fallback ages out. */
+const fallbackExpiry = new Map<string, ReturnType<typeof setTimeout>>();
+
+function forgetFallback(slotId: string): void {
+  clearTimeout(fallbackExpiry.get(slotId));
+  fallbackExpiry.delete(slotId);
+}
+
 /** A slot as the observed fleet read serves it, without host load (machine samples own that). */
 function servedSlotEntity(base: SlotStatus): SlotEntity {
   const overlaid = overlaySlotEntity(base);
-  const { hostLoad: _hostLoad, ...entity } = markFailedSlotUnverified(
-    overlaid,
-    observedSlotWorkspace(overlaid),
-  );
+  const observed = observedSlotWorkspace(overlaid);
+  const served = markFailedSlotUnverified(overlaid, observed);
+  forgetFallback(base.slot);
+  if (served !== observed && overlaid.workspace) {
+    // The fallback is the row's overlay, which a full read stops applying at this age. No write
+    // marks that moment, so the entity is recomputed then, as a full read would compute it.
+    const expiry =
+      Date.parse(overlaid.workspace.observedAt) + WORKSPACE_OVERLAY_MAX_AGE_MS - Date.now();
+    const timer = setTimeout(
+      () => {
+        fallbackExpiry.delete(base.slot);
+        slotResourceChanges.overlayChanged(base.slot);
+      },
+      Math.max(0, expiry),
+    );
+    timer.unref();
+    fallbackExpiry.set(base.slot, timer);
+  }
+  const { hostLoad: _hostLoad, ...entity } = served;
   return entity;
 }
 
@@ -57,7 +85,10 @@ function indexOf(slots: readonly SlotStatus[], fleet: object): Map<string, SlotS
 /** Recomputes these slots' entities (every slot when undefined or on a new base). */
 function refresh(slotIds: readonly string[] | undefined): void {
   const fleet = slotEntityBase();
-  if (!fleet) return;
+  if (!fleet) {
+    for (const slotId of [...fallbackExpiry.keys()]) forgetFallback(slotId);
+    return;
+  }
   const bases = indexOf(fleet.slots, fleet);
   const all = slotIds === undefined || servedBase === undefined;
   const ids = all ? new Set([...bases.keys(), ...records.keys()]) : new Set(slotIds);
@@ -66,6 +97,7 @@ function refresh(slotIds: readonly string[] | undefined): void {
     const base = bases.get(id);
     if (!base) {
       records.delete(id);
+      forgetFallback(id);
       continue;
     }
     const entity = servedSlotEntity(base);

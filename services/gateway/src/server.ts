@@ -64,7 +64,6 @@ import { forgetGatewayUpdateClientInterest } from './methods/gateway-status.js';
 import { resolveObservedNativeWorkspace } from './methods/native-workspace.js';
 import { forgetPRDetailClientInterest } from './methods/pr/detail-observations.js';
 import { forgetPRListClientInterest } from './methods/pr/list-cache.js';
-import { startServedPRListMaintenance } from './methods/pr/served-list.js';
 import { forgetProviderAccountsClientInterest } from './methods/provider-accounts.js';
 import { resetClientResourceIndex, streamUnsubscribe } from './methods/stream-feed.js';
 import { taskProgress } from './methods/task.js';
@@ -611,8 +610,6 @@ export function initServerGlobals(): void {
       slotsPublishedToViewers();
     broadcastEvent(Events.RESOURCE_CHANGED, payload);
   });
-  // Served PR lists follow their local inputs for the gateway's lifetime; its timers are unref'd.
-  startServedPRListMaintenance();
 
   // Watch for fleet state changes and broadcast
   const publishFleetChange = (fleet: FleetStatus) => {

@@ -2,10 +2,23 @@
 // starts them; a viewer that applies pushed slots sends no such read, so its versions read and
 // the slot publications it receives start them instead, and each outcome is pushed.
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 
 import type { FleetStatus, SlotStatus } from '@farmslot/protocol';
 import type { ResourceChangedPayload } from '@farmslot/protocol/transport/events';
+
+// An inspection starts by loading its slot's configuration: a test holds a round there.
+let heldRound: Promise<void> | undefined;
+const realConfig = await import('../core/config.js');
+mock.module('../core/config.js', {
+  namedExports: {
+    ...realConfig,
+    loadSlotVars: async (slotId: string) => {
+      await heldRound;
+      return realConfig.loadSlotVars(slotId);
+    },
+  },
+});
 
 const { setCachedFleetForTests } = await import('../fleet/state.js');
 const { fleetStatusIds } = await import('../fleet/slot-entities.js');
@@ -16,7 +29,7 @@ const {
   stopServedWorkspaceObservations,
 } = await import('./fleet.js');
 
-function fleetOf(id: string): FleetStatus {
+function fleetOf(id: string, patch: Partial<SlotStatus> = {}): FleetStatus {
   const slot: SlotStatus = {
     slot: id,
     machine: 'mac-a',
@@ -39,6 +52,7 @@ function fleetOf(id: string): FleetStatus {
     deviceName: null,
     taskPhase: null,
     taskStepProgress: null,
+    ...patch,
   };
   return {
     checkedAt: '2026-11-12T00:00:00.000Z',
@@ -107,4 +121,32 @@ test('slot publications to viewers start inspections no more often than a reread
   assert.equal(early, undefined, 'the next round waits for the reread floor');
   const later = await pushedSlot('next-round', () => t.mock.timers.tick(1_001));
   assert.ok(later?.workspace ?? later?.workspaceError, 'then it runs once');
+});
+
+test('N5: a refresh asked for while a round runs is run when that round settles', async (t) => {
+  setCachedFleetForTests(fleetOf('new-owner'));
+  t.after(() => setCachedFleetForTests(null));
+  let release = () => {};
+  heldRound = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  t.after(() => {
+    heldRound = undefined;
+    release();
+  });
+  // A round inspects the slot for its first owner and is still running.
+  refreshServedWorkspaceObservations();
+  for (let turn = 0; turn < 10; turn++) await new Promise<void>((resolve) => setImmediate(resolve));
+
+  // The slot changes owner, so that inspection no longer describes it; the publication's refresh
+  // fires while the first round runs.
+  setCachedFleetForTests(fleetOf('new-owner', { currentRunId: 'run-2' }));
+  refreshServedWorkspaceObservations();
+
+  const row = await pushedSlot('new-owner', () => {
+    heldRound = undefined;
+    release();
+  });
+  assert.equal(row?.currentRunId, 'run-2');
+  assert.ok(row?.workspace ?? row?.workspaceError, 'the new owner is inspected');
 });

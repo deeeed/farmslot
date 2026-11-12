@@ -329,6 +329,7 @@ export async function prList(
  */
 export async function servedPRListFor(
   project: string | undefined,
+  fresh: boolean,
   interest: PRListClientInterest = {},
   deps: { fetchList?: typeof fetchPRList; projectRows?: PRListProjector } = {},
 ): Promise<ServedPRProjection> {
@@ -337,7 +338,7 @@ export async function servedPRListFor(
     (force) => fetchList({ force, ...(project === undefined ? {} : { project }) }),
     { project, ...interest },
   );
-  return servedPRList(project, deps.projectRows ?? projectRetainedPRList);
+  return servedPRList(project, deps.projectRows ?? projectRetainedPRList, fresh);
 }
 
 /** Reads only gateway/node-owned local facts and retained raw observations. Never invokes GitHub. */

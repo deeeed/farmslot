@@ -502,10 +502,12 @@ publication or a read looks them up and hashes nothing.
 - Slots: a status commit or load and every overlay write recompute the slots
   they touch. A machine sample advances the machine and the fleet keys, not its
   slots.
-- PRs: entity reads and pushes serve the projection the full read computes. It
-  is recomputed when its collector changes and when a local input changes (runs,
-  slots, workers, configuration, sources), no more often than the view rereads
-  that input.
+- PRs: entity reads and pushes serve the projection the full read computes. A
+  versions read projects it again, as the full read does on every read, so its
+  listing is never older than the full read's; an ids read serves the rows that
+  listing named. A collector change (a collection, a CI result) projects it and
+  pushes the rows that changed. The observations of one list refresh project
+  another scope once, when the refresh ends.
 - Workspace inspections were started by the observed full read. A versions read
   starts them too, and so do slot publications while a viewer is connected, no
   more often than the fleet view's reread floor.
@@ -515,7 +517,17 @@ publication or a read looks them up and hashes nothing.
 - Rows stay on screen across a reconnect. After every connection or epoch change
   a collection is verified by a versions read before it is current again.
 - A push or deletion that arrives after a read was sent wins over that read's
-  entry for the id.
+  entry for the id. The same holds for a machine pushed while a versions read is
+  outstanding.
+- A view's own collection key and entity keys are applied without a read. Any
+  other dependency of the view (for the PR list: runs, slots, workers,
+  configuration, sources) changes what the gateway would serve without a push:
+  the view is stale, as it is on the full read, until one versions read at the
+  floor the view rereads that dependency at.
+- Rows a full read put on screen (an older gateway, a stored snapshot) seed the
+  collection. They leave the screen only when the listing says they are gone,
+  and those already at the listed version are not read again.
+- A change for an id the listing does not hold costs one versions read.
 - An id the versions read listed but the ids page did not return ends in a fresh
   versions read, at most twice per sync.
 - Stored, paged and pushed bodies are untrusted: one set of guards checks the

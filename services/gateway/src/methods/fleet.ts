@@ -188,12 +188,25 @@ const servedWorkspaceDeps: FleetStatusDeps = {
 };
 let servedWorkspacesRefreshedAt = 0;
 let servedWorkspacesTimer: ReturnType<typeof setTimeout> | undefined;
+let servedWorkspacesWaiting = false;
 
 /**
  * Starts the workspace inspections an observed fleet read starts (ADR-071 Amendment 3). A viewer
  * on entity sync applies pushed slots without that read, so its versions read calls this.
  */
 export function refreshServedWorkspaceObservations(): void {
+  const running = workspaceRefreshInFlight;
+  if (running) {
+    // A full reader asks again with its next read; nothing asks again for a pushed viewer, so
+    // one refresh waits for the running round: the slots it inspected may have changed owner.
+    if (servedWorkspacesWaiting) return;
+    servedWorkspacesWaiting = true;
+    void running.then(() => {
+      servedWorkspacesWaiting = false;
+      refreshServedWorkspaceObservations();
+    });
+    return;
+  }
   servedWorkspacesRefreshedAt = Date.now();
   const rows = observedFleetRows();
   // A changed inspection advances its slot key; this path assembles no fleet.updated payload.

@@ -1,13 +1,12 @@
 // The served PR list (ADR-071 Amendment 3). The full read projects its collector's rows on every
-// read. Entity reads and pushes serve that same projection, kept per pr.list scope and recomputed
-// when its inputs change (a collection, a CI result, runs, slots, workers, configuration);
-// versions are stored beside its rows, so a versions or ids read hashes nothing.
+// read. Entity reads and pushes serve that same projection, kept per pr.list scope: a versions
+// read projects it again, as the full read does, and a collector change (a collection, a CI
+// result) projects it and pushes the rows that changed. An ids read looks rows and versions up.
 import type { PRListResult, PRStatus } from '@farmslot/protocol';
 import {
   canonicalResourceJson,
   prEntityId,
   type ResourceKey,
-  resourceQuery,
 } from '@farmslot/protocol/client-cache';
 import { Methods } from '@farmslot/protocol/rpc/registry';
 
@@ -18,7 +17,7 @@ import type { PRListFetchResult, PRListProjector } from '../pr.js';
 import {
   onPRListCollectorChange,
   peekServedPRList,
-  prListHasInterest,
+  prListRefreshInFlight,
   prListResourceKey,
   type ServedPRList,
 } from './list-cache.js';
@@ -43,25 +42,11 @@ interface Projection {
   /** Order and fields of the last served list; a change moves the membership marker. */
   listing?: string;
   failure?: { error: unknown };
-  /** Runs, slots, workers or configuration changed since the last computation. */
-  inputsChanged: boolean;
+  /** A PR of this scope was observed while a list refresh ran; projected when it ends. */
+  observed?: boolean;
   queued?: Promise<void>;
   running: Promise<void>;
-  computedAt: number;
-  /** The pending recomputation for changed inputs and when it fires. */
-  paced?: { at: number; timer: ReturnType<typeof setTimeout> };
 }
-
-const view = resourceQuery(Methods.PR_LIST, {});
-/**
- * The local inputs of a served list: every dependency of the pr.list view but its own list key,
- * each with the floor the view rereads it at. A change recomputes no more often than that.
- */
-const INPUT_PACE_MS = new Map<ResourceKey['family'], number>(
-  view.dependencies
-    .filter((key) => key.family !== 'upstream')
-    .map((key) => [key.family, view.rereadIntervalMs?.[key.family] ?? 0]),
-);
 
 const projections = new Map<string, Projection>();
 
@@ -100,8 +85,7 @@ export function projectedPRList(
 async function compute(projection: Projection): Promise<void> {
   const input = peekServedPRList(projection.queryId);
   if (!input) return;
-  projection.inputsChanged = false;
-  projection.computedAt = Date.now();
+  projection.observed = false;
   const key = upstreamKey(projection.project);
   let projected: PRListFetchResult;
   try {
@@ -158,9 +142,7 @@ function projectionFor(project: string | undefined, projector: PRListProjector):
       queryId,
       ...(project === undefined ? {} : { project }),
       projector,
-      inputsChanged: false,
       running: Promise.resolve(),
-      computedAt: 0,
     };
     projections.set(queryId, projection);
   }
@@ -168,14 +150,18 @@ function projectionFor(project: string | undefined, projector: PRListProjector):
   return projection;
 }
 
-/** The maintained served list of a scope whose collector holds a snapshot. */
+/**
+ * The served list of a scope whose collector holds a snapshot. `fresh` projects it again: runs,
+ * slots, workers and configuration change a projection without telling it, so the listing a
+ * client verifies against is never older than the full read's.
+ */
 export async function servedPRList(
   project: string | undefined,
   projector: PRListProjector,
+  fresh: boolean,
 ): Promise<ServedPRProjection> {
   const projection = projectionFor(project, projector);
-  if (!projection.served || projection.failure || (projection.inputsChanged && !projection.paced))
-    await recompute(projection);
+  if (fresh || !projection.served || projection.failure) await recompute(projection);
   if (projection.failure) throw projection.failure.error;
   if (!projection.served) throw new Error('The PR list collector holds no snapshot');
   return projection.served;
@@ -191,10 +177,18 @@ function prEntityProvider(key: ResourceKey): EntitySnapshot | undefined {
 }
 resourceRevisions.setEntityProvider('upstream', prEntityProvider);
 
-// A collector change recomputes the served list of a scope some entity read has asked for.
-onPRListCollectorChange((queryId) => {
+// A collector change recomputes the served list of a scope some entity read has asked for. A
+// list refresh reads every PR of its scope, and each read is an observation for the other
+// scopes that hold the PR: those are projected once, when no refresh is running.
+onPRListCollectorChange((queryId, observed) => {
+  const refreshing = prListRefreshInFlight();
   const projection = projections.get(queryId);
-  if (projection?.served) void recompute(projection);
+  if (projection?.served) {
+    if (observed && refreshing) projection.observed = true;
+    else void recompute(projection);
+  }
+  if (refreshing) return;
+  for (const waiting of projections.values()) if (waiting.observed) void recompute(waiting);
 });
 
 resourceRevisions.registerEntityCollection(
@@ -205,39 +199,6 @@ resourceRevisions.registerEntityCollection(
     key.queryId.startsWith(`${Methods.PR_LIST}:`),
 );
 
-function inputsChanged(paceMs: number): void {
-  for (const projection of projections.values()) {
-    projection.inputsChanged = true;
-    if (!projection.served || !prListHasInterest(projection.queryId)) continue;
-    const at = Math.max(Date.now(), projection.computedAt + paceMs);
-    if (projection.paced && projection.paced.at <= at) continue;
-    if (projection.paced) clearTimeout(projection.paced.timer);
-    const timer = setTimeout(() => {
-      projection.paced = undefined;
-      void recompute(projection);
-    }, at - Date.now());
-    timer.unref();
-    projection.paced = { at, timer };
-  }
-}
-
-/** Recomputes observed scopes when their local inputs change. Returns its teardown. */
-export function startServedPRListMaintenance(revisions = resourceRevisions): () => void {
-  const stop = revisions.subscribe((payload) => {
-    const paces = payload.changes.flatMap((change) => INPUT_PACE_MS.get(change.key.family) ?? []);
-    if (paces.length) inputsChanged(Math.min(...paces));
-  });
-  return () => {
-    stop();
-    for (const projection of projections.values()) {
-      if (projection.paced) clearTimeout(projection.paced.timer);
-      projection.paced = undefined;
-    }
-  };
-}
-
 export function resetServedPRListsForTests(): void {
-  for (const projection of projections.values())
-    if (projection.paced) clearTimeout(projection.paced.timer);
   projections.clear();
 }

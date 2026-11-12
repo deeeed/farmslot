@@ -38,8 +38,7 @@ const { prListResourceKey, resetPRListCacheForTests, servePRList } =
   await import('./list-cache.js');
 const { prList } = await import('../pr.js');
 const { prListIds, prListVersions } = await import('./pr-entity-sync.js');
-const { resetServedPRListsForTests, startServedPRListMaintenance } =
-  await import('./served-list.js');
+const { resetServedPRListsForTests } = await import('./served-list.js');
 const { resourceRevisions } = await import('../../resources/revisions.js');
 
 function row(n: number, patch: Partial<PRStatus> = {}): PRStatus {
@@ -179,39 +178,76 @@ test('a full read is not told to read again by the list it just projected', asyn
   assert.equal(resourceRevisions.revision(key), before, 'and advances no list key');
 });
 
-test('finding 7: a local input change recomputes an observed scope at the view reread floor', async (t) => {
+test('N4: an entity read after a local input change equals the full read', async () => {
   coldGateway();
-  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
-  t.after(startServedPRListMaintenance());
-  t.after(resetServedPRListsForTests);
-  const { ci, deps } = scope([row(1)]);
-  // A reader without observer admission keeps the scope observed.
-  await prListVersions('p', { legacyClientId: 'viewer' }, deps);
+  const { ci, deps } = scope([row(1), row(2)]);
+  await prListVersions('p', interest, deps);
   await settle();
-  const changes: ResourceChangedPayload['changes'] = [];
-  t.after(resourceRevisions.subscribe((payload) => changes.push(...payload.changes)));
-  const pushedRows = () => changes.filter((change) => 'prKey' in change.key).length;
 
-  // Runs move PRs between slots several times a second; the view rereads them every 30 s.
-  ci.passed = 6;
-  resourceRevisions.advance({ family: 'runs', scope: 'farm' });
-  await settle();
-  t.mock.timers.tick(29_000);
-  await settle();
-  assert.equal(pushedRows(), 0, 'a run change waits for the floor the view rereads runs at');
-  t.mock.timers.tick(1_000);
-  await settle();
-  assert.equal(pushedRows(), 1, 'then the list is recomputed');
+  // A run moved: the same collected rows project differently, and no collector changed.
+  ci.passed = 8;
+  const full = await prList({ project: 'p' }, deps.fetchList, interest, deps.projectRows);
+  let listing: Awaited<ReturnType<typeof prListVersions>> | undefined;
+  const changes = await published(async () => {
+    listing = await prListVersions('p', interest, deps);
+  });
+  assert.deepEqual(
+    listing?.versions,
+    full.prs.map((entry) => ({
+      id: `${entry.repo}/${entry.pr}`,
+      version: realHash.entityVersionHash(entry),
+    })),
+    'the listing is that of the rows the full read serves now',
+  );
+  const page = await prListIds('p', ['o/r/1', 'o/r/2'], interest, deps);
+  assert.deepEqual(page.entities, full.prs, 'and the ids read serves those rows');
+  assert.equal(
+    changes.filter((change) => 'prKey' in change.key).length,
+    2,
+    'the rows that changed are pushed to the other clients',
+  );
+});
 
-  // Project configuration is read at once.
-  ci.passed = 7;
-  resourceRevisions.advance({ family: 'configuration', scope: 'farm' });
+test('N7: the observations of one list refresh project another scope once, when it ends', async () => {
+  coldGateway();
+  const rows = [row(1), row(2), row(3), row(4)];
+  let projectedScopes: Array<string | undefined> = [];
+  const deps = {
+    fetchList: async () => ({ prs: rows, truncated: false, failed: [] }),
+    projectRows: async (stored: readonly PRStatus[], project?: string) => {
+      projectedScopes.push(project);
+      return { prs: [...stored], truncated: false, failed: [] };
+    },
+  };
+  await prListVersions(undefined, interest, deps);
+  await prListVersions('p', interest, deps);
   await settle();
-  t.mock.timers.tick(1);
+
+  // The farm scope refreshes: GitHub answers for its PRs one at a time.
+  let finish = (_value: { prs: PRStatus[]; truncated: boolean }) => {};
+  const refresh = servePRList(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    { force: true, legacyInterest: false },
+  );
   await settle();
-  assert.equal(pushedRows(), 2, 'a configuration change recomputes the list at once');
-  const page = await prListIds('p', ['o/r/1'], interest, deps);
-  assert.equal(page.entities[0].checkSummary.passed, 7);
+  projectedScopes = [];
+  for (const observed of rows) {
+    for (const listener of rawListeners) listener(observed.repo, observed.pr);
+    await settle();
+  }
+  assert.deepEqual(projectedScopes, [], 'no projection per observation while the refresh runs');
+
+  finish({ prs: rows, truncated: false });
+  await refresh;
+  await settle();
+  assert.deepEqual(
+    projectedScopes.filter((scope) => scope === 'p'),
+    ['p'],
+    'the other scope is projected once for the whole refresh',
+  );
 });
 
 test('finding 8: refresh start, failure and recovery reach entity-sync clients', async () => {
@@ -244,16 +280,18 @@ test('finding 8: refresh start, failure and recovery reach entity-sync clients',
   assert.equal(recovered.observation?.error, undefined);
 });
 
-test('finding 21: versions and ids reads hash nothing', async () => {
+test('finding 21: a versions read hashes each row once as it projects; an ids read hashes nothing', async () => {
   coldGateway();
   const { deps } = scope([row(1), row(2), row(3)]);
   await prListVersions('p', interest, deps);
   hashes = 0;
   const listing = await prListVersions('p', interest, deps);
-  const page = await prListIds('p', ['o/r/1', 'o/r/2', 'o/r/3'], interest, deps);
   assert.equal(listing.versions.length, 3);
+  assert.equal(hashes, 3, 'one projection, as the full read projects on every read');
+  hashes = 0;
+  const page = await prListIds('p', ['o/r/1', 'o/r/2', 'o/r/3'], interest, deps);
   assert.equal(page.entities.length, 3);
-  assert.equal(hashes, 0, 'reads look versions up');
+  assert.equal(hashes, 0, 'ids reads look versions up');
 });
 
 test('finding 23: an ids page is bounded by UTF-8 bytes, not string length', async () => {

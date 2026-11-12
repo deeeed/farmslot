@@ -30,12 +30,13 @@ mock.module('./state.js', {
   },
 });
 
-const { setCachedFleetForTests, setTaskProgressOverlay } = realState;
+const { setCachedFleetForTests, setTaskProgressOverlay, setWorkspaceOverlay } = realState;
 const { slotEntityProvider, fleetStatusIds, fleetStatusVersions, FLEET_ENTITY_PAGE_MAX_BYTES } =
   await import('./slot-entities.js');
 const { resourceRevisions } = await import('../resources/revisions.js');
 const { updateMachineMetrics } = await import('./node-health.js');
-const { observedFleetStatus } = await import('../methods/fleet.js');
+const { observedFleetStatus, refreshServedWorkspaceObservations } =
+  await import('../methods/fleet.js');
 
 function slot(id: string, patch: Partial<SlotStatus> = {}): SlotStatus {
   return {
@@ -203,4 +204,51 @@ test('an overlay write changes the maintained entity and the full read alike', a
     );
   }
   assert.equal(page.entities[0].taskPhase, 'Validate 2/4');
+});
+
+test("N9: a failed inspection's fallback workspace leaves the entity when it leaves the full read", async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+  const id = 'fallback';
+  setCachedFleetForTests(fleetOf([slot(id, { currentRunId: null })]));
+  t.after(() => setCachedFleetForTests(null));
+  // The slot's row verified this workspace a moment ago.
+  setWorkspaceOverlay(id, {
+    epoch: 0,
+    currentRunId: null,
+    cleanupRunId: null,
+    handoffRunId: null,
+    branch: 'main',
+    headSha: 'abc1234',
+    dirtyFingerprint: '',
+    recoveryId: null,
+    observedAt: new Date().toISOString(),
+    localDefaultSha: null,
+    defaultFetchedAt: null,
+    remoteDefaultSha: null,
+    remoteObservedAt: null,
+    behind: null,
+    remoteAdvanced: false,
+    publication: 'pushed',
+    dirtyCount: 0,
+    unpublishedCount: 0,
+  });
+  t.after(() => setWorkspaceOverlay(id, undefined));
+  const full = async () =>
+    observedFleetStatus(await realState.loadFleetStatus(false, true)).fleet.slots[0];
+  const entity = async () => (await fleetStatusIds([id])).entities[0];
+
+  // Its inspection fails (no pool declares the slot): the row's workspace is kept, unverified.
+  refreshServedWorkspaceObservations();
+  // The clock is mocked: the ceiling for the inspection is measured on the performance clock.
+  const ceiling = performance.now() + 3000;
+  while (!(await entity()).workspaceError && performance.now() < ceiling)
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal((await entity()).workspace?.publication, 'unknown');
+  assert.equal((await full()).workspace?.publication, 'unknown', 'as the full read shows it');
+
+  // The row's own evidence ages out: the full read drops the fallback, and so does the entity.
+  t.mock.timers.tick(30_001);
+  for (let turn = 0; turn < 20; turn++) await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal((await entity()).workspace, undefined, 'the entity follows the same expiry');
+  assert.equal((await full()).workspace, undefined);
 });

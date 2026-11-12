@@ -630,6 +630,9 @@ const localSlotRepos = new Map<string, string>();
 const localStorageAvailability = new Map<string, string | undefined>();
 const storageBindingHandlers = new Set<() => void>();
 
+/** A row's workspace overlay describes the slot for this long after it was observed. */
+export const WORKSPACE_OVERLAY_MAX_AGE_MS = 30_000;
+
 function overlaySlot(
   base: SlotStatus,
   recoveryIds: ReadonlyMap<string, string | null> | undefined,
@@ -639,7 +642,7 @@ function overlaySlot(
   if (
     workspace &&
     (!slot.workspace || Date.parse(workspace.observedAt) > Date.parse(slot.workspace.observedAt)) &&
-    Date.now() - Date.parse(workspace.observedAt) < 30_000 &&
+    Date.now() - Date.parse(workspace.observedAt) < WORKSPACE_OVERLAY_MAX_AGE_MS &&
     workspace.branch === slot.branch &&
     workspace.epoch === (slot.slotEpoch ?? 0) &&
     workspace.currentRunId === slot.currentRunId &&

@@ -273,16 +273,27 @@ function persist(state: CollectorState): void {
   }
 }
 
-/** Entity sync recomputes a scope's served list after each change of its collector. */
-let collectorChanged: ((queryId: string) => void) | undefined;
+/**
+ * Entity sync recomputes a scope's served list after each change of its collector. `observed`
+ * marks one PR's newer raw observation, as opposed to the collector's own refresh.
+ */
+let collectorChanged: ((queryId: string, observed: boolean) => void) | undefined;
 
-export function onPRListCollectorChange(listener: (queryId: string) => void): void {
+export function onPRListCollectorChange(
+  listener: (queryId: string, observed: boolean) => void,
+): void {
   collectorChanged = listener;
 }
 
-function publish(state: CollectorState): void {
+function publish(state: CollectorState, observed = false): void {
   resourceRevisions.advance(prListResourceKey(state.project));
-  collectorChanged?.(state.id);
+  collectorChanged?.(state.id, observed);
+}
+
+/** Some scope is refreshing from GitHub, reading its PRs one at a time. */
+export function prListRefreshInFlight(): boolean {
+  for (const state of collectors.values()) if (state.inflight) return true;
+  return false;
 }
 
 /** A scope's collector as servePRList answers, without starting or refreshing anything. */
@@ -299,14 +310,6 @@ function served(state: CollectorState, snapshot: PRListSnapshot): ServedPRList {
     truncated: snapshot.truncated === true,
     observation: observation(state),
   };
-}
-
-/** Some reader still wants this scope collected. */
-export function prListHasInterest(queryId: string): boolean {
-  const state = collectors.get(queryId);
-  return Boolean(
-    state && (hasLegacyInterest(state, Date.now()) || observerInterest(state.project)),
-  );
 }
 
 export function setPRListBroadcast(broadcast: Broadcast): void {
@@ -574,6 +577,6 @@ onPRRawObservation((repo, pr) => {
       continue;
     // Active CI can observe newer raw bytes without changing its own scheduling policy.
     persist(state);
-    publish(state);
+    publish(state, true);
   }
 });
