@@ -11,7 +11,7 @@ import {
 } from '@farmslot/protocol';
 import { TASK_RUNTIME_CLOSEOUT_MS } from '@farmslot/slot-config/task-runtime';
 
-import { isLocal, loadSlotVars } from '../core/index.js';
+import { isLocal, loadSlotVars, type SlotVars } from '../core/index.js';
 import { executionKind, measureManagedOperation } from '../observability/performance.js';
 
 import { type ConnectedNode, getNode } from './machine-registry.js';
@@ -679,12 +679,14 @@ export async function getSlotLocality(slotId: string): Promise<{
   isLocal: boolean;
   machine: string;
   sshTarget?: string;
+  machineEnv?: SlotVars['machineEnv'];
 }> {
   const vars = await loadSlotVars(slotId);
   const local = isLocal(vars.host, vars.machine) && !usesNodeLink(vars.machine);
   return {
     isLocal: local,
     machine: vars.machine,
+    machineEnv: vars.machineEnv,
     ...(local ? {} : { sshTarget: vars.sshTarget }),
   };
 }

@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { expandTemplate } from '@farmslot/slot-config';
+
 import type { SlotVars } from '../core/index.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
+import { commandIncludesFarmPath } from '../fleet/farm-paths.js';
 import {
   buildPiAuthCheckCommand,
   buildPiModelCatalogCommand,
@@ -182,6 +185,33 @@ test('a hook on a node without the current bundle runs from the bundle it just r
   await resolveRemoteFarmCommand(remoteVars('mini-ff-2'), HOOK, { io: node.io });
   assert.ok(node.calls.includes('select'), 'second slot gets its selection recorded');
   assert.ok(!node.calls.includes('write'), 'and the bundle is not republished');
+});
+
+test('a hook expanded from a configured workspace uses the selected immutable support', async () => {
+  resetRemoteFarmCommandCache();
+  const node = fakeNode();
+  const vars = makeVars({
+    host: 'remote.invalid',
+    machine: 'configured-support-node',
+    slotId: 'configured-support-slot',
+    projectName: PROJECT,
+    machineEnv: { FARMSLOT_WORKSPACE: '/configured/farm-node' },
+  });
+  const hook = expandTemplate(
+    'bash {{farmslot_dir}}/projects/farmslot-farm/setup/sandbox-dev.sh start --gateway-port 8804',
+    vars,
+  );
+  assert.ok(hook.includes('/configured/farm-node/projects/'));
+  assert.equal(commandIncludesFarmPath(hook, vars), true, 'staged execution admits the hook');
+  const command = `${hook} && bash ~/farmslot-node/scripts/write-runtime-context.sh`;
+  const resolved = await resolveRemoteFarmCommand(vars, command, { io: node.io });
+  assert.match(
+    resolved,
+    /\/support\/[0-9a-f]{64}\/projects\/farmslot-farm\/setup\/sandbox-dev\.sh/,
+  );
+  assert.doesNotMatch(resolved, /\/configured\/farm-node\/projects\//);
+  assert.match(resolved, /\/support\/[0-9a-f]{64}\/scripts\/write-runtime-context\.sh/);
+  assert.ok(node.calls.includes('writeFiles'), 'the matching bundle is published before launch');
 });
 
 test('remote auth resolves its current bundled helper before executing a stale loose node', async () => {

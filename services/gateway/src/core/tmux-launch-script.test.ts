@@ -198,42 +198,50 @@ test('failed remote script publication never respawns a runner', async () => {
   );
 });
 
-test('remote farm references resolve before script publication, using the existing bundle resolver', async (t) => {
-  const { farmPathsForSlot } = await import('../fleet/farm-paths.js');
-  const vars = makeVars({ host: 'remote.invalid', machine: 'synthetic-remote' });
-  const original = `bash '${farmPathsForSlot(vars).code.node}/scripts/synthetic.sh'`;
-  const resolved = "bash '/synthetic-support/scripts/synthetic.sh'";
-  let resolutions = 0;
-  t.mock.module('../node-support/remote-command.js', {
-    namedExports: {
-      resolveRemoteFarmCommand: async (receivedVars: unknown, command: string) => {
-        assert.equal(receivedVars, io);
-        assert.equal(command, original);
-        resolutions += 1;
-        return resolved;
+for (const configured of [false, true])
+  test(`remote farm references resolve before publication, configured workspace=${configured}`, async (t) => {
+    const { farmPathsForSlot } = await import('../fleet/farm-paths.js');
+    const vars = makeVars({
+      host: 'remote.invalid',
+      machine: 'synthetic-remote',
+      machineEnv: configured ? { FARMSLOT_WORKSPACE: '/configured/farm-node' } : {},
+    });
+    const root = configured ? '/configured/farm-node' : farmPathsForSlot(vars).code.node;
+    const original = `bash '${root}/scripts/synthetic.sh'`;
+    const resolved = "bash '/synthetic-support/scripts/synthetic.sh'";
+    let resolutions = 0;
+    t.mock.module('../node-support/remote-command.js', {
+      namedExports: {
+        resolveRemoteFarmCommand: async (receivedVars: unknown, command: string) => {
+          assert.equal(receivedVars, io);
+          assert.equal(command, original);
+          resolutions += 1;
+          return resolved;
+        },
       },
-    },
+    });
+    let staged: unknown;
+    const io = {
+      ...vars,
+      nodeRequest: async (method: string, params: unknown) => {
+        if (method === 'fs.writeChunk') staged = params;
+        return { ok: true };
+      },
+    };
+    await writeTmuxLaunchScript(io, 'fixture:dev', original);
+    assert.equal(resolutions, 1);
+    assert.ok(
+      staged &&
+        typeof staged === 'object' &&
+        'content' in staged &&
+        typeof staged.content === 'string',
+    );
+    assert.equal(Buffer.from(staged.content, 'base64').toString(), `#!/bin/bash\n${resolved}\n`);
+    await withSlotCommandExecutor(capture, () =>
+      writeTmuxLaunchScript(io, 'fixture:dev', original),
+    );
+    assert.equal(resolutions, 1, 'owned executors keep their existing support selection contract');
   });
-  let staged: unknown;
-  const io = {
-    ...vars,
-    nodeRequest: async (method: string, params: unknown) => {
-      if (method === 'fs.writeChunk') staged = params;
-      return { ok: true };
-    },
-  };
-  await writeTmuxLaunchScript(io, 'fixture:dev', original);
-  assert.equal(resolutions, 1);
-  assert.ok(
-    staged &&
-      typeof staged === 'object' &&
-      'content' in staged &&
-      typeof staged.content === 'string',
-  );
-  assert.equal(Buffer.from(staged.content, 'base64').toString(), `#!/bin/bash\n${resolved}\n`);
-  await withSlotCommandExecutor(capture, () => writeTmuxLaunchScript(io, 'fixture:dev', original));
-  assert.equal(resolutions, 1, 'owned executors keep their existing support selection contract');
-});
 
 test('window and pane ownership fences run after remote publication and before respawn', async () => {
   for (const target of ['fixture:dev', '%12']) {

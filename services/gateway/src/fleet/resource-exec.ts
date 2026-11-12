@@ -1,5 +1,3 @@
-import { legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
-
 /**
  * One command, on the machine a slot lives on.
  *
@@ -9,9 +7,9 @@ import { legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
  * would be resolved by module order rather than by design.
  */
 import { execLocal } from '../core/exec.js';
-import { commandIncludesRemotePath } from '../core/remote-paths.js';
 import { ResourceCommandUnavailableError } from '../core/resource-command-error.js';
 
+import { commandIncludesFarmPath } from './farm-paths.js';
 import { getNode } from './machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from './node-rpc.js';
 
@@ -35,19 +33,12 @@ export async function execResourceCommand(
   cmd: string,
   timeout: number,
 ): Promise<ResourceCommandResult> {
-  const { isLocal, machine } = await getSlotLocality(slotId);
+  const { isLocal, machine, machineEnv } = await getSlotLocality(slotId);
   if (!isLocal) {
     const node = getNode(machine);
     if (node) {
       let remoteCmd = cmd;
-      if (
-        commandIncludesRemotePath(
-          cmd,
-          node.farmPaths?.layout === 2
-            ? node.farmPaths.code.node
-            : legacyRemoteFarmPaths().code.node,
-        )
-      ) {
+      if (commandIncludesFarmPath(cmd, { machine, machineEnv })) {
         // Resource hooks call farm scripts too; run them from the bundle that
         // matches this config, not the node's last deploy (ledger F15). A
         // delivery still pending or failed means the command could not run:

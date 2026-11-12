@@ -12,7 +12,7 @@ import { legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { currentProjectSources } from '@farmslot/slot-config';
 
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/index.js';
-import { farmPathsForSlot } from '../fleet/farm-paths.js';
+import { farmCommandRootsForSlot, farmPathsForSlot } from '../fleet/farm-paths.js';
 
 import { NODE_SUPPORT_COMMAND_CACHE_MS, wrapNodeSupportReadCommand } from './activation.js';
 import {
@@ -220,26 +220,28 @@ export async function resolveRemoteFarmCommand(
     selectSlot?: boolean;
   } = {},
 ): Promise<string> {
-  const root = farmPathsForSlot(vars).code.node;
+  const roots = farmCommandRootsForSlot(vars);
   const sources = currentProjectSources();
   if (sources) {
     // Project hooks already resolve to exact read-only source roots. Framework scripts
     // remain part of node service deployment, separate from pack synchronization.
-    if (command.includes(`${root}/projects/`))
+    if (roots.some((root) => command.includes(`${root}/projects/`)))
       throw new Error('Loose node pack reference is refused for locked execution');
     return command;
   }
-  if (!hasRemoteFarmRef(command, root)) return command;
+  if (!roots.some((root) => hasRemoteFarmRef(command, root))) return command;
   // No project config means no bundle to run from; the command keeps the
   // node's own copy, as it always has.
   const projectVars = await loadProjectVarsIfAny(vars.projectName);
   if (!projectVars) return command;
   const local = await currentLocalBundle(vars.projectName, projectVars.projectJson);
+  const remap = (supportDir: string, paths: string[]) =>
+    roots.reduce((cmd, root) => remapRemoteFarmRefs(cmd, supportDir, paths, root), command);
   const selectSlot = options.selectSlot !== false;
   const cacheKey = `${vars.slotId}\0${farmPathsForSlot(vars).code.support}\0${local.hash}\0${selectSlot}`;
   const verified = verifiedBundles.get(cacheKey);
   if (verified && Date.now() - verified.at < VERIFIED_TTL_MS) {
-    const mapped = remapRemoteFarmRefs(command, verified.supportDir, local.paths, root);
+    const mapped = remap(verified.supportDir, local.paths);
     return selectSlot ? mapped : wrapNodeSupportReadCommand(mapped, verified.supportDir);
   }
   const state = await withinBudget(
@@ -249,7 +251,7 @@ export async function resolveRemoteFarmCommand(
   );
   if (!state?.hash) return command;
   verifiedBundles.set(cacheKey, { at: Date.now(), supportDir: state.supportDir });
-  const mapped = remapRemoteFarmRefs(command, state.supportDir, state.paths, root);
+  const mapped = remap(state.supportDir, state.paths);
   return selectSlot ? mapped : wrapNodeSupportReadCommand(mapped, state.supportDir);
 }
 
