@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { mock } from 'node:test';
@@ -13,6 +13,7 @@ const { handleRepeatReviewDecision, buildRepeatReviewContext } =
   await import('./engine-decisions.js');
 const { buildReviewExecutionContract, writePreviousReviewInputs } =
   await import('../tasks/writer.js');
+const { captureReviewInputArtifactsForRun } = await import('./diff-artifacts.js');
 
 for (const cached of [false, true]) {
   test(`unsupported fallback is frozen before task generation, cached=${cached}`, async (t) => {
@@ -99,6 +100,99 @@ for (const cached of [false, true]) {
       frozen.repeatReviewContext?.session?.fallback?.reason,
       'session-resume-unsupported',
     );
+    const captureRun = { ...frozen, taskFile: path.join(dir, 'TASK.md') };
+    if (cached) {
+      await writeFile(path.join(dir, 'inputs/diff.txt'), 'old full PR diff');
+      await writeFile(
+        path.join(dir, 'inputs/diff-stat.json'),
+        JSON.stringify({
+          source: 'artifact',
+          available: true,
+          files: 1,
+          additions: 1,
+          deletions: 0,
+          kind: 'review-input',
+          filter: 'source-code',
+          repository: 'owner/repo',
+          prNumber: 42,
+          baseSha: '0'.repeat(40),
+          headSha: 'b'.repeat(40),
+          reviewMode: 'cold',
+          capturedAt: new Date().toISOString(),
+        }),
+      );
+    }
+    if (cached) {
+      await captureReviewInputArtifactsForRun(captureRun, {
+        fetchGitHubPR: async () => ({
+          branch: 'change',
+          title: 'Change',
+          body: '',
+          baseRef: 'main',
+          baseSha: '0'.repeat(40),
+          headSha: 'b'.repeat(40),
+          number: 42,
+        }),
+        fetchPRDiffFiles: async () => {
+          throw new Error('Full PR capture is forbidden');
+        },
+        fetchGitHubCompareFiles: async () => {
+          throw new Error('Retained delta temporarily unavailable');
+        },
+      });
+      const unavailable = JSON.parse(
+        await readFile(path.join(dir, 'inputs/diff-stat.json'), 'utf8'),
+      );
+      assert.equal(unavailable.available, false);
+      assert.equal(unavailable.baseSha, 'a'.repeat(40));
+    }
+    const captures: string[] = [];
+    await captureReviewInputArtifactsForRun(captureRun, {
+      fetchGitHubPR: async () => ({
+        branch: 'change',
+        title: 'Change',
+        body: '',
+        baseRef: 'main',
+        baseSha: '0'.repeat(40),
+        headSha: 'b'.repeat(40),
+        number: 42,
+      }),
+      fetchPRDiffFiles: async () => {
+        captures.push('full PR');
+        return [
+          {
+            filename: 'src/full.ts',
+            status: 'modified',
+            additions: 1,
+            deletions: 0,
+            patch: '@@ full PR',
+          },
+        ];
+      },
+      fetchGitHubCompareFiles: async (repo, base, head) => {
+        captures.push(`${repo}:${base}..${head}`);
+        return [
+          {
+            filename: 'src/delta.ts',
+            status: 'modified',
+            additions: 1,
+            deletions: 0,
+            patch: '@@ saved delta',
+          },
+        ];
+      },
+    });
+    assert.deepEqual(captures, [`owner/repo:${'a'.repeat(40)}..${'b'.repeat(40)}`]);
+    const commit = JSON.parse(await readFile(path.join(dir, 'inputs/commit.json'), 'utf8'));
+    const stat = JSON.parse(await readFile(path.join(dir, 'inputs/diff-stat.json'), 'utf8'));
+    for (const metadata of [commit, stat]) {
+      assert.equal(metadata.baseSha, 'a'.repeat(40));
+      assert.equal(metadata.headSha, 'b'.repeat(40));
+      assert.equal(metadata.reviewMode, 'cold');
+    }
+    const diff = await readFile(path.join(dir, 'inputs/diff.txt'), 'utf8');
+    assert(diff.includes('src/delta.ts'));
+    assert(!diff.includes('full PR'));
     const inputs = await writePreviousReviewInputs(dir, frozen);
     assert.equal(inputs.length, 2);
     const contract = buildReviewExecutionContract(frozen, inputs, []);

@@ -1,5 +1,4 @@
 // task-steps.ts — GRADE and WRITE_TASK run-engine step owners.
-
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
@@ -43,6 +42,7 @@ import {
   configuredPrepareProfileNames,
   resolvePrepareProfile,
 } from '../methods/slot/prepare-profile.js';
+import { usesPreviousReviewDelta } from '../review/session-mode.js';
 import { getRun, listRuns, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 import { CHECKLIST_MARKER_INPUT } from '../tasks/sidecars.js';
 import {
@@ -50,7 +50,6 @@ import {
   PREVIOUS_REVIEW_MD_INPUT,
   readFrozenTaskInit,
   TaskCollisionError,
-  usesPreviousReviewDelta,
   writeTaskFile,
 } from '../tasks/writer.js';
 

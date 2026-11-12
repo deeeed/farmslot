@@ -89,8 +89,6 @@ PY`;
 export function createPiHookObservability(): RunnerObservability {
   return {
     ...claudeHookObservability,
-    // Pi headers and transcripts own their identity; Claude pid registrations do not.
-    getSessionBinding: undefined,
     async promptAcceptedInSession(vars, _target, sessionId, sessionPath, prompt, since) {
       const result = await execOnSlot(
         vars,

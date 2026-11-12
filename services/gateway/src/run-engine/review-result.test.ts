@@ -21,6 +21,7 @@ mock.module('./review-artifacts.js', {
   },
 });
 const { recordArtifactOnlyReviewResult } = await import('./review-result.js');
+const { primaryReviewIdForDispatch } = await import('../methods/dispatch/execute.js');
 
 async function fixture(t: test.TestContext) {
   const dir = await mkdtemp(path.join(tmpdir(), 'review-result-'));
@@ -203,7 +204,16 @@ test('completed COLD fallback retains its reason, delta and prior conversation l
       },
     ],
   });
+  const dispatchedReviewId = primaryReviewIdForDispatch(getRun(run.id));
+  updateRun(run.id, {
+    agentContexts: getRun(run.id)!.agentContexts!.map((context) => ({
+      ...context,
+      reviewId: dispatchedReviewId,
+    })),
+  });
   const result = await recordArtifactOnlyReviewResult(run.id);
+  assert.equal(dispatchedReviewId, 'lineage');
+  assert.equal(result.session?.reviewId, 'lineage');
   assert.equal(result.session?.mode, 'cold');
   assert.equal(result.session?.continuity, 'fresh');
   assert.equal(result.session?.sessionId, 'new-conversation');

@@ -4,7 +4,6 @@ import { execOnSlot } from '../core/exec.js';
 import { resolveTmuxPaneId } from '../core/tmux.js';
 
 import {
-  readClaudeProcessBinding,
   readClaudeProcessState,
   readClaudePromptAcceptance,
 } from './claude-process-observability.js';
@@ -396,16 +395,6 @@ PY`,
     return readSlotClockMs(vars);
   },
 
-  async getSessionBinding(vars, target, observedNotBefore) {
-    const binding = await readClaudeProcessBinding(vars, target);
-    return binding && (observedNotBefore === undefined || binding.observedAt >= observedNotBefore)
-      ? {
-          sessionId: binding.sessionId,
-          sessionPath: binding.sessionPath,
-          observedAt: binding.observedAt,
-        }
-      : null;
-  },
   async promptAcceptedInSession(vars, target, sessionId, sessionPath, prompt, since) {
     return readClaudePromptAcceptance(vars, target, sessionId, sessionPath, prompt, since);
   },

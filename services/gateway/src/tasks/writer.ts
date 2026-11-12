@@ -85,6 +85,7 @@ import { getPRRawData, parseJsonLines } from '../methods/pr/raw-cache.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 import { harnessRoot } from '../projects/harness-root.js';
 import { extractRecipeFromPRBody, materializeExtractedRecipe } from '../quality/pr-body-recipe.js';
+import { usesPreviousReviewDelta } from '../review/session-mode.js';
 import { resolveWorkerTaskDir } from '../review/templates.js';
 import { prepareBranchMaintenance } from '../run-engine/branch-maintenance.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
@@ -233,17 +234,6 @@ ${artifacts}
 
 ${evidence}
 `;
-}
-
-/** Session freshness does not widen a verified re-review's comparison scope. */
-export function usesPreviousReviewDelta(
-  run: Pick<Run, 'reviewMode' | 'prWork' | 'repeatReviewContext'>,
-): boolean {
-  const fallback = run.repeatReviewContext?.session?.fallback;
-  return (
-    resolveReviewMode({ run }) === 'warm' ||
-    Boolean(fallback && fallback.reason !== 'retention-expired')
-  );
 }
 
 export async function writePreviousReviewInputs(
