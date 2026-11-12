@@ -181,30 +181,37 @@ test('a full read is not told to read again by the list it just projected', asyn
 
 test('finding 7: a local input change recomputes an observed scope at the view reread floor', async (t) => {
   coldGateway();
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
   t.after(startServedPRListMaintenance());
   t.after(resetServedPRListsForTests);
   const { ci, deps } = scope([row(1)]);
   // A reader without observer admission keeps the scope observed.
   await prListVersions('p', { legacyClientId: 'viewer' }, deps);
   await settle();
-  const pushedRows = (changes: ResourceChangedPayload['changes']) =>
-    changes.filter((change) => 'prKey' in change.key).length;
+  const changes: ResourceChangedPayload['changes'] = [];
+  t.after(resourceRevisions.subscribe((payload) => changes.push(...payload.changes)));
+  const pushedRows = () => changes.filter((change) => 'prKey' in change.key).length;
 
   // Runs move PRs between slots several times a second; the view rereads them every 30 s.
   ci.passed = 6;
-  const paced = await published(() => resourceRevisions.advance({ family: 'runs', scope: 'farm' }));
-  assert.equal(pushedRows(paced), 0, 'a run change inside the floor waits for it');
+  resourceRevisions.advance({ family: 'runs', scope: 'farm' });
+  await settle();
+  t.mock.timers.tick(29_000);
+  await settle();
+  assert.equal(pushedRows(), 0, 'a run change waits for the floor the view rereads runs at');
+  t.mock.timers.tick(1_000);
+  await settle();
+  assert.equal(pushedRows(), 1, 'then the list is recomputed');
 
   // Project configuration is read at once.
-  const changes: ResourceChangedPayload['changes'] = [];
-  const stop = resourceRevisions.subscribe((payload) => changes.push(...payload.changes));
-  t.after(stop);
+  ci.passed = 7;
   resourceRevisions.advance({ family: 'configuration', scope: 'farm' });
-  const deadline = Date.now() + 500;
-  while (!pushedRows(changes) && Date.now() < deadline) await settle();
-  assert.equal(pushedRows(changes), 1, 'a configuration change recomputes the list');
+  await settle();
+  t.mock.timers.tick(1);
+  await settle();
+  assert.equal(pushedRows(), 2, 'a configuration change recomputes the list at once');
   const page = await prListIds('p', ['o/r/1'], interest, deps);
-  assert.equal(page.entities[0].checkSummary.passed, 6);
+  assert.equal(page.entities[0].checkSummary.passed, 7);
 });
 
 test('finding 8: refresh start, failure and recovery reach entity-sync clients', async () => {
