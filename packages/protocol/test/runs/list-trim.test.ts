@@ -11,6 +11,8 @@ import type {
 import { hasUnsettledRunExecution } from '../../src/contracts/runs.js';
 import { runListEvidenceSummary, summarizeRunEvidence } from '../../src/runs/evidence-summary.js';
 import {
+  LIST_CHECK_NAME_MAX_CHARS,
+  LIST_FIX_LABEL_MAX_CHARS,
   listStepOutputs,
   RUN_LIST_PAYLOAD_VALUE_LIMIT,
   runHasTrimmedDetail,
@@ -381,8 +383,9 @@ test('runListRow serves exactly the kept fields of a rich run, and its evidence 
         startedAt: '2026-11-11T00:00:10.000Z',
         completedAt: '2026-11-11T00:00:20.000Z',
         outputs: { selectedSlot: 'slot-a', reason: 'picked best slot' },
+        outputsTrimmed: true,
       },
-      { name: 'work', status: 'done', outputs: {} },
+      { name: 'work', status: 'done', outputs: {}, outputsTrimmed: true },
     ],
     decisions: [
       {
@@ -554,4 +557,48 @@ test('a refused completion keeps its run unsettled on the served row, as on the 
     ],
   };
   assert.equal(hasUnsettledRunExecution(runListRow(discarded)), false);
+});
+
+test('a row whose only loss is step outputs reads as trimmed; one that lost nothing has no marker', () => {
+  const stepOnly: Run = {
+    ...minRun(),
+    steps: [{ name: 'work', status: 'done', outputs: { transcript: 'worker transcript' } }],
+  };
+  const row = runListRow(stepOnly);
+  assert.equal(row.steps[0]?.outputsTrimmed, true);
+  assert.equal(runHasTrimmedDetail(row), true);
+  const nothingLost: Run = {
+    ...minRun(),
+    steps: [{ name: 'dispatch', status: 'done', outputs: { selectedSlot: 'slot-a' } }],
+  };
+  const kept = runListRow(nothingLost);
+  assert.equal('outputsTrimmed' in (kept.steps[0] ?? {}), false);
+  assert.equal(runHasTrimmedDetail(kept), false);
+  // The marker is on the served row only: the version basis is unchanged.
+  const basis = runListVersion(trimRunForList(stepOnly));
+  assert.equal(trimRunForList(stepOnly).steps[0]?.outputsTrimmed, undefined);
+  runListRow(stepOnly);
+  assert.equal(runListVersion(trimRunForList(stepOnly)), basis);
+});
+
+test('list rows cap long CI check names and fix labels, and mark the step trimmed', () => {
+  const longName = 'n'.repeat(LIST_CHECK_NAME_MAX_CHARS + 50);
+  const longLabel = 'l'.repeat(LIST_FIX_LABEL_MAX_CHARS + 50);
+  const slim = listStepOutputs({
+    failedNames: ['lint', longName],
+    fixProgress: { completed: 0, total: 2, currentLabel: longLabel },
+  });
+  assert.deepEqual(slim, {
+    failedNames: ['lint', `${'n'.repeat(LIST_CHECK_NAME_MAX_CHARS - 1)}…`],
+    fixProgress: {
+      completed: 0,
+      total: 2,
+      currentLabel: `${'l'.repeat(LIST_FIX_LABEL_MAX_CHARS - 1)}…`,
+    },
+  });
+  const run: Run = {
+    ...minRun(),
+    steps: [{ name: 'ci-watch', status: 'running', outputs: { failedNames: [longName] } }],
+  };
+  assert.equal(runListRow(run).steps[0]?.outputsTrimmed, true);
 });

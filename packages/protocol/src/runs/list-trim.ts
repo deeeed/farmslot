@@ -84,14 +84,17 @@ export function trimRunForList(run: Run): Run {
 }
 
 /**
- * Whether a run.list row left out its output manifest or any decision payload value. A view
- * drawn from such a row reads them from the run's direct `run.get` copy, and shows them as not
- * loaded until then rather than as empty.
+ * Whether a run.list row left out its output manifest, any decision payload value or any step's
+ * inputs or outputs. A view drawn from such a row reads them from the run's direct `run.get`
+ * copy, and shows them as not loaded until then rather than as empty.
  */
-export function runHasTrimmedDetail(run: Pick<RunListRow, 'decisions' | 'output'>): boolean {
+export function runHasTrimmedDetail(
+  run: Pick<RunListRow, 'decisions' | 'output'> & Partial<Pick<RunListRow, 'steps'>>,
+): boolean {
   return (
     Boolean(run.output?.artifactManifestOmitted) ||
-    (run.decisions ?? []).some((decision) => (decision.payloadTrimmed?.length ?? 0) > 0)
+    (run.decisions ?? []).some((decision) => (decision.payloadTrimmed?.length ?? 0) > 0) ||
+    (run.steps ?? []).some((step) => step.outputsTrimmed === true)
   );
 }
 
@@ -104,9 +107,22 @@ function scalarOutput(value: unknown): unknown {
     : undefined;
 }
 
-/** The string entries of an array (CI check names); anything else is left out. */
+/** Longest CI check name a list row keeps; a longer one is cut and ends with an ellipsis. */
+export const LIST_CHECK_NAME_MAX_CHARS = 120;
+/** Longest CI-fix step label a list row keeps; a longer one is cut and ends with an ellipsis. */
+export const LIST_FIX_LABEL_MAX_CHARS = 240;
+
+function capText(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+/** The string entries of an array (CI check names), each capped; anything else is left out. */
 function stringEntriesOutput(value: unknown): unknown {
-  return Array.isArray(value) ? value.filter((entry) => typeof entry === 'string') : undefined;
+  return Array.isArray(value)
+    ? value
+        .filter((entry) => typeof entry === 'string')
+        .map((entry) => capText(entry, LIST_CHECK_NAME_MAX_CHARS))
+    : undefined;
 }
 
 /** A ci-watch check summary: only its counts. */
@@ -129,7 +145,11 @@ function fixProgressOutput(value: unknown): unknown {
   return {
     ...(typeof completed === 'number' ? { completed } : {}),
     ...(typeof total === 'number' ? { total } : {}),
-    ...(typeof currentLabel === 'string' || currentLabel === null ? { currentLabel } : {}),
+    ...(typeof currentLabel === 'string'
+      ? { currentLabel: capText(currentLabel, LIST_FIX_LABEL_MAX_CHARS) }
+      : currentLabel === null
+        ? { currentLabel }
+        : {}),
   };
 }
 
@@ -178,6 +198,17 @@ const STEP_OUTPUT_PROJECTIONS: Record<string, (value: unknown) => unknown> = {
   failedChecks: stringEntriesOutput,
   fixProgress: fixProgressOutput,
 };
+
+/** Whether the list form of a step's outputs left out or reshaped any value. */
+function stepOutputsLost(
+  outputs: Record<string, unknown> | undefined,
+  slim: Record<string, unknown> | undefined,
+): boolean {
+  if (!outputs || !slim) return false;
+  return Object.keys(outputs).some(
+    (key) => !(key in slim) || JSON.stringify(slim[key]) !== JSON.stringify(outputs[key]),
+  );
+}
 
 /** A step's outputs as a list row carries them (see STEP_OUTPUT_PROJECTIONS). */
 export function listStepOutputs(
@@ -362,12 +393,13 @@ export function runListRow(run: Run): RunListRow {
     run;
 
   // Steps keep their timing (list durations, queue waits, progress age) and leave out
-  // their inputs; outputs keep only what list surfaces read.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const steps = run.steps.map(({ inputs, outputs, ...step }) => ({
-    ...step,
-    outputs: listStepOutputs(outputs),
-  }));
+  // their inputs; outputs keep only what list surfaces read. A step that lost anything
+  // says so (`outputsTrimmed`), so runHasTrimmedDetail reports the row as trimmed.
+  const steps = run.steps.map(({ inputs, outputs, ...step }) => {
+    const slim = listStepOutputs(outputs);
+    const lost = inputs !== undefined || stepOutputsLost(outputs, slim);
+    return { ...step, outputs: slim, ...(lost ? { outputsTrimmed: true as const } : {}) };
+  });
 
   const decisions: RunListDecision[] = run.decisions.map((decision) => {
     const slimmedPayload = slimDecisionPayload(decision.payload);
