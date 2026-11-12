@@ -1,13 +1,17 @@
 import { StyleSheet, Text, useColorScheme, View } from 'react-native';
 
-import { type Run, sourceObservationAge, type TaskProgressStructured } from '@farmslot/protocol';
+import {
+  type RunListRow,
+  sourceObservationAge,
+  type TaskProgressStructured,
+} from '@farmslot/protocol';
 import { runChecklistProgressView } from '@farmslot/review-dispatch';
 import { publicationGateColors } from '@farmslot/theme';
 
 import { fonts } from '../lib/theme';
 
 interface RunChecklistProgressProps {
-  run: Run;
+  run: RunListRow;
   progress?: TaskProgressStructured | null;
   error?: string;
   stale?: boolean;

@@ -281,7 +281,7 @@ export function buildGlobalFilterSources({
   decisions,
 }: {
   slots: Array<Pick<SlotStatus, 'slot' | 'project' | 'machine'>>;
-  runs: Run[];
+  runs: Array<Pick<Run, 'project' | 'slotId'>>;
   decisions: PendingDecision[];
 }): FilterSource[] {
   const sources: FilterSource[] = [];

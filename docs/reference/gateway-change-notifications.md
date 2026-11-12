@@ -338,8 +338,36 @@ totalCount, summaryMeta, familySummaries, projectAnalytics }` for every live
    run the principal may read. It ignores filters and the default row limit, and
    excludes archived runs. Versions come in the gateway's current base order,
    which sort ties follow. That order can change across a gateway restart.
-2. `version` is opaque to clients and stable across gateway restarts for an
-   unchanged row.
+2. `version` is `sha256(trimRunForList(run))` — stable across gateway restarts
+   for an unchanged run, and unchanged by the slim-row projection (ADR-071
+   Amendment 3). Rows returned by `run.list`, plain or `{ ids }`, are
+   `runListRow(run)`: the run without its heavy keys, plus the run's
+   `evidenceSummary`. Steps keep the outputs list surfaces read in their
+   bounded shapes. Any other step-output value of at most 512 B is served as
+   stored; a larger one keeps only its videos, before/after visuals and diff
+   files, each where the step held it. Decisions, engine
+   state, agent contexts, metrics, the ticket, the review result and the review
+   subject leave out only their heavy keys (a gate's package, snapshots, report
+   and summary; a decision's selection and attestation; visual-review blobs,
+   session archive and usage; checklist timing; the ticket description; the
+   review text and line comments; the pull request body). A row says what it
+   left out: `payloadTrimmed` on a decision names the payload keys,
+   `outputsTrimmed: true` marks a step that lost inputs or output values,
+   `detailTrimmed: true` marks a row that left out any other heavy key, and
+   `output.artifactManifestOmitted` the output manifest; `runHasTrimmedDetail`
+   reads all four. Full runs come from `run.get` / `run.forSlot`. The gateway
+   derives a run's row, its size and its version once per run change, and every
+   request is served from those.
+
+   On every stored run measured, a client build older than the served summary
+   shows against this gateway the same video and compare chips, opens the same
+   Diff file and shows the same catalog diff stat as before; its evidence
+   counts read lower or equal, never higher than that build showed before, and
+   none falls to zero. ADR-071 Amendment 3 lists the known differences for
+   such a build. The current Companion's "Evidence N" reads
+   the summary, which counts the whole stored run and can therefore read higher
+   than the previous build's count.
+
 3. Only the version reply decides which rows exist. Stored rows it does not list
    are removed.
 4. The client reads changed and missing ids with `run.list { ids }`, in pages of

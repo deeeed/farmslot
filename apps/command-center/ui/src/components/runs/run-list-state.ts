@@ -6,11 +6,11 @@ import type {
   FlowType,
   PRStatus,
   QueueItem,
-  Run,
   RunCleanupResult,
   RunFamilyReadinessSummary,
   RunLane,
   RunListResult,
+  RunListRow,
   RunListSummaryMeta,
   RunProjectAnalyticsSummary,
   RunStatus,
@@ -97,7 +97,7 @@ export abstract class RunListState extends LitElement {
   abstract refreshFamilyFilter(): Promise<void>;
   abstract refreshTagFilter(): Promise<void>;
 
-  @state() runs: Run[] = [];
+  @state() runs: RunListRow[] = [];
   @state() runsObservation: ResourceQueryState<RunListResult> = { status: 'loading' };
   @state() prs: PRStatus[] = [];
   @state() runSummaryMeta: RunListSummaryMeta | null = null;
@@ -111,8 +111,8 @@ export abstract class RunListState extends LitElement {
   @state() laneFilter: RunLane | '' = '';
   @state() familyFilter = '';
   @state() tagFilter = '';
-  @state() tagRuns: Run[] | null = null;
-  @state() familyRuns: Run[] | null = null;
+  @state() tagRuns: RunListRow[] | null = null;
+  @state() familyRuns: RunListRow[] | null = null;
   @state() sortBy: SortOption = 'newest';
   @state() searchQuery = '';
   @state() globalFilters: GlobalFilters = { projects: [], machines: [] };

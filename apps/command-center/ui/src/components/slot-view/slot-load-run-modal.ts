@@ -5,8 +5,8 @@ import type { SlotHealth } from '@farmslot/protocol';
 import {
   canActivateRunOnSlot,
   Methods,
-  type Run,
   type RunListResult,
+  type RunListRow,
   sourceObservationAge,
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
@@ -48,7 +48,7 @@ export class SlotLoadRunModal extends LitElement {
   @property({ type: Boolean }) open = false;
   @property({ type: Boolean }) disabled = false;
   /** Dev harness escape hatch: when provided, no gateway call is made. */
-  @property({ attribute: false }) runsOverride?: Run[];
+  @property({ attribute: false }) runsOverride?: RunListRow[];
 
   private readonly runsQuery = new ResourceQueryController<RunListResult>(this, () =>
     this._onReadChange(),
@@ -72,7 +72,7 @@ export class SlotLoadRunModal extends LitElement {
   private _confirmTimer: ReturnType<typeof setTimeout> | undefined;
   private _unsubPrepare?: () => void;
 
-  private get _runs(): Run[] {
+  private get _runs(): RunListRow[] {
     return this.runsOverride ?? this.runsQuery.state.data?.runs ?? [];
   }
   private get _totalCount(): number {
@@ -122,7 +122,7 @@ export class SlotLoadRunModal extends LitElement {
   }
 
   /** The run as the current list has it, while the dialog still shows the `scope` it was opened in. */
-  private async _currentRun(expected: Run, scope: string): Promise<Run> {
+  private async _currentRun(expected: RunListRow, scope: string): Promise<RunListRow> {
     const changed = () => !this.isConnected || !this.open || this.disabled || this._scope !== scope;
     if (changed()) throw new Error('The load dialog changed. Open it again before acting.');
     // Run writes reread the list at most every 30 s; a load reads it first.
@@ -399,7 +399,7 @@ export class SlotLoadRunModal extends LitElement {
     this.dispatchEvent(new CustomEvent('close', { bubbles: true, composed: true }));
   }
 
-  private _bindOnlyHint(run: Run): string {
+  private _bindOnlyHint(run: RunListRow): string {
     if (!shouldBindOnlyForLoadRun(run.branch, this.slotBranch, this._forcePrepare)) return '';
     return `Slot is already on ${run.branch} — load will bind only (no checkout). Health/deps checks are skipped; run ensure-js-runtime prepare if recipe replay fails.`;
   }
@@ -419,7 +419,7 @@ export class SlotLoadRunModal extends LitElement {
   }
 
   /** `options` are the ones on screen at the click; they stay editable while the runs are reread. */
-  private async _executeLoad(expected: Run, options: SlotPrepareOptionsState) {
+  private async _executeLoad(expected: RunListRow, options: SlotPrepareOptionsState) {
     if (this._actionRequest) return;
     const request = Symbol('load-run');
     const scope = this._scope;
@@ -482,7 +482,7 @@ export class SlotLoadRunModal extends LitElement {
     return [...new Set(this._runs.map((run) => run.status))].sort((a, b) => a.localeCompare(b));
   }
 
-  private _filtered(): Run[] {
+  private _filtered(): RunListRow[] {
     const query = this._search.trim().toLowerCase();
     return this._runs.filter((run) => {
       // Defensive: the fetch is already project-scoped, but guard the override
@@ -503,13 +503,13 @@ export class SlotLoadRunModal extends LitElement {
     return id.slice(0, 8);
   }
 
-  private _loadReason(run: Run): string {
+  private _loadReason(run: RunListRow): string {
     if (!run.branch) return 'no-branch';
     if (!canActivateRunOnSlot(run.status)) return 'mid-pipeline';
     return '';
   }
 
-  private async _onLoadClick(run: Run) {
+  private async _onLoadClick(run: RunListRow) {
     if (this._loadReason(run) || this._actionBusy || this._actionRequest) return;
     const scope = this._scope;
     const options = this._prepareOptions();
@@ -530,7 +530,7 @@ export class SlotLoadRunModal extends LitElement {
     }
   }
 
-  private _renderRow(run: Run) {
+  private _renderRow(run: RunListRow) {
     const statusColor = runStatusColor(run.status);
     const reason = this._loadReason(run);
     const loadable = !reason;

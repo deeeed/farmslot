@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { type Run, runListRow, trimRunForList } from '@farmslot/protocol';
+
 import { colors } from '../../styles/theme-tokens.js';
 
 import {
@@ -200,4 +202,44 @@ test('package-refresh stays pending while post-gate re-review or fix is in fligh
     }),
     'pending',
   );
+});
+
+// The mini pipeline colours review steps from their outputs: a served slim row, the full run
+// and an old cached row give each step the same tone.
+test('review step tones are the same from the served slim row, the full run and an old cached row', () => {
+  const full: Run = {
+    id: 'run-tone',
+    familyId: 'family-tone',
+    lane: 'production',
+    flowType: 'fix-bug',
+    status: 'reviewing',
+    project: 'demo',
+    ticketOrPr: 'DEMO-2',
+    slotId: null,
+    branch: null,
+    taskFile: null,
+    steps: [
+      {
+        name: 'review',
+        status: 'failed',
+        outputs: { verdict: 'issues', issues: [{ file: 'a.ts', description: 'x'.repeat(500) }] },
+      },
+      { name: 'requested 1', status: 'failed', outputs: { reviewVerdict: 'pass' } },
+      {
+        name: 'review',
+        status: 'failed',
+        outputs: { verdict: 'issues', maxRetriesExhausted: true },
+      },
+    ],
+    decisions: [],
+    metrics: { nudgeCount: 0, runner: null, model: null },
+    createdAt: '2026-11-01T00:00:00.000Z',
+    updatedAt: '2026-11-01T00:00:00.000Z',
+  };
+  const tones = (run: Pick<Run, 'steps'>) =>
+    run.steps.map((step) => pipelineStepTone({ ...step, status: step.status }));
+  const expected = tones(full);
+  assert.deepEqual(expected, ['warn', 'ok', 'fail']);
+  assert.deepEqual(tones(runListRow(full)), expected);
+  assert.deepEqual(tones(trimRunForList(full)), expected);
 });

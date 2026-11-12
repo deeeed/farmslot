@@ -8,8 +8,10 @@ import type {
 } from '../contracts/index.js';
 import { isTerminalRunStatus } from '../contracts/runs.js';
 
+import type { RunListRow } from './list-row.js';
+
 export function reviewResultForRun(
-  run: Pick<Run, 'decisions' | 'reviewResult'>,
+  run: Pick<Run, 'reviewResult'> & { decisions: ReadonlyArray<{ payload?: unknown }> },
 ): RunReviewResult | null {
   if (run.reviewResult) return run.reviewResult;
   for (let index = run.decisions.length - 1; index >= 0; index -= 1) {
@@ -19,16 +21,46 @@ export function reviewResultForRun(
   return null;
 }
 
-/** Saved choices are requests; only a published receipt confirms the provider event. */
-export function savedReviewView(
-  run: Pick<Run, 'flowType' | 'status' | 'decisions' | 'reviewResult' | 'reviewPublication'>,
-) {
+/**
+ * Whether a run has a saved review to show: no open posting gate, and a review result (or a
+ * finished review-pr run). It tests presence only, so a run.list row answers as its run does.
+ */
+export function savedReviewExpected(
+  run: Pick<RunListRow, 'flowType' | 'status' | 'reviewResult'> & {
+    decisions: ReadonlyArray<{ type: string; resolvedAt?: string | null; payload?: unknown }>;
+  },
+): boolean {
   const latestGate = [...run.decisions]
     .reverse()
     .find((item) => item.type === 'engine_review_posting');
-  if (latestGate && !latestGate.resolvedAt) return null;
+  if (latestGate && !latestGate.resolvedAt) return false;
+  const hasResult =
+    run.reviewResult !== undefined ||
+    run.decisions.some(
+      (decision) =>
+        typeof decision.payload === 'object' &&
+        decision.payload !== null &&
+        Reflect.get(decision.payload, 'kind') === 'review',
+    );
+  return hasResult || (run.flowType === 'review-pr' && isTerminalRunStatus(run.status));
+}
+
+/** Saved choices are requests; only a published receipt confirms the provider event. */
+export function savedReviewView(
+  run: Pick<Run, 'flowType' | 'status' | 'reviewResult' | 'reviewPublication'> & {
+    decisions: ReadonlyArray<{
+      type: string;
+      resolvedAt?: string | null;
+      selectionData?: Record<string, unknown> | null;
+      payload?: unknown;
+    }>;
+  },
+) {
+  if (!savedReviewExpected(run)) return null;
+  const latestGate = [...run.decisions]
+    .reverse()
+    .find((item) => item.type === 'engine_review_posting');
   const result = reviewResultForRun(run);
-  if (!result && (run.flowType !== 'review-pr' || !isTerminalRunStatus(run.status))) return null;
   const selection = latestGate?.selectionData;
   const receipt = run.reviewPublication?.receipt;
   return {

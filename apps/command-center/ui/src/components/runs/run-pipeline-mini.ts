@@ -4,7 +4,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import {
   deriveRunLifecycleView,
   type FlowType,
-  type Run,
+  type RunListRow,
   type RunStep,
   runStepDisplayDetail,
   runStepDisplayStatus,
@@ -53,7 +53,7 @@ interface MiniSegment {
 
 @customElement('run-pipeline-mini')
 export class RunPipelineMini extends LitElement {
-  @property({ attribute: false }) run?: Run;
+  @property({ attribute: false }) run?: RunListRow;
   @property({ attribute: false }) steps: RunStep[] = [];
   @property() flowType: FlowType = 'fix-bug';
   @property({ attribute: false }) taskProgress?: TaskProgressStructured;
@@ -85,7 +85,7 @@ export class RunPipelineMini extends LitElement {
   override willUpdate(changed: PropertyValues): void {
     // List rows reuse the element; recompute when the bound run changes.
     if (changed.has('run')) {
-      const previous = changed.get('run') as Run | undefined;
+      const previous = changed.get('run') as RunListRow | undefined;
       if (previous?.id !== this.run?.id) {
         this.transferProgress = primaryTransferForRun(this.run?.id);
       }

@@ -2,7 +2,7 @@ import type {
   DispatchCandidatesResult,
   FlowType,
   PRStatus,
-  Run,
+  RunListRow,
   SlotStatus,
 } from '@farmslot/protocol';
 import { hasUnsettledRunExecution, taskTitleText } from '@farmslot/protocol';
@@ -130,7 +130,7 @@ export function findSameTaskSlot(
 export function slotSummaryLabel(input: {
   slotId: string;
   slots: ReadonlyArray<SlotStatus>;
-  runs: ReadonlyArray<Run>;
+  runs: ReadonlyArray<RunListRow>;
 }): string {
   const slot = input.slots.find((item) => item.slot === input.slotId);
   if (!slot) return '';

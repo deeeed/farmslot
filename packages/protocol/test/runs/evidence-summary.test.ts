@@ -8,8 +8,24 @@ import {
   isRunArtifactImagePath,
   isRunArtifactMediaPath,
   runEvidenceArtifacts,
+  type RunEvidenceSummary,
+  runListEvidenceSummary,
   summarizeRunEvidence,
 } from '../../src/runs/evidence-summary.js';
+import { runListRow, trimRunForList } from '../../src/runs/list-trim.js';
+
+const zeroSummary: RunEvidenceSummary = {
+  artifactCount: 0,
+  videoCount: 0,
+  visualPairCount: 0,
+  catalogCounts: {
+    artifactCount: 0,
+    artifactBytes: 0,
+    visualEvidenceCount: 0,
+    validationEvidenceCount: 0,
+    reviewEvidenceCount: 0,
+  },
+};
 
 function run(
   overrides: Partial<Run> = {},
@@ -156,6 +172,9 @@ test('step output prose and host paths are not run artifacts', () => {
             subSteps: [{ detail: 'Rendering run-1/CHECKLIST.md' }],
             artifacts: [{ path: 'inputs/handoff.json', purpose: 'handoff' }],
             recording: 'artifacts/run.mov',
+            // A path that leaves the run directory is not one; a name that only holds dots is.
+            escaped: '../outside/notes.md',
+            ranged: 'artifacts/v1..v2.diff',
           },
         },
       ],
@@ -164,7 +183,7 @@ test('step output prose and host paths are not run artifacts', () => {
 
   assert.deepEqual(
     artifacts.map((artifact) => artifact.path),
-    ['inputs/handoff.json', 'artifacts/run.mov'],
+    ['inputs/handoff.json', 'artifacts/run.mov', 'artifacts/v1..v2.diff'],
   );
 });
 
@@ -204,6 +223,66 @@ test('a gate keeps the frozen metadata of a file the run output recaptured', () 
   assert.deepEqual([video?.purpose, video?.sha256], ['video-after', 'frozen']);
 });
 
+test('summarizeRunEvidence computes diffStat and per-purpose evidence counts from step outputs', () => {
+  const fullRun = run({
+    steps: [
+      {
+        name: 'work',
+        status: 'done',
+        startedAt: '2026-11-01T00:00:00.000Z',
+        completedAt: '2026-11-01T00:01:00.000Z',
+        outputs: {
+          diffStat: { files: 3, additions: 20, deletions: 5 },
+          artifacts: [
+            { path: 'screenshots/after.png', purpose: 'screenshot', sizeBytes: 500 },
+            { path: 'reports/recipe-report.md', purpose: 'report', sizeBytes: 100 },
+            { path: 'reviews/final-review.md', purpose: 'review', sizeBytes: 200 },
+          ],
+        },
+      },
+    ],
+  });
+
+  const summary = summarizeRunEvidence(fullRun);
+
+  assert.deepEqual(summary.diffStat, { files: 3, additions: 20, deletions: 5 });
+  // The eval catalog's counts of the step-output artifacts: one visual (the screenshot), one
+  // validation (the report), one review.
+  assert.deepEqual(summary.catalogCounts, {
+    artifactCount: 3,
+    artifactBytes: 800,
+    visualEvidenceCount: 1,
+    validationEvidenceCount: 1,
+    reviewEvidenceCount: 1,
+  });
+  assert.equal(summary.artifactCount, 3);
+});
+
+test('summarizeRunEvidence always computes from what the run carries, even with a summary key', () => {
+  const stored = run({
+    steps: [{ name: 'work', status: 'done', outputs: { video: 'artifacts/demo-after.mp4' } }],
+  });
+  const expected = summarizeRunEvidence(stored);
+  assert.equal(expected.videoCount, 1);
+  // A stored run object that picked up the served-only key, empty or not, is still computed.
+  const emptyKey = { ...stored, evidenceSummary: undefined };
+  const staleKey = { ...stored, evidenceSummary: zeroSummary };
+  assert.deepEqual(summarizeRunEvidence(emptyKey), expected);
+  assert.deepEqual(summarizeRunEvidence(staleKey), expected);
+});
+
+test('runListEvidenceSummary uses the served summary and computes when the row has none', () => {
+  const row = {
+    decisions: [],
+    steps: [{ name: 'work', status: 'done' as const, outputs: { video: 'artifacts/demo.mp4' } }],
+  };
+  const served: RunEvidenceSummary = { ...zeroSummary, artifactCount: 7, videoCount: 2 };
+  assert.strictEqual(runListEvidenceSummary({ ...row, evidenceSummary: served }), served);
+  // A row cached before the gateway served summaries, or one whose key is present but empty.
+  assert.equal(runListEvidenceSummary(row).videoCount, 1);
+  assert.equal(runListEvidenceSummary({ ...row, evidenceSummary: undefined }).videoCount, 1);
+});
+
 test('WebP stills are inline images and publishable media, beside retained PNG stills', () => {
   for (const still of ['stills/a.webp', 'stills/B.WEBP', 'stills/old.png']) {
     assert.equal(isRunArtifactImagePath(still), true, still);
@@ -214,4 +293,63 @@ test('WebP stills are inline images and publishable media, beside retained PNG s
   assert.equal(isRunArtifactImagePath('videos/run.mp4'), false);
   assert.equal(isRunArtifactMediaPath('report.json'), false);
   assert.equal(isRunArtifactMediaPath('stills/a.webp.json'), false);
+});
+
+// The Companion runs list opens its Diff button on the summary's diff file: the served row,
+// the full run and an old cached row name the same one.
+test('the served summary names the same diff file as the full run and an old cached row', () => {
+  const full: Run = {
+    id: 'diff-run',
+    familyId: 'diff-family',
+    lane: 'production',
+    flowType: 'fix-bug',
+    status: 'done',
+    project: 'demo',
+    ticketOrPr: 'DEMO-3',
+    slotId: null,
+    branch: null,
+    taskFile: null,
+    steps: [
+      {
+        name: 'work',
+        status: 'done',
+        outputs: { screenshots: ['evidence/before-home.png', 'evidence/after-home.png'] },
+      },
+      { name: 'recipe', status: 'done', outputs: { patch: 'artifacts/changes.patch' } },
+    ],
+    decisions: [
+      {
+        id: 'gate',
+        type: 'engine_human_gate',
+        title: 'Publish',
+        description: '',
+        createdAt: '2026-11-01T00:00:00.000Z',
+        actions: [],
+        payload: {
+          kind: 'ready',
+          prNumber: null,
+          repo: null,
+          branch: 'fix/diff',
+          workerReport: 'done',
+          diffStat: { files: 1, additions: 1, deletions: 0 },
+          artifactManifest: [
+            { path: 'artifacts/diff.txt', purpose: 'diff' },
+            { path: 'evidence/after-settings.png', purpose: 'after screenshot' },
+          ],
+        },
+      },
+    ],
+    metrics: { nudgeCount: 0, model: null, runner: null },
+    createdAt: '2026-11-01T00:00:00.000Z',
+    updatedAt: '2026-11-01T00:00:00.000Z',
+  };
+  const expected = summarizeRunEvidence(full).diffArtifactPath;
+  assert.equal(expected, 'artifacts/diff.txt');
+  assert.equal(runListEvidenceSummary(runListRow(full)).diffArtifactPath, expected);
+  assert.equal(runListEvidenceSummary(trimRunForList(full)).diffArtifactPath, expected);
+  // A run with no diff or visual artifacts names none.
+  assert.equal(
+    summarizeRunEvidence({ ...full, steps: [], decisions: [] }).diffArtifactPath,
+    undefined,
+  );
 });

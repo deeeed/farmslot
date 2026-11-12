@@ -1,8 +1,8 @@
 import {
   type FlowType,
-  type Run,
   type RunLane,
   type RunListQuery,
+  type RunListRow,
   selectRunList,
 } from '@farmslot/protocol';
 
@@ -13,7 +13,10 @@ export interface CompanionRunListQuery extends Omit<RunListQuery, 'flow' | 'lane
 }
 
 /** The Runs tab list: the shared run-list selection in this screen's sort order. */
-export function selectCompanionRunList(runs: readonly Run[], query: CompanionRunListQuery): Run[] {
+export function selectCompanionRunList(
+  runs: readonly RunListRow[],
+  query: CompanionRunListQuery,
+): RunListRow[] {
   const result = selectRunList(runs, {
     ...query,
     flow: query.flow || undefined,

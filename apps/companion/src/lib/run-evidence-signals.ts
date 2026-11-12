@@ -1,7 +1,7 @@
 import {
-  type Run,
   type RunEvidenceSummary,
-  summarizeRunEvidence,
+  type RunListEvidenceSource,
+  runListEvidenceSummary,
 } from '@farmslot/protocol';
 
 export type RunEvidenceSignalKind = 'video' | 'compare';
@@ -26,10 +26,8 @@ export function runEvidenceSignalRouteTarget(
     : { section: 'evidence', evidence: 'videos' };
 }
 
-export function summarizeRunEvidenceSignals(
-  run: Pick<Run, 'decisions' | 'steps' | 'liveRecipeContext'>,
-): RunEvidenceSignal[] {
-  return runEvidenceSignals(summarizeRunEvidence(run));
+export function summarizeRunEvidenceSignals(run: RunListEvidenceSource): RunEvidenceSignal[] {
+  return runEvidenceSignals(runListEvidenceSummary(run));
 }
 
 export function runEvidenceSignals(summary: RunEvidenceSummary): RunEvidenceSignal[] {

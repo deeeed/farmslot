@@ -4,9 +4,11 @@ import { bytesToHex } from '@noble/hashes/utils';
 import { canonicalResourceJson } from '../client-cache/keys.js';
 import type { Run } from '../contracts/runs.js';
 
+import type { RunListRow } from './list-row.js';
+
 const encoder = new TextEncoder();
 
 /** The portable version of a run.list row exactly as served by the gateway. */
-export function runListVersion(row: Run): string {
+export function runListVersion(row: Run | RunListRow): string {
   return bytesToHex(sha256(encoder.encode(canonicalResourceJson(row))));
 }

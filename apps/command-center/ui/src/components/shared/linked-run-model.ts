@@ -1,4 +1,4 @@
-import type { BacklogItem, Run } from '@farmslot/protocol';
+import type { BacklogItem, RunListRow } from '@farmslot/protocol';
 import { isTerminalRunStatus } from '@farmslot/protocol';
 
 export interface BacklogRunProjectionOptions {
@@ -6,19 +6,19 @@ export interface BacklogRunProjectionOptions {
   allowSourceRefInference?: boolean;
 }
 
-function selectLinkedRun(matches: Run[]): Run | undefined {
+function selectLinkedRun(matches: RunListRow[]): RunListRow | undefined {
   const newestFirst = [...matches].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   return newestFirst.find((run) => !isTerminalRunStatus(run.status)) ?? newestFirst[0];
 }
 
 export function linkedRunsForBacklogItems(
-  runs: Run[],
+  runs: RunListRow[],
   items: readonly BacklogItem[],
   options: BacklogRunProjectionOptions = {},
-): Map<string, Run> {
-  const byBacklogId = new Map<string, Run[]>();
+): Map<string, RunListRow> {
+  const byBacklogId = new Map<string, RunListRow[]>();
   const byRunId = new Map(runs.map((run) => [run.id, run]));
-  const bySource = new Map<string, Run[]>();
+  const bySource = new Map<string, RunListRow[]>();
   for (const run of runs) {
     if (run.backlogItemId) {
       const matches = byBacklogId.get(run.backlogItemId) ?? [];
@@ -33,7 +33,7 @@ export function linkedRunsForBacklogItems(
     }
   }
 
-  const projection = new Map<string, Run>();
+  const projection = new Map<string, RunListRow>();
   for (const item of items) {
     const explicitMatches = [...(byBacklogId.get(item.id) ?? [])];
     const legacy = item.runId ? byRunId.get(item.runId) : undefined;
@@ -50,10 +50,10 @@ export function linkedRunsForBacklogItems(
 }
 
 export function linkedRunForBacklogItem(
-  runs: Run[],
+  runs: RunListRow[],
   item: BacklogItem,
   options: BacklogRunProjectionOptions = {},
-): Run | undefined {
+): RunListRow | undefined {
   // run.create can intentionally start an item outside the backlog dispatcher.
   // Only activity projections opt into exact project + source-ref inference;
   // detail/history consumers remain anchored to durable linkage.

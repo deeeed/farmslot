@@ -3,9 +3,11 @@ import {
   type FlowType,
   type Run,
   type RunLane,
+  type RunListDecision,
   type RunListProjection,
   type RunListQuery,
   type RunListResult,
+  type RunListRow,
   type RunStatus,
   slotMachineMap,
   type SlotStatus,
@@ -23,7 +25,9 @@ import { type RunInventorySortKey, runInventorySortValue } from './run-list-inve
 import type { SortOption, StatusFilter, TabFilter } from './run-list-state.js';
 
 /** Runs the gateway lets `run.archive` evict: terminal, or blocked with nothing left to advance. */
-export function isArchivableRun(run: Pick<Run, 'status' | 'steps' | 'decisions'>): boolean {
+export function isArchivableRun(
+  run: Pick<Run, 'status' | 'steps'> & { decisions?: ReadonlyArray<{ resolvedAt?: string }> },
+): boolean {
   return TERMINAL_STATUSES.has(run.status) || isSettledBlockedRun(run);
 }
 
@@ -31,10 +35,10 @@ export const TERMINAL_STATUSES = new Set<RunStatus>(TERMINAL_RUN_STATUSES);
 
 /** The Active tab's runs before its local filters; the sidebar badge and list use the same set. */
 export function activeRunsForGlobalFilters(
-  runs: readonly Run[],
+  runs: readonly RunListRow[],
   globalFilters: GlobalFilters,
   slots: readonly Pick<SlotStatus, 'slot' | 'machine'>[],
-): Run[] {
+): RunListRow[] {
   return selectRunList(runs, {
     scope: 'active',
     projects: globalFilters.projects,
@@ -62,11 +66,12 @@ type ProgressRun = Pick<
   | 'createdAt'
   | 'startedAt'
   | 'steps'
-  | 'decisions'
   | 'ciWatchState'
   | 'monitorState'
   | 'waitingForOperator'
->;
+> & {
+  decisions: ReadonlyArray<RunListDecision>;
+};
 
 // When a held step stopped for the operator: its duration is stamped at the hold.
 function heldAtMs(step: Run['steps'][number]): number {
@@ -97,7 +102,9 @@ function lastProgressMs(run: ProgressRun): number {
 }
 
 /** Runs that can still move: not terminal, and not blocked with nothing left to advance. */
-export function showsRunProgress(run: Pick<Run, 'status' | 'steps' | 'decisions'>): boolean {
+export function showsRunProgress(
+  run: Pick<Run, 'status' | 'steps'> & { decisions?: ReadonlyArray<{ resolvedAt?: string }> },
+): boolean {
   return !TERMINAL_STATUSES.has(run.status) && !isSettledBlockedRun(run);
 }
 
@@ -170,10 +177,10 @@ export function runGradeColor(semantic: string): string {
 
 export interface FilterRunListInput {
   familyFilter: string;
-  familyRuns: readonly Run[] | null;
+  familyRuns: readonly RunListRow[] | null;
   tagFilter: string;
-  tagRuns: readonly Run[] | null;
-  runs: readonly Run[];
+  tagRuns: readonly RunListRow[] | null;
+  runs: readonly RunListRow[];
   globalFilters: GlobalFilters;
   /** Fleet slot to machine, for the machine filter. */
   slotMachines: ReadonlyMap<string, string>;
@@ -230,11 +237,11 @@ export function runListObservationAttributes(observation: ResourceQueryState<Run
   };
 }
 
-export function filterRunList(input: FilterRunListInput): readonly Run[] {
+export function filterRunList(input: FilterRunListInput): readonly RunListRow[] {
   // Family and tag views are fetched once; live run updates land in `runs`.
   const live = new Map(input.runs.map((run) => [run.id, run]));
-  const withLive = (runs: readonly Run[]) => runs.map((run) => live.get(run.id) ?? run);
-  let result: readonly Run[] = input.familyFilter
+  const withLive = (runs: readonly RunListRow[]) => runs.map((run) => live.get(run.id) ?? run);
+  let result: readonly RunListRow[] = input.familyFilter
     ? withLive(input.familyRuns ?? [])
     : input.tagFilter
       ? input.tagRuns

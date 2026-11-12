@@ -4,7 +4,12 @@ import React, { useCallback, useMemo } from 'react';
 import { type GestureResponderEvent, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { cancelledRunSlotHold, type Run, type SlotStatus } from '@farmslot/protocol';
+import {
+  cancelledRunSlotHold,
+  type Run,
+  type RunListRow,
+  type SlotStatus,
+} from '@farmslot/protocol';
 
 import { FilterEmptyState } from '../../components/FilterEmptyState';
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
@@ -30,7 +35,7 @@ function SlotCard({
   contextRunId,
 }: {
   slot: SlotStatus;
-  contextRun: Run | null;
+  contextRun: Run | RunListRow | null;
   contextRunId: string | null;
 }) {
   const router = useRouter();
@@ -127,10 +132,15 @@ function SlotCard({
 type FleetListItem =
   | { type: 'header'; title: string; count: number }
   | { type: 'sources'; nodeId: string }
-  | { type: 'slot'; slot: SlotStatus; contextRun: Run | null; contextRunId: string | null };
+  | {
+      type: 'slot';
+      slot: SlotStatus;
+      contextRun: Run | RunListRow | null;
+      contextRunId: string | null;
+    };
 
-function latestRunBySlot(runs: Run[]): Map<string, Run> {
-  const bySlot = new Map<string, Run>();
+function latestRunBySlot(runs: RunListRow[]): Map<string, RunListRow> {
+  const bySlot = new Map<string, RunListRow>();
   for (const run of runs) {
     if (!run.slotId) continue;
     const existing = bySlot.get(run.slotId);
@@ -139,7 +149,7 @@ function latestRunBySlot(runs: Run[]): Map<string, Run> {
   return bySlot;
 }
 
-function runTimestamp(run: Run): number {
+function runTimestamp(run: Run | RunListRow): number {
   return Date.parse(run.updatedAt || run.completedAt || run.createdAt || '') || 0;
 }
 

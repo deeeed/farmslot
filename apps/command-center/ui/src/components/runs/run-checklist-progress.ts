@@ -1,7 +1,7 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
-import type { Run, TaskProgressStructured } from '@farmslot/protocol';
+import type { RunListRow, TaskProgressStructured } from '@farmslot/protocol';
 import { runChecklistProgressView } from '@farmslot/review-dispatch';
 import { publicationGateCssVariables } from '@farmslot/theme';
 
@@ -10,7 +10,7 @@ import '../shared/progress-read-status.js';
 /** The same checklist strip beneath the list pipeline and the detail canvas. */
 @customElement('run-checklist-progress')
 export class RunChecklistProgress extends LitElement {
-  @property({ attribute: false }) run?: Run;
+  @property({ attribute: false }) run?: RunListRow;
   @property({ attribute: false }) progress?: TaskProgressStructured | null;
   @property() error?: string;
   @property({ attribute: false }) retry?: () => void;

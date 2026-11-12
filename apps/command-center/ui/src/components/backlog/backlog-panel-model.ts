@@ -9,7 +9,7 @@ import {
   EDITABLE_BACKLOG_STATUSES,
   isTerminalRunStatus,
   type ReviewSelection,
-  type Run,
+  type RunListRow,
 } from '@farmslot/protocol';
 import { defaultModelForRunner, type ReviewDispatchCatalog } from '@farmslot/review-dispatch';
 
@@ -46,11 +46,11 @@ export const BACKLOG_SORT_KEYS = [
 export type BacklogSortKey = (typeof BACKLOG_SORT_KEYS)[number];
 export type BacklogSortDirection = 'asc' | 'desc';
 
-export function displayedBacklogFlow(item: BacklogItem, activeRun?: Run): string {
+export function displayedBacklogFlow(item: BacklogItem, activeRun?: RunListRow): string {
   return activeRun?.flowType || item.flowType;
 }
 
-export function displayedBacklogStatus(item: BacklogItem, linkedRun?: Run): BacklogStatus {
+export function displayedBacklogStatus(item: BacklogItem, linkedRun?: RunListRow): BacklogStatus {
   if (!linkedRun || item.status === 'archived' || item.status === 'done') return item.status;
   if (linkedRun.status === 'done') return item.multiPr ? 'ready' : 'done';
   if (linkedRun.status === 'failed') return 'failed';
@@ -66,7 +66,7 @@ export function displayedBacklogStatus(item: BacklogItem, linkedRun?: Run): Back
 
 function comparisonValue(
   item: BacklogItem,
-  linkedRun: Run | undefined,
+  linkedRun: RunListRow | undefined,
   key: BacklogSortKey,
 ): string {
   const activeRun = linkedRun && !isTerminalRunStatus(linkedRun.status) ? linkedRun : undefined;
@@ -90,10 +90,10 @@ function comparisonValue(
 
 export function sortBacklogItems(
   items: readonly BacklogItem[],
-  runs: Run[],
+  runs: RunListRow[],
   key: BacklogSortKey,
   direction: BacklogSortDirection,
-  prelinkedRuns?: ReadonlyMap<string, Run | undefined>,
+  prelinkedRuns?: ReadonlyMap<string, RunListRow | undefined>,
 ): BacklogItem[] {
   const multiplier = direction === 'asc' ? 1 : -1;
   const linkedRuns =
@@ -182,7 +182,7 @@ export function backlogItemMatchesStatusFilter(
 
 export function backlogStatusCounts(
   items: readonly BacklogItem[],
-  linkedRuns: ReadonlyMap<string, Run | undefined> = new Map(),
+  linkedRuns: ReadonlyMap<string, RunListRow | undefined> = new Map(),
 ): Record<BacklogStatus, number> {
   const counts = Object.fromEntries(BACKLOG_STATUSES.map((status) => [status, 0])) as Record<
     BacklogStatus,

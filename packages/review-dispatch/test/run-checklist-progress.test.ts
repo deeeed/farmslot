@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run, TaskProgressStructured, TaskProgressUpdatedPayload } from '@farmslot/protocol';
+import {
+  type Run,
+  runListRow,
+  type TaskProgressStructured,
+  type TaskProgressUpdatedPayload,
+  trimRunForList,
+} from '@farmslot/protocol';
 
 import { checklistProgressIsLive, checklistProgressView } from '../src/checklist-progress.js';
 import {
@@ -275,4 +281,28 @@ test('an idle gate without a recorded end never invents an elapsed time for stal
   })!.phases[0].rows.find((entry) => entry.step.status === 'running');
   assert.equal(row?.duration, null);
   assert.equal(row?.live, false);
+});
+
+// The CI-fix checklist strip reads ci-watch's fix progress: the same from the served row, the
+// full run and an old cached row.
+test('the CI-fix checklist is the same from the served slim row, the full run and an old cached row', () => {
+  const full = run({
+    status: 'ci-watching',
+    steps: [
+      {
+        name: 'ci-watch',
+        status: 'running',
+        outputs: {
+          phase: 'fixing',
+          fixInProgress: true,
+          fixProgress: { completed: 2, total: 4, currentLabel: 'Re-run the failing suite' },
+          checkTimeline: [{ timestamp: '2026-10-22T10:00:00Z', status: 'failed' }],
+        },
+      },
+    ],
+  });
+  const expected = runChecklistProgressView(full, null);
+  assert.deepEqual([expected?.completed, expected?.total], [2, 4]);
+  assert.deepEqual(runChecklistProgressView(runListRow(full), null), expected);
+  assert.deepEqual(runChecklistProgressView(trimRunForList(full), null), expected);
 });
