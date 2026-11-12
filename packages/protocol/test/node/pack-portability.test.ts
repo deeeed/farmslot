@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,9 +7,12 @@ import test from 'node:test';
 
 import {
   listPackOwnedEntries,
+  listPackOwnedEntriesAsync,
+  type PackGitRunner,
   packMachineNames,
   validatePackFilePortability,
   validatePackPortability,
+  validatePackPortabilityAsync,
 } from '../../src/node/pack-portability.js';
 
 test('pack policy rejects private paths and fixed nodes with line and fix guidance', () => {
@@ -247,6 +250,52 @@ test('copied packs honor their own ignore rules under an ignoring parent reposit
   assert.ok(!listPackOwnedEntries(pack).some((entry) => entry.rel === 'operator.private'));
   writeFileSync(join(pack, 'hook.sh'), 'cd /Users/operator/app');
   assert.equal(validatePackPortability(pack).length, 1);
+});
+
+test('the asynchronous scan finds what the synchronous scan finds, through the given git runner', async (t) => {
+  const parent = mkdtempSync(join(tmpdir(), 'pack-async-'));
+  t.after(() => rmSync(parent, { recursive: true, force: true }));
+  const calls: string[][] = [];
+  const git: PackGitRunner = (args) =>
+    new Promise((resolve) => {
+      calls.push(args);
+      execFile('git', args, { encoding: 'buffer' }, (error, stdout) => {
+        // Test runner: report the exit status as spawnSync does.
+        resolve({
+          status: !error ? 0 : typeof error.code === 'number' ? error.code : null,
+          stdout,
+        });
+      });
+    });
+  // A standalone pack (copied-pack scan), a pack under an ignoring parent repository,
+  // and a pack indexed by its parent repository.
+  const standalone = join(parent, 'standalone');
+  mkdirSync(join(standalone, 'tasks'), { recursive: true });
+  writeFileSync(join(standalone, 'tasks/report.md'), '/Users/operator/runtime');
+  writeFileSync(join(standalone, 'hook.sh'), 'cd /Users/operator/app');
+  const repo = join(parent, 'repo');
+  execFileSync('git', ['init', '--quiet', repo]);
+  writeFileSync(join(repo, '.gitignore'), 'ignored/\n');
+  const ignored = join(repo, 'ignored');
+  mkdirSync(ignored);
+  writeFileSync(join(ignored, '.gitignore'), 'operator.private\n');
+  writeFileSync(join(ignored, 'operator.private'), '/Users/operator/private');
+  writeFileSync(join(ignored, 'task.md'), 'ssh worker-box.local');
+  const indexed = join(repo, 'indexed');
+  mkdirSync(indexed);
+  writeFileSync(join(indexed, 'template.md'), '{{repo}}\n~/xreview/tool');
+  for (const pack of [standalone, ignored, indexed]) {
+    calls.length = 0;
+    assert.deepEqual(await listPackOwnedEntriesAsync(pack, git), listPackOwnedEntries(pack));
+    const errors = await validatePackPortabilityAsync(pack, 'projects/p', [], git);
+    assert.equal(errors.length, 1, pack);
+    assert.match(errors[0], /^projects\/p\/[^:]+:\d+: nonportable reference/);
+    assert.ok(calls.length > 0, 'git ran through the runner');
+  }
+  await assert.rejects(
+    validatePackPortabilityAsync(standalone, '', [], () => Promise.reject(new Error('git gone'))),
+    /git gone/,
+  );
 });
 
 test('project packs require a valid farm-owned QA preset with a fix hint', () => {
