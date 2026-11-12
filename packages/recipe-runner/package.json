@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/recipe-runner",
-  "version": "0.46.12",
+  "version": "0.46.13",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
