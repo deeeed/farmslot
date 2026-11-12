@@ -378,7 +378,7 @@ test(
       assert.equal(parked.headSha, head);
       assert.equal(git(repo, 'rev-parse', parked.ref), head);
 
-      // A following run can reuse the branch without relying on the old run record.
+      // The named ref remains check-outable without relying on the archived run record.
       git(repo, 'checkout', '-q', branch);
       const follow = createRun({
         flowType: 'dev',

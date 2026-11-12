@@ -204,7 +204,7 @@ test("a checkout that isn't the run's own is never parked", async (t) => {
   git('checkout', '-q', 'main');
   assert.match(
     (await dropParkedBranch(moved, vars, localExec)) ?? '',
-    /kept branch TAT-4146-validation/,
+    /kept branch TAT-4146-validation \(it moved\)/,
   );
 });
 

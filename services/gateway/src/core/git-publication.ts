@@ -11,7 +11,7 @@ interface UnpushedCommitOptions {
 /** Commits not retained by remote refs or an allowed local branch. Git failures refuse. */
 export async function findUnpushedSlotCommits(
   vars: SlotVars,
-  ref = 'HEAD',
+  ref: string,
   exec: typeof execOnSlot,
   options: UnpushedCommitOptions = {},
 ): Promise<string[]> {
