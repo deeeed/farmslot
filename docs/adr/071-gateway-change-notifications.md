@@ -459,22 +459,36 @@ reconnects.
 Amendment 1 stated that a row's `version` is a hash of the row as served. With
 slim rows the hash is `sha256(canonicalResourceJson(trimRunForList(run)))` —
 the same basis as before — while the row the gateway actually sends is
-`runListRow(run)` (a narrower projection that drops `resourcePosture`,
-`sessionUsage`, `visualJudgmentReceipts`, and `templateProvenance`, leaves the
-output file manifest out as before, and projects `steps`, `decisions`, and
-`engineState` to only the fields list surfaces read; step outputs keep each read key in
-the bounded shape its view reads, and every left-out payload key is named in
-`payloadTrimmed`, so `runHasTrimmedDetail` reports the row as trimmed; agent contexts,
-metrics, the ticket, the review result and the review subject leave out only their heavy keys,
-each over about 500 B per stored run and read by no list surface, and the row then carries
-`detailTrimmed: true`). Each served row carries
+`runListRow(run)`: the run without its heavy keys. It drops `resourcePosture`,
+`sessionUsage`, `visualJudgmentReceipts` and `templateProvenance` and leaves the
+output file manifest out as before. Steps lose their inputs, and their outputs
+keep each key a list surface reads in the bounded shape that view reads, plus
+the diff stat and the videos, before/after visuals and diff files among their
+artifacts (path, purpose, size); such a step carries `outputsTrimmed: true`.
+Decisions are the ones `trimRunForList` serves, without the resolver's
+selection, the evidence attestation and the heavy keys of their payload (a
+ready gate's package, snapshots, report and summary; a review's text and line
+comments; a retrospective's gate summary), each named in `payloadTrimmed`.
+Engine state loses only the publish gate's summary. Agent contexts, metrics,
+the ticket, the review result and the review subject lose only their heavy
+keys. A heavy key averages over about 500 B per stored run and is read by no
+list surface; every other key is served as the run holds it, and a row that
+left a heavy key out carries `detailTrimmed: true`. Each served row carries
 `evidenceSummary`, which the gateway computes from the full run with the same
 `summarizeRunEvidence` clients use. Old cached fat rows and new slim rows
 coexist in a client; a row without `evidenceSummary` has its summary computed
 from the row's own fields (`runListEvidenceSummary`). Screens that render
 step outputs or decision payloads read `run.get`, never the list row.
 
-Measured on 81 stored runs, the average `run.list` row drops from 110 KB to 19 KB
-(p95 31 KB, largest 46 KB). The version contract is otherwise unchanged: clients
+A client build older than the summary computes its list values from the row
+itself. From the served row it shows the same video and compare chips, opens
+the same Diff file and reads the same diff stat as before. Its artifact counts
+(Companion's "Evidence N", the eval catalog's counts) read lower than before
+until it updates, because the row keeps those artifacts and not every entry
+(92 per stored run on average).
+
+Measured on 74 stored runs, the average `run.list` row drops from 116 KB to 31 KB
+(p95 from 213 KB to 59 KB, largest from 421 KB to 89 KB). The version contract is
+otherwise unchanged: clients
 still compare versions from the versions list to decide which rows need a
 catch-up page fetch, and `run.get`/`run.forSlot` remain unaffected.

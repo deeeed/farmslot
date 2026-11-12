@@ -341,14 +341,17 @@ totalCount, summaryMeta, familySummaries, projectAnalytics }` for every live
 2. `version` is `sha256(trimRunForList(run))` — stable across gateway restarts
    for an unchanged run, and unchanged by the slim-row projection (ADR-071
    Amendment 3). Rows returned by `run.list`, plain or `{ ids }`, are
-   `runListRow(run)`: the fields list surfaces read plus the run's
-   `evidenceSummary`. Agent contexts, metrics, the ticket, the review result
-   and the review subject leave out only their heavy keys (visual-review blobs,
+   `runListRow(run)`: the run without its heavy keys, plus the run's
+   `evidenceSummary`. Steps keep the outputs list surfaces read, the diff stat
+   and their videos, before/after visuals and diff files. Decisions, engine
+   state, agent contexts, metrics, the ticket, the review result and the review
+   subject leave out only their heavy keys (a gate's package, snapshots, report
+   and summary; a decision's selection and attestation; visual-review blobs,
    session archive and usage; checklist timing; the ticket description; the
    review text and line comments; the pull request body). A row says what it
    left out: `payloadTrimmed` on a decision names the payload keys,
    `outputsTrimmed: true` marks a step that lost inputs or output values,
-   `detailTrimmed: true` marks a row that left out one of those heavy keys, and
+   `detailTrimmed: true` marks a row that left out any other heavy key, and
    `output.artifactManifestOmitted` the output manifest; `runHasTrimmedDetail`
    reads all four. Full runs come from `run.get` / `run.forSlot`.
 3. Only the version reply decides which rows exist. Stored rows it does not list
