@@ -692,7 +692,7 @@ export async function captureRunDiffSnapshot(
   const baseSpec =
     options.baseSpec ??
     (await settleStackedDiffBase(
-      (command) => execOnSlot(vars, command, { timeout: 15000 }),
+      (command) => execOnSlot(vars, withFarmGitConfig(command), { timeout: 15000 }),
       defaultBranch,
       contributionDiffBaseSpec(
         { startRef: run.startRef, stack: await contributionStack(run) },

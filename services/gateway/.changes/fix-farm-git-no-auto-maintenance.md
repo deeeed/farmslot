@@ -1,1 +1,1 @@
-- Prevent farm-owned slot Git payloads, including prepare hooks and blind trial isolation/restoration, from starting automatic maintenance that blocks preparation, while preserving ordinary worker Git settings.
+- Prevent farm-owned slot Git operations, including publication freshness, stacked diffs, review prechecks, prepare hooks, and blind trial isolation/restoration, from starting automatic maintenance that blocks preparation, while preserving ordinary worker Git settings.

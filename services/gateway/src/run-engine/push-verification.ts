@@ -23,6 +23,7 @@ import {
 import { resolveAgentTarget, selectAgentContext } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
 import { EXEC_TIMEOUT_EXIT_CODE, execOnSlot } from '../core/exec.js';
+import { withFarmGitConfig } from '../core/farm-git.js';
 import { shellQuote } from '../core/tmux.js';
 import { assertRunCommitSignatures } from '../run-completion/commit-signatures.js';
 import { normalizeRunner, sendRunnerInstructionSafely } from '../runners/registry.js';
@@ -369,7 +370,8 @@ export async function verifyWorkerPushedBranch(
   const vars = await loadSlotVars(slotId);
   // No cancel signal on the exec, as before: nodeExec keeps its one-shot retry of a
   // dropped transport. Cancellation is checked between attempts.
-  const execute: GitExecutor = (command) => execOnSlot(vars, command, { timeout: 30_000 });
+  const execute: GitExecutor = (command) =>
+    execOnSlot(vars, withFarmGitConfig(command), { timeout: 30_000 });
   // The worker has finished: a slow first inspection gets the same bounded wait
   // a publish nudge gets before the run fails on it.
   let state = await inspectWorktreeWithRetry(
