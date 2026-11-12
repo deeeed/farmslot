@@ -3740,6 +3740,26 @@ describe('call', () => {
     assert.deepEqual(calls.runners, []);
   });
 
+  test('refuses several key=value inputs quoted into one argument', async () => {
+    const target = checkout();
+    // The shell hands `"mode=fast count=2"` over as one token: it used to become mode="fast count=2".
+    await assert.rejects(
+      capture(() =>
+        handleCall(
+          ['shop.ping', 'mode=fast count=2', '--adapter', 'web', '--target', target, '--json'],
+          callOptions,
+        ),
+      ),
+      {
+        name: 'CliError',
+        exitCode: 2,
+        message:
+          '"mode=fast count=2" holds more than one key=value input; pass each as its own argument: mode=fast count=2',
+      },
+    );
+    assert.deepEqual(calls.runners, []);
+  });
+
   test('takes every input as key=value, values that look like flags included', async () => {
     const target = checkout();
     const call = await capture(() =>
@@ -3939,6 +3959,62 @@ describe('call', () => {
         suggestion: 'fast',
       },
     ]);
+  });
+
+  test('suggests the parameter a misnamed or misplaced input belongs to', async () => {
+    const target = checkout();
+    const override = path.join(tempRoot('recipe-cli-override-'), 'web.action-manifest.json');
+    const manifest = manifestFor('web');
+    const ping = manifest.actions['shop.ping']!;
+    fs.writeFileSync(
+      override,
+      JSON.stringify({
+        ...manifest,
+        actions: {
+          ...manifest.actions,
+          'shop.ping': {
+            ...ping,
+            schema: {
+              ...PING_ACTION.schema,
+              properties: {
+                ...PING_ACTION.schema.properties,
+                market_mode: { type: 'string', enum: ['pro', 'lite'] },
+              },
+            },
+          },
+        },
+      }),
+    );
+    const base = ['--adapter', 'web', '--target', target, '--action-manifest', override];
+    const unknown = await capture(() =>
+      handleCall(['shop.ping', 'mode=fast', 'cuont=2', ...base, '--json'], callOptions),
+    );
+    assert.equal(unknown.value, 5);
+    assert.deepEqual(lastJson(unknown.stdout).parameterHelp, [
+      { issue: 'unknown', name: 'cuont', received: 2, suggestedParameter: 'count' },
+    ]);
+    const misplaced = await capture(() =>
+      handleCall(['shop.ping', 'mode=pro', ...base, '--json'], callOptions),
+    );
+    assert.equal(misplaced.value, 5);
+    assert.deepEqual(lastJson(misplaced.stdout).parameterHelp, [
+      {
+        issue: 'invalid',
+        name: 'mode',
+        type: 'string',
+        validValues: ['fast', 'slow'],
+        received: 'pro',
+        suggestedParameter: 'market_mode',
+      },
+    ]);
+    const human = await capture(() =>
+      handleCall(['shop.ping', 'mode=pro', 'cuont=2', ...base], callOptions),
+    );
+    assert.match(human.stderr.join('\n'), /mode received "pro"\..*Did you mean market_mode=pro\?/u);
+    assert.match(
+      human.stderr.join('\n'),
+      /cuont is not a parameter of this action\. Did you mean count=2\?/u,
+    );
   });
 
   test('resolves names against --action-manifest and the --library sources', async () => {

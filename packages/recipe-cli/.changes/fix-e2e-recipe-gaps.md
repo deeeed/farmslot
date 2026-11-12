@@ -1,0 +1,1 @@
+- `call` refuses several `key=value` inputs quoted into one argument (such as `"provider=hyperliquid network=testnet"`) instead of reading them as one value, and validation help suggests the nearest parameter for an unknown input and the parameter whose values include a misplaced one (`Did you mean market_mode=pro?`).

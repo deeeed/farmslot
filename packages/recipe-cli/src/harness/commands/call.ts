@@ -682,13 +682,15 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
 }
 
 interface ParameterValidationHelp {
-  issue: 'missing' | 'invalid';
+  issue: 'missing' | 'invalid' | 'unknown';
   name: string;
   type?: string;
   validValues?: unknown[];
   description?: string;
   received?: unknown;
   suggestion?: string;
+  // The parameter the received value belongs to: a near name, or one whose enum holds it.
+  suggestedParameter?: string;
 }
 
 function parameterValidationHelp(
@@ -698,10 +700,14 @@ function parameterValidationHelp(
 ): ParameterValidationHelp[] {
   const schema = isRecord(action?.schema) ? action.schema : {};
   const properties = isRecord(schema.properties) ? schema.properties : {};
-  return findings.flatMap((finding) => {
+  return findings.flatMap((finding): ParameterValidationHelp[] => {
     const issue = parameterIssue(finding.code);
     if (!issue) return [];
     const name = finding.path.split('.').at(-1);
+    if (name && issue === 'unknown') {
+      const suggestedParameter = closest(name, Object.keys(properties));
+      return suggestedParameter ? [{ issue, name, received: args[name], suggestedParameter }] : [];
+    }
     const property = name && isRecord(properties[name]) ? properties[name] : undefined;
     if (!name || !property) return [];
     const validValues = Array.isArray(property.enum) ? property.enum : undefined;
@@ -712,8 +718,18 @@ function parameterValidationHelp(
           ? property.type.filter((value): value is string => typeof value === 'string').join('|')
           : undefined;
     const received = Object.hasOwn(args, name) ? args[name] : undefined;
+    const suggestedParameter =
+      issue === 'invalid' && received !== undefined
+        ? Object.entries(properties).find(
+            ([other, entry]) =>
+              other !== name &&
+              isRecord(entry) &&
+              Array.isArray(entry.enum) &&
+              entry.enum.includes(received),
+          )?.[0]
+        : undefined;
     const suggestion =
-      issue === 'invalid' && received !== undefined && validValues
+      issue === 'invalid' && received !== undefined && validValues && !suggestedParameter
         ? closest(String(received), validValues.map(String))
         : undefined;
     return [
@@ -725,6 +741,7 @@ function parameterValidationHelp(
         ...(typeof property.description === 'string' ? { description: property.description } : {}),
         ...(issue === 'invalid' && received !== undefined ? { received } : {}),
         ...(suggestion ? { suggestion } : {}),
+        ...(suggestedParameter ? { suggestedParameter } : {}),
       },
     ];
   });
@@ -733,6 +750,7 @@ function parameterValidationHelp(
 function parameterIssue(code: string): ParameterValidationHelp['issue'] | undefined {
   if (code === 'recipe.missing_param') return 'missing';
   if (code === 'recipe.invalid_param_value_enum') return 'invalid';
+  if (code === 'recipe.unknown_param') return 'unknown';
   return undefined;
 }
 
@@ -741,13 +759,21 @@ function renderParameterValidationHelp(parameter: ParameterValidationHelp): stri
   const heading =
     parameter.issue === 'missing'
       ? `${out('cmd', parameter.name)}${parameter.type ? ` (${parameter.type}, required)` : ' (required)'}`
-      : `${out('cmd', parameter.name)} received ${out('err', JSON.stringify(parameter.received) ?? String(parameter.received))}`;
+      : parameter.issue === 'unknown'
+        ? `${out('cmd', parameter.name)} is not a parameter of this action`
+        : `${out('cmd', parameter.name)} received ${out('err', JSON.stringify(parameter.received) ?? String(parameter.received))}`;
   const values = parameter.validValues?.length
     ? ` Valid values: ${parameter.validValues.map((value) => out('accent', String(value))).join(', ')}.`
     : '';
-  const suggestion = parameter.suggestion
-    ? ` Did you mean ${out('accent', JSON.stringify(parameter.suggestion))}?`
-    : '';
+  const received =
+    typeof parameter.received === 'string'
+      ? parameter.received
+      : (JSON.stringify(parameter.received) ?? String(parameter.received));
+  const suggestion = parameter.suggestedParameter
+    ? ` Did you mean ${out('cmd', `${parameter.suggestedParameter}=${received}`)}?`
+    : parameter.suggestion
+      ? ` Did you mean ${out('accent', JSON.stringify(parameter.suggestion))}?`
+      : '';
   const description = parameter.description ? ` ${parameter.description}` : '';
   return `  ${heading}.${values}${suggestion}${description}`;
 }
@@ -898,6 +924,12 @@ function parseCallArgs(argv: string[]): CallArgs {
     }
     if (action !== undefined && !isForwardedOptionValue(argv, i) && isArgPair(arg)) {
       const eq = arg.indexOf('=');
+      // A shell-quoted `"a=1 b=2"` is one token; never fold the later inputs into the first value.
+      if (/^\S*(?:\s+[A-Za-z_][\w.-]*=\S*)+$/u.test(arg.slice(eq + 1))) {
+        throw usageError(
+          `"${arg}" holds more than one key=value input; pass each as its own argument: ${arg.trim().split(/\s+/u).join(' ')}`,
+        );
+      }
       args[arg.slice(0, eq)] = parseCallValue(arg.slice(eq + 1));
       continue;
     }
