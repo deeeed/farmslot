@@ -39,6 +39,7 @@ const EVIDENCE_KEY = 'v';
 const CTRL_C = '\u0003';
 const EVIDENCE_HINT = `${EVIDENCE_KEY}  open the live run evidence page`;
 const EVIDENCE_MESSAGE_MS = 6000;
+const CALL_START_SLACK_MS = 2000;
 
 export interface StatusWatchOptions {
   target: string;
@@ -192,7 +193,9 @@ export async function runStatusWatch(
     if (!page) {
       // Before the first recipe run a task usually proves single actions with `call`; they
       // leave the same evidence package, so show the newest one made during this task.
-      const startedAt = taskStartedAt(view.taskDir);
+      // File times come from a coarse clock that can trail the task's recorded start by a
+      // few milliseconds, so a call made right after the start still counts.
+      const startedAt = taskStartedAt(view.taskDir) - CALL_START_SLACK_MS;
       page = newestEvidence(
         [
           ...(view.taskDir ? [path.join(view.taskDir, 'artifacts', 'calls')] : []),

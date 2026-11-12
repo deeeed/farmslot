@@ -230,6 +230,14 @@ test('status --watch opens the newest call made during the task before any recip
   writeTask(active, 'running');
   const calls = path.join(target, 'temp/recipe/calls');
   writeRun(calls, 'read-positions', new Date().toISOString());
+  // A coarse file clock can stamp a call made right after the task started slightly earlier.
+  const justBefore = new Date(Date.now() - 50);
+  fs.utimesSync(
+    path.join(calls, 'read-positions', 'recipe-invocation.json'),
+    justBefore,
+    justBefore,
+  );
+  fs.utimesSync(path.join(calls, 'read-positions'), justBefore, justBefore);
   const session = watch(t, target);
   await session.ready();
   session.key('v');
