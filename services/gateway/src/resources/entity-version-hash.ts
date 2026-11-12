@@ -1,5 +1,5 @@
-// Entity versions (ADR-071 Amendments 1 and 3): slots, machines, PRs and run-list rows share one
-// content version, the full sha256 hex of the entity's canonical JSON.
+// Entity versions (ADR-071 Amendment 3): a slot, machine or PR is versioned by the full sha256 hex
+// of its canonical JSON, the digest the run list uses for its rows.
 import { createHash } from 'node:crypto';
 
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
