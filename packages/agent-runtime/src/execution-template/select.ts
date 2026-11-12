@@ -49,7 +49,12 @@ function isCompatible(
 ): boolean {
   if (entry.shadowedBy) return false;
   if (entry.flow !== options.flow) return false;
-  if (!entry.platforms.includes('*') && !entry.platforms.includes(options.platform)) return false;
+  if (
+    options.platform !== undefined &&
+    !entry.platforms.includes('*') &&
+    !entry.platforms.includes(options.platform)
+  )
+    return false;
   return executionTemplateEntryParticipates(entry, options.domain);
 }
 
@@ -103,7 +108,12 @@ function domainExcludedExplicitMatches(
   for (const entry of listExecutionTemplates({ sources: options.sources, includeShadowed: true })) {
     if (entry.id !== options.explicitId) continue;
     if (entry.flow !== options.flow) continue;
-    if (!entry.platforms.includes('*') && !entry.platforms.includes(options.platform)) continue;
+    if (
+      options.platform !== undefined &&
+      !entry.platforms.includes('*') &&
+      !entry.platforms.includes(options.platform)
+    )
+      continue;
     const source = options.sources.find((candidate) => candidate.id === entry.sourceId);
     const sourceDomains = source?.domains ?? [];
     const entryDomains = domainLabels(entry).map((label) =>
