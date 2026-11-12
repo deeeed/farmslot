@@ -893,7 +893,8 @@ export class PRRuleService {
 
   private async deliverActionsOnce(): Promise<void> {
     let validations = 0;
-    const actions = this.store.snapshot().actions ?? [];
+    // The store's actions are shared and frozen: sort a copy.
+    const actions = [...(this.store.snapshot().actions ?? [])];
     actions.sort(
       (a, b) =>
         (a.nextValidationAt ?? '').localeCompare(b.nextValidationAt ?? '') ||
