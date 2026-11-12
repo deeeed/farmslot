@@ -20,7 +20,7 @@ import test, { mock, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import type { FleetStatus } from '@farmslot/protocol';
-import { resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
+import { currentFarmPaths, resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { openRunBundleStore } from '@farmslot/run-bundle';
 
 import {
@@ -206,6 +206,17 @@ test('plan is read-only; apply rewrites all owners and rollback restores legacy 
   await migratePaths(f.options, 'rollback');
   await assertLegacy(f);
   assert.equal((await migratePaths(f.options, 'rollback')).status, 'rolled-back');
+});
+
+test('migrate and rollback reset the cached instance marker within the same second', async (t) => {
+  const f = await fixture(t);
+  mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
+  t.after(() => mock.timers.reset());
+  assert.equal(currentFarmPaths('gateway', f.options.env, f.options.checkoutRoot).layout, 'legacy');
+  await migratePaths(f.options, 'apply');
+  assert.equal(currentFarmPaths('gateway', f.options.env, f.options.checkoutRoot).layout, 2);
+  await migratePaths(f.options, 'rollback');
+  assert.equal(currentFarmPaths('gateway', f.options.env, f.options.checkoutRoot).layout, 'legacy');
 });
 
 for (const originalKind of ['absolute', 'relative'] as const)
