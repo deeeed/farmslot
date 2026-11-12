@@ -18,3 +18,4 @@ export function parsePiProviderDiscovery(
   output: string,
   ids: readonly string[],
 ): { configuredProviders: string[]; reported: boolean };
+export const PI_REQUEST_TIMEOUT_RETRIES: number;

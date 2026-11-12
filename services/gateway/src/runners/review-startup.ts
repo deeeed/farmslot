@@ -5,10 +5,75 @@ import type { Run, RunnerPromptAcceptance } from '@farmslot/protocol';
 import type { SlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
+import { withReviewWorkspaceExecutor } from '../runtime/workspace-terminal.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 
 import { getRunnerObservability } from './registry.js';
 import { reviewWorkspaceRunnerVars as workspaceRunnerVars } from './review-workspace-context.js';
+
+export interface ReviewRunnerState {
+  failure: string | null;
+  startupPending: boolean;
+}
+
+/** Current input may still be retrying before its first mark, or fail with a live session. */
+export async function observeReviewRunnerState(
+  run: Run,
+  acceptance: RunnerPromptAcceptance | null,
+): Promise<ReviewRunnerState | null> {
+  const context = run.agentContexts?.find((entry) => entry.id === 'review');
+  const since = Date.parse(context?.promptDeliveryStartedAt ?? '');
+  if (!context || !Number.isFinite(since)) return null;
+  const observer = getRunnerObservability(context.runner);
+  const vars = await reviewWorkspaceRunnerVars(run);
+  if (!observer || !vars) return null;
+  // Native histories bind to the accepted session. Digest hooks bind to the current
+  // pane and the input clock, including when the runner failed before its first mark.
+  const reading = await withReviewWorkspaceExecutor(run, async (check) => {
+    const state = acceptance
+      ? await observer.getSessionDeliveryState(
+          vars,
+          vars.session,
+          acceptance.sessionId,
+          acceptance.sessionPath,
+        )
+      : observer.promptAcceptanceMode === 'hook-digest'
+        ? await observer.getTurnState?.(vars, vars.session)
+        : null;
+    check();
+    return state;
+  });
+  if (
+    !reading ||
+    reading.confidence !== 'high' ||
+    !['hook', 'signal'].includes(reading.source) ||
+    reading.observedAt < since
+  )
+    return null;
+  const turnStartedAt = Number(reading.turnToken?.slice(reading.turnToken.lastIndexOf(':') + 1));
+  if (acceptance) {
+    if (
+      acceptance.runner !== context.runner ||
+      acceptance.deliveryStartedAt !== context.promptDeliveryStartedAt ||
+      !acceptance.turnToken ||
+      reading.turnToken !== acceptance.turnToken ||
+      reading.sessionId !== acceptance.sessionId ||
+      reading.observedAt < acceptance.observedAt
+    )
+      return null;
+  } else {
+    if (!Number.isFinite(turnStartedAt) || turnStartedAt < since) return null;
+  }
+  return {
+    failure: reading.failureKind === 'transport' ? null : (reading.failure ?? null),
+    startupPending:
+      reading.value === 'active' &&
+      Number.isFinite(turnStartedAt) &&
+      (reading.startupGraceMs === null ||
+        (typeof reading.startupGraceMs === 'number' &&
+          Date.now() < turnStartedAt + reading.startupGraceMs)),
+  };
+}
 
 /** Existing progress/control readers retain their owner authorization check. */
 export async function reviewWorkspaceRunnerVars(run: Run): Promise<SlotVars | null> {

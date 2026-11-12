@@ -221,6 +221,12 @@ export function deriveRunnerSessionDeliveryState(
       confidence: 'high',
       observedAt,
       ...failureFields,
+      ...(record.startupGraceMs === null ||
+      (typeof record.startupGraceMs === 'number' &&
+        Number.isSafeInteger(record.startupGraceMs) &&
+        record.startupGraceMs > 0)
+        ? { startupGraceMs: record.startupGraceMs }
+        : {}),
       ...(record.lastToolProgressAt === null || typeof record.lastToolProgressAt === 'number'
         ? { lastToolProgressAt: record.lastToolProgressAt }
         : {}),
