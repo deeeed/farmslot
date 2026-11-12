@@ -79,12 +79,17 @@ export function runListRowHeld(id: string): boolean {
 
 /**
  * Derive every live run's row and version after startup, one run per macrotask, so the first
- * read after a restart finds them ready instead of deriving all of them in one turn.
+ * read after a restart finds them ready instead of deriving all of them in one turn. A run that
+ * left the live store while the warm-up waited is skipped: its row must not come back.
  */
-export async function warmRunListVersions(liveRuns: () => readonly Run[]): Promise<void> {
-  for (const run of liveRuns()) {
+export async function warmRunListVersions(
+  liveRuns: () => readonly Run[],
+  liveRun: (id: string) => Run | undefined,
+): Promise<void> {
+  for (const { id } of liveRuns()) {
     await new Promise<void>((resolve) => setImmediate(resolve));
-    runListVersion(run);
+    const run = liveRun(id);
+    if (run) runListVersion(run);
   }
 }
 

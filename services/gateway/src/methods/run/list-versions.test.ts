@@ -27,7 +27,7 @@ import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 await import('../../runtime/mock-pty.test-support.js');
 const { RUN_LIST_PAGE_MAX_BYTES, runListRowHeld, warmRunListVersions } =
   await import('../../runs/list-version.js');
-const { archiveRun, createRun, deleteRun, getAllRuns, getRun, updateRun } =
+const { archiveRun, createRun, deleteRun, discardUndurableRun, getAllRuns, getRun, updateRun } =
   await import('../../runs/store.js');
 const { runList } = await import('./context.js');
 const { createGatewayAuthRuntime, initializeGatewayIdentity } =
@@ -261,7 +261,7 @@ test(
     const run = fixtureRun(t, 'VERSIONS-WARMED', 'warmed');
     updateRun(run.id, { summary: 'changed before the warm-up' });
     const expected = servedVersion(run.id);
-    await warmRunListVersions(getAllRuns);
+    await warmRunListVersions(getAllRuns, getRun);
     // An unpublished in-place write after the warm-up is invisible: the read used the warmed row.
     const live = getRun(run.id)!;
     live.summary = 'unpublished in-place write';
@@ -271,6 +271,28 @@ test(
     assert.deepEqual(listed, expected);
     // The warm-up derived the served row as well, not only its version.
     assert.equal(page.runs[0]?.summary, 'changed before the warm-up');
+  },
+);
+
+test(
+  'the startup warm-up skips a run that left the live store while it waited',
+  TEST_TIMEOUT,
+  async (t) => {
+    const kept = fixtureRun(t, 'WARM-UP-KEPT');
+    const removed = fixtureRun(t, 'WARM-UP-REMOVED');
+    // The warm-up takes its snapshot of both runs now and yields before each of them.
+    const warming = warmRunListVersions(() => [kept, removed], getRun);
+    // One yield later it has derived the first run and waits before the second.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(runListRowHeld(kept.id), true);
+    assert.equal(runListRowHeld(removed.id), false);
+    // The second run leaves the live store before the warm-up reaches it.
+    const discarded = discardUndurableRun(removed.id);
+    assert.equal(getRun(removed.id), undefined);
+    await warming;
+    await discarded;
+    assert.equal(runListRowHeld(removed.id), false);
+    assert.equal(runListRowHeld(kept.id), true);
   },
 );
 
