@@ -138,12 +138,12 @@
       "count": 1
     },
     {
-      "key": "services/gateway/src/methods/fleet.ts:@typescript-eslint/no-restricted-imports",
-      "count": 1
-    },
-    {
       "key": "services/gateway/src/methods/gateway-doctor.ts:@typescript-eslint/no-restricted-imports",
       "count": 2
+    },
+    {
+      "key": "services/gateway/src/methods/gateway-status.ts:@typescript-eslint/no-restricted-imports",
+      "count": 1
     },
     {
       "key": "services/gateway/src/methods/gateway-update.ts:@typescript-eslint/no-restricted-imports",
