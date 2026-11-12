@@ -59,7 +59,10 @@ mock.module('../review/session-mode.js', {
   namedExports: { WarmReviewRefusal: class extends Error {} },
 });
 mock.module('../core/project-env.js', {
-  namedExports: { resolveProjectCommandEnv: () => ({ set: {}, unset: [] }) },
+  namedExports: {
+    machineShellEnv: () => ({}),
+    resolveProjectCommandEnv: () => ({ set: {}, unset: [] }),
+  },
 });
 mock.module('../core/config.js', {
   namedExports: {

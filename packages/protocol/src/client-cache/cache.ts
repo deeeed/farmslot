@@ -272,6 +272,7 @@ export function createGatewayResourceCache(
   let needsStore = options.store === undefined && options.openStore !== undefined;
   let deletionRequired = false;
   let recoveryAttempted = false;
+  let failedWriteKey: string | undefined;
   let barrier: Promise<void> = Promise.resolve();
   let storeOpening: Promise<void> = Promise.resolve();
   const entries = new Map<string, QueryEntry>();
@@ -297,8 +298,12 @@ export function createGatewayResourceCache(
         writingStore === store &&
         incarnation === storeVersion &&
         !writingStore.deleted;
-      return updateStore(writingStore, current, () =>
-        writingStore.mergeRows!(RUN_LIST_COLLECTION_ID, merge),
+      return updateStore(
+        writingStore,
+        current,
+        () => writingStore.mergeRows!(RUN_LIST_COLLECTION_ID, merge),
+        true,
+        RUN_LIST_COLLECTION_ID,
       );
     },
     maxBodyBytes: resourceQuery(Methods.RUN_LIST).maxBytes,
@@ -464,9 +469,19 @@ export function createGatewayResourceCache(
     }
   }
 
-  async function recoverStore(error: unknown, failed = store): Promise<void> {
+  // Healthy small queries and admission no-ops cannot confirm that the failed
+  // collection/row can be persisted. Only that same completed write re-arms it.
+  function confirmPersistentWrite(target: ResourceStore, key: string): void {
+    if (target === store && target.persistent && key === failedWriteKey) {
+      recoveryAttempted = false;
+      failedWriteKey = undefined;
+    }
+  }
+
+  async function recoverStore(error: unknown, failed = store, writeKey?: string): Promise<void> {
     // A retired store's late I/O failure cannot replace the new principal's store.
     if (failed !== store || disposed) return;
+    failedWriteKey = writeKey;
     replaceStore(createMemoryResourceStore());
     needsStore = options.openStore !== undefined && canPersist(connection);
     storageNotice = `Cached data will not survive a restart: ${queryError(error).message}`;
@@ -521,6 +536,7 @@ export function createGatewayResourceCache(
     current: () => boolean,
     update: () => Promise<void>,
     lockWrites = true,
+    writeKey?: string,
   ): Promise<void> {
     const updating = barrier.then(async () => {
       if (!current()) return;
@@ -532,7 +548,7 @@ export function createGatewayResourceCache(
         if (lockWrites) await withStoreWriteLock(target, write);
         else await write();
       } catch (error) {
-        await recoverStore(error, target);
+        await recoverStore(error, target, writeKey);
       }
     });
     barrier = updating;
@@ -711,6 +727,7 @@ export function createGatewayResourceCache(
     }
     const ticket = ++version;
     recoveryAttempted = false;
+    failedWriteKey = undefined;
     runList.abort();
     // Stored facts belong to an owner, not a socket attempt. Fence a revoked
     // owner's pending I/O synchronously, before queued deletion can run.
@@ -1152,8 +1169,19 @@ export function createGatewayResourceCache(
     const flags = runListFlags();
     try {
       // A new view of a current collection needs no read: no runs change since its version reply.
-      if (!runList.complete || !runList.serves(flags) || !stampCovers(entry, runList.resourceState))
+      if (
+        !runList.complete ||
+        !runList.serves(flags) ||
+        !stampCovers(entry, runList.resourceState)
+      ) {
+        const refreshingStore = store;
+        const incarnation = storeVersion;
         await runList.refresh(flags);
+        // Earlier pages cannot prove that the failed later page can be stored.
+        // Confirm only a complete refresh that never switched its store.
+        if (store === refreshingStore && storeVersion === incarnation && runList.complete)
+          confirmPersistentWrite(refreshingStore, RUN_LIST_COLLECTION_ID);
+      }
     } catch (error) {
       // A refused collection read evicts the stored collection, like every refused read.
       if (evictionCodes.has(queryError(error).code)) {
@@ -1441,83 +1469,91 @@ export function createGatewayResourceCache(
         // A snapshot someone observes is opened, whoever started the read.
         const prefetched = entry.listeners.size ? undefined : pending.prefetch;
         if (persistResult && current()) {
-          await updateStore(writingStore, current, async () => {
-            // Prefetch never removes a row it could not replace, including one the user opened.
-            if (!saved) {
-              if (!prefetched) await writingStore.deleteQuery(nativeHistoryStorageId(entry.query));
-              return;
-            }
-            let row = saved;
-            if (retention?.cohort === 'workspace') {
-              const stored = await writingStore.listQueries();
-              const previous = stored.find((value) => value.id === saved.id);
-              // A prefetch write evicts only what prefetch may evict, even when it refreshes a
-              // snapshot the user opened; that row stays opened. Gate outranks run.
-              const write: StoredResourceQuery = prefetched
-                ? {
-                    ...saved,
-                    origin: 'prefetch',
-                    cohort: previous?.cohort === 'gate' ? 'gate' : (prefetched.cohort ?? 'run'),
-                  }
-                : saved;
-              if (!previous || previous.origin === 'prefetch') row = write;
-              const victims = workspaceRetentionEvictions(
-                entry.query,
-                write,
-                stored,
-                options.contentBudgetBytes ?? defaultContentBudgetBytes,
-                await writingStore.listContent(),
-              );
-              if (!current()) return;
-              if (!victims) {
-                if (!prefetched) await writingStore.deleteQuery(saved.id);
+          await updateStore(
+            writingStore,
+            current,
+            async () => {
+              // Prefetch never removes a row it could not replace, including one the user opened.
+              if (!saved) {
+                if (!prefetched)
+                  await writingStore.deleteQuery(nativeHistoryStorageId(entry.query));
                 return;
               }
-              for (const id of victims.queries) {
-                await writingStore.deleteQuery(id);
-                if (!current()) return;
-              }
-              for (const key of victims.content) {
-                await removeStoredContent(writingStore, key);
-                if (!current()) return;
-              }
-            } else if (retention) {
-              const previous = (await writingStore.listQueries())
-                .filter(
-                  (value) =>
-                    value.id !== saved.id &&
-                    // The run collection is bounded by its own body budget, never by its views.
-                    value.id !== RUN_LIST_COLLECTION_ID &&
-                    (retention.cohort === 'upstream'
-                      ? isUpstreamStoredQuery(value.id)
-                      : value.id.startsWith(`${entry.query.method}:`)),
-                )
-                .sort(
-                  (a, b) =>
-                    (entry.query.method === Methods.RUN_GET
-                      ? (a.accessedAt ?? a.observedAt) - (b.accessedAt ?? b.observedAt)
-                      : a.observedAt - b.observedAt) ||
-                    (entries.get(a.id)?.lastUsed ?? 0) - (entries.get(b.id)?.lastUsed ?? 0),
+              let row = saved;
+              if (retention?.cohort === 'workspace') {
+                const stored = await writingStore.listQueries();
+                const previous = stored.find((value) => value.id === saved.id);
+                // A prefetch write evicts only what prefetch may evict, even when it refreshes a
+                // snapshot the user opened; that row stays opened. Gate outranks run.
+                const write: StoredResourceQuery = prefetched
+                  ? {
+                      ...saved,
+                      origin: 'prefetch',
+                      cohort: previous?.cohort === 'gate' ? 'gate' : (prefetched.cohort ?? 'run'),
+                    }
+                  : saved;
+                if (!previous || previous.origin === 'prefetch') row = write;
+                const victims = workspaceRetentionEvictions(
+                  entry.query,
+                  write,
+                  stored,
+                  options.contentBudgetBytes ?? defaultContentBudgetBytes,
+                  await writingStore.listContent(),
                 );
-              if (!current()) return;
-              let count = previous.length + 1;
-              let total = previous.reduce((sum, value) => sum + value.bytes, saved.bytes);
-              for (const oldest of previous) {
-                if (count <= retention.maxEntries && total <= retention.maxBytes) break;
-                await writingStore.deleteQuery(oldest.id);
                 if (!current()) return;
-                count--;
-                total -= oldest.bytes;
+                if (!victims) {
+                  if (!prefetched) await writingStore.deleteQuery(saved.id);
+                  return;
+                }
+                for (const id of victims.queries) {
+                  await writingStore.deleteQuery(id);
+                  if (!current()) return;
+                }
+                for (const key of victims.content) {
+                  await removeStoredContent(writingStore, key);
+                  if (!current()) return;
+                }
+              } else if (retention) {
+                const previous = (await writingStore.listQueries())
+                  .filter(
+                    (value) =>
+                      value.id !== saved.id &&
+                      // The run collection is bounded by its own body budget, never by its views.
+                      value.id !== RUN_LIST_COLLECTION_ID &&
+                      (retention.cohort === 'upstream'
+                        ? isUpstreamStoredQuery(value.id)
+                        : value.id.startsWith(`${entry.query.method}:`)),
+                  )
+                  .sort(
+                    (a, b) =>
+                      (entry.query.method === Methods.RUN_GET
+                        ? (a.accessedAt ?? a.observedAt) - (b.accessedAt ?? b.observedAt)
+                        : a.observedAt - b.observedAt) ||
+                      (entries.get(a.id)?.lastUsed ?? 0) - (entries.get(b.id)?.lastUsed ?? 0),
+                  );
+                if (!current()) return;
+                let count = previous.length + 1;
+                let total = previous.reduce((sum, value) => sum + value.bytes, saved.bytes);
+                for (const oldest of previous) {
+                  if (count <= retention.maxEntries && total <= retention.maxBytes) break;
+                  await writingStore.deleteQuery(oldest.id);
+                  if (!current()) return;
+                  count--;
+                  total -= oldest.bytes;
+                }
               }
-            }
-            if (current()) {
-              await writingStore.putQuery(row);
-              if (entry.query.method === Methods.CHAT_ARCHIVE && current())
-                await writingStore.deleteQuery(
-                  `chat.history:${canonicalResourceJson(entry.query.params)}`,
-                );
-            }
-          });
+              if (current()) {
+                await writingStore.putQuery(row);
+                if (current()) confirmPersistentWrite(writingStore, row.id);
+                if (entry.query.method === Methods.CHAT_ARCHIVE && current())
+                  await writingStore.deleteQuery(
+                    `chat.history:${canonicalResourceJson(entry.query.params)}`,
+                  );
+              }
+            },
+            true,
+            nativeHistoryStorageId(entry.query),
+          );
         }
         if (store.persistent && entry.query.method === Methods.RUN_LIST) {
           const listed = reply.data as RunListResult;

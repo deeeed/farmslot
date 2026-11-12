@@ -2,8 +2,8 @@ import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { mock } from 'node:test';
 
-// The production PTY module changes tmux options on import. Child-shell tests
-// must never load it or invoke PTY operations.
+// Child-shell tests do not own PTYs or tmux operations. Keep the real PTY
+// module out of their dependency graph.
 const forbidden = (): never => {
   throw new Error('unexpected PTY operation in isolated test');
 };

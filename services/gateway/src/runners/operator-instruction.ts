@@ -11,7 +11,7 @@ import { selectAgentContext } from '../agents/contexts.js';
 import { resolveNativeContext } from '../agents/native-context.js';
 import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { resolveTmuxPaneId } from '../core/tmux.js';
-import { blindTrialWorkerCapsule } from '../evals/blind-git.js';
+import { blindTrialWorkerBoundary } from '../evals/blind-git.js';
 import { getRun } from '../runs/store.js';
 
 import {
@@ -133,7 +133,7 @@ export async function deliverOperatorInstruction(
         recoveryHandle: handle,
         initialPrompt: text,
         beforeRespawn: assertCurrent,
-        blindTrialCapsule: blindTrialWorkerCapsule(run, context.role),
+        blindTrialBoundary: blindTrialWorkerBoundary(run, context.role),
         modelQuestions: modelQuestionsForRun(run),
       });
       if (!resumed.ok) throw new Error(resumed.error);

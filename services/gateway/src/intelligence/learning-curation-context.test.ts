@@ -42,7 +42,8 @@ test('curation reads configured shared/overlay rules and retained evidence after
   t.after(async () => {
     updateRun(run.id, { status: 'cancelled' });
     await deleteRun(run.id);
-    await rm(root, { recursive: true, force: true });
+    // Run-store writes can recreate directories while teardown removes the fixture.
+    await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 });
   });
   const task = path.join(root, 'task');
   await mkdir(path.join(task, 'artifacts'), { recursive: true });

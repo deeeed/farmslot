@@ -300,16 +300,20 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
   // Pane ownership and shell quiescence must be proven before stopping a
   // managed daemon: an unrecorded worker for another task may share this home.
   if (isTerminalRunStatus(run.status)) {
-    const blocker = await cleanupSlotRunnerRuntimes(vars, {
-      stillOwned: async () => {
-        const row = await readSlotRow(slotId);
-        return (
-          row?.slot_epoch === ownerAtInspection?.slot_epoch &&
-          (await slotOwnershipBlocker(run)) === null
-        );
-      },
-    });
+    const stillOwned = async () => {
+      const row = await readSlotRow(slotId);
+      return (
+        row?.slot_epoch === ownerAtInspection?.slot_epoch &&
+        (await slotOwnershipBlocker(run)) === null
+      );
+    };
+    const blocker = await cleanupSlotRunnerRuntimes(vars, { stillOwned });
     if (blocker) return blocker;
+    const browserBlocker = await reapSlotBrowserSession(vars, {
+      stillOwned,
+      includeSlotProfiles: true,
+    });
+    if (browserBlocker) return browserBlocker;
   }
   const census = await execOnSlot(vars, `lsof -a -d cwd -Fpn 2>/dev/null`, {
     cwd: '/',

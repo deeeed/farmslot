@@ -1280,6 +1280,64 @@ for (const [failure, routerId] of ['http', 'timeout', 'json', 'empty'].flatMap((
   });
 }
 
+for (const [setting, configured] of [
+  ['OLLAMA_HOST', false],
+  ['OLLAMA_BASE_URL', false],
+  ['FARMSLOT_PI_OLLAMA', true],
+  ['FARMSLOT_PI_OLLAMA_URL', true],
+]) {
+  test(`unreachable Ollama with ${setting} is ${configured ? 'required' : 'optional'} for catalog listing`, async (t) => {
+    const { listPiModelCatalog } = await import('./pi-farmslot-providers.mjs');
+    const server = http.createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    t.after(() => server.close());
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    await new Promise((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    const endpoint = `http://127.0.0.1:${address.port}`;
+    const env = {
+      OLLAMA_HOST: endpoint,
+      [setting]: setting === 'FARMSLOT_PI_OLLAMA' ? '1' : endpoint,
+    };
+    const reports = [];
+    assert.deepEqual(
+      await resolvePiProviderCatalog(env, { onDiscovery: (report) => reports.push(report) }),
+      [],
+    );
+    const dir = mkdtempSync(join(tmpdir(), 'pi-ollama-catalog-'));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const binary = join(dir, 'pi-fixture');
+    writeFileSync(
+      binary,
+      `#!${process.execPath}
+if (process.argv.includes('-e')) {
+  const { resolvePiProviderCatalog } = await import(${JSON.stringify(new URL('./pi-farmslot-providers.mjs', import.meta.url).href)});
+  const sources = [];
+  await resolvePiProviderCatalog(process.env, { onDiscovery: source => sources.push(source) });
+  console.log(JSON.stringify({ type: 'farmslot.pi-provider-discovery', sources }));
+}
+console.log('provider model\\nxai native-model');
+`,
+      { mode: 0o755 },
+    );
+    const listing = listPiModelCatalog(binary, env, { args: ['-e', 'fixture'] });
+    if (configured)
+      await assert.rejects(listing, /Pi configured provider ollama discovery is incomplete/);
+    else
+      assert.deepEqual(await listing, {
+        ids: ['xai/native-model'],
+        nativeIds: ['xai/native-model'],
+        aliases: {},
+        configuredProviders: [],
+      });
+    assert.deepEqual(reports, [
+      { provider: 'ollama', configured, status: 'failed', modelCount: 0 },
+    ]);
+  });
+}
+
 for (const scenario of ['catalog-ready', 'catalog-failed']) {
   test(`extension emits a structured discovery report during ${scenario} listing`, () => {
     const result = runExtensionCheck(scenario);

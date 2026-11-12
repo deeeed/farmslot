@@ -622,15 +622,10 @@ async function resolvePiSources(sources, env, opts) {
       ]);
       opts.onDiscovery?.({
         provider: source.id,
-        // The default localhost probe is optional; explicit endpoints must be accounted for.
+        // Shell-inherited Ollama endpoints remain optional until Farmslot explicitly opts in.
         configured:
           source.id !== 'ollama' ||
-          Boolean(
-            env.FARMSLOT_PI_OLLAMA === '1' ||
-            env.FARMSLOT_PI_OLLAMA_URL ||
-            env.OLLAMA_BASE_URL ||
-            env.OLLAMA_HOST,
-          ),
+          Boolean(env.FARMSLOT_PI_OLLAMA === '1' || env.FARMSLOT_PI_OLLAMA_URL),
         status: failed ? 'failed' : 'ready',
         modelCount: rows.length,
       });

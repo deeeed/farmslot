@@ -526,3 +526,57 @@ test('the parent acceptance panel owns the only collapse header', () => {
   const plain = litText(Object.assign(pipeline(), { collapsiblePanels: false }).render());
   assert.match(plain, /class="ac-summary"/);
 });
+
+test('static review header keeps the machine, workspace and checkout visible after cleanup', () => {
+  const ctx = context();
+  ctx.run = {
+    ...run,
+    slotId: null,
+    agentContexts: [],
+    reviewWorkspaceTarget: { machine: 'macpro' },
+    reviewWorkspace: {
+      machine: 'macpro',
+      executionNodeId: 'macpro',
+      workspaceId: 'workspace-retained',
+      checkoutPath: '/review/source',
+      taskPath: '/review/task',
+      artifactPath: '/review/artifacts',
+      cleanedAt: '2026-11-12T00:00:00Z',
+    },
+  };
+  const text = litText(renderRunDetailView(ctx));
+  assert.match(text, /Review workspace/);
+  assert.match(text, /Workspace <code>workspace-retained/);
+  assert.match(text, />\/review\/source<\/code/);
+  assert.match(text, /cleaned/);
+});
+
+test('unallocated review header names the selected machine without claiming a worktree', () => {
+  const ctx = context();
+  ctx.run = {
+    ...run,
+    slotId: null,
+    agentContexts: [],
+    status: 'failed',
+    reviewWorkspaceTarget: { machine: 'mini' },
+  };
+  const text = litText(renderRunDetailView(ctx));
+  assert.match(text, /mini · No worktree allocated/);
+  assert.doesNotMatch(text, /data-testid="review-checkout-path"/);
+});
+
+test('pipeline review header uses each reviewer retained placement', () => {
+  const ctx = context();
+  ctx.run = {
+    ...run,
+    agentContexts: [
+      {
+        ...agent('review'),
+        executionLocation: { machine: 'mini', checkoutPath: '/original/checkout' },
+      },
+    ],
+  };
+  const text = litText(renderRunDetailView(ctx));
+  assert.match(text, /Review execution/);
+  assert.match(text, />\/original\/checkout<\/code/);
+});

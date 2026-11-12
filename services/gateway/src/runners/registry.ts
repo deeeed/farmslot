@@ -1,7 +1,7 @@
 import { CLAUDE_ACP_EFFORTS } from '@farmslot/agent-runtime/native/claude-acp';
 import { nativeRunnerDefinitions } from '@farmslot/agent-runtime/native/registry';
 
-import { resolvePiBinary, resolvePiModel, withPiModelCatalogExtension } from './launch-command.js';
+import { resolvePiBinary, resolvePiModel } from './launch-command.js';
 import {
   runnerPaneContainsInstruction,
   runnerPaneHasQueuedInstruction,
@@ -681,7 +681,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
       nodeCommand: 'pi',
       slotPathKey: 'piPath',
       args: ['--list-models'],
-      prepareCommand: withPiModelCatalogExtension,
       parse: parsePiModelCatalog,
       resolveModel: resolvePiModel,
       buildCommand: buildPiModelCatalogCommand,
