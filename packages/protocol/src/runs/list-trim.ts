@@ -33,6 +33,15 @@ export const RUN_LIST_PAYLOAD_VALUE_LIMIT = 2048;
  */
 export const RUN_LIST_STEP_OUTPUT_VALUE_LIMIT = 512;
 
+/**
+ * Whether `value`'s JSON is larger than `limit` UTF-8 bytes. A character is one to three
+ * bytes, so the bytes are counted only when the JSON's length leaves the answer open.
+ */
+function jsonLargerThan(value: unknown, limit: number): boolean {
+  const json = JSON.stringify(value);
+  return json.length > limit || (json.length * 3 > limit && utf8ByteLength(json) > limit);
+}
+
 export function trimDecisionForList(decision: RunDecision): RunDecision {
   const trimmed: string[] = [];
   let context = decision.context;
@@ -48,10 +57,7 @@ export function trimDecisionForList(decision: RunDecision): RunDecision {
   const kept = { ...decision.payload } as Partial<RunDecisionPayload>;
   for (const key of Object.keys(kept) as Array<keyof RunDecisionPayload>) {
     const value = kept[key];
-    if (
-      value !== undefined &&
-      utf8ByteLength(JSON.stringify(value)) > RUN_LIST_PAYLOAD_VALUE_LIMIT
-    ) {
+    if (value !== undefined && jsonLargerThan(value, RUN_LIST_PAYLOAD_VALUE_LIMIT)) {
       delete kept[key];
       trimmed.push(key);
     }
@@ -174,8 +180,7 @@ function presenceOutput(value: unknown): unknown {
  * RUN_LIST_STEP_OUTPUT_VALUE_LIMIT bytes, undefined when it is larger.
  */
 function smallOutput(value: unknown): unknown {
-  return value !== undefined &&
-    utf8ByteLength(JSON.stringify(value)) <= RUN_LIST_STEP_OUTPUT_VALUE_LIMIT
+  return value !== undefined && !jsonLargerThan(value, RUN_LIST_STEP_OUTPUT_VALUE_LIMIT)
     ? value
     : undefined;
 }
@@ -241,8 +246,11 @@ function stepOutputsLost(
   slim: Record<string, unknown> | undefined,
 ): boolean {
   if (!outputs || !slim) return false;
+  // A value served as the step holds it is the same object: nothing to compare.
   return Object.keys(outputs).some(
-    (key) => !(key in slim) || JSON.stringify(slim[key]) !== JSON.stringify(outputs[key]),
+    (key) =>
+      !(key in slim) ||
+      (slim[key] !== outputs[key] && JSON.stringify(slim[key]) !== JSON.stringify(outputs[key])),
   );
 }
 

@@ -172,6 +172,9 @@ test('step output prose and host paths are not run artifacts', () => {
             subSteps: [{ detail: 'Rendering run-1/CHECKLIST.md' }],
             artifacts: [{ path: 'inputs/handoff.json', purpose: 'handoff' }],
             recording: 'artifacts/run.mov',
+            // A path that leaves the run directory is not one; a name that only holds dots is.
+            escaped: '../outside/notes.md',
+            ranged: 'artifacts/v1..v2.diff',
           },
         },
       ],
@@ -180,7 +183,7 @@ test('step output prose and host paths are not run artifacts', () => {
 
   assert.deepEqual(
     artifacts.map((artifact) => artifact.path),
-    ['inputs/handoff.json', 'artifacts/run.mov'],
+    ['inputs/handoff.json', 'artifacts/run.mov', 'artifacts/v1..v2.diff'],
   );
 });
 

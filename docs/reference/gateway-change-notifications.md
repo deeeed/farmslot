@@ -355,7 +355,9 @@ totalCount, summaryMeta, familySummaries, projectAnalytics }` for every live
    `outputsTrimmed: true` marks a step that lost inputs or output values,
    `detailTrimmed: true` marks a row that left out any other heavy key, and
    `output.artifactManifestOmitted` the output manifest; `runHasTrimmedDetail`
-   reads all four. Full runs come from `run.get` / `run.forSlot`.
+   reads all four. Full runs come from `run.get` / `run.forSlot`. The gateway
+   derives a run's row, its size and its version once per run change, and every
+   request is served from those.
 
    On every stored run measured, a client build older than the served summary
    shows against this gateway the same video and compare chips, opens the same

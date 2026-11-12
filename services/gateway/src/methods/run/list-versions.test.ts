@@ -265,8 +265,11 @@ test(
     const live = getRun(run.id)!;
     live.summary = 'unpublished in-place write';
     const listed = (await runList({ versions: true })).versions!.find(({ id }) => id === run.id);
+    const page = await runList({ ids: [run.id] });
     live.summary = 'changed before the warm-up';
     assert.deepEqual(listed, expected);
+    // The warm-up derived the served row as well, not only its version.
+    assert.equal(page.runs[0]?.summary, 'changed before the warm-up');
   },
 );
 
@@ -304,6 +307,35 @@ test(
     const changed = await runList({ ids: [run.id] });
     assert.deepEqual(changed.versions, [servedVersion(run.id)]);
     assert.notDeepEqual(changed.versions, first.versions);
+  },
+);
+
+test(
+  'a row is derived once per run change and shared by the plain list and the ids page',
+  TEST_TIMEOUT,
+  async (t) => {
+    const changed = fixtureRun(t, 'ROW-MEMO-CHANGED', 'before');
+    const untouched = fixtureRun(t, 'ROW-MEMO-UNTOUCHED', 'kept');
+    addDroppedDetail(untouched.id, 10_000);
+    const rowOf = (reply: { runs: RunListRow[] }, id: string) =>
+      reply.runs.find((row) => row.id === id);
+
+    const plain = await runList({});
+    const page = await runList({ ids: [changed.id, untouched.id] });
+    assert.deepEqual(rowOf(plain, changed.id), servedRow(changed.id));
+    assert.deepEqual(rowOf(plain, untouched.id), servedRow(untouched.id));
+    // The ids page serves the very objects the plain list derived: no row is derived twice.
+    assert.equal(rowOf(page, changed.id), rowOf(plain, changed.id));
+    assert.equal(rowOf(page, untouched.id), rowOf(plain, untouched.id));
+
+    // A run change derives that run's row again, and no other run's.
+    updateRun(changed.id, { summary: 'after' });
+    const next = await runList({ ids: [changed.id, untouched.id] });
+    assert.notEqual(rowOf(next, changed.id), rowOf(plain, changed.id));
+    assert.deepEqual(rowOf(next, changed.id), servedRow(changed.id));
+    assert.equal(rowOf(next, changed.id)?.summary, 'after');
+    assert.equal(rowOf(next, untouched.id), rowOf(plain, untouched.id));
+    assert.equal(rowOf(await runList({}), changed.id), rowOf(next, changed.id));
   },
 );
 

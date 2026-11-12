@@ -210,11 +210,10 @@ export function listStepArtifactPaths(
  */
 export function summarizeRunEvidence(run: RunEvidenceSource): RunEvidenceSummary {
   const runArtifacts = extractRunArtifactManifest(run);
-  // Same set as runEvidenceArtifacts, without extracting the run's artifacts twice.
-  const artifacts = dedupeRunArtifacts([
-    ...(run.liveRecipeContext?.artifactManifest ?? []),
-    ...runArtifacts,
-  ]);
+  // Same set as runEvidenceArtifacts, without extracting the run's artifacts twice; they are
+  // one entry per path already, so only a live recipe manifest needs merging in.
+  const live = run.liveRecipeContext?.artifactManifest ?? [];
+  const artifacts = live.length > 0 ? dedupeRunArtifacts([...live, ...runArtifacts]) : runArtifacts;
   return {
     artifactCount: artifacts.length,
     videoCount: artifacts.filter(isRunEvidenceVideoArtifact).length,
@@ -404,6 +403,13 @@ const LATEST_RUN_ARTIFACT_FIELDS = [
   'bundleDigest',
 ] as const;
 
+/** The fields mergeRunArtifactMetadata settles itself, before it fills in the rest. */
+const MERGED_RUN_ARTIFACT_FIELDS: ReadonlySet<PropertyKey> = new Set([
+  'path',
+  'purpose',
+  ...LATEST_RUN_ARTIFACT_FIELDS,
+]);
+
 function mergeRunArtifactMetadata<T extends RunArtifactManifestEntry>(existing: T, incoming: T): T {
   const merged = { ...existing };
   for (const key of LATEST_RUN_ARTIFACT_FIELDS) {
@@ -413,9 +419,8 @@ function mergeRunArtifactMetadata<T extends RunArtifactManifestEntry>(existing: 
     runArtifactPurposeSpecificity(incoming.purpose) >
     runArtifactPurposeSpecificity(existing.purpose);
   if (incomingIsMoreSpecific) merged.purpose = incoming.purpose;
-  const fixed = new Set<keyof T>(['path', 'purpose', ...LATEST_RUN_ARTIFACT_FIELDS]);
   for (const key of Object.keys(incoming) as Array<keyof T>) {
-    if (fixed.has(key) || incoming[key] === undefined) continue;
+    if (MERGED_RUN_ARTIFACT_FIELDS.has(key) || incoming[key] === undefined) continue;
     if (merged[key] === undefined || incomingIsMoreSpecific) merged[key] = incoming[key];
   }
   return merged;

@@ -10,7 +10,6 @@ import {
   type RunGetResult,
   type RunListParams,
   type RunListResult,
-  runListRow,
   type RunRecipeRunsForRunParams,
   type RunRecipeRunsForRunResult,
   type RunRecipeRunsForSlotParams,
@@ -35,7 +34,12 @@ import {
 } from '../../run-completion/retained-artifacts.js';
 import { inspectedRun } from '../../run-engine/gate-inspection.js';
 import { enrichDecisionsWithGateSummary } from '../../run-engine/gate-summary.js';
-import { runListIdsPage, runListVersion, runListVersions } from '../../runs/list-version.js';
+import {
+  runListIdsPage,
+  runListVersion,
+  runListVersions,
+  servedRunListRow,
+} from '../../runs/list-version.js';
 import {
   getAllRuns,
   getLiveRunsByIds,
@@ -108,9 +112,9 @@ export async function runList(params: RunListParams): Promise<RunListResult> {
   const result = listRuns(params);
   // Summaries read the full runs; the listed rows then shed the fields only a
   // single run's page renders and carry the run's evidence summary (see
-  // @farmslot/protocol runs/list-trim.ts `runListRow`).
+  // @farmslot/protocol runs/list-trim.ts `runListRow`), derived once per run change.
   const withSummaries = attachRunListSummaries(result, params);
-  return { ...withSummaries, runs: result.runs.map(runListRow) };
+  return { ...withSummaries, runs: result.runs.map(servedRunListRow) };
 }
 
 export function selectActiveRunForSlot(
