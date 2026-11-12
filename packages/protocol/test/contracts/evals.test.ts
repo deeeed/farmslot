@@ -280,6 +280,22 @@ test('isEvalExperimentManifest accepts experiment cases, strategies, and trials'
   assert.equal(isEvalExperimentManifest(base), true);
   assert.equal(isEvalExperimentManifest({ ...base, kind: 'old-eval' }), false);
   assert.equal(
+    isEvalExperimentManifest({
+      ...base,
+      trials: [{ ...base.trials[0], reviewRunner: 'pi', reviewModel: 'litellm/claude-sonnet-5-5' }],
+    }),
+    true,
+  );
+  for (const invalid of [{ reviewRunner: 42 }, { reviewModel: false }]) {
+    assert.equal(
+      isEvalExperimentManifest({
+        ...base,
+        trials: [{ ...base.trials[0], ...invalid }],
+      }),
+      false,
+    );
+  }
+  assert.equal(
     isEvalExperimentManifest({ ...base, case: { ...base.case, referencePackagePath: undefined } }),
     false,
   );

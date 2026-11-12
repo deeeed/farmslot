@@ -1,0 +1,1 @@
+- Answer `fs.readText` (whole file or tail, capped) and `fs.isFile` without a shell, declared as the `textReads` observation capability.

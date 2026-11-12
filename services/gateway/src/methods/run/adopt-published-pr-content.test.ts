@@ -13,6 +13,8 @@ import {
   type RunAdoptPublishedPrParams,
 } from '@farmslot/protocol';
 
+import type { GitHubService, RestServiceOpts } from '../../integrations/github-client.js';
+
 await import('../../runtime/mock-pty.test-support.js');
 const { runAdoptPublishedPr } = await import('./adopt-published-pr.js');
 const { differingPatchFiles } = await import('./publication-content-match.js');
@@ -31,6 +33,9 @@ const approver = {
   displayName: 'Operator',
 };
 const noop = () => {};
+function notImpl(): never {
+  throw new Error('method not implemented in test fake');
+}
 
 const reviewedDiff = [
   'diff --git a/src/order.ts b/src/order.ts',
@@ -184,17 +189,26 @@ function dependencies(
     authorizeEvidenceAttestation: () => approver,
     repository: async () => 'owner/repo',
     discover: async () => null,
-    github: async (args) => {
-      if (args.some((arg) => arg.endsWith('/commits')))
-        return { stdout: `${reviewedHead}\n${prHead}\n`, stderr: '' };
-      if (args.includes('Accept: application/vnd.github.diff')) {
-        const target = args.find((arg) => arg.includes('/compare/'));
-        if (!target) throw new Error('the PR diff must be read for a pinned range');
-        compares?.push(target);
-        return { stdout: published, stderr: '' };
-      }
-      return {
-        stdout: JSON.stringify({
+    github: {
+      prView: notImpl,
+      prList: notImpl,
+      prListFields: notImpl,
+      prChecks: notImpl,
+      prCreate: notImpl,
+      prEdit: notImpl,
+      prComment: notImpl,
+      prReady: notImpl,
+      repoView: notImpl,
+      graphql: notImpl,
+      rest: async <T>(_method: string, path: string, opts?: RestServiceOpts): Promise<T> => {
+        if (path.endsWith('/commits')) return [{ sha: reviewedHead }, { sha: prHead }] as T;
+        if (opts?.headers?.Accept?.includes('vnd.github.diff')) {
+          if (!path.includes('/compare/'))
+            throw new Error('the PR diff must be read for a pinned range');
+          compares?.push(path);
+          return published as T;
+        }
+        return {
           number: 541,
           html_url: 'https://github.com/owner/repo/pull/541',
           state: 'closed',
@@ -202,10 +216,9 @@ function dependencies(
           draft: false,
           base: { sha: prBase, repo: { full_name: 'owner/repo' } },
           head: { sha: prHead, ref: prBranch, repo: { full_name: headRepo } },
-        }),
-        stderr: '',
-      };
-    },
+        } as T;
+      },
+    } satisfies GitHubService,
     readiness: async (run) => ({
       state: 'ready',
       identity: { runId: run.id, generation: 1 },

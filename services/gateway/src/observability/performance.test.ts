@@ -4,9 +4,13 @@ import test from 'node:test';
 import { PerformanceRecorder } from '@farmslot/protocol/performance';
 
 import {
+  gatewayPerformance,
   measureGatewayRequest,
   measureManagedOperation,
   recordGatewayResponse,
+  recordHostOperationExec,
+  registerHostOperations,
+  withHostOperation,
 } from './performance.js';
 
 test('new methods inherit dispatch, response bytes and concurrent process attribution', async () => {
@@ -91,4 +95,50 @@ test('detached execution and node wait remain outside a completed request costs'
     rows.find((row) => row.name === 'farmslot_node_wait_seconds_total')?.labels.method,
     '_background',
   );
+});
+
+test('commands a host service starts outside a request are counted under its operation', async () => {
+  const execCalls = (method: string, kind: string) =>
+    gatewayPerformance
+      .snapshot()
+      .counters.find(
+        (row) =>
+          row.name === 'farmslot_exec_calls_total' &&
+          row.labels.method === method &&
+          row.labels.kind === kind,
+      )?.value ?? 0;
+  registerHostOperations(['fixture.read']);
+
+  await withHostOperation('fixture.read', () =>
+    measureManagedOperation('exec', 'git', async () => {}),
+  );
+  assert.equal(execCalls('host:fixture.read', 'git'), 1);
+
+  // Inside a request the command stays the request's cost.
+  const metrics = new PerformanceRecorder('gateway', { methods: new Set(['foreground']) });
+  await measureGatewayRequest(
+    'foreground',
+    () =>
+      withHostOperation('fixture.read', () =>
+        measureManagedOperation('exec', 'git', async () => {}),
+      ),
+    metrics,
+  );
+  assert.equal(
+    metrics.snapshot().counters.find((row) => row.name === 'farmslot_exec_calls_total')?.labels
+      .method,
+    'foreground',
+  );
+  assert.equal(execCalls('host:fixture.read', 'git'), 1);
+
+  // An operation nobody registered reads as unknown, like an unknown RPC method.
+  const unknownBefore = execCalls('_unknown', 'shell');
+  await withHostOperation('fixture.unregistered', () =>
+    measureManagedOperation('exec', 'shell', async () => {}),
+  );
+  assert.equal(execCalls('_unknown', 'shell'), unknownBefore + 1);
+
+  // Commands another process ran for an operation are added under the same label.
+  recordHostOperationExec('fixture.read', { git: { calls: 3, seconds: 1.5 } });
+  assert.equal(execCalls('host:fixture.read', 'git'), 4);
 });

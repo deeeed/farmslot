@@ -75,12 +75,26 @@ const nativeMirror = await import('../run-completion/artifact-mirror.js');
 const nativeDraft = await import('../run-completion/draft-pr.js');
 const nativeTemplate = await import('../run-completion/pr-template.js');
 const nativeSession = await import('../runners/session-process.js');
+const guardGithubRequest = async (): Promise<never> => {
+  githubRequests++;
+  throw new Error('The gate headline fixture never reaches GitHub');
+};
 mock.module('../integrations/github-client.js', {
   namedExports: {
     ...nativeGithub,
-    ghRequest: async () => {
-      githubRequests++;
-      throw new Error('The gate headline fixture never reaches GitHub');
+    github: {
+      ...nativeGithub.github,
+      prView: guardGithubRequest,
+      prList: guardGithubRequest,
+      prListFields: guardGithubRequest,
+      prChecks: guardGithubRequest,
+      prCreate: guardGithubRequest,
+      prEdit: guardGithubRequest,
+      prComment: guardGithubRequest,
+      prReady: guardGithubRequest,
+      repoView: guardGithubRequest,
+      graphql: guardGithubRequest,
+      rest: guardGithubRequest,
     },
   },
 });

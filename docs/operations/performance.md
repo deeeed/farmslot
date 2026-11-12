@@ -20,7 +20,10 @@ the subscriber's queued render and data frame. Refresh timing stays separate.
 Read counters include cache source, age, stale/blocking state and opaque per-query
 rereads per minute. Client-window gauges preserve each source's report times on
 its own clock. Managed exec/node counts and elapsed time cover shared helpers,
-not shell descendants or exclusive CPU time.
+not shell descendants or exclusive CPU time. Their `method` label is the RPC
+that started the command; outside a request it is `host:<operation>` for a
+command a host service (`services/gateway/src/host-services`) started, and
+`_background` otherwise.
 
 To investigate and improve:
 

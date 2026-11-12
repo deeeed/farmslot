@@ -23,7 +23,7 @@ import { ReviewApprovalPolicyError } from '@farmslot/protocol/review-approval-po
 
 import { farmslotRoot, getProjectField, resolveProjectTaskDirName } from '../core/config.js';
 import { fetchGitHubPR, fetchPRDiffFiles } from '../external/github.js';
-import { ghRequest } from '../integrations/github-client.js';
+import { github } from '../integrations/github-client.js';
 import { findPRNumber, persistRunPrNumber } from '../integrations/pr-linkage.js';
 import { auditEvidenceQuality } from '../intelligence/engine.js';
 import { resolveDefaultPublicationAccount } from '../pr-monitoring/github-account.js';
@@ -547,25 +547,11 @@ export async function executeReviewGate(runId: string, stepGeneration?: number):
             };
             const body = (prefix[sev] ?? '') + (c.body ?? '');
             try {
-              await ghRequest(
-                [
-                  'api',
-                  `repos/${ciRepo}/pulls/${prNumber}/comments`,
-                  '-X',
-                  'POST',
-                  '-f',
-                  `body=${body}`,
-                  '-f',
-                  `commit_id=${commitId}`,
-                  '-f',
-                  `path=${c.path}`,
-                  '-F',
-                  `line=${c.line}`,
-                  '-f',
-                  'side=RIGHT',
-                ],
-                { force: true, account: publicationAccount?.binding },
-              );
+              await github.rest<unknown>('POST', `repos/${ciRepo}/pulls/${prNumber}/comments`, {
+                body: { body, commit_id: commitId, path: c.path, line: c.line, side: 'RIGHT' },
+                force: true,
+                account: publicationAccount?.binding,
+              });
               posted++;
               updateRunStep(runId, S.HUMAN_GATE, {
                 detail: `Posting comments ${posted}/${commentsToPost.length}...`,

@@ -11,6 +11,8 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
+import { fakeGitHubService } from '../integrations/github-test-fixtures.js';
+
 process.env.NODE_TEST_CONTEXT = '1';
 await import('../runtime/mock-pty.test-support.js');
 const config = await import('../core/config.js');
@@ -41,33 +43,26 @@ let writes: string[] = [];
 let uploads: string[][] = [];
 let onUpload: (() => void | Promise<void>) | undefined;
 const github = await import('../integrations/github-client.js');
-mock.module('../integrations/github-client.js', {
-  namedExports: {
-    ...github,
-    ghRequest: async (args: string[]) => {
-      if (args[0] === 'api')
-        return {
-          stdout: JSON.stringify({
-            number: pr.number,
-            html_url: pr.url,
-            state: 'closed',
-            merged_at: new Date().toISOString(),
-            draft: false,
-            base: { sha: 'e'.repeat(40), repo: { full_name: 'owner/repo' } },
-            head: { sha: pr.headRefOid, ref: pr.headRefName, repo: { full_name: 'owner/repo' } },
-          }),
-          stderr: '',
-        };
-      if (args[0] === 'pr' && args[1] === 'list') return { stdout: '[{"number":193}]', stderr: '' };
-      if (args[0] === 'pr' && args[1] === 'view') return { stdout: JSON.stringify(pr), stderr: '' };
-      if (args[0] === 'pr' && args[1] === 'edit') {
-        pr.body = await readFile(args[args.indexOf('--body-file') + 1], 'utf8');
-        writes.push(pr.body);
-        return { stdout: '', stderr: '' };
-      }
-      throw new Error(`Unexpected GitHub operation: ${args.slice(0, 2).join(' ')}`);
-    },
+const adoptFakeGithub = fakeGitHubService(github.github, {
+  prView: async () => ({ ...pr }),
+  prListFields: async () => [{ number: 193 }],
+  prEdit: async (_repo, _number, params) => {
+    pr.body = params.body ?? '';
+    writes.push(pr.body);
+    return '';
   },
+  rest: async () => ({
+    number: pr.number,
+    html_url: pr.url,
+    state: 'closed',
+    merged_at: new Date().toISOString(),
+    draft: false,
+    base: { sha: 'e'.repeat(40), repo: { full_name: 'owner/repo' } },
+    head: { sha: pr.headRefOid, ref: pr.headRefName, repo: { full_name: 'owner/repo' } },
+  }),
+});
+mock.module('../integrations/github-client.js', {
+  namedExports: { ...github, github: adoptFakeGithub },
 });
 const artifacts = await import('./publication-artifacts.js');
 mock.module('./publication-artifacts.js', {

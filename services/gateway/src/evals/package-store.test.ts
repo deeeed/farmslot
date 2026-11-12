@@ -782,3 +782,20 @@ test('scanResultPackageArtifacts caps recursive artifact hashing', async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('a judge skipped by review config finalizes without a verdict or review evidence', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'eval-disabled-review-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const run = await firstOutputFixture(root, makeRun(root));
+  await freezeEvalFirstOutputPackage(run, {});
+  run.steps = [
+    {
+      name: 'review',
+      status: 'done',
+      outputs: { skipped: true, reason: 'disabled-for-project', retryCount: 0 },
+    },
+  ];
+  const finalized = await finalizeEvalResultPackageForRun(run);
+  assert.equal(finalized?.status, 'final');
+  assert.deepEqual(finalized?.reviewEvidence, []);
+});

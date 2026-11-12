@@ -5,6 +5,7 @@ import { mkdir, open, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { testGatewayIdentity } from '../../lib/test-gateway-identity.mjs';
+import { startPreviewPagesFixture } from '../fixtures/gh-preview-pages.mjs';
 
 assert.equal(process.env.FARMSLOT_ASSESSMENT_VALIDATION, '1');
 const out = process.env.PR_PREVIEW_RESUME_OUT,
@@ -57,9 +58,11 @@ await writeFile(
   { mode: 0o700 },
 );
 testGatewayIdentity(path.join(out, 'home'), `ws://127.0.0.1:${port}`);
+const github = await startPreviewPagesFixture(out);
 const env = {
   ...process.env,
   PATH: `${bin}:${process.env.PATH}`,
+  FARMSLOT_GITHUB_API_URL: github.origin,
   FARMSLOT_ROOT: root,
   FARMSLOT_HOME: path.join(out, 'home'),
   FARMSLOT_POOL_DIR: path.join(root, 'pool'),
@@ -218,4 +221,5 @@ try {
   console.log(JSON.stringify(result));
 } finally {
   await stop();
+  await github.close();
 }

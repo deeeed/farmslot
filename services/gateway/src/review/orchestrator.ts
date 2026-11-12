@@ -270,9 +270,7 @@ export function shouldSkipForDisabledReviewConfig(
     run && isInteractiveDevRun(run) && run.devInteractiveProfile === 'reviewed';
   return (
     !config.enabled &&
-    options.publicationReview !== true &&
-    !options.evalJudge &&
-    !explicitlyReviewed
+    (options.evalJudge || (options.publicationReview !== true && !explicitlyReviewed))
   );
 }
 
@@ -404,7 +402,12 @@ async function executeOwnedReview(
 
   const vars = await loadSlotVars(slotId);
   const workerRunner = normalizeRunner(run.metrics.runner);
-  const { reviewRunner, model } = resolveReviewRunnerModel(config, options);
+  const trial = run.engineState?.evalExperiment;
+  const { reviewRunner, model } = resolveReviewRunnerModel(config, {
+    ...options,
+    ...(trial?.reviewRunner ? { reviewRunner: trial.reviewRunner } : {}),
+    ...(trial?.reviewModel ? { model: trial.reviewModel } : {}),
+  });
   const maxRetries = resolveReviewMaxRetries({
     publicationReview: options.publicationReview,
     configuredMaxRetries: config.max_retries,

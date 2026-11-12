@@ -5,6 +5,7 @@ import path from 'node:path';
 import { failedRunCancelEffects, type FlowType, parseGitHubRef } from '@farmslot/protocol';
 
 import { farmslotRoot, getCachedFleet } from '../fleet/state.js';
+import { github } from '../integrations/github-client.js';
 import { decisionList } from '../methods/decisions.js';
 import { operatorSnapshot, runContextBundle, runRecoveryProposal } from '../methods/operator.js';
 import { terminalSend } from '../methods/terminal.js';
@@ -225,24 +226,20 @@ export async function executeTool(
           );
         }
         const repoSlug = parsedRef.repo;
-        const number = String(parsedRef.number);
-        const { ghRequest } = await import('../integrations/github-client.js');
-        const pr = await ghRequest([
-          'pr',
-          'view',
-          String(number),
-          '--repo',
-          repoSlug,
-          '--json',
-          'state,title,url,mergeable,headRefName,reviews',
+        const prData = await github.prView(repoSlug, parsedRef.number, [
+          'state',
+          'title',
+          'url',
+          'mergeable',
+          'headRefName',
+          'reviews',
         ]);
-        const prData = JSON.parse(pr.stdout);
         result = {
-          state: prData.state,
-          title: prData.title,
-          url: prData.url,
-          mergeable: prData.mergeable,
-          branch: prData.headRefName,
+          state: prData.state as string,
+          title: prData.title as string,
+          url: prData.url as string,
+          mergeable: prData.mergeable as string,
+          branch: prData.headRefName as string,
           reviewStates: (prData.reviews as Array<{ state: string; author: { login: string } }>).map(
             (r: { state: string; author: { login: string } }) => ({
               author: r.author.login,

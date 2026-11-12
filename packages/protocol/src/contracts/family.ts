@@ -250,7 +250,7 @@ export interface FamilyObservabilitySnapshot {
   /** Absent for a reference-only family: it has eval references but no runs yet. */
   latestRunId?: string;
   latestPrNumber: number | null;
-  workflowState: 'active' | 'complete' | 'failed';
+  workflowState: 'active' | 'complete' | 'failed' | 'unjudged';
   familyRunCount: number;
   activeRunCount: number;
   summary: string;
