@@ -120,6 +120,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
     action: shortName,
     args,
     rest,
+    packed,
   } = parseCallArgs(commandOptions.parsed?.positional ?? argv);
   const { options } = commandOptions.parsed ?? parseArgs(rest);
   if (['domain', 'source', 'sort'].some((name) => optionString(options, name) !== undefined)) {
@@ -355,6 +356,17 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
   const describedAction = describeManifestActions(engine, manifest, actionSources).find(
     (entry) => entry.name === resolvedAction,
   );
+  // Refuse only when every later key is a parameter of this action: other text stays one value.
+  const actionSchema = isRecord(describedAction?.schema) ? describedAction.schema : {};
+  const actionProperties = isRecord(actionSchema.properties) ? actionSchema.properties : {};
+  const folded = packed.find(({ keys }) =>
+    keys.every((key) => Object.hasOwn(actionProperties, key)),
+  );
+  if (folded) {
+    throw usageError(
+      `inputs ${[folded.name, ...folded.keys].join(', ')} were quoted into one argument; pass each key=value as its own argument`,
+    );
+  }
   const defaultsUsed = actionDefaultsUsed(describedAction, args);
   const depsBlock =
     (await harnessAdapter(adapter).run?.dependencyBlock?.(target, { action: resolvedAction })) ??
@@ -938,11 +950,14 @@ interface CallArgs {
   action: string | undefined;
   args: Record<string, unknown>;
   rest: string[];
+  // Inputs whose value reads like more `key=value` inputs: the keys after the first.
+  packed: Array<{ name: string; keys: string[] }>;
 }
 
 function parseCallArgs(argv: string[]): CallArgs {
   const args: Record<string, unknown> = {};
   const rest: string[] = [];
+  const packed: CallArgs['packed'] = [];
   let action: string | undefined;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
@@ -956,18 +971,22 @@ function parseCallArgs(argv: string[]): CallArgs {
     }
     if (action !== undefined && !isForwardedOptionValue(argv, i) && isArgPair(arg)) {
       const eq = arg.indexOf('=');
-      // A shell-quoted `"a=1 b=2"` is one token; never fold the later inputs into the first value.
-      if (/^\S*(?:\s+[A-Za-z_][\w.-]*=\S*)+$/u.test(arg.slice(eq + 1))) {
-        throw usageError(
-          `"${arg}" holds more than one key=value input; pass each as its own argument: ${arg.trim().split(/\s+/u).join(' ')}`,
-        );
+      const value = arg.slice(eq + 1);
+      // A shell-quoted `"a=1 b=2"` is one token. JSON values are literal.
+      if (!/^["{[]/u.test(value) && /^\S*(?:\s+[A-Za-z_][\w.-]*=\S*)+$/u.test(value)) {
+        const keys = value
+          .trim()
+          .split(/\s+/u)
+          .slice(1)
+          .map((token) => token.slice(0, token.indexOf('=')));
+        packed.push({ name: arg.slice(0, eq), keys });
       }
-      args[arg.slice(0, eq)] = parseCallValue(arg.slice(eq + 1));
+      args[arg.slice(0, eq)] = parseCallValue(value);
       continue;
     }
     rest.push(arg);
   }
-  return { action, args, rest };
+  return { action, args, rest, packed };
 }
 
 function parseCallValue(value: string): unknown {

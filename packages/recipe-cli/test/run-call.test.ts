@@ -3765,22 +3765,25 @@ describe('call', () => {
 
   test('refuses several key=value inputs quoted into one argument', async () => {
     const target = checkout();
+    const base = ['--adapter', 'web', '--target', target, '--heal', 'off', '--json'];
     // The shell hands `"mode=fast count=2"` over as one token: it used to become mode="fast count=2".
     await assert.rejects(
-      capture(() =>
-        handleCall(
-          ['shop.ping', 'mode=fast count=2', '--adapter', 'web', '--target', target, '--json'],
-          callOptions,
-        ),
-      ),
+      capture(() => handleCall(['shop.ping', 'mode=fast count=2', ...base], callOptions)),
       {
         name: 'CliError',
         exitCode: 2,
         message:
-          '"mode=fast count=2" holds more than one key=value input; pass each as its own argument: mode=fast count=2',
+          'inputs mode, count were quoted into one argument; pass each key=value as its own argument',
       },
     );
     assert.deepEqual(calls.runners, []);
+    // Text whose extra keys are not parameters, and a JSON-quoted literal, stay one value.
+    for (const value of ['Set leverage=10x', '"mode=fast count=2"']) {
+      const call = await capture(() =>
+        handleCall(['shop.ping', 'mode=fast', `password=${value}`, ...base], callOptions),
+      );
+      assert.equal(call.value, 0, `${value}: ${call.stderr.join('\n')}`);
+    }
   });
 
   test('takes every input as key=value, values that look like flags included', async () => {
