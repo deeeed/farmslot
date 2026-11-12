@@ -69,6 +69,7 @@ import {
 } from '../evals/package-store.js';
 import { resolveProofInput } from '../evals/proof-profile.js';
 import { evalSuiteCapUsage, setEvalSuiteCap } from '../evals/suite-cap-store.js';
+import { EVAL_TRIAL_START_VALIDATION_PREFIX } from '../evals/trial-validation.js';
 import { buildSmartBranch, ticketSlug } from '../intelligence/engine.js';
 import { resolveReviewRunnerModel } from '../review/orchestrator.js';
 import { getReviewConfig } from '../review/templates.js';
@@ -509,26 +510,27 @@ const EVAL_TRIAL_START_PARAMS: Record<keyof EvalTrialStartParams, true> = {
 
 function assertEvalTrialStartParams(params: EvalTrialStartParams): void {
   if (!params || typeof params !== 'object' || Array.isArray(params))
-    throw new Error('Invalid eval.trial.start params: expected an object');
+    throw new Error(`${EVAL_TRIAL_START_VALIDATION_PREFIX} expected an object`);
   const unknown = Object.keys(params).filter((key) => !Object.hasOwn(EVAL_TRIAL_START_PARAMS, key));
   if (unknown.length)
     throw new Error(
-      `Unknown eval.trial.start params: ${unknown.join(', ')}. Allowed params: ${Object.keys(EVAL_TRIAL_START_PARAMS).join(', ')}`,
+      `${EVAL_TRIAL_START_VALIDATION_PREFIX} unknown key(s): ${unknown.join(', ')}; allowed: ${Object.keys(EVAL_TRIAL_START_PARAMS).join(', ')}`,
     );
   if (params.review !== undefined && params.review !== false)
-    throw new Error('Invalid eval.trial.start params: review must be false');
+    throw new Error(`${EVAL_TRIAL_START_VALIDATION_PREFIX} review must be false`);
   if (
     params.review === false &&
     (params.reviewRunner !== undefined || params.reviewModel !== undefined)
   )
     throw new Error(
-      'Invalid eval.trial.start params: review:false cannot be combined with reviewRunner or reviewModel',
+      `${EVAL_TRIAL_START_VALIDATION_PREFIX} review:false cannot be combined with reviewRunner or reviewModel`,
     );
-  if (!params.project?.trim()) throw new Error('Invalid eval.trial.start params: missing project');
+  if (!params.project?.trim())
+    throw new Error(`${EVAL_TRIAL_START_VALIDATION_PREFIX} missing project`);
   if (!params.experimentManifestPath?.trim())
-    throw new Error('Invalid eval.trial.start params: missing experimentManifestPath');
+    throw new Error(`${EVAL_TRIAL_START_VALIDATION_PREFIX} missing experimentManifestPath`);
   if (!params.axes || typeof params.axes !== 'object')
-    throw new Error('Invalid eval.trial.start params: missing axes');
+    throw new Error(`${EVAL_TRIAL_START_VALIDATION_PREFIX} missing axes`);
   if (!isEvalPackageAxes(params.axes))
     throw new Error('Invalid candidate axes: expected EvalPackageAxes');
 }
@@ -693,7 +695,7 @@ export async function evalTrialStart(
   for (const key of ['reviewRunner', 'reviewModel'] as const) {
     const value = params[key];
     if (value !== undefined && (typeof value !== 'string' || !value.trim()))
-      throw new Error(`Invalid eval.trial.start params: ${key} must be a non-empty string`);
+      throw new Error(`${EVAL_TRIAL_START_VALIDATION_PREFIX} ${key} must be a non-empty string`);
   }
   if (params.reviewRunner !== undefined && !isKnownRunner(params.reviewRunner))
     throw new Error(`Unknown review runner: ${params.reviewRunner}`);

@@ -40,6 +40,7 @@ import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import type { InternalDispatchQueueAddParams } from '../core/queue-types.js';
 import { evalSuiteCapUsage } from '../evals/suite-cap-store.js';
+import { EVAL_TRIAL_START_VALIDATION_PREFIX } from '../evals/trial-validation.js';
 import {
   isNodeTransportUnavailableError,
   type NodeTransportUnavailableError,
@@ -1621,7 +1622,7 @@ export async function tryDispatchNext(): Promise<void> {
 function isNonRetryableEvalQueueError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   return (
-    message.startsWith('Invalid eval.trial.start params:') ||
+    message.startsWith(EVAL_TRIAL_START_VALIDATION_PREFIX) ||
     message.startsWith('Invalid candidate axes:') ||
     message.startsWith('Experiment manifest project mismatch:') ||
     message.startsWith('Existing trial has no package path:')

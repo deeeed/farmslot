@@ -554,7 +554,7 @@ test('evalTrialStart persists its judge override and creates a catalog candidate
         async () => {
           await assert.rejects(
             evalTrialStart({ ...trialParams, ...unknown }, () => {}),
-            /Unknown eval.trial.start params: .*Allowed params: .*project.*review/,
+            /Invalid eval.trial.start params: unknown key\(s\): .*; allowed: .*project.*review/,
           );
         },
       );
