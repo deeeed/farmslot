@@ -34,6 +34,17 @@ To investigate and improve:
    snapshots, build and host. Assert result identities too. A cache hit cannot
    replace a network measurement.
 
+For `fleet.status` with `forceRefresh: true`, measure the genuine machine-health
+generation through its committed `checkedAt`. Optional workspace/Git observations
+refresh through their shared background owner and retain their own `observedAt`;
+they do not extend the health request's blocking duration. Remote and local slot
+checks share the same four-worker bound per host. Keep workload, cache state and
+host load in the before/after evidence.
+
+`fleet.refresh` also returns machine health without warming every workspace.
+Acting recovery reads remain fenced: `slot refresh --recover --force` waits for
+the shared observation if its target has no workspace witness yet.
+
 Run `node --import tsx scripts/runner-validation/canary/canary.mts --profile nightly --target isolated --only performance` for the same isolated check used nightly. It saves `performance/snapshot.json` under the dated canary evidence directory.
 
 For native chat streaming latency, run the

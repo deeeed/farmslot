@@ -1,0 +1,1 @@
+- Reduce repeated credential-file checks with a 100 ms recheck window; local writes remain immediate and refresh errors fail closed.
