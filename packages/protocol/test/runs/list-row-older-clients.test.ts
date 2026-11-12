@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { Run } from '../../src/contracts/runs.js';
-import { RUN_LIST_STEP_ARTIFACT_LIMIT } from '../../src/runs/evidence-summary.js';
-import { runListRow, trimRunForList } from '../../src/runs/list-trim.js';
+import {
+  RUN_LIST_STEP_OUTPUT_VALUE_LIMIT,
+  runListRow,
+  trimRunForList,
+} from '../../src/runs/list-trim.js';
 
 import {
   diffArtifactCandidate,
@@ -35,12 +38,42 @@ function evidenceRun(): Run {
           patch: 'artifacts/changes.patch',
           diffStat: { files: 3, additions: 20, deletions: 5 },
           artifacts: [
-            { path: 'evidence/before-login.png', purpose: 'before screenshot', sizeBytes: 400 },
-            { path: 'evidence/after-login.png', purpose: 'after screenshot', sizeBytes: 500 },
-            { path: 'evidence/walkthrough.mp4', purpose: 'video', sizeBytes: 9000 },
-            { path: 'reports/recipe-report.md', purpose: 'report', sizeBytes: 100 },
-            { path: 'reviews/final-review.md', purpose: 'review', sizeBytes: 200 },
-            { path: 'artifacts/check.txt', purpose: 'validation', sizeBytes: 50 },
+            {
+              path: 'evidence/before-login.png',
+              purpose: 'before screenshot',
+              sizeBytes: 400,
+              label: 'Recorded by the recipe run',
+            },
+            {
+              path: 'evidence/after-login.png',
+              purpose: 'after screenshot',
+              sizeBytes: 500,
+              label: 'Recorded by the recipe run',
+            },
+            {
+              path: 'evidence/walkthrough.mp4',
+              purpose: 'video',
+              sizeBytes: 9000,
+              label: 'Recorded by the recipe run',
+            },
+            {
+              path: 'reports/recipe-report.md',
+              purpose: 'report',
+              sizeBytes: 100,
+              label: 'Recorded by the recipe run',
+            },
+            {
+              path: 'reviews/final-review.md',
+              purpose: 'review',
+              sizeBytes: 200,
+              label: 'Recorded by the recipe run',
+            },
+            {
+              path: 'artifacts/check.txt',
+              purpose: 'validation',
+              sizeBytes: 50,
+              label: 'Recorded by the recipe run',
+            },
           ],
         },
       },
@@ -181,22 +214,38 @@ function stepRun(...outputs: Array<Record<string, unknown>>): Run {
   };
 }
 
-// The served row keeps a step's videos, before/after visuals and diff files, not every
-// artifact entry (stored runs average 92 of them). So the counts an older build derives are
-// lower than before until it updates: never higher than that build showed before, never zero
-// for a run with evidence. A current build reads the gateway's summary.
+/** Report entries that push an `artifacts` array over the size line. */
+function reportEntries(count: number): Array<Record<string, unknown>> {
+  return Array.from({ length: count }, (_, index) => ({
+    path: `reports/section-${index}.md`,
+    purpose: 'report',
+    sizeBytes: 100,
+    label: `Section ${index} of the recipe report`,
+  }));
+}
+
+const jsonBytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
+
+// A step-output value of at most 512 B is served as stored. A larger one keeps only its videos,
+// before/after visuals and diff files, not every entry (stored runs average 92 of them). So the
+// counts an older build derives are lower or equal: never higher than that build showed
+// before, and not zero for these steps. A current build reads the gateway's summary.
 test('default-branch readers count fewer artifacts from the served row, never more and not none', () => {
   const run = evidenceRun();
   const before = received(trimRunForList(run));
   const served = received(runListRow(run));
   assertOlderCountsNeverGain(run);
 
-  // Companion "Evidence N": the pair, the video, the patch, the gate's two files and the
-  // recipe video, of the nine the default-branch row gave.
+  // The step's six artifacts are over the size line: the pair and the video stay, each as its
+  // path, purpose and size; the report, the review file and the validation file go.
+  assert.ok(jsonBytes(run.steps[0]?.outputs?.artifacts) > RUN_LIST_STEP_OUTPUT_VALUE_LIMIT);
+  assert.deepEqual(served.steps[0]?.outputs?.artifacts, [
+    { path: 'evidence/before-login.png', purpose: 'before screenshot', sizeBytes: 400 },
+    { path: 'evidence/after-login.png', purpose: 'after screenshot', sizeBytes: 500 },
+    { path: 'evidence/walkthrough.mp4', purpose: 'video', sizeBytes: 9000 },
+  ]);
   assert.equal(extractRunArtifactManifest(before).length, 9);
   assert.equal(extractRunArtifactManifest(served).length, 6);
-
-  // Eval catalog preview counts: the three kept entries of the step's six.
   assert.deepEqual(evidenceSummaryFromRun(before), {
     artifactCount: 6,
     artifactBytes: 10250,
@@ -212,21 +261,18 @@ test('default-branch readers count fewer artifacts from the served row, never mo
     reviewEvidenceCount: 0,
   });
 
-  // A step with only reports keeps its first one, so those counts are never zero for it.
-  const reports = stepRun({
-    artifacts: [
-      { path: 'reports/recipe-report.md', purpose: 'report', sizeBytes: 100 },
-      { path: 'reports/coverage.md', purpose: 'coverage', sizeBytes: 300 },
-    ],
-  });
+  // A long list of reports only: its first entry stays, so the counts are not zero.
+  const reports = stepRun({ artifacts: reportEntries(12) });
   assertOlderCountsNeverGain(reports);
-  assert.deepEqual(evidenceSummaryFromRun(received(runListRow(reports))), {
-    artifactCount: 1,
-    artifactBytes: 100,
-    visualEvidenceCount: 0,
-    validationEvidenceCount: 1,
-    reviewEvidenceCount: 0,
-  });
+  assert.deepEqual(received(runListRow(reports)).steps[0]?.outputs?.artifacts, [
+    { path: 'reports/section-0.md', purpose: 'report', sizeBytes: 100 },
+  ]);
+  // A short list of reports is under the line and served whole: the same counts as before.
+  const fewReports = stepRun({ artifacts: reportEntries(2) });
+  assert.deepEqual(
+    evidenceSummaryFromRun(received(runListRow(fewReports))),
+    evidenceSummaryFromRun(received(trimRunForList(fewReports))),
+  );
 
   // A current build shows the default branch's catalog numbers from the gateway's summary.
   assert.deepEqual(runListRow(run).evidenceSummary?.catalogCounts, evidenceSummaryFromRun(before));
@@ -234,20 +280,22 @@ test('default-branch readers count fewer artifacts from the served row, never mo
   assert.equal(runListRow(run).evidenceSummary?.diffArtifactPath, 'artifacts/changes.patch');
 });
 
-// The row holds a subset of what the step held, in the same places: a file recorded under
-// another output key stays under that key and never becomes an `artifacts` entry, which is the
+// The row holds a subset of what the step held, in the same places: nothing is moved between
+// keys, so a file recorded under another key never becomes an `artifacts` entry, which is the
 // only place an older build's catalog counts.
-test('a kept artifact stays where the step held it, so no older reader counts more', () => {
+test('small step outputs are served as stored and a large one keeps its artifacts in place', () => {
   // A video in `artifacts` and a patch under its own key: the catalog read one artifact.
   const patched = stepRun({
     artifacts: [{ path: 'evidence/proof.mp4', purpose: 'video', sizeBytes: 10 }],
     patch: 'artifacts/changes.patch',
+    retryCount: 2,
     transcript: 't'.repeat(2000),
   });
   const patchedServed = received(runListRow(patched));
   assert.deepEqual(patchedServed.steps[0]?.outputs, {
     artifacts: [{ path: 'evidence/proof.mp4', purpose: 'video', sizeBytes: 10 }],
     patch: 'artifacts/changes.patch',
+    retryCount: 2,
   });
   assert.deepEqual(
     evidenceSummaryFromRun(patchedServed),
@@ -267,10 +315,21 @@ test('a kept artifact stays where the step held it, so no older reader counts mo
   assert.equal(evidenceSummaryFromRun(shotServed).visualEvidenceCount, 0);
   assertOlderCountsNeverGain(shot);
 
-  // A path nested inside another output stays at the same place, without its neighbours.
+  // A short `artifacts` list is served as stored, so an entry recognised only by its type
+  // stays recognised: "Evidence 1" on both rows.
+  const typed = stepRun({ artifacts: [{ path: 'data/results.csv', type: 'report' }] });
+  assert.equal(extractRunArtifactManifest(received(trimRunForList(typed))).length, 1);
+  assert.equal(extractRunArtifactManifest(received(runListRow(typed))).length, 1);
+  assertOlderCountsNeverGain(typed);
+
+  // A path nested inside a large value stays at the same place, without its neighbours.
   const nested = stepRun({
     reviews: [
-      { verdict: 'pass', reviewSnapshot: { diffPath: 'artifacts/review.diff', headSha: 'abc' } },
+      {
+        verdict: 'pass',
+        summary: 's'.repeat(600),
+        reviewSnapshot: { diffPath: 'artifacts/review.diff', headSha: 'abc' },
+      },
     ],
   });
   assert.deepEqual(received(runListRow(nested)).steps[0]?.outputs, {
@@ -279,43 +338,62 @@ test('a kept artifact stays where the step held it, so no older reader counts mo
   assertOlderCountsNeverGain(nested);
 });
 
-// One unusual run cannot bring tens of KB back: a row keeps a bounded number of videos and
-// visuals across its steps, and a step that lost any is marked trimmed. Diff files do not
-// count against the limit, so the file an older build's Diff action opens is never cut.
-test('the artifact limit cuts videos and visuals across steps and never a diff file', () => {
-  const videos = (step: string, count: number) =>
-    Array.from({ length: count }, (_, index) => ({
-      path: `evidence/${step}-${index}.mp4`,
-      purpose: 'video',
-      sizeBytes: 1000,
-    }));
+// The fleet map's expanded pipeline on a build from the default branch reads a review step's
+// id, retry counts, open findings and cost, and a finalize step's booleans, from the row. Each
+// is a top-level value of at most 512 B, so the served row holds it as stored.
+test('a review step and a finalize step keep their small top-level values as stored', () => {
+  const review = {
+    verdict: 'pass',
+    reviewId: 'rev-1',
+    retryCount: 2,
+    maxRetries: 3,
+    unresolvedCount: 0,
+    costEstimate: 0.42,
+  };
+  const finalize = {
+    commentPosted: true,
+    metricsSavedToTask: true,
+    prTitleUpdated: true,
+    prMarkedReady: false,
+    prCommentPosted: true,
+  };
   const run = stepRun(
-    { artifacts: videos('monitor', 70), patch: 'evidence/notes.patch' },
-    { artifacts: videos('recipe', 70) },
-    { artifacts: videos('review', 5) },
-    // The best-ranked diff file, in the last step, after the limit is spent.
-    { patch: 'artifacts/diff.txt' },
+    { ...review, transcript: 't'.repeat(2000) },
+    { ...finalize, log: 'l'.repeat(2000) },
   );
-  const row = runListRow(run);
-  const kept = row.steps.map((step) =>
-    Array.isArray(step.outputs?.artifacts) ? step.outputs.artifacts.length : 0,
-  );
-  // The limit is spent in step order; a step cut to nothing keeps its first artifact.
-  assert.deepEqual(kept, [70, RUN_LIST_STEP_ARTIFACT_LIMIT - 70, 1, 0]);
+  const served = received(runListRow(run));
+  assert.deepEqual(served.steps[0]?.outputs, review);
+  assert.deepEqual(served.steps[1]?.outputs, finalize);
+  // The long transcript and log are left out, and the steps say so.
   assert.deepEqual(
-    row.steps.map((step) => step.outputsTrimmed),
-    [undefined, true, true, undefined],
+    served.steps.map((step) => step.outputsTrimmed),
+    [true, true],
   );
-  assert.equal(row.steps[0]?.outputs?.patch, 'evidence/notes.patch');
-  assert.equal(row.steps[3]?.outputs?.patch, 'artifacts/diff.txt');
+});
 
-  // The default-branch Diff reader picks the same file from the served row.
-  const diffPath = (listed: Run) => diffArtifactCandidate(extractRunArtifactManifest(listed))?.path;
-  assert.equal(diffPath(received(trimRunForList(run))), 'artifacts/diff.txt');
-  assert.equal(diffPath(received(row)), 'artifacts/diff.txt');
-
-  // The gateway's summary still counts every video; only an older build's own count is cut.
-  assert.equal(row.evidenceSummary?.videoCount, 145);
-  assert.equal(summarizeRunEvidence(received(row)).videoCount, RUN_LIST_STEP_ARTIFACT_LIMIT + 1);
+// A row keeps every video, before/after visual and diff file of a run, however many: there is
+// no per-run limit, so a later step's pair is never cut by an earlier step's videos.
+test('a later step keeps its before/after pair after a hundred videos in an earlier step', () => {
+  const videos = Array.from({ length: 100 }, (_, index) => ({
+    path: `evidence/monitor-${index}.mp4`,
+    purpose: 'video',
+    sizeBytes: 1000,
+  }));
+  const run = stepRun(
+    { artifacts: videos },
+    {
+      artifacts: [
+        ...reportEntries(12),
+        { path: 'evidence/before-login.png', purpose: 'before screenshot' },
+        { path: 'evidence/after-login.png', purpose: 'after screenshot' },
+      ],
+    },
+  );
+  const chips = (row: Run) => {
+    const { videoCount, visualPairCount } = summarizeRunEvidence(row);
+    return { videoCount, visualPairCount };
+  };
+  assert.deepEqual(chips(received(trimRunForList(run))), { videoCount: 100, visualPairCount: 1 });
+  assert.deepEqual(chips(received(runListRow(run))), { videoCount: 100, visualPairCount: 1 });
   assertOlderCountsNeverGain(run);
 });

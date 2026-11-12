@@ -51,15 +51,6 @@ export interface RunEvidenceSummary {
 }
 
 /**
- * The most videos and before/after visuals one run.list row keeps among its step outputs,
- * across its steps. The stored run with the most keeps 60 (95 in 100 keep 35 or fewer), so the
- * cap changes no known run; it bounds what one unusual run can add to a row at about 11 KB.
- * Diff files do not count against it: a step has one or two, and a cut one would change the
- * file an older client's Diff action opens.
- */
-export const RUN_LIST_STEP_ARTIFACT_LIMIT = 100;
-
-/**
  * Every artifact a run reports: gate and review payloads, the captured run
  * output and step outputs, without gateway-internal launch diagnostics. Command
  * Center and Companion both read a run's artifacts through this.
@@ -183,41 +174,33 @@ export function runCatalogCounts(
 }
 
 /**
- * The artifact paths of one step's outputs that a run.list row keeps, for a client that
- * computes list values from the row itself (a build from before the served summary): every diff
- * file; videos and before/after visuals, the first `limit` of them; the first entry of the
+ * The artifact paths of one step's outputs that a run.list row keeps in a value too large to
+ * serve whole, for a client that computes list values from the row itself (a build from before
+ * the served summary): every video, before/after visual and diff file; the first entry of the
  * step's `artifacts` when none of those is among them; and the step's first artifact when
  * nothing else is kept. The row keeps each of these where the step held it, so such a client
- * finds a subset of what it found before: the same video and compare chips and the same Diff
- * file, and artifact counts that are lower, never higher, and never zero for a step that has
- * evidence. `capped` is how many of the paths count against the limit.
+ * finds a subset of what it found before.
  */
 export function listStepArtifactPaths(
   outputs: Record<string, unknown> | undefined,
-  limit: number,
-): { paths: ReadonlySet<string>; capped: number } {
+): ReadonlySet<string> {
   const scanned: RunArtifactManifestEntry[] = [];
   collectRunArtifactEntries(outputs, scanned);
   const paths = new Set<string>();
-  let capped = 0;
   for (const entry of dedupeRunArtifacts(scanned)) {
-    if (diffArtifactScore(entry) > 0) {
+    if (
+      diffArtifactScore(entry) > 0 ||
+      isRunEvidenceVideoArtifact(entry) ||
+      (isRunEvidenceVisualArtifact(entry) && runEvidenceVisualArtifactKind(entry) !== null)
+    )
       paths.add(entry.path);
-    } else if (
-      capped < limit &&
-      (isRunEvidenceVideoArtifact(entry) ||
-        (isRunEvidenceVisualArtifact(entry) && runEvidenceVisualArtifactKind(entry) !== null))
-    ) {
-      paths.add(entry.path);
-      capped += 1;
-    }
   }
   const recorded: RunArtifactManifestEntry[] = [];
   collectRunArtifactEntries(outputs?.artifacts, recorded);
   if (recorded.length > 0 && !recorded.some((entry) => paths.has(entry.path)))
     paths.add(recorded[0].path);
   if (paths.size === 0 && scanned.length > 0) paths.add(scanned[0].path);
-  return { paths, capped };
+  return paths;
 }
 
 /**

@@ -342,9 +342,10 @@ totalCount, summaryMeta, familySummaries, projectAnalytics }` for every live
    for an unchanged run, and unchanged by the slim-row projection (ADR-071
    Amendment 3). Rows returned by `run.list`, plain or `{ ids }`, are
    `runListRow(run)`: the run without its heavy keys, plus the run's
-   `evidenceSummary`. Steps keep the outputs list surfaces read, the diff stat
-   and their videos, before/after visuals and diff files, each where the step
-   held it. Decisions, engine
+   `evidenceSummary`. Steps keep the outputs list surfaces read in their
+   bounded shapes. Any other step-output value of at most 512 B is served as
+   stored; a larger one keeps only its videos, before/after visuals and diff
+   files, each where the step held it. Decisions, engine
    state, agent contexts, metrics, the ticket, the review result and the review
    subject leave out only their heavy keys (a gate's package, snapshots, report
    and summary; a decision's selection and attestation; visual-review blobs,
@@ -356,11 +357,12 @@ totalCount, summaryMeta, familySummaries, projectAnalytics }` for every live
    `output.artifactManifestOmitted` the output manifest; `runHasTrimmedDetail`
    reads all four. Full runs come from `run.get` / `run.forSlot`.
 
-   A client build older than the served summary, against this gateway, shows
-   the same video and compare chips, opens the same Diff file and shows the
-   same catalog diff stat as before; its evidence counts read lower or equal,
-   never higher than that build showed before and never zero for a run with
-   evidence, until it is updated. The current Companion's "Evidence N" reads
+   On every stored run measured, a client build older than the served summary
+   shows against this gateway the same video and compare chips, opens the same
+   Diff file and shows the same catalog diff stat as before; its evidence
+   counts read lower or equal, never higher than that build showed before, and
+   none falls to zero. ADR-071 Amendment 3 lists the known differences for
+   such a build. The current Companion's "Evidence N" reads
    the summary, which counts the whole stored run and can therefore read higher
    than the previous build's count.
 

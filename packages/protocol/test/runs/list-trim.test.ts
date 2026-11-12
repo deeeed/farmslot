@@ -404,12 +404,15 @@ test('runListRow drops the four heavy fields', () => {
   assert.equal('templateProvenance' in row, false, 'templateProvenance dropped');
 });
 
-test('runListRow keeps only allowed step output keys', () => {
+test('a step keeps its small outputs as stored and loses only the large ones', () => {
   const run = richRun();
   const row = runListRow(run);
-  assert.equal(row.steps[0]?.outputs?.selectedSlot, 'slot-a');
-  assert.equal(row.steps[0]?.outputs?.reason, 'picked best slot');
-  assert.equal(row.steps[0]?.outputs?.['ignoredField'], undefined);
+  // The dispatch step's three short values are all served, and the step is not marked.
+  assert.deepEqual(row.steps[0]?.outputs, run.steps[0]?.outputs);
+  assert.equal('outputsTrimmed' in (row.steps[0] ?? {}), false);
+  // The work step loses its 8 KB transcript and says so.
+  assert.equal(row.steps[1]?.outputs?.transcript, undefined);
+  assert.equal(row.steps[1]?.outputsTrimmed, true);
 });
 
 test('a ready payload on a row leaves out only its heavy keys', () => {
@@ -559,11 +562,10 @@ test('runListRow serves exactly the kept fields of a rich run, and its evidence 
         status: 'done',
         startedAt: '2026-11-11T00:00:10.000Z',
         completedAt: '2026-11-11T00:00:20.000Z',
-        outputs: { selectedSlot: 'slot-a', reason: 'picked best slot' },
-        outputsTrimmed: true,
+        outputs: { selectedSlot: 'slot-a', reason: 'picked best slot', ignoredField: 'drop me' },
       },
-      // The work step keeps its diff stat and the artifacts an older client's list readers
-      // need (the before/after pair), not the transcript, the report or the review file.
+      // The work step keeps every value of at most 512 B as stored (its diff stat, its short
+      // artifact list) and leaves the 8 KB transcript out.
       {
         name: 'work',
         status: 'done',
@@ -572,6 +574,8 @@ test('runListRow serves exactly the kept fields of a rich run, and its evidence 
           artifacts: [
             { path: 'evidence/before-login.png', purpose: 'before screenshot', sizeBytes: 400 },
             { path: 'evidence/after-login.png', purpose: 'after screenshot', sizeBytes: 500 },
+            { path: 'reports/recipe-report.md', purpose: 'report', sizeBytes: 100 },
+            { path: 'reviews/final-review.md', purpose: 'review', sizeBytes: 200 },
           ],
         },
         outputsTrimmed: true,
@@ -693,11 +697,10 @@ test('the served evidence summary is computed from the full run, not from the sl
   const run = richRun();
   const row = runListRow(run);
   assert.deepEqual(row.evidenceSummary, summarizeRunEvidence(run));
-  // The slim row alone has lost most of the step and output artifacts the summary counts: it
-  // keeps the before/after pair of the run's five.
+  // The slim row alone has lost the output manifest's video: four of the run's five.
   const { evidenceSummary, ...withoutSummary } = row;
   assert.equal(evidenceSummary?.artifactCount, 5);
-  assert.equal(summarizeRunEvidence(withoutSummary).artifactCount, 2);
+  assert.equal(summarizeRunEvidence(withoutSummary).artifactCount, 4);
   assert.equal(runListEvidenceSummary(row), evidenceSummary);
 });
 
@@ -714,7 +717,7 @@ test('a slim row reports itself trimmed and names the payload keys it left out',
   assert.equal(runHasTrimmedDetail(run), false);
 });
 
-test('list step outputs keep each read key in its bounded shape and drop the rest', () => {
+test('list step outputs keep each read key in its bounded shape and other small values whole', () => {
   assert.deepEqual(
     listStepOutputs({
       phase: 'fixing',
@@ -730,6 +733,8 @@ test('list step outputs keep each read key in its bounded shape and drop the res
       reviewVerdict: { nested: true },
       gatePrerequisiteRefusal: { code: 'EVIDENCE', reasons: ['r'.repeat(500)] },
       packageHash: 'a'.repeat(64),
+      transcript: 't'.repeat(600),
+      session: { id: 'session-1', log: 'l'.repeat(600), turns: 12 },
     }),
     {
       phase: 'fixing',
@@ -740,6 +745,9 @@ test('list step outputs keep each read key in its bounded shape and drop the res
       failedNames: ['lint'],
       failedChecks: ['lint'],
       fixProgress: { completed: 1, total: 3, currentLabel: 'Fix lint' },
+      // No list reads it and it is at most 512 B: served as stored. The transcript and the
+      // session, over 512 B, are left out whole.
+      checkTimeline: [{ timestamp: 't', status: 'failed' }],
       verdict: 'issues',
       gatePrerequisiteRefusal: {},
       packageHash: 'a'.repeat(64),
@@ -777,7 +785,7 @@ test('a refused completion keeps its run unsettled on the served row, as on the 
 test('a row whose only loss is step outputs reads as trimmed; one that lost nothing has no marker', () => {
   const stepOnly: Run = {
     ...minRun(),
-    steps: [{ name: 'work', status: 'done', outputs: { transcript: 'worker transcript' } }],
+    steps: [{ name: 'work', status: 'done', outputs: { transcript: 't'.repeat(600) } }],
   };
   const row = runListRow(stepOnly);
   assert.equal(row.steps[0]?.outputsTrimmed, true);

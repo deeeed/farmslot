@@ -10,24 +10,28 @@
 // `payloadTrimmed`; run.get, run.forSlot and run events stay complete.
 //
 // `runListRow` (step 2 slim rows, 2026-11-11) reduces a row further — from
-// 116 KB to 31 KB on average over 74 stored runs — by dropping four heavy optional
+// 116 KB to 35 KB on average over 74 stored runs — by dropping four heavy optional
 // fields (resourcePosture, sessionUsage, visualJudgmentReceipts, templateProvenance),
-// keeping only the step outputs list surfaces read, and leaving the heavy keys out of
-// decisions, the publish gate, agent contexts, metrics, the ticket, the review result
-// and the review subject. `trimRunForList` is kept as the version basis.
+// keeping the step outputs list surfaces read and the small ones, and leaving the heavy
+// keys out of decisions, the publish gate, agent contexts, metrics, the ticket, the review
+// result and the review subject. `trimRunForList` is kept as the version basis.
 import type { Run, RunDecision, RunDecisionPayload } from '../contracts/runs.js';
 import { utf8ByteLength } from '../utf8-byte-length.js';
 
 import { CI_SNAPSHOT_TRIM_KEY } from './ci-decision-context.js';
-import {
-  listStepArtifactPaths,
-  RUN_LIST_STEP_ARTIFACT_LIMIT,
-  summarizeRunEvidence,
-} from './evidence-summary.js';
+import { listStepArtifactPaths, summarizeRunEvidence } from './evidence-summary.js';
 import type { RunListDecision, RunListDecisionPayload, RunListRow } from './list-row.js';
 
 /** JSON size in UTF-8 bytes above which a single decision payload value is left out of run.list. */
 export const RUN_LIST_PAYLOAD_VALUE_LIMIT = 2048;
+
+/**
+ * JSON size in UTF-8 bytes up to which a step output is served whole on a run.list row. Step
+ * outputs are 50 KB of a 206 KB stored run on average (74 stored runs), their `artifacts` alone
+ * 24 KB; the values of at most 512 B are the small ones (ids, counts, flags, short objects),
+ * and serving them whole costs 3.4 KB per row.
+ */
+export const RUN_LIST_STEP_OUTPUT_VALUE_LIMIT = 512;
 
 export function trimDecisionForList(decision: RunDecision): RunDecision {
   const trimmed: string[] = [];
@@ -166,14 +170,25 @@ function presenceOutput(value: unknown): unknown {
 }
 
 /**
- * One step output as a list row carries it, or undefined when no list surface reads the key.
- * Kept keys, each in the bounded shape its views read: slot resolution and run activity
+ * A step output no list surface reads: served as the step holds it when it is at most
+ * RUN_LIST_STEP_OUTPUT_VALUE_LIMIT bytes, undefined when it is larger.
+ */
+function smallOutput(value: unknown): unknown {
+  return value !== undefined &&
+    utf8ByteLength(JSON.stringify(value)) <= RUN_LIST_STEP_OUTPUT_VALUE_LIMIT
+    ? value
+    : undefined;
+}
+
+/**
+ * One step output as a list row carries it, or undefined when it is left out. A key a list
+ * surface reads keeps the bounded shape its views read: slot resolution and run activity
  * (dispatch keys); the mini pipeline's tone and step tooltip (`verdict`, `reviewVerdict`,
  * `maxRetriesExhausted`, `packageHash`, `reviewSatisfied`, `resolvedAction`,
  * `publicationStatus`); the CI watch line and the CI-fix checklist (ci-watch keys); the
  * active and split-view filters, which test only whether a completion prerequisite was
  * refused (`gatePrerequisiteRefusal`); the diff stat an older client's eval catalog reads
- * (`diffStat`).
+ * (`diffStat`). Any other key is served whole when it is small (see smallOutput).
  *
  * Each projection is called by name, so the authorization guard can follow run.list's
  * call graph through this function.
@@ -216,7 +231,7 @@ function listStepOutput(key: string, value: unknown): unknown {
     case 'diffStat':
       return diffStatOutput(value);
     default:
-      return undefined;
+      return smallOutput(value);
   }
 }
 
@@ -261,30 +276,23 @@ function keptArtifacts(value: unknown, paths: ReadonlySet<string>): unknown {
 }
 
 /**
- * A step's outputs as a list row carries them, and how many of its kept artifacts count
- * against the row's artifact limit. A key a list surface reads keeps its bounded shape (see
- * listStepOutput); any other key keeps only the artifacts an older client's own evidence scan
- * needs, where the step held them (see listStepArtifactPaths).
+ * A step's outputs as a list row carries them. A key a list surface reads keeps its bounded
+ * shape, and any other value of at most RUN_LIST_STEP_OUTPUT_VALUE_LIMIT bytes is served as the
+ * step holds it (see listStepOutput). A value left out by those keeps only its videos,
+ * before/after visuals and diff files, where the step held them (see listStepArtifactPaths).
  */
-function stepOutputsForList(
-  outputs: Record<string, unknown>,
-  artifactLimit: number,
-): { outputs: Record<string, unknown>; capped: number } {
-  const { paths, capped } = listStepArtifactPaths(outputs, artifactLimit);
+export function listStepOutputs(
+  outputs: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!outputs) return outputs;
+  const paths = listStepArtifactPaths(outputs);
   const slim: Record<string, unknown> = {};
   for (const key of Object.keys(outputs)) {
     const read = listStepOutput(key, outputs[key]);
     const value = read !== undefined ? read : keptArtifacts(outputs[key], paths);
     if (value !== undefined) slim[key] = value;
   }
-  return { outputs: slim, capped };
-}
-
-/** A step's outputs as a list row carries them (see stepOutputsForList). */
-export function listStepOutputs(
-  outputs: Record<string, unknown> | undefined,
-): Record<string, unknown> | undefined {
-  return outputs ? stepOutputsForList(outputs, RUN_LIST_STEP_ARTIFACT_LIMIT).outputs : outputs;
+  return slim;
 }
 
 /** A decision's payload as a list row carries it: the heavy keys of its kind left out. */
@@ -377,13 +385,10 @@ export function runListRow(run: Run): RunListRow {
   }
 
   // Steps keep their timing (list durations, queue waits, progress age) and leave out
-  // their inputs; outputs keep only what list surfaces read. A step that lost anything
-  // says so (`outputsTrimmed`), so runHasTrimmedDetail reports the row as trimmed.
-  let artifactsLeft = RUN_LIST_STEP_ARTIFACT_LIMIT;
+  // their inputs; outputs keep what list surfaces read and their small values. A step that
+  // lost anything says so (`outputsTrimmed`), so runHasTrimmedDetail reports the row as trimmed.
   const steps = run.steps.map(({ inputs, outputs, ...step }) => {
-    const listed = outputs ? stepOutputsForList(outputs, artifactsLeft) : undefined;
-    artifactsLeft -= listed?.capped ?? 0;
-    const slim = listed?.outputs;
+    const slim = listStepOutputs(outputs);
     const lost = inputs !== undefined || stepOutputsLost(outputs, slim);
     return { ...step, outputs: slim, ...(lost ? { outputsTrimmed: true as const } : {}) };
   });

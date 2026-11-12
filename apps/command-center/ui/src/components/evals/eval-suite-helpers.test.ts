@@ -452,8 +452,8 @@ test("catalog preview fields are the default branch's from the full run, the ser
   });
   assert.deepEqual(preview(catalogItemFromRun(fullRun)), expected);
   assert.deepEqual(preview(catalogItemFromRun(cached)), expected);
-  // The row the gateway serves keeps two of the five step artifacts; the numbers come from
-  // its evidence summary.
+  // The row the gateway serves carries the gateway's evidence summary; the numbers come from
+  // it, not from the row's own step outputs.
   const served = runListRow(fullRun);
   assert.equal(Array.isArray(served.steps[0]?.outputs?.artifacts), true);
   assert.deepEqual(preview(catalogItemFromRun(served)), expected);
