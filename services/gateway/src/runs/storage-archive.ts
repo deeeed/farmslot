@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, lstatSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, renameSync } from 'node:fs';
 import { cp, lstat, mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -30,6 +30,11 @@ interface StorageDeletionEntry {
   store: 'task-pins' | 'review-workspaces';
   source: string;
   bytes: number;
+  /**
+   * The sibling the source is renamed to before its removal (same directory, so the rename is
+   * atomic). Absent in intents written before deletions were detached.
+   */
+  detached?: string;
 }
 
 interface DeletingStorageEntry extends StorageDeletionEntry {
@@ -287,13 +292,19 @@ export async function stageStoragePaths(
     const prior = manifest.entries.find(
       (entry) => !isArchiveEntry(entry) && entry.store === file.store && entry.source === source,
     );
-    if (prior?.state === 'deleting') continue;
+    const detached = path.join(path.dirname(source), `.retention-${randomUUID()}`);
+    if (prior?.state === 'deleting') {
+      // An older intent gets a detached path too, journaled below before anything is renamed.
+      prior.detached ??= detached;
+      continue;
+    }
     const intent: DeletingStorageEntry = {
       state: 'deleting',
       store: file.store,
       source,
       bytes: file.bytes,
       plannedAt: new Date().toISOString(),
+      detached,
     };
     if (prior) manifest.entries[manifest.entries.indexOf(prior)] = intent;
     else manifest.entries.push(intent);
@@ -318,7 +329,10 @@ export async function stageStoragePaths(
       entry.state = 'staged';
     }
   }
-  // Stay synchronous from the ownership re-check through staging and deletion.
+  // Stay synchronous from the ownership re-check through staging and detaching: no other work may
+  // run between beforeStage() and the renames, or a run could regain a path about to be removed.
+  // Once renamed, a source is gone from its store; the slow removal of the detached tree is async.
+  const detachedPaths: { index: number; detached: string }[] = [];
   for (const file of deletions) {
     const source = path.resolve(file.source);
     const storeRoot = path.resolve(file.root);
@@ -332,13 +346,22 @@ export async function stageStoragePaths(
         throw new Error(`Deletion parent is a symlink: ${parent}`);
       if (parent === storeRoot) break;
     }
-    rmSync(source, { recursive: true, force: true });
     const index = manifest.entries.findIndex(
       (entry) =>
         entry.state === 'deleting' && entry.store === file.store && entry.source === source,
     );
     const intent = manifest.entries[index];
-    if (intent?.state !== 'deleting') throw new Error(`Deletion intent missing: ${source}`);
+    if (intent?.state !== 'deleting' || !intent.detached)
+      throw new Error(`Deletion intent missing: ${source}`);
+    // Like rm, a rename acts on the path itself: a symlinked source moves as a link.
+    if (lstatSync(source, { throwIfNoEntry: false })) renameSync(source, intent.detached);
+    detachedPaths.push({ index, detached: intent.detached });
+  }
+  for (const { index, detached } of detachedPaths) {
+    // A failed removal rejects here; the intent stays `deleting` and recovery completes it.
+    await rm(detached, { recursive: true, force: true });
+    const intent = manifest.entries[index];
+    if (intent.state !== 'deleting') throw new Error(`Deletion intent missing: ${detached}`);
     manifest.entries[index] = { ...intent, state: 'deleted', deletedAt: new Date().toISOString() };
   }
   await saveManifest(manifestPath, manifest);
@@ -356,6 +379,8 @@ export async function keepStorageDeletions(
   const manifest: StorageArchiveManifest = JSON.parse(await readFile(file, 'utf8'));
   const changes: KeptStorageEntry[] = manifest.entries.flatMap((entry) =>
     entry.state === 'deleting' &&
+    // A detached tree was given up at its rename; recovery removes it rather than keeping it.
+    !(entry.detached && lstatSync(entry.detached, { throwIfNoEntry: false })) &&
     !eligible.some(
       (selected) =>
         selected.store === entry.store && path.resolve(selected.source) === entry.source,
@@ -373,6 +398,8 @@ export async function finishStorageArchive(root: string, runId: string): Promise
     const manifest: StorageArchiveManifest = JSON.parse(await readFile(manifestPath, 'utf8'));
     for (const entry of manifest.entries) {
       if (entry.state === 'deleting') {
+        // A detached path is not a source: the run gave it up at the rename.
+        if (entry.detached) await rm(entry.detached, { recursive: true, force: true });
         // Recovery never removes a surviving source; the next eligibility turn decides.
         if (!lstatSync(entry.source, { throwIfNoEntry: false })) {
           const recovered: DeletedStorageEntry = {
