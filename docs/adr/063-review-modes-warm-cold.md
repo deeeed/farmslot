@@ -661,3 +661,24 @@ PR option parsing, shared picker validation and gateway admission. Its consumers
 share the same COLD/no-lineage rule. Omitting the choice retains current behavior.
 No new RPC, review mode or harness extension is introduced. Publication-gate
 requests reject this policy.
+
+## Amendment 13: adapter-owned WARM continuation, 2026-11-12
+
+**Status:** Proposed.
+
+### Decision
+
+WARM uses the saved-session capability owned by ADR-023 for the lineage's runner.
+A valid lineage whose adapter cannot resume runs a fresh COLD session over
+`lastReviewedHead..currentHead`, with prior findings and a recorded unsupported
+continuation reason. Unsupported capability is not a missing-session refusal.
+Foreign or ambiguous lineage, ownership, model, effort, ancestry, workspace,
+busy-session and capacity fences remain unchanged. Retention expiry keeps its
+existing full-contribution fallback.
+
+### Rationale and consequences
+
+Valid retained conversations must not depend on a workflow's runner allowlist.
+The [review specification](../reference/review-modes-warm-cold.md#adapter-owned-continuation)
+owns selection and fallback evidence. No public command, flag, SDK export or
+harness extension is added; existing review consumers inherit the behavior.

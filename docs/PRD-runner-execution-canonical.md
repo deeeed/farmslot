@@ -33,6 +33,23 @@ Farmslot runners launch in inspectable, operator-attachable TUI sessions by defa
 
 Prompt handling, progress observation, nudging, resume, recovery, and safety behavior must be expressed in a runner-neutral contract.
 
+#### Saved-session continuation
+
+Under ADR-023 Amendment 2, every adapter MUST declare saved-session continuation
+or explicitly declare it unsupported. The shared command adapter MUST use that
+declaration for exact-session resume arguments. A resume MUST NOT select the
+latest session, open a picker or silently create a different conversation.
+
+A workspace-scoped continuation MUST retain its source checkout path. Transfer
+MUST verify the stopped predecessor, owner generation, project, repository/PR,
+runner, model, effort, session and reviewed head, and preserve earlier task
+artifacts. Only one run may own the workspace and conversation at a time.
+Cleanup and replay MUST respect the durable transfer. Acceptance MUST identify
+the exact saved session through structured runner evidence.
+
+The gateway's existing launch and WARM review paths consume this private
+capability. No public command, flag, SDK export or app-harness extension is added.
+
 ### 3. Explicit safety tiers
 
 Dangerous or highly autonomous launch modes need a shared vocabulary and warning model across runners.

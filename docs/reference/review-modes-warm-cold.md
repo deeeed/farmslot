@@ -426,7 +426,7 @@ A completed slotless review records its exact conversation id/path, `reviewId`,
 validated reviewed head and retention deadline. Its retained conversation stays
 under the same project, PR, principal generation, machine, runner, model and
 effort. A re-review before expiry reuses that conversation and reviews only
-`lastReviewedHead..newHead`. Unsupported or ambiguous identity refuses WARM.
+`lastReviewedHead..newHead`. Foreign or ambiguous identity refuses WARM. Unsupported adapter continuation follows the delta fallback below.
 After expiry, a fresh full-contribution COLD session is allowed with an explicit expiry reason;
 the prior lineage, findings and reviewed head remain recorded.
 
@@ -489,3 +489,26 @@ input proof uses the existing task writer. Neither starts a model. Browser
 checks select the shared checkbox through normal user interaction and verify
 that changing the flow removes the choice. These rendering fixtures do not
 claim reviewer-session behavior.
+
+## Adapter-owned continuation
+
+Under ADR-063 Amendment 13, WARM MUST use the lineage owner's shared runner
+saved-session continuation capability. Adapter support MUST NOT participate in
+identity matching. A valid, unexpired lineage with an unsupported adapter MUST
+use a fresh COLD session in the same attempt over
+`lastReviewedHead..currentHead`, preserving prior findings and artifacts as input.
+Its fallback trace MUST record `session-resume-unsupported` and the compared
+range. The successor becomes the retained session for that lineage.
+
+Selection, subject freezing, task generation and result ingestion MUST preserve
+that delta scope even though the effective mode is COLD. Ownership generation,
+project, repository/PR, lineage, runner/model/effort, ancestry, retained workspace,
+busy-session, capacity and publication fences MUST still pass. Missing or foreign
+identity MUST NOT use the unsupported-adapter fallback. Expiry retains its
+existing full-contribution COLD contract.
+
+### Public surface
+
+`ReviewSessionRefusalReason` in `@farmslot/protocol` adds
+`session-resume-unsupported` for the existing fallback trace, consumed by the
+review result and gate displays. No command, flag, RPC or harness extension is added.
