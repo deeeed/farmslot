@@ -158,7 +158,7 @@ export const Events = {
 // Every event subscriber gets a typed payload via GatewayClient.subscribe<T>()
 
 /**
- * The entity behind a per-entity key on resource.changed (ADR-071 Amendment 3). `version` is the
+ * The entity behind a per-entity key on resource.changed (ADR-071 Amendment 4). `version` is the
  * entity's content version after this change. `entity` is present when the version changed since
  * the key's previous notification and the body fits CHANGED_ENTITY_MAX_BYTES; without it a
  * client holding `version` has nothing to do and any other client reads the id. Bodies are

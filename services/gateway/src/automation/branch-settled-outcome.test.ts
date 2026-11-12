@@ -1,6 +1,6 @@
 // A branch source that fails refuses every observed fleet read. A client on entity sync reads
 // nothing for an unchanged slot, so the fleet's membership marker moves when the source settles
-// refused or admitted again (ADR-071 Amendment 3): its versions read then meets that refusal.
+// refused or admitted again (ADR-071 Amendment 4): its versions read then meets that refusal.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';

@@ -1,5 +1,5 @@
 /**
- * Re-attaches hostLoad to slot entities from the machines array (ADR-071 Amendment 3).
+ * Re-attaches hostLoad to slot entities from the machines array (ADR-071 Amendment 4).
  *
  * slotEntityBody strips hostLoad before hashing because it is derived from MachineHealth
  * and changes on every node-health refresh, causing spurious entity version churn.

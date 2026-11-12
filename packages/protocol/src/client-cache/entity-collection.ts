@@ -1,5 +1,5 @@
 /**
- * Entity collection for entity sync (ADR-071 Amendment 3): fleet slots and PR rows held as
+ * Entity collection for entity sync (ADR-071 Amendment 4): fleet slots and PR rows held as
  * entities with content versions, kept current by pushes, a versions read and ids pages.
  *
  * Rules:

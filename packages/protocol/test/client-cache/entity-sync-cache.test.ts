@@ -1,4 +1,4 @@
-// Entity sync through the shared cache (ADR-071 Amendment 3): every scenario counts the reads
+// Entity sync through the shared cache (ADR-071 Amendment 4): every scenario counts the reads
 // the cache sends, by method and read shape, against a scripted gateway.
 import assert from 'node:assert/strict';
 import test from 'node:test';

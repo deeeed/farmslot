@@ -1,4 +1,4 @@
-// Workspace inspections under entity sync, through the production server (ADR-071 Amendment 3).
+// Workspace inspections under entity sync, through the production server (ADR-071 Amendment 4).
 // A viewer that applies pushed slots sends no fleet read, so the slot publication it receives is
 // what starts the inspections that read started. With no viewer connected nothing is inspected.
 import assert from 'node:assert/strict';

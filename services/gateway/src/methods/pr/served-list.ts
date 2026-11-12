@@ -1,4 +1,4 @@
-// The served PR list (ADR-071 Amendment 3). The full read projects its collector's rows on every
+// The served PR list (ADR-071 Amendment 4). The full read projects its collector's rows on every
 // read. Entity reads and pushes serve that same projection, kept per pr.list scope: a versions
 // read projects it again, as the full read does, and a collector change (a collection, a CI
 // result) projects it and pushes the rows that changed. An ids read looks rows and versions up.

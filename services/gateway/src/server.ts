@@ -945,7 +945,7 @@ async function dispatchMessage(
     // Real history cursor pages keep after/limit on the route; durable query identity excludes them.
     const nativeInterests =
       observed && reader ? nativeReadInterests(frame.method, frame.params, reader.id) : undefined;
-    // Entity sync (ADR-071 Amendment 3): a versions or ids read of fleet.status or pr.list reads
+    // Entity sync (ADR-071 Amendment 4): a versions or ids read of fleet.status or pr.list reads
     // the resource its view reads, so it is stamped and admitted as that view.
     const entityRead =
       observed && (frame.method === Methods.FLEET_STATUS || frame.method === Methods.PR_LIST)

@@ -40,7 +40,7 @@ export type ResourceKey =
   | { family: 'gateway-update'; scope: 'gateway' }
   | { family: 'upstream'; integration: 'github' | 'packages' | 'providers'; queryId: string }
   /**
-   * Per-PR entity key for entity-sync (ADR-071 Amendment 3).
+   * Per-PR entity key for entity-sync (ADR-071 Amendment 4).
    * `prKey` is `${repo}/${pr}` and is unique within the collector's queryId scope.
    */
   | { family: 'upstream'; integration: 'github'; queryId: string; prKey: string };

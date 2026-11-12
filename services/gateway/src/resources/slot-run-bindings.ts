@@ -28,7 +28,7 @@ export class SlotResourceChanges {
 
   constructor(private readonly revisions: GatewayResourceRevisions = resourceRevisions) {}
 
-  /** Entity sync maintains each served slot where it is written (ADR-071 Amendment 3). */
+  /** Entity sync maintains each served slot where it is written (ADR-071 Amendment 4). */
   setEntityRefresh(refresh: (slotIds: readonly string[] | undefined) => void): void {
     this.entityRefresh = refresh;
   }

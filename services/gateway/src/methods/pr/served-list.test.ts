@@ -1,4 +1,4 @@
-// The served PR list (ADR-071 Amendment 3): one maintained projection answers the full read,
+// The served PR list (ADR-071 Amendment 4): one maintained projection answers the full read,
 // the versions and ids reads and the pushes of every pr.list scope.
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';

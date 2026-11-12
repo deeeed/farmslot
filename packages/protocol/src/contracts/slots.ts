@@ -151,7 +151,7 @@ export interface SlotStatus {
 }
 
 /**
- * Slot entity for entity-sync (ADR-071 Amendment 3).
+ * Slot entity for entity-sync (ADR-071 Amendment 4).
  * SlotStatus with hostLoad excluded — hostLoad is derived from MachineHealth
  * and re-attached by the client cache from the machines array.
  */

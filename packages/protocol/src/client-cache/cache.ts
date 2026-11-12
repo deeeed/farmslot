@@ -318,7 +318,7 @@ export function createGatewayResourceCache(
   });
   let runListLoad: { store: ResourceStore; promise: Promise<void> } | undefined;
 
-  // Entity sync (ADR-071 Amendment 3): fleet.status and each pr.list scope are answered from
+  // Entity sync (ADR-071 Amendment 4): fleet.status and each pr.list scope are answered from
   // entity collections when the gateway advertises entitySync. Rows outlive a connection; their
   // listing is verified by a versions read on every connection before the view is current.
   const fleetView = createFleetEntityView();

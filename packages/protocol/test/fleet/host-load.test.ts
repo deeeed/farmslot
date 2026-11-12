@@ -1,5 +1,5 @@
 /**
- * host-load.ts — reattachHostLoad equality test (ADR-071 Amendment 3).
+ * host-load.ts — reattachHostLoad equality test (ADR-071 Amendment 4).
  *
  * Proves that reattachHostLoad produces the same hostLoad values that
  * enrichSlotHostLoad (gateway full read) would produce for the same input,
@@ -109,7 +109,7 @@ test('reattachHostLoad full read equals assembled result for same input', () => 
   // This is the core equality proof: for the same entities + machines,
   // reattachHostLoad produces the same slots a gateway full read would.
   // The gateway's enrichSlotHostLoad delegates to this function since
-  // ADR-071 Amendment 3 (one implementation invariant).
+  // ADR-071 Amendment 4 (one implementation invariant).
   const entity2: SlotEntity = { ...baseEntity, slot: 'mini-01', machine: 'mini' };
   const machine2: MachineHealth = {
     machine: 'mini',

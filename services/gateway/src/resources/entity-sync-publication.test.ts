@@ -1,4 +1,4 @@
-// Publication of entity-sync changes (ADR-071 Amendment 3): every per-entity change names its
+// Publication of entity-sync changes (ADR-071 Amendment 4): every per-entity change names its
 // version; the body rides along only when it changed and fits; collection keys carry a marker.
 import assert from 'node:assert/strict';
 import test from 'node:test';

@@ -366,7 +366,7 @@ function settledOutcome(watch: BranchWatch): string | undefined {
 }
 
 /**
- * A client on entity sync reads nothing for an unchanged slot (ADR-071 Amendment 3). When this
+ * A client on entity sync reads nothing for an unchanged slot (ADR-071 Amendment 4). When this
  * source settles refused or admitted again, the fleet's marker moves, so that client's versions
  * read meets the admission a full read meets. An update in progress moves no marker.
  */

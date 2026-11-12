@@ -196,7 +196,7 @@ let servedWorkspacesWaiting = false;
 let servedWorkspacesGeneration = 0;
 
 /**
- * Starts the workspace inspections an observed fleet read starts (ADR-071 Amendment 3). A viewer
+ * Starts the workspace inspections an observed fleet read starts (ADR-071 Amendment 4). A viewer
  * on entity sync applies pushed slots without that read, so its versions read calls this.
  */
 export function refreshServedWorkspaceObservations(): void {

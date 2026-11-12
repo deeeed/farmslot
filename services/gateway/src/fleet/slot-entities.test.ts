@@ -1,4 +1,4 @@
-// Slot entities for entity sync (ADR-071 Amendment 3): maintained where slots are written,
+// Slot entities for entity sync (ADR-071 Amendment 4): maintained where slots are written,
 // published and read by lookup, never derived from the whole fleet on a read or a push.
 import assert from 'node:assert/strict';
 import test, { mock } from 'node:test';

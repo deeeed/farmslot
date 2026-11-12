@@ -1,4 +1,4 @@
-// pr.list entity reads (ADR-071 Amendment 3): `{ versions: true }` and `{ ids }` answer from the
+// pr.list entity reads (ADR-071 Amendment 4): `{ versions: true }` and `{ ids }` answer from the
 // scope's served list, after starting its collector exactly as the full read does. A versions
 // read projects the list again; an ids read serves the rows that listing named.
 import type { PREntityPage, PRVersionsResult } from '@farmslot/protocol';

@@ -1,4 +1,4 @@
-// Workspace inspections under entity sync (ADR-071 Amendment 3). An observed full fleet read
+// Workspace inspections under entity sync (ADR-071 Amendment 4). An observed full fleet read
 // starts them; a viewer that applies pushed slots sends no such read, so its versions read and
 // the slot publications it receives start them instead, and each outcome is pushed.
 import assert from 'node:assert/strict';

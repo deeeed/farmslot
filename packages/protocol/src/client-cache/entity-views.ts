@@ -1,4 +1,4 @@
-// Entity sync views (ADR-071 Amendment 3): fleet.status and pr.list views answered from an
+// Entity sync views (ADR-071 Amendment 4): fleet.status and pr.list views answered from an
 // entity collection plus the collection's non-entity fields, kept current by notifications.
 import type { PRStatus } from '../contracts/reviews.js';
 import type {

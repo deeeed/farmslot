@@ -299,7 +299,7 @@ onStatusCommit((snapshot) => {
   cachedFleet = null;
   fleetReadVersion++;
   try {
-    // Entity sync serves the committed rows before their slot keys advance (ADR-071 Amd. 3).
+    // Entity sync serves the committed rows before their slot keys advance (ADR-071 Amd. 4).
     if (entityLiveIds) {
       // A JSON copy, exactly as a later read of the committed text would parse it.
       const raw: RawStatus = JSON.parse(JSON.stringify(snapshot));
@@ -315,7 +315,7 @@ onStatusCommit((snapshot) => {
 });
 const changeHandlers: StateChangeHandler[] = [];
 
-// ─── Entity sync base (ADR-071 Amendment 3) ───
+// ─── Entity sync base (ADR-071 Amendment 4) ───
 // The rows entity sync serves slot entities from. A status commit replaces them before its slot
 // keys advance and a load replaces them too, so publication never waits for the next load.
 let entityBase: { fleet: FleetStatus; recovery: ReadonlyMap<string, string | null> } | null = null;

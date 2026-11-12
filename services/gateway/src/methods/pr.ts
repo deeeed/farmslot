@@ -330,7 +330,7 @@ export async function prList(
 }
 
 /**
- * The served list an entity read answers from (ADR-071 Amendment 3): its collector started
+ * The served list an entity read answers from (ADR-071 Amendment 4): its collector started
  * exactly as the full read starts it, its projection maintained in served-list.ts.
  */
 export async function servedPRListFor(

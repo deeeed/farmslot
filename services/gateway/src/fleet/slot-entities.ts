@@ -1,4 +1,4 @@
-// Slot entities for entity sync (ADR-071 Amendment 3). Each served slot and its version are
+// Slot entities for entity sync (ADR-071 Amendment 4). Each served slot and its version are
 // maintained where the slot is written: a status commit or load, and every overlay write. A
 // publication or a read looks them up; neither hashes nor rebuilds the fleet.
 import {

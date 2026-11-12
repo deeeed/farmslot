@@ -1,4 +1,4 @@
-// Entity sync (ADR-071 Amendment 3): stored, paged and pushed entities are untrusted. One set of
+// Entity sync (ADR-071 Amendment 4): stored, paged and pushed entities are untrusted. One set of
 // guards admits them: the shape every consumer dereferences, the identity and the content version.
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex } from '@noble/hashes/utils';
