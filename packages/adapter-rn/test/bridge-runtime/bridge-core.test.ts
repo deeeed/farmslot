@@ -397,7 +397,7 @@ describe('bridge core', () => {
 
   it('reports an into-view target with no scroll container as in view only while it shows', async () => {
     // A non-scrolling bottom sheet over an 800-tall window: nothing to scroll.
-    const placement = { y: 500 };
+    const placement = { y: 500, sheet: [0, 400, 400, 400] };
     const host = (rect: number[]) => ({
       measureLayout: () => undefined,
       measureInWindow: (done: (...values: number[]) => void) => done(...rect),
@@ -408,7 +408,10 @@ describe('bridge core', () => {
     };
     const rootFiber: Record<string, unknown> = { stateNode: host([0, 0, 400, 800]) };
     const sheetFiber: Record<string, unknown> = {
-      stateNode: host([0, 400, 400, 400]),
+      stateNode: {
+        measureLayout: () => undefined,
+        measureInWindow: (done: (...values: number[]) => void) => done(...placement.sheet),
+      },
       return: rootFiber,
     };
     const targetFiber = { stateNode: target, memoizedProps: { testID: 'liq' }, return: sheetFiber };
@@ -424,13 +427,17 @@ describe('bridge core', () => {
     assert.equal(output.alreadyInView, true);
     assert.deepEqual(output.targetRect, { x: 0, y: 500, width: 400, height: 30 });
 
+    const refused = { ok: false, error: 'No scrollable near testID=liq', deviceName: 'demo-1' };
     placement.y = 900;
     const hidden = await runBridge(directory, port, args);
-    assert.deepEqual(JSON.parse(hidden.stdout), {
-      ok: false,
-      error: 'No scrollable near testID=liq',
-      deviceName: 'demo-1',
-    });
+    assert.deepEqual(JSON.parse(hidden.stdout), refused);
+
+    // Inside the window but clipped away by a 100-tall sheet: measureInWindow still
+    // reports the child's own bounds, so the ancestors' frames decide.
+    placement.y = 550;
+    placement.sheet = [0, 400, 400, 100];
+    const clipped = await runBridge(directory, port, args);
+    assert.deepEqual(JSON.parse(clipped.stdout), refused);
   });
 
   it('prints help with the app label, built-ins and placed host lines', async () => {

@@ -705,13 +705,31 @@ function createBuiltinCommands({ routes, perfMarkerPrefixes, readyExpression }) 
         if (!opts.intoView) return false;
         if (tryScroll(anchor, false)) return true;
         // Nothing scrolls the target (a fixed sheet, say): it is in view when it shows
-        // whole inside the window, which the root host view measures.
+        // whole inside the window and every measurable ancestor's frame (an ancestor
+        // can clip it while measureInWindow still reports the target's own bounds).
         var top = anchor;
         while (top.return) top = top.return;
         var windowNode = findMeasurable(top);
         if (!target || !windowNode) return false;
+        var frames = [windowNode];
+        for (var up = anchor.return; up; up = up.return) {
+          var raw = up.stateNode;
+          var node = raw && raw.canonical && raw.canonical.publicInstance ? raw.canonical.publicInstance : raw;
+          if (node && node !== windowNode && typeof node.measureLayout === 'function' && typeof node.measureInWindow === 'function') frames.push(node);
+        }
         return new Promise(function(resolve) {
-          settledRect(windowNode, function(view) {
+          var view = null;
+          (function next(index) {
+            if (index < frames.length) {
+              return frames[index].measureInWindow(function(x, y, width, height) {
+                var left = view ? Math.max(view.x, x) : x;
+                var topEdge = view ? Math.max(view.y, y) : y;
+                var right = view ? Math.min(view.x + view.width, x + width) : x + width;
+                var bottom = view ? Math.min(view.y + view.height, y + height) : y + height;
+                view = { x: left, y: topEdge, width: Math.max(0, right - left), height: Math.max(0, bottom - topEdge) };
+                next(index + 1);
+              });
+            }
             settledRect(target, function(rect) {
               var shows = rect.width > 0 && rect.height > 0 &&
                 rect.x >= view.x && rect.x + rect.width <= view.x + view.width &&
@@ -720,7 +738,7 @@ function createBuiltinCommands({ routes, perfMarkerPrefixes, readyExpression }) 
                 ? { ok: true, testId: opts.testId, alreadyInView: true, targetRect: rect }
                 : { ok: false, error: 'No scrollable near testID=' + opts.testId });
             });
-          });
+          })(0);
         });
       }
       function findTestId(fiber) {
