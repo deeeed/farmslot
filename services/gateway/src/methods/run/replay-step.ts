@@ -114,6 +114,7 @@ import {
   completedTaskReplayAnchor,
   readCompletedTaskReplayBinding,
 } from './completed-task-replay.js';
+import { retainedDispatchSignal } from './retained-dispatch-signal.js';
 import {
   isInternalArtifactOnlyEvalTicket,
   isLocalDevRef,
@@ -145,6 +146,8 @@ export interface RunReplayStepHooks {
   startEngine?(runId: string): Promise<void>;
   /** Test-only: whether an engine loop drives the run when the replay cancels it. */
   engineDriven?(runId: string): boolean;
+  /** Test-only: an already validated task-signal probe, without starting a runner. */
+  probeTaskSignal?: typeof readAdoptableTaskSignal;
   /** Test-only: the worker mirror refresh a human-gate replay runs before rebuilding the gate. */
   captureOutput?: typeof captureRunOutput;
   /**
@@ -750,7 +753,8 @@ export async function readAdoptableTaskSignal(
     );
     // Absent file or unreadable path: `cat` exits non-zero, which is the
     // expected "worker never wrote a signal" case, not an error.
-    if (result.exitCode !== 0 || !result.stdout.trim()) return null;
+    if (result.exitCode !== 0 || !result.stdout.trim())
+      return await retainedDispatchSignal(run, context, vars, undefined);
     let signal: unknown;
     try {
       signal = JSON.parse(result.stdout);
@@ -759,9 +763,10 @@ export async function readAdoptableTaskSignal(
       console.warn(
         `[run] replay signal probe for ${run.id.slice(0, 8)} read malformed JSON from ${slotId}: ${(error as Error).message}`,
       );
-      return null;
+      return await retainedDispatchSignal(run, context, vars, undefined);
     }
-    if (!canAdoptTaskSignalAfterUncertainDispatch(run, signal)) return null;
+    if (!canAdoptTaskSignalAfterUncertainDispatch(run, signal))
+      return await retainedDispatchSignal(run, context, vars, signal);
     return normalizeWorkerSignal(signal).ok ? (signal as WorkerSignal) : null;
   } catch (error) {
     const message = (error as Error).message;
@@ -770,9 +775,9 @@ export async function readAdoptableTaskSignal(
     // would send it a second time.
     throw new ReplayTaskSignalProbeError(
       `Run ${run.id.slice(0, 8)} could not be replayed: the worker signal on slot ${slotId} ` +
-        `could not be read (${message}), so replay cannot tell whether the prompt is already ` +
-        'executing. Next: retry once the slot is reachable, replay with freshDispatch to ' +
-        'abandon the retained handoff, or replay from find-slot to select a fresh worker.',
+        `and its original session could not be confirmed (${message}); no replacement was authorized. ` +
+        'Retry after restoring slot reachability and the original session/signal, or explicitly ' +
+        'replay from find-slot to select a fresh worker.',
     );
   }
 }
@@ -1265,11 +1270,11 @@ async function replayRunStep(
   const completeIdx = flowSteps ? flowSteps.indexOf(PS.COMPLETE) : -1;
   const humanGateIdx = flowSteps ? flowSteps.indexOf(PS.HUMAN_GATE) : -1;
   const probedTaskSignal =
-    replayStepName === PS.DISPATCH
-      ? await readAdoptableTaskSignal(existing, {
-          freshDispatch: Boolean(
-            params.freshDispatch || (existing.transport === 'native' && hasWorkerRunnerOverride),
-          ),
+    replayStepName === PS.DISPATCH ||
+    (replayStepName === PS.MONITOR &&
+      existing.steps.some((step) => step.name === PS.DISPATCH && step.status === 'failed'))
+      ? await (hooks.probeTaskSignal ?? readAdoptableTaskSignal)(existing, {
+          freshDispatch: Boolean(params.freshDispatch || hasWorkerRunnerOverride),
         })
       : null;
   const adoptedTaskSignal = probedTaskSignal && monitorIdx >= 0 ? probedTaskSignal : null;
@@ -2036,8 +2041,8 @@ async function replayRunStep(
       const dispatchStep = existing.steps.find((candidate) => candidate.name === PS.DISPATCH);
       updateRunStep(params.runId, PS.DISPATCH, {
         status: 'done',
-        completedAt: adoptedTaskSignal.timestamp,
-        detail: 'Recovered uncertain prompt delivery from the fresh task-local worker signal',
+        completedAt: new Date().toISOString(),
+        detail: 'Recovered dispatch from its task-local worker signal',
         outputs: {
           ...(dispatchStep?.outputs ?? {}),
           // Answered: a restart skips a run still marked, so the mark must not outlive this.
@@ -2247,7 +2252,8 @@ async function replayRunStep(
 
     if (
       replaysWorkerLaunch &&
-      (existing.transport !== 'native' || nativeFreshRestart) &&
+      existing.transport === 'native' &&
+      nativeFreshRestart &&
       effectiveSlotId &&
       existing.taskFile
     ) {

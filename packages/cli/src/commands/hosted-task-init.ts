@@ -64,12 +64,15 @@ export interface HostedTaskInitRequest {
   templateProvenance?: HandoffMetadata['templateProvenance'];
 }
 
-function refusal(message: string, code = 'TASK_INIT_INPUT_INVALID'): Error {
+function refusal(
+  message: string,
+  code = 'TASK_INIT_INPUT_INVALID',
+  userAction = 'Use the matching hosted run and worker task directory. Re-author a new task for a different allocation; never delete or upgrade a retained receipt.',
+): Error {
   return Object.assign(new Error(message), {
     code,
     exitCode: 2,
-    userAction:
-      'Use the matching hosted run and worker task directory. Re-author a new task for a different allocation; never delete or upgrade a retained receipt.',
+    userAction,
   });
 }
 const selectionReasons = [
@@ -386,6 +389,7 @@ export function selectHostedTaskTemplate(
     throw refusal(
       'Selected task template differs from the configured node catalog.',
       'TASK_TEMPLATE_CHANGED',
+      'Before the first worker launch, use run.replayStep at write-task to select the current template and initialize it normally. An initialized worker keeps its frozen task and receipt.',
     );
   return { sources, selected };
 }

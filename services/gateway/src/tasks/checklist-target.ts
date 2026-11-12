@@ -2,6 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  CHECKLIST_TARGET_BY_AGENT_ROLE,
   CHECKLIST_TARGET_MANIFEST,
   type ChecklistTarget,
   checklistTargetForAgentRole as resolveChecklistTargetForRole,
@@ -10,6 +11,7 @@ import {
   type NestedLoopAgentRole,
   targetForChecklistBasename,
   taskDirRelPath,
+  WORKER_SIGNAL_FILE,
 } from '@farmslot/protocol/checklist-target';
 
 export type { ChecklistTarget, ChecklistTargetRegistry, NestedLoopAgentRole };
@@ -65,6 +67,24 @@ export function slotTaskRelPath(
   basename: string,
 ): string {
   return `${vars.remoteRepo}/${taskDirRelPath(taskDir, basename)}`;
+}
+
+/** Called only after dispatch admits a replacement task or replaces its pane. */
+export async function clearWorkerSignalsForDispatch(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  taskAbsDir: string,
+): Promise<void> {
+  const signalPaths = [
+    WORKER_SIGNAL_FILE,
+    CHECKLIST_TARGET_BY_AGENT_ROLE.review.signal,
+    CHECKLIST_TARGET_BY_AGENT_ROLE['review-fix'].signal,
+    CHECKLIST_TARGET_BY_AGENT_ROLE['ci-fix'].signal,
+  ].map((file) => shellQuote(`${taskAbsDir}/${file}`));
+  const result = await execOnSlot(vars, `rm -f ${signalPaths.join(' ')}`, vars.remoteRepo);
+  if (result.exitCode !== 0)
+    throw new Error(
+      `Failed to clear previous worker signals: ${result.stderr || result.stdout || `exit ${result.exitCode}`}`,
+    );
 }
 
 function manifestRelPath(taskDir: string): string {
