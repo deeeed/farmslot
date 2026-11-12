@@ -77,6 +77,7 @@ import {
   assertReviewSequence,
   assertWarmReviewContext,
   parseReviewRequestContext,
+  reviewSequenceFromRequest,
 } from '@farmslot/review-dispatch';
 import { currentProjectSources } from '@farmslot/slot-config';
 
@@ -199,6 +200,7 @@ import { assertScriptedRunnerConfig } from '../runners/scripted-config.js';
 import {
   createRun,
   getAllRuns,
+  getAllRunsWithArchived,
   getRun,
   listRuns,
   normalizeRunClassification,
@@ -2334,7 +2336,10 @@ export async function resolveRunDecision(
     const reviewRequest = params.selectionData?.reviewRequest;
     assertReviewRequestPayload(reviewRequest, { maxRows: 5 });
     await assertReviewRoundAvailable(getRun(params.runId)!);
-    assertWarmReviewRequestAvailable(existing, reviewRequest, getAllRuns(), {
+    const history = reviewSequenceFromRequest(reviewRequest).some((row) => row.mode === 'warm')
+      ? await getAllRunsWithArchived()
+      : [];
+    assertWarmReviewRequestAvailable(existing, reviewRequest, history, {
       requireRetainedSession: true,
     });
   }

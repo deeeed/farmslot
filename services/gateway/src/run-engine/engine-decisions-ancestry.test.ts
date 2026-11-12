@@ -24,6 +24,7 @@ mock.module('../runs/store.js', {
   namedExports: {
     ...store,
     getRun: (id: string) => runs.get(id),
+    getAllRunsWithArchived: async () => [...runs.values()],
     listRuns: () => ({ runs: [...runs.values()] }),
     updateRun: (id: string, patch: Partial<Run>) => {
       const run = { ...runs.get(id)!, ...patch };

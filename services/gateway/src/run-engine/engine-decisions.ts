@@ -35,6 +35,7 @@ import {
   type RunProgressObservation,
 } from '../runners/run-progress.js';
 import {
+  getAllRunsWithArchived,
   getRun,
   getRunWithArchived,
   listRuns,
@@ -492,7 +493,7 @@ export async function handleRepeatReviewDecision(
   ) {
     return current.repeatReviewContext;
   }
-  const allRuns = startsFreshReviewChain(current) ? [] : listRuns({}).runs;
+  const allRuns = startsFreshReviewChain(current) ? [] : await getAllRunsWithArchived();
   const prior = findLatestPriorReviewRun(current, allRuns);
   if (!prior) {
     if (requestedMode === 'warm')
