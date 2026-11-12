@@ -1,0 +1,1 @@
+- Document parked-work inventory and restore operations in the gateway API reference.
