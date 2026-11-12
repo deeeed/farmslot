@@ -2,10 +2,12 @@
 // event loop. The CLI keeps the synchronous `validatePackPortability`; the walk and the policy are
 // the same function in protocol.
 import { execFile } from 'node:child_process';
+import path from 'node:path';
 
 import {
+  listPackOwnedEntriesAsync,
   type PackGitResult,
-  validatePackPortabilityAsync,
+  validatePackEntries,
 } from '@farmslot/protocol/node/pack-portability';
 
 import {
@@ -53,13 +55,24 @@ function runGit(args: string[]): Promise<PackGitResult> {
   );
 }
 
+/** A project pack checked against the portability policy, and the files that check read. */
+export interface ProjectPackPortability {
+  errors: string[];
+  /** Absolute paths of the pack-owned files, so a caller can tell when the pack changed. */
+  files: string[];
+}
+
 /** Every pack-owned file of a project checked against the portability policy. */
 export function validateProjectPackPortability(
   root: string,
   prefix: string,
   machines: readonly string[],
-): Promise<string[]> {
-  return withHostOperation(PACK_PORTABILITY_OPS.validate, () =>
-    validatePackPortabilityAsync(root, prefix, machines, runGit),
-  );
+): Promise<ProjectPackPortability> {
+  return withHostOperation(PACK_PORTABILITY_OPS.validate, async () => {
+    const entries = await listPackOwnedEntriesAsync(root, runGit);
+    return {
+      errors: validatePackEntries(entries, prefix, machines),
+      files: entries.map((entry) => path.join(root, entry.rel)),
+    };
+  });
 }

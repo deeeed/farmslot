@@ -89,6 +89,7 @@ mock.module('../node-support/ensure.js', {
         fileCount: 0,
         files: [],
       },
+      inputs: { files: [], directories: [], machines: [] },
     }),
   },
 });

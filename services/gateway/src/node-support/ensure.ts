@@ -151,6 +151,16 @@ export function nodeSupportBundlePaths(projectName: string, projectJson: RawProj
   return supportPaths.sort();
 }
 
+/** What a bundle collection read: when none of it changed, collecting again gives the same bundle. */
+export interface NodeSupportBundleInputs {
+  /** Absolute paths of the support files and pack-owned files read. */
+  files: string[];
+  /** Absolute paths of the support directories walked: an added or removed file changes one. */
+  directories: string[];
+  /** The pool machine names the packs were checked against. */
+  machines: string[];
+}
+
 /** Read and hash the bundle's files from this gateway's tree. */
 export async function collectNodeSupportBundle(projectName: string, supportPaths: string[]) {
   const projects = new Set([
@@ -160,14 +170,18 @@ export async function collectNodeSupportBundle(projectName: string, supportPaths
   const machines = packMachineNames(poolDirectory());
   // One project at a time, in insertion order: the primary pack's failure surfaces first.
   const portabilityErrors: string[] = [];
-  for (const name of projects)
-    portabilityErrors.push(
-      ...(await validateProjectPackPortability(
-        path.join(projectsDirectory(), name),
-        `projects/${name}`,
-        machines,
-      )),
-    );
+  const inputs: NodeSupportBundleInputs = { files: [], directories: [], machines };
+  for (const name of projects) {
+    const packRoot = path.join(projectsDirectory(), name);
+    const checked = await validateProjectPackPortability(packRoot, `projects/${name}`, machines);
+    portabilityErrors.push(...checked.errors);
+    inputs.files.push(...checked.files);
+    // A file added to the pack changes the directory it lands in.
+    inputs.directories.push(packRoot);
+    for (const file of checked.files)
+      for (let dir = path.dirname(file); dir.startsWith(`${packRoot}/`); dir = path.dirname(dir))
+        inputs.directories.push(dir);
+  }
   if (portabilityErrors.length)
     throw new Error(`Project pack is not portable:\n${portabilityErrors.join('\n')}`);
   const farmslotRootRealPath = await realpath(farmslotRoot());
@@ -179,10 +193,11 @@ export async function collectNodeSupportBundle(projectName: string, supportPaths
         if (!pathWithin(farmslotRootRealPath, sourceRealPath)) {
           throw new Error(`Node support path escapes Farmslot root: ${supportPath}`);
         }
-        return collectSupportFiles(sourcePath, supportPath);
+        return collectSupportFiles(sourcePath, supportPath, inputs.directories);
       }),
     )
   ).flat();
+  for (const file of files) inputs.files.push(path.join(farmslotRoot(), file.relativePath));
   const shippedErrors = files.flatMap((file) => {
     if (!file.relativePath.startsWith('projects/')) return [];
     return validatePackBytesPortability(
@@ -206,7 +221,7 @@ export async function collectNodeSupportBundle(projectName: string, supportPaths
       size: file.size,
     })),
   };
-  return { files, manifest };
+  return { files, manifest, inputs };
 }
 
 /** Where a bundle lives on a node. */
@@ -235,7 +250,7 @@ export async function ensureNodeSupportBundle(
     /** False for read-only prerequisites: preserve the slot's launch selection. */
     selectSlot?: boolean;
     /** The bundle already read for this project; reused when its paths still match. */
-    collected?: Awaited<ReturnType<typeof collectNodeSupportBundle>>;
+    collected?: Pick<Awaited<ReturnType<typeof collectNodeSupportBundle>>, 'files' | 'manifest'>;
   } = {},
 ): Promise<NodeSupportBundleState | null> {
   if (currentProjectSources() ?? options.projectVars?.sourceContext) {
