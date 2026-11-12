@@ -27,6 +27,7 @@ import {
 } from '../core/config.js';
 import { diffKindForFlow } from '../core/diff-kind.js';
 import { execOnSlot } from '../core/exec.js';
+import { withFarmGitConfig } from '../core/farm-git.js';
 import {
   buildSourceDiffFilter,
   isSourceCodePath,
@@ -656,7 +657,7 @@ async function ensureRemoteDefaultBranchFetched(
   if (commitish !== remoteRef) return null;
   const fetchResult = await execOnSlot(
     vars,
-    `git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+    withFarmGitConfig(`git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`),
     { timeout: 15000 },
   );
   if (fetchResult.exitCode === 0) return null;
@@ -691,7 +692,7 @@ export async function captureRunDiffSnapshot(
   const baseSpec =
     options.baseSpec ??
     (await settleStackedDiffBase(
-      (command) => execOnSlot(vars, command, { timeout: 15000 }),
+      (command) => execOnSlot(vars, withFarmGitConfig(command), { timeout: 15000 }),
       defaultBranch,
       contributionDiffBaseSpec(
         { startRef: run.startRef, stack: await contributionStack(run) },
