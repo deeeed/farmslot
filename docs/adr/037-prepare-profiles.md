@@ -175,3 +175,39 @@ Migration is intentionally compatible:
 Project harnesses follow the same boundary: an adapter may expose its harness's action-manifest entries
 as Farmslot provider actions and keep the harness's provenance and readiness internal. Farmslot does not
 import project recipes, branch on runner names, or duplicate a project harness's executor.
+
+## Amendment: pack-owned support files and retirement (2026-11-12)
+
+**Status:** Accepted by lead decision, 2026-11-12.
+**Implementation:** [PR #2037](https://github.com/deeeed/farmslot/pull/2037).
+
+Packs declare `fixtures.owned_paths` as one list of checkout-relative paths with
+`state: "current" | "retired"`. Retiring an installed file changes its state;
+the declaration remains as a permanent tombstone. Fixture mappings and local
+Git exclusions do not establish or revoke ownership.
+
+The shared resolver supplies the same paths to dirty/recovery inspection and
+release/recovery cleanup. Only untracked entries are ignored or removed. Tracked
+files and tracked edits remain user work, including inside a declared directory.
+Cleanup keeps the existing slot ownership, worker and retention guards; it must
+not follow a parent symlink outside the checkout or remove an undeclared path.
+Task/runtime archives retain their existing lifecycle and are not a blanket
+cleanup target.
+
+This fixes retired `CLAUDE.local.md` and installed skill/editor copies stranding
+otherwise clean slots after a pack drops their fixture or exclusion. Packs
+without the new member retain `slotScaffoldingPaths` behavior, so framework and
+pack updates may land separately.
+
+### Public surface
+
+The additive project metadata is specified in
+[Project packs](../reference/project-packs.md#farm-owned-support-paths). Shared
+configuration types and `parseProjectOwnedPaths` belong to private
+`@farmslot/slot-config`, consumed by `loadProjectVars` and Gateway scaffolding
+resolution. The Gateway owns inspection and guarded deletion. No new RPC, CLI flag, store or process is added.
+Pack authors, including harness-backed packs, declare support paths in their
+existing `project.json`; harnesses inherit the common lifecycle behavior.
+
+The one-time fleet sweep uses merged declarations, records Git status before
+and after each slot, and removes only untracked retired entries.
