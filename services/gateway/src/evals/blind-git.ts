@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { type EvalProofSource, primaryRoleForFlow, type Run } from '@farmslot/protocol';
 
 import { shSingleQuote } from '../../../../scripts/lib/shell-quote.mjs';
+import { withFarmGitConfig } from '../core/farm-git.js';
 
 export interface BlindGitSpec {
   slotId: string;
@@ -35,7 +36,9 @@ export function buildBlindGitCommand(
   action: 'plan' | 'isolate' | 'boundary' | 'verify' | 'restore',
   spec: BlindGitSpec,
 ): string {
-  return `python3 - ${shSingleQuote(JSON.stringify({ ...spec, action }))} <<'FARMSLOT_BLIND_GIT_PY'\n${script}\nFARMSLOT_BLIND_GIT_PY`;
+  return withFarmGitConfig(
+    `python3 - ${shSingleQuote(JSON.stringify({ ...spec, action }))} <<'FARMSLOT_BLIND_GIT_PY'\n${script}\nFARMSLOT_BLIND_GIT_PY`,
+  );
 }
 
 export type BlindTrialWorkerBoundary = Pick<BlindGitSpec, 'capsule' | 'baseSha'> & {

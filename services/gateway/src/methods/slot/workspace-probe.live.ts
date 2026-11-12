@@ -22,8 +22,23 @@ test('read-only probe binds staged, unstaged and untracked content at unchanged 
   git('commit', '-qm', 'test: baseline');
   git('remote', 'add', 'origin', repo);
   git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  git('config', 'gc.auto', '1');
+  git('config', 'maintenance.auto', 'true');
+  const config = await readFile(path.join(repo, '.git/config'));
+  const trace = `${repo}.trace.jsonl`;
+  t.after(() => rm(trace, { force: true }));
   const command = workspaceProbeCommand({ remoteRepo: repo }, {}, 'main');
-  const probe = () => JSON.parse(execFileSync('bash', ['-c', command], { encoding: 'utf8' }));
+  const probe = () =>
+    JSON.parse(
+      execFileSync('bash', ['-c', command], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          GIT_TRACE2_EVENT: trace,
+          GIT_TRACE2_CONFIG_PARAMS: 'gc.auto,maintenance.auto',
+        },
+      }),
+    );
   const clean = probe();
   assert.equal(clean.dirtyCount, 0);
   assert.equal(clean.behind, 0);
@@ -47,4 +62,24 @@ test('read-only probe binds staged, unstaged and untracked content at unchanged 
   assert.deepEqual(await readFile(path.join(repo, '.git/index')), index);
   assert.equal(git('show-ref'), refs);
   assert.ok((await stat(path.join(repo, '.git/index'))).isFile());
+  const events = (await readFile(trace, 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  for (const [key, value] of [
+    ['gc.auto', '0'],
+    ['maintenance.auto', 'false'],
+  ]) {
+    assert.ok(
+      events.some(
+        (event) =>
+          event.event === 'def_param' &&
+          event.param === key &&
+          event.scope === 'command' &&
+          event.value === value,
+      ),
+      `probe has command-scoped ${key}`,
+    );
+  }
+  assert.deepEqual(await readFile(path.join(repo, '.git/config')), config);
 });

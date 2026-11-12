@@ -2,6 +2,7 @@ import { isRecord, type Run, type RunStack } from '@farmslot/protocol';
 
 import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { withFarmGitConfig } from '../core/farm-git.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { shellQuote } from '../core/tmux.js';
 import { github } from '../integrations/github-client.js';
@@ -40,7 +41,7 @@ async function readAttachmentSource(
     attachmentRefusal('SOURCE_MISSING', 'A retained slot and branch are required.');
   const vars = await loadSlotVars(run.slotId);
   const git = async (command: string): Promise<string> => {
-    const result = await execOnSlot(vars, command, { timeout: 15_000 });
+    const result = await execOnSlot(vars, withFarmGitConfig(command), { timeout: 15_000 });
     if (result.exitCode !== 0)
       attachmentRefusal('SOURCE_UNVERIFIED', 'The retained source could not be verified.');
     return result.stdout.trim();

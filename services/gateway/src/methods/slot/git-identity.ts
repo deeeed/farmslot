@@ -4,6 +4,7 @@ import path from 'node:path';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { EXEC_TIMEOUT_EXIT_CODE, type ExecResult } from '../../core/exec.js';
+import { withFarmGitConfig } from '../../core/farm-git.js';
 import { execOnSlot, type SlotVars } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
 
@@ -248,7 +249,9 @@ export async function checkCommitSigning(
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
   const timeoutMs = options.probeTimeoutMs ?? SIGNING_PROBE_TIMEOUT_MS;
   const probe = await execute(
-    `${git} commit-tree -S $(${git} hash-object -t tree /dev/null) -m 'farmslot signing probe' </dev/null 2>&1`,
+    withFarmGitConfig(
+      `${git} commit-tree -S $(${git} hash-object -t tree /dev/null) -m 'farmslot signing probe' </dev/null 2>&1`,
+    ),
     timeoutMs,
   );
   if (probe.exitCode === EXEC_TIMEOUT_EXIT_CODE) {

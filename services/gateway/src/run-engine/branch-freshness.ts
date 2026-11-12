@@ -10,6 +10,7 @@ import { DEFAULT_BRANCH, type ReadyGatePayload, type Run } from '@farmslot/proto
 
 import { getProjectField, loadProjectVars, loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { withFarmGitConfig } from '../core/farm-git.js';
 import { shellQuote } from '../core/tmux.js';
 import {
   type MergeMainStrategy,
@@ -301,7 +302,7 @@ export async function probeSlotBranchFreshness(
   const branch = sanitizeDefaultBranch(defaultBranch);
   const script = buildBranchFreshnessProbeScript(vars.remoteRepo, branch);
   try {
-    const result = await execOnSlot(vars, script, { timeout: timeoutMs });
+    const result = await execOnSlot(vars, withFarmGitConfig(script), { timeout: timeoutMs });
     // Even non-zero exit may still carry markers after set +e.
     if (
       !result.stdout.includes('REF_OK:') ||

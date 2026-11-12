@@ -443,6 +443,8 @@ export interface CandidateStrategy {
 }
 
 export interface ExperimentTrial {
+  /** Trial-level judging opt-out, frozen at admission. */
+  review?: false;
   /** Resolved judge override; omitted for trials using project review defaults. */
   reviewRunner?: string;
   reviewModel?: string;
@@ -1049,6 +1051,11 @@ function isExperimentTrial(value: unknown): value is ExperimentTrial {
     typeof value.strategyId === 'string' &&
     typeof value.caseId === 'string' &&
     isExperimentTrialStatus(value.status) &&
+    (value.review === undefined || value.review === false) &&
+    !(
+      value.review === false &&
+      (value.reviewRunner !== undefined || value.reviewModel !== undefined)
+    ) &&
     isOptionalString(value.reviewRunner) &&
     isOptionalString(value.reviewModel) &&
     isOptionalString(value.runId) &&

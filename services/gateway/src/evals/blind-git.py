@@ -12,8 +12,10 @@ import sys
 from urllib.parse import urlsplit
 
 os.umask(0o077)
-GIT = ['git', '-c', 'maintenance.auto=false', '-c', 'gc.auto=0',
-       '-c', 'submodule.recurse=false', '--no-optional-locks']
+# buildBlindGitCommand inherits maintenance suppression from farm-git.ts.
+# Keep submodule traversal explicit and avoid optional index writes while reading
+# retained stores; apply these controls to every Python Git subprocess.
+GIT = ['git', '-c', 'submodule.recurse=false', '--no-optional-locks']
 
 
 def git(repo, *args, git_dir=None, check=True, input=None):
