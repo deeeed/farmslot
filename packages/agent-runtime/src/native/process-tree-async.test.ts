@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
+import { once } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
@@ -47,4 +48,24 @@ test('async launch census retains the combined sync output limit', async (t) => 
     spy.mock.restore();
     syncBuiltinESMExports();
   }
+});
+
+test('async root census refuses a departed process just like the synchronous constructor', async (t) => {
+  const gone = childProcess.spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
+  t.after(async () => {
+    if (gone.pid && gone.exitCode === null && gone.signalCode === null) {
+      const exited = once(gone, 'exit');
+      gone.kill('SIGKILL');
+      await exited;
+    }
+  });
+  await once(gone, 'exit');
+  assert.throws(
+    () => new NativeProcessTree(gone.pid!, { gated: true }),
+    /Native process identity is unavailable/,
+  );
+  await assert.rejects(
+    NativeProcessTree.create(gone.pid!, { gated: true }),
+    /Native process identity is unavailable/,
+  );
 });

@@ -140,7 +140,7 @@ test(
     const project = await (
       await import('../../services/gateway/src/core/config.js')
     ).loadProjectVars('fixture');
-    const selection = (
+    const selection = await (
       await import('../../services/gateway/src/tasks/execution-template-catalog.js')
     ).resolveConfiguredExecutionTemplate(project, {
       flow: 'review-pr',

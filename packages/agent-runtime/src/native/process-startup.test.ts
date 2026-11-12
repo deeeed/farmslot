@@ -9,8 +9,8 @@ import test from 'node:test';
 
 import { JsonLineProcess } from './process.js';
 
-const echo = `require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
-  const message=JSON.parse(line);process.stdout.write(JSON.stringify({id:message.id,result:message.params})+'\\n');
+const echo = `let arrival=0;require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+  const message=JSON.parse(line);process.stdout.write(JSON.stringify({id:message.id,result:{...message.params,arrival:++arrival}})+'\\n');
 });`;
 
 test('native startup queues protocol records without synchronous process reads', async (t) => {
@@ -39,9 +39,13 @@ test('native startup queues protocol records without synchronous process reads',
     () => {},
   );
   try {
+    assert.equal(registered, false, 'registration completed before the async identity read');
     const first = child.request('first', { position: 1 });
     const second = child.request('second', { position: 2 });
-    assert.deepEqual(await Promise.all([first, second]), [{ position: 1 }, { position: 2 }]);
+    assert.deepEqual(await Promise.all([first, second]), [
+      { position: 1, arrival: 1 },
+      { position: 2, arrival: 2 },
+    ]);
     assert.equal(registered, true, 'protocol traffic preceded durable registration');
     assert.equal(scans, 0, 'native startup blocked its caller with synchronous ps');
   } finally {

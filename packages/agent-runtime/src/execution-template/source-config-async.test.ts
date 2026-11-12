@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import childProcess from 'node:child_process';
+import childProcess, { execFile, execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -10,6 +10,7 @@ import type { ProjectExecutionTemplatesConfig } from '@farmslot/protocol';
 
 import {
   type ExecutionTemplateGitResult,
+  type ExecutionTemplateGitRunner,
   resolveConfiguredExecutionTemplateSources,
   resolveConfiguredExecutionTemplateSourcesAsync,
 } from './source-config.js';
@@ -88,4 +89,79 @@ test('async source resolution yields before another source and propagates the fi
   reject(first);
   await rejected;
   assert.deepEqual(seen, ['first']);
+});
+
+test('the asynchronous source resolver answers as the synchronous one, through the given git runner', async (t) => {
+  const pack = mkdtempSync(path.join(tmpdir(), 'source-config-async-'));
+  t.after(() => rmSync(pack, { recursive: true, force: true }));
+  const git = (args: string[]) => execFileSync('git', args, { cwd: pack, stdio: 'ignore' });
+  // A committed source, the same with an uncommitted change, a non-repository and a missing root.
+  const repo = path.join(pack, 'repo');
+  mkdirSync(path.join(repo, 'clean'), { recursive: true });
+  mkdirSync(path.join(repo, 'dirty'), { recursive: true });
+  writeFileSync(path.join(repo, 'clean', 'a.md'), '# A\n');
+  writeFileSync(path.join(repo, 'dirty', 'b.md'), '# B\n');
+  git(['init', '--quiet', repo]);
+  git(['-C', repo, 'add', '.']);
+  git([
+    '-C',
+    repo,
+    '-c',
+    'user.name=t',
+    '-c',
+    'user.email=t@t',
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '--quiet',
+    '-m',
+    'init',
+  ]);
+  writeFileSync(path.join(repo, 'dirty', 'b.md'), '# B changed\n');
+  mkdirSync(path.join(pack, 'plain'));
+  const config = {
+    sources: [
+      { id: 'clean', kind: 'workspace' as const, root: { projectPath: 'repo' }, subpath: 'clean' },
+      { id: 'dirty', kind: 'workspace' as const, root: { projectPath: 'repo' }, subpath: 'dirty' },
+      { id: 'plain', kind: 'workspace' as const, root: { projectPath: 'plain' } },
+      { id: 'missing', kind: 'workspace' as const, root: { projectPath: 'missing' } },
+    ],
+  };
+  const calls: string[][] = [];
+  const runner: ExecutionTemplateGitRunner = (args) =>
+    new Promise((resolve) => {
+      calls.push(args);
+      execFile('git', args, { encoding: 'utf8' }, (error, stdout) =>
+        resolve({
+          status: !error ? 0 : typeof error.code === 'number' ? error.code : null,
+          stdout,
+        }),
+      );
+    });
+  const options = { projectPackRoot: pack };
+  const synchronous = resolveConfiguredExecutionTemplateSources(config, options);
+  assert.deepEqual(
+    await resolveConfiguredExecutionTemplateSourcesAsync(config, options, runner),
+    synchronous,
+  );
+  assert.equal(calls.length, 6, 'a revision and a status read per available source');
+  assert.deepEqual(
+    synchronous.sources.map((source) => [
+      source.id,
+      Boolean(source.sourceRevision),
+      source.sourceDirty,
+    ]),
+    [
+      ['clean', true, false],
+      ['dirty', true, true],
+      ['plain', false, undefined],
+    ],
+  );
+  assert.deepEqual(synchronous.unavailable, [{ id: 'missing', reason: 'missing-root' }]);
+  await assert.rejects(
+    resolveConfiguredExecutionTemplateSourcesAsync(config, options, () =>
+      Promise.reject(new Error('git gone')),
+    ),
+    /git gone/,
+  );
 });
