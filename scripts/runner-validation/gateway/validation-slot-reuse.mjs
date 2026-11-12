@@ -1,8 +1,7 @@
 // Disposable-gateway proof that a closed or archived artifact-only validation run leaves its slot
 // reusable (F291): unpublished commits keep their named branch and an immutable parking ref.
 // The slot returns to idle. Fresh prepare refuses to overwrite that branch; other tickets can use
-// the slot. Covers an
-// archive after COMPLETE already released the slot (c9562e49), the named discard of a run held at a
+// the slot. Covers archive after COMPLETE released the slot (c9562e49), named discard of a run held at a
 // refused COMPLETE (29ce2ab4), the archive of a cancelled run, and a stacked commit that is not the
 // run's own. Engine start is disabled; every release goes through the production RPCs.
 import assert from 'node:assert/strict';
@@ -444,7 +443,6 @@ try {
     return 'unpublished branch retained; overwrite refused';
   });
   scenario('another ticket prepares on the freed slot', () => {
-    rpc('slot.release', { slotId: released.id, keepWork: true });
     const branch = 'TAT-9007-validation';
     rpc('slot.prepare', { slotId: released.id, branch, prepareProfile: 'git' });
     assert.equal(git(released.repo, 'branch', '--show-current'), branch);
