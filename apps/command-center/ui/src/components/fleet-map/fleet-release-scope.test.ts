@@ -23,7 +23,7 @@ function workspace(branch: string): SlotWorkspace {
     handoffRunId: null,
     branch,
     headSha: 'abc',
-    dirtyFingerprint: '',
+    dirtyFingerprint: 'fixture-clean',
     recoveryId: null,
     observedAt: now,
     localDefaultSha: 'abc',
@@ -170,10 +170,7 @@ test('the bulk release sends exactly the selected safe slots to fleet.refreshSlo
     model.rows.map((row) => row.slotId),
     ['idle-2', 'busy-1', 'unpushed-1', 'dirty-1'],
   );
-  assert.equal(
-    fleetLocalWorkNote(model.rows),
-    'Unpushed or uncommitted work on dirty-1. Bulk release skips it.',
-  );
+  assert.equal(fleetLocalWorkNote(model.rows), '', 'local work is parked before bulk reset');
   await model.releaseIdle();
   const bulk = calls.filter((call) => call.method === Methods.FLEET_REFRESH_SLOTS);
   assert.equal(bulk.length, 1);
@@ -183,8 +180,9 @@ test('the bulk release sends exactly the selected safe slots to fleet.refreshSlo
     [
       ['idle-2', 'safe'],
       ['unpushed-1', 'safe'],
+      ['dirty-1', 'safe'],
     ],
-    'ownerless commits are parked; busy and dirty rows stay out; idle-1 was not selected',
+    'ownerless commits and dirty work are parked; busy rows stay out; idle-1 was not selected',
   );
   model.dispose();
 });
