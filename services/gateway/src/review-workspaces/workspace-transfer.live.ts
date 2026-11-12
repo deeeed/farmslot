@@ -1,7 +1,7 @@
 // Opt-in real Git transfer proof; subprocess allocation exceeds the default five-second test budget.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -14,6 +14,8 @@ test('a stopped reviewer transfers its source checkout and preserves predecessor
   const oldTask = path.join(f.workspace, 'task');
   writeFileSync(path.join(oldTask, '.terminal-cancelled'), f.identity.runId);
   writeFileSync(path.join(oldTask, 'report.md'), 'Original review evidence\n');
+  const runtime = path.join(source, 'ignored.tmp');
+  writeFileSync(runtime, 'Retained runtime data\n');
   writeFileSync(path.join(f.source, 'source.txt'), 'next head\n');
   f.git('add', '.');
   f.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-m', 'next');
@@ -28,9 +30,13 @@ test('a stopped reviewer transfers its source checkout and preserves predecessor
   );
   assert.equal(readFileSync(path.join(oldTask, 'report.md'), 'utf8'), 'Original review evidence\n');
   assert(existsSync(path.join(taskPath, 'artifacts')));
+  assert.equal(readFileSync(runtime, 'utf8'), 'Retained runtime data\n');
   assert.deepEqual(f.execute('allocate', changes, false, extra), { state: 'ready' });
   assert.throws(() => f.execute('cleanup'), /Workspace identity conflict/);
   assert.equal(readFileSync(path.join(source, 'source.txt'), 'utf8'), 'next head\n');
+  assert.throws(() => f.execute('cleanup', changes, false, extra), /refusing to discard/);
+  assert.equal(readFileSync(runtime, 'utf8'), 'Retained runtime data\n');
+  unlinkSync(runtime);
   assert.deepEqual(f.execute('cleanup', changes, false, extra), { state: 'cleaned' });
   assert.equal(readFileSync(path.join(oldTask, 'report.md'), 'utf8'), 'Original review evidence\n');
 });

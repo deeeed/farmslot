@@ -351,6 +351,9 @@ export async function allocateReviewWorkspace(
             throw new Error('Review workspace ownership changed before transfer');
         },
       );
+      await options.assertCurrent();
+      await removeReviewWorkspaceSkills(prior);
+      await options.assertCurrent();
     }
 
     await executeWorkspace(ownedRun(runId), 'allocate', options);

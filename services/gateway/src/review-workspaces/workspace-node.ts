@@ -321,7 +321,7 @@ async function git(args, phase = 'inspect') {
   if (result !== 0) throw new Error(stderr || 'Git command failed');
   return stdout.trim();
 }
-async function verifyCheckout(expectedHead = identity.headSha) {
+async function verifyCheckout(expectedHead = identity.headSha, preserveIgnored = false) {
   directory(checkout);
   const gitFile = path.join(checkout, '.git');
   const stat = fs.lstatSync(gitFile);
@@ -331,7 +331,7 @@ async function verifyCheckout(expectedHead = identity.headSha) {
   if (await git(['-C',checkout,'rev-parse','HEAD']) !== expectedHead) throw new Error('Checkout HEAD no longer matches frozen review');
   const changes = (await git(['-C',checkout,'status','--porcelain','-z','--untracked-files=normal','--ignored=matching'])).split('\0').filter(Boolean);
   // Ignored tool runtime state is not reviewed source. Preserve every other change.
-  if (changes.some((entry) => !entry.startsWith('!! .agent/'))) throw new Error('Review checkout changed; refusing to discard files');
+  if (changes.some((entry) => !(preserveIgnored && entry.startsWith('!! ')) && !entry.startsWith('!! .agent/'))) throw new Error('Review checkout changed; refusing to discard files');
 }
 function validateCleanupSession() {
   const files=[],directories=[];
@@ -465,7 +465,7 @@ function finishCleanup() {
     if(previousIdentity.runId === identity.runId || previousIdentity.headSha !== identity.baseSha)
       throw new Error('Review transfer does not match its previous reviewed head');
     marker(identityPath,previousIdentity,false);
-    await verifyCheckout(previousIdentity.headSha);
+    await verifyCheckout(previousIdentity.headSha, true);
     const priorTask = path.resolve(input.previousTaskPath || '');
     if(![path.join(workspace,'task'),path.join(workspace,'tasks',previousIdentity.runId)].includes(priorTask) ||
        fs.realpathSync(priorTask) !== path.join(fs.realpathSync(workspace),path.relative(workspace,priorTask)) ||
@@ -532,10 +532,10 @@ function finishCleanup() {
       await git(['--git-dir',cache,'worktree','add','--detach',checkout,identity.headSha], 'add-worktree');
     }
     if(previousIdentity && await git(['-C',checkout,'rev-parse','HEAD']) !== identity.headSha) {
-      await verifyCheckout(previousIdentity.headSha);
-      await git(['-C',checkout,'checkout','--detach',identity.headSha], 'continue-worktree');
+      await verifyCheckout(previousIdentity.headSha, true);
+      await git(['-C',checkout,'checkout','--detach','--no-overwrite-ignore',identity.headSha], 'continue-worktree');
     }
-    await verifyCheckout();
+    await verifyCheckout(identity.headSha, Boolean(previousIdentity));
     assertWorkspaceOperationCurrent();
     write(receiptPath,{state:'ready',operationId:operation.id,updatedAt:new Date().toISOString()});
     write(path.join(operationPath,'state.json'),{state:'complete'});
