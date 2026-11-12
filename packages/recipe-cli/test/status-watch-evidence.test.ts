@@ -204,6 +204,22 @@ test('status --watch says when no recipe run exists yet', async (t) => {
   assert.match(session.frames[1]!, /no recipe run or call yet under .*temp\/recipe\/runs/u);
 });
 
+test("status --watch ignores a previous task's call made moments before this task started", async (t) => {
+  taskEnv(t, undefined);
+  const target = tempDir(t);
+  const calls = path.join(target, 'temp/recipe/calls');
+  writeRun(calls, 'previous', new Date(Date.now() - 1500).toISOString());
+  writeTask(path.join(target, 'temp/tasks/dev/task'), 'running');
+  const session = watch(t, target, {
+    serveEvidence: async () => assert.fail('a call from the previous task must not open'),
+    openUrl: () => assert.fail('nothing to open'),
+  });
+  await session.ready();
+  session.key('v');
+  await settle(() => session.frames.length === 2);
+  assert.match(session.frames[1]!, /no recipe run or call yet/u);
+});
+
 test('status --watch ignores calls made before the task started', async (t) => {
   taskEnv(t, undefined);
   const target = tempDir(t);

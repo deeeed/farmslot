@@ -193,9 +193,7 @@ export async function runStatusWatch(
     if (!page) {
       // Before the first recipe run a task usually proves single actions with `call`; they
       // leave the same evidence package, so show the newest one made during this task.
-      // File times come from a coarse clock that can trail the task's recorded start by a
-      // few milliseconds, so a call made right after the start still counts.
-      const startedAt = taskStartedAt(view.taskDir) - CALL_START_SLACK_MS;
+      const startedAt = taskStartedAt(view.taskDir);
       page = newestEvidence(
         [
           ...(view.taskDir ? [path.join(view.taskDir, 'artifacts', 'calls')] : []),
@@ -343,7 +341,11 @@ function taskStartedAt(taskDir: string | undefined): number {
   }
 }
 
-/** The newest evidence package across `roots`, optionally only ones updated after `since`. */
+/**
+ * The newest evidence package across `roots`, optionally only ones made at or after `since`.
+ * A package's recorded start is compared exactly; without one, its file time is used with
+ * slack, because file times come from a coarse clock that can trail the process clock.
+ */
 function newestEvidence(
   roots: string[],
   since = Number.NEGATIVE_INFINITY,
@@ -352,8 +354,11 @@ function newestEvidence(
   for (const root of roots) {
     if (!fs.existsSync(root)) continue;
     for (const entry of listRunEvidenceHistory(root)) {
+      const made = entry.startedAt
+        ? Date.parse(entry.startedAt) >= since
+        : Date.parse(entry.updatedAt) >= since - CALL_START_SLACK_MS;
+      if (!made) continue;
       const at = entry.startedAt ?? entry.updatedAt;
-      if (Date.parse(entry.updatedAt) < since) continue;
       if (!best || at > best.at) best = { root, id: entry.id, at };
     }
   }
