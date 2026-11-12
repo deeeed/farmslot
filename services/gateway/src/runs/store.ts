@@ -1954,6 +1954,7 @@ export async function claimReviewWorkspaceTransfer(
   assertCurrent: (prior: Run) => void,
 ): Promise<Run> {
   const check = (run: Run) => {
+    assertRunNotArchiving(id);
     assertCurrent(run);
     const { transferredTo, ...binding } = run.reviewWorkspace ?? {};
     const expectedBinding = { ...expected };

@@ -56,6 +56,60 @@ export function compatibleWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Ru
   return compatible ? reviewer : undefined;
 }
 
+/** Follow only stopped, no-verdict transfers; the validated baseline remains unchanged. */
+export function resolveWorkspaceContinuationSource(
+  run: WorkspaceReviewerRun,
+  baseline: Run,
+  read: (id: string) => Run | undefined,
+  reviewId: string,
+): Run {
+  const reviewer = compatibleWorkspaceReviewer(run, baseline);
+  if (!reviewer || reviewer.reviewId !== reviewId)
+    throw new Error('WARM review unavailable: incompatible retained reviewer source');
+  let source = baseline;
+  while (
+    source.reviewWorkspace?.transferredTo &&
+    source.reviewWorkspace.transferredTo.runId !== run.id
+  ) {
+    const successorId = source.reviewWorkspace.transferredTo.runId;
+    const successor = read(successorId);
+    const successorOwner = successor && runPrincipalOwner(successor);
+    const owner = runPrincipalOwner(run);
+    if (
+      !successor ||
+      !isTerminalRunStatus(successor.status) ||
+      successor.reviewResult ||
+      successor.decisions?.some((decision) => !decision.resolvedAt) ||
+      !successor.reviewWorkspace?.executionStoppedAt ||
+      successor.reviewWorkspace.continuedFrom?.runId !== source.id ||
+      successor.reviewWorkspace.workspaceId !== source.reviewWorkspace?.workspaceId ||
+      successor.reviewWorkspace.checkoutPath !== source.reviewWorkspace?.checkoutPath ||
+      successor.transport !== 'tmux' ||
+      successor.nativeOwnerPrincipalId !== run.nativeOwnerPrincipalId ||
+      successor.reviewWorkspace.machine !== run.reviewWorkspaceTarget?.machine ||
+      !sameReviewPR(successor, run) ||
+      successor.agentContexts?.some(
+        (context) => !['complete', 'failed', 'idle'].includes(context.status),
+      ) ||
+      Object.values(successor.reviewRoundSettlements ?? {}).some(
+        (settlement) => settlement.kind === 'pending' || settlement.kind === 'verdict',
+      ) ||
+      successor.project !== run.project ||
+      !owner ||
+      !successorOwner ||
+      !samePrincipalOwner(owner, successorOwner) ||
+      successor.metrics.runner !== run.metrics.runner ||
+      successor.metrics.model !== run.metrics.model ||
+      (successor.effort ?? null) !== (run.effort ?? null) ||
+      successor.repeatReviewContext?.session?.reviewId !== reviewer.reviewId ||
+      successor.repeatReviewContext.session.priorSessionId !== reviewer.runnerSessionId
+    )
+      throw new Error('WARM review unavailable: retained workspace is held by its successor');
+    source = successor;
+  }
+  return source;
+}
+
 /** Retained identity is required before a WARM workspace review can launch. */
 export function configureWorkspaceContinuity(
   run: WorkspaceReviewerRun,
@@ -117,42 +171,16 @@ export function configureWorkspaceContinuity(
   const reviewer = compatibleWorkspaceReviewer(run, prior);
   if (!context.session?.reviewId || reviewer?.reviewId !== context.session.reviewId)
     throw new Error('WARM review unavailable: missing or foreign reviewId lineage');
-  let fallbackReason: 'session-resume-unsupported' | 'session-unavailable' | undefined;
-  const successorId = prior.reviewWorkspace?.transferredTo?.runId;
-  if (successorId && successorId !== run.id) {
-    const successor = history.find((candidate) => candidate.id === successorId);
-    const successorOwner = successor && runPrincipalOwner(successor);
-    const owner = runPrincipalOwner(run);
-    if (
-      !successor ||
-      !isTerminalRunStatus(successor.status) ||
-      successor.reviewResult ||
-      !successor.reviewWorkspace?.executionStoppedAt ||
-      successor.reviewWorkspace.continuedFrom?.runId !== prior.id ||
-      successor.reviewWorkspace.workspaceId !== prior.reviewWorkspace?.workspaceId ||
-      successor.transport !== 'tmux' ||
-      successor.nativeOwnerPrincipalId !== run.nativeOwnerPrincipalId ||
-      successor.reviewWorkspace.machine !== run.reviewWorkspaceTarget?.machine ||
-      !sameReviewPR(successor, run) ||
-      successor.agentContexts?.some(
-        (context) => !['complete', 'failed', 'idle'].includes(context.status),
-      ) ||
-      Object.values(successor.reviewRoundSettlements ?? {}).some(
-        (settlement) => settlement.kind === 'pending' || settlement.kind === 'verdict',
-      ) ||
-      successor.project !== run.project ||
-      !owner ||
-      !successorOwner ||
-      !samePrincipalOwner(owner, successorOwner) ||
-      successor.metrics.runner !== run.metrics.runner ||
-      successor.metrics.model !== run.metrics.model ||
-      (successor.effort ?? null) !== (run.effort ?? null) ||
-      successor.repeatReviewContext?.session?.reviewId !== reviewer.reviewId ||
-      successor.repeatReviewContext.session.priorSessionId !== reviewer.runnerSessionId
-    )
-      throw new Error('WARM review unavailable: retained workspace is held by its successor');
-    fallbackReason = 'session-unavailable';
-  }
+  const source = resolveWorkspaceContinuationSource(
+    run,
+    prior,
+    (id) => history.find((candidate) => candidate.id === id),
+    context.session.reviewId,
+  );
+  let fallbackReason: 'session-resume-unsupported' | 'session-unavailable' | undefined = source
+    .reviewWorkspace?.cleanedAt
+    ? 'session-unavailable'
+    : undefined;
   if (!runnerSupportsSessionContinuation(run.metrics.runner, 'tmux'))
     fallbackReason = 'session-resume-unsupported';
   if (fallbackReason) {
@@ -163,7 +191,7 @@ export function configureWorkspaceContinuity(
       mode: 'cold',
       continuity: 'fresh',
       reviewId: reviewer.reviewId,
-      priorRunId: prior.id,
+      priorRunId: source.id,
       priorSessionId: reviewer.runnerSessionId ?? undefined,
       repository: context.repository,
       prNumber: context.prNumber,
@@ -173,7 +201,7 @@ export function configureWorkspaceContinuity(
         detail:
           fallbackReason === 'session-resume-unsupported'
             ? 'The runner cannot continue a saved terminal session; reviewing the retained delta in a fresh session.'
-            : 'A stopped attempt holds the former workspace without a verdict; reviewing the retained delta in a fresh session.',
+            : 'The retained source was reclaimed; reviewing the retained delta in a fresh session.',
         comparedRanges: [`${context.priorReviewedHeadSha}..${currentHead}`],
       },
     };
@@ -190,7 +218,7 @@ export function configureWorkspaceContinuity(
     repository: context.repository,
     prNumber: context.prNumber,
     lastReviewedHeadSha: context.priorReviewedHeadSha,
-    priorRunId: prior.id,
+    priorRunId: source.id,
     priorSessionId: reviewer.runnerSessionId,
     sessionId: reviewer.runnerSessionId,
   };

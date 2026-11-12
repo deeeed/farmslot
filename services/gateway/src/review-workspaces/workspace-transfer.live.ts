@@ -32,11 +32,22 @@ test('a stopped reviewer transfers its source checkout and preserves predecessor
   assert(existsSync(path.join(taskPath, 'artifacts')));
   assert.equal(readFileSync(runtime, 'utf8'), 'Retained runtime data\n');
   assert.deepEqual(f.execute('allocate', changes, false, extra), { state: 'ready' });
+  const previousIdentity = { ...f.identity, ...changes };
+  writeFileSync(path.join(taskPath, '.terminal-cancelled'), changes.runId);
+  f.execute('cancel', changes);
+  const retry = { ...changes, runId: 'retry-run' };
+  const retryExtra = {
+    previousIdentity,
+    previousTaskPath: taskPath,
+    taskPath: path.join(f.workspace, 'tasks', retry.runId),
+  };
+  assert.deepEqual(f.execute('allocate', retry, false, retryExtra), { state: 'ready' });
+  assert.throws(() => f.execute('cleanup', changes), /Workspace identity conflict/);
   assert.throws(() => f.execute('cleanup'), /Workspace identity conflict/);
   assert.equal(readFileSync(path.join(source, 'source.txt'), 'utf8'), 'next head\n');
-  assert.throws(() => f.execute('cleanup', changes, false, extra), /refusing to discard/);
+  assert.throws(() => f.execute('cleanup', retry, false, retryExtra), /refusing to discard/);
   assert.equal(readFileSync(runtime, 'utf8'), 'Retained runtime data\n');
   unlinkSync(runtime);
-  assert.deepEqual(f.execute('cleanup', changes, false, extra), { state: 'cleaned' });
+  assert.deepEqual(f.execute('cleanup', retry, false, retryExtra), { state: 'cleaned' });
   assert.equal(readFileSync(path.join(oldTask, 'report.md'), 'utf8'), 'Original review evidence\n');
 });

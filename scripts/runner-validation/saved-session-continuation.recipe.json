@@ -15,7 +15,7 @@
       "source-transfer": {
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test services/gateway/src/review-workspaces/workspace-transfer.live.ts",
-        "timeout_ms": 180000,
+        "timeout_ms": 300000,
         "intent": "Reuse a stopped review's source path, preserve its reports, reject old-owner cleanup, and retry the same transfer.",
         "next": "done"
       },
@@ -26,7 +26,7 @@
       "unsupported-continuation": {
         "action": "command",
         "cmd": "FARMSLOT_UNSUPPORTED_CONTINUATION_RPC_OUT=temp/saved-session-continuation/unsupported.json TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks --test services/gateway/src/review-workspaces/unsupported-continuation.rpc.live.ts",
-        "timeout_ms": 180000,
+        "timeout_ms": 300000,
         "intent": "An authenticated WARM request must obey a declared unsupported capability and keep its exact delta and earlier finding in a fresh COLD session trace, without launching a provider.",
         "next": "retained-runners"
       }

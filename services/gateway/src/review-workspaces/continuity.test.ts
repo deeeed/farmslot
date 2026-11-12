@@ -268,7 +268,7 @@ test('an unsupported adapter keeps the delta and prior findings in a fresh sessi
   );
 });
 
-test('a stopped transferred attempt without a verdict preserves the validated delta baseline', () => {
+test('a stopped transferred attempt without a verdict keeps WARM and its validated delta baseline', () => {
   const source = {
     ...prior,
     reviewWorkspace: {
@@ -303,9 +303,11 @@ test('a stopped transferred attempt without a verdict preserves the validated de
   configureWorkspaceContinuity({ ...current, id: 'next' }, source, result, undefined, [
     interrupted,
   ]);
-  assert.equal(result.session?.fallback?.reason, 'session-unavailable');
+  assert.equal(result.session?.fallback, undefined);
   assert.equal(result.priorReviewedHeadSha, 'a'.repeat(40));
-  assert.equal(result.mode, 'cold');
+  assert.equal(result.mode, 'warm');
+  assert.equal(result.session?.priorRunId, interrupted.id);
+  assert.equal(result.session?.sessionId, 'chat');
   for (const other of [
     { ...interrupted, status: 'monitoring' as const },
     { ...interrupted, nativeOwnerPrincipalId: 'foreign' },

@@ -406,7 +406,7 @@ export async function teardownReviewWorkspace(
   const check = () => currentWorkspaceRun(runId, generation, true);
   check();
   if (run.transport === 'tmux') {
-    if (run.agentContexts?.some((context) => context.target))
+    if (run.reviewWorkspace.continuedFrom || run.agentContexts?.some((context) => context.target))
       await reviewTmuxOperation(run, 'stop');
     const reviewer = getRun(runId)?.agentContexts?.find((context) => context.id === 'review');
     if (reviewer && !['complete', 'failed', 'idle'].includes(reviewer.status))

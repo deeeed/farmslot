@@ -30,6 +30,7 @@ mock.module('../runs/store.js', {
   namedExports: {
     getRun: (id: string) => runs.get(id),
     getAllRuns: () => [...runs.values()],
+    getAllRunsWithArchived: async () => [...runs.values()],
     getRunWithArchived: async (id: string) => runs.get(id),
     claimReviewWorkspaceTransfer: () => {
       throw new Error('Unexpected workspace transfer');

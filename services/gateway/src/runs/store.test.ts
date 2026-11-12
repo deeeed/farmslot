@@ -21,6 +21,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
 import { farmslotRoot } from '../projects/repo-root.js';
+import { beginRunArchive, endRunArchive } from '../run-lifecycle/archive-fence.js';
 import { runnerDefaultSafetyTier } from '../runners/registry.js';
 
 import {
@@ -1544,6 +1545,15 @@ test('workspace transfer claims are durable on archived runs and cannot select t
   await writeFile(file, JSON.stringify({ ...prior, reviewWorkspace: workspace }));
   forgetArchivedRuns();
   const target = { runId: 'next', generation: 1 };
+  beginRunArchive(id);
+  try {
+    await assert.rejects(
+      claimReviewWorkspaceTransfer(id, workspace, target, () => undefined),
+      /being archived/,
+    );
+  } finally {
+    endRunArchive(id);
+  }
   await claimReviewWorkspaceTransfer(id, workspace, target, () => undefined);
   const claimed = (await getArchivedRuns()).find((run) => run.id === id)!;
   assert.deepEqual(claimed.reviewWorkspace?.transferredTo, target);

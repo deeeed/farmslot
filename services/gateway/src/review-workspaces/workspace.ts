@@ -17,8 +17,8 @@ import { execNativeNodeArgv, routeNativeExecution } from '../runners/native/node
 import {
   claimReviewWorkspaceTransfer,
   getAllRuns,
+  getAllRunsWithArchived,
   getRun,
-  getRunWithArchived,
   persistRunNow,
   updateRun,
 } from '../runs/store.js';
@@ -244,22 +244,29 @@ export async function allocateReviewWorkspace(
       trace?.continuity === 'resumed' &&
       (await import('../runners/registry.js')).getRunnerDefinition(initial.metrics.runner)
         .sessionContinuation.terminal?.workspace === 'retained';
-    const prior = originalBinding?.continuedFrom
-      ? await getRunWithArchived(originalBinding.continuedFrom.runId)
-      : !originalBinding && retainedCwd && trace.priorRunId
-        ? await getRunWithArchived(trace.priorRunId)
-        : undefined;
-    if (prior || (!originalBinding && retainedCwd)) {
+    let prior: Run | undefined;
+    let baseline: Run | undefined;
+    let history: Run[] = [];
+    if (originalBinding?.continuedFrom || retainedCwd) {
       await options.assertCurrent();
-      const { compatibleWorkspaceReviewer } = await import('./continuity.js');
-      const reviewer = prior && compatibleWorkspaceReviewer(initial, prior);
+      if (!trace?.reviewId || !trace.priorSessionId || !initial.repeatReviewContext?.priorRunId)
+        throw new Error('The retained reviewer has no verified baseline');
+      const { resolveWorkspaceContinuationSource } = await import('./continuity.js');
+      history = await getAllRunsWithArchived();
+      baseline = history.find(
+        (candidate) => candidate.id === initial.repeatReviewContext!.priorRunId,
+      );
+      if (!baseline) throw new Error('The retained reviewer baseline is unavailable');
+      prior = resolveWorkspaceContinuationSource(
+        initial,
+        baseline,
+        (id) => history.find((candidate) => candidate.id === id),
+        trace.reviewId,
+      );
       if (
-        !trace ||
-        !prior?.reviewWorkspace ||
+        !prior.reviewWorkspace ||
         !prior.reviewWorkspaceSubject ||
-        !reviewer ||
-        reviewer.reviewId !== trace.reviewId ||
-        reviewer.runnerSessionId !== trace.priorSessionId ||
+        prior.id !== trace.priorRunId ||
         getAllRuns().some(
           (other) =>
             other.id !== runId &&
@@ -321,7 +328,7 @@ export async function allocateReviewWorkspace(
               },
             }
           : {}),
-      ...(sourceBinding?.support ? { support: sourceBinding.support } : {}),
+      ...(originalBinding?.support ? { support: originalBinding.support } : {}),
       ...(!originalBinding
         ? {
             retentionDays:
@@ -341,13 +348,21 @@ export async function allocateReviewWorkspace(
     await persistRunNow(ownedRun(runId), 'review workspace allocation identity');
     expectedBinding = binding;
     if (prior) {
-      const { compatibleWorkspaceReviewer } = await import('./continuity.js');
+      const { resolveWorkspaceContinuationSource } = await import('./continuity.js');
       await claimReviewWorkspaceTransfer(
         prior.id,
         prior.reviewWorkspace!,
         { runId, generation: initialGeneration },
         (candidate) => {
-          if (!compatibleWorkspaceReviewer(assertAllocationCurrent(), candidate))
+          if (
+            resolveWorkspaceContinuationSource(
+              assertAllocationCurrent(),
+              candidate.id === baseline!.id ? candidate : baseline!,
+              (id) =>
+                id === candidate.id ? candidate : history.find((previous) => previous.id === id),
+              trace!.reviewId!,
+            ).id !== candidate.id
+          )
             throw new Error('Review workspace ownership changed before transfer');
         },
       );

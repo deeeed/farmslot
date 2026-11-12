@@ -512,6 +512,14 @@ its existing delta fallback. Unsupported capability MUST NOT emit an
 This fallback uses normal verdict accounting and grants no refund. Expiry retains its
 existing full-contribution COLD contract.
 
+A stopped transfer that returned no verdict MAY continue the same conversation
+through its latest execution owner under the same identity and busy-session fences.
+`RepeatReviewContext.priorRunId` remains the validated baseline;
+`ReviewSessionTrace.priorRunId` identifies the physical source owner. An attempted
+source-head advance MUST NOT replace the last validated comparison base.
+The successor MUST capture its own support admission even when immutable support
+content is reused. A predecessor's support binding is not that receipt.
+
 The gateway records `ReviewWorkspaceBinding.transferredTo` on the predecessor
 before moving execution authority, including archived predecessors. It records
 `continuedFrom` and a separate task path on the successor before node allocation.

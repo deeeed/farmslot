@@ -151,6 +151,7 @@ function assertWorkspaceOperationCurrent() {
   if (input.action !== 'allocate' && (input.action !== 'cleanup' || input.allowCancelled)) return;
   const cancelled = read(cancellationPath);
   if (cancelled) {
+    if (input.action === 'allocate' && input.previousIdentity && same(cancelled,input.previousIdentity)) return;
     if (!same(cancelled, identity)) throw new Error('Workspace cancellation identity conflict');
     throw new Error('Workspace operation was cancelled');
   }
@@ -462,8 +463,7 @@ function finishCleanup() {
   if (previousIdentity && input.action === 'allocate' && !same(recordedIdentity,identity)) {
     for (const key of ['workspaceId','owner','project','machine','executionNodeId','repositoryUrl'])
       if(previousIdentity[key] !== identity[key]) throw new Error('Review transfer changed '+key);
-    if(previousIdentity.runId === identity.runId || previousIdentity.headSha !== identity.baseSha)
-      throw new Error('Review transfer does not match its previous reviewed head');
+    if(previousIdentity.runId === identity.runId) throw new Error('Review transfer must change its owner');
     marker(identityPath,previousIdentity,false);
     await verifyCheckout(previousIdentity.headSha, true);
     const priorTask = path.resolve(input.previousTaskPath || '');
@@ -471,6 +471,7 @@ function finishCleanup() {
        fs.realpathSync(priorTask) !== path.join(fs.realpathSync(workspace),path.relative(workspace,priorTask)) ||
        fs.readFileSync(path.join(priorTask,'.terminal-cancelled'),'utf8') !== previousIdentity.runId)
       throw new Error('Previous review terminal has no owned stop receipt');
+    if(same(read(cancellationPath),previousIdentity))fs.unlinkSync(cancellationPath);
     write(transferPath,{from:previousIdentity,to:identity});
     write(path.join(workspace,'allocation.json'),{state:'transferring',operationId:operation.id});
     write(identityPath,identity);
@@ -527,6 +528,8 @@ function finishCleanup() {
         await git(['--git-dir',cache,'update-ref','refs/reviews/'+identity.workspaceId+'/'+kind,sha], 'retain-ref');
       }
     }
+    if(previousIdentity && previousIdentity.headSha !== identity.baseSha)
+      await git(['--git-dir',cache,'merge-base','--is-ancestor',identity.baseSha,identity.headSha], 'verify-review-delta');
     if (!fs.existsSync(checkout)) {
       if(previousIdentity) throw new Error('Retained review checkout is missing');
       await git(['--git-dir',cache,'worktree','add','--detach',checkout,identity.headSha], 'add-worktree');

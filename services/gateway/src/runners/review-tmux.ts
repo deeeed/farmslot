@@ -300,8 +300,13 @@ export async function reviewTmuxOperation(
       ...(action === 'resume' ? { resumeSessionId, resumeCommandId } : {}),
     });
   }
+  const baseline =
+    action === 'stop' && w.continuedFrom && run.repeatReviewContext?.priorRunId
+      ? await getRunWithArchived(run.repeatReviewContext.priorRunId)
+      : undefined;
+  // An allocation can fail before its runtime is copied. Stop through the validated predecessor's immutable runtime.
   const script = path.posix.join(
-    w.taskPath,
+    baseline?.reviewWorkspace?.taskPath ?? w.taskPath,
     'inputs/runtime/node_modules/@farmslot/agent-runtime/scripts/review-terminal.cjs',
   );
   // Control code comes from the owning gateway, even for a pre-change retained task.
@@ -324,6 +329,8 @@ export async function reviewTmuxOperation(
       : await execNativeNodeArgv(run.nativeOwnerPrincipalId!, w.machine, argv, 30000);
   if (result.exitCode !== 0) throw new Error(result.stderr || 'Review terminal operation failed');
   const receipt = JSON.parse(result.stdout);
+  if (action === 'stop' && receipt.stopped !== true)
+    throw new Error('Review terminal did not confirm its stop');
   if (
     (action === 'launch' || action === 'resume') &&
     (receipt.runner !== runner || receipt.model !== run.metrics.model)
