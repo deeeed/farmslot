@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import fs, { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -273,6 +274,7 @@ test('the asynchronous scan finds what the synchronous scan finds, through the g
   mkdirSync(join(standalone, 'tasks'), { recursive: true });
   writeFileSync(join(standalone, 'tasks/report.md'), '/Users/operator/runtime');
   writeFileSync(join(standalone, 'hook.sh'), 'cd /Users/operator/app');
+  symlinkSync('/home/operator/private', join(standalone, 'private-link'));
   const repo = join(parent, 'repo');
   execFileSync('git', ['init', '--quiet', repo]);
   writeFileSync(join(repo, '.gitignore'), 'ignored/\n');
@@ -284,14 +286,47 @@ test('the asynchronous scan finds what the synchronous scan finds, through the g
   const indexed = join(repo, 'indexed');
   mkdirSync(indexed);
   writeFileSync(join(indexed, 'template.md'), '{{repo}}\n~/xreview/tool');
-  for (const pack of [standalone, ignored, indexed]) {
+  // The asynchronous scan reads paths, files and links, and removes its temporary repository,
+  // without a synchronous file system call.
+  const blocking: string[] = [];
+  let watching = false;
+  for (const name of ['openSync', 'readFileSync', 'lstatSync', 'readlinkSync', 'rmSync'] as const) {
+    const original = fs[name] as (...args: unknown[]) => unknown;
+    t.mock.method(fs, name, (...args: unknown[]) => {
+      if (watching) blocking.push(name);
+      return original(...args);
+    });
+  }
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  const watched = async <T>(run: () => Promise<T>): Promise<T> => {
+    watching = true;
+    try {
+      return await run();
+    } finally {
+      watching = false;
+    }
+  };
+  // The hook and the dangling link in the standalone pack; one file in each other pack.
+  for (const [pack, expected] of [
+    [standalone, 2],
+    [ignored, 1],
+    [indexed, 1],
+  ] as const) {
     calls.length = 0;
-    assert.deepEqual(await listPackOwnedEntriesAsync(pack, git), listPackOwnedEntries(pack));
-    const errors = await validatePackPortabilityAsync(pack, 'projects/p', [], git);
-    assert.equal(errors.length, 1, pack);
-    assert.match(errors[0], /^projects\/p\/[^:]+:\d+: nonportable reference/);
+    const entries = await watched(() => listPackOwnedEntriesAsync(pack, git));
+    assert.deepEqual(entries, listPackOwnedEntries(pack));
+    // Both drivers validate their entries with the same function.
+    const errors = await watched(() => validatePackPortabilityAsync(pack, 'projects/p', [], git));
+    assert.equal(errors.length, expected, pack);
+    for (const error of errors)
+      assert.match(error, /^projects\/p\/[^:]+:\d+: nonportable reference/);
     assert.ok(calls.length > 0, 'git ran through the runner');
   }
+  assert.deepEqual(blocking, [], 'no synchronous file system call');
   await assert.rejects(
     validatePackPortabilityAsync(standalone, '', [], () => Promise.reject(new Error('git gone'))),
     /git gone/,
