@@ -6,15 +6,46 @@ import { mock, test } from 'node:test';
 
 import type { ReadyGatePrPackage, RunDecision } from '@farmslot/protocol';
 
+import type { GitHubService } from '../integrations/github-client.js';
+
 await import('../runtime/mock-pty.test-support.js');
 const github = await import('../integrations/github-client.js');
-mock.module('../integrations/github-client.js', {
-  namedExports: {
-    ...github,
-    ghRequest: async () => {
-      throw new Error('Unexpected external GitHub call in frozen-evidence refusal test.');
-    },
+const guardMsg = 'Unexpected external GitHub call in frozen-evidence refusal test.';
+const fakeGithub: GitHubService = {
+  ...github.github,
+  prView: async () => {
+    throw new Error(guardMsg);
   },
+  prList: async () => {
+    throw new Error(guardMsg);
+  },
+  prListFields: async () => {
+    throw new Error(guardMsg);
+  },
+  prChecks: async () => {
+    throw new Error(guardMsg);
+  },
+  prCreate: async () => {
+    throw new Error(guardMsg);
+  },
+  prEdit: async () => {
+    throw new Error(guardMsg);
+  },
+  prComment: async () => {
+    throw new Error(guardMsg);
+  },
+  prReady: async () => {
+    throw new Error(guardMsg);
+  },
+  graphql: async () => {
+    throw new Error(guardMsg);
+  },
+  rest: async () => {
+    throw new Error(guardMsg);
+  },
+};
+mock.module('../integrations/github-client.js', {
+  namedExports: { ...github, github: fakeGithub },
 });
 const { deleteTestRunIfPresent, retainRunFixture, overwriteRetainedFixture } =
   await import('../run-engine/test-fixtures.js');

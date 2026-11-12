@@ -419,7 +419,7 @@ const readers: GatePrerequisiteReaders = {
   },
 };
 
-// The scan is synchronous detector work on the gateway's event loop, and readiness is
+// The scan is seconds of detector work on a worker thread, and readiness is
 // evaluated on every presentation and resolve. The package content (its draft, evidence
 // digests, selection and bundle) covers every scanned input, so a verdict, a refusal
 // included, holds for that content.
@@ -441,7 +441,7 @@ async function scanPackageForPublicationSecrets(
   run: Run,
   preparedPackage: ReadyGatePrPackage,
 ): Promise<void> {
-  assertPublicationTextSafe(preparedPackage.draftTitle, preparedPackage.draftBody);
+  await assertPublicationTextSafe(preparedPackage.draftTitle, preparedPackage.draftBody);
   const inventory = preparedPackage.evidenceManifest ?? [];
   const selected = preparedPackage.selectedEvidenceKeys ?? [];
   if (!inventory.length && !selected.length) return;

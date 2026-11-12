@@ -27,11 +27,13 @@ import {
   fsDelete,
   fsExists,
   fsHash,
+  fsIsFile,
   fsList,
   fsMkdir,
   fsRead,
   fsReadBase64,
   fsReadChunk,
+  fsReadText,
   fsRealpath,
   fsRename,
   fsStat,
@@ -235,7 +237,7 @@ async function handshake(socket: WebSocket): Promise<void> {
         ? { nodeLink: { commands: 1, streams: 1, operations: NODE_LINK_OPERATIONS } }
         : {}),
       terminalInputSequence: tmuxKeepsPaneOptions(tmux.TMUX_VERSION),
-      observationCapabilities: { workers: 1, files: 1, fileAppends: 1, workspace: 1 },
+      observationCapabilities: { workers: 1, files: 1, fileAppends: 1, workspace: 1, textReads: 1 },
     });
     if (ws !== socket) {
       // Superseded while awaiting: the newer socket runs its own handshake and
@@ -782,6 +784,23 @@ async function handleRequest(
         const root = requireString(params, 'root');
         const relPath = requireString(params, 'relPath');
         const result = await fsRead({ root, relPath });
+        sendResponse(frame.id, true, result);
+        break;
+      }
+
+      case 'fs.readText': {
+        const root = requireString(params, 'root');
+        const relPath = requireString(params, 'relPath');
+        const tailBytes = typeof params.tailBytes === 'number' ? params.tailBytes : undefined;
+        const result = await fsReadText({ root, relPath, tailBytes });
+        sendResponse(frame.id, true, result);
+        break;
+      }
+
+      case 'fs.isFile': {
+        const root = requireString(params, 'root');
+        const relPath = requireString(params, 'relPath');
+        const result = await fsIsFile({ root, relPath });
         sendResponse(frame.id, true, result);
         break;
       }

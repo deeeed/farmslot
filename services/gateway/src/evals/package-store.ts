@@ -750,9 +750,11 @@ export async function finalizeEvalResultPackageForRun(
         review?.skipped === true &&
         review.reason === 'eval-first-output-blocked' &&
         frozen.outcomeClaims.includes(`Worker blocked: ${review.blockedReason}`);
+      const configSkipped = review?.skipped === true && review.reason === 'disabled-for-project';
       if (
         !invalidSkipped &&
         !blockedSkipped &&
+        !configSkipped &&
         review?.verdict !== 'pass' &&
         review?.verdict !== 'issues'
       )

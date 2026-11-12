@@ -1,6 +1,6 @@
 import type { WorkerSignalChecklistStepDuration } from '../transport/signal.js';
 
-import type { FlowType, RunLane, RunStatus } from './runs.js';
+import type { FlowType, RunLane, RunMetrics, RunStatus } from './runs.js';
 
 // ─── Pipeline-ops analytics ───
 //
@@ -86,7 +86,7 @@ export interface RunAnalyticsRecord {
   runner: string | null;
   model: string | null;
   status: RunStatus;
-  outcome: 'success' | 'failure' | 'partial' | 'cancelled' | null;
+  outcome: NonNullable<RunMetrics['outcome']> | null;
   /** Step the run died at (failed step, else the last non-terminal step), or null for clean runs. */
   failedStep: string | null;
   failureReason: FailureReason | null;

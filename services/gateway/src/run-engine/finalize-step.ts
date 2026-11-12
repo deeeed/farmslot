@@ -20,7 +20,7 @@ import { shellQuote } from '../core/tmux.js';
 import { usesNodeLink } from '../fleet/node-link-policy.js';
 import { nodeExecArgv } from '../fleet/node-rpc.js';
 import { loadFleetStatus } from '../fleet/state.js';
-import { ghRequest } from '../integrations/github-client.js';
+import { github } from '../integrations/github-client.js';
 import { assertEvidenceAttestationReceipt } from '../run-completion/evidence-attestation.js';
 import {
   assertReadyGatePackageInputsCurrent,
@@ -498,9 +498,7 @@ export async function executeFinalizeStep(
       detail: `Posting reviewer comment to PR #${prNumber}`,
     });
     try {
-      await ghRequest(['pr', 'comment', String(prNumber), '--repo', ciRepo, '--body', comment], {
-        force: true,
-      });
+      await github.prComment(ciRepo, prNumber, comment, { force: true });
       commentPosted = true;
     } catch (err) {
       console.warn(`[run-engine] comment post failed: ${(err as Error).message}`);

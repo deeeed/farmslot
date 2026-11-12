@@ -1,31 +1,30 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
-const github = await import('../../integrations/github-client.js');
+import type { GitHubService, RestServiceOpts } from '../../integrations/github-client.js';
+
+const githubModule = await import('../../integrations/github-client.js');
 const comparisons: string[] = [];
 let failNext = false;
-mock.module('../../integrations/github-client.js', {
-  namedExports: {
-    ...github,
-    ghRequest: async (args: string[]) => {
-      const endpoint = args[1] ?? '';
-      comparisons.push(endpoint);
-      if (failNext) {
-        failNext = false;
-        throw new Error('Fixture compare unavailable');
-      }
-      const base = /\/compare\/([a-f0-9]+)\.\.\./.exec(endpoint)?.[1];
-      assert(base, 'The provider read must name the actual base SHA');
-      return {
-        stdout: JSON.stringify({
-          status: 'ahead',
-          base_commit: { sha: base },
-          merge_base_commit: { sha: base },
-        }),
-        stderr: '',
-      };
-    },
+const fakeGithub: GitHubService = {
+  ...githubModule.github,
+  rest: async <T>(_method: string, path: string, _opts?: RestServiceOpts): Promise<T> => {
+    comparisons.push(path);
+    if (failNext) {
+      failNext = false;
+      throw new Error('Fixture compare unavailable');
+    }
+    const base = /\/compare\/([a-f0-9]+)\.\.\./.exec(path)?.[1];
+    assert(base, 'The provider read must name the actual base SHA');
+    return {
+      status: 'ahead',
+      base_commit: { sha: base },
+      merge_base_commit: { sha: base },
+    } as T;
   },
+};
+mock.module('../../integrations/github-client.js', {
+  namedExports: { ...githubModule, github: fakeGithub },
 });
 const { refIncludedInMergedPullRequest } = await import('./unmerged-work.js');
 const { bash, git, slotRepo } = await import('./unmerged-work.test-support.js');

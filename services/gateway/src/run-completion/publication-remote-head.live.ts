@@ -11,6 +11,8 @@ import { fileURLToPath } from 'node:url';
 
 import type { Run } from '@farmslot/protocol';
 
+import { startGitHubFixture } from '../integrations/github-test-fixtures.js';
+
 test(
   'publication pushes exact Git objects and finalize checks origin through authenticated replay',
   { timeout: 180_000 },
@@ -69,9 +71,39 @@ test(
     // Block all external GitHub access. This proof checks Git and run settlement, not GitHub hosting.
     await writeFile(
       path.join(root, 'bin/gh'),
-      '#!/bin/sh\ncase "$*" in\n*reviews*) echo "[]";;\n*"pr checks"*) echo "[]";;\n*"pr view"*) echo \'{"number":255,"state":"OPEN","author":{"login":"fixture"}}\';;\n*) echo "{}";;\nesac\n',
+      '#!/bin/sh\nif [ "$1" = auth ] && [ "$2" = token ]; then printf fixture-token; exit 0; fi\nexit 1\n',
       { mode: 0o755 },
     );
+    const github = await startGitHubFixture((request) => {
+      const query = String((request.json as { query?: unknown } | undefined)?.query ?? '');
+      if (request.path.includes('reviews')) return { body: [] };
+      if (query.includes('PullRequestStatusChecks'))
+        return {
+          body: {
+            data: {
+              repository: {
+                pullRequest: {
+                  headRefName: branch,
+                  statusCheckRollup: { nodes: [{ commit: { statusCheckRollup: null } }] },
+                },
+              },
+            },
+          },
+        };
+      if (query.includes('PullRequestByNumber'))
+        return {
+          body: {
+            data: {
+              repository: {
+                pullRequest: { number: 255, state: 'OPEN', author: { login: 'fixture' } },
+              },
+            },
+          },
+        };
+      return { body: {} };
+    });
+    process.env.FARMSLOT_GITHUB_API_URL = github.origin;
+    t.after(() => github.close());
     process.env.PATH = `${path.join(root, 'bin')}:${process.env.PATH}`;
     const git = (...args: string[]) =>
       execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();

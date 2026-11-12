@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import type { ReadyGatePrPackage, Run } from '@farmslot/protocol';
 
-import type { ghRequest } from '../../integrations/github-client.js';
+import type { GitHubService } from '../../integrations/github-client.js';
 import { codeReviewCertifiesPackage } from '../../run-engine/gate-policy.js';
 import { readVerifiedSnapshotDiff } from '../../run-engine/review-diff-refresh.js';
 
@@ -89,7 +89,7 @@ export async function comparePublishedContent(
   run: Run,
   prepared: ReadyGatePrPackage | undefined,
   range: PublishedRange,
-  github: typeof ghRequest,
+  github: GitHubService,
 ): Promise<PublishedContentComparison> {
   const reviewed = reviewedSnapshotOf(run, prepared);
   if ('unavailable' in reviewed) return reviewed;
@@ -105,17 +105,11 @@ export async function comparePublishedContent(
     return { unavailable: 'the reviewed patch could not be verified against its recorded hash' };
   let publishedDiff: string;
   try {
-    publishedDiff = (
-      await github(
-        [
-          'api',
-          `repos/${range.repository}/compare/${range.baseSha}...${range.headSha}`,
-          '-H',
-          'Accept: application/vnd.github.diff',
-        ],
-        { force: true },
-      )
-    ).stdout;
+    publishedDiff = await github.rest<string>(
+      'GET',
+      `repos/${range.repository}/compare/${range.baseSha}...${range.headSha}`,
+      { headers: { Accept: 'application/vnd.github.diff' }, raw: true, force: true },
+    );
   } catch (error) {
     return { unavailable: `the PR diff could not be read: ${(error as Error).message}` };
   }
