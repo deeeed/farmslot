@@ -1,9 +1,2 @@
-- Attach `changedEntity` (entity body + content-hash version) to per-entity `ResourceChangeEntry` notifications for slot and PR changes
-- Attach `membershipRevision` to collection-key notifications; counter advances only when the id set changes
-- Add `fleet.status { versions: true }` and `fleet.status { ids: [...] }` handlers for slot entity-sync
-- Add `pr.list { versions: true }` and `pr.list { ids: [...] }` handlers for PR entity-sync
-- Advance per-PR entity keys on data and membership changes in the PR list collector
-- Remove local `computeSummary`; use shared implementation from `@farmslot/protocol`
-- Add `fleet.status { versions }` and `{ ids }` authorization test; cap ids page at 2 MB (export `FLEET_ENTITY_PAGE_MAX_BYTES`)
-- Export `getPRListCollectorState` from `list-cache.ts`; pass `observation`/`refreshing` through `prListVersions`
-- `enrichSlotHostLoad` in `node-health.ts` delegates to shared `reattachHostLoad`; removes duplicate machine-lookup logic
+- Entity sync for the fleet, machine health and the PR list (ADR-071 Amendment 3): `fleet.status` and `pr.list` answer `{ versions: true }` and `{ ids }`, and change notifications carry the changed slot, PR or machine. A data-only change costs clients no read; one slot no longer re-sends the fleet.
+- A machine sample no longer advances the slot keys of that machine.

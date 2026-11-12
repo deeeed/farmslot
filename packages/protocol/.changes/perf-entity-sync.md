@@ -1,10 +1,3 @@
-- Add `ChangedEntity` discriminated union and `membershipRevision` field to `ResourceChangeEntry` for entity-sync push attachment
-- Add `FleetStatusParams.versions` and `FleetStatusParams.ids` for entity-sync reads; add `FleetVersionsResult` and `FleetEntityPage` result types
-- Add `EntityCollection<T>` client helper for id/version-based entity caching with priority catch-up
-- Add `catch-up` variant to `ResourceSyncState` with `done`/`total` progress for determinate catch-up display
-- Move `computeSummary` to `@farmslot/protocol/fleet/summary` so both gateway and client share one implementation
-- Add `entitySync` capability flag to `GatewayResourceChangesCapability`
-- Client cache applies pushed slot entities inline and assembles fleet view without extra RPCs (62x reduction per data-only change on a 100-slot fleet)
-- Membership changes trigger a targeted non-throttled versions read; cold-start hydrates from persisted store rows with zero ids-read RPCs
-- Add `PRVersionsResult.versions`/`ids` entity-sync types and optional `observation`/`refreshing` fields; wire `EntityCollection<PRStatus>` in client cache
-- Add `reattachHostLoad` to `@farmslot/protocol/fleet/host-load`; client reassembles `hostLoad` from the machines array returned by versions reads
+- Entity sync (ADR-071 Amendment 3): `fleet.status` and `pr.list` gain the `{ versions: true }` and `{ ids }` read shapes, `resource.changed` entries carry `changedEntity` and `membershipRevision`, and the gateway advertises `resourceChanges.entitySync`. The shared client cache holds slots, machines and PRs as entities, applies pushed ones without a read, verifies each collection after a reconnect and keeps the rows offline.
+- `ResourceSyncState` gains `catch-up` with `done` and `total`.
+- `computeSummary` and `reattachHostLoad` are exported for clients.
