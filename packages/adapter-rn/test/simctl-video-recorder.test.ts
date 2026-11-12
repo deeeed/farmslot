@@ -36,7 +36,12 @@ test('a clean stop without an output file names the exit and simctl stderr', asy
   // start() waits 250ms for an early exit before handing back the recording.
   t.mock.timers.tick(250);
   const recording = await starting;
-  while (!fs.existsSync(path.join(dir, 'ready'))) await new Promise(setImmediate);
+  // Date is not mocked: bound the wait for the stub to install its trap.
+  const readyBy = Date.now() + 5_000;
+  while (!fs.existsSync(path.join(dir, 'ready'))) {
+    assert.ok(Date.now() < readyBy, 'the xcrun stub never became ready');
+    await new Promise(setImmediate);
+  }
 
   await assert.rejects(recording.stop(), (error: Error) => {
     assert.match(error.message, /simctl recordVideo produced no file \(exit 0\)/u);
