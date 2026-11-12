@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.31.10 - 2026-11-12
+
+- iOS simulator discovery reuses a `simctl list` result for 5 s, so one command that asks for the device inventory twice runs `simctl` once.
+
 ## 0.31.9 - 2026-11-10
 
 - Republish against recipe-runner 0.46.12 so consumers load one copy of it, with the fixed-element visibility fix.
