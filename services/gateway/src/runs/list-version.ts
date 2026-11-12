@@ -67,6 +67,16 @@ export function servedRunListRow(run: Run): RunListRow {
   return listedRun(run).row;
 }
 
+/** Drop a run's row and version. The run store calls this when the run leaves the live set. */
+export function forgetRunListRow(id: string): void {
+  listed.delete(id);
+}
+
+/** Whether the memo holds a row for `id`. For tests. */
+export function runListRowHeld(id: string): boolean {
+  return listed.has(id);
+}
+
 /**
  * Derive every live run's row and version after startup, one run per macrotask, so the first
  * read after a restart finds them ready instead of deriving all of them in one turn.

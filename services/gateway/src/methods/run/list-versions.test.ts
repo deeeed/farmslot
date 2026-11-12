@@ -25,7 +25,8 @@ import {
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 
 await import('../../runtime/mock-pty.test-support.js');
-const { RUN_LIST_PAGE_MAX_BYTES, warmRunListVersions } = await import('../../runs/list-version.js');
+const { RUN_LIST_PAGE_MAX_BYTES, runListRowHeld, warmRunListVersions } =
+  await import('../../runs/list-version.js');
 const { archiveRun, createRun, deleteRun, getAllRuns, getRun, updateRun } =
   await import('../../runs/store.js');
 const { runList } = await import('./context.js');
@@ -336,6 +337,42 @@ test(
     assert.equal(rowOf(next, changed.id)?.summary, 'after');
     assert.equal(rowOf(next, untouched.id), rowOf(plain, untouched.id));
     assert.equal(rowOf(await runList({}), changed.id), rowOf(next, changed.id));
+  },
+);
+
+test(
+  'a run that leaves the live store leaves the row memo without a versions read',
+  TEST_TIMEOUT,
+  async (t) => {
+    const kept = fixtureRun(t, 'ROW-MEMO-KEPT');
+    const deleted = fixtureRun(t, 'ROW-MEMO-DELETED');
+    const archived = fixtureRun(t, 'ROW-MEMO-ARCHIVED');
+    // Plain lists only, as from the CLI: no versions read ever prunes the memo.
+    const keptRow = (await runList({})).runs.find((row) => row.id === kept.id);
+    assert.ok(keptRow);
+    for (const run of [kept, deleted, archived]) assert.equal(runListRowHeld(run.id), true);
+
+    for (const run of [deleted, archived])
+      updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await runList({});
+    assert.equal(await deleteRun(deleted.id), true);
+    assert.equal(await archiveRun(archived.id), true);
+    // The rows are gone with their runs, before any other read.
+    assert.equal(runListRowHeld(deleted.id), false);
+    assert.equal(runListRowHeld(archived.id), false);
+
+    const after = await runList({});
+    assert.equal(
+      after.runs.some((row) => row.id === deleted.id || row.id === archived.id),
+      false,
+    );
+    assert.equal(runListRowHeld(deleted.id), false);
+    assert.equal(runListRowHeld(archived.id), false);
+    // The live run next to them keeps its row object.
+    assert.equal(
+      after.runs.find((row) => row.id === kept.id),
+      keptRow,
+    );
   },
 );
 
