@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -17,6 +17,182 @@ import {
 } from '../../tasks/execution-template-catalog.js';
 
 import { resolveCandidateTemplateProvenance } from './candidate-setup.js';
+
+test('catalog eval resolves the configured fix-bug default before a slot is assigned', async (t) => {
+  const name = `eval-nested-catalog-${process.pid}-farm`;
+  const root = path.join(farmslotRoot(), 'projects', name);
+  await mkdir(path.join(root, 'catalog/fix-bug'), { recursive: true });
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(
+    path.join(root, 'project.json'),
+    JSON.stringify({
+      name,
+      execution_templates: {
+        sources: [{ id: 'package:synthetic', kind: 'package', root: { projectPath: 'catalog' } }],
+        defaults: [{ when: { flow: 'fix-bug' }, templateId: 'fix-bug/variant' }],
+      },
+    }),
+  );
+  const content =
+    '---\nplatforms: [ios]\n---\n\n# Synthetic variant\n\n- [ ] Check the example behavior.\n';
+  await writeFile(path.join(root, 'catalog/fix-bug/variant.md'), content);
+  await writeFile(
+    path.join(root, 'catalog/fix-bug/alternate.md'),
+    '# Synthetic alternate\n\n- [ ] Check the alternate behavior.\n',
+  );
+
+  const result = await resolveCandidateTemplateProvenance(name, 'fix-bug', {});
+  assert.equal(result.executionTemplate?.relativePath, 'fix-bug/variant.md');
+  assert.equal(result.executionTemplate?.sourceId, 'package:synthetic');
+  assert.equal(result.templateContent, content);
+  assert.equal(result.provenance?.contentHash, result.executionTemplate?.sha256);
+  assert.equal(result.provenance?.templateName, 'fix-bug/variant.md');
+  assert.equal(result.provenance?.source, 'external');
+  assert.equal(result.axes.template?.path, 'fix-bug/variant.md');
+  assert.equal(result.mode, 'autonomous');
+
+  for (const selection of ['fix-bug/alternate.md', 'templates/worker/alternate.md']) {
+    const explicit = await resolveCandidateTemplateProvenance(name, 'fix-bug', {
+      template: { path: selection },
+    });
+    assert.equal(explicit.executionTemplate?.relativePath, 'fix-bug/alternate.md');
+    assert.equal(explicit.axes.template?.path, selection);
+  }
+
+  await mkdir(path.join(root, 'catalog/other'), { recursive: true });
+  await writeFile(
+    path.join(root, 'catalog/other/alternate.md'),
+    '---\nid: fix-bug/other\nflow: fix-bug\n---\n\n# Synthetic duplicate\n\n- [ ] Check another behavior.\n',
+  );
+  const exact = await resolveCandidateTemplateProvenance(name, 'fix-bug', {
+    template: { path: 'fix-bug/alternate.md' },
+  });
+  assert.equal(exact.executionTemplate?.relativePath, 'fix-bug/alternate.md');
+  await assert.rejects(
+    resolveCandidateTemplateProvenance(name, 'fix-bug', {
+      template: { path: 'alternate.md' },
+    }),
+    /Candidate template path is ambiguous: alternate\.md.*fix-bug\/alternate\.md.*other\/alternate\.md/,
+  );
+  await assert.rejects(
+    resolveCandidateTemplateProvenance(name, 'fix-bug', {
+      template: { path: 'missing.md' },
+    }),
+    /Candidate template is unavailable in the project catalog: missing\.md/,
+  );
+});
+
+test('catalog eval rejects a repeated strategy when package bytes change', async (t) => {
+  const name = `eval-repeat-catalog-${process.pid}-farm`;
+  const root = path.join(farmslotRoot(), 'projects', name);
+  await mkdir(path.join(root, 'catalog/fix-bug'), { recursive: true });
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(
+    path.join(root, 'project.json'),
+    JSON.stringify({
+      name,
+      execution_templates: {
+        sources: [{ id: 'package:synthetic', kind: 'package', root: { projectPath: 'catalog' } }],
+        defaults: [{ when: { flow: 'fix-bug' }, templateId: 'fix-bug/mobile' }],
+      },
+    }),
+  );
+  const file = path.join(root, 'catalog/fix-bug/mobile.md');
+  const content = '# Mobile fix\n\n- [ ] Check the example behavior.\n';
+  await writeFile(file, content);
+  // Serialized Command Center default trialStartParams.axes: no explicit template axis.
+  const launchAxes = {
+    prompt: { name: 'fix-bug' },
+    harness: { name: 'recipe-harness' },
+    review: { name: 'none', version: 'first-pass' },
+    runner: { name: 'codex' },
+    model: { name: 'comparison-model' },
+  };
+  const first = await resolveCandidateTemplateProvenance(name, 'fix-bug', launchAxes);
+  assert.equal(first.executionTemplate?.relativePath, 'fix-bug/mobile.md');
+  const repeated = await resolveCandidateTemplateProvenance(name, 'fix-bug', first.axes);
+  assert.equal(repeated.templateContent, content);
+  assert.equal(repeated.axes.template?.hash, repeated.executionTemplate?.sha256);
+  assert.equal(repeated.axes.template?.hash, repeated.provenance?.contentHash);
+  const padded = await resolveCandidateTemplateProvenance(name, 'fix-bug', {
+    ...first.axes,
+    template: { ...first.axes.template, hash: ` ${first.axes.template?.hash} ` },
+  });
+  assert.equal(padded.axes.template?.hash, repeated.provenance?.contentHash);
+  const blank = await resolveCandidateTemplateProvenance(name, 'fix-bug', {
+    template: { hash: ' ' },
+  });
+  assert.equal(blank.axes.template?.hash, repeated.provenance?.contentHash);
+  await writeFile(file, content + '\nChanged package bytes.\n');
+  await assert.rejects(
+    resolveCandidateTemplateProvenance(name, 'fix-bug', first.axes),
+    /Candidate template hash mismatch.*expected.*resolved/,
+  );
+  const refreshed = await resolveCandidateTemplateProvenance(name, 'fix-bug', launchAxes);
+  assert.notEqual(refreshed.axes.template?.hash, first.axes.template?.hash);
+  assert.equal(refreshed.axes.template?.hash, refreshed.provenance?.contentHash);
+});
+
+test('catalog eval rejects an old project-owned default hash after a package transition', async (t) => {
+  const name = `eval-transition-catalog-${process.pid}-farm`;
+  const root = path.join(farmslotRoot(), 'projects', name);
+  await mkdir(path.join(root, 'templates/worker'), { recursive: true });
+  await mkdir(path.join(root, 'catalog/fix-bug'), { recursive: true });
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(
+    path.join(root, 'project.json'),
+    JSON.stringify({
+      name,
+      execution_templates: {
+        sources: [{ id: 'package:synthetic', kind: 'package', root: { projectPath: 'catalog' } }],
+      },
+    }),
+  );
+  const owned = path.join(root, 'templates/worker/fix-bug.md');
+  await writeFile(owned, '# Project fix\n\n- [ ] Check the project behavior.\n');
+  const first = await resolveCandidateTemplateProvenance(name, 'fix-bug', {
+    template: { path: 'templates/worker/fix-bug.md' },
+  });
+  assert.equal(first.provenance?.source, 'current-project');
+  await unlink(owned);
+  await writeFile(
+    path.join(root, 'catalog/fix-bug/core.md'),
+    '---\nid: fix-bug/default\nflow: fix-bug\n---\n\n# Package fix\n\n- [ ] Check package behavior.\n',
+  );
+  await assert.rejects(
+    resolveCandidateTemplateProvenance(name, 'fix-bug', first.axes),
+    /Candidate template is unavailable in the project catalog: templates\/worker\/fix-bug\.md/,
+  );
+  await assert.rejects(
+    resolveCandidateTemplateProvenance(name, 'fix-bug', {
+      template: { hash: first.axes.template?.hash },
+    }),
+    /Candidate template hash mismatch.*expected.*resolved/,
+  );
+  const current = await resolveCandidateTemplateProvenance(name, 'fix-bug', {});
+  assert.equal(current.provenance?.source, 'external');
+  assert.equal(current.axes.template?.hash, current.provenance?.contentHash);
+});
+
+test('catalog eval preserves the project-owned fix-bug default', async (t) => {
+  const name = `eval-owned-catalog-${process.pid}-farm`;
+  const root = path.join(farmslotRoot(), 'projects', name);
+  await mkdir(path.join(root, 'templates/worker'), { recursive: true });
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(
+    path.join(root, 'project.json'),
+    JSON.stringify({ name, execution_templates: { sources: [] } }),
+  );
+  await writeFile(
+    path.join(root, 'templates/worker/fix-bug.md'),
+    '# Synthetic fix\n\n- [ ] Check the example behavior.\n',
+  );
+  const result = await resolveCandidateTemplateProvenance(name, 'fix-bug', {});
+  assert.equal(result.executionTemplate?.relativePath, 'fix-bug.md');
+  assert.equal(result.provenance?.source, 'current-project');
+  assert.equal(result.provenance?.templateIsDefault, true);
+  assert.equal(result.mode, 'autonomous');
+});
 
 test('catalog eval keeps a selected local variant and its exact template snapshot', async (t) => {
   const name = `eval-catalog-${process.pid}-farm`;

@@ -74,7 +74,8 @@ export interface ExecutionTemplateEntry {
 export interface SelectExecutionTemplateOptions {
   sources: ExecutionTemplateSource[];
   flow: string;
-  platform: string;
+  /** Omit before slot assignment; the selected slot must still pass compatibility checks. */
+  platform?: string;
   /**
    * Run mode of the RUN being dispatched. Templates carry no run mode; this is
    * purely a selector input matched against `defaults[].when.runMode`.
