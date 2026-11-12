@@ -4,8 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { loadLiteLlmPrices, parseLiteLlmPrices } from './litellm-pricing.js';
-import { readPiAssistantUsage } from './session-usage.js';
+import { loadLiteLlmPrices, parseLiteLlmPrices, readPiAssistantUsage } from './session-usage.js';
 
 const payload = {
   data: [
