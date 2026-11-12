@@ -366,6 +366,20 @@ test('slot resolution uses explicit domain before the slot or pool default', () 
   });
 });
 
+test('catalog resolution before slot assignment preserves platform checks when a slot is supplied', () => {
+  withProject((vars) => {
+    const query = { flow: 'fix-bug', runMode: 'autonomous', domain: 'perps' } as const;
+    const pendingSlot = resolveConfiguredExecutionTemplate(vars, query);
+    assert.equal(pendingSlot.entry.relativePath, 'fix-bug/perps.mobile.md');
+    const assignedSlot = resolveConfiguredExecutionTemplate(vars, { ...query, platform: 'ios' });
+    assert.equal(assignedSlot.entry.sha256, pendingSlot.entry.sha256);
+    assert.throws(
+      () => resolveConfiguredExecutionTemplate(vars, { ...query, platform: 'cli' }),
+      /No compatible execution template/,
+    );
+  });
+});
+
 test('catalog read uses verified project vars without an async source context', () => {
   withProject((vars) => {
     const sourceRoot = path.dirname(vars.projectConfig);

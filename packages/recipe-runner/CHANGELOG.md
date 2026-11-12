@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.46.13 - 2026-11-12
+
+- Process liveness checks skip `ps` for dead processes and share one `ps` listing per burst, so reading a checkout with many stale operation records no longer spawns `ps` once per record.
+
 ## 0.46.12 - 2026-11-10
 
 - `ui.wait_for` visibility and presses no longer clip a `position: fixed` element to overflow ancestors that do not contain it. With the docked recipe HUD reserving the page bottom, the Extension order form's fixed submit footer was reported not visible and visible waits timed out.

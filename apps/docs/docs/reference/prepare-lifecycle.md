@@ -290,3 +290,11 @@ work while the run detail page receives structured progress.
 - Profile selection: `services/gateway/src/methods/slot/prepare-profile.ts`
 - Phase execution: `services/gateway/src/methods/slot/prepare.ts`
 - Run-engine skip behavior: `services/gateway/src/run-engine/dispatch-lifecycle-steps.ts`
+
+## Farm-owned support files
+
+Packs declare current and retired support paths in `fixtures.owned_paths`. The
+shared [project-pack ownership contract](https://github.com/deeeed/farmslot/blob/main/docs/reference/project-packs.md#farm-owned-support-paths)
+keeps retired files out of dirty/recovery counts before a slot is prepared and
+limits release/recovery deletion to declared untracked files. Packs without
+the declaration retain existing scaffolding behavior.

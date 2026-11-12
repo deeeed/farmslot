@@ -11,6 +11,7 @@ import {
 
 import { loadSlotVars } from '../../core/config.js';
 import { execOnSlot, isLocal } from '../../core/exec.js';
+import { withFarmGitConfig } from '../../core/farm-git.js';
 import {
   claimSlotStatusIf,
   readSlotRow,
@@ -113,9 +114,13 @@ export async function inspectReleasableBranchHolders(
     if (row && !idleBranchHolderRow(row)) continue;
     try {
       await assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.release);
-      const result = await execOnSlot(vars, branchHolderGitCommand(vars.remoteRepo, branch), {
-        timeout: 15_000,
-      });
+      const result = await execOnSlot(
+        vars,
+        withFarmGitConfig(branchHolderGitCommand(vars.remoteRepo, branch)),
+        {
+          timeout: 15_000,
+        },
+      );
       if (result.exitCode === 0) eligible.add(slot.slot);
     } catch (error) {
       // A node that disappears during the read cannot authorize release; other candidates remain usable.
@@ -161,9 +166,13 @@ export async function releaseBranchHolderForSelection(
   let restored = false;
   try {
     if (!branchHolderIsIdle(holder, [...runs, ...getAllRuns()])) throw refuse();
-    const result = await execOnSlot(vars, branchHolderGitCommand(vars.remoteRepo, branch, true), {
-      timeout: 30_000,
-    });
+    const result = await execOnSlot(
+      vars,
+      withFarmGitConfig(branchHolderGitCommand(vars.remoteRepo, branch, true)),
+      {
+        timeout: 30_000,
+      },
+    );
     if (result.exitCode !== 0) throw refuse();
     head = result.stdout.trim().split('\n').at(-1);
   } finally {

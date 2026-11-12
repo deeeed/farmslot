@@ -286,7 +286,19 @@ test('isEvalExperimentManifest accepts experiment cases, strategies, and trials'
     }),
     true,
   );
-  for (const invalid of [{ reviewRunner: 42 }, { reviewModel: false }]) {
+  assert.equal(
+    isEvalExperimentManifest({ ...base, trials: [{ ...base.trials[0], review: false }] }),
+    true,
+  );
+  for (const invalid of [
+    { reviewRunner: 42 },
+    { reviewModel: false },
+    { review: true },
+    { review: null },
+    { review: 'false' },
+    { review: false, reviewRunner: 'pi' },
+    { review: false, reviewModel: 'gpt-5.5' },
+  ]) {
     assert.equal(
       isEvalExperimentManifest({
         ...base,

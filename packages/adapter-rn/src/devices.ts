@@ -114,17 +114,35 @@ interface SimctlDevice {
   state?: string;
 }
 
+// `simctl list` takes about two seconds, and one command can ask for the inventory
+// several times (status and device targeting both do). Reuse a recent listing.
+const SIMCTL_LIST_REUSE_MS = 5_000;
+const simctlListings = new Map<string, { at: number; output: string }>();
+
+/** Forget reused `simctl` listings, for callers that change the device set. */
+export function clearSimctlListings(): void {
+  simctlListings.clear();
+}
+
+function simctlDeviceList(scope: 'booted' | 'available'): string {
+  const recent = simctlListings.get(scope);
+  if (recent && Date.now() - recent.at < SIMCTL_LIST_REUSE_MS) return recent.output;
+  const output = execFileSync('xcrun', ['simctl', 'list', 'devices', scope, '-j'], {
+    encoding: 'utf8',
+    timeout: IOS_DEVICE_DISCOVERY_TIMEOUT_MS,
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  simctlListings.set(scope, { at: Date.now(), output });
+  return output;
+}
+
 function listIosSimulators(
   scope: 'booted' | 'available',
   errors: DeviceDiscoveryError[],
 ): ConnectedDevice[] {
   let output: string;
   try {
-    output = execFileSync('xcrun', ['simctl', 'list', 'devices', scope, '-j'], {
-      encoding: 'utf8',
-      timeout: IOS_DEVICE_DISCOVERY_TIMEOUT_MS,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
+    output = simctlDeviceList(scope);
   } catch (error) {
     reportProbeFailure(errors, 'ios', error);
     return [];

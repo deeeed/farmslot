@@ -9,6 +9,7 @@ import {
 
 import type { SlotVars } from '../core/config.js';
 import type { execOnSlot } from '../core/exec.js';
+import { withFarmGitConfig } from '../core/farm-git.js';
 import { shellQuote } from '../core/tmux.js';
 
 /**
@@ -115,7 +116,7 @@ async function parkHead(
     `echo ${MARK} "$head" "$branch" "$ref"`,
     `printf '%s\\n' "$commits"`,
   ].join(' && ');
-  const result = await exec(vars, script);
+  const result = await exec(vars, withFarmGitConfig(script));
   if (result.exitCode === 3) return null;
   const lines = result.stdout.split('\n').filter(Boolean);
   const marker = lines.findIndex((line) => line.startsWith(`${MARK} `));
@@ -284,7 +285,9 @@ export async function dropParkedBranch(
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
   const dropped = await exec(
     vars,
-    `${git} update-ref -d ${shellQuote(`refs/heads/${parked.branch}`)} ${shellQuote(parked.headSha)}`,
+    withFarmGitConfig(
+      `${git} update-ref -d ${shellQuote(`refs/heads/${parked.branch}`)} ${shellQuote(parked.headSha)}`,
+    ),
   );
   return dropped.exitCode === 0
     ? null
@@ -305,7 +308,9 @@ export async function restoreParkedBranch(
   if (!parked) return null;
   const restored = await exec(
     vars,
-    `git -C ${shellQuote(vars.remoteRepo)} update-ref ${shellQuote(`refs/heads/${branch}`)} ${shellQuote(parked.headSha)} ''`,
+    withFarmGitConfig(
+      `git -C ${shellQuote(vars.remoteRepo)} update-ref ${shellQuote(`refs/heads/${branch}`)} ${shellQuote(parked.headSha)} ''`,
+    ),
   );
   return restored.exitCode === 0 ? parked : null;
 }
@@ -335,7 +340,7 @@ export async function recordReleasedCheckout(
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
   const read = await exec(
     vars,
-    `${git} symbolic-ref --quiet --short HEAD && ${git} rev-parse HEAD`,
+    withFarmGitConfig(`${git} symbolic-ref --quiet --short HEAD && ${git} rev-parse HEAD`),
   );
   const [branch, headSha] = read.stdout.trim().split('\n');
   if (read.exitCode !== 0 || branch !== run.branch || !headSha) return;

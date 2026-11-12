@@ -96,7 +96,7 @@ test('review findings, the delivered head and the actions in one fixed order', (
     view.actions.map(({ id, label, available }) => [id, label, available]),
     [
       ['send-back', 'Send back for another fix', false],
-      ['accept-result', 'Accept', true],
+      ['accept-result', 'Accept and close without publishing', true],
       ['close-result', 'Close', true],
     ],
   );

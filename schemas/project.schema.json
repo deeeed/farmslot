@@ -1375,6 +1375,24 @@
       "type": "object",
       "description": "Files to sync from project fixtures/ to each worker repo.",
       "properties": {
+        "owned_paths": {
+          "type": "array",
+          "description": "Regenerable farm-owned support paths, including permanent retired tombstones. Tracked files are never excluded or deleted.",
+          "items": {
+            "type": "object",
+            "required": ["path", "state"],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)(?:\\.|\\.\\.|\\.git)(?:/|$))(?!.*[\\\\*?\\[\\]\\r\\n\\u0000])(?!.*/$).+$",
+                "description": "Literal normalized checkout-relative path; no traversal, Git metadata or globs."
+              },
+              "state": { "type": "string", "enum": ["current", "retired"] }
+            },
+            "additionalProperties": false
+          }
+        },
         "templates": {
           "type": "array",
           "description": "Files with {{var}} placeholder substitution.",

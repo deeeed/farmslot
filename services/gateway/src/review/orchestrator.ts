@@ -395,8 +395,13 @@ async function executeOwnedReview(
 
   const config = await getReviewConfig(run.project);
   const requestedEffort = options.effort === undefined ? (config.effort ?? null) : options.effort;
-  if (shouldSkipForDisabledReviewConfig(config, { ...options, evalJudge }, run)) {
-    debugReviewLog(`[review] run ${runId.slice(0, 8)} — disabled for project ${run.project}`);
+  if (
+    run.engineState?.evalExperiment?.review === false ||
+    shouldSkipForDisabledReviewConfig(config, { ...options, evalJudge }, run)
+  ) {
+    debugReviewLog(
+      `[review] run ${runId.slice(0, 8)} — disabled for ${run.engineState?.evalExperiment?.review === false ? 'trial' : `project ${run.project}`}`,
+    );
     return { skipped: true, reason: 'disabled-for-project', retryCount: 0 };
   }
 

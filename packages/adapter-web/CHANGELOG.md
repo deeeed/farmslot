@@ -6,6 +6,11 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.19.8 - 2026-11-12
+
+- Launch blind trial browsers on their allocated recipe CDP endpoint while configured slot endpoints remain protected.
+- Inspect owned browser processes without setuid ps, recheck authorized process identities before teardown, reject unusable Python helpers without opening install dialogs, and launch blind-trial Chrome directly under the verified outer seatbelt.
+
 ## 0.19.7 - 2026-11-10
 
 - Republish against recipe-runner 0.46.12 so consumers load one copy of it, with the fixed-element visibility fix.

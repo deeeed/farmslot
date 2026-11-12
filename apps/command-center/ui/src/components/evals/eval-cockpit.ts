@@ -571,23 +571,27 @@ export class EvalCockpit extends EvalCockpitState {
       const res = state.data;
       if (!res) return;
       const taskProfile = this._selectedCases[0]?.taskProfile ?? 'fix-bug';
-      const validPaths = new Set(
-        res.options.map((option) => `templates/worker/${option.fileName}`),
-      );
-      const defaultOption = res.options.find((option) => option.isDefault) ?? res.options[0];
-      if (defaultOption) {
-        const defaultPath = `templates/worker/${defaultOption.fileName}`;
-        this._candidateRows = this._candidateRows.map((row) => {
-          const customized = Boolean(
-            row.templateHash.trim() ||
-            row.promptHash.trim() ||
-            row.baseRecipePath.trim() ||
-            row.baseRecipeHash.trim(),
-          );
-          if (customized || validPaths.has(row.templatePath)) return row;
-          return { ...row, templatePath: defaultPath, promptName: taskProfile };
-        });
-      }
+      const validPaths = new Set([
+        '',
+        ...res.options.map((option) => `templates/worker/${option.fileName}`),
+      ]);
+      this._candidateRows = this._candidateRows.map((row) => {
+        const customized = Boolean(
+          row.templateHash.trim() ||
+          row.promptHash.trim() ||
+          row.baseRecipePath.trim() ||
+          row.baseRecipeHash.trim(),
+        );
+        // Migrate only the old implicit default. Explicit catalog paths must
+        // remain explicit even when legacy worker options do not list them.
+        if (
+          customized ||
+          validPaths.has(row.templatePath) ||
+          row.templatePath !== `templates/worker/${taskProfile}.md`
+        )
+          return row;
+        return { ...row, templatePath: '', promptName: taskProfile };
+      });
     });
 
   private async _loadCandidateTemplateOptions(): Promise<void> {
