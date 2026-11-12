@@ -1,0 +1,1 @@
+- Operation pruning also removes records left `running` by a process that died, so the operations directory stays bounded and `status` reads stay fast.

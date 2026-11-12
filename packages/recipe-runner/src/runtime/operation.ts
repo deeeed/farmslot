@@ -12,16 +12,40 @@ import { type TaskOperation, validateOperationRecord } from '@farmslot/protocol'
  * setuid /bin/ps inside any sandbox (EPERM). The identity is then unknown, not absent.
  */
 export function processIdentity(pid: number): string | null | undefined {
+  const fresh = identitySnapshot && Date.now() - identitySnapshot.at < IDENTITY_SNAPSHOT_MS;
+  if (fresh && identitySnapshot!.byPid?.has(pid) !== false) return lookup(identitySnapshot!, pid);
+  identitySnapshot = readIdentitySnapshot();
+  return lookup(identitySnapshot, pid);
+}
+
+// One `ps` listing serves every lookup in a burst: callers check many records at once,
+// and one `ps` per record cost seconds. A miss re-reads it, so a new process is never stale.
+const IDENTITY_SNAPSHOT_MS = 2_000;
+let identitySnapshot: { at: number; byPid: Map<number, string> | null } | undefined;
+
+function lookup(
+  snapshot: { byPid: Map<number, string> | null },
+  pid: number,
+): string | null | undefined {
+  return snapshot.byPid === null ? null : snapshot.byPid.get(pid);
+}
+
+function readIdentitySnapshot(): { at: number; byPid: Map<number, string> | null } {
   try {
-    const value = execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
+    const output = execFileSync('ps', ['-axo', 'pid=,lstart='], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim();
-    return value || undefined;
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    const byPid = new Map<number, string>();
+    for (const line of output.split('\n')) {
+      const match = /^\s*(\d+)\s+(.+?)\s*$/.exec(line);
+      if (match) byPid.set(Number(match[1]), match[2]);
+    }
+    return { at: Date.now(), byPid };
   } catch (error) {
-    if ((error as { status?: number }).status === 1) return undefined;
     const code = (error as NodeJS.ErrnoException).code;
-    if (code === 'EPERM' || code === 'EACCES') return null;
+    if (code === 'EPERM' || code === 'EACCES') return { at: Date.now(), byPid: null };
     throw error;
   }
 }
@@ -40,8 +64,12 @@ export function processAlive(pid: number): boolean {
  * identity is unknown, only liveness can be checked, so a live pid counts as the owner.
  */
 export function processStillRunning(pid: number, startedAt: string | undefined): boolean {
-  const identity = startedAt === undefined ? null : processIdentity(pid);
-  return identity === null ? processAlive(pid) : identity === startedAt;
+  // A dead pid needs no `ps`: checkouts keep hundreds of stale running records,
+  // and spawning `ps` for each one made every `status` call take minutes.
+  if (!processAlive(pid)) return false;
+  if (startedAt === undefined) return true;
+  const identity = processIdentity(pid);
+  return identity === null || identity === startedAt;
 }
 
 export class OperationRecord {
