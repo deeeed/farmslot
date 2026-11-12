@@ -1,1 +1,2 @@
 - An iOS simulator recording that stops without writing its file now fails with "simctl recordVideo produced no file", the exit code or signal and the tail of simctl's stderr, instead of a bare ENOENT.
+- `scroll-view --into-view` centres the target in its scroll container's visible frame (top-aligned with a margin when taller) after the scroll settles, instead of at the container's top edge under fixed headers, and returns the settled `targetRect`.

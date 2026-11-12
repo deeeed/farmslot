@@ -626,6 +626,53 @@ function createBuiltinCommands({ routes, perfMarkerPrefixes, readyExpression }) 
         if (sn && typeof sn.measureLayout === 'function') return sn;
         return findMeasurable(fiber.child);
       }
+      // A window rect once two reads agree (bounded), so a scroll has settled.
+      function settledRect(node, done) {
+        var last = null;
+        var reads = 0;
+        (function read() {
+          node.measureInWindow(function(x, y, width, height) {
+            var rect = { x: x, y: y, width: width, height: height };
+            reads += 1;
+            var still = last && last.x === x && last.y === y && last.width === width && last.height === height;
+            if (still || reads >= 30) return done(rect);
+            last = rect;
+            setTimeout(read, 32);
+          });
+        })();
+      }
+      // Scroll to the target's content offset, then centre it in the container's
+      // window frame (top-aligned with a margin when taller), so overlays at the
+      // container's edges do not cover it. Resolves with the settled target rect.
+      // The scroll component instance rarely measures itself; its first host view
+      // carries the visible frame.
+      function scrollTargetIntoView(target, containerFiber, container, scrollToOffset) {
+        var frameNode = typeof container.measureInWindow === 'function' ? container : findMeasurable(containerFiber);
+        return new Promise(function(resolve) {
+          target.measureLayout(
+            frameNode,
+            function(x, y) {
+              scrollToOffset(y);
+              settledRect(frameNode, function(frame) {
+                settledRect(target, function(rect) {
+                  var margin = 16;
+                  var delta = rect.height + 2 * margin <= frame.height
+                    ? rect.y + rect.height / 2 - (frame.y + frame.height / 2)
+                    : rect.y - (frame.y + margin);
+                  var offset = Math.max(0, y + delta);
+                  scrollToOffset(offset);
+                  settledRect(target, function(targetRect) {
+                    resolve({ ok: true, testId: opts.testId, measuredOffset: offset, animated: opts.animated, targetRect: targetRect, containerRect: frame });
+                  });
+                });
+              });
+            },
+            function() {
+              resolve({ ok: false, error: 'Unable to measure testID=' + opts.testId + ' relative to its scroll container' });
+            }
+          );
+        });
+      }
       function tryScrollNear(anchor) {
         if (!opts.intoView && tryScroll(anchor, false)) return true;
         var target = opts.intoView ? findMeasurable(anchor) : null;
@@ -639,17 +686,8 @@ function createBuiltinCommands({ routes, perfMarkerPrefixes, readyExpression }) 
           if (sn) {
             if (typeof sn.scrollTo === 'function' && !(currentProps && currentProps.horizontal === true)) {
               if (target) {
-                return new Promise(function(resolve) {
-                  target.measureLayout(
-                    sn,
-                    function(x, y) {
-                      sn.scrollTo({ y: y, animated: opts.animated });
-                      resolve({ ok: true, testId: opts.testId, measuredOffset: y, animated: opts.animated });
-                    },
-                    function() {
-                      resolve({ ok: false, error: 'Unable to measure testID=' + opts.testId + ' relative to its scroll container' });
-                    }
-                  );
+                return scrollTargetIntoView(target, current, sn, function(offset) {
+                  sn.scrollTo({ y: offset, animated: opts.animated });
                 });
               }
               sn.scrollTo({ y: opts.offset, animated: opts.animated });
@@ -657,17 +695,8 @@ function createBuiltinCommands({ routes, perfMarkerPrefixes, readyExpression }) 
             }
             if (typeof sn.scrollToOffset === 'function' && !(currentProps && currentProps.horizontal === true)) {
               if (target) {
-                return new Promise(function(resolve) {
-                  target.measureLayout(
-                    sn,
-                    function(x, y) {
-                      sn.scrollToOffset({ offset: y, animated: opts.animated });
-                      resolve({ ok: true, testId: opts.testId, measuredOffset: y, animated: opts.animated });
-                    },
-                    function() {
-                      resolve({ ok: false, error: 'Unable to measure testID=' + opts.testId + ' relative to its scroll container' });
-                    }
-                  );
+                return scrollTargetIntoView(target, current, sn, function(offset) {
+                  sn.scrollToOffset({ offset: offset, animated: opts.animated });
                 });
               }
               sn.scrollToOffset({ offset: opts.offset, animated: opts.animated });

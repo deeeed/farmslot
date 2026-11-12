@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 
 import { type WebSocket, WebSocketServer } from 'ws';
 
@@ -298,6 +299,60 @@ describe('bridge core', () => {
         expression.includes('globalThis.__AGENTIC__?.navigate("Settings", {})'),
       ),
     );
+  });
+
+  it('scrolls an into-view target to the centre of its scroll container frame', async () => {
+    // A container whose window frame starts at y=100 (under a fixed header) and is 600 tall,
+    // holding a 50-tall row at content offset 1000. Every measure reflects the scroll position.
+    const app = { scrollY: 0 };
+    // As in React Native: the scroll component instance scrolls, its host view measures.
+    const scroller = {
+      scrollTo({ y }: { y: number }) {
+        app.scrollY = y;
+      },
+    };
+    const scrollHost = {
+      measureLayout: () => undefined,
+      measureInWindow: (done: (...rect: number[]) => void) => done(0, 100, 400, 600),
+    };
+    const target = {
+      measureLayout: (_parent: unknown, done: (...rect: number[]) => void) =>
+        done(0, 1000, 400, 50),
+      measureInWindow: (done: (...rect: number[]) => void) =>
+        done(0, 100 + 1000 - app.scrollY, 400, 50),
+    };
+    const containerFiber: Record<string, unknown> = { stateNode: scroller, memoizedProps: {} };
+    const hostFiber: Record<string, unknown> = { stateNode: scrollHost, return: containerFiber };
+    const targetFiber = { stateNode: target, memoizedProps: { testID: 'row' }, return: hostFiber };
+    containerFiber.child = hostFiber;
+    hostFiber.child = targetFiber;
+    const context = vm.createContext({
+      // The app's own timers: settle reads run on the next turn, never on a wall clock.
+      setTimeout: (callback: () => void) => setImmediate(callback),
+      __REACT_DEVTOOLS_GLOBAL_HOOK__: {
+        renderers: new Map([[1, {}]]),
+        getFiberRoots: () => new Set([{ current: containerFiber }]),
+      },
+    });
+    const { directory, port } = await startBroker((expression) =>
+      expression.includes('__AGENTIC__?.platform')
+        ? 'android'
+        : vm.runInContext(expression, context),
+    );
+
+    const result = await runBridge(directory, port, [
+      'scroll-view',
+      '--test-id',
+      'row',
+      '--into-view',
+    ]);
+
+    assert.equal(result.code, 0, result.stderr);
+    const output = JSON.parse(result.stdout) as Record<string, unknown>;
+    // Row centre (y + 25) lands on the frame centre (100 + 300): offset 1000 + 25 - 300.
+    assert.equal(app.scrollY, 725);
+    assert.equal(output.ok, true);
+    assert.deepEqual(output.targetRect, { x: 0, y: 375, width: 400, height: 50 });
   });
 
   it('prints help with the app label, built-ins and placed host lines', async () => {
