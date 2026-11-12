@@ -301,7 +301,7 @@ export async function materializeReviewWorkspaceTask(
       throw new Error('Cannot reconstruct a missing static task after worker launch');
     invalidateProjectVarsCache(run.project);
     const project = await deps.loadProjectVars(run.project);
-    const selected = readConfiguredExecutionTemplateSnapshot(project, run.executionTemplate!);
+    const selected = await readConfiguredExecutionTemplateSnapshot(project, run.executionTemplate!);
     const terminalContract = resolveWorkerTerminalContract(
       readWorkerTerminalProjectConfig(project.projectJson as Record<string, unknown>),
       'review-pr',

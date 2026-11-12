@@ -106,7 +106,7 @@ export async function initializeAuthoredTaskOnSlot(
       ? withTerminalReportPath(configuredContract, authored.report, [authored.learnings])
       : configuredContract;
   }
-  const selected = resolveConfiguredExecutionTemplateForSlot(project, {
+  const selected = await resolveConfiguredExecutionTemplateForSlot(project, {
     flow: run.flowType,
     platform: slot.platform,
     runMode: run.mode ?? 'interactive',
