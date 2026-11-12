@@ -4,13 +4,17 @@ import test from 'node:test';
 import type { WebSocket } from 'ws';
 
 import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
+import { makeVars } from '../runners/test-fixtures.js';
 
+import type { ProjectVars } from './config.js';
 import {
   buildMachineEnvPrefix,
   buildProjectCommandEnvPrefix,
   machineShellEnv,
+  projectCommandEnvOptions,
   resolveProjectCommandEnv,
   withMachineEnv,
+  withProjectMachineEnv,
 } from './project-env.js';
 
 test('frozen launch bindings override slot paths before expansion without hiding other unresolved values', () => {
@@ -225,5 +229,48 @@ test('CI home, checkout and isolated runs do not add roots to legacy machine com
       withMachineEnv('claude', { ...vars, machineEnv: { MM_HARNESS_BIN: '/node/provider' } }),
       "export MM_HARNESS_BIN='/node/provider' && claude",
     );
+  }
+});
+
+test('launch and accounting share slot/project expansion with an explicit domain override', () => {
+  const vars = makeVars({ domain: 'other', resourceVars: { port: '1234' } });
+  const project: ProjectVars = {
+    projectName: 'fixture',
+    projectConfig: '/fixture/project.json',
+    projectFixturesDir: '/fixture/fixtures',
+    projectTemplatesDir: '/fixture/templates',
+    runtimeDir: '.runtime',
+    artifactDir: '.task',
+    projectJson: {
+      reference_repos: {
+        trading_library: { repo_url: 'https://example.invalid/library.git', local_name: 'recipes' },
+      },
+      vars: { library_label: '{{domain}}-{{slot_id}}' },
+      command_env: {
+        domains: {
+          trading: {
+            set: {
+              RECIPE_LIBRARY_PATH: 'trading={{trading_library_repo}}',
+              LIBRARY_CONTEXT: '{{library_label}}:{{runtime_dir}}:{{repo}}:{{port}}',
+            },
+          },
+        },
+      },
+    },
+  };
+  const resolved = resolveProjectCommandEnv(
+    project.projectJson,
+    projectCommandEnvOptions(vars, project, 'trading'),
+  );
+  assert.deepEqual(resolved, {
+    unset: [],
+    set: {
+      RECIPE_LIBRARY_PATH: 'trading=/tmp/recipes',
+      LIBRARY_CONTEXT: 'trading-runner-local-test-1:.runtime:/tmp/repo:1234',
+    },
+  });
+  const command = withProjectMachineEnv('true', vars, project.projectJson, project, 'trading');
+  for (const [name, value] of Object.entries(resolved.set)) {
+    assert.ok(command.includes(`export ${name}='${value}'`));
   }
 });

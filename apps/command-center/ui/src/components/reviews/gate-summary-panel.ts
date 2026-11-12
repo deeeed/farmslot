@@ -207,6 +207,7 @@ export class GateSummaryPanel extends LitElement {
                   <th>Cache</th>
                   <th>Total</th>
                   <th>Turns</th>
+                  <th>Cost</th>
                 </tr>
               </thead>
               <tbody>
@@ -219,6 +220,7 @@ export class GateSummaryPanel extends LitElement {
                       <td>${m.cacheRead}</td>
                       <td class="gs-total">${m.total}</td>
                       <td>${m.turns || '—'}</td>
+                      <td>${m.cost}</td>
                     </tr>`,
                 )}
               </tbody>
@@ -229,22 +231,24 @@ export class GateSummaryPanel extends LitElement {
           <summary>Cost breakdown — ${d.tokens.grandTotal} tokens to reach this gate</summary>
           <div class="gs-token-row">
             <span>${d.tokens.mainWorker.label} (${d.tokens.mainWorker.model})</span>
-            <span>${d.tokens.mainWorker.total}</span>
+            <span>${d.tokens.mainWorker.total} tokens · ${d.tokens.mainWorker.cost}</span>
           </div>
           ${d.tokens.reviews.map(
             (r) =>
               html`<div class="gs-token-row">
-                <span>${r.label} (${r.model})</span><span>${r.total}</span>
+                <span>${r.label} (${r.model})</span><span>${r.total} tokens · ${r.cost}</span>
               </div>`,
           )}
           ${d.tokens.chainedLoops.map(
             (c) =>
               html`<div class="gs-token-row">
-                <span>${c.flowType} ${c.label} (${c.model})</span><span>${c.total}</span>
+                <span>${c.flowType} ${c.label} (${c.model})</span
+                ><span>${c.total} tokens · ${c.cost}</span>
               </div>`,
           )}
           <div class="gs-token-row gs-total">
-            <span>Family grand total</span><span>${d.tokens.grandTotal}</span>
+            <span>Family grand total</span
+            ><span>${d.tokens.grandTotal} tokens · ${d.tokens.grandCost}</span>
           </div>
           ${d.tokens.sessionPaths.length
             ? html`<div class="gs-section-title">Per-turn sessions</div>

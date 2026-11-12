@@ -1,4 +1,5 @@
 import type { NativeWorkerSessionBinding } from '@farmslot/protocol';
+import type { PiModelCostMetadata } from '@farmslot/slot-config';
 
 export type NativeSessionUsageIdentity = Pick<
   NativeWorkerSessionBinding,
@@ -14,6 +15,8 @@ export interface NativeSessionUsageRequest {
   sessionPath?: string | null;
   slotId: string;
   nativeSession?: NativeSessionUsageIdentity;
+  /** Normalized rates only. Provider credentials never enter host command arguments. */
+  liteLlmPrices?: Array<[string, PiModelCostMetadata]>;
   /** Explicit pool node for terminal sessions, which have no native host binding. */
   executionNodeId?: string;
 }
@@ -143,10 +146,10 @@ const results = [];
 for (const request of input) {
   try {
     const file = await locate(request);
-    const key = request.provider + ':' + request.runnerSessionId + ':' + file;
+    const key = JSON.stringify([request.provider, request.runnerSessionId, file, request.liteLlmPrices]);
     let output = measured.get(key);
     if (!output) {
-      output = await runSessionUsage({ repo: '', slotId: request.slotId, action: 'total', forcedPath: file, forcedRunner: request.runner });
+      output = await runSessionUsage({ repo: '', slotId: request.slotId, action: 'total', forcedPath: file, forcedRunner: request.runner, ...(request.liteLlmPrices ? { liteLlmPrices: new Map(request.liteLlmPrices) } : {}) });
       measured.set(key, output);
     }
     results.push({ key: request.key, runnerSessionId: request.runnerSessionId, sessionPath: file, output });

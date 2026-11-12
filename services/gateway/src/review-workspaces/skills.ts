@@ -27,6 +27,7 @@ export type {
   ReviewWorkspaceSupportSource,
 } from '@farmslot/protocol';
 
+import type { ProjectCommandEnvOptions } from '../core/project-env.js';
 import { collectSupportFiles, type NodeSupportFile, supportHash } from '../node-support/files.js';
 
 interface SourceManifest {
@@ -333,6 +334,25 @@ export async function collectReviewWorkspaceSupport(
         size: file.size,
       })),
     },
+  };
+}
+
+/** Native launch and accounting use the same frozen workspace environment bindings. */
+export function reviewWorkspaceCommandEnvOptions(
+  workspace: NonNullable<Run['reviewWorkspace']>,
+  domain?: string,
+): ProjectCommandEnvOptions {
+  const support = workspace.support;
+  return {
+    domain,
+    overrides: support
+      ? Object.fromEntries(
+          Object.entries(support.environment).map(([name, value]) => [
+            name,
+            bindReviewWorkspaceSupportValue(value, support),
+          ]),
+        )
+      : undefined,
   };
 }
 

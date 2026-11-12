@@ -24,6 +24,7 @@ export {
   emptyIncrementalSessionUsageState,
   INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE,
   INCREMENTAL_SESSION_USAGE_MAX_OVERSIZED_BYTES,
+  loadLiteLlmPrices,
   pinnedIncrementalSessionUsageState,
   readPiAssistantUsage,
   runSessionUsage,

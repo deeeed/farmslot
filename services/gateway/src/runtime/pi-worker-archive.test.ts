@@ -86,14 +86,14 @@ test('Pi reads preserve stored totals or a verified archive after the native fil
   assert.match(stored.metrics.sessionUsageError ?? '', /unavailable|ENOENT/);
   const archived = await projectArchivedRunnerUsage(run);
   assert.equal(archived.metrics.sessionTotalTokens, 38036157);
-  assert.equal(archived.metrics.costEstimate, 22.6049);
+  assert.equal(archived.metrics.costEstimate, 22.6048636);
   assert.match(archived.metrics.sessionUsageError ?? '', /unavailable|ENOENT/);
   recovery.mock.mockImplementation(async () => {
     throw new Error('node offline');
   });
   const offline = await projectArchivedRunnerUsage(run);
   assert.equal(offline.metrics.sessionTotalTokens, 38036157);
-  assert.equal(offline.metrics.costEstimate, 22.6049);
+  assert.equal(offline.metrics.costEstimate, 22.6048636);
   assert.equal(offline.metrics.sessionUsageError, 'node offline');
   assert.equal(run.metrics.sessionTotalTokens, undefined, 'projection remains read-only');
 });

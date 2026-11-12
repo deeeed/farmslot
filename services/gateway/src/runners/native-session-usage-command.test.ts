@@ -202,3 +202,34 @@ test('foreign native owner and mismatched transcript ids remain unavailable', as
   assert.match(String(mismatch[0].error), /identity mismatch/);
   assert(!('output' in mismatch[0]));
 });
+
+test('native Pi accounting uses supplied worker prices rather than the node process environment', async (t) => {
+  const f = await fixture(t);
+  const request: NativeSessionUsageRequest = {
+    ...f.request('pi'),
+    liteLlmPrices: [['fixture-priced', { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 }]],
+  };
+  const transcript = path.join(f.root, 'pi.jsonl');
+  request.sessionPath = transcript;
+  request.nativeSession = undefined;
+  await writeFile(
+    transcript,
+    [
+      { type: 'session', id: request.runnerSessionId },
+      {
+        type: 'message',
+        message: {
+          role: 'assistant',
+          provider: 'litellm',
+          model: 'fixture-priced',
+          usage: { input: 4, output: 4, cacheRead: 38195, cacheWrite: 0, cost: { total: 0 } },
+        },
+      },
+    ]
+      .map((row) => JSON.stringify(row))
+      .join('\n') + '\n',
+  );
+  const [row] = await f.run([request]);
+  assert.ok('output' in row && typeof row.output === 'string');
+  assert.match(row.output, /cost_usd=0\.0076870000/);
+});
