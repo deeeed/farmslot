@@ -21,7 +21,8 @@ mock.module('../core/config.js', {
 });
 
 await import('../runtime/mock-pty.test-support.js');
-const { setCachedFleetForTests, setWorkspaceOverlay } = await import('../fleet/state.js');
+const { overlaySlotEntity, setCachedFleetForTests, setWorkspaceOverlay } =
+  await import('../fleet/state.js');
 const { disposeServerResourceObservations } = await import('../server.js');
 const { fleetStatusIds } = await import('../fleet/slot-entities.js');
 const { resourceRevisions } = await import('../resources/revisions.js');
@@ -30,6 +31,7 @@ const {
   slotsPublishedToViewers,
   stopServedWorkspaceObservations,
 } = await import('./fleet.js');
+const { observedSlotWorkspace } = await import('./slot/workspace.js');
 
 function fleetOf(id: string, patch: Partial<SlotStatus> = {}): FleetStatus {
   const slot: SlotStatus = {
@@ -226,10 +228,73 @@ test('R5: disposing the server observations stops the pending inspections and ex
     'unknown',
     'no expiry recomputes the entity',
   );
-  // The round that was already running may still report what it found; no expiry publishes.
+  // Neither an expiry nor the round that was running publishes after disposal.
   assert.deepEqual(
-    changes.filter(({ key }) => key.family === 'slot' && key.slotId === fallback.slot),
+    changes.filter(({ key }) => key.family === 'slot'),
     [],
-    'the fallback slot is not published again',
+    'no slot is published again',
+  );
+});
+
+test('E: an inspection that completes after disposal publishes nothing and arms no expiry', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() + 240_000 });
+  const slot = fleetOf('late-failure', { currentRunId: null }).slots[0];
+  setCachedFleetForTests(fleetOf('late-failure', { currentRunId: null }));
+  t.after(() => setCachedFleetForTests(null));
+  // The slot's row verified this workspace a moment ago, and it has never been inspected.
+  setWorkspaceOverlay(slot.slot, {
+    epoch: 0,
+    currentRunId: null,
+    cleanupRunId: null,
+    handoffRunId: null,
+    branch: 'main',
+    headSha: 'abc1234',
+    dirtyFingerprint: '',
+    recoveryId: null,
+    observedAt: new Date().toISOString(),
+    localDefaultSha: null,
+    defaultFetchedAt: null,
+    remoteDefaultSha: null,
+    remoteObservedAt: null,
+    behind: null,
+    remoteAdvanced: false,
+    publication: 'pushed',
+    dirtyCount: 0,
+    unpublishedCount: 0,
+  });
+  t.after(() => setWorkspaceOverlay(slot.slot, undefined));
+  let release = () => {};
+  heldRound = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  t.after(() => {
+    heldRound = undefined;
+    release();
+  });
+  // Its first inspection is running when the server observations are disposed.
+  refreshServedWorkspaceObservations();
+  for (let turn = 0; turn < 10; turn++) await new Promise<void>((resolve) => setImmediate(resolve));
+  disposeServerResourceObservations();
+  const changes: ResourceChangedPayload['changes'] = [];
+  t.after(resourceRevisions.subscribe((payload) => changes.push(...payload.changes)));
+
+  // The inspection then fails (no pool declares the slot).
+  heldRound = undefined;
+  release();
+  const inspected = () => observedSlotWorkspace(overlaySlotEntity(slot)).workspaceError;
+  // The clock is mocked: the ceiling for the inspection is measured on the performance clock.
+  const ceiling = performance.now() + 3000;
+  while (!inspected() && performance.now() < ceiling)
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.ok(inspected(), 'the inspection completed');
+  for (let turn = 0; turn < 50; turn++) await new Promise<void>((resolve) => setImmediate(resolve));
+  // Past the fallback's expiry: a timer armed by that completion would publish the slot now.
+  t.mock.timers.tick(30_001);
+  for (let turn = 0; turn < 50; turn++) await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(
+    changes.filter(({ key }) => key.family === 'slot' && key.slotId === slot.slot),
+    [],
+    'nothing is published after disposal',
   );
 });

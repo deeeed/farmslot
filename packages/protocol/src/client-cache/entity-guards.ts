@@ -35,6 +35,9 @@ const absentOr = (value: unknown, check: (present: unknown) => boolean) =>
 /**
  * The fields of a slot that summary, host-load reattachment, sorting and the slot views read
  * without a check of their own; the gateway's row transform always fills them.
+ *
+ * This is the boundary of admission: identity, and the fields list consumers dereference
+ * unguarded. Everything else is trusted from the current gateway. A refused row is read again.
  */
 export function isSlotEntity(value: unknown): value is SlotEntity {
   if (!isRecord(value) || !isRecord(value.health)) return false;
@@ -57,9 +60,12 @@ export function isSlotEntity(value: unknown): value is SlotEntity {
     isString(health.devserver) &&
     isString(health.cdp) &&
     isString(health.fixtures) &&
-    // The slot view reads each agent context's id without a check of its own.
+    // The slot view keys each agent context by its id and sorts them by label.
     absentOr(value.agentContexts, (contexts) =>
-      everyOf(contexts, (context) => isRecord(context) && isString(context.id)),
+      everyOf(
+        contexts,
+        (context) => isRecord(context) && isString(context.id) && isString(context.label),
+      ),
     ) &&
     // Host load is reattached from machine samples and never part of a slot entity.
     value.hostLoad === undefined

@@ -115,6 +115,8 @@ interface QueryEntry {
   retryAt?: number;
   /** How long after the last read the changes since it may wait; any unpaced key lifts it. */
   rereadFloor?: number;
+  /** When this entry's whole snapshot was last handed to the store. */
+  snapshotStoredAt?: number;
   readTimer?: ReturnType<typeof setTimeout>;
 }
 
@@ -182,7 +184,18 @@ function profileId(connection: ResourceCacheConnection): string {
 
 /** Experimental ADR-071 controller. It opens no sockets and never accepts a command. */
 /** A read's reply; a run list view served from the collection carries the collection's time. */
-type ReadReply = ResourceReadResult<unknown> & { incomplete?: boolean; observedAt?: number };
+type ReadReply = ResourceReadResult<unknown> & {
+  incomplete?: boolean;
+  observedAt?: number;
+  /** An entity view put together from what the client holds, without a request. */
+  assembled?: boolean;
+};
+
+/**
+ * A view assembled from pushed entities stores its whole snapshot at most this often; each
+ * pushed row is stored at once. It is the floor a full read of the fleet rereads at.
+ */
+const ENTITY_SNAPSHOT_INTERVAL_MS = RESOURCE_REREAD_INTERVAL_MS.slots ?? 10_000;
 
 export function createGatewayResourceCache(
   options: GatewayResourceCacheOptions,
@@ -340,7 +353,10 @@ export function createGatewayResourceCache(
     }
     return view;
   }
+  /** Advances when the views are discarded: stored rows read for an earlier one are dropped. */
+  let entityViewGeneration = 0;
   function forgetEntityViews(): void {
+    entityViewGeneration++;
     for (const view of entityViews()) view.clear();
     prViews.clear();
   }
@@ -963,8 +979,13 @@ export function createGatewayResourceCache(
   /** A notification changed an entity view: reassemble it now; a read follows only if needed. */
   function refreshEntityView(view: EntityView): void {
     for (const entry of entries.values()) {
-      if (!entry.listeners.size || !view.serves(entry.query)) continue;
+      if (!view.serves(entry.query)) continue;
       entry.dirty = true;
+      if (!entry.listeners.size) {
+        // Nobody observes it now: it is stale until someone does, and reassembled then.
+        if (entry.state.status === 'ready') entry.state = { ...entry.state, status: 'stale' };
+        continue;
+      }
       if (entry.queued) continue;
       entry.queued = true;
       queueMicrotask(() => {
@@ -1223,6 +1244,7 @@ export function createGatewayResourceCache(
     view.hydratedFrom = readingStore;
     const incarnation = storeVersion;
     const owner = hydrationOwnerVersion;
+    const generation = entityViewGeneration;
     let stored: Awaited<ReturnType<NonNullable<ResourceStore['getRows']>>>;
     try {
       stored = await readingStore.getRows(view.storeId);
@@ -1236,7 +1258,10 @@ export function createGatewayResourceCache(
       store !== readingStore ||
       readingStore.deleted ||
       incarnation !== storeVersion ||
-      owner !== hydrationOwnerVersion
+      owner !== hydrationOwnerVersion ||
+      // The view was discarded meanwhile (a gateway without entity sync): these rows are older
+      // than the full read that replaced the screen.
+      generation !== entityViewGeneration
     )
       return;
     view.hydrate(stored);
@@ -1284,6 +1309,12 @@ export function createGatewayResourceCache(
     // and the listing alone says which rows have gone. Stored rows fill a view nothing seeded.
     view.seed(entry.state.data);
     if (!view.held) await hydrateEntityView(view);
+    // The read was cancelled while the store answered (a new connection): it sends nothing.
+    if (signal.aborted)
+      throw Object.assign(new Error('Entity view read superseded'), {
+        code: 'RESOURCE_READ_SUPERSEDED',
+      });
+    let requested = false;
     const publishPage = (done: number, total: number) => {
       const partial = view.answer();
       entry.state = {
@@ -1294,11 +1325,10 @@ export function createGatewayResourceCache(
       notify(entry);
     };
     try {
-      await view.sync(
-        async (params, readSignal) =>
-          (await request<unknown>(entry.query.method, params, readSignal)).data,
-        publishPage,
-      );
+      await view.sync(async (params, readSignal) => {
+        requested = true;
+        return (await request<unknown>(entry.query.method, params, readSignal)).data;
+      }, publishPage);
     } catch (error) {
       if (evictionCodes.has(queryError(error).code)) {
         const evictingStore = store;
@@ -1322,6 +1352,7 @@ export function createGatewayResourceCache(
       data: answer.data,
       resourceState: appliedRevisionStamp(entry),
       ...(answer.current ? {} : { incomplete: true }),
+      ...(requested ? {} : { assembled: true }),
       observedAt: Date.now(),
     };
   }
@@ -1636,8 +1667,17 @@ export function createGatewayResourceCache(
         entry.retryAt = undefined;
         entry.lastUsed = ++lastUsed;
         // Version-list views are derived from the run collection, which is stored on its own.
+        // A view assembled from pushed entities already stored the rows that changed; its whole
+        // snapshot follows no more often than a full read would have been reread.
+        const paced =
+          reply.assembled === true &&
+          Date.now() - (entry.snapshotStoredAt ?? 0) < ENTITY_SNAPSHOT_INTERVAL_MS;
         const persistResult =
-          entry.query.persisted && canPersist(connection) && reply.incomplete === undefined;
+          entry.query.persisted &&
+          canPersist(connection) &&
+          reply.incomplete === undefined &&
+          !paced;
+        if (persistResult) entry.snapshotStoredAt = Date.now();
         const serialized = persistResult
           ? JSON.stringify(
               entry.query.persistedData ? entry.query.persistedData(reply.data) : reply.data,

@@ -128,6 +128,12 @@ function fleetStatusResult(fleet: FleetStatus): FleetStatusResult {
   };
 }
 
+/**
+ * Advances when the observations are stopped: a refresh queued before then does not start, and a
+ * round running then publishes nothing.
+ */
+let servedWorkspacesGeneration = 0;
+
 function refreshWorkspaceObservations(
   fleet: FleetStatus,
   deps: FleetStatusDeps,
@@ -136,9 +142,12 @@ function refreshWorkspaceObservations(
   const workspaces = deps.workspaces;
   if (workspaceRefreshInFlight || !workspaces?.refresh) return;
   const previous = new Map(fleet.slots.map((slot) => [slot.slot, slot]));
+  const generation = servedWorkspacesGeneration;
   workspaceRefreshInFlight = workspaces
     .refresh(fleet)
     .then(async () => {
+      // Stopped meanwhile: a publication would recompute entities and arm their expiries again.
+      if (generation !== servedWorkspacesGeneration) return;
       // Owners may have changed while Git/network reads ran. Publish current
       // rows, never the captured fleet that started the observation.
       const current = workspaces.read(await deps.load());
@@ -192,8 +201,6 @@ const servedWorkspaceDeps: FleetStatusDeps = {
 let servedWorkspacesRefreshedAt = 0;
 let servedWorkspacesTimer: ReturnType<typeof setTimeout> | undefined;
 let servedWorkspacesWaiting = false;
-/** Advances when the observations are stopped: a refresh queued before then does not start. */
-let servedWorkspacesGeneration = 0;
 
 /**
  * Starts the workspace inspections an observed fleet read starts (ADR-071 Amendment 4). A viewer

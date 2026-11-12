@@ -601,8 +601,13 @@ publication or a read looks them up and hashes nothing.
   versions read, at most twice per sync.
 - Stored, paged and pushed bodies are untrusted: one set of guards checks the
   fields consumers read, the id and the version. A refused body is read again.
-- Rows are kept in the offline store. A cold start with unchanged versions reads
-  no bodies.
+- Rows are kept in the offline store, each as it changes. The assembled view is
+  stored after a read that used the network, and at most once per 10 s while
+  rows are pushed. A cold start begins from that stored view: with unchanged
+  versions it reads no bodies, except rows pushed after the view was stored.
+- A view nobody observes still applies pushes and is marked stale. Observing it
+  again assembles it from the held rows, with a versions read only if its
+  marker moved.
 - `ResourceSyncState` gains `catch-up` with `{ done, total }`. Each ids page
   publishes its rows with the progress.
 

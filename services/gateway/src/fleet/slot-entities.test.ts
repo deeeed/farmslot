@@ -206,6 +206,34 @@ test('an overlay write changes the maintained entity and the full read alike', a
   assert.equal(page.entities[0].taskPhase, 'Validate 2/4');
 });
 
+test('B: on a snapshot past the stale threshold the entity view equals the observed full read', async (t) => {
+  setCachedFleetForTests({
+    ...fleetOf([slot('a'), slot('b')]),
+    checkedAt: '2000-01-01T00:00:00.000Z',
+  });
+  t.after(() => setCachedFleetForTests(null));
+  // The client's own view, from the protocol source: what an entity-sync client assembles.
+  const { createFleetEntityView } =
+    await import('../../../../packages/protocol/src/client-cache/entity-views.js');
+  const view = createFleetEntityView();
+  await view.sync(async (params) => {
+    const ids = params && typeof params === 'object' ? Reflect.get(params, 'ids') : undefined;
+    return Array.isArray(ids) ? fleetStatusIds(ids) : fleetStatusVersions();
+  });
+  const observed = observedFleetStatus(await realState.loadFleetStatus(false, true));
+  // Compared as sent: JSON drops undefined fields on both sides.
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(view.answer()?.data)),
+    JSON.parse(JSON.stringify(observed)),
+  );
+  // The observed read a cache client sends has never applied the plain read's stale transform.
+  assert.equal(observed.fleet.stale, undefined);
+  assert.deepEqual(
+    observed.fleet.slots.map((row) => row.dispatchable),
+    [true, true],
+  );
+});
+
 test("N9: a failed inspection's fallback workspace leaves the entity when it leaves the full read", async (t) => {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
   const id = 'fallback';
