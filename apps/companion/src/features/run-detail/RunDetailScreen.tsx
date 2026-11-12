@@ -405,7 +405,27 @@ export default function RunDetailScreen() {
     [recipeRuns, run, selectedRecipeRunId, evidenceModel],
   );
 
+  const focusedArtifactPath = requestedArtifactPath.trim() || null;
+  // The terminal tile opens from the row as well: it shows before run.get lands.
+  const openTerminal = () => {
+    const shown = run ?? row;
+    if (!shown) return;
+    const terminal = runTerminalView(shown);
+    if (!terminal.target || terminal.disabledReason) return;
+    router.push({
+      pathname: terminal.target.slotId ? '/workspace/slot/[slotId]/terminal' : '/terminal/worker',
+      params: {
+        ...terminal.target,
+        ...targetRouteContext('terminal'),
+        details: '1',
+        ...(workspaceRecipeRunId ? { recipeRun: workspaceRecipeRunId } : {}),
+        ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
+      },
+    });
+  };
+
   // No run.get yet: the list row paints the header at once; the sections wait for the detail.
+  // The header card holds what the loaded one holds, so nothing in it moves when run.get lands.
   if (!run && row) {
     const standIn = runDetailHeaderModel(row);
     return (
@@ -424,6 +444,7 @@ export default function RunDetailScreen() {
               row={row}
               linkedTickets={<RunLinkedTickets key={row.id} run={row} disabled />}
             />
+            <RunDetailTerminalTile header={standIn} onPress={openTerminal} />
             <RunDetailSlotLine header={standIn} />
           </View>
           <RunPipelineMini run={row} />
@@ -459,7 +480,6 @@ export default function RunDetailScreen() {
     connectionStatus === 'connected' &&
     runObservation.status === 'ready';
   const cancelledSlot = offeredSlotRelease(run, fleetSlots ?? [], runActionable);
-  const focusedArtifactPath = requestedArtifactPath.trim() || null;
   const focusedArtifactIsDiff = Boolean(
     focusedArtifactPath && diffArtifactCandidate([{ path: focusedArtifactPath }]),
   );
@@ -559,20 +579,6 @@ export default function RunDetailScreen() {
 
   const reviewStatus = humanGateBlockingReason(run);
   const terminal = runTerminalView(run);
-  const openTerminal = () => {
-    if (terminal.disabledReason) return;
-    if (!terminal.target) return;
-    router.push({
-      pathname: terminal.target.slotId ? '/workspace/slot/[slotId]/terminal' : '/terminal/worker',
-      params: {
-        ...terminal.target,
-        ...targetRouteContext('terminal'),
-        details: '1',
-        ...(workspaceRecipeRunId ? { recipeRun: workspaceRecipeRunId } : {}),
-        ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
-      },
-    });
-  };
 
   return (
     <View style={baseStyles.container}>
@@ -621,24 +627,7 @@ export default function RunDetailScreen() {
               />
             }
           />
-          <CockpitTile
-            testID="companion-run-open-terminal"
-            label={terminal.label}
-            value={
-              terminal.disabledReason ??
-              (terminal.target?.slotId ||
-                terminal.context?.nativeSession?.executionNodeId ||
-                run.reviewWorkspace?.machine ||
-                'Current session')
-            }
-            disabled={Boolean(terminal.disabledReason)}
-            onPress={openTerminal}
-          />
-          {run.qa && (
-            <Text style={baseStyles.textSecondary} testID="companion-run-qa-profile">
-              QA profile: {run.qa.profile.title} ({run.qa.profile.id})
-            </Text>
-          )}
+          <RunDetailTerminalTile header={header} onPress={openTerminal} />
           <RunDetailSlotLine header={header} />
           {cancelledSlot ? (
             <CancelledRunSlotRelease
@@ -1236,6 +1225,32 @@ function RunDetailHeaderLines({
       {linkedTickets}
       {header.summary ? (
         <RunTitle key={row.id} style={baseStyles.textSecondary} title={header.summary} />
+      ) : null}
+    </>
+  );
+}
+
+/** The terminal tile and QA profile line, between the title and the slot line. */
+function RunDetailTerminalTile({
+  header,
+  onPress,
+}: {
+  header: RunDetailHeaderModel;
+  onPress: () => void;
+}) {
+  return (
+    <>
+      <CockpitTile
+        testID="companion-run-open-terminal"
+        label={header.terminalLabel}
+        value={header.terminalValue}
+        disabled={header.terminalDisabled}
+        onPress={onPress}
+      />
+      {header.qaProfile ? (
+        <Text style={baseStyles.textSecondary} testID="companion-run-qa-profile">
+          QA profile: {header.qaProfile}
+        </Text>
       ) : null}
     </>
   );

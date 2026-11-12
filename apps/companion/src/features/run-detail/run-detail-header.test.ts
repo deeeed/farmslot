@@ -92,6 +92,32 @@ const states: Run[] = [
       },
     ],
   }),
+  // A native QA run on a review worktree: its terminal tile opens a conversation.
+  run({
+    slotId: null,
+    steps: [{ name: 'monitor', status: 'running' }],
+    qa: { profile: { id: 'smoke', title: 'Smoke', template_id: 'qa' }, inputs: {} },
+    agentContexts: [
+      {
+        id: 'primary',
+        label: 'Worker',
+        role: 'primary',
+        status: 'working',
+        slotId: null,
+        runId: 'run-header',
+        runner: 'claude',
+        startedAt: '2026-11-01T00:01:00.000Z',
+        nativeSession: {
+          sessionId: 'session-1',
+          executionNodeId: 'node-1',
+          ownerPrincipalId: 'operator',
+          leaseId: 'lease-1',
+          commandId: 'command-1',
+        },
+        runnerSessionArchive: { status: 'captured', originalPath: '/home/worker/session.jsonl' },
+      },
+    ],
+  }),
 ];
 
 // With no run.get held, Run Detail paints its header from the list row; when the detail lands
@@ -107,4 +133,34 @@ test('the run detail header is the same from the served row, the full run and an
     runDetailHeaderModel(states[3]).statusLabel,
     'Needs your decision: Evidence policy needs attestation.',
   );
+});
+
+// The stand-in header card holds the terminal tile and QA line the loaded card holds, with the
+// same values, so the slot line under them does not move when run.get lands.
+test('the terminal tile and QA line are the same from the served row and the full run', () => {
+  const tile = (full: Run) => {
+    const { terminalLabel, terminalValue, terminalDisabled, qaProfile } = runDetailHeaderModel(
+      runListRow(full),
+    );
+    return { terminalLabel, terminalValue, terminalDisabled, qaProfile };
+  };
+  assert.deepEqual(tile(states[0]), {
+    terminalLabel: 'Open terminal',
+    terminalValue: 'slot-2',
+    terminalDisabled: false,
+    qaProfile: null,
+  });
+  assert.deepEqual(tile(states[2]), {
+    terminalLabel: 'Open terminal',
+    terminalValue: 'This run is finished.',
+    terminalDisabled: true,
+    qaProfile: null,
+  });
+  assert.equal(runListRow(states[4]).detailTrimmed, true);
+  assert.deepEqual(tile(states[4]), {
+    terminalLabel: 'Open conversation',
+    terminalValue: 'node-1',
+    terminalDisabled: false,
+    qaProfile: 'Smoke (smoke)',
+  });
 });

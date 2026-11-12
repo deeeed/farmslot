@@ -4,7 +4,7 @@ import test from 'node:test';
 import { type Run, runListRow, trimRunForList } from '@farmslot/protocol';
 
 import { nativeWorkerTabs } from '../src/native-worker-target.js';
-import { runActivityView, runReviewActivityContext } from '../src/run-activity.js';
+import { runActivityView, runReviewActivityContext, runTerminalView } from '../src/run-activity.js';
 import { runRecoveredReviewFailures } from '../src/run-review-failures.js';
 
 /** A run in its second review attempt on a native reviewer, after a failed first attempt. */
@@ -71,8 +71,8 @@ function reviewingRun(): Run {
   };
 }
 
-// Run activity, the recovered-review segment and split view's native tabs read agent contexts:
-// the same from the served row, the full run and an old cached row.
+// Run activity, the recovered-review segment, split view's native tabs and the run's terminal
+// target read agent contexts: the same from the served row, the full run and an old cached row.
 test('agent-context readers agree on the served row, the full run and an old cached row', () => {
   const full = reviewingRun();
   const views = (run: Parameters<typeof runActivityView>[0]) => ({
@@ -80,11 +80,15 @@ test('agent-context readers agree on the served row, the full run and an old cac
     reviewer: runReviewActivityContext(run)?.id,
     recovered: runRecoveredReviewFailures(run).map(({ name, reason }) => [name, reason]),
     tabs: nativeWorkerTabs(run.agentContexts ?? [], 'slot-4').map(({ key, label }) => [key, label]),
+    terminal: (({ label, disabledReason, target }) => ({ label, disabledReason, target }))(
+      runTerminalView(run),
+    ),
   });
   const expected = views(full);
   assert.equal(expected.reviewer, 'review-2');
   assert.deepEqual(expected.recovered, [['recovered-review-review-1', 'Reviewer crashed']]);
   assert.equal(expected.tabs.length, 1);
+  assert.equal(expected.terminal.label, 'Open conversation');
   const row = runListRow(full);
   assert.equal(row.detailTrimmed, true);
   assert.deepEqual(views(row), expected);

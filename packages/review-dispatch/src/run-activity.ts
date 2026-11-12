@@ -62,7 +62,7 @@ export function runReviewActivityContext(
 }
 
 /** Both run views open the same current actor; the gateway resolves its exact node and pane. */
-export function runTerminalView(run: Run, contextId?: string) {
+export function runTerminalView(run: RunListRow, contextId?: string) {
   const contexts = run.agentContexts ?? [];
   if (contextId && !contexts.some((entry) => entry.id === contextId))
     return {
