@@ -1,1 +1,2 @@
 - `call` refuses several `key=value` inputs quoted into one argument (such as `"provider=hyperliquid network=testnet"`) instead of reading them as one value, and validation help suggests the nearest parameter for an unknown input and the parameter whose values include a misplaced one (`Did you mean market_mode=pro?`).
+- `call` prints the absolute path of each screenshot it wrote (`Screenshot:` lines, and `screenshots` in `--json`).

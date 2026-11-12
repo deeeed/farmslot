@@ -3683,6 +3683,29 @@ describe('call', () => {
     assert.equal(path.dirname(String(lastJson(pinned.stdout).summaryPath)), explicit);
   });
 
+  test('prints the absolute path of each screenshot the call wrote', async () => {
+    const target = checkout();
+    const args = [
+      'shop.ping',
+      'mode=fast',
+      '--adapter',
+      'web',
+      '--target',
+      target,
+      '--heal',
+      'off',
+    ];
+    const json = await capture(() => handleCall([...args, 'count=0', '--json'], callOptions));
+    assert.equal(json.value, 0, json.stderr.join('\n'));
+    const envelope = lastJson(json.stdout);
+    const shot = path.join(path.dirname(String(envelope.summaryPath)), 'shot.png');
+    assert.deepEqual(envelope.screenshots, [shot]);
+    const human = await capture(() => handleCall([...args, 'count=0'], callOptions));
+    assert.match(human.stdout.join('\n'), /Screenshot: \/.*\/shot\.png\n/u);
+    const none = await capture(() => handleCall([...args, '--json'], callOptions));
+    assert.equal(lastJson(none.stdout).screenshots, undefined);
+  });
+
   test('an inline --flag=value is an option, never an input', async () => {
     const target = checkout();
     const artifacts = tempRoot('recipe-cli-call-inline-');

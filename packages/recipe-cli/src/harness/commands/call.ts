@@ -614,6 +614,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
         return emitHealViolation(json, 'call', result, taughtViolation, state, adapter);
       }
       const callOutput = readCallOutput(result.tracePath);
+      const screenshots = callScreenshots(result.artifactManifestPath);
       const safeArgs = redactCallValue(args);
       const safeCallOutput = redactCallValue(callOutput);
       const failureUserAction = runFailureUserAction(target, result);
@@ -637,6 +638,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
               ...(result.diagnosticsPath ? { diagnosticsPath: result.diagnosticsPath } : {}),
               ...(result.sideFindings ? { sideFindings: result.sideFindings } : {}),
               ...(callOutput !== undefined ? { output: safeCallOutput } : {}),
+              ...(screenshots.length > 0 ? { screenshots } : {}),
               recovered: state.recovered,
               mutations: state.mutations,
               exitCode: result.status === 'pass' ? EXIT.ok : EXIT.runtime,
@@ -668,6 +670,9 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
             `${Object.keys(defaultsUsed).length > 0 ? `\n${renderDefaultsUsed(defaultsUsed, process.stdout)}` : ''}` +
             `${callOutput !== undefined ? `\n${out('label', 'Result:')}\n${formatCallOutput(safeCallOutput)}` : ''}\n` +
             renderedDiagnostics +
+            screenshots
+              .map((shot) => `${out('label', 'Screenshot:')} ${out('path', shot)}\n`)
+              .join('') +
             `${out('label', 'Artifacts:')} ${out('path', result.artifactManifestPath)}` +
             (result.status === 'fail' ? `\n  Next: ${failureUserAction}` : ''),
         );
@@ -825,6 +830,23 @@ function readCallOutput(tracePath: string): unknown {
       : undefined;
   } catch {
     return undefined;
+  }
+}
+
+// Absolute paths of the screenshots the call wrote, so an agent never guesses where they are.
+function callScreenshots(manifestPath: string): string[] {
+  try {
+    const manifest: unknown = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    const entries =
+      isRecord(manifest) && Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
+    return entries.flatMap((entry: unknown) => {
+      if (!isRecord(entry) || entry.type !== 'screenshot' || typeof entry.path !== 'string')
+        return [];
+      const absolute = path.resolve(path.dirname(manifestPath), entry.path);
+      return fs.existsSync(absolute) ? [absolute] : [];
+    });
+  } catch {
+    return [];
   }
 }
 
