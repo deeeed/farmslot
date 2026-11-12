@@ -58,11 +58,18 @@ function fixture(t: TestContext) {
     },
   };
 }
-function countStats(t: TestContext, path: string) {
+function countStats(
+  t: TestContext,
+  path: string,
+  respond?: (...args: Parameters<typeof fs.statSync>) => ReturnType<typeof fs.statSync>,
+) {
   const stat = fs.statSync;
   let calls = 0;
   const spy = t.mock.method(fs, 'statSync', (...args: Parameters<typeof stat>) => {
-    if (String(args[0]) === path) calls++;
+    if (String(args[0]) === path) {
+      calls++;
+      if (respond) return respond(...args);
+    }
     return stat(...args);
   });
   syncBuiltinESMExports();
@@ -140,15 +147,7 @@ test('a racy unchanged stamp cannot hide a revocation after the recheck boundary
   f.authorize();
   readCredentialStoreSnapshot(f.path);
   const stamp = fs.statSync(f.path);
-  const stat = fs.statSync;
-  const spy = t.mock.method(fs, 'statSync', (...args: Parameters<typeof stat>) =>
-    String(args[0]) === f.path ? stamp : stat(...args),
-  );
-  syncBuiltinESMExports();
-  t.after(() => {
-    spy.mock.restore();
-    syncBuiltinESMExports();
-  });
+  countStats(t, f.path, () => stamp);
   f.external((store) => revoke(store, f.issued.record.id));
   f.setNow(100);
   assert.throws(f.authorize, { code: 'AUTH_REQUIRED' });
@@ -173,16 +172,8 @@ test('stat failure at the deadline is retried and fails closed', (t) => {
   const f = fixture(t);
   f.authorize();
   readCredentialStoreSnapshot(f.path);
-  const stat = fs.statSync;
-  const spy = t.mock.method(fs, 'statSync', (...args: Parameters<typeof stat>) => {
-    if (String(args[0]) === f.path)
-      throw Object.assign(new Error('fixture read denied'), { code: 'EACCES' });
-    return stat(...args);
-  });
-  syncBuiltinESMExports();
-  t.after(() => {
-    spy.mock.restore();
-    syncBuiltinESMExports();
+  countStats(t, f.path, () => {
+    throw Object.assign(new Error('fixture read denied'), { code: 'EACCES' });
   });
   f.setNow(100);
   for (let n = 0; n < 2; n++) {
@@ -295,4 +286,17 @@ test('a direct locked save invalidates cached authority before any runtime reloa
       ?.revokedAt,
     null,
   );
+});
+
+test('a settled runtime projection is reused across a stat recheck', (t) => {
+  const f = fixture(t);
+  const settledAt = Date.now() + 10_000;
+  t.mock.method(Date, 'now', () => settledAt);
+  const stats = countStats(t, f.path);
+  f.setNow(100);
+  const first = f.runtime.store.snapshot();
+  assert.equal(stats(), 1);
+  f.setNow(200);
+  assert.equal(f.runtime.store.snapshot(), first);
+  assert.equal(stats(), 2);
 });

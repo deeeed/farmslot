@@ -33,6 +33,7 @@ assert(
 assert.notEqual(credentialPath, fs.realpathSync(origin.source), 'Refuse operator state');
 const root = await mkdtemp(path.join(tmpdir(), 'credential-stamp-benchmark-'));
 const connections: GatewayConnection[] = [];
+const broadcastCleanups = new Set<() => void>();
 let closeServer = async () => {};
 let restore = () => {};
 try {
@@ -137,16 +138,21 @@ try {
     (connection) =>
       new Promise<void>((resolve, reject) => {
         const deadline = setTimeout(() => {
-          unsubscribe();
+          cleanup();
           reject(new Error('Benchmark broadcast did not reach every connection'));
         }, 2_000);
         const unsubscribe = connection.onEvent((frame) => {
           if (frame.event === event) {
-            clearTimeout(deadline);
-            unsubscribe();
+            cleanup();
             resolve();
           }
         });
+        const cleanup = () => {
+          clearTimeout(deadline);
+          unsubscribe();
+          broadcastCleanups.delete(cleanup);
+        };
+        broadcastCleanups.add(cleanup);
       }),
   );
   started = performance.now();
@@ -162,6 +168,7 @@ try {
   await writeFile(values.output, JSON.stringify(result, null, 2) + '\n', { mode: 0o600 });
   console.log(JSON.stringify(result));
 } finally {
+  for (const cleanup of broadcastCleanups) cleanup();
   restore();
   for (const connection of connections) connection.close();
   await closeServer();

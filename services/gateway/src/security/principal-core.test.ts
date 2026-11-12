@@ -193,7 +193,12 @@ test('read-only credential snapshots are frozen and refreshed within the bounded
   const clock = t.mock.method(Date, 'now', () => settledAt);
   freshnessNow = 200;
   const snapshot = readCredentialStoreSnapshot(path);
-  assert.equal(readCredentialStoreSnapshot(path), snapshot, 'an unchanged file is not re-read');
+  freshnessNow = 300;
+  assert.equal(
+    readCredentialStoreSnapshot(path),
+    snapshot,
+    'a settled unchanged file is reused across a recheck',
+  );
   assert.equal(
     snapshot.credentials.find((record) => record.id === issued.record.id)?.revokedAt,
     null,
