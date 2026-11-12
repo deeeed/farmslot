@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { performance } from 'node:perf_hooks';
 
 import {
   deepFreeze,
@@ -151,6 +152,7 @@ export function saveCredentialStore(store: CredentialStore, path = credentialSto
   writeFileSync(tmp, `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600 });
   chmodSync(tmp, 0o600);
   renameSync(tmp, path);
+  invalidateCredentialReads();
 }
 
 export function activeAdminCredentialCount(store: CredentialStore): number {
@@ -166,61 +168,107 @@ export function isGlobalAdminBinding(binding: RoleBinding): boolean {
   return binding.role === 'admin' && binding.scope.kind === 'global';
 }
 
-/** Read-only snapshots per store path, keyed by the file's stamp at the time they were read. */
+// External changes are observed on the next read after this non-sliding 100 ms
+// window. Local writes invalidate immediately, including other runtimes/path aliases.
+const CREDENTIAL_STAMP_RECHECK_MS = 100;
+interface CheckedCredentialStamp {
+  stamp: FreshnessStamp | null;
+  checkedAt: number;
+  writeGeneration: number;
+  trusted: boolean;
+}
+let credentialWriteGeneration = 0;
+const checkedCredentialStamps = new Map<string, CheckedCredentialStamp>();
 const readOnlySnapshots = new Map<
   string,
   {
-    stamp: FreshnessStamp | null;
-    /** The file had settled when it was read, so an equal stamp later means equal content. */
-    trusted: boolean;
+    observation: CheckedCredentialStamp;
     store: Readonly<CredentialStore>;
   }
 >();
 
+function invalidateCredentialReads(): void {
+  credentialWriteGeneration++;
+  checkedCredentialStamps.clear();
+  readOnlySnapshots.clear();
+}
+
+function observeCredentialStamp(path: string): CheckedCredentialStamp {
+  const now = performance.now();
+  const cached = checkedCredentialStamps.get(path);
+  if (cached && now >= cached.checkedAt && now - cached.checkedAt < CREDENTIAL_STAMP_RECHECK_MS)
+    return cached;
+  const wallTime = Date.now();
+  // Capture time before I/O: a slow stat/load must not extend the revocation window.
+  const stamp = readStamp(path);
+  const observation = {
+    stamp,
+    checkedAt: now,
+    writeGeneration: credentialWriteGeneration,
+    trusted: !(stamp && isRacyStamp(stamp.mtimeMs, wallTime)),
+  };
+  checkedCredentialStamps.set(path, observation);
+  return observation;
+}
+
+function canReuseCredentialRead(
+  previous: CheckedCredentialStamp,
+  next: CheckedCredentialStamp,
+): boolean {
+  return (
+    previous.writeGeneration === next.writeGeneration &&
+    (previous === next ||
+      (previous.trusted && next.trusted && stampsEqual(previous.stamp, next.stamp)))
+  );
+}
+
 /**
- * The credential store for callers that only read it, such as ownership and assignment checks on
- * every native request. It is re-read when the file's stamp changes, and while the file changed
- * too recently for its stamp to be trusted (isRacyStamp), so a revocation is seen on the next call. The snapshot is deep-frozen and
- * shared: writers must use loadCredentialStore and saveCredentialStore.
+ * Deep-frozen read-only projection. External changes are visible at the next
+ * recheck, at most 100 ms after the last check; same-process saves invalidate now.
+ * Racy stamps still force a reload at each recheck. Writers read disk under their lock.
  */
 export function readCredentialStoreSnapshot(
   path = credentialStorePath(),
 ): Readonly<CredentialStore> {
-  // The stamp is taken before reading, so a write landing mid-read is picked up next call.
-  const stamp = readStamp(path);
+  const observation = observeCredentialStamp(path);
   const cached = readOnlySnapshots.get(path);
-  if (cached?.trusted && stampsEqual(cached.stamp, stamp)) return cached.store;
+  if (cached && canReuseCredentialRead(cached.observation, observation)) {
+    cached.observation = observation;
+    return cached.store;
+  }
   const store = deepFreeze(loadCredentialStore(path));
-  readOnlySnapshots.set(path, { stamp, trusted: !(stamp && isRacyStamp(stamp.mtimeMs)), store });
+  readOnlySnapshots.set(path, { observation, store });
   return store;
 }
 
 export class CredentialStoreRuntime {
   readonly path: string;
   private projection: CredentialStore;
-  private stamp: FreshnessStamp | null;
+  private observation: CheckedCredentialStamp;
   private readonly listeners = new Set<(change: CredentialStoreChange) => void>();
 
   constructor(readonly env: NodeJS.ProcessEnv = process.env) {
     this.path = credentialStorePath(env);
     this.projection = loadCredentialStore(this.path);
-    this.stamp = readStamp(this.path);
+    this.observation = observeCredentialStamp(this.path);
   }
 
-  ensureFresh(): void {
-    const nextStamp = readStamp(this.path);
-    if (stampsEqual(this.stamp, nextStamp)) return;
+  /** A post-verification fence bypasses projection reuse, not the bounded stamp check. */
+  ensureFresh(forceRead = false): void {
+    const observation = observeCredentialStamp(this.path);
+    if (!forceRead && canReuseCredentialRead(this.observation, observation)) {
+      this.observation = observation;
+      return;
+    }
     const previous = this.projection;
     this.projection = loadCredentialStore(this.path);
-    this.stamp = nextStamp;
+    this.observation = observation;
     this.emit(diffStores(previous, this.projection));
   }
 
   reloadAfterWrite(): void {
-    const previous = this.projection;
-    this.projection = loadCredentialStore(this.path);
-    this.stamp = readStamp(this.path);
-    this.emit(diffStores(previous, this.projection));
+    invalidateCredentialReads();
+    this.ensureFresh(true);
   }
 
   snapshot(): CredentialStore {

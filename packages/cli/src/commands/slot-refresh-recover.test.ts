@@ -9,6 +9,10 @@ import { fileURLToPath } from 'node:url';
 
 import { WebSocketServer } from 'ws';
 
+import { GatewayClient } from '../gateway-client.js';
+
+import { forcedRecoveryWorkspace } from './slot-recovery-workspace.js';
+
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const repoRoot = path.resolve(packageDir, '../..');
 const tsxBin = path.join(repoRoot, 'node_modules', '.bin', 'tsx');
@@ -61,8 +65,10 @@ async function runRecover(
   refreshResult: unknown = { refreshed: true },
   extraArgs: string[] = [],
   cachedSlots: unknown[] = slots,
+  observation?: { error?: string },
 ): Promise<{ refreshParams: unknown[]; run: Awaited<ReturnType<typeof spawnCli>> }> {
   const refreshParams: unknown[] = [];
+  let observationReady = false;
   // Created before the server listens, so every exit path closes the server.
   const home = mkdtempSync(path.join(os.tmpdir(), 'farmslot-slot-recover-'));
   const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
@@ -77,13 +83,43 @@ async function runRecover(
           params !== null &&
           'forceRefresh' in params &&
           params.forceRefresh === true;
-        payload = { fleet: { slots: fresh ? slots : cachedSlots } };
+        payload = {
+          fleet: {
+            slots: observation
+              ? observationReady
+                ? observation.error
+                  ? [{ slot: 'example-slot', workspaceError: observation.error }]
+                  : slots
+                : cachedSlots
+              : fresh
+                ? slots
+                : cachedSlots,
+          },
+        };
       }
       if (request.method === 'slot.refresh') {
         refreshParams.push(request.params);
         payload = refreshResult;
       }
       socket.send(JSON.stringify({ type: 'res', id: request.id, ok: true, payload }));
+      if (observation && request.method === 'fleet.status' && !observationReady) {
+        observationReady = true;
+        queueMicrotask(() =>
+          socket.send(
+            JSON.stringify({
+              type: 'event',
+              event: 'fleet.updated',
+              payload: {
+                fleet: {
+                  slots: observation.error
+                    ? [{ slot: 'example-slot', workspaceError: observation.error }]
+                    : slots,
+                },
+              },
+            }),
+          ),
+        );
+      }
     });
   });
   try {
@@ -177,4 +213,69 @@ test('force recovery obtains the workspace witness when the cached fleet read ha
   assert.deepEqual(refreshParams, [
     { slotId: 'example-slot', mode: 'force', release: true, expectedWorkspace: IDENTITY },
   ]);
+});
+
+test('force recovery waits for the shared observation when forced health has no workspace yet', async () => {
+  const { refreshParams, run } = await runRecover(
+    [{ slot: 'example-slot', workspace: { ...IDENTITY, observedAt: 'now', dirtyCount: 38 } }],
+    { refreshed: true },
+    ['--force'],
+    [{ slot: 'example-slot' }],
+    {},
+  );
+  assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
+  assert.deepEqual(refreshParams, [
+    { slotId: 'example-slot', mode: 'force', release: true, expectedWorkspace: IDENTITY },
+  ]);
+});
+
+test('a failed shared workspace observation never sends an unfenced forced recovery', async () => {
+  const { refreshParams, run } = await runRecover(
+    [],
+    { refreshed: true },
+    ['--force'],
+    [{ slot: 'example-slot' }],
+    { error: 'Workspace inspection unavailable' },
+  );
+  assert.equal(run.status, 1, `${run.stdout}${run.stderr}`);
+  assert.match(`${run.stdout}${run.stderr}`, /Workspace inspection unavailable/);
+  assert.deepEqual(refreshParams, []);
+});
+
+test('forced recovery permits a full health generation beyond the ordinary RPC timeout', async (t) => {
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  t.after(() => {
+    for (const socket of server.clients) socket.terminate();
+    server.close();
+  });
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const request = once(server, 'connection').then(async ([socket]) => {
+    const [raw] = await once(socket, 'message');
+    const frame = JSON.parse(String(raw)) as { id: string; method: string };
+    assert.equal(frame.method, 'fleet.status');
+    return { socket, id: frame.id };
+  });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const recovery = forcedRecoveryWorkspace(
+    new GatewayClient({ url: `ws://127.0.0.1:${address.port}`, timeout: 200 }),
+    'example-slot',
+  ).then(
+    (workspace) => ({ workspace, error: undefined }),
+    (error: Error) => ({ workspace: undefined, error }),
+  );
+  const { socket, id } = await request;
+  t.mock.timers.tick(370_000);
+  socket.send(
+    JSON.stringify({
+      type: 'res',
+      id,
+      ok: true,
+      payload: { fleet: { slots: [{ slot: 'example-slot', workspace: IDENTITY }] } },
+    }),
+  );
+  const result = await recovery;
+  assert.equal(result.error, undefined);
+  assert.deepEqual(result.workspace, IDENTITY);
 });

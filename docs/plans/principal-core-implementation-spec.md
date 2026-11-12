@@ -473,13 +473,18 @@ Every mutation is a whole-file write. There is no partial update path.
 value, along with a **freshness stamp** taken from the file: `{ dev, ino, mtimeMs, size }`.
 
 ```ts
-ensureFresh(): void   // stat the store; reload and invalidate when the stamp differs
+ensureFresh(forceRead = false): void // bounded stamp recheck; optional forced content reread
 ```
 
-`ensureFresh()` compares a `statSync` of the store path against the stamp and, on any difference,
-reloads the store, clears the verification cache, and replaces the projection. An absent file where
-one was present, or present where absent, counts as a difference. This is the "cheap freshness check
-on store identity and modification metadata" §2 invariant 3 requires.
+`ensureFresh()` shares a file-stamp observation for a non-sliding 100 ms window measured with
+monotonic time. At or after the deadline, the next read checks the file before using authority.
+A changed or racy stamp reloads the validated projection. A settled unchanged stamp reuses it.
+Missing/present transitions count as changes. A failed refresh fails closed rather than returning
+last-known-good authority. Local saves invalidate observations and frozen snapshots immediately,
+including other runtime instances and path aliases; writer transactions still read disk under lock.
+The post-scrypt verification fence uses `ensureFresh(true)` for an uncached content reread.
+This bounds only external-file freshness; roles, generation, expiry and revocation are still
+resolved on every authorization, without an authorization-result cache.
 
 **Lazy freshness alone cannot satisfy invariant 2, so detection is also proactive.** `ensureFresh()`
 runs on request-driven paths, and a subscription is a _push_ stream: after an external writer revokes
@@ -634,8 +639,9 @@ caches authority — no principal, no roles, no record, only a credential id tha
 resolved and revocation-checked on every use.
 
 A cache hit **skips only the KDF**. Resolution still reads the credential record and its principal
-from the live store, so a revoked credential or a changed binding takes effect on the next request no
-matter what is cached.
+from the validated projection. A local revocation or binding change takes effect on the next
+request; an external CLI change is observed at the next read after the non-sliding 100 ms deadline.
+Cached KDF verification never bypasses that freshness check or extends the window.
 
 ### New: `services/gateway/src/security/principal-resolver.ts`
 

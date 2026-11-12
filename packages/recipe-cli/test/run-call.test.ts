@@ -198,6 +198,23 @@ const pingAdapter: ActionHandler = {
   action: 'shop.ping',
   source: { kind: 'bundled', trust: 'trusted', name: 'shop' },
   async execute(node, context) {
+    if (node.count === -1) {
+      // count -1: a screenshot plus a still taken from the recording, as a recorded run reports.
+      fs.writeFileSync(path.join(context.artifactsDir, 'shot.png'), 'png');
+      fs.writeFileSync(path.join(context.artifactsDir, 'still.png'), 'png');
+      return {
+        output: { pong: -1, mode: node.mode },
+        artifacts: [
+          { path: 'shot.png', type: 'screenshot', label: 'Ping shot' },
+          {
+            path: 'still.png',
+            type: 'screenshot',
+            category: 'evidence',
+            metadata: { recordedEvidence: { videoPath: 'run.mp4', traceIndex: 0, frameMs: 0 } },
+          },
+        ],
+      };
+    }
     if (node.count !== 0) return { output: { pong: node.count ?? 1, mode: node.mode } };
     // count 0: report a screenshot taken through a fallback provider, as a platform action would.
     fs.writeFileSync(path.join(context.artifactsDir, 'shot.png'), 'png');
@@ -3683,6 +3700,30 @@ describe('call', () => {
     assert.equal(path.dirname(String(lastJson(pinned.stdout).summaryPath)), explicit);
   });
 
+  test('prints the absolute path of each screenshot the call wrote', async () => {
+    const target = checkout();
+    const args = [
+      'shop.ping',
+      'mode=fast',
+      '--adapter',
+      'web',
+      '--target',
+      target,
+      '--heal',
+      'off',
+    ];
+    const json = await capture(() => handleCall([...args, 'count=-1', '--json'], callOptions));
+    assert.equal(json.value, 0, json.stderr.join('\n'));
+    const envelope = lastJson(json.stdout);
+    const shot = path.join(path.dirname(String(envelope.summaryPath)), 'shot.png');
+    assert.deepEqual(envelope.screenshots, [shot]);
+    const human = await capture(() => handleCall([...args, 'count=-1'], callOptions));
+    assert.match(human.stdout.join('\n'), /Screenshot: \/.*\/shot\.png\n/u);
+    assert.doesNotMatch(human.stdout.join('\n'), /still\.png/u);
+    const none = await capture(() => handleCall([...args, '--json'], callOptions));
+    assert.equal(lastJson(none.stdout).screenshots, undefined);
+  });
+
   test('an inline --flag=value is an option, never an input', async () => {
     const target = checkout();
     const artifacts = tempRoot('recipe-cli-call-inline-');
@@ -3738,6 +3779,42 @@ describe('call', () => {
       refused,
     );
     assert.deepEqual(calls.runners, []);
+  });
+
+  test('hints at key=value inputs quoted into one argument only when the value fails', async () => {
+    const target = checkout();
+    const base = ['--target', target, '--heal', 'off', '--json'];
+    // The shell hands `"mode=fast count=2"` over as one token: mode then fails its enum.
+    const packed = await capture(() =>
+      handleCall(['shop.ping', 'mode=fast count=2', '--adapter', 'web', ...base], callOptions),
+    );
+    assert.equal(packed.value, 5);
+    assert.deepEqual(lastJson(packed.stdout).packedInputs, [{ name: 'mode', keys: ['count'] }]);
+    const human = await capture(() =>
+      handleCall(
+        ['shop.ping', 'mode=fast count=2', '--adapter', 'web', '--target', target],
+        callOptions,
+      ),
+    );
+    assert.match(
+      human.stderr.join('\n'),
+      /mode looks like several inputs \(mode, count\) quoted into one argument; pass each key=value as its own argument\./u,
+    );
+    // A value its parameter accepts runs as given, even when it reads like more inputs.
+    const command = await capture(() =>
+      handleCall(['command', 'cmd=echo timeout_ms=1000', '--adapter', 'api', ...base], callOptions),
+    );
+    assert.equal(command.value, 0, command.stderr.join('\n'));
+    assert.deepEqual(lastJson(command.stdout).args, { cmd: 'echo timeout_ms=1000' });
+    for (const value of ['Set leverage=10x', '"mode=fast count=2"', 'mode=fast count=2']) {
+      const call = await capture(() =>
+        handleCall(
+          ['shop.ping', 'mode=fast', `password=${value}`, '--adapter', 'web', ...base],
+          callOptions,
+        ),
+      );
+      assert.equal(call.value, 0, `${value}: ${call.stderr.join('\n')}`);
+    }
   });
 
   test('takes every input as key=value, values that look like flags included', async () => {
@@ -3939,6 +4016,138 @@ describe('call', () => {
         suggestion: 'fast',
       },
     ]);
+  });
+
+  test('teaches a value of the wrong type and how to quote it', async () => {
+    const target = checkout();
+    const args = [
+      'shop.ping',
+      'mode=fast',
+      'password=2400',
+      '--adapter',
+      'web',
+      '--target',
+      target,
+    ];
+    const json = await capture(() => handleCall([...args, '--json'], callOptions));
+    assert.equal(json.value, 5);
+    assert.deepEqual(lastJson(json.stdout).parameterHelp, [
+      {
+        issue: 'type',
+        name: 'password',
+        type: 'string',
+        received: '<redacted>',
+        receivedType: 'number',
+      },
+    ]);
+    const human = await capture(() => handleCall(args, callOptions));
+    assert.match(
+      human.stderr.join('\n'),
+      /password expects a string; got number "<redacted>"\. Quote it: 'password="<value>"'\./u,
+    );
+    // A sensitive key's value never reaches the output.
+    for (const output of [json, human])
+      assert.doesNotMatch([...output.stdout, ...output.stderr].join('\n'), /2400/u);
+  });
+
+  test('suggests the parameter a misnamed or misplaced input belongs to', async () => {
+    const target = checkout();
+    const override = path.join(tempRoot('recipe-cli-override-'), 'web.action-manifest.json');
+    const manifest = manifestFor('web');
+    const ping = manifest.actions['shop.ping']!;
+    fs.writeFileSync(
+      override,
+      JSON.stringify({
+        ...manifest,
+        actions: {
+          ...manifest.actions,
+          'shop.ping': {
+            ...ping,
+            schema: {
+              ...PING_ACTION.schema,
+              properties: {
+                ...PING_ACTION.schema.properties,
+                market_mode: { type: 'string', enum: ['pro', 'lite'] },
+                note: { type: 'string' },
+                assert: {
+                  type: 'object',
+                  properties: { path: { type: 'string' } },
+                  additionalProperties: false,
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+    const base = ['--adapter', 'web', '--target', target, '--action-manifest', override];
+    const unknown = await capture(() =>
+      handleCall(['shop.ping', 'mode=fast', 'cuont=2', ...base, '--json'], callOptions),
+    );
+    assert.equal(unknown.value, 5);
+    assert.deepEqual(lastJson(unknown.stdout).parameterHelp, [
+      { issue: 'unknown', name: 'cuont', received: 2, suggestedParameter: 'count' },
+    ]);
+    const misplaced = await capture(() =>
+      handleCall(['shop.ping', 'mode=pro', ...base, '--json'], callOptions),
+    );
+    assert.equal(misplaced.value, 5);
+    assert.deepEqual(lastJson(misplaced.stdout).parameterHelp, [
+      {
+        issue: 'invalid',
+        name: 'mode',
+        type: 'string',
+        validValues: ['fast', 'slow'],
+        received: 'pro',
+        suggestedParameter: 'market_mode',
+      },
+    ]);
+    const human = await capture(() =>
+      handleCall(['shop.ping', 'mode=pro', 'cuont=2', ...base], callOptions),
+    );
+    assert.match(
+      human.stderr.join('\n'),
+      /mode received "pro"\..*Did you mean 'market_mode="pro"'\?/u,
+    );
+    assert.match(
+      human.stderr.join('\n'),
+      /cuont is not a parameter of this action\. Did you mean 'count=2'\?/u,
+    );
+    // A quoted string keeps its quotes in the suggestion, so it stays a string.
+    const quoted = await capture(() =>
+      handleCall(['shop.ping', 'mode=fast', 'noet="2400"', 'note=2400', ...base], callOptions),
+    );
+    assert.match(quoted.stderr.join('\n'), /Did you mean 'note="2400"'\?/u);
+    assert.match(
+      quoted.stderr.join('\n'),
+      /note expects a string; got number 2400\. Quote it: 'note="2400"'\./u,
+    );
+    // A near name that is sensitive hides the value behind a placeholder.
+    const secret = await capture(() =>
+      handleCall(['shop.ping', 'mode=fast', 'pasword=hunter2', ...base, '--json'], callOptions),
+    );
+    assert.deepEqual(lastJson(secret.stdout).parameterHelp, [
+      { issue: 'unknown', name: 'pasword', received: '<redacted>', suggestedParameter: 'password' },
+    ]);
+    const secretHuman = await capture(() =>
+      handleCall(['shop.ping', 'mode=fast', 'pasword=hunter2', ...base], callOptions),
+    );
+    assert.match(secretHuman.stderr.join('\n'), /Did you mean 'password=<value>'\?/u);
+    // A key that misspells a sensitive parameter is redacted wherever the inputs echo.
+    assert.deepEqual(lastJson(secret.stdout).args, { mode: 'fast', pasword: '<redacted>' });
+    for (const output of [secret, secretHuman])
+      assert.doesNotMatch([...output.stdout, ...output.stderr].join('\n'), /hunter2/u);
+    // A nested field is not an action input: its finding stays as the validator reports it.
+    const nested = ['shop.ping', 'mode=fast', 'assert={"cuont":1}', ...base];
+    const nestedJson = await capture(() => handleCall([...nested, '--json'], callOptions));
+    assert.equal(nestedJson.value, 5);
+    assert.equal(lastJson(nestedJson.stdout).parameterHelp, undefined);
+    const nestedHuman = await capture(() => handleCall(nested, callOptions));
+    assert.match(
+      nestedHuman.stderr.join('\n'),
+      /recipe\.unknown_param workflow\.nodes\.call\.assert\.cuont/u,
+    );
+    assert.doesNotMatch(nestedHuman.stderr.join('\n'), /Did you mean/u);
   });
 
   test('resolves names against --action-manifest and the --library sources', async () => {

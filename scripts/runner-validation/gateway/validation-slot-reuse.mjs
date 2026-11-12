@@ -1,7 +1,7 @@
 // Disposable-gateway proof that a closed or archived artifact-only validation run leaves its slot
-// reusable (F291): its own unpushed branch commits are parked under a durable ref, recorded on the
-// run with SHAs, the slot returns to idle and the same ticket's branch prepares again. Covers an
-// archive after COMPLETE already released the slot (c9562e49), the named discard of a run held at a
+// reusable (F291): unpublished commits keep their named branch and an immutable parking ref.
+// The slot returns to idle. Fresh prepare refuses to overwrite that branch; other tickets can use
+// the slot. Covers archive after COMPLETE released the slot (c9562e49), named discard of a run held at a
 // refused COMPLETE (29ce2ab4), the archive of a cancelled run, and a stacked commit that is not the
 // run's own. Engine start is disabled; every release goes through the production RPCs.
 import assert from 'node:assert/strict';
@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import {
   closeSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -17,6 +18,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { createServer } from 'node:net';
@@ -116,12 +118,16 @@ const slotRow = (id) => {
   const row = JSON.parse(readFileSync(statusFile, 'utf8')).slots.find((s) => s.slot === id);
   return { lifecycle: row?.lifecycle, owner: row?.current_run_id ?? null };
 };
-/** The slot is back on main at origin, the run's branch is gone, and its commits are parked. */
+/** The slot returns to main; the original branch and immutable parking ref keep its commits. */
 function assertReturned(slot, run, label) {
   assert.equal(git(slot.repo, 'branch', '--show-current'), 'main', `${label}: slot on main`);
   assert.equal(git(slot.repo, 'rev-parse', 'HEAD'), git(origin, 'rev-parse', 'main'), label);
   assert.equal(git(slot.repo, 'status', '--porcelain'), '', `${label}: clean`);
-  assert.equal(git(slot.repo, 'branch', '--list', slot.branch), '', `${label}: branch dropped`);
+  assert.equal(
+    git(slot.repo, 'rev-parse', `refs/heads/${slot.branch}`),
+    slot.head,
+    `${label}: branch retained`,
+  );
   const ref = `refs/farmslot/parked/${slot.runId}/${slot.head}`;
   assert.equal(git(slot.repo, 'rev-parse', ref), slot.head, `${label}: parked ref keeps the head`);
   const parked = run.parkedCommits?.find((entry) => entry.ref === ref);
@@ -167,7 +173,9 @@ try {
   // An interactive dev run the operator marks done without a PR: its release keeps the checkout.
   const interactive = seedSlot('interactive', 'TAT-9006');
 
-  mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  cpSync(path.join(sourceRoot, 'scripts'), path.join(root, 'scripts'), { recursive: true });
+  symlinkSync(path.join(sourceRoot, 'packages'), path.join(root, 'packages'), 'dir');
+  symlinkSync(path.join(sourceRoot, 'node_modules'), path.join(root, 'node_modules'), 'dir');
   writeFileSync(path.join(root, 'CLAUDE.md'), '# Disposable validation-slot fixture\n');
   writeFileSync(path.join(root, 'scripts', 'dev.sh'), '#!/bin/sh\n');
   // The project has no fixtures; the idle return still runs the gateway's fixture sync.
@@ -407,8 +415,8 @@ try {
     }
   };
 
-  // 1. c9562e49: archiving the done run returns its released checkout to idle, commits parked;
-  // the same ticket then prepares again on that slot, from main, with no unpushed-commit refusal.
+  // 1. Archive returns the checkout to idle while preserving its unpublished branch. A fresh
+  // prepare must refuse that branch instead of overwriting it; another ticket can use the slot.
   scenario('archive after COMPLETE released the slot', () => {
     assert.equal(git(released.repo, 'branch', '--show-current'), released.branch);
     assert.equal(rpc('run.archive', { runId: released.runId }).ok, true);
@@ -416,11 +424,31 @@ try {
     assert.equal(slotRow(released.id).owner, null);
     return parked;
   });
-  scenario('the same ticket prepares again', () => {
-    rpc('slot.prepare', { slotId: released.id, branch: released.branch, prepareProfile: 'git' });
-    assert.equal(git(released.repo, 'branch', '--show-current'), released.branch);
+  scenario('fresh prepare refuses the retained unpublished branch', () => {
+    const before = git(released.repo, 'rev-parse', 'HEAD');
+    assert.throws(
+      () =>
+        rpc('slot.prepare', {
+          slotId: released.id,
+          branch: released.branch,
+          prepareProfile: 'git',
+        }),
+      (error) => {
+        assert.match(String(error.stderr ?? error.message), /unpushed commits/);
+        return true;
+      },
+    );
+    assert.equal(git(released.repo, 'rev-parse', 'HEAD'), before, 'refusal leaves HEAD alone');
+    assert.equal(git(released.repo, 'rev-parse', `refs/heads/${released.branch}`), released.head);
+    return 'unpublished branch retained; overwrite refused';
+  });
+  scenario('another ticket prepares on the freed slot', () => {
+    const branch = 'TAT-9007-validation';
+    rpc('slot.prepare', { slotId: released.id, branch, prepareProfile: 'git' });
+    assert.equal(git(released.repo, 'branch', '--show-current'), branch);
     assert.equal(git(released.repo, 'rev-parse', 'HEAD'), git(origin, 'rev-parse', 'main'));
-    return 'fresh branch from main';
+    assert.equal(git(released.repo, 'rev-parse', `refs/heads/${released.branch}`), released.head);
+    return 'fresh branch from main, earlier unpublished branch preserved';
   });
 
   // 2. 29ce2ab4: the named discard of a run held at a refused COMPLETE parks before its reset.

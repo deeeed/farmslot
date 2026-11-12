@@ -175,7 +175,11 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
   private async reconcileOnce(): Promise<void> {
     await this.store.withdrawReplacedContributions(this.replaced);
     for (const snapshot of this.store.snapshot().intents) {
-      let intent = this.store.intent(snapshot.id);
+      // The committed intent, frozen and shared: this loop only reads it, and every change goes
+      // through the store's write path. Copying each one per turn stalled the gateway.
+      let intent = this.store.snapshot((data) =>
+        data.intents.find((item) => item.id === snapshot.id),
+      );
       if (!intent) continue;
       const run = getAllRuns().find((item) => item.prWork?.id === workId(intent!));
       if (run) {

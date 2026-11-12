@@ -130,7 +130,12 @@ class SimctlVideoRecorder implements VideoRecorder {
             `simctl recordVideo failed (${formatExit(result.code, result.signal)}): ${stderr.join('').trim()}`,
           );
         }
-        const stats = await stat(request.outputPath);
+        const stats = await stat(request.outputPath).catch((error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          throw new Error(
+            `simctl recordVideo produced no file (${formatExit(result.code, result.signal)}): ${stderr.join('').trim().slice(-2000)}`,
+          );
+        });
         if (stats.size <= 0) throw new Error(`Recording output is empty: ${request.outputPath}`);
         const handle = await open(request.outputPath, 'r');
         let finalized = false;

@@ -100,12 +100,13 @@ test("a finished artifact-only run's own commits are parked under a ref that nev
   await parkRunBranchCommits(getRun(validation.id)!, vars, localExec, checks);
   assert.equal(getRun(validation.id)?.parkedCommits?.length, 1);
 
-  // After the idle reset the unchanged branch is dropped; the parked ref keeps its commits.
+  // Cleanup keeps both the named branch and its immutable parking ref.
   git('checkout', '-q', 'main');
-  assert.equal(await dropParkedBranch(parked, vars, localExec), null);
-  assert.equal(git('branch', '--list', 'TAT-4146-validation'), '');
+  assert.match((await dropParkedBranch(parked, vars, localExec)) ?? '', /kept branch .*unpushed/);
+  assert.equal(git('rev-parse', 'refs/heads/TAT-4146-validation'), head);
   assert.equal(git('rev-parse', parked.ref), head);
-  // A replay's prepare recreates the dropped branch at the parked head, and never moves it.
+  // Legacy cleanup could drop the branch. Replay still restores that history.
+  git('branch', '-D', 'TAT-4146-validation');
   assert.deepEqual(
     await restoreParkedBranch(getRun(validation.id), vars, 'TAT-4146-validation', localExec),
     parked,
@@ -118,8 +119,44 @@ test("a finished artifact-only run's own commits are parked under a ref that nev
   );
 });
 
+for (const status of ['cancelled', 'failed'] as const) {
+  test(`cleanup retains the original branch of a ${status} run with unpushed commits`, async (t) => {
+    const { git, vars, head, validation } = await fixture(t);
+    const ended = updateRun(validation.id, { status });
+    const parked = await parkRunBranchCommits(ended, vars, localExec, checks);
+    assert.ok(parked);
+    git('checkout', '-q', 'main');
+    await dropParkedBranch(parked, vars, localExec);
+    assert.equal(git('rev-parse', `refs/heads/${ended.branch}`), head);
+    assert.equal(git('rev-parse', parked.ref), head, 'parking also remains durable');
+  });
+}
+
+test('a following run keeps an unpublished branch even when its dispatch baseline is that head', async (t) => {
+  const { git, vars, head, validation } = await fixture(t);
+  const follow = updateRun(validation.id, { status: 'cancelled', worktreeHeadAtDispatch: head });
+  const parked = await parkRunBranchCommits(follow, vars, localExec, checks);
+  assert.ok(parked);
+  assert.equal(parked.commits.length, 0, 'the next run added no commits after dispatch');
+  git('checkout', '-q', 'main');
+  await dropParkedBranch(parked, vars, localExec);
+  assert.equal(git('rev-parse', `refs/heads/${follow.branch}`), head);
+});
+
+test('cleanup may drop a fully published unchanged branch', async (t) => {
+  const { git, vars, head, validation } = await fixture(t);
+  git('push', '-q', 'origin', 'HEAD');
+  const parked = await parkRunBranchCommits(validation, vars, localExec, checks);
+  assert.ok(parked);
+  assert.equal(parked.commits.length, 0);
+  git('checkout', '-q', 'main');
+  assert.equal(await dropParkedBranch(parked, vars, localExec), null);
+  assert.equal(git('branch', '--list', validation.branch!), '');
+  assert.equal(git('rev-parse', parked.ref), head);
+});
+
 test("a checkout that isn't the run's own is never parked", async (t) => {
-  const { git, vars, validation } = await fixture(t);
+  const { git, vars, base, validation } = await fixture(t);
   // Dirty files, another branch, and history that doesn't descend from the run's baseline.
   git('commit', '-q', '--allow-empty', '-m', 'x');
   execFileSync('sh', ['-c', `echo edit > ${path.join(vars.remoteRepo, 'note.txt')}`]);
@@ -159,15 +196,15 @@ test("a checkout that isn't the run's own is never parked", async (t) => {
     slotId: 'proof-slot',
     ref: 'refs/farmslot/parked/x/y',
     branch: 'TAT-4146-validation',
-    baseSha: 'b'.repeat(40),
-    headSha: 'a'.repeat(40),
+    baseSha: base,
+    headSha: base,
     commits: [],
     parkedAt: '',
   };
   git('checkout', '-q', 'main');
   assert.match(
     (await dropParkedBranch(moved, vars, localExec)) ?? '',
-    /kept branch TAT-4146-validation/,
+    /kept branch TAT-4146-validation \(it moved\)/,
   );
 });
 
