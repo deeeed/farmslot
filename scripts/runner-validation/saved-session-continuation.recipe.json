@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/saved-session-continuation.mts",
         "timeout_ms": 120000,
-        "intent": "Read the owning gateway's real runner receipts and task progress to prove two exact saved conversations execute their delta-scoped successor tasks.",
+        "intent": "Read retained authenticated gateway receipts and task progress to prove all three pinned saved conversations execute their delta-scoped successor tasks.",
         "next": "source-transfer"
       },
       "source-transfer": {

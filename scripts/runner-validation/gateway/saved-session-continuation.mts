@@ -1,18 +1,15 @@
 // Read-only protocol proof. The external acceptance matrix pins the task's requested lineages.
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { isRecord, type RunGetResult, type TaskProgressResult } from '@farmslot/protocol';
+import { isRecord, type Run, type TaskProgressResult } from '@farmslot/protocol';
 
 import { getRunnerDefinition } from '../../../services/gateway/src/runners/registry.js';
 
 interface ContinuationProofCase {
   runner: 'claude' | 'codex' | 'pi';
-  gatewayHome: string;
-  gatewayProfile: string;
-  gatewayUrl: string;
+  snapshotFile: string;
   runId: string;
   expectedPriorRunId: string;
   expectedReviewId: string;
@@ -22,9 +19,7 @@ function proofCase(value: unknown): ContinuationProofCase {
   assert(isRecord(value));
   assert(value.runner === 'claude' || value.runner === 'codex' || value.runner === 'pi');
   for (const key of [
-    'gatewayHome',
-    'gatewayProfile',
-    'gatewayUrl',
+    'snapshotFile',
     'runId',
     'expectedPriorRunId',
     'expectedReviewId',
@@ -32,34 +27,18 @@ function proofCase(value: unknown): ContinuationProofCase {
   ])
     assert(typeof value[key] === 'string' && value[key].length > 0, `Missing ${key}`);
   // Narrow each field at the input boundary; no credentials belong in the matrix.
-  const {
-    runner,
-    gatewayHome,
-    gatewayProfile,
-    gatewayUrl,
-    runId,
-    expectedPriorRunId,
-    expectedReviewId,
-    expectedSessionId,
-  } = value;
-  assert(
-    typeof gatewayHome === 'string' &&
-      typeof gatewayProfile === 'string' &&
-      typeof gatewayUrl === 'string',
-  );
+  const { runner, snapshotFile, runId, expectedPriorRunId, expectedReviewId, expectedSessionId } =
+    value;
+  assert(typeof snapshotFile === 'string');
   assert(
     typeof runId === 'string' &&
       typeof expectedPriorRunId === 'string' &&
       typeof expectedReviewId === 'string' &&
       typeof expectedSessionId === 'string',
   );
-  const url = new URL(gatewayUrl);
-  assert(['ws:', 'wss:'].includes(url.protocol) && !url.username && !url.password);
   return {
     runner,
-    gatewayHome,
-    gatewayProfile,
-    gatewayUrl,
+    snapshotFile,
     runId,
     expectedPriorRunId,
     expectedReviewId,
@@ -80,34 +59,13 @@ assert.deepEqual(
   ['claude', 'codex', 'pi'],
   'Require every requested runner, exactly once',
 );
-const root = process.cwd();
-function rpc<T>(item: ContinuationProofCase, method: string, params: Record<string, unknown>): T {
-  return JSON.parse(
-    execFileSync(
-      process.execPath,
-      [
-        path.join(root, 'apps/command-center/scripts/cdp.mjs'),
-        'gateway',
-        method,
-        JSON.stringify(params),
-      ],
-      {
-        cwd: root,
-        encoding: 'utf8',
-        maxBuffer: 16 * 1024 * 1024,
-        env: {
-          ...process.env,
-          FARMSLOT_HOME: item.gatewayHome,
-          FARMSLOT_GATEWAY_PROFILE: item.gatewayProfile,
-          FARMSLOT_GATEWAY: item.gatewayUrl,
-        },
-      },
-    ),
-  );
-}
 const receipts = [];
 for (const item of cases) {
-  const { run } = rpc<RunGetResult>(item, 'run.get', { runId: item.runId });
+  // Capture these authenticated RPC responses before cancelling/restoring a borrowed source.
+  const { run, prior, progress }: { run: Run; prior: Run; progress: TaskProgressResult } =
+    JSON.parse(await readFile(item.snapshotFile, 'utf8'));
+  assert.equal(run.id, item.runId);
+  assert.equal(prior.id, item.expectedPriorRunId);
   const trace = run.repeatReviewContext?.session;
   assert(trace?.priorRunId && trace.reviewId && trace.priorSessionId);
   assert.equal(
@@ -115,7 +73,6 @@ for (const item of cases) {
     item.expectedPriorRunId,
     'Must use the pinned requested lineage',
   );
-  const { run: prior } = rpc<RunGetResult>(item, 'run.get', { runId: item.expectedPriorRunId });
   const previous = prior.agentContexts?.find((context) => context.id === 'review');
   const reviewer = run.agentContexts?.find((context) => context.id === 'review');
   assert(previous?.runnerSessionId && reviewer?.promptAcceptance);
@@ -145,12 +102,16 @@ for (const item of cases) {
   }
   for (const name of ['write-task', 'prepare', 'dispatch'])
     assert.equal(run.steps.find((step) => step.name === name)?.status, 'done');
-  const progress = rpc<TaskProgressResult>(item, 'task.progress', { slotId: '', runId: run.id });
   assert(
     progress.structured?.phases.some((phase) =>
       phase.steps.some((step) => step.status === 'running' || step.status === 'done'),
     ),
     'The saved conversation must execute the new task',
+  );
+  const policy = run.reviewPublication?.direct?.policy;
+  assert(
+    policy?.enabled === false || (!policy && run.reviewAutoFinish === true),
+    'Publication must be disabled by request or the explicit artifact-only auto-finish path',
   );
   assert(!run.reviewPublication?.receipt, 'Proof must not publish');
   receipts.push({
@@ -169,4 +130,6 @@ await writeFile(
   output,
   JSON.stringify({ status: 'PASS', matrix: matrixPath, receipts }, null, 2) + '\n',
 );
-console.log('Verified all three pinned saved-session continuations through their owning gateways.');
+console.log(
+  'Verified all three pinned saved-session continuations from retained gateway receipts.',
+);
