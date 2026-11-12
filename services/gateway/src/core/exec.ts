@@ -1,11 +1,17 @@
 // core/exec.ts — Local/remote command execution
 // TypeScript port of lib/slot-common.sh: is_local, run_on, remote
 // Uses node-rpc.ts for remote execution via connected nodes.
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
+import { accessSync, constants, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { createNodeExecCloseout, type ExecResult, observeNodeExecAbort } from '@farmslot/protocol';
+import {
+  createNodeExecCloseout,
+  type ExecResult,
+  NODE_EXEC_CLOSEOUT_MS,
+  observeNodeExecAbort,
+} from '@farmslot/protocol';
 import { currentProjectSources, sourceExecutionEnvironment } from '@farmslot/slot-config';
 
 import { currentFarmPaths, farmPathsForSlot } from '../fleet/farm-paths.js';
@@ -104,19 +110,64 @@ export interface ExecOptions {
 
 // ─── Process groups ───
 
-/** Watches local commands that own a process group (a timeout or a signal gives them one). */
-export interface ProcessGroupObserver {
-  started(pgid: number): void;
-  ended(pgid: number): void;
+/**
+ * A process that owns every local command it starts: the gateway-background process, whose
+ * commands must not outlive it. Each command gets its own process group and is handed to
+ * `started`, so the owner can kill the group of any command that has not exited when it exits.
+ * A command with a timeout also carries a watchdog (WATCHDOG_PRELUDE) for an owner killed outright.
+ */
+export interface LocalCommandOwner {
+  started(command: ChildProcess): void;
+  /** How long after a command's timeout and closeout its watchdog kills the group. */
+  watchdogGraceMs: number;
 }
-let processGroupObserver: ProcessGroupObserver | undefined;
+let localCommandOwner: LocalCommandOwner | undefined;
+
+export function ownLocalCommands(owner: LocalCommandOwner | undefined): void {
+  localCommandOwner = owner;
+}
 
 /**
- * Report each command's process group as it starts and closes. The gateway-background process
- * uses this to kill its commands' groups when it exits, and to tell its supervisor about them.
+ * Run as `sh -c PRELUDE sh <seconds> <executable> <argv...>`. A watchdog subshell joins the
+ * command's process group, then the shell execs the command, which keeps the shell's pid: the
+ * exit status, signal, output and group are the command's own. Once a second the watchdog checks
+ * its leader (`$$` in a subshell is the parent shell's pid, now the command's; a group's id is not
+ * reused while the watchdog is in it). It exits when the leader is gone, or SIGKILLs its own group
+ * (`kill 0`) after <seconds>. Its stdio is /dev/null, so it never holds the command's pipes.
  */
-export function observeProcessGroups(observer: ProcessGroupObserver | undefined): void {
-  processGroupObserver = observer;
+const WATCHDOG_PRELUDE =
+  'w=$1; shift; (n=0; while kill -0 "$$" 2>/dev/null; do if [ "$n" -ge "$w" ]; then kill -KILL 0; fi; sleep 1; n=$((n+1)); done) </dev/null >/dev/null 2>&1 & exec "$@"';
+
+/**
+ * Whether the prelude's `exec` runs what spawn would: an existing cwd, and an executable spawn
+ * would find (a path, or a name on the command's PATH). Otherwise the command starts unwrapped, so
+ * its spawn error stays exactly today's.
+ */
+function preludeRunsExactly(executable: string, cwd: string | undefined, envPath: string): boolean {
+  const accessible = (file: string, kind: 'directory' | 'executable') => {
+    try {
+      if (kind === 'directory') return statSync(file).isDirectory();
+      accessSync(file, constants.X_OK);
+      return statSync(file).isFile();
+    } catch (error) {
+      // Missing or not permitted: spawn would fail too, and reports it in its own words.
+      if (
+        ['ENOENT', 'ENOTDIR', 'EACCES', 'ELOOP'].includes(
+          (error as NodeJS.ErrnoException).code ?? '',
+        )
+      )
+        return false;
+      throw error;
+    }
+  };
+  const base = cwd === undefined ? process.cwd() : path.resolve(cwd);
+  if (cwd !== undefined && !accessible(base, 'directory')) return false;
+  if (executable.includes('/')) return accessible(path.resolve(base, executable), 'executable');
+  return envPath
+    .split(':')
+    .some((directory) =>
+      accessible(path.resolve(base, directory || '.', executable), 'executable'),
+    );
 }
 
 /** Signals every process in a command's group; false when none is left (ESRCH). */
@@ -168,13 +219,32 @@ function spawnLocalProcess(
 ): Promise<ExecResult> {
   return trackCleanupCommand(
     new Promise((resolve) => {
-      const useProcessGroup = opts?.signal != null || opts?.timeout != null;
-      const proc = spawn(executable, argv, {
-        cwd: opts?.cwd,
-        env: localCommandEnvironment(),
-        stdio: ['ignore', 'pipe', 'pipe'],
-        detached: useProcessGroup,
-      });
+      const owner = localCommandOwner;
+      const useProcessGroup = owner !== undefined || opts?.signal != null || opts?.timeout != null;
+      const env = localCommandEnvironment();
+      const watchdogSeconds =
+        owner && opts?.timeout != null && preludeRunsExactly(executable, opts.cwd, env.PATH ?? '')
+          ? Math.ceil(
+              (opts.timeout +
+                (opts.closeoutTimeoutMs ?? NODE_EXEC_CLOSEOUT_MS) +
+                owner.watchdogGraceMs) /
+                1000,
+            )
+          : undefined;
+      const proc =
+        watchdogSeconds === undefined
+          ? spawn(executable, argv, {
+              cwd: opts?.cwd,
+              env,
+              stdio: ['ignore', 'pipe', 'pipe'],
+              detached: useProcessGroup,
+            })
+          : spawn(
+              '/bin/sh',
+              ['-c', WATCHDOG_PRELUDE, 'sh', String(watchdogSeconds), executable, ...argv],
+              { cwd: opts?.cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true },
+            );
+      if (proc.pid !== undefined) owner?.started(proc);
 
       let stdout = '';
       let stderr = '';
@@ -185,11 +255,6 @@ function spawnLocalProcess(
       let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
 
       const group = useProcessGroup ? proc.pid : undefined;
-      if (group !== undefined) {
-        const observer = processGroupObserver;
-        observer?.started(group);
-        proc.once('close', () => observer?.ended(group));
-      }
 
       const killProcessTree = (sig: NodeJS.Signals) => {
         if (group !== undefined) {
