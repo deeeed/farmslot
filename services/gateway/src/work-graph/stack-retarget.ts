@@ -7,7 +7,7 @@
 import { DEFAULT_BRANCH, type Run } from '@farmslot/protocol';
 
 import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
-import { ghRequest } from '../integrations/github-client.js';
+import { github } from '../integrations/github-client.js';
 import {
   completeBranchMaintenance,
   executeBranchMaintenance,
@@ -39,6 +39,7 @@ export interface UpstreamPr {
   mergedAt?: string;
 }
 
+/** The request's own abort cannot end a wait for a concurrency slot; this deadline does. */
 async function withDeadline<T>(operation: Promise<T>, what: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const deadline = new Promise<never>((_, reject) => {
@@ -62,25 +63,24 @@ async function projectGitHub(project: string): Promise<{ repo: string; base: str
   return { repo, base };
 }
 
-function ghApi(args: string[], what: string) {
-  return withDeadline(
-    ghRequest(['api', ...args], { force: true, signal: AbortSignal.timeout(GH_DEADLINE_MS) }),
-    what,
-  );
-}
-
 /** The upstream PR as GitHub reports it now. */
 export async function readUpstreamPr(project: string, prNumber: number): Promise<UpstreamPr> {
   const { repo } = await projectGitHub(project);
-  const output = await ghApi([`repos/${repo}/pulls/${prNumber}`], `reading PR #${prNumber}`);
-  const pr = JSON.parse(output.stdout) as {
-    state: 'open' | 'closed';
-    merged?: boolean;
-    merged_at?: string | null;
-    merge_commit_sha?: string | null;
-    html_url: string;
-    head: { ref: string; repo?: { full_name?: string } | null };
-  };
+  const pr = await withDeadline(
+    github.rest<{
+      state: 'open' | 'closed';
+      merged?: boolean;
+      merged_at?: string | null;
+      merge_commit_sha?: string | null;
+      html_url: string;
+      head: { ref: string; repo?: { full_name?: string } | null };
+    }>('GET', `repos/${repo}/pulls/${prNumber}`, {
+      force: true,
+      signal: AbortSignal.timeout(GH_DEADLINE_MS),
+    }),
+    `reading PR #${prNumber}`,
+  );
+  if (!pr) throw new Error(`PR #${prNumber} not found`);
   return {
     state: pr.state,
     merged: pr.merged === true,
@@ -107,8 +107,12 @@ export async function retargetStackedPr(run: Run): Promise<StackRetargetResult> 
   if (run.prState === 'MERGED' || run.prState === 'CLOSED') {
     return { base, result: `skipped:#${run.prNumber} ${run.prState.toLowerCase()}`, ...merge };
   }
-  await ghApi(
-    ['-X', 'PATCH', `repos/${repo}/pulls/${run.prNumber}`, '-f', `base=${base}`],
+  await withDeadline(
+    github.rest<unknown>('PATCH', `repos/${repo}/pulls/${run.prNumber}`, {
+      body: { base },
+      force: true,
+      signal: AbortSignal.timeout(GH_DEADLINE_MS),
+    }),
     `retargeting PR #${run.prNumber}`,
   );
   return { base, result: `retargeted:#${run.prNumber}->${base}`, ...merge };

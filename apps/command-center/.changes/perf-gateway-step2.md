@@ -1,0 +1,1 @@
+- Proof scripts read GitHub through a local HTTP fixture instead of a fake `gh`.

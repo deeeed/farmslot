@@ -199,9 +199,26 @@ async function invocations() {
     .filter(Boolean)
     .map((line) => JSON.parse(line));
 }
+async function httpInvocations() {
+  if (!fixture.githubHttpInvocationsFile) return [];
+  let text;
+  try {
+    text = await readFile(fixture.githubHttpInvocationsFile, 'utf8');
+  } catch (error) {
+    // File does not exist yet when no requests have been logged — return empty baseline.
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+  return text
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+const httpPrViewReads = (rows) => rows.filter((row) => row.source === 'pr-detail:view');
 const accountReads = (rows) =>
   rows.filter((row) => row.tool === 'gh' && row.args.slice(0, 2).join(' ') === 'auth status');
-const prReads = (rows) =>
+const _prReads = (rows) =>
   rows.filter(
     (row) =>
       row.tool === 'gh' &&
@@ -427,6 +444,7 @@ await save('seats-recovered', seatsRecovered);
 
 // ── GitHub accounts and PR detail: PR board selected PR with the monitor account picker ──
 before = await invocations();
+let httpBefore = await httpInvocations();
 await navigate(A, url('owner', PR_HASH));
 const prOwner = await until(
   (value) =>
@@ -445,8 +463,9 @@ const prOwner = await until(
 );
 assert.equal(prOwner.timeOrigin, seatsOwner.timeOrigin, 'Route changes keep the owner runtime');
 let rows = await invocations();
+let httpRows = await httpInvocations();
 assert.equal(accountReads(rows).length - accountReads(before).length, 1);
-assert.equal(prReads(rows).length - prReads(before).length, 1);
+assert.equal(httpPrViewReads(httpRows).length - httpPrViewReads(httpBefore).length, 1);
 await save('pr-owner', prOwner);
 await image('pr-owner', A);
 await navigate(B, url('second', PR_HASH));
@@ -472,11 +491,16 @@ assert.equal(
   prOwner.prDetail.sourceObservation.observedAt,
 );
 const shared = await invocations();
+const httpShared = await httpInvocations();
 assert.equal(accountReads(shared).length, accountReads(rows).length, 'No second account sample');
-assert.equal(prReads(shared).length, prReads(rows).length, 'No second PR sample');
+assert.equal(
+  httpPrViewReads(httpShared).length,
+  httpPrViewReads(httpRows).length,
+  'No second PR sample',
+);
 await save('pr-second', prSecond);
 await image('pr-second', B);
-const prChange = await transition('pr-change');
+const _prChange = await transition('pr-change');
 const prBaseline = prOwner.prDetail.sourceObservation.observedAt;
 
 await transition('accounts-change');
@@ -557,10 +581,11 @@ const prNotified = await until(
 const prNotifiedAt = prNotifiedOwner.prDetail.sourceObservation.observedAt;
 assert.equal(prNotified.prDetail.sourceObservation.observedAt, prNotifiedAt);
 assert(prNotifiedAt - prBaseline >= 60000, 'Passive PR cadence is at least one minute');
-const changed = prReads(await invocations()).filter(
-  (row) => row.stateRevision >= prChange.revision && row.at <= prNotifiedAt,
+assert.equal(
+  httpPrViewReads(await httpInvocations()).length - httpPrViewReads(httpRows).length,
+  1,
+  'Both viewers share one PR sample of the change',
 );
-assert.equal(changed.length, 1, 'Both viewers share one PR sample of the change');
 assert.deepEqual(
   prNotified.prDetail.data.pr.checks.map((check) => check.status),
   ['pass', 'pass'],
@@ -886,8 +911,6 @@ const allowedPaths = [expectedPath, `${fixture.osHome}/.asdf/shims:${expectedPat
 assert(rows.every((row) => allowedPaths.includes(row.path) && row.home === fixture.osHome));
 for (const sourceName of [
   'github-accounts',
-  'pr-detail:view',
-  'pr-detail:checks',
   'seats:claude',
   'seats:codexbar',
   'seats:codex',
@@ -895,6 +918,12 @@ for (const sourceName of [
 ])
   assert(
     rows.some((row) => row.source === sourceName && row.outcome === 'ok'),
+    sourceName,
+  );
+const allHttpRows = await httpInvocations();
+for (const sourceName of ['pr-detail:view', 'pr-detail:checks'])
+  assert(
+    allHttpRows.some((row) => row.source === sourceName),
     sourceName,
   );
 const unsupported = rows.filter((row) => row.outcome === 'unsupported');

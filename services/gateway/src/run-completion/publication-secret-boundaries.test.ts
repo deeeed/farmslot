@@ -1,22 +1,41 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import { mock, test } from 'node:test';
+
+import type { PREditParams } from '../integrations/github-client.js';
+import { fakeGitHubService } from '../integrations/github-test-fixtures.js';
 
 await import('../runtime/mock-pty.test-support.js');
 const github = await import('../integrations/github-client.js');
 const calls: string[][] = [];
 const bodies: string[] = [];
-mock.module('../integrations/github-client.js', {
-  namedExports: {
-    ...github,
-    ghRequest: async (args: string[]) => {
-      calls.push(args);
-      if (args.includes('--body-file')) {
-        bodies.push(await readFile(args[args.indexOf('--body-file') + 1], 'utf8'));
-      }
-      return { exitCode: 0, stdout: '', stderr: '' };
-    },
+const secretFakeGithub = fakeGitHubService(github.github, {
+  prCreate: async () => {
+    calls.push(['pr', 'create']);
+    return '';
   },
+  prEdit: async (_repo, _number, params: PREditParams) => {
+    calls.push(['pr', 'edit']);
+    if (params.body != null) bodies.push(params.body);
+    return '';
+  },
+  prComment: async () => {
+    calls.push(['pr', 'comment']);
+    return '';
+  },
+  prReady: async () => {
+    calls.push(['pr', 'ready']);
+  },
+  graphql: async (_doc: string, _vars: Record<string, unknown>) => {
+    calls.push(['graphql']);
+    return {};
+  },
+  rest: async (_method: string, path: string) => {
+    calls.push(['rest', path]);
+    return {};
+  },
+});
+mock.module('../integrations/github-client.js', {
+  namedExports: { ...github, github: secretFakeGithub },
 });
 const llm = await import('../llm/index.js');
 let llmCalls = 0;

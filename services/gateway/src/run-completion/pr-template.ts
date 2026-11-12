@@ -3,7 +3,7 @@ import type { Run } from '@farmslot/protocol';
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
-import { ghRequest } from '../integrations/github-client.js';
+import { github } from '../integrations/github-client.js';
 
 const PR_TEMPLATE_CANDIDATES = [
   '.github/pull-request-template.md',
@@ -217,13 +217,11 @@ export async function readGitHubPrTemplate(
 ): Promise<RepositoryPrTemplate | null> {
   for (const templatePath of PR_TEMPLATE_CANDIDATES) {
     try {
-      const result = await ghRequest([
-        'api',
+      const result = await github.rest<{ content?: string }>(
+        'GET',
         `repos/${ciRepo}/contents/${templatePath}?ref=${encodeURIComponent(baseBranch)}`,
-        '--jq',
-        '.content',
-      ]);
-      const encoded = result.stdout.replace(/\s/g, '');
+      );
+      const encoded = (result?.content ?? '').replace(/\s/g, '');
       if (!encoded) throw new Error(`GitHub returned an empty PR template at ${templatePath}`);
       return {
         path: templatePath,
