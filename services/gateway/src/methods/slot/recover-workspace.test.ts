@@ -289,7 +289,7 @@ test('unconfirmed support cleanup leaves recovery held', async () => {
   };
   const result = await recover();
   assert.equal(result.refreshed, false);
-  assert.match(result.detail, /support cleanup refused/);
+  assert.match(result.detail ?? '', /support cleanup refused/);
   assert.equal(refreshed, false);
   assert.equal((await core.readSlotRow('example-slot'))?.lifecycle, 'held');
 });
