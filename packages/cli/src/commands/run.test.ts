@@ -22,6 +22,7 @@ import { resultDecisionView } from '@farmslot/review-dispatch';
 import {
   assertRunGateActionAvailable,
   buildReviewChainResult,
+  buildReviewDispatchParams,
   buildRunCreateParams,
   buildRunGateParams,
   formatResultDecision,
@@ -1445,5 +1446,33 @@ test('combined gate CLI needs explicit evidence consent and carries both receipt
       .find((c) => c.name() === 'run')!
       .commands.find((c) => c.name() === 'gate')!
       .options.some((o) => o.long === '--attest-evidence'),
+  );
+});
+
+test('fresh review chain CLI uses the shared COLD context and refuses conflicting requests', () => {
+  assert.deepEqual(buildReviewDispatchParams({ flowType: 'review-pr', freshReviewChain: true }), {
+    reviewMode: 'cold',
+    reviewContext: { freshChain: true, reviewLineages: [null] },
+  });
+  assert.throws(() => buildReviewDispatchParams({ freshReviewChain: true }), /flow-type review-pr/);
+  assert.throws(
+    () =>
+      buildReviewDispatchParams({
+        flowType: 'review-pr',
+        freshReviewChain: true,
+        reviewMode: 'warm',
+      }),
+    /requires COLD/,
+  );
+  assert.throws(
+    () =>
+      buildReviewDispatchParams({
+        flowType: 'review-pr',
+        freshReviewChain: true,
+        reviewContext: JSON.stringify({
+          reviewLineages: [{ repository: 'owner/repo', prNumber: 1, reviewId: 'prior' }],
+        }),
+      }),
+    /without a retained lineage/,
   );
 });

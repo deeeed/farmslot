@@ -2,7 +2,6 @@ import {
   hasLiveRecipeEvidence,
   isActiveListRun,
   isSuccessfulRun,
-  type Run,
   RUN_SELF_LEARNING_MISSING_SIGNALS,
   type RunDecisionPayload,
   type RunFamilyCompletionState,
@@ -13,11 +12,13 @@ import {
 } from '../contracts/index.js';
 import type { RunListResult } from '../rpc/index.js';
 
-function hasPendingDecision(run: Run): boolean {
+import type { RunListDecisionPayload, RunListRow } from './list-row.js';
+
+function hasPendingDecision(run: RunListRow): boolean {
   return (run.decisions ?? []).some((decision) => !decision.resolvedAt);
 }
 
-function latestRun(runs: Run[]): Run {
+function latestRun(runs: RunListRow[]): RunListRow {
   if (runs.length === 0) throw new Error('Cannot summarize an empty run family');
   return runs.reduce((latest, run) => {
     const latestTime = latest.updatedAt || latest.createdAt;
@@ -38,7 +39,9 @@ function completionState(
   return 'complete';
 }
 
-function hasPayloadWorkerLearnings(payload: RunDecisionPayload | undefined): boolean {
+function hasPayloadWorkerLearnings(
+  payload: RunDecisionPayload | RunListDecisionPayload | undefined,
+): boolean {
   return Boolean(
     payload &&
     'workerLearnings' in payload &&
@@ -47,7 +50,9 @@ function hasPayloadWorkerLearnings(payload: RunDecisionPayload | undefined): boo
   );
 }
 
-function hasPayloadRecipe(payload: RunDecisionPayload | undefined): boolean {
+function hasPayloadRecipe(
+  payload: RunDecisionPayload | RunListDecisionPayload | undefined,
+): boolean {
   return (
     Boolean(
       payload &&
@@ -58,7 +63,9 @@ function hasPayloadRecipe(payload: RunDecisionPayload | undefined): boolean {
   );
 }
 
-function hasPayloadEvidence(payload: RunDecisionPayload | undefined): boolean {
+function hasPayloadEvidence(
+  payload: RunDecisionPayload | RunListDecisionPayload | undefined,
+): boolean {
   return (
     Boolean(
       payload &&
@@ -76,13 +83,13 @@ function hasPayloadEvidence(payload: RunDecisionPayload | undefined): boolean {
   );
 }
 
-function hasPayloadDiff(payload: RunDecisionPayload | undefined): boolean {
+function hasPayloadDiff(payload: RunDecisionPayload | RunListDecisionPayload | undefined): boolean {
   return Boolean(
     payload && 'diffStat' in payload && payload.diffStat && payload.diffStat.files > 0,
   );
 }
 
-function eligibilityForFamily(runs: Run[]): RunSelfLearningEligibility {
+function eligibilityForFamily(runs: RunListRow[]): RunSelfLearningEligibility {
   const reasons: RunSelfLearningBlockReason[] = [];
   if (runs.some(isActiveListRun)) reasons.push('active-runs');
   if (runs.some(hasPendingDecision)) reasons.push('pending-decisions');
@@ -142,8 +149,8 @@ function eligibilityForFamily(runs: Run[]): RunSelfLearningEligibility {
   };
 }
 
-export function buildRunFamilyReadinessSummaries(runs: Run[]): RunFamilyReadinessSummary[] {
-  const grouped = new Map<string, Run[]>();
+export function buildRunFamilyReadinessSummaries(runs: RunListRow[]): RunFamilyReadinessSummary[] {
+  const grouped = new Map<string, RunListRow[]>();
   for (const run of runs) {
     const familyId = run.familyId || run.id;
     const current = grouped.get(familyId);
@@ -237,9 +244,9 @@ export function buildRunProjectAnalyticsSummaries(
  * via the runs list and the LLM `family.report.generate` button.
  */
 export function buildFamilySummary(
-  rootRun: Run | null,
-  latestRun: Run | null,
-  runs: Run[],
+  rootRun: RunListRow | null,
+  latestRun: RunListRow | null,
+  runs: RunListRow[],
 ): string {
   if (runs.length === 0) return '';
   const reference = latestRun ?? rootRun ?? runs[0];

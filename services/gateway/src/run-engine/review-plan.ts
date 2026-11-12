@@ -2,6 +2,7 @@ import path from 'node:path';
 
 import {
   type AgentContext,
+  assertFreshReviewChainSelection,
   effectiveRequiredReviewCount,
   isQualifyingReview,
   isRecord,
@@ -500,14 +501,19 @@ export function assertPrimaryReviewContext(
   input: Pick<Run, 'flowType' | 'ticketOrPr' | 'reviewMode' | 'reviewContext' | 'prWork'>,
 ): void {
   const mode = resolveReviewMode({ run: input });
-  if (mode !== 'warm') return;
   const raw = input.reviewContext ?? input.prWork?.review?.options.reviewContext;
-  if (!raw)
+  const context = raw ? parseReviewRequestContext(raw) : undefined;
+  if (context?.freshChain) {
+    assertFreshReviewChainSelection({ ...context, mode });
+    if (input.flowType !== 'review-pr')
+      throw new Error('A fresh review chain applies only to a new review-pr request');
+  }
+  if (mode !== 'warm') return;
+  if (!context)
     throw new WarmReviewRefusal(
       'missing-session',
       'WARM requires explicit reviewId lineage context',
     );
-  const context = parseReviewRequestContext(raw);
   const bindings = context.reviewLineages.filter(
     (binding): binding is NonNullable<typeof binding> => !!binding,
   );

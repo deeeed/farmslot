@@ -107,6 +107,7 @@ import { currentSessionOriginator } from '../security/work-originator.js';
 import { captureRunCreationRequest } from '../sources/creation-request.js';
 
 import { emitAnalyticsForTerminalRun } from './analytics.js';
+import { forgetRunListRow } from './list-version.js';
 import { isLeakedGatewayTestFixture, isLeakedGatewayTestRun } from './test-run-leak.js';
 
 // ADR-023 shipped 2026-04-20. Runs persisted before this date have no
@@ -162,6 +163,12 @@ function isProductionRunsDir(): boolean {
   );
 }
 const runs = new Map<string, Run>();
+
+/** Take a run out of the live store, and with it the list row derived for it. */
+function removeLiveRun(id: string): void {
+  runs.delete(id);
+  forgetRunListRow(id);
+}
 
 /** Resolved persistence root shared by run-adjacent durable journals. */
 export function runsDirectory(): string {
@@ -567,7 +574,7 @@ export function commitRunBeforeAttemptAttestation(
 export async function discardUndurableRun(id: string): Promise<void> {
   const run = runs.get(id);
   if (!run) return;
-  runs.delete(id);
+  removeLiveRun(id);
   publishRunResources(captureRunResources(run), undefined, 'deleted');
   try {
     await unlink(path.join(runsDirectory(), `${id}.json`));
@@ -624,7 +631,7 @@ async function quarantineRunFile(id: string, filePath: string, run?: Run): Promi
 export async function quarantineLeakedRun(run: Run): Promise<void> {
   const filePath = path.join(runsDirectory(), `${run.id}.json`);
   await quarantineRunFile(run.id, filePath, run);
-  runs.delete(run.id);
+  removeLiveRun(run.id);
   publishRunResources(captureRunResources(run), undefined, 'deleted');
 }
 
@@ -1762,7 +1769,7 @@ async function deleteRunBody(id: string): Promise<boolean> {
       return false;
     }
   }
-  runs.delete(id);
+  removeLiveRun(id);
   publishRunResources(captureRunResources(run), undefined, 'deleted');
   try {
     await unlink(path.join(runsDirectory(), `${id}.json`));
@@ -2305,7 +2312,7 @@ async function archiveRunBody(id: string): Promise<boolean> {
     // persisted before archive; dst above is the durable archived copy.
   }
   fs.rmSync(decisionHistoryFile(src), { force: true });
-  runs.delete(id);
+  removeLiveRun(id);
   recordArchivedRunWrite(id, archivedRaw);
   publishRunResources(captureRunResources(archivedRun));
   try {
@@ -2395,7 +2402,7 @@ export async function cleanupRuns(
     if (!dryRun) {
       const filePath = path.join(runsDirectory(), `${id}.json`);
       await quarantineRunFile(id, filePath, run);
-      runs.delete(id);
+      removeLiveRun(id);
       publishRunResources(captureRunResources(run), undefined, 'deleted');
     }
   }

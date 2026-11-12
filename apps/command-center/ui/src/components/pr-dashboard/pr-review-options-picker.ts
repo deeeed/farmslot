@@ -33,6 +33,7 @@ export class PRReviewOptionsPicker extends LitElement {
     if (next.workflow === 'qa') {
       delete next.publishReview;
       delete next.autoFinish;
+      if (next.reviewContext?.freshChain) delete next.reviewContext;
     }
     if (next.workflow === 'review') {
       delete next.qaProfileId;

@@ -319,6 +319,8 @@ The optional fields ship in `@farmslot/protocol` 0.71.1. The gateway writes and 
 is an explicit selection, `Run.reviewMode`, `Run.prWork.review.options.mode`,
 the retained `Run.repeatReviewContext.mode`, a supplied project default, then
 COLD. An explicit COLD selection MUST override a configured WARM default.
+A new review-pr's explicit fresh-chain context also selects COLD when no mode
+was supplied, before a configured WARM default.
 Admission, continuity, task instructions and recorded review snapshots MUST use
 this precedence. Run creation MUST use the same shared default. The resolver does not verify lineage or authorize session reuse.
 
@@ -452,3 +454,38 @@ ADR-063 Amendment 11 separates admission from budget consumption. Before dispatc
 Only validated reviewer-result ingestion records `kind: verdict`, in the same durable snapshot as the result or after its verified persistence. That transition spends one round and is idempotent. Recovery reconciles a persisted validated context before skipping an already-ingested result. A failed, cancelled, missing-signal or unstarted reviewer spends none, including when its failure settlement is missing. Ended failures retain the existing no-verdict disposition and automatic-launch cap. The established infrastructure-fallback refund remains free.
 
 Existing recorded verdicts seed retained histories through their validated reviewer contexts or recorded result rows. A historical failed/cancelled attempt or an admission alone is not verdict evidence. Receipt identities, PR/update-branch scopes, extensions and history deduplication are unchanged. Dispositions survive retirement of an earlier run. Pending live launches still reserve the last available capacity. A context-free startup reservation belongs to its current gateway and engine generation; an orphan from an earlier gateway does not pin capacity. Saved live reviewer contexts retain their reservations across restart. A confirmed terminal reviewer without a verdict releases capacity.
+
+## Fresh review chains
+
+A new `review-pr` request MAY set `reviewContext.freshChain: true`, with a null
+lineage entry for each execution row, to start a fresh chain. It MUST use COLD.
+When mode is omitted, this explicit fresh request selects COLD before a
+configured WARM default. An explicit WARM choice remains invalid.
+The gateway MUST skip predecessor lookup for both slotless and slot-backed
+review-pr launch paths. No prior review findings, verdict, artifact references,
+generation history or retained session may enter the task. The writer MUST omit
+`inputs/prior-review.json` and its previous-review instruction. The new run is
+generation one of its own chain. Existing run records and artifacts remain
+unchanged.
+Standing team, repository, trigger-rule and farm workflow policies MUST reject
+`freshChain: true`. Only a one-off request host may opt in to the fresh-chain control;
+review capability alone MUST NOT expose it in a persistent policy editor.
+
+The selection MUST survive existing request serialization, queue persistence
+and replay of that request. It MUST NOT change a previously frozen request's
+policy or reset its review budget. Omitted or false retains the current COLD or
+WARM continuation contract. Fresh plus WARM or retained lineage context is
+invalid. QA and publication-gate review requests MUST reject the fresh policy.
+
+The shared review-and-dispatch model owns this request choice. New review-pr
+hosts opt in; publication-gate hosts do not. Command Center and Companion use
+thin renderers of that model. The CLI maps `run create --fresh-review-chain` to
+this same context and COLD, refusing a conflicting explicit mode or lineage.
+
+Manual validation uses
+`scripts/runner-validation/fresh-review-chain.recipe.json`. The request proof
+uses the checkout-local CLI and an authenticated disposable gateway; the task
+input proof uses the existing task writer. Neither starts a model. Browser
+checks select the shared checkbox through normal user interaction and verify
+that changing the flow removes the choice. These rendering fixtures do not
+claim reviewer-session behavior.

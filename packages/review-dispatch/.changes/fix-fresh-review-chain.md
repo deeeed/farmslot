@@ -1,0 +1,1 @@
+- Share fresh review-chain selection and validation across PR review clients.

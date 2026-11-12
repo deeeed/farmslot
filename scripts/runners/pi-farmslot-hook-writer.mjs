@@ -104,6 +104,7 @@ function readSnapshot(directory, key) {
  *   toolName?: string | null,
  *   cwd?: string | null,
  *   usageTokens?: number,
+ *   startupGraceMs?: number | null,
  *   env?: NodeJS.ProcessEnv,
  * }} params
  */
@@ -176,6 +177,11 @@ export function writePiHook(params) {
     tmuxPane,
     slotId: env.FARMSLOT_SLOT_ID || undefined,
     runner: env.FARMSLOT_RUNNER || 'pi',
+    ...(startsTurn
+      ? { startupGraceMs: params.startupGraceMs }
+      : resetsTurn
+        ? {}
+        : { startupGraceMs: previousSession?.startupGraceMs }),
     ...(event === 'StopFailure' && typeof params.failure === 'string' && params.failure
       ? {
           failure: params.failure,

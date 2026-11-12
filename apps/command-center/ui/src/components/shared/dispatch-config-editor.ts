@@ -243,10 +243,16 @@ export class DispatchConfigEditor extends LitElement {
   });
 
   protected override willUpdate(changed: PropertyValues<this>) {
+    const freshAllowed = this.flowType === 'review-pr';
+    const primaryContext =
+      !freshAllowed && this.reviewContext?.freshChain ? undefined : this.reviewContext;
+    if (changed.has('flowType') && !freshAllowed && this.reviewContext?.freshChain)
+      this.emitChange({ reviewContext: null });
     if (changed.has('reviewLineages')) {
       this.executionPicker.setContext({
         ...this.executionPicker.context,
-        reviewContext: this.reviewContext,
+        reviewContext: primaryContext,
+        allowFreshChain: freshAllowed,
         reviewLineages: this.reviewLineages,
       });
       this.reviewPicker.setContext({
@@ -262,11 +268,13 @@ export class DispatchConfigEditor extends LitElement {
       changed.has('model') ||
       changed.has('effort') ||
       changed.has('reviewMode') ||
+      changed.has('flowType') ||
       changed.has('reviewContext')
     ) {
       this.executionPicker.setContext({
         ...this.executionPicker.context,
-        reviewContext: this.reviewContext,
+        reviewContext: primaryContext,
+        allowFreshChain: freshAllowed,
       });
       this.executionPicker.setSequence([
         {

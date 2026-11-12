@@ -3,6 +3,7 @@ import {
   isBlockedAtOpenHumanGate,
   isTerminalRunStatus,
   type Run,
+  type RunListRow,
   type RunStep,
   type TaskProgressStructured,
 } from '@farmslot/protocol';
@@ -533,7 +534,7 @@ export function publicationReviewStepForName(run: Run, stepName: string): RunSte
 export function pipelineDisplayStep(
   step: RunStep,
   waitingForPreGateReviews: boolean,
-  run: Run | undefined,
+  run: RunListRow | undefined,
 ): RunStep {
   if (isInteractiveCompletionAwaitingOperator(run) && step.name === 'monitor') {
     return {

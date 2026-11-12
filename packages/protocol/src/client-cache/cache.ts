@@ -1558,8 +1558,18 @@ export function createGatewayResourceCache(
         if (store.persistent && entry.query.method === Methods.RUN_LIST) {
           const listed = reply.data as RunListResult;
           if (Array.isArray(listed.runs)) {
-            for (const run of listed.runs)
+            for (const run of listed.runs) {
+              // A slim row (it carries the gateway's evidenceSummary) hashes to no version the
+              // gateway serves: its version comes only from the version list, and until that is
+              // held its detail is not treated as changed. An older gateway's trimmed full row is
+              // the version basis itself, so it keeps the derived version. Trim markers cannot
+              // tell the two apart: trimRunForList rows carry payloadTrimmed too.
+              if (run.evidenceSummary !== undefined) {
+                fallbackDetailTargets.delete(run.id);
+                continue;
+              }
               fallbackDetailTargets.set(run.id, runDetailTarget(run, runListVersion(run)));
+            }
           }
           refreshDetailTargets();
         }

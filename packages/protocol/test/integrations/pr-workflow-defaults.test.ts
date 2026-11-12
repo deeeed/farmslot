@@ -297,3 +297,32 @@ test('QA without a request profile inherits the nearest declared id without broa
     );
   }
 });
+
+for (const layer of ['team', 'repository', 'rule'] as const) {
+  test(`fresh review chains cannot be inherited from ${layer} policy`, () => {
+    const review = {
+      mode: 'cold' as const,
+      reviewContext: { freshChain: true, reviewLineages: [null] },
+    };
+    assert.throws(
+      () => resolvePRWorkflowDefaults({ farm, [layer]: { review } }),
+      /one-off PR review requests/,
+    );
+    assert.equal(
+      resolvePRWorkflowDefaults({ farm, request: { review } }).review.reviewContext?.freshChain,
+      true,
+    );
+  });
+}
+
+test('fresh review chains cannot be persisted as farm workflow defaults', () => {
+  assert.throws(
+    () =>
+      normalizeProjectWorkflowDefaults({
+        'review-pr': {
+          review: { mode: 'cold', reviewContext: { freshChain: true, reviewLineages: [null] } },
+        },
+      }),
+    /one-off PR review requests/,
+  );
+});

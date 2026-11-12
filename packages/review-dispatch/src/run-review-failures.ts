@@ -1,13 +1,16 @@
 import {
   type AgentContext,
   isReviewRoundNoVerdictSettlement,
-  type Run,
+  type RunListRow,
   type RunStep,
 } from '@farmslot/protocol';
 
 export const recoveredReviewFailureColor = '#f59e0b';
 
-export function reviewAttemptFailureReason(run: Run, context: AgentContext): string | null {
+export function reviewAttemptFailureReason(
+  run: Pick<RunListRow, 'agentContexts' | 'reviewRoundSettlements'>,
+  context: AgentContext,
+): string | null {
   if (context.error) return context.error;
   const settled = Object.entries(run.reviewRoundSettlements ?? {}).find(([key, value]) => {
     if (!isReviewRoundNoVerdictSettlement(value)) return false;
@@ -35,7 +38,9 @@ export function reviewAttemptFailureReason(run: Run, context: AgentContext): str
 }
 
 /** A failed attempt remains visible after continuation instead of disappearing into a pending gap. */
-export function runRecoveredReviewFailures(run: Run): Array<RunStep & { reason: string }> {
+export function runRecoveredReviewFailures(
+  run: Pick<RunListRow, 'agentContexts' | 'reviewRoundSettlements'>,
+): Array<RunStep & { reason: string }> {
   const contexts = run.agentContexts ?? [];
   return contexts
     .filter(

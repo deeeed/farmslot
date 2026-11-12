@@ -4,6 +4,15 @@ import test from 'node:test';
 import type { RunDecision } from '@farmslot/protocol';
 
 import {
+  HELD_EVIDENCE_MANIFEST,
+  HELD_PACKAGE_HASH,
+  heldGateRun,
+  newerSlimRow,
+} from '../features/run-detail/held-detail.fixtures';
+import { heldDetailWithNewerRow } from '../features/run-detail/run-detail-reads';
+
+import { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from './artifact-url';
+import {
   selectArtifactWorkspaceDecision,
   selectPrimaryWorkspaceDecision,
   selectReadyWorkspaceDecision,
@@ -194,4 +203,26 @@ test('a re-presented result decision replaces the superseded one on screen', () 
     payload: { kind: 'output-review', manifestDigest: 'sha256:m', reportPath: 'artifacts/r.md' },
   });
   assert.equal(supersedingResultDecisionId(output, { decisions: [output, next] }), undefined);
+});
+
+// The artifact viewer freezes its gate from the run Run Detail hands it. Under a newer slim row
+// that gate is still the held one, with the package hash and manifest the viewer reads.
+test('the artifact viewer gate under a newer slim row keeps the held package', () => {
+  const held = heldGateRun();
+  const row = newerSlimRow(held);
+  for (const explicitId of ['', 'gate-1']) {
+    const gate = selectArtifactWorkspaceDecision(
+      heldDetailWithNewerRow(held, row),
+      DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+      explicitId,
+    );
+    const payload = gate?.payload;
+    assert.equal(payload?.kind, 'ready', explicitId);
+    if (payload?.kind !== 'ready') continue;
+    assert.equal(payload.prPackage?.packageHash, HELD_PACKAGE_HASH, explicitId);
+    assert.deepEqual(payload.prPackage?.evidenceManifest, HELD_EVIDENCE_MANIFEST, explicitId);
+  }
+  // The row's own gate is display data: its payload has no package to freeze.
+  const listed = selectReadyWorkspaceDecision(row)?.payload;
+  assert.equal(listed && 'prPackage' in listed, false);
 });

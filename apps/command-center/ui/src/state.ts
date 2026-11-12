@@ -25,6 +25,7 @@ import {
   type Run,
   type RunFamilyReadinessSummary,
   type RunListResult,
+  type RunListRow,
   type RunListSummaryMeta,
   type RunProjectAnalyticsSummary,
   type WorkGraphListResult,
@@ -102,7 +103,7 @@ export interface AppState {
   prs: PRStatus[];
   prsObservation: ResourceQueryState<PRListResult>;
   decisions: PendingDecision[];
-  runs: Run[];
+  runs: RunListRow[];
   runsObservation: ResourceQueryState<RunListResult>;
   decisionsObservation: ResourceQueryState<DecisionListResult>;
   runSummaryMeta: RunListSummaryMeta | null;
@@ -312,15 +313,15 @@ const PR_PRODUCING_FLOWS = new Set<Run['flowType']>([
   'pr-complete',
   'update-branch',
 ]);
-function isActiveRun(run: Run): boolean {
+function isActiveRun(run: RunListRow): boolean {
   return !isTerminalRunStatus(run.status);
 }
 
-function isReviewableTerminalRun(run: Run): boolean {
+function isReviewableTerminalRun(run: RunListRow): boolean {
   return run.taskFile != null && (run.status === 'done' || run.status === 'failed');
 }
 
-export function isPrLinkageMissing(run: Run): boolean {
+export function isPrLinkageMissing(run: RunListRow): boolean {
   // `getProjectDefaultBranch` falls back to DEFAULT_BRANCH while the projects
   // slice is still hydrating, which would flash a false-positive "PR missing"
   // badge for any run whose branch isn't `main`. Gate until projects lands.
@@ -768,7 +769,7 @@ export function updateGlobalFilters(filters: GlobalFilters): void {
   notify();
 }
 
-export function getRunForSlot(slotId: string, preferredRunId?: string | null): Run | null {
+export function getRunForSlot(slotId: string, preferredRunId?: string | null): RunListRow | null {
   if (preferredRunId) {
     const preferred = state.runs.find((r) => r.id === preferredRunId);
     if (!preferred) return null;

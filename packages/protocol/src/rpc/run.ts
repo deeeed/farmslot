@@ -10,6 +10,7 @@ import type {
   RunStatus,
   SlotRunHistoryEntry,
 } from '../contracts/index.js';
+import type { RunListRow } from '../runs/list-row.js';
 import type { WorkerSignalProbeResult } from '../transport/signal.js';
 
 import { Methods } from './registry.js';
@@ -321,7 +322,7 @@ export interface RunListVersion {
 
 export interface RunListResult {
   /** `[]` in a versions reply. */
-  runs: Run[];
+  runs: RunListRow[];
   /** Matching runs before `limit`. Versions reply: every live run. Ids page: the rows it served. */
   totalCount: number;
   /** Summary metadata is present only when a summary flag was requested. */

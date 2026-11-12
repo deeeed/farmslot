@@ -2,7 +2,7 @@ import {
   HUMAN_GATE_DECISION_TYPE,
   openHumanGateDecision,
   type PendingDecision,
-  type Run,
+  type RunListRow,
   withArtifactBundleDigest,
 } from '@farmslot/protocol';
 import {
@@ -28,7 +28,7 @@ export function contentPrefetchTargets(
     PendingDecision,
     'type' | 'payload' | 'context' | 'runMeta' | 'createdAt'
   >[],
-  activeRuns: readonly Pick<Run, 'id' | 'updatedAt' | 'decisions'>[],
+  activeRuns: readonly Pick<RunListRow, 'id' | 'updatedAt' | 'decisions'>[],
 ): ContentPrefetchTarget[] {
   const runs = new Map(activeRuns.map((run) => [run.id, run]));
   const targets = new Map<string, ContentPrefetchTarget>();

@@ -1,4 +1,5 @@
 import {
+  assertFreshReviewChainSelection,
   DEFAULT_RUNNER,
   type ReviewContinuationContext,
   type ReviewLineageOption,
@@ -47,6 +48,7 @@ function rankRetainedLineage(a: ReviewLineageOption, b: ReviewLineageOption): nu
 
 /** Platform-neutral picker state. Hosts render and invoke actions; this model owns selections. */
 export class ReviewDispatchViewModel {
+  readonly freshChainLabel = 'Start fresh review chain';
   private currentContext: ReviewDispatchContext;
   private currentRows: ReviewDispatchRow[] = [];
   private nextId = 1;
@@ -82,6 +84,30 @@ export class ReviewDispatchViewModel {
       this.valid &&
       (action !== 'request-review' || this.currentRows.length > 0)
     );
+  }
+  get freshChain(): boolean {
+    return this.currentContext.reviewContext?.freshChain === true;
+  }
+  get canStartFreshChain(): boolean {
+    return this.currentContext.allowFreshChain === true && this.currentContext.workflow !== 'qa';
+  }
+  setFreshChain(enabled: boolean): void {
+    if (!this.canStartFreshChain)
+      throw new Error('A fresh review chain is unavailable in this context');
+    this.currentContext = {
+      ...this.currentContext,
+      reviewContext: enabled
+        ? { freshChain: true, reviewLineages: this.currentRows.map(() => null) }
+        : undefined,
+    };
+    if (enabled)
+      this.currentRows = this.currentRows.map((row) => ({
+        ...row,
+        selection: { ...row.selection, mode: 'cold' },
+        context: null,
+        note: undefined,
+      }));
+    this.changed();
   }
   get canAddRow(): boolean {
     return this.currentRows.length < this.maxRows;
@@ -142,6 +168,14 @@ export class ReviewDispatchViewModel {
     return { ...context, defaults: context.defaults ? { ...context.defaults } : undefined };
   }
   private assertRows(sequence: readonly Readonly<ReviewSelection>[]): void {
+    if (this.freshChain)
+      for (const selection of sequence)
+        assertFreshReviewChainSelection({
+          ...this.currentContext.reviewContext!,
+          reviewLineages: this.currentRows.map((row) => row.context),
+          mode: selection.mode,
+          workflow: this.currentContext.workflow,
+        });
     assertReviewSequence(sequence, {
       ...this.currentContext,
       catalog: this.catalog,
@@ -188,6 +222,7 @@ export class ReviewDispatchViewModel {
     );
   }
   private contextForRow(index: number): ReviewContinuationContext | null {
+    if (this.freshChain) return null;
     const explicit = this.currentContext.reviewContext?.reviewLineages[index];
     if (
       this.currentContext.reviewContext &&
@@ -510,6 +545,8 @@ export class ReviewDispatchViewModel {
   }
   toReviewContext(): ReviewRequestContext | undefined {
     if (this.currentContext.workflow === 'qa') return undefined;
+    if (this.freshChain)
+      return { freshChain: true, reviewLineages: this.currentRows.map(() => null) };
     // A person's COLD at the gate stays in its lineage (ADR-063 Amendment 5); elsewhere only a
     // WARM row continues one.
     const reviewLineages = this.currentRows.map((row) =>

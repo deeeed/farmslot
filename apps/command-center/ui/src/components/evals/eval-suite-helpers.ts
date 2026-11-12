@@ -1,4 +1,4 @@
-import { isRunArtifactMediaPath, runDisplayTitle } from '@farmslot/protocol';
+import { runDisplayTitle, runListEvidenceSummary } from '@farmslot/protocol';
 import {
   type DiffStat,
   type EvalExperimentSource,
@@ -7,6 +7,7 @@ import {
   isTerminalRunStatus,
   type PRStatus,
   type Run,
+  type RunListRow,
 } from '@farmslot/protocol';
 
 export type EvalCaseSourceKind = EvalExperimentSource['kind'];
@@ -168,11 +169,11 @@ export function datasetIdFor(input: {
   return `dataset-${slugFor(input.project, 'project')}-${stableIdHash(ids.join('|'))}`;
 }
 
-function taskProfileFromRun(run: Run): EvalTaskProfile {
+function taskProfileFromRun(run: RunListRow): EvalTaskProfile {
   return run.flowType === 'dev' ? 'dev' : 'fix-bug';
 }
 
-function unsupportedRunFlowWarning(run: Run): string | null {
+function unsupportedRunFlowWarning(run: RunListRow): string | null {
   return EVAL_RUN_FLOW_TYPES.has(run.flowType)
     ? null
     : `Only fix-bug and dev runs can seed eval cases; ${run.flowType} is unsupported.`;
@@ -200,7 +201,7 @@ function dateFields(
   };
 }
 
-function runSearchText(run: Run): string {
+function runSearchText(run: RunListRow): string {
   return [
     run.id,
     run.familyId,
@@ -292,7 +293,7 @@ function caseSearchNeedles(query: string): string[] {
   return [...new Set([normalized, prRef, prUrl, prNumber].filter(Boolean))];
 }
 
-function githubPrUrlFromRun(run: Run): string | undefined {
+function githubPrUrlFromRun(run: RunListRow): string | undefined {
   const linked = run.links?.find(
     (link) => /^pr$/i.test(link.label) && /github\.com\/[^/]+\/[^/]+\/pull\/\d+/.test(link.url),
   );
@@ -309,74 +310,8 @@ function familyHref(run: Pick<Run, 'id' | 'familyId'>): string {
   return `#family/${run.familyId}?run=${encodeURIComponent(run.id)}`;
 }
 
-function diffStatFromRun(run: Run): DiffStat | undefined {
-  for (const step of [...run.steps].reverse()) {
-    const raw = step.outputs?.diffStat;
-    if (!raw || typeof raw !== 'object') continue;
-    const row = raw as Partial<DiffStat>;
-    if (
-      typeof row.files !== 'number' ||
-      typeof row.additions !== 'number' ||
-      typeof row.deletions !== 'number'
-    )
-      continue;
-    return { files: row.files, additions: row.additions, deletions: row.deletions };
-  }
-  return undefined;
-}
-
-function evidenceSummaryFromRun(
-  run: Run,
-): Pick<
-  EvalCaseCatalogItem,
-  | 'artifactCount'
-  | 'artifactBytes'
-  | 'visualEvidenceCount'
-  | 'validationEvidenceCount'
-  | 'reviewEvidenceCount'
-> {
-  const seen = new Set<string>();
-  let artifactCount = 0;
-  let artifactBytes = 0;
-  let visualEvidenceCount = 0;
-  let validationEvidenceCount = 0;
-  let reviewEvidenceCount = 0;
-  for (const step of run.steps) {
-    const rawArtifacts = step.outputs?.artifacts;
-    if (!Array.isArray(rawArtifacts)) continue;
-    for (const raw of rawArtifacts) {
-      if (!raw || typeof raw !== 'object') continue;
-      const artifact = raw as { path?: unknown; purpose?: unknown; sizeBytes?: unknown };
-      if (typeof artifact.path !== 'string' || !artifact.path.trim()) continue;
-      const key = `${step.name}:${artifact.path}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      artifactCount += 1;
-      if (typeof artifact.sizeBytes === 'number') artifactBytes += artifact.sizeBytes;
-      const purpose = typeof artifact.purpose === 'string' ? artifact.purpose.toLowerCase() : '';
-      const pathLower = artifact.path.toLowerCase();
-      if (/screenshot|video|visual/.test(purpose) || isRunArtifactMediaPath(pathLower))
-        visualEvidenceCount += 1;
-      if (
-        /recipe|validation|report|summary|trace|coverage|manifest/.test(purpose) ||
-        /recipe|validation|report|summary|trace|coverage|manifest/.test(pathLower)
-      )
-        validationEvidenceCount += 1;
-      if (/review|comment/.test(purpose) || /review|comment/.test(pathLower))
-        reviewEvidenceCount += 1;
-    }
-  }
-  return {
-    artifactCount,
-    artifactBytes,
-    visualEvidenceCount,
-    validationEvidenceCount,
-    reviewEvidenceCount,
-  };
-}
-
 function previewFieldsFromRun(
-  run: Run,
+  run: RunListRow,
 ): Pick<
   EvalCaseCatalogItem,
   | 'prUrl'
@@ -389,16 +324,17 @@ function previewFieldsFromRun(
   | 'validationEvidenceCount'
   | 'reviewEvidenceCount'
 > {
+  const evidence = runListEvidenceSummary(run);
   return {
     prUrl: githubPrUrlFromRun(run),
     runHref: runHref(run),
     familyHref: familyHref(run),
-    diffStat: diffStatFromRun(run),
-    ...evidenceSummaryFromRun(run),
+    diffStat: evidence.diffStat,
+    ...evidence.catalogCounts,
   };
 }
 
-export function catalogItemFromPr(pr: PRStatus, latestRun?: Run): EvalCaseCatalogItem {
+export function catalogItemFromPr(pr: PRStatus, latestRun?: RunListRow): EvalCaseCatalogItem {
   const prRef = `${pr.repo}#${pr.pr}`;
   const merged = pr.merged || pr.prState === 'MERGED' || pr.recommendation === 'MERGED';
   const runFlowWarning = latestRun ? unsupportedRunFlowWarning(latestRun) : null;
@@ -460,7 +396,7 @@ export function catalogItemFromPr(pr: PRStatus, latestRun?: Run): EvalCaseCatalo
   };
 }
 
-export function catalogItemFromRun(run: Run): EvalCaseCatalogItem {
+export function catalogItemFromRun(run: RunListRow): EvalCaseCatalogItem {
   const source: EvalExperimentSource = { kind: 'prior-run', runId: run.id };
   const terminal = isTerminalRunStatus(run.status);
   const flowWarning = unsupportedRunFlowWarning(run);
@@ -585,14 +521,14 @@ export function findCatalogItemForPrRef(
 
 export function buildCaseCatalog(input: {
   prs: readonly PRStatus[];
-  runs: readonly Run[];
+  runs: readonly RunListRow[];
   project?: string;
 }): EvalCaseCatalogItem[] {
   const project = normalizedText(input.project);
   const runsById = new Map(input.runs.map((run) => [run.id, run]));
   const runItems = input.runs
     .filter((run) => EVAL_RUN_FLOW_TYPES.has(run.flowType))
-    .map(catalogItemFromRun);
+    .map((run) => catalogItemFromRun(run));
   const items = [
     ...input.prs.map((pr) =>
       catalogItemFromPr(pr, pr.latestRunId ? runsById.get(pr.latestRunId) : undefined),

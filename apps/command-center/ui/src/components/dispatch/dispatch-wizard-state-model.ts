@@ -1,4 +1,10 @@
-import type { DispatchCandidatesResult, FlowType, Run, SlotStatus } from '@farmslot/protocol';
+import type {
+  DispatchCandidatesResult,
+  FlowType,
+  Run,
+  RunListRow,
+  SlotStatus,
+} from '@farmslot/protocol';
 import { hasUnsettledRunExecution } from '@farmslot/protocol';
 
 import { candidateDispatchable, pressureOverrideAvailable } from './dispatch-wizard-selectors.js';
@@ -160,7 +166,7 @@ export function dispatchScoringKey(input: DispatchScoringKeyInput): string {
 }
 
 export function findActiveRunConflict(
-  runs: readonly Run[],
+  runs: readonly RunListRow[],
   input: { ticket: string; normalizedTicket: string; project: string },
 ): Pick<Run, 'id' | 'status'> | null {
   const ticket = input.ticket.trim();

@@ -1,7 +1,7 @@
 import { css, html, LitElement, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
-import type { Run, SlotStatus, TaskProgressStructured } from '@farmslot/protocol';
+import type { RunListRow, SlotStatus, TaskProgressStructured } from '@farmslot/protocol';
 import { cancelledRunSlotHold, isTerminalRunStatus, runDisplayTitle } from '@farmslot/protocol';
 import { fleetBehindDefaultIfBehind, fleetSlotBranch } from '@farmslot/review-dispatch';
 
@@ -30,7 +30,7 @@ export class SlotCard extends LitElement {
   @property({ attribute: false }) slotData!: SlotStatus;
   @property({ type: Boolean }) nodeOnline = false;
   @property({ attribute: false }) progress?: TaskProgressStructured;
-  @property({ attribute: false }) linkedRun?: Run;
+  @property({ attribute: false }) linkedRun?: RunListRow;
   @property({ attribute: false }) thumbnailData?: { data: string; ts: number };
   @property({ type: Boolean }) expanded = false;
   @property({ type: Number }) pendingDecisions = 0;
@@ -608,7 +608,7 @@ export class SlotCard extends LitElement {
     `;
   }
 
-  private renderRunBadge(run: Run) {
+  private renderRunBadge(run: RunListRow) {
     const sc = runStatusColor(run.status);
     const currentStep = run.steps.find((s) => s.status === 'running');
     return html`

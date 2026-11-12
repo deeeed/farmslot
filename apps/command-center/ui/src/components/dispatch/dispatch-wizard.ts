@@ -12,10 +12,10 @@ import type {
   NativeSessionCatalogResult,
   PRStatus,
   QaInput,
-  Run,
   RunCancelResult,
   RunGetResult,
   RunListResult,
+  RunListRow,
   SourceSelection,
 } from '@farmslot/protocol';
 import {
@@ -167,7 +167,7 @@ export class DispatchWizard extends DispatchWizardState {
   private _runAgeClock?: number;
   private _runActionRequest?: symbol;
 
-  private get _comparisonRows(): Run[] {
+  private get _comparisonRows(): RunListRow[] {
     return filterRunsForComparisonPicker(
       this.mockMode
         ? (this.mockPriorRuns ?? getState().runs)
@@ -572,7 +572,7 @@ export class DispatchWizard extends DispatchWizardState {
     this._checkActiveRunConflict();
   }
 
-  private _tryHydrateComparisonParentEngine(runs: readonly Run[]): void {
+  private _tryHydrateComparisonParentEngine(runs: readonly RunListRow[]): void {
     const parentTransport = runs.find((run) => run.id === this._comparisonParentRunId);
     if (parentTransport && !this._transportChosen && this._flowType !== 'review-pr') {
       this._transport = parentTransport.transport ?? 'tmux';
@@ -1163,7 +1163,7 @@ export class DispatchWizard extends DispatchWizardState {
     this._checkActiveRunConflict();
   }
 
-  private _applyComparisonBaseline(expected: Run): void {
+  private _applyComparisonBaseline(expected: RunListRow): void {
     let run = expected;
     if (!this.mockMode) {
       try {
@@ -1711,6 +1711,15 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _syncWorkflowSelection(): void {
+    const freshAllowed = this._flowType === 'review-pr';
+    if (this._executionPicker.context.allowFreshChain !== freshAllowed) {
+      const context = this._executionPicker.toReviewContext();
+      this._executionPicker.setContext({
+        ...this._executionPicker.context,
+        allowFreshChain: freshAllowed,
+        reviewContext: context?.freshChain && !freshAllowed ? undefined : context,
+      });
+    }
     const pr =
       parseGitHubRef(this._normalizedTicket || this._ticketId) ??
       parseGitHubPullUrl(this._ticketId);
