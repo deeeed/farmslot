@@ -450,7 +450,7 @@ export class BacklogPanel extends LitElement {
   @state() private _visibleModelsError = '';
   private _activityCacheItems: BacklogItem[] | null = null;
   private _activityCacheRuns: RunListRow[] | null = null;
-  private _activityCache = new Map<string, Run | undefined>();
+  private _activityCache = new Map<string, RunListRow | undefined>();
   private readonly _confirmTimer = new ConfirmActionTimer({
     pendingConfirm: () => this._pendingConfirm,
     setPendingConfirm: (pending) => {
@@ -1791,12 +1791,12 @@ export class BacklogPanel extends LitElement {
 
   private _sortFilteredCandidates(
     items: BacklogItem[],
-    linkedRuns: ReadonlyMap<string, Run | undefined>,
+    linkedRuns: ReadonlyMap<string, RunListRow | undefined>,
   ): BacklogItem[] {
     return sortBacklogItems(items, this._runs, this._sortKey, this._sortDirection, linkedRuns);
   }
 
-  private _linkedActivityRuns(): ReadonlyMap<string, Run | undefined> {
+  private _linkedActivityRuns(): ReadonlyMap<string, RunListRow | undefined> {
     if (this._activityCacheItems === this._items && this._activityCacheRuns === this._runs) {
       return this._activityCache;
     }
@@ -3130,7 +3130,7 @@ export class BacklogPanel extends LitElement {
     </section>`;
   }
 
-  private _renderCompactRow(item: BacklogItem, linkedRun?: Run) {
+  private _renderCompactRow(item: BacklogItem, linkedRun?: RunListRow) {
     const selected = this._selectedItemId === item.id && !this._forceInventoryList;
     const displayedStatus = displayedBacklogStatus(item, linkedRun);
     const tone = statusTone(displayedStatus);

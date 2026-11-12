@@ -1,4 +1,4 @@
-import type { BacklogItem, Run, RunListRow } from '@farmslot/protocol';
+import type { BacklogItem, RunListRow } from '@farmslot/protocol';
 import { isTerminalRunStatus } from '@farmslot/protocol';
 
 export interface BacklogRunProjectionOptions {
@@ -6,18 +6,16 @@ export interface BacklogRunProjectionOptions {
   allowSourceRefInference?: boolean;
 }
 
-function selectLinkedRun(matches: RunListRow[]): Run | undefined {
+function selectLinkedRun(matches: RunListRow[]): RunListRow | undefined {
   const newestFirst = [...matches].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  return (newestFirst.find((run) => !isTerminalRunStatus(run.status)) ?? newestFirst[0]) as
-    | Run
-    | undefined;
+  return newestFirst.find((run) => !isTerminalRunStatus(run.status)) ?? newestFirst[0];
 }
 
 export function linkedRunsForBacklogItems(
   runs: RunListRow[],
   items: readonly BacklogItem[],
   options: BacklogRunProjectionOptions = {},
-): Map<string, Run> {
+): Map<string, RunListRow> {
   const byBacklogId = new Map<string, RunListRow[]>();
   const byRunId = new Map(runs.map((run) => [run.id, run]));
   const bySource = new Map<string, RunListRow[]>();
@@ -35,7 +33,7 @@ export function linkedRunsForBacklogItems(
     }
   }
 
-  const projection = new Map<string, Run>();
+  const projection = new Map<string, RunListRow>();
   for (const item of items) {
     const explicitMatches = [...(byBacklogId.get(item.id) ?? [])];
     const legacy = item.runId ? byRunId.get(item.runId) : undefined;
@@ -55,7 +53,7 @@ export function linkedRunForBacklogItem(
   runs: RunListRow[],
   item: BacklogItem,
   options: BacklogRunProjectionOptions = {},
-): Run | undefined {
+): RunListRow | undefined {
   // run.create can intentionally start an item outside the backlog dispatcher.
   // Only activity projections opt into exact project + source-ref inference;
   // detail/history consumers remain anchored to durable linkage.
