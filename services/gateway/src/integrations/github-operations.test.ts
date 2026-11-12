@@ -411,6 +411,32 @@ describe('in-process gh client', { concurrency: 1 }, () => {
     assert.equal(processes.length, 0, 'keyring was never called');
   });
 
+  test('fixture-token rule: a caller Authorization header never reaches the fixture', async () => {
+    const account = { host: 'github.com', token: 'account-bound-secret', scope: 'fixture' };
+    route = () => ({ body: { ok: true } });
+    const start = fixture.requests.length;
+    try {
+      for (const fixtureToken of [undefined, 'fixture-only-token'])
+        for (const name of ['authorization', 'Authorization'])
+          for (const bound of [false, true]) {
+            if (fixtureToken) process.env.FARMSLOT_GITHUB_FIXTURE_TOKEN = fixtureToken;
+            else delete process.env.FARMSLOT_GITHUB_FIXTURE_TOKEN;
+            await github.rest('GET', `fixture/caller-${name}-${bound}-${fixtureToken ?? 'none'}`, {
+              headers: { [name]: 'Bearer caller-secret' },
+              force: true,
+              ...(bound ? { account } : {}),
+            });
+          }
+    } finally {
+      delete process.env.FARMSLOT_GITHUB_FIXTURE_TOKEN;
+    }
+    assert.deepEqual(requestsSince(start).map(authOf), [
+      ...Array<undefined>(4).fill(undefined),
+      ...Array<string>(4).fill('token fixture-only-token'),
+    ]);
+    assert.equal(processes.length, 0, 'keyring was never called');
+  });
+
   test('a keyring token is read again once its minute is over', async (t) => {
     const origin = fixture.origin;
     delete process.env.FARMSLOT_GITHUB_API_URL;

@@ -54,14 +54,14 @@ const freshSlotFiles: typeof import('../host-services/slot-files.js') = await im
 // Use a mutable impl so the EPERM test can swap in an fs-mocked version without re-mocking the
 // module (Node.js rejects a second mock.module on a module already mocked at the outer level).
 let _slotFilesImpl = freshSlotFiles.default;
+// Node 22 cannot mock a module whose named exports include `default`: it goes in defaultExport.
+const { default: _freshSlotFilesDefault, ...freshSlotFilesNamed } = freshSlotFiles;
 mock.module('../host-services/slot-files.js', {
-  namedExports: {
-    ...freshSlotFiles,
-    default: {
-      read: (...args: Parameters<typeof _slotFilesImpl.read>) => _slotFilesImpl.read(...args),
-      tail: (...args: Parameters<typeof _slotFilesImpl.tail>) => _slotFilesImpl.tail(...args),
-      isFile: (...args: Parameters<typeof _slotFilesImpl.isFile>) => _slotFilesImpl.isFile(...args),
-    },
+  namedExports: freshSlotFilesNamed,
+  defaultExport: {
+    read: (...args: Parameters<typeof _slotFilesImpl.read>) => _slotFilesImpl.read(...args),
+    tail: (...args: Parameters<typeof _slotFilesImpl.tail>) => _slotFilesImpl.tail(...args),
+    isFile: (...args: Parameters<typeof _slotFilesImpl.isFile>) => _slotFilesImpl.isFile(...args),
   },
 });
 const observabilityModule: string = '../runners/observability-files.js?bounded-read-probes';
@@ -333,8 +333,11 @@ test('a local runner file the OS refuses (EPERM) reads as empty, as the shell re
   const refuse = async () => {
     throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
   };
+  // Node 22 cannot mock a module whose named exports include `default`: it goes in defaultExport.
+  const { default: fsDefault, ...fsNamed } = fs;
   const refused = t.mock.module('node:fs/promises', {
-    namedExports: { ...fs, open: refuse, readFile: refuse, stat: refuse },
+    namedExports: { ...fsNamed, open: refuse, readFile: refuse, stat: refuse },
+    defaultExport: { ...fsDefault, open: refuse, readFile: refuse, stat: refuse },
   });
   t.after(() => refused.restore());
   // slot-files.ts owns the in-process fs calls; load it fresh after the fs mock so it picks up

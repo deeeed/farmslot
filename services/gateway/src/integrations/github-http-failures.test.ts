@@ -99,6 +99,24 @@ describe('GitHub HTTP failures', { concurrency: 1 }, () => {
     }
   });
 
+  test('a quota reset outside the date range leaves the original HTTP error intact', async () => {
+    responses.push({
+      status: 404,
+      headers: {
+        'x-ratelimit-resource': 'core',
+        'x-ratelimit-limit': '5000',
+        'x-ratelimit-remaining': '10',
+        'x-ratelimit-reset': '100000000000000',
+      },
+      body: '{"message":"Not Found"}',
+    });
+    const { GitHubHttpError } = await import('./github-errors.js');
+    await assert.rejects(
+      github.rest('GET', 'repos/owner/repo/contents/missing', { force: true }),
+      (error: unknown) => error instanceof GitHubHttpError && error.status === 404,
+    );
+  });
+
   test('a 304 revalidation still serves the previously cached response', async () => {
     responses.push(
       { headers: { etag: '"fixture"' }, body: '{"value":42}' },

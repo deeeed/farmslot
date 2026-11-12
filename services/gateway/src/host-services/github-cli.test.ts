@@ -97,3 +97,31 @@ test('keyring reads drop the token variables gh would prefer and never echo gh o
   assert.deepEqual(spawns.at(-1)?.args, ['auth', 'status', '--json', 'hosts']);
   for (const name of tokenVariables) assert.equal(spawns.at(-1)?.env[name], undefined, name);
 });
+
+test('each gh command is counted under its host operation in the exec metrics', async () => {
+  const { gatewayPerformance } = await import('../observability/performance.js');
+  const calls = (operation: string) =>
+    gatewayPerformance
+      .snapshot()
+      .counters.filter(
+        (row) =>
+          row.name === 'farmslot_exec_calls_total' && row.labels.method === `host:${operation}`,
+      )
+      .reduce((sum, row) => sum + row.value, 0);
+  const before = ['authToken', 'authStatus', 'checkoutPRForBranch'].map((name) =>
+    calls(`githubCli.${name}`),
+  );
+  reply = async () => ({ stdout: '{"hosts":{}}', stderr: '' });
+  await githubCli.authStatus();
+  reply = async () => ({ stdout: 'keyring-token\n', stderr: '' });
+  await githubCli.authToken('github.com');
+  reply = async () => ({ stdout: '', stderr: '' });
+  await githubCli.checkoutPRForBranch('/slots/one', 'feat/a');
+  const after = ['authToken', 'authStatus', 'checkoutPRForBranch'].map((name) =>
+    calls(`githubCli.${name}`),
+  );
+  assert.deepEqual(
+    after.map((count, i) => count - (before[i] ?? 0)),
+    [1, 1, 1],
+  );
+});

@@ -551,10 +551,10 @@ function updateQuotaFromHeaders(headers: Map<string, string>, credentialKey: str
   if (!Number.isFinite(remaining) || !Number.isFinite(limit) || limit <= 0) return;
 
   const resetEpoch = resetStr ? Number(resetStr) : 0;
-  const resetAt =
-    Number.isFinite(resetEpoch) && resetEpoch > 0
-      ? new Date(resetEpoch * 1000).toISOString()
-      : new Date(0).toISOString();
+  const reset = new Date(Number.isFinite(resetEpoch) && resetEpoch > 0 ? resetEpoch * 1000 : 0);
+  // A reset GitHub could not mean (beyond the Date range) is no quota observation.
+  if (!Number.isFinite(reset.getTime())) return;
+  const resetAt = reset.toISOString();
   const resource = headers.get('x-ratelimit-resource');
   const observationKey = `${credentialKey}/${resource ?? 'unknown'}`;
   const previous = quotaObservations.get(observationKey);

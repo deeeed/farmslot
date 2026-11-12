@@ -8,7 +8,12 @@ import { promisify } from 'node:util';
 
 import { isRecord } from '@farmslot/protocol';
 
-import { registerHostOperations, withHostOperation } from '../observability/performance.js';
+import {
+  executionKind,
+  measureManagedOperation,
+  registerHostOperations,
+  withHostOperation,
+} from '../observability/performance.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -34,6 +39,22 @@ export interface GitHubCliService {
   checkoutPRForBranch(checkout: string, branch: string): Promise<CheckoutBranchPR | null>;
 }
 
+/**
+ * One measured `gh` command under its host operation, counted in the exec metrics like git.run.
+ * core/exec cannot scrub the token variables, so the measurement wraps the process call here.
+ */
+function runGh(
+  operation: string,
+  args: string[],
+  options: { cwd?: string; env: NodeJS.ProcessEnv; timeout?: number; maxBuffer: number },
+): Promise<{ stdout: string; stderr: string }> {
+  return withHostOperation(operation, () =>
+    measureManagedOperation('exec', executionKind('gh', args), () =>
+      execFileAsync('gh', args, options),
+    ),
+  );
+}
+
 function keyringEnvironment(named: boolean): NodeJS.ProcessEnv {
   const env = { ...process.env };
   delete env.GH_TOKEN;
@@ -48,16 +69,10 @@ function keyringEnvironment(named: boolean): NodeJS.ProcessEnv {
 async function authToken(host: string, login?: string): Promise<string> {
   let token: string;
   try {
-    const result = await withHostOperation(GITHUB_CLI_OPS.authToken, () =>
-      execFileAsync(
-        'gh',
-        ['auth', 'token', '--hostname', host, ...(login ? ['--user', login] : [])],
-        {
-          env: keyringEnvironment(Boolean(login)),
-          timeout: 15_000,
-          maxBuffer: 64 * 1024,
-        },
-      ),
+    const result = await runGh(
+      GITHUB_CLI_OPS.authToken,
+      ['auth', 'token', '--hostname', host, ...(login ? ['--user', login] : [])],
+      { env: keyringEnvironment(Boolean(login)), timeout: 15_000, maxBuffer: 64 * 1024 },
     );
     token = result.stdout.trim();
   } catch {
@@ -71,13 +86,11 @@ async function authToken(host: string, login?: string): Promise<string> {
 }
 
 async function authStatus(): Promise<unknown> {
-  const { stdout } = await withHostOperation(GITHUB_CLI_OPS.authStatus, () =>
-    execFileAsync('gh', ['auth', 'status', '--json', 'hosts'], {
-      env: keyringEnvironment(true),
-      timeout: 15_000,
-      maxBuffer: 1024 * 1024,
-    }),
-  );
+  const { stdout } = await runGh(GITHUB_CLI_OPS.authStatus, ['auth', 'status', '--json', 'hosts'], {
+    env: keyringEnvironment(true),
+    timeout: 15_000,
+    maxBuffer: 1024 * 1024,
+  });
   return JSON.parse(stdout);
 }
 
@@ -85,12 +98,10 @@ async function checkoutPRForBranch(
   checkout: string,
   branch: string,
 ): Promise<CheckoutBranchPR | null> {
-  const { stdout } = await withHostOperation(GITHUB_CLI_OPS.checkoutPRForBranch, () =>
-    execFileAsync(
-      'gh',
-      ['pr', 'list', '--head', branch, '--json', 'number,baseRefName', '--jq', '.[0]'],
-      { cwd: checkout, env: keyringEnvironment(false), maxBuffer: 1024 * 1024 },
-    ),
+  const { stdout } = await runGh(
+    GITHUB_CLI_OPS.checkoutPRForBranch,
+    ['pr', 'list', '--head', branch, '--json', 'number,baseRefName', '--jq', '.[0]'],
+    { cwd: checkout, env: keyringEnvironment(false), maxBuffer: 1024 * 1024 },
   );
   const found: unknown = JSON.parse(stdout || 'null');
   if (!isRecord(found) || typeof found.number !== 'number' || !found.number) return null;

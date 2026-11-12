@@ -28,17 +28,18 @@ git('-C', repo, 'commit', '-q', '--allow-empty', '-m', 'a');
 
 const commands: string[] = [];
 const gitRunCalls: string[][] = [];
-mock.module('../host-services/git.js', {
-  namedExports: {
-    ...realGit,
-    gitService: {
-      ...realGit.gitService,
-      run(argv: string[], options?: GitRunOptions) {
-        gitRunCalls.push(argv);
-        return realGit.gitService.run(argv, options);
-      },
-    },
+const recordingGitService = {
+  ...realGit.gitService,
+  run(argv: string[], options?: GitRunOptions) {
+    gitRunCalls.push(argv);
+    return realGit.gitService.run(argv, options);
   },
+};
+// Node 22 cannot mock a module whose named exports include `default`: it goes in defaultExport.
+const { default: _realGitDefault, ...realGitNamed } = realGit;
+mock.module('../host-services/git.js', {
+  namedExports: { ...realGitNamed, gitService: recordingGitService },
+  defaultExport: recordingGitService,
 });
 mock.module('../core/exec.js', {
   namedExports: {

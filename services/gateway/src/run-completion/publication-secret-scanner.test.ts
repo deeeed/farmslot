@@ -3,7 +3,7 @@ import { mock, test } from 'node:test';
 
 import secretScan from '../host-services/secret-scan.js';
 
-// Counts scans in the caller's thread. The worker thread loads the real module.
+// Counts scans in the gateway process. The scan process loads the real module.
 const scrub = await import('@farmslot/handoff/scrub');
 let callerThreadScans = 0;
 mock.module('@farmslot/handoff/scrub', {
@@ -20,13 +20,13 @@ const { assertPublicationTextSafe, PublicationSecretError } =
 
 const secret = `private_key = ${'1'.repeat(64)}`;
 
-test('publication text is scanned on the worker thread, never in the caller', async () => {
+test('publication text is scanned in the scan process, never in the caller', async () => {
   await assert.rejects(assertPublicationTextSafe('Clean summary.', secret), PublicationSecretError);
   await assertPublicationTextSafe('Clean summary.', 'Recipe passed.');
   assert.equal(callerThreadScans, 0);
 });
 
-test('a scan stopped before it completes refuses, and the next scan starts a new worker', async () => {
+test('a scan stopped before it completes refuses, and the next scan starts a new scan process', async () => {
   const refused = assert.rejects(
     assertPublicationTextSafe('clean diagnostic line\n'.repeat(50_000)),
     (error: unknown) =>

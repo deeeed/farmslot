@@ -142,15 +142,17 @@ const API_VERSION = '2022-11-28';
 const USER_AGENT = 'farmslot-gateway';
 
 export async function githubHttp(request: GitHubHttpRequest): Promise<GitHubHttpResponse> {
-  // A fixture origin only ever receives FARMSLOT_GITHUB_FIXTURE_TOKEN, never a keyring or
-  // account-bound credential; without one no Authorization header is sent.
-  const token = overrideOrigin()
-    ? (process.env.FARMSLOT_GITHUB_FIXTURE_TOKEN?.trim() ?? '')
-    : request.token;
+  // A fixture origin only ever receives FARMSLOT_GITHUB_FIXTURE_TOKEN, never a keyring,
+  // account-bound or caller-supplied credential; without one no Authorization header is sent.
+  const fixture = overrideOrigin() !== null;
+  const token = fixture ? (process.env.FARMSLOT_GITHUB_FIXTURE_TOKEN?.trim() ?? '') : request.token;
+  const callerHeaders = Object.entries(request.headers ?? {}).filter(
+    ([name]) => !fixture || name.toLowerCase() !== 'authorization',
+  );
   const headers: Record<string, string> = {
     'User-Agent': USER_AGENT,
     'X-GitHub-Api-Version': API_VERSION,
-    ...request.headers,
+    ...Object.fromEntries(callerHeaders),
     ...(token ? { Authorization: `token ${token}` } : {}),
   };
   let response: Response;

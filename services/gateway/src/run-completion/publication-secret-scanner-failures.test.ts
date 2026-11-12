@@ -2,30 +2,37 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { mock, test } from 'node:test';
 
-import type { PublicationScanRequest } from '../host-services/secret-scan-worker.js';
+import type { PublicationScanRequest } from '../host-services/secret-scan-protocol.js';
 
-/** Stands in for the scan worker so each failure can be driven deterministically. */
-class FakeWorker extends EventEmitter {
+/** Stands in for the forked scan process so each failure can be driven deterministically. */
+class FakeScanProcess extends EventEmitter {
   readonly posted: PublicationScanRequest[] = [];
+  readonly pid = 4242;
+  exitCode: number | null = null;
+  signalCode: NodeJS.Signals | null = null;
   terminated = false;
+  readonly channel = { ref() {}, unref() {} };
 
   constructor() {
     super();
     workers.push(this);
   }
 
-  postMessage(request: PublicationScanRequest): void {
+  send(request: PublicationScanRequest, callback?: (error: Error | null) => void): boolean {
     this.posted.push(request);
+    callback?.(null);
+    return true;
   }
 
   ref(): void {}
 
   unref(): void {}
 
-  async terminate(): Promise<number> {
+  kill(signal: NodeJS.Signals = 'SIGTERM'): boolean {
     this.terminated = true;
-    this.emit('exit', 1);
-    return 1;
+    this.signalCode = signal;
+    this.emit('exit', null, signal);
+    return true;
   }
 
   /** Answers one posted request, the latest by default. */
@@ -38,16 +45,23 @@ class FakeWorker extends EventEmitter {
   }
 }
 
-const workers: FakeWorker[] = [];
-mock.module('node:worker_threads', { namedExports: { Worker: FakeWorker } });
+const workers: FakeScanProcess[] = [];
+const realChildProcess = await import('node:child_process');
+const fork = () => new FakeScanProcess();
+// Node 22 cannot mock a module whose named exports include `default`: it goes in defaultExport.
+const { default: realChildProcessDefault, ...realChildProcessNamed } = realChildProcess;
+mock.module('node:child_process', {
+  namedExports: { ...realChildProcessNamed, fork },
+  defaultExport: { ...realChildProcessDefault, fork },
+});
 const { default: secretScan, MAX_PENDING_PUBLICATION_SCANS } =
   await import('../host-services/secret-scan.js');
 const { assertPublicationTextSafe, PublicationSecretError } =
   await import('./publication-secrets.js');
 
-function latest(): FakeWorker {
+function latest(): FakeScanProcess {
   const worker = workers.at(-1);
-  assert.ok(worker, 'no scan worker was started');
+  assert.ok(worker, 'no scan process was started');
   return worker;
 }
 
