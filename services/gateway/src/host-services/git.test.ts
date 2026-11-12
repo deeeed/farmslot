@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -16,6 +16,8 @@ await mkdir(home);
 process.env.HOME = home;
 delete process.env.XDG_CONFIG_HOME;
 for (const name of Object.keys(process.env)) if (name.startsWith('GIT_')) delete process.env[name];
+// The machine's system config too: git and the reader both take it from GIT_CONFIG_SYSTEM.
+process.env.GIT_CONFIG_SYSTEM = path.join(root, 'system-gitconfig');
 
 const gitSvc = await import('./git.js');
 const { gitHeadProbeCommand, parseGitHeadProbe, readLocalSlotGit } =
@@ -411,4 +413,116 @@ test('a global config git rejects makes every read fail as git fails', async (t)
   const local = { host: 'localhost', machine: 'git-service-test', remoteRepo: dir };
   assert.deepEqual(await readLocalSlotGit(local, 'main'), { linked: false });
   assert.equal((await gitSvc.gitService.run(['rev-parse', 'HEAD'], { cwd: dir })).exitCode, 128);
+});
+
+/** Replace a config file through a rename, so its identity changes as git's own writes change it. */
+async function replaceConfig(file: string, text: string): Promise<void> {
+  await writeFile(`${file}.next`, text);
+  await rename(`${file}.next`, file);
+}
+
+/** One variable as a config file line; null writes a bare key. */
+function configEntry(name: string, value: string | null): string {
+  const dot = name.lastIndexOf('.');
+  const [section, ...sub] = name.slice(0, dot).split('.');
+  const header = sub.length ? `[${section} "${sub.join('.')}"]` : `[${section}]`;
+  return `${header}\n\t${name.slice(dot + 1)}${value === null ? '' : ` = ${value}`}\n`;
+}
+
+test('a config value git refuses leaves every read to git', async () => {
+  const dir = await repo();
+  const localFile = path.join(dir, '.git', 'config');
+  const globalFile = path.join(home, '.gitconfig');
+  const local = await readFile(localFile, 'utf8');
+  assert.ok(await gitSvc.openGitCheckout(dir));
+  // Each makes git exit 128 at startup (temp/git-config-probe.zsh, git 2.54). The repository
+  // format variables only count in the repository's own config.
+  const refused: Array<[scope: 'global' | 'local' | 'both', name: string, value: string | null]> = [
+    ['both', 'core.bare', 'garbage'],
+    ['both', 'core.bare', '99999999999'],
+    ['both', 'core.compression', '10'],
+    ['both', 'core.abbrev', '3'],
+    ['both', 'core.checkstat', 'garbage'],
+    ['both', 'core.editor', null],
+    ['both', 'core.packedgitlimit', '99999999999999999999'],
+    ['both', 'core.packedgitwindowsize', '-1'],
+    ['both', 'core.warnambiguousrefs', 'garbage'],
+    ['local', 'core.logallrefupdates', null],
+    ['local', 'core.repositoryformatversion', 'garbage'],
+    ['local', 'extensions.objectformat', 'garbage'],
+    ['local', 'extensions.preciousobjects', 'garbage'],
+    ['both', 'advice.detachedhead', 'garbage'],
+    ['both', 'push.default', 'garbage'],
+    ['both', 'push.default', null],
+    ['both', 'branch.autosetupmerge', 'garbage'],
+    ['both', 'branch.autosetuprebase', 'garbage'],
+    ['both', 'pack.packsizelimit', 'garbage'],
+    ['both', 'pager.color', 'garbage'],
+    ['both', 'color.pager', 'auto'],
+    ['both', 'color.advice', 'garbage'],
+    ['both', 'user.name', null],
+    ['both', 'author.name', null],
+    ['both', 'i18n.commitencoding', null],
+    ['both', 'index.version', null],
+    ['both', 'index.skiphash', 'garbage'],
+    ['both', 'feature.experimental', 'garbage'],
+    ['both', 'sparse.expectfilesoutsideofpatterns', 'garbage'],
+    ['both', 'fetch.negotiationalgorithm', 'garbage'],
+    ['both', 'gc.writecommitgraph', 'garbage'],
+  ];
+  try {
+    for (const [scope, name, value] of refused)
+      for (const where of scope === 'both' ? (['global', 'local'] as const) : [scope]) {
+        const label = `${where} ${name}=${value ?? '(bare)'}`;
+        if (where === 'global') await replaceConfig(globalFile, configEntry(name, value));
+        else await replaceConfig(localFile, local + configEntry(name, value));
+        assert.equal(sh(`git -C '${dir}' rev-parse HEAD`).exitCode, 128, `git: ${label}`);
+        assert.equal(await gitSvc.openGitCheckout(dir), undefined, `service: ${label}`);
+        if (where === 'global') await rm(globalFile);
+        else await replaceConfig(localFile, local);
+      }
+  } finally {
+    await rm(globalFile, { force: true });
+    await replaceConfig(localFile, local);
+  }
+});
+
+test('a usual config is read from its files, with the answers git gives', async () => {
+  const dir = await repo();
+  git(dir, 'remote', 'add', 'origin', 'https://example.invalid/repo.git');
+  git(dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  // The variables of this repository's and this machine's configs, by name, with usual values.
+  const globalFile = path.join(home, '.gitconfig');
+  await replaceConfig(
+    globalFile,
+    [
+      ['user.name', 'Proof'],
+      ['user.email', 'proof@example.invalid'],
+      ['user.signingkey', '/tmp/key.pub'],
+      ['core.pager', 'less -R'],
+      ['push.autosetupremote', 'true'],
+      ['init.defaultbranch', 'main'],
+      ['commit.gpgsign', 'true'],
+      ['gpg.format', 'ssh'],
+      ['credential.helper', 'osxkeychain'],
+      ['credential.https://example.invalid.helper', 'store'],
+      ['filter.lfs.required', 'true'],
+      ['filter.lfs.clean', 'git-lfs clean -- %f'],
+      ['http.postbuffer', '524288000'],
+    ]
+      .map(([name, value]) => configEntry(name, value))
+      .join(''),
+  );
+  try {
+    git(dir, 'config', 'core.quotepath', 'false');
+    git(dir, 'config', 'core.hookspath', '.githooks');
+    git(dir, 'config', 'branch.main.remote', 'origin');
+    git(dir, 'config', 'branch.main.merge', 'refs/heads/main');
+    git(dir, 'config', 'gpg.ssh.allowedsignersfile', '/tmp/allowed');
+    assert.equal(sh(`git -C '${dir}' rev-parse HEAD`).exitCode, 0);
+    await assertHeadMatchesGit(dir);
+    await assertDefaultBranchMatchesGit(dir);
+  } finally {
+    await rm(globalFile, { force: true });
+  }
 });

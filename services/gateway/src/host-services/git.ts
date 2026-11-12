@@ -154,7 +154,8 @@ function pointerPath(content: string): string | undefined {
 /**
  * Whether git reads this repository through the files ref backend these readers implement: format
  * version 0 or 1, and `extensions.refStorage` unset, or `files` in a version 1 repository (git
- * refuses the extension in version 0). Reftable or a newer format is left to git.
+ * refuses the extension in version 0; `objectFormat` likewise). Reftable or a newer format is left
+ * to git.
  */
 function filesRefBackend(local: GitConfigEntries): boolean {
   const last = (name: string) => {
@@ -164,7 +165,10 @@ function filesRefBackend(local: GitConfigEntries): boolean {
   const version = last('core.repositoryformatversion');
   if (version !== undefined && version !== '0' && version !== '1') return false;
   const storage = last('extensions.refstorage');
-  return storage === undefined || (version === '1' && storage === 'files');
+  if (storage !== undefined && !(version === '1' && storage === 'files')) return false;
+  // Like refStorage, objectFormat is refused in version 0; sha256 objects read with the same refs.
+  const format = last('extensions.objectformat');
+  return format === undefined || (version === '1' && (format === 'sha1' || format === 'sha256'));
 }
 
 /**
@@ -637,8 +641,217 @@ function parseConfigBool(value: string | null): boolean | undefined {
   if (value === null) return true;
   if (value === '' || /^(false|no|off)$/i.test(value)) return false;
   if (/^(true|yes|on)$/i.test(value)) return true;
-  if (/^[-+]?\d+$/.test(value)) return Number(value) !== 0;
-  return undefined;
+  const number = parseConfigInt(value, INT_MAX);
+  return number === undefined ? undefined : number !== 0;
+}
+
+const INT_MAX = 2 ** 31 - 1;
+const UNIT = { k: 1024, m: 1024 ** 2, g: 1024 ** 3 } as const;
+
+/**
+ * An integer git reads the same way (git_parse_signed, base 0): plain decimal with an optional
+ * k/m/g unit, within ±`limit`. Leading zeros (octal to git), hex and anything else are left to git.
+ */
+function parseConfigInt(value: string | null, limit: number): number | undefined {
+  const match = value === null ? null : /^([-+]?)(0|[1-9]\d{0,15})([kmg]?)$/i.exec(value);
+  if (!match) return undefined;
+  const unit = match[3] ? UNIT[match[3].toLowerCase() as keyof typeof UNIT] : 1;
+  const number = Number(match[2]) * unit * (match[1] === '-' ? -1 : 1);
+  return Math.abs(number) <= limit ? number : undefined;
+}
+
+/** How git checks a variable's value when it loads its config at startup. */
+type ConfigCheck =
+  | 'bool'
+  /** Any value, or none: git does not check it at startup. */
+  | 'any'
+  /** Any value; a bare `key` (no value) is an error. */
+  | 'string'
+  | 'int'
+  /** A non-negative size (unsigned long). */
+  | 'size'
+  | ConfigChoice;
+
+/** Exact words, a git boolean (`bool`) and/or an integer range; a bare key only with `bare`. */
+interface ConfigChoice {
+  words?: readonly string[];
+  bool?: true;
+  range?: readonly [number, number];
+  bare?: true;
+}
+
+/**
+ * Sections whose variables git checks while loading its config for the reads this service
+ * replaces (rev-parse, symbolic-ref, for-each-ref, config --get). Found by setting one invalid
+ * value at a time with the installed git (temp/git-config-probe.zsh). Subsections
+ * (`branch.<name>.*`, `color.diff.*`) are not checked.
+ */
+const CHECKED_SECTIONS = new Set([
+  'core',
+  'extensions',
+  'advice',
+  'push',
+  'branch',
+  'pack',
+  'pager',
+  'color',
+  'user',
+  'author',
+  'committer',
+  'i18n',
+  'index',
+  'feature',
+  'sparse',
+  'fetch',
+  'gc',
+]);
+
+/**
+ * The variables of the checked sections that this service knows, with git's check for each. A
+ * variable of a checked section that is not listed leaves the checkout to git; `any` entries are
+ * ones the probe showed git accepts with any value.
+ */
+const CONFIG_CHECKS: Readonly<Record<string, ConfigCheck>> = {
+  'core.bare': 'bool',
+  'core.filemode': 'bool',
+  'core.ignorecase': 'bool',
+  'core.precomposeunicode': 'bool',
+  'core.symlinks': 'bool',
+  'core.trustctime': 'bool',
+  'core.quotepath': 'bool',
+  'core.fsyncobjectfiles': 'bool',
+  'core.commitgraph': 'bool',
+  'core.multipackindex': 'bool',
+  'core.sparsecheckout': 'bool',
+  'core.sparsecheckoutcone': 'bool',
+  'core.protecthfs': 'bool',
+  'core.protectntfs': 'bool',
+  'core.warnambiguousrefs': 'bool',
+  // A bare key is accepted globally but refused in the repository's own config.
+  'core.logallrefupdates': { words: ['always'], bool: true },
+  'core.autocrlf': { words: ['input'], bool: true, bare: true },
+  'core.safecrlf': { words: ['warn'], bool: true },
+  'core.checkstat': { words: ['default', 'minimal'] },
+  'core.createobject': { words: ['rename', 'link'] },
+  'core.compression': { range: [-1, 9] },
+  'core.loosecompression': { range: [-1, 9] },
+  'core.abbrev': { words: ['auto', 'false', 'no', 'off'], range: [4, 40] },
+  'core.repositoryformatversion': 'int',
+  'core.maxtreedepth': 'int',
+  'core.packedgitwindowsize': 'size',
+  'core.packedgitlimit': 'size',
+  'core.deltabasecachelimit': 'size',
+  'core.editor': 'string',
+  'core.excludesfile': 'string',
+  'core.attributesfile': 'string',
+  'core.askpass': 'string',
+  'core.worktree': 'string',
+  'core.pager': 'any',
+  'core.hookspath': 'any',
+  'core.sshcommand': 'any',
+  'core.notesref': 'any',
+  'core.gitproxy': 'any',
+  'core.alternaterefscommand': 'any',
+  'core.sharedrepository': 'string',
+  'core.eol': 'string',
+  'core.bigfilethreshold': 'string',
+  'core.fsync': 'string',
+  'core.fsyncmethod': 'string',
+  'core.preloadindex': 'string',
+  'core.untrackedcache': 'string',
+  'core.splitindex': 'string',
+  'core.fsmonitor': 'string',
+  'core.checkroundtripencoding': 'string',
+  'core.packedrefstimeout': 'string',
+  'core.filesreftimeout': 'string',
+  'core.whitespace': 'string',
+  'core.hidedotfiles': 'string',
+  // The repository format check (filesRefBackend) reads these two.
+  'extensions.refstorage': 'string',
+  'extensions.objectformat': 'string',
+  'extensions.worktreeconfig': 'bool',
+  'push.default': { words: ['nothing', 'matching', 'simple', 'upstream', 'tracking', 'current'] },
+  'push.autosetupremote': 'string',
+  'push.followtags': 'string',
+  'push.gpgsign': 'string',
+  'push.usebitmaps': 'string',
+  'push.recursesubmodules': 'string',
+  'branch.autosetupmerge': { words: ['always', 'inherit', 'simple'], bool: true, bare: true },
+  'branch.autosetuprebase': { words: ['never', 'local', 'remote', 'always'] },
+  'branch.sort': 'string',
+  'pack.packsizelimit': 'size',
+  'pack.usesparse': 'bool',
+  'pack.usebitmapboundarytraversal': 'bool',
+  'pack.usepathwalk': 'bool',
+  'pack.threads': 'string',
+  'pack.window': 'string',
+  'pager.color': 'bool',
+  'color.pager': 'bool',
+  'color.advice': { words: ['auto', 'always', 'never'], bool: true },
+  'color.ui': 'string',
+  'color.diff': 'string',
+  'color.status': 'string',
+  'color.branch': 'string',
+  'color.interactive': 'string',
+  'user.name': 'string',
+  'user.email': 'string',
+  'user.useconfigonly': 'bool',
+  'user.signingkey': 'any',
+  'author.name': 'string',
+  'author.email': 'string',
+  'committer.name': 'string',
+  'committer.email': 'string',
+  'i18n.commitencoding': 'string',
+  'i18n.logoutputencoding': 'string',
+  'index.version': 'int',
+  'index.skiphash': 'bool',
+  'index.sparse': 'bool',
+  'index.threads': 'string',
+  'index.recordendofindexentries': 'string',
+  'feature.manyfiles': 'bool',
+  'feature.experimental': 'bool',
+  'sparse.expectfilesoutsideofpatterns': 'bool',
+  'fetch.negotiationalgorithm': { words: ['consecutive', 'skipping', 'noop', 'default'] },
+  'fetch.writecommitgraph': 'bool',
+  'fetch.prune': 'string',
+  'gc.writecommitgraph': 'bool',
+  'gc.auto': 'string',
+  'gc.autodetach': 'string',
+};
+
+function configValueAccepted(check: ConfigCheck, value: string | null): boolean {
+  if (check === 'any') return true;
+  if (check === 'string') return value !== null;
+  if (check === 'bool') return parseConfigBool(value) !== undefined;
+  if (check === 'int') return parseConfigInt(value, INT_MAX) !== undefined;
+  if (check === 'size') {
+    const size = parseConfigInt(value, Number.MAX_SAFE_INTEGER);
+    return size !== undefined && size >= 0;
+  }
+  if (value === null) return check.bare === true;
+  // Exact words: git compares some case-insensitively, which only makes this stricter.
+  if (check.words?.includes(value)) return true;
+  if (check.bool && parseConfigBool(value) !== undefined) return true;
+  const number = check.range && parseConfigInt(value, INT_MAX);
+  return (
+    check.range !== undefined &&
+    number !== undefined &&
+    number >= check.range[0] &&
+    number <= check.range[1]
+  );
+}
+
+/**
+ * Whether git accepts every variable of the checked sections in a config file: each is one this
+ * service knows and its value passes git's check. Anything else leaves the checkout to git.
+ */
+function configAcceptedByGit(entries: GitConfigEntries): boolean {
+  return entries.every(([name, value]) => {
+    const section = name.slice(0, name.lastIndexOf('.'));
+    if (!CHECKED_SECTIONS.has(section)) return true;
+    const check = CONFIG_CHECKS[name] ?? (section === 'advice' ? 'bool' : undefined);
+    return check !== undefined && configValueAccepted(check, value);
+  });
 }
 
 /** The last value of a boolean variable, or `fallback` when unset. */
@@ -660,7 +873,9 @@ async function readConfigFile(file: string): Promise<GitConfigEntries | undefine
   const content = await readFile(file, 'utf8');
   // Stat after reading: content written in between gets a new identity and is read again.
   const after = await stat(file);
-  const entries = parseGitConfig(content);
+  const parsed = parseGitConfig(content);
+  // A file git would refuse, for its syntax or for a value, is left to git like an include.
+  const entries = parsed && configAcceptedByGit(parsed) ? parsed : undefined;
   if (fileIdentity(after) === identity) configFileCache.set(file, { identity, entries });
   return entries;
 }

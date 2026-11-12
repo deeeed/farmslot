@@ -1,9 +1,11 @@
 // The gateway-background process's request loop (child.ts runs it with the real handlers). It
 // answers operation requests over IPC and exits with its parent. It never registers as the gateway
 // status process, so a shared fleet status write from here is refused by assertStatusFileWritable.
+import type { ChildProcess } from 'node:child_process';
+
 import type { ExecutionKind } from '@farmslot/protocol/performance';
 
-import { observeProcessGroups, signalProcessGroup } from '../../core/exec.js';
+import { ownLocalCommands, signalProcessGroup } from '../../core/exec.js';
 import { gatewayPerformance } from '../../observability/performance.js';
 
 import type { BackgroundHandlers } from './handlers.js';
@@ -37,6 +39,14 @@ function execCounters(): ExecCounters {
   return counters;
 }
 
+/** After a command's own timeout and closeout, how long its watchdog waits to kill its group. */
+const WATCHDOG_GRACE_MS = 3_000;
+
+export interface ServeOptions {
+  /** Tests shorten it; the default leaves the command's own timeout path well ahead. */
+  watchdogGraceMs?: number;
+}
+
 /**
  * Serve requests with `handlers`. `commandOperations` are the operations that run commands: the
  * child attributes its exec counters to the completing request of one of these.
@@ -44,6 +54,7 @@ function execCounters(): ExecCounters {
 export function serveBackgroundRequests(
   handlers: BackgroundHandlers,
   commandOperations: ReadonlySet<BackgroundOperation>,
+  options: ServeOptions = {},
 ): void {
   const send = process.send?.bind(process);
   if (!send) throw new Error('The gateway background process must be forked with an IPC channel');
@@ -98,31 +109,29 @@ export function serveBackgroundRequests(
     }
   }
 
-  // Commands run in their own process groups, whose timeouts this process owns. The supervisor
-  // hears of each group so it can kill what is left if this process dies without cleaning up.
-  const commandGroups = new Set<number>();
-  observeProcessGroups({
-    started(pgid) {
-      commandGroups.add(pgid);
-      post({ type: 'processGroup', pgid, state: 'started' });
+  // Every command this process starts runs in its own process group. However this process exits
+  // (shutdown, a closed IPC channel, process.exit, an uncaught exception), the groups of commands
+  // that have not exited are killed, through their handles: a command that has not emitted `exit`
+  // has not been reaped, so its pid still names its group. A command with a timeout also carries a
+  // watchdog that kills its group if this process is killed outright (SIGKILL, a native crash).
+  const running = new Set<ChildProcess>();
+  ownLocalCommands({
+    started(command) {
+      running.add(command);
+      command.once('exit', () => running.delete(command));
     },
-    ended(pgid) {
-      commandGroups.delete(pgid);
-      post({ type: 'processGroup', pgid, state: 'ended' });
-    },
+    watchdogGraceMs: options.watchdogGraceMs ?? WATCHDOG_GRACE_MS,
   });
-  /** Kill the groups of commands still running (their timeouts die with this process), then exit. */
-  function exit(): never {
-    for (const pgid of commandGroups) signalProcessGroup(pgid, 'SIGKILL');
-    process.exit(0);
-  }
+  process.on('exit', () => {
+    for (const command of running) if (command.pid) signalProcessGroup(command.pid, 'SIGKILL');
+  });
 
   process.on('message', (message: BackgroundParentMessage) => {
-    if (message.type === 'shutdown') exit();
+    if (message.type === 'shutdown') process.exit(0);
     else void handle(message);
   });
   // The IPC channel closes when the gateway exits or restarts: this process never outlives it.
-  process.on('disconnect', exit);
+  process.on('disconnect', () => process.exit(0));
 
   post({
     type: 'ready',
