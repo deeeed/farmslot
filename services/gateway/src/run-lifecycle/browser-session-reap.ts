@@ -23,7 +23,8 @@ function escapeRegExp(value: string): string {
  * CDP port and the helpers attached to it (wallet host, console collector).
  * A recipe call starts them detached, so they outlive the worker with parent 1
  * and no lease records them (run 22e62daa). A process is reaped only when it is
- * detached and either uses a browser profile inside the slot checkout, or is
+ * detached and either uses a browser profile inside the slot checkout after
+ * its workers are verified stopped (includeSlotProfiles), or is
  * on its CDP port and tied to the checkout by cwd or arguments. Descendants
  * go with it. While a capability lease on the slot still holds or keeps providers warm, its release
  * effect decides and nothing is reaped; a process a lease recorded is never
@@ -31,11 +32,11 @@ function escapeRegExp(value: string): string {
  */
 export async function reapSlotBrowserSession(
   vars: SlotVars,
-  opts: { stillOwned?: () => Promise<boolean> } = {},
+  opts: { stillOwned?: () => Promise<boolean>; includeSlotProfiles?: boolean } = {},
 ): Promise<string | null> {
   const configuredPort = vars.resourceVars?.cdp_port;
   const cdpPort = configuredPort && /^\d+$/.test(configuredPort) ? configuredPort : undefined;
-  if (!vars.remoteRepo) return null;
+  if (!vars.remoteRepo || (!cdpPort && !opts.includeSlotProfiles)) return null;
   const census = await execOnSlot(
     vars,
     [
@@ -74,11 +75,9 @@ export async function reapSlotBrowserSession(
     : undefined;
   const candidates = rows.filter((row) => {
     const cwd = cwds.get(row.pid);
-    const profileArg = /(?:^|\s)--user-data-dir(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(
-      row.command,
-    );
-    const profile = profileArg?.[1] ?? profileArg?.[2] ?? profileArg?.[3];
+    const profile = /(?:^|\s)--user-data-dir(?:=|\s+)(\S+)/.exec(row.command)?.[1];
     const ownedProfile =
+      opts.includeSlotProfiles &&
       profile !== undefined &&
       path.posix.isAbsolute(profile) &&
       repos.some((repo) => isWithinPath(repo, path.posix.normalize(profile)));

@@ -1,1 +1,1 @@
-- Stop detached diagnostic browsers whose user-data-dir belongs to the slot checkout, even when they bypass its managed CDP port.
+- Stop detached diagnostic browsers with checkout-owned profiles after workers are verified quiescent, even outside the managed CDP port.

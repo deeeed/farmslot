@@ -1338,13 +1338,14 @@ test('diagnostic cleanup preserves a browser attached to a live worker', async (
   assert.deepEqual(alivePids(), [60370, 60371]);
 });
 
-test('diagnostic cleanup accepts a quoted profile flag with a space separator', async () => {
+test('diagnostic cleanup accepts a profile flag with a space separator', async () => {
   slotProcesses = leftDiagnosticBrowser();
   slotProcesses[0].args = slotProcesses[0].args.replace(
     '--user-data-dir=/slot/temp/diag',
-    '--user-data-dir "/slot/temp/diag profile"',
+    '--user-data-dir /slot/temp/diag',
   );
   assert.equal(await stopRunOwnedTmuxAndWatches(run), null);
+  assert.equal(await slotTeardownBlocker(run), null);
   assert.deepEqual(alivePids(), []);
 });
 
@@ -1352,7 +1353,7 @@ test('a diagnostic browser that survives signals keeps a profile-specific hold',
   slotProcesses = leftDiagnosticBrowser();
   slotProcesses[0].survives = true;
   assert.match(
-    (await stopRunOwnedTmuxAndWatches(run)) ?? '',
+    (await slotTeardownBlocker(run)) ?? '',
     /Browser session process 60370 .*with a profile in the slot repository did not stop$/,
   );
   assert.deepEqual(alivePids(), [60370]);
@@ -1453,6 +1454,18 @@ test('done cleanup preserves an unrecorded worker for another task and its manag
   assert.equal(result.released, false);
   assert.match(result.skipped ?? '', /Unrecorded pane %3.*not quiescent/);
   assert.deepEqual(alivePids(), [55354, 55559]);
+});
+
+test('done cleanup preserves diagnostic Chrome while an unrecorded worker protects the checkout', async () => {
+  run.status = 'done';
+  slotProcesses = leftDiagnosticBrowser();
+  closedRunUnrecordedWorker('.task/dev/manual-000164-1102-090112');
+
+  const result = await releaseCompletedRunSlot(run);
+
+  assert.equal(result.released, false);
+  assert.match(result.skipped ?? '', /Unrecorded pane %3.*not quiescent/);
+  assert.deepEqual(alivePids(), [60370, 60371]);
 });
 
 test('a dev server the gateway does not watch still holds the slot', async () => {
