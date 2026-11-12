@@ -1,5 +1,6 @@
 import { isRecord } from '@farmslot/protocol/recipe';
 
+import { withFarmGitConfig } from '../../core/farm-git.js';
 import type { RawProjectJson, SlotVars } from '../../core/index.js';
 import { readSlotProbe } from '../../core/read-probes.js';
 import { shellQuote } from '../../core/tmux.js';
@@ -24,7 +25,7 @@ export function workspaceProbeCommand(
   project: RawProjectJson,
   defaultBranch: string,
 ): string {
-  return `GIT_OPTIONAL_LOCKS=0 python3 - ${shellQuote(vars.remoteRepo)} ${shellQuote(defaultBranch)} ${shellQuote(JSON.stringify(slotScaffoldingPaths(project).owned))} <<'FARMSLOT_WORKSPACE_PROBE'
+  return withFarmGitConfig(`GIT_OPTIONAL_LOCKS=0 python3 - ${shellQuote(vars.remoteRepo)} ${shellQuote(defaultBranch)} ${shellQuote(JSON.stringify(slotScaffoldingPaths(project).owned))} <<'FARMSLOT_WORKSPACE_PROBE'
 import datetime,hashlib,json,os,pathlib,stat,subprocess,sys
 repo,default,excluded=sys.argv[1],sys.argv[2],json.loads(sys.argv[3])
 def git(*args,optional=False):
@@ -64,7 +65,7 @@ remote=git('config','--get','branch.'+branch+'.remote',optional=True).decode().s
 merge=git('config','--get','branch.'+branch+'.merge',optional=True).decode().strip() or 'refs/heads/'+branch
 origin=git('remote','get-url','origin').strip()
 print(json.dumps(dict(branch=branch,headSha=head,dirtyFingerprint=digest.hexdigest(),dirtyCount=count,localDefaultSha=local,behind=int(behind) if behind.isdigit() else None,defaultFetchedAt=fetched,originKey=hashlib.sha256(origin).hexdigest(),publicationRemote=remote,publicationRef=merge)))
-FARMSLOT_WORKSPACE_PROBE`;
+FARMSLOT_WORKSPACE_PROBE`);
 }
 
 export async function probeWorkspace(

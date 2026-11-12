@@ -4,8 +4,10 @@ import path from 'node:path';
 
 import { DEFAULT_TASK_DIR } from '@farmslot/protocol';
 import { FARM_INSTANCE_CLAIM } from '@farmslot/protocol/node/farm-paths';
+import { parseProjectOwnedPaths } from '@farmslot/slot-config';
 
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
+import { withFarmGitConfig } from '../core/farm-git.js';
 import { assertHeavyWriteRoom } from '../core/heavy-write-room.js';
 import {
   execOnSlot,
@@ -56,7 +58,8 @@ export function slotScaffoldingPaths(projectJson: RawProjectJson) {
     configuredRuntime === '~' ||
     configuredRuntime.startsWith('~/');
   const runtime = externalRuntime ? configuredRuntime : relativeNamespace(configuredRuntime);
-  // Retain the pre-existing exclusions for legacy generated support files.
+  const support = parseProjectOwnedPaths(projectJson.fixtures?.owned_paths);
+  // Old packs keep their existing exclusions until they declare ownership.
   return {
     task,
     runtime,
@@ -69,7 +72,9 @@ export function slotScaffoldingPaths(projectJson: RawProjectJson) {
         '.agent',
         '.observability',
         '.omc',
-        '.claude/CLAUDE.local.md',
+        ...(support === undefined
+          ? ['.claude/CLAUDE.local.md']
+          : support.map((entry) => entry.path)),
       ]),
     ],
   };
@@ -112,6 +117,65 @@ fi`;
       `Cannot exclude slot scaffolding on ${vars.slotId}: ${result.stderr || result.stdout}`,
     );
   return result.stdout.trim() === 'installed';
+}
+
+/** One batch for literal pack paths. Git clean preserves tracked files and nested repositories. */
+export function slotOwnedPathCleanupCommand(
+  vars: Pick<SlotVars, 'remoteRepo'>,
+  projectJson: RawProjectJson,
+  retiredOnly = false,
+): string | null {
+  const declared = parseProjectOwnedPaths(projectJson.fixtures?.owned_paths);
+  const roots =
+    declared
+      ?.filter((entry) => !retiredOnly || entry.state === 'retired')
+      .map((entry) => entry.path) ?? [];
+  if (!roots.length) return null;
+  return `GIT_OPTIONAL_LOCKS=0 GIT_NO_LAZY_FETCH=1 python3 - ${shellQuote(vars.remoteRepo)} ${shellQuote(JSON.stringify(roots))} <<'FARMSLOT_OWNED_PATH_CLEANUP'
+import json,os,subprocess,sys
+repo,roots=sys.argv[1],json.loads(sys.argv[2])
+real_repo=os.path.realpath(repo)
+def git(*args):
+ result=subprocess.run(['git','--literal-pathspecs','-C',repo,*args],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+ if result.returncode: raise RuntimeError(result.stderr.decode(errors='replace').strip() or 'Farm-owned path cleanup failed')
+ return result.stdout
+def inside_parent(relative):
+ parent=os.path.realpath(os.path.dirname(os.path.join(repo,relative)))
+ if os.path.commonpath([real_repo,parent])!=real_repo: raise RuntimeError('Farm-owned path parent escapes checkout: '+relative)
+for root in roots: inside_parent(root)
+# Refuse unreadable HEAD metadata without another full workspace scan.
+git('cat-file','-e','HEAD^{tree}')
+def untracked():
+ return [os.fsdecode(name) for name in git('ls-files','--others','-z','--',*roots).split(bytes([0])) if name]
+before=untracked()
+for relative in before: inside_parent(relative.rstrip('/'))
+git('clean','-fdx','--',*roots)
+after=untracked()
+if after: raise RuntimeError('Farm-owned paths remain untracked (repository or removal refused): '+', '.join(after))
+print(json.dumps(dict(removed=before)))
+FARMSLOT_OWNED_PATH_CLEANUP`;
+}
+
+export async function cleanupSlotOwnedPaths(
+  vars: SlotVars,
+  projectJson: RawProjectJson,
+  options: { retiredOnly?: boolean; beforeRemove?: () => Promise<void> } = {},
+  execute = execOnSlot,
+): Promise<string[]> {
+  const command = slotOwnedPathCleanupCommand(vars, projectJson, options.retiredOnly);
+  if (!command) return [];
+  await options.beforeRemove?.();
+  const result = await execute(vars, command, { cwd: '/', timeout: 30_000, noRetry: true });
+  if (result.exitCode !== 0)
+    throw new Error(
+      `Farm-owned support cleanup failed on ${vars.slotId}: ${result.stderr || result.stdout}`,
+    );
+  const data: unknown = JSON.parse(result.stdout);
+  if (!data || typeof data !== 'object' || !('removed' in data) || !Array.isArray(data.removed))
+    throw new Error('Invalid farm-owned support cleanup result');
+  const removed = data.removed.filter((name): name is string => typeof name === 'string');
+  if (removed.length !== data.removed.length) throw new Error('Invalid farm-owned cleanup paths');
+  return removed;
 }
 
 export interface SlotScaffoldingArchiveOptions {
@@ -210,7 +274,7 @@ async function inventoryRebuildableScaffolding(
     'probe="$base"; [ -e "$probe" ] || probe="$(dirname "$base")"',
     'printf "V\\t%s\\t%s\\t%s\\n" "$(pwd -P)" "$(df -P "$probe" | awk \'NR==2{print $1}\')" "$base"',
   ].join('\n');
-  const result = await execOnSlot(vars, script, { timeout: 120_000 });
+  const result = await execOnSlot(vars, withFarmGitConfig(script), { timeout: 120_000 });
   if (result.exitCode !== 0) throw new Error(`Cannot inventory scaffolding: ${result.stderr}`);
   const skipped: SkippedScaffolding[] = [];
   const devices = new Map<string, string>();
@@ -288,16 +352,18 @@ async function retainNestedCheckouts(
   });
   const result = await execOnSlot(
     vars,
-    [
-      'set -e',
-      `cd ${shellQuote(vars.remoteRepo)}`,
-      ...moved.flatMap(({ entry, to }) => [
-        `mkdir -p ${shellQuote(path.posix.dirname(to))}`,
-        `mv ${shellQuote(entry.path)} ${shellQuote(to)}`,
-        `printf '%s\\t%s\\n' ${shellQuote(entry.path)} ${shellQuote(to)} >> ${shellQuote(path.posix.join(retainedDir, 'RETAINED.tsv'))}`,
-      ]),
-      ...repairs,
-    ].join('\n'),
+    withFarmGitConfig(
+      [
+        'set -e',
+        `cd ${shellQuote(vars.remoteRepo)}`,
+        ...moved.flatMap(({ entry, to }) => [
+          `mkdir -p ${shellQuote(path.posix.dirname(to))}`,
+          `mv ${shellQuote(entry.path)} ${shellQuote(to)}`,
+          `printf '%s\\t%s\\n' ${shellQuote(entry.path)} ${shellQuote(to)} >> ${shellQuote(path.posix.join(retainedDir, 'RETAINED.tsv'))}`,
+        ]),
+        ...repairs,
+      ].join('\n'),
+    ),
     { timeout: 120_000 },
   );
   if (result.exitCode !== 0)

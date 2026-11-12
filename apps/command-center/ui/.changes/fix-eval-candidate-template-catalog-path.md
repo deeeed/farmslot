@@ -1,0 +1,1 @@
+- Launch default eval candidates with the configured project template instead of a fixed worker path.

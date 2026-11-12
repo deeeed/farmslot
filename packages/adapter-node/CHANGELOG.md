@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-node` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.8.13 - 2026-11-12
+
+- Republish against recipe-runner 0.46.13 so consumers load one copy of it, with the faster `status` on checkouts that hold many stale operation records.
+
 ## 0.8.12 - 2026-11-10
 
 - Republish against recipe-runner 0.46.12 so consumers load one copy of it, with the fixed-element visibility fix.

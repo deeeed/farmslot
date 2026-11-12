@@ -16,6 +16,7 @@ import {
   resolveProjectTaskDirName,
 } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { withFarmGitConfig } from '../core/farm-git.js';
 import { expandHook } from '../core/hooks.js';
 import { shellQuote } from '../core/tmux.js';
 import { readResultPackageManifest, writeResultPackageManifest } from '../evals/package-store.js';
@@ -233,7 +234,7 @@ export function materializeHarnessCommand(
   ].join(' && ');
 
   return {
-    command,
+    command: withFarmGitConfig(command),
     harnessDir,
     resolvedShaCommand: `git -C ${shellQuote(checkoutDir)} rev-parse HEAD`,
   };
