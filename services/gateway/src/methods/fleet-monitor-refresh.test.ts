@@ -56,6 +56,17 @@ await writeFile(
   }),
 );
 await import('../runtime/mock-pty.test-support.js');
+const core = await import('../core/index.js');
+let statusCommits = 0;
+mock.module('../core/index.js', {
+  namedExports: {
+    ...core,
+    rewriteStatusFile: async (...args: Parameters<typeof core.rewriteStatusFile>) => {
+      statusCommits++;
+      return core.rewriteStatusFile(...args);
+    },
+  },
+});
 let workspaceRefreshes = 0;
 const forbidden = () => {
   throw new Error('Unexpected workspace action in machine-refresh fixture');
@@ -75,18 +86,30 @@ mock.module('./slot/workspace.js', {
     observeSlotWorkspaces: forbidden,
   },
 });
-const { fleetMonitorStatus, fleetRefresh, fleetHealthRefresh, isFleetCheckedAtStale } =
-  await import('./fleet.js');
+const {
+  fleetMonitorStatus,
+  fleetRefresh,
+  fleetHealthRefresh,
+  isFleetCheckedAtStale,
+  joinFleetRefresh,
+} = await import('./fleet.js');
 
 test('a stale monitor refreshes real machine state without borrowing viewer enrichment', async () => {
   assert.equal((await fleetMonitorStatus()).fleet.stale, true);
-  // Join the production coordinators with one explicit viewer refresh. Exactly
-  // that viewer may enrich; the already requested monitor refresh may not.
+  // Both callers request machine health; optional viewer inspection has another owner.
   const result = await fleetRefresh();
   assert.equal(result.fleet.slots.length, 1);
-  assert.equal(workspaceRefreshes, 1, 'The stale monitor also enriched workspace data');
+  assert.equal(workspaceRefreshes, 0, 'Health refresh must not borrow viewer workspace work');
   const saved = JSON.parse(await readFile(path.join(root, 'status.json'), 'utf8'));
   assert(Date.parse(saved.checked_at) > Date.parse('2000-01-01T00:00:00Z'));
+});
+
+test('joining a health refresh shares its producer instead of a second refresh coordinator', async () => {
+  const before = statusCommits;
+  const running = fleetHealthRefresh();
+  const joined = joinFleetRefresh();
+  await Promise.all([running, joined]);
+  assert.equal(statusCommits - before, 1, 'A join must not schedule a second health generation');
 });
 
 test('startup and configuration refreshes use the shared health-only producer', async () => {

@@ -1,0 +1,1 @@
+- Keep forced recovery fenced by waiting for its shared workspace observation when fresh health has no workspace witness yet.

@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 
 import { type WebSocket, WebSocketServer } from 'ws';
 
@@ -298,6 +299,172 @@ describe('bridge core', () => {
         expression.includes('globalThis.__AGENTIC__?.navigate("Settings", {})'),
       ),
     );
+  });
+
+  // A scroll container whose window frame starts at y=100 (under a fixed header) and is 600
+  // tall, holding a 50-tall row at layout offset 1000. The scroller clamps like a native one,
+  // and an inverted list draws its layout bottom-up.
+  function intoViewApp({ contentHeight = 2000, inverted = false, wrappedTarget = false } = {}) {
+    const app = { scrollY: 0 };
+    // As in React Native: the scroll component instance scrolls, its host view measures.
+    const scroller = {
+      scrollTo({ y }: { y: number }) {
+        app.scrollY = Math.min(Math.max(0, y), contentHeight - 600);
+      },
+    };
+    const scrollHost = {
+      measureLayout: () => undefined,
+      measureInWindow: (done: (...rect: number[]) => void) => done(0, 100, 400, 600),
+    };
+    const target = {
+      measureLayout: (_parent: unknown, done: (...rect: number[]) => void) =>
+        done(0, 1000, 400, 50),
+      measureInWindow: (done: (...rect: number[]) => void) =>
+        done(
+          0,
+          inverted ? 100 + 600 - (1000 + 50 - app.scrollY) : 100 + 1000 - app.scrollY,
+          400,
+          50,
+        ),
+    };
+    const containerFiber: Record<string, unknown> = { stateNode: scroller, memoizedProps: {} };
+    const hostFiber: Record<string, unknown> = { stateNode: scrollHost, return: containerFiber };
+    const targetFiber: Record<string, unknown> = {
+      stateNode: target,
+      memoizedProps: { testID: 'row' },
+      return: hostFiber,
+    };
+    containerFiber.child = hostFiber;
+    hostFiber.child = targetFiber;
+    if (wrappedTarget) {
+      // The testID sits on a node that lays out but cannot measure in the window.
+      targetFiber.memoizedProps = {};
+      const wrapperFiber = {
+        stateNode: { measureLayout: target.measureLayout },
+        memoizedProps: { testID: 'row' },
+        return: hostFiber,
+        child: targetFiber,
+      };
+      targetFiber.return = wrapperFiber;
+      hostFiber.child = wrapperFiber;
+    }
+    return { app, root: containerFiber };
+  }
+
+  /** A broker whose app is a vm holding `root`; the app's timers run on the next turn. */
+  async function appBroker(root: Record<string, unknown>) {
+    const context = vm.createContext({
+      setTimeout: (callback: () => void) => setImmediate(callback),
+      clearTimeout: (handle: NodeJS.Immediate) => clearImmediate(handle),
+      __REACT_DEVTOOLS_GLOBAL_HOOK__: {
+        renderers: new Map([[1, {}]]),
+        getFiberRoots: () => new Set([{ current: root }]),
+      },
+    });
+    return startBroker((expression) =>
+      expression.includes('__AGENTIC__?.platform')
+        ? 'android'
+        : vm.runInContext(expression, context),
+    );
+  }
+
+  for (const [name, options] of [
+    ['a list', {}],
+    // Clamped: the first scroll to 1000 stops at 800, so a correction from 1000 is off.
+    ['a list too short to reach the row offset', { contentHeight: 1400 }],
+    // Inverted: scrolling further down the layout moves the row up the screen.
+    ['an inverted list', { inverted: true }],
+    ['a list whose testID node cannot measure in the window', { wrappedTarget: true }],
+  ] as const) {
+    it(`scrolls an into-view target to the centre of its container frame in ${name}`, async () => {
+      const { app, root } = intoViewApp(options);
+      const { directory, port } = await appBroker(root);
+
+      const result = await runBridge(directory, port, [
+        'scroll-view',
+        '--test-id',
+        'row',
+        '--into-view',
+      ]);
+
+      assert.equal(result.code, 0, result.stderr);
+      const output = JSON.parse(result.stdout) as Record<string, unknown>;
+      // Row centre (1000 + 25) on the frame centre (300 into a 600 frame): offset 725.
+      assert.equal(app.scrollY, 725);
+      assert.equal(output.ok, true);
+      assert.deepEqual(output.targetRect, { x: 0, y: 375, width: 400, height: 50 });
+    });
+  }
+
+  it('reports an into-view target with no scroll container as in view only while it shows', async () => {
+    // A non-scrolling bottom sheet over an 800-tall window: nothing to scroll.
+    const placement: { y: number; sheet: number[]; sheetStyle?: unknown; sheetAnswers: boolean } = {
+      y: 500,
+      sheet: [0, 400, 400, 400],
+      sheetAnswers: true,
+    };
+    const host = (rect: number[]) => ({
+      measureLayout: () => undefined,
+      measureInWindow: (done: (...values: number[]) => void) => done(...rect),
+    });
+    const target = {
+      measureLayout: () => undefined,
+      measureInWindow: (done: (...rect: number[]) => void) => done(0, placement.y, 400, 30),
+    };
+    const rootFiber: Record<string, unknown> = { stateNode: host([0, 0, 400, 800]) };
+    const sheetFiber: Record<string, unknown> = {
+      stateNode: {
+        measureLayout: () => undefined,
+        measureInWindow: (done: (...values: number[]) => void) => {
+          if (placement.sheetAnswers) done(...placement.sheet);
+        },
+      },
+      return: rootFiber,
+    };
+    Object.defineProperty(sheetFiber, 'memoizedProps', {
+      get: () => ({ style: placement.sheetStyle }),
+    });
+    const targetFiber = { stateNode: target, memoizedProps: { testID: 'liq' }, return: sheetFiber };
+    rootFiber.child = sheetFiber;
+    sheetFiber.child = targetFiber;
+    const { directory, port } = await appBroker(rootFiber);
+    const args = ['scroll-view', '--test-id', 'liq', '--into-view'];
+
+    const shown = await runBridge(directory, port, args);
+    assert.equal(shown.code, 0, shown.stderr);
+    const output = JSON.parse(shown.stdout) as Record<string, unknown>;
+    assert.equal(output.ok, true);
+    assert.equal(output.alreadyInView, true);
+    assert.deepEqual(output.targetRect, { x: 0, y: 500, width: 400, height: 30 });
+
+    const refused = { ok: false, error: 'No scrollable near testID=liq', deviceName: 'demo-1' };
+    placement.y = 900;
+    const hidden = await runBridge(directory, port, args);
+    assert.deepEqual(JSON.parse(hidden.stdout), refused);
+
+    // Past the bottom of a 100-tall sheet that does not clip (overflow defaults to
+    // visible on iOS): still drawn inside the window, so in view.
+    placement.y = 550;
+    placement.sheet = [0, 400, 400, 100];
+    const overflowing = await runBridge(directory, port, args);
+    assert.equal((JSON.parse(overflowing.stdout) as Record<string, unknown>).alreadyInView, true);
+
+    // The same sheet with overflow hidden clips it away; measureInWindow still reports
+    // the child's own bounds, so the clipping ancestor's frame decides.
+    placement.sheetStyle = [{ flex: 1 }, [{ overflow: 'hidden' }]];
+    const clipped = await runBridge(directory, port, args);
+    assert.deepEqual(JSON.parse(clipped.stdout), refused);
+
+    // A later explicit `overflow: undefined` restores visible, as React Native's flatten does.
+    placement.sheetStyle = [{ overflow: 'hidden' }, [{ flex: 1, overflow: undefined }]];
+    const restored = await runBridge(directory, port, args);
+    assert.equal((JSON.parse(restored.stdout) as Record<string, unknown>).alreadyInView, true);
+
+    // A clipping ancestor that never answers (unmounted) refuses instead of hanging.
+    placement.sheetStyle = { overflow: 'hidden' };
+    placement.sheetAnswers = false;
+    const unanswered = await runBridge(directory, port, args);
+    assert.deepEqual(JSON.parse(unanswered.stdout), refused);
   });
 
   it('prints help with the app label, built-ins and placed host lines', async () => {

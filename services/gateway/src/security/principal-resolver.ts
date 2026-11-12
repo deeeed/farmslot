@@ -96,7 +96,7 @@ export class PrincipalResolver {
       };
       verified = active.access.secret;
     } else return { ok: false, reason: 'secret_mismatch' };
-    this.store.ensureFresh();
+    this.store.ensureFresh(true);
     const current = this.storedSecret(reference);
     if (current && !sameStoredSecret(current, verified))
       return { ok: false, reason: 'secret_mismatch' };

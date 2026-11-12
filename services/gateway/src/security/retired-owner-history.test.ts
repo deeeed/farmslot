@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomInt } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test, type TestContext } from 'node:test';
@@ -24,6 +24,8 @@ after(() => {
 const { buildFollowUpLineage } = await import('../family-observability/context.js');
 const { createRun, deleteRun, updateRun } = await import('../runs/store.js');
 const { runWithSessionOriginator } = await import('./work-originator.js');
+const { emptyCredentialStore } = await import('./credential-store.js');
+const { withCredentialStoreLock } = await import('./credential-store-lock.js');
 
 const principal = (id: string, generation?: number): Principal => ({
   id,
@@ -41,16 +43,10 @@ function writeStore(store: {
   retiredPrincipalIds?: string[];
   principalIdReuses?: { principalId: string; generation: number; reusedAt: string }[];
 }): void {
-  writeFileSync(
-    path.join(home, 'credentials.json'),
-    JSON.stringify({
-      schemaVersion: 2,
-      activatedAt: null,
-      credentials: [],
-      personSessions: [],
-      personAccessTokens: [],
-      ...store,
-    }),
+  // Fixture changes model a local transaction, which invalidates readers immediately.
+  withCredentialStoreLock(
+    () => ({ next: { ...emptyCredentialStore(), ...store }, result: undefined }),
+    { env: { FARMSLOT_HOME: home } },
   );
 }
 

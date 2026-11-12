@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { FleetStatus, Run, SlotStatus } from '@farmslot/protocol';
+import type { FleetStatus, FleetStatusResult, Run, SlotStatus } from '@farmslot/protocol';
 
 import { resolveSlot, SlotConfigError } from '../core/config.js';
 import type { RawPoolJson } from '../core/index.js';
@@ -538,6 +538,101 @@ test('fleet.status forceRefresh triggers a real re-probe, not a file re-read', a
   assert.equal(calls.refresh, 1);
   assert.equal(calls.load, 0);
   assert.equal(result.fleet.checkedAt, refreshed.checkedAt);
+});
+
+test('a forced health generation returns while optional workspace inspection remains pending', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const stale = fleetFixture(new Date(0).toISOString(), [slotStatusFixture({ slot: 'proof' })]);
+  const fresh = { ...stale, checkedAt: new Date().toISOString() };
+  let current = stale;
+  let finishHealth: (result: FleetStatusResult) => void = () => assert.fail('Health gate missing');
+  const health = new Promise<FleetStatusResult>((resolve) => {
+    finishHealth = resolve;
+  });
+  let finishWorkspace: (fleet: FleetStatus) => void = () => assert.fail('Workspace gate missing');
+  const workspace = new Promise<FleetStatus>((resolve) => {
+    finishWorkspace = resolve;
+  });
+  let refreshes = 0;
+  let workspaceReads = 0;
+  const deps: FleetStatusDeps = {
+    load: async () => current,
+    refresh: () => {
+      refreshes++;
+      return health;
+    },
+    workspaces: {
+      read: (fleet) => fleet,
+      refresh: () => {
+        workspaceReads++;
+        return workspace;
+      },
+    },
+  };
+  const pending = fleetStatus({ forceRefresh: true }, deps);
+  let completed = false;
+  void pending.then(() => {
+    completed = true;
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(refreshes, 1);
+  assert.equal(completed, false, 'force must wait for a real health generation');
+  current = fresh;
+  finishHealth({ fleet: fresh });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const deadline = new Promise<'workspace blocked health'>((resolve) =>
+    setTimeout(() => resolve('workspace blocked health'), 10),
+  );
+  t.mock.timers.tick(10);
+  try {
+    const result = await Promise.race([pending, deadline]);
+    assert.ok(typeof result !== 'string', 'Optional workspace inspection blocked fresh health');
+    assert.equal(result.fleet.checkedAt, fresh.checkedAt);
+    await fleetStatus(undefined, deps);
+    assert.equal(workspaceReads, 1, 'force and cached readers share the same workspace owner');
+  } finally {
+    finishWorkspace(fresh);
+    await pending;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+});
+
+test('forced health queues a workspace follow-up when the previous observation is still pending', async () => {
+  let current = fleetFixture(new Date().toISOString(), [
+    slotStatusFixture({ slot: 'proof', headSha: 'old' }),
+  ]);
+  const next = { ...current, slots: [slotStatusFixture({ slot: 'proof', headSha: 'new' })] };
+  let release: () => void = () => assert.fail('Workspace gate missing');
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const observed: Array<string | undefined> = [];
+  const deps: FleetStatusDeps = {
+    load: async () => current,
+    refresh: async () => {
+      current = next;
+      return { fleet: next };
+    },
+    workspaces: {
+      read: (fleet) => fleet,
+      refresh: async (fleet) => {
+        observed.push(fleet.slots[0]?.headSha);
+        if (observed.length === 1) await held;
+        return fleet;
+      },
+    },
+  };
+  try {
+    await fleetStatus(undefined, deps);
+    await fleetStatus({ forceRefresh: true }, deps);
+    assert.deepEqual(observed, ['old']);
+    release();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(observed, ['old', 'new']);
+  } finally {
+    release();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
 });
 
 test('fresh fleet.status passes through without stale flag or background refresh', async () => {

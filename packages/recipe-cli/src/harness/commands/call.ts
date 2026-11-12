@@ -120,6 +120,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
     action: shortName,
     args,
     rest,
+    packed,
   } = parseCallArgs(commandOptions.parsed?.positional ?? argv);
   const { options } = commandOptions.parsed ?? parseArgs(rest);
   if (['domain', 'source', 'sort'].some((name) => optionString(options, name) !== undefined)) {
@@ -389,6 +390,11 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
   if (validation.status === 'invalid') {
     const message = `call ${resolvedAction}: recipe validation failed`;
     const parameterHelp = parameterValidationHelp(describedAction, validation.findings, args);
+    // A value its parameter accepts runs as given; only a failing one that reads like
+    // several quoted inputs gets the hint.
+    const packedInputs = packed.filter(({ name }) =>
+      validation.findings.some((finding) => directInput(finding.path) === name),
+    );
     const actionsCommand = `${host} actions --action ${resolvedAction} --adapter ${adapter}`;
     const userAction = describedAction
       ? (actionExampleCommand(describedAction, adapter, target, invokedHostCommand(), args) ??
@@ -404,9 +410,10 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
             adapter,
             action: shortName,
             resolvedAction,
-            args: redactCallValue(args),
+            args: safeCallArgs(args, describedAction),
             findings: validation.findings,
             ...(parameterHelp.length > 0 ? { parameterHelp } : {}),
+            ...(packedInputs.length > 0 ? { packedInputs } : {}),
             error: { code: 'RECIPE_VALIDATION_FAILED', message, userAction },
           },
           null,
@@ -417,8 +424,13 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
       console.error(`✗ ${message}`);
       const taught = new Set(parameterHelp.map((entry) => `${entry.issue}:${entry.name}`));
       for (const entry of parameterHelp) console.error(renderParameterValidationHelp(entry));
+      for (const { name, keys } of packedInputs) {
+        console.error(
+          `  ${name} looks like several inputs (${[name, ...keys].join(', ')}) quoted into one argument; pass each key=value as its own argument.`,
+        );
+      }
       for (const finding of validation.findings) {
-        const name = finding.path.split('.').at(-1);
+        const name = directInput(finding.path);
         const issue = parameterIssue(finding.code);
         if (issue && name && taught.has(`${issue}:${name}`)) continue;
         console.error(`  ${finding.code} ${finding.path} — ${finding.message}`);
@@ -614,7 +626,8 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
         return emitHealViolation(json, 'call', result, taughtViolation, state, adapter);
       }
       const callOutput = readCallOutput(result.tracePath);
-      const safeArgs = redactCallValue(args);
+      const screenshots = callScreenshots(result.artifactManifestPath);
+      const safeArgs = safeCallArgs(args, describedAction);
       const safeCallOutput = redactCallValue(callOutput);
       const failureUserAction = runFailureUserAction(target, result);
 
@@ -637,6 +650,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
               ...(result.diagnosticsPath ? { diagnosticsPath: result.diagnosticsPath } : {}),
               ...(result.sideFindings ? { sideFindings: result.sideFindings } : {}),
               ...(callOutput !== undefined ? { output: safeCallOutput } : {}),
+              ...(screenshots.length > 0 ? { screenshots } : {}),
               recovered: state.recovered,
               mutations: state.mutations,
               exitCode: result.status === 'pass' ? EXIT.ok : EXIT.runtime,
@@ -668,6 +682,9 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
             `${Object.keys(defaultsUsed).length > 0 ? `\n${renderDefaultsUsed(defaultsUsed, process.stdout)}` : ''}` +
             `${callOutput !== undefined ? `\n${out('label', 'Result:')}\n${formatCallOutput(safeCallOutput)}` : ''}\n` +
             renderedDiagnostics +
+            screenshots
+              .map((shot) => `${out('label', 'Screenshot:')} ${out('path', shot)}\n`)
+              .join('') +
             `${out('label', 'Artifacts:')} ${out('path', result.artifactManifestPath)}` +
             (result.status === 'fail' ? `\n  Next: ${failureUserAction}` : ''),
         );
@@ -682,13 +699,17 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
 }
 
 interface ParameterValidationHelp {
-  issue: 'missing' | 'invalid';
+  issue: 'missing' | 'invalid' | 'unknown' | 'type';
   name: string;
   type?: string;
   validValues?: unknown[];
   description?: string;
+  // Redacted when the parameter or the suggested one is sensitive.
   received?: unknown;
+  receivedType?: string;
   suggestion?: string;
+  // The parameter the received value belongs to: a near name, or one whose enum holds it.
+  suggestedParameter?: string;
 }
 
 function parameterValidationHelp(
@@ -698,10 +719,26 @@ function parameterValidationHelp(
 ): ParameterValidationHelp[] {
   const schema = isRecord(action?.schema) ? action.schema : {};
   const properties = isRecord(schema.properties) ? schema.properties : {};
-  return findings.flatMap((finding) => {
+  const shown = (value: unknown, ...keys: Array<string | undefined>) =>
+    redactCallValue(value, keys.find((key) => key && isSensitiveKey(key)) ?? '');
+  return findings.flatMap((finding): ParameterValidationHelp[] => {
     const issue = parameterIssue(finding.code);
     if (!issue) return [];
-    const name = finding.path.split('.').at(-1);
+    // Nested fields keep the validator's own diagnostics.
+    const name = directInput(finding.path);
+    if (name && issue === 'unknown') {
+      const suggestedParameter = closest(name, Object.keys(properties));
+      return suggestedParameter
+        ? [
+            {
+              issue,
+              name,
+              received: shown(args[name], name, suggestedParameter),
+              suggestedParameter,
+            },
+          ]
+        : [];
+    }
     const property = name && isRecord(properties[name]) ? properties[name] : undefined;
     if (!name || !property) return [];
     const validValues = Array.isArray(property.enum) ? property.enum : undefined;
@@ -712,8 +749,18 @@ function parameterValidationHelp(
           ? property.type.filter((value): value is string => typeof value === 'string').join('|')
           : undefined;
     const received = Object.hasOwn(args, name) ? args[name] : undefined;
+    const suggestedParameter =
+      issue === 'invalid' && received !== undefined
+        ? Object.entries(properties).find(
+            ([other, entry]) =>
+              other !== name &&
+              isRecord(entry) &&
+              Array.isArray(entry.enum) &&
+              entry.enum.includes(received),
+          )?.[0]
+        : undefined;
     const suggestion =
-      issue === 'invalid' && received !== undefined && validValues
+      issue === 'invalid' && received !== undefined && validValues && !suggestedParameter
         ? closest(String(received), validValues.map(String))
         : undefined;
     return [
@@ -723,16 +770,37 @@ function parameterValidationHelp(
         ...(type ? { type } : {}),
         ...(validValues ? { validValues } : {}),
         ...(typeof property.description === 'string' ? { description: property.description } : {}),
-        ...(issue === 'invalid' && received !== undefined ? { received } : {}),
+        ...(issue !== 'missing' && received !== undefined
+          ? { received: shown(received, name, suggestedParameter) }
+          : {}),
+        ...(issue === 'type' && received !== undefined
+          ? {
+              receivedType: Array.isArray(received)
+                ? 'array'
+                : received === null
+                  ? 'null'
+                  : typeof received,
+            }
+          : {}),
         ...(suggestion ? { suggestion } : {}),
+        ...(suggestedParameter ? { suggestedParameter } : {}),
       },
     ];
   });
 }
 
+// The input name a finding is about, when it is a direct input of the call node.
+function directInput(findingPath: string): string | undefined {
+  const prefix = 'workflow.nodes.call.';
+  const name = findingPath.startsWith(prefix) ? findingPath.slice(prefix.length) : '';
+  return name && !name.includes('.') ? name : undefined;
+}
+
 function parameterIssue(code: string): ParameterValidationHelp['issue'] | undefined {
   if (code === 'recipe.missing_param') return 'missing';
   if (code === 'recipe.invalid_param_value_enum') return 'invalid';
+  if (code === 'recipe.unknown_param') return 'unknown';
+  if (code === 'recipe.invalid_param_value_type') return 'type';
   return undefined;
 }
 
@@ -741,13 +809,32 @@ function renderParameterValidationHelp(parameter: ParameterValidationHelp): stri
   const heading =
     parameter.issue === 'missing'
       ? `${out('cmd', parameter.name)}${parameter.type ? ` (${parameter.type}, required)` : ' (required)'}`
-      : `${out('cmd', parameter.name)} received ${out('err', JSON.stringify(parameter.received) ?? String(parameter.received))}`;
+      : parameter.issue === 'unknown'
+        ? `${out('cmd', parameter.name)} is not a parameter of this action`
+        : parameter.issue === 'type'
+          ? `${out('cmd', parameter.name)} expects a ${parameter.type ?? 'different type'}; got ${parameter.receivedType} ${out('err', JSON.stringify(parameter.received) ?? String(parameter.received))}`
+          : `${out('cmd', parameter.name)} received ${out('err', JSON.stringify(parameter.received) ?? String(parameter.received))}`;
   const values = parameter.validValues?.length
     ? ` Valid values: ${parameter.validValues.map((value) => out('accent', String(value))).join(', ')}.`
     : '';
-  const suggestion = parameter.suggestion
-    ? ` Did you mean ${out('accent', JSON.stringify(parameter.suggestion))}?`
-    : '';
+  // A JSON-encoded value in a shell-quoted assignment reaches the call with its type intact.
+  // A redacted value shows as <value>.
+  const hidden = parameter.received === '<redacted>';
+  const assignment = (name: string, value: unknown) =>
+    out('cmd', shellQuote(`${name}=${JSON.stringify(value) ?? String(value)}`));
+  const quoteHint =
+    parameter.issue === 'type' &&
+    parameter.type === 'string' &&
+    !['object', 'array', 'null'].includes(parameter.receivedType ?? 'object')
+      ? ` Quote it: ${assignment(parameter.name, hidden ? '<value>' : String(parameter.received))}.`
+      : '';
+  const suggestion =
+    quoteHint ||
+    (parameter.suggestedParameter
+      ? ` Did you mean ${hidden ? out('cmd', shellQuote(`${parameter.suggestedParameter}=<value>`)) : assignment(parameter.suggestedParameter, parameter.received)}?`
+      : parameter.suggestion
+        ? ` Did you mean ${out('accent', JSON.stringify(parameter.suggestion))}?`
+        : '');
   const description = parameter.description ? ` ${parameter.description}` : '';
   return `  ${heading}.${values}${suggestion}${description}`;
 }
@@ -802,11 +889,53 @@ function readCallOutput(tracePath: string): unknown {
   }
 }
 
+// Absolute paths of the screenshots the call wrote, so an agent never guesses where they are.
+// Stills taken from a recording (metadata.recordedEvidence) are not the call's own screenshots.
+function callScreenshots(manifestPath: string): string[] {
+  try {
+    const manifest: unknown = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    const entries =
+      isRecord(manifest) && Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
+    return entries.flatMap((entry: unknown) => {
+      if (
+        !isRecord(entry) ||
+        entry.type !== 'screenshot' ||
+        typeof entry.path !== 'string' ||
+        (isRecord(entry.metadata) && entry.metadata.recordedEvidence !== undefined)
+      )
+        return [];
+      const absolute = path.resolve(path.dirname(manifestPath), entry.path);
+      return fs.existsSync(absolute) ? [absolute] : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
 function formatCallOutput(value: unknown): string {
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean' || value === null)
     return String(value);
   return JSON.stringify(value, null, 2);
+}
+
+// Call inputs with sensitive values redacted, and a key that is not a parameter but
+// misspells a sensitive one (pasword=...) redacted with them.
+function safeCallArgs(
+  args: Record<string, unknown>,
+  action: DescribedAction | undefined,
+): Record<string, unknown> {
+  const schema = isRecord(action?.schema) ? action.schema : {};
+  const properties = isRecord(schema.properties) ? schema.properties : {};
+  const sensitive = Object.keys(properties).filter(isSensitiveKey);
+  return Object.fromEntries(
+    Object.entries(args).map(([key, value]) => [
+      key,
+      !Object.hasOwn(properties, key) && closest(key, sensitive)
+        ? '<redacted>'
+        : redactCallValue(value, key),
+    ]),
+  );
 }
 
 /** Call inputs and output with every sensitive-keyed value redacted. */
@@ -880,11 +1009,14 @@ interface CallArgs {
   action: string | undefined;
   args: Record<string, unknown>;
   rest: string[];
+  // Inputs whose value reads like more `key=value` inputs: the keys after the first.
+  packed: Array<{ name: string; keys: string[] }>;
 }
 
 function parseCallArgs(argv: string[]): CallArgs {
   const args: Record<string, unknown> = {};
   const rest: string[] = [];
+  const packed: CallArgs['packed'] = [];
   let action: string | undefined;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
@@ -898,12 +1030,22 @@ function parseCallArgs(argv: string[]): CallArgs {
     }
     if (action !== undefined && !isForwardedOptionValue(argv, i) && isArgPair(arg)) {
       const eq = arg.indexOf('=');
-      args[arg.slice(0, eq)] = parseCallValue(arg.slice(eq + 1));
+      const value = arg.slice(eq + 1);
+      // A shell-quoted `"a=1 b=2"` is one token. JSON values are literal.
+      if (!/^["{[]/u.test(value) && /^\S*(?:\s+[A-Za-z_][\w.-]*=\S*)+$/u.test(value)) {
+        const keys = value
+          .trim()
+          .split(/\s+/u)
+          .slice(1)
+          .map((token) => token.slice(0, token.indexOf('=')));
+        packed.push({ name: arg.slice(0, eq), keys });
+      }
+      args[arg.slice(0, eq)] = parseCallValue(value);
       continue;
     }
     rest.push(arg);
   }
-  return { action, args, rest };
+  return { action, args, rest, packed };
 }
 
 function parseCallValue(value: string): unknown {
