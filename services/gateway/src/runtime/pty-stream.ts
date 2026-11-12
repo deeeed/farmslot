@@ -53,21 +53,8 @@ try {
   );
 }
 
-// Set escape-time 10 at startup — escape-time 0 causes tmux to send init sequences
-// byte-by-byte, which xterm.js can't parse (renders as garbled first line).
-try {
-  execFileSync(tmuxPath, ['set-option', '-s', 'escape-time', '10']);
-  execFileSync(tmuxPath, ['set-option', '-g', 'status-left-length', '30']);
-  console.log('[pty] set tmux escape-time=10 status-left-length=30');
-} catch (err) {
-  // The tmux server may not be running yet; applyTmuxAttachOptions reapplies
-  // these cosmetic options when a session is created or attached.
-  console.warn(
-    `[pty] deferred tmux startup options until session attach: ${(err as Error).message}`,
-  );
-}
-
-async function applyTmuxAttachOptions(session: string, sshTarget?: string): Promise<void> {
+// Apply gateway defaults only after this module creates a session.
+async function applyCreatedTmuxOptions(session: string, sshTarget?: string): Promise<void> {
   try {
     if (sshTarget) {
       await runRemoteShell(
@@ -85,7 +72,7 @@ async function applyTmuxAttachOptions(session: string, sshTarget?: string): Prom
     });
   } catch (err) {
     console.warn(
-      `[pty] failed to apply tmux attach options session=${session}: ${(err as Error).message}`,
+      `[pty] failed to apply created-session options session=${session}: ${(err as Error).message}`,
     );
   }
 }
@@ -278,7 +265,6 @@ export async function reinitTmuxSession(
   try {
     if (sshTarget) {
       if (await remoteSessionExists(sshTarget, session)) {
-        await applyTmuxAttachOptions(session, sshTarget);
         log('reinit', session, `session already exists (remote ${sshTarget})`);
         return true;
       }
@@ -288,21 +274,20 @@ export async function reinitTmuxSession(
         sshTarget,
         `tmux new-session -d -s ${shellQuote(session)} -c ${shellQuote(startDir)}`,
       );
-      await applyTmuxAttachOptions(session, sshTarget);
+      await applyCreatedTmuxOptions(session, sshTarget);
       log('reinit', session, `created new session on ${sshTarget} startDir=${startDir}`);
       return true;
     }
 
     // Local
     if (localTmuxSessionExists(session)) {
-      await applyTmuxAttachOptions(session);
       log('reinit', session, 'session already exists');
       return true;
     }
 
     const startDir = repoDir || process.env.HOME || '/tmp';
     execFileSync(tmuxPath, ['new-session', '-d', '-s', session, '-c', startDir]);
-    await applyTmuxAttachOptions(session);
+    await applyCreatedTmuxOptions(session);
     log('reinit', session, `created new session startDir=${startDir}`);
     return true;
   } catch (err) {

@@ -1,0 +1,1 @@
+- Launch blind trial browsers on their allocated recipe CDP endpoint while configured slot endpoints remain protected.

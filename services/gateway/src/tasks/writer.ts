@@ -1067,6 +1067,9 @@ export async function writeTaskFile(
     }
   }
 
+  const blindBrowserPort = run.engineState?.evalExperiment?.blind?.isolation?.browserCdpPort;
+  if (blindBrowserPort !== undefined) vars.CDP_PORT = String(blindBrowserPort);
+
   // Build --label flags from project config
   const prLabels = (projectVars.projectJson as any)?.ci?.pr_labels as string[] | undefined;
   vars.PR_LABELS = prLabels?.length ? prLabels.map((l) => `--label "${l}"`).join(' ') : '';

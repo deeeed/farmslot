@@ -1,20 +1,26 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { executionTemplateReference } from '@farmslot/agent-runtime';
 import type {
   RuntimeCapabilityLease,
   RuntimeCapabilityProofRequirement,
   RuntimeCapabilityStatusResult,
 } from '@farmslot/protocol';
 
+import type { ProjectVars } from '../core/config.js';
+import { makeVars } from '../runners/test-fixtures.js';
+import { resolveConfiguredExecutionTemplate } from '../tasks/execution-template-catalog.js';
+
 await import('../runtime/mock-pty.test-support.js');
 const {
   prepareDeclaredRunCapabilities,
   assertDeclaredCapabilityPreparation,
   prepareRetainedRunCapabilities,
+  prepareDispatchRunCapabilities,
 } = await import('./declared-capabilities.js');
 const { makeRun } = await import('./test-fixtures.js');
 
@@ -56,6 +62,58 @@ const requirement: RuntimeCapabilityProofRequirement = {
   reason: 'Authored device proof',
   parameters: { simulator: 'device-a', port: 8081 },
 };
+
+test('dispatch of an initialized task keeps its frozen template after a pack edit', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'dispatch-template-drift-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const templates = path.join(directory, 'templates');
+  await mkdir(path.join(templates, 'worker'), { recursive: true });
+  const source = path.join(templates, 'worker/dev.md');
+  const original = '---\nplatforms: [cli]\n---\n# Original task\n- [ ] Keep this work\n';
+  await writeFile(source, original);
+  const project: ProjectVars = {
+    projectName: 'drift-fixture',
+    projectConfig: path.join(directory, 'project.json'),
+    projectFixturesDir: path.join(directory, 'fixtures'),
+    projectTemplatesDir: templates,
+    projectJson: { name: 'drift-fixture', execution_templates: { sources: [] } },
+    artifactDir: 'artifacts',
+    runtimeDir: '.agent',
+  };
+  const selected = resolveConfiguredExecutionTemplate(project, {
+    flow: 'dev',
+    platform: 'cli',
+    runMode: 'autonomous',
+  });
+  const { run } = fixture();
+  run.flowType = 'dev';
+  run.executionTemplate = executionTemplateReference(selected.entry);
+  run.taskFile = path.join(directory, 'TASK.md');
+  run.engineState = { taskInit: { taskFile: run.taskFile, status: 'initialized' } };
+  await writeFile(run.taskFile, '# Retained task\n');
+  await writeFile(path.join(directory, 'CHECKLIST.md'), original);
+  await writeFile(
+    source,
+    '---\nplatforms: [cli]\nruntime_capabilities: [new-unrelated-provider]\n---\n# Changed source\n',
+  );
+  const slot = makeVars({ platform: 'cli', slotId: run.slotId!, remoteRepo: directory });
+  await prepareDispatchRunCapabilities({ run, project, slot, flow: 'dev', mode: 'autonomous' });
+  run.engineState.taskInit = { taskFile: run.taskFile, status: 'pending' };
+  await assert.rejects(
+    prepareDispatchRunCapabilities({ run, project, slot, flow: 'dev', mode: 'autonomous' }),
+    /changed after catalog resolution/,
+  );
+  run.engineState.taskInit = { taskFile: run.taskFile, status: 'initialized' };
+  await rm(path.join(directory, 'CHECKLIST.md'));
+  await assert.rejects(
+    prepareDispatchRunCapabilities({ run, project, slot, flow: 'dev', mode: 'autonomous' }),
+    /ENOENT/,
+  );
+  run.metrics.runner = 'scripted';
+  run.scripted = { mode: 'command', commandRef: 'hold' };
+  run.completionPolicy = 'artifact-only';
+  await prepareDispatchRunCapabilities({ run, project, slot, flow: 'dev', mode: 'autonomous' });
+});
 
 test('declared IDs consume frozen inputs and leave unrelated authored requirements unacquired', async () => {
   const requirements = [
