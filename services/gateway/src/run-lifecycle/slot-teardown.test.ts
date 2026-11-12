@@ -1327,6 +1327,10 @@ for (const profile of ['/personal/profile', '/slot-2/temp/diag', '/slot/../other
     slotProcesses = leftDiagnosticBrowser();
     slotProcesses[0].args = slotProcesses[0].args.replace('/slot/temp/diag', profile);
     assert.equal(await stopRunOwnedTmuxAndWatches(run), null);
+    assert.match(
+      (await slotTeardownBlocker(run)) ?? '',
+      /Process 60370 still uses the slot repository/,
+    );
     assert.deepEqual(alivePids(), [60370, 60371]);
   });
 }
@@ -1335,6 +1339,10 @@ test('diagnostic cleanup preserves a browser attached to a live worker', async (
   slotProcesses = leftDiagnosticBrowser();
   slotProcesses[0].ppid = 5000;
   assert.equal(await stopRunOwnedTmuxAndWatches(run), null);
+  assert.match(
+    (await slotTeardownBlocker(run)) ?? '',
+    /Process 60370 still uses the slot repository/,
+  );
   assert.deepEqual(alivePids(), [60370, 60371]);
 });
 
