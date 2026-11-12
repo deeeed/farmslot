@@ -158,6 +158,33 @@ test(
     const exec = promisify(execFile);
     let runId: string | undefined;
     try {
+      const projectPath = path.join(root, 'projects/review/project.json');
+      const validProject = await readFile(projectPath, 'utf8');
+      const projectConfig: unknown = JSON.parse(validProject);
+      assert(isRecord(projectConfig));
+      try {
+        await writeFile(
+          projectPath,
+          JSON.stringify({
+            ...projectConfig,
+            workflow_defaults: {
+              'review-pr': {
+                review: {
+                  mode: 'cold',
+                  reviewContext: { freshChain: true, reviewLineages: [null] },
+                },
+              },
+            },
+          }),
+        );
+        // Invalid file-backed defaults make the project unavailable to admission.
+        // Direct policy tests additionally assert the detailed one-off-only error.
+        await assert.rejects(fixture.client.call('run.create', request), {
+          code: 'REVIEW_WORKSPACE_NEEDS_CONFIGURATION',
+        });
+      } finally {
+        await writeFile(projectPath, validProject);
+      }
       const cli = await exec(
         'yarn',
         [
@@ -256,6 +283,7 @@ test(
             root,
             modelCalls: 0,
             reviewerStarted: false,
+            persistentFarmPolicyRejected: true,
             checkoutLocalCliFlag: true,
             freshSelectionPersisted: true,
             omittedModeOverridesWarmDefault: true,

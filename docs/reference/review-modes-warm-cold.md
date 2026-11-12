@@ -467,6 +467,9 @@ generation history or retained session may enter the task. The writer MUST omit
 `inputs/prior-review.json` and its previous-review instruction. The new run is
 generation one of its own chain. Existing run records and artifacts remain
 unchanged.
+Standing team, repository, trigger-rule and farm workflow policies MUST reject
+`freshChain: true`. Only a one-off request host may opt in to the fresh-chain control;
+review capability alone MUST NOT expose it in a persistent policy editor.
 
 The selection MUST survive existing request serialization, queue persistence
 and replay of that request. It MUST NOT change a previously frozen request's

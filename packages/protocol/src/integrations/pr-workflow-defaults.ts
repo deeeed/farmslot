@@ -12,7 +12,7 @@ import {
 } from '../contracts/pr-rules.js';
 
 import { assertPRExecutionProfile, isPRWorkspaceExecutionProfile } from './pr-monitoring.js';
-import { assertPRReviewOptions } from './pr-rule-config.js';
+import { assertPRReviewOptions, assertPRReviewPolicyOptions } from './pr-rule-config.js';
 
 function record(value: unknown, path: string): asserts value is Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -42,7 +42,7 @@ export function assertProjectWorkflowDefaults(
       }
     }
     if (policy.review !== undefined) {
-      assertPRReviewOptions(policy.review);
+      assertPRReviewPolicyOptions(policy.review);
       if (flow === 'qa' && policy.review.publishReview === true)
         throw new Error('QA cannot publish a static PR review');
       if (
@@ -99,7 +99,8 @@ export function resolvePRWorkflowDefaults(
   const reviewLayer = layers.find(([, policy]) => policy?.review !== undefined);
   const selectedReview = reviewLayer?.[1]?.review;
   if (selectedReview) {
-    assertPRReviewOptions(selectedReview);
+    if (reviewLayer?.[0] === 'request') assertPRReviewOptions(selectedReview);
+    else assertPRReviewPolicyOptions(selectedReview);
     if (
       input.workflow &&
       selectedReview.workflow !== undefined &&

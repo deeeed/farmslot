@@ -88,6 +88,13 @@ export function assertPRReviewOptions(value: unknown): asserts value is PRReview
     throw new Error('QA preset inputs require the QA workflow');
 }
 
+/** Freshness is a one-off request choice, never a standing automation policy. */
+export function assertPRReviewPolicyOptions(value: unknown): asserts value is PRReviewOptions {
+  assertPRReviewOptions(value);
+  if (value.reviewContext?.freshChain)
+    throw new Error('Fresh chains are only available for one-off PR review requests');
+}
+
 export function assertPRReviewRequest(value: unknown): asserts value is PRReviewRequest {
   record(value, 'review request');
   keys(value, [
@@ -200,14 +207,14 @@ export function assertPRTeamConfig(value: unknown): asserts value is PRTeamConfi
     text(policy.reviewProfile, 'reviewProfile');
     texts(policy.excludedLabels, 'excludedLabels');
     if (policy.execution !== undefined) assertPRExecutionProfile(policy.execution);
-    if (policy.review !== undefined) assertPRReviewOptions(policy.review);
+    if (policy.review !== undefined) assertPRReviewPolicyOptions(policy.review);
     if (policy.approvalTarget !== undefined)
       integer(policy.approvalTarget, 'approvalTarget', 0, 100);
     if (policy.staleAfterDays !== undefined)
       integer(policy.staleAfterDays, 'staleAfterDays', 1, 365);
   }
   if (value.execution !== undefined) assertPRExecutionProfile(value.execution);
-  if (value.review !== undefined) assertPRReviewOptions(value.review);
+  if (value.review !== undefined) assertPRReviewPolicyOptions(value.review);
   texts(value.githubTeams, 'githubTeams');
   for (const team of value.githubTeams)
     if (!/^[a-z0-9-]+\/[a-z0-9-]+$/i.test(team))
@@ -242,7 +249,7 @@ export function assertPRTriggerRuleConfig(value: unknown): asserts value is PRTr
       if (typeof action.autoStart !== 'boolean')
         throw new Error('Review autoStart must be explicit');
       if (action.execution !== undefined) assertPRExecutionProfile(action.execution);
-      if (action.review !== undefined) assertPRReviewOptions(action.review);
+      if (action.review !== undefined) assertPRReviewPolicyOptions(action.review);
     } else if (action.kind === 'monitor') {
       keys(action, ['kind', 'policy', 'pollIntervalMs']);
       if (action.pollIntervalMs !== undefined)

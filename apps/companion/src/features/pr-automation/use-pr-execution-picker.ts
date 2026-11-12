@@ -23,6 +23,7 @@ export function usePRExecutionPicker(
   reviewLineages?: readonly ReviewContinuationContext[],
   workflow?: 'review' | 'qa',
 ) {
+  const allowFreshChain = reviewMode !== undefined;
   const [picker] = useState(
     () =>
       new ReviewDispatchViewModel({
@@ -31,7 +32,7 @@ export function usePRExecutionPicker(
           allowSequence: true,
           sequenceRole: 'execution-alternatives',
           workflow,
-          allowFreshChain: reviewMode !== undefined && workflow !== 'qa',
+          allowFreshChain,
           reviewContext,
           reviewLineages,
         },
@@ -50,7 +51,7 @@ export function usePRExecutionPicker(
       previousContext.current === reviewContext &&
       previousLineages.current === reviewLineages &&
       picker.context.workflow === workflow &&
-      picker.context.allowFreshChain === (reviewMode !== undefined && workflow !== 'qa')
+      picker.context.allowFreshChain === allowFreshChain
     )
       return;
     picker.setContext({
@@ -58,11 +59,11 @@ export function usePRExecutionPicker(
       reviewContext,
       reviewLineages,
       workflow,
-      allowFreshChain: reviewMode !== undefined && workflow !== 'qa',
+      allowFreshChain,
     });
     previousContext.current = reviewContext;
     previousLineages.current = reviewLineages;
-  }, [picker, reviewContext, reviewLineages, workflow, reviewMode]);
+  }, [picker, reviewContext, reviewLineages, workflow, allowFreshChain]);
   const resources = useRef(new Map<number, ReviewDispatchExecutionResources>());
   const previousModels = useRef(value.models);
   const previousMode = useRef(reviewMode);

@@ -63,6 +63,7 @@ export class PRExecutionPicker extends LitElement {
   @property({ attribute: false }) reviewLineages: readonly ReviewContinuationContext[] = [];
   @property({ attribute: false }) reviewContext?: ReviewRequestContext;
   @property({ type: Boolean }) review = false;
+  @property({ type: Boolean }) allowFreshChain = false;
   private viewModel = new ReviewDispatchViewModel({
     context: {
       allowedActions: ['configure'],
@@ -77,12 +78,13 @@ export class PRExecutionPicker extends LitElement {
       changed.has('value') ||
       changed.has('reviewMode') ||
       changed.has('review') ||
+      changed.has('allowFreshChain') ||
       changed.has('reviewContext') ||
       changed.has('reviewLineages')
     ) {
       this.viewModel.setContext({
         ...this.viewModel.context,
-        allowFreshChain: this.review,
+        allowFreshChain: this.review && this.allowFreshChain,
         reviewContext: this.reviewContext,
         reviewLineages: this.reviewLineages,
       });

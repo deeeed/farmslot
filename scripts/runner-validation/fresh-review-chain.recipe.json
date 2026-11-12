@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json FARMSLOT_FRESH_CHAIN_RPC_OUT=temp/fresh-review-chain/rpc.json node --import tsx --experimental-test-module-mocks --test services/gateway/src/review-workspaces/fresh-chain.rpc.live.ts",
         "timeout_ms": 240000,
-        "intent": "Create an isolated review request through the actual CLI and gateway, keep fresh selection on disk, reject inherited lineage and keep previous runs unchanged.",
+        "intent": "Create an isolated review request through the actual CLI and gateway, keep fresh selection on disk, reject standing-policy defaults and inherited lineage, and keep previous runs unchanged.",
         "next": "task-inputs"
       },
       "task-inputs": {

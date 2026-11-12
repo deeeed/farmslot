@@ -246,7 +246,8 @@ export class DispatchConfigEditor extends LitElement {
     const freshAllowed = this.flowType === 'review-pr';
     const primaryContext =
       !freshAllowed && this.reviewContext?.freshChain ? undefined : this.reviewContext;
-    if (!freshAllowed && this.reviewContext?.freshChain) this.emitChange({ reviewContext: null });
+    if (changed.has('flowType') && !freshAllowed && this.reviewContext?.freshChain)
+      this.emitChange({ reviewContext: null });
     if (changed.has('reviewLineages')) {
       this.executionPicker.setContext({
         ...this.executionPicker.context,

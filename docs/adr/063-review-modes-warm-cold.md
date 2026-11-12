@@ -632,6 +632,9 @@ A new `review-pr` request may explicitly start a fresh review chain. It uses a
 new reviewer session and the full frozen contribution, without a previous
 review's findings, verdict, artifacts, generation history or session as input.
 The old run and chain remain unchanged and discoverable as history.
+The choice belongs to that one request. Team, repository, trigger-rule and farm
+workflow defaults reject it, so later automatic head-change reviews continue
+normally.
 
 COLD continues to mean a new session in the existing chain when a predecessor
 exists. WARM retains its explicit lineage. A fresh chain requires COLD and no
@@ -651,6 +654,8 @@ Add optional `ReviewRequestContext.freshChain` in `@farmslot/protocol`, carried
 by the existing run-create and PR-review options. The shared picker exposes it
 only for new review-pr requests; Command Center and Companion render the same
 choice. The checkout-local CLI adds `run create --fresh-review-chain`.
+The protocol export `assertPRReviewPolicyOptions` rejects fresh-chain selection
+in standing policy configuration.
 The protocol export `assertFreshReviewChainSelection` validates this choice for
 PR option parsing, shared picker validation and gateway admission. Its consumers
 share the same COLD/no-lineage rule. Omitting the choice retains current behavior.
