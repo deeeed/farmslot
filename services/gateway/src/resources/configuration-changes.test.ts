@@ -629,7 +629,7 @@ test('the actual PR rule file observer reloads replacements and refuses malforme
     await watcher.ready;
     clock.flush();
     await watcher.readyFor(file);
-    const external = rules.store.snapshot();
+    const external = structuredClone(rules.store.snapshot());
     external.teams[0].config.name = 'External team';
     await writeFile(`${file}.tmp`, JSON.stringify(external));
     await watcher.observe(file, () => rename(`${file}.tmp`, file));

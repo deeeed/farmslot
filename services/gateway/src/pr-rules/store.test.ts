@@ -73,7 +73,7 @@ test('rescanning QA retains its durable id and eligible contribution', async (t)
   const live = preview(team, rule);
   live.items[0].review = { mode: 'cold' as const, workflow: 'qa', qaProfileId: 'changes' };
   await store.applyPreview('owner', live);
-  const legacy = store.snapshot();
+  const legacy = structuredClone(store.snapshot());
   const legacyId = reviewIntentId(live.items[0]);
   legacy.intents[0].id = legacyId;
   await writeFile(file, JSON.stringify(legacy));
@@ -353,7 +353,7 @@ test('resolving farm defaults preserves completed legacy QA without equating a d
   const live = preview(team, rule);
   live.items[0].review = { mode: 'cold' as const, workflow: 'qa', qaProfileId: 'changes' };
   await store.applyPreview('owner', live);
-  const legacy = store.snapshot();
+  const legacy = structuredClone(store.snapshot());
   const historical = legacy.intents[0];
   historical.id = reviewIntentId({ ...live.items[0], review: undefined });
   historical.status = 'completed';
@@ -457,7 +457,7 @@ test('QA admission retains closed and draft restrictions while static review ret
 test('external PR-intake reload cannot publish while retention cleanup owns storage', async (t) => {
   const { store, file } = await fixture(t);
   const { team } = await ruleFor(store, 'owner', true);
-  const changed = store.snapshot();
+  const changed = structuredClone(store.snapshot());
   changed.teams[0].config.name = 'External replacement';
   await writeFile(file, JSON.stringify(changed));
   let release!: () => void;
@@ -492,15 +492,28 @@ test('external PR-intake reload cannot publish while retention cleanup owns stor
   assert.equal(store.team(team.id, 'owner').config.name, 'External replacement');
 });
 
-test('snapshot projection copies only selected rule data and preserves store isolation', async (t) => {
+test('readers share one frozen snapshot until a write, which later reads see', async (t) => {
   const { store } = await fixture(t);
   const team = await store.saveTeam('owner', teamConfig);
-  const teams = store.snapshot((data) => data.teams);
-  assert.deepEqual(teams, [team]);
-  teams[0].config.name = 'Outside mutation';
-  teams.pop();
+  const first = store.snapshot();
+  assert.equal(store.snapshot(), first, 'an unchanged store hands out the same state');
+  assert.equal(
+    store.snapshot((data) => data.teams),
+    first.teams,
+    'a selection is not copied',
+  );
+  assert.deepEqual(first.teams, [team]);
+  // A reader that changes shared state fails at the write instead of corrupting the store.
+  assert.throws(() => {
+    first.teams[0].config.name = 'Outside mutation';
+  }, TypeError);
+  assert.throws(() => first.teams.pop(), TypeError);
   assert.equal(store.team(team.id, 'owner').config.name, teamConfig.name);
-  assert.equal(store.snapshot().teams.length, 1);
+  await store.saveTeam('owner', { ...teamConfig, name: 'Second team' });
+  const later = store.snapshot();
+  assert.notEqual(later, first, 'a write commits a new state');
+  assert.equal(later.teams.length, 2);
+  assert.equal(first.teams.length, 1, 'the earlier state is unchanged');
 });
 
 test('a reload of the store own write is not decoded again; an external edit still applies', async (t) => {
@@ -513,7 +526,7 @@ test('a reload of the store own write is not decoded again; an external edit sti
   assert.equal(echoed, false);
   assert.equal(parses, 0, 'the committed text is not parsed again');
 
-  const external = store.snapshot();
+  const external = structuredClone(store.snapshot());
   external.teams[0].config.name = 'External edit';
   await writeFile(file, JSON.stringify(external, null, 2));
   assert.equal(await store.reloadFromFile(), true);

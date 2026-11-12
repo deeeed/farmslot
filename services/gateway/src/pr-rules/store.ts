@@ -23,7 +23,7 @@ import {
 
 import { writeAtomicText } from '../core/atomic-json.js';
 import { GatewayMethodError } from '../core/method-error.js';
-import { cloneStoreSnapshot } from '../core/store-snapshot.js';
+import { freezeStoreState } from '../core/store-snapshot.js';
 import { publishPRAutomationResources } from '../resources/pr-automation-changes.js';
 import {
   assertReviewWorkspaceAdmissionOpen,
@@ -102,6 +102,7 @@ export class PRRuleStore {
     private readonly file: string,
     private data: PRRuleStoreData,
   ) {
+    freezeStoreState(data);
     this.text = JSON.stringify(data);
   }
 
@@ -184,7 +185,7 @@ export class PRRuleStore {
             this.validatedRetirementReload ||
             (data !== this.data && !isDeepStrictEqual(data, this.data));
           if (data !== this.data) {
-            this.data = data;
+            this.data = freezeStoreState(data);
             this.text = JSON.stringify(data);
           }
           this.sourceUnavailable = false;
@@ -229,7 +230,8 @@ export class PRRuleStore {
   snapshot<Result>(select: (data: Readonly<PRRuleStoreData>) => Result): Result;
   snapshot<Result>(select?: (data: Readonly<PRRuleStoreData>) => Result): PRRuleStoreData | Result {
     this.assertReadable();
-    return cloneStoreSnapshot(this.data, this.text, select);
+    // The committed state is frozen: readers share it, and one that changes a value copies it.
+    return select ? select(this.data) : this.data;
   }
 
   /** Other authority loss keeps a contribution held so restored authority admits it unchanged. */
@@ -987,7 +989,7 @@ export class PRRuleStore {
         await appendIntentArchive(intentArchiveFile(this.file), archived, now);
         await writeAtomicText(this.file, text);
         // Committed state is exactly what a restart would load: no keys the file drops.
-        this.data = JSON.parse(text);
+        this.data = freezeStoreState(JSON.parse(text));
         this.text = text;
         publishPRAutomationResources();
         return result;
