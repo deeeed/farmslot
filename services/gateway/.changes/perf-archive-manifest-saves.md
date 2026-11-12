@@ -1,0 +1,1 @@
+- A retention pass no longer rewrites the manifest of every run archived earlier: finished archive entries are skipped, so resuming the archive costs no manifest writes and no longer blocks the gateway for seconds on large manifests.
