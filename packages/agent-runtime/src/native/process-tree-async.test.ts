@@ -19,7 +19,7 @@ test('async launch census retains the combined sync output limit', async (t) => 
       const stderr = new PassThrough();
       child.stdout = stdout;
       child.stderr = stderr;
-      t.mock.method(child, 'kill', (signal) => {
+      t.mock.method(child, 'kill', (signal?: NodeJS.Signals | number) => {
         signals.push(signal);
         return true;
       });
