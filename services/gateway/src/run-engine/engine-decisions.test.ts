@@ -138,6 +138,26 @@ test('artifact-only review evidence supplies continuation SHA and findings witho
   assert.equal(context.priorGenerations?.[0].headSha, result.reviewSnapshot!.headSha);
 });
 
+test('an explicit fresh review chain does not select a prior review of the same PR', () => {
+  const prior = makeRun({
+    id: 'prior-review',
+    flowType: 'review-pr',
+    ticketOrPr: 'Owner/Repo#42',
+    status: 'done',
+    decisions: [reviewDecision()],
+  });
+  const current = makeRun({
+    id: 'fresh-review',
+    flowType: 'review-pr',
+    ticketOrPr: 'Owner/Repo#42',
+  });
+  assert.equal(findLatestPriorReviewRun(current, [prior])?.id, prior.id);
+  const original = structuredClone(prior);
+  current.reviewContext = { reviewLineages: [null], freshChain: true };
+  assert.equal(findLatestPriorReviewRun(current, [prior]), null);
+  assert.deepEqual(prior, original);
+});
+
 test('collision successor retains backlog and work-graph ownership', () => {
   const params = buildCollisionSuccessorParams(
     makeRun({
@@ -629,6 +649,18 @@ test('an intake-owned round chains onto a manual review of the same PR', () => {
     },
   });
   assert.equal(findLatestPriorReviewRun(intake, [manual])?.id, manual.id);
+  const freshIntake: Run = {
+    ...intake,
+    prWork: {
+      ...intake.prWork!,
+      review: {
+        ...intake.prWork!.review!,
+        options: { mode: 'cold', reviewContext: { freshChain: true, reviewLineages: [null] } },
+      },
+    },
+  };
+  assert.equal(findLatestPriorReviewRun(freshIntake, [manual]), null);
+
   const otherOwner = makeRun({
     ...manual,
     id: 'other-owner-review',

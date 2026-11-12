@@ -1,0 +1,1 @@
+- Add an explicit fresh-chain choice for new PR review requests while preserving existing continuation behavior.

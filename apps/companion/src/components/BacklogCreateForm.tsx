@@ -118,6 +118,7 @@ export function BacklogCreateForm({
           allowedActions: ['configure'],
           defaults: backlogExecutionDefaults(selectedProject, flowType, item),
           allowSequence: false,
+          allowFreshChain: flowType === 'review-pr',
           reviewContext: flowType === 'review-pr' ? item?.reviewContext : undefined,
         },
       }),

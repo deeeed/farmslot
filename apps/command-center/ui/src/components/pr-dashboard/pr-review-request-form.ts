@@ -302,6 +302,7 @@ export class PRReviewRequestForm extends LitElement {
           >
           ${execution
             ? html`<pr-execution-picker
+                .allowFreshChain=${true}
                 .review=${prReviewWorkflow(review) === 'review'}
                 .reviewMode=${review.mode}
                 .reviewContext=${review.reviewContext}

@@ -514,8 +514,14 @@ export async function planRunCreation(
   if (params.reviewSequence) assertReviewSequence(params.reviewSequence, { maxRows: 5 });
   assertPrimaryReviewContext(params);
   if (params.reviewPolicy) assertReviewPolicy(params.reviewPolicy);
-  if (params.reviewSequenceContext)
-    parseReviewRequestContext(params.reviewSequenceContext, params.reviewSequence?.length ?? 0);
+  if (params.reviewSequenceContext) {
+    const context = parseReviewRequestContext(
+      params.reviewSequenceContext,
+      params.reviewSequence?.length ?? 0,
+    );
+    if (context.freshChain)
+      throw new Error('A fresh review chain applies only to a new review-pr request');
+  }
   if (params.reviewSequence)
     assertWarmReviewContext(params.reviewSequence, params.reviewSequenceContext);
 

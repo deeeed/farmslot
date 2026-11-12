@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { PRRulePredicate, PRRuleSubject } from '../../src/contracts/pr-rules.js';
+import type { PRRulePredicate, PRRuleSubject, PRTeamConfig } from '../../src/contracts/pr-rules.js';
 import {
   assertPRReviewOptions,
+  assertPRReviewRequest,
+  assertPRTeamConfig,
   assertPRTriggerRuleConfig,
 } from '../../src/integrations/pr-rule-config.js';
 import {
@@ -180,4 +182,65 @@ test('predicates reject unbounded trees, wrong operators, and arbitrary executab
   let nested: PRRulePredicate = repository;
   for (let i = 0; i < 10; i++) nested = { kind: 'not', item: nested };
   assert.throws(() => assertPRRulePredicate(nested), /nesting/);
+});
+
+const freshReviewRequest = {
+  mode: 'cold' as const,
+  reviewContext: { freshChain: true, reviewLineages: [null] },
+};
+
+test('one-off fresh review requests cannot become persistent team or repository policy', () => {
+  const team: PRTeamConfig = {
+    name: 'Example',
+    account: { host: 'github.com', login: 'reviewer' },
+    sources: [{ kind: 'repository', repo: 'owner/repo' }],
+    predicate: repository,
+    repositories: [{ repo: 'owner/repo', reviewProfile: 'standard', excludedLabels: [] }],
+    githubTeams: [],
+    notificationPrincipalIds: [],
+  };
+  assert.doesNotThrow(() => assertPRTeamConfig(team));
+  assert.throws(
+    () => assertPRTeamConfig({ ...team, review: freshReviewRequest }),
+    /one-off PR review requests/,
+  );
+  assert.throws(
+    () =>
+      assertPRTeamConfig({
+        ...team,
+        repositories: [{ ...team.repositories[0], review: freshReviewRequest }],
+      }),
+    /one-off PR review requests/,
+  );
+  assert.doesNotThrow(() =>
+    assertPRReviewRequest({
+      teamId: 'team',
+      pr: { host: 'github.com', repo: 'owner/repo', number: 1 },
+      idempotencyKey: 'fresh-request',
+      autoStart: false,
+      review: freshReviewRequest,
+      source: { client: 'command-center' },
+    }),
+  );
+});
+
+test('automatic trigger policies refuse fresh chains even when head-change re-review is enabled', () => {
+  const rule = {
+    name: 'Review',
+    teamId: 'team',
+    predicate: repository,
+    actions: [{ kind: 'review', autoStart: false, review: { mode: 'cold' } }],
+    pollIntervalMs: 300000,
+    maxAdmissionsPerScan: 10,
+    rereviewOnHeadChange: true,
+  };
+  assert.doesNotThrow(() => assertPRTriggerRuleConfig(rule));
+  assert.throws(
+    () =>
+      assertPRTriggerRuleConfig({
+        ...rule,
+        actions: [{ kind: 'review', autoStart: false, review: freshReviewRequest }],
+      }),
+    /one-off PR review requests/,
+  );
 });

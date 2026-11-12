@@ -6,6 +6,7 @@ import type { Command } from 'commander';
 import {
   type AgentRole,
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
+  assertFreshReviewChainSelection,
   assertPRReviewOptions,
   ATTEST_BEFORE_ATTEMPT_ACTION,
   buildRunDecisionActionRequest,
@@ -338,6 +339,10 @@ export async function runWizardDispatch(
   const plan = await collectRunCreatePlan(ctx.client);
   if (!plan) return true; // operator cancelled — exit 0, nothing dispatched
   if (plan.kind === 'backlog') {
+    if (opts.freshReviewChain)
+      throw new Error(
+        '--fresh-review-chain applies to a new ticket review-pr request, not a backlog dispatch.',
+      );
     // A backlog dispatch carries the item's own policies; the flag would be dropped silently.
     if (opts.pipelineReview === false)
       throw new Error('--no-pipeline-review applies to a ticket run, not a backlog dispatch.');
@@ -453,6 +458,7 @@ export function parseTaskPath(taskFile: string): {
 }
 
 export interface RunCreateCliOptions {
+  freshReviewChain?: boolean;
   publishReview?: boolean;
   reviewTeam?: string;
   team?: string;
@@ -573,6 +579,8 @@ export function buildReviewDispatchParams(
     RunCreateCliOptions,
     | 'slot'
     | 'reviewMachine'
+    | 'freshReviewChain'
+    | 'flowType'
     | 'reviewMode'
     | 'reviewSequence'
     | 'reviewContext'
@@ -603,6 +611,15 @@ export function buildReviewDispatchParams(
     }
     reviewContext = parseReviewRequestContext(value, 1);
   }
+  if (opts.freshReviewChain) {
+    if (opts.flowType !== 'review-pr')
+      throw new Error('--fresh-review-chain requires --flow-type review-pr');
+    reviewContext = {
+      freshChain: true,
+      reviewLineages: reviewContext?.reviewLineages ?? [null],
+    };
+    assertFreshReviewChainSelection({ ...reviewContext, mode: opts.reviewMode });
+  }
   let reviewSequenceContext: ReviewRequestContext | undefined;
   if (opts.reviewSequenceContext !== undefined) {
     if (!reviewSequence) throw new Error('--review-sequence-context requires --review-sequence');
@@ -613,10 +630,16 @@ export function buildReviewDispatchParams(
       throw new Error('--review-sequence-context must be valid JSON');
     }
     reviewSequenceContext = parseReviewRequestContext(value, reviewSequence.length);
+    if (reviewSequenceContext.freshChain)
+      throw new Error('--fresh-review-chain applies to the primary review-pr request only');
   }
   return {
     ...(opts.reviewMachine ? { reviewWorkspaceTarget: { machine: opts.reviewMachine } } : {}),
-    ...(opts.reviewMode !== undefined ? { reviewMode: opts.reviewMode as ReviewMode } : {}),
+    ...(opts.freshReviewChain
+      ? { reviewMode: 'cold' as const }
+      : opts.reviewMode !== undefined
+        ? { reviewMode: opts.reviewMode as ReviewMode }
+        : {}),
     ...(reviewSequence ? { reviewSequence } : {}),
     ...(reviewContext ? { reviewContext } : {}),
     ...(reviewSequenceContext ? { reviewSequenceContext } : {}),
@@ -1487,6 +1510,7 @@ export function registerRunCommand(program: Command): void {
     .option('--review-mode <mode>', 'Review mode: warm or cold')
     .option('--review-sequence <json>', 'Ordered runner/model/effort/mode review selections')
     .option('--review-context <json>', 'Repository/PR and reviewId provenance for WARM rows')
+    .option('--fresh-review-chain', 'Start a new review-pr chain without prior-review input')
     .option(
       '--review-sequence-context <json>',
       'Lineage provenance aligned with review sequence rows',

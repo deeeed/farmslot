@@ -665,3 +665,15 @@ test('Run QA retains repository and team profile choices when the request only s
   assert.equal(resolved.review.qaProfileId, 'team');
   assert.equal(buildPRRequest(draft, 'team-inherited', resolved).review?.qaProfileId, 'team');
 });
+
+test('switching a one-off fresh review to QA removes the static chain choice', () => {
+  const review = {
+    mode: 'cold' as const,
+    reviewContext: { freshChain: true, reviewLineages: [null] },
+  };
+  const before = structuredClone(review);
+  const qa = updatePRReviewOptions(review, { workflow: 'qa' });
+  assert.equal(qa.mode, 'cold');
+  assert.equal(qa.reviewContext, undefined);
+  assert.deepEqual(review, before);
+});

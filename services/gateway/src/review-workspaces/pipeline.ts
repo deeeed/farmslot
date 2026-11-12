@@ -28,6 +28,7 @@ import {
   buildRepeatReviewContext,
   confirmIncrementalAncestry,
   findLatestPriorReviewRun,
+  startsFreshReviewChain,
 } from '../run-engine/engine-decisions.js';
 import { BlockedRunError } from '../run-engine/errors.js';
 import { resolveMonitorConfig } from '../run-engine/run-monitor.js';
@@ -290,9 +291,10 @@ async function freezeSubject(
     capturedAt: new Date().toISOString(),
   };
   const owner = runPrincipalOwner(run);
+  const allRuns = startsFreshReviewChain(run) ? [] : getAllRuns();
   const prior = findLatestPriorReviewRun(
     run,
-    getAllRuns().filter((candidate) => {
+    allRuns.filter((candidate) => {
       const candidateOwner = runPrincipalOwner(candidate);
       return owner && candidateOwner && samePrincipalOwner(owner, candidateOwner);
     }),
@@ -309,7 +311,7 @@ async function freezeSubject(
             headSha: pr.headSha,
             baseRef: pr.baseRef,
           },
-          getAllRuns(),
+          allRuns,
         ),
       )
     : undefined;

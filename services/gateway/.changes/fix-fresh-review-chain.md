@@ -1,0 +1,1 @@
+- Start an independent PR review chain without carrying prior findings, artifacts or reviewer sessions when requested.
