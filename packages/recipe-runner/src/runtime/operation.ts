@@ -12,27 +12,36 @@ import { type TaskOperation, validateOperationRecord } from '@farmslot/protocol'
  * setuid /bin/ps inside any sandbox (EPERM). The identity is then unknown, not absent.
  */
 export function processIdentity(pid: number): string | null | undefined {
-  const fresh = identitySnapshot && Date.now() - identitySnapshot.at < IDENTITY_SNAPSHOT_MS;
-  if (fresh && identitySnapshot!.byPid?.has(pid) !== false) return lookup(identitySnapshot!, pid);
-  identitySnapshot = readIdentitySnapshot();
-  return lookup(identitySnapshot, pid);
+  try {
+    const value = execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    return value || undefined;
+  } catch (error) {
+    if ((error as { status?: number }).status === 1) return undefined;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'EPERM' || code === 'EACCES') return null;
+    throw error;
+  }
 }
 
-// One `ps` listing serves every lookup in a burst: callers check many records at once,
-// and one `ps` per record cost seconds. A miss re-reads it, so a new process is never stale.
+// One `ps` listing answers a burst of liveness checks: callers check many records at
+// once, and one `ps` per record cost seconds. Only a match is trusted from the listing;
+// a miss or a different start time is confirmed with a fresh `ps` before it counts.
 const IDENTITY_SNAPSHOT_MS = 2_000;
 let identitySnapshot: { at: number; byPid: Map<number, string> | null } | undefined;
 
-function lookup(
-  snapshot: { byPid: Map<number, string> | null },
-  pid: number,
-): string | null | undefined {
-  return snapshot.byPid === null ? null : snapshot.byPid.get(pid);
+function snapshotIdentity(pid: number): string | null | undefined {
+  if (!identitySnapshot || Date.now() - identitySnapshot.at >= IDENTITY_SNAPSHOT_MS) {
+    identitySnapshot = readIdentitySnapshot();
+  }
+  return identitySnapshot.byPid === null ? null : identitySnapshot.byPid.get(pid);
 }
 
 function readIdentitySnapshot(): { at: number; byPid: Map<number, string> | null } {
   try {
-    const output = execFileSync('ps', ['-axo', 'pid=,lstart='], {
+    const output = execFileSync('ps', ['-Ao', 'pid=,lstart='], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       maxBuffer: 64 * 1024 * 1024,
@@ -68,6 +77,8 @@ export function processStillRunning(pid: number, startedAt: string | undefined):
   // and spawning `ps` for each one made every `status` call take minutes.
   if (!processAlive(pid)) return false;
   if (startedAt === undefined) return true;
+  const listed = snapshotIdentity(pid);
+  if (listed === null || listed === startedAt) return true;
   const identity = processIdentity(pid);
   return identity === null || identity === startedAt;
 }
