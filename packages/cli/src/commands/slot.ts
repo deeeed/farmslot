@@ -23,6 +23,7 @@ import { withProgress, withStreamProgress } from '../progress.js';
 import { resolveCurrentSlot, resolveSlotId } from '../slot-context.js';
 
 import { resolveSlotPrepareGatewayTimeoutMs } from './slot-prepare-timeout.js';
+import { forcedRecoveryWorkspace } from './slot-recovery-workspace.js';
 
 interface PrepareOptions {
   branch?: string;
@@ -261,11 +262,15 @@ export function registerSlotCommand(program: Command): void {
         const slotId = resolveSlotId(id);
         let params: SlotRefreshParams = { slotId, mode: opts.force ? 'force' : 'safe' };
         if (opts.recover) {
-          const { fleet } = await client.call<FleetStatusResult>(
-            'fleet.status',
-            opts.force ? { forceRefresh: true } : undefined,
-          );
-          const workspace = fleet.slots.find((slot) => slot.slot === slotId)?.workspace;
+          const workspace = opts.force
+            ? await forcedRecoveryWorkspace(
+                client,
+                slotId,
+                Math.min(Number(cmd.optsWithGlobals().timeout) || 30_000, 30_000),
+              )
+            : (await client.call<FleetStatusResult>('fleet.status')).fleet.slots.find(
+                (slot) => slot.slot === slotId,
+              )?.workspace;
           params = {
             ...params,
             release: true,

@@ -74,7 +74,6 @@ import {
 const SLOT_CHECK_CONCURRENCY = 4;
 const SLOT_CHECK_TIMEOUT_MS = 5_000;
 
-let workspaceRefreshInFlight: Promise<void> | null = null;
 type FleetWorkspacePublisher = (fleet: FleetStatus) => void;
 let workspacePublisher: FleetWorkspacePublisher | undefined;
 
@@ -97,6 +96,37 @@ export interface FleetStatusDeps {
   workspaces?: FleetWorkspaceObservations;
 }
 
+interface WorkspaceRefreshRequest {
+  fleet: FleetStatus;
+  deps: FleetStatusDeps;
+  publish?: FleetWorkspacePublisher;
+}
+let workspaceRequest: WorkspaceRefreshRequest | undefined;
+const workspaceRefreshes = withFollowUpRefresh(async () => {
+  const request = workspaceRequest;
+  if (!request) return;
+  const { deps, fleet, publish } = request;
+  const workspaces = deps.workspaces;
+  if (!workspaces?.refresh) return;
+  const previous = new Map(fleet.slots.map((slot) => [slot.slot, slot]));
+  try {
+    // A queued force request may follow an older health generation. Inspect
+    // the current rows when this owner starts, not the earlier captured rows.
+    await workspaces.refresh(await deps.load());
+    const current = workspaces.read(await deps.load());
+    const changed = current.slots.filter((slot) => {
+      const before = previous.get(slot.slot);
+      return before?.workspace !== slot.workspace || before?.workspaceError !== slot.workspaceError;
+    });
+    for (const slot of changed) slotResourceChanges.overlayChanged(slot.slot);
+    if (changed.length) publish?.(fleetStatusResult(current).fleet);
+  } catch (error) {
+    // Passive display retains the saved result on an unavailable observation;
+    // acting reads still validate, and the next demand can retry this owner.
+    console.error(`[fleet.status] background workspace refresh failed: ${String(error)}`);
+  }
+});
+
 const defaultFleetStatusDeps: FleetStatusDeps = {
   load: () => loadFleetStatus(false, true),
   refresh: () => fleetRefresh(),
@@ -106,8 +136,6 @@ const defaultFleetStatusDeps: FleetStatusDeps = {
 
 const monitorFleetStatusDeps: FleetStatusDeps = {
   ...defaultFleetStatusDeps,
-  refresh: () => fleetHealthRefresh(),
-  join: () => machineHealthRefreshes.join(),
   workspaces: { read: observedFleetWorkspaces },
 };
 
@@ -126,35 +154,13 @@ function refreshWorkspaceObservations(
   fleet: FleetStatus,
   deps: FleetStatusDeps,
   publish?: FleetWorkspacePublisher,
+  fresh = false,
 ): void {
-  const workspaces = deps.workspaces;
-  if (workspaceRefreshInFlight || !workspaces?.refresh) return;
-  const previous = new Map(fleet.slots.map((slot) => [slot.slot, slot]));
-  workspaceRefreshInFlight = workspaces
-    .refresh(fleet)
-    .then(async () => {
-      // Owners may have changed while Git/network reads ran. Publish current
-      // rows, never the captured fleet that started the observation.
-      const current = workspaces.read(await deps.load());
-      const changed = current.slots.filter((slot) => {
-        const before = previous.get(slot.slot);
-        return (
-          before?.workspace !== slot.workspace || before?.workspaceError !== slot.workspaceError
-        );
-      });
-      // Cached fleet reads learn of every changed observation, failures included.
-      for (const slot of changed) slotResourceChanges.overlayChanged(slot.slot);
-      // A cached observation must not create a fleet.updated -> status loop.
-      if (changed.length) publish?.(fleetStatusResult(current).fleet);
-    })
-    .catch((error: unknown) => {
-      // A failed passive read keeps the saved response available. Slot failures
-      // already carry workspaceError; a later status request can retry the batch.
-      console.error(`[fleet.status] background workspace refresh failed: ${String(error)}`);
-    })
-    .finally(() => {
-      workspaceRefreshInFlight = null;
-    });
+  if (!deps.workspaces?.refresh) return;
+  workspaceRequest = { fleet, deps, publish };
+  // Ordinary readers join. A forced health generation requests one coalesced
+  // follow-up without making the foreground health response wait for it.
+  void (fresh ? workspaceRefreshes.refresh() : workspaceRefreshes.join());
 }
 
 /** The cached fleet read: completed observations now, never waiting for background probes. */
@@ -177,7 +183,7 @@ export async function fleetStatus(
   const fleet = deps.workspaces?.read(loaded) ?? loaded;
   // Fresh health must not wait for optional Git/workspace inspection. Forced
   // and cached reads use the same background owner and completion publication.
-  refreshWorkspaceObservations(fleet, deps, publish);
+  refreshWorkspaceObservations(fleet, deps, publish, params?.forceRefresh === true);
   if (!isFleetCheckedAtStale(fleet.checkedAt)) return { fleet };
   // Still stale: serve it honestly (stale flag, nothing dispatchable). Kick a
   // background re-probe only when this call did not just refresh AND probeable
@@ -504,15 +510,13 @@ export function withFollowUpRefresh<T>(run: () => Promise<T>): {
 
 const machineHealthRefreshes = withFollowUpRefresh(runFleetHealthRefresh);
 
-/** Background callers need current machine health without viewer-only workspace inspection. */
+/** The one machine-health producer; workspace display has its own async owner. */
 export function fleetHealthRefresh(): Promise<FleetStatusResult> {
   return machineHealthRefreshes.refresh();
 }
 
-/** Re-probe the fleet; a call made while a refresh runs gets one more run after it. */
-export function fleetRefresh(): Promise<FleetStatusResult> {
-  return machineHealthRefreshes.refresh();
-}
+/** Preserve the explicit refresh entry point on the same health producer. */
+export const fleetRefresh = fleetHealthRefresh;
 
 /** Re-probe the fleet, or share the refresh already running. */
 export function joinFleetRefresh(): Promise<FleetStatusResult> {

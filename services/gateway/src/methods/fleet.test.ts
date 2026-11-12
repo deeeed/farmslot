@@ -544,6 +544,7 @@ test('a forced health generation returns while optional workspace inspection rem
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const stale = fleetFixture(new Date(0).toISOString(), [slotStatusFixture({ slot: 'proof' })]);
   const fresh = { ...stale, checkedAt: new Date().toISOString() };
+  let current = stale;
   let finishHealth: (result: FleetStatusResult) => void = () => assert.fail('Health gate missing');
   const health = new Promise<FleetStatusResult>((resolve) => {
     finishHealth = resolve;
@@ -555,7 +556,7 @@ test('a forced health generation returns while optional workspace inspection rem
   let refreshes = 0;
   let workspaceReads = 0;
   const deps: FleetStatusDeps = {
-    load: async () => fresh,
+    load: async () => current,
     refresh: () => {
       refreshes++;
       return health;
@@ -573,11 +574,12 @@ test('a forced health generation returns while optional workspace inspection rem
   void pending.then(() => {
     completed = true;
   });
-  await Promise.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(refreshes, 1);
   assert.equal(completed, false, 'force must wait for a real health generation');
+  current = fresh;
   finishHealth({ fleet: fresh });
-  await Promise.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
   const deadline = new Promise<'workspace blocked health'>((resolve) =>
     setTimeout(() => resolve('workspace blocked health'), 10),
   );
@@ -591,6 +593,44 @@ test('a forced health generation returns while optional workspace inspection rem
   } finally {
     finishWorkspace(fresh);
     await pending;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+});
+
+test('forced health queues a workspace follow-up when the previous observation is still pending', async () => {
+  let current = fleetFixture(new Date().toISOString(), [
+    slotStatusFixture({ slot: 'proof', headSha: 'old' }),
+  ]);
+  const next = { ...current, slots: [slotStatusFixture({ slot: 'proof', headSha: 'new' })] };
+  let release: () => void = () => assert.fail('Workspace gate missing');
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const observed: Array<string | undefined> = [];
+  const deps: FleetStatusDeps = {
+    load: async () => current,
+    refresh: async () => {
+      current = next;
+      return { fleet: next };
+    },
+    workspaces: {
+      read: (fleet) => fleet,
+      refresh: async (fleet) => {
+        observed.push(fleet.slots[0]?.headSha);
+        if (observed.length === 1) await held;
+        return fleet;
+      },
+    },
+  };
+  try {
+    await fleetStatus(undefined, deps);
+    await fleetStatus({ forceRefresh: true }, deps);
+    assert.deepEqual(observed, ['old']);
+    release();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(observed, ['old', 'new']);
+  } finally {
+    release();
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
 });
