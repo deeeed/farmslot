@@ -29,7 +29,7 @@ import {
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunLinkedTickets } from '../../components/RunLinkedTickets';
 import { RunOutputReportViewer } from '../../components/RunOutputReportViewer';
-import { RunPipelineFull, RunPipelineMini } from '../../components/RunPipeline';
+import { RunPipelineFull } from '../../components/RunPipeline';
 import { RunTitle } from '../../components/RunTitle';
 import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
 import { TaskProgressPanel } from '../../components/TaskProgressPanel';
@@ -424,10 +424,21 @@ export default function RunDetailScreen() {
     });
   };
 
-  // No run.get yet: the list row paints the header at once; the sections wait for the detail.
-  // The header card holds what the loaded one holds, so nothing in it moves when run.get lands.
+  // Ticket edits act on the detail. The control is in the header from the first paint and
+  // stays disabled until run.get is ready.
+  const saveLinkedTickets = client
+    ? async (linkedTicketRefs: string[]) => {
+        if (!currentFarmConnection(client)())
+          throw new Error('Wait for the current connection before editing tickets.');
+        if (!run) throw new Error('Wait for the run to load before editing tickets.');
+        assertNativeRunReady(run.id, run);
+        await client.request(Methods.RUN_LINKED_TICKETS_SET, { runId: run.id, linkedTicketRefs });
+      }
+    : undefined;
+
+  // No run.get yet: the list row paints the header card at once; the sections wait for the
+  // detail. The loaded screen renders the same card, so nothing in it moves when run.get lands.
   if (!run && row) {
-    const standIn = runDetailHeaderModel(row);
     return (
       <View style={baseStyles.container}>
         <Animated.ScrollView
@@ -438,16 +449,12 @@ export default function RunDetailScreen() {
             { paddingBottom: styles.scrollContent.paddingBottom + insets.bottom },
           ]}
         >
-          <View style={styles.headerCard}>
-            <RunDetailHeaderLines
-              header={standIn}
-              row={row}
-              linkedTickets={<RunLinkedTickets key={row.id} run={row} disabled />}
-            />
-            <RunDetailTerminalTile header={standIn} onPress={openTerminal} />
-            <RunDetailSlotLine header={standIn} />
-          </View>
-          <RunPipelineMini run={row} />
+          <RunDetailHeaderCard
+            row={row}
+            ticketsDisabled
+            onSaveTickets={saveLinkedTickets}
+            onOpenTerminal={openTerminal}
+          />
           <RunDetailSkeleton
             error={
               error ?? (connectionStatus !== 'connected' ? 'Connect to the gateway' : undefined)
@@ -472,7 +479,6 @@ export default function RunDetailScreen() {
       </View>
     );
 
-  const header = runDetailHeaderModel(run);
   const replayAllowed =
     isTerminalRunStatus(run.status) &&
     !run.engineState?.operatorForceCompleted &&
@@ -600,35 +606,12 @@ export default function RunDetailScreen() {
           { paddingBottom: styles.scrollContent.paddingBottom + insets.bottom },
         ]}
       >
-        <View style={styles.headerCard}>
-          <RunDetailHeaderLines
-            header={header}
-            row={run}
-            linkedTickets={
-              <RunLinkedTickets
-                key={run.id}
-                run={run}
-                disabled={runObservation.status !== 'ready' || connectionStatus !== 'connected'}
-                onSave={
-                  client
-                    ? async (linkedTicketRefs) => {
-                        if (!currentFarmConnection(client)())
-                          throw new Error(
-                            'Wait for the current connection before editing tickets.',
-                          );
-                        assertNativeRunReady(run.id, run);
-                        await client.request(Methods.RUN_LINKED_TICKETS_SET, {
-                          runId: run.id,
-                          linkedTicketRefs,
-                        });
-                      }
-                    : undefined
-                }
-              />
-            }
-          />
-          <RunDetailTerminalTile header={header} onPress={openTerminal} />
-          <RunDetailSlotLine header={header} />
+        <RunDetailHeaderCard
+          row={run}
+          ticketsDisabled={runObservation.status !== 'ready' || connectionStatus !== 'connected'}
+          onSaveTickets={saveLinkedTickets}
+          onOpenTerminal={openTerminal}
+        >
           {cancelledSlot ? (
             <CancelledRunSlotRelease
               hold={cancelledSlot.hold}
@@ -639,7 +622,7 @@ export default function RunDetailScreen() {
               }}
             />
           ) : null}
-        </View>
+        </RunDetailHeaderCard>
 
         {reviewStatus ? (
           <Text accessibilityLiveRegion="polite" style={baseStyles.textSecondary}>
@@ -1195,6 +1178,46 @@ function headerStatusColor(header: RunDetailHeaderModel): string {
       running: colors.lifecycleWorking,
       muted: colors.textMuted,
     }[header.tone]
+  );
+}
+
+/**
+ * Run Detail's header card: title lines with the ticket control, the terminal tile, the slot
+ * line, then `children`. The same component renders it from the run.list row while run.get
+ * loads and from the detail afterwards, so no element of it exists in only one state.
+ */
+function RunDetailHeaderCard({
+  row,
+  ticketsDisabled,
+  onSaveTickets,
+  onOpenTerminal,
+  children,
+}: {
+  row: RunListRow;
+  ticketsDisabled: boolean;
+  onSaveTickets?: (refs: string[]) => Promise<void>;
+  onOpenTerminal: () => void;
+  children?: ReactNode;
+}) {
+  const header = runDetailHeaderModel(row);
+  return (
+    <View style={styles.headerCard}>
+      <RunDetailHeaderLines
+        header={header}
+        row={row}
+        linkedTickets={
+          <RunLinkedTickets
+            key={row.id}
+            run={row}
+            disabled={ticketsDisabled}
+            onSave={onSaveTickets}
+          />
+        }
+      />
+      <RunDetailTerminalTile header={header} onPress={onOpenTerminal} />
+      <RunDetailSlotLine header={header} />
+      {children}
+    </View>
   );
 }
 

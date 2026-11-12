@@ -424,7 +424,7 @@ export function buildRunDiagnosisPrompt(run: Run): string {
  * included when known so the operator starts from the same engine and can
  * still switch before dispatch.
  */
-export function buildRerunAlongsideHref(run: Run, hash?: string): string {
+export function buildRerunAlongsideHref(run: RunListRow, hash?: string): string {
   const params = new URLSearchParams();
   params.set('flow', run.flowType);
   params.set('ticket', run.ticketOrPr);
