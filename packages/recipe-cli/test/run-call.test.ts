@@ -4069,6 +4069,11 @@ describe('call', () => {
                 ...PING_ACTION.schema.properties,
                 market_mode: { type: 'string', enum: ['pro', 'lite'] },
                 note: { type: 'string' },
+                assert: {
+                  type: 'object',
+                  properties: { path: { type: 'string' } },
+                  additionalProperties: false,
+                },
               },
             },
           },
@@ -4129,6 +4134,17 @@ describe('call', () => {
     );
     assert.match(secretHuman.stderr.join('\n'), /Did you mean 'password=<value>'\?/u);
     assert.doesNotMatch(secretHuman.stderr.join('\n'), /hunter2/u);
+    // A nested field is not an action input: its finding stays as the validator reports it.
+    const nested = ['shop.ping', 'mode=fast', 'assert={"cuont":1}', ...base];
+    const nestedJson = await capture(() => handleCall([...nested, '--json'], callOptions));
+    assert.equal(nestedJson.value, 5);
+    assert.equal(lastJson(nestedJson.stdout).parameterHelp, undefined);
+    const nestedHuman = await capture(() => handleCall(nested, callOptions));
+    assert.match(
+      nestedHuman.stderr.join('\n'),
+      /recipe\.unknown_param workflow\.nodes\.call\.assert\.cuont/u,
+    );
+    assert.doesNotMatch(nestedHuman.stderr.join('\n'), /Did you mean/u);
   });
 
   test('resolves names against --action-manifest and the --library sources', async () => {

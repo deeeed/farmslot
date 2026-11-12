@@ -430,7 +430,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
         );
       }
       for (const finding of validation.findings) {
-        const name = finding.path.split('.').at(-1);
+        const name = directInput(finding.path);
         const issue = parameterIssue(finding.code);
         if (issue && name && taught.has(`${issue}:${name}`)) continue;
         console.error(`  ${finding.code} ${finding.path} — ${finding.message}`);
@@ -724,7 +724,8 @@ function parameterValidationHelp(
   return findings.flatMap((finding): ParameterValidationHelp[] => {
     const issue = parameterIssue(finding.code);
     if (!issue) return [];
-    const name = finding.path.split('.').at(-1);
+    // Nested fields keep the validator's own diagnostics.
+    const name = directInput(finding.path);
     if (name && issue === 'unknown') {
       const suggestedParameter = closest(name, Object.keys(properties));
       return suggestedParameter
