@@ -6,6 +6,7 @@
 
 ## 0.45.10 - 2026-11-12
 
+- Allow catalog template selection before slot assignment while retaining platform compatibility checks when a platform is supplied.
 - Republish against recipe-runner 0.46.13 so consumers load one copy of it, with the faster `status` on checkouts that hold many stale operation records.
 
 ## 0.45.9 - 2026-11-11
