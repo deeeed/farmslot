@@ -1,7 +1,7 @@
 // Opt-in real Git transfer proof; subprocess allocation exceeds the default five-second test budget.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -20,9 +20,37 @@ test('a stopped reviewer transfers its source checkout and preserves predecessor
   f.git('add', '.');
   f.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-m', 'next');
   const headSha = f.git('rev-parse', 'HEAD');
+  const failed = { runId: 'failed-owner', baseSha: f.identity.headSha, headSha };
+  const failedTask = path.join(f.workspace, 'tasks', failed.runId);
+  const offline = f.source + '-offline';
+  renameSync(f.source, offline);
+  try {
+    assert.throws(() =>
+      f.execute('allocate', failed, false, {
+        previousIdentity: f.identity,
+        previousTaskPath: oldTask,
+        taskPath: failedTask,
+      }),
+    );
+  } finally {
+    renameSync(offline, f.source);
+  }
+  assert.equal(
+    JSON.parse(readFileSync(path.join(f.workspace, 'identity.json'), 'utf8')).runId,
+    failed.runId,
+  );
+  assert.equal(
+    execFileSync('git', ['-C', source, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+    f.identity.headSha,
+  );
+  writeFileSync(path.join(failedTask, '.terminal-cancelled'), failed.runId);
   const changes = { runId: 'successor-run', baseSha: f.identity.headSha, headSha };
   const taskPath = path.join(f.workspace, 'tasks', changes.runId);
-  const extra = { previousIdentity: f.identity, previousTaskPath: oldTask, taskPath };
+  const extra = {
+    previousIdentity: { ...f.identity, ...failed },
+    previousTaskPath: failedTask,
+    taskPath,
+  };
   assert.deepEqual(f.execute('allocate', changes, false, extra), { state: 'ready' });
   assert.equal(
     execFileSync('git', ['-C', source, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),

@@ -18,7 +18,6 @@ import {
   type Run,
   type RunTicketData,
 } from '@farmslot/protocol';
-import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import {
   extractBacklogAcceptanceCriteria,
@@ -51,6 +50,7 @@ import {
   PREVIOUS_REVIEW_MD_INPUT,
   readFrozenTaskInit,
   TaskCollisionError,
+  usesPreviousReviewDelta,
   writeTaskFile,
 } from '../tasks/writer.js';
 
@@ -744,7 +744,7 @@ export async function executeWriteTaskStep(
           !isArtifactOnlyScriptedCommandRun(afterWrite),
       }),
     );
-    if (afterWrite.repeatReviewContext && resolveReviewMode({ run: afterWrite }) === 'warm') {
+    if (afterWrite.repeatReviewContext && usesPreviousReviewDelta(afterWrite)) {
       artifacts.push(
         { path: PREVIOUS_REVIEW_JSON_INPUT, purpose: 'previous-review-context' },
         { path: PREVIOUS_REVIEW_MD_INPUT, purpose: 'previous-review-summary' },

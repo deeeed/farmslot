@@ -322,6 +322,15 @@ async function git(args, phase = 'inspect') {
   if (result !== 0) throw new Error(stderr || 'Git command failed');
   return stdout.trim();
 }
+function physicalHeadsFor(expected) {
+  const allocation=read(path.join(workspace,'allocation.json'));
+  const transition=read(path.join(workspace,'transfer.json'));
+  if(!['allocating','transferring'].includes(allocation?.state)||!same(transition?.to,expected))return [expected.headSha];
+  const checkpoint=allocation.physicalHeadSha ?? transition.from.headSha;
+  if(!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(checkpoint))throw new Error('Invalid physical source checkpoint');
+  // Checkout can finish just before the ready receipt is persisted.
+  return [checkpoint,expected.headSha];
+}
 async function verifyCheckout(expectedHead = identity.headSha, preserveIgnored = false) {
   directory(checkout);
   const gitFile = path.join(checkout, '.git');
@@ -329,10 +338,12 @@ async function verifyCheckout(expectedHead = identity.headSha, preserveIgnored =
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Checkout has no owned worktree binding');
   const common = await git(['-C',checkout,'rev-parse','--path-format=absolute','--git-common-dir']);
   if (fs.realpathSync(common) !== fs.realpathSync(cache)) throw new Error('Checkout belongs to another repository');
-  if (await git(['-C',checkout,'rev-parse','HEAD']) !== expectedHead) throw new Error('Checkout HEAD no longer matches frozen review');
+  const actualHead = await git(['-C',checkout,'rev-parse','HEAD']);
+  if (!(Array.isArray(expectedHead) ? expectedHead.includes(actualHead) : actualHead === expectedHead)) throw new Error('Checkout HEAD no longer matches frozen review');
   const changes = (await git(['-C',checkout,'status','--porcelain','-z','--untracked-files=normal','--ignored=matching'])).split('\0').filter(Boolean);
   // Ignored tool runtime state is not reviewed source. Preserve every other change.
   if (changes.some((entry) => !(preserveIgnored && entry.startsWith('!! ')) && !entry.startsWith('!! .agent/'))) throw new Error('Review checkout changed; refusing to discard files');
+  return actualHead;
 }
 function validateCleanupSession() {
   const files=[],directories=[];
@@ -465,7 +476,7 @@ function finishCleanup() {
       if(previousIdentity[key] !== identity[key]) throw new Error('Review transfer changed '+key);
     if(previousIdentity.runId === identity.runId) throw new Error('Review transfer must change its owner');
     marker(identityPath,previousIdentity,false);
-    await verifyCheckout(previousIdentity.headSha, true);
+    const physicalHeadSha = await verifyCheckout(physicalHeadsFor(previousIdentity), true);
     const priorTask = path.resolve(input.previousTaskPath || '');
     if(![path.join(workspace,'task'),path.join(workspace,'tasks',previousIdentity.runId)].includes(priorTask) ||
        fs.realpathSync(priorTask) !== path.join(fs.realpathSync(workspace),path.relative(workspace,priorTask)) ||
@@ -473,7 +484,7 @@ function finishCleanup() {
       throw new Error('Previous review terminal has no owned stop receipt');
     if(same(read(cancellationPath),previousIdentity))fs.unlinkSync(cancellationPath);
     write(transferPath,{from:previousIdentity,to:identity});
-    write(path.join(workspace,'allocation.json'),{state:'transferring',operationId:operation.id});
+    write(path.join(workspace,'allocation.json'),{state:'transferring',physicalHeadSha,operationId:operation.id});
     write(identityPath,identity);
   }
   marker(identityPath,identity,input.action === 'allocate');
@@ -509,7 +520,7 @@ function finishCleanup() {
       throw new Error('Review task directory does not match its owner');
     directory(task);
     directory(path.join(task,'artifacts'));
-    if (previous?.state !== 'ready') write(receiptPath,{state:'allocating',operationId:operation.id});
+    if (previous?.state !== 'ready') write(receiptPath,{state:'allocating',physicalHeadSha:previous?.physicalHeadSha,operationId:operation.id});
     // Reinitialization repairs interrupted creation and preserves existing bare-cache objects/refs.
     if (fs.existsSync(cache)) directory(cache);
     if (!['config','HEAD','objects'].every((name) => fs.existsSync(path.join(cache,name))))
@@ -535,12 +546,12 @@ function finishCleanup() {
       await git(['--git-dir',cache,'worktree','add','--detach',checkout,identity.headSha], 'add-worktree');
     }
     if(previousIdentity && await git(['-C',checkout,'rev-parse','HEAD']) !== identity.headSha) {
-      await verifyCheckout(previousIdentity.headSha, true);
+      await verifyCheckout(physicalHeadsFor(identity), true);
       await git(['-C',checkout,'checkout','--detach','--no-overwrite-ignore',identity.headSha], 'continue-worktree');
     }
     await verifyCheckout(identity.headSha, Boolean(previousIdentity));
     assertWorkspaceOperationCurrent();
-    write(receiptPath,{state:'ready',operationId:operation.id,updatedAt:new Date().toISOString()});
+    write(receiptPath,{state:'ready',physicalHeadSha:identity.headSha,operationId:operation.id,updatedAt:new Date().toISOString()});
     write(path.join(operationPath,'state.json'),{state:'complete'});
     process.stdout.write(JSON.stringify({state:'ready'}));
   } else throw new Error('Unknown workspace operation');

@@ -152,3 +152,62 @@ test('a paraphrased body-only major is appended and keeps its blocking recommend
   assert.match(result.reviewMd, /Cancel the trace/);
   assert.equal(await readRetainedRunText(getRun(run.id)!, 'artifacts/review.md'), report);
 });
+
+test('completed COLD fallback retains its reason, delta and prior conversation lineage', async (t) => {
+  const { run, commit } = await fixture(t);
+  const range = `${'c'.repeat(40)}..${commit.headSha}`;
+  updateRun(run.id, {
+    reviewMode: 'cold',
+    repeatReviewContext: {
+      version: 1,
+      priorFamilyId: 'family',
+      chainId: 'chain',
+      generation: 2,
+      repository: 'owner/repo',
+      prNumber: 123,
+      priorRunId: 'prior',
+      priorReviewedHeadSha: 'c'.repeat(40),
+      currentHeadSha: commit.headSha,
+      verdict: 'issues',
+      unresolvedFindings: [],
+      artifactRefs: [],
+      farmslotEvidenceRefs: [],
+      mode: 'cold',
+      validationDepth: 'static-code',
+      session: {
+        mode: 'cold',
+        continuity: 'fresh',
+        reviewId: 'lineage',
+        priorRunId: 'prior',
+        priorSessionId: 'old-conversation',
+        fallback: {
+          reason: 'session-resume-unsupported',
+          detail: 'No continuation capability',
+          comparedRanges: [range],
+        },
+      },
+    },
+    agentContexts: [
+      {
+        id: 'review',
+        role: 'review',
+        label: 'Review',
+        status: 'complete',
+        runId: run.id,
+        slotId: null,
+        runner: 'opencode',
+        model: 'auto',
+        reviewId: 'lineage',
+        runnerSessionId: 'new-conversation',
+        runnerSessionCapturedAt: new Date().toISOString(),
+      },
+    ],
+  });
+  const result = await recordArtifactOnlyReviewResult(run.id);
+  assert.equal(result.session?.mode, 'cold');
+  assert.equal(result.session?.continuity, 'fresh');
+  assert.equal(result.session?.sessionId, 'new-conversation');
+  assert.equal(result.session?.priorSessionId, 'old-conversation');
+  assert.equal(result.session?.fallback?.reason, 'session-resume-unsupported');
+  assert.deepEqual(result.session?.fallback?.comparedRanges, [range]);
+});

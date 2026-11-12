@@ -235,12 +235,23 @@ ${evidence}
 `;
 }
 
+/** Session freshness does not widen a verified re-review's comparison scope. */
+export function usesPreviousReviewDelta(
+  run: Pick<Run, 'reviewMode' | 'prWork' | 'repeatReviewContext'>,
+): boolean {
+  const fallback = run.repeatReviewContext?.session?.fallback;
+  return (
+    resolveReviewMode({ run }) === 'warm' ||
+    Boolean(fallback && fallback.reason !== 'retention-expired')
+  );
+}
+
 export async function writePreviousReviewInputs(
   taskAbsDir: string,
   run: Pick<Run, 'reviewMode' | 'prWork' | 'repeatReviewContext'>,
 ): Promise<string[]> {
   const context = run.repeatReviewContext;
-  if (!context || resolveReviewMode({ run }) !== 'warm') return [];
+  if (!context || !usesPreviousReviewDelta(run)) return [];
   await writeFile(
     path.join(taskAbsDir, PREVIOUS_REVIEW_JSON_INPUT),
     `${JSON.stringify(context, null, 2)}\n`,
@@ -280,7 +291,7 @@ export async function writeStaticReviewInstructionInputs(
   return written;
 }
 
-function buildReviewExecutionContract(
+export function buildReviewExecutionContract(
   run: Run,
   previousReviewPaths: readonly string[],
   instructionPaths: readonly string[],
@@ -289,7 +300,7 @@ function buildReviewExecutionContract(
   const scope = resolveReviewMode({ run });
   const depth = run.reviewValidationDepth ?? 'static-code';
   const range =
-    scope === 'warm' && run.repeatReviewContext?.priorReviewedHeadSha
+    usesPreviousReviewDelta(run) && run.repeatReviewContext?.priorReviewedHeadSha
       ? `${run.repeatReviewContext.priorReviewedHeadSha}..${run.repeatReviewContext.currentHeadSha}`
       : `PR base..${run.repeatReviewContext?.currentHeadSha ?? 'frozen current head'}`;
   const inherited = previousReviewPaths.length

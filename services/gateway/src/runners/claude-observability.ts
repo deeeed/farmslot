@@ -3,7 +3,11 @@ import path from 'node:path';
 import { execOnSlot } from '../core/exec.js';
 import { resolveTmuxPaneId } from '../core/tmux.js';
 
-import { readClaudeProcessState } from './claude-process-observability.js';
+import {
+  readClaudeProcessBinding,
+  readClaudeProcessState,
+  readClaudePromptAcceptance,
+} from './claude-process-observability.js';
 import { readSlotClockMs } from './observability-clock.js';
 import {
   activeToolFromHooks,
@@ -392,6 +396,19 @@ PY`,
     return readSlotClockMs(vars);
   },
 
+  async getSessionBinding(vars, target, observedNotBefore) {
+    const binding = await readClaudeProcessBinding(vars, target);
+    return binding && (observedNotBefore === undefined || binding.observedAt >= observedNotBefore)
+      ? {
+          sessionId: binding.sessionId,
+          sessionPath: binding.sessionPath,
+          observedAt: binding.observedAt,
+        }
+      : null;
+  },
+  async promptAcceptedInSession(vars, target, sessionId, sessionPath, prompt, since) {
+    return readClaudePromptAcceptance(vars, target, sessionId, sessionPath, prompt, since);
+  },
   async promptAccepted(vars, target, promptDigest, sinceMs, paneRetired = false) {
     const { hooks } = await loadObservabilitySnapshot(vars, target);
     const reading = promptAcceptedFromHooks(

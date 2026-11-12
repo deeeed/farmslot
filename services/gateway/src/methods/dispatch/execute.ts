@@ -1261,7 +1261,7 @@ export async function dispatchExecute(
         ? currentRun.repeatReviewContext?.session?.reviewId
         : randomUUID()
       : undefined;
-  let repeatReviewMode = resolveReviewMode({ run: currentRun });
+  const repeatReviewMode = resolveReviewMode({ run: currentRun });
   const existingNativeBinding =
     currentRun?.transport === 'native'
       ? selectAgentContext(currentRun, { role: primaryRoleForFlow(currentRun.flowType) })
@@ -1282,24 +1282,22 @@ export async function dispatchExecute(
     if (!latest?.repeatReviewContext) return;
     reviewSessionContinuity = trace.continuity;
     updateRunStore(currentRun.id, {
-      repeatReviewContext: { ...latest.repeatReviewContext, session: trace },
+      repeatReviewContext: {
+        ...latest.repeatReviewContext,
+        session: {
+          ...(latest.repeatReviewContext.session?.fallback
+            ? latest.repeatReviewContext.session
+            : {}),
+          ...trace,
+        },
+      },
     });
   };
 
-  if (repeatReviewResumePlan.kind === 'delta-cold' && currentRun?.repeatReviewContext) {
-    repeatReviewMode = 'cold';
-    updateRunStore(currentRun.id, {
-      reviewMode: 'cold',
-      repeatReviewContext: {
-        ...currentRun.repeatReviewContext,
-        mode: 'cold',
-        session: repeatReviewResumePlan.trace,
-      },
-    });
-    const { persistRunNow } = await import('../../runs/store.js');
-    await persistRunNow(getRun(currentRun.id)!, 'unsupported runner delta review fallback');
-    recordReviewSession(repeatReviewResumePlan.trace);
-  }
+  if (repeatReviewResumePlan.kind === 'delta-cold')
+    throw new Error(
+      'Review continuation support changed after task freezing; regenerate the request before dispatch',
+    );
   if (transport === 'native' && currentRun?.repeatReviewContext && !existingNativeBinding) {
     if (repeatReviewResumePlan.kind === 'native-resume') {
       if (!params.skipPrepare)
@@ -1317,13 +1315,9 @@ export async function dispatchExecute(
       });
     } else {
       recordReviewSession({
-        ...(repeatReviewResumePlan.kind === 'delta-cold'
-          ? repeatReviewResumePlan.trace
-          : {
-              mode: repeatReviewMode,
-              continuity: 'fresh',
-              priorRunId: currentRun.repeatReviewContext.priorRunId,
-            }),
+        mode: repeatReviewMode,
+        continuity: 'fresh',
+        priorRunId: currentRun.repeatReviewContext.priorRunId,
       });
     }
   }
@@ -2209,7 +2203,6 @@ export async function dispatchExecute(
         throw new Error('WARM review unavailable: retained session was not resumed');
       } else if (!resumedReviewSession) {
         recordReviewSession({
-          ...(repeatReviewResumePlan.kind === 'delta-cold' ? repeatReviewResumePlan.trace : {}),
           mode: 'cold',
           reviewId: primaryReviewId,
           continuity: 'fresh',
