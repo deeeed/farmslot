@@ -20,7 +20,7 @@ import { refreshRunLinks } from '../run-engine/run-links.js';
 import { commitRunPublication, getRun, getRunWithArchived, updateRun } from '../runs/store.js';
 
 import { getBinding, invalidateBinding, setBinding } from './github-bindings-cache.js';
-import { ghRequest } from './github-client.js';
+import { github } from './github-client.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 
@@ -33,32 +33,27 @@ export function initPrLinkage(broadcast: BroadcastFn): void {
 // Delays between the 4 attempts: 0s, 5s, 20s, 65s cumulative.
 const RETRY_DELAYS_MS = [5_000, 15_000, 45_000];
 
-interface DiscoveredPR {
-  number: number;
-  state: 'OPEN' | 'CLOSED' | 'MERGED';
-  headRefOid: string;
-}
-
-function canBindPR(run: Run, ciRepo: string, pr: DiscoveredPR): boolean {
+function canBindPR(run: Run, ciRepo: string, pr: Record<string, unknown>): boolean {
   if (pr.state !== 'CLOSED') return true;
-  const key = monitoredPRKey({ host: 'github.com', repo: ciRepo, number: pr.number });
+  const key = monitoredPRKey({ host: 'github.com', repo: ciRepo, number: pr.number as number });
   if (run.prPublications?.some(({ pr: published }) => monitoredPRKey(published) === key))
     return true;
   if (!pr.headRefOid) return false;
+  const oid = pr.headRefOid as string;
   if (
-    pr.headRefOid === run.reviewResult?.reviewSnapshot?.headSha ||
+    oid === run.reviewResult?.reviewSnapshot?.headSha ||
     run.decisions.some(
       ({ payload }) =>
         payload?.kind === 'ready' &&
-        (payload.headSha === pr.headRefOid || payload.prPackage?.headSha === pr.headRefOid),
+        (payload.headSha === oid || payload.prPackage?.headSha === oid),
     )
   )
     return true;
   return (run.engineState?.publishGate?.reviews ?? []).some(
     (review) =>
-      review.reviewSnapshot?.headSha === pr.headRefOid ||
-      review.reviewedHeadSha === pr.headRefOid ||
-      review.attempts?.some((attempt) => attempt.reviewSnapshot?.headSha === pr.headRefOid),
+      review.reviewSnapshot?.headSha === oid ||
+      review.reviewedHeadSha === oid ||
+      review.attempts?.some((attempt) => attempt.reviewSnapshot?.headSha === oid),
   );
 }
 
@@ -80,13 +75,11 @@ export async function findPRNumber(
     if (isFollowUpFlow(run.flowType)) return refNum;
     if (refRepo === ciRepo) {
       try {
-        const verify = await ghRequest([
-          'api',
+        const verify = await github.rest<{ number?: number }>(
+          'GET',
           `repos/${refRepo}/pulls/${refNum}`,
-          '--jq',
-          '.number',
-        ]);
-        if (verify.stdout.trim() === String(refNum)) return refNum;
+        );
+        if (verify.number === refNum) return refNum;
       } catch (err) {
         console.warn(
           `[pr-linkage] gh api verify failed runId=${run.id.slice(0, 8)} pr=${refNum}: ${(err as Error).message.slice(0, 200)}`,
@@ -112,11 +105,9 @@ export async function findPRNumber(
   // existed. Revalidate it too, so a finalize retry can create the run's own PR.
   if (run.prNumber && run.prNumber > 0) {
     // An unavailable saved-PR read must stop publication, never create a duplicate.
-    const { stdout } = await ghRequest(
-      ['pr', 'view', String(run.prNumber), '--repo', ciRepo, '--json', 'number,state,headRefOid'],
-      { force: true },
-    );
-    const linked = JSON.parse(stdout) as DiscoveredPR;
+    const linked = await github.prView(ciRepo, run.prNumber, ['number', 'state', 'headRefOid'], {
+      force: true,
+    });
     if (canBindPR(run, ciRepo, linked)) return run.prNumber;
   }
 
@@ -132,16 +123,13 @@ export async function findPRNumber(
   const cached = getBinding(run.branch, ciRepo);
   if (cached !== null) {
     try {
-      const verify = await ghRequest([
-        'api',
+      const verify = await github.rest<{ state?: string; head?: { ref?: string } }>(
+        'GET',
         `repos/${ciRepo}/pulls/${cached}`,
-        '--jq',
-        '{state:.state,head:.head.ref}',
-      ]);
-      const parsed = JSON.parse(verify.stdout || '{}') as { state?: string; head?: string };
-      if (parsed.state === 'open' && parsed.head === run.branch) return cached;
+      );
+      if (verify.state === 'open' && verify.head?.ref === run.branch) return cached;
       console.log(
-        `[pr-linkage] invalidating stale cache runId=${run.id.slice(0, 8)} branch=${run.branch} prNumber=${cached} state=${parsed.state ?? '?'} head=${parsed.head ?? '?'}`,
+        `[pr-linkage] invalidating stale cache runId=${run.id.slice(0, 8)} branch=${run.branch} prNumber=${cached} state=${verify.state ?? '?'} head=${String(verify.head?.ref ?? '?')}`,
       );
       invalidateBinding(run.branch, ciRepo);
     } catch (err) {
@@ -153,43 +141,26 @@ export async function findPRNumber(
   }
 
   const totalAttempts = options?.noRetry ? 1 : RETRY_DELAYS_MS.length + 1;
-  const listArgs = [
-    'pr',
-    'list',
-    '--repo',
-    ciRepo,
-    '--head',
-    run.branch,
-    '--json',
-    'number,state,headRefOid',
-    '--limit',
-    '1',
-  ];
   for (let attempt = 0; attempt < totalAttempts; attempt++) {
     if (attempt > 0) {
       await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt - 1]));
     }
     // Retries force-refresh so a negative cache hit doesn't poison the retry window.
     const force = attempt > 0;
-    let stdout: string;
     try {
-      const result = await ghRequest(listArgs, { force });
-      stdout = result.stdout;
-    } catch (err) {
-      console.warn(
-        `[pr-linkage] gh pr list attempt ${attempt + 1}/${totalAttempts} failed runId=${run.id.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
+      const prs = await github.prListFields(
+        ciRepo,
+        ['number', 'state', 'headRefOid'],
+        { head: run.branch, limit: 1 },
+        { force },
       );
-      continue;
-    }
-    try {
-      const prs = JSON.parse(stdout || '[]') as DiscoveredPR[];
       if (prs.length > 0) {
-        setBinding(run.branch, ciRepo, prs[0].number);
-        return prs[0].number;
+        setBinding(run.branch, ciRepo, prs[0].number as number);
+        return prs[0].number as number;
       }
     } catch (err) {
       console.warn(
-        `[pr-linkage] gh pr list attempt ${attempt + 1}/${totalAttempts} parse failed runId=${run.id.slice(0, 8)}: ${(err as Error).message}`,
+        `[pr-linkage] gh pr list attempt ${attempt + 1}/${totalAttempts} failed runId=${run.id.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
       );
     }
   }
@@ -197,12 +168,16 @@ export async function findPRNumber(
   // linkage ran — e.g. an operator merged out-of-band while the run sat at a
   // gate. Fall back to all states once so recovery paths can still link it.
   try {
-    const { stdout } = await ghRequest([...listArgs, '--state', 'all'], { force: true });
-    const prs = JSON.parse(stdout || '[]') as DiscoveredPR[];
+    const prs = await github.prListFields(
+      ciRepo,
+      ['number', 'state', 'headRefOid'],
+      { head: run.branch, state: 'all', limit: 1 },
+      { force: true },
+    );
     const pr = prs[0];
     if (pr && canBindPR(run, ciRepo, pr)) {
-      setBinding(run.branch, ciRepo, pr.number);
-      return pr.number;
+      setBinding(run.branch, ciRepo, pr.number as number);
+      return pr.number as number;
     }
   } catch (err) {
     console.warn(
@@ -223,27 +198,17 @@ const MERGED_PR_PROBE_TIMEOUT_MS = 15_000;
 export async function findMergedPRNumber(run: Run, ciRepo: string): Promise<number | null> {
   if (!run.branch) return null;
   try {
-    const { stdout } = await withProbeTimeout(
-      ghRequest(
-        [
-          'pr',
-          'list',
-          '--repo',
-          ciRepo,
-          '--head',
-          run.branch,
-          '--state',
-          'merged',
-          '--json',
-          'number',
-          '--limit',
-          '1',
-        ],
-        { force: true },
+    const prs = await withProbeTimeout(
+      github.prListFields(
+        ciRepo,
+        ['number'],
+        { head: run.branch, state: 'merged', limit: 1 },
+        {
+          force: true,
+        },
       ),
     );
-    const prs = JSON.parse(stdout || '[]') as Array<{ number: number }>;
-    return prs.length > 0 ? prs[0].number : null;
+    return prs.length > 0 ? (prs[0].number as number) : null;
   } catch (err) {
     console.warn(
       `[pr-linkage] merged-PR probe failed runId=${run.id.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { type DispatchPreviewResult, Methods } from '@farmslot/protocol';
 
+import { startGitHubFixture } from '../integrations/github-test-fixtures.js';
 import { createNativeProofFixture } from '../runtime/native-proof-fixture.live-support.js';
 
 test('managed review preview ignores execution pools but rejects duplicate review authorities over RPC', async (t) => {
@@ -89,14 +90,35 @@ test('managed review preview ignores execution pools but rejects duplicate revie
   );
   await writeFile(
     path.join(root, 'bin/gh'),
-    `#!/usr/bin/env node
-const args=process.argv.slice(2);
-if(args[0]!=='api'||args.some(arg=>['POST','PATCH','PUT','DELETE'].includes(arg))) throw Error('Proof refuses GitHub writes');
-if(args.includes('--include')) process.stdout.write('HTTP/2.0 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n');
-process.stdout.write(JSON.stringify({number:42,title:'Fixture change',state:'open',body:'',user:{login:'fixture'},labels:[],head:{sha:'a'.repeat(40)},base:{sha:'b'.repeat(40)}}));
+    `#!/bin/sh
+if [ "$1" = auth ] && [ "$2" = token ]; then printf fixture-token; exit 0; fi
+echo 'Proof answers credential reads only' >&2
+exit 1
 `,
     { mode: 0o755 },
   );
+  // GitHub reads reach this fixture through FARMSLOT_GITHUB_API_URL; writes are refused.
+  const github = await startGitHubFixture((request) =>
+    request.method === 'GET' || request.path === '/graphql'
+      ? {
+          body: {
+            number: 42,
+            title: 'Fixture change',
+            state: 'open',
+            body: '',
+            user: { login: 'fixture' },
+            labels: [],
+            head: { sha: 'a'.repeat(40) },
+            base: { sha: 'b'.repeat(40) },
+          },
+        }
+      : { status: 500, body: { message: 'Proof refuses GitHub writes' } },
+  );
+  process.env.FARMSLOT_GITHUB_API_URL = github.origin;
+  t.after(async () => {
+    delete process.env.FARMSLOT_GITHUB_API_URL;
+    await github.close();
+  });
   process.env.PATH = path.join(root, 'bin') + path.delimiter + process.env.PATH;
   await import('../runtime/mock-pty.test-support.js');
   const fixture = await createNativeProofFixture(t, root);

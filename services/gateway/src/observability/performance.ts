@@ -9,7 +9,9 @@ import {
   PerformanceRecorder,
 } from '@farmslot/protocol/performance';
 
-export const gatewayPerformance = new PerformanceRecorder('gateway');
+/** Method labels the recorder keeps: RPC methods, plus the host-service operations registered below. */
+const knownMethods = new Set<string>(Object.values(Methods));
+export const gatewayPerformance = new PerformanceRecorder('gateway', { methods: knownMethods });
 interface RequestCost {
   method: string;
   metrics: PerformanceRecorder;
@@ -23,7 +25,6 @@ interface RequestCost {
 }
 const current = new AsyncLocalStorage<RequestCost>();
 const active = new Set<RequestCost>();
-const knownMethods = new Set<string>(Object.values(Methods));
 const loop = monitorEventLoopDelay({ resolution: 20 });
 let sampling: ReturnType<typeof setInterval> | undefined;
 /** The server owns sampling; closing a fixture server must release its timer. */
@@ -117,16 +118,55 @@ export function executionKind(executable: string, argv: readonly string[] = []):
   }
   return 'other';
 }
+const hostOperation = new AsyncLocalStorage<string>();
+const hostMethod = (operation: string) => `host:${operation}`;
+
+/**
+ * Host-service operation names (src/host-services) the exec and node counters may carry as their
+ * method. An unregistered name reads as `_unknown`, like an unknown RPC method.
+ */
+export function registerHostOperations(operations: Iterable<string>): void {
+  for (const operation of operations) knownMethods.add(hostMethod(operation));
+}
+
+/**
+ * Commands a host service starts inside `run` and outside any RPC are counted under that
+ * operation instead of the anonymous `_background`. Inside an RPC they stay the RPC's cost.
+ */
+export function withHostOperation<T>(operation: string, run: () => T): T {
+  return hostOperation.run(operation, run);
+}
+
+/** Commands another process ran for a host operation (the background child's tally). */
+export function recordHostOperationExec(
+  operation: string,
+  tally: Partial<Record<ExecutionKind, { calls: number; seconds: number }>>,
+): void {
+  for (const [kind, { calls, seconds }] of Object.entries(tally) as Array<
+    [ExecutionKind, { calls: number; seconds: number }]
+  >) {
+    const labels = { method: hostMethod(operation), kind };
+    gatewayPerformance.increment('farmslot_exec_calls_total', labels, calls);
+    gatewayPerformance.increment('farmslot_exec_seconds_total', labels, seconds);
+  }
+}
+
 export function measureManagedOperation<T>(
   type: 'exec' | 'node' | 'wait',
   kind: ExecutionKind,
   operation: () => Promise<T>,
 ): Promise<T> {
   const cost = current.getStore();
+  const operationName = hostOperation.getStore();
   const metrics = cost?.metrics ?? gatewayPerformance;
   const start = performance.now();
   const finish = () => {
-    const labels = { method: cost?.active ? cost.method : '_background', kind };
+    const method = cost?.active
+      ? cost.method
+      : operationName
+        ? hostMethod(operationName)
+        : '_background';
+    const labels = { method, kind };
     const elapsed = (performance.now() - start) / 1000;
     if (type !== 'wait')
       metrics.increment(

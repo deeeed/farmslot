@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import test, { mock } from 'node:test';
 
-import * as client from '../integrations/github-client.js';
+import type { RestServiceOpts } from '../integrations/github-client.js';
+import { fakeGitHubService } from '../integrations/github-test-fixtures.js';
 
-const requests: string[][] = [];
+const clientModule = await import('../integrations/github-client.js');
+const requests: string[] = [];
 let status = 'ahead';
 let comparison:
   | {
@@ -16,19 +18,17 @@ let comparison:
       }>;
     }
   | undefined;
-mock.module('../integrations/github-client.js', {
-  namedExports: {
-    ...client,
-    ghRequest: async (args: string[]) => {
-      requests.push(args);
-      if (status === 'missing') throw new Error('HTTP 404: No commit found');
-      return {
-        stdout: comparison ? JSON.stringify(comparison) : `${status}\n`,
-        stderr: '',
-        exitCode: 0,
-      };
-    },
+const fakeGithub = fakeGitHubService(clientModule.github, {
+  rest: async (_method: string, path: string, _opts?: RestServiceOpts) => {
+    requests.push(path);
+    if (status === 'missing') throw new Error('HTTP 404: No commit found');
+    if (comparison) return comparison;
+    if (path.includes('/compare/')) return { status };
+    return {};
   },
+});
+mock.module('../integrations/github-client.js', {
+  namedExports: { ...clientModule, github: fakeGithub },
 });
 const { isGitHubAncestor, fetchPRDiffFiles } = await import('./github.js');
 
@@ -45,12 +45,7 @@ test('only an ahead or identical comparison proves the prior head is an ancestor
     status = value;
     assert.equal(await isGitHubAncestor('owner/repo', prior, current), expected, value);
   }
-  assert.deepEqual(requests[0], [
-    'api',
-    `repos/owner/repo/compare/${prior}...${current}`,
-    '--jq',
-    '.status',
-  ]);
+  assert.equal(requests[0], `repos/owner/repo/compare/${prior}...${current}`);
 });
 
 test('a failed comparison reaches the caller', async () => {
@@ -76,7 +71,7 @@ test('captured PR diff uses immutable base/head comparison instead of the mutabl
   try {
     const files = await fetchPRDiffFiles('owner/repo', 42, { baseSha: prior, headSha: current });
     assert.equal(files[0].patch, '@@ captured');
-    assert.deepEqual(requests.at(-1), ['api', `repos/owner/repo/compare/${prior}...${current}`]);
+    assert.equal(requests.at(-1), `repos/owner/repo/compare/${prior}...${current}`);
     await assert.rejects(
       fetchPRDiffFiles('owner/repo', 42, { baseSha: prior }),
       /both base and head/,

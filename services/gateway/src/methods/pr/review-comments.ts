@@ -20,7 +20,7 @@ import {
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../../core/method-error.js';
-import { ghRequest } from '../../integrations/github-client.js';
+import { github } from '../../integrations/github-client.js';
 import { refreshPRStatusObservations } from '../pr.js';
 
 import { PRDetailCollector, type PRDetailReadInterest } from './detail-collector.js';
@@ -48,8 +48,8 @@ let _cachedUser = '';
 async function getCurrentUser(): Promise<string> {
   if (_cachedUser) return _cachedUser;
   try {
-    const { stdout } = await ghRequest(['api', 'user', '--jq', '.login']);
-    _cachedUser = stdout.trim();
+    const user = await github.rest<{ login?: string }>('GET', 'user');
+    _cachedUser = user.login?.trim() ?? '';
   } catch {
     _cachedUser = '';
   }
@@ -92,34 +92,23 @@ async function queryReviewThreads(
     }
   `;
 
-  const { stdout } = await ghRequest(
-    [
-      'api',
-      'graphql',
-      '-f',
-      `query=${query}`,
-      '-f',
-      `owner=${owner}`,
-      '-f',
-      `name=${name}`,
-      '-F',
-      `pr=${pr}`,
-    ],
-    { caller: 'review-comments:threads' },
-  );
-
-  const data = JSON.parse(stdout) as {
-    data?: {
-      repository?: {
-        pullRequest?: { reviewThreads?: { nodes?: GqlReviewThread[] } } | null;
-      } | null;
-    };
+  type QueryData = {
+    repository?: {
+      pullRequest?: { reviewThreads?: { nodes?: GqlReviewThread[] } } | null;
+    } | null;
   };
-  const pullRequest = data.data?.repository?.pullRequest;
+  const data = await github.graphql<QueryData>(
+    query,
+    { owner, name, pr },
+    {
+      caller: 'review-comments:threads',
+    },
+  );
+  const pullRequest = data.repository?.pullRequest;
   // An absent PR is an authorized not-found, never an empty thread list.
   if (!pullRequest && strict)
     throw new GatewayMethodError(
-      data.data?.repository === undefined ? 'UPSTREAM_UNAVAILABLE' : 'NOT_FOUND',
+      data.repository === undefined ? 'UPSTREAM_UNAVAILABLE' : 'NOT_FOUND',
       `GitHub returned no review threads for ${repo}#${pr}`,
     );
   const threadNodes: GqlReviewThread[] = pullRequest?.reviewThreads?.nodes ?? [];
@@ -193,47 +182,27 @@ function reviewCommandCompleted(
 export async function prAddComment(params: PRAddCommentParams): Promise<PRAddCommentResult> {
   const { pr, repo, body, path, line, side, commitId, inReplyTo } = params;
   if (inReplyTo) {
-    const { stdout } = await ghRequest(
-      [
-        'api',
-        `repos/${repo}/pulls/${pr}/comments/${inReplyTo}/replies`,
-        '-X',
-        'POST',
-        '-f',
-        `body=${body}`,
-      ],
-      { force: true },
+    const result = await github.rest<{ id: number }>(
+      'POST',
+      `repos/${repo}/pulls/${pr}/comments/${inReplyTo}/replies`,
+      { body: { body }, force: true },
     );
     reviewCommandCompleted(repo, pr);
-    return { id: JSON.parse(stdout).id };
+    return { id: result.id };
   }
   if (commitId && !/^[0-9a-f]{40,64}$/i.test(commitId)) {
     throw new Error('commitId must be an exact commit SHA');
   }
   const resolvedCommitId = commitId
     ? commitId
-    : (await ghRequest(['api', `repos/${repo}/pulls/${pr}`, '--jq', '.head.sha'])).stdout.trim();
-  const { stdout } = await ghRequest(
-    [
-      'api',
-      `repos/${repo}/pulls/${pr}/comments`,
-      '-X',
-      'POST',
-      '-f',
-      `body=${body}`,
-      '-f',
-      `path=${path}`,
-      '-F',
-      `line=${line}`,
-      '-f',
-      `side=${side || 'RIGHT'}`,
-      '-f',
-      `commit_id=${resolvedCommitId}`,
-    ],
-    { force: true },
-  );
+    : ((await github.rest<{ head?: { sha?: string } }>('GET', `repos/${repo}/pulls/${pr}`)).head
+        ?.sha ?? '');
+  const result = await github.rest<{ id: number }>('POST', `repos/${repo}/pulls/${pr}/comments`, {
+    body: { body, path, line, side: side || 'RIGHT', commit_id: resolvedCommitId },
+    force: true,
+  });
   reviewCommandCompleted(repo, pr);
-  return { id: JSON.parse(stdout).id };
+  return { id: result.id };
 }
 
 export async function prResolveThread(
@@ -242,26 +211,20 @@ export async function prResolveThread(
   const mutation = params.resolved
     ? 'mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { id } } }'
     : 'mutation($id: ID!) { unresolveReviewThread(input: {threadId: $id}) { thread { id } } }';
-  await ghRequest(['api', 'graphql', '-f', `query=${mutation}`, '-f', `id=${params.threadId}`], {
-    force: true,
-    caller: 'review-comments:mutate',
-  });
+  await github.graphql<unknown>(
+    mutation,
+    { id: params.threadId },
+    { force: true, caller: 'review-comments:mutate' },
+  );
   reviewCommandCompleted(params.repo, undefined, (thread) => thread.id === params.threadId);
   return { ok: true };
 }
 
 export async function prEditComment(params: PREditCommentParams): Promise<PREditCommentResult> {
-  await ghRequest(
-    [
-      'api',
-      `repos/${params.repo}/pulls/comments/${params.commentId}`,
-      '-X',
-      'PATCH',
-      '-f',
-      `body=${params.body}`,
-    ],
-    { force: true },
-  );
+  await github.rest<unknown>('PATCH', `repos/${params.repo}/pulls/comments/${params.commentId}`, {
+    body: { body: params.body },
+    force: true,
+  });
   reviewCommandCompleted(params.repo, undefined, (thread) =>
     thread.comments.some((comment) => comment.id === params.commentId),
   );
@@ -271,10 +234,9 @@ export async function prEditComment(params: PREditCommentParams): Promise<PREdit
 export async function prDeleteComment(
   params: PRDeleteCommentParams,
 ): Promise<PRDeleteCommentResult> {
-  await ghRequest(
-    ['api', `repos/${params.repo}/pulls/comments/${params.commentId}`, '-X', 'DELETE'],
-    { force: true },
-  );
+  await github.rest<unknown>('DELETE', `repos/${params.repo}/pulls/comments/${params.commentId}`, {
+    force: true,
+  });
   reviewCommandCompleted(params.repo, undefined, (thread) =>
     thread.comments.some((comment) => comment.id === params.commentId),
   );
@@ -282,19 +244,11 @@ export async function prDeleteComment(
 }
 
 export async function prSubmitReview(params: PRSubmitReviewParams): Promise<PRSubmitReviewResult> {
-  const { stdout } = await ghRequest(
-    [
-      'api',
-      `repos/${params.repo}/pulls/${params.pr}/reviews`,
-      '-X',
-      'POST',
-      '-f',
-      `body=${params.body}`,
-      '-f',
-      'event=COMMENT',
-    ],
-    { force: true },
+  const result = await github.rest<{ id: number }>(
+    'POST',
+    `repos/${params.repo}/pulls/${params.pr}/reviews`,
+    { body: { body: params.body, event: 'COMMENT' }, force: true },
   );
   reviewCommandCompleted(params.repo, params.pr);
-  return { id: JSON.parse(stdout).id };
+  return { id: result.id };
 }

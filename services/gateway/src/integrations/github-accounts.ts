@@ -1,19 +1,16 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-
 import {
   assertPRSourceAccount,
   type ConfigGitHubAccountsResult,
   Methods,
 } from '@farmslot/protocol';
 
+import { githubCli } from '../host-services/github-cli.js';
 import {
   GitHubAccountObservation,
   type GitHubAccountsReadInterest,
 } from '../resources/github-account-observation.js';
 import { resourceRevisions } from '../resources/revisions.js';
 
-const execFileAsync = promisify(execFile);
 let hasVisibleInterest = () => false;
 let activeObservation: object | undefined;
 const observation = new GitHubAccountObservation({
@@ -64,18 +61,10 @@ export function parseGitHubAccounts(value: unknown): ConfigGitHubAccountsResult[
 }
 
 async function sampleGitHubAccounts(): Promise<ConfigGitHubAccountsResult> {
-  const env = { ...process.env };
-  for (const key of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN'])
-    delete env[key];
   let value: ConfigGitHubAccountsResult;
   try {
-    const { stdout } = await execFileAsync('gh', ['auth', 'status', '--json', 'hosts'], {
-      env,
-      timeout: 15_000,
-      maxBuffer: 1024 * 1024,
-    });
     value = {
-      accounts: parseGitHubAccounts(JSON.parse(stdout)),
+      accounts: parseGitHubAccounts(await githubCli.authStatus()),
       checkedAt: new Date().toISOString(),
     };
   } catch {

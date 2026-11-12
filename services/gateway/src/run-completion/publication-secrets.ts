@@ -1,11 +1,6 @@
-import { createHash } from 'node:crypto';
+import type { FloorHit } from '@farmslot/handoff/scrub';
 
-import { type FloorHit, scanForFloorSecrets } from '@farmslot/handoff/scrub';
-
-// Repeated publication checks still validate frozen bytes. Cache only clean
-// text hashes to avoid rescanning the same immutable logs at each boundary.
-const cleanTextHashes = new Set<string>();
-const MAX_CLEAN_TEXT_HASHES = 256;
+import secretScan from '../host-services/secret-scan.js';
 
 /** A refusal must survive optional rendering fallbacks without exposing secret bytes. */
 export class PublicationSecretError extends Error {
@@ -17,16 +12,11 @@ export class PublicationSecretError extends Error {
   }
 }
 
-export function assertPublicationTextSafe(...texts: string[]): void {
-  for (const text of texts) {
-    const digest = createHash('sha256').update(text).digest('hex');
-    if (cleanTextHashes.has(digest)) continue;
-    const hits = scanForFloorSecrets(text);
-    if (hits.length) throw new PublicationSecretError(hits);
-    cleanTextHashes.add(digest);
-    if (cleanTextHashes.size > MAX_CLEAN_TEXT_HASHES) {
-      const oldest = cleanTextHashes.values().next();
-      if (!oldest.done) cleanTextHashes.delete(oldest.value);
-    }
-  }
+/**
+ * Resolves only after every text was scanned. Refuses on secret values, and on
+ * any failure to complete the scan, so nothing publishes unscanned.
+ */
+export async function assertPublicationTextSafe(...texts: string[]): Promise<void> {
+  const found = await secretScan.publication(...texts);
+  if (found.length) throw new PublicationSecretError(found);
 }

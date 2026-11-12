@@ -11,6 +11,8 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
+import { startGitHubFixture } from '../integrations/github-test-fixtures.js';
+
 const root = mkdtempSync(path.join(tmpdir(), 'automatic-qa-'));
 for (const directory of [
   'scripts',
@@ -37,12 +39,27 @@ writeFileSync(
   path.join(root, 'bin/gh'),
   String.raw`#!/usr/bin/env node
 const args=process.argv.slice(2);
-if(args[0]!=='api'||args.some(arg=>['POST','PATCH','PUT','DELETE'].includes(arg))) throw new Error('Fixture refuses non-read GitHub commands');
-if(args.includes('--include')) process.stdout.write('HTTP/2.0 200 OK\r\ncontent-type: application/json\r\n\r\n');
-process.stdout.write(JSON.stringify({number:42,title:'Fixture',body:'',state:'open',labels:[],user:{login:'fixture'}}));
+if(args[0]!=='auth'||args[1]!=='token') throw new Error('Fixture answers credential reads only');
+process.stdout.write('fixture-token');
 `,
   { mode: 0o700 },
 );
+// GitHub reads arrive here through FARMSLOT_GITHUB_API_URL; writes are refused.
+const github = await startGitHubFixture((request) =>
+  request.method === 'GET' || request.path === '/graphql'
+    ? {
+        body: {
+          number: 42,
+          title: 'Fixture',
+          body: '',
+          state: 'open',
+          labels: [],
+          user: { login: 'fixture' },
+        },
+      }
+    : { status: 500, body: { message: 'Fixture refuses non-read GitHub commands' } },
+);
+after(() => github.close());
 const execution = {
   slotPolicy: { kind: 'exact' as const, slotId: 'runtime' },
   models: [{ mode: 'cold' as const, runner: 'codex', model: 'gpt-6-luna', effort: 'low' }],
@@ -135,6 +152,7 @@ Object.assign(process.env, {
   FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'owner',
   FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
   PATH: `${path.join(root, 'bin')}${path.delimiter}${process.env.PATH}`,
+  FARMSLOT_GITHUB_API_URL: github.origin,
 });
 after(() => rmSync(root, { recursive: true, force: true }));
 const { PRRuleStore } = await import('./store.js');

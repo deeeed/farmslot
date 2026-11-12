@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ghRequest } from '../integrations/github-client.js';
+import type { GitHubService } from '../integrations/github-client.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 
 import {
@@ -12,6 +12,24 @@ import {
 
 await import('../runtime/mock-pty.test-support.js');
 const { completionCommentRows, renderCommentSummary } = await import('./writer.js');
+
+function notImpl(): never {
+  throw new Error('method not implemented in test fake');
+}
+
+function baseFake(): Omit<GitHubService, 'graphql' | 'rest'> {
+  return {
+    prView: notImpl,
+    prList: notImpl,
+    prListFields: notImpl,
+    prChecks: notImpl,
+    prCreate: notImpl,
+    prEdit: notImpl,
+    prComment: notImpl,
+    prReady: notImpl,
+    repoView: notImpl,
+  };
+}
 
 function threadPage(commentsComplete = true): string {
   return JSON.stringify({
@@ -40,19 +58,28 @@ function threadPage(commentsComplete = true): string {
 }
 
 test('one intake retains full review bodies and bot/human sources without filtering', async () => {
-  const calls: string[][] = [];
-  const request: typeof ghRequest = async (args) => {
-    calls.push(args);
-    const stdout = args.includes('graphql')
-      ? threadPage()
-      : JSON.stringify({
-          id: args.some((arg) => arg.includes('/reviews')) ? 3 : 2,
+  const endpoints: string[] = [];
+  const request: GitHubService = {
+    ...baseFake(),
+    graphql: async <T>() => {
+      endpoints.push('graphql');
+      return { repository: { pullRequest: JSON.parse(threadPage()) } } as T;
+    },
+    rest: async <T>(_method: string, path: string) => {
+      const isReviews = path.includes('/reviews');
+      endpoints.push(isReviews ? 'reviews' : 'issues');
+      const id = isReviews ? 3 : 2;
+      return [
+        {
+          id,
           body: 'A human obligation',
-          author: 'person',
-          url: 'https://example.test/comments/2',
-          updatedAt: '2026-10-25T00:00:00Z',
-        });
-    return { stdout, stderr: '' };
+          updated_at: '2026-10-25T00:00:00Z',
+          html_url: `https://example.test/comments/${id}`,
+          user: { login: 'person' },
+          ...(isReviews ? { state: 'APPROVED', submitted_at: '2026-10-25T00:00:00Z' } : {}),
+        },
+      ] as T;
+    },
   };
   const intake = await fetchPRCompletionIntake('example/repo', 7, request);
   assert.equal(intake.sources.length, 3);
@@ -60,23 +87,36 @@ test('one intake retains full review bodies and bot/human sources without filter
   assert.equal(intake.sources[0].author, 'cursor[bot]');
   assert.equal(intake.sources[0].resolved, false);
   assert.equal(intake.identity.headSha, 'a'.repeat(40));
-  assert.ok(calls.every((args) => args.includes('--paginate')));
+  assert.ok(
+    endpoints.includes('graphql') && endpoints.includes('issues') && endpoints.includes('reviews'),
+  );
 });
 
 test('a failed or incomplete fetch refuses instead of returning an empty intake', async () => {
-  const failed: typeof ghRequest = async () => {
-    throw new Error('Provider unavailable');
+  const failed: GitHubService = {
+    ...baseFake(),
+    graphql: async () => {
+      throw new Error('Provider unavailable');
+    },
+    rest: async () => {
+      throw new Error('Provider unavailable');
+    },
   };
   await assert.rejects(fetchPRCompletionIntake('example/repo', 7, failed), /Provider unavailable/);
-  const incomplete: typeof ghRequest = async (args) => ({
-    stdout: args.includes('graphql') ? threadPage(false) : '',
-    stderr: '',
-  });
+  const incomplete: GitHubService = {
+    ...baseFake(),
+    graphql: async <T>() => ({ repository: { pullRequest: JSON.parse(threadPage(false)) } }) as T,
+    rest: async <T>() => [] as T,
+  };
   await assert.rejects(
     fetchPRCompletionIntake('example/repo', 7, incomplete),
     /incomplete comment connection/,
   );
-  const empty: typeof ghRequest = async () => ({ stdout: '', stderr: '' });
+  const empty: GitHubService = {
+    ...baseFake(),
+    graphql: async <T>() => null as T,
+    rest: async <T>() => [] as T,
+  };
   await assert.rejects(fetchPRCompletionIntake('example/repo', 7, empty), /no PR snapshot/);
 });
 
@@ -125,10 +165,11 @@ test('resolved threads and deleted authors keep comment IDs and file context', a
     path: 'src/example.ts',
     line: 42,
   });
-  const intake = await fetchPRCompletionIntake('example/repo', 7, async (args) => ({
-    stdout: args.includes('graphql') ? JSON.stringify(page) : '',
-    stderr: '',
-  }));
+  const intake = await fetchPRCompletionIntake('example/repo', 7, {
+    ...baseFake(),
+    graphql: async <T>() => ({ repository: { pullRequest: page } }) as T,
+    rest: async <T>() => [] as T,
+  });
   assert.deepEqual(
     {
       threadId: intake.sources[0].threadId,
@@ -152,21 +193,24 @@ test('resolved threads and deleted authors keep comment IDs and file context', a
 });
 
 test('pending unsubmitted reviews are excluded before requiring a submission timestamp', async () => {
-  const intake = await fetchPRCompletionIntake('example/repo', 7, async (args) => ({
-    stdout: args.includes('graphql')
-      ? threadPage()
-      : args.some((arg) => arg.includes('/reviews'))
-        ? JSON.stringify({
+  const intake = await fetchPRCompletionIntake('example/repo', 7, {
+    ...baseFake(),
+    graphql: async <T>() => ({ repository: { pullRequest: JSON.parse(threadPage()) } }) as T,
+    rest: async <T>(_method: string, path: string) => {
+      if (path.includes('/reviews'))
+        return [
+          {
             id: 19,
             body: 'Private draft',
             state: 'PENDING',
-            updatedAt: null,
-            author: 'person',
-            url: 'https://example.test/review/19',
-          })
-        : '',
-    stderr: '',
-  }));
+            submitted_at: null,
+            html_url: 'https://example.test/review/19',
+            user: { login: 'person' },
+          },
+        ] as T;
+      return [] as T;
+    },
+  });
   assert.equal(intake.sources.length, 1);
   assert.equal(intake.sources[0].providerKind, 'thread');
   assert.ok(!intake.sources.some(({ body }) => body === 'Private draft'));

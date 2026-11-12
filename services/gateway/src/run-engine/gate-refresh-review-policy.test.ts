@@ -18,12 +18,26 @@ import {
 await import('../runtime/mock-pty.test-support.js');
 const github = await import('../integrations/github-client.js');
 const githubCalls: string[][] = [];
+const guardGithub = async (...args: unknown[]): Promise<never> => {
+  githubCalls.push(args.filter((a) => typeof a === 'string') as string[]);
+  throw new Error('Unexpected GitHub call');
+};
 mock.module('../integrations/github-client.js', {
   namedExports: {
     ...github,
-    ghRequest: async (args: string[]) => {
-      githubCalls.push(args);
-      throw new Error('Unexpected GitHub call');
+    github: {
+      ...github.github,
+      prView: guardGithub,
+      prList: guardGithub,
+      prListFields: guardGithub,
+      prChecks: guardGithub,
+      prCreate: guardGithub,
+      prEdit: guardGithub,
+      prComment: guardGithub,
+      prReady: guardGithub,
+      repoView: guardGithub,
+      graphql: guardGithub,
+      rest: guardGithub,
     },
   },
 });

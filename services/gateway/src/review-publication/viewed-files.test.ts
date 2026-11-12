@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mock, test } from 'node:test';
+import { after, mock, test } from 'node:test';
 
-import type { ReviewViewedFilesResult } from '@farmslot/protocol';
+import { isRecord, type ReviewViewedFilesResult } from '@farmslot/protocol';
 
-import { parseGhFields } from '../../../../scripts/runner-validation/gh-fixture-fields.cjs';
-import type { GhRequestOpts } from '../integrations/github-client.js';
+import { rejectMutationRateLimit } from '../../../../scripts/runner-validation/review-provider-fixture.cjs';
+import { startGitHubFixture } from '../integrations/github-test-fixtures.js';
 
 const head = 'a'.repeat(40);
 const base = 'b'.repeat(40);
@@ -36,41 +36,60 @@ const reset = () => {
   calls.length = 0;
   saved = undefined;
 };
+// A fixture origin never receives an account credential, so the binding is checked where
+// githubGraphQL hands each exchange to the client.
+const githubClient = await import('../integrations/github-client.js');
 mock.module('../integrations/github-client.js', {
   namedExports: {
-    githubRequestCacheKey: () => 'viewed-fixture',
-    ghRequest: async (args: string[], options: GhRequestOpts) => {
+    ...githubClient,
+    runGitHubGraphQLExchange: (
+      ...args: Parameters<typeof githubClient.runGitHubGraphQLExchange>
+    ) => {
       assert.equal(
-        options.account,
-        binding,
+        args[4]?.account?.token,
+        binding.token,
         'Every observation and mutation uses the posting token',
       );
-      calls.push(args);
-      const fields = parseGhFields(args);
-      const pr = () => ({ id: 'PR_fixture', headRefOid: liveHead, baseRefOid: base });
-      let data;
-      if (fields.query.includes('markFileAsViewed')) {
-        assert(options.signal, 'Mutation work has a deadline');
-        mutationCount++;
-        data = Object.fromEntries(
-          Object.keys(fields)
-            .filter((key) => /^path\d+$/.test(key))
-            .map((key, index) => [
-              key.replace('path', 'file'),
-              mutationErrors && index === 1 ? null : { pullRequest: pr() },
-            ]),
-        );
-        if (moveAfterFirstMutation && mutationCount === 1) liveHead = 'c'.repeat(40);
-      } else if (fields.query.includes('repository(')) {
-        const index = Number(fields.cursor ?? 0);
-        data = {
+      return githubClient.runGitHubGraphQLExchange(...args);
+    },
+  },
+});
+// GitHub GraphQL through the real githubGraphQL client; the fixture validates like GitHub.
+const fixture = await startGitHubFixture((request) => {
+  assert.equal(request.headers.authorization, undefined, 'no credential reaches the fixture');
+  const body = isRecord(request.json) ? request.json : {};
+  const doc = typeof body.query === 'string' ? body.query : '';
+  const variables = isRecord(body.variables) ? body.variables : {};
+  const invalid = rejectMutationRateLimit(doc);
+  if (invalid) return { body: invalid };
+  const args = [...Object.entries(variables).map(([k, v]) => `${k}=${String(v)}`), doc];
+  calls.push(args);
+  const pr = () => ({ id: 'PR_fixture', headRefOid: liveHead, baseRefOid: base });
+  if (doc.includes('markFileAsViewed')) {
+    mutationCount++;
+    const data: Record<string, unknown> = {};
+    let idx = 0;
+    for (const key of Object.keys(variables)) {
+      if (/^path\d+$/.test(key)) {
+        data[key.replace('path', 'file')] =
+          mutationErrors && idx === 1 ? null : { pullRequest: pr() };
+        idx++;
+      }
+    }
+    if (moveAfterFirstMutation && mutationCount === 1) liveHead = 'c'.repeat(40);
+    return { body: { data } };
+  } else if (doc.includes('repository(')) {
+    const index = Number(variables.cursor ?? 0);
+    return {
+      body: {
+        data: {
           viewer: { login: actor },
           repository: {
             pullRequest: {
               ...pr(),
               changedFiles: pages.flat().length,
               files: {
-                nodes: pages[index].map((path) => ({ path })),
+                nodes: pages[index].map((p) => ({ path: p })),
                 pageInfo: {
                   hasNextPage: index < pages.length - 1,
                   endCursor: index < pages.length - 1 ? String(index + 1) : null,
@@ -78,22 +97,18 @@ mock.module('../integrations/github-client.js', {
               },
             },
           },
-        };
-      } else {
-        if (moveBeforeMutation) liveHead = 'c'.repeat(40);
-        data = { node: pr() };
-      }
-      return {
-        stdout: JSON.stringify({
-          data,
-          ...(mutationErrors && fields.query.includes('markFileAsViewed')
-            ? { errors: [{ message: 'Forbidden path' }] }
-            : {}),
-        }),
-        stderr: '',
-      };
-    },
-  },
+        },
+      },
+    };
+  } else {
+    if (moveBeforeMutation) liveHead = 'c'.repeat(40);
+    return { body: { data: { node: pr() } } };
+  }
+});
+process.env.FARMSLOT_GITHUB_API_URL = fixture.origin;
+after(async () => {
+  delete process.env.FARMSLOT_GITHUB_API_URL;
+  await fixture.close();
 });
 const { markReviewedFilesViewed } = await import('./viewed-files.js');
 const save = async (result: ReviewViewedFilesResult) => {
@@ -131,7 +146,7 @@ test('partial provider failures and diagnostic persistence failure stay best eff
   const result = await markReviewedFilesViewed(input, save);
   assert.equal(result.state, 'partial');
   assert.deepEqual(result.markedPaths, ['src/deleted.ts', 'src/other.ts']);
-  assert.match(result.reason ?? '', /Forbidden path/);
+  assert.match(result.reason ?? '', /GitHub did not confirm every Viewed mutation/);
   reset();
   const unretained = await markReviewedFilesViewed(input, async () => {
     throw new Error('Disk unavailable');
