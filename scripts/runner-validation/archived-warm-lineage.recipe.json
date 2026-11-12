@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Archived WARM lineage lookup",
+  "description": "An isolated authenticated gateway proves that live and archived reviewer records pass the same WARM provenance check. Missing execution capacity stops the request before launch; model and effort mismatches still refuse. No reviewer or provider command runs.",
+  "workflow": {
+    "entry": "warm-preflight",
+    "nodes": {
+      "warm-preflight": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json FARMSLOT_ARCHIVED_WARM_OUT=temp/archived-warm-lineage/rpc.json node --import tsx --experimental-test-module-mocks --test services/gateway/src/review/archived-warm-lineage.rpc.live.ts",
+        "timeout_ms": 180000,
+        "intent": "Archive a completed fixture reviewer, clear in-memory reviewer claims, resolve its verified lineage over RPC without restoring it, preserve mismatch refusals and leave the gate and archive unchanged.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

@@ -58,7 +58,9 @@ import { RunnerExecutionError } from '../runners/runner-execution-error.js';
 import {
   assertRunArchivable,
   getAllRuns,
+  getAllRunsWithArchived,
   getRun,
+  getRunWithArchived,
   persistRunNow,
   updateRun,
   updateRunStep,
@@ -291,7 +293,7 @@ async function freezeSubject(
     capturedAt: new Date().toISOString(),
   };
   const owner = runPrincipalOwner(run);
-  const allRuns = startsFreshReviewChain(run) ? [] : getAllRuns();
+  const allRuns = startsFreshReviewChain(run) ? [] : await getAllRunsWithArchived();
   const prior = findLatestPriorReviewRun(
     run,
     allRuns.filter((candidate) => {
@@ -326,7 +328,8 @@ async function freezeSubject(
         currentWorkspaceRun(runId, generation);
       });
     }
-    const savedPrior = getRun(prior.id);
+    const savedPrior = await getRunWithArchived(prior.id);
+    currentWorkspaceRun(runId, generation);
     if (!savedPrior) throw new Error('The prior review was removed during session recovery');
     configureWorkspaceContinuity(run, savedPrior, context, subject);
     if (context.mode === 'warm' && context.priorReviewedHeadSha)
