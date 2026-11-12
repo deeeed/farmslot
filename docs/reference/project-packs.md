@@ -177,6 +177,51 @@ quotes in workspace, repo, and hook paths.
 | `sync`     | During `farmslot update`, when the pack content hash changed.     |
 | `smoke`    | Last step of `project add`; non-zero exit fails the add.          |
 
+## Farm-owned support paths
+
+`project.json` MAY declare one `fixtures.owned_paths` list:
+
+```json
+{
+  "fixtures": {
+    "owned_paths": [
+      { "path": ".agents/skills/example-validation", "state": "current" },
+      { "path": "CLAUDE.local.md", "state": "retired" }
+    ]
+  }
+}
+```
+
+Each entry MUST contain a literal checkout-relative `path` and `state`, either
+`current` or `retired`. Paths MUST be nonempty, normalized and unique; absolute
+paths, globs, traversal, Git metadata and checkout-root ownership are forbidden.
+A directory declares ownership of its untracked descendants. A retired path MUST
+NOT contain a separately declared current path. Packs MUST declare
+only regenerable farm-installed support files, not user content or task/runtime
+data already governed by archive and retention rules.
+
+Retirement MUST change the state and retain the entry permanently. Removing a
+fixture mapping, required skill or Git exclusion MUST NOT remove its ownership
+tombstone. Both states use one resolver for dirty checks, recovery verification
+and cleanup. Declared untracked files MUST NOT count as user changes, even on a
+slot that has not been prepared since the pack update. Tracked entries and
+tracked edits MUST remain visible and MUST NOT be deleted by this cleanup.
+
+Guarded release/recovery MUST remove the declared untracked support paths. The
+operation MUST preserve undeclared paths, tracked files, nested repositories
+and paths reached through an escaping parent symlink. Existing run/slot
+ownership and worker-quiescence checks still apply. Prepare/fixture refresh MAY
+recreate current support files; retired entries MUST NOT be installed again.
+
+When `owned_paths` is absent, consumers MUST retain the existing
+`slotScaffoldingPaths` fallback. This is an optional additive project contract,
+with no new RPC or command. Framework task/runtime namespaces keep their
+existing archive and retention behavior.
+
+The one-time migration sweep MUST use merged pack declarations, inspect each
+slot's Git status before and after, and delete only untracked `retired` paths.
+It MUST report preserved tracked/undeclared work and failures per slot.
+
 ## What `project add` does
 
 1. Resolve the source (local dir, or git URL cloned under `<workspace>/packs/`).
