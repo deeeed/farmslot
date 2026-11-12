@@ -120,10 +120,14 @@ async function startServer() {
     const ws = new WebSocket(`ws://127.0.0.1:${address.port}/ws`);
     sockets.push(ws);
     const changes: ResourceChangedPayload[] = [];
+    /** Each `fleet.updated` frame as it crossed the socket. */
+    const fleetUpdates: string[] = [];
     ws.on('message', (data) => {
       const frame: EventFrame = JSON.parse(data.toString());
       if (frame.type === 'event' && frame.event === Events.RESOURCE_CHANGED)
         changes.push(frame.payload as ResourceChangedPayload);
+      if (frame.type === 'event' && frame.event === Events.FLEET_UPDATED)
+        fleetUpdates.push(data.toString());
     });
     await new Promise<void>((resolve, reject) => {
       ws.once('open', resolve);
@@ -134,7 +138,7 @@ async function startServer() {
       token: credential.secret,
     });
     assert.equal(connected.ok, true, JSON.stringify(connected.error));
-    return { ws, changes };
+    return { ws, changes, fleetUpdates };
   };
   return {
     request,
@@ -203,6 +207,38 @@ test('observed fleet.status versions and ids reads answer with a stamp', async (
   const invalid = await harness.request(ws, 'fleet.status', { ids: [1] }, true);
   assert.equal(invalid.ok, false);
   assert.equal(invalid.error?.code, 'INVALID_PARAMS');
+});
+
+test('F1: fleet.updated carries no fleet to a connection that reads the fleet as entities', async (t) => {
+  setCachedFleetForTests(fleet);
+  const harness = await startServer();
+  t.after(async () => {
+    setCachedFleetForTests(null);
+    await harness.close();
+  });
+  // Command Center and Companion read the fleet by versions; the CLI and the TUI read it whole
+  // and render the event's fleet.
+  const viewer = await harness.connect(['admin']);
+  const whole = await harness.connect(['admin']);
+  const versions = await harness.request(viewer.ws, 'fleet.status', { versions: true }, true);
+  assert.equal(versions.ok, true, JSON.stringify(versions.error));
+  assert.equal((await harness.request(whole.ws, 'fleet.status', {})).ok, true);
+  viewer.fleetUpdates.length = 0;
+  whole.fleetUpdates.length = 0;
+
+  broadcastEvent(Events.FLEET_UPDATED, { fleet });
+  const ceiling = performance.now() + 3000;
+  while (!(viewer.fleetUpdates.length && whole.fleetUpdates.length) && performance.now() < ceiling)
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+  const payloads = (frames: string[]) =>
+    frames.map((frame) => (JSON.parse(frame) as EventFrame).payload);
+  assert.deepEqual(payloads(viewer.fleetUpdates), [{}], 'the notice arrives without the fleet');
+  assert.deepEqual(payloads(whole.fleetUpdates), [JSON.parse(JSON.stringify({ fleet }))]);
+  assert.ok(
+    Buffer.byteLength(viewer.fleetUpdates[0]) < 100,
+    `the notice is ${Buffer.byteLength(viewer.fleetUpdates[0])} B`,
+  );
 });
 
 test('pushed entities reach only principals whose read would return them', async (t) => {

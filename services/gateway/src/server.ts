@@ -954,6 +954,7 @@ async function dispatchMessage(
     if (entityRead && !entityRead.ok)
       throw new GatewayMethodError('INVALID_PARAMS', entityRead.message);
     const entityShape = entityRead?.ok ? entityRead.shape : undefined;
+    if (entityShape && frame.method === Methods.FLEET_STATUS) state.fleetEntitySync = true;
     const query =
       observed && !nativeInterests
         ? resourceQuery(
@@ -1258,6 +1259,10 @@ export function broadcast(frame: EventFrame, ownerId?: string, ownerGeneration?:
   const payload: unknown = frame.payload;
   noteRunEvent(frame.event, payload);
   const msg = JSON.stringify(frame);
+  // The CLI and the TUI render this event's fleet. A connection that reads the fleet as entities
+  // already holds it, and its apps use the event only as a notice.
+  const notice =
+    frame.event === Events.FLEET_UPDATED ? JSON.stringify({ ...frame, payload: {} }) : undefined;
   let authorizationFaultLogged = false;
   for (const [ws, state] of clients) {
     if (ws.readyState !== WebSocket.OPEN || activeAuthRuntime === null) continue;
@@ -1283,7 +1288,7 @@ export function broadcast(frame: EventFrame, ownerId?: string, ownerGeneration?:
       }
       continue;
     }
-    if (canReceive) ws.send(msg);
+    if (canReceive) ws.send(notice !== undefined && state.fleetEntitySync ? notice : msg);
   }
 }
 

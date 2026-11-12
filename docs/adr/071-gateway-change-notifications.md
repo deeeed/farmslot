@@ -580,6 +580,9 @@ publication or a read looks them up and hashes nothing.
 - Workspace inspections were started by the observed full read. A versions read
   starts them too, and so do slot publications while a viewer is connected, no
   more often than the fleet view's reread floor.
+- `fleet.updated` still carries the whole fleet, which the CLI and the TUI
+  render. A connection that has read the fleet as entities holds it already and
+  receives the event as a notice with an empty payload.
 
 **Client.** One implementation in `@farmslot/protocol/client-cache`:
 
