@@ -754,3 +754,42 @@ test('a replaced owner is refused as replaced and its contribution is withdrawn 
     false,
   );
 });
+
+test('a reconcile turn reads unchanged intents without copying them and still persists a change', async (t) => {
+  const { store, preview, dispatcher, restart } = await fixture(t);
+  // More withdrawn intents, as on an operator gateway: a turn only reads them.
+  for (let index = 0; index < 4; index++) {
+    const [item] = preview.items;
+    await store.applyPreview('owner', {
+      ...preview,
+      checkedAt: new Date().toISOString(),
+      items: [
+        { ...item, subject: { ...item.subject, pr: { ...item.subject.pr, number: ++prNumber } } },
+      ],
+    });
+  }
+  const intents = store.snapshot().intents;
+  assert.equal(intents.length, 5);
+  for (const intent of intents) await store.updateDispatch(intent.id, { status: 'withdrawn' });
+  const before = store.snapshot();
+  assert.throws(() => {
+    before.intents[0].status = 'held';
+  }, TypeError);
+  const copies = t.mock.method(store, 'intent');
+
+  await dispatcher.reconcile();
+  assert.equal(copies.mock.callCount(), 0, 'no intent is copied');
+  assert.equal(store.snapshot(), before, 'nothing is written');
+
+  // A changed intent still goes through the write path and reaches the file. Each preview
+  // replaced the previous one, so only the last PR still has an eligible contribution.
+  const changed = intents.find((intent) => intent.contributions.some((source) => source.eligible))!;
+  await store.updateDispatch(changed.id, { status: 'held', queueItemId: 'removed-item' });
+  await dispatcher.reconcile();
+  const persisted = (await restart()).store.intent(changed.id);
+  assert.equal(persisted?.queueItemId, undefined);
+  assert.equal(
+    persisted?.dispatchHold,
+    'Dispatch was removed; accept the review to queue it again',
+  );
+});

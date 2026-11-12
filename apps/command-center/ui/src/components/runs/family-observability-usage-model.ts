@@ -23,6 +23,7 @@ export interface UsageAttributionPoint {
 }
 
 export interface UsageBreakdown extends UsageTotals {
+  costReason?: string;
   label: string;
 }
 
@@ -111,8 +112,19 @@ export function usageBreakdown(
   return [...labels]
     .map((label) => {
       const totals = summarizeUsage(rows.filter((row) => labelFor(row) === label));
-      const coverage = summarizeUsage(inventory.filter((row) => labelFor(row) === label));
-      return { ...totals, label, missing: coverage.missing, unpriced: coverage.unpriced };
+      const group = inventory.filter((row) => labelFor(row) === label);
+      const coverage = summarizeUsage(group);
+      return {
+        ...totals,
+        label,
+        missing: coverage.missing,
+        unpriced: coverage.unpriced,
+        ...(totals.cost === null &&
+        group.length &&
+        group.every((row) => row.costReason === 'local, unpriced')
+          ? { costReason: 'local, unpriced' }
+          : {}),
+      };
     })
     .sort((a, b) => (b.tokens ?? 0) - (a.tokens ?? 0) || a.label.localeCompare(b.label));
 }

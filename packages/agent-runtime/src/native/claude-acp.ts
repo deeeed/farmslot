@@ -6,6 +6,7 @@ import {
 } from './account-common.js';
 import type { NativeAccountProbeOptions } from './account-types.js';
 import { createAcpAdapter } from './acp.js';
+import { claudeHeadlessDisallowedTools, claudeHeadlessEnvironment } from './claude-headless.js';
 import type { NativeAdapter } from './types.js';
 
 export const CLAUDE_ACP_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
@@ -26,9 +27,9 @@ const adapter = createAcpAdapter({
       ...(options.filesystemPolicy
         ? { settingSources: ['user'], settings: { disableAllHooks: true } }
         : {}),
-      ...(options.modelQuestions === 'off' ? { disallowedTools: ['AskUserQuestion'] } : {}),
+      disallowedTools: claudeHeadlessDisallowedTools(options.modelQuestions),
     };
-    return Object.keys(policy).length ? { claudeCode: { options: policy } } : undefined;
+    return { claudeCode: { options: policy } };
   },
 });
 
@@ -36,7 +37,7 @@ const adapter = createAcpAdapter({
 export const claudeAcpNativeAdapter: NativeAdapter = {
   ...adapter,
   async start(options, emit) {
-    const environment = options.env ?? process.env;
+    const environment = claudeHeadlessEnvironment(options.env);
     const executable = await resolveNativeAccountExecutable(
       environment.CLAUDE_CODE_EXECUTABLE || 'claude',
       options,

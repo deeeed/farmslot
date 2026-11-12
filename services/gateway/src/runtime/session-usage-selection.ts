@@ -91,6 +91,7 @@ export function allRunSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
   return rows.map<RunnerSessionUsage>((row) => {
     const priced =
       row.source !== 'unavailable' &&
+      !row.error &&
       row.costStatus !== 'unpriced' &&
       typeof row.costUsd === 'number' &&
       Number.isFinite(row.costUsd) &&
