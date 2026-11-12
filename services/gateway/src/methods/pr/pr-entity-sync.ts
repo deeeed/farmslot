@@ -3,10 +3,9 @@
 // read projects the list again; an ids read serves the rows that listing named.
 import type { PREntityPage, PRVersionsResult } from '@farmslot/protocol';
 
-import { resourceRevisions } from '../../resources/revisions.js';
 import { servedPRListFor } from '../pr.js';
 
-import { type PRListClientInterest, prListResourceKey } from './list-cache.js';
+import type { PRListClientInterest } from './list-cache.js';
 
 /** An ids page stops before the row that would take it past this many UTF-8 JSON bytes. */
 export const PR_ENTITY_PAGE_MAX_BYTES = 2 * 1024 * 1024;
@@ -23,7 +22,7 @@ export async function prListVersions(
   return {
     versions: [...list.rows].map(([id, row]) => ({ id, version: row.version })),
     ...list.meta,
-    membershipRevision: resourceRevisions.membershipRevision(prListResourceKey(project)),
+    membershipRevision: list.marker,
   };
 }
 

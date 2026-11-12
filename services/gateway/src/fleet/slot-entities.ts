@@ -48,6 +48,11 @@ function forgetFallback(slotId: string): void {
   fallbackExpiry.delete(slotId);
 }
 
+/** Gateway shutdown: no fallback is recomputed after it. */
+export function stopSlotEntityExpiries(): void {
+  for (const slotId of [...fallbackExpiry.keys()]) forgetFallback(slotId);
+}
+
 /** A slot as the observed fleet read serves it, without host load (machine samples own that). */
 function servedSlotEntity(base: SlotStatus): SlotEntity {
   const overlaid = overlaySlotEntity(base);
@@ -86,7 +91,7 @@ function indexOf(slots: readonly SlotStatus[], fleet: object): Map<string, SlotS
 function refresh(slotIds: readonly string[] | undefined): void {
   const fleet = slotEntityBase();
   if (!fleet) {
-    for (const slotId of [...fallbackExpiry.keys()]) forgetFallback(slotId);
+    stopSlotEntityExpiries();
     return;
   }
   const bases = indexOf(fleet.slots, fleet);

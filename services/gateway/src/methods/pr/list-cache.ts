@@ -273,19 +273,22 @@ function persist(state: CollectorState): void {
   }
 }
 
+/** One PR of a scope, named by its collected row, whose raw observation is newer. */
+export type ObservedPR = Pick<PRStatus, 'repo' | 'pr'>;
+
 /**
- * Entity sync recomputes a scope's served list after each change of its collector. `observed`
- * marks one PR's newer raw observation, as opposed to the collector's own refresh.
+ * Entity sync follows each change of a scope's collector. `observed` names the one PR whose raw
+ * observation is newer; without it the collector itself changed (a refresh began or ended).
  */
-let collectorChanged: ((queryId: string, observed: boolean) => void) | undefined;
+let collectorChanged: ((queryId: string, observed?: ObservedPR) => void) | undefined;
 
 export function onPRListCollectorChange(
-  listener: (queryId: string, observed: boolean) => void,
+  listener: (queryId: string, observed?: ObservedPR) => void,
 ): void {
   collectorChanged = listener;
 }
 
-function publish(state: CollectorState, observed = false): void {
+function publish(state: CollectorState, observed?: ObservedPR): void {
   resourceRevisions.advance(prListResourceKey(state.project));
   collectorChanged?.(state.id, observed);
 }
@@ -568,15 +571,13 @@ export function startPRListRefresher(
 
 onPRRawObservation((repo, pr) => {
   for (const state of collectors.values()) {
-    if (
-      state.inflight ||
-      !state.snapshot?.prs.some(
-        (row) => row.repo.toLowerCase() === repo.toLowerCase() && row.pr === pr,
-      )
-    )
-      continue;
+    if (state.inflight) continue;
+    const observed = state.snapshot?.prs.find(
+      (row) => row.repo.toLowerCase() === repo.toLowerCase() && row.pr === pr,
+    );
+    if (!observed) continue;
     // Active CI can observe newer raw bytes without changing its own scheduling policy.
     persist(state);
-    publish(state, true);
+    publish(state, observed);
   }
 });

@@ -58,6 +58,8 @@ export interface EntityView {
   ): Promise<boolean>;
   answer(): EntityViewAnswer | undefined;
   hydrate(stored: StoredResourceRows): void;
+  /** The view holds rows or a listing. */
+  readonly held: boolean;
   /** Rows a full read already put on screen, when the view holds none of its own. */
   seed(full: unknown): void;
   /** Something this view cannot apply changed what the gateway serves: read the listing again. */
@@ -268,8 +270,12 @@ class SpecView<T, M> implements EntityView {
     if (this.meta === undefined && this.spec.isMeta(data)) this.meta = data;
   }
 
+  get held(): boolean {
+    return this.collection.held;
+  }
+
   seed(full: unknown): void {
-    if (this.collection.held || !isRecord(full)) return;
+    if (this.held || !isRecord(full)) return;
     const seeded = this.spec.fromFull(full);
     if (!seeded) return;
     // Admitted like any stored row, at the version of the body itself: the listing decides.

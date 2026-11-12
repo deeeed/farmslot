@@ -27,6 +27,11 @@ const isNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 const isNullableString = (value: unknown) => value === null || typeof value === 'string';
 
+const everyOf = (value: unknown, each: (item: unknown) => boolean) =>
+  Array.isArray(value) && value.every(each);
+const absentOr = (value: unknown, check: (present: unknown) => boolean) =>
+  value === undefined || value === null || check(value);
+
 /**
  * The fields of a slot that summary, host-load reattachment, sorting and the slot views read
  * without a check of their own; the gateway's row transform always fills them.
@@ -52,6 +57,10 @@ export function isSlotEntity(value: unknown): value is SlotEntity {
     isString(health.devserver) &&
     isString(health.cdp) &&
     isString(health.fixtures) &&
+    // The slot view reads each agent context's id without a check of its own.
+    absentOr(value.agentContexts, (contexts) =>
+      everyOf(contexts, (context) => isRecord(context) && isString(context.id)),
+    ) &&
     // Host load is reattached from machine samples and never part of a slot entity.
     value.hostLoad === undefined
   );
@@ -68,10 +77,6 @@ function isCheckSummary(value: unknown): boolean {
   );
 }
 
-const everyOf = (value: unknown, each: (item: unknown) => boolean) =>
-  Array.isArray(value) && value.every(each);
-const absentOr = (value: unknown, check: (present: unknown) => boolean) =>
-  value === undefined || value === null || check(value);
 const isStrings = (value: unknown) => everyOf(value, isString);
 const isCheck = (value: unknown) =>
   isRecord(value) && isString(value.name) && isString(value.status);

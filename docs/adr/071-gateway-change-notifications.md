@@ -504,10 +504,11 @@ publication or a read looks them up and hashes nothing.
   slots.
 - PRs: entity reads and pushes serve the projection the full read computes. A
   versions read projects it again, as the full read does on every read, so its
-  listing is never older than the full read's; an ids read serves the rows that
-  listing named. A collector change (a collection, a CI result) projects it and
-  pushes the rows that changed. The observations of one list refresh project
-  another scope once, when the refresh ends.
+  listing is never older than the full read's, and it carries the marker that
+  was committed with those rows. An ids read serves the rows that listing named.
+  A collector refresh projects the list and pushes the rows that changed. One
+  observed PR (a CI result) projects and hashes its own row. The observations of
+  one list refresh project another scope once, when the refresh ends.
 - Workspace inspections were started by the observed full read. A versions read
   starts them too, and so do slot publications while a viewer is connected, no
   more often than the fleet view's reread floor.

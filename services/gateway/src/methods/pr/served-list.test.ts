@@ -250,6 +250,98 @@ test('N7: the observations of one list refresh project another scope once, when 
   );
 });
 
+test('R1: a versions reply carries the marker of the rows and fields it carries', async () => {
+  coldGateway();
+  let held: Promise<void> | undefined;
+  let release = () => {};
+  const deps = {
+    fetchList: async () => ({ prs: [row(1)], truncated: false, failed: [] }),
+    // The projection behind the held one settles at once, before the held read resumes.
+    projectRows: (stored: readonly PRStatus[]) => {
+      const projected = { prs: [...stored], truncated: false, failed: [] };
+      return held ? held.then(() => projected) : Promise.resolve(projected);
+    },
+  };
+  await prListVersions('p', interest, deps);
+  await settle();
+
+  // A versions read projects the scope and waits in its projector.
+  held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const reading = prListVersions('p', interest, deps);
+  await settle();
+  // Meanwhile a refresh fails: newer fields and a newer marker, projected right behind.
+  held = undefined;
+  await assert.rejects(
+    servePRList(
+      async () => {
+        throw new Error('GitHub refused');
+      },
+      { project: 'p', force: true, legacyInterest: false },
+    ),
+    /GitHub refused/,
+  );
+  await settle();
+  release();
+  const reply = await reading;
+  await settle();
+
+  const latest = await prListVersions('p', interest, deps);
+  assert.equal(latest.observation?.error?.message, 'GitHub refused');
+  assert.equal(reply.observation?.error, undefined, 'the held read answers from its own snapshot');
+  assert.ok(
+    reply.membershipRevision < latest.membershipRevision,
+    `an older snapshot keeps its own marker (got ${reply.membershipRevision}, latest ${latest.membershipRevision})`,
+  );
+});
+
+test('R4: one PR observed outside a list refresh projects and hashes that row only', async () => {
+  coldGateway();
+  const rows = Array.from({ length: 100 }, (_, index) => row(index + 1));
+  let listProjections = 0;
+  const deps = {
+    fetchList: async () => ({ prs: rows, truncated: false, failed: [] }),
+    projectRows: async (stored: readonly PRStatus[]) => {
+      listProjections++;
+      return { prs: [...stored], truncated: false, failed: [] };
+    },
+    // The observed PR's newer CI result, with the placement the list projection gave the row.
+    projectRow: async (served: PRStatus) => ({
+      ...served,
+      checkSummary: { ...served.checkSummary, passed: 7 },
+    }),
+  };
+  const before = await prListVersions(undefined, interest, deps);
+  await settle();
+  hashes = 0;
+  listProjections = 0;
+
+  const changes = await published(() => {
+    for (const listener of rawListeners) listener('o/r', 42);
+  });
+  assert.equal(hashes, 1, 'one row is hashed');
+  assert.equal(listProjections, 0, 'the scope is not projected again');
+  const pushed = changes.filter((change) => 'prKey' in change.key);
+  assert.deepEqual(
+    pushed.map((change) => ('prKey' in change.key ? change.key.prKey : undefined)),
+    ['o/r/42'],
+  );
+  const entity = pushed[0].changedEntity;
+  assert.equal(entity?.family === 'upstream' ? entity.entity?.checkSummary.passed : undefined, 7);
+  const page = await prListIds(undefined, ['o/r/41', 'o/r/42'], interest, deps);
+  assert.deepEqual(
+    page.entities.map((entry) => entry.checkSummary.passed),
+    [0, 7],
+    'ids reads serve the updated row beside the untouched ones',
+  );
+  assert.equal(
+    resourceRevisions.membershipRevision(prListResourceKey(undefined)),
+    before.membershipRevision,
+    'the listing did not change',
+  );
+});
+
 test('finding 8: refresh start, failure and recovery reach entity-sync clients', async () => {
   coldGateway();
   const { deps } = scope([row(1)]);

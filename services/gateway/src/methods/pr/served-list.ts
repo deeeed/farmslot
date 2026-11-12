@@ -15,6 +15,7 @@ import { type EntitySnapshot, resourceRevisions } from '../../resources/revision
 import type { PRListFetchResult, PRListProjector } from '../pr.js';
 
 import {
+  type ObservedPR,
   onPRListCollectorChange,
   peekServedPRList,
   prListRefreshInFlight,
@@ -32,12 +33,21 @@ interface ServedRow {
 export interface ServedPRProjection {
   rows: ReadonlyMap<string, ServedRow>;
   meta: Omit<PRListResult, 'prs'>;
+  /** The list key's membership marker when this list was committed. */
+  marker: number;
 }
+
+/**
+ * One served row again from its newer observation, with the placement the list projection gave
+ * it. Undefined when that observation alone cannot say what the list serves for the PR.
+ */
+export type PRRowProjector = (served: PRStatus) => Promise<PRStatus | undefined>;
 
 interface Projection {
   queryId: string;
   project?: string;
   projector: PRListProjector;
+  rowProjector: PRRowProjector;
   served?: ServedPRProjection;
   /** Order and fields of the last served list; a change moves the membership marker. */
   listing?: string;
@@ -108,18 +118,46 @@ async function compute(projection: Projection): Promise<void> {
       bytes: Buffer.byteLength(JSON.stringify(pr)),
     });
   const previous = projection.served;
-  projection.served = { rows, meta };
-  for (const [id, row] of rows)
-    if (previous?.rows.get(id)?.version !== row.version)
-      resourceRevisions.advance({ ...key, prKey: id });
-  for (const id of previous?.rows.keys() ?? [])
-    if (!rows.has(id)) resourceRevisions.advance({ ...key, prKey: id }, 'deleted');
   // The list key itself advances with its collector, as it always did; here only its marker moves.
   const listing = canonicalResourceJson({ order: [...rows.keys()], meta });
   if (listing !== projection.listing || hadFailure) {
     projection.listing = listing;
     resourceRevisions.advanceMembership(key);
   }
+  // The marker a reply carries is the one committed with its rows, never a later one.
+  projection.served = { rows, meta, marker: resourceRevisions.membershipRevision(key) };
+  for (const [id, row] of rows)
+    if (previous?.rows.get(id)?.version !== row.version)
+      resourceRevisions.advance({ ...key, prKey: id });
+  for (const id of previous?.rows.keys() ?? [])
+    if (!rows.has(id)) resourceRevisions.advance({ ...key, prKey: id }, 'deleted');
+}
+
+/**
+ * One PR's newer observation: its served row alone is projected and hashed. The list is
+ * projected instead when the PR has no served row or the row projector cannot answer, because
+ * the list projection decides what a missing or refused observation means for the list.
+ */
+async function computeRow(projection: Projection, observed: ObservedPR): Promise<void> {
+  const served = projection.served;
+  const id = prEntityId(observed);
+  const held = served?.rows.get(id);
+  if (!served || !held || projection.failure) return compute(projection);
+  let pr: PRStatus | undefined;
+  try {
+    pr = await projection.rowProjector(held.pr);
+  } catch {
+    // A refused observation is the list projection's to report: it carries, drops or marks it.
+    return compute(projection);
+  }
+  if (!pr || prEntityId(pr) !== id) return compute(projection);
+  const version = entityVersionHash(pr);
+  if (version === held.version) return;
+  // The same key keeps its place in the listing; order and fields are untouched.
+  const rows = new Map(served.rows);
+  rows.set(id, { pr, version, bytes: Buffer.byteLength(JSON.stringify(pr)) });
+  projection.served = { ...served, rows };
+  resourceRevisions.advance({ ...upstreamKey(projection.project), prKey: id });
 }
 
 /** One computation after any running one; callers asking meanwhile share the queued one. */
@@ -134,7 +172,17 @@ function recompute(projection: Projection): Promise<void> {
   return queued;
 }
 
-function projectionFor(project: string | undefined, projector: PRListProjector): Projection {
+/** One observed row, after any running computation; a queued list projection covers it. */
+function recomputeRow(projection: Projection, observed: ObservedPR): void {
+  if (projection.queued) return;
+  projection.running = projection.running.then(() => computeRow(projection, observed));
+}
+
+function projectionFor(
+  project: string | undefined,
+  projector: PRListProjector,
+  rowProjector: PRRowProjector,
+): Projection {
   const queryId = upstreamKey(project).queryId;
   let projection = projections.get(queryId);
   if (!projection) {
@@ -142,11 +190,13 @@ function projectionFor(project: string | undefined, projector: PRListProjector):
       queryId,
       ...(project === undefined ? {} : { project }),
       projector,
+      rowProjector,
       running: Promise.resolve(),
     };
     projections.set(queryId, projection);
   }
   projection.projector = projector;
+  projection.rowProjector = rowProjector;
   return projection;
 }
 
@@ -158,9 +208,10 @@ function projectionFor(project: string | undefined, projector: PRListProjector):
 export async function servedPRList(
   project: string | undefined,
   projector: PRListProjector,
+  rowProjector: PRRowProjector,
   fresh: boolean,
 ): Promise<ServedPRProjection> {
-  const projection = projectionFor(project, projector);
+  const projection = projectionFor(project, projector, rowProjector);
   if (fresh || !projection.served || projection.failure) await recompute(projection);
   if (projection.failure) throw projection.failure.error;
   if (!projection.served) throw new Error('The PR list collector holds no snapshot');
@@ -177,15 +228,17 @@ function prEntityProvider(key: ResourceKey): EntitySnapshot | undefined {
 }
 resourceRevisions.setEntityProvider('upstream', prEntityProvider);
 
-// A collector change recomputes the served list of a scope some entity read has asked for. A
-// list refresh reads every PR of its scope, and each read is an observation for the other
-// scopes that hold the PR: those are projected once, when no refresh is running.
+// A collector change follows into the served list of a scope some entity read has asked for:
+// the collector's own refresh projects the list, one observed PR projects its row. A list
+// refresh reads every PR of its scope, and each read is an observation for the other scopes
+// that hold the PR: those are projected once, when no refresh is running.
 onPRListCollectorChange((queryId, observed) => {
   const refreshing = prListRefreshInFlight();
   const projection = projections.get(queryId);
   if (projection?.served) {
-    if (observed && refreshing) projection.observed = true;
-    else void recompute(projection);
+    if (!observed) void recompute(projection);
+    else if (refreshing) projection.observed = true;
+    else recomputeRow(projection, observed);
   }
   if (refreshing) return;
   for (const waiting of projections.values()) if (waiting.observed) void recompute(waiting);

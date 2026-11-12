@@ -75,7 +75,12 @@ import {
   retainPRRawNotFound,
   shouldPrefetchPRRawData,
 } from './pr/raw-cache.js';
-import { projectedPRList, servedPRList, type ServedPRProjection } from './pr/served-list.js';
+import {
+  projectedPRList,
+  type PRRowProjector,
+  servedPRList,
+  type ServedPRProjection,
+} from './pr/served-list.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -331,14 +336,48 @@ export async function servedPRListFor(
   project: string | undefined,
   fresh: boolean,
   interest: PRListClientInterest = {},
-  deps: { fetchList?: typeof fetchPRList; projectRows?: PRListProjector } = {},
+  deps: {
+    fetchList?: typeof fetchPRList;
+    projectRows?: PRListProjector;
+    projectRow?: PRRowProjector;
+  } = {},
 ): Promise<ServedPRProjection> {
   const fetchList = deps.fetchList ?? fetchPRList;
   await servePRList(
     (force) => fetchList({ force, ...(project === undefined ? {} : { project }) }),
     { project, ...interest },
   );
-  return servedPRList(project, deps.projectRows ?? projectRetainedPRList, fresh);
+  return servedPRList(
+    project,
+    deps.projectRows ?? projectRetainedPRList,
+    deps.projectRow ?? projectRetainedPRRow,
+    fresh,
+  );
+}
+
+/**
+ * One served row again from its retained observation, placed as the list projection placed it
+ * (project, slot, worker, summary): no fleet load and no candidate discovery. Never invokes GitHub.
+ */
+export async function projectRetainedPRRow(served: PRStatus): Promise<PRStatus | undefined> {
+  const raw = peekRetainedPRRawData(served.repo, served.pr);
+  if (!raw) return undefined;
+  const projects = await loadProjectConfigs(true);
+  const row = projectPRData(
+    raw,
+    {
+      prNum: served.pr,
+      runs: getAllRuns(),
+      project: served.project,
+      repo: served.repo,
+      slot: served.slot ?? undefined,
+      workerActive: served.workerActive,
+      summary: served.summary,
+      rejectIncomplete: true,
+    },
+    projects.find((project) => project.name === served.project) ?? null,
+  );
+  return shouldIncludePRInDashboard(row) ? row : undefined;
 }
 
 /** Reads only gateway/node-owned local facts and retained raw observations. Never invokes GitHub. */

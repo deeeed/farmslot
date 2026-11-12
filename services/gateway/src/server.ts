@@ -52,6 +52,7 @@ import {
   handleNodeResourceChanged,
   startResourcePolling,
 } from './fleet/resource-manager.js';
+import { stopSlotEntityExpiries } from './fleet/slot-entities.js';
 import { loadFleetStatus, onStateChange } from './fleet/state.js';
 import { forgetGitHubAccountsClientInterest } from './integrations/github-accounts.js';
 import {
@@ -643,6 +644,8 @@ export function initServerGlobals(): void {
 export function disposeServerResourceObservations(): void {
   nativeObservations.dispose();
   workspaceObservations.dispose();
+  stopServedWorkspaceObservations();
+  stopSlotEntityExpiries();
 }
 
 /** Test-only: reset the once-guard so a suite can re-exercise initServerGlobals. */
@@ -653,7 +656,6 @@ export function resetServerGlobalsForTests(): void {
   serverGlobalsInitialized = false;
   disposeServerResourceObservations();
   setFleetWorkspacePublisher(undefined);
-  stopServedWorkspaceObservations();
   if (backlogAutoDispatchInterval) {
     clearInterval(backlogAutoDispatchInterval);
     backlogAutoDispatchInterval = null;

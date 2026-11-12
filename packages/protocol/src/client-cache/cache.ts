@@ -751,8 +751,12 @@ export function createGatewayResourceCache(
     const ticket = ++version;
     recoveryAttempted = false;
     runList.abort();
-    // A new connection or epoch: rows stay displayed, unverified until a versions read.
-    for (const view of entityViews()) view.unverify();
+    // A new connection or epoch: rows stay displayed, unverified until a versions read. A gateway
+    // without entity sync replaces the screen with full reads, which a view held from before
+    // would be older than: the next entity sync starts from what is displayed then.
+    if (next.connected && next.capabilities?.resourceChanges?.entitySync !== true)
+      forgetEntityViews();
+    else for (const view of entityViews()) view.unverify();
     // Stored facts belong to an owner, not a socket attempt. Fence a revoked
     // owner's pending I/O synchronously, before queued deletion can run.
     if (revoke || scopeChanged || authorityChanged) {
@@ -1259,9 +1263,10 @@ export function createGatewayResourceCache(
     view: EntityView,
     signal: AbortSignal,
   ): Promise<ReadReply> {
-    await hydrateEntityView(view);
-    // Rows a full read put on screen stay there: the listing alone says which have gone.
+    // What a full read put on screen is the newest this client holds: it seeds an empty view,
+    // and the listing alone says which rows have gone. Stored rows fill a view nothing seeded.
     view.seed(entry.state.data);
+    if (!view.held) await hydrateEntityView(view);
     const publishPage = (done: number, total: number) => {
       const partial = view.answer();
       entry.state = {

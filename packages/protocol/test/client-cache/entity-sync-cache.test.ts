@@ -368,6 +368,31 @@ test('finding 5: stored rows that fail the guard are dropped and read again', as
   }
 });
 
+test('R2: a stored slot whose agent contexts hold a null is read again', async () => {
+  const gateway = new EntityGateway();
+  // The digest matches the body and the gateway lists it: only the guard can refuse the element
+  // the slot view dereferences.
+  const unusable: unknown = JSON.parse(JSON.stringify({ ...slot('a'), agentContexts: [null] }));
+  gateway.slots.set('a', slot('a'));
+  gateway.listedVersions.set('a', versionOf(unusable));
+  const store = await seededStore(gateway, [
+    { collection: FLEET_ROWS_ID, id: 'a', body: unusable, version: versionOf(unusable), data: {} },
+  ]);
+  const client = setup(gateway, store);
+  try {
+    client.watch(fleetQuery);
+    await flush();
+    assert.deepEqual(
+      gateway.requests('fleet.status', 'ids').map((entry) => entry.params.ids),
+      [['a']],
+      'the rejected row is read',
+    );
+    assert.equal(client.read(fleetQuery).data?.fleet.slots[0].agentContexts, undefined);
+  } finally {
+    await client.close();
+  }
+});
+
 test('finding 5: a pushed PR that fails the guard is read instead', async () => {
   const gateway = new EntityGateway();
   gateway.writePR(pr('o/r', 1));
@@ -738,6 +763,80 @@ test('N3: rows a full read already holds at the listed version are not read agai
       'only the changed slot is read',
     );
     assert.equal(client.read(fleetQuery).status, 'ready');
+  } finally {
+    await client.close();
+  }
+});
+
+test('R3: entity sync, then a gateway without it, then entity sync again never drops a displayed row', async () => {
+  const gateway = new EntityGateway();
+  gateway.slots.set('s00', slot('s00'));
+  const store = createMemoryResourceStore();
+  const client = setup(gateway, store);
+  try {
+    client.watch(fleetQuery);
+    await flush();
+    assert.equal(client.read(fleetQuery).data?.fleet.slots.length, 1);
+
+    // The gateway is rolled back: a full read puts 26 slots on screen.
+    gateway.setConnection({ connected: false });
+    await flush();
+    for (const row of [...manySlots('main'), slot('s25')]) gateway.slots.set(row.slot, row);
+    gateway.reconnect('epoch-2', false);
+    await flush();
+    assert.equal(client.read(fleetQuery).data?.fleet.slots.length, 26);
+    const shown = client.states.length;
+
+    // It is rolled forward again while every slot changed.
+    gateway.setConnection({ connected: false });
+    await flush();
+    for (const row of [...manySlots('moved'), slot('s25', { branch: 'moved' })])
+      gateway.slots.set(row.slot, row);
+    gateway.reconnect('epoch-3', true);
+    await flush();
+    assert.equal(client.read(fleetQuery).status, 'ready');
+    assert.equal(
+      slotsOf(client.read(fleetQuery)).filter((row) => row.endsWith(':moved')).length,
+      26,
+    );
+    const counts = client.states
+      .slice(shown)
+      .map((state: ResourceQueryState<FleetStatusResult>) => state.data?.fleet.slots.length);
+    assert.ok(
+      counts.every((count) => count === 26),
+      `no state shows fewer rows than the full read did (got ${JSON.stringify(counts)})`,
+    );
+  } finally {
+    await client.close();
+  }
+});
+
+test('R1: a versions reply older than a marker the client has seen is followed by another read', async () => {
+  const gateway = new EntityGateway();
+  gateway.writePR(pr('o/r', 1));
+  const client = setup(gateway);
+  try {
+    client.watch(prQuery());
+    await flush();
+    // A versions read is outstanding: its reply carries the marker of the snapshot it read.
+    const versionsReply = gateway.hold((entry) => entry.params.versions === true);
+    gateway.writePRMeta({ ...gateway.prMeta, refreshing: true });
+    await within(versionsReply.arrived, 'the held read was sent');
+    // The refresh then fails: newer fields under a newer marker.
+    gateway.writePRMeta({
+      observation: {
+        status: 'stale',
+        observedAt: 1_000,
+        error: { code: 'UPSTREAM_UNAVAILABLE', message: 'GitHub refused' },
+      },
+      fetchedAt: gateway.prMeta.fetchedAt,
+    });
+    await flush();
+    versionsReply.release();
+    await flush();
+    const state = client.read(prQuery());
+    assert.equal(state.data?.observation?.error?.message, 'GitHub refused');
+    assert.equal(state.status, 'stale', 'the older snapshot is not left as current');
   } finally {
     await client.close();
   }

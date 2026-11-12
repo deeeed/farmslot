@@ -20,7 +20,9 @@ mock.module('../core/config.js', {
   },
 });
 
-const { setCachedFleetForTests } = await import('../fleet/state.js');
+await import('../runtime/mock-pty.test-support.js');
+const { setCachedFleetForTests, setWorkspaceOverlay } = await import('../fleet/state.js');
+const { disposeServerResourceObservations } = await import('../server.js');
 const { fleetStatusIds } = await import('../fleet/slot-entities.js');
 const { resourceRevisions } = await import('../resources/revisions.js');
 const {
@@ -149,4 +151,85 @@ test('N5: a refresh asked for while a round runs is run when that round settles'
   });
   assert.equal(row?.currentRunId, 'run-2');
   assert.ok(row?.workspace ?? row?.workspaceError, 'the new owner is inspected');
+});
+
+test('R5: disposing the server observations stops the pending inspections and expiries', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() + 120_000 });
+  const fallback = fleetOf('teardown-fallback', { currentRunId: null }).slots[0];
+  const other = (patch: Partial<SlotStatus> = {}) => fleetOf('teardown-other', patch).slots[0];
+  const fleet = (slots: SlotStatus[]): FleetStatus => ({ ...fleetOf('unused'), slots });
+  setCachedFleetForTests(fleet([fallback, other()]));
+  t.after(() => setCachedFleetForTests(null));
+  // The first slot's row verified this workspace a moment ago; its inspection then fails, so
+  // its entity shows that workspace unverified until the row's evidence ages out.
+  setWorkspaceOverlay(fallback.slot, {
+    epoch: 0,
+    currentRunId: null,
+    cleanupRunId: null,
+    handoffRunId: null,
+    branch: 'main',
+    headSha: 'abc1234',
+    dirtyFingerprint: '',
+    recoveryId: null,
+    observedAt: new Date().toISOString(),
+    localDefaultSha: null,
+    defaultFetchedAt: null,
+    remoteDefaultSha: null,
+    remoteObservedAt: null,
+    behind: null,
+    remoteAdvanced: false,
+    publication: 'pushed',
+    dirtyCount: 0,
+    unpublishedCount: 0,
+  });
+  t.after(() => setWorkspaceOverlay(fallback.slot, undefined));
+  const entity = async (id: string) => (await fleetStatusIds([id])).entities[0];
+  refreshServedWorkspaceObservations();
+  const ceiling = performance.now() + 3000;
+  while (!(await entity(fallback.slot)).workspaceError && performance.now() < ceiling)
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal((await entity(fallback.slot)).workspace?.publication, 'unknown');
+
+  // Those inspections age out. A round is then held; a second refresh waits behind it, the other
+  // slot changes owner meanwhile, and a slot publication arms the viewer timer.
+  t.mock.timers.tick(16_000);
+  let release = () => {};
+  heldRound = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  t.after(() => {
+    heldRound = undefined;
+    release();
+  });
+  refreshServedWorkspaceObservations();
+  for (let turn = 0; turn < 10; turn++) await new Promise<void>((resolve) => setImmediate(resolve));
+  setCachedFleetForTests(fleet([fallback, other({ currentRunId: 'run-2' })]));
+  refreshServedWorkspaceObservations();
+  slotsPublishedToViewers();
+
+  disposeServerResourceObservations();
+  const changes: ResourceChangedPayload['changes'] = [];
+  t.after(resourceRevisions.subscribe((payload) => changes.push(...payload.changes)));
+  heldRound = undefined;
+  release();
+  for (let turn = 0; turn < 200; turn++)
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  // Past the reread floor and the fallback's expiry.
+  t.mock.timers.tick(30_000);
+  for (let turn = 0; turn < 200; turn++)
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+  const newOwner = await entity('teardown-other');
+  assert.equal(newOwner.workspace ?? newOwner.workspaceError, undefined, 'no round starts');
+  assert.equal(
+    (await entity(fallback.slot)).workspace?.publication,
+    'unknown',
+    'no expiry recomputes the entity',
+  );
+  // The round that was already running may still report what it found; no expiry publishes.
+  assert.deepEqual(
+    changes.filter(({ key }) => key.family === 'slot' && key.slotId === fallback.slot),
+    [],
+    'the fallback slot is not published again',
+  );
 });

@@ -189,6 +189,8 @@ const servedWorkspaceDeps: FleetStatusDeps = {
 let servedWorkspacesRefreshedAt = 0;
 let servedWorkspacesTimer: ReturnType<typeof setTimeout> | undefined;
 let servedWorkspacesWaiting = false;
+/** Advances when the observations are stopped: a refresh queued before then does not start. */
+let servedWorkspacesGeneration = 0;
 
 /**
  * Starts the workspace inspections an observed fleet read starts (ADR-071 Amendment 3). A viewer
@@ -201,9 +203,10 @@ export function refreshServedWorkspaceObservations(): void {
     // one refresh waits for the running round: the slots it inspected may have changed owner.
     if (servedWorkspacesWaiting) return;
     servedWorkspacesWaiting = true;
+    const generation = servedWorkspacesGeneration;
     void running.then(() => {
       servedWorkspacesWaiting = false;
-      refreshServedWorkspaceObservations();
+      if (generation === servedWorkspacesGeneration) refreshServedWorkspaceObservations();
     });
     return;
   }
@@ -230,6 +233,7 @@ export function slotsPublishedToViewers(): void {
 export function stopServedWorkspaceObservations(): void {
   clearTimeout(servedWorkspacesTimer);
   servedWorkspacesTimer = undefined;
+  servedWorkspacesGeneration++;
 }
 
 export async function fleetStatus(
