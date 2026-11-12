@@ -344,10 +344,10 @@ export async function launchReviewTmux(
   if (previous?.nativeSession)
     throw new Error('Stop the native reviewer before changing execution transport');
   const runnerSessionId = previous?.runnerSessionId ?? (await reserveReviewSession(run));
-  await assertCurrent();
   const prior = run.repeatReviewContext?.priorRunId
     ? await getRunWithArchived(run.repeatReviewContext.priorRunId)
     : undefined;
+  await assertCurrent();
   const retained = prior?.agentContexts?.find(
     (context) =>
       context.id === 'review' &&

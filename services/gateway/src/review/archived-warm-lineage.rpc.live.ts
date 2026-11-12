@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import type {
   RunCreateParams,
+  RunRereviewLatestHeadResult,
   RunResolveDecisionParams,
   RunReviewResult,
 } from '@farmslot/protocol';
@@ -55,8 +56,65 @@ test(
       JSON.stringify({ name: 'review' }),
     );
     await import('../runtime/mock-pty.test-support.js');
-    const fixture = await createNativeProofFixture(t, root);
     const store = await import('../runs/store.js');
+    let historyBarrier: Promise<void> | undefined;
+    let historyCalls = 0;
+    let bothHistoryReads: () => void = () => {};
+    mock.module('../runs/store.js', {
+      namedExports: {
+        ...store,
+        getAllRunsWithArchived: async () => {
+          if (historyBarrier) {
+            historyCalls += 1;
+            if (historyCalls === 2) bothHistoryReads();
+            await historyBarrier;
+          }
+          return store.getAllRunsWithArchived();
+        },
+      },
+    });
+    const github = await import('../external/github.js');
+    mock.module('../external/github.js', {
+      namedExports: {
+        ...github,
+        fetchGitHubPR: async () => ({
+          headSha: 'b'.repeat(40),
+          baseSha: 'c'.repeat(40),
+          number: 42,
+        }),
+        isGitHubAncestor: async () => true,
+      },
+    });
+    let rereviewRunId: string | undefined;
+    const fleet = await import('../fleet/state.js');
+    mock.module('../fleet/state.js', {
+      namedExports: {
+        ...fleet,
+        loadFleetStatus: async () =>
+          rereviewRunId
+            ? {
+                slots: [
+                  {
+                    slot: 'rereview-proof-slot',
+                    agent: 'working',
+                    agentContexts: [{ runId: rereviewRunId, role: 'review' }],
+                  },
+                ],
+              }
+            : fleet.loadFleetStatus(),
+      },
+    });
+    const launches: string[] = [];
+    const orchestrator = await import('../run-engine/orchestrator.js');
+    mock.module('../run-engine/orchestrator.js', {
+      namedExports: {
+        ...orchestrator,
+        startRun: async (runId: string) => {
+          launches.push(runId);
+        },
+      },
+    });
+    const fixture = await createNativeProofFixture(t, root);
     const { runWithSessionOriginator } = await import('../security/work-originator.js');
     const create = (params: RunCreateParams) =>
       runWithSessionOriginator(fixture.person, () => store.createRun(params));
@@ -189,6 +247,60 @@ test(
     assert.equal(store.getRun(current.id)?.reviewRoundAdmissions?.length ?? 0, 0);
     assert.equal(store.getRun(prior.id), undefined);
     assert.deepEqual(await readFile(archive), before);
+    // Provider facts and engine scheduling are controlled edges; both requests still use
+    // authenticated RPC and the production rereview handler, store and child admission.
+    const repeat = create({
+      flowType: 'review-pr',
+      project: 'review',
+      ticketOrPr: 'example/app#42',
+      slotId: 'rereview-proof-slot',
+      runner: 'codex',
+      model: 'gpt-6.1-sol',
+      effort: 'high',
+    });
+    const archived = (await store.getAllRunsWithArchived()).find((run) => run.id === prior.id)!;
+    store.updateRun(repeat.id, {
+      status: 'done',
+      completedAt: new Date().toISOString(),
+      reviewResult: {
+        ...result,
+        session: {
+          ...result.session!,
+          reviewId: 'rereview-lineage',
+          sessionId: 'rereview-session',
+        },
+      },
+      agentContexts: [
+        {
+          ...archived.agentContexts![0],
+          runId: repeat.id,
+          slotId: repeat.slotId,
+          reviewId: 'rereview-lineage',
+          runnerSessionId: 'rereview-session',
+        },
+      ],
+    });
+    rereviewRunId = repeat.id;
+    let releaseHistory: () => void = () => {};
+    historyBarrier = new Promise<void>((resolve) => {
+      releaseHistory = resolve;
+    });
+    const waiting = new Promise<void>((resolve) => {
+      bothHistoryReads = resolve;
+    });
+    const first = fixture.client.call<RunRereviewLatestHeadResult>('run.rereviewLatestHead', {
+      runId: repeat.id,
+    });
+    const second = fixture.client.call<RunRereviewLatestHeadResult>('run.rereviewLatestHead', {
+      runId: repeat.id,
+    });
+    await waiting;
+    releaseHistory();
+    const replies = await Promise.all([first, second]);
+    historyBarrier = undefined;
+    assert.equal(store.getAllRuns().filter((run) => run.parentRunId === repeat.id).length, 1);
+    assert.equal(replies[0].runId, replies[1].runId);
+    assert.deepEqual(launches, [replies[0].runId]);
     await mkdir(path.dirname(output), { recursive: true });
     await writeFile(
       output,
@@ -203,6 +315,8 @@ test(
           gateUnconsumed: true,
           archiveUnchanged: true,
           priorNotRestored: true,
+          concurrentRereviewChildCount: 1,
+          scheduledLaunches: 1,
           modelCalls: 0,
           reviewerStarted: false,
           scope: 'Authenticated RPC archive lookup, not a live runner-resume proof.',

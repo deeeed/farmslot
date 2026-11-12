@@ -137,7 +137,9 @@ async function rereviewWithSources(
         )
       : undefined;
 
-  // The parent may have been cancelled or superseded while GitHub answered.
+  const reviewerHistory =
+    runner && model && !run.reviewWorkspaceTarget ? await getAllRunsWithArchived() : [];
+  // The parent may have been cancelled or superseded while history or GitHub answered.
   const parent = getRun(run.id);
   if (!parent) throw new Error(`Run not found: ${params.runId}`);
   assertRereviewable(parent);
@@ -157,7 +159,7 @@ async function rereviewWithSources(
     assertWarmReviewRequestAvailable(
       parent,
       { runner, model, effort: run.effort ?? null, mode: 'warm', context: reviewContext },
-      await getAllRunsWithArchived(),
+      reviewerHistory,
     );
 
   if (!slot || !runner || !model || !context) {
