@@ -1,0 +1,1 @@
+- Fail static reviews with pi's structured request-timeout reason after retry exhaustion, keeping proven current input monitored before the first task mark using the runner's effective deadline policy.

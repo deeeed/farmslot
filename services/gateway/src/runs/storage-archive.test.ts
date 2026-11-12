@@ -600,3 +600,36 @@ test('a detached tree that cannot be removed does not stop the other entries of 
   assert.equal(archived.state, 'archived', 'the archive entry after it was finished');
   assert.equal(await fs.readFile(archived.destination, 'utf8'), 'session evidence');
 });
+
+test('a finish over runs archived earlier rewrites no manifest', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'archive-settled-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const archive = path.join(root, 'archive');
+  await fs.mkdir(archive);
+  const sources = ['first', 'second', 'third'].map((name) => path.join(root, name));
+  for (const source of sources) await fs.writeFile(source, path.basename(source));
+  await archiveStoragePaths(
+    archive,
+    'run-settled',
+    sources.map((source) => ({ source, store: 'session-archives' })),
+  );
+  const manifestFile = path.join(archive, 'run-settled', 'manifest.json');
+  const manifest = JSON.parse(await fs.readFile(manifestFile, 'utf8'));
+  assert.ok(manifest.entries.every((entry: { completedAt?: string }) => entry.completedAt));
+  const rename = fs.rename;
+  let writes = 0;
+  mock.method(fs, 'rename', async (...[from, to]: Parameters<typeof fs.rename>) => {
+    if (String(to) === manifestFile) writes++;
+    return rename(from, to);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  // Every retention pass resumes every archived run: a settled one must cost no write.
+  await finishStorageArchive(archive, 'run-settled');
+  assert.deepEqual(await resumeStorageArchives(archive), []);
+  assert.equal(writes, 0, 'the manifest of a settled run is not rewritten');
+  assert.deepEqual(JSON.parse(await fs.readFile(manifestFile, 'utf8')), manifest);
+});

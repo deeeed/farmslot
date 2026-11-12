@@ -9,6 +9,7 @@ export interface PiHookParams {
   toolName?: string | null;
   cwd?: string | null;
   usageTokens?: number;
+  startupGraceMs?: number | null;
   failure?: string;
   env?: Record<string, string | undefined>;
 }
@@ -30,6 +31,7 @@ export interface PiHookRecord {
   failureKind?: 'transport';
   turnStartedAt?: number;
   turnActive?: boolean;
+  startupGraceMs?: number | null;
   lastToolProgressAt: number | null;
   lastTokenProgressAt?: number;
   rootSessionId?: string;

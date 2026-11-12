@@ -439,8 +439,10 @@ export async function finishStorageArchive(root: string, runId: string): Promise
         continue;
       }
       if (!isArchiveEntry(entry)) continue;
-      if (!entry.completedAt && !existsSync(entry.staged) && !existsSync(entry.destination))
-        continue;
+      // A finished entry needs nothing, and saving it again would rewrite the whole manifest: a
+      // pass over runs archived earlier (every retention pass resumes them all) writes no file.
+      if (entry.completedAt) continue;
+      if (!existsSync(entry.staged) && !existsSync(entry.destination)) continue;
       await finishEntry(entry, saveArchived);
       await saveArchived();
     }

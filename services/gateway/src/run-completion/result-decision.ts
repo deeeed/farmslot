@@ -120,6 +120,9 @@ async function sendBackState(
   const { assertReviewRoundAvailable } = await import('../review/review-round-budget.js');
   try {
     await assertReviewRoundAvailable(run);
+    const outputs = run.steps.find((step) => step.name === PipelineSteps.REVIEW)?.outputs;
+    if (!recordedReviewResult(outputs) && !reviewBudgetStopReason(run))
+      throw new Error('The recorded review cannot be resumed. Accept or close the result.');
     return { id: 'send-back', available: true, requiresReason: false };
   } catch (error) {
     return {
@@ -325,7 +328,7 @@ export function recordedReviewResult(
 ): ReviewResult | undefined {
   if (
     !outputs ||
-    outputs.verdict !== 'issues' ||
+    (outputs.verdict !== 'issues' && outputs.verdict !== 'blocked') ||
     !Array.isArray(outputs.issues) ||
     outputs.issues.length === 0 ||
     typeof outputs.retryCount !== 'number'

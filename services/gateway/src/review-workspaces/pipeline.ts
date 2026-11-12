@@ -28,6 +28,7 @@ import {
   buildRepeatReviewContext,
   confirmIncrementalAncestry,
   findLatestPriorReviewRun,
+  startsFreshReviewChain,
 } from '../run-engine/engine-decisions.js';
 import { BlockedRunError } from '../run-engine/errors.js';
 import { resolveMonitorConfig } from '../run-engine/run-monitor.js';
@@ -43,17 +44,23 @@ import {
   sendNativeWorkerInstruction,
 } from '../runners/native/worker-control.js';
 import { getRunnerDefinition } from '../runners/registry.js';
-import { observeReviewPromptAcceptance } from '../runners/review-startup.js';
+import {
+  observeReviewPromptAcceptance,
+  observeReviewRunnerState,
+} from '../runners/review-startup.js';
 import {
   launchReviewTmux,
   recoverReviewTmuxSession,
   reviewTmuxOperation,
   reviewTmuxStartupState,
 } from '../runners/review-tmux.js';
+import { RunnerExecutionError } from '../runners/runner-execution-error.js';
 import {
   assertRunArchivable,
   getAllRuns,
+  getAllRunsWithArchived,
   getRun,
+  getRunWithArchived,
   persistRunNow,
   updateRun,
   updateRunStep,
@@ -286,9 +293,10 @@ async function freezeSubject(
     capturedAt: new Date().toISOString(),
   };
   const owner = runPrincipalOwner(run);
+  const allRuns = startsFreshReviewChain(run) ? [] : await getAllRunsWithArchived();
   const prior = findLatestPriorReviewRun(
     run,
-    getAllRuns().filter((candidate) => {
+    allRuns.filter((candidate) => {
       const candidateOwner = runPrincipalOwner(candidate);
       return owner && candidateOwner && samePrincipalOwner(owner, candidateOwner);
     }),
@@ -305,7 +313,7 @@ async function freezeSubject(
             headSha: pr.headSha,
             baseRef: pr.baseRef,
           },
-          getAllRuns(),
+          allRuns,
         ),
       )
     : undefined;
@@ -320,7 +328,8 @@ async function freezeSubject(
         currentWorkspaceRun(runId, generation);
       });
     }
-    const savedPrior = getRun(prior.id);
+    const savedPrior = await getRunWithArchived(prior.id);
+    currentWorkspaceRun(runId, generation);
     if (!savedPrior) throw new Error('The prior review was removed during session recovery');
     configureWorkspaceContinuity(run, savedPrior, context, subject);
     if (context.mode === 'warm' && context.priorReviewedHeadSha)
@@ -1075,11 +1084,6 @@ async function executeOwnedReviewWorkspaceStep(
               ? { retainedSessionId: current.repeatReviewContext?.session?.priorSessionId }
               : {}),
           });
-          if (startup === 'blocked')
-            throw new BlockedRunError(
-              'Reviewer has not acknowledged its task. Check its terminal for a startup prompt, sign-in or usage limit. This run will resume when the original reviewer starts or finishes.',
-              'review-startup-unacknowledged',
-            );
           const status = startup === 'acknowledged' ? 'working' : 'launching';
           if (
             context &&
@@ -1158,6 +1162,19 @@ async function executeOwnedReviewWorkspaceStep(
               },
             };
           }
+          const runnerState = await observe(() =>
+            observeReviewRunnerState(currentWorkspaceRun(runId, generation), acceptance),
+          );
+          check();
+          if (runnerState?.failure) {
+            await upsertAgentContext(runId, 'review', { id: 'review', status: 'failed' });
+            throw new RunnerExecutionError(runnerState.failure);
+          }
+          if (startup === 'blocked' && !runnerState?.startupPending)
+            throw new BlockedRunError(
+              'Reviewer has not acknowledged its task. Check its terminal for a startup prompt, sign-in or usage limit. This run will resume when the original reviewer starts or finishes.',
+              'review-startup-unacknowledged',
+            );
           const state = await observe(() =>
             reviewTmuxOperation(currentWorkspaceRun(runId, generation), 'inspect'),
           );

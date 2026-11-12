@@ -479,6 +479,8 @@ export interface ReviewLineageOption {
 
 /** Context rows align with the complete sequence, including the first request row. */
 export interface ReviewRequestContext {
+  /** New review-pr request only: omit predecessor input and start a separate chain. */
+  freshChain?: boolean;
   reviewLineages: Array<ReviewContinuationContext | null>;
 }
 

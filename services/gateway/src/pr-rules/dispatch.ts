@@ -37,6 +37,7 @@ import { publishPRAutomationResources } from '../resources/pr-automation-changes
 import { findLatestPriorReviewRun } from '../run-engine/engine-decisions.js';
 import {
   getAllRuns,
+  getAllRunsWithArchived,
   getCachedRunWithArchived,
   getRunWithArchived,
   runRecordPath,
@@ -286,6 +287,10 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
         review,
         ...(publication ? { publication } : {}),
       };
+      const reviewHistory =
+        flowType === 'review-pr' && !review.options.reviewContext?.freshChain
+          ? await getAllRunsWithArchived()
+          : [];
       const domain =
         parent?.domain ??
         (flowType === 'review-pr'
@@ -297,7 +302,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
                 ticketOrPr: `${intent.pr.repo}#${intent.pr.number}`,
                 prWork,
               },
-              getAllRuns().filter(
+              reviewHistory.filter(
                 (run) =>
                   run.createdByPrincipalId === source.ownerId &&
                   (run.createdByPrincipalGeneration ?? 0) === (source.ownerGeneration ?? 0),
@@ -330,7 +335,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
         intent,
         source.project,
         resolved.choices,
-        getAllRuns(),
+        reviewHistory,
       );
       if (!resolved.choices.length) {
         await this.store.updateDispatch(intent.id, {
@@ -453,7 +458,14 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       active.flatMap((source) => (source.execution ? [source.execution] : [])),
       { ownerId: active[0].ownerId },
     );
-    resolved.choices = preferRetainedReviewer(intent, project, resolved.choices, getAllRuns());
+    resolved.choices = preferRetainedReviewer(
+      intent,
+      project,
+      resolved.choices,
+      resolved.choices.some((choice) => choice.mode === 'warm')
+        ? await getAllRunsWithArchived()
+        : [],
+    );
     const workspaceRequired = prReviewWorkflow(active[0].review) === 'review';
     if (
       resolved.choices.some((choice) => isPRWorkspaceExecutionChoice(choice) !== workspaceRequired)

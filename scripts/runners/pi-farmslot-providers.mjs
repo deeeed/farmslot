@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
 
 const DEFAULT_OLLAMA = '127.0.0.1:11434';
+export const PI_REQUEST_TIMEOUT_RETRIES = 1;
 const PI_REASONING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const PRICE_TIER =
   /^(input_cost_per_token|output_cost_per_token|cache_read_input_token_cost|cache_creation_input_token_cost)_above_(\d+)k_tokens$/;
@@ -14,17 +15,18 @@ const PRICE_TIER =
 /** @typedef {import('@farmslot/slot-config').PiModelCostMetadata} PiModelCostMetadata */
 
 /** Bound worker HTTP requests through the final response byte. Pi owns retries. */
-export function deadlinePiFetch(fetchImpl, timeoutMs = 5 * 60_000, onExhausted) {
+export function deadlinePiFetch(fetchImpl, timeoutMs = 5 * 60_000, onExhausted, mode = 'total') {
   let consecutiveTimeouts = 0;
   const boundedFetch = async (input, options = {}) => {
     const upstream = options.signal ?? (input instanceof Request ? input.signal : undefined);
     const deadline = new AbortController();
     const signal = upstream ? AbortSignal.any([upstream, deadline.signal]) : deadline.signal;
-    const timer = setTimeout(() => {
+    const expire = () => {
       if (upstream?.aborted) return;
       deadline.abort();
-      if (++consecutiveTimeouts >= 2) onExhausted?.();
-    }, timeoutMs);
+      if (++consecutiveTimeouts > PI_REQUEST_TIMEOUT_RETRIES) onExhausted?.();
+    };
+    let timer = setTimeout(expire, timeoutMs);
     const failure = (error) =>
       deadline.signal.aborted && !upstream?.aborted
         ? new Error(`Pi model request timed out after ${timeoutMs}ms`)
@@ -45,7 +47,13 @@ export function deadlinePiFetch(fetchImpl, timeoutMs = 5 * 60_000, onExhausted) 
               clearTimeout(timer);
               consecutiveTimeouts = 0;
               controller.close();
-            } else controller.enqueue(next.value);
+            } else {
+              if (mode === 'idle' && next.value.byteLength > 0) {
+                clearTimeout(timer);
+                timer = setTimeout(expire, timeoutMs);
+              }
+              controller.enqueue(next.value);
+            }
           } catch (error) {
             clearTimeout(timer);
             controller.error(failure(error));

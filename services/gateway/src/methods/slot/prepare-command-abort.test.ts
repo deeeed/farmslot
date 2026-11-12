@@ -8,6 +8,7 @@ import { after, before, beforeEach, mock, test } from 'node:test';
 
 import type { SlotVars } from '../../core/index.js';
 import type { SlotLocality, SlotWriteFileEntry } from '../../core/slot-io.js';
+import { makeVars } from '../../runners/test-fixtures.js';
 
 // runPrepareCommand is driven through a faked slot exec layer: no tmux server,
 // shell or process is touched. Execution, file transport and session lookup are faked.
@@ -229,6 +230,29 @@ test('large remote scripts bind bare farm roots before the file transfer', async
   assert.ok(script.includes('printf %s /node/support/selected'));
   assert.ok(!script.includes('~/farmslot-node'));
   assert.ok(Math.max(...commands.map((cmd) => Buffer.byteLength(cmd))) < 65536);
+});
+
+test('configured workspace references resolve before remote prepare script publication', async () => {
+  const controller = new AbortController();
+  onLaunch = () => controller.abort();
+  const configured = makeVars({
+    host: 'remote.invalid',
+    machine: 'configured-support-node',
+    machineEnv: { FARMSLOT_WORKSPACE: '/configured/farm-node' },
+  });
+  const result = await runPrepareCommand(
+    configured,
+    await logPath(),
+    'bash /configured/farm-node/scripts/dev.sh',
+    {
+      signal: controller.signal,
+      windowLabel: 'configured-root',
+      phase: 'preflight',
+      tailPollIntervalMs: 10,
+    },
+  );
+  assert.equal(result.exitCode, 130);
+  assert.equal(resolutions.length, 1);
 });
 
 test('pending support delivery keeps the existing staging timeout and starts no wrapper', async () => {

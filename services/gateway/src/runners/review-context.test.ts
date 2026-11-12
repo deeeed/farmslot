@@ -27,7 +27,12 @@ const run: Run = {
 run.metrics.runner = 'codex';
 run.metrics.model = 'gpt-6.1-sol';
 mock.module('../runs/store.js', {
-  namedExports: { getRun: () => run, getAllRuns: () => [run], persistRunNow: async () => {} },
+  namedExports: {
+    getRun: () => run,
+    getRunWithArchived: async () => run,
+    getAllRuns: () => [run],
+    persistRunNow: async () => {},
+  },
 });
 mock.module('../agents/contexts.js', {
   namedExports: {

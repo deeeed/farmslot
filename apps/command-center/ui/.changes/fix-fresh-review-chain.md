@@ -1,0 +1,1 @@
+- Offer a fresh review chain in PR review setup through the shared picker.
