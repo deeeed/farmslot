@@ -1,4 +1,4 @@
-import { PipelineSteps, type Run } from '@farmslot/protocol';
+import { PipelineSteps, type Run, type RunMetrics } from '@farmslot/protocol';
 
 /** Monitor output that carries the reason a blind eval worker blocked its own first output. */
 export const EVAL_WORKER_BLOCKED_OUTPUT = 'evalWorkerBlocked';
@@ -11,7 +11,12 @@ export function evalWorkerBlockedReason(run: Pick<Run, 'steps'>): string | undef
   return typeof reason === 'string' ? reason : undefined;
 }
 
-/** A run's outcome when it ends done: a blind eval worker that blocked itself finished its trial, not its task. */
-export function completedRunOutcome(run: Pick<Run, 'steps'>): 'partial' | 'success' {
-  return evalWorkerBlockedReason(run) ? 'partial' : 'success';
+/** A finished eval trial without a judge verdict is not a successful task. */
+export function completedRunOutcome(
+  run: Pick<Run, 'steps'> & Partial<Pick<Run, 'engineState'>>,
+): NonNullable<RunMetrics['outcome']> {
+  if (evalWorkerBlockedReason(run)) return 'partial';
+  const review = run.steps.find(({ name }) => name === PipelineSteps.REVIEW)?.outputs;
+  if (run.engineState?.evalExperiment && review?.skipped === true) return 'unjudged';
+  return 'success';
 }

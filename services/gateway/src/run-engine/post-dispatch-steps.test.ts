@@ -3237,3 +3237,44 @@ test('proof-only completion keeps failed coverage as output and never requests a
     /Frozen proof artifact changed/,
   );
 });
+
+test('an eval judge skipped by config completes the review step without a failure', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'eval-disabled-review-step-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'generic-project',
+    ticketOrPr: 'EVAL-DISABLED',
+    slotId: 'eval-slot',
+    completionPolicy: 'artifact-only',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  const fixture = await firstOutputFixture(root, getRun(run.id)!);
+  updateRun(run.id, { taskFile: fixture.taskFile, engineState: fixture.engineState });
+  const context: PostDispatchStepContext = {
+    ...restartReplayContext(),
+    readEvalWorkerProgress: async () => ({ kind: 'idle' }),
+    captureEvalWorkerOutput: async () => 0,
+    extractEvalWorkerCost: async () => ({
+      costUsd: null,
+      turns: null,
+      inputTokens: null,
+      outputTokens: null,
+      totalTokens: null,
+      cacheCreation: null,
+      cacheRead: null,
+      actualModel: null,
+    }),
+    executeReviewForRun: async () => ({
+      skipped: true,
+      reason: 'disabled-for-project',
+      retryCount: 0,
+    }),
+  };
+  const io = await executeReviewStep(run.id, context);
+  assert.equal(io.outputs?.skipped, true);
+  assert.equal(io.outputs?.reason, 'disabled-for-project');
+  assert.equal(io.outputs?.verdict, undefined);
+  assert.equal(context.stepPartialIO.size, 0);
+});

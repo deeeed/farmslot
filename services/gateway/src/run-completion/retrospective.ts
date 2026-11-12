@@ -13,6 +13,7 @@ import {
   type RunDecision,
 } from '@farmslot/protocol';
 
+import { completedRunOutcome } from '../evals/blocked-first-output.js';
 import { getFamilyRuns } from '../family-observability/context.js';
 import {
   collectFeedbackCandidates,
@@ -468,10 +469,11 @@ export async function createRetrospectiveForRun(runId: string): Promise<void> {
 
 export function inferRetrospectiveOutcome(
   run: Run,
-): 'success' | 'failure' | 'partial' | 'cancelled' | 'unknown' {
+): 'success' | 'failure' | 'partial' | 'cancelled' | 'unjudged' | 'unknown' {
   if (run.metrics.outcome) return run.metrics.outcome;
   if (run.status === 'cancelled') return 'cancelled';
   if (run.steps.some((step) => step.status === 'failed')) return 'failure';
+  if (completedRunOutcome(run) === 'unjudged') return 'unjudged';
 
   const ciWatchStep = run.steps.find((step) => step.name === 'ci-watch');
   const ciResult =

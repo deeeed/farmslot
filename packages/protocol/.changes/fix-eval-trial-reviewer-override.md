@@ -1,0 +1,1 @@
+- Retain eval trial reviewer overrides, reject conflicting retries, and finalize disabled judge reviews as unjudged without counting success or failure.
