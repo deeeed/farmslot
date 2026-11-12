@@ -1,4 +1,8 @@
-const FLEET_STALE_MS_DEFAULT = 5 * 60_000;
+/**
+ * A full health refresh of the operator fleet (108 slots on three machines) takes 170-215 s
+ * (measured 2026-11-12). Refreshed at half this, it lands well before the threshold.
+ */
+const FLEET_STALE_MS_DEFAULT = 10 * 60_000;
 
 export function fleetStaleThresholdMs(): number {
   const raw = Number(process.env.FARMSLOT_FLEET_STALE_MS);
@@ -11,13 +15,17 @@ export function isFleetCheckedAtStale(checkedAt: string, nowMs = Date.now()): bo
 }
 
 /**
- * The monitor refreshes a snapshot this old, at half the threshold. Its 30 s loop then starts the
- * refresh by 0.5 threshold + 30 s (180 s at the default), leaving 120 s for the machine probes, whose
- * stages each run under a 5 s timeout. A fleet whose machines answer never reaches the threshold.
+ * The snapshot age at which the monitor starts a refresh: half the threshold. A fleet whose
+ * refresh completes within the other half, less one monitor turn, never shows stale; a slower one
+ * still crosses the threshold.
  */
+export function fleetRefreshDueAgeMs(): number {
+  return fleetStaleThresholdMs() / 2;
+}
+
 export function isFleetRefreshDue(checkedAt: string, nowMs = Date.now()): boolean {
   const ts = Date.parse(checkedAt);
-  return !Number.isFinite(ts) || nowMs - ts > fleetStaleThresholdMs() / 2;
+  return !Number.isFinite(ts) || nowMs - ts > fleetRefreshDueAgeMs();
 }
 
 /** First clock millisecond at which the existing strict stale comparison becomes true. */

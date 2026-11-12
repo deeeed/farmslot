@@ -98,7 +98,7 @@ import { assertPressureAdmissionConfigValid } from './methods/dispatch/pressure-
 import { assertDispatchPressureAdmissionEnvValid } from './methods/dispatch/pressure-admission-control.js';
 import { isFreeSlot } from './methods/dispatch/slot-scoring.js';
 import { serveFile, serveRunArtifact } from './methods/filesystem.js';
-import { fleetHealthRefresh, isFleetCheckedAtStale } from './methods/fleet.js';
+import { fleetHealthRefresh, isFleetCheckedAtStale, isFleetRefreshDue } from './methods/fleet.js';
 import {
   startGatewayUpdateObservation,
   wakeGatewayUpdateObservation,
@@ -536,7 +536,11 @@ async function main(): Promise<void> {
   const staleFile = Boolean(
     cached && cached.slots.length > 0 && isFleetCheckedAtStale(cached.checkedAt),
   );
-  const needsBootstrap = missingFile || !cached || cached.slots.length === 0 || staleFile;
+  // A fresh snapshot already due for its refresh starts it now: the monitor's first turn is a
+  // poll interval away, which can be past the threshold.
+  const dueFile = Boolean(cached && cached.slots.length > 0 && isFleetRefreshDue(cached.checkedAt));
+  const needsBootstrap =
+    missingFile || !cached || cached.slots.length === 0 || staleFile || dueFile;
 
   // Initialize the engine and monitor after run ownership has been restored.
   initRunEngine(observedBroadcast, settledBroadcast);
@@ -1052,7 +1056,9 @@ async function main(): Promise<void> {
       ? 'no .farm-status.json'
       : staleFile
         ? 'cached fleet is stale'
-        : 'cached fleet is empty';
+        : dueFile
+          ? 'cached fleet is due for its refresh'
+          : 'cached fleet is empty';
     console.log(`[startup] ${reason} — running initial fleet refresh`);
     fleetHealthRefresh()
       .then(({ fleet }) => {

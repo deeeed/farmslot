@@ -61,12 +61,12 @@ export class SlotResourceChanges {
     this.previous = current;
     this.previousCheckedAt = checkedAt;
     this.failed = false;
-    this.publishStale();
+    this.fleetStale();
     this.revisions.scheduleInvalidations(
       'fleet-status',
       this.slotKeys([...current.keys()], current),
       fleetStaleDeadline(checkedAt),
-      () => this.publishStale(),
+      () => this.fleetStale(),
     );
   }
 
@@ -84,22 +84,24 @@ export class SlotResourceChanges {
       this.invalidateBindings();
     }
     this.failed = true;
-    this.publishStale();
+    this.fleetStale();
     this.revisions.scheduleInvalidations('fleet-status', [], undefined);
   }
 
   /**
-   * The fleet's `stale` is not an entity field: an entity-sync client reads it again only when the
-   * collection marker moves. Stale means no readable source, no `checked_at`, or one past the
-   * threshold. Compared with what was last published, so a replacement snapshot, a missing or
-   * repaired timestamp and a clock moved back each move the marker exactly when the state changes.
+   * Whether the fleet is stale now, as clients are told. `stale` is not an entity field: an
+   * entity-sync client reads it again only when the collection marker moves. Stale means no
+   * readable source, no `checked_at`, or one past the threshold. Every path that decides it (a
+   * commit, a lost source, the deadline, a versions read) calls this, and the marker moves whenever
+   * the answer differs from the last one given, so no reader sees a state clients are not told of.
    */
-  private publishStale(): void {
+  fleetStale(): boolean {
     // An absent timestamp does not parse, which the rule reads as stale.
     const stale = this.failed || isFleetCheckedAtStale(this.previousCheckedAt ?? '');
     if (this.publishedStale !== undefined && stale !== this.publishedStale)
       this.revisions.advanceMembership({ family: 'slots', scope: 'farm' });
     this.publishedStale = stale;
+    return stale;
   }
 
   /** In-memory enrichments change slot facts without changing persisted run ownership. */

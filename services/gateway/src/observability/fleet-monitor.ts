@@ -47,6 +47,7 @@ let fleetTimer: ReturnType<typeof setInterval> | null = null;
 let decisionTimer: ReturnType<typeof setInterval> | null = null;
 let persistTimer: ReturnType<typeof setInterval> | null = null;
 let fleetPollInFlight = false;
+let violationScanInFlight = false;
 let decisionPollInFlight = false;
 let knownDecisions = new Set<string>();
 let knownDecisionFiles = new Map<string, string>();
@@ -114,18 +115,29 @@ export function startMonitor(eventHandler: MonitorEventHandler): void {
   // Restore persisted state before starting loops
   loadMonitorState();
 
-  // Fleet refresh loop
+  // Fleet refresh loop. The read starts the refresh that keeps the fleet fresh, so a slow
+  // violation scan skips later scans, never later reads.
   fleetTimer = setInterval(async () => {
     if (fleetPollInFlight) return;
     fleetPollInFlight = true;
+    let fleet: FleetStatus;
     try {
-      const { fleet } = await fleetMonitorStatus();
+      ({ fleet } = await fleetMonitorStatus());
       handler?.onFleetUpdated(fleet);
-      await checkForViolations(fleet);
     } catch {
-      /* ignore refresh errors */
+      // The next turn reads again; a failed read publishes nothing.
+      return;
     } finally {
       fleetPollInFlight = false;
+    }
+    if (violationScanInFlight) return;
+    violationScanInFlight = true;
+    try {
+      await checkForViolations(fleet);
+    } catch {
+      // The next turn scans again.
+    } finally {
+      violationScanInFlight = false;
     }
   }, FLEET_POLL_MS);
   fleetTimer.unref();

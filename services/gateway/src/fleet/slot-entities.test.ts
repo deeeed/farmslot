@@ -283,8 +283,18 @@ test("N9: a failed inspection's fallback workspace leaves the entity when it lea
 });
 
 test('a stale snapshot is served stale by the observed read and named stale by the versions read', async (t) => {
+  const { slotResourceChanges, statusSlotResources } =
+    await import('../resources/slot-run-bindings.js');
+  /** A status commit: new rows, then their observation, which owns the published stale state. */
+  const commit = (fleet: FleetStatus) => {
+    setCachedFleetForTests(fleet);
+    slotResourceChanges.observe(
+      statusSlotResources({ slots: fleet.slots.map((row) => ({ slot: row.slot })) }),
+      fleet.checkedAt,
+    );
+  };
   // Older than any freshness threshold: the plain read has always served this as stale.
-  setCachedFleetForTests(fleetOf([slot('a'), slot('b')], '2000-01-01T00:00:00.000Z'));
+  commit(fleetOf([slot('a'), slot('b')], '2000-01-01T00:00:00.000Z'));
   t.after(() => setCachedFleetForTests(null));
   const observed = observedFleetStatus(await realState.loadFleetStatus(false, true)).fleet;
   assert.equal(observed.stale, true);
@@ -301,7 +311,7 @@ test('a stale snapshot is served stale by the observed read and named stale by t
     [true, true],
   );
 
-  setCachedFleetForTests(fleetOf([slot('a'), slot('b')]));
+  commit(fleetOf([slot('a'), slot('b')]));
   const fresh = observedFleetStatus(await realState.loadFleetStatus(false, true)).fleet;
   assert.equal(fresh.stale, undefined);
   assert.deepEqual(

@@ -92,7 +92,9 @@ const {
   fleetHealthRefresh,
   isFleetCheckedAtStale,
   joinFleetRefresh,
+  refreshStaleFleet,
 } = await import('./fleet.js');
+const { fleetRefreshDueAgeMs, fleetStaleThresholdMs } = await import('../fleet/freshness.js');
 
 test('a stale monitor refreshes real machine state without borrowing viewer enrichment', async () => {
   assert.equal((await fleetMonitorStatus()).fleet.stale, true);
@@ -110,6 +112,21 @@ test('joining a health refresh shares its producer instead of a second refresh c
   const joined = joinFleetRefresh();
   await Promise.all([running, joined]);
   assert.equal(statusCommits - before, 1, 'A join must not schedule a second health generation');
+});
+
+test('a stale read joins the running health refresh instead of queueing another', async () => {
+  const { fleet } = await fleetHealthRefresh();
+  const before = statusCommits;
+  const workspaces = workspaceRefreshes;
+  const running = fleetHealthRefresh();
+  // What a stale observed or versions read does.
+  refreshStaleFleet({ ...fleet, checkedAt: '2000-01-01T00:00:00Z' });
+  await running;
+  // A queued follow-up would start as the running refresh settles; give it time to commit.
+  for (let wait = 0; wait < 30 && statusCommits - before < 2; wait++)
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  assert.equal(statusCommits - before, 1, 'the read shared the running refresh');
+  assert.equal(workspaceRefreshes, workspaces, 'the read started no workspace inspection');
 });
 
 test('startup and configuration refreshes use the shared health-only producer', async () => {
@@ -177,14 +194,23 @@ test('the monitor refreshes ahead of the threshold: answering machines never tur
     t.mock.timers.tick(30_000);
     assert.equal(isFleetCheckedAtStale(checkedAt), false, `after turn ${turn}`);
   }
-  assert.ok(refreshes >= 6 && refreshes <= 8, `one refresh per 150-180 s, saw ${refreshes}`);
+  // One refresh per due age, started up to one 30 s turn late.
+  const due = fleetRefreshDueAgeMs();
+  const [fewest, most] = [Math.floor(1_200_000 / (due + 30_000)), Math.ceil(1_200_000 / due)];
+  assert.ok(
+    refreshes >= fewest && refreshes <= most,
+    `${fewest}-${most} refreshes, saw ${refreshes}`,
+  );
   // The machines stop answering: the fleet turns stale at the threshold.
   answering = false;
   let turns = 0;
   while (!(await fleetMonitorStatus(deps)).fleet.stale) {
     for (let i = 0; i < 3; i++) await new Promise<void>((resolve) => setImmediate(resolve));
     t.mock.timers.tick(30_000);
-    assert.ok(++turns <= 11, 'stale within the threshold and one loop turn');
+    assert.ok(
+      ++turns <= fleetStaleThresholdMs() / 30_000 + 1,
+      'stale within the threshold and one loop turn',
+    );
   }
   assert.ok(errors.mock.callCount() > 0, 'each failed refresh is reported');
 });

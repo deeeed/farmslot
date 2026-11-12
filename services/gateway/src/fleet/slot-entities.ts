@@ -4,6 +4,7 @@
 import {
   computeSummary,
   type FleetEntityPage,
+  type FleetStatus,
   type FleetVersionsResult,
   type SlotEntity,
   type SlotStatus,
@@ -15,7 +16,6 @@ import { entityVersionHash } from '../resources/entity-version-hash.js';
 import { type EntitySnapshot, resourceRevisions } from '../resources/revisions.js';
 import { slotResourceChanges } from '../resources/slot-run-bindings.js';
 
-import { isFleetCheckedAtStale } from './freshness.js';
 import { getAllMachineHealth } from './node-health.js';
 import {
   ensureFleetLoaded,
@@ -137,8 +137,11 @@ export function slotEntityProvider(key: ResourceKey): EntitySnapshot | undefined
 }
 resourceRevisions.setEntityProvider('slot', slotEntityProvider);
 
-async function current(): Promise<NonNullable<ReturnType<typeof slotEntityBase>>> {
-  await ensureFleetLoaded();
+/**
+ * The committed fleet as readers serve it. Synchronous, so a reader takes it in the same turn as
+ * the records, the stale state and the marker: a commit cannot land between them.
+ */
+function served(): FleetStatus {
   if (servedBase === undefined) refresh(undefined);
   const fleet = slotEntityBase();
   if (!fleet) throw new Error('The fleet has no committed rows');
@@ -147,28 +150,32 @@ async function current(): Promise<NonNullable<ReturnType<typeof slotEntityBase>>
 
 /** `fleet.status { versions: true }`: stored versions and the fleet's non-entity fields. */
 export async function fleetStatusVersions(): Promise<FleetVersionsResult> {
-  const fleet = await current();
+  await ensureFleetLoaded();
+  // Nothing below awaits: the reply describes one state.
+  const fleet = served();
   const held = order.flatMap((id) => {
     const record = records.get(id);
     return record ? [{ id, record }] : [];
   });
   const machines = getAllMachineHealth();
+  // Decided by the publication state, which moves the marker first if this read is the first to
+  // see a crossing; the client applies it to the slots it holds.
+  const stale = slotResourceChanges.fleetStale();
   return {
     versions: held.map(({ id, record }) => ({ id, version: record.version })),
     summary: computeSummary(held.map(({ record }) => record.entity)),
     ...(machines.length ? { machines } : {}),
     checkedAt: fleet.checkedAt,
     ...(fleet.poolErrors?.length ? { poolErrors: fleet.poolErrors } : {}),
-    // Decided here, applied by the client to the slots it holds (the collection marker moves at
-    // each crossing of the threshold, so a connected client reads this again then).
-    ...(isFleetCheckedAtStale(fleet.checkedAt) ? { stale: true as const } : {}),
+    ...(stale ? { stale: true as const } : {}),
     membershipRevision: resourceRevisions.membershipRevision(FLEET_COLLECTION_KEY),
   };
 }
 
 /** `fleet.status { ids }`: the named slots that exist, in request order, within the byte cap. */
 export async function fleetStatusIds(ids: readonly string[]): Promise<FleetEntityPage> {
-  await current();
+  await ensureFleetLoaded();
+  served();
   const page: FleetEntityPage = { entities: [], versions: [] };
   let bytes = 0;
   for (const id of ids) {

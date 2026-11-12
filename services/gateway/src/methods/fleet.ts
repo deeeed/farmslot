@@ -93,7 +93,7 @@ export function setFleetWorkspacePublisher(publish: FleetWorkspacePublisher | un
   workspacePublisher = publish;
 }
 
-export { fleetStaleThresholdMs, isFleetCheckedAtStale };
+export { fleetStaleThresholdMs, isFleetCheckedAtStale, isFleetRefreshDue };
 
 interface FleetWorkspaceObservations {
   read(fleet: FleetStatus): FleetStatus;
@@ -157,7 +157,10 @@ const monitorFleetStatusDeps: FleetStatusDeps = {
 };
 
 function fleetStatusResult(fleet: FleetStatus): FleetStatusResult {
-  return { fleet: isFleetCheckedAtStale(fleet.checkedAt) ? staleFleet(fleet) : fleet };
+  if (!isFleetCheckedAtStale(fleet.checkedAt)) return { fleet };
+  // Entity-sync clients are told too, when this read is the first to see the crossing.
+  slotResourceChanges.fleetStale();
+  return { fleet: staleFleet(fleet) };
 }
 
 /**
@@ -168,6 +171,8 @@ function fleetStatusResult(fleet: FleetStatus): FleetStatusResult {
 function kickFleetRefresh(fleet: FleetStatus, join: () => Promise<FleetStatusResult>): void {
   if (!fleet.slots.some((slot) => !slot.missingFromPool)) return;
   join().catch((err) => {
+    // Reported, not raised: the reader is not waiting, and a refresh that fails leaves the
+    // snapshot to age into stale, which every client shows.
     console.error(`[fleet.status] background stale refresh failed: ${(err as Error).message}`);
   });
 }
