@@ -35,7 +35,9 @@ test.after(() => rmSync(dfStub, { recursive: true, force: true }));
 await import('../runtime/mock-pty.test-support.js');
 const {
   archiveSlotScaffolding,
+  cleanupSlotOwnedPaths,
   excludeSlotScaffolding,
+  hasUserSlotChanges,
   measureSlotRetention,
   SCAFFOLDING_TEXT_MAX_FILE_BYTES,
 } = await import('./slot-scaffolding.js');
@@ -92,6 +94,200 @@ function scaffolding(repo: string, task = '.task', runtime = '.agent') {
   writeFileSync(path.join(repo, runtime, 'browser/profile.json'), 'warm resource');
   symlinkSync(`${runtime}/.observability`, path.join(repo, '.observability'));
 }
+
+const retiredSupport = {
+  fixtures: {
+    templates: [],
+    owned_paths: [{ path: 'CLAUDE.local.md', state: 'retired' as const }],
+  },
+};
+
+function cleanGitFixture(t: test.TestContext) {
+  const f = fixture(t);
+  git(f.repo, 'init', '-q', '-b', 'main');
+  writeFileSync(path.join(f.repo, 'README.md'), 'source');
+  git(f.repo, 'add', 'README.md');
+  git(f.repo, 'commit', '-qm', 'test: baseline');
+  git(f.repo, 'remote', 'add', 'origin', f.repo);
+  git(f.repo, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  return f;
+}
+
+test('retired declared farm files are not user changes before a slot is prepared', (t) => {
+  const f = cleanGitFixture(t);
+  writeFileSync(path.join(f.repo, 'CLAUDE.local.md'), 'retired farm context');
+  const status = git(f.repo, 'status', '--porcelain', '-z', '--untracked-files=all');
+  assert.equal(hasUserSlotChanges(status, retiredSupport), false);
+  writeFileSync(path.join(f.repo, 'user.txt'), 'keep user work');
+  assert.equal(
+    hasUserSlotChanges(git(f.repo, 'status', '--porcelain', '-z'), retiredSupport),
+    true,
+  );
+});
+
+test('recovery probe ignores a declared retired file without a local exclude entry', async (t) => {
+  const f = cleanGitFixture(t);
+  writeFileSync(path.join(f.repo, 'CLAUDE.local.md'), 'retired farm context');
+  const { workspaceProbeCommand } = await import('../methods/slot/workspace-probe.js');
+  const command = workspaceProbeCommand(f.vars, retiredSupport, 'main');
+  const result: unknown = JSON.parse(execFileSync('bash', ['-c', command], { encoding: 'utf8' }));
+  assert.ok(result && typeof result === 'object' && 'dirtyCount' in result);
+  assert.equal(result.dirtyCount, 0, 'a retired farm file must not strand recovery');
+});
+
+test('declared cleanup removes ignored support files but preserves tracked and undeclared work', async (t) => {
+  const f = cleanGitFixture(t);
+  const rules = path.join(f.repo, '.cursor/rules');
+  mkdirSync(rules, { recursive: true });
+  writeFileSync(path.join(rules, 'product.mdc'), 'product rule');
+  git(f.repo, 'add', '.cursor/rules/product.mdc');
+  git(f.repo, 'commit', '-qm', 'test: tracked product rule');
+  writeFileSync(path.join(rules, 'product.mdc'), 'user edit');
+  writeFileSync(path.join(rules, 'farm.mdc'), 'generated');
+  writeFileSync(path.join(f.repo, 'CLAUDE.local.md'), 'retired');
+  writeFileSync(path.join(f.repo, 'user.txt'), 'untracked user work');
+  writeFileSync(path.join(f.repo, '.git/info/exclude'), 'CLAUDE.local.md\n.cursor/\n');
+  const project = {
+    fixtures: {
+      owned_paths: [
+        { path: 'CLAUDE.local.md', state: 'retired' as const },
+        { path: '.cursor/rules', state: 'current' as const },
+      ],
+    },
+  };
+  let checks = 0;
+  const removed = await cleanupSlotOwnedPaths(
+    f.vars,
+    project,
+    {
+      beforeRemove: async () => {
+        checks++;
+      },
+    },
+    execute,
+  );
+  assert.deepEqual(removed.sort(), ['.cursor/rules/farm.mdc', 'CLAUDE.local.md']);
+  assert.equal(checks, 1);
+  assert.equal(readFileSync(path.join(rules, 'product.mdc'), 'utf8'), 'user edit');
+  assert.equal(readFileSync(path.join(f.repo, 'user.txt'), 'utf8'), 'untracked user work');
+  assert.match(git(f.repo, 'status', '--porcelain'), /M \.cursor\/rules\/product\.mdc/);
+  assert.equal(hasUserSlotChanges(git(f.repo, 'status', '--porcelain', '-z'), project), true);
+});
+
+test('retired-only cleanup leaves currently installed support files in place', async (t) => {
+  const f = cleanGitFixture(t);
+  writeFileSync(path.join(f.repo, 'current.md'), 'current');
+  writeFileSync(path.join(f.repo, 'retired.md'), 'retired');
+  const project = {
+    fixtures: {
+      owned_paths: [
+        { path: 'current.md', state: 'current' as const },
+        { path: 'retired.md', state: 'retired' as const },
+      ],
+    },
+  };
+  assert.deepEqual(await cleanupSlotOwnedPaths(f.vars, project, { retiredOnly: true }, execute), [
+    'retired.md',
+  ]);
+  assert.equal(readFileSync(path.join(f.repo, 'current.md'), 'utf8'), 'current');
+});
+
+test('declaring a tracked file never hides or deletes its edits', async (t) => {
+  const f = cleanGitFixture(t);
+  writeFileSync(path.join(f.repo, 'CLAUDE.local.md'), 'tracked');
+  git(f.repo, 'add', 'CLAUDE.local.md');
+  git(f.repo, 'commit', '-qm', 'test: tracked context');
+  writeFileSync(path.join(f.repo, 'CLAUDE.local.md'), 'user edit');
+  assert.equal(
+    hasUserSlotChanges(git(f.repo, 'status', '--porcelain', '-z'), retiredSupport),
+    true,
+  );
+  assert.deepEqual(await cleanupSlotOwnedPaths(f.vars, retiredSupport, {}, execute), []);
+  assert.equal(readFileSync(path.join(f.repo, 'CLAUDE.local.md'), 'utf8'), 'user edit');
+});
+
+test('cleanup refuses an escaping parent before removing any declared file', async (t) => {
+  const f = cleanGitFixture(t);
+  const outside = path.join(f.root, 'outside');
+  mkdirSync(outside);
+  writeFileSync(path.join(outside, 'support.md'), 'keep outside');
+  symlinkSync(outside, path.join(f.repo, 'linked'));
+  writeFileSync(path.join(f.repo, 'CLAUDE.local.md'), 'keep until safe');
+  const project = {
+    fixtures: {
+      owned_paths: [
+        ...retiredSupport.fixtures.owned_paths,
+        { path: 'linked/support.md', state: 'retired' as const },
+      ],
+    },
+  };
+  await assert.rejects(
+    cleanupSlotOwnedPaths(f.vars, project, {}, execute),
+    /parent escapes checkout/,
+  );
+  assert.ok(existsSync(path.join(f.repo, 'CLAUDE.local.md')));
+  assert.equal(readFileSync(path.join(outside, 'support.md'), 'utf8'), 'keep outside');
+});
+
+test('cleanup unlinks a declared support link without deleting its target', async (t) => {
+  const f = cleanGitFixture(t);
+  const outside = path.join(f.root, 'outside.md');
+  writeFileSync(outside, 'keep target');
+  symlinkSync(outside, path.join(f.repo, 'CLAUDE.local.md'));
+  assert.deepEqual(await cleanupSlotOwnedPaths(f.vars, retiredSupport, {}, execute), [
+    'CLAUDE.local.md',
+  ]);
+  assert.equal(readFileSync(outside, 'utf8'), 'keep target');
+});
+
+test('cleanup preserves a nested repository and reports why it remains', async (t) => {
+  const f = cleanGitFixture(t);
+  const nested = path.join(f.repo, 'support/nested');
+  mkdirSync(nested, { recursive: true });
+  git(nested, 'init', '-q', '-b', 'main');
+  writeFileSync(path.join(nested, 'unique.txt'), 'unique work');
+  git(nested, 'add', 'unique.txt');
+  git(nested, 'commit', '-qm', 'test: unique nested work');
+  const project = { fixtures: { owned_paths: [{ path: 'support', state: 'retired' as const }] } };
+  await assert.rejects(cleanupSlotOwnedPaths(f.vars, project, {}, execute), /remain untracked/);
+  assert.equal(readFileSync(path.join(nested, 'unique.txt'), 'utf8'), 'unique work');
+  assert.equal(git(nested, 'log', '-1', '--format=%s'), 'test: unique nested work');
+});
+
+test('an empty retired selection cannot turn into an unrestricted Git clean', async (t) => {
+  const f = cleanGitFixture(t);
+  const project = {
+    fixtures: { owned_paths: [{ path: 'current.md', state: 'current' as const }] },
+  };
+  writeFileSync(path.join(f.repo, 'current.md'), 'keep current');
+  let executed = false;
+  assert.deepEqual(
+    await cleanupSlotOwnedPaths(f.vars, project, { retiredOnly: true }, async () => {
+      executed = true;
+      throw new Error('unexpected cleanup');
+    }),
+    [],
+  );
+  assert.equal(executed, false);
+  assert.ok(existsSync(path.join(f.repo, 'current.md')));
+});
+
+test('packs without a declaration keep legacy filtering and cleanup behavior', async (t) => {
+  const f = cleanGitFixture(t);
+  writeFileSync(path.join(f.repo, 'CLAUDE.local.md'), 'legacy unknown file');
+  assert.equal(hasUserSlotChanges('?? .agent/generated.md\0'), false);
+  assert.equal(hasUserSlotChanges('?? CLAUDE.local.md\0'), true);
+  let executed = false;
+  assert.deepEqual(
+    await cleanupSlotOwnedPaths(f.vars, {}, {}, async () => {
+      executed = true;
+      throw new Error('unexpected cleanup');
+    }),
+    [],
+  );
+  assert.equal(executed, false);
+  assert.ok(existsSync(path.join(f.repo, 'CLAUDE.local.md')));
+});
 
 test('prepare appends exclusions idempotently to the linked worktree Git file', async (t) => {
   const f = fixture(t);
