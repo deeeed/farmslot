@@ -5,6 +5,8 @@
 // keys list surfaces read.  Every full `Run` satisfies `RunListRow` (every
 // required field that slim keeps is also required or optional on `Run`), so old
 // cached fat rows and new slim rows are both valid `RunListRow` values.
+import type { AgentContext } from '../contracts/agents.js';
+import type { ReviewWorkspaceSubject } from '../contracts/review-workspace.js';
 import type {
   NoChangeGatePayload,
   ReadyGatePayload,
@@ -14,6 +16,9 @@ import type {
   RunDecision,
   RunDecisionPayload,
   RunEngineState,
+  RunMetrics,
+  RunReviewResult,
+  RunTicketData,
 } from '../contracts/runs.js';
 
 import type { RunEvidenceSummary } from './evidence-summary.js';
@@ -52,6 +57,7 @@ export interface RunListReviewGatePayload {
  */
 export type RunListReadyGatePayload = Omit<
   ReadyGatePayload,
+  | 'gateSummary'
   | 'workerReport'
   | 'reviewRoundBudget'
   | 'inputSnapshot'
@@ -127,6 +133,29 @@ export type RunListEngineState = Omit<RunEngineState, 'publishGate'> & {
   publishGate?: RunListPublishGate;
 };
 
+// ─── Heavy per-run detail left out ───────────────────────────────────────────
+//
+// Only the heavy keys go: each averages over 500 B per stored run and no list surface reads
+// it. Every other key of these fields is served as the run holds it.
+
+/** An agent context on a list row, without its visual-review blobs, session archive and usage. */
+export type RunListAgentContext = Omit<
+  AgentContext,
+  'pipelineVisualReviewInput' | 'pipelineVisualReviewResult' | 'runnerSessionArchive' | 'usage'
+>;
+
+/** Metrics on a list row, without the checklist timing events. */
+export type RunListMetrics = Omit<RunMetrics, 'subtasks' | 'checklistTiming'>;
+
+/** Ticket data on a list row, without the ticket's description. */
+export type RunListTicketData = Omit<RunTicketData, 'description'>;
+
+/** A review result on a list row, without the review's text and line comments. */
+export type RunListReviewResult = Omit<RunReviewResult, 'reviewMd' | 'lineComments'>;
+
+/** A review workspace subject on a list row, without the pull request body. */
+export type RunListReviewWorkspaceSubject = Omit<ReviewWorkspaceSubject, 'body'>;
+
 // ─── RunListRow ───────────────────────────────────────────────────────────────
 
 /**
@@ -147,9 +176,25 @@ export type RunListRow = Omit<
   | 'visualJudgmentReceipts'
   | 'templateProvenance'
   | 'evidenceSummary'
+  | 'agentContexts'
+  | 'metrics'
+  | 'ticketData'
+  | 'reviewResult'
+  | 'reviewWorkspaceSubject'
 > & {
   decisions: RunListDecision[];
   engineState?: RunListEngineState;
+  agentContexts?: RunListAgentContext[];
+  metrics: RunListMetrics;
+  ticketData?: RunListTicketData;
+  reviewResult?: RunListReviewResult;
+  reviewWorkspaceSubject?: RunListReviewWorkspaceSubject;
+  /**
+   * Set only on a served row that left out a heavy agent-context, metrics, ticket,
+   * review-result or review-subject key (see `payloadTrimmed` on decisions and
+   * `outputsTrimmed` on steps). A reader that needs one fetches the run.
+   */
+  detailTrimmed?: true;
   /** Pre-computed at serve time by the gateway; absent on run.get rows. */
   evidenceSummary?: RunEvidenceSummary;
 };

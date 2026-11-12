@@ -178,6 +178,70 @@ function richRun(): Run {
       runner: 'claude',
       model: 'claude-opus',
       nudgeCount: 0,
+      runnerSessionPath: '/home/worker/.claude/session.jsonl',
+      checklistTiming: {
+        schemaVersion: 1,
+        events: [{ stepNumber: 1, label: 'Read the task', checkedAt: '2026-11-11T00:00:40.000Z' }],
+      },
+    },
+    agentContexts: [
+      {
+        id: 'review',
+        label: 'Reviewer',
+        role: 'review',
+        status: 'working',
+        slotId: 'slot-a',
+        runId: 'slim-test',
+        runner: 'claude',
+        taskFile: 'tasks/REVIEW.md',
+        reviewId: 'rev-1',
+        reviewLoopNumber: 1,
+        startedAt: '2026-11-11T00:00:40.000Z',
+        runnerSessionPath: '/home/worker/.claude/review.jsonl',
+        signalFile: '/repo/tasks/signal.json',
+        usage: {
+          totalTokens: 9000,
+          measuredAt: '2026-11-11T00:00:55.000Z',
+          source: 'runner-transcript',
+        },
+        runnerSessionArchive: { status: 'captured', relativeDir: 'session-archives/slim-test' },
+      },
+    ],
+    ticketData: {
+      source: 'jira',
+      title: 'Fix the banner',
+      description: 'd'.repeat(3000),
+      acceptanceCriteria: ['Shows the banner'],
+      affectedArea: 'home',
+      stepsToReproduce: ['Open the app'],
+      screenshots: [],
+      labels: ['bug'],
+      jiraKey: 'TEAM-1',
+      linkedTickets: [
+        {
+          ref: 'TEAM-2',
+          url: 'https://jira.example/browse/TEAM-2',
+          title: 'Related',
+          description: 'Related ticket',
+          source: 'jira',
+        },
+      ],
+    },
+    reviewResult: {
+      recommendation: 'COMMENT',
+      reviewMd: 'r'.repeat(4000),
+      lineComments: [{ path: 'src/main.ts', line: 3, body: 'c'.repeat(600), severity: 'major' }],
+      reviewInputArtifactPaths: ['reviews/input.md'],
+    },
+    reviewWorkspaceSubject: {
+      repository: 'owner/repo',
+      repositoryUrl: 'https://github.com/owner/repo',
+      headSha: 'a'.repeat(40),
+      baseSha: 'b'.repeat(40),
+      branch: 'feature/x',
+      title: 'Fix the banner',
+      body: 'b'.repeat(3000),
+      capturedAt: '2026-11-11T00:00:05.000Z',
     },
     steps: [
       {
@@ -227,6 +291,32 @@ function richRun(): Run {
           },
           workerReport: 'w'.repeat(8000),
           inputSnapshot: { taskPrompt: 'p'.repeat(8000) },
+          gateSummary: {
+            kind: 'publication',
+            headline: 'h'.repeat(1500),
+            worker: { model: 'claude-opus', turns: 12 },
+            review: {
+              reviews: [],
+              passingReviews: 0,
+              totalUnresolved: 0,
+              didAnyReviewTriggerReWork: false,
+            },
+            tokens: {
+              mainWorker: {
+                model: 'claude-opus',
+                input: 1,
+                output: 1,
+                cacheRead: 0,
+                cacheCreation: 0,
+                total: 2,
+                turns: 12,
+              },
+              reviews: [],
+              byModel: [],
+              familyTotalTokens: 2,
+              perTurnDetailsAvailable: false,
+            },
+          },
           branch: 'feature/x',
           prNumber: null,
           repo: null,
@@ -375,7 +465,62 @@ test('runListRow serves exactly the kept fields of a rich run, and its evidence 
     summary: 'worker running',
     createdAt: '2026-11-11T00:00:00.000Z',
     updatedAt: '2026-11-11T00:01:00.000Z',
-    metrics: { runner: 'claude', model: 'claude-opus', nudgeCount: 0 },
+    // Per-run detail: only the heavy keys are gone (the checklist timing, the agent's usage
+    // and session archive, the ticket description, the review text and line comments, the
+    // pull request body); every small key is served as the run holds it.
+    metrics: {
+      runner: 'claude',
+      model: 'claude-opus',
+      nudgeCount: 0,
+      runnerSessionPath: '/home/worker/.claude/session.jsonl',
+    },
+    agentContexts: [
+      {
+        id: 'review',
+        label: 'Reviewer',
+        role: 'review',
+        status: 'working',
+        slotId: 'slot-a',
+        runId: 'slim-test',
+        runner: 'claude',
+        taskFile: 'tasks/REVIEW.md',
+        reviewId: 'rev-1',
+        reviewLoopNumber: 1,
+        startedAt: '2026-11-11T00:00:40.000Z',
+        runnerSessionPath: '/home/worker/.claude/review.jsonl',
+        signalFile: '/repo/tasks/signal.json',
+      },
+    ],
+    ticketData: {
+      source: 'jira',
+      title: 'Fix the banner',
+      acceptanceCriteria: ['Shows the banner'],
+      affectedArea: 'home',
+      stepsToReproduce: ['Open the app'],
+      screenshots: [],
+      labels: ['bug'],
+      jiraKey: 'TEAM-1',
+      linkedTickets: [
+        {
+          ref: 'TEAM-2',
+          url: 'https://jira.example/browse/TEAM-2',
+          title: 'Related',
+          description: 'Related ticket',
+          source: 'jira',
+        },
+      ],
+    },
+    reviewResult: { recommendation: 'COMMENT', reviewInputArtifactPaths: ['reviews/input.md'] },
+    reviewWorkspaceSubject: {
+      repository: 'owner/repo',
+      repositoryUrl: 'https://github.com/owner/repo',
+      headSha: 'a'.repeat(40),
+      baseSha: 'b'.repeat(40),
+      branch: 'feature/x',
+      title: 'Fix the banner',
+      capturedAt: '2026-11-11T00:00:05.000Z',
+    },
+    detailTrimmed: true,
     steps: [
       {
         name: 'dispatch',
@@ -394,7 +539,7 @@ test('runListRow serves exactly the kept fields of a rich run, and its evidence 
         title: 'Human gate',
         createdAt: '2026-11-11T00:00:30.000Z',
         actions: [{ id: 'approve', label: 'Approve', style: 'primary' }],
-        payloadTrimmed: ['workerReport', 'inputSnapshot'],
+        payloadTrimmed: ['workerReport', 'inputSnapshot', 'gateSummary'],
         payload: {
           kind: 'ready',
           gateReadiness: {
@@ -462,11 +607,11 @@ test('runListRow serves exactly the kept fields of a rich run, and its evidence 
   });
 });
 
-test('the served row of a rich run is under 2.5 KB, a fraction of the trimmed row', () => {
+test('the served row of a rich run is under 3.5 KB, a fraction of the trimmed row', () => {
   const run = richRun();
   const served = Buffer.byteLength(JSON.stringify(runListRow(run)));
   const trimmed = Buffer.byteLength(JSON.stringify(trimRunForList(run)));
-  assert.ok(served < 2560, `served row ${served} B`);
+  assert.ok(served < 3584, `served row ${served} B`);
   assert.ok(served * 5 < trimmed, `served ${served} B vs trimmed ${trimmed} B`);
 });
 
@@ -494,7 +639,11 @@ test('a slim row reports itself trimmed and names the payload keys it left out',
   const run = richRun();
   const row = runListRow(run);
   assert.equal(runHasTrimmedDetail(row), true);
-  assert.deepEqual(row.decisions[0]?.payloadTrimmed, ['workerReport', 'inputSnapshot']);
+  assert.deepEqual(row.decisions[0]?.payloadTrimmed, [
+    'workerReport',
+    'inputSnapshot',
+    'gateSummary',
+  ]);
   // The full run reports nothing trimmed.
   assert.equal(runHasTrimmedDetail(run), false);
 });
@@ -601,4 +750,48 @@ test('list rows cap long CI check names and fix labels, and mark the step trimme
     steps: [{ name: 'ci-watch', status: 'running', outputs: { failedNames: [longName] } }],
   };
   assert.equal(runListRow(run).steps[0]?.outputsTrimmed, true);
+});
+
+// A row drops only heavy per-run detail keys, and says so with one marker.
+test('a row that left out a heavy detail key reads as trimmed; small keys stay and add no marker', () => {
+  const timed: Run = {
+    ...minRun(),
+    metrics: {
+      nudgeCount: 0,
+      model: null,
+      runner: null,
+      checklistTiming: {
+        schemaVersion: 1,
+        events: [{ stepNumber: 1, label: 'Read', checkedAt: '2026-01-01T00:00:01.000Z' }],
+      },
+    },
+  };
+  const row = runListRow(timed);
+  assert.equal('checklistTiming' in row.metrics, false);
+  assert.equal(row.detailTrimmed, true);
+  assert.equal(runHasTrimmedDetail(row), true);
+  // The marker is on the served row only: trimRunForList's version basis is unchanged.
+  assert.equal(trimRunForList(timed), timed);
+
+  const small: Run = {
+    ...minRun(),
+    metrics: { nudgeCount: 0, model: null, runner: null, runnerSessionPath: '/x/session.jsonl' },
+    agentContexts: [
+      {
+        id: 'primary',
+        label: 'Worker',
+        role: 'primary',
+        status: 'working',
+        slotId: null,
+        runId: 'min',
+        signalFile: '/repo/tasks/signal.json',
+        runnerSessionPath: '/x/session.jsonl',
+      },
+    ],
+  };
+  const plain = runListRow(small);
+  assert.deepEqual(plain.metrics, small.metrics);
+  assert.deepEqual(plain.agentContexts, small.agentContexts);
+  assert.equal('detailTrimmed' in plain, false);
+  assert.equal(runHasTrimmedDetail(plain), false);
 });

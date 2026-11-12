@@ -50,13 +50,28 @@ export async function retryRunDetailReads({
 
 /**
  * A held run.get with a newer run.list row's own fields laid over it: status, summary,
- * timestamps, metrics and the other top-level facts come from the row. Steps, decisions, engine
- * state and output stay the held detail's until run.get's reread lands, because a run.list row
- * leaves their detail out (step outputs, decision payloads such as `prPackage`, the output
- * manifest).
+ * timestamps, the row's metrics and the other top-level facts come from the row. Steps,
+ * decisions, engine state, output, agent contexts, the ticket, the review result and the review
+ * subject stay the held detail's until run.get's reread lands, because a run.list row leaves
+ * their detail out (step outputs, decision payloads such as `prPackage`, the output manifest,
+ * the review text, the ticket description).
  */
 export function heldDetailWithNewerRow(detail: Run, row: RunListRow): Run {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { steps, decisions, engineState, output, evidenceSummary, ...rowFacts } = row;
-  return { ...detail, ...rowFacts };
+  const {
+    /* eslint-disable @typescript-eslint/no-unused-vars -- the held detail keeps these */
+    steps,
+    decisions,
+    engineState,
+    output,
+    evidenceSummary,
+    agentContexts,
+    ticketData,
+    reviewResult,
+    reviewWorkspaceSubject,
+    detailTrimmed,
+    /* eslint-enable @typescript-eslint/no-unused-vars */
+    metrics,
+    ...rowFacts
+  } = row;
+  return { ...detail, ...rowFacts, metrics: { ...detail.metrics, ...metrics } };
 }

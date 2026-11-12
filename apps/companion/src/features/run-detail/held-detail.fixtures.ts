@@ -6,6 +6,11 @@ import {
 } from '@farmslot/protocol';
 
 export const HELD_PACKAGE_HASH = 'pkg-held';
+export const HELD_TICKET_DESCRIPTION = 'The banner is missing after a cold start.';
+export const HELD_CHECKLIST_TIMING = {
+  schemaVersion: 1 as const,
+  events: [{ stepNumber: 1, label: 'Read the task', checkedAt: '2026-11-01T00:00:30.000Z' }],
+};
 export const HELD_EVIDENCE_MANIFEST = [
   { path: 'evidence/before-login.png', purpose: 'before screenshot' },
   { path: 'evidence/after-login.png', purpose: 'after screenshot' },
@@ -64,7 +69,17 @@ export function heldGateRun(): Run {
         },
       },
     ],
-    metrics: { nudgeCount: 0, model: null, runner: null },
+    metrics: { nudgeCount: 0, model: null, runner: null, checklistTiming: HELD_CHECKLIST_TIMING },
+    ticketData: {
+      source: 'jira',
+      title: 'Banner missing',
+      description: HELD_TICKET_DESCRIPTION,
+      acceptanceCriteria: ['Shows the banner'],
+      affectedArea: 'home',
+      stepsToReproduce: [],
+      screenshots: [],
+      labels: [],
+    },
     createdAt: '2026-11-01T00:00:00.000Z',
     updatedAt: '2026-11-01T00:01:00.000Z',
   };
@@ -76,6 +91,7 @@ export function newerSlimRow(held: Run, status: Run['status'] = 'needs-decision'
     ...held,
     status,
     summary: 'newer listed row',
+    metrics: { ...held.metrics, durationMs: 240_000 },
     updatedAt: '2026-11-01T00:05:00.000Z',
   });
 }

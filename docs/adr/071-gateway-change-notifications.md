@@ -464,14 +464,17 @@ the same basis as before — while the row the gateway actually sends is
 output file manifest out as before, and projects `steps`, `decisions`, and
 `engineState` to only the fields list surfaces read; step outputs keep each read key in
 the bounded shape its view reads, and every left-out payload key is named in
-`payloadTrimmed`, so `runHasTrimmedDetail` reports the row as trimmed). Each served row carries
+`payloadTrimmed`, so `runHasTrimmedDetail` reports the row as trimmed; agent contexts,
+metrics, the ticket, the review result and the review subject leave out only their heavy keys,
+each over about 500 B per stored run and read by no list surface, and the row then carries
+`detailTrimmed: true`). Each served row carries
 `evidenceSummary`, which the gateway computes from the full run with the same
 `summarizeRunEvidence` clients use. Old cached fat rows and new slim rows
 coexist in a client; a row without `evidenceSummary` has its summary computed
 from the row's own fields (`runListEvidenceSummary`). Screens that render
 step outputs or decision payloads read `run.get`, never the list row.
 
-Average `run.list` row size drops from ~118 KB to ~9.5 KB (1.3 MB for a
-134-run list vs 15.9 MB). The version contract is otherwise unchanged: clients
+Measured on 81 stored runs, the average `run.list` row drops from 110 KB to 19 KB
+(p95 31 KB, largest 46 KB). The version contract is otherwise unchanged: clients
 still compare versions from the versions list to decide which rows need a
 catch-up page fetch, and `run.get`/`run.forSlot` remain unaffected.

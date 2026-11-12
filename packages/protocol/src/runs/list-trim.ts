@@ -10,10 +10,11 @@
 // `payloadTrimmed`; run.get, run.forSlot and run events stay complete.
 //
 // `runListRow` (step 2 slim rows, 2026-11-11) reduces a row further — from
-// ~118 KB to ~9.5 KB on average — by dropping four heavy optional fields
-// (resourcePosture, sessionUsage, visualJudgmentReceipts, templateProvenance)
-// and projecting steps, decisions, and engineState to only the keys list
-// surfaces read. `trimRunForList` is kept as the version basis.
+// 110 KB to 19 KB on average over 81 stored runs — by dropping four heavy optional
+// fields (resourcePosture, sessionUsage, visualJudgmentReceipts, templateProvenance),
+// projecting steps, decisions, and engineState to only the keys list surfaces read,
+// and leaving the heavy keys out of agent contexts, metrics, the ticket, the review
+// result and the review subject. `trimRunForList` is kept as the version basis.
 import type {
   ReviewStatus,
   Run,
@@ -84,17 +85,19 @@ export function trimRunForList(run: Run): Run {
 }
 
 /**
- * Whether a run.list row left out its output manifest, any decision payload value or any step's
- * inputs or outputs. A view drawn from such a row reads them from the run's direct `run.get`
- * copy, and shows them as not loaded until then rather than as empty.
+ * Whether a run.list row left out its output manifest, any decision payload value, any step's
+ * inputs or outputs, or a heavy per-run detail key. A view drawn from such a row reads them from
+ * the run's direct `run.get` copy, and shows them as not loaded until then rather than as empty.
  */
 export function runHasTrimmedDetail(
-  run: Pick<RunListRow, 'decisions' | 'output'> & Partial<Pick<RunListRow, 'steps'>>,
+  run: Pick<RunListRow, 'decisions' | 'output'> &
+    Partial<Pick<RunListRow, 'steps' | 'detailTrimmed'>>,
 ): boolean {
   return (
     Boolean(run.output?.artifactManifestOmitted) ||
     (run.decisions ?? []).some((decision) => (decision.payloadTrimmed?.length ?? 0) > 0) ||
-    (run.steps ?? []).some((step) => step.outputsTrimmed === true)
+    (run.steps ?? []).some((step) => step.outputsTrimmed === true) ||
+    run.detailTrimmed === true
   );
 }
 
@@ -277,6 +280,8 @@ function slimDecisionPayload(
       recipeQualityArtifact,
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       qualityReport,
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      gateSummary,
       // Keep these:
       reviewRoundBudget,
       reviews,
@@ -380,7 +385,8 @@ function slimEngineState(engineState: RunEngineState | undefined): RunListEngine
  * `sessionUsage`, `visualJudgmentReceipts`, `templateProvenance`), leaves the
  * output file manifest out as `trimRunForList` does, projects `steps`,
  * `decisions`, and `engineState` to only the keys list consumers actually
- * access, and attaches `evidenceSummary` computed from the full run.
+ * access, leaves the heavy keys out of the per-run detail fields (marked
+ * `detailTrimmed`), and attaches `evidenceSummary` computed from the full run.
  * `trimRunForList` stays as the version basis; this function is applied where
  * rows are served.
  *
@@ -391,6 +397,48 @@ export function runListRow(run: Run): RunListRow {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { resourcePosture, sessionUsage, visualJudgmentReceipts, templateProvenance, ...rest } =
     run;
+
+  // Agent contexts, metrics, the ticket, the review result and the review subject leave out
+  // only their heavy keys (see list-row.ts). The row says so when one held something.
+  const heavy: unknown[] = [];
+  const agentContexts = run.agentContexts?.map(
+    ({
+      pipelineVisualReviewInput,
+      pipelineVisualReviewResult,
+      runnerSessionArchive,
+      usage,
+      ...context
+    }) => {
+      heavy.push(
+        pipelineVisualReviewInput,
+        pipelineVisualReviewResult,
+        runnerSessionArchive,
+        usage,
+      );
+      return context;
+    },
+  );
+  const { subtasks, checklistTiming, ...metrics } = run.metrics;
+  heavy.push(subtasks, checklistTiming);
+  let ticketData: RunListRow['ticketData'];
+  if (run.ticketData) {
+    const { description, ...ticket } = run.ticketData;
+    heavy.push(description);
+    ticketData = ticket;
+  }
+  let reviewResult: RunListRow['reviewResult'];
+  if (run.reviewResult) {
+    const { reviewMd, lineComments, ...result } = run.reviewResult;
+    heavy.push(reviewMd, lineComments);
+    reviewResult = result;
+  }
+  let reviewWorkspaceSubject: RunListRow['reviewWorkspaceSubject'];
+  if (run.reviewWorkspaceSubject) {
+    const { body, ...subject } = run.reviewWorkspaceSubject;
+    heavy.push(body);
+    reviewWorkspaceSubject = subject;
+  }
+  const detailTrimmed = heavy.some((value) => value !== undefined);
 
   // Steps keep their timing (list durations, queue waits, progress age) and leave out
   // their inputs; outputs keep only what list surfaces read. A step that lost anything
@@ -439,6 +487,12 @@ export function runListRow(run: Run): RunListRow {
     steps,
     decisions,
     ...(engineState !== undefined ? { engineState } : { engineState: undefined }),
+    ...(agentContexts !== undefined ? { agentContexts } : {}),
+    metrics,
+    ...(ticketData !== undefined ? { ticketData } : {}),
+    ...(reviewResult !== undefined ? { reviewResult } : {}),
+    ...(reviewWorkspaceSubject !== undefined ? { reviewWorkspaceSubject } : {}),
+    ...(detailTrimmed ? { detailTrimmed: true as const } : {}),
     evidenceSummary: summarizeRunEvidence(run),
   };
 }

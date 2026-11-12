@@ -9,7 +9,7 @@ import type {
 } from '../contracts/runs.js';
 import { isRecord } from '../recipe/common.js';
 
-import type { RunListEngineState } from './list-row.js';
+import type { RunListEngineState, RunListRow } from './list-row.js';
 
 export const MAX_REVIEW_ROUNDS = 5;
 export const MAX_UPDATE_BRANCH_REVIEW_ROUNDS = 2;
@@ -26,7 +26,10 @@ export type ReviewRoundBudgetSource = Pick<
   | 'reviewBudgetExtensions'
 > &
   Partial<
-    Pick<Run, 'createdAt' | 'agentContexts' | 'steps' | 'reviewWorkspaceSubject' | 'reviewResult'>
+    Pick<
+      RunListRow,
+      'createdAt' | 'agentContexts' | 'steps' | 'reviewWorkspaceSubject' | 'reviewResult'
+    >
   > & {
     /** Accept slim list-row engine state as well as the full gateway type. */
     engineState?: RunEngineState | RunListEngineState;

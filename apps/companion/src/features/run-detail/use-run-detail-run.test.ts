@@ -19,8 +19,10 @@ import { mountHook } from '../../hooks/hook-harness.fixtures';
 import { heldDataUsable } from '../../lib/resource-read-status';
 
 import {
+  HELD_CHECKLIST_TIMING,
   HELD_EVIDENCE_MANIFEST,
   HELD_PACKAGE_HASH,
+  HELD_TICKET_DESCRIPTION,
   heldGateRun,
   newerSlimRow,
 } from './held-detail.fixtures';
@@ -278,6 +280,13 @@ test('a newer slim row over a held run.get shows the row status and keeps the he
     assert.equal(payload.prPackage?.packageHash, HELD_PACKAGE_HASH);
     assert.deepEqual(payload.prPackage?.evidenceManifest, HELD_EVIDENCE_MANIFEST);
     assert.deepEqual(shown.run?.steps[0]?.outputs, { transcript: 'worker transcript' });
+    // The row left the ticket description and checklist timing out; the held detail keeps
+    // them, takes the row's newer metrics, and is not marked trimmed.
+    assert.equal(row.detailTrimmed, true);
+    assert.equal(shown.run?.ticketData?.description, HELD_TICKET_DESCRIPTION);
+    assert.deepEqual(shown.run?.metrics.checklistTiming, HELD_CHECKLIST_TIMING);
+    assert.equal(shown.run?.metrics.durationMs, 240_000);
+    assert.equal(shown.run && 'detailTrimmed' in shown.run, false);
   } finally {
     await detail.dispose();
   }

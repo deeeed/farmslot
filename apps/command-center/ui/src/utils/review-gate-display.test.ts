@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { GateSummary, ReadyGatePayload, ReviewStatus } from '@farmslot/protocol';
+import {
+  type GateSummary,
+  type ReadyGatePayload,
+  type ReviewStatus,
+  type Run,
+  runListRow,
+  trimRunForList,
+} from '@farmslot/protocol';
 
 import {
   activePublicationReviewLabel,
@@ -577,4 +584,47 @@ test('a not-ready gate shows the reason a person can act on', () => {
     readyReviewBlockingDisplayReason(gated, [{ id: 'continue-review-fix' }, { id: 'hold' }]),
     'Review found 4 issues. Fix and pass review before publishing.',
   );
+});
+
+// The run list's active-review label reads agent contexts, which a served row carries without
+// their heavy keys: the same from the served row, the full run and an old cached row.
+test('the active review label is the same from the served row, the full run and an old cached row', () => {
+  const full: Run = {
+    id: 'run-fix',
+    familyId: 'family-fix',
+    lane: 'production',
+    flowType: 'fix-bug',
+    status: 'reviewing',
+    project: 'farm',
+    ticketOrPr: 'owner/repo#3',
+    slotId: 'slot-1',
+    branch: null,
+    taskFile: null,
+    steps: [{ name: 'review', status: 'running' }],
+    decisions: [],
+    agentContexts: [
+      {
+        id: 'review-fix',
+        label: 'Review fix',
+        role: 'review-fix',
+        status: 'working',
+        slotId: 'slot-1',
+        runId: 'run-fix',
+        usage: {
+          totalTokens: 9000,
+          measuredAt: '2026-11-01T00:00:00.000Z',
+          source: 'runner-transcript',
+        },
+      },
+    ],
+    metrics: { nudgeCount: 0, model: null, runner: null },
+    createdAt: '2026-11-01T00:00:00.000Z',
+    updatedAt: '2026-11-01T00:00:00.000Z',
+  };
+  const expected = activePublicationReviewLabel(full);
+  assert.equal(expected, 'Review fix');
+  const row = runListRow(full);
+  assert.equal(row.detailTrimmed, true);
+  assert.equal(activePublicationReviewLabel(row), expected);
+  assert.equal(activePublicationReviewLabel(trimRunForList(full)), expected);
 });

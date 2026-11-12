@@ -8,6 +8,8 @@ import type {
 } from '../contracts/index.js';
 import { isTerminalRunStatus } from '../contracts/runs.js';
 
+import type { RunListRow } from './list-row.js';
+
 export function reviewResultForRun(
   run: Pick<Run, 'reviewResult'> & { decisions: ReadonlyArray<{ payload?: unknown }> },
 ): RunReviewResult | null {
@@ -17,6 +19,30 @@ export function reviewResultForRun(
     if (payload?.kind === 'review') return payload;
   }
   return null;
+}
+
+/**
+ * Whether a run has a saved review to show: no open posting gate, and a review result (or a
+ * finished review-pr run). It tests presence only, so a run.list row answers as its run does.
+ */
+export function savedReviewExpected(
+  run: Pick<RunListRow, 'flowType' | 'status' | 'reviewResult'> & {
+    decisions: ReadonlyArray<{ type: string; resolvedAt?: string | null; payload?: unknown }>;
+  },
+): boolean {
+  const latestGate = [...run.decisions]
+    .reverse()
+    .find((item) => item.type === 'engine_review_posting');
+  if (latestGate && !latestGate.resolvedAt) return false;
+  const hasResult =
+    run.reviewResult !== undefined ||
+    run.decisions.some(
+      (decision) =>
+        typeof decision.payload === 'object' &&
+        decision.payload !== null &&
+        Reflect.get(decision.payload, 'kind') === 'review',
+    );
+  return hasResult || (run.flowType === 'review-pr' && isTerminalRunStatus(run.status));
 }
 
 /** Saved choices are requests; only a published receipt confirms the provider event. */
@@ -30,12 +56,11 @@ export function savedReviewView(
     }>;
   },
 ) {
+  if (!savedReviewExpected(run)) return null;
   const latestGate = [...run.decisions]
     .reverse()
     .find((item) => item.type === 'engine_review_posting');
-  if (latestGate && !latestGate.resolvedAt) return null;
   const result = reviewResultForRun(run);
-  if (!result && (run.flowType !== 'review-pr' || !isTerminalRunStatus(run.status))) return null;
   const selection = latestGate?.selectionData;
   const receipt = run.reviewPublication?.receipt;
   return {
