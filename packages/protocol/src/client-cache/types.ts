@@ -43,6 +43,11 @@ export interface ResourceQueryState<T = unknown> {
   conversation?: NativeConversationCursor;
   error?: ResourceQueryError;
   storageNotice?: string;
+  /**
+   * Entity-sync catch-up progress. Set by EntityCollection while paging through the
+   * ids-catch-up loop; cleared when done === total. Drives ResourceSyncState 'catch-up'.
+   */
+  catchUpProgress?: { done: number; total: number };
 }
 
 export interface ResourceReadResult<T> {

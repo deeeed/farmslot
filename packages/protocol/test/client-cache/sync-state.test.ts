@@ -81,3 +81,19 @@ test('observed views publish syncing, synced and cached across a real cache reco
     await cache.dispose();
   }
 });
+
+test('an entity catch-up reports determinate progress while connected', () => {
+  const partial = {
+    status: 'stale',
+    data: {},
+    observedAt: 1000,
+    catchUpProgress: { done: 20, total: 25 },
+  } as const;
+  assert.deepEqual(resourceSyncState([partial], true), { status: 'catch-up', done: 20, total: 25 });
+  assert.equal(resourceSyncLabel({ status: 'catch-up', done: 20, total: 25 }), 'Syncing 20 of 25');
+  assert.deepEqual(resourceSyncState([partial], false), { status: 'cached', observedAt: 1000 });
+  assert.deepEqual(
+    resourceSyncState([{ ...partial, catchUpProgress: { done: 25, total: 25 } }], true),
+    { status: 'syncing' },
+  );
+});

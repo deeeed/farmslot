@@ -24,6 +24,7 @@ import {
   ReviewQaConfigurationError,
 } from '@farmslot/protocol';
 import {
+  entitySyncRead,
   resourceCollectorReadMethods,
   resourceDependenciesForRead,
   resourceQuery,
@@ -51,9 +52,15 @@ import {
   handleNodeResourceChanged,
   startResourcePolling,
 } from './fleet/resource-manager.js';
+import { stopSlotEntityExpiries } from './fleet/slot-entities.js';
 import { loadFleetStatus, onStateChange } from './fleet/state.js';
 import { forgetGitHubAccountsClientInterest } from './integrations/github-accounts.js';
-import { observedFleetStatus, setFleetWorkspacePublisher } from './methods/fleet.js';
+import {
+  observedFleetStatus,
+  setFleetWorkspacePublisher,
+  slotsPublishedToViewers,
+  stopServedWorkspaceObservations,
+} from './methods/fleet.js';
 import { forgetGatewayUpdateClientInterest } from './methods/gateway-status.js';
 import { resolveObservedNativeWorkspace } from './methods/native-workspace.js';
 import { forgetPRDetailClientInterest } from './methods/pr/detail-observations.js';
@@ -599,6 +606,9 @@ export function initServerGlobals(): void {
       )
     )
       nativeCatalogChanges.catalogChanged();
+    // A viewer on entity sync applies pushed slots without the read that inspected workspaces.
+    if (payload.changes.some(({ key }) => key.family === 'slot') && hasConnectedViewers())
+      slotsPublishedToViewers();
     broadcastEvent(Events.RESOURCE_CHANGED, payload);
   });
 
@@ -634,6 +644,8 @@ export function initServerGlobals(): void {
 export function disposeServerResourceObservations(): void {
   nativeObservations.dispose();
   workspaceObservations.dispose();
+  stopServedWorkspaceObservations();
+  stopSlotEntityExpiries();
 }
 
 /** Test-only: reset the once-guard so a suite can re-exercise initServerGlobals. */
@@ -658,14 +670,9 @@ function handleNodeBinaryFrame(raw: Buffer): void {
   ingestNodeFrame(decoded.slotId, decoded.payload, decoded.keyFrame, decoded.width, decoded.height);
 }
 
-async function sendHello(ws: WebSocket): Promise<void> {
-  try {
-    const fleet = await loadFleetStatus();
-    sendEvent(ws, Events.HELLO, { fleet });
-  } catch (err) {
-    console.warn(`[server] sendHello fleet load failed: ${(err as Error).message}`);
-    sendEvent(ws, Events.HELLO, { fleet: null });
-  }
+/** The connection is admitted. Clients read the fleet themselves; nothing reads this payload. */
+function sendHello(ws: WebSocket): void {
+  sendEvent(ws, Events.HELLO, {});
 }
 
 async function handleMessage(
@@ -829,6 +836,7 @@ async function dispatchMessage(
           version: 1,
           epoch: resourceRevisions.epoch,
           versionLists: true,
+          entitySync: true,
           observedReads: 1,
           workspaceReads: 1,
           ...(collectorMethods.length
@@ -855,7 +863,7 @@ async function dispatchMessage(
     });
     const changes = currentSourceResourceChanges();
     if (changes) await broadcastResourceChanges(changes, state.ws);
-    if (canReceiveBroadcast(authRuntime, state, Events.HELLO)) await sendHello(state.ws);
+    if (canReceiveBroadcast(authRuntime, state, Events.HELLO)) sendHello(state.ws);
     return;
   }
 
@@ -932,11 +940,26 @@ async function dispatchMessage(
     // Real history cursor pages keep after/limit on the route; durable query identity excludes them.
     const nativeInterests =
       observed && reader ? nativeReadInterests(frame.method, frame.params, reader.id) : undefined;
+    // Entity sync (ADR-071 Amendment 4): a versions or ids read of fleet.status or pr.list reads
+    // the resource its view reads, so it is stamped and admitted as that view.
+    const entityRead =
+      observed && (frame.method === Methods.FLEET_STATUS || frame.method === Methods.PR_LIST)
+        ? entitySyncRead(frame.params)
+        : undefined;
+    if (entityRead && !entityRead.ok)
+      throw new GatewayMethodError('INVALID_PARAMS', entityRead.message);
+    const entityShape = entityRead?.ok ? entityRead.shape : undefined;
+    if (entityShape && frame.method === Methods.FLEET_STATUS) state.entitySync = true;
     const query =
       observed && !nativeInterests
-        ? resourceQuery(frame.method as ResourceReadMethod, frame.params, reader?.id)
+        ? resourceQuery(
+            frame.method as ResourceReadMethod,
+            entityShape && entityRead?.ok ? entityRead.view : frame.params,
+            reader?.id,
+          )
         : undefined;
-    const params = query?.params ?? frame.params;
+    // The read shape stays on the dispatched params; the query names only the view.
+    const params = entityShape ? frame.params : (query?.params ?? frame.params);
     if (query && reader && frame.method === Methods.RUNNER_VISIBLE_MODELS_GET)
       nativeObservations.observeVisibleModels(state.ws, reader);
     const workspace =
@@ -969,7 +992,7 @@ async function dispatchMessage(
         )
       : undefined;
     const read = () =>
-      observed && frame.method === Methods.FLEET_STATUS
+      observed && frame.method === Methods.FLEET_STATUS && !entityShape
         ? loadFleetStatus(false, true).then(observedFleetStatus)
         : observed && frame.method === Methods.TASK_PROGRESS
           ? taskProgress(params as import('@farmslot/protocol').TaskProgressParams, {
@@ -1223,6 +1246,25 @@ async function deliverResourceChanges(
   }
 }
 
+/**
+ * `fleet.updated` carries the whole fleet, which the CLI and the TUI render, and
+ * `pr.list.updated` the whole PR list when it changed. A connection on entity sync holds those
+ * rows already and uses the events only as notices: this is the frame it gets. Undefined for
+ * every other event.
+ */
+function withoutHeldList(frame: EventFrame): EventFrame | undefined {
+  if (frame.event === Events.FLEET_UPDATED) return { ...frame, payload: {} };
+  if (frame.event !== Events.PR_LIST_UPDATED) return undefined;
+  const payload: unknown = frame.payload;
+  return {
+    ...frame,
+    payload:
+      payload && typeof payload === 'object'
+        ? Object.fromEntries(Object.entries(payload).filter(([field]) => field !== 'prs'))
+        : payload,
+  };
+}
+
 export function broadcast(frame: EventFrame, ownerId?: string, ownerGeneration?: number): void {
   if (frame.event === Events.RESOURCE_CHANGED) {
     broadcastResourceChanges(frame.payload as import('@farmslot/protocol').ResourceChangedPayload);
@@ -1230,7 +1272,10 @@ export function broadcast(frame: EventFrame, ownerId?: string, ownerGeneration?:
   }
   const payload: unknown = frame.payload;
   noteRunEvent(frame.event, payload);
-  const msg = JSON.stringify(frame);
+  // Each variant is serialized once, and only when a connection receives it.
+  let whole: string | undefined;
+  let notice: string | undefined;
+  const withoutList = withoutHeldList(frame);
   let authorizationFaultLogged = false;
   for (const [ws, state] of clients) {
     if (ws.readyState !== WebSocket.OPEN || activeAuthRuntime === null) continue;
@@ -1256,7 +1301,9 @@ export function broadcast(frame: EventFrame, ownerId?: string, ownerGeneration?:
       }
       continue;
     }
-    if (canReceive) ws.send(msg);
+    if (!canReceive) continue;
+    if (withoutList && state.entitySync) ws.send((notice ??= JSON.stringify(withoutList)));
+    else ws.send((whole ??= JSON.stringify(frame)));
   }
 }
 

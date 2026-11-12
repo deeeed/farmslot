@@ -1,0 +1,1 @@
+- The store notice counts a fleet or PR list catch-up ("Syncing 20 of 107") and updates as each page lands.

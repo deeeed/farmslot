@@ -23,8 +23,20 @@ export class SlotResourceChanges {
   private previousCheckedAt?: string;
   private ghosts = new Set<string>();
   private failed = false;
+  /** Recomputes served slot entities before their keys advance; undefined ids means every slot. */
+  private entityRefresh?: (slotIds: readonly string[] | undefined) => void;
 
   constructor(private readonly revisions: GatewayResourceRevisions = resourceRevisions) {}
+
+  /** Entity sync maintains each served slot where it is written (ADR-071 Amendment 4). */
+  setEntityRefresh(refresh: (slotIds: readonly string[] | undefined) => void): void {
+    this.entityRefresh = refresh;
+  }
+
+  /** The committed rows were replaced outside a status write (test fixtures). */
+  refreshEntities(): void {
+    this.entityRefresh?.(undefined);
+  }
 
   observe(slots: readonly SlotResourceSnapshot[], checkedAt?: string): void {
     const current = new Map(slots.map((row) => [row.slot, { ...row }]));
@@ -73,6 +85,7 @@ export class SlotResourceChanges {
 
   /** In-memory enrichments change slot facts without changing persisted run ownership. */
   overlayChanged(slotId: string): void {
+    this.entityRefresh?.([slotId]);
     const row = this.previous?.get(slotId);
     const keys: ResourceKey[] = [
       { family: 'slots', scope: 'farm' },
@@ -88,6 +101,7 @@ export class SlotResourceChanges {
     current?: ReadonlyMap<string, SlotResourceSnapshot>,
     previous?: ReadonlyMap<string, SlotResourceSnapshot>,
   ): void {
+    this.entityRefresh?.(ids);
     for (const key of this.slotKeys(ids, current, previous))
       this.revisions.advance(
         key,

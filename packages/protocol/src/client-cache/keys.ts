@@ -38,7 +38,12 @@ export type ResourceKey =
   | { family: 'assessment'; scope: 'farm'; assessmentId?: string }
   | { family: 'copilot'; ownerId: string; sessionId?: string }
   | { family: 'gateway-update'; scope: 'gateway' }
-  | { family: 'upstream'; integration: 'github' | 'packages' | 'providers'; queryId: string };
+  | { family: 'upstream'; integration: 'github' | 'packages' | 'providers'; queryId: string }
+  /**
+   * Per-PR entity key for entity-sync (ADR-071 Amendment 4).
+   * `prKey` is `${repo}/${pr}` and is unique within the collector's queryId scope.
+   */
+  | { family: 'upstream'; integration: 'github'; queryId: string; prKey: string };
 
 const RESOURCE_KEY_FAMILIES: Record<ResourceKey['family'], true> = {
   sources: true,
