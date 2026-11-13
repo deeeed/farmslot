@@ -14,15 +14,102 @@ The shared harness checklist command MUST resolve explicit `--checklist` and
 blocker, run `checklist mark <task-dir> start`, then continue numbered marks. This
 uses the existing runtime start verb, preserves checked boxes and resumes signal
 progress under the launcher's attempt identity. Successful terminal verdicts remain protected.
-On a complete or no-change signal, `checklist mark <task-dir> N` for a declared
-deterministic step reruns that check and refreshes its receipt for the current
-tree without reopening the signal; other numbered marks stay ignored.
+On a complete or no-change signal, `checklist mark <task-dir> N` validates the
+declared deterministic step under the receipt rules below without reopening the
+signal; other numbered marks stay ignored.
 
 Ticket intake preserves an explicit acceptance section, including an empty one. When none is supplied,
 authored `AC1:` or `AC-1:` paragraphs outside fenced code populate the same
 acceptance array in source order. Paragraph boundaries exclude unrelated prose.
 Existing structured criteria remain authoritative. Generated TASK.md and
 `inputs/handoff.json` MUST consume that same normalized array.
+
+## Linked run tickets
+
+`Run.linkedTicketRefs` stores operator-added Jira keys only. Metadata edits MUST
+NOT rewrite `ticketData`, task files, package inputs, review state or evidence.
+The shared reader unions the canonical Jira ref, `ticketData.jiraKey`, prefetched
+`ticketData.linkedTickets`, ticket keys in description headings and acceptance
+criterion prefixes, and these operator additions. Keys are uppercase and unique;
+incidental references in description prose are not covered tickets.
+
+Run list/detail in Command Center and Companion MUST show this same union and
+search it through the shared run-list selection. Existing run and family summary
+projections carry the covered-key union so a trimmed summary retains ticket lookup.
+Removing an operator addition MUST NOT remove a key derived from frozen inputs.
+A known Jira browse URL supplies links; a key without a resolved URL stays visible.
+The run's recorded PR link remains available beside its tickets.
+Run list rows MUST render one comma-separated line at the metadata text size,
+without ticket pills or a separate label. The source ticket comes first and
+appears once. A PR source is linked first, followed by covered tickets. The shared
+`runLinkedTicketsView.references` owns this order and destinations. Long lines
+scroll horizontally so additional tickets do not increase row height.
+The existing metadata line also shows total wall time from `startedAt` or `createdAt`,
+plus elapsed wall time from the running step's `startedAt`. Clients pass the
+steps from the existing `runActivityView` so review and fix attempts share the
+pipeline's current actor and attempt start. Both apps MUST use
+`runElapsedTimeView` and tick live labels at least once per minute. Terminal totals
+freeze at `completedAt`, falling back to `statusChangedAt` or `updatedAt` on older records.
+
+### Public surface
+
+`@farmslot/protocol` exports the additive `Run.linkedTicketRefs` contract,
+`normalizeRunLinkedTicketRefs`, `runLinkedTicketRefs`, `runLinkedTicketsView` and
+`runElapsedTimeView`.
+Command Center and Companion use the same reader and validation. Each platform
+reuses one ticket renderer for run list and detail. The supported admin metadata
+RPC `run.linkedTickets.set { runId, linkedTicketRefs }` replaces only the operator
+additions, persists the run and broadcasts `run.updated`, following `run.tags.set`.
+`RunMethods.setLinkedTickets` names it; CLI callers may use the existing generic
+`farmslot rpc` entry. There is no new worker/harness hook, task input, workflow
+action or wire version. The SDK addition requires a fresh minor package release.
+
+## Run checklist progress
+
+Command Center and Companion MUST retain the run pipeline and, when its current
+step has structured checklist data, show a thinner bar beneath it with
+`completedSteps/totalSteps` and `currentStep`. They MUST NOT derive totals from
+pipeline segments or hint text. Without checklist data, no sub-bar is rendered;
+the compact strip reserves its height so live updates do not move the run row.
+A finished run or idle person gate MUST NOT display the previous review's checklist.
+
+Both clients consume the `@farmslot/review-dispatch` run-checklist view model and
+one renderer per platform for list and detail. They hydrate through existing
+`task.progress` and follow `task.progress.updated`, matching the run, slot and
+active checklist. Checklist or attempt changes invalidate cached progress.
+Slot-free review workspaces use their existing empty slot id and run id.
+These additive UI helpers are exported by `@farmslot/review-dispatch`; there are
+no new CLI flags, persisted fields, harness requirements or wire version changes.
+
+### Checklist row durations
+
+The expanded Worker progress panel in both clients MUST show completed checklist
+durations as muted trailing text and live elapsed time on the current row. Both
+renderers consume the same `@farmslot/review-dispatch` checklist row model. Missing
+timing MUST leave the duration blank rather than inventing a value.
+
+`TaskProgressStructured.timing` carries the existing `SIGNAL.json` mark history,
+the current attempt's `startedAt` when known, and `finishedAt` when stopped. It
+belongs to that exact checklist and context; a warm reviewer MUST NOT reuse its
+first launch as the current attempt start. Child units use their registration
+time. A signal-only timing update MUST publish progress even if no checkbox
+changed. Completed durations use `deriveChecklistStepDurations`; elapsed time
+stops at the recorded finish. Retained worker metrics supply historical timing
+after finalize.
+
+A stopped parent also stops elapsed time on unfinished child rows, without
+changing the child's recorded ownership or signal status. Progress and monthly
+analytics use the same attempt boundary to exclude marks from before a resume.
+
+Monthly `events-YYYY-MM.ndjson` records add optional `checklistSteps`, containing
+the primary worker's step number, label and duration in milliseconds, derived
+from retained `Run.metrics.checklistTiming` and its worker attempt start. This
+additive field does not change analytics schema version 2. Existing aggregate
+query results and bundle exports are unchanged.
+
+These optional contracts belong to `@farmslot/protocol`; both apps and monthly
+analytics are the consumers. The SDK and shared view-model require fresh minor
+releases. There is no new harness writer, CLI flag or wire version.
 
 ## Two documents, one checklist
 
@@ -75,6 +162,7 @@ One producer writes the shared layer on every surface: `taskInit` / `farmslot-ag
 | `SIGNAL.json`                          | `mark` only                                             | run monitor, publication gate, closeout                                                                              |
 | `inputs/handoff.json`                  | task init                                               | `handoff closeout`, learning packages, replay and eval, `farmslot run`                                               |
 | `inputs/worker-terminal-contract.json` | task init from `project.json` `worker_terminal`         | `mark` terminal commands, artifact contract check, monitor hold                                                      |
+| `inputs/inherited-acceptance.json`     | gateway preparation after parent proof qualification    | provisional PR-follow-up closeout; gateway revalidates the original parent independently                             |
 | `inputs/bug-input.json`                | task init from the fetched ticket                       | `farmslot run`, review inputs                                                                                        |
 | `subtasks/index.json`                  | `mark sub` only                                         | worker, gateway task watcher, review-workspace progress publisher, progress projection, view mirror                  |
 | `subtasks/<id>.md`                     | `mark sub start` (materialized from the named source)   | worker, `mark sub`, progress projection, view mirror                                                                 |
@@ -105,6 +193,8 @@ The selected checklist travels inside `inputs/handoff.json` as `executionTemplat
 
 `sha256` is the template source. `renderedSha256` is the checklist file as written. For a placeholder-free template they are equal, and equal to a skill-side materialization of the same id. Farmslot adds `templateProvenance` beside it (project repository revision, selection source, render time) for the run record; the reference is never stored twice. Task dirs written before 0.9 keep `inputs/template-provenance.json`; readers fall back to it for one release.
 
+When the pack declares `required_skills`, the handoff also carries `requiredSkills`: the one frozen required skill set the dev worker and its review load. See [project packs: Required skills](https://github.com/deeeed/farmslot/blob/main/docs/reference/project-packs.md#required-skills).
+
 ### Retained task tooling
 
 `farmslot task init` uses the shared runtime producer. It retains the CLI distribution and selected provider, library and configuration bytes through the immutable installation mechanism. `inputs/recipe-binding.json` records the selection; `artifacts/harness-provenance.json` binds its bytes and the executable. The runtime owns this receipt and the installation pin manifest that verifies it. A provider is never recorded as the CLI. Full development workspaces refuse with `TASK_INSTALL_UNSUPPORTED`; task pinning uses the existing immutable CLI installation or a self-contained package install.
@@ -112,6 +202,8 @@ The selected checklist travels inside `inputs/handoff.json` as `executionTemplat
 `farmslot task verify <task-dir> --json` checks the retained bytes before a wrapper invokes the recorded executable. `task mark` and `task closeout` use the retained provider's gates and policy. New frozen markers always enter that CLI; `FARMSLOT_MARK_CMD` cannot bypass its gates. Existing markers retain their recorded behavior. Product source and task recipes remain editable. Verification writes no files, and older receipts without `bindingIdentity` refuse without rewriting their original markers.
 
 The root task commands consume `@farmslot/recipe-cli/harness`'s `projectTaskExecution`, `verifySelectedTask` and `withTaskProjectHost`. `TaskInitSpec.execution`, typed by `TaskExecutionInput` in `@farmslot/agent-runtime`, connects that selection to the one task producer. The receipt's `retainedInputs` lists original paths, retained paths and content digests. `pin` identifies the producer-owned installation pin. Verification compares its manifest with the task receipt before loading a recorded executable. The installation pins live under the selected `FARMSLOT_HOME`. The producer and verifier use that existing home selection; task data cannot choose another store or authorize another provider source.
+
+When `FARMSLOT_HOME` is unset, the pinned CLI recovers it from its logical invoking path under `<home>/task-pins/<pin>/cli` or layout 2's `<home>/state/task-pins/<pin>/cli`, before loading checkout environment or workspace state. A candidate is accepted only when its `packages/cli/bin/farmslot.mjs` resolves to the running CLI module. If that path has no verified pin home, the CLI follows executable-file symlinks, resolving relative targets against the physical link directory, then scans again. A symlinked pin store preserves its logical home when it contains the running CLI. An explicit home still takes precedence. Receipt verification continues to enforce the selected pin store and producer manifest.
 
 The accepted [hosted initialization contract](https://github.com/deeeed/farmslot/blob/main/docs/reference/project-recipe-contract.md#hosted-task-initialization), ADR-068 Amendment 5, applies this same producer on the execution node. The gateway supplies task data and mirrors its result; it does not replace the generated marker or task provenance. All affected active consumers migrate before activation, and the replaced producer is deleted. Existing tasks and receipts are not upgraded.
 
@@ -149,24 +241,22 @@ or resolve publication gates.
 
 `project.json` may set `ci.local_check` to a nonempty portable shell command. The built-in project uses `yarn ci:local`; the repository quality job calls the same script. Its guard list is shared, formatting is scoped to changed files when Git supplies a base, and tests requiring a tmux server remain CI-only.
 
-PR-producing worker templates reference one `{{CI_PARITY_STEP}}` part. It materializes when a local command is configured. Projects without that field retain their existing checklist. A template can also declare a step explicitly:
+The shared task writer freezes each declaration under `inputs/worker-terminal-contract.json.deterministicChecks`, with `checklist`, `stepNumber`, `reference` and the resolved `command`. Task-init callers supply command references through their existing `vars`. Missing command references or malformed declarations refuse initialization. No new mark flags or top-level SDK functions are added.
 
-```markdown
-- [ ] CI parity [DETERMINISTIC: ci.local_check]
-```
-
-The shared task writer freezes each declaration under `inputs/worker-terminal-contract.json.deterministicChecks`, with `checklist`, `stepNumber`, `reference` and the resolved `command`. Task-init callers supply command references through their existing `vars`, including `vars['ci.local_check']`. Missing command references or malformed declarations refuse initialization. No new mark flags or top-level SDK functions are added.
+Implementation checklists MUST declare `[DETERMINISTIC: ci.local_check]` for code validation.
+Workers MUST call `./mark N` and inspect failures rather than selecting or launching
+commands. The frozen script MUST select changed files and affected tests rather
+than a full suite. Reviewers MUST only read existing CI results, receipts and logs.
+The retired `CI_PARITY_STEP` placeholder MUST NOT be used.
 
 ### Mark and receipt rules
 
-1. `./mark N` MUST execute the declared command itself before checking the box. Repeating an already checked deterministic step reruns it, including after a complete signal. Execution uses the Git checkout containing the task, or the caller's target checkout when a standalone task is outside Git. The process inherits the configured environment and runs without a login shell.
-2. Mark MUST persist a running record first, then an immutable output log and a schema-version-1 completion receipt under `artifacts/deterministic-checks/<checklist>/<step>.json`. The receipt records command, reference, checklist, step, source-input hash, timestamps, exit code, signal and the relative log path/hash.
+1. `./mark N` MUST reuse a receipt only when the frozen command, current publishable-input hash, successful completion and recorded log integrity still validate. Reuse MUST leave the receipt and log unchanged. Otherwise mark MUST execute the declared command itself before checking the box. This also applies after a complete signal. Execution uses the Git checkout containing the task, or the caller's target checkout when a standalone task is outside Git. The process inherits the configured environment and runs without a login shell.
+2. On execution, mark MUST persist a running record first, then an immutable output log and a schema-version-1 completion receipt under `artifacts/deterministic-checks/<checklist>/<step>.json`. The receipt records command, reference, checklist, step, source-input hash, timestamps, exit code, signal and the relative log path/hash.
    Tracked submodules bind their checked-out commit, or their recorded gitlink commit while uninitialized. Uncommitted submodule work MUST fail closed with a commit-and-rerun hint because the parent repository publishes a gitlink, not those local files.
 3. Only exit zero, unchanged publishable inputs and successful receipt persistence permit checking the box. Failure, interruption and missing configuration MUST refuse completion. Bulk/terminal marks and checklist skip flags do not waive these checks. Custom mark engines that cannot produce receipts cannot satisfy declared steps.
 4. Publishable inputs are Git's tracked and nonignored untracked file inventory, paths, file permissions, file bytes or symlink targets, including tracked deletions. The task directory's owned inputs/outputs are excluded. Commit metadata is excluded, so committing identical checked content preserves a pass. Failure to identify the checkout or inputs fails closed.
 5. The artifact checker MUST reject absent, failed, interrupted or stale receipts, changed commands, and missing/changed logs, independently of checkbox state. The active role's frozen declarations apply; role initialization freezes its own materialized checklist through the same writer.
-
-Lightweight interactive development keeps the operator plan in `CHECKLIST.md`. Its generated CI-parity step is frozen in `TASK.md` and the shared part gives the existing `mark --checklist TASK.md N` invocation. The operator plan cannot waive its receipt.
 
 ### Publication and display
 
@@ -204,12 +294,12 @@ Shared `inputs/` names: `bug-input.json` for the ticket as fetched and `assets/`
 
 Kept current with the layout. Each row is something the layout still carries that a good default could remove. Rows leave when shipped or rejected. Shipped 2026-09-13: one task-dir producer; provenance folded into `handoff.json`; `ticket-comments.json` removed; `checklist-target.json` optional for readers. Shipped 2026-09-14: the gateway no longer writes the default-valued `checklist-target.json` (every node runs the 0.9 `mark` engine).
 
-| Candidate                                                        | Today                                                                                                            | Simpler default                                                                 | State                                   |
-| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | --------------------------------------- |
-| two naming schemes for review outputs                            | `review-feedback.<context>.md` / `review-result.<context>.json` and `self-review-N.*` / `independent-review-N.*` | one scheme, one row in the layers table                                         | candidate                               |
-| harness identity                                                 | PATH resolve through the pack's `recipe_runner_resolve_cmd` on the farm, task-local lock on the skill            | one preparation step both surfaces run, which also writes the readiness records | decision open                           |
-| farm `defaults` pinning farm copies of dev / fix-bug / review-pr | three near-copies of the skill templates                                                                         | delete them so the catalog default (skills package) wins                        | deferred until the five-label inventory |
-| task directory path                                              | `<flow>/<slug>-<stamp>` vs `recipe-cook/<stamp>-<slug>`                                                          | leave; nothing reads it                                                         | rejected                                |
+| Candidate                             | Today                                                                                                            | Simpler default                                                                                                                                                                                                                                     | State                                                |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| two naming schemes for review outputs | `review-feedback.<context>.md` / `review-result.<context>.json` and `self-review-N.*` / `independent-review-N.*` | one scheme, one row in the layers table                                                                                                                                                                                                             | candidate                                            |
+| harness identity                      | PATH resolve through the pack's `recipe_runner_resolve_cmd` on the farm, task-local lock on the skill            | one preparation step both surfaces run, which also writes the readiness records                                                                                                                                                                     | decision open                                        |
+| shared dev / fix-bug checklists       | some pack defaults still select project templates; lightweight interactive dev keeps its operator plan           | select Cook templates within [ADR-049 adoption scope](https://github.com/deeeed/farmslot/blob/main/docs/adr/049-agent-execution-template-selection.md#amendment-2-metamask-cook-adoption-scope-2026-10-23); review adoption needs separate approval | partial; remaining migrations need explicit approval |
+| task directory path                   | `<flow>/<slug>-<stamp>` vs `recipe-cook/<stamp>-<slug>`                                                          | leave; nothing reads it                                                                                                                                                                                                                             | rejected                                             |
 
 ## What travels to the slot
 
@@ -233,9 +323,24 @@ A project may ship `templates/task-document.md`. The writer renders it with the 
 - `SIGNAL.json` is written by `mark` only. Hand-written signals are rejected by the monitor.
 - `subtasks/` is written by `mark sub` only, and a step may own one child unit for the life of the task directory. A child unit is observed, never spawned: registering one writes files and starts no process. A parent terminal mark is refused while any registered child is unsettled, by `mark` and again by the gateway's terminal check. Settled is `complete` or `done`: a `blocked` child is terminal for the run but keeps its step. The verbs and their refusals live in [Agent runtime](agent-runtime.md).
 - A child unit is not a role switch. It never writes `checklist-target.json` and never changes the run's active task file, so a child may hang off `CHECKLIST.md` or off a role checklist such as `SELF-REVIEW.md`; the parent link names which. A child progress update is live only while its parent checklist is the active one, and `running` with no recent mark projects as `stale` — a projection only, never a status in the file.
-- `artifacts/acceptance-status.json` is a task-namespace projection of the selected recipe engine's schema-2 ledger. The engine is the sole normal verdict authority; agent-runtime transfers its claims and never reduces or records manual verdicts. Writes and current successful completion reject schema 1. Retained schema-1 ledgers are display only with an explicit limitation; migration preserves original bytes and frozen decisions, never manufactures moments or task bindings. Recipe verdicts come from eligible executed expectations and required occurrences; action success alone is not proof, and visual claims require verified review. Successful completion requires a current verdict for every registered criterion even without an acceptance opt-in; missing ledgers or unreadable handoffs refuse. Weak or missing engine verdicts refuse unless the resolved contract sets `acceptance.allowWeak`. No-change and self-review keep their existing outcome contracts. `acceptance.require` cannot disable successful-completion enforcement. Per-flow `acceptance.allowWeak` overrides inherit unspecified keys. Standalone validation can request the same check with `--require-acceptance-status`. Current acceptance readers never derive relationships from manifest `covers` or substitute `recipe-coverage.md`.
-- Schema-2 verdicts and task projections are engine-owned; `ac` is read-only and cannot override them. With a gateway-derived `claimReviewGate`, completion validates the selected package through the canonical SDK reader and can present unresolved verdicts at human review. Approval remains blocked. Only the verified `run.overrideClaim` operation records an untestable exception in the Run store; engine/task bytes stay unchanged. Without a human gate, completion keeps its existing refusal. [ADR-062 Amendment 4](https://github.com/deeeed/farmslot/blob/main/docs/reference/recorded-run-evidence.md#verified-claim-overrides) defines authority and freshness.
+- `artifacts/acceptance-status.json` is a task-namespace projection of the selected recipe engine's schema-2 ledger. The engine is the sole normal verdict authority; agent-runtime transfers its claims and never reduces or records manual verdicts. A QA task merges its case executions by claim id, and each row names its case execution ([QA case ledger](https://github.com/deeeed/farmslot/blob/main/docs/reference/recorded-run-evidence.md#qa-case-ledger)). Writes and current successful completion reject schema 1. Retained schema-1 ledgers are display only with an explicit limitation; migration preserves original bytes and frozen decisions, never manufactures moments or task bindings. Recipe verdicts come from eligible executed expectations and required occurrences; action success alone is not proof, and visual claims require verified review. Successful completion requires a current verdict for every registered criterion even without an acceptance opt-in. PR follow-ups may consume qualified parent proof under [ADR-062](https://github.com/deeeed/farmslot/blob/main/docs/reference/recorded-run-evidence.md#inherited-acceptance-for-pr-completion); otherwise missing ledgers or unreadable handoffs refuse. Weak or missing engine verdicts refuse unless the resolved contract sets `acceptance.allowWeak`. No-change and self-review keep their existing outcome contracts. `acceptance.require` cannot disable successful-completion enforcement. Per-flow `acceptance.allowWeak` overrides inherit unspecified keys. Standalone validation can request the same check with `--require-acceptance-status`. Current acceptance readers never derive relationships from manifest `covers` or substitute `recipe-coverage.md`.
+- Schema-2 verdicts and task projections are engine-owned; `ac` is read-only and cannot override them. With a gateway-derived `claimReviewGate`, completion validates the selected package (for a QA case ledger, each row's case package) through the canonical SDK reader and can present unresolved verdicts at human review. Approval remains blocked. Only the verified `run.overrideClaim` operation records an untestable exception in the Run store; engine/task bytes stay unchanged. Without a human gate, completion keeps its existing refusal. [ADR-062 Amendment 4](https://github.com/deeeed/farmslot/blob/main/docs/reference/recorded-run-evidence.md#verified-claim-overrides) defines authority and freshness.
 
 - Lightweight interactive dev keeps its own pairing: `CHECKLIST.md` is the operator-agreed plan and `TASK.md` the context.
 
 See also: [Agent runtime](agent-runtime.md), [Template variables](https://github.com/deeeed/farmslot/blob/main/docs/reference/template-variables.md), and the worker artifacts by flow reference on the documentation site.
+
+### Read-only task status
+
+Task status readers associate a task with `inputs/recipe-binding.json`'s recorded
+checkout target. Branch text supplies no task identity. Legacy skill tasks keep
+their local progress semantics. A handoff with `surface: "farmslot"` binds its
+`attemptId` to the parent run, independently of a worker signal's attempt ID.
+The shared task view observes that run through the existing CLI lifecycle stream.
+Worker completion does not close a watch while its parent is reviewing or
+waiting for a decision. Loss of connectivity is unavailable lifecycle, never an
+inferred completed run. A watch retains its bound run through task-file cleanup.
+
+Task ownership accepts the recorded `checkoutRoot` or `identity.target` exactly,
+after realpath normalization. This lets a registered nested app and its checkout
+inspect their bound task without treating sibling paths as the same app.
