@@ -1,1 +1,0 @@
-- Keep worker branch-update SSH pushes alive during pre-push hooks and enforce the shared configurable push budget.
