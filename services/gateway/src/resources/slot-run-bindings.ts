@@ -92,7 +92,7 @@ export class SlotResourceChanges {
    * Whether the fleet is stale now, as clients are told. `stale` is not an entity field: an
    * entity-sync client reads it again only when the collection marker moves. Stale means no
    * readable source, no `checked_at`, or one past the threshold. Every path that decides it (a
-   * commit, a lost source, the deadline, a versions read) calls this, and the marker moves whenever
+   * commit, a lost source, the deadline, every fleet read) calls this, and the marker moves whenever
    * the answer differs from the last one given, so no reader sees a state clients are not told of.
    */
   fleetStale(): boolean {

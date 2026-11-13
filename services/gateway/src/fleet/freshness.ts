@@ -1,8 +1,4 @@
-/**
- * A full health refresh of the operator fleet (108 slots on three machines) takes 170-215 s
- * (measured 2026-11-12). Refreshed at half this, it lands well before the threshold.
- */
-const FLEET_STALE_MS_DEFAULT = 10 * 60_000;
+import { FLEET_STALE_MS_DEFAULT } from '@farmslot/protocol';
 
 export function fleetStaleThresholdMs(): number {
   const raw = Number(process.env.FARMSLOT_FLEET_STALE_MS);

@@ -144,6 +144,15 @@ test('an entity-sync client follows every stale state change with one versions r
   commit(now());
   await follow('recovery after the clock moved back', false, [1, 0]);
 
+  // The deadline publishes stale, then the clock moves back with no commit: the first fresh read
+  // tells clients.
+  t.mock.timers.tick(fleetStaleThresholdMs() + 1);
+  await follow('the deadline before a rollback', true, [1, 0]);
+  t.mock.timers.setTime(Date.now() - 10 * 60_000);
+  assert.equal((await fullRead()).fleet.stale, undefined, 'a fresh full read, no commit');
+  assert.deepEqual(await reads(), [1, 0], 'the client is told by that read');
+  await follow('recovery without a commit', false, [0, 0]);
+
   // A versions read past the threshold before the deadline timer runs: the read itself tells every
   // client, so the next fresh commit is a change for all of them. Versions reads only here: a full
   // read tells clients by itself.

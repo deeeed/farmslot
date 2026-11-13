@@ -157,10 +157,10 @@ const monitorFleetStatusDeps: FleetStatusDeps = {
 };
 
 function fleetStatusResult(fleet: FleetStatus): FleetStatusResult {
-  if (!isFleetCheckedAtStale(fleet.checkedAt)) return { fleet };
-  // Entity-sync clients are told too, when this read is the first to see the crossing.
+  // Entity-sync clients are told too, when this read is the first to see a change in either
+  // direction (a crossing, or a clock moved back past it).
   slotResourceChanges.fleetStale();
-  return { fleet: staleFleet(fleet) };
+  return { fleet: isFleetCheckedAtStale(fleet.checkedAt) ? staleFleet(fleet) : fleet };
 }
 
 /**
@@ -298,7 +298,7 @@ export async function fleetStatus(
   // Fresh health must not wait for optional Git/workspace inspection. Forced
   // and cached reads use the same background owner and completion publication.
   refreshWorkspaceObservations(fleet, deps, publish, params?.forceRefresh === true);
-  if (!isFleetCheckedAtStale(fleet.checkedAt)) return { fleet };
+  if (!isFleetCheckedAtStale(fleet.checkedAt)) return fleetStatusResult(fleet);
   // Still stale: serve it honestly (stale flag, nothing dispatchable), and re-probe unless this
   // call just did.
   if (!params?.forceRefresh) refreshStaleFleet(fleet, deps.join ?? deps.refresh);

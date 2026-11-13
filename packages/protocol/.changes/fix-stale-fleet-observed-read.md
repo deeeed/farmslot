@@ -1,1 +1,1 @@
-- The client cache applies the stale-fleet rule (`staleFleet`) to the entity-sync fleet when the versions reply says the snapshot is stale.
+- The client cache applies the stale-fleet rule (`staleFleet`) to the entity-sync fleet when the versions reply says the snapshot is stale. `FLEET_STALE_MS_DEFAULT` exports the gateway's default threshold, now 10 minutes, so scripts and tests read one value.
