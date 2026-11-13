@@ -1,0 +1,1 @@
+- Resolve a python3 shim (asdf, pyenv) to its real interpreter once and give python probes a 15 s budget, so a loaded host no longer fails launch or readiness with `ETIMEDOUT`; a failed rollback probe no longer replaces the launch error.

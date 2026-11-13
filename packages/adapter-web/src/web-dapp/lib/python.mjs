@@ -8,12 +8,16 @@ export function pythonFor({ found, platform = process.platform, developerDir }) 
   return found;
 }
 
+// A version-manager shim (asdf, pyenv) is a shell script that can take seconds
+// to start on a loaded host. Every python spawn gets this budget.
+export const PYTHON_TIMEOUT_MS = 15000;
+
 function output(command, args) {
   try {
     return execFileSync(command, args, {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 2000,
+      timeout: PYTHON_TIMEOUT_MS,
     }).trim();
   } catch (error) {
     // which exits 1 when absent; xcode-select exits 2 before CLT is installed.
@@ -22,13 +26,16 @@ function output(command, args) {
   }
 }
 
+// The found python3 may be a shim: ask it once for the interpreter it runs, and
+// spawn that binary for every probe, so the shim's startup is paid once.
 let pythonChoice;
 export function usablePython() {
   if (pythonChoice === undefined) {
-    pythonChoice = pythonFor({
+    const found = pythonFor({
       found: output('/usr/bin/which', ['python3']),
       developerDir: () => output('/usr/bin/xcode-select', ['-p']),
     });
+    pythonChoice = found && (output(found, ['-c', 'import sys; print(sys.executable)']) || null);
   }
   return pythonChoice;
 }

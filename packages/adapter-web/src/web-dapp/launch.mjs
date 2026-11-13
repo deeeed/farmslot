@@ -799,11 +799,15 @@ export async function launchWebDappBrowser(
       log(
         `launch failed, stopping what it started: ${String(error?.message ?? error).split('\n')[0]}`,
       );
-      await stopWebDappBrowser(target, { cdpPort, log }).catch((stopError) =>
-        log(`rollback incomplete: ${stopError.message}`),
-      );
-      for (const pid of ownedBrowserPids(runtime))
-        await terminate(pid, 3000, ownedProcessIdentity('browser', pid, runtime));
+      const incomplete = (stopError) => log(`rollback incomplete: ${stopError.message}`);
+      await stopWebDappBrowser(target, { cdpPort, log }).catch(incomplete);
+      // A failed ownership probe here must not replace the launch's own error.
+      try {
+        for (const pid of ownedBrowserPids(runtime))
+          await terminate(pid, 3000, ownedProcessIdentity('browser', pid, runtime));
+      } catch (stopError) {
+        incomplete(stopError);
+      }
     }
     throw error;
   } finally {
