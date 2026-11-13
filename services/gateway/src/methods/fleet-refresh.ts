@@ -127,7 +127,10 @@ export async function fleetPrSummary(params: FleetPrSummaryParams): Promise<Flee
   const ids = Array.isArray(params.slotIds) ? params.slotIds : [];
   const fleet = await loadFleetStatus();
   const selected = new Set(ids);
-  const slots = await observeSlotWorkspaces(fleet.slots.filter((slot) => selected.has(slot.slot)));
+  const slots = await observeSlotWorkspaces(
+    fleet.slots.filter((slot) => selected.has(slot.slot)),
+    fleet.slots,
+  );
   const work = new Map(slots.map((slot) => [slot.slot, slot.workspace]));
   const entries: Record<string, FleetPrSummaryEntry> = {};
   for (const slotId of ids) {

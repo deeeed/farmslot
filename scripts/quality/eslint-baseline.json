@@ -206,10 +206,6 @@
       "count": 1
     },
     {
-      "key": "services/gateway/src/methods/slot/workspace-version.ts:@typescript-eslint/no-restricted-imports",
-      "count": 1
-    },
-    {
       "key": "services/gateway/src/methods/stream-resolve.ts:@typescript-eslint/no-restricted-imports",
       "count": 1
     },

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Remote workspace metadata reuse",
+  "description": "Count actual node subprocesses on the frozen affected remote fleet mix; retain .git filesystem denial and exact ownership/freshness policy.",
+  "workflow": {
+    "entry": "metadata-budget",
+    "nodes": {
+      "metadata-budget": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx services/gateway/src/host-services/workspace-metadata.live.ts --assert-budget",
+        "timeout_ms": 240000,
+        "intent": "Two loopback nodes use production execution and filesystem handlers for the same 67-slot, 630-logical-second mix on base and candidate. Assert real shell rate at most 115/min, verified workspaces and unchanged ownership; no live farm slot.",
+        "next": "dispatch-smoke"
+      },
+      "dispatch-smoke": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx services/gateway/src/run-lifecycle/safe-idle-slot.live.ts",
+        "timeout_ms": 300000,
+        "intent": "Authenticated private create, write-task, prepare and dispatch, then cancel/archive/reset. Supply immutable FARMSLOT_CLI, fresh FARMSLOT_SAFE_IDLE_PROOF_OUT and TMPDIR on an eligible volume; normal 50GB floor remains.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
