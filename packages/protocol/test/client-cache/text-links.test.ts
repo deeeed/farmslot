@@ -73,7 +73,31 @@ test('markdown emphasis, full-width punctuation and invisible characters stay ou
     'https://a.com/x',
     'https://b.com/y',
   ]);
-  for (const invisible of ['\u200b', '\u200e', '\u202e', '\u2060', '\ufeff', '\u0007', '\u0085']) {
+  assert.deepEqual(links('「https://a.com/x」と【https://b.com/y】'), [
+    'https://a.com/x',
+    'https://b.com/y',
+  ]);
+  // Japanese letters in that block (々, 〆) are part of a path.
+  assert.deepEqual(links('https://example.com/wiki/時々 と https://example.com/〆切。'), [
+    'https://example.com/wiki/時々',
+    'https://example.com/〆切',
+  ]);
+  for (const invisible of [
+    '\u00ad',
+    '\u061c',
+    '\u180e',
+    '\u2066',
+    '\u2067',
+    '\u2068',
+    '\u2069',
+    '\u200b',
+    '\u200e',
+    '\u202e',
+    '\u2060',
+    '\ufeff',
+    '\u0007',
+    '\u0085',
+  ]) {
     const text = `https://a.com/x${invisible}next`;
     assert.deepEqual(links(text), ['https://a.com/x'], JSON.stringify(invisible));
     assert.equal(

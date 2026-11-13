@@ -6,12 +6,13 @@ export interface TextLinkPart {
 
 // An http or https address after the start, whitespace or punctuation (so `_https://…_` links),
 // up to whitespace, a quote, a backtick, an angle bracket, an invisible or control character
-// (zero-width, bidi, C0/C1) or CJK punctuation (。、「」（），：；！？). Those stay visible in the
-// text but never enter a link. Every other scheme (javascript:, file:, app schemes) stays plain
-// text. A host starting with a non-ASCII letter (`https://ąbc.pl`) stays plain; its punycode
-// form links.
+// (zero-width, soft hyphen, bidi marks and isolates, C0/C1) or CJK punctuation (the ideographic
+// space, 。、「」『』【】〈〉《》〔〕 and （），：；！？). Those stay visible in the text but never enter
+// a link; CJK letters such as 々 and 〆 stay part of a path. Every other scheme (javascript:,
+// file:, app schemes) stays plain text. A host starting with a non-ASCII letter
+// (`https://ąbc.pl`) stays plain; its punycode form links.
 const WEB_ADDRESS =
-  /(^|[^a-z0-9])(https?:\/\/[^\s<>"`\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff\u3000-\u303f\uff01\uff08\uff09\uff0c\uff1a\uff1b\uff1f]+)/gi;
+  /(^|[^a-z0-9])(https?:\/\/[^\s<>"`\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u00ad\u061c\u180e\u2060-\u2069\ufeff\u3000-\u3002\u3008-\u3011\u3014\u3015\uff01\uff08\uff09\uff0c\uff1a\uff1b\uff1f]+)/gi;
 // A host must follow the scheme: a letter, a digit, or an IPv6 bracket.
 const WITH_HOST = /^https?:\/\/[a-z0-9[]/i;
 // Punctuation that ends a sentence or emphasis, not an address.
