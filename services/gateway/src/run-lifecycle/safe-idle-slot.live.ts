@@ -344,6 +344,10 @@ try {
     await save('FIXTURE-smoke-after-cancel.json', await client.call('run.get', { runId }));
     if (complete) {
       await save('FIXTURE-smoke-archive.json', await client.call('run.archive', { runId }));
+      await save(
+        'FIXTURE-smoke-release.json',
+        await client.call('slot.release', { slotId: slot, forceReset: true }),
+      );
       assert.equal(git(repo, 'branch', '--show-current'), 'main');
       assert.equal(git(repo, 'rev-parse', 'HEAD'), latestMain);
       assert.equal(git(repo, 'rev-parse', 'fix/merged-ticket'), mergedHead);
