@@ -541,7 +541,8 @@
             <p>
               Artifacts, screenshots, videos and diffs stay on the slot until a checkpoint: the
               terminal signal, completion, the gate package, or an explicit mirror refresh. A mirror
-              copies only files whose size and hash changed.
+              skips files whose size and hash are unchanged; <code>task-actions/</code> is copied
+              whole.
             </p>
           </div>
           <div class="rule">
@@ -575,8 +576,8 @@
             <h3>Preload only what you'd open offline</h3>
             <p>
               In the background, clients fetch what a pending gate or an active run needs: details,
-              the diff, and both sides of touched files, under per-item caps (diff 5 MB, file 1 MB,
-              image 2 MB). Everything else loads when opened.
+              the diff, and both sides of touched files, keeping what fits per-item caps (diff 5
+              MiB, file 1 MiB, image 2 MiB). Everything else loads when opened.
             </p>
           </div>
         </div>
@@ -621,7 +622,7 @@
                 <td>Native conversation</td>
                 <td>node → gateway → viewer</td>
                 <td><span class="pill p-signal">pushed deltas</span></td>
-                <td class="num">≤ 400 rows / 832 KB on open</td>
+                <td class="num">≤ 400 rows / 832 KiB on open</td>
                 <td>snapshot once, then deltas</td>
                 <td><code>resources/native-conversations.ts:527</code></td>
               </tr>
@@ -641,7 +642,10 @@
                 <td>slot → gateway</td>
                 <td><span class="pill p-checkpoint">signal, completion, gate, refresh</span></td>
                 <td class="num">512 KiB chunks, hash-verified</td>
-                <td>skip when size + remote hash match; package caps checked first</td>
+                <td>
+                  skip when size + remote hash match (task-actions/ copied whole); package caps
+                  checked first
+                </td>
                 <td>
                   <code>run-completion/artifact-mirror.ts:394</code>,
                   <code>core/slot-io.ts:489</code>
@@ -668,7 +672,10 @@
                 <td>gateway → slot</td>
                 <td><span class="pill p-checkpoint">dispatch, resume</span></td>
                 <td class="num">TASK.md, inputs/, artifacts/</td>
-                <td>never overwrites newer files; <code>*.worker</code> files never go out</td>
+                <td>
+                  files already in the slot's artifacts/ are kept; TASK.md and inputs/ are replaced;
+                  <code>*.worker</code> files never go out
+                </td>
                 <td><code>run-engine/task-sync.ts:38</code></td>
               </tr>
               <tr>
@@ -724,44 +731,52 @@
         <h2>What a diff carries, by file type</h2>
         <p class="lede">
           Four producers write diffs. The worker diff (<code>artifacts/diff.txt</code>, capped at 50
-          MB, otherwise dropped with a reason) and the review input are source-filtered; the gate
-          review diff's committed part and the live <code>git.diff</code> RPC are not. That is why
-          file counts can differ between views.
+          MiB, otherwise dropped with a reason) is local git, source-filtered, with binary patches.
+          The review input is GitHub's per-file patches, source-filtered and kept as a display-only
+          snapshot. The gate review diff's committed part and the live <code>git.diff</code> RPC are
+          unfiltered; the gate's uncommitted part is produced like the worker diff. That is why file
+          counts can differ between views. The source filter allows about 60 source extensions and
+          common build files (Dockerfile, Makefile, Gemfile and similar).
         </p>
         <div class="tbl">
           <table>
             <thead>
               <tr>
                 <th>File type</th>
-                <th>Worker diff + review input</th>
-                <th>Gate review diff, live git.diff</th>
+                <th>Worker diff</th>
+                <th>Review input (GitHub)</th>
+                <th>Gate committed part, live git.diff</th>
                 <th>Client prefetch</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td>Source text (60 allowlisted extensions, Dockerfile, Makefile…)</td>
+                <td>Allowlisted source text</td>
                 <td>full hunks</td>
+                <td>GitHub's hunks</td>
                 <td>full hunks</td>
-                <td>diff + both sides, file ≤ 1 MB</td>
+                <td>diff + both sides, file ≤ 1 MiB</td>
               </tr>
               <tr>
                 <td>Lockfiles (yarn.lock, package-lock, pnpm-lock, Cargo/Gemfile/Podfile.lock)</td>
                 <td>left out of text and stats</td>
+                <td>left out</td>
                 <td>included</td>
                 <td>as text, if in the diff</td>
               </tr>
               <tr>
                 <td>Images, video, archives</td>
                 <td>left out</td>
+                <td>left out</td>
                 <td>"Binary files differ" line</td>
-                <td>skipped; gate evidence images ≤ 2 MB fetched separately</td>
+                <td>skipped; gate evidence images ≤ 2 MiB fetched separately</td>
               </tr>
               <tr>
                 <td>Binary bytes under a text extension (e.g. binary .plist)</td>
-                <td>base85 binary patch, counts toward the 50 MB cap</td>
-                <td>binary line</td>
-                <td>dropped client-side (git.show still sends it, ≤ 1 MB)</td>
+                <td>base85 binary patch, counts toward the 50 MiB cap</td>
+                <td>usually no patch from GitHub, so a placeholder line</td>
+                <td>"Binary files differ" line</td>
+                <td>skipped before any git.show request</td>
               </tr>
               <tr>
                 <td>Generated files</td>
@@ -769,26 +784,40 @@
                   no special handling; projects add rules via
                   <code>diff_analysis.source_filter</code>
                 </td>
+                <td>same filter</td>
                 <td>included</td>
                 <td>as text</td>
               </tr>
               <tr>
                 <td>Renames</td>
-                <td>normalized <code>{a => b}</code>, 50% similarity</td>
-                <td>old path passed per file</td>
+                <td>normalized <code>{a => b}</code> in stats, 50% similarity</td>
+                <td>shown under the new path</td>
+                <td>git.diff passes the old path per file</td>
                 <td>both sides</td>
               </tr>
               <tr>
-                <td>Submodules, ignored files (.env)</td>
-                <td>gitlink only / never listed</td>
-                <td>same</td>
+                <td>Submodules</td>
+                <td>gitlink only</td>
+                <td>as GitHub reports it</td>
+                <td>gitlink only</td>
                 <td>skipped</td>
+              </tr>
+              <tr>
+                <td>Untracked ignored files (.env)</td>
+                <td>never listed</td>
+                <td>n/a (commits only)</td>
+                <td>never listed</td>
+                <td>never listed</td>
               </tr>
             </tbody>
           </table>
         </div>
+        <p class="lede">
+          Ignore rules apply to untracked files only. A tracked file that matches an ignore rule
+          appears in every diff like any other tracked file.
+        </p>
         <p class="mono" style="font-size: var(--s-1); color: var(--ink-soft)">
-          Refs: core/source-diff-filter.ts:7-92, run-engine/diff-artifacts.ts:101,433-851,
+          Refs: core/source-diff-filter.ts:7-92, run-engine/diff-artifacts.ts:101,433-851,1035-1053,
           review/snapshots.ts:272-307, methods/git.ts:104-683, client-cache/prefetch.ts:479-645,
           client-cache/content.ts:21-180
         </p>
@@ -803,22 +832,25 @@
             <ul>
               <li>
                 <b>Run details</b> (<code>run.get</code>) for listed runs on unmetered networks,
-                otherwise pending gates and active runs only. Budget 64 MB.
+                otherwise pending gates and active runs only. Budget 64 MiB.
               </li>
               <li>
-                <b>Pending gates:</b> the package diff, base files via batched
-                <code>git.show</code> (4 MB per page, 1 MB per file), evidence images ≤ 2 MB.
+                <b>Pending gates:</b> the package diff (stored only if ≤ 5 MiB), base files via
+                batched <code>git.show</code> (4 MiB per page, 1 MiB per file), evidence images ≤ 2
+                MiB.
               </li>
               <li>
-                <b>Active runs</b> on a slot: the worktree diff plus untracked files, base files
-                when the diff is ≤ 5 MB. A head check runs at most once a minute and only while a
-                view watches that slot.
+                <b>Active runs</b> on a slot: the worktree diff plus untracked files, always read;
+                base files only when the diff is ≤ 5 MiB. A head check runs at most once a minute
+                and only while a view watches that slot.
               </li>
               <li><b>Review rounds:</b> each round's metadata, review diff and fix diff.</li>
-              <li><b>Companion on LAN only:</b> gate videos and large images, up to 400 MB.</li>
+              <li>
+                <b>Companion on LAN only:</b> gate videos and large images, up to 400 MiB in total.
+              </li>
               <li>
                 Two at a time, foreground and connected only, never on a timer. Prefetch uses at
-                most half the store (2 GB Command Center, 500 MB Companion) and gives way to
+                most half the store (2 GiB Command Center, 500 MiB Companion) and gives way to
                 anything the user opened.
               </li>
             </ul>
@@ -826,14 +858,19 @@
           <div class="card">
             <span class="pill p-demand" style="justify-self: start">when opened</span>
             <ul>
-              <li>Diffs over 5 MB, files over 1 MB or binary, images over 2 MB.</li>
+              <li>Files over 1 MiB or binary, images over 2 MiB.</li>
+              <li>
+                Base files of diffs over 5 MiB. The diff itself may already have downloaded in the
+                background: the 5 MiB cap is checked after it arrives and decides only whether it is
+                stored.
+              </li>
               <li>Command Center videos.</li>
               <li>
                 <code>artifacts/diff.txt</code> and the iteration diff (prefetch reads the gate
                 package diff or the live diff instead).
               </li>
               <li>
-                Logs, terminal history and native transcripts (bounded to 400 rows / 832 KB on
+                Logs, terminal history and native transcripts (bounded to 400 rows / 832 KiB on
                 open).
               </li>
               <li>Base files for warm snapshots and GitHub PR snapshots.</li>
@@ -956,7 +993,7 @@
         },
         artifactOpen: {
           gap: 'Artifacts re-download on every open',
-          effect: 'no conditional request; files between 1 and 5 MB are fetched but not stored',
+          effect: 'no conditional request; files between 1 and 5 MiB are fetched but not stored',
           where: 'client-cache/artifact-response.ts:61-123',
         },
         eager: {
@@ -1001,7 +1038,7 @@
             ],
           ],
           guards:
-            'Never overwrites newer files on the slot. *.worker files never go out. The support bundle is collected again only when a file stamp changes (checked at most every 2 s, 10 min backstop).',
+            "Files already in the slot's artifacts/ are kept; TASK.md, assets/ and inputs/ are replaced. *.worker files never go out. The support bundle is collected again only when a file stamp changes (checked at most every 2 s, 10 min backstop).",
           refs: 'run-engine/task-sync.ts:38-139 · restore-task-artifacts.ts:120 · node-support/ensure.ts:244-470 · remote-command.ts:181-270',
           gaps: [],
         },
@@ -1050,7 +1087,7 @@
           title: 'Worker signals done: first capture',
           when: 'The monitor sees a terminal SIGNAL (60 s poll as fallback).',
           flows: [
-            ['slot', 'gw', 'checkpoint', 'mirror: changed files only'],
+            ['slot', 'gw', 'checkpoint', 'mirror: changed files'],
             ['slot', 'bundles', 'checkpoint', 'media, direct'],
             ['gw', 'bundles', 'checkpoint', 'bundle (digest)'],
           ],
@@ -1072,7 +1109,7 @@
             ],
           ],
           guards:
-            'The mirror skips a file when size and remote hash match. An identical capture key reuses the existing bundle.',
+            'The mirror skips a file when size and remote hash match, except task-actions/, which is copied whole. An identical capture key reuses the existing bundle.',
           refs: 'run-completion/output.ts:265-397 · artifact-mirror.ts:394-719 · core/slot-io.ts:408,489 · retained-artifacts.ts:108-147,598 · run-bundle retained.ts:2343-2658',
           gaps: [],
         },
@@ -1154,12 +1191,12 @@
           moves: [
             [
               'checkpoint',
-              "From the parent's bundle, on the gateway: TASK.md, CHECKLIST.md, report, learnings, recipe, task actions, recipe library, quality catalog, harness provenance",
+              "From the parent's bundle, on the gateway: TASK.md, CHECKLIST.md, report, learnings, recipe.json, task actions, recipe library, recipe-quality.json, recipe-shape-catalog.json, harness provenance, recipe-coverage.md; recipe.json, task actions and the recipe library are also seeded into the new run's artifacts/ and task-actions/",
               'into inputs/inherited/',
             ],
             [
               'checkpoint',
-              'Pushed to the new slot with the normal inputs/ copy',
+              'Pushed to the new slot with the normal task copy',
               'dispatch checkpoint',
             ],
             [
@@ -1177,7 +1214,7 @@
           key: 'archive',
           label: 'Retention',
           title: 'Hourly retention moves the bytes',
-          when: '10 min after the gateway starts, then hourly. Only for runs that are done and settled for the retention period (default 7 days), with no keep tag and no held slot. The latest review of each open PR is kept regardless of age.',
+          when: '10 min after the gateway starts, then hourly. Only for runs that are done, cancelled or archived and settled for the retention period (default 7 days), with no keep tag and no held slot. The latest review of each open PR is kept regardless of age.',
           flows: [
             ['gw', 'archive', 'checkpoint', 'task dir · sessions'],
             ['bundles', 'archive', 'checkpoint', 'bundle dir'],
@@ -1196,7 +1233,7 @@
             ],
             [
               'never',
-              'Nothing reads the archive back; restore is manual',
+              'Nothing serves reads from the archive; restore is manual',
               'run record stays listed',
             ],
           ],
@@ -1241,7 +1278,15 @@
 
       const canvas = document.getElementById('map');
       const ctx = canvas.getContext('2d');
-      const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const reduceQuery = matchMedia('(prefers-reduced-motion: reduce)');
+      let reduce = reduceQuery.matches;
+      // Follow a preference change while open: the animation loop stops itself or restarts.
+      reduceQuery.addEventListener('change', (e) => {
+        const wasReduced = reduce;
+        reduce = e.matches;
+        if (reduce) draw(performance.now());
+        else if (wasReduced) requestAnimationFrame(draw);
+      });
       let cur = 0,
         t0 = performance.now(),
         playing = null;
@@ -1512,7 +1557,12 @@
       // The parent sends its theme once it listens, so a theme message is also the cue to re-report.
       if (window.parent !== window) {
         window.addEventListener('message', (e) => {
-          if (e.origin !== location.origin || !e.data || e.data.type !== 'run-data-map:theme')
+          if (
+            e.source !== window.parent ||
+            e.origin !== location.origin ||
+            !e.data ||
+            e.data.type !== 'run-data-map:theme'
+          )
             return;
           if (e.data.theme === 'light' || e.data.theme === 'dark')
             document.documentElement.setAttribute('data-theme', e.data.theme);

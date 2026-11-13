@@ -20,8 +20,9 @@ export const RunDataMap = () => {
   useEffect(() => {
     const onMessage = (event) => {
       if (event.source !== frame.current?.contentWindow) return;
-      if (event.data?.type === 'run-data-map:height' && event.data.height > 0)
-        setHeight(event.data.height);
+      if (event.origin !== window.location.origin) return;
+      const next = event.data?.type === 'run-data-map:height' ? Number(event.data.height) : 0;
+      if (next > 0) setHeight(Math.min(Math.ceil(next), 6000));
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
@@ -65,8 +66,9 @@ size, cap, guard and code reference, is
    after a 1 s debounce. The terminal pane streams only while someone watches it.
 2. **Big things move at checkpoints.** Artifacts, screenshots, video and diffs
    stay on the slot until the terminal signal, completion, the gate package or an
-   explicit mirror refresh. A mirror copies only files whose size and hash
-   changed, in hash-verified 512 KiB chunks.
+   explicit mirror refresh. A mirror skips files whose size and hash are
+   unchanged (task actions are copied whole) and moves the rest in
+   hash-verified 512 KiB chunks.
 3. **A bundle is the record.** Each capture becomes an immutable bundle named by
    its manifest's SHA-256. Readers use the bundle, never the slot or the mutable
    task directory.
@@ -78,8 +80,10 @@ size, cap, guard and code reference, is
    screens refetch, with a minimum interval for busy families.
 6. **Preload only what you would open offline.** In the background, clients
    fetch what a pending gate or an active run needs: details, the diff, and both
-   sides of touched files, under caps of 5 MiB per diff, 1 MiB per file and
-   2 MiB per image. Everything else loads when opened.
+   sides of touched files. It keeps what fits the caps of 5 MiB per diff,
+   1 MiB per file and 2 MiB per image; a larger diff is still downloaded, but
+   not stored, and its files load when opened. Everything else loads when
+   opened.
 
 ## A run's checkpoints
 
@@ -98,8 +102,10 @@ sequenceDiagram
 ```
 
 A follow-up run on another slot or node, such as PR completion or a fix, gets
-the parent's small structured context (task, checklist, report, recipe, task
-actions) from the parent's bundle in `inputs/inherited/`. Media, diffs and
+the parent's small structured context (task, checklist, report, learnings,
+recipe, task actions, recipe library and quality files) from the parent's bundle
+in `inputs/inherited/`; the recipe, task actions and recipe library are also
+seeded into the new run's own artifacts. Media, diffs and
 signals are not copied, and code travels by git branch or PR.
 
 ## Storage
