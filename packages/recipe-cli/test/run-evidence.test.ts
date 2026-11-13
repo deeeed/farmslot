@@ -1722,6 +1722,58 @@ describe('live adapter scripts', () => {
     assert.equal(recorder.snapshot().work.liveAdapterBuilt, 2);
   });
 
+  test("rebuilds a cached bundle when a package's import map changes", async () => {
+    const root = tempRoot('cached-import-map-');
+    const dir = path.join(root, 'web', 'team');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'a.mjs'), 'export const value = "from a";\n');
+    fs.writeFileSync(path.join(dir, 'b.mjs'), 'export const value = "from b";\n');
+    const imports = (target: string) =>
+      fs.writeFileSync(
+        path.join(root, 'package.json'),
+        JSON.stringify({ type: 'module', imports: { '#helper': target } }),
+      );
+    imports('./web/team/a.mjs');
+    fs.writeFileSync(
+      path.join(dir, 'probe.mjs'),
+      `import { value } from '#helper';\nconsole.log(value);\n`,
+    );
+    const prepare = () =>
+      prepareLiveAdapterScript({
+        platform: 'web',
+        action: 'team.probe',
+        namespace: 'shop',
+        implementationRoot: root,
+      });
+    assert.match((await prepare())?.sourceText ?? '', /from a/u);
+    imports('./web/team/b.mjs');
+    assert.match((await prepare())?.sourceText ?? '', /from b/u);
+  });
+
+  test('does not cache a bundle whose input changed while it was built', async () => {
+    const root = tempRoot('racing-adapter-');
+    const dir = path.join(root, 'web', 'team');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'probe.mjs'), 'console.log("probe");\n');
+    // A modification time at or after the build's start reads as a write during it.
+    const later = new Date(Date.now() + 60_000);
+    fs.utimesSync(path.join(dir, 'probe.mjs'), later, later);
+    const recorder = new CallTimingRecorder();
+    const prepare = () =>
+      withCallTimings(recorder, () =>
+        prepareLiveAdapterScript({
+          platform: 'web',
+          action: 'team.probe',
+          namespace: 'shop',
+          implementationRoot: root,
+        }),
+      );
+    await prepare();
+    await prepare();
+    assert.equal(recorder.snapshot().work.liveAdapterBuilt, 2);
+    assert.equal(recorder.snapshot().work.liveAdapterCached, 0);
+  });
+
   test('rejects computed dynamic imports unless runtime imports are allowed', async () => {
     const root = tempRoot('dynamic-adapter-');
     const actionPath = path.join(root, 'web', 'team', 'probe.mjs');

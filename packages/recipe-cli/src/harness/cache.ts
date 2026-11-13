@@ -2,7 +2,7 @@
 // were computed from. A missing or corrupt record is a miss; a record the
 // filesystem refuses to store only costs the next command the same work again.
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -41,7 +41,8 @@ export function readCacheRecord(file: string): unknown {
 const UNWRITABLE = new Set(['EACCES', 'EPERM', 'EROFS', 'ENOSPC']);
 
 export function writeCacheRecord(file: string, record: unknown): void {
-  const staged = `${file}.${process.pid}.tmp`;
+  // Unique per write, so two writes of one record in a process never share a staged file.
+  const staged = `${file}.${process.pid}.${randomUUID()}.tmp`;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(staged, JSON.stringify(record));
