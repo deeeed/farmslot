@@ -1,0 +1,28 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Unavailable workspace retry budget",
+  "description": "Real read-only inspection failures retain unknown status while unchanged retries are bounded; isolated authenticated dispatch proof follows.",
+  "workflow": {
+    "entry": "retry-budget",
+    "nodes": {
+      "retry-budget": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx services/gateway/src/host-services/workspace-retry-benchmark.live.ts --assert-budget",
+        "timeout_ms": 120000,
+        "intent": "Eight unchanged unavailable checkouts stay unverified over630 logical seconds. Require no more than88 managed shells and176 actual Git launches; tear down the owned child and fixture.",
+        "next": "dispatch-smoke"
+      },
+      "dispatch-smoke": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx services/gateway/src/run-lifecycle/safe-idle-slot.live.ts",
+        "timeout_ms": 300000,
+        "intent": "Authenticated run.create reaches write-task, prepare and dispatch, then cancellation releases the owned fixture. Supply FARMSLOT_CLI and a fresh FARMSLOT_SAFE_IDLE_PROOF_OUT; do not allocate a farm slot.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

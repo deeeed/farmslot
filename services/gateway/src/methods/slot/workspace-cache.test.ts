@@ -75,6 +75,7 @@ await writeFile(
 );
 await import('../../runtime/mock-pty.test-support.js');
 let probes = 0;
+let defaultRefMissing = false;
 let probeFailure: Error | undefined;
 interface ProbePause {
   gate: Promise<void>;
@@ -111,7 +112,9 @@ mock.module('../../core/read-probes.js', {
         stdout:
           scope === 'workspace' || scope === 'workspace-recovery'
             ? JSON.stringify(probe)
-            : `${scope.includes('publication') ? probe.headSha : 'a'.repeat(40)}\trefs/heads/main\n`,
+            : defaultRefMissing && scope === 'workspace-default'
+              ? ''
+              : `${scope.includes('publication') ? probe.headSha : 'a'.repeat(40)}\trefs/heads/main\n`,
         stderr: '',
       };
     },
@@ -462,4 +465,75 @@ test('unchanged Git metadata cannot retain an active-owner refusal after the Run
   assert.equal(completed.slots[0]?.workspace?.protectedReason, undefined);
   assert.equal(completed.slots[0]?.workspace?.terminalOwner, true);
   assert.equal(probes, before + 1, 'a changed owner disposition requires a fresh inspection');
+});
+
+test('unchanged unavailable inspections wait sixty seconds without moving their retry deadline', async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  invalidateSlotWorkspaceObservations('cache-slot');
+  const before = probes;
+  probeFailure = new Error('Read probe did not complete (exit 124)');
+  const failed = await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.match(failed.slots[0]?.workspaceError ?? '', /exit 124/);
+  now += 16_000;
+  const retained = await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(
+    probes,
+    before + 1,
+    'unchanged unavailable workspace must not launch another inspection',
+  );
+  assert.match(retained.slots[0]?.workspaceError ?? '', /exit 124/);
+  now += 45_000;
+  const retried = await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(probes, before + 2, 'the original sixty-second deadline permits a retry');
+  assert.equal(retried.slots[0]?.workspaceError, undefined);
+});
+
+test('metadata changes and acting reads bypass unavailable-inspection backoff', async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const gitDir = path.join(root, 'repo/.git');
+  await mkdir(gitDir, { recursive: true });
+  t.after(() => rm(gitDir, { recursive: true, force: true }));
+  await writeFile(path.join(gitDir, 'HEAD'), 'a'.repeat(40) + '\n');
+  const index = path.join(gitDir, 'index');
+  await writeFile(index, 'index');
+  await utimes(index, 1_700_000_000, 1_700_000_000);
+  invalidateSlotWorkspaceObservations('cache-slot');
+  const before = probes;
+  probeFailure = new Error('unavailable workspace');
+  await enrichFleetWorkspaces(await loadFleetStatus(true));
+  now += 16_000;
+  await utimes(index, 1_700_000_001, 1_700_000_001);
+  await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(probes, before + 2, 'changed metadata retries before sixty seconds');
+  invalidateSlotWorkspaceObservations('cache-slot');
+  probeFailure = new Error('unavailable again');
+  await enrichFleetWorkspaces(await loadFleetStatus(true));
+  await inspectSlotWorkspace('cache-slot');
+  assert.equal(probes, before + 4, 'acting inspection always reads actual workspace');
+  invalidateSlotWorkspaceObservations('cache-slot');
+  await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(probes, before + 5, 'explicit invalidation also bypasses backoff');
+});
+
+test('an unchanged unavailable workspace retains its original observation time', async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const original = { ...probe };
+  t.after(() => {
+    Object.assign(probe, original);
+    defaultRefMissing = false;
+  });
+  probe.originKey = 'unavailable-object';
+  defaultRefMissing = true;
+  invalidateSlotWorkspaceObservations('cache-slot');
+  const first = await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.match(first.slots[0]?.workspace?.error ?? '', /Remote default is unavailable/);
+  const before = probes;
+  now += 16_000;
+  const retained = await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(probes, before);
+  assert.equal(retained.slots[0]?.workspace, first.slots[0]?.workspace);
+  assert.equal(retained.slots[0]?.workspace?.observedAt, first.slots[0]?.workspace?.observedAt);
 });
