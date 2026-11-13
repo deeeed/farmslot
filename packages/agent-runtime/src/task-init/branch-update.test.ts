@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   assertCIFixScope,
@@ -16,6 +17,7 @@ import {
   pushOrdinaryBranchMaintenance,
   verifyCIFixScope,
 } from './branch-update.js';
+import { buildBranchUpdateGuardCommand } from './task-document.js';
 
 test('normalizes only equivalent explicit remote branch names', () => {
   assert.equal(normalizeMaintenanceBranch('refs/remotes/origin/feat/base'), 'feat/base');
@@ -148,3 +150,63 @@ test('scope rejects a reverted unrelated edit and an unpublished completion', (t
     message: 'Branch maintenance refused: CI_FIX_NOT_PUSHED',
   });
 });
+
+for (const budget of ['2500', '500']) {
+  test(`TASK.md worker push shares SSH protection and ${budget}ms hook budget`, (t) => {
+    const f = scopeFixture(t);
+    const remote = f.git('remote', 'get-url', 'origin');
+    const capture = path.join(f.repo, '.git', 'ssh-argv');
+    const ssh = path.join(f.repo, '.git', 'fixture-ssh');
+    writeFileSync(
+      ssh,
+      `#!/bin/sh\nprintf '%s\\n' "$@" > '${capture}'\nfor arg do [ "$arg" = -G ] && exit 0; last=$arg; done\nexec sh -c "$last"\n`,
+      { mode: 0o755 },
+    );
+    f.git('remote', 'set-url', 'origin', `fixture@localhost:${remote}`);
+    f.git('config', 'core.hooksPath', '.git/hooks');
+    writeFileSync(
+      path.join(f.repo, '.git/hooks/pre-push'),
+      `#!/bin/sh\necho started > .git/hook-started\nsleep ${budget === '500' ? '0.8' : '0.05'}\necho finished > .git/hook-finished\n`,
+      { mode: 0o755 },
+    );
+    writeFileSync(path.join(f.repo, 'product.ts'), 'worker fix\n');
+    f.git('commit', '-qam', 'worker fix');
+    const command = buildBranchUpdateGuardCommand(
+      {
+        REPO: f.repo,
+        BRANCH: f.request.branch,
+        PUBLICATION_BASE: 'main',
+        BRANCH_UPDATE_SCRIPT: fileURLToPath(
+          new URL('../../scripts/branch-update.mjs', import.meta.url),
+        ),
+        FARMSLOT_GIT_PUSH_TIMEOUT_MS: budget,
+      },
+      'push',
+    );
+    const result = spawnSync(process.platform === 'darwin' ? 'zsh' : 'sh', ['-c', command], {
+      cwd: f.repo,
+      env: { ...process.env, GIT_SSH_COMMAND: `'${ssh}'`, GIT_SSH_VARIANT: 'ssh' },
+      encoding: 'utf8',
+      timeout: 4000,
+    });
+    if (result.error) throw result.error;
+    assert.ok(existsSync(path.join(f.repo, '.git/hook-started')));
+    if (budget === '500') {
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /git push timed out after 500 ms.*pre-push hook budget/);
+      assert.equal(existsSync(path.join(f.repo, '.git/hook-finished')), false);
+    } else {
+      assert.equal(result.status, 0, result.stderr);
+      assert.ok(existsSync(path.join(f.repo, '.git/hook-finished')));
+      assert.match(readFileSync(capture, 'utf8'), /ServerAliveInterval=20/);
+      assert.match(readFileSync(capture, 'utf8'), /ServerAliveCountMax=30/);
+    }
+    // Read the bare remote directly; no network or worker transport is needed.
+    const remoteHead = execFileSync(
+      'git',
+      ['--git-dir', remote, 'rev-parse', `refs/heads/${f.request.branch}`],
+      { encoding: 'utf8' },
+    ).trim();
+    assert.equal(remoteHead, budget === '500' ? f.headSha : f.git('rev-parse', 'HEAD'));
+  });
+}

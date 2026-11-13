@@ -32,6 +32,7 @@ import {
   resolveProjectTaskDirName,
 } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { gitPushTimeoutMs } from '../core/git-push-budget.js';
 import {
   assertNoUnknownPlaceholders,
   expandSourceBindings,
@@ -725,6 +726,7 @@ async function writeCIFixTask(
   const scope = { ...ownership, headSha: ciBaseRef };
   const operation = await prepareBranchMaintenance(run, vars, defaultBranch);
   const guardVars = {
+    FARMSLOT_GIT_PUSH_TIMEOUT_MS: String(await gitPushTimeoutMs(vars)),
     CI_FIX_SCOPE: JSON.stringify(scope),
     REPO: vars.remoteRepo,
     BRANCH: branch,

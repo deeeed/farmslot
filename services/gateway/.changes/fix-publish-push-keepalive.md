@@ -1,0 +1,1 @@
+- Keep SSH Git connections alive through pre-push hooks and give publication and branch-maintenance pushes a configurable fifteen-minute hook budget with clear timeout errors.

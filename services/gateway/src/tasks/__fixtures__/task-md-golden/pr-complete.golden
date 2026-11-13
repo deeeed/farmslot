@@ -54,7 +54,7 @@ node '<FARMSLOT_ROOT>/packages/agent-runtime/scripts/branch-update.mjs' execute 
 After conflict resolution, required checks and any fix commits, use this shared leased push:
 
 ```bash
-node '<FARMSLOT_ROOT>/packages/agent-runtime/scripts/branch-update.mjs' push '{"kind":"ordinary","repo":"<FARMSLOT_ROOT>","branch":"feature/golden-pr","baseRef":"main"}'
+FARMSLOT_GIT_PUSH_TIMEOUT_MS='900000' node '<FARMSLOT_ROOT>/packages/agent-runtime/scripts/branch-update.mjs' push '{"kind":"ordinary","repo":"<FARMSLOT_ROOT>","branch":"feature/golden-pr","baseRef":"main"}'
 ```
 
 ## Recipe proof + acceptance review
