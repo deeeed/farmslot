@@ -133,7 +133,9 @@ mandatory report/lightweight-metadata capacity before admitting work/capture;
 media MUST NOT consume that reservation. Count in-progress copy reservations and
 mirror staging in the same budget. Recorder/transcode limits stay unchanged.
 
-The owning gateway reads overrides from `${FARMSLOT_HOME}/run-bundle-retention.json`:
+The owning gateway reads overrides from `run-bundle-retention.json` in the farm's
+config directory: `${FARMSLOT_HOME}/config/` on layout 2, `${FARMSLOT_HOME}/` on the
+legacy layout. A bundle-store migration rewrites the same file.
 
 ```json
 {
@@ -222,8 +224,8 @@ review workspace, pending closeout/backlog reconciliation or `keep` tag, is not 
 by an unsettled run, and is not on an open PR. Shared paths and admitted task
 directories MUST remain available to their owners.
 
-The retention age is `runBundleRetention.runRetentionDays` in
-`${FARMSLOT_HOME}/run-bundle-retention.json`, default 7 (ADR-039 Amendment 8).
+The retention age is `runBundleRetention.runRetentionDays` in that
+`run-bundle-retention.json`, default 7 (ADR-039 Amendment 8).
 It is a positive number of days; any other value makes every reader of the file
 refuse, as an invalid capacity key does, and the pass fails loudly. To keep a
 shorter window, for example 3 days, set it next to the other `runBundleRetention`
