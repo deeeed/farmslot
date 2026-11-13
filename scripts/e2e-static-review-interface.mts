@@ -1124,7 +1124,7 @@ process.stdout.write(JSON.stringify(body));
     }
 
     const publicationEvents: unknown[] = [];
-    // run.updated is a notice (id, status, updatedAt); the publication itself is read with run.get.
+    // run.updated is a notice (id, project, status, slotId, updatedAt); the publication is read with run.get.
     const unsubscribePublication = connection.onEvent((event) => {
       const run = (event.payload as { run?: { id: string } } | undefined)?.run;
       if (event.event === 'run.updated' && run?.id === 'ui-automatic-qa')

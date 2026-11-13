@@ -1,11 +1,12 @@
 // A run write through the production websocket server reaches a connected client as a
 // `run.updated` notice (the run's id and lifecycle), and the client reads the run with run.get.
+// The same holds for an event a method emits to its caller only (the per-request `emit`).
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 
 import WebSocket from 'ws';
 
@@ -16,6 +17,7 @@ import {
   type ResponseFrame,
   type RunGetResult,
   type RunUpdatedPayload,
+  type SlotReleaseParams,
 } from '@farmslot/protocol';
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), 'run-updated-broadcast-')));
@@ -31,10 +33,26 @@ process.env.FARMSLOT_PROJECTS_DIR = join(root, 'projects');
 process.env.FARMSLOT_RUNS_DIR = join(root, 'runs');
 
 await import('../runtime/mock-pty.test-support.js');
+const { createRun, getAllRuns, getRun, loadAllRuns, persistRunNow, updateRun } =
+  await import('../runs/store.js');
+// slot.release emits to its caller only. A real release needs a node; this one only emits the
+// run.updated a release of the run's slot emits (release-run-ownership.ts), through the gateway's
+// per-request emit.
+const realSlotMethods = await import('../methods/slot/index.js');
+mock.module('../methods/slot.js', {
+  namedExports: {
+    ...realSlotMethods,
+    slotRelease: async (
+      params: SlotReleaseParams,
+      emit: (event: string, payload: unknown) => void,
+    ) => {
+      emit(Events.RUN_UPDATED, { run: getRun(params.expectedRunId ?? '') });
+      return { released: true };
+    },
+  },
+});
 const { createGatewayAuthRuntime } = await import('../security/auth.js');
 const { createWebSocketServer } = await import('../server.js');
-const { createRun, getAllRuns, loadAllRuns, persistRunNow, updateRun } =
-  await import('../runs/store.js');
 await loadAllRuns();
 
 test('a run write reaches the client as a run.updated notice, not the whole run', async (t) => {
@@ -123,4 +141,22 @@ test('a run write reaches the client as a run.updated notice, not the whole run'
   assert.deepEqual(read.run.tags, ['notice']);
   assert.equal(read.run.ticketData?.description?.length, 100_000);
   assert.equal(read.run.updatedAt, update.payload.run.updatedAt);
+
+  await t.test('an event emitted to the caller only is a notice too', async () => {
+    updates.length = 0;
+    await request(Methods.SLOT_RELEASE, { slotId: 'slot-notice', expectedRunId: run.id });
+    for (let waited = 0; !updates.length && waited < 2000; waited += 10)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    const [callerUpdate] = updates;
+    assert.ok(callerUpdate, 'the caller receives the release event');
+    assert.deepEqual(Object.keys(callerUpdate.payload.run).sort(), [
+      'id',
+      'project',
+      'slotId',
+      'status',
+      'updatedAt',
+    ]);
+    assert.equal(callerUpdate.payload.run.id, run.id);
+    assert.ok(callerUpdate.bytes < 1000, `the notice is small (${callerUpdate.bytes} B)`);
+  });
 });

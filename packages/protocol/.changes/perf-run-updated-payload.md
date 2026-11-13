@@ -1,1 +1,1 @@
-- `RunUpdatedPayload.run` is now a `RunUpdateNotice`: the run's `id`, `project`, `status`, `slotId` and `updatedAt`. Read the rest of the run with `run.get`.
+- BREAKING CHANGE: `RunUpdatedPayload.run` is now a `RunUpdateNotice`: the run's `id`, `project`, `status`, `slotId` and `updatedAt`, no longer the whole `Run`. Read the rest of the run with `run.get`.

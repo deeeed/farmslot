@@ -442,10 +442,10 @@ try {
   assert.ok(refusedStep.outputs.gatePrerequisiteRefusal, 'the refusal stays as history');
   assert.equal(typeof refusedStep.outputs.gatePrerequisiteDiscardedAt, 'string');
   // The release's own events go to its caller only; the discard reaches every client.
-  // A notice names the run and when it changed; the step outputs are read above with run.get.
+  // A notice names the run, its slot and when it changed; the step outputs are read above with run.get.
   const discardedAt = Date.parse(refusedStep.outputs.gatePrerequisiteDiscardedAt);
   const observedDiscard = () =>
-    observer.updates.some((run) => Date.parse(run.updatedAt) >= discardedAt);
+    observer.updates.some((run) => run.slotId == null && Date.parse(run.updatedAt) >= discardedAt);
   for (let attempt = 0; !observedDiscard() && attempt < 50; attempt++)
     await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(observedDiscard(), true, 'another client receives the discarded run');
