@@ -30,6 +30,8 @@ import {
 
 interface SlotWorkOptions {
   defaultBranch: string;
+  /** Verified base of a blind capsule, which deliberately has no origin refs. */
+  blindBaseSha?: string;
   runId?: string;
   operationKey?: string;
   targetBranches?: string[];
@@ -91,9 +93,11 @@ export async function captureSlotWork(
       purpose: 'prior-work',
       at: new Date().toISOString(),
       onlyThreatened: true,
-      // Other stale tracking refs cannot prove work is still published. Save conservatively
-      // against the fetched default; no per-branch network query is needed before reset.
-      notRevs: [`origin/${options.defaultBranch}`],
+      // Blind isolation already retains its verified base and removes all remotes.
+      // Normal checkouts must still prove the fetched default exists; stale tracking
+      // refs cannot prove other work is published.
+      baseSha: options.blindBaseSha,
+      notRevs: [options.blindBaseSha ?? `origin/${options.defaultBranch}`],
       extraRefs: (options.targetBranches ?? []).map((branch) => `refs/heads/${branch}`),
       targetTrees: options.targetTrees,
     },

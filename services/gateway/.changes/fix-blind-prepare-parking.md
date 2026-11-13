@@ -1,0 +1,1 @@
+- Fix blind trial prepare and replay parking to retain candidate work against the verified blind base without requiring origin refs.

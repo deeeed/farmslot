@@ -14,6 +14,9 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import type { execOnSlot } from '../core/exec.js';
+import { makeVars } from '../runners/test-fixtures.js';
+
 import { type BlindGitSpec, buildBlindGitCommand, withBlindTrialBoundary } from './blind-git.js';
 
 const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
@@ -49,6 +52,80 @@ function command(action: 'isolate' | 'boundary' | 'verify' | 'restore', spec: Bl
     }),
   );
 }
+
+test('isolated blind prepare and replay park candidate work before resetting to base', async (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'blind-prepare-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const overrides = {
+    NODE_TEST_CONTEXT: '1',
+    FARMSLOT_HOME: path.join(root, 'home'),
+    FARMSLOT_RUNS_DIR: path.join(root, 'runs'),
+    FARMSLOT_TEST_STATUS_FILE: path.join(root, 'status.json'),
+  };
+  const previous = Object.fromEntries(Object.keys(overrides).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, overrides);
+  t.after(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  mkdirSync(overrides.FARMSLOT_HOME);
+  const { claimSlotStatusIf } = await import('../core/state.js');
+  const { mutateSlotGit, slotParkedInventory } =
+    await import('../run-lifecycle/validation-run-commits.js');
+  const repo = path.join(root, 'repo');
+  mkdirSync(repo);
+  git(repo, 'init', '-q', '-b', 'main');
+  writeFileSync(path.join(repo, 'value.txt'), 'base\n');
+  const baseSha = commit(repo, 'base');
+  writeFileSync(path.join(repo, 'answer.txt'), 'reference\n');
+  const reference = commit(repo, 'reference');
+  git(repo, 'remote', 'add', 'origin', path.join(root, 'upstream'));
+  git(repo, 'update-ref', 'refs/remotes/origin/main', reference);
+  const spec: BlindGitSpec = {
+    slotId: 'blind-prepare-fixture',
+    slotEpoch: 1,
+    repo,
+    capsule: path.join(root, '.farmslot-blind-evals/trial'),
+    runId: 'trial',
+    branch: 'eval/trial',
+    baseSha,
+    referenceCommits: [reference],
+  };
+  const vars = makeVars({ slotId: spec.slotId, remoteRepo: repo, repo });
+  const localExec: typeof execOnSlot = async (_vars, script) => {
+    const result = spawnSync('bash', ['-c', script], { env, encoding: 'utf8' });
+    if (result.error) throw result.error;
+    return { stdout: result.stdout, stderr: result.stderr, exitCode: result.status ?? 1 };
+  };
+  await claimSlotStatusIf(spec.slotId, () => true, { lifecycle: 'ready', phase: 'idle' });
+  assert.equal(command('isolate', spec).status, 'isolated');
+  assert.equal(git(repo, 'remote'), '');
+  assert.equal(git(repo, 'for-each-ref', '--format=%(refname)'), `refs/heads/${spec.branch}`);
+  const reset = () =>
+    mutateSlotGit(
+      vars,
+      {},
+      { defaultBranch: 'main', blindBaseSha: baseSha, targetTrees: [baseSha] },
+      `git reset --hard ${baseSha} && git clean -fd`,
+      localExec,
+    );
+  assert.equal((await reset()).exitCode, 0);
+  assert.equal(command('isolate', spec).status, 'isolated');
+  writeFileSync(path.join(repo, 'value.txt'), 'candidate\n');
+  const candidate = commit(repo, 'candidate');
+  writeFileSync(path.join(repo, 'unfinished.txt'), 'unfinished\n');
+  assert.equal((await reset()).exitCode, 0);
+  const [saved] = (await slotParkedInventory(vars, localExec)).receipts;
+  assert.deepEqual(saved.commits, [candidate]);
+  assert.equal(saved.baseSha, baseSha);
+  assert.equal(git(repo, 'show', `${saved.ref}:unfinished.txt`), 'unfinished');
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), baseSha);
+  assert.equal(command('isolate', spec).status, 'isolated');
+  assert.equal(command('restore', spec).status, 'restored');
+  assert.equal(git(repo, 'rev-parse', 'origin/main'), reference);
+});
 
 for (const linked of [false, true])
   test(`blind Git removes reference objects and restores candidate work, linked=${linked}`, (t) => {
