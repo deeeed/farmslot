@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -114,6 +115,8 @@ module['boundary'](json.loads(sys.argv[2]))
     );
     assert.throws(() => command('verify', spec), /worker boundary is missing/);
     assert.equal(command('boundary', spec).status, 'isolated');
+    const workerTemp = realpathSync(path.join(spec.capsule, 'boundary/tmp'));
+    t.after(() => rmSync(workerTemp, { recursive: true, force: true }));
     assert.equal(git(repo, 'rev-parse', 'HEAD'), base);
     assert.equal(readFileSync(path.join(repo, 'value.txt'), 'utf8'), 'base\n');
     assert.equal(existsSync(path.join(repo, 'answer.txt')), false);
@@ -225,6 +228,7 @@ module['restore'](json.loads(sys.argv[2]))
     assert.match(interrupted.stderr, /fixture interrupted restore/);
     assert.equal(existsSync(path.join(repo, '.git')), false);
     assert.equal(command('restore', spec).headSha, head);
+    assert.equal(existsSync(workerTemp), false, 'restoration removes only the allocated temp');
     assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
     assert.equal(git(repo, 'status', '--porcelain'), '');
     assert.equal(git(repo, 'remote', 'get-url', 'origin'), path.join(root, 'upstream'));
