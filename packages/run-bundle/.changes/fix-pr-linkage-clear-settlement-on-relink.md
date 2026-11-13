@@ -1,0 +1,1 @@
+- A bundle-store migration on a layout-2 farm writes `run-bundle-retention.json` in the farm config directory, where its readers look, instead of the farm home.

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import fs, {
   chmod,
   mkdir,
@@ -21,13 +22,18 @@ import type { Run } from '@farmslot/protocol';
 
 import * as bundles from './retained.js';
 
-async function fixture(t: TestContext) {
+/** A farm home with one captured bundle; `layout2` adds the instance marker that moves config. */
+async function fixture(t: TestContext, { layout2 = false } = {}) {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), 'bundle-migrate-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   const home = path.join(root, 'home');
   const runsDir = path.join(root, 'runs');
+  if (layout2) {
+    await mkdir(path.join(home, 'config'), { recursive: true });
+    await writeFile(path.join(home, 'config', 'instance.json'), JSON.stringify({ layout: 2 }));
+  }
   const store = await bundles.openRunBundleStore({ home, runsDir, create: true });
-  const config = path.join(home, 'run-bundle-retention.json');
+  const config = path.join(home, ...(layout2 ? ['config'] : []), 'run-bundle-retention.json');
   await writeFile(
     config,
     JSON.stringify({ other: true, runBundleRetention: { maxStoreBytes: 123456 } }),
@@ -190,6 +196,13 @@ test('migration resumes an interrupted copy and refuses an unrelated nonempty de
   mocked.mock.restore();
   syncBuiltinESMExports();
   assert.equal((await bundles.migrateRunBundleStore(f.request)).store.root, f.targetRoot);
+});
+
+test('a layout-2 migration writes the settings file its readers open', async (t) => {
+  const f = await fixture(t, { layout2: true });
+  assert.equal((await bundles.migrateRunBundleStore(f.request)).store.root, f.targetRoot);
+  assert.equal(bundles.runBundleRetentionSettings(f.home).storeRoot, f.targetRoot);
+  assert.equal(existsSync(path.join(f.home, 'run-bundle-retention.json')), false);
 });
 
 test('a verified switch interrupted between config and binding recovers before any reader opens', async (t) => {

@@ -1,0 +1,1 @@
+- A run relinked to another PR (a different number, or a PR link in another repository) drops the previous PR's recorded merge or close, so retention, CI watch and the work graph no longer read the old PR's outcome as the new one's.

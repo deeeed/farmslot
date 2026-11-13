@@ -104,11 +104,12 @@ interface CachedRetentionDocument {
 
 const retentionDocuments = new Map<string, CachedRetentionDocument>();
 
+/** The settings file, in the farm config directory: the home itself on the legacy layout. */
+const retentionFile = (home: string) =>
+  path.join(resolveFarmPaths({ home, role: 'node' }).config, 'run-bundle-retention.json');
+
 function retentionDocument(home: string): Record<string, unknown> {
-  const file = path.join(
-    resolveFarmPaths({ home, role: 'node' }).config,
-    'run-bundle-retention.json',
-  );
+  const file = retentionFile(home);
   try {
     const now = Date.now();
     const stamp = statsStamp(statSync(file), now);
@@ -672,7 +673,7 @@ async function finishRunBundleMigration(journal: RunBundleMigration): Promise<vo
     throw new Error('Migrated run bundle store pairing changed.');
   // Two files cannot share a rename. The flushed journal is the commit point: every opener
   // rolls a verified transaction forward under the same lock before reading either file.
-  await atomicJson(path.join(journal.home, 'run-bundle-retention.json'), journal.settings);
+  await atomicJson(retentionFile(journal.home), journal.settings);
   await atomicJson(path.join(journal.store.runsDir, 'bundle-store.json'), journal.store);
   await atomicJson(migrationFile(journal.store.runsDir), { ...journal, phase: 'complete' });
 }
