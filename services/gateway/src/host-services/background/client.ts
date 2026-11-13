@@ -1,6 +1,6 @@
 // The gateway-background host: a forked child process that runs background probes (local fleet
 // slot checks, the decision walk) off the request loop. The gateway keeps the timers, the stores
-// and every write; the child only returns results. Nothing forks until `start()` is called, so
+// and store writes; the child owns probes and task-transfer subprocesses. Nothing forks until `start()` is called, so
 // importing this module (tests, the child itself) runs every operation in-process.
 import { type ChildProcess, fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -43,8 +43,8 @@ export interface BackgroundHostStatus {
 }
 
 export interface BackgroundRequestOptions {
-  /** How long the caller waits for the answer once the request is sent; a miss counts toward a wedge restart. */
-  deadlineMs: number;
+  /** Answer budget; null preserves an existing untimed transfer. Startup stays bounded. */
+  deadlineMs: number | null;
   /** Cancellation stops the child command; closeout still owns settlement. */
   signal?: AbortSignal;
 }
@@ -241,15 +241,17 @@ export class ForkedBackgroundHost implements BackgroundHost {
       void this.readyGate.then(() => {
         if (!this.pending.has(id) || this.child !== child || !child.connected) return;
         clearTimeout(pending.timer);
-        pending.timer = setTimeout(() => {
-          const error = new BackgroundTimeoutError(
-            `The gateway background process did not answer ${operation} within ${deadlineMs} ms`,
-          );
-          this.recordFailure(operation, error.message);
-          this.settle(id, error);
-          this.deadlineMissed(child);
-        }, deadlineMs);
-        pending.timer.unref();
+        if (deadlineMs !== null) {
+          pending.timer = setTimeout(() => {
+            const error = new BackgroundTimeoutError(
+              `The gateway background process did not answer ${operation} within ${deadlineMs} ms`,
+            );
+            this.recordFailure(operation, error.message);
+            this.settle(id, error);
+            this.deadlineMissed(child);
+          }, deadlineMs);
+          pending.timer.unref();
+        }
         child.send(message, (error) => {
           if (error) this.settle(id, new BackgroundUnavailableError(error.message));
           else if (signal?.aborted) cancel();

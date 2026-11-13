@@ -414,10 +414,6 @@
       "count": 1
     },
     {
-      "key": "services/gateway/src/run-engine/task-sync.ts:@typescript-eslint/no-restricted-imports",
-      "count": 1
-    },
-    {
       "key": "services/gateway/src/run-engine/worker-launch-preflight.ts:@typescript-eslint/no-restricted-imports",
       "count": 1
     },
@@ -623,10 +619,6 @@
     },
     {
       "key": "services/gateway/src/tasks/hosted-task-init.ts:@typescript-eslint/no-restricted-imports",
-      "count": 1
-    },
-    {
-      "key": "services/gateway/src/tasks/sidecars.ts:@typescript-eslint/no-restricted-imports",
       "count": 1
     },
     {

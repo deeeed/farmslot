@@ -13,7 +13,20 @@ export const BACKGROUND_OPERATIONS = {
   fleetProbeMachine: 'fleet.probeMachine',
   decisionsScan: 'decisions.scan',
   readCommand: 'commands.read',
+  taskTransfer: 'taskFiles.transfer',
 } as const;
+
+export interface BackgroundCommandParams {
+  command: string;
+  cwd: string;
+  timeout?: number;
+  maxBuffer?: number;
+  closeoutTimeoutMs?: number;
+}
+
+interface BackgroundReadCommandParams extends BackgroundCommandParams {
+  timeout: number;
+}
 
 export interface BackgroundOperationContract {
   /** Every slot check of one local machine, as the fleet refresh would run it in-process. */
@@ -25,13 +38,12 @@ export interface BackgroundOperationContract {
   'decisions.scan': { params: Record<string, never>; result: FileDecision[] };
   /** Read-only commands from the shared probe/workspace readers, never owned mutations. */
   'commands.read': {
-    params: {
-      command: string;
-      cwd: string;
-      timeout: number;
-      maxBuffer?: number;
-      closeoutTimeoutMs?: number;
-    };
+    params: BackgroundReadCommandParams;
+    result: ExecResult;
+  };
+  /** Existing gateway-owned SSH/SCP/rsync task staging, including marker publication. */
+  'taskFiles.transfer': {
+    params: BackgroundCommandParams;
     result: ExecResult;
   };
 }

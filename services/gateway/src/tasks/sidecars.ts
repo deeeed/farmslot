@@ -9,10 +9,11 @@ import {
 } from '@farmslot/protocol/checklist-target';
 
 import { loadSlotVars } from '../core/config.js';
-import { execLocal, isLocal } from '../core/exec.js';
+import { isLocal } from '../core/index.js';
 import { RSYNC_SSH_SHELL_OPTION, SSH_CONNECT_SHELL_OPTIONS } from '../core/ssh-options.js';
 import { shellQuote } from '../core/tmux.js';
 import { usesNodeLink } from '../fleet/node-link-policy.js';
+import { runTaskTransfer } from '../host-services/task-transfer.js';
 import { getRun } from '../runs/store.js';
 
 export const CHECKLIST_MARKER_INPUT = 'mark';
@@ -108,7 +109,7 @@ export async function copyTaskDirSubdirectories(
         .filter((entry) => entry.startsWith(`${subdir}/`))
         .map((entry) => `--exclude=${shellQuote(`/${entry.slice(subdir.length + 1)}`)} `)
         .join('');
-      const result = await execLocal(
+      const result = await runTaskTransfer(
         `rsync -az ${RSYNC_SSH_SHELL_OPTION} --exclude=${shellQuote(`*${WORKER_MIRROR_SUFFIX}`)} ` +
           `${exclusions}${shellQuote(`${source}/`)} ${shellQuote(`${params.sshTarget}:${dest}/`)}`,
       );
@@ -177,7 +178,7 @@ export async function copyPreparedTaskRootSidecars(
           await rm(dest, { force: true });
         } else {
           if (!params.sshTarget) throw new Error(`missing ssh target for ${sidecar} sidecar reset`);
-          const rmRes = await execLocal(
+          const rmRes = await runTaskTransfer(
             `ssh ${SSH_CONNECT_SHELL_OPTIONS} ${shellQuote(params.sshTarget)} ${shellQuote(`rm -f ${shellQuote(dest)}`)}`,
           );
           if (rmRes.exitCode !== 0) {
@@ -197,7 +198,7 @@ export async function copyPreparedTaskRootSidecars(
       }
     } else {
       if (!params.sshTarget) throw new Error(`missing ssh target for ${sidecar} sidecar copy`);
-      const scpRes = await execLocal(
+      const scpRes = await runTaskTransfer(
         `scp -q ${SSH_CONNECT_SHELL_OPTIONS} ${shellQuote(source)} ${shellQuote(`${params.sshTarget}:${dest}`)}`,
       );
       if (scpRes.exitCode !== 0) {
@@ -206,7 +207,7 @@ export async function copyPreparedTaskRootSidecars(
         );
       }
       if (sidecar === CHECKLIST_MARKER_INPUT) {
-        const chmodRes = await execLocal(
+        const chmodRes = await runTaskTransfer(
           `ssh ${SSH_CONNECT_SHELL_OPTIONS} ${shellQuote(params.sshTarget)} ${shellQuote(`chmod 755 ${shellQuote(dest)}`)}`,
         );
         if (chmodRes.exitCode !== 0) {

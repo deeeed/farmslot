@@ -45,6 +45,8 @@ export function serveBackgroundRequests(
         return handlers[request.operation](request.params, { signal });
       case 'commands.read':
         return handlers[request.operation](request.params, { signal });
+      case 'taskFiles.transfer':
+        return handlers[request.operation](request.params, { signal });
     }
   }
 

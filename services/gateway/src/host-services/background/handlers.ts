@@ -4,24 +4,41 @@ import { execLocal } from '../../core/exec.js';
 import { checkMachineSlots } from '../../methods/fleet.js';
 import { loadFileDecisions } from '../../observability/fleet-monitor.js';
 
-import type { BackgroundOperation, BackgroundParams, BackgroundResult } from './protocol.js';
+import type {
+  BackgroundCommandParams,
+  BackgroundOperation,
+  BackgroundParams,
+  BackgroundResult,
+} from './protocol.js';
+
+export interface BackgroundHandlerContext {
+  signal: AbortSignal;
+}
 
 export type BackgroundHandlers = {
   [O in BackgroundOperation]: (
     params: BackgroundParams<O>,
-    context?: { signal: AbortSignal },
+    context?: BackgroundHandlerContext,
   ) => Promise<BackgroundResult<O>>;
 };
+
+function command(
+  { command, ...options }: BackgroundCommandParams,
+  context?: BackgroundHandlerContext,
+) {
+  return execLocal(command, { ...options, signal: context?.signal });
+}
 
 export const backgroundHandlers: BackgroundHandlers = {
   'fleet.probeMachine': ({ entries, ssh }) => checkMachineSlots(entries, new Map(ssh)),
   'decisions.scan': () => loadFileDecisions(),
-  'commands.read': ({ command, ...options }, context) =>
-    execLocal(command, { ...options, signal: context?.signal }),
+  'commands.read': command,
+  'taskFiles.transfer': command,
 };
 
 /** Only command-running requests carry an execution tally. */
 export const COMMAND_OPERATIONS: ReadonlySet<BackgroundOperation> = new Set([
   'fleet.probeMachine',
   'commands.read',
+  'taskFiles.transfer',
 ]);
