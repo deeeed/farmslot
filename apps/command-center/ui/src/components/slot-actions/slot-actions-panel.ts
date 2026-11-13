@@ -688,7 +688,7 @@ export class SlotActionsPanel extends LitElement {
         />
         <button
           class="sap-btn ${confirming ? 'confirming' : ''} ${running ? 'running' : ''}"
-          ?disabled=${this._running}
+          ?disabled=${this._running || !isFleetCurrent()}
           @click=${this._prepare}
         >
           ${prepareLabel}
@@ -1020,6 +1020,7 @@ export class SlotActionsPanel extends LitElement {
                     <button
                       class="sap-btn danger"
                       style="margin-top:8px"
+                      ?disabled=${!isFleetCurrent()}
                       @click=${() => this._recycle(true)}
                     >
                       Force Reset
@@ -1033,6 +1034,7 @@ export class SlotActionsPanel extends LitElement {
                       class=${this._btnClass('refresh-force', 'danger')}
                       style="margin-top:8px"
                       title="Discard local changes and reset to default @ origin"
+                      ?disabled=${!isFleetCurrent()}
                       @click=${() => this._refresh(true)}
                     >
                       ${this._label('refresh-force', 'Force Refresh', 'Confirm Force Refresh?')}

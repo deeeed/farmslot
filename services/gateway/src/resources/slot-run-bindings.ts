@@ -4,7 +4,7 @@ import {
   resourceKeyId,
 } from '@farmslot/protocol/client-cache';
 
-import { fleetStaleDeadline } from '../fleet/freshness.js';
+import { fleetStaleDeadline, isFleetCheckedAtStale } from '../fleet/freshness.js';
 
 import { type GatewayResourceRevisions, resourceRevisions } from './revisions.js';
 import { publishWorkerResources } from './worker-changes.js';
@@ -23,6 +23,8 @@ export class SlotResourceChanges {
   private previousCheckedAt?: string;
   private ghosts = new Set<string>();
   private failed = false;
+  /** Whether clients were last told the fleet is stale; undefined before the first snapshot. */
+  private publishedStale?: boolean;
   /** Recomputes served slot entities before their keys advance; undefined ids means every slot. */
   private entityRefresh?: (slotIds: readonly string[] | undefined) => void;
 
@@ -59,10 +61,12 @@ export class SlotResourceChanges {
     this.previous = current;
     this.previousCheckedAt = checkedAt;
     this.failed = false;
+    this.fleetStale();
     this.revisions.scheduleInvalidations(
       'fleet-status',
       this.slotKeys([...current.keys()], current),
       fleetStaleDeadline(checkedAt),
+      () => this.fleetStale(),
     );
   }
 
@@ -80,7 +84,24 @@ export class SlotResourceChanges {
       this.invalidateBindings();
     }
     this.failed = true;
+    this.fleetStale();
     this.revisions.scheduleInvalidations('fleet-status', [], undefined);
+  }
+
+  /**
+   * Whether the fleet is stale now, as clients are told. `stale` is not an entity field: an
+   * entity-sync client reads it again only when the collection marker moves. Stale means no
+   * readable source, no `checked_at`, or one past the threshold. Every path that decides it (a
+   * commit, a lost source, the deadline, every fleet read) calls this, and the marker moves whenever
+   * the answer differs from the last one given, so no reader sees a state clients are not told of.
+   */
+  fleetStale(): boolean {
+    // An absent timestamp does not parse, which the rule reads as stale.
+    const stale = this.failed || isFleetCheckedAtStale(this.previousCheckedAt ?? '');
+    if (this.publishedStale !== undefined && stale !== this.publishedStale)
+      this.revisions.advanceMembership({ family: 'slots', scope: 'farm' });
+    this.publishedStale = stale;
+    return stale;
   }
 
   /** In-memory enrichments change slot facts without changing persisted run ownership. */

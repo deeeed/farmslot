@@ -388,7 +388,8 @@ export function validatePackBytesPortability(
     : validatePackFilePortability(file, bytes.toString('utf8'), machines);
 }
 
-function validatePackEntries(
+/** The portability policy over a pack's owned entries, as both scans apply it. */
+export function validatePackEntries(
   entries: PackOwnedEntry[],
   prefix: string,
   machines: readonly string[],
