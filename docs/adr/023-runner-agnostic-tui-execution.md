@@ -238,3 +238,24 @@ Case-insensitive whole-word "runner" or "runners", excluding tests, on main b41c
 - Gateway orchestration: [ADR-013](013-gateway-mediated-orchestration.md)
 - Intelligence/provider abstraction: [ADR-014](014-llm-provider-abstraction.md)
 - Interactive vs autonomous run modes: [ADR-018](018-dev-flow-interactive-autonomous.md)
+
+## Amendment 2: saved-session continuation, 2026-11-12
+
+**Status:** Accepted, approved 2026-11-12.
+
+### Decision
+
+Each runner adapter declares one saved-session continuation capability for its
+tmux and native transports, including exact resume arguments and workspace
+requirements. WARM selection replaces workspace, reload, handoff and native-reuse
+allowlists with this declaration; runtime identity checks remain authoritative.
+Launch and recovery consume it. Unsupported continuation is explicit;
+workflow code never chooses resume syntax by runner name.
+
+### Rationale and consequences
+
+A saved reviewer conversation was rejected because a separate workspace capability
+covered only some adapters. One continuation contract removes that mismatch.
+Identity, ownership, model, effort, workspace and busy-session fences still apply.
+The [runner execution specification](../PRD-runner-execution-canonical.md#saved-session-continuation)
+owns the contract. No public command, flag, SDK export or harness extension is added.

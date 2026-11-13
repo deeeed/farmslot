@@ -634,13 +634,15 @@ export async function planRunCreation(
   let executionTemplateSnapshot: Run['executionTemplate'];
   if (workspaceAdmission) {
     const projectVars = await loadProjectVars(params.project);
-    executionTemplateSnapshot = resolveConfiguredExecutionTemplateForSlot(projectVars, {
-      flow: 'review-pr',
-      platform: await resolveReviewWorkspacePlatform(workspaceAdmission.pool, params.project),
-      runMode: params.mode ?? 'autonomous',
-      explicitDomain: params.domain,
-      explicitId: params.executionTemplateId,
-    }).reference;
+    executionTemplateSnapshot = (
+      await resolveConfiguredExecutionTemplateForSlot(projectVars, {
+        flow: 'review-pr',
+        platform: await resolveReviewWorkspacePlatform(workspaceAdmission.pool, params.project),
+        runMode: params.mode ?? 'autonomous',
+        explicitDomain: params.domain,
+        explicitId: params.executionTemplateId,
+      })
+    ).reference;
   }
   if (projectConfig?.executionTemplates && params.slotId) {
     const [projectVars, slotVars] = await Promise.all([
@@ -650,14 +652,16 @@ export async function planRunCreation(
     if (!params.mode) {
       throw new Error('Configured execution-template selection requires an explicit run mode.');
     }
-    executionTemplateSnapshot = resolveConfiguredExecutionTemplateForSlot(projectVars, {
-      flow: params.flowType,
-      platform: slotVars.platform,
-      runMode: params.mode,
-      ...(params.domain ? { explicitDomain: params.domain } : {}),
-      ...(slotVars.domain ? { slotDomain: slotVars.domain } : {}),
-      ...(params.executionTemplateId ? { explicitId: params.executionTemplateId } : {}),
-    }).reference;
+    executionTemplateSnapshot = (
+      await resolveConfiguredExecutionTemplateForSlot(projectVars, {
+        flow: params.flowType,
+        platform: slotVars.platform,
+        runMode: params.mode,
+        ...(params.domain ? { explicitDomain: params.domain } : {}),
+        ...(slotVars.domain ? { slotDomain: slotVars.domain } : {}),
+        ...(params.executionTemplateId ? { explicitId: params.executionTemplateId } : {}),
+      })
+    ).reference;
   }
   assertExpectedExecutionTemplate(executionTemplateSnapshot, options.expectedExecutionTemplate);
 

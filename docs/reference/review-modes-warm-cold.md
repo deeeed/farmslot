@@ -426,7 +426,7 @@ A completed slotless review records its exact conversation id/path, `reviewId`,
 validated reviewed head and retention deadline. Its retained conversation stays
 under the same project, PR, principal generation, machine, runner, model and
 effort. A re-review before expiry reuses that conversation and reviews only
-`lastReviewedHead..newHead`. Unsupported or ambiguous identity refuses WARM.
+`lastReviewedHead..newHead`. Foreign or ambiguous identity refuses WARM. Unsupported adapter continuation follows the delta fallback below.
 After expiry, a fresh full-contribution COLD session is allowed with an explicit expiry reason;
 the prior lineage, findings and reviewed head remain recorded.
 
@@ -489,3 +489,50 @@ input proof uses the existing task writer. Neither starts a model. Browser
 checks select the shared checkbox through normal user interaction and verify
 that changing the flow removes the choice. These rendering fixtures do not
 claim reviewer-session behavior.
+
+## Adapter-owned continuation
+
+Under ADR-063 Amendment 13, WARM MUST use the lineage owner's shared runner
+saved-session continuation capability. Adapter support MUST NOT participate in
+identity matching. A valid, unexpired lineage with an unsupported adapter MUST
+use a fresh COLD session in the same attempt over
+`lastReviewedHead..currentHead`, preserving prior findings and artifacts as input.
+Its fallback trace MUST record `session-resume-unsupported` and the compared
+range. The successor becomes the retained session for that lineage.
+
+Selection, subject freezing, task generation and result ingestion MUST preserve
+that delta scope even though the effective mode is COLD. Ownership generation,
+project, repository/PR, lineage, runner/model/effort, ancestry, busy-session,
+capacity and publication fences MUST still pass. A retained checkout is required
+only when resuming it; unsupported continuation uses a newly allocated checkout.
+Missing or foreign lineage identity MUST NOT use the unsupported-adapter fallback.
+A missing saved conversation is distinct from missing lineage identity and keeps
+its existing delta fallback. Unsupported capability MUST NOT emit an
+`unsupported-runner` refusal; that reason remains readable in historical traces.
+This fallback uses normal verdict accounting and grants no refund. Expiry retains its
+existing full-contribution COLD contract.
+
+A stopped transfer that returned no verdict MAY continue the same conversation
+through its latest execution owner under the same identity and busy-session fences.
+`RepeatReviewContext.priorRunId` remains the validated baseline;
+`ReviewSessionTrace.priorRunId` identifies the physical source owner. An attempted
+source-head advance MUST NOT replace the last validated comparison base.
+The successor MUST capture its own support admission even when immutable support
+content is reused. A predecessor's support binding is not that receipt.
+
+The gateway records `ReviewWorkspaceBinding.transferredTo` on the predecessor
+before moving execution authority, including archived predecessors. It records
+`continuedFrom` and a separate task path on the successor before node allocation.
+The node verifies the former immutable source identity and stop receipt before
+advancing that same checkout. Retry reuses this transfer; prior task artifacts
+are preserved. A transferred predecessor cannot replay execution or reclaim the
+successor's source. The current owner alone starts a new retention period.
+
+### Public surface
+
+`ReviewWorkspaceBinding` in `@farmslot/protocol` adds optional `continuedFrom`
+and `transferredTo` receipts for gateway allocation, replay and retention readers.
+Existing bindings omit both. These additive fields grant no caller authority.
+`ReviewSessionRefusalReason` in `@farmslot/protocol` adds
+`session-resume-unsupported` for the existing fallback trace, consumed by the
+review result and gate displays. No command, flag, RPC or harness extension is added.

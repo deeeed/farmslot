@@ -1,0 +1,1 @@
+- Keep native launch registration and template-source Git reads off the request loop and include those commands in managed execution metrics.

@@ -1,0 +1,1 @@
+- Farm-path resolution no longer stats `instance.json` on every call, and a node-support hash scan looks up the legacy support root and builds its pattern once instead of for every string of every run record.

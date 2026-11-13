@@ -43,7 +43,6 @@ import {
   warmLineageScope,
   WarmReviewRefusal,
 } from '../review/session-mode.js';
-import { runnerSupportsSessionReload } from '../runners/launch-command.js';
 import { normalizeRunner } from '../runners/registry.js';
 
 import { isHumanGateReviewRequestAction } from './decision-replay.js';
@@ -403,11 +402,6 @@ export function assertWarmReviewRequestAvailable(
       );
     const nativeOwner = [...nativeOwners][0];
     const transport = nativeOwner ? 'native' : (run.transport ?? 'tmux');
-    if (transport !== 'native' && !runnerSupportsSessionReload(row.runner))
-      throw new WarmReviewRefusal(
-        'unsupported-runner',
-        'the selected runner cannot reload a reviewer',
-      );
     const execution = executionModelFromSelection(row);
     const ownerPrincipalId =
       nativeOwner ?? run.nativeOwnerPrincipalId ?? run.createdByPrincipalId ?? null;

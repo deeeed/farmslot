@@ -286,7 +286,7 @@ export async function configTemplateOptions(
   if (!projectUsesExecutionTemplateCatalog(projectVars)) return { options };
   return {
     options,
-    executionTemplates: configuredExecutionTemplateOptions(projectVars, {
+    executionTemplates: await configuredExecutionTemplateOptions(projectVars, {
       ...(params.flowType ? { flow: params.flowType } : {}),
       ...(params.unfiltered
         ? { unfiltered: true }
@@ -308,7 +308,7 @@ export async function configTemplatePreview(
     if (!params.executionTemplateSourceId || !params.executionTemplateSha256) {
       throw new Error('Execution-template preview requires its source id and source digest.');
     }
-    const snapshot = readConfiguredExecutionTemplateSnapshot(projectVars, {
+    const snapshot = await readConfiguredExecutionTemplateSnapshot(projectVars, {
       flow: params.flowType,
       id: params.executionTemplateId,
       sourceId: params.executionTemplateSourceId,

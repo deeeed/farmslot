@@ -16,7 +16,9 @@ export function runNeedsExecutionStorage(run: Run): boolean {
     hasReviewWorkspaceRetirement(run.id) ||
     (!run.archivedAt && !isTerminalRunStatus(run.status)) ||
     run.decisions.some((decision) => !decision.resolvedAt) ||
-    Boolean(run.reviewWorkspace && !run.reviewWorkspace.cleanedAt) ||
+    Boolean(
+      run.reviewWorkspace && !run.reviewWorkspace.cleanedAt && !run.reviewWorkspace.transferredTo,
+    ) ||
     Boolean(run.output?.cleanupPending || run.output?.closeError) ||
     Boolean(
       run.agentContexts?.some(

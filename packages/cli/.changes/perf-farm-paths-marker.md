@@ -1,0 +1,1 @@
+- `farmslot paths migrate` makes path resolution in its own process read the instance marker again after it writes or removes one.

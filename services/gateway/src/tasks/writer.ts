@@ -85,6 +85,7 @@ import { getPRRawData, parseJsonLines } from '../methods/pr/raw-cache.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 import { harnessRoot } from '../projects/harness-root.js';
 import { extractRecipeFromPRBody, materializeExtractedRecipe } from '../quality/pr-body-recipe.js';
+import { usesPreviousReviewDelta } from '../review/session-mode.js';
 import { resolveWorkerTaskDir } from '../review/templates.js';
 import { prepareBranchMaintenance } from '../run-engine/branch-maintenance.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
@@ -240,7 +241,7 @@ export async function writePreviousReviewInputs(
   run: Pick<Run, 'reviewMode' | 'prWork' | 'repeatReviewContext'>,
 ): Promise<string[]> {
   const context = run.repeatReviewContext;
-  if (!context || resolveReviewMode({ run }) !== 'warm') return [];
+  if (!context || !usesPreviousReviewDelta(run)) return [];
   await writeFile(
     path.join(taskAbsDir, PREVIOUS_REVIEW_JSON_INPUT),
     `${JSON.stringify(context, null, 2)}\n`,
@@ -280,7 +281,7 @@ export async function writeStaticReviewInstructionInputs(
   return written;
 }
 
-function buildReviewExecutionContract(
+export function buildReviewExecutionContract(
   run: Run,
   previousReviewPaths: readonly string[],
   instructionPaths: readonly string[],
@@ -289,7 +290,7 @@ function buildReviewExecutionContract(
   const scope = resolveReviewMode({ run });
   const depth = run.reviewValidationDepth ?? 'static-code';
   const range =
-    scope === 'warm' && run.repeatReviewContext?.priorReviewedHeadSha
+    usesPreviousReviewDelta(run) && run.repeatReviewContext?.priorReviewedHeadSha
       ? `${run.repeatReviewContext.priorReviewedHeadSha}..${run.repeatReviewContext.currentHeadSha}`
       : `PR base..${run.repeatReviewContext?.currentHeadSha ?? 'frozen current head'}`;
   const inherited = previousReviewPaths.length
@@ -777,7 +778,7 @@ export async function writeTaskFile(
     throw new Error('Configured execution-template selection requires an explicit run mode.');
   }
   const configuredTemplate = usesConfiguredCatalog
-    ? resolveConfiguredExecutionTemplateForSlot(projectVars, {
+    ? await resolveConfiguredExecutionTemplateForSlot(projectVars, {
         flow: run.flowType,
         platform: slotVars.platform,
         runMode: run.mode!,

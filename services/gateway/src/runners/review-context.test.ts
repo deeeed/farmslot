@@ -105,7 +105,11 @@ mock.module('./launch-command.js', {
   },
 });
 mock.module('./registry.js', {
-  namedExports: { getRunnerDefinition: () => ({ workspaceTerminalSession: 'resume-session' }) },
+  namedExports: {
+    getRunnerDefinition: () => ({
+      sessionContinuation: { native: true, terminal: { workspace: 'current' } },
+    }),
+  },
 });
 const { launchReviewTmux } = await import('./review-tmux.js');
 

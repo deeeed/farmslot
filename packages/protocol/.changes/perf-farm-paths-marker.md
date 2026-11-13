@@ -1,0 +1,1 @@
+- `currentFarmPaths` reads the instance marker at most once a second per home instead of on every call; `forgetFarmInstanceMarkers` makes the next resolution read it again after this process writes one.

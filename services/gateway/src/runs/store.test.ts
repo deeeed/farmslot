@@ -21,12 +21,14 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
 import { farmslotRoot } from '../projects/repo-root.js';
+import { beginRunArchive, endRunArchive } from '../run-lifecycle/archive-fence.js';
 import { runnerDefaultSafetyTier } from '../runners/registry.js';
 
 import {
   archiveRun,
   backfillLegacySafetyTier,
   buildRunRecord,
+  claimReviewWorkspaceTransfer,
   cleanupRuns,
   createRun,
   deleteArchivedRun,
@@ -1524,3 +1526,53 @@ for (const reason of [
     if (reason === 'open gate') assert(getRun(run.id), 'an unresolved gate cannot be archived');
   });
 }
+
+test('workspace transfer claims are durable on archived runs and cannot select two successors', async (t) => {
+  const id = await archivedFixture(t, 'workspace-transfer');
+  const prior = (await getArchivedRuns()).find((run) => run.id === id)!;
+  // The archived fixture has no execution binding; seed its retained snapshot on disk once.
+  const workspace = {
+    workspaceId: 'workspace',
+    machine: 'node',
+    executionNodeId: 'node',
+    checkoutPath: '/owned/source',
+    taskPath: '/owned/task',
+    artifactPath: '/owned/task/artifacts',
+    retainedAt: '2026-11-12T00:00:00Z',
+    executionStoppedAt: '2026-11-12T00:01:00Z',
+  };
+  const file = path.join(path.dirname(runRecordPath(id)), 'archive', `${id}.json`);
+  await writeFile(file, JSON.stringify({ ...prior, reviewWorkspace: workspace }));
+  forgetArchivedRuns();
+  const target = { runId: 'next', generation: 1 };
+  beginRunArchive(id);
+  try {
+    await assert.rejects(
+      claimReviewWorkspaceTransfer(id, workspace, target, () => undefined),
+      /being archived/,
+    );
+  } finally {
+    endRunArchive(id);
+  }
+  await claimReviewWorkspaceTransfer(id, workspace, target, () => undefined);
+  const claimed = (await getArchivedRuns()).find((run) => run.id === id)!;
+  assert.deepEqual(claimed.reviewWorkspace?.transferredTo, target);
+  assert.equal(getRun(id), undefined);
+  assert.equal(claimed.status, prior.status);
+  await claimReviewWorkspaceTransfer(id, workspace, target, () => undefined);
+  await assert.rejects(
+    claimReviewWorkspaceTransfer(id, workspace, { runId: 'other', generation: 1 }, () => undefined),
+    /already transferred/,
+  );
+  await assert.rejects(
+    claimReviewWorkspaceTransfer(id, workspace, target, () => {
+      throw new Error('owner generation changed');
+    }),
+    /owner generation changed/,
+  );
+  forgetArchivedRuns();
+  assert.deepEqual(
+    (await getArchivedRuns()).find((run) => run.id === id)?.reviewWorkspace?.transferredTo,
+    target,
+  );
+});
