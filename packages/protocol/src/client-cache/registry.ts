@@ -788,6 +788,16 @@ export const RESOURCE_QUERY_DEFINITIONS = {
       return [{ family: 'profiles', scope: 'owner', ownerId: readerId }];
     },
   },
+  // The farm's clips; clip.push stays imperative.
+  [Methods.CLIP_LIST]: {
+    persisted: true,
+    maxBytes: 2 * mb,
+    retention: { maxEntries: 1, maxBytes: 2 * mb },
+    live: true,
+    requiresObservedRead: true,
+    normalizeParams: (params: unknown) => domainParams(params, []),
+    dependencies: () => [{ family: 'clipboard', scope: 'farm' }],
+  },
   // D07 observations. Their imperative siblings are deliberately absent.
   [Methods.PR_WATCH_LIST]: domainDefinition,
   [Methods.PR_WATCH_GET]: {

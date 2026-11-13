@@ -79,6 +79,9 @@ export function canReadResourceKey(
       if (key.ownerId !== 'gateway-copilot') return false;
       method = key.sessionId === undefined ? Methods.COPILOT_STATUS : Methods.CHAT_SESSION_CONTEXT;
       break;
+    case 'clipboard':
+      method = Methods.CLIP_LIST;
+      break;
     case 'configuration':
       method = Methods.CONFIG_PROJECTS;
       break;

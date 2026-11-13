@@ -54,6 +54,8 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `chat.sessionPin`                       | admin                |                                                                                    |
 | `chat.sessions`                         | admin                |                                                                                    |
 | `chat.sessionsBulkDelete`               | admin                |                                                                                    |
+| `clip.list`                             | admin                |                                                                                    |
+| `clip.push`                             | admin                |                                                                                    |
 | `config.githubAccounts`                 | admin                |                                                                                    |
 | `config.pool`                           | admin                |                                                                                    |
 | `config.pool.raw`                       | admin                |                                                                                    |

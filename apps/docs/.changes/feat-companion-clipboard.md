@@ -1,0 +1,1 @@
+- List `clip.push` and `clip.list` in the generated gateway API reference.

@@ -1,0 +1,1 @@
+- Add `farmslot clip [--label] [--text | --link <url> | stdin]` to send copy-ready text or a link to Companion (64 KiB cap).
