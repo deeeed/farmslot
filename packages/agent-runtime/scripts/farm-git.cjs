@@ -77,14 +77,22 @@ git() (
   if [ "\${GIT_SSH_COMMAND+x}" = x ]; then
     ssh_command=$GIT_SSH_COMMAND
   else
-    ssh_command=$(command git "\${config_args[@]}" config --get core.sshCommand)
-    status=$?
-    if [ "$status" -gt 1 ]; then exit "$status"; fi
-    if [ "$status" -eq 1 ]; then
+    if ssh_command=$(command git "\${config_args[@]}" config --get core.sshCommand); then
+      :
+    else
+      ssh_config_status=$?
+      if [ "$ssh_config_status" -gt 1 ]; then exit "$ssh_config_status"; fi
       printf -v ssh_command '%q' "\${GIT_SSH:-ssh}"
     fi
   fi
-  variant=\${GIT_SSH_VARIANT-$(command git "\${config_args[@]}" config --get ssh.variant)}
+  if [ "\${GIT_SSH_VARIANT+x}" = x ]; then
+    variant=$GIT_SSH_VARIANT
+  elif variant=$(command git "\${config_args[@]}" config --get ssh.variant); then
+    :
+  else
+    ssh_config_status=$?
+    if [ "$ssh_config_status" -gt 1 ]; then exit "$ssh_config_status"; fi
+  fi
   variant=$(printf '%s' "$variant" | tr '[:upper:]' '[:lower:]')
   if [ -z "$variant" ] || [ "$variant" = auto ]; then
     variant=$(node -e ${quote(`process.stdout.write((${commandVariant.toString()})(process.argv[1]))`)} "$ssh_command")
@@ -99,18 +107,17 @@ git() (
 )
 `;
 
-/** An explicit Bash boundary also works when the node transport's outer shell is zsh. */
+/** Keep the caller's subshell and payload intact in both Bash and Darwin zsh. */
 function withFarmGitConfig(command) {
   const config = quote("'gc.auto=0' 'maintenance.auto=false'");
-  return `bash -c ${quote(`export GIT_CONFIG_PARAMETERS="\${GIT_CONFIG_PARAMETERS:+$GIT_CONFIG_PARAMETERS }"${config}\n${transportConfig}\n${command}`)}`;
+  return `(export GIT_CONFIG_PARAMETERS="\${GIT_CONFIG_PARAMETERS:+$GIT_CONFIG_PARAMETERS }"${config}\n${transportConfig}\n${command}\n)`;
 }
 
 function withFarmGitArgv(argv) {
   return [
     'bash',
     '-c',
-    withFarmGitConfig('if [ "$1" = git ]; then shift; git "$@"; else exec "$@"; fi') +
-      ' farm-git "$@"',
+    withFarmGitConfig('if [ "$1" = git ]; then shift; git "$@"; else exec "$@"; fi'),
     'farm-git',
     ...argv,
   ];

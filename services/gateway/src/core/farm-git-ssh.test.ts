@@ -73,9 +73,9 @@ for (const source of [
     ];
     // Run outside the repo so core.sshCommand must resolve in Git's own cwd.
     const wrapped = withFarmGitArgv(argv);
-    if (source === 'parameters' || source === 'count') {
+    if (['parameters', 'count', 'default', 'GIT_SSH'].includes(source)) {
       execFileSync(
-        process.platform === 'darwin' ? 'zsh' : 'sh',
+        process.platform === 'darwin' ? 'zsh' : 'bash',
         ['-c', withFarmGitConfig(argv.map(shellQuote).join(' '))],
         {
           cwd: root,
