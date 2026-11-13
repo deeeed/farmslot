@@ -256,6 +256,28 @@ function planRun(runner: RecipeRunner, request: RecipeRunRequest): Promise<Recip
   return runner.preflight(request);
 }
 
+/**
+ * Whether a prepared execution can still run as planned after healing: healing
+ * installed and recovered nothing, and the environment the plan runs in is unchanged.
+ */
+export function preparedExecutionCurrent(
+  execution: PreparedRecipeExecution,
+  adapter: string,
+  runtimeOptions: RecipeEngineRunOptions,
+  state: HealState,
+): boolean {
+  if (state.mutations.length > 0 || state.recovered.length > 0) return false;
+  const planned = execution.runRequest.env ?? {};
+  const sourceMap = recipeEnvName('ACTION_SOURCE_MAP');
+  const current: Record<string, string | undefined> = {
+    ...recipeProcessEnvironment(),
+    ...recipeRunEnv(adapter, runtimeOptions),
+    [sourceMap]: planned[sourceMap],
+  };
+  const keys = new Set([...Object.keys(planned), ...Object.keys(current)]);
+  return [...keys].every((key) => planned[key] === current[key]);
+}
+
 /** Register recovery/mutation metadata with the engine's single final writer. */
 export function persistRunEffects(context: RecipeArtifactFinalization, state: HealState): void {
   const metadata = {

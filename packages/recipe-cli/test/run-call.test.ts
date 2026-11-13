@@ -3636,9 +3636,10 @@ describe('call', () => {
       ),
     );
     assert.equal(call.value, 0, call.stderr.join('\n'));
-    assert.equal(calls.runners.length, 2);
+    // Healing changed nothing, so the call keeps the one runner it planned with.
+    assert.equal(calls.runners.length, 1);
     assert.ok(calls.runners.every((runner) => runner.trustedMutation === undefined));
-    assert.deepEqual(calls.mutationHooks, ['load:web', 'load:web']);
+    assert.deepEqual(calls.mutationHooks, ['load:web']);
   });
 
   test("writes under the task's artifacts like run, each call in its own directory", async () => {
@@ -4321,6 +4322,40 @@ describe('call timings', () => {
     );
     assert.ok(timings.work.createRunner > 0 && timings.work.provenanceSnapshot > 0);
     assert.equal(typeof timings.nodeMs, 'number');
+  });
+
+  test('keeps the plan made before healing when healing changes nothing', async () => {
+    const { call } = await timedCall('--json');
+    const timings = lastJson(call.stdout).timings as CallTimings;
+    assert.equal(timings.work.createRunner, 1);
+    assert.equal(
+      timings.phases.some((phase) => phase.name === 'replan'),
+      false,
+    );
+  });
+
+  test('plans again when healing recovered the runtime', async () => {
+    const recovering = webAdapter(calls);
+    const registry = createAdapterRegistry();
+    registry.register({
+      ...recovering,
+      run: {
+        ...recovering.run,
+        runtimeCheck:
+          ({ state }) =>
+          async () => {
+            state.recovered.push('shop-runtime');
+            return null;
+          },
+      },
+    });
+    configureHarnessAdapters(registry);
+    const { call } = await timedCall('--json');
+    const envelope = lastJson(call.stdout);
+    const timings = envelope.timings as CallTimings;
+    assert.deepEqual(envelope.recovered, ['shop-runtime']);
+    assert.equal(timings.work.createRunner, 2);
+    assert.ok(timings.phases.some((phase) => phase.name === 'replan'));
   });
 
   test('prints one timing line for a person', async () => {

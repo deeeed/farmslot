@@ -1,1 +1,2 @@
 - `call` records where its time goes: each phase's wall and CPU time, the child processes it started and how often it built a runner or took a provenance snapshot, in `call-timings.json` beside the call's evidence, as `timings` in `--json`, and as one `Timing:` line in human output.
+- `call` plans its action once: it keeps the runner and plan it made before healing unless healing installed the overlay, recovered the runtime or changed the run environment.

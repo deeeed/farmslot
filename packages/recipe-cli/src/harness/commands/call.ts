@@ -62,6 +62,7 @@ import {
   emitHealViolation,
   executeWithHealBounds,
   preflightRecipe,
+  preparedExecutionCurrent,
   type PreparedRecipeExecution,
   prepareHeal,
   type RecipeEngine,
@@ -557,16 +558,22 @@ async function runCall<TMutation, TAllowlist extends ConsoleAllowlist>(
       });
       if (typeof prepared === 'number') return prepared;
       const { state } = prepared;
-      timings.phase('replan');
-      preflightedExecution = await preflightRecipe(
-        engine,
-        adapter,
-        recipe,
-        artifactsDir,
-        target,
-        actionManifestOverride,
-        callRuntimeOptions,
-      );
+      // The plan made before healing stands unless healing changed what it was built from.
+      if (
+        !preflightedExecution ||
+        !preparedExecutionCurrent(preflightedExecution, adapter, callRuntimeOptions, state)
+      ) {
+        timings.phase('replan');
+        preflightedExecution = await preflightRecipe(
+          engine,
+          adapter,
+          recipe,
+          artifactsDir,
+          target,
+          actionManifestOverride,
+          callRuntimeOptions,
+        );
+      }
 
       timings.phase('observers');
       const started = await startRunObservers(adapter, target, artifactsDir);
