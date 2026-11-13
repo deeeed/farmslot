@@ -30,8 +30,11 @@ FARMSLOT_HOME/run-bundles/sha256/<bundle-digest>/
   analytics/...                       # existing full-profile export only
 ```
 
-The owning Run store binds its bundle root once to
-`<owner FARMSLOT_HOME>/run-bundles` in durable Run-store metadata. All readers,
+The owning Run store binds its bundle root once, in durable Run-store metadata. Unless
+`runBundleRetention.storeRoot` names another root, it is the owner's `run-bundles`
+data directory: `FARMSLOT_DATA/run-bundles` on layout 2 (the instance's `dataRoot`,
+else `FARMSLOT_DATA`, else `<owner FARMSLOT_HOME>/data`), and
+`<owner FARMSLOT_HOME>/run-bundles` on the legacy layout. All readers,
 capture writers and GC resolve that same binding, keyed by the canonical Run
 store, including when `FARMSLOT_RUNS_DIR` is shared. A sandbox's isolated
 authentication home MUST NOT establish or replace that binding. A missing or
@@ -133,7 +136,9 @@ mandatory report/lightweight-metadata capacity before admitting work/capture;
 media MUST NOT consume that reservation. Count in-progress copy reservations and
 mirror staging in the same budget. Recorder/transcode limits stay unchanged.
 
-The owning gateway reads overrides from `${FARMSLOT_HOME}/run-bundle-retention.json`:
+The owning gateway reads overrides from `run-bundle-retention.json` in the farm's
+config directory: `${FARMSLOT_HOME}/config/` on layout 2, `${FARMSLOT_HOME}/` on the
+legacy layout. A bundle-store migration rewrites the same file.
 
 ```json
 {
@@ -222,8 +227,8 @@ review workspace, pending closeout/backlog reconciliation or `keep` tag, is not 
 by an unsettled run, and is not on an open PR. Shared paths and admitted task
 directories MUST remain available to their owners.
 
-The retention age is `runBundleRetention.runRetentionDays` in
-`${FARMSLOT_HOME}/run-bundle-retention.json`, default 7 (ADR-039 Amendment 8).
+The retention age is `runBundleRetention.runRetentionDays` in that
+`run-bundle-retention.json`, default 7 (ADR-039 Amendment 8).
 It is a positive number of days; any other value makes every reader of the file
 refuse, as an invalid capacity key does, and the pass fails loudly. To keep a
 shorter window, for example 3 days, set it next to the other `runBundleRetention`

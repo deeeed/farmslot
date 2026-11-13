@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
-import { DEFAULT_RUN_BUNDLE_RETENTION, runBundleRetentionSettings } from './retained.js';
+import {
+  DEFAULT_RUN_BUNDLE_RETENTION,
+  DEFAULT_RUN_RETENTION_DAYS,
+  runBundleRetentionSettings,
+} from './retained.js';
 
 function fixture(t: TestContext) {
   const home = mkdtempSync(path.join(tmpdir(), 'bundle-settings-'));
@@ -47,10 +51,15 @@ test('unchanged settled retention settings are read once and policies remain cal
   assert.equal(reads(), 1, 'unchanged settings must not be read and parsed for every store open');
 });
 
+const defaults = {
+  policy: DEFAULT_RUN_BUNDLE_RETENTION,
+  runRetentionDays: DEFAULT_RUN_RETENTION_DAYS,
+};
+
 test('retention settings see edits, atomic replacement, removal and recreation immediately', (t) => {
   const { home, file } = fixture(t);
   settleClock(t);
-  assert.deepEqual(runBundleRetentionSettings(home), { policy: DEFAULT_RUN_BUNDLE_RETENTION });
+  assert.deepEqual(runBundleRetentionSettings(home), defaults);
   writeFileSync(file, JSON.stringify({ runBundleRetention: { maxStoreBytes: 100 } }));
   assert.equal(runBundleRetentionSettings(home).policy.maxStoreBytes, 100);
   writeFileSync(file, JSON.stringify({ runBundleRetention: { maxStoreBytes: 2000 } }));
@@ -59,7 +68,7 @@ test('retention settings see edits, atomic replacement, removal and recreation i
   renameSync(`${file}.next`, file);
   assert.equal(runBundleRetentionSettings(home).policy.maxStoreBytes, 3000);
   rmSync(file);
-  assert.deepEqual(runBundleRetentionSettings(home), { policy: DEFAULT_RUN_BUNDLE_RETENTION });
+  assert.deepEqual(runBundleRetentionSettings(home), defaults);
   writeFileSync(file, JSON.stringify({ runBundleRetention: { maxStoreBytes: 4000 } }));
   assert.equal(runBundleRetentionSettings(home).policy.maxStoreBytes, 4000);
 });
