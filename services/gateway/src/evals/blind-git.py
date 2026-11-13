@@ -63,6 +63,30 @@ printf '%s\\n' "$*" >> ATTEMPTS
 echo 'GitHub access is unavailable in this blind eval trial.' >&2
 exit 1
 '''
+# ps prints other processes' environments with -E, BSD-style e, or legacy -e.
+# Refuse those (and -e, use -A) before any option value; values are skipped.
+PS_WRAPPER = '''#!/bin/sh
+refuse() { echo 'ps: environment output is unavailable in this blind eval trial.' >&2; exit 1; }
+value=; first=1
+for arg in "$@"; do
+  if [ -n "$value" ]; then value=; first=; continue; fi
+  case "$arg" in
+    --) first=; continue ;;
+    -*) flags=${arg#-} ;;
+    *) [ -n "$first" ] || { case "$arg" in *[eE]*) refuse ;; esac; continue; }
+       flags=$arg ;;
+  esac
+  first=
+  while [ -n "$flags" ]; do
+    letter=${flags%"${flags#?}"}; flags=${flags#?}
+    case "$letter" in
+      e|E) refuse ;;
+      O|o|G|g|p|t|U|u) [ -n "$flags" ] || value=1; flags= ;;
+    esac
+  done
+done
+COMMAND_MODE=unix2003 exec REAL_PS "$@"
+'''
 SANDBOX = '/usr/bin/sandbox-exec'
 SANDBOX_REQUIRED = 'Blind eval trials need macOS sandbox-exec on the slot node; refusing an unsandboxed worker'
 NODE_INSTALLATIONS = ['farmslot-node', 'farmslot-node-dev']
@@ -135,6 +159,9 @@ def worker_access_rules(repo):
         '(remote tcp "*:%s")' % port for port in [22, 512, 513, 514]) + ')']
     rules += ['(deny process-exec ' + ' '.join(
         '(literal "/usr/bin/%s")' % name for name in ['ssh', 'scp', 'sftp']) + ')']
+    # System ps prints other processes' environments; boundary/bin/ps refuses that.
+    rules += ['(deny process-exec ' + ' '.join(
+        '(literal %s)' % quote(p) for p in path_aliases('/bin/ps')) + ')']
     # Deployed task helpers and support bundles must remain executable.
     # Hide the rest of both legacy node installations, including dev-stack and
     # pool/project sources. Preserve a task checkout nested inside either root.
@@ -288,6 +315,20 @@ def gateway_credential_paths():
     return protected
 
 
+def operator_shell_secret_paths():
+    # Shell startup files export operator credentials; path_aliases adds each
+    # resolved dotfiles target. The worker's own ZDOTDIR is the empty boundary/shell.
+    home = Path.home()
+    homes = {home} | ({Path(os.path.expanduser(os.environ['ZDOTDIR']))} if os.environ.get('ZDOTDIR') else set())
+    startup = ['.zshenv', '.zshrc', '.zprofile', '.zlogin', '.zlogout', '.zsh_history', '.zsh_sessions']
+    protected = [root / name for root in homes for name in startup]
+    protected += [home / name for name in [
+        '.bashrc', '.bash_profile', '.bash_login', '.bash_logout', '.bash_history', '.profile',
+        '.config/secrets', '.netrc', '.npmrc', '.yarnrc', '.yarnrc.yml', '.pypirc',
+        '.docker/config.json', '.git-credentials', '.aws', '.kube/config', '.gnupg']]
+    return protected
+
+
 def worker_private_rules(capsule):
     quote = lambda value: json.dumps(str(value), ensure_ascii=False)
     rules = []
@@ -295,6 +336,7 @@ def worker_private_rules(capsule):
     # node_modules. Resolve symlinks before entering the sandbox as well.
     protected = [Path.home() / '.ssh', Path.home() / '.pi/agent/settings.json',
                  capsule / 'boundary/sandbox.sb'] + gateway_credential_paths() + operator_browser_paths()
+    protected += operator_shell_secret_paths()
     for value in protected:
         rules += ['(deny %s (subpath %s))' % (operation, quote(p))
                   for operation in ['file-read*', 'file-write*'] for p in path_aliases(value)]
@@ -384,6 +426,9 @@ def sandbox_profile(spec, capsule, tmux_sockets=None, network_ports=None):
               '(require-not (require-any ' + ' '.join('(subpath %s)' % quote(p)
                   for p in path_aliases(temporary)) + '))))']
     rules += ['(deny file-write* (subpath %s))' % quote((capsule / 'boundary/bin').resolve())]
+    # Tmux launch scripts inline the node's pool environment, credentials included.
+    rules += ['(deny %s (subpath %s))' % (operation, quote(p))
+              for operation in ['file-read*', 'file-write*'] for p in path_aliases(repo / '.agent/.launch')]
     rules += worker_private_rules(capsule)
     return '\n'.join(rules + [''])
 
@@ -487,6 +532,8 @@ def prepare_boundary(spec, capsule):
     require_sandbox()
     root = capsule / 'boundary'
     (root / 'gh-config').mkdir(parents=True, exist_ok=True)
+    # Empty ZDOTDIR: worker zsh shells read no startup files. Seatbelt keeps it read-only.
+    (root / 'shell').mkdir(exist_ok=True)
     (root / 'bin').mkdir(exist_ok=True)
     # Keep socket paths below sockaddr_un's macOS limit even for deep capsules.
     temporary = root / 'tmp'
@@ -497,12 +544,17 @@ def prepare_boundary(spec, capsule):
     if broker.is_symlink() or broker.stat().st_uid != os.getuid() or broker.stat().st_mode & 0o077:
         raise RuntimeError('Blind worker broker directory is not private')
     # macOS refuses setuid exec under Seatbelt. A non-setuid, ad-hoc signed
-    # system ps retains its CLI and sandbox, without a privileged helper.
-    ps = root / 'bin/ps'
+    # system ps retains its CLI and sandbox, without a privileged helper. The
+    # PATH entry is a wrapper that refuses environment output.
+    (root / 'libexec').mkdir(exist_ok=True)
+    ps = root / 'libexec/ps'
     shutil.copyfile('/bin/ps', ps)
     ps.chmod(0o700)
     subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', str(ps)],
                    check=True, capture_output=True)
+    (root / 'bin/ps').unlink(missing_ok=True)
+    (root / 'bin/ps').write_text(PS_WRAPPER.replace('REAL_PS', shlex.quote(str(ps))))
+    (root / 'bin/ps').chmod(0o700)
     script = BOUNDARY_SCRIPT.replace('ATTEMPTS', shlex.quote(str(root / 'attempts.log')))
     for name in ['gh', 'deny']:
         (root / 'bin' / name).write_text(script)

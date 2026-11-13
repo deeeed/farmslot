@@ -70,6 +70,7 @@ import { planRunSources } from '@farmslot/slot-config';
 
 import { assertNoAutomatedPRConflict, assertPRRunActivation } from '../backlog/pr-admission.js';
 import { projectTaskRoots } from '../core/config.js';
+import { redactStepOutputCommands } from '../core/credential-redaction.js';
 import { isGatewayTestProcess, isolatedTestPath } from '../core/isolated-test-path.js';
 import { readSlotField } from '../core/state.js';
 import { assertStorageVolumePresent } from '../core/storage-volume.js';
@@ -751,6 +752,8 @@ export function normalizePersistedRun(run: Run): boolean {
       changed = true;
     }
   }
+  // Older records stored launch lines with inlined pool credentials.
+  for (const step of run.steps ?? []) if (redactStepOutputCommands(step.outputs)) changed = true;
   return changed;
 }
 
@@ -1689,7 +1692,7 @@ export function updateRunAgentContexts(
   return updateRun(id, { agentContexts: mutator(run, currentContexts) });
 }
 
-export function updateRunStep(id: string, stepName: string, partial: Partial<RunStep>): Run {
+export function updateRunStep(id: string, stepName: string, update: Partial<RunStep>): Run {
   const run = runs.get(id);
   if (!run) throw new Error(`Run not found: ${id}`);
   if (run.engineState?.operatorForceCompleted === true) {
@@ -1701,6 +1704,9 @@ export function updateRunStep(id: string, stepName: string, partial: Partial<Run
 
   const step = run.steps.find((s) => s.name === stepName);
   if (!step) throw new Error(`Step not found: ${stepName}`);
+  // Command outputs are persisted, broadcast and served: keep credential names only.
+  const outputs = update.outputs && { ...update.outputs };
+  const partial = redactStepOutputCommands(outputs) ? { ...update, outputs } : update;
 
   // A step that stops running ends a wait still open on it (a claim not yet
   // granted, a decision a worker signal outran): that time stays queue time.

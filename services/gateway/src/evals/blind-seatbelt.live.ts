@@ -2220,3 +2220,141 @@ try {
     );
   },
 );
+
+test(
+  'worker shells start without operator startup files or their secrets',
+  { skip: process.platform !== 'darwin' },
+  (t) => {
+    const root = fixture();
+    t.after(() => rmSync(root, { recursive: true }));
+    // Synthetic operator home: startup files are links into a dotfiles checkout
+    // and source a secrets file, as on farm hosts. Fake values only.
+    const home = path.join(root, 'home');
+    const dotfiles = path.join(root, 'dotfiles');
+    mkdirSync(path.join(home, '.config/secrets'), { recursive: true });
+    mkdirSync(dotfiles);
+    const secrets = path.join(home, '.config/secrets/env.zsh');
+    writeFileSync(secrets, 'export FAKE_SECRET=fixture-value\n');
+    const startup = `export FAKE_SECRET=fixture-value\n. ${q(secrets)}\n`;
+    for (const name of ['zshenv', 'zshrc', 'zprofile']) {
+      writeFileSync(path.join(dotfiles, name), startup);
+      symlinkSync(path.join(dotfiles, name), path.join(home, `.${name}`));
+    }
+    for (const name of ['.bashrc', '.bash_profile', '.profile'])
+      writeFileSync(path.join(home, name), startup);
+    const launchEnv = {
+      ...env,
+      HOME: home,
+      FAKE_SECRET: 'fixture-value',
+      BASH_ENV: path.join(home, '.bashrc'),
+      ENV: path.join(home, '.profile'),
+    };
+    profile(root, launchEnv);
+    const shells = ['env', 'zsh -c env', 'bash -lc env', 'zsh -ic env', 'bash -ic env'];
+    const script = [
+      ...shells.map((shell) => `echo ${q(`== ${shell}`)}; ${shell} </dev/null 2>&1`),
+      // Seatbelt alone: a worker that drops the boundary's ZDOTDIR still reads nothing.
+      'echo "== unset ZDOTDIR"; (unset ZDOTDIR; zsh -lic env) </dev/null 2>&1',
+      ...[path.join(home, '.zshenv'), path.join(dotfiles, 'zshenv'), secrets].map(
+        (file) => `if cat ${q(file)} >/dev/null 2>&1; then echo READ; else echo DENIED; fi`,
+      ),
+    ].join('; ');
+    const started = Date.now();
+    const result = worker(root, script, launchEnv);
+    const output = `${result.stdout}\n${result.stderr}`;
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(output, /fixture-value|FAKE_SECRET/u);
+    assert.equal(output.match(/^HOME=/gmu)?.length, shells.length + 1, 'each shell printed env');
+    assert.deepEqual(output.match(/^(?:READ|DENIED)$/gmu), ['DENIED', 'DENIED', 'DENIED']);
+    t.diagnostic(`six shells and three reads checked in ${Date.now() - started}ms`);
+  },
+);
+
+test(
+  'worker ps cannot print other processes environments while its own tools keep working',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const root = fixture();
+    const secretEnv = { ...env, FAKE_SECRET: 'fixture-value' };
+    // Same-uid stand-ins holding a fake secret: gateway, private tmux server and pane.
+    const gateway = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      env: secretEnv,
+      stdio: 'ignore',
+    });
+    const socketDir = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'ps-tmux-')));
+    const socket = path.join(socketDir, 's');
+    t.after(() => {
+      gateway.kill('SIGKILL');
+      spawnSync('tmux', ['-S', socket, 'kill-server'], { env });
+      rmSync(socketDir, { recursive: true, force: true });
+      rmSync(root, { recursive: true });
+    });
+    execFileSync('tmux', ['-S', socket, '-f', '/dev/null', 'new-session', '-d', 'sleep 300'], {
+      env: secretEnv,
+    });
+    const tmuxServer = execFileSync('tmux', ['-S', socket, 'display-message', '-p', '#{pid}'], {
+      env,
+      encoding: 'utf8',
+    }).trim();
+    const tmuxPane = execFileSync('tmux', ['-S', socket, 'display-message', '-p', '#{pane_pid}'], {
+      env,
+      encoding: 'utf8',
+    }).trim();
+    profile(root, env);
+    const repo = path.join(root, 'tools-repo');
+    const nodeTest = path.join(root, 'tiny.test.mjs');
+    writeFileSync(nodeTest, "import test from 'node:test'; test('tiny', () => {});\n");
+    const others = [String(gateway.pid), tmuxServer, tmuxPane];
+    // $PPID is the launching shell, the stand-in for Pi's parent, which also holds the secret.
+    const script = [
+      'set -u',
+      ...[...others, '$PPID'].flatMap((pid) => [
+        `ps eww -p ${pid} 2>&1`,
+        `ps -E -p ${pid} 2>&1`,
+        `ps -ww e -p ${pid} 2>&1`,
+        `/bin/ps eww -p ${pid} 2>&1`,
+      ]),
+      'ps eww -ax 2>&1',
+      'ps -e 2>&1',
+      'echo ==own',
+      '/bin/sleep 30 & child=$!',
+      'ps -o pid=,command= -p "$child"',
+      'ps -ax -o pid=,ppid= | awk -v c="$child" -v p="$$" \'$1 == c && $2 == p { print "OWN-CHILD-LISTED" }\'',
+      'ps -ww -p $$ -o lstart= >/dev/null && echo OWN-LSTART',
+      'kill "$child"',
+      `git init -q ${q(repo)} && git -C ${q(repo)} -c user.name=f -c user.email=f@example.invalid commit -q --allow-empty -m fixture && git -C ${q(repo)} rev-parse --verify -q HEAD >/dev/null && echo GIT-OK`,
+      `${q(process.execPath)} --test ${q(nodeTest)} >/dev/null 2>&1 && echo NODE-TEST-OK`,
+    ].join('\n');
+    const started = Date.now();
+    const result = spawnSync(
+      '/bin/sh',
+      [
+        '-c',
+        withBlindTrialBoundary(script, {
+          capsule: fixtureCapsules.get(root) ?? root,
+          baseSha: 'a'.repeat(40),
+        }),
+      ],
+      { env: secretEnv, encoding: 'utf8', timeout: 45_000 },
+    );
+    const elapsed = Date.now() - started;
+    const output = `${result.stdout}\n${result.stderr}`;
+    assert.equal(result.status, 0, output);
+    assert.doesNotMatch(output, /fixture-value|FAKE_SECRET/u);
+    const [denied = '', own = ''] = output.split('==own');
+    assert.ok(denied.includes('environment output is unavailable'), denied);
+    for (const marker of [
+      '/bin/sleep 30',
+      'OWN-CHILD-LISTED',
+      'OWN-LSTART',
+      'GIT-OK',
+      'NODE-TEST-OK',
+    ])
+      assert.ok(own.includes(marker), `${marker}\n${own}`);
+    // Residual, documented in blind-environment.md: Seatbelt cannot filter a raw
+    // KERN_PROCARGS2 sysctl, so a deliberate read still sees same-uid environments.
+    t.diagnostic(
+      `ps forms refused for gateway, tmux server, pane and parent; own tools passed in ${elapsed}ms`,
+    );
+  },
+);

@@ -97,6 +97,7 @@ inherited Git configuration cannot cross the boundary.
 | `NODE_ENV`                        | Selects installed toolchains or project build mode.                                                 |
 | `PYTHONDONTWRITEBYTECODE`         | Selects installed toolchains or project build mode.                                                 |
 | `GH_CONFIG_DIR`                   | Assigned by the boundary wrapper; prevents inherited transport or browser authority.                |
+| `ZDOTDIR`                         | Assigned by the boundary wrapper to the empty, read-only `boundary/shell`; zsh reads no home rc.    |
 | `GIT_TERMINAL_PROMPT`             | Assigned by the boundary wrapper; prevents inherited transport or browser authority.                |
 | `FARMSLOT_CI_BASE_REF`            | Assigned by the boundary wrapper; prevents inherited transport or browser authority.                |
 | `FARMSLOT_BLIND_SEATBELT`         | Assigned by the boundary wrapper; prevents inherited transport or browser authority.                |
@@ -113,8 +114,11 @@ inherited Git configuration cannot cross the boundary.
 
 The runner registry's `blindModelEnvironment` capability adds the runner's
 model authentication, endpoint and provider configuration variables. Authentication
-entries are deliberate credential exceptions, visible to that model's tools just
-as its own login files are.
+entries are deliberate credential exceptions. Native runner keys stay visible to
+that model's tools just as its own login files are. Pi's provider extension holds
+the router, LiteLLM and Ollama keys it registers and removes them from its
+environment before any tool shell starts; Pi's built-in providers read their keys
+from the environment per request, so those remain visible to Pi's tool shells.
 
 | Runner or selected provider            | Additional exact entries                                                                     | Reason                                                                                                   |
 | -------------------------------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -147,6 +151,17 @@ Pi's default and unqualified `grok-*` models resolve to `xai/…` through its sh
 model adapter. Custom providers that require another environment name must add
 an exact capability entry and a regression test. Prefer the runner's own config
 for custom provider authentication.
+
+## Shell startup files
+
+`BASH_ENV`, `ENV` and the operator's `ZDOTDIR` never cross `env -i`. The wrapper
+sets `ZDOTDIR` to the capsule's empty `boundary/shell`. Seatbelt also denies reads
+and writes of the operator's zsh and bash startup files and histories,
+`~/.config/secrets`, `~/.netrc`, `~/.npmrc`, `~/.yarnrc(.yml)`, `~/.pypirc`,
+`~/.docker/config.json`, `~/.git-credentials`, `~/.aws`, `~/.kube/config`,
+`~/.gnupg` and the checkout's `.agent/.launch` scripts, with each resolved symlink
+target. A worker that resets `ZDOTDIR` or runs `bash -l` still reads none of them.
+Tools that read those files for registry authentication see them as absent.
 
 ## Trial browser routing
 
@@ -192,13 +207,33 @@ can bind its singleton in general temp, but that socket has no connect allowance
 The harness reuses its browser through TCP CDP; Metro also uses TCP. Neither
 needs another Unix-connect exception.
 
-macOS refuses the setuid `/bin/ps` inside Seatbelt. Boundary preparation copies
-the installed system binary, removes setuid and signs the copy ad hoc. The
-protected `boundary/bin/ps` handles PATH-based harness calls inside the same
-sandbox. It gains no process-info allowance. Seatbelt target filters do not
-restrict `ps`'s sysctl process-table reads, so process listing is not confined to
-the trial's descendants. `/bin/ps` remains unavailable. No outside-sandbox
-process helper is used.
+macOS refuses the setuid `/bin/ps` inside Seatbelt, and the profile also denies
+executing it. Boundary preparation copies the installed system binary to
+`boundary/libexec/ps`, removes setuid and signs the copy ad hoc. The protected
+`boundary/bin/ps` on PATH is a wrapper for harness identity and health calls
+(`-o lstart=`, `-axo pid=,command=` and similar). It refuses every
+environment-printing form: `-E`, BSD-style `e` in any cluster (`eww`, `axe`),
+and `-e`, which legacy mode reads as environment (use `-A`). It runs the copy
+with `COMMAND_MODE=unix2003`. It gains no process-info allowance. Seatbelt
+target filters do not restrict `ps`'s sysctl process-table reads, so process
+listing is not confined to the trial's descendants. No outside-sandbox process
+helper is used.
+
+### Residual: other processes' environments
+
+The wrapper closes the casual route only. The worker runs as the operator's uid,
+and the kernel returns any same-uid process's start-up environment through the
+`KERN_PROCARGS2` sysctl. A deliberate numeric read (for example `python3`
+ctypes, or running `boundary/libexec/ps` directly) still shows the gateway's,
+tmux panes' and the launching shell's environments. Seatbelt cannot block it on
+macOS 27.2. Measured on a fake process with these rules added: `(deny
+process-info* (target others))`, `(deny process-info-pidinfo (target others))`,
+`(deny sysctl-read (sysctl-name "kern.procargs2"))`, `sysctl-name-prefix
+"kern.procargs"` and `"kern.proc"`, and `(deny syscall-unix (syscall-number
+202))` all leave the read working. `(deny sysctl-read)` stops `ps` only because
+it reads `kern.argmax` first, still leaves the numeric read working, and aborts
+Node. `(deny process-info*)` aborts Python. The fix is to run blind workers
+under a separate macOS uid; that is follow-up work.
 
 Mobile producers and clients must use a broker package version supporting this
 directory override. A harness pinned to an earlier package still uses `/tmp` and

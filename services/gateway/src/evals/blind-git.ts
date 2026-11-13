@@ -136,6 +136,7 @@ const BLIND_ENVIRONMENT = [
   'PYTHONDONTWRITEBYTECODE',
   // Set by this wrapper, never admitted with ambient values.
   'GH_CONFIG_DIR',
+  'ZDOTDIR',
   'GIT_TERMINAL_PROMPT',
   'FARMSLOT_CI_BASE_REF',
   'FARMSLOT_BLIND_SEATBELT',
@@ -176,6 +177,8 @@ export function withBlindTrialBoundary(
     'unset CDP_PORT RECIPE_CDP_PORT FARMSLOT_BLIND_CDP_PORT',
     `export FARMSLOT_CI_BASE_REF=${shSingleQuote(trial.baseSha)}`,
     `export GH_CONFIG_DIR=${shSingleQuote(`${boundary}/gh-config`)}`,
+    // zsh always reads $ZDOTDIR/.zshenv; home startup files export operator secrets.
+    `export ZDOTDIR=${shSingleQuote(`${boundary}/shell`)}`,
     `export PATH=${shSingleQuote(`${boundary}/bin`)}:"$PATH"`,
     `TMPDIR="$(/usr/bin/readlink ${shSingleQuote(`${boundary}/tmp`)})"`,
     'export TMPDIR TMP="$TMPDIR" TEMP="$TMPDIR" FARMSLOT_BLIND_BROKER_DIR="$TMPDIR/broker" MAC_CHROMIUM_TMPDIR="$TMPDIR"',
