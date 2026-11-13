@@ -104,6 +104,8 @@ const BLIND_ENVIRONMENT = [
   'RECIPE_LIBRARY_PATH',
   'RECIPE_RUNTIME_DIR',
   'RECIPE_PROJECT_ROOT',
+  'RECIPE_TASK_DIR',
+  'RECIPE_SLOT_ID',
   'RECIPE_WALLET_FIXTURE',
   'RECIPE_WEB_DAPP_POLICY',
   'RECIPE_HARNESS_CHROME_BIN',
@@ -114,6 +116,9 @@ const BLIND_ENVIRONMENT = [
   'RECIPE_WATCHER_PORT',
   'TERMINAL_APP_PORT',
   'SIMULATOR_UDID',
+  'IOS_SIMULATOR',
+  'SIM_UDID',
+  'ANDROID_DEVICE',
   'DEVICE_UDID',
   'ADB_SERIAL',
   'ANDROID_SERIAL',
@@ -134,6 +139,7 @@ const BLIND_ENVIRONMENT = [
   'GIT_TERMINAL_PROMPT',
   'FARMSLOT_CI_BASE_REF',
   'FARMSLOT_BLIND_SEATBELT',
+  'FARMSLOT_BLIND_CDP_PORT',
   'CDP_PORT',
   'RECIPE_CDP_PORT',
   'GIT_TRACE2_EVENT',
@@ -165,7 +171,7 @@ export function withBlindTrialBoundary(
   // and omits unset variables. No parent environment enumeration or logging.
   const environment = names.map((name) => `\${${name}+"${name}=$${name}"}`).join(' ');
   return [
-    'unset CDP_PORT RECIPE_CDP_PORT',
+    'unset CDP_PORT RECIPE_CDP_PORT FARMSLOT_BLIND_CDP_PORT',
     `export FARMSLOT_CI_BASE_REF=${shSingleQuote(trial.baseSha)}`,
     `export GH_CONFIG_DIR=${shSingleQuote(`${boundary}/gh-config`)}`,
     `export PATH=${shSingleQuote(`${boundary}/bin`)}:"$PATH"`,
@@ -174,7 +180,7 @@ export function withBlindTrialBoundary(
     'export FARMSLOT_BLIND_SEATBELT=1',
     ...(trial.browserCdpPort
       ? [
-          `export RECIPE_CDP_PORT=${shSingleQuote(String(trial.browserCdpPort))} CDP_PORT=${shSingleQuote(String(trial.browserCdpPort))}`,
+          `export FARMSLOT_BLIND_CDP_PORT=${shSingleQuote(String(trial.browserCdpPort))} RECIPE_CDP_PORT=${shSingleQuote(String(trial.browserCdpPort))} CDP_PORT=${shSingleQuote(String(trial.browserCdpPort))}`,
         ]
       : []),
     // Records transports the isolated repository refuses, for any git binary.

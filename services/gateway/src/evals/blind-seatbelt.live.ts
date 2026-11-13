@@ -22,9 +22,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 import { shSingleQuote as q } from '../../../../scripts/lib/shell-quote.mjs';
+import { getRunnerDefinition } from '../runners/registry.js';
 
 import { withBlindTrialBoundary } from './blind-git.js';
-import { getRunnerDefinition } from '../runners/registry.js';
 
 const python = fileURLToPath(new URL('./blind-git.py', import.meta.url));
 const adapter = fileURLToPath(new URL('../../../../packages/adapter-web/', import.meta.url));
@@ -185,8 +185,9 @@ test(
   'frozen mark helper verifies its CLI and marks progress under the real seatbelt',
   { skip: process.platform !== 'darwin' },
   async (t) => {
-    const { cliTaskInputExclusions } =
-      await import('../../../../packages/cli/src/commands/task.js');
+    const { cliTaskInputExclusions } = await import(
+      new URL('../../../../packages/cli/src/commands/task.ts', import.meta.url).href
+    );
     const { retainTaskExecution } =
       await import('../../../../packages/agent-runtime/src/task-init/execution-provenance.js');
     const { buildMarkShim } =
@@ -261,6 +262,80 @@ test(
     assert.match(denied.stderr, /Operation not permitted/u);
     t.diagnostic(
       'real frozen mark verified its receipt and wrote CHECKLIST; boundary builder and sandbox profile contents remain denied',
+    );
+  },
+);
+
+test(
+  'blind Mobile tooling can reach its synthetic Metro TCP endpoint',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const root = fixture();
+    t.after(() => rmSync(root, { recursive: true }));
+    const metro = net.createServer((socket) => socket.end('synthetic-metro'));
+    t.after(
+      () =>
+        new Promise<void>((resolve, reject) =>
+          metro.close((error) => (error ? reject(error) : resolve())),
+        ),
+    );
+    metro.listen(0, '127.0.0.1');
+    await once(metro, 'listening');
+    const address = metro.address();
+    assert.ok(address && typeof address !== 'string');
+    profile(root, env, { metro_port: address.port });
+    const probe = path.join(root, 'metro-probe.mjs');
+    writeFileSync(
+      probe,
+      `
+import assert from 'node:assert/strict';
+import net from 'node:net';
+assert.equal(process.env.IOS_SIMULATOR, 'Synthetic simulator');
+assert.equal(process.env.SIM_UDID, 'synthetic-device');
+const data = await new Promise((resolve, reject) => {
+  const socket = net.connect({ host: '127.0.0.1', port: Number(process.env.METRO_PORT) });
+  socket.setTimeout(1000, () => socket.destroy(new Error('synthetic Metro timeout')));
+  socket.on('error', reject);
+  let bytes = ''; socket.on('data', chunk => bytes += chunk);
+  socket.on('end', () => resolve(bytes));
+});
+assert.equal(data, 'synthetic-metro');
+`,
+    );
+    // Async spawning lets the parent serve Metro while the child connects.
+    const child = spawn(
+      '/bin/sh',
+      [
+        '-c',
+        withBlindTrialBoundary(`exec ${q(process.execPath)} ${q(probe)}`, {
+          capsule: root,
+          baseSha: 'a'.repeat(40),
+          browserCdpPort: JSON.parse(readFileSync(path.join(root, 'state.json'), 'utf8'))
+            .browserCdpPort,
+        }).replace('/usr/bin/env -i', 'exec /usr/bin/env -i'),
+      ],
+      {
+        env: {
+          ...env,
+          METRO_PORT: String(address.port),
+          IOS_SIMULATOR: 'Synthetic simulator',
+          SIM_UDID: 'synthetic-device',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    const exited = once(child, 'exit');
+    t.after(async () => {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      await exited;
+    });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => (stderr += chunk));
+    child.stdout.resume();
+    const [code] = await exited;
+    assert.equal(code, 0, stderr);
+    t.diagnostic(
+      'synthetic Metro TCP and Mobile device environment passed; no live simulator was contacted',
     );
   },
 );
@@ -1025,7 +1100,33 @@ try {
   assert.equal(state.cdpPort, cdpPort);
   assert.equal(state.browser.launchMethod, 'spawn');
   assert.equal(state.browser.outerSeatbelt, true);
-  const version = await fetch('http://127.0.0.1:' + cdpPort + '/json/version').then(r => r.json());
+  const { register } = await import(${JSON.stringify(import.meta.resolve('tsx/esm/api'))});
+  const unregister = register({ tsconfig: ${JSON.stringify(fileURLToPath(new URL('../../../../packages/cli/tsconfig.json', import.meta.url)))} });
+  const { createAdapterRegistry } = await import(${JSON.stringify(new URL('../../../../packages/adapter-sdk/src/index.ts', import.meta.url).href)});
+  const { createWebDappAdapter } = await import(${JSON.stringify(path.join(adapter, 'src/web-dapp/index.mjs'))});
+  const { configureHarnessAdapters, harnessAdapter } = await import(${JSON.stringify(new URL('../../../../packages/recipe-cli/src/harness/adapters.ts', import.meta.url).href)});
+  const { activateRecipeRuntimeEnvironment } = await import(${JSON.stringify(new URL('../../../../packages/recipe-cli/src/harness/run-engine.ts', import.meta.url).href)});
+  const { recipeRunOptionsFromCli } = await import(${JSON.stringify(new URL('../../../../packages/recipe-cli/src/harness/run-options.ts', import.meta.url).href)});
+  const adapter = createWebDappAdapter();
+  const registry = createAdapterRegistry();
+  registry.register({ ...adapter, resolveSlotPorts() {
+    // The Extension adapter's context/pool rung overwrites both inherited ports.
+    process.env.CDP_PORT = String(${assignedPort});
+    process.env.RECIPE_CDP_PORT = String(${assignedPort});
+  } });
+  configureHarnessAdapters(registry);
+  harnessAdapter(adapter.id).resolveSlotPorts(root);
+  const options = recipeRunOptionsFromCli(adapter.id, { cdpPort: String(${assignedPort}) });
+  const restore = activateRecipeRuntimeEnvironment(adapter.id, root, options);
+  let version;
+  try {
+    const runtimePort = Number(process.env.CDP_PORT);
+    version = await fetch('http://127.0.0.1:' + runtimePort + '/json/version').then(r => r.json());
+    assert.equal(runtimePort, cdpPort);
+    assert.equal(options.cdpPort, String(cdpPort));
+    assert.equal(process.env.RECIPE_CDP_PORT, String(cdpPort));
+  } finally { restore(); unregister(); }
+
   assert.ok(version.webSocketDebuggerUrl);
   const client = await CdpClient.connect(version.webSocketDebuggerUrl);
   try {
@@ -1058,7 +1159,7 @@ try {
   assert.equal(reused.browserPid, state.browserPid);
   const stopped = await stop();
   assert.equal(stopped.stopped.length, 2);
-  console.log('ps denied; ownership/group/state/start identity passed; production adapter launch remapped assigned slot CDP to allocated recipe port; configured port denied; harness launched and reused Chrome; recipe-style CDP target/evaluation passed; Chrome CDP served; outer read denial retained');
+  console.log('ps denied; ownership/group/state/start identity passed; production adapter launch remapped assigned slot CDP to allocated recipe port; configured port denied; harness launched and reused Chrome; recipe slot resolution and explicit slot flags remapped to trial CDP; recipe-style CDP target/evaluation passed; Chrome CDP served; outer read denial retained');
 } finally {
   await cleanup();
 }

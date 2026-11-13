@@ -349,6 +349,7 @@ test('blind boundary strips gateway credentials, routing, tmux and SSH agent var
     encoding: 'utf8',
     env: {
       PATH: process.env.PATH,
+      FARMSLOT_BLIND_CDP_PORT: '19222',
       CDP_PORT: '19222',
       RECIPE_CDP_PORT: '19222',
       TMUX: '/fixture/socket,1,0',
@@ -383,5 +384,6 @@ test('blind boundary strips gateway credentials, routing, tmux and SSH agent var
   assert.match(worker.stdout, /^FARMSLOT_BLIND_SEATBELT=1$/mu);
   assert.match(worker.stdout, /^RECIPE_CDP_PORT=19444$/mu);
   assert.match(worker.stdout, /^CDP_PORT=19444$/mu);
+  assert.match(worker.stdout, /^FARMSLOT_BLIND_CDP_PORT=19444$/mu);
   assert.match(worker.stdout, /^FARMSLOT_CI_BASE_REF=a{40}$/mu);
 });

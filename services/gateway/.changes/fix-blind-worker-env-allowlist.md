@@ -1,1 +1,1 @@
-- Build blind worker environments from an explicit allowlist on fresh launches and retained reloads, preserving only task tooling and the selected runner model configuration.
+- Build blind worker environments from an explicit allowlist on fresh launches and retained reloads, preserving task tooling and selected model configuration, and keep recipe CDP routing on the trial browser.

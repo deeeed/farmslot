@@ -135,3 +135,17 @@ Pi's default and unqualified `grok-*` models resolve to `xai/…` through its sh
 model adapter. Custom providers that require another environment name must add
 an exact capability entry and a regression test. Prefer the runner's own config
 for custom provider authentication.
+
+## Trial browser routing
+
+`FARMSLOT_BLIND_CDP_PORT` carries the boundary's allocated browser port separately
+from the generic adapter variables. Recipe slot hydration and explicit recipe
+CDP flags use that allocation. Application and Metro ports retain their existing
+selection rules. Non-blind recipes retain slot and explicit-flag precedence.
+
+| Entry                                         | Reason                                                                                            |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `FARMSLOT_BLIND_CDP_PORT`                     | Assigned by the launch boundary; preserves trial browser ownership across adapter slot hydration. |
+| `RECIPE_TASK_DIR`                             | Locates the admitted recipe task and its artifacts.                                               |
+| `RECIPE_SLOT_ID`                              | Identifies the recipe slot to adapter tools.                                                      |
+| `IOS_SIMULATOR`, `SIM_UDID`, `ANDROID_DEVICE` | Preserve the assigned Mobile device names consumed by adapter tools.                              |
