@@ -161,7 +161,7 @@ try {
       flowType: 'dev',
       mode: 'autonomous',
       lane: 'validation',
-      ticketOrPr: 'FIXTURE-CATALOG-1',
+      ticketOrPr: 'FIXTURE-1',
       runner: 'scripted',
       model: 'scripted',
       transport: 'tmux',
