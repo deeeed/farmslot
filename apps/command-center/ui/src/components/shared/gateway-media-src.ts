@@ -171,7 +171,8 @@ export class GatewayMedia extends AsyncDirective {
       this.source = undefined;
       return this.value(url, format);
     }
-    const source = `${format}:${url}`;
+    // A new manifest identity for the same URL is a new source, so a held failure is read again.
+    const source = `${format}:${url}\n${heldMediaIds.get(url) ?? ''}`;
     if (this.source === source) return noChange;
     this.release();
     this.source = source;
@@ -190,12 +191,37 @@ export class GatewayMedia extends AsyncDirective {
       })
       .catch((error: unknown) => {
         if (abort.signal.aborted) return;
-        this.source = undefined;
+        // A failure stays settled for this source, so a re-render of the same URL does not fetch
+        // it again (a missing file would otherwise be requested on every render). It loads once
+        // more for another URL, when the view mounts again, or when the gateway connection
+        // comes back after a drop or restart.
         this.setValue(this.initial);
+        this.retryOnReconnect(abort.signal);
         // Fetch failures remain visible and never fall back to a credential-bearing URL.
         console.error('Gateway media could not be loaded.', error);
       });
     return this.initial;
+  }
+
+  private retryOnReconnect(signal: AbortSignal): void {
+    if (typeof window === 'undefined') return;
+    void import('../../gateway-client.js').then(({ gateway }) => {
+      if (signal.aborted) return;
+      let dropped = gateway.connectionState !== 'connected';
+      const unsubscribe = gateway.onConnectionChange((state) => {
+        if (state !== 'connected') {
+          dropped = true;
+          return;
+        }
+        if (!dropped) return;
+        unsubscribe();
+        this.source = undefined;
+        if (this.lastUrl) this.setValue(this.render(this.lastUrl, this.lastFormat));
+      });
+      // Another source, a remount or the view closing calls release(), which aborts the failed
+      // load and so ends this watch: a closed view is never loaded again.
+      signal.addEventListener('abort', unsubscribe, { once: true });
+    });
   }
 
   protected disconnected(): void {

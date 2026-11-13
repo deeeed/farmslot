@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mock, test } from 'node:test';
 
+import { noChange } from 'lit';
 import { PartType } from 'lit/directive.js';
 
 import { type ReadyGatePayload, reviewDiffHash, type RunDecision } from '@farmslot/protocol';
@@ -630,27 +631,27 @@ test('an image mismatch is settled: a re-render fetches the same source no more'
   const view = new MediaHarness({ type: PartType.CHILD });
   view.render(url);
   await failed(1);
-  // The failed load clears the source; the host renders again, as that clearing may cause.
-  view.render(url);
-  await failed(2);
+  // The failed load stays settled for this source: the host rendering again loads nothing.
+  assert.equal(view.render(url), noChange);
   assert.deepEqual(fetched, ['evidence/settled.png']);
+  assert.equal(errors.mock.callCount(), 1);
 
   // A new manifest identity for the same URL is a new source, read once more.
   gatewayContentMediaUrl(url, { path: settled.path, sha256: 'e'.repeat(64) });
   view.render(url);
-  await failed(3);
+  await failed(2);
   assert.deepEqual(fetched, ['evidence/settled.png', 'evidence/settled.png']);
 
-  // A network failure is not settled: the next render tries again.
+  // A network failure is held the same way; the gateway connection coming back reads it again
+  // (gateway-media-reconnect.test.ts), not every render.
   offline = true;
   const flaky = { ...imageArtifact, path: 'evidence/flaky.png' };
   const flakyUrl = makePresenter()._artifactUrl(flaky.path, flaky);
   const other = new MediaHarness({ type: PartType.CHILD });
   other.render(flakyUrl);
-  await failed(4);
-  other.render(flakyUrl);
-  await failed(5);
-  assert.equal(fetched.filter((path) => path === 'evidence/flaky.png').length, 2);
+  await failed(3);
+  assert.equal(other.render(flakyUrl), noChange);
+  assert.equal(fetched.filter((path) => path === 'evidence/flaky.png').length, 1);
 });
 
 test('an image mismatch is settled per owner: another principal reads the source again', async (t) => {
