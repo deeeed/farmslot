@@ -65,7 +65,20 @@ try {
     JSON.stringify(snapshot.events, null, 2) + '\n',
   );
   const tools = snapshot.events.filter((event) => event.type === 'tool.completed');
-  assert(tools.length > 0);
+  const bash = snapshot.events.find(
+    (event) =>
+      event.type === 'tool.started' &&
+      event.commandId === commandId &&
+      event.tool?.name === 'Bash' &&
+      event.tool.command === 'cat sample.txt',
+  );
+  assert(bash?.nativeId, 'Expected the exact Bash source-read command');
+  const completion = tools.find(
+    (event) => event.commandId === commandId && event.nativeId === bash.nativeId,
+  );
+  assert(completion?.tool, 'Expected the matching Bash completion');
+  assert.equal(completion.tool.status, 'completed');
+  assert.equal(completion.tool.output?.trim(), 'native source evidence');
   result.tools = tools;
   const temporaryDirectory = path.join(task, '.review-runtime/tmp');
   result.privateTemporaryFiles = await readdir(temporaryDirectory);
@@ -85,7 +98,7 @@ try {
     .flatMap((value) => value.message.content)
     .filter((value) => value.type === 'tool_result');
   result.toolResults = toolResults;
-  assert(toolResults.length >= 1);
+  assert(toolResults.some((value) => value.tool_use_id === bash.nativeId));
   assert(toolResults.every((value) => !value.is_error));
   assert.equal(await readFile(path.join(source, 'sample.txt'), 'utf8'), 'native source evidence\n');
   result.status = 'PASS';
