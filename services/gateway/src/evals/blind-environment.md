@@ -179,6 +179,8 @@ Outbound Unix connections admit the resolver and the trial directory. Other
 trials' socket connections, writes, chmod, unlink and directory renames remain
 denied, including through symlinks in the admitted directory. The boundary bin,
 routing link and existing private inputs remain protected after these allowances.
+Seatbelt denies writes and hardlinks on socket vnodes outside the trial directory,
+so a worker cannot rename or hardlink a home-based control socket into it.
 
 macOS refuses the setuid `/bin/ps` inside Seatbelt. Boundary preparation copies
 the installed system binary, removes setuid and signs the copy ad hoc. The

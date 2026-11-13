@@ -356,6 +356,11 @@ def sandbox_profile(spec, capsule, tmux_sockets=None, network_ports=None):
         # Keep the allocated root and its routing link fixed across retained launches.
         rules += ['(deny file-write* (literal %s))' % quote(p) for p in path_aliases(temporary)]
         rules += rename_guard_rules([temporary.resolve() / 'owned-entry'])
+    # Check the source vnode as well as the destination path: an external
+    # control socket must not acquire the trial directory's connect allowance.
+    rules += ['(deny file-write* file-link (require-all (vnode-type SOCKET) '
+              '(require-not (require-any ' + ' '.join('(subpath %s)' % quote(p)
+                  for p in path_aliases(temporary)) + '))))']
     rules += ['(deny file-write* (subpath %s))' % quote((capsule / 'boundary/bin').resolve())]
     rules += worker_private_rules(capsule)
     return '\n'.join(rules + [''])

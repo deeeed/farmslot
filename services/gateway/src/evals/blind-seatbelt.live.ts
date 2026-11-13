@@ -150,7 +150,8 @@ test(
     const otherSocket = other + '.sock';
     symlinkSync(other, path.join(own, 'foreign'));
     symlinkSync(otherSocket, path.join(own, 'foreign.sock'));
-    const servers = [ownSocket, otherSocket].map((socketPath) => {
+    const homeSockets = ['rename', 'link'].map((operation) => path.join(root, operation + '.sock'));
+    const servers = [ownSocket, otherSocket, ...homeSockets].map((socketPath) => {
       const server = net.createServer((socket) => socket.end('fixture-ok'));
       t.after(
         () =>
@@ -187,6 +188,21 @@ test(
         assert.equal(error.code, 'EPERM');
       }`),
     );
+    for (const [index, operation] of ['renameSync', 'linkSync'].entries()) {
+      await t.test(`home socket ${operation} into trial temp is EPERM`, () =>
+        run(`
+      import assert from 'node:assert/strict'; import * as fs from 'node:fs'; import net from 'node:net';
+      const source = ${JSON.stringify(homeSockets[index])};
+      const target = process.env.TMPDIR + '/imported-${operation}.sock';
+      let relocationError;
+      try { fs.${operation}(source, target); } catch (error) { relocationError = error; }
+      const connectionError = await new Promise(resolve => net.connect(target)
+        .on('error', resolve).on('connect', () => { throw Error('imported socket connected'); }));
+      assert.equal(relocationError?.code, 'EPERM');
+      assert.equal(connectionError.code, 'ENOENT');
+      assert.ok(fs.existsSync(source));`),
+      );
+    }
     await t.test('ps supplies harness identity and health fields', () =>
       run(`
       import assert from 'node:assert/strict'; import { execFileSync } from 'node:child_process';
