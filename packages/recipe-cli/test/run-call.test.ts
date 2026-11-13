@@ -28,8 +28,14 @@ import {
   type RecipeRecordingOptions,
   type RecipeRunResult,
 } from '@farmslot/recipe-runner';
+import { processIdentity } from '@farmslot/recipe-runner/runtime/operation';
 
-import { CALL_TIMINGS_FILE, type CallTimings } from '../src/harness/call-timings.js';
+import {
+  CALL_TIMINGS_FILE,
+  CallTimingRecorder,
+  type CallTimings,
+  withCallTimings,
+} from '../src/harness/call-timings.js';
 import {
   actionExampleCommand,
   actionLibraryContextArgs,
@@ -99,7 +105,7 @@ import {
 
 const DEFAULT_HOST = harnessHost();
 // Child processes one stubbed call may start: the checkout's provenance reads through git.
-const CALL_PROCESS_BUDGET = 12;
+const CALL_PROCESS_BUDGET = 7;
 const roots: string[] = [];
 
 function tempRoot(prefix: string): string {
@@ -4437,7 +4443,7 @@ describe('call timings', () => {
     assert.ok(timings.phases.some((phase) => phase.name === 'replan'));
   });
 
-  test('binds the call with two provenance snapshots, before and after its action', async () => {
+  test('binds the call from before its runner bundles anything to after its action', async () => {
     const { call, artifacts } = await timedCall('--json');
     const timings = lastJson(call.stdout).timings as CallTimings;
     const provenance = JSON.parse(
@@ -4445,14 +4451,76 @@ describe('call timings', () => {
     ) as { snapshots: Array<{ phase: string }> };
     assert.deepEqual(
       provenance.snapshots.map((snapshot) => snapshot.phase),
-      ['start', 'end'],
+      ['start', 'pre-execute', 'end'],
     );
-    assert.equal(timings.work.provenanceSnapshot, 2);
+    assert.equal(timings.work.provenanceSnapshot, 3);
+  });
+
+  test('refuses a kept plan when its library changed after the runner was built', async () => {
+    const editing: ShopEngine = {
+      ...engine,
+      async createRunner(adapter, manifest, options) {
+        const runner = await engine.createRunner(adapter, manifest, options);
+        // An edit while the call prepares: the runner already holds the old bytes.
+        fs.writeFileSync(path.join(library, 'notes.txt'), 'edited after bundling\n');
+        return runner;
+      },
+    };
+    const target = checkout();
+    const call = await capture(() =>
+      handleCall(
+        [
+          'shop.ping',
+          'mode=fast',
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--json',
+        ],
+        { engine: editing },
+      ),
+    );
+    assert.notEqual(call.value, 0);
+    const error = lastJson(call.stdout).error as {
+      code?: string;
+      drift?: Array<{ phase: string }>;
+    };
+    assert.equal(error.code, 'PROVENANCE_DRIFT');
+    assert.equal(error.drift?.[0]?.phase, 'pre-execute');
+    assert.equal(
+      calls.events.some((event) => event.action === 'shop.ping'),
+      false,
+    );
   });
 
   test('names its one action to the runner, so a host prepares only that action', async () => {
     await timedCall('--json');
     assert.deepEqual(calls.plannedActions, [['shop.ping']]);
+  });
+
+  test('plans once when the platform prepares no runtime, and again after one that does', async () => {
+    const target = checkout();
+    const api = await capture(() =>
+      handleCall(
+        ['command', 'cmd=pwd', '--adapter', 'api', '--target', target, '--heal', 'off', '--json'],
+        callOptions,
+      ),
+    );
+    assert.equal(api.value, 0, api.stdout.join('\n') + api.stderr.join('\n'));
+    assert.equal((lastJson(api.stdout).timings as CallTimings).work.runnerPreflight, 1);
+    const { call } = await timedCall('--json');
+    assert.equal((lastJson(call.stdout).timings as CallTimings).work.runnerPreflight, 2);
+  });
+
+  test("reads this process's own start time once, for the journal and the checkout lock", async () => {
+    const recorder = new CallTimingRecorder();
+    await withCallTimings(recorder, async () => {
+      assert.equal(processIdentity(process.pid), processIdentity(process.pid));
+    });
+    assert.ok(recorder.snapshot().processes <= 1);
   });
 
   test('prints one timing line for a person', async () => {
@@ -4468,14 +4536,21 @@ describe('call timings', () => {
   });
 
   // CI gate: the work one call repeats. Wall time is reported, never gated.
-  test('a call builds one runner, takes at most two provenance snapshots and stays in its process budget', async () => {
+  test('a call builds one runner, takes one git process per root per snapshot and stays in its process budget', async () => {
     const { call } = await timedCall('--json');
     const timings = lastJson(call.stdout).timings as CallTimings;
     console.error(
       `[call budget] wall ${timings.wallMs - (timings.phases[0]?.wallMs ?? 0)} ms after bootstrap · processes ${timings.processes} · ${JSON.stringify(timings.work)}`,
     );
     assert.equal(timings.work.createRunner, 1);
-    assert.ok(timings.work.provenanceSnapshot <= 2, `${timings.work.provenanceSnapshot} snapshots`);
+    // Start (before bundling), pre-execute and end.
+    assert.ok(timings.work.provenanceSnapshot <= 3, `${timings.work.provenanceSnapshot} snapshots`);
+    // One git process per snapshot for the one Git source root (the checkout), plus one
+    // work-tree lookup per source root (checkout, runner, library) for the whole call.
+    assert.ok(
+      timings.work.git <= timings.work.provenanceSnapshot + 3,
+      `${timings.work.git} git processes`,
+    );
     assert.ok(timings.processes <= CALL_PROCESS_BUDGET, `${timings.processes} processes`);
   });
 });

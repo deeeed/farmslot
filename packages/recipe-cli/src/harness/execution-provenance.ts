@@ -2,7 +2,6 @@
 // runs: the recipe, the product checkout, the runner (the host package), the
 // recipe libraries and any command helper scripts. Drift invalidates the run.
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs, { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
@@ -14,6 +13,7 @@ import type { RecipeArtifactFinalization, RecipeLibrarySource } from '@farmslot/
 import { harnessAdapter } from './adapters.js';
 import { cacheRecordPath, readCacheRecord, writeCacheRecord } from './cache.js';
 import { countCallWork } from './call-timings.js';
+import { gitTopLevel, readGit, readHeadCommit } from './git-read.js';
 import { harnessHost } from './host.js';
 import { isPathWithin } from './paths.js';
 
@@ -28,8 +28,6 @@ export function withRetainedSourceProvenance<T>(
 ): Promise<T> {
   return retainedSourceRoot.run(root ? fs.realpathSync(root) : undefined, invoke);
 }
-
-const gitContexts = new Map<string, { topLevel: string; pathspec: string } | null>();
 
 export type ExecutionProvenancePhase = 'start' | 'pre-execute' | 'end';
 
@@ -289,29 +287,39 @@ export function sourceSnapshot(
     '--',
     ...pathspecs,
   ]);
-  let head: Buffer;
-  try {
-    head = gitBuffer(git.topLevel, ['rev-parse', '--verify', 'HEAD']);
-  } catch (error) {
-    // A new checkout has no commit yet; its current bytes still bind the report.
-    if ((error as { status?: number }).status !== 128) throw error;
-    return {
-      head: null,
-      status,
-      sourceFingerprint: directoryFingerprint(root, excludedRoots, includedRoots),
-    };
+  let head = readHeadCommit(git.topLevel);
+  if (!head) {
+    try {
+      head = gitText(git.topLevel, ['rev-parse', '--verify', 'HEAD']).trim();
+    } catch (error) {
+      // A new checkout has no commit yet; its current bytes still bind the report.
+      if ((error as { status?: number }).status !== 128) throw error;
+      return {
+        head: null,
+        status,
+        sourceFingerprint: directoryFingerprint(root, excludedRoots, includedRoots),
+      };
+    }
   }
   // Product snapshots follow Git source selection; code inputs also bind ignored delivery bytes.
   const platformFingerprint = adapter ? harnessAdapter(adapter).sourceFingerprint : undefined;
   return {
-    head: head.toString('utf8').trim() || null,
+    head: head || null,
     status,
     sourceFingerprint:
       platformFingerprint && path.resolve(root) === git.topLevel
         ? platformFingerprint(root)
         : adapter
-          ? gitSourceFingerprint(git.topLevel, pathspecs, head)
-          : nestedGitSourceFingerprint(root, git, pathspecs, excludedRoots, includedRoots, head),
+          ? gitSourceFingerprint(git.topLevel, pathspecs, head, status)
+          : nestedGitSourceFingerprint(
+              root,
+              git,
+              pathspecs,
+              excludedRoots,
+              includedRoots,
+              head,
+              status,
+            ),
   };
 }
 
@@ -321,9 +329,10 @@ function nestedGitSourceFingerprint(
   pathspecs: string[],
   excludedRoots: string[],
   includedRoots: string[],
-  head: Buffer,
+  head: string,
+  status: string,
 ): string {
-  const gitFingerprint = gitSourceFingerprint(git.topLevel, pathspecs, head);
+  const gitFingerprint = gitSourceFingerprint(git.topLevel, pathspecs, head, status);
   if (git.pathspec === '.' && includedRoots.length === 0) return gitFingerprint;
   return createHash('sha256')
     .update(gitFingerprint)
@@ -333,34 +342,132 @@ function nestedGitSourceFingerprint(
 }
 
 function gitContext(root: string): { topLevel: string; pathspec: string } | null {
-  const cacheKey = path.resolve(root);
-  if (gitContexts.has(cacheKey)) return gitContexts.get(cacheKey) ?? null;
-  try {
-    const resolved = cacheKey;
-    const topLevel = fs.realpathSync(gitText(resolved, ['rev-parse', '--show-toplevel']).trim());
-    const relative = path.relative(topLevel, fs.realpathSync(resolved));
-    const context =
-      relative === '..' || relative.startsWith(`..${path.sep}`)
-        ? null
-        : { topLevel, pathspec: relative || '.' };
-    gitContexts.set(cacheKey, context);
-    return context;
-  } catch {
-    gitContexts.set(cacheKey, null);
-    return null;
-  }
+  const topLevel = gitTopLevel(root);
+  if (!topLevel) return null;
+  const relative = path.relative(topLevel, fs.realpathSync(path.resolve(root)));
+  return relative === '..' || relative.startsWith(`..${path.sep}`)
+    ? null
+    : { topLevel, pathspec: relative || '.' };
 }
 
-function gitSourceFingerprint(topLevel: string, pathspecs: string[], head: Buffer): string {
-  const hash = createHash('sha256');
-  hash.update(head);
-  hash.update('\0diff\0');
-  hash.update(
-    gitBuffer(
-      topLevel,
-      gitDiffArgs(['--binary', head.toString('utf8').trim(), '--', ...pathspecs]),
-    ),
+// The source's bytes from its status: HEAD, the status listing, and the mode and
+// bytes of every path it names (a missing one as deleted). A path absent from the
+// listing matches HEAD, so this binds what the full diff and untracked listing bind.
+// When the listing cannot be read back exactly, or names a submodule, the diff decides.
+function gitSourceFingerprint(
+  topLevel: string,
+  pathspecs: string[],
+  head: string,
+  status: string,
+): string {
+  return (
+    statusSourceFingerprint(topLevel, head, status) ??
+    diffSourceFingerprint(topLevel, pathspecs, head)
   );
+}
+
+function statusSourceFingerprint(
+  topLevel: string,
+  head: string,
+  status: string,
+): string | undefined {
+  const paths = statusPaths(status);
+  if (!paths) return undefined;
+  const hash = createHash('sha256');
+  hash.update(`${head}\0status\0`);
+  hash.update(status);
+  for (const relative of paths) {
+    hash.update(`\0path\0${relative}\0`);
+    const absolute = path.join(topLevel, relative);
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(absolute);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      hash.update('deleted');
+      continue;
+    }
+    // A submodule's change is its commit, which only the diff reports.
+    if (stat.isDirectory()) return undefined;
+    hash.update(`${stat.mode}\0`);
+    hash.update(
+      stat.isSymbolicLink() ? fs.readlinkSync(absolute) : readRegularFileNoFollow(absolute),
+    );
+  }
+  return hash.digest('hex');
+}
+
+// Every path a `status --porcelain=v1` listing names, or undefined when one cannot be
+// read back exactly: an untracked directory, an unparsable quote, an ambiguous rename.
+function statusPaths(status: string): string[] | undefined {
+  const paths = new Set<string>();
+  for (const line of status.split('\n')) {
+    if (!line) continue;
+    if (line.length < 4 || line[2] !== ' ') return undefined;
+    const rest = line.slice(3);
+    const names = line[0] === 'R' || line[0] === 'C' ? renamedPaths(rest) : [statusPath(rest)];
+    if (!names) return undefined;
+    for (const name of names) {
+      if (name === undefined || name.endsWith('/')) return undefined;
+      paths.add(name);
+    }
+  }
+  return [...paths].sort();
+}
+
+function renamedPaths(field: string): Array<string | undefined> | undefined {
+  if (field.startsWith('"')) {
+    const end = quotedEnd(field);
+    if (end === undefined || !field.startsWith(' -> ', end)) return undefined;
+    return [statusPath(field.slice(0, end)), statusPath(field.slice(end + 4))];
+  }
+  const arrow = field.indexOf(' -> ');
+  if (arrow < 0 || field.indexOf(' -> ', arrow + 1) >= 0) return undefined;
+  return [statusPath(field.slice(0, arrow)), statusPath(field.slice(arrow + 4))];
+}
+
+// The index just past a C-quoted field's closing quote.
+function quotedEnd(field: string): number | undefined {
+  for (let index = 1; index < field.length; index += 1) {
+    if (field[index] === '\\') index += 1;
+    else if (field[index] === '"') return index + 1;
+  }
+  return undefined;
+}
+
+// A status path: as written, or C-unquoted when Git quoted it.
+function statusPath(field: string): string | undefined {
+  if (!field.startsWith('"')) return field.includes('"') ? undefined : field;
+  if (quotedEnd(field) !== field.length) return undefined;
+  const bytes: number[] = [];
+  const escapes: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13 };
+  for (let index = 1; index < field.length - 1; index += 1) {
+    const char = field[index]!;
+    if (char !== '\\') {
+      bytes.push(...Buffer.from(char, 'utf8'));
+      continue;
+    }
+    const next = field[index + 1] ?? '';
+    if (/^[0-7]{3}$/u.test(field.slice(index + 1, index + 4))) {
+      bytes.push(Number.parseInt(field.slice(index + 1, index + 4), 8));
+      index += 3;
+    } else if (next in escapes) {
+      bytes.push(escapes[next]!);
+      index += 1;
+    } else if (next === '"' || next === '\\') {
+      bytes.push(next.charCodeAt(0));
+      index += 1;
+    } else return undefined;
+  }
+  const decoded = Buffer.from(bytes).toString('utf8');
+  return decoded.includes('\uFFFD') ? undefined : decoded;
+}
+
+function diffSourceFingerprint(topLevel: string, pathspecs: string[], head: string): string {
+  const hash = createHash('sha256');
+  hash.update(`${head}\n`);
+  hash.update('\0diff\0');
+  hash.update(gitBuffer(topLevel, gitDiffArgs(['--binary', head, '--', ...pathspecs])));
   const untracked = gitText(topLevel, [
     'ls-files',
     '--others',
@@ -569,12 +676,7 @@ function gitText(cwd: string, args: string[]): string {
 }
 
 function gitBuffer(cwd: string, args: string[]): Buffer {
-  return execFileSync('git', args, {
-    cwd,
-    encoding: 'buffer',
-    maxBuffer: 128 * 1024 * 1024,
-    stdio: ['ignore', 'pipe', 'ignore'],
-  });
+  return readGit(cwd, args);
 }
 
 function compareSource(

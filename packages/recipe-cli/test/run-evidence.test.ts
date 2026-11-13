@@ -789,6 +789,46 @@ describe('execution provenance', () => {
     );
   });
 
+  test('a snapshot reads each Git root with one git process and still sees every edit', async () => {
+    const root = checkout('provenance-status-', {
+      'app/a.txt': 'one\n',
+      'app/spaced name é.txt': 'two\n',
+      'app/tool.sh': 'echo hi\n',
+    });
+    const recorder = new CallTimingRecorder();
+    const seen = new Set<string>();
+    const snapshot = async (label: string, gitAtMost: number) => {
+      const before = recorder.snapshot().work.git;
+      const fingerprint = await withCallTimings(recorder, async () => sourceSnapshot(root)).then(
+        (source) => source.sourceFingerprint,
+      );
+      assert.ok(recorder.snapshot().work.git - before <= gitAtMost, `${label}: git processes`);
+      assert.equal(seen.has(fingerprint), false, `${label}: the edit changes the fingerprint`);
+      seen.add(fingerprint);
+    };
+    await snapshot('clean', 2); // the work-tree lookup, once, plus status
+    fs.writeFileSync(path.join(root, 'app', 'a.txt'), 'uno\n');
+    await snapshot('tracked edit', 1);
+    fs.writeFileSync(path.join(root, 'app', 'a.txt'), 'une\n');
+    await snapshot('second edit of a modified file', 1);
+    fs.writeFileSync(path.join(root, 'app', 'spaced name é.txt'), 'deux\n');
+    await snapshot('quoted path edit', 1);
+    fs.chmodSync(path.join(root, 'app', 'tool.sh'), 0o755);
+    await snapshot('mode change', 1);
+    fs.writeFileSync(path.join(root, 'app', 'new.txt'), 'new\n');
+    await snapshot('untracked file', 1);
+    fs.writeFileSync(path.join(root, 'app', 'new.txt'), 'newer\n');
+    await snapshot('untracked edit', 1);
+    // A new directory is listed collapsed, so the untracked listing reads its files.
+    fs.mkdirSync(path.join(root, 'fresh'));
+    fs.writeFileSync(path.join(root, 'fresh', 'inside.txt'), 'in\n');
+    await snapshot('untracked directory', 3);
+    fs.writeFileSync(path.join(root, 'fresh', 'inside.txt'), 'inner\n');
+    await snapshot('edit inside an untracked directory', 3);
+    fs.rmSync(path.join(root, 'app', 'a.txt'));
+    await snapshot('deletion', 3);
+  });
+
   test('hashes an installed runner package once per version and again after an edit', () => {
     const previous = process.env.FARMSLOT_RECIPE_CACHE_DIR;
     const cache = tempRoot('provenance-cache-');

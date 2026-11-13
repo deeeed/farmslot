@@ -91,11 +91,6 @@ export type RecipeEngineRunOptions = RecipeRunOptions & {
   cli?: CommandOptions;
   /** Read-only planning/conformance validates authority without publishing execution claims. */
   readOnly?: boolean;
-  /**
-   * Take the start provenance snapshot right before execution instead of while planning, so
-   * the start and end snapshots alone bind the run: `call` plans before it heals.
-   */
-  deferStartProvenance?: boolean;
   /** The actions the recipe runs, passed to the host's runner (`RecipeRunnerOptions`). */
   plannedActions?: readonly string[];
   /** Command-specific artifacts join the engine package before its final validation. */
@@ -144,25 +139,23 @@ export async function runRecipe<TMutation, TAllowlist extends ConsoleAllowlist>(
   const { runner, runRequest, absoluteArtifactsDir, provenanceInput, provenanceSnapshots } =
     execution;
   if (!wasPreflighted) await planRun(runner, runRequest);
-  await prepareRuntimeIfNeeded(adapter, projectRoot, runtimeOptions);
-  // The prepared runner owns frozen action bundles. Rechecking its plan here
-  // does not reconstruct adapters or replace their approved bytes.
-  await planRun(runner, runRequest);
-  if (provenanceSnapshots.length === 0) {
-    // Deferred from planning: what runs is bound from here to the end snapshot.
-    provenanceSnapshots.push(await captureExecutionProvenance(provenanceInput, 'start'));
-  } else {
-    const preExecute = await captureExecutionProvenance(provenanceInput, 'pre-execute');
-    provenanceSnapshots.push(preExecute);
-    const preExecuteDrift = executionProvenanceDrift(provenanceSnapshots[0]!, preExecute);
-    if (preExecuteDrift.length > 0) {
-      const provenancePath = await writeExecutionProvenance(
-        absoluteArtifactsDir,
-        provenanceSnapshots,
-        preExecuteDrift,
-      );
-      throw new ProvenanceDriftError(provenancePath, preExecuteDrift);
-    }
+  // A platform that prepared its runtime after the plan was made gets the plan
+  // checked again. The prepared runner owns frozen action bundles: rechecking its
+  // plan does not reconstruct adapters or replace their approved bytes.
+  if (await prepareRuntimeIfNeeded(adapter, projectRoot, runtimeOptions)) {
+    await planRun(runner, runRequest);
+  }
+  // The start snapshot was taken when the runner froze its bundles: any edit since refuses the run.
+  const preExecute = await captureExecutionProvenance(provenanceInput, 'pre-execute');
+  provenanceSnapshots.push(preExecute);
+  const preExecuteDrift = executionProvenanceDrift(provenanceSnapshots[0]!, preExecute);
+  if (preExecuteDrift.length > 0) {
+    const provenancePath = await writeExecutionProvenance(
+      absoluteArtifactsDir,
+      provenanceSnapshots,
+      preExecuteDrift,
+    );
+    throw new ProvenanceDriftError(provenancePath, preExecuteDrift);
   }
   if (runRequest.hud) {
     const explicitShow = (runtimeOptions.requestedAutoHud ?? runtimeOptions.autoHud) === true;
@@ -324,12 +317,6 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     runtimeOptions.librarySources,
     trust.source?.trust ?? 'trusted',
   );
-  const { manifest, actionSources } = await engine.resolveActionManifest(
-    adapter,
-    actionManifestPath,
-    librarySources,
-    process.env[recipeEnvName('LIVE_ADAPTER_DIR')],
-  );
   const recipeDocument = runtimeRecipeDocument(recipe, absoluteRecipePath);
   const mutation = engine.trustedMutation;
   const mutationInput: TrustedMutationLoadInput = {
@@ -346,6 +333,35 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
   const hud: RecipeHudUnavailable | undefined = suppressAutoHud
     ? { state: 'unavailable', reason: 'opaque-runtime' }
     : undefined;
+  // Bound before any runner bundles its actions, so an edit after this point,
+  // even one a bundle already holds, shows as drift before execution.
+  const context = harnessContext();
+  const projectBinding =
+    context?.target.value === path.resolve(projectRoot) ? context.project : undefined;
+  const provenanceInput: ExecutionProvenanceInput = {
+    adapter,
+    projectRoot,
+    recipeDocument: recipeDocument ?? recipe,
+    ...(absoluteRecipePath ? { recipePath: absoluteRecipePath } : {}),
+    ...(librarySources ? { librarySources } : {}),
+    excludedProductRoots: [
+      absoluteArtifactsDir,
+      ...(projectBinding ? recipeOutputRoots(projectRoot, projectBinding) : []),
+      recipeRuntimePath(projectRoot, 'operations'),
+      recipeRuntimePath(projectRoot, 'lock-members'),
+    ],
+    helperPaths: commandHelperPaths(recipeDocument ?? recipe, projectRoot),
+    runnerIncludes: engine.runnerIncludes,
+  };
+  const provenanceSnapshots = runtimeOptions.readOnly
+    ? []
+    : [await captureExecutionProvenance(provenanceInput, 'start')];
+  const { manifest, actionSources } = await engine.resolveActionManifest(
+    adapter,
+    actionManifestPath,
+    librarySources,
+    process.env[recipeEnvName('LIVE_ADAPTER_DIR')],
+  );
   const runnerOptions = {
     captureHudEvidence: !suppressAutoHud && !surface.headless,
     quietStdout: runtimeOptions.stdoutIsMachineContract === true,
@@ -420,28 +436,6 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
       });
     }
   }
-  const context = harnessContext();
-  const projectBinding =
-    context?.target.value === path.resolve(projectRoot) ? context.project : undefined;
-  const provenanceInput: ExecutionProvenanceInput = {
-    adapter,
-    projectRoot,
-    recipeDocument: recipeDocument ?? recipe,
-    ...(absoluteRecipePath ? { recipePath: absoluteRecipePath } : {}),
-    ...(librarySources ? { librarySources } : {}),
-    excludedProductRoots: [
-      absoluteArtifactsDir,
-      ...(projectBinding ? recipeOutputRoots(projectRoot, projectBinding) : []),
-      recipeRuntimePath(projectRoot, 'operations'),
-      recipeRuntimePath(projectRoot, 'lock-members'),
-    ],
-    helperPaths: commandHelperPaths(recipeDocument ?? recipe, projectRoot),
-    runnerIncludes: engine.runnerIncludes,
-  };
-  const provenanceSnapshots =
-    runtimeOptions.readOnly || runtimeOptions.deferStartProvenance
-      ? []
-      : [await captureExecutionProvenance(provenanceInput, 'start')];
   return {
     readOnly: runtimeOptions.readOnly === true,
     ...(plan ? { plan } : {}),
@@ -727,12 +721,16 @@ function recipeRunEnv(
   return run?.childEnv ? run.childEnv(base) : base;
 }
 
+/** Run the platform's prepareRuntime hook; whether it has one. */
 export async function prepareRuntimeIfNeeded(
   adapter: string,
   projectRoot: string,
   runtimeOptions: RecipeRunOptions,
-): Promise<void> {
-  await harnessAdapter(adapter).run?.prepareRuntime?.(projectRoot, runtimeOptions);
+): Promise<boolean> {
+  const run = harnessAdapter(adapter).run;
+  if (!run?.prepareRuntime) return false;
+  await run.prepareRuntime(projectRoot, runtimeOptions);
+  return true;
 }
 
 function restoreEnv(key: string, value: string | undefined) {

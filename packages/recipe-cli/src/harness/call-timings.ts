@@ -17,6 +17,7 @@ export type CallWork =
   | 'createRunner'
   | 'runnerPreflight'
   | 'provenanceSnapshot'
+  | 'git'
   | 'liveAdapterBuilt'
   | 'liveAdapterCached';
 
@@ -60,6 +61,7 @@ export class CallTimingRecorder {
     createRunner: 0,
     runnerPreflight: 0,
     provenanceSnapshot: 0,
+    git: 0,
     liveAdapterBuilt: 0,
     liveAdapterCached: 0,
   };
@@ -148,7 +150,8 @@ export function countCallWork(work: CallWork): void {
 
 let tracking = false;
 
-// Asynchronous children reach the `child_process` diagnostics channel. Node has
+// Asynchronous children reach the `child_process` diagnostics channel (Node 22 and
+// later; on older Node they go uncounted). Node has
 // no channel for spawnSync, so its three synchronous entry points are wrapped;
 // syncBuiltinESMExports makes ESM importers see the wrappers too. Each start is
 // attributed to the call whose async context started it.

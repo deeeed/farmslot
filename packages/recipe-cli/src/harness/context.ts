@@ -55,6 +55,7 @@ import {
   type ResolvedProjectLibrary,
 } from './context-state.js';
 import { inputSourceSnapshot, providerSourceSnapshot } from './execution-provenance.js';
+import { gitTopLevel } from './git-read.js';
 import {
   configureHarnessHost,
   type HarnessHostConfig,
@@ -405,20 +406,6 @@ function detectedAdapter(
         ...(winner.library ? { library: winner.library } : {}),
       }
     : undefined;
-}
-
-// The Git work tree `dir` is in, or undefined outside one.
-function gitTopLevel(dir: string): string | undefined {
-  try {
-    const top = execFileSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-    return top ? fs.realpathSync(top) : undefined;
-  } catch {
-    // Not inside a Git work tree, or no git: the directory answers for itself.
-    return undefined;
-  }
 }
 
 type RuntimeContext = Record<string, unknown>;
