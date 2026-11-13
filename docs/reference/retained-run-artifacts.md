@@ -30,8 +30,11 @@ FARMSLOT_HOME/run-bundles/sha256/<bundle-digest>/
   analytics/...                       # existing full-profile export only
 ```
 
-The owning Run store binds its bundle root once to
-`<owner FARMSLOT_HOME>/run-bundles` in durable Run-store metadata. All readers,
+The owning Run store binds its bundle root once, in durable Run-store metadata. Unless
+`runBundleRetention.storeRoot` names another root, it is the owner's `run-bundles`
+data directory: `FARMSLOT_DATA/run-bundles` on layout 2 (the instance's `dataRoot`,
+else `FARMSLOT_DATA`, else `<owner FARMSLOT_HOME>/data`), and
+`<owner FARMSLOT_HOME>/run-bundles` on the legacy layout. All readers,
 capture writers and GC resolve that same binding, keyed by the canonical Run
 store, including when `FARMSLOT_RUNS_DIR` is shared. A sandbox's isolated
 authentication home MUST NOT establish or replace that binding. A missing or
