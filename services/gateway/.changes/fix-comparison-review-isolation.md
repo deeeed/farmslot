@@ -1,0 +1,2 @@
+- Start comparison review variants in fresh chains by default.
+- Preserve continuation when a primary review lineage is explicitly requested.

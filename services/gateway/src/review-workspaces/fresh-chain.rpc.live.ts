@@ -132,6 +132,17 @@ test(
       status: 'done',
       completedAt: new Date().toISOString(),
       reviewResult: priorResult,
+      agentContexts: [
+        {
+          id: 'review',
+          role: 'review',
+          label: 'Reference',
+          status: 'complete',
+          runId: prior.id,
+          slotId: null,
+          reviewId: 'reference-lineage',
+        },
+      ],
     });
     await store.persistRunNow(savedPrior, 'historical fixture setup');
     const before = structuredClone(savedPrior);
@@ -256,6 +267,53 @@ test(
         await fixture.client.call('run.archive', { runId: omittedMode.run.id });
       }
 
+      const comparisonRequest: RunCreateParams = {
+        ...request,
+        lane: 'comparison',
+        variant: 'candidate',
+        familyId: prior.id,
+        reviewMode: undefined,
+        reviewContext: undefined,
+      };
+      const comparison = await fixture.client.call<RunCreateResult>(
+        'run.create',
+        comparisonRequest,
+      );
+      try {
+        const observed = await fixture.client.call<RunGetResult>('run.get', {
+          runId: comparison.run.id,
+        });
+        assert.equal(observed.run.reviewMode, 'cold');
+        assert.deepEqual(observed.run.reviewContext, { freshChain: true, reviewLineages: [null] });
+        assert.equal(findLatestPriorReviewRun(observed.run, [before]), null);
+        assert.equal(observed.run.repeatReviewContext, undefined);
+      } finally {
+        await fixture.client.call('run.cancel', { runId: comparison.run.id });
+        await fixture.client.call('run.archive', { runId: comparison.run.id });
+      }
+      const retainedContext = {
+        reviewLineages: [
+          {
+            reviewId: 'reference-lineage',
+            repository: 'example/app',
+            prNumber: 42,
+          },
+        ],
+      };
+      const retained = await fixture.client.call<RunCreateResult>('run.create', {
+        ...comparisonRequest,
+        reviewMode: 'cold',
+        reviewContext: retainedContext,
+      });
+      try {
+        assert.deepEqual(retained.run.reviewContext, retainedContext);
+        assert.equal(findLatestPriorReviewRun(retained.run, [before])?.id, prior.id);
+      } finally {
+        await fixture.client.call('run.cancel', { runId: retained.run.id });
+        await fixture.client.call('run.archive', { runId: retained.run.id });
+      }
+      assert.deepEqual(store.getRun(prior.id), before);
+
       await assert.rejects(
         fixture.client.call('run.create', { ...request, reviewMode: 'warm' }),
         /requires COLD/,
@@ -287,6 +345,11 @@ test(
             checkoutLocalCliFlag: true,
             freshSelectionPersisted: true,
             omittedModeOverridesWarmDefault: true,
+            comparisonDefaultRunId: comparison.run.id,
+            comparisonDefaultFresh: true,
+            comparisonModeOverridesWarmDefault: true,
+            explicitComparisonLineageRunId: retained.run.id,
+            explicitComparisonLineagePreserved: true,
             predecessorSelected: false,
             priorRunUnchanged: true,
             conflictingWarmRejected: true,
