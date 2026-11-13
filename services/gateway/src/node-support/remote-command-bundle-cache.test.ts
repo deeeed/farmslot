@@ -44,6 +44,7 @@ writeFileSync(path.join(root, 'scripts/write-runtime-context.sh'), '#!/bin/sh\n'
 writeFileSync(path.join(root, 'services/gateway/package.json'), '{}');
 writeFileSync(path.join(poolDir, 'testbox.json'), JSON.stringify({ machine: 'testbox' }));
 await seedRunnerObservabilityFixture(root);
+writeFileSync(path.join(root, 'scripts/lib/resolve-farmslot-cli.sh'), '#!/bin/sh\n');
 
 const script = path.join(packRoot, 'scripts', 'x.sh');
 const nested = path.join(packRoot, 'scripts', 'sub', 'y.sh');
@@ -235,23 +236,17 @@ test('commands in an unchanged tree collect the bundle once and deliver it once'
   assert.equal(node.uploads(), 1);
 });
 
-test('external catalog edits and root bindings invalidate the bundle without rescanning unchanged inputs', async (t) => {
+test('external catalogs select a bundle without script hooks and invalidate it only when inputs change', async (t) => {
   aheadClock(t);
   const name = 'external-cache-farm';
   const pack = path.join(root, 'projects', name);
   const firstRoot = path.join(root, 'external-one');
   const secondRoot = path.join(root, 'external-two');
-  for (const dir of [
-    path.join(pack, 'scripts'),
-    path.join(firstRoot, 'dev'),
-    path.join(secondRoot, 'dev'),
-  ])
+  for (const dir of [pack, path.join(firstRoot, 'dev'), path.join(secondRoot, 'dev')])
     mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(pack, 'scripts/x.sh'), 'echo catalog\n');
   writeFileSync(
     path.join(pack, 'project.json'),
     JSON.stringify({
-      node_support: { paths: [`projects/${name}/scripts`, `projects/${name}/project.json`] },
       qa: {
         default_profile: 'smoke',
         profiles: [{ id: 'smoke', title: 'Smoke', template_id: 'qa/default' }],
@@ -272,9 +267,10 @@ test('external catalog edits and root bindings invalidate the bundle without res
   });
   const node = fakeNode();
   const vars = { ...remoteVars('external-cache-1'), projectName: name };
-  const hook = `bash ~/farmslot-node/projects/${name}/scripts/x.sh`;
-  const command = () => resolveRemoteFarmCommand(vars, hook, { io: node.io });
+  const command = () =>
+    resolveRemoteFarmCommand(vars, '~/farmslot-node', { io: node.io, supportRoot: true });
   const first = await command();
+  assert.match(first, /\/support\/[a-f0-9]{64}$/);
   assert.equal(await command(), first);
   assert.equal(collections, 1);
   process.env.CACHE_COOK_ROOT = secondRoot;

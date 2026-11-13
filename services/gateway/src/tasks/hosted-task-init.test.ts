@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -122,6 +123,7 @@ let linked = false;
 let linkedRequest: TaskRuntimeRequest | undefined;
 let supportPending = false;
 let supportBudget: number | undefined;
+let supportRootRequested: boolean | undefined;
 mock.module('../fleet/node-link-policy.js', {
   namedExports: { usesNodeLink: () => linked },
 });
@@ -144,6 +146,7 @@ mock.module('../node-support/remote-command.js', {
       options?: Parameters<typeof remoteCommands.resolveRemoteFarmCommand>[2],
     ) => {
       supportBudget = options?.budgetMs;
+      supportRootRequested = options?.supportRoot;
       if (supportPending)
         throw new remoteCommands.NodeSupportPendingError('support delivery exceeded its budget');
       return path.isAbsolute(support) ? support : '/captured/support';
@@ -165,6 +168,7 @@ const {
   initializeHostedTaskOnSlot,
   verifyHostedTaskOnSlot,
   hostedTaskRequest,
+  hostedTaskCommand,
   syncHostedTaskSidecars,
 } = (await import(fresh)) as typeof import('./hosted-task-init.js');
 
@@ -222,6 +226,7 @@ test('partial initialization refuses before any gateway sidecar replaces retaine
   assert.equal(executionCount, 0, 'local task initialization must not start a CLI process');
   assert.equal(runtimeRequests.length, 1, 'a refused partial initialization must not be retried');
   assert.equal(runtimeRequests[0].action, 'init');
+  assert.equal(runtimeRequests[0].env?.FARMSLOT_TASK_SUPPORT_DIR, runtimeRequests[0].supportDir);
   assert.deepEqual(
     files.map((file) => fs.readFileSync(path.join(worker, file), 'utf8')),
     before,
@@ -310,6 +315,37 @@ test('remote verification stays on its node with the selected provider and captu
     supportDir: '/captured/support',
     env: { MM_HARNESS_PACKAGE_ROOT: '/node/provider' },
   });
+  assert.equal(supportRootRequested, true);
+});
+
+test('legacy CLI receives the selected bundle for init and no catalog context for verify', async (t) => {
+  const support = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-task-support-')));
+  t.after(() => fs.rmSync(support, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(support, 'scripts/lib'), { recursive: true });
+  fs.copyFileSync(
+    path.resolve(import.meta.dirname, '../../../../scripts/lib/resolve-farmslot-cli.sh'),
+    path.join(support, 'scripts/lib/resolve-farmslot-cli.sh'),
+  );
+  const cli = path.join(support, 'capture-cli');
+  fs.writeFileSync(
+    cli,
+    '#!/usr/bin/env node\nconsole.log(JSON.stringify({support:process.env.FARMSLOT_TASK_SUPPORT_DIR??null,args:process.argv.slice(2)}));\n',
+    { mode: 0o755 },
+  );
+  const environment: NodeJS.ProcessEnv = { ...process.env, FARMSLOT_CLI: cli };
+  delete environment.FARMSLOT_TASK_SUPPORT_DIR;
+  const slot = { ...fixtureSlot(fixtureFarm), host: 'remote.invalid', machine: 'remote-node' };
+  for (const args of [
+    ['internal', 'task-init', '/node/request.json'],
+    ['task', 'verify', '/node/task'],
+  ]) {
+    const command = await hostedTaskCommand(slot, args, support);
+    const receipt = JSON.parse(
+      execFileSync('bash', ['-c', command], { env: environment, encoding: 'utf8' }),
+    );
+    assert.equal(receipt.support, args[0] === 'internal' ? support : null);
+    assert.deepEqual(receipt.args, ['--json', ...args]);
+  }
 });
 
 test('written task stages sidecars once after QA inputs and mirrors all producer bytes', async (t) => {
@@ -482,6 +518,11 @@ for (const transport of ['local', 'classic', 'node-link'] as const) {
     await assert.rejects(verifyHostedTaskOnSlot(slot(), taskPath), /TASK_INIT_PARTIAL/);
     assert.equal(executionCount, 1);
     assert.ok(cliCommand?.endsWith(`'task' 'verify' ${shellQuote(taskPath)}`));
+    if (transport === 'classic') {
+      assert.equal(supportRootRequested, true);
+      assert(cliCommand);
+      assert(cliCommand.includes(shellQuote('/captured/support')));
+    }
     assert.deepEqual(cliOptions, { timeout: 120_000, maxBuffer: 8 * 1024 * 1024, noRetry: true });
     assert.equal(runtimeRequests.length, 0);
     assert.equal(remoteRequest, undefined);

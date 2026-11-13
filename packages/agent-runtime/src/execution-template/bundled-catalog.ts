@@ -47,7 +47,7 @@ function invalid(message: string): never {
     code: 'TASK_TEMPLATE_CATALOG_INVALID',
   });
 }
-function within(root: string, target: string): boolean {
+export function isWithin(root: string, target: string): boolean {
   const relative = path.relative(root, target);
   return (
     relative === '' ||
@@ -63,7 +63,7 @@ export function readBundledExecutionTemplateCatalog(root: string): BundledCatalo
   const file = path.join(root, EXECUTION_TEMPLATE_CATALOG_FILE);
   if (!existsSync(file)) return;
   const canonical = realpathSync(root);
-  if (!within(canonical, realpathSync(file))) invalid('descriptor escapes its support project');
+  if (!isWithin(canonical, realpathSync(file))) invalid('descriptor escapes its support project');
   let data: unknown;
   try {
     data = JSON.parse(readFileSync(file, 'utf8'));
@@ -109,7 +109,7 @@ export function readBundledExecutionTemplateCatalog(root: string): BundledCatalo
     if (
       !existsSync(target) ||
       !statSync(target).isDirectory() ||
-      !within(canonical, realpathSync(target))
+      !isWithin(canonical, realpathSync(target))
     )
       invalid(`missing or escaping root for ${declaration.id}`);
     sources.set(declaration.id, {

@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "External catalog consistency through hosted task initialization",
-  "description": "An isolated gateway and node have different cookbook bytes. A real run.create, node task.runtime and installed CLI must prepare and dispatch using the shipped gateway catalog, preserving the node checkout. No model or production run is used; owned fixture resources are cancelled, archived and cleaned.",
+  "description": "An isolated gateway and node have different cookbook bytes and a pack with no node_support declaration or farm-script hooks. A real run.create, node task.runtime and installed CLI must prepare and dispatch using the shipped gateway catalog, preserving the node checkout. No model or production run is used; owned fixture resources are cancelled, archived and cleaned.",
   "workflow": {
     "entry": "dispatch",
     "nodes": {

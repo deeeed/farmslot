@@ -11,6 +11,7 @@ import type {
 
 import {
   bundledExecutionTemplateSource,
+  isWithin,
   readBundledExecutionTemplateCatalog,
 } from './bundled-catalog.js';
 import type { ExecutionTemplateSource } from './types.js';
@@ -32,14 +33,6 @@ export interface ResolveConfiguredExecutionTemplateSourcesOptions {
   /** Runtime-selected bundle project root, independent of an installed pack's location. */
   catalogRoot?: string;
   env?: NodeJS.ProcessEnv;
-}
-
-function isWithin(base: string, candidate: string): boolean {
-  const relative = path.relative(base, candidate);
-  return (
-    relative === '' ||
-    (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
-  );
 }
 
 /** A git answer matches spawnSync, including unavailable status on launch/output failure. */

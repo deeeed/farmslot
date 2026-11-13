@@ -396,6 +396,8 @@ export async function resolveRemoteFarmCommand(
     budgetMs?: number;
     /** Preserve the slot support pointer while checking prerequisites. */
     selectSlot?: boolean;
+    /** Resolve a support directory itself, independently of hook script coverage. */
+    supportRoot?: boolean;
   } = {},
 ): Promise<string> {
   const roots = farmCommandRootsForSlot(vars);
@@ -414,7 +416,9 @@ export async function resolveRemoteFarmCommand(
   if (!projectVars) return command;
   const local = await currentLocalBundle(vars.projectName, projectVars.projectJson);
   const remap = (supportDir: string, paths: string[]) =>
-    roots.reduce((cmd, root) => remapRemoteFarmRefs(cmd, supportDir, paths, root), command);
+    options.supportRoot && roots.includes(command)
+      ? supportDir
+      : roots.reduce((cmd, root) => remapRemoteFarmRefs(cmd, supportDir, paths, root), command);
   const selectSlot = options.selectSlot !== false;
   const cacheKey = `${vars.slotId}\0${farmPathsForSlot(vars).code.support}\0${local.hash}\0${selectSlot}`;
   const verified = verifiedBundles.get(cacheKey);

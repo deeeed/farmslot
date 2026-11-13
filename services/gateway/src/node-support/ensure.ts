@@ -137,6 +137,7 @@ export function nodeSupportBundlePaths(projectName: string, projectJson: RawProj
   const supportPaths = [...hookSupportPaths];
   for (const requiredPath of [
     'scripts/write-runtime-context.sh',
+    'scripts/lib/resolve-farmslot-cli.sh',
     ...(projectJson.execution_templates?.sources?.some((source) => source.root.env)
       ? [path.posix.join('projects', projectName, 'project.json')]
       : []),

@@ -33,6 +33,7 @@ const projectRoot = path.join(farmslotRoot(), 'projects', 'ensure-test');
 test('repo-local project hooks still ship the shared prepare runtime writer', () => {
   const paths = nodeSupportBundlePaths('ensure-test', { hooks: { preflight: 'node server.mjs' } });
   assert.ok(paths.includes('scripts/write-runtime-context.sh'));
+  assert.ok(paths.includes('scripts/lib/resolve-farmslot-cli.sh'));
 });
 
 test.before(() => {
@@ -194,7 +195,11 @@ test('a local slot uses the checkout directly and touches no node', async () => 
   assert.equal(state?.published, false);
   assert.deepEqual(
     state?.paths,
-    [...RUNNER_OBSERVABILITY_SUPPORT_PATHS, 'scripts/write-runtime-context.sh'].sort(),
+    [
+      ...RUNNER_OBSERVABILITY_SUPPORT_PATHS,
+      'scripts/write-runtime-context.sh',
+      'scripts/lib/resolve-farmslot-cli.sh',
+    ].sort(),
     'a project without farm refs still carries the runner installer',
   );
   assert.equal(rec.execs.length, 0);
@@ -224,8 +229,8 @@ test('a slot on a stale bundle gets the current bundle published and selected; l
   assert.ok(manifest.paths.includes('scripts/runners/pi-farmslot-providers.mjs'));
   assert.equal(
     manifest.fileCount,
-    RUNNER_OBSERVABILITY_SUPPORT_PATHS.length + 1,
-    'a project without hooks bundles only the installer files',
+    RUNNER_OBSERVABILITY_SUPPORT_PATHS.length + 2,
+    'a project without hooks bundles installer and hosted-task support files',
   );
   // The slot's pointer is the last write and names the published bundle.
   const selection = rec.written.at(-1)!;

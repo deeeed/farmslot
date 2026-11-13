@@ -430,7 +430,9 @@ unavailable, not an invitation to use the node's environment.
 For both legacy and layout-2 nodes, hosted initialization MUST read the descriptor
 from the gateway-selected `TaskRuntimeRequest.supportDir`, regardless of the
 project config's installation path. Runtime context supplies this root; task JSON
-cannot choose it. Source IDs, flow/platform/domain filtering and selected SHA
+cannot choose it. Hosted initialization, including the legacy CLI transport, MUST
+select that bundle independently of farm-script hooks or `node_support` declarations.
+Source IDs, flow/platform/domain filtering and selected SHA
 checks remain mandatory. A configured optional source absent/unavailable in the
 snapshot stays unavailable without node-local fallback; only selecting it
 refuses with `TASK_TEMPLATE_SOURCE_UNAVAILABLE`. Malformed descriptors, escaping

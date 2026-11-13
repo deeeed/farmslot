@@ -118,9 +118,8 @@ try {
             default_safety_tier: 'dangerous',
             paths: { runtime_dir: '.agent', artifact_dir: '.task' },
             review: { enabled: false },
-            node_support: {
-              paths: ['scripts/lib/resolve-farmslot-cli.sh', `projects/${project}/project.json`],
-            },
+            // No node_support declaration or script hooks: hosted initialization
+            // must select the shipped catalog independently of hook coverage.
             execution_templates: {
               sources: [
                 { id: 'package:cook', kind: 'package', root: { env: 'COOK_TEMPLATE_ROOT' } },
