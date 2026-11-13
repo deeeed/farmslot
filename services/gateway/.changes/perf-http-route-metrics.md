@@ -1,0 +1,1 @@
+- Measure HTTP routes through the shared ingress so artifact requests, refusals and disconnects appear in performance diagnostics.

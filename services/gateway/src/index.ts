@@ -135,6 +135,7 @@ import { initRuntimePosture } from './methods/runtime-posture.js';
 import { reconcileStalePrepareLocks } from './methods/slot.js';
 import { serveStaticUi } from './methods/static-ui.js';
 import { startMonitor } from './observability/fleet-monitor.js';
+import { measureGatewayHttpRequest, recordGatewayHttpRoute } from './observability/performance.js';
 import { servePerformanceMetrics } from './observability/performance-http.js';
 import { notifyPublicationGateStall } from './observability/publication-gate-notification.js';
 import { resourceRevisions } from './resources/revisions.js';
@@ -770,18 +771,20 @@ async function main(): Promise<void> {
       });
   };
 
-  const requestHandler = (req: IncomingMessage, res: ServerResponse): void => {
+  const handleHttpRequest = (req: IncomingMessage, res: ServerResponse): void => {
     if (!applyGatewayCors(req, res)) {
       res.writeHead(403);
       res.end('Forbidden origin');
       return;
     }
     if (req.method === 'OPTIONS') {
+      recordGatewayHttpRoute('http.options');
       res.writeHead(204);
       res.end();
       return;
     }
     if (req.url === '/health') {
+      recordGatewayHttpRoute('http.health');
       const listen = getGatewayListenSnapshot();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
@@ -798,6 +801,7 @@ async function main(): Promise<void> {
       return;
     }
     if (req.method === 'GET' && req.url === '/metrics') {
+      recordGatewayHttpRoute('http.metrics');
       servePerformanceMetrics(req, res, gatewayAuthRuntime).catch((err: unknown) => {
         console.error(`[metrics] request failed: ${(err as Error).message}`);
         if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -807,16 +811,19 @@ async function main(): Promise<void> {
     }
     // Serve raw files: /api/file?slotId=X&path=Y
     if (req.url?.startsWith('/api/file?')) {
+      recordGatewayHttpRoute('http.file');
       serveAuthorized(req, res, 'file', serveFile);
       return;
     }
     // Serve run artifacts: /api/run-artifact?runId=X&path=Y (relative to task artifacts dir)
     if (req.url?.startsWith('/api/run-artifact?')) {
+      recordGatewayHttpRoute('http.run-artifact');
       serveAuthorized(req, res, 'run-artifact', serveRunArtifact);
       return;
     }
     // Webhook endpoints
     if (req.method === 'POST' && req.url === '/webhook/github') {
+      recordGatewayHttpRoute('http.webhook-github');
       handleGitHubWebhook(req, res, resolveWebhookPrincipal).catch((err) => {
         console.error(`[webhook/github] error: ${(err as Error).message}`);
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -825,6 +832,7 @@ async function main(): Promise<void> {
       return;
     }
     if (req.method === 'POST' && req.url === '/webhook/jira') {
+      recordGatewayHttpRoute('http.webhook-jira');
       handleJiraWebhook(req, res, resolveWebhookPrincipal).catch((err) => {
         console.error(`[webhook/jira] error: ${(err as Error).message}`);
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -833,10 +841,16 @@ async function main(): Promise<void> {
       return;
     }
     // Fall through: serve the built Command Center UI bundle for GET, else 404.
-    if (req.method === 'GET' && serveStaticUi(req, res)) return;
+    if (req.method === 'GET' && serveStaticUi(req, res)) {
+      recordGatewayHttpRoute('http.ui');
+      return;
+    }
     res.writeHead(404);
     res.end();
   };
+
+  const requestHandler = (req: IncomingMessage, res: ServerResponse): void =>
+    measureGatewayHttpRequest(res, () => handleHttpRequest(req, res));
 
   // Create HTTP server (health check endpoint) + attach WebSocket server.
   const httpServer = createServer(requestHandler);

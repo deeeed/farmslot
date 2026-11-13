@@ -70,3 +70,11 @@ for trends; do not reset measurements or change workloads to produce a pass.
 
 Use the shared dispatch, client/cache and exec wrappers. New methods inherit
 coverage; add no endpoint timers or separate measuring service.
+
+HTTP ingress shares the request context used for managed exec and node attribution.
+`farmslot_http_requests_total` counts responses by bounded `http.*` route and status
+class, including `aborted`; `farmslot_http_duration_seconds` and Doctor's HTTP rows
+measure through response completion. URLs, query strings and caller identifiers
+are never metric labels. HTTP streams have no assigned latency budget and their
+body bytes remain unmeasured. Older Doctor clients ignore the new HTTP duration
+rows; updated clients show them in the HTTP phase.
