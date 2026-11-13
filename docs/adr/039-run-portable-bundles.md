@@ -589,7 +589,7 @@ archived there too.
 
 Task pins and run-owned review workspaces are recreatable copies. Retention deletes them under the same eligibility, admission and ownership checks used for archival, and journals each intent before deletion in the run's storage manifest, without a destination, for recovery at the next pass. Recovery records missing sources as deleted; surviving sources go through eligibility checks again and become deleted or kept with a reason. Archival and restore skip these entries. Shared review caches remain untouched. Everything else keeps Amendments 3 and 5 archival, including agent logs and session archives, final reports and task directories, run bundles and evidence. Run records are still never deleted. Existing archived pins and workspaces remain archived.
 
-## Amendment 8: 2026-11-13 seven-day retention, latest review per open PR
+## Amendment 8: 2026-11-13 seven-day retention, warm review sources per open PR
 
 **Status:** Accepted by Arthur, 2026-11-13.
 **Specification:** [Settled-run retention](../reference/retained-run-artifacts.md#settled-run-retention).
@@ -599,19 +599,35 @@ Task pins and run-owned review workspaces are recreatable copies. Retention dele
 A settled run keeps its storage for 7 days instead of 48 hours. One setting,
 `runBundleRetention.runRetentionDays` in the gateway's `run-bundle-retention.json`,
 changes that age; task pins use the same age. An open PR no longer holds every run
-on it. Past the age, only the latest review of each open PR keeps its storage: the
-`review-pr` run for that repository and PR that settled last. Development,
-fix-bug, `pr-complete` and older review runs on that PR follow the age rule. A PR
-whose state cannot be read (unreadable repository, possibly truncated open-PR list
-or unresolvable identity) still holds its latest review, so a failed read releases
-only what the age rule already allows. The other holds stay as they were.
+on it. Past the age, an open PR holds only the runs a later warm review would
+continue from: for each review chain on the PR, the run the warm-review lookup
+returns. A chain is the PR and project, optionally narrowed to one review lineage
+and to one intake owner and profile. The lookup takes the latest finished
+`review-pr` run with a review result, by completion time, so a cancelled re-review
+without a result or an older review archived later does not take the hold. Other
+review runs and development, fix-bug and `pr-complete` runs on that PR follow the
+age rule. A PR whose state cannot be read (unreadable repository or possibly
+truncated open-PR list) still holds those runs, so a failed read releases only what
+the age rule already allows.
+
+A follow-up run (`review-pr`, `pr-complete` or `update-branch` with a parent) that
+has not settled holds its run family, the runs it inherits recipes and evidence
+from, whatever the PR state. The other holds stay as they were.
 
 ### Rationale and consequences
 
 48 hours was too short for warm reviews of PRs that wait days for a re-review, and
 holding every run on an open PR kept development task trees, recordings and
-sessions for as long as a PR stayed open. A warm review continues only from its
-PR's latest review, so that run is the one worth holding. Seven days keeps a week
-of history on local disk; when the disk gets tight the operator can lower the
-setting (for example to 3) without a code change. Storage still moves to the run
-archive under Amendments 3 and 7, so a released run stays restorable.
+sessions for as long as a PR stayed open. A `review-pr` warm review reads its
+predecessor's task directory, so that predecessor is the run worth holding, and the
+hold uses the same lookup so the two cannot disagree. Seven days keeps a week of
+history on local disk; when the disk gets tight the operator can lower the setting
+(for example to 3) without a code change. Storage still moves to the run archive
+under Amendments 3 and 7, so a released run stays restorable.
+
+Gate reviews inside a run family continue from reviewer sessions of earlier runs in
+that family, and a follow-up dispatched later inherits from the family's task
+directories. Once no follow-up of the family is active, those earlier development
+runs are released after the retention age even while their PR is open. A gate
+review or follow-up started after that falls back to a cold review or runs without
+the inherited recipe and evidence until the storage is restored.

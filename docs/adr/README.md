@@ -115,4 +115,4 @@ ADR-040 has a [Accepted retained-run attachment amendment](040-work-graph-orches
 
 ADR-039 [Amendment 7](039-run-portable-bundles.md#amendment-7-2026-11-09-recreatable-run-storage-is-deleted-not-archived), Accepted by Arthur, 2026-11-09, deletes and journals recreatable task pins and run-owned review workspaces under the existing retention checks; other storage keeps Amendments 3 and 5 archival, and run records are never deleted.
 
-ADR-039 [Amendment 8](039-run-portable-bundles.md#amendment-8-2026-11-13-seven-day-retention-latest-review-per-open-pr), Accepted by Arthur, 2026-11-13, keeps settled run storage 7 days by default (`runBundleRetention.runRetentionDays`) and holds only the latest review of each open PR past that age.
+ADR-039 [Amendment 8](039-run-portable-bundles.md#amendment-8-2026-11-13-seven-day-retention-warm-review-sources-per-open-pr), Accepted by Arthur, 2026-11-13, keeps settled run storage 7 days by default (`runBundleRetention.runRetentionDays`). Past that age an open PR holds only the runs its warm review chains continue from, and an unsettled follow-up holds its run family.

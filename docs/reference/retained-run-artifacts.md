@@ -218,9 +218,10 @@ or release backlog/history links during retention.
 
 Storage is eligible only when the run is done/cancelled/archived, settled at least
 the retention age, holds no slot or native worker, has no open decision, uncleaned
-review workspace, pending closeout/backlog reconciliation or `keep` tag, and is not
-the latest review of an open PR. Shared paths and admitted task directories MUST
-remain available to their owners.
+review workspace, pending closeout/backlog reconciliation or `keep` tag, is not in
+the family of an unsettled follow-up, and is not the run a warm review chain on an
+open PR would continue from. Shared paths and admitted task directories MUST remain
+available to their owners.
 
 The retention age is `runBundleRetention.runRetentionDays` in
 `${FARMSLOT_HOME}/run-bundle-retention.json`, default 7 (ADR-039 Amendment 8).
@@ -237,14 +238,22 @@ Each pass reads it when it starts, so no restart is needed. Task pins whose
 task directory is gone are removed once they are older than the same age. A run
 settles at the later of its completion and archive time.
 
-The latest review of a PR is the `review-pr` run for that repository and PR (its
-review-session identity, or its number in the project's repository) with the
-latest settle time. Runs that have not settled do not compete. Past the age it
-keeps its storage while the PR is open, or while the PR's state is unknown: its
-repository's open PRs could not be read, the list reached the read limit, or its
-PR identity could not be resolved, in which case the run counts as its own latest
-review. Every other run on the PR, including older reviews and development,
-fix-bug and `pr-complete` runs, follows the age rule.
+Past the age, an open PR holds the run each of its warm review chains would continue
+from, as `findLatestPriorReviewRun` selects it: the latest `review-pr` run with a
+review result that is done, cancelled, failed or blocked, ordered by completion time
+(not archive time). A chain is one PR (`owner/repo#N` ticket) and project, either
+across all review runs or narrowed to one review lineage (`reviewId`) or one intake
+owner and profile. A cancelled re-review without a result, or an older review
+archived later, does not take the hold. The same runs stay held while the PR's state
+is unknown: its repository's open PRs could not be read or the list reached the read
+limit. Every other run on the PR, including older reviews and development, fix-bug
+and `pr-complete` runs, follows the age rule.
+
+A follow-up run (`review-pr`, `pr-complete` or `update-branch` with a `parentRunId`)
+that is not done, cancelled or archived holds every run of its family, as
+`getFamilyRuns` lists it: the parent, the family root and the other members it may
+inherit task artifacts from. Once the follow-up settles, the family follows the age
+rule again.
 
 Eligible task directories, task pins, session archives, local review workspaces,
 local native sessions and run bundles MUST move to `FARMSLOT_RUN_ARCHIVE_ROOT`.

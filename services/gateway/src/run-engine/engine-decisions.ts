@@ -264,6 +264,60 @@ export function findLatestPriorReviewRun(
   );
 }
 
+/**
+ * The runs a later warm review could continue from: `findLatestPriorReviewRun`'s answer for
+ * every chain the existing review runs define. A chain is one PR identity and project,
+ * optionally narrowed to one review lineage and to one intake owner and profile.
+ */
+export function warmReviewPredecessorIds(allRuns: readonly Run[]): Set<string> {
+  const groups = new Map<string, Run[]>();
+  for (const run of allRuns) {
+    const identity = canonicalReviewIdentity(run);
+    if (!identity) continue;
+    const key = JSON.stringify([identity.project, identity.repository, identity.prNumber]);
+    groups.set(key, [...(groups.get(key) ?? []), run]);
+  }
+  const ids = new Set<string>();
+  for (const group of groups.values()) {
+    const lineages = new Set(
+      group.flatMap(
+        (run) =>
+          run.agentContexts?.flatMap((context) =>
+            context.role === 'review' && context.reviewId ? [context.reviewId] : [],
+          ) ?? [],
+      ),
+    );
+    const intakes: NonNullable<Run['prWork']>[] = [];
+    for (const run of group) {
+      const review = run.prWork?.kind === 'review' ? run.prWork.review : undefined;
+      if (
+        review &&
+        !intakes.some(
+          (seen) =>
+            samePrincipalOwner(seen.review!, review) && seen.review!.profile === review.profile,
+        )
+      )
+        intakes.push(run.prWork!);
+    }
+    for (const reviewId of [undefined, ...lineages])
+      for (const prWork of [undefined, ...intakes]) {
+        const prior = findLatestPriorReviewRun(
+          {
+            id: '',
+            project: group[0].project,
+            ticketOrPr: group[0].ticketOrPr,
+            flowType: 'review-pr',
+            prWork,
+            reviewContext: { reviewLineages: reviewId ? [{ reviewId }] : [] },
+          },
+          group,
+        );
+        if (prior) ids.add(prior.id);
+      }
+  }
+  return ids;
+}
+
 function uniqueArtifactRefs(refs: readonly EvidenceManifestEntry[]): EvidenceManifestEntry[] {
   const seen = new Set<string>();
   return refs.filter((ref) => {

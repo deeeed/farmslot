@@ -7,6 +7,7 @@ import { runBundleRetentionSettings, withRunBundleStoreLock } from '@farmslot/ru
 
 import { projectTaskRoots } from '../../core/config.js';
 import { ownsRunSlotCleanup, readSlotRow } from '../../core/index.js';
+import { getFamilyRuns, isFollowUpFlow } from '../../family-observability/context.js';
 import { loadProjectConfig } from '../../fleet/state.js';
 import { github } from '../../integrations/github-client.js';
 import { reviewPRIdentity } from '../../review/session-mode.js';
@@ -18,6 +19,7 @@ import {
   warnRunBundleCapacity,
 } from '../../run-completion/retained-artifacts.js';
 import { captureMissingRunEpisodes } from '../../run-completion/run-episode.js';
+import { warmReviewPredecessorIds } from '../../run-engine/engine-decisions.js';
 import { parkedWorkRetentionPass } from '../../run-lifecycle/parked-work-retention.js';
 import { nativeSessionManager } from '../../runners/native/manager.js';
 import {
@@ -34,7 +36,6 @@ import {
   type RunRetentionPlan,
   type RunRetentionRoots,
   type RunRetentionStore,
-  runSettledAt,
 } from '../../runs/retention.js';
 import {
   assertArchiveRoot,
@@ -103,9 +104,9 @@ const prRecordedSettled = (run: Run) =>
  * open PR makes the state open; an unresolvable identity, an unreadable repository or a
  * possibly truncated list makes it unknown.
  *
- * Only the latest review of each PR is held for an open or unknown PR: the review-pr run
- * of that repository and PR that settled last. A review-pr run whose PR identity cannot be
- * resolved is its own latest review.
+ * Past the age, an open or unknown PR holds only the runs a later warm review would
+ * continue from, one per review chain (`warmReviewPredecessorIds`). Any PR state holds the
+ * family of a follow-up that has not settled, which it inherits from (`getFamilyRuns`).
  */
 export async function retentionContext(
   runs: Run[],
@@ -145,19 +146,19 @@ export async function retentionContext(
       open.set(repo, undefined);
     }
   }
-  const latest = new Map<string, Run>();
+  const warmSources = warmReviewPredecessorIds(runs);
+  const followUpSources = new Set<string>();
   for (const run of runs) {
-    if (run.flowType !== 'review-pr' || !runIsSettled(run)) continue;
-    const pr = identities.get(run.id)?.prs[0];
-    const key = pr ? `${pr.repo.toLowerCase()}#${pr.number}` : run.id;
-    const current = latest.get(key);
-    if (!current || runSettledAt(run) > runSettledAt(current)) latest.set(key, run);
+    if (runIsSettled(run) || !run.parentRunId || !isFollowUpFlow(run.flowType)) continue;
+    const { parentRun, rootRun, otherFamilyRuns } = getFamilyRuns(run, runs);
+    for (const source of [parentRun, rootRun, ...otherFamilyRuns])
+      if (source && source.id !== run.id) followUpSources.add(source.id);
   }
-  const latestReviews = new Set([...latest.values()].map((run) => run.id));
   return {
     now,
     ageMs: read.retentionDays() * DAY_MS,
-    latestReview: (run) => latestReviews.has(run.id),
+    warmReviewSource: (run) => warmSources.has(run.id),
+    followUpSource: (run) => followUpSources.has(run.id),
     prState: (run): RunPrState => {
       if (prRecordedSettled(run)) return 'settled';
       const identity = identities.get(run.id);

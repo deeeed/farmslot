@@ -116,7 +116,7 @@ test('settled runs keep their storage 7 days unless runRetentionDays says otherw
   assert.equal(bundles.runBundleRetentionSettings(home).runRetentionDays, 7, 'unset');
   await writeFile(config, JSON.stringify({ runBundleRetention: { runRetentionDays: 3 } }));
   assert.equal(bundles.runBundleRetentionSettings(home).runRetentionDays, 3);
-  for (const invalid of [0, -1, '3']) {
+  for (const invalid of [0, -1, '3', null]) {
     await writeFile(config, JSON.stringify({ runBundleRetention: { runRetentionDays: invalid } }));
     assert.throws(() => bundles.runBundleRetentionSettings(home), /runRetentionDays/);
   }

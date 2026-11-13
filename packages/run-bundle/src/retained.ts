@@ -120,7 +120,11 @@ export function runBundleRetentionSettings(home: string): RunBundleRetentionSett
   }
   if (settings.storeRoot !== undefined && typeof settings.storeRoot !== 'string')
     throw new Error('Invalid runBundleRetention.storeRoot.');
-  const runRetentionDays = settings.runRetentionDays ?? DEFAULT_RUN_RETENTION_DAYS;
+  // Only an absent key takes the default; an explicit null is invalid like any other non-number.
+  const runRetentionDays =
+    settings.runRetentionDays === undefined
+      ? DEFAULT_RUN_RETENTION_DAYS
+      : settings.runRetentionDays;
   if (
     typeof runRetentionDays !== 'number' ||
     !Number.isFinite(runRetentionDays) ||

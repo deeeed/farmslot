@@ -59,8 +59,10 @@ export interface RunRetentionContext {
   /** How long a settled run keeps its storage: `runBundleRetention.runRetentionDays` (ADR-039 Amendment 8). */
   ageMs: number;
   prState: (run: Run) => RunPrState;
-  /** Whether the run is the most recently settled review-pr run of its PR. */
-  latestReview: (run: Run) => boolean;
+  /** Whether a later warm review of the run's PR would continue from it (`findLatestPriorReviewRun`). */
+  warmReviewSource: (run: Run) => boolean;
+  /** Whether an unsettled follow-up run inherits from its family, which includes this run. */
+  followUpSource: (run: Run) => boolean;
 }
 
 const time = (value: string | undefined) => (value ? Date.parse(value) || 0 : 0);
@@ -72,21 +74,26 @@ export const runIsSettled = (run: Run) =>
 export const runSettledAt = (run: Run) =>
   Math.max(time(run.completedAt), time(run.archivedAt)) || time(run.updatedAt);
 
+function retentionAge(ageMs: number): string {
+  const days = Number((ageMs / DAY_MS).toFixed(2));
+  return days === 1 ? '1 day' : `${days} days`;
+}
+
 /** Why a run keeps its storage, or undefined when retention may remove it. */
 export function runRetentionHold(
   run: Run,
-  { now, ageMs, prState, latestReview }: RunRetentionContext,
+  { now, ageMs, prState, warmReviewSource, followUpSource }: RunRetentionContext,
 ): string | undefined {
   if (!runIsSettled(run)) return 'not done, cancelled or archived';
   if (run.tags?.includes(RUN_RETENTION_KEEP_TAG)) return 'tagged keep';
   if (runNeedsExecutionStorage(run)) return 'still needs its execution storage';
   if (run.backlogReconcilePending) return 'backlog reconciliation pending';
-  if (now - runSettledAt(run) < ageMs) return `settled less than ${ageMs / DAY_MS} days ago`;
-  // A warm review continues from its PR's latest review, so only that run outlives the age.
-  if (!latestReview(run)) return undefined;
+  if (now - runSettledAt(run) < ageMs) return `settled less than ${retentionAge(ageMs)} ago`;
+  if (followUpSource(run)) return 'inherited by an unsettled follow-up';
+  if (!warmReviewSource(run)) return undefined;
   const pr = prState(run);
-  if (pr === 'open') return 'latest review of an open PR';
-  if (pr === 'unknown') return 'latest review of a PR in unknown state';
+  if (pr === 'open') return 'warm review source of an open PR';
+  if (pr === 'unknown') return 'warm review source of a PR in unknown state';
   return undefined;
 }
 

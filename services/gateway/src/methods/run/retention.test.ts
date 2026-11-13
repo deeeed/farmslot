@@ -22,11 +22,13 @@ import {
   type Run,
   type RunArtifactBundleRef,
   type RunDecision,
+  type RunReviewResult,
 } from '@farmslot/protocol';
 import { resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { DEFAULT_RUN_RETENTION_DAYS } from '@farmslot/run-bundle';
 
 import { runBundleHome } from '../../run-completion/retained-artifacts.js';
+import { findLatestPriorReviewRun } from '../../run-engine/engine-decisions.js';
 import {
   DAY_MS,
   planRunRetention,
@@ -58,11 +60,16 @@ import { makeRun } from './test-fixtures.js';
 const NOW = Date.parse('2026-10-20T12:00:00.000Z');
 const RUN_RETENTION_AGE_MS = DEFAULT_RUN_RETENTION_DAYS * DAY_MS;
 const settled = new Date(NOW - RUN_RETENTION_AGE_MS - 60_000).toISOString();
-const context = (pr: RunPrState = 'none', latestReview = false): RunRetentionContext => ({
+const context = (
+  pr: RunPrState = 'none',
+  warmReviewSource = false,
+  followUpSource = false,
+): RunRetentionContext => ({
   now: NOW,
   ageMs: RUN_RETENTION_AGE_MS,
   prState: () => pr,
-  latestReview: () => latestReview,
+  warmReviewSource: () => warmReviewSource,
+  followUpSource: () => followUpSource,
 });
 
 const openDecision: RunDecision = {
@@ -177,64 +184,218 @@ test('retention archives settled run storage only after 7 days with nothing open
   // Archiving is a reversible move, so only the keep tag holds a run's storage in place.
   assert.equal(runRetentionHold({ ...done, tags: ['demo', 'unsteered'] }, context()), undefined);
   assert.equal(runRetentionHold({ ...done, tags: ['perps', 'keep'] }, context()), 'tagged keep');
-  // Past the age, only the latest review of an open or unknown PR keeps its storage.
+  // Past the age, an open or unknown PR keeps only a warm review source.
   assert.equal(runRetentionHold(done, context('open')), undefined);
   assert.equal(runRetentionHold(done, context('unknown')), undefined);
-  assert.equal(runRetentionHold(done, context('open', true)), 'latest review of an open PR');
+  assert.equal(runRetentionHold(done, context('open', true)), 'warm review source of an open PR');
   assert.equal(
     runRetentionHold(done, context('unknown', true)),
-    'latest review of a PR in unknown state',
+    'warm review source of a PR in unknown state',
   );
   assert.equal(runRetentionHold(done, context('settled', true)), undefined);
+  assert.equal(
+    runRetentionHold(done, context('none', false, true)),
+    'inherited by an unsettled follow-up',
+  );
+  assert.equal(
+    runRetentionHold(
+      { ...done, completedAt: new Date(NOW - 60_000).toISOString() },
+      { ...context(), ageMs: DAY_MS },
+    ),
+    'settled less than 1 day ago',
+  );
 });
 
-test('the age comes from runRetentionDays and only the latest review of an open PR outlives it', async () => {
-  const ago = (days: number) => new Date(NOW - days * DAY_MS).toISOString();
-  const onPr = (id: string, days: number, overrides: Partial<Run> = {}): Run => ({
-    ...makeRun({ id, status: 'done', flowType: 'review-pr', ticketOrPr: 'o/r#1' }),
-    completedAt: ago(days),
-    ...overrides,
-  });
-  const runs = [
-    onPr('six-days', 6, { ticketOrPr: 'PROJ-6', flowType: 'fix-bug' }),
-    onPr('eight-days', 8, { ticketOrPr: 'PROJ-8', flowType: 'fix-bug' }),
-    onPr('four-days', 4, { ticketOrPr: 'PROJ-4', flowType: 'fix-bug' }),
-    onPr('older-review', 20),
-    onPr('newer-review', 10),
-    // A review still running does not displace the settled review a warm review continues from.
-    onPr('running-review', 1, { status: 'monitoring' }),
-    onPr('dev-on-open-pr', 10, { flowType: 'pr-complete', prNumber: 1, project: 'repo' }),
-    onPr('closed-review', 10, { ticketOrPr: 'o/r#2' }),
-    onPr('older-unknown', 20, { ticketOrPr: 'o/down#3' }),
-    onPr('newer-unknown', 10, { ticketOrPr: 'o/down#3' }),
-  ];
-  const holds = async (retentionDays: number) => {
-    const context = await retentionContext(runs, NOW, {
-      retentionDays: () => retentionDays,
-      projectRepo: async () => 'o/r',
-      openPrs: async (repo) => {
-        if (repo === 'o/down') throw new Error('rate limited');
-        return [1];
-      },
-    });
-    return Object.fromEntries(runs.map((run) => [run.id, runRetentionHold(run, context)]));
+const reviewed: RunReviewResult = {
+  recommendation: 'approve',
+  reviewMd: 'review.md',
+  lineComments: [],
+};
+const ago = (days: number) => new Date(NOW - days * DAY_MS).toISOString();
+
+function reviewerContext(runId: string, reviewId: string): AgentContext {
+  return {
+    id: `review-${reviewId}`,
+    role: 'review',
+    label: 'Review',
+    status: 'complete',
+    slotId: null,
+    runId,
+    reviewId,
   };
-  assert.deepEqual(await holds(DEFAULT_RUN_RETENTION_DAYS), {
-    'six-days': 'settled less than 7 days ago',
-    'eight-days': undefined,
-    'four-days': 'settled less than 7 days ago',
-    'older-review': undefined,
-    'newer-review': 'latest review of an open PR',
-    'running-review': 'not done, cancelled or archived',
-    'dev-on-open-pr': undefined,
-    'closed-review': undefined,
-    'older-unknown': undefined,
-    'newer-unknown': 'latest review of a PR in unknown state',
+}
+
+/** A settled review-pr run on `pr`, `days` after it completed. */
+const reviewRun = (id: string, pr: string, days: number, overrides: Partial<Run> = {}): Run => ({
+  ...makeRun({
+    id,
+    familyId: id,
+    status: 'done',
+    flowType: 'review-pr',
+    project: 'p',
+    ticketOrPr: pr,
+  }),
+  completedAt: ago(days),
+  ...overrides,
+});
+
+/** A settled intake review round on o/r#7 owned by `ownerId`. */
+const intakeRun = (id: string, ownerId: string, days: number): Run =>
+  reviewRun(id, 'o/r#7', days, {
+    reviewResult: reviewed,
+    prWork: {
+      kind: 'review',
+      id: `review:${id}`,
+      sourceId: id,
+      pr: { host: 'github.com', repo: 'o/r', number: 7 },
+      headSha: 'bbbbbbbbbbbbbbbb',
+      review: { profile: 'standard', ownerId, options: { mode: 'cold' } },
+    },
   });
-  const short = await holds(3);
-  assert.equal(short['four-days'], undefined, 'a 3-day setting releases a 4-day-old run');
-  assert.equal(short['six-days'], undefined);
-  assert.equal(short['newer-review'], 'latest review of an open PR');
+
+async function holdsFor(runs: Run[], retentionDays = DEFAULT_RUN_RETENTION_DAYS) {
+  const context = await retentionContext(runs, NOW, {
+    retentionDays: () => retentionDays,
+    projectRepo: async () => 'o/r',
+    openPrs: async (repo) => {
+      if (repo === 'o/down') throw new Error('rate limited');
+      return [1, 2, 3, 4, 7];
+    },
+  });
+  return Object.fromEntries(runs.map((run) => [run.id, runRetentionHold(run, context)]));
+}
+
+test('the age comes from runRetentionDays', async () => {
+  const runs = [6, 8, 4].map((days) => ({
+    ...makeRun({
+      id: `${days}-days`,
+      familyId: `${days}`,
+      status: 'done',
+      ticketOrPr: `PROJ-${days}`,
+    }),
+    completedAt: ago(days),
+  }));
+  assert.deepEqual(await holdsFor(runs), {
+    '6-days': 'settled less than 7 days ago',
+    '8-days': undefined,
+    '4-days': 'settled less than 7 days ago',
+  });
+  assert.deepEqual(await holdsFor(runs, 3), {
+    '6-days': undefined,
+    '8-days': undefined,
+    '4-days': undefined,
+  });
+  assert.equal((await holdsFor(runs, 7.5))['6-days'], 'settled less than 7.5 days ago');
+});
+
+test('an open PR holds exactly the runs its warm review chains continue from', async () => {
+  const runs = [
+    // A: an older review archived after the newer one does not displace it.
+    reviewRun('a-old', 'o/r#1', 20, { archivedAt: ago(8), reviewResult: reviewed }),
+    reviewRun('a-new', 'o/r#1', 10, { reviewResult: reviewed }),
+    // A review still running does not displace the settled review either.
+    reviewRun('a-running', 'o/r#1', 1, { status: 'monitoring' }),
+    // B: a cancelled re-review without a result is not a warm predecessor.
+    reviewRun('b-reviewed', 'o/r#2', 10, { reviewResult: reviewed }),
+    reviewRun('b-cancelled', 'o/r#2', 9, { status: 'cancelled' }),
+    // C: a failed review archived later by cleanup is not one either.
+    reviewRun('c-reviewed', 'o/r#3', 10, { reviewResult: reviewed }),
+    reviewRun('c-failed', 'o/r#3', 12, { status: 'failed', archivedAt: ago(9) }),
+    // Two lineages on one PR each keep their own predecessor.
+    reviewRun('codex-older', 'o/r#4', 30, {
+      reviewResult: reviewed,
+      agentContexts: [reviewerContext('codex-older', 'codex')],
+    }),
+    reviewRun('codex', 'o/r#4', 20, {
+      reviewResult: reviewed,
+      agentContexts: [reviewerContext('codex', 'codex')],
+    }),
+    reviewRun('claude', 'o/r#4', 10, {
+      reviewResult: reviewed,
+      agentContexts: [reviewerContext('claude', 'claude')],
+    }),
+    // Intake rounds chain per owner and profile, so each owner keeps its own predecessor.
+    intakeRun('owner-a-older', 'a', 30),
+    intakeRun('owner-a', 'a', 20),
+    intakeRun('owner-b', 'b', 10),
+    // An unknown PR state holds only the chain's predecessor.
+    reviewRun('down-old', 'o/down#5', 20, { reviewResult: reviewed }),
+    reviewRun('down-new', 'o/down#5', 10, { reviewResult: reviewed }),
+    // A closed PR releases its predecessor after the age.
+    reviewRun('closed', 'o/r#6', 10, { reviewResult: reviewed }),
+    // A non-review run on an open PR follows the age rule.
+    {
+      ...makeRun({
+        id: 'dev',
+        familyId: 'dev',
+        status: 'done',
+        flowType: 'pr-complete',
+        ticketOrPr: 'o/r#1',
+      }),
+      completedAt: ago(10),
+    },
+  ];
+  assert.deepEqual(await holdsFor(runs), {
+    'a-old': undefined,
+    'a-new': 'warm review source of an open PR',
+    'a-running': 'not done, cancelled or archived',
+    'b-reviewed': 'warm review source of an open PR',
+    'b-cancelled': undefined,
+    'c-reviewed': 'warm review source of an open PR',
+    'c-failed': undefined,
+    'codex-older': undefined,
+    codex: 'warm review source of an open PR',
+    claude: 'warm review source of an open PR',
+    'down-old': undefined,
+    'down-new': 'warm review source of a PR in unknown state',
+    'owner-a-older': undefined,
+    'owner-a': 'warm review source of an open PR',
+    'owner-b': 'warm review source of an open PR',
+    closed: undefined,
+    dev: undefined,
+  });
+  // The held runs are the ones the warm review lookup itself returns.
+  const next = (pr: string, reviewId?: string) =>
+    findLatestPriorReviewRun(
+      {
+        ...makeRun({ id: 'next', flowType: 'review-pr', project: 'p', ticketOrPr: pr }),
+        reviewContext: { reviewLineages: reviewId ? [{ reviewId }] : [] },
+      },
+      runs,
+    )?.id;
+  assert.deepEqual(
+    [next('o/r#1'), next('o/r#2'), next('o/r#3'), next('o/r#4', 'codex'), next('o/r#4', 'claude')],
+    ['a-new', 'b-reviewed', 'c-reviewed', 'codex', 'claude'],
+  );
+});
+
+test('an unsettled follow-up keeps the family it inherits from', async () => {
+  const parent: Run = {
+    ...makeRun({
+      id: 'parent',
+      familyId: 'parent',
+      status: 'done',
+      flowType: 'fix-bug',
+      ticketOrPr: 'PROJ-1',
+    }),
+    completedAt: ago(20),
+  };
+  const child: Run = makeRun({
+    id: 'child',
+    familyId: 'parent',
+    parentRunId: 'parent',
+    status: 'monitoring',
+    flowType: 'pr-complete',
+    ticketOrPr: 'PROJ-1',
+  });
+  const other: Run = { ...parent, id: 'other', familyId: 'other' };
+  assert.deepEqual(await holdsFor([parent, child, other]), {
+    parent: 'inherited by an unsettled follow-up',
+    child: 'not done, cancelled or archived',
+    other: undefined,
+  });
+  const settledChild = { ...child, status: 'done' as const, completedAt: ago(8) };
+  assert.equal((await holdsFor([parent, settledChild, other])).parent, undefined);
 });
 
 test("the pass reads runRetentionDays from the gateway's run-bundle-retention.json", async (t) => {
