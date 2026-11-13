@@ -1,0 +1,1 @@
+- Run the SQLite worker fixture with its TypeScript loader and await nested cases in local-store tests.
