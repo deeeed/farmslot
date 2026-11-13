@@ -1,0 +1,2 @@
+- `scripts/scrub-run-credentials.mts` scans only the given roots when any `--root` is passed, accepts `--root=<dir>`, and exits on unknown arguments instead of falling back to the default stores.
+- Credential redaction catches single-case passwords and passphrases (12+ characters) under `_SECRET`/`_PASSWORD`/`_PASSWD` names; `_KEY`/`_TOKEN` values still need two character classes, so repo slugs stay unchanged.
