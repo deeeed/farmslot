@@ -1,0 +1,1 @@
+- Start blind trial launch shells with `env -i` and no startup files. Worker names reach the worker subshell on a file descriptor, so the pane's long-lived shells hold no credential in their environment or argv, and pool credentials outside the blind allowlist are no longer written into the launch script. Non-blind launches are unchanged.

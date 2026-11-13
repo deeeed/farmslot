@@ -16,6 +16,7 @@ import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 
 import { ensureWorkerContinuationReady } from './continuation-ready.js';
 import {
+  blindLaunchEnvironment,
   buildRunnerSessionReloadCommand,
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
 } from './launch-command.js';
@@ -837,6 +838,9 @@ export async function reloadRunnerForPark(
     )}`;
     await deps.respawnPane(options.vars, target, command, {
       preservePaneAfterExit: true,
+      blindEnvironment: options.blindTrialBoundary
+        ? blindLaunchEnvironment(options.vars, runnerId, handle.model)
+        : undefined,
       beforeRespawn: options.beforeRespawn,
     });
   } catch (error) {

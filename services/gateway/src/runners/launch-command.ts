@@ -37,7 +37,11 @@ import {
 import { applyProjectCommandEnv, withMachineEnv } from '../core/project-env.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
-import { type BlindTrialWorkerBoundary, withBlindTrialBoundary } from '../evals/blind-git.js';
+import {
+  blindEnvironmentNames,
+  type BlindTrialWorkerBoundary,
+  withBlindTrialBoundary,
+} from '../evals/blind-git.js';
 
 import {
   assertRunnerTransport,
@@ -573,6 +577,43 @@ interface RunnerSessionReloadOptions {
   blindTrialBoundary?: BlindTrialWorkerBoundary;
 }
 
+function blindModelEnvironment(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runner: string,
+  model: string | null | undefined,
+): readonly string[] | undefined {
+  return getRunnerDefinition(runner).blindModelEnvironment?.(model, {
+    ...process.env,
+    ...vars.machineEnv,
+  });
+}
+
+/** Every name a blind trial worker of this runner and model may receive. */
+export function blindLaunchEnvironment(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runnerId: string,
+  model: string | null | undefined,
+): string[] {
+  return blindEnvironmentNames(blindModelEnvironment(vars, normalizeRunner(runnerId), model));
+}
+
+/** A blind launch inlines only the pool entries its worker may receive. */
+function blindMachineVars(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runner: string,
+  model: string | null | undefined,
+  boundary: BlindTrialWorkerBoundary | undefined,
+): Awaited<ReturnType<typeof loadSlotVars>> {
+  if (!boundary) return vars;
+  const names = new Set(blindLaunchEnvironment(vars, runner, model));
+  return {
+    ...vars,
+    machineEnv: Object.fromEntries(
+      Object.entries(vars.machineEnv ?? {}).filter(([name]) => names.has(name)),
+    ),
+  };
+}
+
 export function buildRunnerSessionReloadCommand(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runnerId: string,
@@ -596,12 +637,10 @@ export function buildRunnerSessionReloadCommand(
       ? withBlindTrialBoundary(
           command,
           opts.blindTrialBoundary,
-          getRunnerDefinition(runner).blindModelEnvironment?.(model, {
-            ...process.env,
-            ...vars.machineEnv,
-          }),
+          blindModelEnvironment(vars, runner, model),
         )
       : command;
+  const machineVars = blindMachineVars(vars, runner, model, opts.blindTrialBoundary);
 
   if (runner === 'claude') {
     const installCommand = buildRunnerObservabilityInstallCommand(
@@ -633,7 +672,7 @@ export function buildRunnerSessionReloadCommand(
         repo,
         opts.taskDir,
       ),
-      vars,
+      machineVars,
     );
   }
 
@@ -669,7 +708,7 @@ export function buildRunnerSessionReloadCommand(
         repo,
         opts.taskDir,
       ),
-      vars,
+      machineVars,
     );
   }
 
@@ -701,7 +740,7 @@ export function buildRunnerSessionReloadCommand(
         repo,
         opts.taskDir,
       ),
-      vars,
+      machineVars,
     );
   }
 
@@ -734,7 +773,7 @@ export function buildRunnerSessionReloadCommand(
         repo,
         opts.taskDir,
       ),
-      vars,
+      machineVars,
     );
   }
   throw new Error(`Runner '${runner}' does not support persisted session reload`);
@@ -1056,17 +1095,14 @@ export function buildLaunchCommand(
             ? withBlindTrialBoundary(
                 command,
                 opts.blindTrialBoundary,
-                getRunnerDefinition(runner).blindModelEnvironment?.(model, {
-                  ...process.env,
-                  ...vars.machineEnv,
-                }),
+                blindModelEnvironment(vars, runner, model),
               )
             : command,
         ),
         repo,
         opts.taskDir ?? (opts.taskFile ? path.posix.dirname(opts.taskFile) : undefined),
       ),
-      vars,
+      blindMachineVars(vars, runner, model, opts.blindTrialBoundary),
     );
   };
   const questionsArgs = modelQuestionsArgs(runner, opts.modelQuestions);

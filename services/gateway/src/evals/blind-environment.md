@@ -163,6 +163,37 @@ and writes of the operator's zsh and bash startup files and histories,
 target. A worker that resets `ZDOTDIR` or runs `bash -l` still reads none of them.
 Tools that read those files for registry authentication see them as absent.
 
+## Launch shells
+
+A blind tmux launch (fresh dispatch, retained reload and parked-worker reload)
+starts its pane as `exec bash --noprofile --norc -c <stage>`. The stage execs
+`/usr/bin/env -i` into a startup-file-free bash holding only `HOME`, `USER`,
+`LOGNAME`, `PATH`, `SHELL`, `TMPDIR`, `LANG`, `LC_ALL`, `LC_CTYPE`,
+`LC_MESSAGES`, `TZ`, `TERM`, `COLORTERM`, `NO_COLOR`, `TMUX` and `TMUX_PANE`. The
+values of the worker's exact names (the table above plus its model entries) reach
+the launch script on fd 3. The script keeps them in an unexported array and
+exports them only inside the worker subshell, which then runs the boundary's
+`env -i`. Pool `env` entries outside those names are not written into the
+launch script. The script body runs in that shell, never in a child's argv.
+
+The pane's own shell and the stage are replaced by `exec`. The stage's
+substitution child, which writes the values to fd 3, exits once they are
+written. The long-lived
+ancestors of the sandboxed worker are the launch bash and its worker subshell.
+Both start with only the names above, and neither argv carries a value. Only
+the sandboxed chain (`sandbox-exec`'s `/bin/sh` and the runner) holds the model
+key. Non-blind launches are unchanged: they still run `bash <script>` and
+`bash -lc`.
+
+The launch body no longer runs as a login shell, so `~/.bash_profile` does not
+add to `PATH`. A blind worker's `PATH` is the pane's `PATH` plus the pool's.
+
+`blind-launch-env.live.ts` launches a synthetic Pi worker through both production
+paths on a private tmux server. It reads every ancestor up to the server through
+`KERN_PROCARGS2`. macOS returns no environment for Apple platform binaries such
+as `/bin/sh` and `/bin/bash`, so that test runs the launch shells with a
+Homebrew bash, as an operator's `PATH` usually does.
+
 ## Trial browser routing
 
 `FARMSLOT_BLIND_CDP_PORT` carries the boundary's allocated browser port separately
@@ -225,7 +256,9 @@ The wrapper closes the casual route only. The worker runs as the operator's uid,
 and the kernel returns any same-uid process's start-up environment through the
 `KERN_PROCARGS2` sysctl. A deliberate numeric read (for example `python3`
 ctypes, or running `boundary/libexec/ps` directly) still shows the gateway's,
-tmux panes' and the launching shell's environments. Seatbelt cannot block it on
+the tmux server's and other panes' environments. The trial's own launch shells
+hold no credential (see Launch shells). The tmux server keeps the environment of
+whoever started it, which usually includes operator credentials. Seatbelt cannot block it on
 macOS 27.2. Measured on a fake process with these rules added: `(deny
 process-info* (target others))`, `(deny process-info-pidinfo (target others))`,
 `(deny sysctl-read (sysctl-name "kern.procargs2"))`, `sysctl-name-prefix
