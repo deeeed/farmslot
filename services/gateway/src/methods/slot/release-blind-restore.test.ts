@@ -66,7 +66,15 @@ await import('../../runtime/mock-pty.test-support.js');
 // Blind restoration fences on the slot epoch through core/state directly.
 const realState = await import('../../core/state.js');
 mock.module('../../core/state.js', {
-  namedExports: { ...realState, readSlotRow: async () => slotRow },
+  namedExports: {
+    ...realState,
+    readSlotRow: async () => slotRow,
+    updateSlotStatusIf: async (
+      _id: string,
+      predicate: (row: Readonly<Record<string, unknown>>) => boolean,
+      fields: Record<string, unknown>,
+    ) => applies(predicate, fields),
+  },
 });
 const realExec = await import('../../core/exec.js');
 mock.module('../../core/exec.js', { namedExports: { ...realExec, execOnSlot: execForTest } });

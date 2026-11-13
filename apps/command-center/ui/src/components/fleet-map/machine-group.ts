@@ -16,7 +16,11 @@ import {
   viewTextField,
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
-import { fleetBehindDefaultIfBehind, fleetSlotBranch } from '@farmslot/review-dispatch';
+import {
+  fleetBehindDefaultIfBehind,
+  fleetSlotBranch,
+  fleetSlotParkedWork,
+} from '@farmslot/review-dispatch';
 
 import './slot-card.js';
 import '../shared/cancelled-run-slot-release.js';
@@ -362,6 +366,13 @@ export class MachineGroup extends LitElement {
       vertical-align: middle;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+    .slot-row .parked-work {
+      height: 1.3em;
+      line-height: 1.3;
+      font-size: 11px;
+      white-space: nowrap;
+      color: var(--text-secondary, #888);
     }
     .slot-row .branch-cell {
       color: ${unsafeCSS(colors.accent)};
@@ -1134,7 +1145,12 @@ ${deployHint}"
             : html`<span class="muted">-</span>`}
         </td>
         <td class="muted">${s.model ?? run?.metrics?.model ?? '-'}</td>
-        <td class="${branchClass}" title="${checkedOut}">${branchLabel}</td>
+        <td class="${branchClass}" title="${checkedOut}">
+          ${branchLabel}
+          <div class="parked-work" title=${s.parkedWork?.latestRef ?? ''}>
+            ${fleetSlotParkedWork(s) ?? ''}
+          </div>
+        </td>
         <td class="muted">
           <span class="behind-cell" title=${behind ?? ''}>${behind ?? ''}</span>
         </td>

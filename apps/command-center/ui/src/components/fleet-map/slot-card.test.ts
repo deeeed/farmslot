@@ -23,6 +23,7 @@ function idleSlot(overrides: Partial<SlotStatus> = {}): SlotStatus {
     currentRunId: '',
     agent: 'idle',
     health: { ssh: 'LOCAL', device: '-', devserver: '-', cdp: '-', fixtures: 'OK' },
+    parkedWork: { count: 0, latestRef: null, latestAt: null },
     ...overrides,
   } as SlotStatus;
 }
@@ -33,7 +34,7 @@ function cardText(slot: SlotStatus): string {
   return litText(card.render()).replace(/\s+/g, ' ');
 }
 
-test('an idle slot with no saved workspace shows its branch and no unknown filler', () => {
+test('an idle slot with empty parking and no saved workspace shows no unknown filler', () => {
   const text = cardText(idleSlot());
   assert.match(text, /main/);
   assert.doesNotMatch(text, /unknown|Unowned|Fetch time/i);
@@ -47,7 +48,7 @@ function observed(overrides: Partial<SlotWorkspace> = {}): SlotWorkspace {
     handoffRunId: null,
     branch: 'feat/demo',
     headSha: 'abc',
-    dirtyFingerprint: '',
+    dirtyFingerprint: 'fixture-clean',
     recoveryId: null,
     observedAt: new Date().toISOString(),
     localDefaultSha: 'abc',
@@ -73,7 +74,7 @@ test('a current workspace observation shows how far the slot is behind main', ()
 test('an expired or unknown observation shows no distance, as the release review does', () => {
   for (const workspace of [
     observed({ observedAt: '2000-01-01T00:00:00.000Z' }),
-    observed({ publication: 'unknown' }),
+    observed({ publication: 'unknown', behind: null }),
   ]) {
     const text = cardText(idleSlot({ branch: 'feat/demo', workspace }));
     assert.doesNotMatch(text, /\d+ behind|unknown/i);

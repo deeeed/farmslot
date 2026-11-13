@@ -9,8 +9,10 @@ import { fileURLToPath } from 'node:url';
 
 import type {
   FleetRefreshSlotUpdateEvent,
+  SlotParkedResult,
   SlotRefreshResult,
   SlotReleaseResult,
+  SlotWorkspace,
 } from '@farmslot/protocol';
 import { isRecord } from '@farmslot/protocol/recipe';
 
@@ -19,7 +21,7 @@ import { createNativeProofFixture } from '../../runtime/native-proof-fixture.liv
 const source = fileURLToPath(new URL('../../../../../', import.meta.url));
 test(
   'releases retain ownerless backups and unpushed run branches across archive and retry',
-  { timeout: 120_000 },
+  { timeout: 360_000 },
   async (t) => {
     const output = process.env.FARMSLOT_WORKSPACE_PROOF_OUT;
     assert.ok(output, 'set FARMSLOT_WORKSPACE_PROOF_OUT');
@@ -212,11 +214,17 @@ test(
     assert.ok(update?.parked?.some((entry) => git(repo, 'rev-parse', entry.ref) === mainHead));
     assert.equal(git(repo, 'rev-parse', 'HEAD'), git(repo, 'rev-parse', 'origin/main'));
     const parkingCases: Array<{ name: string; result: SlotRefreshResult }> = [];
-    const releaseOwnedProof = async (name: string, mode: 'safe' | 'force' = 'safe') => {
-      const expectedWorkspace = await inspectWorkspace('proof-slot', {
-        fetch: true,
-        timeoutMs: 120_000,
-      });
+    const releaseOwnedProof = async (
+      name: string,
+      mode: 'safe' | 'force' = 'safe',
+      observed?: SlotWorkspace,
+    ) => {
+      const expectedWorkspace =
+        observed ??
+        (await inspectWorkspace('proof-slot', {
+          fetch: true,
+          timeoutMs: 120_000,
+        }));
       const result = await call<SlotRefreshResult>('slot.refresh', {
         slotId: 'proof-slot',
         release: true,
@@ -269,12 +277,134 @@ test(
     git(repo, 'commit', '--allow-empty', '-qm', 'test: dirty operator work');
     const dirtyHead = git(repo, 'rev-parse', 'HEAD');
     await writeFile(path.join(repo, 'file.txt'), 'uncommitted operator edit\n');
-    const dirtyRefused = await releaseOwnedProof('dirty-safe-refusal');
-    assert.equal(dirtyRefused.refreshed, false);
-    const dirtyPark = await releaseOwnedProof('dirty-confirmed-discard', 'force');
+    const staleBeforeDirty = await inspectWorkspace('proof-slot', { network: false });
+    await writeFile(path.join(repo, 'file.txt'), 'staged operator edit\n');
+    git(repo, 'add', 'file.txt');
+    await writeFile(path.join(repo, 'file.txt'), 'unstaged operator edit\n');
+    await writeFile(path.join(repo, 'untracked.txt'), 'untracked operator edit\n');
+    const dirtyPark = await releaseOwnedProof('dirty-safe-parking', 'safe', staleBeforeDirty);
     assert.equal(dirtyPark.refreshed, true, dirtyPark.detail);
-    assert.ok(dirtyPark.parked?.some((entry) => git(repo, 'rev-parse', entry.ref) === dirtyHead));
+    const inventory = await call<SlotParkedResult>('slot.parked', {
+      action: 'list',
+      slotId: 'proof-slot',
+    });
+    assert.equal(inventory.action, 'list');
+    assert.ok(inventory.action === 'list');
+    const dirtyReceipt = inventory.receipts.find(
+      (receipt) => receipt.kind === 'worktree' && receipt.sourceHeadSha === dirtyHead,
+    );
+    assert.ok(dirtyReceipt, 'dirty work has a canonical, discoverable receipt');
     assert.equal(git(repo, 'status', '--porcelain'), '');
+    git(repo, 'gc', '--prune=now');
+    const restored = await call<SlotParkedResult>('slot.parked', {
+      action: 'restore',
+      slotId: 'proof-slot',
+      ref: dirtyReceipt.ref,
+    });
+    assert.ok(restored.action === 'restore');
+    assert.equal(git(repo, 'symbolic-ref', '--short', 'HEAD'), restored.branch);
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), dirtyHead);
+    assert.equal(git(repo, 'show', ':file.txt'), 'staged operator edit');
+    assert.equal(await readFile(path.join(repo, 'file.txt'), 'utf8'), 'unstaged operator edit\n');
+    assert.equal(
+      await readFile(path.join(repo, 'untracked.txt'), 'utf8'),
+      'untracked operator edit\n',
+    );
+    assert.ok((await core.readSlotRow('proof-slot'))?.parked_work);
+    assert.equal(
+      (await core.readSlotRow('proof-slot'))?.lifecycle,
+      'ready',
+      'restore preserves posture',
+    );
+    const restoredCleanup = await releaseOwnedProof('restored-dirty-reuse');
+    assert.equal(restoredCleanup.refreshed, true, restoredCleanup.detail);
+    await writeFile(
+      path.join(output, 'restore.json'),
+      JSON.stringify({ receipt: dirtyReceipt, restored, inventory: inventory.summary }, null, 2),
+    );
+
+    git(repo, 'checkout', '-qb', 'dirty-deletion-snapshot');
+    await writeFile(path.join(repo, '.gitignore'), 'fixture.txt\n.agent/\ngenerated-note\n');
+    await writeFile(path.join(repo, 'generated-note'), 'old generated content\n');
+    git(repo, 'add', '.gitignore');
+    git(repo, 'add', '-f', 'generated-note');
+    git(repo, 'commit', '-qm', 'test: tracked generated file');
+    git(repo, 'rm', 'generated-note');
+    const deletionPark = await releaseOwnedProof('dirty-deletion-snapshot');
+    assert.equal(deletionPark.refreshed, true, deletionPark.detail);
+    const deletionInventory = await call<SlotParkedResult>('slot.parked', {
+      action: 'list',
+      slotId: 'proof-slot',
+    });
+    assert.ok(deletionInventory.action === 'list');
+    const deletionReceipt = deletionInventory.receipts.find(
+      (receipt) => receipt.branch === 'dirty-deletion-snapshot' && receipt.kind === 'worktree',
+    );
+    assert.ok(deletionReceipt);
+    await writeFile(path.join(repo, '.gitignore'), 'fixture.txt\n.agent/\ngenerated-note\n');
+    git(repo, 'add', '.gitignore');
+    git(repo, 'commit', '-qm', 'test: current ignore rules');
+    await writeFile(path.join(repo, 'generated-note'), 'current ignored user content\n');
+    const deletionRestore = await call<SlotParkedResult>('slot.parked', {
+      action: 'restore',
+      slotId: 'proof-slot',
+      ref: deletionReceipt.ref,
+    });
+    assert.ok(deletionRestore.action === 'restore');
+    const currentInventory = await call<SlotParkedResult>('slot.parked', {
+      action: 'list',
+      slotId: 'proof-slot',
+    });
+    assert.ok(currentInventory.action === 'list');
+    const currentBackup = currentInventory.receipts.find(
+      (receipt) =>
+        receipt.kind === 'worktree' &&
+        receipt.branch === 'main' &&
+        git(repo, 'ls-tree', receipt.ref, 'generated-note'),
+    );
+    assert.ok(currentBackup, 'intermediate checkout must retain ignored current contents');
+    assert.equal(
+      git(repo, 'show', currentBackup.ref + ':generated-note'),
+      'current ignored user content',
+    );
+    await writeFile(
+      path.join(output, 'intermediate-restore.json'),
+      JSON.stringify({ deletionReceipt, currentBackup, deletionRestore }, null, 2),
+    );
+    const deletionCleanup = await releaseOwnedProof('dirty-deletion-restored-cleanup');
+    assert.equal(deletionCleanup.refreshed, true, deletionCleanup.detail);
+
+    await writeFile(path.join(repo, 'legacy-refresh.txt'), 'ordinary refresh local work\n');
+    const posture = (await core.readSlotRow('proof-slot'))?.warm;
+    git(seed, 'remote', 'add', 'origin', remote);
+    git(seed, 'commit', '--allow-empty', '-qm', 'test: remote main advanced');
+    git(seed, 'push', '-q', 'origin', 'main');
+    const remoteLock = path.join(
+      repo,
+      git(repo, 'rev-parse', '--git-path', 'refs/remotes/origin/main.lock'),
+    );
+    await writeFile(remoteLock, '');
+    const oldRemoteLock = new Date(Date.now() - 60_000);
+    await utimes(remoteLock, oldRemoteLock, oldRemoteLock);
+    const ordinary = await call<SlotRefreshResult>('slot.refresh', {
+      slotId: 'proof-slot',
+      mode: 'safe',
+    });
+    assert.equal(ordinary.refreshed, true, ordinary.detail);
+    assert.equal((await core.readSlotRow('proof-slot'))?.warm, posture);
+    const ordinaryInventory = await call<SlotParkedResult>('slot.parked', {
+      action: 'list',
+      slotId: 'proof-slot',
+    });
+    assert.ok(ordinaryInventory.action === 'list');
+    assert.ok(
+      ordinaryInventory.receipts.some(
+        (receipt) =>
+          receipt.kind === 'worktree' && git(repo, 'ls-tree', receipt.ref, 'legacy-refresh.txt'),
+      ),
+    );
+    assert.equal(git(repo, 'status', '--porcelain'), '');
+    await writeFile(path.join(output, 'ordinary-refresh.json'), JSON.stringify(ordinary, null, 2));
 
     git(repo, 'commit', '--allow-empty', '-qm', 'test: parked before fixture failure');
     const failedHead = git(repo, 'rev-parse', 'HEAD');

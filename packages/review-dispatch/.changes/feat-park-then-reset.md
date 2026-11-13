@@ -1,0 +1,1 @@
+- Park local commits and dirty work before slot resets, with scoped list/restore and a bounded fleet summary.

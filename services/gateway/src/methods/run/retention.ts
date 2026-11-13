@@ -17,6 +17,7 @@ import {
   warnRunBundleCapacity,
 } from '../../run-completion/retained-artifacts.js';
 import { captureMissingRunEpisodes } from '../../run-completion/run-episode.js';
+import { parkedWorkRetentionPass } from '../../run-lifecycle/parked-work-retention.js';
 import { nativeSessionManager } from '../../runners/native/manager.js';
 import {
   diskBytes,
@@ -383,7 +384,8 @@ export function startRunRetention(emit: Emit): void {
     if (running) return;
     running = true;
     runRetentionPass({ apply: true, emit })
-      .then((plan) => {
+      .then(async (plan) => {
+        await parkedWorkRetentionPass();
         if (plan.runs.length) console.log(`[run-retention] ${formatRunRetention(plan)}`);
       })
       .catch((err) =>

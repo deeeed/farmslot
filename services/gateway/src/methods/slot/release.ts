@@ -20,7 +20,6 @@ import {
 } from '@farmslot/protocol';
 
 import { assertCleanupCurrent, withoutCleanupSignal } from '../../core/cleanup-scope.js';
-import { withFarmGitConfig } from '../../core/farm-git.js';
 import {
   execOnSlot,
   expandHook,
@@ -119,46 +118,15 @@ import {
 } from './shared.js';
 import {
   assertSlotNotOperatorRoot,
-  detectLinkedWorktree,
-  isSlotIdleBranch,
   resetSlotRepoToIdle,
-  resolveSlotTrackingBranchFromProject,
   slotIdleResetStepDetail,
 } from './slot-tracking.js';
-import { findUnmergedSlotWork } from './unmerged-work.js';
 
 // In-flight teardown coalescing: two concurrent releases for the same slot
 // must be ONE teardown — the slower duplicate previously re-killed and reset
 // whatever claimed the slot after the first release finished.
 const inflightReleases = new Map<string, { key: string; promise: Promise<SlotReleaseResult> }>();
 
-/**
- * A reset release discards the checkout's local work without checking it
- * (ADR-054, 2026-10-19). One log line names it, so the reflog can recover it.
- */
-async function logDiscardedWork(
-  vars: SlotVars,
-  slotId: string,
-  owner: string | null,
-  parked = false,
-): Promise<void> {
-  const work = await execOnSlot(
-    vars,
-    withFarmGitConfig(
-      `cd ${shellQuote(vars.remoteRepo)} && { git rev-parse HEAD 2>/dev/null || echo unknown; git status --porcelain 2>/dev/null | wc -l; }`,
-    ),
-  );
-  const [head, dirty] = work.stdout.trim().split('\n');
-  console.log(
-    parked
-      ? `[slot.release] ${slotId}: reset moves off HEAD ${head?.trim() || 'unknown'}, kept under refs/farmslot/parked, and discards ${dirty?.trim() || 'unknown'} dirty file(s)`
-      : `[slot.release] ${slotId}: reset discards HEAD ${head?.trim() || 'unknown'} and ${dirty?.trim() || 'unknown'} dirty file(s)${owner ? ` of run ${owner}` : ''}`,
-  );
-}
-
-/** How long a release waits for an aborted in-flight prepare to settle. A
- * git command stalled on a dropped network never observes the abort; past
- * this the slot is held with the reason instead of the release hanging. */
 export const RELEASE_PREPARE_STOP_TIMEOUT_MS = 3 * 60_000;
 /** Progress while waiting, so a CLI idle timeout does not end the release first. */
 const RELEASE_PREPARE_STOP_HEARTBEAT_MS = 15_000;
@@ -273,11 +241,6 @@ export async function slotRelease(
   return teardown;
 }
 
-export interface SlotUnmergedWork {
-  branch: string;
-  details: string;
-}
-
 export interface SlotReleasePreflight {
   vars: SlotVars;
   boundOwner: string | null;
@@ -285,8 +248,6 @@ export interface SlotReleasePreflight {
   projectVars: ProjectVars | undefined;
   projectJson: RawProjectJson;
   defaultBranch: string;
-  /** Work a full release would discard; null under keepWork/forceReset. */
-  unmergedWork: SlotUnmergedWork | null;
   /** The detached blind trial whose isolated Git an unowned slot still holds. */
   blindMarker: string | null;
 }
@@ -367,7 +328,6 @@ async function releasePreflight(
   }
   const vars = await loadSlotVars(params.slotId);
   assertReleaseRunGuards(params, boundOwner);
-  const forceReset = params.forceReset ?? false;
 
   const ownerRun = boundOwner ? await getRunWithArchived(boundOwner) : undefined;
   if (params.preserveAgents && ownerRun?.engineState?.evalExperiment?.blind?.isolation)
@@ -408,10 +368,6 @@ async function releasePreflight(
   if (blindMarker && params.preserveAgents) throw new Error(BLIND_WORKER_STOP_REFUSAL);
 
   const defaultBranch = getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH;
-  const unmergedWork =
-    params.keepWork || forceReset || options?.workspaceRecovery
-      ? null
-      : await findReleaseUnmergedWork(vars, projectJson, projectVars, defaultBranch);
   return {
     vars,
     boundOwner,
@@ -419,7 +375,6 @@ async function releasePreflight(
     projectVars,
     projectJson,
     defaultBranch,
-    unmergedWork,
     blindMarker,
   };
 }
@@ -485,42 +440,6 @@ function releaseOwnerRefusal(
     : `Slot ${params.slotId} is held by missing run ${owner}; restore its run record or explicitly discard this named workspace through slot.release RPC with forceReset:true and expectedRunId:${owner}`;
 }
 
-async function findReleaseUnmergedWork(
-  vars: SlotVars,
-  projectJson: RawProjectJson,
-  projectVars: ProjectVars | undefined,
-  defaultBranch: string,
-): Promise<SlotUnmergedWork | null> {
-  const currentBranch = (
-    await execOnSlot(
-      vars,
-      withFarmGitConfig(
-        `git -C ${shellQuote(vars.remoteRepo)} rev-parse --abbrev-ref HEAD 2>/dev/null`,
-      ),
-    )
-  ).stdout.trim();
-  const linkedWorktree = await detectLinkedWorktree(vars);
-  const trackingBranch = resolveSlotTrackingBranchFromProject(
-    projectJson,
-    vars,
-    projectVars,
-    linkedWorktree,
-  );
-  if (
-    !currentBranch ||
-    isSlotIdleBranch(currentBranch, trackingBranch, defaultBranch, linkedWorktree)
-  )
-    return null;
-  const details = await findUnmergedSlotWork(vars, currentBranch, execOnSlot, projectJson);
-  return details ? { branch: currentBranch, details } : null;
-}
-
-function unmergedWorkError(work: SlotUnmergedWork): Error {
-  return new Error(
-    `UNMERGED_WORK:${work.branch}:${work.details}:Slot has work on '${work.branch}' (${work.details}) that would be lost. Use Force Reset to discard.`,
-  );
-}
-
 async function slotReleaseImpl(
   params: SlotReleaseParams,
   emit: EventEmitter,
@@ -531,7 +450,6 @@ async function slotReleaseImpl(
   if ('skipped' in preflight) return { released: false, reason: preflight.skipped };
   // Refused before the kill below, so a refusal leaves the worker running. Step 2
   // checks again after the kill for work the worker wrote in between.
-  if (preflight.unmergedWork) throw unmergedWorkError(preflight.unmergedWork);
   const { vars, boundOwner, ownerTerminal, projectVars, projectJson, defaultBranch, blindMarker } =
     preflight;
   const forceReset = params.forceReset ?? false;
@@ -988,20 +906,6 @@ async function slotReleaseImpl(
     throw new Error(
       `Slot ${params.slotId} holds work that is not run ${options.workspaceRecovery.parkRunId}'s own branch commits; nothing was parked or reset.`,
     );
-  }
-  if (!keepWork && !forceReset && !options?.workspaceRecovery && !parked) {
-    const unmergedWork = await findReleaseUnmergedWork(
-      vars,
-      projectJson,
-      projectVars,
-      defaultBranch,
-    );
-    if (unmergedWork) {
-      await markSlotBusy(params.slotId, 'working');
-      throw unmergedWorkError(unmergedWork);
-    }
-  } else if (!keepWork && !parked) {
-    await logDiscardedWork(vars, params.slotId, boundOwner, options?.workspaceRecovery?.parked);
   }
 
   // A named discard performs Close after release. Retain its final result before that source

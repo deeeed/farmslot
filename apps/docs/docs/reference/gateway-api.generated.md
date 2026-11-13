@@ -372,6 +372,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `slot.fixtureRefresh`                   | slot             | bounded-write | —      | —      | Slot FixtureRefresh gateway method.                   |
 | `slot.monitor`                          | slot             | bounded-write | —      | —      | Slot Monitor gateway method.                          |
 | `slot.openEditor`                       | slot             | bounded-write | —      | —      | Slot OpenEditor gateway method.                       |
+| `slot.parked`                           | slot             | bounded-write | —      | —      | Slot Parked gateway method.                           |
 | `slot.prepare`                          | slot             | lifecycle     | —      | —      | Slot Prepare gateway method.                          |
 | `slot.prepareStatus`                    | slot             | lifecycle     | —      | —      | Slot PrepareStatus gateway method.                    |
 | `slot.recycle`                          | slot             | lifecycle     | —      | —      | Slot Recycle gateway method.                          |
