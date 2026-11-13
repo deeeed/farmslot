@@ -11,8 +11,9 @@ import {
 
 import { emptyCiWatchState } from '../ci-monitor/state.js';
 import { loadSlotVars, type SlotVars } from '../core/config.js';
-import { execOnSlot } from '../core/exec.js';
+import { EXEC_TIMEOUT_EXIT_CODE, execOnSlot } from '../core/exec.js';
 import { withFarmGitConfig } from '../core/farm-git.js';
+import { gitPushTimeoutError, gitPushTimeoutMs } from '../core/git-push-budget.js';
 import { shellQuote } from '../core/tmux.js';
 import { captureCurrentReviewSnapshot } from '../review/snapshots.js';
 import {
@@ -41,13 +42,16 @@ export async function runtimeOperation<T>(
   input: unknown,
 ): Promise<T> {
   const script = await agentRuntimeScriptForSlot(vars, 'branch-update.mjs');
+  const timeout = phase === 'push' ? await gitPushTimeoutMs(vars) : 60_000;
   const result = await execOnSlot(
     vars,
     withFarmGitConfig(
       `node ${shellQuote(script)} ${shellQuote(phase)} ${shellQuote(JSON.stringify(input))}`,
     ),
-    { timeout: 60_000, maxBuffer: 1024 * 1024 },
+    { timeout, maxBuffer: 1024 * 1024 },
   );
+  if (phase === 'push' && result.exitCode === EXEC_TIMEOUT_EXIT_CODE)
+    throw gitPushTimeoutError(timeout);
   if (result.exitCode !== 0) {
     const detail = result.stderr.trim().split('\n').at(-1) ?? '';
     let refusal: { code?: string; message?: string } | undefined;
