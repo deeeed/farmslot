@@ -18,8 +18,6 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
-
 import {
   AMBIENT_ACCOUNT_LABEL,
   earliestExhaustionExpiry,
@@ -145,8 +143,8 @@ function main() {
         const timeoutMs = Number(guard.timeoutMs) > 0 ? Number(guard.timeoutMs) : 8000;
         const cmd = guard.command.map((part) =>
           String(part)
-            .replaceAll('{{label}}', literalReplacement(label))
-            .replaceAll('{{provider}}', literalReplacement(provider)),
+            .replaceAll('{{label}}', () => label)
+            .replaceAll('{{provider}}', () => provider),
         );
         const result = spawnSync(cmd[0], cmd.slice(1), {
           encoding: 'utf8',
