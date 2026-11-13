@@ -2,10 +2,13 @@
 // event loop. The CLI keeps the synchronous `validatePackPortability`; the walk and the policy are
 // the same function in protocol.
 import { execFile } from 'node:child_process';
+import { lstat, readdir } from 'node:fs/promises';
+import path from 'node:path';
 
 import {
+  listPackOwnedEntriesAsync,
   type PackGitResult,
-  validatePackPortabilityAsync,
+  validatePackEntries,
 } from '@farmslot/protocol/node/pack-portability';
 
 import {
@@ -53,13 +56,122 @@ function runGit(args: string[]): Promise<PackGitResult> {
   );
 }
 
+/** What a pack check read or depends on, so a caller can tell when its answer may change. */
+export interface PackCheckInputs {
+  /** Pack-owned files, a link as the link itself. */
+  files: string[];
+  /**
+   * Directories where a new file would be owned: in a pack that is its own repository, every
+   * directory but ignored ones, `.git` and `node_modules`; otherwise the root and the directories
+   * holding owned files.
+   */
+  directories: string[];
+  /** Ownership rules, which may be absent: the Git index, `info/exclude` and `.gitignore` files. */
+  rules: string[];
+}
+
+/** A project pack checked against the portability policy, and what that check depends on. */
+export interface ProjectPackPortability {
+  errors: string[];
+  inputs: PackCheckInputs;
+}
+
+function gitLines(result: PackGitResult, what: string): string[] {
+  if (result.status !== 0) throw new Error(`Cannot read ${what} for the pack check`);
+  return result.stdout.toString().split('\0').filter(Boolean);
+}
+
+/** Directories under `root` (itself included) outside `skipped`, and the `.gitignore` files in them. */
+async function walkPackDirectories(
+  root: string,
+  skipped: ReadonlySet<string>,
+): Promise<{ directories: string[]; ignoreFiles: string[] }> {
+  const directories: string[] = [];
+  const ignoreFiles: string[] = [];
+  const visit = async (dir: string, rel: string): Promise<void> => {
+    directories.push(dir);
+    const children: Promise<void>[] = [];
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const childRel = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.name === '.gitignore') ignoreFiles.push(path.join(dir, entry.name));
+      if (!entry.isDirectory() || entry.name === '.git' || entry.name === 'node_modules') continue;
+      if (!skipped.has(childRel)) children.push(visit(path.join(dir, entry.name), childRel));
+    }
+    await Promise.all(children);
+  };
+  await visit(root, '');
+  return { directories, ignoreFiles };
+}
+
+/** A copied pack: its ownership follows its files, so the directories holding them suffice. */
+function copiedPackInputs(root: string, files: string[]): PackCheckInputs {
+  const directories = new Set([root]);
+  for (const file of files)
+    for (let dir = path.dirname(file); dir.startsWith(`${root}/`); dir = path.dirname(dir))
+      directories.add(dir);
+  return { files, directories: [...directories], rules: [] };
+}
+
+async function packCheckInputs(root: string, files: string[]): Promise<PackCheckInputs> {
+  try {
+    await lstat(path.join(root, '.git'));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return copiedPackInputs(root, files);
+  }
+  const gitPaths = await runGit([
+    '-C',
+    root,
+    'rev-parse',
+    '--git-path',
+    'index',
+    '--git-path',
+    'info/exclude',
+  ]);
+  // An unusable `.git` (a pruned worktree, a `safe.directory` refusal): the ownership walk reads
+  // the pack as a copied one, and so does this.
+  if (gitPaths.status === 128) return copiedPackInputs(root, files);
+  const rules = gitPaths.stdout
+    .toString()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => path.resolve(root, line));
+  if (gitPaths.status !== 0 || rules.length !== 2)
+    throw new Error('Cannot locate the pack repository for the pack check');
+  // Directories an ignore rule matches, not ones that only hold ignored files; no index write.
+  const ignored = await runGit([
+    '-C',
+    root,
+    '--no-optional-locks',
+    'status',
+    '--porcelain=v1',
+    '-z',
+    '--ignored=matching',
+    '--untracked-files=all',
+  ]);
+  const skipped = new Set(
+    gitLines(ignored, 'ignored pack directories')
+      .filter((entry) => entry.startsWith('!! ') && entry.endsWith('/'))
+      .map((entry) => entry.slice(3, -1)),
+  );
+  const walked = await walkPackDirectories(root, skipped);
+  return { files, directories: walked.directories, rules: [...rules, ...walked.ignoreFiles] };
+}
+
 /** Every pack-owned file of a project checked against the portability policy. */
 export function validateProjectPackPortability(
   root: string,
   prefix: string,
   machines: readonly string[],
-): Promise<string[]> {
-  return withHostOperation(PACK_PORTABILITY_OPS.validate, () =>
-    validatePackPortabilityAsync(root, prefix, machines, runGit),
-  );
+): Promise<ProjectPackPortability> {
+  return withHostOperation(PACK_PORTABILITY_OPS.validate, async () => {
+    const entries = await listPackOwnedEntriesAsync(root, runGit);
+    return {
+      errors: validatePackEntries(entries, prefix, machines),
+      inputs: await packCheckInputs(
+        root,
+        entries.map((entry) => path.join(root, entry.rel)),
+      ),
+    };
+  });
 }
