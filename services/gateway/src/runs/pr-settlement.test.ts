@@ -78,6 +78,7 @@ test('retention holds a relinked run whose new PR cannot be read', async (t) => 
   updateRun(run.id, { status: 'done', completedAt: '2026-01-01T00:00:00.000Z' });
   const relinked = getRun(run.id)!;
   const context = await retentionContext([relinked], Date.parse('2026-11-13T00:00:00.000Z'), {
+    retentionDays: () => 7,
     projectRepo: async () => 'owner/repo',
     openPrs: async () => {
       throw new Error('rate limited');
