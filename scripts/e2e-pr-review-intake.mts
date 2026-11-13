@@ -14,6 +14,7 @@ import type {
   PRRulesListResult,
   PRTeamSaveResult,
   QueueItem,
+  ResourceChangedPayload,
 } from '../packages/protocol/src/index.js';
 
 loadCheckoutEnv(fileURLToPath(new URL('../', import.meta.url)));
@@ -37,9 +38,16 @@ const observer = await client.connect().catch((error) => {
   connection.close();
   throw error;
 });
-const updates: PRRulesListResult[] = [];
+// The second client reads the rules again whenever the gateway announces a PR automation change.
+const updates: Promise<PRRulesListResult>[] = [];
 observer.onEvent((event) => {
-  if (event.event === 'prRules.updated') updates.push(event.payload as PRRulesListResult);
+  if (
+    event.event === 'resource.changed' &&
+    (event.payload as ResourceChangedPayload).changes.some(
+      (change) => change.key.family === 'pr-automation',
+    )
+  )
+    updates.push(observer.call<PRRulesListResult>('prRules.list'));
 });
 let receipt: PRReviewRequestResult | undefined;
 try {
@@ -134,7 +142,9 @@ try {
     'Human intake must not create trigger rules',
   );
   assert(
-    updates.some((state) => state.submissions?.some((item) => item.id === receipt?.submission.id)),
+    (await Promise.all(updates)).some((state) =>
+      state.submissions?.some((item) => item.id === receipt?.submission.id),
+    ),
     'Second client must receive durable intake updates',
   );
   await cancel();

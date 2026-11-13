@@ -15,6 +15,7 @@ import type {
   PRTriggerRule,
   PRWatchListResult,
   PRRulePredicate,
+  ResourceChangedPayload,
 } from '../packages/protocol/src/index.js';
 
 loadCheckoutEnv(fileURLToPath(new URL('../', import.meta.url)));
@@ -35,9 +36,16 @@ const observer = await client.connect().catch((error) => {
   connection.close();
   throw error;
 });
-const updates: PRRulesListResult[] = [];
+// The second client reads the rules again whenever the gateway announces a PR automation change.
+const updates: Promise<PRRulesListResult>[] = [];
 observer.onEvent((event) => {
-  if (event.event === 'prRules.updated') updates.push(event.payload as PRRulesListResult);
+  if (
+    event.event === 'resource.changed' &&
+    (event.payload as ResourceChangedPayload).changes.some(
+      (change) => change.key.family === 'pr-automation',
+    )
+  )
+    updates.push(observer.call<PRRulesListResult>('prRules.list'));
 });
 let rule: PRTriggerRule | undefined;
 let teamId: string | undefined;
@@ -187,7 +195,9 @@ try {
   assert.equal(enrollment?.monitorId, existing.id, 'Backfill must reuse the original subscription');
   assert(notice && state.notifications?.some((item) => item.id === notice.id && item.current));
   assert(
-    updates.some((update) => update.notifications?.some((item) => item.id === notice.id)),
+    (await Promise.all(updates)).some((update) =>
+      update.notifications?.some((item) => item.id === notice.id),
+    ),
     'A second connected client receives persisted rule attention',
   );
   const subscribed = (await connection.call<PRWatchListResult>('prWatch.list')).monitors.filter(
