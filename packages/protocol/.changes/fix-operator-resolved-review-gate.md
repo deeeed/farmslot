@@ -1,1 +1,0 @@
-- Label result acceptance as "Accept and close without publishing" so its terminal effect is explicit.

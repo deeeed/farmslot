@@ -1,1 +1,0 @@
-- Run hooks from selected immutable support when a node uses a configured workspace root, including prepare and staged worker launches.

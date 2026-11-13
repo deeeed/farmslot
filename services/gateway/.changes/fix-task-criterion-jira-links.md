@@ -1,1 +1,0 @@
-- Keep acceptance criterion IDs as plain text when Jira incorrectly links them as issue keys, preserving real ticket links in task documents.

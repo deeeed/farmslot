@@ -1,1 +1,0 @@
-- Re-review fixes to PR descriptions and worker reports instead of returning stale findings to the decision gate.

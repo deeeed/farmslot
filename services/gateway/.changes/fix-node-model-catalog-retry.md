@@ -1,1 +1,0 @@
-- Retry failed per-node model listings with capped backoff after gateway restarts, so Pi and other node-command catalogs recover without opening a model picker.

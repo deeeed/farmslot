@@ -1,1 +1,0 @@
-- Collecting a node-support bundle no longer blocks the gateway while the pack portability check reads the pack's files.

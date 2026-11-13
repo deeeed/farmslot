@@ -1,1 +1,0 @@
-- Refuse silent Pi reasoning-effort changes before sending requests and declare image input for every worker model.

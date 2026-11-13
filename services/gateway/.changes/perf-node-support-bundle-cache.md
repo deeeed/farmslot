@@ -1,1 +1,0 @@
-- Remote slot commands collect the node-support bundle once per change of the files, packs and pool it is built from, instead of every 2 seconds; a prepare's hundreds of commands no longer re-walk, re-hash and re-check the bundle on the request loop.

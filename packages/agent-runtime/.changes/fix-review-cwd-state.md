@@ -1,1 +1,0 @@
-- Keep reviewer shell working-directory state in the task's private writable directory so source inspection commands complete under the review sandbox.

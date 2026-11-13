@@ -1,1 +1,0 @@
-- Resume retained tasks with their verified provider copy when a rollout removes the pool-selected installation, recording the fallback and actual provider identity.

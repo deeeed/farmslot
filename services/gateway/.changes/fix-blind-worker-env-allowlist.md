@@ -1,2 +1,0 @@
-- Build blind worker environments from an explicit allowlist on fresh launches and retained reloads, preserving task tooling, selected Pi provider endpoints, configuration and authentication, and keep recipe CDP routing on the trial browser.
-- Isolate blind worker temporary files and Mobile CDP broker sockets per trial, restrict Unix connections to a fixed socket-only broker directory with escaped physical paths to prevent external socket imports through lookalike capsule directories, and provide process listing inside the worker sandbox.

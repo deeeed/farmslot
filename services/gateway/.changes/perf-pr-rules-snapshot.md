@@ -1,1 +1,0 @@
-- PR review intake and PR monitoring no longer copy their whole store on every read: readers share the committed state, frozen, so listing PR rules and the reconcile passes stop blocking the gateway for several milliseconds per call.

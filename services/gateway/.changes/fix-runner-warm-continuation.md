@@ -1,1 +1,0 @@
-- Continue retained reviewer conversations through the shared runner capability, preserving delta scope and workspace ownership.

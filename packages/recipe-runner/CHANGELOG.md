@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.46.15 - 2026-11-13
+
+- `processIdentity(process.pid)` reads this process's start time once instead of running `ps` on every call.
+
 ## 0.46.14 - 2026-11-13
 
 - Route blind Mobile CDP broker sockets into the trial's fixed socket-only directory and keep ownership files in general trial temp.

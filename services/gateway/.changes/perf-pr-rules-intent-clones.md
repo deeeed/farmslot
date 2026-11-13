@@ -1,1 +1,0 @@
-- PR-rules reconciliation reads each review intent from the shared frozen snapshot instead of copying all of them every turn.

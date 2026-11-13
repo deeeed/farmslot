@@ -1,1 +1,0 @@
-- Accept router model reasoning metadata with a boolean `default_enabled` so Pi can load its provider catalog while still refusing non-reasoning router models.

@@ -1,1 +1,0 @@
-- Keep capture errors and missing-media declarations after a transfer timeout so review can restore required task artifacts without failing on unavailable optional media.

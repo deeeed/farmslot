@@ -1,1 +1,0 @@
-- The acceptance panel renders proof steps from the shared run evidence view-model, the same projection `farmslot recipe view` reads.

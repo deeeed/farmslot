@@ -1,1 +1,0 @@
-- Distinguish automatic queued slot placement from explicit caller pins in run audit output.

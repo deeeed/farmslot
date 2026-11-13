@@ -1,1 +1,0 @@
-- Browser profile cleanup and the slot-facts live proof read the gateway's fleet stale threshold (now 10 minutes) from the protocol package instead of a 5-minute copy.

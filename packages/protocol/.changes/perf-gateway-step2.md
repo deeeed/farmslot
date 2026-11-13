@@ -1,1 +1,0 @@
-- Add `fs.readText` and `fs.isFile` node file reads (`NodeFsReadTextParams`, `NODE_FS_READ_TEXT_MAX_BYTES`) and the `textReads` node observation capability.

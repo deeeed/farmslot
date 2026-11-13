@@ -1,1 +1,0 @@
-- Add `textLinkParts`, which splits message text into plain runs and http(s) links, and `nativeMessageCopyLabel` for message copy actions.

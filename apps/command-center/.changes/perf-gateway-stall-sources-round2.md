@@ -1,1 +1,0 @@
-- The progressive gate proof script waits for the gateway's now-asynchronous sign-in checks.

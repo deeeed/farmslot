@@ -1,1 +1,0 @@
-- Honor trial-level `review:false` across retries and resumes, reject contradictory reviewer overrides, and reject unknown `eval.trial.start` parameters.

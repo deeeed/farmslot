@@ -1,1 +1,0 @@
-- Retry automatic slot selection when another run claims the reusable candidate during preview, preserving slot pins and the rival's ownership.
