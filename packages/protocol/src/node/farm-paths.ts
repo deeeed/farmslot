@@ -76,6 +76,8 @@ export interface GatewayFarmStatePaths extends FarmStatePaths {
   backlogRefinementPrompts: string;
   resourceWatchState: string;
   capabilityStore: string;
+  /** Copies of pool and project files taken before each configuration save. */
+  configBackups: string;
 }
 
 export interface FarmCodePaths {
@@ -331,6 +333,7 @@ export function resolveFarmPaths(options: ResolveFarmPathsOptions): FarmPaths {
             backlogRefinementPrompts: atHome('state', 'backlog', 'refinement-prompts'),
             resourceWatchState: atHome('state', 'cache', 'resource-watch-state.json'),
             capabilityStore: atHome('state', 'runtime-capabilities.json'),
+            configBackups: atHome('state', 'config-backups'),
           },
         }
       : { ...shared, role: 'node', state };
@@ -491,6 +494,7 @@ export function resolveFarmPaths(options: ResolveFarmPathsOptions): FarmPaths {
               `runtime-capabilities-${env.GATEWAY_PORT?.trim() || '7777'}.json`,
             ),
           ),
+          configBackups: atHome('state', 'config-backups'),
         },
       }
     : { ...shared, role: 'node', state };
