@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import {
   defaultScrubRoots,
+  outsideScrubPrefix,
   scrubRunCredentials,
   unsafeScrubRoot,
 } from '../services/gateway/src/runs/credential-scrub.js';
@@ -42,6 +43,13 @@ for (const root of roots) {
   }
 }
 if (!roots.length) roots.push(...defaultScrubRoots());
+for (const root of roots) {
+  const outside = outsideScrubPrefix(root);
+  if (outside) {
+    console.error(`refusing root ${root}: ${outside}`);
+    process.exit(2);
+  }
+}
 console.log(`${apply ? 'apply' : 'dry run'} roots:`);
 for (const root of roots) console.log(`  ${root}${existsSync(root) ? '' : ' (missing)'}`);
 

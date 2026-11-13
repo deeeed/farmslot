@@ -28,8 +28,17 @@ directories: any `--root` replaces the default list, so stores you leave out
 (an `archive/` you mean to keep, say) are neither scanned nor rewritten. An
 unknown argument exits with status 2 before anything is scanned. So does a
 `--root` that resolves, symlinks followed, to `/`, the home directory, the farm
-home (it holds `credentials.json`) or any directory containing the farm home;
-the message names the refused root and why.
+home (it holds `credentials.json`), any directory containing the farm home, a
+system tree (`/System`, `/Applications`, `/Library`, `/usr`, `/bin`, `/sbin`,
+`/opt/homebrew`) or a path with fewer than 3 segments such as `/Users/x` or
+`/Volumes/disk` (paths inside the temp dir excepted); the message names the
+refused root and why.
+
+Set `FARMSLOT_SCRUB_ALLOWED_PREFIX=<dir>` to confine a run: any root (default
+or `--root`) whose real path is outside `<dir>` exits with status 2 before
+scanning, and the library refuses to rewrite a file outside it. The tests set it
+to their own temp dir. Never run `--apply` by hand outside a `mktemp -d`
+directory except for the real one-shot against the gateway's stores.
 
 Only real credential values change: a value assigned to a name ending in
 `_KEY`, `_TOKEN`, `_PAT` or `_CREDENTIALS` when it looks like a secret (16+
