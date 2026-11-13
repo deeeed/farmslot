@@ -1,1 +1,0 @@
-- Chat messages have a Copy action that copies the exact message text, and http(s) addresses in your own messages are links that open in a new tab, as in assistant replies. Other schemes stay plain text.

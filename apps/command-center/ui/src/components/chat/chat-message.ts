@@ -4,10 +4,8 @@ import { customElement, property } from 'lit/decorators.js';
 import type { ChatMessage } from '@farmslot/protocol';
 
 import './chat-action-card.js';
-import '../shared/copy-text-button.js';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import { linkedText } from '../../utils/linked-text.js';
 import { renderChatMarkdown } from '../../utils/markdown.js';
 
 /** Rendered message markdown. */
@@ -111,25 +109,6 @@ const messageCss = `
     flex-direction: column;
     margin-bottom: ${spacing.lg};
   }
-  chat-message .cm-copy {
-    align-self: flex-start;
-  }
-  chat-message .cm-copy.cm-copy-user {
-    align-self: flex-end;
-  }
-  chat-message .cm-copy button {
-    font: inherit;
-    font-size: ${fonts.sizeXs};
-    color: ${colors.textMuted};
-    background: transparent;
-    border: none;
-    min-height: 32px;
-    padding: 0 ${spacing.xs};
-    cursor: pointer;
-  }
-  chat-message .cm-copy button:hover {
-    color: ${colors.textPrimary};
-  }
   chat-message .cm-cost-badge {
     color: ${colors.textMuted};
     font-size: 10px;
@@ -190,8 +169,6 @@ let sheet: CSSStyleSheet | undefined;
 export class ChatMessageElement extends LitElement {
   @property({ attribute: false }) message!: ChatMessage;
   @property({ type: Boolean }) isStreaming = false;
-  /** Off where the host offers its own copy of the same text (a proposed plan). */
-  @property({ attribute: false }) copyable = true;
 
   protected override createRenderRoot() {
     return this;
@@ -292,15 +269,9 @@ export class ChatMessageElement extends LitElement {
         </div>
         <div class="cm-bubble ${isUser ? 'cm-user' : 'cm-assistant'}">
           ${isUser
-            ? html`<span>${linkedText(this.message.content)}</span>`
+            ? html`<span>${this.message.content}</span>`
             : html`<span class="cm-markdown" .innerHTML=${this.markdownHtml(content)}></span>`}
         </div>
-        ${this.copyable
-          ? html`<copy-text-button
-              class="cm-copy ${isUser ? 'cm-copy-user' : ''}"
-              .text=${this.message.content}
-            ></copy-text-button>`
-          : ''}
         ${!isUser && this.message.usage?.costUsd
           ? html`<span class="cm-cost-badge">$${this.message.usage.costUsd.toFixed(4)}</span>`
           : ''}

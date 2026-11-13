@@ -83,7 +83,6 @@ import {
   ReviewDispatchViewModel,
 } from '@farmslot/review-dispatch';
 
-import '../shared/copy-text-button.js';
 import '../shared/review-dispatch-picker.js';
 import './chat-message.js';
 // Also registers <diff-review>, which shows a turn's file diffs.
@@ -100,7 +99,6 @@ import {
 } from '../../resource-cache.js';
 import { getState, subscribe } from '../../state.js';
 import { copyTextToClipboard } from '../../utils/clipboard.js';
-import { linkedText } from '../../utils/linked-text.js';
 import { safeLsGet, safeLsRemove, safeLsSet } from '../../utils/storage.js';
 import { buildHash, hashParams, navigateHash, parseHashRoute } from '../../utils/url-state.js';
 import { browserViewState, viewBinding, ViewStateBindings } from '../../utils/view-state.js';
@@ -739,9 +737,6 @@ export class NativeSessionView extends LitElement {
                         entry.event.commandId ?? String(entry.key),
                       )}
                 </div>
-                ${entry.kind === 'assistant'
-                  ? nothing
-                  : html`<copy-text-button .text=${entry.text}></copy-text-button>`}
                 ${entry.event.type === 'error' && entry.event.data
                   ? html`<details>
                       <summary>Error details</summary>
@@ -754,7 +749,7 @@ export class NativeSessionView extends LitElement {
   /** Each entry's message, the same object while its text is unchanged, so Lit skips it. */
   private readonly chatMessages = new WeakMap<NativeTimelineEntry, ChatMessage>();
 
-  private renderMarkdown(entry: NativeTimelineEntry, content: string, copyable = true) {
+  private renderMarkdown(entry: NativeTimelineEntry, content: string) {
     let message = this.chatMessages.get(entry);
     if (message?.content !== content) {
       message = {
@@ -765,7 +760,7 @@ export class NativeSessionView extends LitElement {
       };
       this.chatMessages.set(entry, message);
     }
-    return html`<chat-message .message=${message} .copyable=${copyable}></chat-message>`;
+    return html`<chat-message .message=${message}></chat-message>`;
   }
 
   /**
@@ -796,8 +791,7 @@ export class NativeSessionView extends LitElement {
           entry.text,
           nativeEntryPreview(entry),
           `plan:${entry.key}`,
-          // The plan has its own copy action below.
-          (text) => this.renderMarkdown(entry, text, false),
+          (text) => this.renderMarkdown(entry, text),
         )}
       </div>
       <button
@@ -953,11 +947,10 @@ ${JSON.stringify(
     text: string,
     preview: NativeMessagePreview | undefined,
     key: string,
-    full: (text: string) => unknown = (body) => html`<span class="body">${linkedText(body)}</span>`,
+    full: (text: string) => unknown = (body) => html`<span class="body">${body}</span>`,
   ) {
     if (!preview) return full(text);
     const expanded = this.expandedMessages.has(key);
-    // A preview may end inside an address: it stays plain until the whole text shows.
     return html`${expanded ? full(text) : html`<span class="body">${preview.text}</span>`}
       <button
         class="message-toggle"
