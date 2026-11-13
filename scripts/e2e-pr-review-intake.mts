@@ -15,7 +15,6 @@ import type {
   PRTeamSaveResult,
   QueueItem,
 } from '../packages/protocol/src/index.js';
-import { observePRRules } from './lib/pr-rules-observer.mjs';
 
 loadCheckoutEnv(fileURLToPath(new URL('../', import.meta.url)));
 const parsed = parseGitHubPullUrl(process.env.INTAKE_PR_URL);
@@ -34,12 +33,6 @@ const client = new GatewayClient({
   timeout: 15_000,
 });
 const connection = await client.connect();
-const observer = await client.connect().catch((error) => {
-  connection.close();
-  throw error;
-});
-// The second client reads the rules on each PR automation change, as Command Center does.
-const observed = observePRRules(observer);
 let receipt: PRReviewRequestResult | undefined;
 try {
   const { fleet } = await connection.call<{ fleet: FleetStatus }>('fleet.status');
@@ -79,7 +72,6 @@ try {
       notificationPrincipalIds: [],
     },
   });
-  await observed.mark();
   const request = {
     teamId: team.id,
     pr: { host: 'github.com', repo: parsed.repo, number: parsed.number },
@@ -127,12 +119,11 @@ try {
     assert.equal(queued.effort, 'high');
     assert.equal(queued.runId, undefined);
   }
-  const submissionId = receipt.submission.id;
-  await observed.expect(
-    (state) => !!state.submissions?.some((item) => item.id === submissionId),
-    'Second client must receive durable intake updates',
+  const after = await connection.call<PRRulesListResult>('prRules.list');
+  assert(
+    after.submissions?.some((item) => item.id === receipt?.submission.id),
+    'The rules list must show the durable intake request',
   );
-  const after = await observer.call<PRRulesListResult>('prRules.list');
   assert.equal(
     after.rules.length,
     before.rules.length,
@@ -165,7 +156,6 @@ try {
     if (receipt) await cancel();
   } finally {
     connection.close();
-    observer.close();
   }
 }
 

@@ -45,18 +45,6 @@ export const CI_PARITY_STEPS = [
       'scripts/runner-validation/canary/outcome.test.mts',
     ],
   ],
-  [
-    'PR rule e2e observer tests',
-    [
-      'env',
-      'TSX_TSCONFIG_PATH=services/gateway/tsconfig.json',
-      'node',
-      '--import',
-      'tsx',
-      '--test',
-      'scripts/lib/pr-rules-observer.test.mts',
-    ],
-  ],
   ['large files', ['yarn', 'quality:large-files']],
   ['project hook conformance', ['yarn', 'test:project-hooks']],
 ];

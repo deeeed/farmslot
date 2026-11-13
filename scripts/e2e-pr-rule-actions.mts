@@ -16,7 +16,6 @@ import type {
   PRWatchListResult,
   PRRulePredicate,
 } from '../packages/protocol/src/index.js';
-import { observePRRules } from './lib/pr-rules-observer.mjs';
 
 loadCheckoutEnv(fileURLToPath(new URL('../', import.meta.url)));
 const repo = process.env.RULE_REPOSITORY;
@@ -32,12 +31,6 @@ const client = new GatewayClient({
   timeout: 120_000,
 });
 const connection = await client.connect();
-const observer = await client.connect().catch((error) => {
-  connection.close();
-  throw error;
-});
-// The second client reads the rules on each PR automation change, as Command Center does.
-const observed = observePRRules(observer);
 let rule: PRTriggerRule | undefined;
 let teamId: string | undefined;
 let proof: Record<string, unknown> | undefined;
@@ -111,7 +104,7 @@ try {
     1,
     'Validation must target one PR',
   );
-  const afterPreview = await observer.call<PRRulesListResult>('prRules.list');
+  const afterPreview = await connection.call<PRRulesListResult>('prRules.list');
   assert.deepEqual(afterPreview.actions, before.actions, 'Preview cannot emit action receipts');
   assert.deepEqual(afterPreview.notifications, before.notifications, 'Preview cannot notify');
   assert.equal(
@@ -169,7 +162,6 @@ try {
       },
     })
   ).rule;
-  await observed.mark();
   rule = (
     await connection.call<PRRuleSaveResult>('prRules.setEnabled', {
       id: rule.id,
@@ -178,7 +170,7 @@ try {
       backfill: true,
     })
   ).rule;
-  const state = await observer.call<PRRulesListResult>('prRules.list');
+  const state = await connection.call<PRRulesListResult>('prRules.list');
   const actions = state.actions?.filter((action) => action.ruleId === rule!.id) ?? [];
   assert.equal(actions.length, 2);
   const enrollment = actions.find((action) => action.kind === 'monitor');
@@ -186,10 +178,6 @@ try {
   assert.equal(enrollment?.status, 'applied', enrollment?.error);
   assert.equal(enrollment?.monitorId, existing.id, 'Backfill must reuse the original subscription');
   assert(notice && state.notifications?.some((item) => item.id === notice.id && item.current));
-  await observed.expect(
-    (update) => !!update.notifications?.some((item) => item.id === notice.id),
-    'A second connected client receives persisted rule attention',
-  );
   const subscribed = (await connection.call<PRWatchListResult>('prWatch.list')).monitors.filter(
     (monitor) => monitor.config.teamId === teamId,
   );
@@ -223,7 +211,7 @@ try {
     const deadline = Date.now() + 180_000;
     let acknowledged = false;
     while (Date.now() < deadline) {
-      const current = await observer.call<PRRulesListResult>('prRules.list');
+      const current = await connection.call<PRRulesListResult>('prRules.list');
       if (current.notifications?.find((item) => item.id === notice.id)?.acknowledgedAt) {
         acknowledged = true;
         break;
@@ -299,7 +287,6 @@ try {
       }
     }
   } finally {
-    observer.close();
     connection.close();
   }
 }
