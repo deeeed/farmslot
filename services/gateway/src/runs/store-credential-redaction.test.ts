@@ -19,7 +19,7 @@ import {
 } from './store.js';
 
 const FAKE_KEY = 'fixture-provider-value-0001';
-const FAKE_TOKEN = "fixture-quoted'token";
+const FAKE_TOKEN = "fixture-quoted'token-0001";
 const launch = [
   `export LITELLM_API_KEY='${FAKE_KEY}'`,
   `export JIRA_API_TOKEN='${FAKE_TOKEN.replace(/'/g, `'\\''`)}'`,

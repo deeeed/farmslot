@@ -25,11 +25,15 @@ missing ones. Pass `--root <dir>` (repeatable) to choose stores.
 
 Only real credential values change: a value assigned to a name ending in
 `_KEY`, `_TOKEN`, `_SECRET`, `_PASSWORD`, `_PASSWD`, `_PAT` or `_CREDENTIALS`
-when it looks like a secret (16+ characters, not a `$NAME` reference, number,
-placeholder such as `local`, or `org/repo` slug), and provider token shapes
-(`sk-`, `sk-ant-`, `ghp_`/`gho_`/`ghs_`/`github_pat_`, Atlassian `ATATT`,
-`xoxb-`/`xoxp-`, `AKIA…`, `glpat-`, `npm_`) wherever they appear. Names such as
-`…_API_KEY_INDEX` or `…_MAX_TOKENS` and ordinary prose are left alone. The
-gateway applies the same rules when it stores and loads run records. Add `--apply` to rewrite in place. Files keep their mode and JSON
+when it looks like a secret (16+ characters mixing at least two of lowercase,
+uppercase and digits; not a `$NAME` reference or an `org/repo` path), and
+provider token shapes (`sk-`, `sk-ant-`, `ghp_`/`gho_`/`ghs_`/`github_pat_`,
+Atlassian `ATATT`, `xoxb-`/`xoxp-`, `AKIA…`, `glpat-`, `npm_`, `AIza…`, `hf_`,
+`xai-`, `fw_`) wherever they appear. Placeholders such as `local`, numbers,
+single-case slugs such as `metamask-extension`, names such as
+`…_API_KEY_INDEX` or `…_MAX_TOKENS`, and ordinary prose are left alone. The
+gateway applies the same rules when it stores and loads run records.
+
+Add `--apply` to rewrite in place. Files keep their mode and JSON
 layout; no backup copies are written. A second run reports zero records.
 Packed `.farmrun`/tar bundles are listed, not rewritten; re-export or delete them.

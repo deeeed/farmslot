@@ -21,13 +21,15 @@ const PROVIDER_TOKEN = new RegExp(
       'AKIA[0-9A-Z]{16}(?![0-9A-Z])',
       'glpat-[A-Za-z0-9_-]{20,}',
       'npm_[A-Za-z0-9]{36}(?![A-Za-z0-9])',
+      'AIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])',
+      'hf_[A-Za-z0-9]{30,}',
+      'xai-[A-Za-z0-9]{20,}',
+      'fw_[A-Za-z0-9]{20,}',
     ].join('|') +
     ')',
   'g',
 );
 const PROVIDER_TOKEN_VALUE = new RegExp(`^${PROVIDER_TOKEN.source}$`);
-const PLACEHOLDER =
-  /^(?:local|ollama|none|null|undefined|true|false|changeme|placeholder|dummy|x+)$/i;
 /** A repo slug or file path such as org/repo or ~/dir/file. */
 const SLUG_OR_PATH = /^[~.]?\/?[\w.-]+(?:\/[\w.-]+)+\/?$/;
 
@@ -47,16 +49,19 @@ function unquote(value: string): string {
   return value;
 }
 
-/** True for a literal that looks like a secret rather than a reference, placeholder, number or slug. */
+/**
+ * True for a literal that looks like a secret: a provider shape, or 16+ characters mixing at least
+ * two of lowercase, uppercase and digits. References, placeholders such as `local`, numbers and
+ * single-case words or slugs such as `metamask-extension` or `org/repo` are not secrets.
+ */
 export function isSecretValue(value: string): boolean {
   if (PROVIDER_TOKEN_VALUE.test(value)) return true;
+  const classes = [/[a-z]/, /[A-Z]/, /\d/].filter((pattern) => pattern.test(value)).length;
   return (
     value.length >= 16 &&
-    value !== REDACTED_CREDENTIAL &&
+    classes >= 2 &&
     !value.includes('$') &&
     !/\s/.test(value) &&
-    !/^\d+$/.test(value) &&
-    !PLACEHOLDER.test(value) &&
     !SLUG_OR_PATH.test(value)
   );
 }

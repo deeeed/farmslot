@@ -92,6 +92,12 @@ test('apply rewrites values in place, keeps names, mode and format, leaves no ba
 const SK_FIXTURE = ['sk', 'fixture0000000000000000'].join('-');
 const GHP_FIXTURE = ['ghp', 'fixtureFixtureFixture0000'].join('_');
 const ATLASSIAN_FIXTURE = ['ATA', 'TT3xFfGF0fixture', 'A'.repeat(40), '=0FIXTURE'].join('');
+const FREE_TEXT_FIXTURES = [
+  ['AI', 'za', 'Fixture0fixture0fixture0fixture0fix'].join(''),
+  ['hf', 'fixture0fixture0fixture0fixture0'].join('_'),
+  ['xai', 'fixture0fixture0fixture0'].join('-'),
+  ['fw', 'fixture0fixture0fixture0'].join('_'),
+];
 
 test('names, references, numbers, slugs and prose without a provider shape are left alone', () => {
   const record = {
@@ -105,6 +111,7 @@ test('names, references, numbers, slugs and prose without a provider shape are l
         },
       },
     ],
+    input: { task: { vars: { ANTIPATTERN_REPO_KEY: 'fixture-repo-slugs' } } },
     environment: {
       MM_PERPS_LIGHTER_API_KEY_INDEX: '3',
       ANTIPATTERN_REPO_KEY: 'org/repo',
@@ -125,16 +132,24 @@ test('credential values and provider shapes are redacted in commands, maps, jour
     environment: { JIRA_API_TOKEN: 'fixture-atlassian-value-0003' },
     commit: { message: `fix: drop the leaked ${GHP_FIXTURE} from the config` },
     note: `the Atlassian token ${ATLASSIAN_FIXTURE} was pasted here`,
+    keys: FREE_TEXT_FIXTURES.map((key) => `pasted ${key} into the chat`),
   };
   const scrubbed = scrubRecordText(JSON.stringify(record), false)!;
-  assert.equal(scrubbed.values, 4);
+  assert.equal(scrubbed.values, 4 + FREE_TEXT_FIXTURES.length);
   assert.deepEqual(scrubbed.fields, [
     '$.steps[0].outputs.launchCommand',
     '$.environment.JIRA_API_TOKEN',
     '$.commit.message',
     '$.note',
+    ...FREE_TEXT_FIXTURES.map((_, index) => `$.keys[${index}]`),
   ]);
-  for (const secret of [SK_FIXTURE, GHP_FIXTURE, ATLASSIAN_FIXTURE, 'fixture-atlassian'])
+  for (const secret of [
+    SK_FIXTURE,
+    GHP_FIXTURE,
+    ATLASSIAN_FIXTURE,
+    'fixture-atlassian',
+    ...FREE_TEXT_FIXTURES,
+  ])
     assert.ok(!scrubbed.text.includes(secret));
   const after = JSON.parse(scrubbed.text);
   assert.equal(after.steps[0].outputs.launchCommand, 'export LITELLM_API_KEY=[REDACTED] && pi');
