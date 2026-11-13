@@ -308,7 +308,13 @@ export function sourceSnapshot(
     status,
     sourceFingerprint:
       platformFingerprint && path.resolve(root) === git.topLevel
-        ? platformFingerprint(root)
+        ? platformFingerprint(root, {
+            head: `${head}\n`,
+            status,
+            excluded: pathspecs.flatMap((spec) =>
+              spec.startsWith(':(exclude)') ? [spec.slice(':(exclude)'.length)] : [],
+            ),
+          })
         : adapter
           ? gitSourceFingerprint(git.topLevel, pathspecs, head, status)
           : nestedGitSourceFingerprint(

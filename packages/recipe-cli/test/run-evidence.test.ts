@@ -1072,6 +1072,36 @@ describe('execution provenance', () => {
     assert.ok(fields.includes('product.sourceFingerprint'));
   });
 
+  test("hands the platform fingerprint the snapshot's HEAD and status, so it can skip its own git", async () => {
+    const observed: unknown[] = [];
+    useAdapters(
+      fakeAdapter('web', {
+        sourceFingerprint: (_root, observation) => {
+          observed.push(observation);
+          return 'web-fingerprint';
+        },
+      }),
+    );
+    const product = checkout('provenance-observed-', { 'app/value.ts': 'export const v = 1;\n' });
+    fs.writeFileSync(path.join(product, 'app/value.ts'), 'export const v = 2;\n');
+    const artifacts = path.join(product, 'artifacts');
+    const input = {
+      adapter: 'web',
+      projectRoot: product,
+      recipeDocument,
+      runnerIncludes: [],
+      excludedProductRoots: [artifacts],
+    };
+    await captureExecutionProvenance(input, 'start');
+    assert.deepEqual(observed, [
+      {
+        head: `${git(product, 'rev-parse', 'HEAD')}\n`,
+        status: ' M app/value.ts\n',
+        excluded: ['artifacts'],
+      },
+    ]);
+  });
+
   test('fingerprints the checkout root with the platform fingerprint; refuses symlinked helpers', async () => {
     useAdapters(fakeAdapter('web', { sourceFingerprint: () => 'web-fingerprint' }));
     const product = checkout('provenance-platform-', { 'app/value.ts': 'export const v = 1;\n' });

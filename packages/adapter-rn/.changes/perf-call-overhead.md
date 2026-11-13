@@ -1,0 +1,1 @@
+- `sourceFingerprint` takes the HEAD and status a caller already read: a status that lists nothing under the source paths gives the same fingerprint without running `git diff` or `git ls-files`.

@@ -1,1 +1,2 @@
 - `RecipeRunnerOptions.plannedActions` names the actions a command's plan runs (a `call` names its one action), so a host can bundle and bind only those.
+- `ProjectRuntime.sourceFingerprint(root, observed)` receives the `WorkTreeObservation` (HEAD, status, excluded paths) the engine already read, so a platform can reuse it.

@@ -233,5 +233,39 @@ describe('fingerprint parity with mm-harness algorithm', () => {
 
       assert.equal(newHash, oldHash, 'hashes must be byte-identical (untracked + env file)');
     });
+
+    it('reuses an observed clean status without running git, with the same hash', async () => {
+      const dir = await makeTempDir();
+      initGitRepo(dir);
+      await writeFile(path.join(dir, 'package.json'), '{"name":"test"}');
+      await writeFile(path.join(dir, 'index.js'), 'console.log("hello")');
+      execFileSync('git', ['-C', dir, 'add', '.'], { stdio: 'ignore' });
+      execFileSync('git', ['-C', dir, 'commit', '-m', 'sources'], { stdio: 'ignore' });
+      await writeFile(path.join(dir, '.env'), 'NODE_ENV=test\n');
+      const inputs = { paths: [...MM_SOURCE_PATHS], envFiles: [...MM_ENV_FILES] };
+      const head = execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
+      const status = (from: string) =>
+        execFileSync('git', ['status', '--porcelain=v1', '--untracked-files=normal'], {
+          cwd: from,
+          encoding: 'utf8',
+        });
+      const expected = sourceFingerprint(dir, inputs);
+      const observed = { head, status: status(dir), excluded: [] };
+      // No git on PATH: a clean observation answers without it.
+      const savedPath = process.env.PATH;
+      process.env.PATH = '';
+      try {
+        assert.equal(sourceFingerprint(dir, inputs, observed), expected);
+      } finally {
+        process.env.PATH = savedPath;
+      }
+      // A status that names a source path takes the diff, and still agrees.
+      await writeFile(path.join(dir, 'index.js'), 'console.log("changed")');
+      assert.equal(
+        sourceFingerprint(dir, inputs, { head, status: status(dir), excluded: [] }),
+        sourceFingerprint(dir, inputs),
+      );
+      assert.notEqual(sourceFingerprint(dir, inputs), expected);
+    });
   });
 });

@@ -66,8 +66,9 @@ export interface ProjectRuntime<
   recording?: AdapterRecording;
   // Application diagnostics collected around a run.
   diagnostics?: AdapterDiagnostics;
-  // Source fingerprint of the checkout root, when the platform has its own.
-  sourceFingerprint?(root: string): string;
+  // Source fingerprint of the checkout root, when the platform has its own. The
+  // engine passes what it already read from the work tree, for the platform to reuse.
+  sourceFingerprint?(root: string, observed?: WorkTreeObservation): string;
   // `launch` for this platform. The command owns the shared grammar (--heal,
   // adapter resolution, the checkout lock, the --json-stream envelope); the
   // platform owns the rest and returns the exit code.
@@ -251,6 +252,16 @@ export interface HealMutation {
   type: string;
   action: string;
   [key: string]: unknown;
+}
+
+/** What the engine read from a checkout's work tree, at its root. */
+export interface WorkTreeObservation {
+  /** `git rev-parse HEAD` as printed: the commit and its newline. */
+  head: string;
+  /** `git status --porcelain=v1 --untracked-files=normal` of the work tree. */
+  status: string;
+  /** Paths, relative to the root, the status left out. */
+  excluded: readonly string[];
 }
 
 export interface HealState {
