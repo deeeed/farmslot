@@ -2,7 +2,7 @@
 // inspection never returns or decodes a process's environment.
 import { execFileSync } from 'node:child_process';
 
-import { usablePython } from './python.mjs';
+import { PYTHON_TIMEOUT_MS, usablePython } from './python.mjs';
 
 export const NATIVE_PROC_ARGS = String.raw`
 import ctypes, json, struct, sys
@@ -43,7 +43,7 @@ export function runNativeProcessProbe(source, pid, { python = usablePython } = {
     execFileSync(interpreter, ['-c', source, String(pid)], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 2000,
+      timeout: PYTHON_TIMEOUT_MS,
     }),
   );
 }

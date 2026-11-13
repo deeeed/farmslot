@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import childProcess, { spawn } from 'node:child_process';
+import childProcess, { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
@@ -19,6 +19,7 @@ import {
   stopWebDappBrowser,
   terminate,
 } from '../src/web-dapp/lib/processes.mjs';
+import { resolvePython } from '../src/web-dapp/lib/python.mjs';
 
 test('process inspection preserves argv, group, state and start identity without setuid ps', async (t) => {
   const runtime = '/synthetic/slot';
@@ -84,6 +85,95 @@ test('macOS inspection rejects an unusable interpreter and never calls the insta
     /Command failed/u,
   );
 });
+
+test(
+  'a slow python3 shim is resolved once to its interpreter, so later probes never wait on it',
+  { skip: process.platform !== 'darwin' },
+  (t) => {
+    const real = spawnSync('/usr/bin/which', ['python3'], { encoding: 'utf8' }).stdout.trim();
+    if (!real) return t.skip('no python3 on PATH');
+    // An asdf shim on a loaded host: a bash wrapper that takes seconds to start.
+    const bin = mkdtempSync(path.join(os.tmpdir(), 'slow-python-'));
+    t.after(() => rmSync(bin, { recursive: true, force: true }));
+    writeFileSync(path.join(bin, 'python3'), `#!/bin/bash\nsleep 3\nexec ${real} "$@"\n`, {
+      mode: 0o755,
+    });
+    const probe = `
+      import { usablePython } from ${JSON.stringify(new URL('../src/web-dapp/lib/python.mjs', import.meta.url).href)};
+      import { processInfo } from ${JSON.stringify(new URL('../src/web-dapp/lib/process-info.mjs', import.meta.url).href)};
+      const python = usablePython();
+      const pids = [processInfo(process.pid).pgid, processInfo(process.pid).pgid];
+      console.log(JSON.stringify({ python, pids }));`;
+    const run = spawnSync(process.execPath, ['--input-type=module', '-e', probe], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+    });
+    assert.equal(run.status, 0, run.stderr);
+    const { python, pids } = JSON.parse(run.stdout);
+    assert.notEqual(python, path.join(bin, 'python3'));
+    assert.equal(pids.length, 2);
+  },
+);
+
+test(
+  'a resolved interpreter still passes the stub guard and must be an executable file',
+  { skip: process.platform !== 'darwin' },
+  () => {
+    const calls = [];
+    const run = (resolved) => (command, args, env) => {
+      calls.push({ command, env });
+      if (command === '/usr/bin/which') return '/opt/fake/bin/python3';
+      if (command === '/usr/bin/xcode-select') return '';
+      return resolved;
+    };
+    const env = {
+      PATH: '/opt/fake/bin',
+      PYTHONEXECUTABLE: '/usr/bin/python3',
+      __PYVENV_LAUNCHER__: 'x',
+    };
+    const options = { platform: 'darwin', env };
+    assert.equal(resolvePython({ ...options, run: run('/usr/bin/python3') }), null);
+    assert.deepEqual(calls.find((call) => call.command === '/opt/fake/bin/python3').env, {
+      PATH: '/opt/fake/bin',
+    });
+    assert.equal(resolvePython({ ...options, run: run('/does/not/exist/python3') }), undefined);
+    assert.equal(resolvePython({ ...options, run: run('') }), undefined);
+    assert.equal(resolvePython({ ...options, run: run(process.execPath) }), process.execPath);
+  },
+);
+
+test(
+  'python3 resolution ignores PYTHONEXECUTABLE and retries after a failed answer',
+  { skip: process.platform !== 'darwin' },
+  (t) => {
+    const real = spawnSync('/usr/bin/which', ['python3'], { encoding: 'utf8' }).stdout.trim();
+    if (!real) return t.skip('no python3 on PATH');
+    // A shim that fails its first answer, as one that briefly disappears does.
+    const bin = mkdtempSync(path.join(os.tmpdir(), 'flaky-python-'));
+    t.after(() => rmSync(bin, { recursive: true, force: true }));
+    const once = path.join(bin, 'answered');
+    writeFileSync(
+      path.join(bin, 'python3'),
+      `#!/bin/bash\n[ -e ${once} ] || { touch ${once}; exit 1; }\nexec ${real} "$@"\n`,
+      { mode: 0o755 },
+    );
+    const probe = `
+      import { usablePython } from ${JSON.stringify(new URL('../src/web-dapp/lib/python.mjs', import.meta.url).href)};
+      console.log(JSON.stringify([usablePython(), usablePython()]));`;
+    const run = spawnSync(process.execPath, ['--input-type=module', '-e', probe], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        PYTHONEXECUTABLE: '/nope/python3',
+      },
+    });
+    assert.equal(run.status, 0, run.stderr);
+    const [first, second] = JSON.parse(run.stdout);
+    assert.equal(first, null);
+    assert.ok(second && second !== '/nope/python3' && existsSync(second), second);
+  },
+);
 
 test('ordinary browser mode and seatbelt validation are independent of the test runner sandbox', () => {
   assert.deepEqual(blindBrowserOptions({}), { args: [], direct: false });

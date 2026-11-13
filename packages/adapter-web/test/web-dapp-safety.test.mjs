@@ -7,7 +7,7 @@
 // selection, wallet confirmation guard, HUD) and the host CLI checks stay there.
 
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import childProcess, { spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync,
   copyFileSync,
@@ -22,12 +22,12 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { createRequire } from 'node:module';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   assertLaunchNetwork,
@@ -40,6 +40,7 @@ import {
   ownsProcess,
   parseWebDappLauncherOutput,
   pidAlive,
+  portFree,
   pythonFor,
   resolveBrowser,
   spawnDetached,
@@ -1330,6 +1331,110 @@ describe('launch rollback', () => {
     assert.equal(processesMatching(`--user-data-dir=${s.runtime}/profile-`), '');
     assert.equal(processesMatching(`--runtime-dir ${s.runtime}`), '');
   });
+
+  it(
+    'frees the CDP port and keeps the launch error when python3 is a shim that turns slow',
+    { skip: process.platform !== 'darwin' },
+    async (t) => {
+      const real = spawnSync('/usr/bin/which', ['python3'], { encoding: 'utf8' }).stdout.trim();
+      if (!real) return t.skip('no python3 on PATH');
+      const s = await slot();
+      const args = await launchArgs(s);
+      // An asdf shim on a loaded host: it takes 3 s to start once the browser runs.
+      const bin = mkdtempSync(path.join(os.tmpdir(), 'slow-python-'));
+      const slow = path.join(bin, 'slow');
+      writeFileSync(
+        path.join(bin, 'python3'),
+        `#!/bin/bash\n[ -e ${slow} ] && sleep 3\nexec ${real} "$@"\n`,
+        { mode: 0o755 },
+      );
+      // usablePython is cached per process, so the launch runs in its own.
+      const launch = `
+        import { existsSync, writeFileSync } from 'node:fs';
+        import { launchWebDappBrowser } from ${JSON.stringify(pathToFileURL(LAUNCH).href)};
+        const started = ${JSON.stringify(path.join(s.runtime, 'browser.pid'))};
+        const timer = setInterval(() => existsSync(started) && writeFileSync(${JSON.stringify(slow)}, ''), 50);
+        const error = await launchWebDappBrowser(${JSON.stringify(args)}, process.env, ${JSON.stringify(fast)}).catch((e) => e);
+        clearInterval(timer);
+        console.log(JSON.stringify(String(error?.message)));`;
+      const run = spawnSync(process.execPath, ['--input-type=module', '-e', launch], {
+        encoding: 'utf8',
+        env: { ...launchEnv(s, { mode: 'http-only' }), PATH: `${bin}:${process.env.PATH}` },
+      });
+      trackPids(s.runtime);
+      assert.equal(existsSync(slow), true, run.stderr);
+      assert.equal(await portFree(args['cdp-port']), true);
+      assert.match(JSON.parse(run.stdout), /wallet host (ready|exited before it was ready)/);
+    },
+  );
+
+  it('keeps the launch error when the rollback cannot prove what it owns', async (t) => {
+    const s = await slot();
+    const args = await launchArgs(s);
+    const started = path.join(s.runtime, 'browser.pid');
+    const original = childProcess.execFileSync;
+    t.mock.method(childProcess, 'execFileSync', (file, argv, options) => {
+      if (argv?.[0] === '-c' && existsSync(started))
+        throw Object.assign(new Error(`spawnSync ${file} ETIMEDOUT`), { code: 'ETIMEDOUT' });
+      return original(file, argv, options);
+    });
+    syncBuiltinESMExports();
+    t.after(async () => {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+      trackPids(s.runtime);
+      await stopWebDappBrowser(s.root, { cdpPort: args['cdp-port'] });
+    });
+    await assert.rejects(
+      launchWebDappBrowser(args, launchEnv(s, { mode: 'http-only' }), fast),
+      /wallet host (ready|exited before it was ready)/,
+    );
+  });
+
+  it(
+    'keeps the launch error when the focus check after a background launch fails',
+    { skip: process.platform !== 'darwin' },
+    async (t) => {
+      const s = await slot();
+      // A browser inside an .app takes the LaunchServices path, whose focus is checked.
+      const app = mkdtempSync(path.join(os.tmpdir(), 'web-dapp-app-'));
+      const bin = path.join(app, 'Stub.app/Contents/MacOS/stub');
+      mkdirSync(path.dirname(bin), { recursive: true });
+      writeFileSync(bin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      const args = await launchArgs(s, {
+        signer: 'extension',
+        'signer-module': TEST_SIGNER,
+        headless: false,
+        headful: true,
+      });
+      // The focus check finds one of this slot's browsers, then cannot inspect it.
+      const pid = 60000001;
+      const original = childProcess.execFileSync;
+      t.mock.method(childProcess, 'execFileSync', (file, argv, options) => {
+        if (file === 'pgrep' && argv?.includes(ownerMarker('browser', s.runtime)))
+          return `${pid}\n`;
+        if (argv?.[0] === '-c' && argv.at(-1) === String(pid))
+          throw Object.assign(new Error(`spawnSync ${file} ETIMEDOUT`), { code: 'ETIMEDOUT' });
+        return original(file, argv, options);
+      });
+      syncBuiltinESMExports();
+      t.after(() => {
+        t.mock.restoreAll();
+        syncBuiltinESMExports();
+      });
+      await assert.rejects(
+        launchWebDappBrowser(args, launchEnv(s, { browser: bin, TEST_SIGNER_FAIL: 'prepare' }), {
+          ...fast,
+          sessionLocked: () => false,
+        }),
+        /prepareProfile failed/,
+      );
+      assert.match(
+        readFileSync(path.join(s.runtime, 'focus.log'), 'utf8'),
+        /check failed: .*ETIMEDOUT/,
+      );
+    },
+  );
 
   it('removes the key fixture and vault state when the browser cannot be spawned (EACCES)', async () => {
     const s = await slot();
