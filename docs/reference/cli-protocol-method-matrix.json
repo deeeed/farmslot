@@ -211,6 +211,14 @@
       "surface": "na",
       "note": "Command Center chat surface (web UI)."
     },
+    "clip.list": {
+      "surface": "na",
+      "note": "Companion clipboard list."
+    },
+    "clip.push": {
+      "surface": "typed-command",
+      "command": "farmslot clip"
+    },
     "config.githubAccounts": {
       "surface": "rpc-only",
       "command": "farmslot rpc config.githubAccounts",

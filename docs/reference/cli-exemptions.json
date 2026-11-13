@@ -46,6 +46,9 @@
     "chat.sessionsBulkDelete": {
       "reason": "Command Center chat surface (web UI)."
     },
+    "clip.list": {
+      "reason": "Companion clipboard list."
+    },
     "copilot.formatInstruction": {
       "reason": "Command Center copilot surface (web UI)."
     },

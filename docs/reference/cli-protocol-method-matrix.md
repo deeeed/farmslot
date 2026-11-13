@@ -88,6 +88,13 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `chat.context`            | na       |             |     | Command Center chat surface (web UI).                                      |
 | `chat.sessionContext`     | na       |             |     | Command Center chat surface (web UI).                                      |
 
+## clip.\*
+
+| Method      | Surface       | CLI command     | TUI | Note                      |
+| ----------- | ------------- | --------------- | --- | ------------------------- |
+| `clip.push` | typed-command | `farmslot clip` |     |                           |
+| `clip.list` | na            |                 |     | Companion clipboard list. |
+
 ## config.\*
 
 | Method                               | Surface       | CLI command                          | TUI | Note                                                                                                 |

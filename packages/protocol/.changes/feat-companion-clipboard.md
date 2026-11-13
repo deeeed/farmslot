@@ -1,0 +1,1 @@
+- Add `clip.push` and `clip.list` with the farm `clipboard` resource key, so clients can show the last 20 clips agents sent the farm.

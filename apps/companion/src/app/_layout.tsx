@@ -20,6 +20,7 @@ import { observeOfflineClientCacheProof } from '../farmslot/offline-client-cache
 import { observeOfflineClientStoreBaseline } from '../farmslot/offline-client-store-baseline';
 import { observeRunCollectionsProof } from '../farmslot/run-collections-proof';
 import { observeSourcesCacheProof } from '../farmslot/sources-cache-proof';
+import { ClipBanner } from '../features/clipboard/ClipBanner';
 import { QuickActionsProvider } from '../features/quick-actions/QuickActionsProvider';
 import { QuickActionsRoot } from '../features/quick-actions/QuickActionsRoot';
 import { initNotifications } from '../lib/notifications';
@@ -87,6 +88,7 @@ export default function RootLayout() {
               <PRPushRegistration />
               <WhatsNewMonitor />
               <AppUpdatesMonitor />
+              <ClipBanner />
             </>
           ) : null}
           <Stack
@@ -111,6 +113,13 @@ export default function RootLayout() {
               <Stack.Screen name="native" options={{ title: 'Conversations' }} />
             </Stack.Protected>
             <Stack.Protected guard={farm}>
+              <Stack.Screen
+                name="clipboard"
+                options={{
+                  title: 'Clipboard',
+                  headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/advanced" />,
+                }}
+              />
               <Stack.Screen
                 name="pr-automation"
                 options={{

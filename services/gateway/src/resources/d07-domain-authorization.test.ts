@@ -155,3 +155,15 @@ test('visible-model owner keys reach only that principal, with or without native
     false,
   );
 });
+
+test('clip notices use clip.list authorization', async (t) => {
+  const home = await mkdtemp(join(tmpdir(), 'clip-key-authorization-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const runtime = createGatewayAuthRuntime({ FARMSLOT_HOME: home });
+  allow = true;
+  methods.length = 0;
+  assert.equal(canReadResourceKey(runtime, state, { family: 'clipboard', scope: 'farm' }), true);
+  assert.deepEqual(methods, ['clip.list']);
+  allow = false;
+  assert.equal(canReadResourceKey(runtime, state, { family: 'clipboard', scope: 'farm' }), false);
+});

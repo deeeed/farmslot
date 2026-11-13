@@ -123,6 +123,7 @@ in the protocol registry before implementation; each row needs writer coverage.
 | `assessment`, authorized scope and optional assessment ID    | Assessment/advice/triage progress, saved result, feedback, audit or incident                   | Assessment history, advice, incidents and training exports                |
 | `analytics`, authorized query scope                          | New persisted metrics/audit data or backfill completion                                        | Analytics and derived exports                                             |
 | `copilot`, owner/session scope                               | Runtime, conversation context, usage observation or saved memory change                        | Copilot status and chat context                                           |
+| `clipboard`, farm scope                                      | `clip.push` adds a clip (the last 20 are kept)                                                 | Companion clipboard and links (`clip.list`)                               |
 | `gateway-update`, gateway scope                              | Observed remote ref, installed version or update-operation phase                               | Version details and update progress/banner                                |
 | `upstream`, registered integration/query scope               | GitHub PR/check/comment/catalog or provider account observation                                | Cached remote lists, review status, checks and account chips              |
 

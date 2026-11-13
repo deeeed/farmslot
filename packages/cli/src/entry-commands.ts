@@ -5,6 +5,7 @@ import { registerAuthCommands } from './commands/auth.js';
 import { registerBacklogCommand } from './commands/backlog.js';
 import { registerBugCommand } from './commands/bug.js';
 import { registerCertsCommand } from './commands/certs.js';
+import { registerClipCommand } from './commands/clip.js';
 import { registerCompletionCommand } from './commands/completion.js';
 import { registerConfigCommand } from './commands/config.js';
 import { registerCredentialCommands } from './commands/credential.js';
@@ -80,4 +81,5 @@ export function registerCommands(program: Command): void {
   registerAnalyticsCommand(program);
   registerCertsCommand(program);
   registerBugCommand(program);
+  registerClipCommand(program);
 }

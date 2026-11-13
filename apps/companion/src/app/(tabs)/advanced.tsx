@@ -14,10 +14,17 @@ type AdvancedRoute = {
   title: string;
   subtitle: string;
   icon: keyof typeof Ionicons.glyphMap;
-  pathname: '/(tabs)/fleet' | '/(tabs)/prs' | '/(tabs)/inbox' | '/(tabs)/copilot';
+  pathname: '/(tabs)/fleet' | '/(tabs)/prs' | '/(tabs)/inbox' | '/(tabs)/copilot' | '/clipboard';
 };
 
 const ADVANCED_ROUTES: AdvancedRoute[] = [
+  {
+    testID: 'companion-advanced-clipboard',
+    title: 'Clipboard',
+    subtitle: 'Links and copy-ready text agents sent with farmslot clip.',
+    icon: 'clipboard-outline',
+    pathname: '/clipboard',
+  },
   {
     testID: 'companion-advanced-fleet',
     title: 'Fleet',
