@@ -1,6 +1,8 @@
 // One-shot scrub of credential values already stored in run records. Reports
 // names, record ids and field paths only; never a value. No backup copies.
+import { realpathSync } from 'node:fs';
 import { chmod, lstat, open, readdir, readFile, rename, rm } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import { type FarmPathEnv, resolveReportedFarmPaths } from '@farmslot/protocol/node/farm-paths';
@@ -131,11 +133,74 @@ export function defaultScrubRoots(env: FarmPathEnv = process.env): string[] {
   ];
 }
 
+/** The real path, following symlinks; a missing tail is joined to its nearest real ancestor. */
+function realPath(target: string): string {
+  const resolved = path.resolve(target);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    const parent = path.dirname(resolved);
+    return parent === resolved ? resolved : path.join(realPath(parent), path.basename(resolved));
+  }
+}
+
+/** System trees no run store lives in. */
+const SYSTEM_DIRS = [
+  '/System',
+  '/Applications',
+  '/Library',
+  '/usr',
+  '/bin',
+  '/sbin',
+  '/opt/homebrew',
+];
+
+/**
+ * Why an explicit root must not be scanned, or '' when it may be: the filesystem root, the home
+ * directory, the farm home (it holds live credentials) or a directory containing it, a system
+ * tree, or a shallow path such as /Users/x or /Volumes/disk (fewer than 3 segments, unless inside
+ * the temp dir). Compared by real path.
+ */
+export function unsafeScrubRoot(root: string, env: FarmPathEnv = process.env): string {
+  const real = realPath(root);
+  const farmHome = realPath(resolveReportedFarmPaths({ role: 'gateway', env }).home);
+  const shown = real === path.resolve(root) ? '' : ` (resolves to ${real})`;
+  if (real === path.parse(real).root) return `filesystem root${shown}`;
+  if (real === realPath(os.homedir())) return `home directory${shown}`;
+  if (real === farmHome) return `farm home${shown}`;
+  if (farmHome.startsWith(`${real}${path.sep}`))
+    return `contains the farm home ${farmHome}${shown}`;
+  if (SYSTEM_DIRS.some((dir) => real === dir || real.startsWith(`${dir}/`)))
+    return `system directory${shown}`;
+  const insideTemp = real.startsWith(`${realPath(os.tmpdir())}${path.sep}`);
+  if (!insideTemp && real.split(path.sep).filter(Boolean).length < 3)
+    return `shallow path (fewer than 3 segments)${shown}`;
+  return '';
+}
+
+/** When set, the scrub refuses any root or write whose real path is outside this directory. */
+export const SCRUB_ALLOWED_PREFIX_ENV = 'FARMSLOT_SCRUB_ALLOWED_PREFIX';
+
+/** Why a path falls outside FARMSLOT_SCRUB_ALLOWED_PREFIX, or '' when it is inside or unset. */
+export function outsideScrubPrefix(target: string, env: FarmPathEnv = process.env): string {
+  const prefix = env[SCRUB_ALLOWED_PREFIX_ENV];
+  if (!prefix) return '';
+  const allowed = realPath(prefix);
+  const real = realPath(target);
+  return real === allowed || real.startsWith(`${allowed}${path.sep}`)
+    ? ''
+    : `${real} is outside ${SCRUB_ALLOWED_PREFIX_ENV} ${allowed}`;
+}
+
 /** Walks each root (symlinks are not followed); rewrites only with apply. */
 export async function scrubRunCredentials(
   roots: readonly string[],
   options: { apply: boolean },
 ): Promise<ScrubReport> {
+  for (const root of roots) {
+    const outside = outsideScrubPrefix(root);
+    if (outside) throw new Error(`refusing scrub root ${root}: ${outside}`);
+  }
   const report: ScrubReport = { scanned: 0, findings: [], bundles: [] };
   const visit = async (entry: string): Promise<void> => {
     const info = await lstat(entry).catch((error: NodeJS.ErrnoException) => {
@@ -158,7 +223,10 @@ export async function scrubRunCredentials(
     const scrubbed = scrubRecordText(await readFile(entry, 'utf8'), jsonLines);
     if (!scrubbed?.values) return;
     report.findings.push({ file: entry, fields: scrubbed.fields, values: scrubbed.values });
-    if (options.apply) await replaceFile(entry, scrubbed.text, info.mode);
+    if (!options.apply) return;
+    const outside = outsideScrubPrefix(entry);
+    if (outside) throw new Error(`refusing scrub write ${entry}: ${outside}`);
+    await replaceFile(entry, scrubbed.text, info.mode);
   };
   for (const root of roots) await visit(path.resolve(root));
   return report;
