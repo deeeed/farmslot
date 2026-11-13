@@ -3,16 +3,22 @@ import path from 'node:path';
 
 import type { Run } from '@farmslot/protocol';
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
-import { withRunBundleStoreLock } from '@farmslot/run-bundle';
+import { runBundleRetentionSettings, withRunBundleStoreLock } from '@farmslot/run-bundle';
 
 import { projectTaskRoots } from '../../core/config.js';
 import { ownsRunSlotCleanup, readSlotRow } from '../../core/index.js';
+import {
+  getFamilyRuns,
+  isFollowUpFlow,
+  resolveFamilyIdentity,
+} from '../../family-observability/context.js';
 import { loadProjectConfig } from '../../fleet/state.js';
 import { github } from '../../integrations/github-client.js';
 import { reviewPRIdentity } from '../../review/session-mode.js';
 import { reclaimReviewWorkspaceStorage } from '../../review-workspaces/storage-use.js';
 import {
   archiveRunArtifactHousekeeping,
+  runBundleHome,
   runBundleStore,
   warnRunBundleCapacity,
 } from '../../run-completion/retained-artifacts.js';
@@ -20,10 +26,12 @@ import { captureMissingRunEpisodes } from '../../run-completion/run-episode.js';
 import { parkedWorkRetentionPass } from '../../run-lifecycle/parked-work-retention.js';
 import { nativeSessionManager } from '../../runners/native/manager.js';
 import {
+  DAY_MS,
   diskBytes,
   planRunRetention,
   retentionStoreAction,
   retiredTaskPins,
+  runIsSettled,
   runOwnedPaths,
   type RunPrState,
   type RunRetentionContext,
@@ -89,20 +97,25 @@ async function projectRepo(project: string): Promise<string | undefined> {
   return (await loadProjectConfig(project))?.ci?.repo;
 }
 
-const prRecordedSettled = (run: Run) =>
-  Boolean(run.mergedAt) || run.prState === 'MERGED' || run.prState === 'CLOSED';
-
 /**
- * Each run's PR state for this pass. A PR the run records as merged or closed is settled.
- * Otherwise every identity it has (the review-session identity, and its own number in the
- * project's repository) is checked against that repository's open PRs, read once. Any
- * open PR keeps the run; so does an unresolvable identity, an unreadable repository or a
- * possibly truncated list.
+ * Each run's PR state for this pass. Every identity a run has (the review-session identity,
+ * and its own number in the project's repository) is checked against that repository's open
+ * PRs, read once. Any open PR makes the state open, even when the run records it closed, since
+ * a PR can be reopened. A recorded merge settles it (a merged PR cannot reopen); a recorded
+ * close settles it only when every list for the run was read completely. An unreadable or
+ * possibly truncated list, an unresolvable identity, or a review-pr run with no PR identity
+ * makes it unknown.
+ *
+ * A run family shares its members' state, open before unknown: a follow-up inherits from every
+ * member (`getFamilyRuns`), including a root that never recorded the PR.
+ *
+ * An open or unknown PR keeps every run on it; the age rule applies to the others. Whatever the
+ * PR state, an unsettled run holds what it still reads (`activeSourceHolds`).
  */
 export async function retentionContext(
   runs: Run[],
   now = Date.now(),
-  read: Pick<RunRetentionDeps, 'openPrs' | 'projectRepo'> = { openPrs: readOpenPrs, projectRepo },
+  read: Pick<RunRetentionDeps, 'openPrs' | 'projectRepo' | 'retentionDays'> = RUN_RETENTION_DEPS,
 ): Promise<RunRetentionContext> {
   const identities = new Map<
     string,
@@ -110,7 +123,6 @@ export async function retentionContext(
   >();
   const projectRepos = new Map<string, string | undefined>();
   for (const run of runs) {
-    if (prRecordedSettled(run)) continue;
     const prs: { repo: string; number: number }[] = [];
     const review = reviewPRIdentity(run);
     if (review) prs.push({ repo: review.repository, number: review.prNumber });
@@ -137,17 +149,67 @@ export async function retentionContext(
       open.set(repo, undefined);
     }
   }
+  const ownState = (run: Run): RunPrState => {
+    const identity = identities.get(run.id);
+    const lists = identity?.prs.map((pr) => open.get(pr.repo)?.has(pr.number)) ?? [];
+    if (lists.includes(true)) return 'open';
+    if (run.mergedAt || run.prState === 'MERGED') return 'settled';
+    // A list that was not read, or an identity with no repository to read, cannot confirm a close.
+    if (lists.includes(undefined) || identity?.unresolved) return 'unknown';
+    if (run.prState === 'CLOSED') return 'settled';
+    if (!identity) return run.flowType === 'review-pr' ? 'unknown' : 'none';
+    return 'settled';
+  };
+  const familyStates = new Map<string, RunPrState>();
+  for (const run of runs) {
+    const family = resolveFamilyIdentity(run).familyId;
+    const state = ownState(run);
+    if (state === 'open' || (state === 'unknown' && familyStates.get(family) !== 'open'))
+      familyStates.set(family, state);
+  }
+  const activeSources = activeSourceHolds(runs, runs);
   return {
     now,
-    prState: (run): RunPrState => {
-      if (prRecordedSettled(run)) return 'settled';
-      const identity = identities.get(run.id);
-      if (!identity) return 'none';
-      const lists = identity.prs.map((pr) => open.get(pr.repo)?.has(pr.number));
-      if (lists.includes(true)) return 'open';
-      return identity.unresolved || lists.includes(undefined) ? 'unknown' : 'settled';
-    },
+    ageMs: read.retentionDays() * DAY_MS,
+    activeSource: (run) => activeSources.get(run.id),
+    prState: (run) => familyStates.get(resolveFamilyIdentity(run).familyId) ?? ownState(run),
   };
+}
+
+/**
+ * Runs that unsettled runs among `live` still read, with why: a follow-up inherits task
+ * artifacts from its run family (`getFamilyRuns` over `members`), and an in-flight review reads
+ * the prior run its repeat-review context recorded.
+ */
+export function activeSourceHolds(live: readonly Run[], members: Run[]): Map<string, string> {
+  const holds = new Map<string, string>();
+  for (const run of live) {
+    if (runIsSettled(run)) continue;
+    if (run.parentRunId && isFollowUpFlow(run.flowType)) {
+      const { parentRun, rootRun, otherFamilyRuns } = getFamilyRuns(run, members);
+      for (const source of [parentRun, rootRun, ...otherFamilyRuns])
+        if (source && source.id !== run.id)
+          holds.set(source.id, 'inherited by an unsettled follow-up');
+    }
+    if (run.flowType === 'review-pr')
+      for (const prior of [
+        run.repeatReviewContext?.priorRunId,
+        run.repeatReviewContext?.session?.priorRunId,
+      ])
+        if (prior && !holds.has(prior)) holds.set(prior, 'prior of an in-flight review');
+  }
+  return holds;
+}
+
+/**
+ * The hold right before a candidate moves: the pass's context, plus what runs dispatched since
+ * the pass started now read.
+ */
+function currentRetentionHold(run: Run, context: RunRetentionContext): string | undefined {
+  return (
+    runRetentionHold(run, context) ??
+    activeSourceHolds(getAllRuns(), [run, ...getAllRuns()]).get(run.id)
+  );
 }
 
 export async function runHoldsSlot(run: Run): Promise<boolean> {
@@ -158,6 +220,8 @@ export interface RunRetentionDeps {
   holdsSlot: (run: Run) => Promise<boolean>;
   openPrs: (repo: string) => Promise<number[]>;
   projectRepo: (project: string) => Promise<string | undefined>;
+  /** Days a settled run keeps its storage. */
+  retentionDays: () => number;
   withBundleLock: <T>(operation: () => Promise<T>) => Promise<T>;
 }
 
@@ -165,6 +229,7 @@ export const RUN_RETENTION_DEPS: RunRetentionDeps = {
   holdsSlot: runHoldsSlot,
   openPrs: readOpenPrs,
   projectRepo,
+  retentionDays: () => runBundleRetentionSettings(runBundleHome()).runRetentionDays,
   // Each eligible run's walk and stage is one turn under the lock; waiters allow a turn an hour.
   withBundleLock: async (operation) =>
     withRunBundleStoreLock(await runBundleStore(), operation, {
@@ -250,7 +315,7 @@ export async function runRetentionPass(
           return;
         }
         const run = await getRunWithArchived(candidate.id);
-        const hold = run ? runRetentionHold(run, context) : 'run missing';
+        const hold = run ? currentRetentionHold(run, context) : 'run missing';
         if (!run || hold) {
           await keepStorageDeletions(roots.archiveRoot, candidate.id, hold ?? 'run missing');
           return;
@@ -271,7 +336,7 @@ export async function runRetentionPass(
         const pins = await retiredTaskPins(
           roots.taskPins,
           new Set(files.filter((file) => file.store === 'task-dirs').map((file) => file.source)),
-          context.now,
+          context,
           new Set(others.flatMap(runTaskDirectories)),
         );
         for (const source of pins)
@@ -308,7 +373,7 @@ export async function runRetentionPass(
           archiveFiles,
           () => {
             const latest = getCachedRunWithArchived(run.id);
-            if (!latest || runRetentionHold(latest, context)) return false;
+            if (!latest || currentRetentionHold(latest, context)) return false;
             const current = [...runs, ...getAllRuns()].filter(
               (other) =>
                 other.id !== run.id &&

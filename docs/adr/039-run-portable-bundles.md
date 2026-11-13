@@ -583,9 +583,50 @@ evidence or datasets they hold move to `FARMSLOT_DATA` first. Settled task pins
 are archived to `FARMSLOT_DATA`, never deleted. Directories with no reader are
 archived there too.
 
-
 ## Amendment 7: 2026-11-09 recreatable run storage is deleted, not archived
 
 **Status:** Accepted by Arthur, 2026-11-09.
 
 Task pins and run-owned review workspaces are recreatable copies. Retention deletes them under the same eligibility, admission and ownership checks used for archival, and journals each intent before deletion in the run's storage manifest, without a destination, for recovery at the next pass. Recovery records missing sources as deleted; surviving sources go through eligibility checks again and become deleted or kept with a reason. Archival and restore skip these entries. Shared review caches remain untouched. Everything else keeps Amendments 3 and 5 archival, including agent logs and session archives, final reports and task directories, run bundles and evidence. Run records are still never deleted. Existing archived pins and workspaces remain archived.
+
+## Amendment 8: 2026-11-13 seven-day retention for runs not on an open PR
+
+**Status:** Accepted by Arthur, 2026-11-13.
+**Specification:** [Settled-run retention](../reference/retained-run-artifacts.md#settled-run-retention).
+
+### Decision
+
+Every run on an open PR keeps its storage, whatever its age, as before. So does a run
+whose PR state cannot be read (unreadable repository, possibly truncated open-PR list,
+unresolvable identity, or a `review-pr` run with no PR identity). A live open PR counts
+as open even if a run recorded it closed, since a PR can be reopened; a recorded close
+settles a run only when its open-PR lists were read completely, and a recorded merge
+always does. A run family shares the open or unknown state of any member, so a root
+that never recorded the PR stays with it. Other settled runs keep their storage
+for 7 days instead of 48 hours. One setting, `runBundleRetention.runRetentionDays` in
+the gateway's `run-bundle-retention.json`, changes that age; task pins use the same
+age.
+
+Whatever the PR state, an unsettled run holds what it still reads: a follow-up
+(`review-pr`, `pr-complete` or `update-branch` with a parent) holds its run family,
+and an in-flight review holds the prior run its repeat-review context recorded. The
+pass checks these again from the current runs just before it moves each run. The
+other holds stay as they were.
+
+### Rationale and consequences
+
+Holding every run on an open PR keeps every warm review chain, owner and inherited
+run family a PR still needs, without modelling each reader's selection. A narrower
+hold (only the latest review per PR) was tried and dropped: warm-review readers filter
+by owner, lineage, intake and session in ways a single rule kept missing. For runs
+whose PR closed or that never had one, 48 hours released history and evidence before
+follow-ups and re-reviews of slow PRs could use it; seven days keeps a week on local
+disk. When the disk gets tight the operator lowers the setting (for example to 3)
+without a code change. Storage still moves to the run archive under Amendments 3
+and 7, so a released run stays restorable.
+
+A follow-up dispatched after the storage of a live member of its run family was
+archived fails to write its task: inheritance reads the bundles of the root, the parent
+and every other member with a live run record (members whose record was archived are
+skipped), so dispatch is refused until the operator restores the storage of each such
+member from its archive manifest.
