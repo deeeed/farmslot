@@ -1,15 +1,35 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { mock, test } from 'node:test';
 
 import { noChange, nothing } from 'lit';
 import { PartType } from 'lit/directive.js';
 
-import { clearGatewayMemoryAuth } from '../../gateway-url.js';
-import { installFakeGateway } from '../../testing/fake-gateway.js';
+// A gateway whose connection the test drives: no socket, timer or shared client state.
+type ConnectionState = 'connected' | 'disconnected';
+const listeners = new Set<(state: ConnectionState) => void>();
+const gateway = {
+  connectionState: 'connected' as ConnectionState,
+  onConnectionChange(callback: (state: ConnectionState) => void) {
+    listeners.add(callback);
+    return () => listeners.delete(callback);
+  },
+};
+const setConnection = (state: ConnectionState) => {
+  gateway.connectionState = state;
+  for (const listener of [...listeners]) listener(state);
+};
+mock.module('../../gateway-client.js', { namedExports: { gateway } });
 
-import { GatewayMedia } from './gateway-media-src.js';
+// A browser view: media requests wait on, and retry with, the gateway connection.
+Object.defineProperty(globalThis, 'location', {
+  configurable: true,
+  value: new URL('http://localhost:7777/'),
+});
+Object.defineProperty(globalThis, 'window', { configurable: true, value: globalThis });
 
-// Its own file: the gateway client singleton must not have been disconnected by another test.
+const { clearGatewayMemoryAuth, setGatewayMemoryAuth } = await import('../../gateway-url.js');
+const { GatewayMedia } = await import('./gateway-media-src.js');
+
 class MediaHarness extends GatewayMedia {
   values: unknown[] = [];
   override setValue(value: unknown): void {
@@ -20,42 +40,23 @@ class MediaHarness extends GatewayMedia {
   }
 }
 
-const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+/** Failed media loads: each ends by logging this message. */
+const mediaFailures = (errors: { mock: { calls: Array<{ arguments: unknown[] }> } }) =>
+  errors.mock.calls.filter((call) => call.arguments[0] === 'Gateway media could not be loaded.')
+    .length;
+
+/** Waits for a condition, however many turns the load takes. */
+async function until(description: string, condition: () => boolean): Promise<void> {
+  const deadline = performance.now() + 5000;
+  while (!condition()) {
+    assert.ok(performance.now() < deadline, `${description} never happened`);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
 
 test('a held failure loads once more when the gateway connection comes back', async (t) => {
-  const fake = installFakeGateway(t);
-  Object.defineProperty(window, 'location', {
-    value: {
-      ...location,
-      origin: 'http://localhost:1234',
-      href: 'http://localhost:1234/',
-      pathname: '/',
-    },
-    configurable: true,
-  });
-  const { gateway } = await import('../../gateway-client.js');
-  t.after(() => {
-    gateway.disconnect();
-    clearGatewayMemoryAuth();
-  });
-  fake.authPayload = {
-    ok: true,
-    authMode: 'token',
-    principal: {
-      id: 'media-owner',
-      subjectKind: 'service',
-      displayName: 'Media owner',
-      roles: [{ role: 'viewer', scope: { kind: 'global' } }],
-    },
-    capabilities: { workspaceAccess: 'farm' },
-  };
-  await gateway.setAuthCredentials({ token: 'media-fixture' });
-  gateway.connect();
-  const settle = async () => {
-    for (let i = 0; i < 20; i++) await flush();
-  };
-  await settle();
-  assert.equal(gateway.connectionState, 'connected');
+  setGatewayMemoryAuth({ token: 'media-fixture' }, 'ws://localhost:7777/ws');
+  t.after(clearGatewayMemoryAuth);
   const answers: Array<() => Response> = [
     () => new Response('Artifact was not retained', { status: 404 }),
     () => {
@@ -67,8 +68,8 @@ test('a held failure loads once more when the gateway connection comes back', as
   let calls = 0;
   t.mock.method(globalThis, 'fetch', async () => answers[calls++]!());
   t.mock.method(URL, 'createObjectURL', () => 'blob:recovered-media');
-  t.mock.method(URL, 'revokeObjectURL', () => {});
-  t.mock.method(console, 'error', () => {});
+  t.mock.method(URL, 'revokeObjectURL', () => undefined);
+  const errors = t.mock.method(console, 'error', () => undefined);
   const view = new MediaHarness({
     type: PartType.ATTRIBUTE,
     name: 'src',
@@ -76,29 +77,49 @@ test('a held failure loads once more when the gateway connection comes back', as
     tagName: 'IMG',
   });
   const url = '/api/file?slotId=slot-1&path=screen.png';
-  const reconnect = async () => {
-    fake.restart();
-    assert.equal(gateway.connectionState, 'disconnected');
-    gateway.connect();
-    await settle();
-    assert.equal(gateway.connectionState, 'connected');
-    await settle();
-  };
   view.render(url);
-  await settle();
-  // 404, network error and 503 each stay held across re-renders until the connection returns.
-  for (const expected of [1, 2, 3]) {
-    assert.equal(calls, expected);
+  // 404, network error and 503: each stays held across re-renders until the connection returns.
+  for (const failure of [1, 2, 3]) {
+    await until(`failed load ${failure}`, () => mediaFailures(errors) === failure);
+    // The reconnect watch is registered once the failure settles.
+    await until(`reconnect watch ${failure}`, () => listeners.size === 1);
     for (let i = 0; i < 3; i++) assert.equal(view.render(url), noChange);
-    await settle();
-    assert.equal(calls, expected, 'a re-render does not fetch a held failure again');
-    await reconnect();
+    assert.equal(calls, failure, 'a re-render does not fetch a held failure again');
+    setConnection('connected');
+    assert.equal(calls, failure, 'a connection that never dropped does not reload');
+    setConnection('disconnected');
+    setConnection('connected');
   }
+  await until(
+    'the reload after the third reconnect',
+    () => view.values.at(-1) === 'blob:recovered-media',
+  );
   assert.equal(calls, 4);
-  assert.equal(view.values.at(-1), 'blob:recovered-media');
   assert.ok(view.values.slice(0, -1).every((value) => value === nothing));
-  // A loaded source does not refetch on a later reconnect.
-  await reconnect();
+  // A loaded source has no watch: a later reconnect reads nothing again.
+  assert.equal(listeners.size, 0);
+  setConnection('disconnected');
+  setConnection('connected');
   assert.equal(calls, 4);
   view.disconnect();
+});
+
+test('a closed view stops watching its held failure', async (t) => {
+  setGatewayMemoryAuth({ token: 'media-fixture' }, 'ws://localhost:7777/ws');
+  t.after(clearGatewayMemoryAuth);
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls++;
+    return new Response('Artifact was not retained', { status: 404 });
+  });
+  const errors = t.mock.method(console, 'error', () => undefined);
+  const view = new MediaHarness({ type: PartType.CHILD });
+  view.render('/api/run-artifact?runId=run-1&path=artifacts/diff.txt');
+  await until('the failed load', () => mediaFailures(errors) === 1);
+  await until('the reconnect watch', () => listeners.size === 1);
+  view.disconnect();
+  assert.equal(listeners.size, 0);
+  setConnection('disconnected');
+  setConnection('connected');
+  assert.equal(calls, 1);
 });

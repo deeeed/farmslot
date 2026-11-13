@@ -171,7 +171,8 @@ export class GatewayMedia extends AsyncDirective {
       this.source = undefined;
       return this.value(url, format);
     }
-    const source = `${format}:${url}`;
+    // A new manifest identity for the same URL is a new source, so a held failure is read again.
+    const source = `${format}:${url}\n${heldMediaIds.get(url) ?? ''}`;
     if (this.source === source) return noChange;
     this.release();
     this.source = source;
