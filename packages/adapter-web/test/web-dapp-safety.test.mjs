@@ -1391,6 +1391,51 @@ describe('launch rollback', () => {
     );
   });
 
+  it(
+    'keeps the launch error when the focus check after a background launch fails',
+    { skip: process.platform !== 'darwin' },
+    async (t) => {
+      const s = await slot();
+      // A browser inside an .app takes the LaunchServices path, whose focus is checked.
+      const app = mkdtempSync(path.join(os.tmpdir(), 'web-dapp-app-'));
+      const bin = path.join(app, 'Stub.app/Contents/MacOS/stub');
+      mkdirSync(path.dirname(bin), { recursive: true });
+      writeFileSync(bin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      const args = await launchArgs(s, {
+        signer: 'extension',
+        'signer-module': TEST_SIGNER,
+        headless: false,
+        headful: true,
+      });
+      // The focus check finds one of this slot's browsers, then cannot inspect it.
+      const pid = 60000001;
+      const original = childProcess.execFileSync;
+      t.mock.method(childProcess, 'execFileSync', (file, argv, options) => {
+        if (file === 'pgrep' && argv?.includes(ownerMarker('browser', s.runtime)))
+          return `${pid}\n`;
+        if (argv?.[0] === '-c' && argv.at(-1) === String(pid))
+          throw Object.assign(new Error(`spawnSync ${file} ETIMEDOUT`), { code: 'ETIMEDOUT' });
+        return original(file, argv, options);
+      });
+      syncBuiltinESMExports();
+      t.after(() => {
+        t.mock.restoreAll();
+        syncBuiltinESMExports();
+      });
+      await assert.rejects(
+        launchWebDappBrowser(args, launchEnv(s, { browser: bin, TEST_SIGNER_FAIL: 'prepare' }), {
+          ...fast,
+          sessionLocked: () => false,
+        }),
+        /prepareProfile failed/,
+      );
+      assert.match(
+        readFileSync(path.join(s.runtime, 'focus.log'), 'utf8'),
+        /check failed: .*ETIMEDOUT/,
+      );
+    },
+  );
+
   it('removes the key fixture and vault state when the browser cannot be spawned (EACCES)', async () => {
     const s = await slot();
     const notExecutable = path.join(

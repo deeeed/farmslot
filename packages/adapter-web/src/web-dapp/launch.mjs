@@ -812,7 +812,14 @@ export async function launchWebDappBrowser(
     throw error;
   } finally {
     for (const file of secrets) rmSync(file, { force: true });
-    if (guardFocus) checkFocusAfterLaunch(runtime, previousFrontmost);
+    if (guardFocus) {
+      try {
+        checkFocusAfterLaunch(runtime, previousFrontmost);
+      } catch (focusError) {
+        // Advisory, like the rollback sweep: a failed probe must not replace the launch error.
+        focusLog(runtime, `check failed: ${focusError.message}`);
+      }
+    }
   }
 }
 
