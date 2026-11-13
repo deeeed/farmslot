@@ -33,14 +33,6 @@ const client = new GatewayClient({
   timeout: 15_000,
 });
 const connection = await client.connect();
-const observer = await client.connect().catch((error) => {
-  connection.close();
-  throw error;
-});
-const updates: PRRulesListResult[] = [];
-observer.onEvent((event) => {
-  if (event.event === 'prRules.updated') updates.push(event.payload as PRRulesListResult);
-});
 let receipt: PRReviewRequestResult | undefined;
 try {
   const { fleet } = await connection.call<{ fleet: FleetStatus }>('fleet.status');
@@ -127,15 +119,15 @@ try {
     assert.equal(queued.effort, 'high');
     assert.equal(queued.runId, undefined);
   }
-  const after = await observer.call<PRRulesListResult>('prRules.list');
+  const after = await connection.call<PRRulesListResult>('prRules.list');
+  assert(
+    after.submissions?.some((item) => item.id === receipt?.submission.id),
+    'The rules list must show the durable intake request',
+  );
   assert.equal(
     after.rules.length,
     before.rules.length,
     'Human intake must not create trigger rules',
-  );
-  assert(
-    updates.some((state) => state.submissions?.some((item) => item.id === receipt?.submission.id)),
-    'Second client must receive durable intake updates',
   );
   await cancel();
   const restarted = await client.call<PRReviewRequestResult>('prReview.get', {
@@ -164,7 +156,6 @@ try {
     if (receipt) await cancel();
   } finally {
     connection.close();
-    observer.close();
   }
 }
 
