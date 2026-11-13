@@ -175,6 +175,8 @@ function manifestFor(adapter: string, team = false): RecipeActionManifestDocumen
 
 interface Calls {
   runners: Array<{ adapter: string; trustedMutation?: string; trustTaskActions: boolean }>;
+  // The planned actions each runner was created with (undefined: every action).
+  plannedActions: Array<readonly string[] | undefined>;
   // The HUD policy each runner was created with (undefined: the engine's default, on).
   autoHud: Array<boolean | undefined>;
   // Each trustedMutation hook call, as `<hook>:<adapter it received>`.
@@ -188,6 +190,7 @@ interface Calls {
 function newCalls(): Calls {
   return {
     runners: [],
+    plannedActions: [],
     autoHud: [],
     mutationHooks: [],
     events: [],
@@ -283,6 +286,7 @@ function shopEngine(
     actionCapabilities: (action) =>
       action === 'shop.ping' ? ['host-read-export'] : ['arbitrary-code'],
     async createRunner(adapter, manifest, options) {
+      calls.plannedActions.push(options.plannedActions);
       calls.runners.push({
         adapter,
         ...(options.trustedMutation ? { trustedMutation: options.trustedMutation.bound } : {}),
@@ -4371,6 +4375,11 @@ describe('call timings', () => {
       ['start', 'end'],
     );
     assert.equal(timings.work.provenanceSnapshot, 2);
+  });
+
+  test('names its one action to the runner, so a host prepares only that action', async () => {
+    await timedCall('--json');
+    assert.deepEqual(calls.plannedActions, [['shop.ping']]);
   });
 
   test('prints one timing line for a person', async () => {

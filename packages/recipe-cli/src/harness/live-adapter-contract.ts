@@ -16,9 +16,12 @@ import type { ActionExecutionContext } from '@farmslot/recipe-runner';
 import { runOwnedRecipeProcess } from '@farmslot/recipe-runner/adapters/core';
 
 import { harnessAdapter, harnessAdapters } from './adapters.js';
+import { cacheRecordPath, readCacheRecord, writeCacheRecord } from './cache.js';
+import { countCallWork } from './call-timings.js';
 import { trackCheckoutChild } from './checkout-lock.js';
 import { recordCommandOutput } from './command-journal.js';
 import { harnessHost, recipeEnvName } from './host.js';
+import { isRecord } from './parse-args.js';
 
 function actionFileStem(action: string) {
   return String(action).replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -195,12 +198,62 @@ export async function prepareLiveAdapterScript({
   if (!isPathWithin(rootReal, entryReal)) {
     throw new Error(`Live adapter ${entryPath} resolves outside ${implementationRoot}.`);
   }
+  const bundle = await bundleLiveAdapter(entryReal);
+  const { sourceText } = bundle;
+  if (!allowRuntimeImports && bundle.runtimeImports) {
+    const error = new Error(
+      `Live adapter ${entryReal} contains a runtime dynamic import that cannot be bound to the approved bundle. ` +
+        'Replace it with a static import so its implementation bytes are included in the plan digest.',
+    );
+    Object.assign(error, {
+      code: 'RECIPE_TRUST_UNBOUND_IMPORT',
+      userAction:
+        'replace the computed import with a static import, or promote the adapter into an explicitly trusted engineer-owned library',
+    });
+    throw error;
+  }
+  return {
+    action,
+    platform,
+    entryPath: entryReal,
+    sourceText,
+    sourceDigest: `sha256:${createHash('sha256').update(sourceText).digest('hex')}`,
+  };
+}
+
+interface LiveAdapterBundle {
+  sourceText: string;
+  // Whether the bundle keeps a dynamic import, which only a trusted source may run.
+  runtimeImports: boolean;
+}
+
+interface CachedLiveAdapterBundle extends LiveAdapterBundle {
+  // Every file the bundle read, each package.json that resolved one, and their sha256.
+  inputs: Array<{ path: string; sha256: string }>;
+}
+
+// Bundling takes most of a runner's construction, so each bundle is cached by its
+// entry and reused while every file it read hashes the same.
+async function bundleLiveAdapter(entryReal: string): Promise<LiveAdapterBundle> {
   // Loaded on first use: every harness command imports this module.
-  const { build } = await import('esbuild');
+  const { build, version } = await import('esbuild');
+  // Bump schemaVersion when the build options below change what a bundle contains.
+  const record = cacheRecordPath('live-adapters', {
+    schemaVersion: 1,
+    esbuild: version,
+    node: process.versions.node.split('.')[0],
+    entry: entryReal,
+  });
+  const cached = await reusableBundle(readCacheRecord(record));
+  if (cached) {
+    countCallWork('liveAdapterCached');
+    return cached;
+  }
   const result = await build({
     entryPoints: [entryReal],
     bundle: true,
     write: false,
+    metafile: true,
     platform: 'node',
     format: 'esm',
     target: `node${process.versions.node.split('.')[0]}`,
@@ -222,25 +275,76 @@ export async function prepareLiveAdapterScript({
   const { init, parse } = await import('es-module-lexer');
   await init;
   const [imports] = parse(sourceText);
-  if (!allowRuntimeImports && imports.some((entry) => entry.d >= 0)) {
-    const error = new Error(
-      `Live adapter ${entryReal} contains a runtime dynamic import that cannot be bound to the approved bundle. ` +
-        'Replace it with a static import so its implementation bytes are included in the plan digest.',
-    );
-    Object.assign(error, {
-      code: 'RECIPE_TRUST_UNBOUND_IMPORT',
-      userAction:
-        'replace the computed import with a static import, or promote the adapter into an explicitly trusted engineer-owned library',
-    });
-    throw error;
+  const bundle = { sourceText, runtimeImports: imports.some((entry) => entry.d >= 0) };
+  countCallWork('liveAdapterBuilt');
+  const inputs = bundleInputs(Object.keys(result.metafile.inputs));
+  if (inputs) {
+    writeCacheRecord(record, {
+      ...bundle,
+      inputs: await Promise.all(
+        inputs.map(async (file) => ({ path: file, sha256: await fileSha256(file) })),
+      ),
+    } satisfies CachedLiveAdapterBundle);
   }
-  return {
-    action,
-    platform,
-    entryPath: entryReal,
-    sourceText,
-    sourceDigest: `sha256:${createHash('sha256').update(sourceText).digest('hex')}`,
-  };
+  return bundle;
+}
+
+// The bundle's files as absolute paths, plus the package.json of each installed
+// package among them so a changed version or exports map invalidates it. None when an
+// input is not a plain file, which the cache cannot check.
+function bundleInputs(metafileInputs: string[]): string[] | undefined {
+  const files = new Set<string>();
+  for (const input of metafileInputs) {
+    if (/^[a-z-]+:/u.test(input)) return undefined;
+    const file = path.resolve(input);
+    files.add(file);
+    const marker = `${path.sep}node_modules${path.sep}`;
+    const index = file.lastIndexOf(marker);
+    if (index < 0) continue;
+    const [scope, name] = file.slice(index + marker.length).split(path.sep);
+    if (!scope) continue;
+    const packageDir = path.join(
+      file.slice(0, index + marker.length),
+      scope.startsWith('@') && name ? path.join(scope, name) : scope,
+    );
+    files.add(path.join(packageDir, 'package.json'));
+  }
+  return [...files].sort();
+}
+
+async function reusableBundle(record: unknown): Promise<LiveAdapterBundle | undefined> {
+  if (!isCachedBundle(record)) return undefined;
+  for (const input of record.inputs) {
+    let digest: string;
+    try {
+      digest = await fileSha256(input.path);
+    } catch (error) {
+      // A file the bundle read is gone: bundle again.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw error;
+    }
+    if (digest !== input.sha256) return undefined;
+  }
+  return { sourceText: record.sourceText, runtimeImports: record.runtimeImports };
+}
+
+function isCachedBundle(value: unknown): value is CachedLiveAdapterBundle {
+  return (
+    isRecord(value) &&
+    typeof value.sourceText === 'string' &&
+    typeof value.runtimeImports === 'boolean' &&
+    Array.isArray(value.inputs) &&
+    value.inputs.every(
+      (input) =>
+        isRecord(input) && typeof input.path === 'string' && typeof input.sha256 === 'string',
+    )
+  );
+}
+
+async function fileSha256(file: string): Promise<string> {
+  return createHash('sha256')
+    .update(await readFile(file))
+    .digest('hex');
 }
 
 function bindImportMetaUrls(): Plugin {

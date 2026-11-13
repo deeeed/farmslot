@@ -96,6 +96,8 @@ export type RecipeEngineRunOptions = RecipeRunOptions & {
    * the start and end snapshots alone bind the run: `call` plans before it heals.
    */
   deferStartProvenance?: boolean;
+  /** The actions the recipe runs, passed to the host's runner (`RecipeRunnerOptions`). */
+  plannedActions?: readonly string[];
   /** Command-specific artifacts join the engine package before its final validation. */
   finalizeArtifacts?(
     context: RecipeArtifactFinalization,
@@ -357,6 +359,7 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     // task-local adapter. Inherited gateway provenance remains authoritative,
     // so an untrusted worker cannot promote itself with CLI flags.
     trustTaskActions: (trust.source?.trust ?? 'trusted') === 'trusted',
+    ...(runtimeOptions.plannedActions ? { plannedActions: runtimeOptions.plannedActions } : {}),
   };
   // The loaded mutation is not bound to a plan yet, so the runner that computes
   // the plan gets none; only an authorized mutation reaches execution.

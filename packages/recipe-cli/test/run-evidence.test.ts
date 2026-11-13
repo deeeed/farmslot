@@ -28,6 +28,7 @@ import {
   type SummaryDocument,
 } from '@farmslot/recipe-runner';
 
+import { CallTimingRecorder, withCallTimings } from '../src/harness/call-timings.js';
 import {
   beginRunDiagnostics,
   captureExecutionProvenance,
@@ -1540,6 +1541,16 @@ describe('run report', () => {
 });
 
 describe('live adapter scripts', () => {
+  // Bundles are cached per user; each test keeps its own cache.
+  const cachedEnv = process.env.FARMSLOT_RECIPE_CACHE_DIR;
+  beforeEach(() => {
+    process.env.FARMSLOT_RECIPE_CACHE_DIR = tempRoot('live-adapter-cache-');
+  });
+  afterEach(() => {
+    if (cachedEnv === undefined) delete process.env.FARMSLOT_RECIPE_CACHE_DIR;
+    else process.env.FARMSLOT_RECIPE_CACHE_DIR = cachedEnv;
+  });
+
   function context(root: string) {
     return {
       nodeId: 'probe',
@@ -1676,6 +1687,39 @@ describe('live adapter scripts', () => {
       prepared: approved,
     });
     assert.deepEqual(executed?.result, { value: 'approved' });
+  });
+
+  test('reuses a bundle until one of its inputs changes', async () => {
+    const root = tempRoot('cached-adapter-');
+    const actionPath = path.join(root, 'web', 'team', 'probe.mjs');
+    const helperPath = path.join(root, 'web', 'team', 'helper.mjs');
+    fs.mkdirSync(path.dirname(actionPath), { recursive: true });
+    fs.writeFileSync(helperPath, 'export const value = 1;\n');
+    fs.writeFileSync(actionPath, `import { value } from './helper.mjs';\nconsole.log(value);\n`);
+    const recorder = new CallTimingRecorder();
+    const prepare = () =>
+      withCallTimings(recorder, () =>
+        prepareLiveAdapterScript({
+          platform: 'web',
+          action: 'team.probe',
+          namespace: 'shop',
+          implementationRoot: root,
+        }),
+      );
+    const first = await prepare();
+    const second = await prepare();
+    assert.ok(first && second);
+    assert.equal(second.sourceText, first.sourceText);
+    assert.equal(second.sourceDigest, first.sourceDigest);
+    assert.deepEqual(
+      [recorder.snapshot().work.liveAdapterBuilt, recorder.snapshot().work.liveAdapterCached],
+      [1, 1],
+    );
+    fs.writeFileSync(helperPath, 'export const value = 2;\n');
+    const changed = await prepare();
+    assert.notEqual(changed?.sourceDigest, first.sourceDigest);
+    assert.match(changed?.sourceText ?? '', /value = 2/u);
+    assert.equal(recorder.snapshot().work.liveAdapterBuilt, 2);
   });
 
   test('rejects computed dynamic imports unless runtime imports are allowed', async () => {

@@ -497,6 +497,8 @@ async function runCall<TMutation, TAllowlist extends ConsoleAllowlist>(
     // The plan is made before healing and kept when healing changes nothing, so the
     // start snapshot waits for execution: start and end then bind the call.
     deferStartProvenance: true,
+    // A one-node recipe runs only its action; the official `call` action runs other recipes.
+    ...(resolvedAction === 'call' ? {} : { plannedActions: [resolvedAction] }),
     suppressLibraryResolutionLogs: true,
     stdoutIsMachineContract: json,
     onActionEvent: ({ nodeId, action, status }: RecipeNodeEvent) => {
