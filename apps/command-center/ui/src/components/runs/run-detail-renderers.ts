@@ -43,6 +43,7 @@ import '../shared/hydrating-placeholder.js';
 import { gateway } from '../../gateway-client.js';
 import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { formatUsageCost } from '../../utils/review-gate-display.js';
 import { navigateHash } from '../../utils/url-state.js';
 import { viewDetails } from '../../utils/view-state.js';
 import type { AcceptanceEvidenceOpen } from '../progress-tracker/acceptance-panel.js';
@@ -552,6 +553,20 @@ export function renderReviewChain(run: Run): unknown {
             <a class="review-chain-row" href=${`#run/${entry.runId}`}>
               <span class="review-chain-generation">G${entry.generation}</span>
               <span title=${`${entry.repository}#${entry.prNumber}`}>${range}</span>
+              <span class="review-chain-execution">
+                <span>${entry.runner ?? 'Unknown runner'} / ${entry.model ?? 'default'}</span>
+                <span class="review-chain-metrics">
+                  <span title="Recorded generation duration"
+                    >${entry.durationMs == null
+                      ? 'Time unavailable'
+                      : formatDuration(entry.durationMs)}</span
+                  >
+                  ·
+                  <span title="Recorded generation cost"
+                    >${formatUsageCost(entry.costUsd, entry.costReason ?? 'Cost unavailable')}</span
+                  >
+                </span>
+              </span>
               <span>${entry.mode.toUpperCase()} · ${entry.validationDepth}</span>
               <span
                 >${entry.verdict} ·
