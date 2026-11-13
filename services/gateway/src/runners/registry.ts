@@ -1,6 +1,8 @@
 import { CLAUDE_ACP_EFFORTS } from '@farmslot/agent-runtime/native/claude-acp';
 import { nativeRunnerDefinitions } from '@farmslot/agent-runtime/native/registry';
 
+import { piProviderEnvironment } from '../../../../scripts/runners/pi-farmslot-providers.mjs';
+
 import { resolvePiBinary, resolvePiModel } from './launch-command.js';
 import {
   runnerPaneContainsInstruction,
@@ -225,7 +227,31 @@ export interface RunnerSessionContinuation {
   } | null;
 }
 
+/** Only the selected model provider's explicit API variables cross a blind launch. */
+function blindProviderEnvironment(model: string): readonly string[] {
+  const provider = model.split('/')[0];
+  const names: Record<string, readonly string[]> = {
+    openai: ['OPENAI_API_KEY', 'OPENAI_BASE_URL'],
+    anthropic: ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'],
+    xai: ['XAI_API_KEY', 'XAI_BASE_URL'],
+    groq: ['GROQ_API_KEY'],
+    google: ['GEMINI_API_KEY'],
+    openrouter: ['OPENROUTER_API_KEY'],
+    litellm: ['LITELLM_API_KEY', 'LITELLM_BASE_URL'],
+    'codex-lb': ['CODEX_LB_API_KEY'],
+    sparks: [],
+  };
+  // Custom providers use the runner's own config/auth files; never admit an
+  // arbitrary *_KEY or *_TOKEN from a gateway's environment.
+  return names[provider] ?? [];
+}
+
 export interface RunnerDefinition {
+  /** Environment required by this runner's selected model, for blind workers only. */
+  blindModelEnvironment?: (
+    model?: string | null,
+    environment?: NodeJS.ProcessEnv,
+  ) => readonly string[];
   /** Hook destination for a read-only terminal review, shared by launch and observation. */
   reviewObservabilityDir?: (taskDir: string) => string;
   /** Tmux launches install and verify the copied runner observability bundle. */
@@ -408,6 +434,12 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     usesObservabilityBundle: true,
     supportsInitialPromptArg: true,
     id: 'claude',
+    blindModelEnvironment: () => [
+      'ANTHROPIC_API_KEY',
+      'ANTHROPIC_BASE_URL',
+      'ANTHROPIC_AUTH_TOKEN',
+      'CLAUDE_CODE_OAUTH_TOKEN',
+    ],
     sessionContinuation: {
       native: true,
       terminal: { args: (sessionId) => ['--resume', sessionId], workspace: 'retained' },
@@ -458,6 +490,12 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   codex: {
     usesObservabilityBundle: true,
     id: 'codex',
+    blindModelEnvironment: () => [
+      'OPENAI_API_KEY',
+      'OPENAI_BASE_URL',
+      'CODEX_API_KEY',
+      'CODEX_LB_API_KEY',
+    ],
     sessionContinuation: {
       native: true,
       terminal: { args: (sessionId) => ['resume', '--all', sessionId], workspace: 'current' },
@@ -523,6 +561,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   cursor: {
     usesObservabilityBundle: true,
     id: 'cursor',
+    blindModelEnvironment: () => ['CURSOR_API_KEY', 'CURSOR_AUTH_TOKEN'],
     sessionContinuation: {
       native: true,
       terminal: {
@@ -598,6 +637,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   grok: {
     usesObservabilityBundle: true,
     id: 'grok',
+    blindModelEnvironment: () => ['GROK_API_KEY', 'XAI_API_KEY'],
     sessionContinuation: {
       native: true,
       terminal: { args: (sessionId) => ['--resume', sessionId], workspace: 'retained' },
@@ -651,6 +691,15 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     usesObservabilityBundle: true,
     reviewObservabilityDir: (taskDir) => path.posix.join(taskDir, '.observability'),
     id: 'pi',
+    blindModelEnvironment: (model, environment) => {
+      const selected = resolvePiModel(model);
+      return [
+        ...new Set([
+          ...blindProviderEnvironment(selected),
+          ...piProviderEnvironment(selected, environment),
+        ]),
+      ];
+    },
     sessionContinuation: {
       native: true,
       terminal: { args: (sessionId) => ['--session', sessionId], workspace: 'retained' },
@@ -713,6 +762,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   },
   opencode: {
     id: 'opencode',
+    blindModelEnvironment: (model) => blindProviderEnvironment(model ?? ''),
     sessionContinuation: { native: true, terminal: null },
     nativeTransport: 'opencode-acp',
     // No seed: a new session uses the model OpenCode is configured with.

@@ -592,7 +592,16 @@ export function buildRunnerSessionReloadCommand(
     ? ` ${shellQuote(opts.initialPrompt.trim())}`
     : '';
   const blind = (command: string): string =>
-    opts.blindTrialBoundary ? withBlindTrialBoundary(command, opts.blindTrialBoundary) : command;
+    opts.blindTrialBoundary
+      ? withBlindTrialBoundary(
+          command,
+          opts.blindTrialBoundary,
+          getRunnerDefinition(runner).blindModelEnvironment?.(model, {
+            ...process.env,
+            ...vars.machineEnv,
+          }),
+        )
+      : command;
 
   if (runner === 'claude') {
     const installCommand = buildRunnerObservabilityInstallCommand(
@@ -1044,7 +1053,14 @@ export function buildLaunchCommand(
         // Innermost, so neither pool nor project environment restores a credential.
         withSourceInputs(
           opts.blindTrialBoundary
-            ? withBlindTrialBoundary(command, opts.blindTrialBoundary)
+            ? withBlindTrialBoundary(
+                command,
+                opts.blindTrialBoundary,
+                getRunnerDefinition(runner).blindModelEnvironment?.(model, {
+                  ...process.env,
+                  ...vars.machineEnv,
+                }),
+              )
             : command,
         ),
         repo,

@@ -32,6 +32,7 @@ module.loader.exec_module(blind)
 root, capsule = pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
 roots = json.loads(sys.argv[4])
 spec = {'repo': str(root / 'product'), 'farmConfigRoots': roots}
+pathlib.Path(spec['repo']).mkdir()
 profile = capsule / 'sandbox.sb'
 profile.write_text(blind.sandbox_profile(spec, capsule))
 for index, entry in enumerate(roots):
@@ -48,7 +49,7 @@ for index, entry in enumerate(roots):
             assert denied.returncode != 0, str(folder)
             assert not (target / 'forbidden').exists()
 if sys.platform == 'darwin':
-    allowed = subprocess.run([blind.SANDBOX, '-f', str(profile), '/usr/bin/touch', str(root / 'allowed')], capture_output=True)
+    allowed = subprocess.run([blind.SANDBOX, '-f', str(profile), '/usr/bin/touch', str(root / 'product/allowed')], capture_output=True)
     assert allowed.returncode == 0, allowed.stderr
     print('direct and symlink writes denied; unrelated write allowed')
 else:
