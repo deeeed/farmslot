@@ -201,6 +201,74 @@ assert.equal(error.code, 'EPERM');
 );
 
 test(
+  'lookalike capsule directory import is refused while the own broker connects',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const root = fixture();
+    t.after(() => rmSync(root, { recursive: true }));
+    const capsule = path.join(root, '.farmslot-blind-evals/slot/run-epoch');
+    mkdirSync(path.join(capsule, 'boundary'), { recursive: true });
+    writeFileSync(path.join(capsule, 'state.json'), '{"originalIsDirectory":true}');
+    profile(capsule);
+    const source = path.join(root, 'run');
+    mkdirSync(source);
+    const ownBroker = path.join(realpathSync(path.join(capsule, 'boundary/tmp')), 'broker');
+    const servers = [path.join(source, 'control.sock'), path.join(ownBroker, 'own.sock')].map(
+      (socketPath) => {
+        const server = net.createServer((socket) => socket.destroy());
+        t.after(
+          () =>
+            new Promise<void>((resolve, reject) =>
+              server.close((error) => (error ? reject(error) : resolve())),
+            ),
+        );
+        server.listen(socketPath);
+        return server;
+      },
+    );
+    await Promise.all(servers.map((server) => once(server, 'listening')));
+    const run = (source: string) => {
+      const result = worker(
+        capsule,
+        `exec ${q(process.execPath)} --input-type=module -e ${q(source)}`,
+      );
+      assert.ifError(result.error);
+      assert.equal(result.status, 0, result.stderr);
+    };
+    await t.test('own physical and /tmp alias broker connects', () =>
+      run(`
+import net from 'node:net';
+for (const broker of ${JSON.stringify([ownBroker, ownBroker.replace('/private/tmp/', '/tmp/')])}) {
+  await new Promise((resolve, reject) => {
+    const socket = net.connect(broker + '/own.sock');
+    socket.on('error', reject).on('connect', () => { socket.destroy(); resolve(); });
+  });
+}
+`),
+    );
+    await t.test(
+      'relative connect to renamed external socket in lookalike directory is EPERM',
+      () =>
+        run(`
+import assert from 'node:assert/strict'; import * as fs from 'node:fs'; import net from 'node:net';
+const temporary = ${JSON.stringify(path.join(root, '_farmslot-blind-evals/slot/run-epoch/boundary/tmp'))};
+fs.mkdirSync(temporary, { recursive: true });
+fs.renameSync(${JSON.stringify(source)}, temporary + '/broker');
+assert.ok(fs.statSync(temporary + '/broker/control.sock').isSocket());
+process.chdir(temporary);
+const error = await new Promise((resolve, reject) => {
+  const socket = net.connect('broker/control.sock');
+  socket.on('error', resolve).on('connect', () => {
+    socket.destroy(); reject(new Error('lookalike directory socket connected'));
+  });
+});
+assert.equal(error.code, 'EPERM');
+`),
+    );
+  },
+);
+
+test(
   'Mobile broker and temp ownership under the real blind wrapper',
   { skip: process.platform !== 'darwin' },
   async (t) => {

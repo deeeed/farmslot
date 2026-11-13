@@ -351,11 +351,11 @@ def sandbox_profile(spec, capsule, tmux_sockets=None, network_ports=None):
     rules += [tmux_socket_rules(tmux_sockets or []), gateway_network_rules(spec, network_ports)]
     if temporary.exists():
         rules += ['(allow file-write* (subpath %s))' % quote(p) for p in path_aliases(temporary)]
-        broker = temporary / 'broker'
-        # Seatbelt regex literals retain backslashes. The validated allocation
-        # uses only /private/tmp/fs-blind- plus tempfile's regex-safe suffix.
-        rules += ['(allow network-outbound (remote unix-socket (regex #%s)))'
-                  % quote('^' + p + '/[^/]+$') for p in path_aliases(broker)]
+        broker = worker_temp(capsule) / 'broker'
+        # Use only physical allocation aliases. Ordinary SBPL strings decode
+        # JSON escapes before regex compilation; #"..." retains backslashes.
+        rules += ['(allow network-outbound (remote unix-socket (regex %s)))'
+                  % quote('^' + re.escape(p) + '/[^/]+$') for p in path_aliases(broker)]
         # Only bind sockets directly in this fixed directory. In particular a
         # directory rename must never import a foreign socket into an allowance.
         rules += ['(deny file-write* file-link (require-all (subpath %s) '

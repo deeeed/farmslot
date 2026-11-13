@@ -177,7 +177,9 @@ Non-blind broker paths remain independent of `TMPDIR`.
 Seatbelt denies shared temporary writes, including `/tmp`, `/var/tmp` and
 `/var/folders`, then admits the trial directory and existing task write scope.
 Outbound Unix connections admit the resolver and direct children of `broker`,
-using an anchored path regex. That directory admits only socket vnodes, so
+using an anchored regex with escaped literal paths from the validated physical
+allocation and its `/tmp` alias. Logical capsule paths grant no connect access.
+That directory admits only socket vnodes, so
 workers cannot create or import directories, regular files or symlinks there,
 or move or replace the directory itself. Other
 trials' socket connections, writes, chmod, unlink and directory renames remain
@@ -211,3 +213,6 @@ and absence of registry and unselected auth keys. The hosted static scenario
 initializes through the production CLI source snapshot, re-initializes the same
 retained receipt, and runs `./mark` inside Seatbelt after each initialization.
 Both mark checks must pass while the boundary source stays outside the pin.
+The lookalike capsule regression renames a synthetic external socket's directory
+into `_farmslot-blind-evals/.../boundary/tmp/broker` and checks that a relative
+connect fails with `EPERM`, while both physical broker aliases still connect.
