@@ -10,16 +10,28 @@ import {
 } from '../services/gateway/src/runs/credential-scrub.js';
 
 const flags = process.argv.slice(2);
-const apply = flags.includes('--apply');
-const roots = flags.flatMap((flag, index) => (flag === '--root' ? [flags[index + 1]!] : []));
-if (flags.includes('--help') || roots.some((root) => !root)) {
+let apply = false;
+let help = false;
+let invalid = false;
+const roots: string[] = [];
+for (let index = 0; index < flags.length; index += 1) {
+  const flag = flags[index]!;
+  if (flag === '--apply') apply = true;
+  else if (flag === '--help') help = true;
+  else if (flag === '--root') roots.push(flags[++index] ?? '');
+  else if (flag.startsWith('--root=')) roots.push(flag.slice('--root='.length));
+  else invalid = true;
+}
+invalid ||= roots.some((root) => !root || root.startsWith('--'));
+if (help || invalid) {
   console.log(
     'Usage: scrub-run-credentials.mts [--root <dir>]... [--apply]\n' +
-      'Without --root: the gateway runs dir (live, archive, quarantine), run archive, run bundle\n' +
-      'store and the run-archive/ and archive/ in their data dir, resolved like `farmslot paths`\n' +
-      '(FARMSLOT_HOME, run bundle retention storeRoot, FARMSLOT_RUN_ARCHIVE_ROOT).',
+      'With --root: only the given roots. Without: the gateway runs dir (live, archive,\n' +
+      'quarantine), run archive, run bundle store and the run-archive/ and archive/ in their\n' +
+      'data dir, resolved like `farmslot paths` (FARMSLOT_HOME, run bundle retention storeRoot,\n' +
+      'FARMSLOT_RUN_ARCHIVE_ROOT).',
   );
-  process.exit(roots.some((root) => !root) ? 2 : 0);
+  process.exit(invalid ? 2 : 0);
 }
 if (!roots.length) roots.push(...defaultScrubRoots());
 console.log(`${apply ? 'apply' : 'dry run'} roots:`);

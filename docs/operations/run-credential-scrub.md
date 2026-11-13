@@ -21,15 +21,22 @@ the stores `farmslot paths` reports for that home: the runs directory, the run
 archive, the run bundle store (`run-bundle-retention.json` `storeRoot`), and
 `run-archive/` and `archive/` in the bundle store's data directory. The farm
 home itself is never scanned. The output starts with every root and marks
-missing ones. Pass `--root <dir>` (repeatable) to choose stores.
+missing ones.
+
+Pass `--root <dir>` or `--root=<dir>` (repeatable) to scan exactly those
+directories: any `--root` replaces the default list, so stores you leave out
+(an `archive/` you mean to keep, say) are neither scanned nor rewritten. An
+unknown argument exits with status 2 before anything is scanned.
 
 Only real credential values change: a value assigned to a name ending in
-`_KEY`, `_TOKEN`, `_SECRET`, `_PASSWORD`, `_PASSWD`, `_PAT` or `_CREDENTIALS`
-when it looks like a secret (16+ characters mixing at least two of lowercase,
-uppercase and digits; not a `$NAME` reference or an `org/repo` path), and
-provider token shapes (`sk-`, `sk-ant-`, `ghp_`/`gho_`/`ghs_`/`github_pat_`,
-Atlassian `ATATT`, `xoxb-`/`xoxp-`, `AKIA…`, `glpat-`, `npm_`, `AIza…`, `hf_`,
-`xai-`, `fw_`) wherever they appear. Placeholders such as `local`, numbers,
+`_KEY`, `_TOKEN`, `_PAT` or `_CREDENTIALS` when it looks like a secret (16+
+characters mixing at least two of lowercase, uppercase and digits; not a
+`$NAME` reference or an `org/repo` path); any 12+ character value under a name
+ending in `_SECRET`, `_PASSWORD` or `_PASSWD`, single-case passwords and
+hyphenated passphrases included (not a reference, path, URL or plain number);
+and provider token shapes (`sk-`, `sk-ant-`, `ghp_`/`gho_`/`ghs_`/
+`github_pat_`, Atlassian `ATATT`, `xoxb-`/`xoxp-`, `AKIA…`, `glpat-`, `npm_`,
+`AIza…`, `hf_`, `xai-`, `fw_`) wherever they appear. Placeholders such as `local`, numbers,
 single-case slugs such as `metamask-extension`, names such as
 `…_API_KEY_INDEX` or `…_MAX_TOKENS`, and ordinary prose are left alone. The
 gateway applies the same rules when it stores and loads run records.
