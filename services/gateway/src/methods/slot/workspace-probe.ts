@@ -17,6 +17,7 @@ export interface WorkspaceProbe {
   originKey: string;
   publicationRemote: string;
   publicationRef: string;
+  publicationRemoteKey: string;
 }
 
 /** One read-only process, including content hashes. No file contents cross the node boundary. */
@@ -61,10 +62,20 @@ if not fetch.is_absolute(): fetch=pathlib.Path(repo,fetch)
 fetched=None
 if fetch.is_file() and ("branch '"+default+"' of ") in fetch.read_text(errors='replace'):
  fetched=datetime.datetime.fromtimestamp(fetch.stat().st_mtime,datetime.timezone.utc).isoformat()
-remote=git('config','--get','branch.'+branch+'.remote',optional=True).decode().strip() or 'origin'
-merge=git('config','--get','branch.'+branch+'.merge',optional=True).decode().strip() or 'refs/heads/'+branch
-origin=git('remote','get-url','origin').strip()
-print(json.dumps(dict(branch=branch,headSha=head,dirtyFingerprint=digest.hexdigest(),dirtyCount=count,localDefaultSha=local,behind=int(behind) if behind.isdigit() else None,defaultFetchedAt=fetched,originKey=hashlib.sha256(origin).hexdigest(),publicationRemote=remote,publicationRef=merge)))
+configuration=git('config','--null','--list').split(b'\\x00')
+def config(name):
+ values=[entry.split(b'\\n',1)[1] for entry in configuration if entry.split(b'\\n',1)[0]==name.encode() and b'\\n' in entry]
+ return values[-1].decode().strip() if values else ''
+remote=config('branch.'+branch+'.remote') or 'origin'
+merge=config('branch.'+branch+'.merge') or 'refs/heads/'+branch
+def authentication_entry(entry):
+ key=entry.split(b'\\n',1)[0]
+ return key.startswith((b'credential.',b'http.',b'url.')) or key in (b'core.sshcommand',b'ssh.variant') or (key.startswith(b'remote.') and key.endswith((b'.proxy',b'.uploadpack')))
+auth=b'\\x00'.join(entry for entry in configuration if authentication_entry(entry))
+def remote_key(name): return hashlib.sha256(git('remote','get-url',name).strip()+b'\\x00'+auth).hexdigest()
+origin_key=remote_key('origin')
+publication_key=origin_key if remote=='origin' else (remote_key(remote) if remote!='.' else '')
+print(json.dumps(dict(branch=branch,headSha=head,dirtyFingerprint=digest.hexdigest(),dirtyCount=count,localDefaultSha=local,behind=int(behind) if behind.isdigit() else None,defaultFetchedAt=fetched,originKey=origin_key,publicationRemote=remote,publicationRef=merge,publicationRemoteKey=publication_key)))
 FARMSLOT_WORKSPACE_PROBE`);
 }
 
@@ -91,6 +102,7 @@ export async function probeWorkspace(
       'originKey',
       'publicationRemote',
       'publicationRef',
+      'publicationRemoteKey',
     ].every((key) => typeof data[key] === 'string') ||
     typeof data.dirtyCount !== 'number' ||
     !(data.behind === null || typeof data.behind === 'number') ||
@@ -106,6 +118,7 @@ export async function probeWorkspace(
     originKey: String(data.originKey),
     publicationRemote: String(data.publicationRemote),
     publicationRef: String(data.publicationRef),
+    publicationRemoteKey: String(data.publicationRemoteKey),
     localDefaultSha: data.localDefaultSha,
     behind: data.behind,
     defaultFetchedAt: data.defaultFetchedAt,

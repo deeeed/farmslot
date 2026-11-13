@@ -75,6 +75,8 @@ await writeFile(
 );
 await import('../../runtime/mock-pty.test-support.js');
 let probes = 0;
+let refFailure: Error | undefined;
+let passiveRefPause: ProbePause | undefined;
 let probeFailure: Error | undefined;
 interface ProbePause {
   gate: Promise<void>;
@@ -91,6 +93,7 @@ const probe: WorkspaceProbe = {
   behind: 0,
   defaultFetchedAt: null,
   originKey: 'fixture',
+  publicationRemoteKey: 'fixture',
   publicationRemote: 'origin',
   publicationRef: 'refs/heads/main',
 };
@@ -99,6 +102,19 @@ mock.module('../../core/read-probes.js', {
   namedExports: {
     readSlotProbe: async (_vars: SlotVars, _command: string, scope: string, timeout: number) => {
       probeReads.push({ scope, timeout });
+      if (scope.startsWith('unit-')) {
+        const pause = passiveRefPause;
+        passiveRefPause = undefined;
+        if (pause) {
+          pause.started();
+          await pause.gate;
+        }
+        if (refFailure) {
+          const failure = refFailure;
+          refFailure = undefined;
+          throw failure;
+        }
+      }
       const kind = scope.includes('publication') ? 'publication' : 'default';
       const pause = pausedRead;
       if (pause && pause.kind === kind && timeout === 120_000) {
@@ -462,4 +478,110 @@ test('unchanged Git metadata cannot retain an active-owner refusal after the Run
   assert.equal(completed.slots[0]?.workspace?.protectedReason, undefined);
   assert.equal(completed.slots[0]?.workspace?.terminalOwner, true);
   assert.equal(probes, before + 1, 'a changed owner disposition requires a fresh inspection');
+});
+
+test('passive publication ref reads share completed answers for sixty seconds', async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const original = { ...probe };
+  t.after(() => Object.assign(probe, original));
+  Object.assign(probe, {
+    originKey: 'passive-ref-cache',
+    publicationRemoteKey: 'passive-ref-cache',
+    branch: 'topic',
+    publicationRef: 'refs/heads/topic',
+    headSha: 'b'.repeat(40),
+    localDefaultSha: null,
+    dirtyCount: 0,
+  });
+  const before = probeReads.length;
+  await inspectSlotWorkspace('cache-slot', { passive: true });
+  now += 16_000;
+  await inspectSlotWorkspace('cache-slot', { passive: true });
+  const reads = probeReads.slice(before);
+  assert.equal(reads.filter((read) => read.scope === 'workspace-default').length, 1);
+  assert.equal(reads.filter((read) => read.scope === 'workspace-publication').length, 1);
+  now += 45_000;
+  await inspectSlotWorkspace('cache-slot', { passive: true });
+  assert.equal(
+    probeReads.slice(before).filter((read) => read.scope === 'workspace-default').length,
+    2,
+  );
+  assert.equal(
+    probeReads.slice(before).filter((read) => read.scope === 'workspace-publication').length,
+    2,
+  );
+});
+
+test('passive ref sharing respects remote, ref, machine and owned authority', async () => {
+  const { loadSlotVars } = await import('../../core/config.js');
+  const { withSlotCommandExecutor } = await import('../../core/exec-scope.js');
+  const { readWorkspaceRemoteRef } = await import('./workspace-remote-ref.js');
+  const vars = await loadSlotVars('cache-slot');
+  const query = {
+    vars,
+    remoteKey: 'unit-identity',
+    remote: 'origin',
+    ref: 'refs/heads/main',
+    scope: 'unit-identity',
+    timeoutMs: 5000,
+    passive: true,
+  };
+  const before = probeReads.length;
+  await readWorkspaceRemoteRef(query);
+  await readWorkspaceRemoteRef({ ...query, vars: { ...vars, remoteRepo: '/another/checkout' } });
+  assert.equal(probeReads.length - before, 1, 'same authority and remote share across slots');
+  await readWorkspaceRemoteRef({ ...query, remoteKey: 'unit-other-auth-or-url' });
+  await readWorkspaceRemoteRef({ ...query, ref: 'refs/heads/topic' });
+  await readWorkspaceRemoteRef({ ...query, vars: { ...vars, machine: 'other-machine' } });
+  await readWorkspaceRemoteRef({ ...query, vars: { ...vars, sshTarget: 'another-user@host' } });
+  assert.equal(probeReads.length - before, 5);
+  await readWorkspaceRemoteRef({ ...query, passive: false });
+  await withSlotCommandExecutor(
+    async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+    async () => {
+      await readWorkspaceRemoteRef(query);
+      await readWorkspaceRemoteRef(query);
+    },
+  );
+  assert.equal(probeReads.length - before, 8, 'fresh and owner-bound readers never use the cache');
+});
+
+test('concurrent passive refs share a flight and failed reads are retried', async () => {
+  const { loadSlotVars } = await import('../../core/config.js');
+  const { readWorkspaceRemoteRef } = await import('./workspace-remote-ref.js');
+  const query = {
+    vars: await loadSlotVars('cache-slot'),
+    remoteKey: 'unit-flight',
+    remote: 'origin',
+    ref: 'refs/heads/main',
+    scope: 'unit-flight',
+    timeoutMs: 5000,
+    passive: true,
+  };
+  let release: () => void = () => assert.fail('read gate was not installed');
+  let notify: () => void = () => assert.fail('start gate was not installed');
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    notify = resolve;
+  });
+  passiveRefPause = { gate, started: notify };
+  const before = probeReads.length;
+  const first = readWorkspaceRemoteRef(query);
+  await started;
+  const second = readWorkspaceRemoteRef(query);
+  release();
+  assert.deepEqual(await first, await second);
+  assert.equal(probeReads.length - before, 1);
+  refFailure = new Error('ref transport failed');
+  const failed = { ...query, remoteKey: 'unit-failure' };
+  await assert.rejects(readWorkspaceRemoteRef(failed), /ref transport failed/);
+  await readWorkspaceRemoteRef(failed);
+  assert.equal(
+    probeReads.length - before,
+    3,
+    'a failed ref never becomes a completed cached answer',
+  );
 });

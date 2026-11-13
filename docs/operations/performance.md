@@ -78,3 +78,5 @@ measure through response completion. URLs, query strings and caller identifiers
 are never metric labels. HTTP streams have no assigned latency budget and their
 body bytes remain unmeasured. Older Doctor clients ignore the new HTTP duration
 rows; updated clients show them in the HTTP phase.
+
+Passive workspace default and publication ref queries share a 60-second answer only for the same resolved remote, ref, Git authentication configuration and node authority. Acting, recovery and owner-bound reads bypass completed passive answers. Errors do not become verified ref observations.

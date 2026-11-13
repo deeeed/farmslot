@@ -1,0 +1,28 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Passive remote-ref cache",
+  "description": "Count actual shells and Git launches across a frozen eight-slot remote-ref workload, then prove authenticated run create, prepare, dispatch and cancel on an owned temporary gateway.",
+  "workflow": {
+    "entry": "ref-budget",
+    "nodes": {
+      "ref-budget": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx services/gateway/src/host-services/workspace-spawn-benchmark.live.ts --remote-refs",
+        "timeout_ms": 120000,
+        "intent": "Published workspaces retain their real verdicts while default and publication queries reuse exact remote/ref/authority observations. Count shells and nested Git launches over 630 logical seconds; every fixture and background child is cleaned.",
+        "next": "dispatch-smoke"
+      },
+      "dispatch-smoke": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx services/gateway/src/run-lifecycle/safe-idle-slot.live.ts",
+        "timeout_ms": 300000,
+        "intent": "Authenticated run.create reaches write-task, prepare and dispatch, then cancels and releases the owned fixture. Use the supplied immutable FARMSLOT_CLI and a fresh FARMSLOT_SAFE_IDLE_PROOF_OUT; never allocate a real farm slot.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

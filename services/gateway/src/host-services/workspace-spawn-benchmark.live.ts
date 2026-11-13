@@ -1,14 +1,15 @@
 // Opt-in isolated before/after workload. Run identical file on the base and proposed trees.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 
 const root = await mkdtemp(path.join(os.tmpdir(), 'workspace-spawn-benchmark-'));
 const count = 8;
-const rounds = 4;
+const remoteRefs = process.argv.includes('--remote-refs');
+const rounds = remoteRefs ? 21 : 4;
 const sourceHead = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const sourceChanges = execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim();
 const git = (repo: string, ...args: string[]) =>
@@ -58,6 +59,16 @@ try {
   git(seed, 'commit', '-qm', 'fixture');
   const origin = path.join(root, 'origin.git');
   git(root, 'clone', '-q', '--bare', seed, origin);
+  if (remoteRefs) {
+    git(seed, 'remote', 'add', 'origin', origin);
+    for (let i = 0; i < 2; i++) {
+      git(seed, 'checkout', '-qb', `published-${i}`, 'main');
+      await writeFile(path.join(seed, 'published.txt'), `published-${i}\n`);
+      git(seed, 'add', '.');
+      git(seed, 'commit', '-qm', `published-${i}`);
+      git(seed, 'push', '-q', 'origin', `published-${i}`);
+    }
+  }
   const slots = [];
   const rows = [];
   const expectedHeads = new Map<string, string>();
@@ -65,8 +76,9 @@ try {
     const id = `proof-${i}`;
     const repo = path.join(root, id);
     git(root, 'clone', '-q', origin, repo);
-    const branch = i % 2 ? `unpublished-${i}` : 'main';
-    if (i % 2) {
+    const branch = remoteRefs ? `published-${i % 2}` : i % 2 ? `unpublished-${i}` : 'main';
+    if (remoteRefs) git(repo, 'checkout', '-q', branch);
+    else if (i % 2) {
       git(repo, 'checkout', '-qb', branch);
       await writeFile(path.join(repo, 'local.txt'), `unpublished-${i}\n`);
       git(repo, 'add', 'local.txt');
@@ -120,26 +132,51 @@ try {
   const workspace = await import('../methods/slot/workspace.js');
   const performance = await import('../observability/performance.js');
   background = (await import('./background/client.js')).backgroundHost;
+  const gitCount = path.join(root, 'git-count');
+  if (remoteRefs) {
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    const bin = path.join(root, 'bin');
+    await mkdir(bin);
+    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    await writeFile(
+      path.join(bin, 'git'),
+      `#!/bin/sh\nprintf 'git\\n' >> ${quote(gitCount)}\nexec ${quote(realGit)} "$@"\n`,
+    );
+    await chmod(path.join(bin, 'git'), 0o755);
+    process.env.PATH = `${bin}:${process.env.PATH}`;
+  }
   background.start();
   await background.request('decisions.scan', {}, { deadlineMs: 10000 });
   const loaded = await state.loadFleetStatus(true);
   const before = performance.gatewayPerformance.snapshot();
+  if (remoteRefs) await writeFile(gitCount, '');
   const observations: string[][] = [];
   Date.now = () => originalNow() + offset;
   lag.enable();
   const started = globalThis.performance.now();
   for (let round = 0; round < rounds; round++) {
-    offset = round * 16000;
+    offset = round * (remoteRefs ? 30000 : 16000);
     const sampled = {
       ...loaded,
       slots: loaded.slots.map((slot) =>
         round % 2 ? { ...slot, branch: '-', headSha: undefined } : slot,
       ),
     };
-    const observed = await workspace.enrichFleetWorkspaces(sampled);
+    const observed = remoteRefs
+      ? {
+          ...sampled,
+          slots: await Promise.all(
+            sampled.slots.map(async (slot) => ({
+              ...slot,
+              workspace: await workspace.inspectSlotWorkspace(slot.slot, { passive: true }),
+            })),
+          ),
+        }
+      : await workspace.enrichFleetWorkspaces(sampled);
     observations.push(
       observed.slots.map((slot) => {
         assert.equal(slot.workspaceError, undefined);
+        if (remoteRefs) assert.equal(slot.workspace?.publication, 'pushed');
         assert.equal(slot.workspace?.headSha, expectedHeads.get(slot.slot));
         assert.equal(slot.workspace?.dirtyCount, 0);
         return slot.workspace.observedAt;
@@ -171,14 +208,19 @@ try {
         sourceHead,
         sourceChanges,
         slots: count,
-        unpublishedSlots: count / 2,
+        unpublishedSlots: remoteRefs ? 0 : count / 2,
+        remoteRefCase: remoteRefs,
+        gitProcesses: remoteRefs
+          ? (await readFile(gitCount, 'utf8')).trim().split('\n').filter(Boolean).length
+          : undefined,
         rounds,
-        logicalSampleSeconds: 48,
+        logicalSampleSeconds: remoteRefs ? rounds * 30 : 48,
         elapsedMs,
         parentShells,
         childShells,
         totalShells: parentShells + childShells,
-        shellsPerLogicalMinute: ((parentShells + childShells) / 48) * 60,
+        shellsPerLogicalMinute:
+          ((parentShells + childShells) / (remoteRefs ? rounds * 30 : 48)) * 60,
         changedObservationRounds,
         maxLoopLagMs: lag.max / 1e6,
         p99LoopLagMs: lag.percentile(99) / 1e6,

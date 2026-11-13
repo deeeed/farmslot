@@ -88,6 +88,7 @@ const probe: WorkspaceProbe = {
   behind: 0,
   defaultFetchedAt: null,
   originKey: 'fixture',
+  publicationRemoteKey: 'fixture',
   publicationRemote: 'origin',
   publicationRef: 'refs/heads/main',
 };
