@@ -4594,6 +4594,37 @@ describe('call timings', () => {
     assert.equal((lastJson(call.stdout).timings as CallTimings).work.runnerPreflight, 2);
   });
 
+  test('keeps the plan when runtime preparation explicitly made no changes', async () => {
+    const adapter = webAdapter(calls);
+    const registry = createAdapterRegistry();
+    registry.register({ ...adapter, run: { ...adapter.run, prepareRuntime: async () => false } });
+    configureHarnessAdapters(registry);
+    const { call } = await timedCall('--json');
+    assert.equal((lastJson(call.stdout).timings as CallTimings).work.runnerPreflight, 1);
+  });
+
+  test('keeps the authorization plan when no mutation was bound to the runner', async () => {
+    const target = checkout();
+    const unbound: ShopEngine = {
+      ...engine,
+      trustedMutation: {
+        ...engine.trustedMutation!,
+        load: async () => ({ bound: 'fixture-policy' }),
+        authorize: async () => undefined,
+      },
+    };
+    const call = await capture(() =>
+      handleCall(
+        ['command', 'cmd=pwd', '--adapter', 'api', '--target', target, '--heal', 'off', '--json'],
+        { engine: unbound },
+      ),
+    );
+    assert.equal(call.value, 0, call.stdout.join('\n') + call.stderr.join('\n'));
+    const timings = lastJson(call.stdout).timings as CallTimings;
+    assert.equal(timings.work.createRunner, 1);
+    assert.equal(timings.work.runnerPreflight, 1);
+  });
+
   test("reads this process's own start time once, for the journal and the checkout lock", async () => {
     const recorder = new CallTimingRecorder();
     await withCallTimings(recorder, async () => {

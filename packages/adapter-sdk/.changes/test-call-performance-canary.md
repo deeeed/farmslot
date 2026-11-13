@@ -1,0 +1,1 @@
+- Let runtime preparation report that it made no changes, so callers can preserve the current plan.

@@ -1,0 +1,1 @@
+- Reuse the authorized plan when the runner stays unchanged and runtime preparation explicitly reports no changes.
