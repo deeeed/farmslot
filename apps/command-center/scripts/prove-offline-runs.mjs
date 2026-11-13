@@ -2354,8 +2354,14 @@ if (phase === 'slot-facts-web') {
       bytes: await readFile(statusFile),
       mode: (await stat(statusFile)).mode & 0o777,
     };
-    const threshold = Number(process.env.FARMSLOT_FLEET_STALE_MS ?? 300000);
-    assert.equal(threshold, 300000, 'Use the unchanged normal fleet stale threshold');
+    assert.equal(
+      process.env.FARMSLOT_FLEET_STALE_MS,
+      undefined,
+      'Use the unchanged normal fleet stale threshold',
+    );
+    const { FLEET_STALE_MS_DEFAULT: threshold } = await import(
+      path.join(root, 'packages/protocol/dist/index.js')
+    );
     const seededAt = Date.now() - threshold + 5000;
     const seededTime = new Date(seededAt).toISOString();
     const staleAt = seededAt + threshold + 1;

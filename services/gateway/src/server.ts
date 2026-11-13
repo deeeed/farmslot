@@ -57,6 +57,7 @@ import { loadFleetStatus, onStateChange } from './fleet/state.js';
 import { forgetGitHubAccountsClientInterest } from './integrations/github-accounts.js';
 import {
   observedFleetStatus,
+  refreshStaleFleet,
   setFleetWorkspacePublisher,
   slotsPublishedToViewers,
   stopServedWorkspaceObservations,
@@ -993,7 +994,10 @@ async function dispatchMessage(
       : undefined;
     const read = () =>
       observed && frame.method === Methods.FLEET_STATUS && !entityShape
-        ? loadFleetStatus(false, true).then(observedFleetStatus)
+        ? loadFleetStatus(false, true).then((loaded) => {
+            refreshStaleFleet(loaded);
+            return observedFleetStatus(loaded);
+          })
         : observed && frame.method === Methods.TASK_PROGRESS
           ? taskProgress(params as import('@farmslot/protocol').TaskProgressParams, {
               observed: true,
