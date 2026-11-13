@@ -74,11 +74,15 @@ for (const source of [
     // Run outside the repo so core.sshCommand must resolve in Git's own cwd.
     const wrapped = withFarmGitArgv(argv);
     if (source === 'parameters' || source === 'count') {
-      execFileSync('zsh', ['-c', withFarmGitConfig(argv.map(shellQuote).join(' '))], {
-        cwd: root,
-        env,
-        stdio: 'pipe',
-      });
+      execFileSync(
+        process.platform === 'darwin' ? 'zsh' : 'sh',
+        ['-c', withFarmGitConfig(argv.map(shellQuote).join(' '))],
+        {
+          cwd: root,
+          env,
+          stdio: 'pipe',
+        },
+      );
     } else {
       execFileSync(wrapped[0], wrapped.slice(1), { cwd: root, env, stdio: 'pipe' });
     }
