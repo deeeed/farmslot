@@ -161,15 +161,26 @@ export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal):
     throw new Error('Blind trial isolation belongs to a different slot.');
   if (!isolation) {
     const planned = await executeGit('plan', vars, gitSpec(run, vars, blind, epoch, ''), signal);
+    if (typeof planned.repoKey !== 'string' || !/^[a-f0-9]{64}$/.test(planned.repoKey))
+      throw new Error('Blind trial trusted repository identity is missing from isolation plan.');
     if (typeof planned.capsule !== 'string')
       throw new Error('Blind trial capsule location is missing.');
     await ownedEpoch(run, epoch);
-    isolation = { slotId: vars.slotId, slotEpoch: epoch, capsulePath: planned.capsule };
+    isolation = {
+      slotId: vars.slotId,
+      slotEpoch: epoch,
+      capsulePath: planned.capsule,
+      repoKey: planned.repoKey,
+    };
     await persistRunNow(
       updateBlind(runId, { ...blind, isolation }),
       'blind trial isolation intent',
     );
   }
+  if (!isolation.repoKey || !/^[a-f0-9]{64}$/.test(isolation.repoKey))
+    throw new Error(
+      'Blind trial trusted repository identity is missing. Restore this trial and create a new blind run.',
+    );
   const spec = gitSpec(run, vars, blind, isolation.slotEpoch, isolation.capsulePath);
   await executeGit('isolate', vars, spec, signal);
   // The worker sandbox denies the node's other slot checkouts, resolved as each slot's own launch resolves them.

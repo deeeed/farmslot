@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, afterEach, beforeEach, mock, test, type TestContext } from 'node:test';
 
-import type { ExecResult, QaProfileSelection } from '@farmslot/protocol';
+import { type ExecResult, isRecord, type QaProfileSelection } from '@farmslot/protocol';
 
 import type { SlotVars } from '../core/config.js';
+import type { BlindGitSpec } from '../evals/blind-git.js';
 import { seedRunnerObservabilityFixture } from '../node-support/support-test-fixtures.js';
 
 const root = mkdtempSync(path.join(tmpdir(), 'qa-scope-prepare-'));
@@ -113,6 +115,7 @@ writeFileSync(
   }),
 );
 
+let blindBoundary: Pick<BlindGitSpec, 'runId' | 'baseSha'> | undefined;
 let commandSignal: AbortSignal | undefined;
 let commandController: AbortController | undefined;
 const pendingCommands = new Set<Promise<ExecResult>>();
@@ -129,7 +132,17 @@ afterEach(async () => {
 
 // Git runs for real; tmux never does (prepare only asks whether a session exists).
 async function slotExec(vars: SlotVars, command: string): Promise<ExecResult> {
-  if (command.includes('TMUX_BIN') || /\btmux\b/.test(command))
+  // Identity forwarding needs real planning/isolation, not the macOS worker sandbox.
+  if (blindBoundary && command.includes('"action":"boundary"'))
+    return {
+      exitCode: 0,
+      stdout: JSON.stringify({ status: 'isolated', ...blindBoundary, browserCdpPort: 19444 }),
+      stderr: '',
+    };
+  if (
+    !command.includes('FARMSLOT_BLIND_GIT_PY') &&
+    (command.includes('TMUX_BIN') || /\btmux\b/.test(command))
+  )
     return { exitCode: 1, stdout: '', stderr: 'fixture has no tmux server' };
   assert(commandSignal, 'Slot commands must belong to a test');
   const executing = realExec.execLocal(command, {
@@ -148,6 +161,13 @@ const realExec = await import('../core/exec.js');
 mock.module('../core/exec.js', { namedExports: { ...realExec, execOnSlot: slotExec } });
 const realCore = await import('../core/index.js');
 mock.module('../core/index.js', { namedExports: { ...realCore, execOnSlot: slotExec } });
+
+// These cases exercise Git prepare; the recipe installation is a separate contract.
+mock.module('./eval-harness-lifecycle.js', {
+  namedExports: {
+    executeEvalHarnessLifecycle: async () => ({ skipped: true, reason: 'Git-only fixture' }),
+  },
+});
 
 const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
 const { executePrepareStep } = await import('./dispatch-lifecycle-steps.js');
@@ -425,3 +445,86 @@ test(
     git(repo, 'checkout', '-q', '--', 'frozen.txt');
   },
 );
+
+test('fresh blind prepare reads the identity persisted during branch setup', budget, async (t) => {
+  git(repo, 'checkout', '-q', 'main');
+  git(repo, 'reset', '--hard', 'origin/main');
+  const baseSha = git(repo, 'rev-parse', 'HEAD');
+  const repoKey = createHash('sha256')
+    .update(path.resolve(repo, git(repo, 'rev-parse', '--git-common-dir')))
+    .digest('hex');
+  const created = createRun({
+    flowType: 'dev',
+    project,
+    slotId,
+    ticketOrPr: 'blind identity fixture',
+    prepareProfile: 'git-only',
+  });
+  const branch = 'eval/identity';
+  blindBoundary = { runId: created.id, baseSha };
+  t.after(() => {
+    blindBoundary = undefined;
+  });
+  updateRun(created.id, {
+    branch,
+    startRef: { requestedRef: baseSha, source: { kind: 'git-ref', ref: baseSha } },
+    engineState: {
+      evalExperiment: {
+        experimentId: 'identity',
+        experimentKey: 'identity',
+        experimentManifestPath: path.join(root, 'experiment.json'),
+        packagePath: path.join(root, 'package.json'),
+        candidateStrategyFingerprint: 'identity',
+        trialId: created.id,
+        blind: {
+          version: 1,
+          baseSha,
+          problemDigest: 'fixture',
+          referenceCommits: [],
+          referencePatchId: 'fixture',
+          forbiddenInputs: [],
+        },
+      },
+    },
+  });
+  const { buildBlindGitCommand } = await import('../evals/blind-git.js');
+  t.after(async () => {
+    const isolation = getRun(created.id)?.engineState?.evalExperiment?.blind?.isolation;
+    if (isolation)
+      execFileSync('bash', [
+        '-c',
+        buildBlindGitCommand('restore', {
+          slotId,
+          slotEpoch: isolation.slotEpoch,
+          capsule: isolation.capsulePath,
+          repo,
+          runId: created.id,
+          branch,
+          baseSha,
+          referenceCommits: [],
+        }),
+      ]);
+    updateRun(created.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(created.id);
+  });
+  const { claimSlotStatusIf } = await import('../core/state.js');
+  await claimSlotStatusIf(slotId, () => true, {
+    current_run_id: created.id,
+    lifecycle: 'busy',
+    phase: 'preparing',
+  });
+  assert.equal(getRun(created.id)?.engineState?.evalExperiment?.blind?.isolation, undefined);
+  const result = await prepare(created.id);
+  assert.equal(result.outputs?.success, true);
+  assert.ok(getRun(created.id)?.engineState?.evalExperiment?.blind?.isolation?.repoKey === repoKey);
+  const { readSlotRow } = await import('../core/state.js');
+  const row = await readSlotRow(slotId);
+  const binding = row?.parked_work;
+  assert.ok(isRecord(binding));
+  assert.ok(
+    binding.repoKey === repoKey,
+    'prepare inventory must use the persisted original identity',
+  );
+  assert.equal(git(repo, 'remote'), '');
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), baseSha);
+});

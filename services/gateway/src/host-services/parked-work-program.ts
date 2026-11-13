@@ -28,7 +28,14 @@ const metadataRef = ref => ref.replace(root, 'refs/farmslot/parked-meta/');
 function exists(file) { try { return fs.lstatSync(file); } catch (e) { if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return null; throw e; } }
 function nul(buffer) { return buffer.toString('utf8').split('\0').filter(Boolean); }
 function refSha(ref) { const r = git(['rev-parse','--verify','--quiet',ref], { allow:[1,128] }); return r.status === 0 ? r.stdout.toString('utf8').trim() : null; }
-function repositoryKey() { const common = text(['rev-parse','--git-common-dir']); return hash(path.resolve(repo, common)); }
+function repositoryKey() {
+  if (input.repoKey !== undefined) {
+    if (typeof input.repoKey !== 'string' || !/^[a-f0-9]{64}$/.test(input.repoKey)) fail('INVALID_METADATA','Invalid trusted repository identity');
+    return input.repoKey;
+  }
+  const common = text(['rev-parse','--git-common-dir']);
+  return hash(path.resolve(repo, common));
+}
 function branch() { return text(['symbolic-ref','--quiet','--short','HEAD'], {allow:[1]}) || 'HEAD'; }
 function stageEntries(buffer) {
   return nul(buffer).map(line => { const tab = line.indexOf('\t'); const fields = line.slice(0,tab).split(' '); return { mode:fields[0], sha:fields[1], stage:Number(fields[2]), file:line.slice(tab+1) }; });
