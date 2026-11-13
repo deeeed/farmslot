@@ -590,3 +590,61 @@ test('blind boundary strips gateway credentials, routing, tmux and SSH agent var
   assert.ok(worker.stdout.includes(`ZDOTDIR=${root}/boundary/shell\n`));
   assert.doesNotMatch(worker.stdout, /^(?:BASH_ENV|ENV)=/mu);
 });
+
+test('blind profile denies system ps execution, including aliases', (t) => {
+  const { profile } = generatedProfile(t);
+  assert.match(profile, /^\(deny process-exec \(literal "\/bin\/ps"\)/mu);
+});
+
+test('boundary ps refuses environment output in every option form and passes other calls through', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'blind-ps-')));
+  t.after(() => rmSync(root, { recursive: true }));
+  const real = path.join(root, 'real-ps');
+  writeFileSync(real, '#!/bin/sh\necho "RAN $COMMAND_MODE $*"\n', { mode: 0o700 });
+  const extracted = spawnSync(
+    'python3',
+    [
+      '-c',
+      "import runpy, sys; print(runpy.run_path(sys.argv[1], run_name='fixture')['PS_WRAPPER'], end='')",
+      fileURLToPath(new URL('./blind-git.py', import.meta.url)),
+    ],
+    { encoding: 'utf8', timeout: 4500 },
+  );
+  assert.equal(extracted.status, 0, extracted.stderr);
+  const wrapper = path.join(root, 'ps');
+  writeFileSync(wrapper, extracted.stdout.replace('REAL_PS', real), { mode: 0o700 });
+  const ps = (...args: string[]) =>
+    spawnSync(wrapper, args, {
+      encoding: 'utf8',
+      env: { PATH: '/usr/bin:/bin', COMMAND_MODE: 'legacy' },
+    });
+  for (const args of [
+    ['eww', '-p', '1'],
+    ['e'],
+    ['axe'],
+    ['-E'],
+    ['-e'],
+    ['-axE', '-o', 'pid'],
+    ['-ww', '-p', '1', '-E'],
+    ['-ww', 'eww'],
+    ['ax', '-e'],
+    ['--', 'e'],
+  ]) {
+    const result = ps(...args);
+    assert.equal(result.status, 1, args.join(' '));
+    assert.match(result.stderr, /environment output is unavailable/u);
+    assert.equal(result.stdout, '');
+  }
+  for (const args of [
+    ['-ww', '-p', '1', '-o', 'lstart='],
+    ['-ww', '-p', '1', '-o', 'etime=,rss='],
+    ['-axo', 'pid=,command='],
+    ['-opid=,etime=', '-p', '1'],
+    ['axo', 'etime'],
+    ['-A'],
+  ]) {
+    const result = ps(...args);
+    assert.equal(result.status, 0, args.join(' '));
+    assert.equal(result.stdout, `RAN unix2003 ${args.join(' ')}\n`);
+  }
+});

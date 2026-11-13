@@ -2269,3 +2269,92 @@ test(
     t.diagnostic(`six shells and three reads checked in ${Date.now() - started}ms`);
   },
 );
+
+test(
+  'worker ps cannot print other processes environments while its own tools keep working',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const root = fixture();
+    const secretEnv = { ...env, FAKE_SECRET: 'fixture-value' };
+    // Same-uid stand-ins holding a fake secret: gateway, private tmux server and pane.
+    const gateway = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      env: secretEnv,
+      stdio: 'ignore',
+    });
+    const socketDir = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'ps-tmux-')));
+    const socket = path.join(socketDir, 's');
+    t.after(() => {
+      gateway.kill('SIGKILL');
+      spawnSync('tmux', ['-S', socket, 'kill-server'], { env });
+      rmSync(socketDir, { recursive: true, force: true });
+      rmSync(root, { recursive: true });
+    });
+    execFileSync('tmux', ['-S', socket, '-f', '/dev/null', 'new-session', '-d', 'sleep 300'], {
+      env: secretEnv,
+    });
+    const tmuxServer = execFileSync('tmux', ['-S', socket, 'display-message', '-p', '#{pid}'], {
+      env,
+      encoding: 'utf8',
+    }).trim();
+    const tmuxPane = execFileSync('tmux', ['-S', socket, 'display-message', '-p', '#{pane_pid}'], {
+      env,
+      encoding: 'utf8',
+    }).trim();
+    profile(root, env);
+    const repo = path.join(root, 'tools-repo');
+    const nodeTest = path.join(root, 'tiny.test.mjs');
+    writeFileSync(nodeTest, "import test from 'node:test'; test('tiny', () => {});\n");
+    const others = [String(gateway.pid), tmuxServer, tmuxPane];
+    // $PPID is the launching shell, the stand-in for Pi's parent, which also holds the secret.
+    const script = [
+      'set -u',
+      ...[...others, '$PPID'].flatMap((pid) => [
+        `ps eww -p ${pid} 2>&1`,
+        `ps -E -p ${pid} 2>&1`,
+        `ps -ww e -p ${pid} 2>&1`,
+        `/bin/ps eww -p ${pid} 2>&1`,
+      ]),
+      'ps eww -ax 2>&1',
+      'ps -e 2>&1',
+      'echo ==own',
+      '/bin/sleep 30 & child=$!',
+      'ps -o pid=,command= -p "$child"',
+      'ps -ax -o pid=,ppid= | awk -v c="$child" -v p="$$" \'$1 == c && $2 == p { print "OWN-CHILD-LISTED" }\'',
+      'ps -ww -p $$ -o lstart= >/dev/null && echo OWN-LSTART',
+      'kill "$child"',
+      `git init -q ${q(repo)} && git -C ${q(repo)} -c user.name=f -c user.email=f@example.invalid commit -q --allow-empty -m fixture && git -C ${q(repo)} rev-parse --verify -q HEAD >/dev/null && echo GIT-OK`,
+      `${q(process.execPath)} --test ${q(nodeTest)} >/dev/null 2>&1 && echo NODE-TEST-OK`,
+    ].join('\n');
+    const started = Date.now();
+    const result = spawnSync(
+      '/bin/sh',
+      [
+        '-c',
+        withBlindTrialBoundary(script, {
+          capsule: fixtureCapsules.get(root) ?? root,
+          baseSha: 'a'.repeat(40),
+        }),
+      ],
+      { env: secretEnv, encoding: 'utf8', timeout: 45_000 },
+    );
+    const elapsed = Date.now() - started;
+    const output = `${result.stdout}\n${result.stderr}`;
+    assert.equal(result.status, 0, output);
+    assert.doesNotMatch(output, /fixture-value|FAKE_SECRET/u);
+    const [denied = '', own = ''] = output.split('==own');
+    assert.ok(denied.includes('environment output is unavailable'), denied);
+    for (const marker of [
+      '/bin/sleep 30',
+      'OWN-CHILD-LISTED',
+      'OWN-LSTART',
+      'GIT-OK',
+      'NODE-TEST-OK',
+    ])
+      assert.ok(own.includes(marker), `${marker}\n${own}`);
+    // Residual, documented in blind-environment.md: Seatbelt cannot filter a raw
+    // KERN_PROCARGS2 sysctl, so a deliberate read still sees same-uid environments.
+    t.diagnostic(
+      `ps forms refused for gateway, tmux server, pane and parent; own tools passed in ${elapsed}ms`,
+    );
+  },
+);

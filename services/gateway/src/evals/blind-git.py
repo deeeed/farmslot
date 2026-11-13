@@ -63,6 +63,30 @@ printf '%s\\n' "$*" >> ATTEMPTS
 echo 'GitHub access is unavailable in this blind eval trial.' >&2
 exit 1
 '''
+# ps prints other processes' environments with -E, BSD-style e, or legacy -e.
+# Refuse those (and -e, use -A) before any option value; values are skipped.
+PS_WRAPPER = '''#!/bin/sh
+refuse() { echo 'ps: environment output is unavailable in this blind eval trial.' >&2; exit 1; }
+value=; first=1
+for arg in "$@"; do
+  if [ -n "$value" ]; then value=; first=; continue; fi
+  case "$arg" in
+    --) first=; continue ;;
+    -*) flags=${arg#-} ;;
+    *) [ -n "$first" ] || { case "$arg" in *[eE]*) refuse ;; esac; continue; }
+       flags=$arg ;;
+  esac
+  first=
+  while [ -n "$flags" ]; do
+    letter=${flags%"${flags#?}"}; flags=${flags#?}
+    case "$letter" in
+      e|E) refuse ;;
+      O|o|G|g|p|t|U|u) [ -n "$flags" ] || value=1; flags= ;;
+    esac
+  done
+done
+COMMAND_MODE=unix2003 exec REAL_PS "$@"
+'''
 SANDBOX = '/usr/bin/sandbox-exec'
 SANDBOX_REQUIRED = 'Blind eval trials need macOS sandbox-exec on the slot node; refusing an unsandboxed worker'
 NODE_INSTALLATIONS = ['farmslot-node', 'farmslot-node-dev']
@@ -135,6 +159,9 @@ def worker_access_rules(repo):
         '(remote tcp "*:%s")' % port for port in [22, 512, 513, 514]) + ')']
     rules += ['(deny process-exec ' + ' '.join(
         '(literal "/usr/bin/%s")' % name for name in ['ssh', 'scp', 'sftp']) + ')']
+    # System ps prints other processes' environments; boundary/bin/ps refuses that.
+    rules += ['(deny process-exec ' + ' '.join(
+        '(literal %s)' % quote(p) for p in path_aliases('/bin/ps')) + ')']
     # Deployed task helpers and support bundles must remain executable.
     # Hide the rest of both legacy node installations, including dev-stack and
     # pool/project sources. Preserve a task checkout nested inside either root.
@@ -517,12 +544,17 @@ def prepare_boundary(spec, capsule):
     if broker.is_symlink() or broker.stat().st_uid != os.getuid() or broker.stat().st_mode & 0o077:
         raise RuntimeError('Blind worker broker directory is not private')
     # macOS refuses setuid exec under Seatbelt. A non-setuid, ad-hoc signed
-    # system ps retains its CLI and sandbox, without a privileged helper.
-    ps = root / 'bin/ps'
+    # system ps retains its CLI and sandbox, without a privileged helper. The
+    # PATH entry is a wrapper that refuses environment output.
+    (root / 'libexec').mkdir(exist_ok=True)
+    ps = root / 'libexec/ps'
     shutil.copyfile('/bin/ps', ps)
     ps.chmod(0o700)
     subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', str(ps)],
                    check=True, capture_output=True)
+    (root / 'bin/ps').unlink(missing_ok=True)
+    (root / 'bin/ps').write_text(PS_WRAPPER.replace('REAL_PS', shlex.quote(str(ps))))
+    (root / 'bin/ps').chmod(0o700)
     script = BOUNDARY_SCRIPT.replace('ATTEMPTS', shlex.quote(str(root / 'attempts.log')))
     for name in ['gh', 'deny']:
         (root / 'bin' / name).write_text(script)

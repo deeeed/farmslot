@@ -207,13 +207,33 @@ can bind its singleton in general temp, but that socket has no connect allowance
 The harness reuses its browser through TCP CDP; Metro also uses TCP. Neither
 needs another Unix-connect exception.
 
-macOS refuses the setuid `/bin/ps` inside Seatbelt. Boundary preparation copies
-the installed system binary, removes setuid and signs the copy ad hoc. The
-protected `boundary/bin/ps` handles PATH-based harness calls inside the same
-sandbox. It gains no process-info allowance. Seatbelt target filters do not
-restrict `ps`'s sysctl process-table reads, so process listing is not confined to
-the trial's descendants. `/bin/ps` remains unavailable. No outside-sandbox
-process helper is used.
+macOS refuses the setuid `/bin/ps` inside Seatbelt, and the profile also denies
+executing it. Boundary preparation copies the installed system binary to
+`boundary/libexec/ps`, removes setuid and signs the copy ad hoc. The protected
+`boundary/bin/ps` on PATH is a wrapper for harness identity and health calls
+(`-o lstart=`, `-axo pid=,command=` and similar). It refuses every
+environment-printing form: `-E`, BSD-style `e` in any cluster (`eww`, `axe`),
+and `-e`, which legacy mode reads as environment (use `-A`). It runs the copy
+with `COMMAND_MODE=unix2003`. It gains no process-info allowance. Seatbelt
+target filters do not restrict `ps`'s sysctl process-table reads, so process
+listing is not confined to the trial's descendants. No outside-sandbox process
+helper is used.
+
+### Residual: other processes' environments
+
+The wrapper closes the casual route only. The worker runs as the operator's uid,
+and the kernel returns any same-uid process's start-up environment through the
+`KERN_PROCARGS2` sysctl. A deliberate numeric read (for example `python3`
+ctypes, or running `boundary/libexec/ps` directly) still shows the gateway's,
+tmux panes' and the launching shell's environments. Seatbelt cannot block it on
+macOS 27.2. Measured on a fake process with these rules added: `(deny
+process-info* (target others))`, `(deny process-info-pidinfo (target others))`,
+`(deny sysctl-read (sysctl-name "kern.procargs2"))`, `sysctl-name-prefix
+"kern.procargs"` and `"kern.proc"`, and `(deny syscall-unix (syscall-number
+202))` all leave the read working. `(deny sysctl-read)` stops `ps` only because
+it reads `kern.argmax` first, still leaves the numeric read working, and aborts
+Node. `(deny process-info*)` aborts Python. The fix is to run blind workers
+under a separate macOS uid; that is follow-up work.
 
 Mobile producers and clients must use a broker package version supporting this
 directory override. A harness pinned to an earlier package still uses `/tmp` and

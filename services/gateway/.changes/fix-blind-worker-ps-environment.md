@@ -1,0 +1,1 @@
+- Deny `/bin/ps` in blind workers and make the boundary `ps` refuse environment output (`-E`, `e`, legacy `-e`); document that a deliberate `KERN_PROCARGS2` read of same-uid processes remains possible.
