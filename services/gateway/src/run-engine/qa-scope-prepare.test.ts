@@ -9,6 +9,7 @@ import { after, afterEach, beforeEach, mock, test, type TestContext } from 'node
 import { type ExecResult, isRecord, type QaProfileSelection } from '@farmslot/protocol';
 
 import type { SlotVars } from '../core/config.js';
+import type { BlindGitSpec } from '../evals/blind-git.js';
 import { seedRunnerObservabilityFixture } from '../node-support/support-test-fixtures.js';
 
 const root = mkdtempSync(path.join(tmpdir(), 'qa-scope-prepare-'));
@@ -114,6 +115,7 @@ writeFileSync(
   }),
 );
 
+let blindBoundary: Pick<BlindGitSpec, 'runId' | 'baseSha'> | undefined;
 let commandSignal: AbortSignal | undefined;
 let commandController: AbortController | undefined;
 const pendingCommands = new Set<Promise<ExecResult>>();
@@ -130,6 +132,13 @@ afterEach(async () => {
 
 // Git runs for real; tmux never does (prepare only asks whether a session exists).
 async function slotExec(vars: SlotVars, command: string): Promise<ExecResult> {
+  // Identity forwarding needs real planning/isolation, not the macOS worker sandbox.
+  if (blindBoundary && command.includes('"action":"boundary"'))
+    return {
+      exitCode: 0,
+      stdout: JSON.stringify({ status: 'isolated', ...blindBoundary, browserCdpPort: 19444 }),
+      stderr: '',
+    };
   if (
     !command.includes('FARMSLOT_BLIND_GIT_PY') &&
     (command.includes('TMUX_BIN') || /\btmux\b/.test(command))
@@ -452,6 +461,10 @@ test('fresh blind prepare reads the identity persisted during branch setup', bud
     prepareProfile: 'git-only',
   });
   const branch = 'eval/identity';
+  blindBoundary = { runId: created.id, baseSha };
+  t.after(() => {
+    blindBoundary = undefined;
+  });
   updateRun(created.id, {
     branch,
     startRef: { requestedRef: baseSha, source: { kind: 'git-ref', ref: baseSha } },
