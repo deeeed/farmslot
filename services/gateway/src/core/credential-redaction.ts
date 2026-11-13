@@ -1,30 +1,84 @@
-// Records keep credential names, never their values.
+// Records keep credential names, never their values. Only real credential
+// values are replaced: a secret-looking value assigned to a credential name, or
+// a known provider token shape anywhere in text.
 
 export const REDACTED_CREDENTIAL = '[REDACTED]';
 
-/** Environment-style names that carry a credential, e.g. LITELLM_API_KEY or GH_TOKEN. */
-const CREDENTIAL_NAME = /KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|(?:^|_)PAT$/;
+/** The suffix that marks a credential, e.g. LITELLM_API_KEY, GH_TOKEN or GITHUB_PAT. Names that
+ * only end near one (API_KEY_INDEX, KEY_ID, MAX_TOKENS, GIT_CONFIG_KEY_0) are not credentials. */
+const CREDENTIAL_NAME = /(?:^|_)(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PAT|CREDENTIALS)$/;
 
-// NAME=value with a literal value: shellQuote's '…'\''…' form, a double-quoted
-// string without expansions, or a bare word. A `$NAME` reference is not a value.
+/** Provider token shapes, redacted wherever they occur. */
+const PROVIDER_TOKEN = new RegExp(
+  '(?<![A-Za-z0-9_-])(?:' +
+    [
+      'sk-ant-[A-Za-z0-9_-]{16,}',
+      'sk-[A-Za-z0-9_-]{17,}',
+      'gh[pos]_[A-Za-z0-9]{20,}',
+      'github_pat_[A-Za-z0-9_]{20,}',
+      'ATATT[A-Za-z0-9_=-]{20,}',
+      'xox[bp]-[A-Za-z0-9-]{10,}',
+      'AKIA[0-9A-Z]{16}(?![0-9A-Z])',
+      'glpat-[A-Za-z0-9_-]{20,}',
+      'npm_[A-Za-z0-9]{36}(?![A-Za-z0-9])',
+    ].join('|') +
+    ')',
+  'g',
+);
+const PROVIDER_TOKEN_VALUE = new RegExp(`^${PROVIDER_TOKEN.source}$`);
+const PLACEHOLDER =
+  /^(?:local|ollama|none|null|undefined|true|false|changeme|placeholder|dummy|x+)$/i;
+/** A repo slug or file path such as org/repo or ~/dir/file. */
+const SLUG_OR_PATH = /^[~.]?\/?[\w.-]+(?:\/[\w.-]+)+\/?$/;
+
+// NAME=value, NAME: value or "NAME": "value" with a literal value: shellQuote's
+// '…'\''…' form, a quoted string without expansions, or a bare word. A `$NAME`
+// reference is not a value.
 const ASSIGNMENT =
-  /(?<![A-Za-z0-9_$])([A-Z_][A-Z0-9_]*)=('[^']*'(?:\\''[^']*')*|"(?:[^"\\$`]|\\.)*"|[^\s;&|()<>'"`$\\]+)/g;
+  /(?<![A-Za-z0-9_$])(["']?)([A-Z_][A-Z0-9_]*)\1(=|[ \t]*:[ \t]*)('[^']*'(?:\\''[^']*')*|"(?:[^"\\$`]|\\.)*"|[^\s;&|()<>'"`$\\,}\]]+)/g;
 
 export function isCredentialName(name: string): boolean {
+  return /^[A-Z_][A-Z0-9_]*$/.test(name) && CREDENTIAL_NAME.test(name);
+}
+
+function unquote(value: string): string {
+  if (value.startsWith("'")) return value.slice(1, -1).replaceAll(`'\\''`, "'");
+  if (value.startsWith('"')) return value.slice(1, -1).replace(/\\(.)/g, '$1');
+  return value;
+}
+
+/** True for a literal that looks like a secret rather than a reference, placeholder, number or slug. */
+export function isSecretValue(value: string): boolean {
+  if (PROVIDER_TOKEN_VALUE.test(value)) return true;
   return (
-    /^[A-Z_][A-Z0-9_]*$/.test(name) &&
-    CREDENTIAL_NAME.test(name) &&
-    !/^GIT_CONFIG_KEY_\d+$/.test(name)
+    value.length >= 16 &&
+    value !== REDACTED_CREDENTIAL &&
+    !value.includes('$') &&
+    !/\s/.test(value) &&
+    !/^\d+$/.test(value) &&
+    !PLACEHOLDER.test(value) &&
+    !SLUG_OR_PATH.test(value)
   );
 }
 
-/** Replaces literal values assigned to credential names in a shell command. */
+/** Replaces credential values in text (shell lines, prose, embedded JSON). */
 export function redactCommandCredentials(command: string): { text: string; count: number } {
   let count = 0;
-  const text = command.replace(ASSIGNMENT, (match, name: string, value: string) => {
-    if (!isCredentialName(name) || value === REDACTED_CREDENTIAL) return match;
+  const assigned = command.replace(
+    ASSIGNMENT,
+    (match, quote: string, name: string, separator: string, value: string) => {
+      if (!isCredentialName(name) || !isSecretValue(unquote(value))) return match;
+      count += 1;
+      const marker =
+        separator === '=' || !/^["']/.test(value)
+          ? REDACTED_CREDENTIAL
+          : `${value[0]}${REDACTED_CREDENTIAL}${value[0]}`;
+      return `${quote}${name}${quote}${separator}${marker}`;
+    },
+  );
+  const text = assigned.replace(PROVIDER_TOKEN, () => {
     count += 1;
-    return `${name}=${REDACTED_CREDENTIAL}`;
+    return REDACTED_CREDENTIAL;
   });
   return { text, count };
 }
