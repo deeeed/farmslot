@@ -25,6 +25,7 @@ import {
 } from '../core/config.js';
 import { shellQuote } from '../core/tmux.js';
 import { farmPathsForSlot } from '../fleet/farm-paths.js';
+import { runChangeStamp } from '../resources/run-changes.js';
 import { nodeSupportHashPath } from '../runners/runner-observability.js';
 
 export interface NodeSupportRetentionReferences {
@@ -61,17 +62,8 @@ function isHistoricalRun(record: unknown): boolean {
 }
 
 /** Historical outputs can refer to an older bundle than the slot now selects. */
-function supportHashes(values: readonly unknown[], supportRoot?: string): string[] {
+function supportHashes(value: unknown, pattern: RegExp): string[] {
   const hashes = new Set<string>();
-  // Built once per scan: the visit below reaches every string of every run record.
-  const roots = [
-    legacyRemoteFarmPaths().code.support.slice(1),
-    ...(supportRoot ? [supportRoot] : []),
-  ];
-  const pattern = new RegExp(
-    `(?:${roots.map((root) => root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})/([a-f0-9]{64})(?=$|[\\s/"'\\\\])`,
-    'g',
-  );
   const visit = (value: unknown): void => {
     if (typeof value === 'string') {
       if (/^[a-f0-9]{64}$/.test(value)) hashes.add(value);
@@ -80,9 +72,28 @@ function supportHashes(values: readonly unknown[], supportRoot?: string): string
     } else if (Array.isArray(value)) value.forEach(visit);
     else if (value && typeof value === 'object') Object.values(value).forEach(visit);
   };
-  values.forEach(visit);
+  visit(value);
   return [...hashes];
 }
+
+interface RunSupportHashScan {
+  /** The record that was read: a load, archive read or disk read gives a new object. */
+  run: Run;
+  stamp: string;
+  scannedAt: number;
+  hashes: string[];
+}
+
+/**
+ * A scan is reused for at most this long, even if the run's stamp never changes: a writer that
+ * skips the stamp then leaves a referenced bundle unretained for one window, not for good.
+ */
+export const RUN_SUPPORT_SCAN_MAX_AGE_MS = 5 * 60_000;
+/** Support patterns whose scans are kept; the least recently used one goes first. */
+export const RUN_SUPPORT_SCAN_PATTERNS = 8;
+
+/** Each support pattern's last scan of each run, kept until the run changes or leaves the list. */
+const runSupportHashScans = new Map<string, Map<string, RunSupportHashScan>>();
 
 /**
  * A failed run stays replayable until archived, so its references stay retained. Unsettled runs
@@ -93,11 +104,50 @@ function retainsNodeSupport(run: Run): boolean {
   return !run.archivedAt && isActiveListRun(run);
 }
 
+/**
+ * A run is scanned again when its record object or its change stamp differs from the last scan
+ * (resources/run-changes.ts), or when that scan is older than RUN_SUPPORT_SCAN_MAX_AGE_MS: a
+ * stale entry would let retention prune a referenced bundle.
+ */
 export function referencedNodeSupportHashes(runs: readonly Run[], supportRoot?: string): string[] {
-  return supportHashes(
-    runs.filter((run) => !run.archivedAt && !isHistoricalRun(run)),
-    supportRoot,
+  // Built once per call: the scan reaches every string of every changed run record.
+  const roots = [
+    legacyRemoteFarmPaths().code.support.slice(1),
+    ...(supportRoot ? [supportRoot] : []),
+  ];
+  const pattern = new RegExp(
+    `(?:${roots.map((root) => root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})/([a-f0-9]{64})(?=$|[\\s/"'\\\\])`,
+    'g',
   );
+  // Most recently used last: a retired root's scans, and the records they hold, go once
+  // RUN_SUPPORT_SCAN_PATTERNS more recent patterns are in use.
+  const scans = runSupportHashScans.get(pattern.source) ?? new Map<string, RunSupportHashScan>();
+  runSupportHashScans.delete(pattern.source);
+  runSupportHashScans.set(pattern.source, scans);
+  for (const source of runSupportHashScans.keys()) {
+    if (runSupportHashScans.size <= RUN_SUPPORT_SCAN_PATTERNS) break;
+    runSupportHashScans.delete(source);
+  }
+  const now = Date.now();
+  const hashes = new Set<string>();
+  const listed = new Set<string>();
+  for (const run of runs) {
+    if (run.archivedAt || isHistoricalRun(run)) continue;
+    listed.add(run.id);
+    const stamp = runChangeStamp(run);
+    let scan = scans.get(run.id);
+    if (
+      scan?.run !== run ||
+      scan.stamp !== stamp ||
+      now - scan.scannedAt >= RUN_SUPPORT_SCAN_MAX_AGE_MS
+    ) {
+      scan = { run, stamp, scannedAt: now, hashes: supportHashes(run, pattern) };
+      scans.set(run.id, scan);
+    }
+    for (const hash of scan.hashes) hashes.add(hash);
+  }
+  for (const id of scans.keys()) if (!listed.has(id)) scans.delete(id);
+  return [...hashes];
 }
 
 /**

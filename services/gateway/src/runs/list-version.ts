@@ -10,7 +10,7 @@ import {
 } from '@farmslot/protocol';
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 
-import { resourceRevisions } from '../resources/revisions.js';
+import { runChangeStamp } from '../resources/run-changes.js';
 
 /** A catch-up page stops before the row that would take it past this many UTF-8 JSON bytes. */
 export const RUN_LIST_PAGE_MAX_BYTES = 2 * 1024 * 1024;
@@ -25,16 +25,8 @@ interface ListedRun {
   bytes: number;
 }
 
-/**
- * A run's served row, its size and its version are derived once per change, not once per read.
- * Every run writer advances the run's resource revision after the facts are readable
- * (resources/run-changes.ts); the few in-place writers that skip it stamp `updatedAt`. Either
- * one changes the stamp.
- */
+/** A run's served row, its size and its version are derived once per change, not once per read. */
 const listed = new Map<string, ListedRun>();
-
-const stampOf = (run: Run) =>
-  `${resourceRevisions.revision({ family: 'run', runId: run.id })}|${run.updatedAt}`;
 
 /** sha256 of the row's canonical JSON: the same digest as the protocol's `runListVersion`. */
 function rowVersion(row: Run): string {
@@ -43,7 +35,7 @@ function rowVersion(row: Run): string {
 
 /** A run's list row, size and version, derived only when the run changed since the last ones. */
 function listedRun(run: Run): ListedRun {
-  const stamp = stampOf(run);
+  const stamp = runChangeStamp(run);
   const known = listed.get(run.id);
   if (known?.stamp === stamp) return known;
   const row = runListRow(run);
