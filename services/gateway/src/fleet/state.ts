@@ -78,6 +78,15 @@ import { rememberPoolFile, resolveMachinePoolConfig } from './machine-pool.js';
 import { enrichSlotHostLoad, getAllMachineHealth } from './node-health.js';
 import { getActiveResources, getCachedSlotResources } from './resource-manager.js';
 
+// These modules import this one, so the watch handlers load them on first use, once:
+// under tsx each import() call runs the resolve hooks again, and every event paid it.
+let prRulesModule: Promise<typeof import('../methods/pr-rules.js')> | undefined;
+const loadPRRules = () => (prRulesModule ??= import('../methods/pr-rules.js'));
+let deviceInventoryModule: Promise<typeof import('./device-inventory.js')> | undefined;
+const loadDeviceInventory = () => (deviceInventoryModule ??= import('./device-inventory.js'));
+let fleetMethodsModule: Promise<typeof import('../methods/fleet.js')> | undefined;
+const loadFleetMethods = () => (fleetMethodsModule ??= import('../methods/fleet.js'));
+
 const VALID_SAFETY_TIERS: SafetyTier[] = ['sandboxed', 'full-auto', 'dangerous'];
 export function isValidSafetyTier(value: unknown): value is SafetyTier {
   return typeof value === 'string' && (VALID_SAFETY_TIERS as string[]).includes(value);
@@ -837,7 +846,7 @@ export function startFileWatcher() {
   const prRulesFile = path.resolve(farmslotRoot(), '.pr-rules.json');
   const reloadPRRules = async () => {
     try {
-      const { reloadPRRulesFromFile } = await import('../methods/pr-rules.js');
+      const { reloadPRRulesFromFile } = await loadPRRules();
       await reloadPRRulesFromFile();
     } catch (error) {
       // The owning store latches this failure and refuses reads/actions until a valid reload.
@@ -893,9 +902,9 @@ export function startFileWatcher() {
         // whole TTL, on the one surface whose job is telling them which slot
         // owns a device. Imported lazily to keep the fleet module out of the
         // inventory's import graph.
-        const { clearDeviceInventoryCache } = await import('./device-inventory.js');
+        const { clearDeviceInventoryCache } = await loadDeviceInventory();
         clearDeviceInventoryCache();
-        const { fleetHealthRefresh } = await import('../methods/fleet.js');
+        const { fleetHealthRefresh } = await loadFleetMethods();
         await fleetHealthRefresh();
       } catch (err) {
         console.error('[state] pool refresh failed:', (err as Error).message);

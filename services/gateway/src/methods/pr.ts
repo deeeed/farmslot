@@ -85,6 +85,13 @@ import {
 
 const execFileAsync = promisify(execFile);
 
+// Loaded on first use, once (see loadPRList): under tsx each import() call runs the
+// resolve hooks again, and every PR list build paid it.
+let prRulesModule: Promise<typeof import('./pr-rules.js')> | undefined;
+const loadPRRules = () => (prRulesModule ??= import('./pr-rules.js'));
+let prWatchModule: Promise<typeof import('./pr-watch.js')> | undefined;
+const loadPRWatch = () => (prWatchModule ??= import('./pr-watch.js'));
+
 // ─── Internal types ───
 
 /**
@@ -606,8 +613,8 @@ async function loadPRList(
   //    rules/monitoring module graph, which already imports this file.
   {
     const [{ listActiveReviewPRs }, { listActiveMonitoredPRs }] = await Promise.all([
-      import('./pr-rules.js'),
-      import('./pr-watch.js'),
+      loadPRRules(),
+      loadPRWatch(),
     ]);
     for (const candidate of trackedPRCandidates(
       [...listActiveReviewPRs(), ...listActiveMonitoredPRs()],

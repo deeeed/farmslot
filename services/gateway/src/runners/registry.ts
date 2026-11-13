@@ -841,14 +841,23 @@ KNOWN_RUNNERS['claude-acp'] = {
   acceptsEffort: (_model, effort) => CLAUDE_ACP_EFFORTS.includes(effort),
 };
 
+// Observation reads load these on first use, once: under tsx each import() call runs
+// the resolve hooks again, and every observation tick paid it.
+let claudePendingQuestionModule: Promise<typeof import('./claude-pending-question.js')> | undefined;
+const loadClaudePendingQuestion = () =>
+  (claudePendingQuestionModule ??= import('./claude-pending-question.js'));
+let claudeBackgroundWorkModule: Promise<typeof import('./claude-background-work.js')> | undefined;
+const loadClaudeBackgroundWork = () =>
+  (claudeBackgroundWorkModule ??= import('./claude-background-work.js'));
+
 const KNOWN_RUNNER_OBSERVABILITY: Record<string, RunnerObservability> = {
   claude: {
     ...claudeHookObservability,
     supportsMidTurnPrompt: true,
     getPendingQuestion: async (vars, target) =>
-      (await import('./claude-pending-question.js')).readClaudePendingQuestion(vars, target),
+      (await loadClaudePendingQuestion()).readClaudePendingQuestion(vars, target),
     getBackgroundWorkState: async (vars, target) =>
-      (await import('./claude-background-work.js')).readClaudeBackgroundWorkState(vars, target),
+      (await loadClaudeBackgroundWork()).readClaudeBackgroundWorkState(vars, target),
   },
   codex: codexSessionObservability,
   cursor: createCursorLogObservability(),

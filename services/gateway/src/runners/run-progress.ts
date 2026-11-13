@@ -86,6 +86,10 @@ interface RunProgressReaders {
   retainedTarget: typeof readRetainedWorkerProgressTarget;
 }
 
+// Loaded on first use, once: under tsx each import() call runs the resolve hooks again.
+let registryModule: Promise<typeof import('./registry.js')> | undefined;
+const loadRegistry = () => (registryModule ??= import('./registry.js'));
+
 const progressReaders: RunProgressReaders = {
   native: readNativeWorkerSnapshot,
   workspace: readReviewWorkspaceWorker,
@@ -98,7 +102,7 @@ const progressReaders: RunProgressReaders = {
   background: readRunnerBackgroundWorkState,
   turnActive: runnerTurnLeaseIsActive,
   // Registry and lifecycle consumers form a cycle; look up this capability after initialization.
-  taskProgress: async (input) => (await import('./registry.js')).readRunnerTaskProgress(input),
+  taskProgress: async (input) => (await loadRegistry()).readRunnerTaskProgress(input),
   retainedTarget: readRetainedWorkerProgressTarget,
 };
 

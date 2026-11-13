@@ -6,6 +6,11 @@ import { resolveExactTmuxWindowPane } from '../core/tmux.js';
 import type { SlotVars } from './observability-types.js';
 import type { probeRunnerDescendantPid } from './session-process.js';
 
+// The session process module reaches this one through the registry, so it loads on
+// first use, once: under tsx each import() call runs the resolve hooks again.
+let sessionProcessModule: Promise<typeof import('./session-process.js')> | undefined;
+const loadSessionProcess = () => (sessionProcessModule ??= import('./session-process.js'));
+
 interface ClaudeProcessBindingRegistration {
   sessionId: string;
   status: 'busy' | 'idle' | 'waiting';
@@ -112,8 +117,7 @@ export async function readClaudeProcessBinding(
 ) {
   const source: ProcessReaders = {
     pane: resolveExactTmuxWindowPane,
-    process: async (...args) =>
-      (await import('./session-process.js')).probeRunnerDescendantPid(...args),
+    process: async (...args) => (await loadSessionProcess()).probeRunnerDescendantPid(...args),
     exec: execOnSlot,
     ...overrides,
   };

@@ -59,6 +59,13 @@ import {
 import { loadFleetStatus } from '../fleet/state.js';
 import { DEFAULT_HOST_PRESSURE_THRESHOLDS } from '../runtime-capabilities/host-pressure-config.js';
 
+// Loaded on the first pressure read, once: under tsx each import() call runs the
+// resolve hooks again, and every pressure read paid it.
+let tmuxWorkersModule: Promise<typeof import('./tmux-workers.js')> | undefined;
+const loadTmuxWorkers = () => (tmuxWorkersModule ??= import('./tmux-workers.js'));
+let runStoreModule: Promise<typeof import('../runs/store.js')> | undefined;
+const loadRunStore = () => (runStoreModule ??= import('../runs/store.js'));
+
 const RESOURCE_STATUSES: ResourceStatus[] = ['unknown', 'running', 'stopped', 'error', 'stale'];
 const PRESSURE_RESOURCE_RESOLUTION_CONCURRENCY = 4;
 const PRESSURE_RESOURCE_CACHE_TTL_MS = 30_000;
@@ -369,8 +376,8 @@ export async function resourcePressureSnapshot(
   }
   const fleet = await loadFleetStatus();
   const [{ tmuxWorkerList }, { getAllRuns }] = await Promise.all([
-    import('./tmux-workers.js'),
-    import('../runs/store.js'),
+    loadTmuxWorkers(),
+    loadRunStore(),
   ]);
   const machineFilter = combinedFilter(params.machine, params.machines);
   const projectFilter = combinedFilter(params.project, params.projects);

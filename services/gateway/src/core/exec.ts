@@ -21,6 +21,17 @@ import { currentSlotCommandExecutor } from './exec-scope.js';
 
 export type { ExecResult };
 
+// These modules execute through this one, so they load on first use, once: under tsx
+// each import() call runs the resolve hooks again, and every slot command paid it.
+let sourcesRuntimeModule: Promise<typeof import('../sources/runtime.js')> | undefined;
+const loadSourcesRuntime = () => (sourcesRuntimeModule ??= import('../sources/runtime.js'));
+let remoteCommandModule: Promise<typeof import('../node-support/remote-command.js')> | undefined;
+const loadRemoteCommand = () =>
+  (remoteCommandModule ??= import('../node-support/remote-command.js'));
+let nodeLinkProcessModule: Promise<typeof import('../fleet/node-link-process.js')> | undefined;
+const loadNodeLinkProcess = () =>
+  (nodeLinkProcessModule ??= import('../fleet/node-link-process.js'));
+
 const LOCAL_HOSTNAME = os.hostname();
 
 // Put asdf shims first in PATH so .tool-versions in cwd is respected.
@@ -401,7 +412,7 @@ export async function execOnSlot(
   const sources = currentProjectSources();
   if (sources) {
     const execution = sources.execution ?? sources.materialization;
-    const { verifyExecutionSources } = await import('../sources/runtime.js');
+    const { verifyExecutionSources } = await loadSourcesRuntime();
     await verifyExecutionSources(slotVars.machine, execution);
     const env = sourceExecutionEnvironment(sources);
     const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
@@ -425,8 +436,7 @@ export async function execOnSlot(
   // (ledger F15). Loaded lazily: node-support itself executes through here.
   const timeout = opts.timeout;
   if (commandIncludesFarmPath(cmd, slotVars)) {
-    const { NodeSupportPendingError, resolveRemoteFarmCommand } =
-      await import('../node-support/remote-command.js');
+    const { NodeSupportPendingError, resolveRemoteFarmCommand } = await loadRemoteCommand();
     try {
       cmd = await resolveRemoteFarmCommand(slotVars, cmd, {
         budgetMs: timeout,
@@ -440,7 +450,7 @@ export async function execOnSlot(
     }
   }
   if (usesNodeLink(slotVars.machine)) {
-    const { execThroughNodeLink } = await import('../fleet/node-link-process.js');
+    const { execThroughNodeLink } = await loadNodeLinkProcess();
     const shell =
       slotVars.osType === 'darwin' || slotVars.osType === 'macos' ? '/bin/zsh' : '/bin/bash';
     const args = shell === '/bin/zsh' ? ['-f', '-c'] : ['--noprofile', '--norc', '-c'];
@@ -474,7 +484,7 @@ export async function execArgvOnSlot(
     return execFileArgv(argv, { ...opts, cwd, signal });
   }
   if (usesNodeLink(slotVars.machine)) {
-    const { execThroughNodeLink } = await import('../fleet/node-link-process.js');
+    const { execThroughNodeLink } = await loadNodeLinkProcess();
     return execThroughNodeLink(
       slotVars,
       argv,

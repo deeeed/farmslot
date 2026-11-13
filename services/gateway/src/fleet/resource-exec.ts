@@ -13,6 +13,12 @@ import { commandIncludesFarmPath } from './farm-paths.js';
 import { getNode } from './machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from './node-rpc.js';
 
+// Loaded on the first farm-path command, once: under tsx each import() call runs the
+// resolve hooks again, and every resource command paid it.
+let remoteCommandModule: Promise<typeof import('../node-support/remote-command.js')> | undefined;
+const loadRemoteCommand = () =>
+  (remoteCommandModule ??= import('../node-support/remote-command.js'));
+
 export interface ResourceCommandResult {
   stdout: string;
   stderr: string;
@@ -46,7 +52,7 @@ export async function execResourceCommand(
         // "already stopped" and skip its hook. Imported on demand so this
         // module's many importers (device inventory, cleanup, pressure) do not
         // load the node-support graph for commands that never need it.
-        const { resolveSlotFarmCommand } = await import('../node-support/remote-command.js');
+        const { resolveSlotFarmCommand } = await loadRemoteCommand();
         try {
           remoteCmd = await resolveSlotFarmCommand(slotId, cmd, timeout);
         } catch (err) {

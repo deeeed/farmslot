@@ -11,6 +11,11 @@ import type { RunnerObservability, SlotVars } from './observability-types.js';
 import { buildRunnerOpenFileProbeCommand, parseOpenFilePaths } from './process-open-files.js';
 import type { probeRunnerDescendantPid } from './session-process.js';
 
+// The session process module reaches this one through the registry, so it loads on
+// first use, once: under tsx each import() call runs the resolve hooks again.
+let sessionProcessModule: Promise<typeof import('./session-process.js')> | undefined;
+const loadSessionProcess = () => (sessionProcessModule ??= import('./session-process.js'));
+
 type CodexPromptProbe =
   | { status: 'matched'; observedAt: number; turnId: string }
   | { status: 'not-found' | 'unavailable' | 'identity-mismatch' };
@@ -636,8 +641,7 @@ export async function readCodexProcessTurnState(
 ) {
   const source: CodexProcessTurnReaders = {
     pane: resolveExactTmuxWindowPane,
-    process: async (...args) =>
-      (await import('./session-process.js')).probeRunnerDescendantPid(...args),
+    process: async (...args) => (await loadSessionProcess()).probeRunnerDescendantPid(...args),
     exec: execOnSlot,
     ...overrides,
   };

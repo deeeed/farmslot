@@ -30,6 +30,11 @@ import {
   type NodeSupportIo,
 } from './ensure.js';
 
+// Loaded on first use, once: under tsx each import() call runs the resolve hooks again,
+// and every resource command paid it.
+let coreModule: Promise<typeof import('../core/index.js')> | undefined;
+const loadCore = () => (coreModule ??= import('../core/index.js'));
+
 /**
  * A remote farm reference, as `{{farmslot_dir}}` expands on a node: a file
  * under `projects/` or `scripts/`, or the bare root handed to a farm script
@@ -428,7 +433,7 @@ export async function resolveSlotFarmCommand(
   command: string,
   budgetMs?: number,
 ): Promise<string> {
-  const { loadSlotVars } = await import('../core/index.js');
+  const { loadSlotVars } = await loadCore();
   return resolveRemoteFarmCommand(await loadSlotVars(slotId), command, { budgetMs });
 }
 

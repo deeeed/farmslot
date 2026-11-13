@@ -57,6 +57,11 @@ import {
 } from './subtasks.js';
 import { normalizeWorkerSignal } from './worker-signals.js';
 
+// Loaded on first sync, once: under tsx each import() call runs the resolve hooks again.
+let acceptanceSyncModule: Promise<typeof import('./acceptance-registration-sync.js')> | undefined;
+const loadAcceptanceSync = () =>
+  (acceptanceSyncModule ??= import('./acceptance-registration-sync.js'));
+
 // Keep imperative watch consumers compatible while recording shared-read admission centrally.
 const sendNodeRequest: typeof sendRawNodeRequest = (node, method, params, options) => {
   if (method === 'fs.watch') {
@@ -1192,7 +1197,7 @@ function scheduleAcceptanceSync(key: string, sw: SlotWatch): void {
       const before = acceptanceSyncState(sw.runId);
       const previousError = sw.acceptanceSyncError;
       try {
-        const { syncAcceptanceRegistration } = await import('./acceptance-registration-sync.js');
+        const { syncAcceptanceRegistration } = await loadAcceptanceSync();
         await syncAcceptanceRegistration(sw.runId, sw.slotId, sw, path.dirname(sw.taskFilePath));
         sw.acceptanceSyncError = undefined;
       } catch (error) {

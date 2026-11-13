@@ -46,6 +46,17 @@ import { ownsLocalNativeProfile } from '../../security/native-owner.js';
 import { knownNativeExecutionNodes } from './execution-nodes.js';
 import { nativeSessionManager, validateNativeRunner } from './manager.js';
 
+// Both modules route through this one, so they load on first use, once: under tsx each
+// import() call runs the resolve hooks again, and every native read paid it.
+let nativeObservationsModule:
+  | Promise<typeof import('../../resources/native-observations.js')>
+  | undefined;
+const loadNativeObservations = () =>
+  (nativeObservationsModule ??= import('../../resources/native-observations.js'));
+let nativeWorkspaceModule: Promise<typeof import('../../methods/native-workspace.js')> | undefined;
+const loadNativeWorkspace = () =>
+  (nativeWorkspaceModule ??= import('../../methods/native-workspace.js'));
+
 type AuthorizedNativeNode = ConnectedNode & {
   nativeSessions: NonNullable<ConnectedNode['nativeSessions']>;
   nativeAuthority: NonNullable<ConnectedNode['nativeAuthority']>;
@@ -199,7 +210,7 @@ export async function routeNativeExecution(
   // Resolve the observation owner after the native route module initializes.
   // Its authorization helper also uses this route; eager imports form a cycle.
   const { admitNativeCollectionNode, isNativeObservedRead, nativeObservations } =
-    await import('../../resources/native-observations.js');
+    await loadNativeObservations();
   const executionNodeId = params.executionNodeId ?? 'local';
   if (typeof executionNodeId !== 'string' || !executionNodeId.trim())
     throw new GatewayMethodError('INVALID_PARAMS', 'executionNodeId must be a nonempty string');
@@ -219,7 +230,7 @@ export async function routeNativeExecution(
     )
       throw new GatewayMethodError('INVALID_PARAMS', 'Expected native runner and model strings');
     validateNativeRunner(params.runner, params.model, params.effort);
-    const { nativeModelNodeBlocker } = await import('../../methods/native-workspace.js');
+    const { nativeModelNodeBlocker } = await loadNativeWorkspace();
     const blocker = await nativeModelNodeBlocker(params.runner, params.model, executionNodeId);
     if (blocker) throw new GatewayMethodError('INVALID_PARAMS', blocker);
   }

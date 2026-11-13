@@ -65,6 +65,12 @@ import {
   type RunSlotSourcePlans,
 } from './slot-planning.js';
 
+// Test module mocks replace the slot state module with partial exports, so slot
+// actions load it on first use, once: under tsx each import() call runs the resolve
+// hooks again, and every resource poll paid it.
+let slotStateModule: Promise<typeof import('../core/state.js')> | undefined;
+const loadSlotState = () => (slotStateModule ??= import('../core/state.js'));
+
 let authority: SourceAuthority | undefined;
 let gateway: SourceMaterializer | undefined;
 let stopReconciliation: (() => void) | undefined;
@@ -819,7 +825,7 @@ export async function withSlotSources<T>(slotId: string, operation: () => Promis
   if (!authority) return operation();
   const { slot, pool } = await resolveSlot(slotId);
   const project = slot.project ?? pool.project;
-  const { readSlotField } = await import('../core/state.js');
+  const { readSlotField } = await loadSlotState();
   const currentRunId = await readSlotField(slotId, 'current_run_id');
   const owner = typeof currentRunId === 'string' ? getRun(currentRunId) : undefined;
   if (owner?.slotId === slotId) return withRunSources(owner, operation);

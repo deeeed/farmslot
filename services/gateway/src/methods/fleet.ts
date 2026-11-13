@@ -82,6 +82,11 @@ import {
   slotProbeScript,
 } from './slot-probe-batch.js';
 
+// Loaded on first health parse, once: under tsx each import() call runs the resolve
+// hooks again, and every slot probe paid it.
+let execModule: Promise<typeof import('../core/exec.js')> | undefined;
+const loadExec = () => (execModule ??= import('../core/exec.js'));
+
 const SLOT_CHECK_CONCURRENCY = 4;
 const SLOT_CHECK_TIMEOUT_MS = 5_000;
 
@@ -1554,7 +1559,7 @@ async function readHealth(pj: RawProjectJson, result: SlotProbeOutcome): Promise
   if (!parseCmd) return 'OK';
   try {
     // Parse through project's parse command
-    const { execLocal } = await import('../core/exec.js');
+    const { execLocal } = await loadExec();
     const parsed = await execLocal(`echo '${raw.replace(/'/g, "'\\''")}' | ${parseCmd}`, {
       timeout: SLOT_CHECK_TIMEOUT_MS,
     });
