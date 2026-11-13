@@ -53,7 +53,7 @@ function command(action: 'isolate' | 'boundary' | 'verify' | 'restore', spec: Bl
   );
 }
 
-test('isolated blind prepare and replay park candidate work before resetting to base', async (t) => {
+test('isolated blind prepare parking survives restore', async (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'blind-prepare-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const overrides = {
@@ -74,57 +74,196 @@ test('isolated blind prepare and replay park candidate work before resetting to 
   const { claimSlotStatusIf } = await import('../core/state.js');
   const { mutateSlotGit, slotParkedInventory } =
     await import('../run-lifecycle/validation-run-commits.js');
-  const repo = path.join(root, 'repo');
-  mkdirSync(repo);
-  git(repo, 'init', '-q', '-b', 'main');
-  writeFileSync(path.join(repo, 'value.txt'), 'base\n');
-  const baseSha = commit(repo, 'base');
-  writeFileSync(path.join(repo, 'answer.txt'), 'reference\n');
-  const reference = commit(repo, 'reference');
-  git(repo, 'remote', 'add', 'origin', path.join(root, 'upstream'));
-  git(repo, 'update-ref', 'refs/remotes/origin/main', reference);
-  const spec: BlindGitSpec = {
-    slotId: 'blind-prepare-fixture',
-    slotEpoch: 1,
-    repo,
-    capsule: path.join(root, '.farmslot-blind-evals/trial'),
-    runId: 'trial',
-    branch: 'eval/trial',
-    baseSha,
-    referenceCommits: [reference],
-  };
-  const vars = makeVars({ slotId: spec.slotId, remoteRepo: repo, repo });
-  const localExec: typeof execOnSlot = async (_vars, script) => {
-    const result = spawnSync('bash', ['-c', script], { env, encoding: 'utf8' });
-    if (result.error) throw result.error;
-    return { stdout: result.stdout, stderr: result.stderr, exitCode: result.status ?? 1 };
-  };
-  await claimSlotStatusIf(spec.slotId, () => true, { lifecycle: 'ready', phase: 'idle' });
-  assert.equal(command('isolate', spec).status, 'isolated');
-  assert.equal(git(repo, 'remote'), '');
-  assert.equal(git(repo, 'for-each-ref', '--format=%(refname)'), `refs/heads/${spec.branch}`);
-  const reset = () =>
-    mutateSlotGit(
-      vars,
-      {},
-      { defaultBranch: 'main', blindBaseSha: baseSha, targetTrees: [baseSha] },
-      `git reset --hard ${baseSha} && git clean -fd`,
-      localExec,
-    );
-  assert.equal((await reset()).exitCode, 0);
-  assert.equal(command('isolate', spec).status, 'isolated');
-  writeFileSync(path.join(repo, 'value.txt'), 'candidate\n');
-  const candidate = commit(repo, 'candidate');
-  writeFileSync(path.join(repo, 'unfinished.txt'), 'unfinished\n');
-  assert.equal((await reset()).exitCode, 0);
-  const [saved] = (await slotParkedInventory(vars, localExec)).receipts;
-  assert.deepEqual(saved.commits, [candidate]);
-  assert.equal(saved.baseSha, baseSha);
-  assert.equal(git(repo, 'show', `${saved.ref}:unfinished.txt`), 'unfinished');
-  assert.equal(git(repo, 'rev-parse', 'HEAD'), baseSha);
-  assert.equal(command('isolate', spec).status, 'isolated');
-  assert.equal(command('restore', spec).status, 'restored');
-  assert.equal(git(repo, 'rev-parse', 'origin/main'), reference);
+  const { parkGitWork, restoreParkedGitWork } = await import('../host-services/parked-work.js');
+  for (const restorePhase of [
+    'normal',
+    'journaled',
+    'exported',
+    'retained',
+    'reattached',
+    'conflicting',
+  ])
+    await t.test(`phase=${restorePhase}`, async () => {
+      const caseRoot = path.join(root, restorePhase);
+      mkdirSync(caseRoot);
+      const repo = path.join(caseRoot, 'repo');
+      mkdirSync(repo);
+      git(repo, 'init', '-q', '-b', 'main');
+      writeFileSync(path.join(repo, 'value.txt'), 'ancestor\n');
+      const ancestor = commit(repo, 'ancestor');
+      writeFileSync(path.join(repo, 'value.txt'), 'base\n');
+      const baseSha = commit(repo, 'base');
+      writeFileSync(path.join(repo, 'answer.txt'), 'reference\n');
+      const reference = commit(repo, 'reference');
+      git(repo, 'remote', 'add', 'origin', path.join(root, 'upstream'));
+      git(repo, 'update-ref', 'refs/remotes/origin/main', reference);
+      const spec: BlindGitSpec = {
+        slotId: 'blind-prepare-fixture',
+        slotEpoch: 1,
+        repo,
+        capsule: path.join(caseRoot, '.farmslot-blind-evals/trial'),
+        runId: 'trial',
+        branch: 'eval/trial',
+        baseSha,
+        referenceCommits: [reference],
+      };
+      const vars = makeVars({ slotId: spec.slotId, remoteRepo: repo, repo });
+      const localExec: typeof execOnSlot = async (_vars, script) => {
+        const result = spawnSync('bash', ['-c', script], { env, encoding: 'utf8' });
+        if (result.error) throw result.error;
+        return { stdout: result.stdout, stderr: result.stderr, exitCode: result.status ?? 1 };
+      };
+      await claimSlotStatusIf(spec.slotId, () => true, { lifecycle: 'ready', phase: 'idle' });
+      assert.equal(command('isolate', spec).status, 'isolated');
+      assert.equal(git(repo, 'remote'), '');
+      assert.equal(git(repo, 'for-each-ref', '--format=%(refname)'), `refs/heads/${spec.branch}`);
+      const reset = () =>
+        mutateSlotGit(
+          vars,
+          {},
+          { defaultBranch: 'main', blindBaseSha: baseSha, targetTrees: [baseSha] },
+          `git reset --hard ${baseSha} && git clean -fd`,
+          localExec,
+        );
+      assert.equal((await reset()).exitCode, 0);
+      assert.equal(command('isolate', spec).status, 'isolated');
+      writeFileSync(path.join(repo, 'value.txt'), 'candidate\n');
+      const candidate = commit(repo, 'candidate');
+      writeFileSync(path.join(repo, 'value.txt'), 'staged\n');
+      git(repo, 'add', 'value.txt');
+      writeFileSync(path.join(repo, 'value.txt'), 'working\n');
+      writeFileSync(path.join(repo, 'unfinished.txt'), 'unfinished\n');
+      const dirtyStatus = git(repo, 'status', '--porcelain');
+      assert.equal((await reset()).exitCode, 0);
+      const [saved] = (await slotParkedInventory(vars, localExec)).receipts;
+      assert.deepEqual(saved.commits, [candidate]);
+      assert.equal(saved.baseSha, baseSha);
+      assert.equal(git(repo, 'show', `${saved.ref}:unfinished.txt`), 'unfinished');
+      assert.equal(git(repo, 'rev-parse', 'HEAD'), baseSha);
+      assert.equal(command('isolate', spec).status, 'isolated');
+      const prunedMetadataRef = 'refs/farmslot/parked-meta/other-slot/pruned/snapshot';
+      const prunedMetadataFile = path.join(caseRoot, 'pruned.json');
+      writeFileSync(prunedMetadataFile, '{"pruned":true}\n');
+      git(
+        repo,
+        'update-ref',
+        prunedMetadataRef,
+        git(repo, 'hash-object', '-w', prunedMetadataFile),
+      );
+      const parkedRefs = git(
+        repo,
+        'for-each-ref',
+        '--format=%(refname) %(objectname)',
+        'refs/farmslot/parked/',
+        'refs/farmslot/parked-meta/',
+      );
+      assert.ok(saved.metadataRef);
+      assert.ok(saved.worktreeTreeSha);
+      assert.ok(saved.indexArchiveSha);
+      const metadata = git(repo, 'cat-file', 'blob', saved.metadataRef);
+      if (restorePhase === 'conflicting') {
+        const original = path.join(spec.capsule, 'original.entry');
+        for (const ref of [saved.ref, saved.metadataRef]) {
+          git(repo, `--git-dir=${original}`, 'update-ref', ref, baseSha);
+          assert.throws(() => command('restore', spec), /parked ref conflicts/);
+          assert.equal(git(repo, `--git-dir=${original}`, 'rev-parse', ref), baseSha);
+          assert.equal(git(repo, 'rev-parse', saved.ref), saved.headSha);
+          git(repo, `--git-dir=${original}`, 'update-ref', '-d', ref, baseSha);
+        }
+      } else if (restorePhase !== 'normal') {
+        const interrupted = spawnSync(
+          'python3',
+          [
+            '-c',
+            `
+import json, runpy, sys
+from pathlib import Path
+module = runpy.run_path(sys.argv[1], run_name='blind_git_fixture')
+phase = sys.argv[3]
+save = module['save']
+rename = Path.rename
+rmtree = module['shutil'].rmtree
+def interrupt_save(file, state):
+    if phase == 'exported' and state.get('parkedWorkExported'):
+        raise RuntimeError('fixture interrupted restore')
+    save(file, state)
+    if phase == 'journaled' and state['phase'] == 'restoring':
+        raise RuntimeError('fixture interrupted restore')
+def interrupt_rename(source, target):
+    if phase == 'retained' and source.name == 'original.entry':
+        raise RuntimeError('fixture interrupted restore')
+    return rename(source, target)
+def interrupt_remove(directory, *args, **kwargs):
+    if phase == 'reattached' and Path(directory).name == 'candidate.git':
+        rmtree(Path(directory) / 'objects')
+        raise RuntimeError('fixture interrupted restore')
+    return rmtree(directory, *args, **kwargs)
+module['restore'].__globals__['save'] = interrupt_save
+Path.rename = interrupt_rename
+module['shutil'].rmtree = interrupt_remove
+module['restore'](json.loads(sys.argv[2]))
+`,
+            new URL('./blind-git.py', import.meta.url).pathname,
+            JSON.stringify(spec),
+            restorePhase,
+          ],
+          { env, encoding: 'utf8', timeout: 60_000 },
+        );
+        assert.notEqual(interrupted.status, 0);
+        assert.match(interrupted.stderr, /fixture interrupted restore/);
+        assert.equal(
+          JSON.parse(readFileSync(path.join(spec.capsule, 'state.json'), 'utf8')).phase,
+          'restoring',
+        );
+      }
+      assert.equal(command('restore', spec).status, 'restored');
+      assert.equal(git(repo, 'rev-parse', 'origin/main'), reference);
+      assert.equal(
+        git(
+          repo,
+          'for-each-ref',
+          '--format=%(refname) %(objectname)',
+          'refs/farmslot/parked/',
+          'refs/farmslot/parked-meta/',
+        ),
+        parkedRefs,
+      );
+      assert.equal(git(repo, 'cat-file', 'blob', saved.metadataRef), metadata);
+      assert.equal(git(repo, 'cat-file', 'blob', prunedMetadataRef), '{"pruned":true}');
+      assert.equal(git(repo, 'cat-file', '-t', candidate), 'commit');
+      assert.equal(git(repo, 'cat-file', '-t', saved.worktreeTreeSha), 'tree');
+      assert.equal(git(repo, 'cat-file', '-t', saved.indexArchiveSha), 'commit');
+      assert.ok(git(repo, 'show', `${saved.indexArchiveSha}:index`).length > 0);
+      assert.equal(git(repo, 'rev-parse', `${candidate}~2`), ancestor);
+      git(repo, 'fsck', '--full', '--no-reflogs');
+      assert.deepEqual((await slotParkedInventory(vars, localExec)).receipts, [saved]);
+      const capture = await parkGitWork(
+        vars,
+        {
+          slotId: spec.slotId,
+          operationKey: 'restore',
+          defaultBranch: 'main',
+          purpose: 'checkpoint',
+          at: new Date().toISOString(),
+          onlyThreatened: true,
+        },
+        localExec,
+      );
+      const restored = await restoreParkedGitWork(
+        vars,
+        { slotId: spec.slotId, restoreBranch: 'restored/candidate' },
+        { ...capture, receipts: [saved] },
+        saved,
+        localExec,
+      );
+      assert.equal(restored.head, candidate);
+      assert.equal(git(repo, 'branch', '--show-current'), 'restored/candidate');
+      assert.equal(git(repo, 'status', '--porcelain'), dirtyStatus);
+      assert.equal(git(repo, 'show', ':value.txt'), 'staged');
+      assert.equal(readFileSync(path.join(repo, 'value.txt'), 'utf8'), 'working\n');
+      assert.equal(readFileSync(path.join(repo, 'unfinished.txt'), 'utf8'), 'unfinished\n');
+      assert.equal(command('restore', spec).status, 'restored');
+    });
 });
 
 for (const linked of [false, true])

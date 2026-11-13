@@ -848,6 +848,37 @@ def isolate(spec):
         raise
 
 
+def preserve_parked_work(repo, capsule, source, destination):
+    prefixes = ['refs/farmslot/parked/', 'refs/farmslot/parked-meta/']
+    def refs(directory):
+        return dict(line.split() for line in git(
+            repo, 'for-each-ref', '--format=%(refname) %(objectname)', *prefixes,
+            git_dir=directory).stdout.decode().splitlines())
+    parked = refs(source)
+    if not parked:
+        return
+    existing = refs(destination)
+    updates = []
+    for ref, sha in parked.items():
+        if ref in existing:
+            if existing[ref] != sha:
+                raise RuntimeError('Blind trial parked ref conflicts with original: ' + ref)
+            updates.append('verify ' + ref + ' ' + sha)
+        else:
+            updates.append('create ' + ref + ' ' + sha)
+    objects = capsule / 'parked.objects'
+    objects.write_text('\n'.join(parked.values()) + '\n')
+    # The capsule stops traversal at its shallow base; the original already has
+    # that base's full history. Export a self-contained pack, never a thin pack.
+    pack_into(repo, destination, ['--revs'], objects, git_dir=source)
+    # Create atomically, verifying matching refs on retries rather than moving
+    # any existing ref. A concurrent conflicting writer also fails closed.
+    git(repo, '-c', 'core.logAllRefUpdates=false', 'update-ref', '--no-deref', '--stdin',
+        git_dir=destination,
+        input=('start\n' + '\n'.join(updates) + '\nprepare\ncommit\n').encode())
+    objects.unlink()
+
+
 def restore(spec):
     repo, capsule = Path(spec['repo']), Path(spec['capsule'])
     journal = capsule / 'state.json'
@@ -900,6 +931,13 @@ def restore(spec):
         state['candidateHead'] = head
         save(journal, state)
     head = state['candidateHead']
+    if not state.get('parkedWorkExported'):
+        if original.exists() or retained.exists():
+            source = retained if retained.exists() else repo / '.git'
+            destination = original if state['originalIsDirectory'] and original.exists() else Path(state['originalDirectory'])
+            preserve_parked_work(repo, capsule, source, destination)
+        state['parkedWorkExported'] = True
+        save(journal, state)
     if not state.get('submodulesExported'):
         preserve_submodule_candidates(repo, capsule, state,
                                       retained if retained.exists() else repo / '.git')
