@@ -97,17 +97,39 @@ test('each support root keeps its own scans and gives its own hashes', () => {
   assert.equal(a.scans(), 2);
 });
 
+/** The monotonic clock the scan ages by, moved by the test. */
+function monotonicClock(t: test.TestContext) {
+  let now = 1_000_000;
+  t.mock.method(performance, 'now', () => now);
+  return { tick: (ms: number) => (now += ms) };
+}
+
 test('a scan older than the maximum age is read again, though the run did not change', (t) => {
-  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-13T00:00:00.000Z') });
+  const clock = monotonicClock(t);
   const a = countedRun('cache-expiry', { dir: `/farm/support/${hash(12)}` });
   referencedNodeSupportHashes([a.run], '/farm/support');
-  t.mock.timers.tick(RUN_SUPPORT_SCAN_MAX_AGE_MS - 1);
+  clock.tick(RUN_SUPPORT_SCAN_MAX_AGE_MS - 1);
   assert.deepEqual(referencedNodeSupportHashes([a.run], '/farm/support'), [hash(12)]);
   assert.equal(a.scans(), 1);
   // A writer that skips the stamp: its change goes unseen for one window at most.
   a.run.steps[0].outputs = { dir: `/farm/support/${hash(13)}` };
-  t.mock.timers.tick(1);
+  clock.tick(1);
   assert.deepEqual(referencedNodeSupportHashes([a.run], '/farm/support'), [hash(13)]);
+  assert.equal(a.scans(), 2);
+});
+
+test('a wall-clock step back does not stretch the maximum age', (t) => {
+  const clock = monotonicClock(t);
+  const wall = Date.parse('2026-11-13T12:00:00.000Z');
+  t.mock.timers.enable({ apis: ['Date'], now: wall });
+  const a = countedRun('cache-rollback', { dir: `/farm/support/${hash(15)}` });
+  referencedNodeSupportHashes([a.run], '/farm/support');
+  // The system clock moves back an hour; the maximum age still passes in real time.
+  t.mock.timers.setTime(wall - 60 * 60_000);
+  clock.tick(RUN_SUPPORT_SCAN_MAX_AGE_MS);
+  t.mock.timers.tick(RUN_SUPPORT_SCAN_MAX_AGE_MS);
+  a.run.steps[0].outputs = { dir: `/farm/support/${hash(16)}` };
+  assert.deepEqual(referencedNodeSupportHashes([a.run], '/farm/support'), [hash(16)]);
   assert.equal(a.scans(), 2);
 });
 

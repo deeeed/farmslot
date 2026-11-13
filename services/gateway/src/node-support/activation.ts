@@ -80,6 +80,7 @@ interface RunSupportHashScan {
   /** The record that was read: a load, archive read or disk read gives a new object. */
   run: Run;
   stamp: string;
+  /** `performance.now()` at the scan. */
   scannedAt: number;
   hashes: string[];
 }
@@ -128,7 +129,8 @@ export function referencedNodeSupportHashes(runs: readonly Run[], supportRoot?: 
     if (runSupportHashScans.size <= RUN_SUPPORT_SCAN_PATTERNS) break;
     runSupportHashScans.delete(source);
   }
-  const now = Date.now();
+  // Monotonic: a wall-clock step back must not stretch the age bound.
+  const now = performance.now();
   const hashes = new Set<string>();
   const listed = new Set<string>();
   for (const run of runs) {

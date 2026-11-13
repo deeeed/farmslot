@@ -2670,6 +2670,10 @@ export async function resolveRunDecision(
           assertDecisionStillUnresolved(params.runId, params.decisionId);
           await recordLearningsDraftLanded(existing, decision);
           assertDecisionStillUnresolved(params.runId, params.decisionId);
+          // A writer can replace the card's object during the await: write to the stored one.
+          decision = getRun(params.runId)!.decisions.find(
+            (entry) => entry.id === params.decisionId,
+          )!;
         } catch (err) {
           releaseLearningsDraft();
           throw err;
