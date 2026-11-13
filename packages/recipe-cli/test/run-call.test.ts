@@ -94,6 +94,8 @@ import {
 } from '../src/harness/run-engine.js';
 
 const DEFAULT_HOST = harnessHost();
+// Child processes one stubbed call may start: the checkout's provenance reads through git.
+const CALL_PROCESS_BUDGET = 12;
 const roots: string[] = [];
 
 function tempRoot(prefix: string): string {
@@ -4381,6 +4383,18 @@ describe('call timings', () => {
       line ?? '',
       /^Timing: \d+\.\ds \(node \d+\.\ds\): .* · \d+ processes · runner \d+× · provenance \d+×$/u,
     );
+  });
+
+  // CI gate: the work one call repeats. Wall time is reported, never gated.
+  test('a call builds one runner, takes at most two provenance snapshots and stays in its process budget', async () => {
+    const { call } = await timedCall('--json');
+    const timings = lastJson(call.stdout).timings as CallTimings;
+    console.error(
+      `[call budget] wall ${timings.wallMs - (timings.phases[0]?.wallMs ?? 0)} ms after bootstrap · processes ${timings.processes} · ${JSON.stringify(timings.work)}`,
+    );
+    assert.equal(timings.work.createRunner, 1);
+    assert.ok(timings.work.provenanceSnapshot <= 2, `${timings.work.provenanceSnapshot} snapshots`);
+    assert.ok(timings.processes <= CALL_PROCESS_BUDGET, `${timings.processes} processes`);
   });
 });
 
