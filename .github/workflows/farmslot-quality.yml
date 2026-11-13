@@ -82,7 +82,6 @@ jobs:
         suite: [ui, protocol, recipe-runner, cli]
     env:
       FARMSLOT_TSX_TEST_WORKERS: ${{ matrix.workers }}
-      FARMSLOT_QUALITY_TIMINGS_DIR: ${{ runner.temp }}/scheduling-timings
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -95,6 +94,7 @@ jobs:
       - name: Measure full suite
         env:
           SUITE: ${{ matrix.suite }}
+          FARMSLOT_QUALITY_TIMINGS_DIR: ${{ runner.temp }}/scheduling-timings
         run: |
           start=$(date +%s)
           mkdir -p "$FARMSLOT_QUALITY_TIMINGS_DIR"
