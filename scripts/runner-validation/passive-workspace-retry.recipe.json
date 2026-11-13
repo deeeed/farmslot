@@ -16,7 +16,7 @@
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx services/gateway/src/run-lifecycle/safe-idle-slot.live.ts",
         "timeout_ms": 300000,
-        "intent": "Authenticated run.create reaches write-task, prepare and dispatch, then cancellation releases the owned fixture. Supply FARMSLOT_CLI and a fresh FARMSLOT_SAFE_IDLE_PROOF_OUT; do not allocate a farm slot.",
+        "intent": "Authenticated run.create reaches write-task, prepare and dispatch, then cancellation releases the owned fixture. Supply FARMSLOT_CLI and a fresh FARMSLOT_SAFE_IDLE_PROOF_OUT; do not allocate a farm slot. TMPDIR must satisfy the normal heavy-write floor.",
         "next": "done"
       },
       "done": {

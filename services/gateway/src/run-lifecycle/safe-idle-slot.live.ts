@@ -216,6 +216,8 @@ await writeFile(
   }),
 );
 const load = (file: string) => import(pathToFileURL(path.join(code, file)).href);
+const { registerGatewayStatusProcess } = await load('services/gateway/src/projects/repo-root.ts');
+registerGatewayStatusProcess();
 const { createGatewayAuthRuntime } = await load('services/gateway/src/security/auth.ts');
 const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: path.join(root, 'home') });
 const person = auth.writer.createPrincipal(
