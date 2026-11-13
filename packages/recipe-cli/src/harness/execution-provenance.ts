@@ -12,6 +12,7 @@ import { digestRecipeDocument, type RecipeConformanceSource } from '@farmslot/pr
 import type { RecipeArtifactFinalization, RecipeLibrarySource } from '@farmslot/recipe-runner';
 
 import { harnessAdapter } from './adapters.js';
+import { cacheRecordPath, readCacheRecord, writeCacheRecord } from './cache.js';
 import { countCallWork } from './call-timings.js';
 import { harnessHost } from './host.js';
 import { isPathWithin } from './paths.js';
@@ -405,6 +406,56 @@ function directoryFingerprint(
   excludedRoots: string[],
   includedRoots: string[],
 ): string {
+  const installed = installedPackage(root);
+  if (!installed) return walkDirectory(root, excludedRoots, includedRoots, true);
+  // An installed package changes with its version, so its bytes are hashed once per version.
+  // The sizes and modification times, far cheaper to read, still catch an edit in place.
+  const shape = walkDirectory(root, excludedRoots, includedRoots, false);
+  const record = cacheRecordPath('provenance', {
+    installed,
+    root: path.resolve(root),
+    excludedRoots,
+    includedRoots,
+  });
+  const cached = readCacheRecord(record);
+  if (
+    typeof cached === 'object' &&
+    cached !== null &&
+    'shape' in cached &&
+    cached.shape === shape &&
+    'fingerprint' in cached &&
+    typeof cached.fingerprint === 'string'
+  ) {
+    return cached.fingerprint;
+  }
+  const fingerprint = walkDirectory(root, excludedRoots, includedRoots, true);
+  writeCacheRecord(record, { shape, fingerprint });
+  return fingerprint;
+}
+
+// `<package dir>@<version>` when `root` lies in a package installed under node_modules.
+function installedPackage(root: string): string | undefined {
+  const resolved = path.resolve(root);
+  const marker = `${path.sep}node_modules${path.sep}`;
+  const index = resolved.lastIndexOf(marker);
+  if (index < 0) return undefined;
+  const nodeModules = resolved.slice(0, index + marker.length - 1);
+  for (let dir = resolved; dir.startsWith(`${nodeModules}${path.sep}`); dir = path.dirname(dir)) {
+    const manifest = path.join(dir, 'package.json');
+    if (!fs.existsSync(manifest)) continue;
+    const { version } = JSON.parse(fs.readFileSync(manifest, 'utf8')) as { version?: unknown };
+    return typeof version === 'string' ? `${dir}@${version}` : undefined;
+  }
+  return undefined;
+}
+
+// The files under `root`: their bytes (`content`), or only their sizes and modification times.
+function walkDirectory(
+  root: string,
+  excludedRoots: string[],
+  includedRoots: string[],
+  content: boolean,
+): string {
   const hash = createHash('sha256');
   const resolvedRoot = path.resolve(root);
   const roots = includedRoots.length > 0 ? includedRoots : [''];
@@ -414,6 +465,7 @@ function directoryFingerprint(
       resolvedRoot,
       included,
       new Set(excludedRoots.map((entry) => path.resolve(entry))),
+      content,
     );
   }
   return hash.digest('hex');
@@ -424,6 +476,7 @@ function hashDirectory(
   root: string,
   relative: string,
   excludedRoots: Set<string>,
+  content: boolean,
 ): void {
   const absolute = path.join(root, relative);
   if (
@@ -446,7 +499,7 @@ function hashDirectory(
     // Directories carry no source bytes; files bind their relative path.
     for (const name of fs.readdirSync(absolute).sort()) {
       if (relative === '' && DIRECTORY_IGNORED_ROOTS.has(name)) continue;
-      hashDirectory(hash, root, path.join(relative, name), excludedRoots);
+      hashDirectory(hash, root, path.join(relative, name), excludedRoots, content);
     }
     return;
   }
@@ -456,7 +509,7 @@ function hashDirectory(
       const target = fs.realpathSync(absolute);
       if (isPathWithin(pin, target) && fs.statSync(target).isFile()) {
         hash.update(`link\0${relative}\0${fs.readlinkSync(absolute)}\0`);
-        hash.update(readRegularFileNoFollow(target));
+        hash.update(content ? readRegularFileNoFollow(target) : fileShape(fs.statSync(target)));
         hash.update('\0');
         return;
       }
@@ -464,8 +517,12 @@ function hashDirectory(
     throw new Error(`Execution provenance source must not be a symbolic link: ${absolute}`);
   }
   hash.update(`file\0${relative}\0`);
-  hash.update(readRegularFileNoFollow(absolute));
+  hash.update(content ? readRegularFileNoFollow(absolute) : fileShape(stat));
   hash.update('\0');
+}
+
+function fileShape(stat: fs.Stats): string {
+  return `${stat.size}\0${stat.mtimeMs}`;
 }
 
 export function fileFingerprint(filePath: string): string {

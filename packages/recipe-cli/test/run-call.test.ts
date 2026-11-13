@@ -4358,6 +4358,19 @@ describe('call timings', () => {
     assert.ok(timings.phases.some((phase) => phase.name === 'replan'));
   });
 
+  test('binds the call with two provenance snapshots, before and after its action', async () => {
+    const { call, artifacts } = await timedCall('--json');
+    const timings = lastJson(call.stdout).timings as CallTimings;
+    const provenance = JSON.parse(
+      fs.readFileSync(path.join(artifacts, 'execution-provenance.json'), 'utf8'),
+    ) as { snapshots: Array<{ phase: string }> };
+    assert.deepEqual(
+      provenance.snapshots.map((snapshot) => snapshot.phase),
+      ['start', 'end'],
+    );
+    assert.equal(timings.work.provenanceSnapshot, 2);
+  });
+
   test('prints one timing line for a person', async () => {
     const { call } = await timedCall();
     const line = call.stdout

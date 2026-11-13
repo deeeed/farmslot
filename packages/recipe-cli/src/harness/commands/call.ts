@@ -494,6 +494,9 @@ async function runCall<TMutation, TAllowlist extends ConsoleAllowlist>(
       ? { autoHud: false, requestedAutoHud: requestedRuntimeOptions.autoHud }
       : {}),
     librarySources,
+    // The plan is made before healing and kept when healing changes nothing, so the
+    // start snapshot waits for execution: start and end then bind the call.
+    deferStartProvenance: true,
     suppressLibraryResolutionLogs: true,
     stdoutIsMachineContract: json,
     onActionEvent: ({ nodeId, action, status }: RecipeNodeEvent) => {

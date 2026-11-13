@@ -51,6 +51,7 @@ import {
   recipeRunOptionsFromCli,
   recipeTrustFailure,
   runLiveAdapterScript,
+  sourceSnapshot,
   validateRuntimeProof,
   validateRuntimeProofPlan,
   verifyConsoleCapture,
@@ -785,6 +786,45 @@ describe('execution provenance', () => {
       } as unknown as RecipeArtifactFinalization),
       /finalization closed/u,
     );
+  });
+
+  test('hashes an installed runner package once per version and again after an edit', () => {
+    const previous = process.env.FARMSLOT_RECIPE_CACHE_DIR;
+    const cache = tempRoot('provenance-cache-');
+    process.env.FARMSLOT_RECIPE_CACHE_DIR = cache;
+    try {
+      const runner = path.join(
+        tempRoot('provenance-installed-'),
+        'node_modules',
+        '@acme',
+        'harness',
+      );
+      fs.mkdirSync(path.join(runner, 'dist'), { recursive: true });
+      fs.writeFileSync(
+        path.join(runner, 'package.json'),
+        JSON.stringify({ name: '@acme/harness', version: '1.0.0' }),
+      );
+      fs.writeFileSync(path.join(runner, 'dist', 'index.js'), 'export const v = 1;\n');
+      const fingerprint = () =>
+        sourceSnapshot(runner, undefined, [], ['dist', 'package.json']).sourceFingerprint;
+      const first = fingerprint();
+      const records = path.join(cache, 'provenance');
+      const [record] = fs.existsSync(records) ? fs.readdirSync(records) : [];
+      assert.ok(record, 'the fingerprint is cached for the installed version');
+      // While no file changed, the cached hash is reused: a planted value comes back.
+      const file = path.join(records, record);
+      const cached = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+      fs.writeFileSync(file, JSON.stringify({ ...cached, fingerprint: 'planted' }));
+      assert.equal(fingerprint(), 'planted');
+      // An edit in place changes a file's size or time, so the bytes are hashed again.
+      fs.writeFileSync(path.join(runner, 'dist', 'index.js'), 'export const v = 22;\n');
+      const edited = fingerprint();
+      assert.notEqual(edited, 'planted');
+      assert.notEqual(edited, first);
+    } finally {
+      if (previous === undefined) delete process.env.FARMSLOT_RECIPE_CACHE_DIR;
+      else process.env.FARMSLOT_RECIPE_CACHE_DIR = previous;
+    }
   });
 
   test('a colocated library ignores generated output but still binds its recipe source', async () => {

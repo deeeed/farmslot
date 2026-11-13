@@ -91,6 +91,11 @@ export type RecipeEngineRunOptions = RecipeRunOptions & {
   cli?: CommandOptions;
   /** Read-only planning/conformance validates authority without publishing execution claims. */
   readOnly?: boolean;
+  /**
+   * Take the start provenance snapshot right before execution instead of while planning, so
+   * the start and end snapshots alone bind the run: `call` plans before it heals.
+   */
+  deferStartProvenance?: boolean;
   /** Command-specific artifacts join the engine package before its final validation. */
   finalizeArtifacts?(
     context: RecipeArtifactFinalization,
@@ -141,16 +146,21 @@ export async function runRecipe<TMutation, TAllowlist extends ConsoleAllowlist>(
   // The prepared runner owns frozen action bundles. Rechecking its plan here
   // does not reconstruct adapters or replace their approved bytes.
   await planRun(runner, runRequest);
-  const preExecute = await captureExecutionProvenance(provenanceInput, 'pre-execute');
-  provenanceSnapshots.push(preExecute);
-  const preExecuteDrift = executionProvenanceDrift(provenanceSnapshots[0]!, preExecute);
-  if (preExecuteDrift.length > 0) {
-    const provenancePath = await writeExecutionProvenance(
-      absoluteArtifactsDir,
-      provenanceSnapshots,
-      preExecuteDrift,
-    );
-    throw new ProvenanceDriftError(provenancePath, preExecuteDrift);
+  if (provenanceSnapshots.length === 0) {
+    // Deferred from planning: what runs is bound from here to the end snapshot.
+    provenanceSnapshots.push(await captureExecutionProvenance(provenanceInput, 'start'));
+  } else {
+    const preExecute = await captureExecutionProvenance(provenanceInput, 'pre-execute');
+    provenanceSnapshots.push(preExecute);
+    const preExecuteDrift = executionProvenanceDrift(provenanceSnapshots[0]!, preExecute);
+    if (preExecuteDrift.length > 0) {
+      const provenancePath = await writeExecutionProvenance(
+        absoluteArtifactsDir,
+        provenanceSnapshots,
+        preExecuteDrift,
+      );
+      throw new ProvenanceDriftError(provenancePath, preExecuteDrift);
+    }
   }
   if (runRequest.hud) {
     const explicitShow = (runtimeOptions.requestedAutoHud ?? runtimeOptions.autoHud) === true;
@@ -425,9 +435,10 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     helperPaths: commandHelperPaths(recipeDocument ?? recipe, projectRoot),
     runnerIncludes: engine.runnerIncludes,
   };
-  const provenanceSnapshots = runtimeOptions.readOnly
-    ? []
-    : [await captureExecutionProvenance(provenanceInput, 'start')];
+  const provenanceSnapshots =
+    runtimeOptions.readOnly || runtimeOptions.deferStartProvenance
+      ? []
+      : [await captureExecutionProvenance(provenanceInput, 'start')];
   return {
     readOnly: runtimeOptions.readOnly === true,
     ...(plan ? { plan } : {}),
