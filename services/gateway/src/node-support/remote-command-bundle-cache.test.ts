@@ -1,24 +1,52 @@
 // The node-support bundle is collected once per change of what it is built from, not on a timer.
+// A miniature farm root (the runner files, one small pack, one pool file) keeps each collection to
+// a few files and three `git` calls.
 import assert from 'node:assert/strict';
-import childProcess from 'node:child_process';
-import { mkdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import childProcess, { execFileSync } from 'node:child_process';
+import fs, {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { mock } from 'node:test';
 
 import type { SlotVars } from '../core/index.js';
-import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 
 import type { NodeSupportIo } from './ensure.js';
-import { resetRemoteFarmCommandCache, resolveRemoteFarmCommand } from './remote-command.js';
-import { fakeSupportHomeResult } from './support-test-fixtures.js';
+import { fakeSupportHomeResult, seedRunnerObservabilityFixture } from './support-test-fixtures.js';
 
-const { farmslotRoot } = await import('../core/config.js');
+const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'bundle-cache-')));
+const PROJECT = 'cache-farm';
+const packRoot = path.join(root, 'projects', PROJECT);
+const poolDir = path.join(root, 'pool');
+const environment = {
+  FARMSLOT_ROOT: root,
+  FARMSLOT_PROJECTS_DIR: path.join(root, 'projects'),
+  FARMSLOT_POOL_DIR: poolDir,
+  FARMSLOT_HOME: path.join(root, 'home'),
+};
+const previous = Object.fromEntries(Object.keys(environment).map((key) => [key, process.env[key]]));
+Object.assign(process.env, environment);
+for (const dir of ['scripts', 'services/gateway', 'pool', 'home'])
+  mkdirSync(path.join(root, dir), { recursive: true });
+writeFileSync(path.join(root, 'CLAUDE.md'), '# Disposable bundle cache fixture\n');
+writeFileSync(path.join(root, 'scripts/dev.sh'), '');
+writeFileSync(path.join(root, 'scripts/write-runtime-context.sh'), '#!/bin/sh\n');
+writeFileSync(path.join(root, 'services/gateway/package.json'), '{}');
+writeFileSync(path.join(poolDir, 'testbox.json'), JSON.stringify({ machine: 'testbox' }));
+await seedRunnerObservabilityFixture(root);
 
-const PROJECT = `bundle-cache-${process.pid}-farm`;
-const packRoot = path.join(farmslotRoot(), 'projects', PROJECT);
 const script = path.join(packRoot, 'scripts', 'x.sh');
-mkdirSync(path.dirname(script), { recursive: true });
+const nested = path.join(packRoot, 'scripts', 'sub', 'y.sh');
+mkdirSync(path.dirname(nested), { recursive: true });
 writeFileSync(
   path.join(packRoot, 'project.json'),
   JSON.stringify({
@@ -30,29 +58,60 @@ writeFileSync(
   }),
 );
 writeFileSync(script, 'echo one\n');
-// A pack may hold a dangling link outside its support paths (the pack check reads its target
-// text); it must not look like a change on every check.
-symlinkSync('not-there.md', path.join(packRoot, 'dangling.md'));
-test.after(() => rmSync(packRoot, { recursive: true, force: true }));
+writeFileSync(nested, 'echo nested\n');
+// Ignored: `notes/` holds no owned file, `runs/` is runtime state.
+writeFileSync(path.join(packRoot, '.gitignore'), '*.log\nruns/\n');
+mkdirSync(path.join(packRoot, 'notes'));
+writeFileSync(path.join(packRoot, 'notes', 'a.log'), 'log\n');
+mkdirSync(path.join(packRoot, 'runs'));
+// Links outside the support paths, which the pack check reads as their target text.
+mkdirSync(path.join(packRoot, 'docs'));
+symlinkSync('not-there.md', path.join(packRoot, 'docs', 'dangling.md'));
+symlinkSync('self', path.join(packRoot, 'docs', 'self'));
+execFileSync('git', ['init', '-q', packRoot]);
 
-// Each collection checks the pack once, starting with one `git -C <pack> ls-files`.
+// Each collection checks the pack once, starting with one `git -C <pack> ls-files -c`.
 let collections = 0;
 /** Runs when a collection starts checking the pack: lets a test change an input meanwhile. */
 let duringCollection: (() => void) | undefined;
 const execFile = childProcess.execFile;
 mock.method(childProcess, 'execFile', (...args: Parameters<typeof execFile>) => {
   const argv = args[1];
-  if (Array.isArray(argv) && argv[0] === '-C' && argv[1] === packRoot && argv[2] === 'ls-files') {
+  if (
+    Array.isArray(argv) &&
+    argv[0] === '-C' &&
+    argv[1] === packRoot &&
+    argv[2] === 'ls-files' &&
+    argv[3] === '-c'
+  ) {
     collections++;
     duringCollection?.();
   }
   return execFile(...args);
 });
+/** While set, reading the pool directory fails the way a file-descriptor shortage does. */
+let poolUnreadable = false;
+const statSync = fs.statSync;
+mock.method(fs, 'statSync', (...args: Parameters<typeof statSync>) => {
+  if (poolUnreadable && args[0] === poolDir)
+    throw Object.assign(new Error(`EMFILE: too many open files, stat '${poolDir}'`), {
+      code: 'EMFILE',
+    });
+  return statSync(...args);
+});
 syncBuiltinESMExports();
 test.after(() => {
   mock.restoreAll();
   syncBuiltinESMExports();
+  for (const [key, value] of Object.entries(previous))
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  rmSync(root, { recursive: true, force: true });
 });
+
+const { shellExpressionForRemotePath } = await import('../core/remote-paths.js');
+const { resetRemoteFarmCommandCache, resolveRemoteFarmCommand } =
+  await import('./remote-command.js');
 
 const HOOK = `bash ~/farmslot-node/projects/${PROJECT}/scripts/x.sh`;
 
@@ -122,60 +181,97 @@ function fakeNode(upload?: { started: () => void; done: Promise<void> }) {
 
 /**
  * The test clock runs a minute ahead of the files' real modification times, so no input looks
- * written during a collection unless a test stamps it so.
+ * recently changed unless a test stamps it so, and sits half a second into a whole second.
  */
 function aheadClock(t: test.TestContext, apis: ('Date' | 'setTimeout')[] = ['Date']) {
-  t.mock.timers.enable({ apis, now: Date.now() + 60_000 });
+  t.mock.timers.enable({ apis, now: Math.floor(Date.now() / 1000) * 1000 + 60_500 });
   resetRemoteFarmCommandCache();
   collections = 0;
   duringCollection = undefined;
   t.after(() => {
     duringCollection = undefined;
+    poolUnreadable = false;
     resetRemoteFarmCommandCache();
   });
+}
+
+/** One command after the check interval. */
+async function later(t: test.TestContext, io: NodeSupportIo): Promise<string> {
+  t.mock.timers.tick(3_000);
+  return resolveRemoteFarmCommand(remoteVars(), HOOK, { io });
 }
 
 test('commands in an unchanged tree collect the bundle once and deliver it once', async (t) => {
   aheadClock(t);
   const node = fakeNode();
   const first = await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
-  // A prepare's worth of commands over several minutes, each past the check interval.
-  for (let command = 0; command < 30; command++) {
-    t.mock.timers.tick(3_000);
-    assert.equal(await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io }), first);
-  }
+  // A prepare's worth of commands over a minute, each past the check interval.
+  for (let command = 0; command < 10; command++) assert.equal(await later(t, node.io), first);
+  // Runtime state in an ignored directory is not an input.
+  writeFileSync(path.join(packRoot, 'runs', 'r1.json'), '{}');
+  t.after(() => rmSync(path.join(packRoot, 'runs', 'r1.json'), { force: true }));
+  assert.equal(await later(t, node.io), first);
   assert.equal(collections, 1);
   assert.equal(node.uploads(), 1);
 });
 
-test('a support file edit and a file added to the pack each collect once more', async (t) => {
+test('a support file edit and a file added to or edited in the pack each collect once more', async (t) => {
   aheadClock(t);
   const node = fakeNode();
+  t.after(() => writeFileSync(script, 'echo one\n'));
+  const added = path.join(packRoot, 'recipes', 'smoke.json');
+  t.after(() => rmSync(path.dirname(added), { recursive: true, force: true }));
   const before = await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
   writeFileSync(script, 'echo two\n');
-  t.mock.timers.tick(3_000);
-  const edited = await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
-  t.mock.timers.tick(3_000);
-  await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
+  const edited = await later(t, node.io);
+  await later(t, node.io);
   assert.equal(collections, 2, 'the edit');
   assert.notEqual(edited, before, 'the edit changes the bundle the command runs from');
 
-  const added = path.join(packRoot, 'recipes', 'smoke.json');
   mkdirSync(path.dirname(added), { recursive: true });
-  t.after(() => rmSync(path.dirname(added), { recursive: true, force: true }));
   writeFileSync(added, '{}');
-  t.mock.timers.tick(3_000);
-  await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
-  t.mock.timers.tick(3_000);
-  await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
+  await later(t, node.io);
+  await later(t, node.io);
   assert.equal(collections, 3, 'the added pack file');
   writeFileSync(added, '{"edited":true}');
-  t.mock.timers.tick(3_000);
-  await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
-  t.mock.timers.tick(3_000);
-  await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
+  await later(t, node.io);
+  await later(t, node.io);
   assert.equal(collections, 4, 'the edited pack file');
-  writeFileSync(script, 'echo one\n');
+});
+
+test('pack ownership changes made only in Git or in ignore rules each collect once more', async (t) => {
+  aheadClock(t);
+  const node = fakeNode();
+  const exclude = path.join(packRoot, '.git', 'info', 'exclude');
+  const fresh = path.join(packRoot, 'notes', 'b.md');
+  t.after(() => {
+    execFileSync('git', [
+      '-C',
+      packRoot,
+      'rm',
+      '-q',
+      '--cached',
+      '--ignore-unmatch',
+      'notes/a.log',
+    ]);
+    writeFileSync(exclude, '');
+    rmSync(fresh, { force: true });
+  });
+  await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
+  // An ignored file becomes owned through the index alone.
+  execFileSync('git', ['-C', packRoot, 'add', '-f', 'notes/a.log']);
+  await later(t, node.io);
+  await later(t, node.io);
+  assert.equal(collections, 2, 'the index');
+  appendFileSync(exclude, 'docs/\n');
+  await later(t, node.io);
+  await later(t, node.io);
+  assert.equal(collections, 3, 'info/exclude');
+  // `notes/` holds no file the pack owned until now.
+  writeFileSync(fresh, 'note\n');
+  await later(t, node.io);
+  await later(t, node.io);
+  assert.equal(collections, 4, 'a new file in a directory without owned files');
 });
 
 test('concurrent commands after a change share one collection', async (t) => {
@@ -194,24 +290,67 @@ test('concurrent commands after a change share one collection', async (t) => {
   assert.equal(collections, 2);
 });
 
-test('an input written while the bundle was being collected is collected again', async (t) => {
+test('an input written in the same coarse timestamp tick as a collection is collected again', async (t) => {
   aheadClock(t);
   const node = fakeNode();
   t.after(() => writeFileSync(script, 'echo one\n'));
   duringCollection = () => {
     duringCollection = undefined;
     writeFileSync(script, 'echo four\n');
-    // Written now, by the test clock: after the collection started.
-    utimesSync(script, Date.now() / 1000, Date.now() / 1000);
+    // A whole-second timestamp, as some filesystems keep: half a second before the collection began.
+    const second = Math.floor(Date.now() / 1000);
+    utimesSync(script, second, second);
   };
   await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
   // Within the check interval: the bundle cannot be trusted, so it is collected again at once.
   t.mock.timers.tick(1);
   await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
   assert.equal(collections, 2);
-  t.mock.timers.tick(3_000);
+  // Still within the settling margin of that write; 3 s later it is settled and the bundle held.
+  await later(t, node.io);
+  assert.equal(collections, 3);
+  await later(t, node.io);
+  assert.equal(collections, 3, 'and then held');
+});
+
+test('a failed check does not fail the commands after it', async (t) => {
+  aheadClock(t);
+  const node = fakeNode();
+  const first = await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
+  poolUnreadable = true;
+  await assert.rejects(later(t, node.io), /EMFILE/);
+  poolUnreadable = false;
+  assert.equal(await later(t, node.io), first);
+  assert.equal(collections, 1);
+});
+
+test('a failed collection does not fail the commands after it', async (t) => {
+  aheadClock(t);
+  const node = fakeNode();
+  const leak = path.join(packRoot, 'leak.md');
+  t.after(() => rmSync(leak, { force: true }));
   await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
-  assert.equal(collections, 2, 'and then held');
+  writeFileSync(leak, 'cat /Users/someone/secret\n');
+  await assert.rejects(later(t, node.io), /not portable/);
+  rmSync(leak);
+  await later(t, node.io);
+  assert.equal(collections, 3);
+});
+
+test('a support directory replaced by a file is collected again', async (t) => {
+  aheadClock(t);
+  const node = fakeNode();
+  const sub = path.dirname(nested);
+  t.after(() => {
+    rmSync(sub, { recursive: true, force: true });
+    mkdirSync(sub);
+    writeFileSync(nested, 'echo nested\n');
+  });
+  const before = await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
+  rmSync(sub, { recursive: true });
+  writeFileSync(sub, 'echo now a file\n');
+  assert.notEqual(await later(t, node.io), before);
+  assert.equal(collections, 2);
 });
 
 test('a delivery in flight keeps its budget while more commands arrive', async (t) => {

@@ -1,6 +1,7 @@
 import { type Stats } from 'node:fs';
 import { lstat, stat } from 'node:fs/promises';
 
+import { isRacyStamp } from '@farmslot/protocol';
 import { legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { packMachineNames } from '@farmslot/protocol/node/pack-portability';
 // node-support/remote-command.ts — run remote farm scripts from the bundle that
@@ -23,6 +24,7 @@ import {
   collectNodeSupportBundle,
   ensureNodeSupportBundle,
   loadProjectVarsIfAny,
+  type NodeSupportBundleInputs,
   nodeSupportBundlePaths,
   type NodeSupportBundleState,
   type NodeSupportIo,
@@ -69,10 +71,26 @@ interface LocalBundle {
 }
 
 /**
- * What a file or directory looked like: modification and change times, size, inode and mode,
- * following links. Any write, rename over it or mode change gives another stamp.
+ * What a path looked like: modification and change times, size, inode and mode, or `missing`.
+ * Any write, rename over it or mode change gives another stamp.
  */
 type InputStamp = string;
+
+/** A path a bundle was built from, and how it is stamped. */
+interface BundleInput {
+  path: string;
+  /** Through links, as the support collection reads it; otherwise the path itself. */
+  follow: boolean;
+  /** Absent is a state, not a change: an ignore file or Git index that may appear. */
+  optional: boolean;
+}
+
+/** The inputs of a collection and their stamps when it finished, in the same order. */
+interface HeldInputs {
+  list: BundleInput[];
+  stamps: InputStamp[];
+  machines: string;
+}
 
 /**
  * A collected bundle, kept until something it was built from changes (collecting it walks, hashes
@@ -82,10 +100,10 @@ interface HeldBundle {
   pathsKey: string;
   bundle: Promise<LocalBundle>;
   /**
-   * Set when the collection finished: the stamp of every input it read and the machine names it
-   * checked against, or `changed` when an input changed while it ran (collect again next time).
+   * Set when the collection finished: its inputs, or `changed` when one changed too close to the
+   * collection for its stamp to be trusted (collect again next time).
    */
-  inputs?: { stamps: Map<string, InputStamp>; machines: string } | 'changed';
+  inputs?: HeldInputs | 'changed';
   checkedAt: number;
   check?: Promise<boolean>;
 }
@@ -145,48 +163,62 @@ export function remapRemoteFarmRefs(
   );
 }
 
+/** The path, or a directory on the way to it, is gone: replaced by a file counts too. */
 function isMissing(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException).code === 'ENOENT';
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === 'ENOENT' || code === 'ENOTDIR';
 }
 
-/**
- * Stamps of these paths, a few at a time; a path that no longer exists is `missing`. A link is
- * stamped by its target, or by itself when the target is missing: a pack ships a dangling link
- * as its target text.
- */
-async function stampInputs(paths: readonly string[]): Promise<Map<string, InputStamp>> {
-  const stamps = new Map<string, InputStamp>();
+/** Stamps of these inputs, a few at a time, in the same order. */
+async function stampInputs(inputs: readonly BundleInput[]): Promise<InputStamp[]> {
+  const stamps: InputStamp[] = [];
   let next = 0;
   const worker = async () => {
-    while (next < paths.length) {
-      const file = paths[next++];
+    while (next < inputs.length) {
+      const index = next++;
+      const input = inputs[index];
       let info: Stats;
       try {
-        info = await stat(file);
+        info = await (input.follow ? stat : lstat)(input.path);
       } catch (error) {
         // Any failure but a missing path is not a stamp.
         if (!isMissing(error)) throw error;
-        try {
-          info = await lstat(file);
-        } catch (linkError) {
-          if (!isMissing(linkError)) throw linkError;
-          // Deleted since it was read: a change the comparison sees.
-          stamps.set(file, 'missing');
-          continue;
-        }
+        stamps[index] = 'missing';
+        continue;
       }
-      stamps.set(file, `${info.mtimeMs}:${info.ctimeMs}:${info.size}:${info.ino}:${info.mode}`);
+      stamps[index] = `${info.mtimeMs}:${info.ctimeMs}:${info.size}:${info.ino}:${info.mode}`;
     }
   };
-  await Promise.all(Array.from({ length: Math.min(STAMP_CONCURRENCY, paths.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(STAMP_CONCURRENCY, inputs.length) }, worker));
   return stamps;
 }
 
-/** A stamp written at or after `since`: the file changed while it was being read. */
-function stampedSince(stamp: InputStamp, since: number): boolean {
-  if (stamp === 'missing') return true;
+/**
+ * Whether an input's stamp cannot vouch for the bytes collected: it vanished, or it changed too
+ * close to the collection's start for a later write to be sure to change the stamp (isRacyStamp:
+ * coarse timestamps).
+ */
+function unsettled(input: BundleInput, stamp: InputStamp, startedAt: number): boolean {
+  if (stamp === 'missing') return !input.optional;
   const [mtimeMs, ctimeMs] = stamp.split(':').map(Number);
-  return mtimeMs >= since || ctimeMs >= since;
+  return isRacyStamp(Math.max(mtimeMs, ctimeMs), startedAt);
+}
+
+function bundleInputs(inputs: NodeSupportBundleInputs): BundleInput[] {
+  const seen = new Set<string>();
+  const list: BundleInput[] = [];
+  const add = (paths: string[], follow: boolean, optional: boolean) => {
+    for (const file of paths) {
+      const key = `${follow}:${file}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      list.push({ path: file, follow, optional });
+    }
+  };
+  add(inputs.followed, true, false);
+  add(inputs.exact, false, false);
+  add(inputs.optional, false, true);
+  return list;
 }
 
 function collectLocalBundle(projectName: string, paths: string[], pathsKey: string): HeldBundle {
@@ -194,13 +226,12 @@ function collectLocalBundle(projectName: string, paths: string[], pathsKey: stri
   let held: HeldBundle | undefined;
   const bundle = (async (): Promise<LocalBundle> => {
     const collected = await collectNodeSupportBundle(projectName, paths);
-    const stamps = await stampInputs([
-      ...new Set([...collected.inputs.files, ...collected.inputs.directories]),
-    ]);
+    const list = bundleInputs(collected.inputs);
+    const stamps = await stampInputs(list);
     if (held) {
-      held.inputs = [...stamps.values()].some((stamp) => stampedSince(stamp, startedAt))
+      held.inputs = list.some((input, index) => unsettled(input, stamps[index], startedAt))
         ? 'changed'
-        : { stamps, machines: collected.inputs.machines.join('\0') };
+        : { list, stamps, machines: collected.inputs.machines.join('\0') };
       held.checkedAt = Date.now();
     }
     return { hash: collected.manifest.hash, paths, collected };
@@ -210,6 +241,15 @@ function collectLocalBundle(projectName: string, paths: string[], pathsKey: stri
   return held;
 }
 
+/** Whether the pool machine names and every input's stamp are as the collection left them. */
+async function inputsUnchanged(held: HeldBundle, inputs: HeldInputs): Promise<boolean> {
+  if (packMachineNames(poolDirectory()).join('\0') !== inputs.machines) return false;
+  const now = await stampInputs(inputs.list);
+  if (now.some((stamp, index) => stamp !== inputs.stamps[index])) return false;
+  held.checkedAt = Date.now();
+  return true;
+}
+
 /** Whether nothing the held bundle was built from has changed; one check at a time. */
 async function heldBundleCurrent(held: HeldBundle): Promise<boolean> {
   const inputs = held.inputs;
@@ -217,17 +257,10 @@ async function heldBundleCurrent(held: HeldBundle): Promise<boolean> {
   if (inputs === undefined) return true;
   if (inputs === 'changed') return false;
   if (Date.now() - held.checkedAt < LOCAL_CHECK_INTERVAL_MS) return true;
-  held.check ??= (async () => {
-    try {
-      if (packMachineNames(poolDirectory()).join('\0') !== inputs.machines) return false;
-      const now = await stampInputs([...inputs.stamps.keys()]);
-      for (const [file, stamp] of inputs.stamps) if (now.get(file) !== stamp) return false;
-      held.checkedAt = Date.now();
-      return true;
-    } finally {
-      held.check = undefined;
-    }
-  })();
+  // Cleared once settled, after it is stored: a failed check never stays for the next command.
+  held.check ??= inputsUnchanged(held, inputs).finally(() => {
+    held.check = undefined;
+  });
   return held.check;
 }
 
