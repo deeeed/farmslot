@@ -7,11 +7,14 @@ import { mock, test } from 'node:test';
 process.env.FARMSLOT_RUNS_DIR = mkdtempSync(path.join(os.tmpdir(), 'farmslot-ci-merge-test-'));
 
 const prStatusCalls: number[] = [];
+/** Runs while the PR read is still in flight, before its response arrives. */
+let whileReading: (() => void) | undefined;
 
 mock.module('../methods/pr.js', {
   namedExports: {
     prStatus: async (params: { pr: number }) => {
       prStatusCalls.push(params.pr);
+      whileReading?.();
       return {
         pr: {
           prNumber: params.pr,
@@ -45,7 +48,7 @@ mock.module('../methods/pr.js', {
 // only sets poll timings, which a merged-on-first-poll PR never reaches.
 
 const { monitorCI } = await import('./service.js');
-const { createRun, getRun, loadAllRuns } = await import('../runs/store.js');
+const { createRun, getRun, loadAllRuns, updateRun } = await import('../runs/store.js');
 
 test('ci-watch records the merge it observes so downstream gates can see it', async () => {
   // The gateway learns a PR merged in exactly one place: this poll. It used to
@@ -68,4 +71,26 @@ test('ci-watch records the merge it observes so downstream gates can see it', as
   const observed = getRun(run.id);
   assert.equal(observed?.prState, 'MERGED', 'the merge observation must be persisted on the run');
   assert.equal(observed?.mergedAt, '2026-07-27T12:50:12Z');
+});
+
+test('a merge response for a PR the run no longer links does not settle it', async () => {
+  await loadAllRuns();
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000047',
+    prNumber: 406,
+  });
+  // Force-complete attaches another PR while the read for PR 406 is in flight.
+  whileReading = () => updateRun(run.id, { prNumber: 407 });
+  try {
+    const outcome = await monitorCI(run.id, 406, 'deeeed/farmslot', new AbortController().signal);
+    assert.equal(outcome.result, 'aborted');
+  } finally {
+    whileReading = undefined;
+  }
+  const observed = getRun(run.id);
+  assert.equal(observed?.prNumber, 407);
+  assert.equal(observed?.prState, undefined, "PR 406's merge must not settle PR 407");
+  assert.equal(observed?.mergedAt, undefined);
 });

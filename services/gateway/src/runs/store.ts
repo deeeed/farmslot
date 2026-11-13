@@ -1389,22 +1389,24 @@ function retainDecisionHistory(run: Run, decisions: RunDecision[]): RunDecision[
   return retired;
 }
 
-/** The PR a run links to, as its number and the repository and number of its PR link. */
+/**
+ * The PR a run links to: its `prNumber`, which is authoritative, and the repository of its PR
+ * link. A link's own number can be a guess (the highest number the ticket names), so it is not
+ * compared.
+ */
 function linkedPRIdentity(run: Pick<Run, 'prNumber' | 'links'>): {
   number?: number;
-  link?: string;
+  repo?: string;
 } {
   const url = run.links?.find((link) => link.label.toLowerCase() === 'pr')?.url;
+  if (url === undefined) return { number: run.prNumber };
   const pull = parseGitHubPullUrl(url);
-  return {
-    number: run.prNumber,
-    link: pull ? `${pull.repo.toLowerCase()}#${pull.number}` : url?.toLowerCase(),
-  };
+  return { number: run.prNumber, repo: (pull ? pull.repo : url).toLowerCase() };
 }
 
 /**
  * A recorded merge or close (`prState`, `mergedAt`) describes the PR the run was linked to when
- * it was observed. Relinking to another PR number, or to a PR link in another repository,
+ * it was observed. A different PR number, a PR link in another repository, or a removed PR link
  * clears them, so nothing reads the old PR's outcome as the new one's. Adding a first PR link
  * is not a relink.
  */
@@ -1416,8 +1418,7 @@ export function prSettlementCleared(
   const before = linkedPRIdentity(run);
   const after = linkedPRIdentity(next);
   const relinked =
-    before.number !== after.number ||
-    Boolean(before.link && after.link && before.link !== after.link);
+    before.number !== after.number || (before.repo !== undefined && before.repo !== after.repo);
   return relinked ? { prState: undefined, mergedAt: undefined } : undefined;
 }
 

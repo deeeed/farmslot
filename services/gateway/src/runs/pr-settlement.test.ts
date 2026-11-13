@@ -86,3 +86,39 @@ test('retention holds a relinked run whose new PR cannot be read', async (t) => 
   });
   assert.equal(runRetentionHold(relinked, context), 'PR state unknown');
 });
+
+const jira = { label: 'Jira', url: 'https://jira.example/browse/SETTLEMENT-1' };
+const prLink = (repo: string, number: number) => ({
+  label: 'PR',
+  url: `https://github.com/${repo}/pull/${number}`,
+});
+
+test('a removed PR link clears the record, so a later publication elsewhere starts unsettled', async (t) => {
+  const run = mergedRun(t, 'SETTLEMENT-REMOVED', 9109);
+  updateRun(run.id, { links: [jira, prLink('owner/repo', 9109)] });
+  // A link refresh that keeps only Jira drops the PR link.
+  updateRun(run.id, { links: [jira] });
+  assert.equal(getRun(run.id)?.prState, undefined);
+  await recordRunPRPublication(run.id, 'owner/other', 9109);
+  assert.deepEqual(settlement(run.id), {
+    prNumber: 9109,
+    prState: undefined,
+    mergedAt: undefined,
+  });
+});
+
+test('a links-only move to another repository clears; a different guessed link number keeps', async (t) => {
+  const moved = mergedRun(t, 'SETTLEMENT-LINKS', 9110);
+  updateRun(moved.id, { links: [prLink('owner/repo', 9110)] });
+  // The link names the highest number the ticket mentions; prNumber stays authoritative.
+  updateRun(moved.id, { links: [prLink('Owner/Repo', 9999)] });
+  assert.equal(getRun(moved.id)?.prState, 'MERGED');
+  updateRun(moved.id, { links: [prLink('owner/other', 9110)] });
+  assert.equal(getRun(moved.id)?.prState, undefined);
+});
+
+test('values the relinking update sets itself win over the cleared record', async (t) => {
+  const run = mergedRun(t, 'SETTLEMENT-EXPLICIT', 9111);
+  updateRun(run.id, { prNumber: 9112, prState: 'CLOSED', mergedAt: null });
+  assert.deepEqual(settlement(run.id), { prNumber: 9112, prState: 'CLOSED', mergedAt: null });
+});
