@@ -7,7 +7,7 @@
     "nodes": {
       "ref-budget": {
         "action": "command",
-        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx services/gateway/src/host-services/workspace-spawn-benchmark.live.ts --remote-refs",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx services/gateway/src/host-services/workspace-spawn-benchmark.live.ts --remote-refs --assert-ref-budget",
         "timeout_ms": 120000,
         "intent": "Published workspaces retain their real verdicts while default and publication queries reuse exact remote/ref/authority observations. Count shells and nested Git launches over 630 logical seconds; every fixture and background child is cleaned.",
         "next": "dispatch-smoke"

@@ -202,6 +202,13 @@ try {
     .filter((values, index) =>
       values.some((value, slot) => value !== observations[index][slot]),
     ).length;
+  const gitProcesses = remoteRefs
+    ? (await readFile(gitCount, 'utf8')).trim().split('\n').filter(Boolean).length
+    : undefined;
+  if (process.argv.includes('--assert-ref-budget')) {
+    assert.ok(parentShells + childShells <= 720, 'passive ref shell budget exceeded');
+    assert.ok(gitProcesses !== undefined && gitProcesses <= 2400, 'nested Git budget exceeded');
+  }
   console.log(
     JSON.stringify(
       {
@@ -210,9 +217,7 @@ try {
         slots: count,
         unpublishedSlots: remoteRefs ? 0 : count / 2,
         remoteRefCase: remoteRefs,
-        gitProcesses: remoteRefs
-          ? (await readFile(gitCount, 'utf8')).trim().split('\n').filter(Boolean).length
-          : undefined,
+        gitProcesses,
         rounds,
         logicalSampleSeconds: remoteRefs ? rounds * 30 : 48,
         elapsedMs,
