@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync, fork } from 'node:child_process';
+import { execFileSync, fork, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -97,8 +97,26 @@ test('the forked child probes a local machine and walks decisions', async () => 
   );
   assert.equal(output.stdout, 'background-read');
   assert.equal(output.exitCode, 0);
+  const cwdRead = await background.request(
+    'commands.read',
+    { command: 'sleep 0.02; printf "%s\\n" "$$"; pwd', cwd: checkout, timeout: 5000 },
+    { deadlineMs: 10000 },
+  );
+  const [group, commandCwd] = cwdRead.stdout.trim().split('\n');
+  const { realpath } = await import('node:fs/promises');
+  assert.equal(
+    commandCwd,
+    await realpath(checkout),
+    'the command retains its requested working directory',
+  );
+  const census = spawnSync('lsof', ['-a', '-g', group, '-d', 'cwd', '-Fn'], { encoding: 'utf8' });
+  assert.ok(census.status === 0 || census.status === 1, 'command-group cwd census unavailable');
+  assert.ok(
+    !census.stdout.split('\n').includes(`n${await realpath(checkout)}`),
+    'a completed read must leave no checkout occupant in its command group',
+  );
   const status = background.status();
-  assert.equal(status.exec['commands.read']?.shell?.calls, 1);
+  assert.equal(status.exec['commands.read']?.shell?.calls, 2);
   const abort = new AbortController();
   const marker = path.join(root, 'cancel-read-started');
   const heldRead = background.request(
