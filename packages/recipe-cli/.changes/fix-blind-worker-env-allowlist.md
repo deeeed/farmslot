@@ -1,0 +1,1 @@
+- Keep blind recipe runs and calls on their allocated trial browser when slot context or explicit CDP options name the protected slot browser.

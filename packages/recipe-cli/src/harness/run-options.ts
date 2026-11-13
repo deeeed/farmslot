@@ -3,6 +3,7 @@
 import type { RecipeRunOptions } from '@farmslot/adapter-sdk';
 
 import { harnessAdapter } from './adapters.js';
+import { blindRecipeCdpPort } from './blind-runtime.js';
 import { type CliOptions, optionString } from './parse-args.js';
 import { explicitRecipeTrustOptions } from './trust.js';
 
@@ -23,7 +24,7 @@ export function recipeRunOptionsFromCli(adapter: string, options: CliOptions): R
   const hud = optionString(options, 'hud');
   const platform = harnessAdapter(adapter).run?.platformOptions?.(options);
   return {
-    cdpPort: optionString(options, 'cdpPort'),
+    cdpPort: blindRecipeCdpPort() ?? optionString(options, 'cdpPort'),
     watcherPort: optionString(options, 'watcherPort'),
     slot: optionString(options, 'slot'),
     validationRuntimeDir: optionString(options, 'validationRuntimeDir'),

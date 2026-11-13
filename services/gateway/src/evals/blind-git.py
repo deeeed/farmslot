@@ -9,6 +9,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 from urllib.parse import urlsplit
 
 os.umask(0o077)
@@ -323,10 +324,20 @@ def sandbox_profile(spec, capsule, tmux_sockets=None, network_ports=None):
     capsules = {path.parent / '.farmslot-blind-evals' for path in [repo] + checkouts}
     denied += sorted(capsules) + [(Path.home() / '.config' / 'gh').resolve()]
     quote = lambda path: json.dumps(str(path), ensure_ascii=False)
+    # Shared temp is never worker-owned. Reopen only this checkout's admitted
+    # writes below and the boundary-allocated temp directory, not ambient TMPDIR.
+    temporary = capsule / 'boundary/tmp'
+    shared_temp = ['/tmp', '/var/tmp', '/var/folders', tempfile.gettempdir()]
     rules = ['(version 1)', '(allow default)',
+                      *['(deny file-write* (subpath %s))' % quote(p)
+                        for value in shared_temp for p in path_aliases(value)],
+                      *([] if spec.get('proofBoundary') else [
+                          '(allow file-write* (subpath %s))' % quote(repo)]),
                       *worker_access_rules(repo),
                       '(deny file-read* ' + ' '.join('(subpath %s)' % quote(path) for path in denied) + ')',
                       '(allow file-read* (subpath %s))' % quote((capsule / 'boundary').resolve())]
+    rules += ['(allow file-write* (literal %s))' % quote((capsule / 'boundary' / name).resolve())
+              for name in ['attempts.log', 'git-trace.jsonl']]
     if spec.get('proofBoundary'):
         scope = proof_scope(spec)
         rules += ['(deny file-read* ' + ' '.join('(subpath %s)' % quote(p) for p in scope['denied']) + ')',
@@ -338,8 +349,52 @@ def sandbox_profile(spec, capsule, tmux_sockets=None, network_ports=None):
     rules += ['(deny file-write* (subpath %s))' % quote(Path(os.path.expanduser(p)).resolve())
               for p in spec.get('farmConfigRoots', [])]
     rules += [tmux_socket_rules(tmux_sockets or []), gateway_network_rules(spec, network_ports)]
+    if temporary.exists():
+        rules += ['(allow file-write* (subpath %s))' % quote(p) for p in path_aliases(temporary)]
+        broker = worker_temp(capsule) / 'broker'
+        # Use only physical allocation aliases. Ordinary SBPL strings decode
+        # JSON escapes before regex compilation; #"..." retains backslashes.
+        rules += ['(allow network-outbound (remote unix-socket (regex %s)))'
+                  % quote('^' + re.escape(p) + '/[^/]+$') for p in path_aliases(broker)]
+        # Only bind sockets directly in this fixed directory. In particular a
+        # directory rename must never import a foreign socket into an allowance.
+        rules += ['(deny file-write* file-link (require-all (subpath %s) '
+                  '(require-not (vnode-type SOCKET))))' % quote(p)
+                  for p in path_aliases(broker)]
+        # Also block two-step imports: move a containing directory into general
+        # temp, then rename/link its socket into the broker. Chromium may bind
+        # its singleton in general temp, but cannot move it into the broker.
+        rules += ['(deny file-write-unlink file-link (require-all (vnode-type SOCKET) '
+                  '(require-not (require-any ' + ' '.join('(subpath %s)' % quote(p)
+                      for p in path_aliases(broker)) + '))))']
+        # Keep the allocated root and its routing link fixed across retained launches.
+        rules += ['(deny file-write* (literal %s))' % quote(p) for p in path_aliases(temporary)]
+        rules += rename_guard_rules([temporary.resolve() / 'owned-entry'])
+    # Check the source vnode as well as the destination path: an external
+    # control socket must not acquire the trial directory's connect allowance.
+    rules += ['(deny file-write* file-link (require-all (vnode-type SOCKET) '
+              '(require-not (require-any ' + ' '.join('(subpath %s)' % quote(p)
+                  for p in path_aliases(temporary)) + '))))']
+    rules += ['(deny file-write* (subpath %s))' % quote((capsule / 'boundary/bin').resolve())]
     rules += worker_private_rules(capsule)
     return '\n'.join(rules + [''])
+
+
+def worker_temp(capsule):
+    link = capsule / 'boundary/tmp'
+    directory = link.resolve()
+    if (not link.is_symlink() or directory.parent != Path('/private/tmp')
+            or not re.fullmatch(r'fs-blind-[a-z0-9_]+', directory.name) or not directory.is_dir()
+            or directory.stat().st_uid != os.getuid() or directory.stat().st_mode & 0o077):
+        raise RuntimeError('Blind worker temporary directory is not private')
+    return directory
+
+
+def remove_worker_temp(capsule):
+    link = capsule / 'boundary/tmp'
+    if link.exists():
+        shutil.rmtree(worker_temp(capsule))
+        link.unlink()
 
 
 def inside(path, root):
@@ -425,6 +480,21 @@ def prepare_boundary(spec, capsule):
     root = capsule / 'boundary'
     (root / 'gh-config').mkdir(parents=True, exist_ok=True)
     (root / 'bin').mkdir(exist_ok=True)
+    # Keep socket paths below sockaddr_un's macOS limit even for deep capsules.
+    temporary = root / 'tmp'
+    if not temporary.is_symlink():
+        temporary.symlink_to(tempfile.mkdtemp(prefix='fs-blind-', dir='/private/tmp'))
+    broker = worker_temp(capsule) / 'broker'
+    broker.mkdir(mode=0o700, exist_ok=True)
+    if broker.is_symlink() or broker.stat().st_uid != os.getuid() or broker.stat().st_mode & 0o077:
+        raise RuntimeError('Blind worker broker directory is not private')
+    # macOS refuses setuid exec under Seatbelt. A non-setuid, ad-hoc signed
+    # system ps retains its CLI and sandbox, without a privileged helper.
+    ps = root / 'bin/ps'
+    shutil.copyfile('/bin/ps', ps)
+    ps.chmod(0o700)
+    subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', str(ps)],
+                   check=True, capture_output=True)
     script = BOUNDARY_SCRIPT.replace('ATTEMPTS', shlex.quote(str(root / 'attempts.log')))
     for name in ['gh', 'deny']:
         (root / 'bin' / name).write_text(script)
@@ -789,6 +859,7 @@ def restore(spec):
     if any(state.get(key) != spec.get(key) for key in ['runId', 'repo', 'baseSha', 'branch', 'slotId', 'slotEpoch', 'referenceCommits', 'proof']):
         raise RuntimeError('Blind trial restoration owner does not match')
     if state['phase'] == 'restored':
+        remove_worker_temp(capsule)
         return {'status': 'restored', 'runId': spec['runId']}
     original = capsule / 'original.entry'
     if state['phase'] == 'preparing':
@@ -804,6 +875,7 @@ def restore(spec):
         restore_submodule_entries(state)
         state['phase'] = 'restored'
         save(journal, state)
+        remove_worker_temp(capsule)
         return {'status': 'restored', 'runId': spec['runId']}
     retained = capsule / 'candidate.git'
     if state['phase'] != 'restoring':
@@ -851,6 +923,7 @@ def restore(spec):
     save(journal, state)
     for name in ['base.objects', 'candidate.objects']:
         (capsule / name).unlink(missing_ok=True)
+    remove_worker_temp(capsule)
     return {'status': 'restored', 'runId': spec['runId'], 'headSha': head}
 
 
