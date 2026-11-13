@@ -167,10 +167,11 @@ async function locate(request, context) {
 const measured = new Map();
 const results = [];
 for (const request of input) {
+  let usageWindow;
   try {
     const context = await contextFor(request);
+    usageWindow = context.usageWindow || request.usageWindow;
     const file = await locate(request, context);
-    const usageWindow = context.usageWindow || request.usageWindow;
     const key = JSON.stringify([request.provider, request.runnerSessionId, file, request.liteLlmPrices, usageWindow]);
     let output = measured.get(key);
     if (!output) {
@@ -179,8 +180,8 @@ for (const request of input) {
         throw Error('Installed accounting module did not apply the requested run usage window');
       measured.set(key, output);
     }
-    results.push({ key: request.key, runnerSessionId: request.runnerSessionId, sessionPath: file, output });
-  } catch (error) { results.push({ key: request.key, runnerSessionId: request.runnerSessionId, error: error.message }); }
+    results.push({ key: request.key, runnerSessionId: request.runnerSessionId, sessionPath: file, output, usageWindow });
+  } catch (error) { results.push({ key: request.key, runnerSessionId: request.runnerSessionId, error: error.message, usageWindow }); }
 }
 process.stdout.write(JSON.stringify(results));
 `;

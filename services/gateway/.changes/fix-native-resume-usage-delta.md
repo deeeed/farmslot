@@ -1,1 +1,1 @@
-- Attribute resumed native session tokens and cost using node journal task boundaries, preserve deltas through family and gate totals and eval receipt replay, and reconcile later whole-session readings.
+- Attribute resumed native session tokens and cost using node journal task boundaries, including retained archives after original transcripts are pruned, fail visibly when native boundaries are unavailable, preserve deltas through family and gate totals and eval receipt replay, and reconcile later whole-session readings.

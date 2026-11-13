@@ -542,7 +542,6 @@ async function summarizeCodex(
         previousCumulative = usage;
       }
       if (timestamp < window.startedAt) {
-        const info = object(payload.info) ? payload.info : {};
         const usage = info.total_token_usage ?? obj.usage;
         if (object(usage)) baseline = usage;
         continue;
