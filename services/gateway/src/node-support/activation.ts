@@ -94,8 +94,14 @@ export function referencedNodeSupportHashes(runs: readonly Run[], supportRoot?: 
   );
 }
 
-/** One-shot activators do not have the gateway's run store loaded in memory. */
-export async function persistedNodeSupportRuns(directory: string): Promise<Run[]> {
+/**
+ * One-shot activators do not have the gateway's run store loaded in memory. A gateway passes its
+ * live run ids: their records win over disk, so their files are not read.
+ */
+export async function persistedNodeSupportRuns(
+  directory: string,
+  liveRunIds: ReadonlySet<string> = new Set(),
+): Promise<Run[]> {
   let names: string[];
   try {
     names = await readdir(directory);
@@ -105,6 +111,7 @@ export async function persistedNodeSupportRuns(directory: string): Promise<Run[]
   }
   const runs: Run[] = [];
   for (const name of names.filter((name) => name.endsWith('.json'))) {
+    if (liveRunIds.has(name.slice(0, -'.json'.length))) continue;
     let content: string;
     try {
       content = await readFile(path.join(directory, name), 'utf8');
@@ -157,16 +164,19 @@ export async function nodeSupportRetentionReferences(
 ): Promise<NodeSupportRetentionReferences> {
   // Transport probes import this module while runner observability is initializing.
   // Read the run store only for an activation, after that import graph has settled.
-  const { listRuns, runsDirectory, getArchivedRuns } = await import('../runs/store.js');
+  const { getAllRuns, runsDirectory, getArchivedRuns } = await import('../runs/store.js');
   const generation = await nextInventoryGeneration(runsDirectory());
-  // Loaded records win over disk while their latest status is being persisted.
+  const archived = await getArchivedRuns();
+  // Loaded records win over disk while their latest status is being persisted. Live runs are
+  // taken before the disk read (their files are skipped) and after it (runs created meanwhile).
+  const live = getAllRuns();
+  const persisted = await persistedNodeSupportRuns(
+    runsDirectory(),
+    new Set(live.map((run) => run.id)),
+  );
   const runs = [
     ...new Map(
-      [
-        ...(await getArchivedRuns()),
-        ...(await persistedNodeSupportRuns(runsDirectory())),
-        ...listRuns().runs,
-      ].map((run) => [run.id, run]),
+      [...archived, ...persisted, ...live, ...getAllRuns()].map((run) => [run.id, run]),
     ).values(),
   ].filter((run) => !isHistoricalRun(run));
   const selectionPaths = [];
