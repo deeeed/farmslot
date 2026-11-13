@@ -713,3 +713,122 @@ print('\\n'.join(blind['slot_runtime_rules'](spec, pathlib.Path(spec['repo']), [
     assert.ok(profile.includes(`(literal ${JSON.stringify(path.join(root, 'other'))})`));
   }
 });
+
+test('blind profile denies host credential stores last, except the trial own paths and pinned code', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'seatbelt-host-')));
+  t.after(() => rmSync(root, { recursive: true }));
+  const home = path.join(root, 'home');
+  // Paths only: rules come from names; the farm homes are discovered as directories.
+  for (const name of ['.farmslot-dev', '.farmslot-rollout-backups'])
+    mkdirSync(path.join(home, name), { recursive: true });
+  const repo = path.join(root, 'ws/product');
+  const capsule = path.join(root, 'ws/.farmslot-blind-evals/slot/run-1');
+  mkdirSync(capsule, { recursive: true });
+  writeFileSync(path.join(capsule, 'state.json'), '{"originalIsDirectory":true}');
+  const data = path.join(root, 'data');
+  const spec = {
+    repo,
+    hostDeniedRoots: [data],
+    hostReadableRoots: [path.join(data, 'state/task-pins')],
+  };
+  const result = spawnSync(
+    'python3',
+    [
+      '-c',
+      `import json, os, pathlib, runpy, sys
+from unittest.mock import patch
+blind = runpy.run_path(sys.argv[1], run_name='fixture')
+spec, capsule = json.loads(sys.argv[2]), pathlib.Path(sys.argv[3])
+with patch.dict(os.environ, {'HOME': sys.argv[4], 'FARMSLOT_BLIND_DENIED_PATHS': sys.argv[5]}, clear=True):
+    profile = blind['sandbox_profile'](spec, capsule, [], set())
+    volume = blind['host_secret_paths']({'repo': '/Volumes/fixture/dev/org/product'}, pathlib.Path('/Volumes/fixture/dev/org/product'), capsule, [])
+print(json.dumps({'profile': profile, 'volume': [str(p) for p in volume]}))`,
+      fileURLToPath(new URL('./blind-git.py', import.meta.url)),
+      JSON.stringify(spec),
+      capsule,
+      home,
+      path.join(root, 'extra'),
+    ],
+    { encoding: 'utf8', timeout: 4500 },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const { profile, volume } = JSON.parse(result.stdout) as { profile: string; volume: string[] };
+  const lines = profile.trim().split('\n');
+  const q = JSON.stringify;
+  const denial = (operation: string, store: string) =>
+    lines.findIndex(
+      (line) =>
+        line.startsWith(`(deny ${operation} (subpath ${q(store)})`) ||
+        line.startsWith(`(deny ${operation} (require-all (subpath ${q(store)}) `),
+    );
+  const stores = [
+    ...[
+      '.claude',
+      '.codex',
+      '.pi',
+      '.grok',
+      '.config',
+      '.farmslot',
+      '.farmslot-dev',
+      '.farmslot-rollout-backups',
+      'farm-paths-brief',
+      'xreview',
+      'Library/Application Support',
+      'Library/Preferences',
+      'Library/HTTPStorages',
+      'Library/Keychains',
+      'Library/Cookies',
+    ].map((name) => path.join(home, name)),
+    data,
+    path.join(root, 'extra'),
+    path.join(root, 'ws/.farmslot-runtime/product/.blind-pi'),
+  ];
+  const lastAllow = Math.max(
+    profile.lastIndexOf('(allow file-read*'),
+    profile.lastIndexOf('(allow file-write*'),
+  );
+  const first = Math.min(
+    ...stores.map((store) => denial('file-read*', store)).filter((index) => index >= 0),
+  );
+  for (const store of stores)
+    for (const operation of ['file-read*', 'file-write*', 'file-link']) {
+      const index = denial(operation, store);
+      assert.ok(index >= 0, `${operation} ${store}`);
+      // No later allowance can reopen a store.
+      assert.ok(profile.indexOf(lines[index]!) > lastAllow, `${operation} ${store} is not last`);
+    }
+  for (const line of lines.slice(first))
+    assert.match(line, /^\(deny |^\(allow file-read-metadata \(literal "[^"]+"\)\)$/u, line);
+  // Reads keep pinned task CLIs, installed code and Pi's tools; writes keep none of them.
+  const farm = lines[denial('file-read*', path.join(home, '.farmslot-dev'))]!;
+  for (const kept of ['task-pins', 'state/task-pins', 'code'])
+    assert.ok(farm.includes(`(subpath ${q(path.join(home, '.farmslot-dev', kept))})`), kept);
+  assert.ok(
+    lines[denial('file-read*', data)]!.includes(
+      `(subpath ${q(path.join(data, 'state/task-pins'))})`,
+    ),
+  );
+  assert.ok(
+    lines[denial('file-read*', path.join(home, '.pi'))]!.includes(
+      `(subpath ${q(path.join(home, '.pi/agent/bin'))})`,
+    ),
+  );
+  for (const store of [path.join(home, '.farmslot-dev'), path.join(home, '.pi'), data])
+    assert.ok(lines.includes(`(deny file-write* (subpath ${q(store)}))`), store);
+  // Only this trial's Pi home survives in the slot runtime's Pi homes.
+  const piHomes = path.join(root, 'ws/.farmslot-runtime/product/.blind-pi');
+  for (const operation of ['file-read*', 'file-write*', 'file-link']) {
+    const rule = lines[denial(operation, piHomes)]!;
+    assert.ok(rule.includes(`(require-not (require-any `), rule);
+    assert.ok(rule.includes(`(subpath ${q(path.join(piHomes, 'run-1'))})`), rule);
+  }
+  assert.ok(
+    profile.includes(`(allow file-read-metadata (literal ${q(path.join(home, '.pi/agent'))}))`),
+  );
+  // A rename of an ancestor cannot carry a store out of its denial.
+  assert.ok(profile.includes(`(literal ${q(path.join(home, 'Library'))})`));
+  for (const name of ['lanes', 'slot-retained', 'xreview', 'dev/xreview-personal'])
+    assert.ok(volume.includes(path.join('/Volumes/fixture', name)), name);
+  // The legacy in-checkout launch directory also refuses hard links.
+  assert.ok(lines.includes(`(deny file-link (subpath ${q(path.join(repo, '.agent/.launch'))}))`));
+});

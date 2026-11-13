@@ -29,7 +29,7 @@ import { captureRunDiffSnapshot } from '../run-engine/diff-artifacts.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { farmslotDirectoryForSlot } from '../tasks/agent-runtime-script.js';
 
-import { type BlindGitSpec, buildBlindGitCommand } from './blind-git.js';
+import { type BlindGitSpec, blindHostRoots, buildBlindGitCommand } from './blind-git.js';
 import {
   assertBlindProblem,
   buildBlindInputAuditCommand,
@@ -190,7 +190,7 @@ export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal):
   const boundary = await executeGit(
     'boundary',
     vars,
-    { ...spec, siblingRepos, farmConfigRoots },
+    { ...spec, siblingRepos, farmConfigRoots, ...blindHostRoots(paths) },
     signal,
   );
   const browserCdpPort = boundary.browserCdpPort;
@@ -268,6 +268,7 @@ export async function verifyBlindTrialForDispatch(run: Run, retained = false): P
       ...gitSpec(run, vars, blind, blind.isolation.slotEpoch, blind.isolation.capsulePath),
       siblingRepos: await resolvedSiblingRepos(vars),
       farmConfigRoots: [paths.pool, paths.state.runs, paths.projects],
+      ...blindHostRoots(paths),
       proofBoundary: {
         taskRoot,
         currentTask,

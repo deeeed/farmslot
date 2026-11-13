@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 
 import { type EvalProofSource, primaryRoleForFlow, type Run } from '@farmslot/protocol';
+import type { FarmPaths, legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { runnerLaunchDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { shSingleQuote } from '../../../../scripts/lib/shell-quote.mjs';
@@ -15,6 +17,10 @@ export interface BlindGitSpec {
   siblingRepos?: string[];
   /** The node's resolved pool, runs and projects roots, which the worker sandbox cannot write. */
   farmConfigRoots?: string[];
+  /** The node's farm home, data, archive and run roots, which the worker sandbox cannot read. */
+  hostDeniedRoots?: string[];
+  /** Task pins and installed code inside those roots that the worker still reads. */
+  hostReadableRoots?: string[];
   /** Configured ports for collision diagnostics; slot CDP is always denied. */
   slotResourcePorts?: Record<string, number>;
   runId: string;
@@ -28,6 +34,28 @@ export interface BlindGitSpec {
     currentTask: string;
     runtimeRoots: string[];
     deniedRoots: string[];
+  };
+}
+
+/** Farm stores the worker cannot read, and the pinned or installed code inside them it runs. */
+export function blindHostRoots(
+  paths: FarmPaths | ReturnType<typeof legacyRemoteFarmPaths>,
+): Pick<BlindGitSpec, 'hostDeniedRoots' | 'hostReadableRoots'> {
+  const data = 'data' in paths ? paths.data : undefined;
+  return {
+    hostDeniedRoots: [
+      paths.home,
+      paths.state.runs,
+      ...('backups' in paths ? [paths.backups] : []),
+      ...(data ? [data.root, data.runBundles, data.runArchive, data.taskPinsArchive] : []),
+    ],
+    hostReadableRoots: [
+      'taskPins' in paths.state ? paths.state.taskPins : path.posix.join(paths.home, 'task-pins'),
+      paths.code.cli,
+      paths.code.bin,
+      paths.code.support,
+      paths.code.agentRuntimeScripts,
+    ],
   };
 }
 
@@ -245,6 +273,8 @@ export function withBlindTrialBoundary(
     `export PATH=${shSingleQuote(`${boundary}/bin`)}:"$PATH"`,
     `TMPDIR="$(/usr/bin/readlink ${shSingleQuote(`${boundary}/tmp`)})"`,
     'export TMPDIR TMP="$TMPDIR" TEMP="$TMPDIR" FARMSLOT_BLIND_BROKER_DIR="$TMPDIR/broker" MAC_CHROMIUM_TMPDIR="$TMPDIR"',
+    // Seatbelt denies the operator's Pi home; an unconfigured Pi uses the trial's own.
+    `{ [ -n "\${PI_CODING_AGENT_DIR:-}" ] || ! [ -L ${shSingleQuote(`${boundary}/pi-agent`)} ] || export PI_CODING_AGENT_DIR="$(/usr/bin/readlink ${shSingleQuote(`${boundary}/pi-agent`)})"; }`,
     'export GIT_TERMINAL_PROMPT=0',
     // Browser children must stay in this seatbelt; preserve TMUX_PANE for hooks.
     'export FARMSLOT_BLIND_SEATBELT=1',
