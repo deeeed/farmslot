@@ -1,1 +1,0 @@
-- Prepare, Force Reset and Force Refresh in the slot actions panel are disabled while the fleet is stale, like the panel's other actions.

@@ -1,1 +1,0 @@
-- Show whether the visible view is synced, syncing, or using timestamped cached data while persistence recovers.

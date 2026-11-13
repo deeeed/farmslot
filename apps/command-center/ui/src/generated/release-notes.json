@@ -1,8 +1,11 @@
 {
-  "version": "0.36.1",
-  "date": "2026-11-08",
+  "version": "0.36.2",
+  "date": "2026-11-13",
   "items": [
-    "Map proof-eval candidates to QA execution and preserve their frozen QA selection in queued cells",
-    "View the actual offline-storage notice and its failure reason"
+    "Expand checklist step titles to read their instructions, collapsed by default",
+    "View implementation and review costs, shared-session labels, and reasons for incomplete family pricing",
+    "Park local commits and dirty work before slot resets, with scoped list/restore and a bounded fleet summary",
+    "View reviewer, model, recorded duration and generation cost in review-chain rows, with a wrapping layout on narrow screens",
+    "View retained review machine, slot and checkout placement in run details and reviewer sessions"
   ]
 }

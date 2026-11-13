@@ -1,1 +1,0 @@
-- Present Retry Gate when publication preparation exceeds its storage and output-capture queue wait budget, retain settled review verdicts, and flag gates stuck beyond ten minutes in the fleet health feed without triggering recovery.

@@ -1,1 +1,0 @@
-- Retain optional worker launch placement for historical review display.

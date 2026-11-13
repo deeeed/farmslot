@@ -1,1 +1,0 @@
-- Check a project pack's portability without blocking the gateway on file reads: the asynchronous scan reads paths, links and file contents and removes its temporary repository with `fs/promises`.

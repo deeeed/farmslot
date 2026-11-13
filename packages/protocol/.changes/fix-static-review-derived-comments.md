@@ -1,1 +1,0 @@
-- Allow dispatch replay to continue a retained static reviewer while preserving workspace identity and refusing reviewer replacement.

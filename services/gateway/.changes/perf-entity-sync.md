@@ -1,2 +1,0 @@
-- Entity sync for the fleet, machine health and the PR list (ADR-071 Amendment 4): `fleet.status` and `pr.list` answer `{ versions: true }` and `{ ids }`, and change notifications carry the changed slot, PR or machine. A data-only change costs clients no read; one slot no longer re-sends the fleet, `fleet.updated` and `pr.list.updated` reach a connection that reads the fleet as entities without their list, and `hello` carries no fleet.
-- A machine sample no longer advances the slot keys of that machine.

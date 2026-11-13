@@ -1,1 +1,0 @@
-- Run list refreshes no longer stall the gateway: each run's list version is derived once per change instead of hashing every run on every refresh, and local runner progress files are read without starting a shell.

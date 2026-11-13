@@ -1,1 +1,0 @@
-- Exercise forced workspace recovery through the authenticated CLI with a cold observation cache and real Git, retaining workspace identity fences.

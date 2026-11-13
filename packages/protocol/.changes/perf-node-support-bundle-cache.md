@@ -1,1 +1,0 @@
-- Export `validatePackEntries`, the portability policy over a pack's owned entries, so a caller that lists the entries can check them without a second scan.

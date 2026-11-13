@@ -1,1 +1,0 @@
-- Load Pi model catalog provider extensions from the verified node support bundle so regular listing slots discover configured providers without a prior worker install. Keep shell-inherited Ollama endpoints optional unless Farmslot explicitly opts in. Report missing bundled extensions as failures and preserve native-only listing on nodes without support.

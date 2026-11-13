@@ -1,1 +1,0 @@
-- A scripted command run whose project command declares `runtime: "self-managed"` no longer boots the slot's dev-server, browser or device before the command. Other runs boot them as before.

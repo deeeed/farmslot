@@ -1,1 +1,0 @@
-- Re-arm automatic storage recovery only when the previously failed query or collection write succeeds, so later transient failures recover without looping on partially unavailable storage.

@@ -1,1 +1,0 @@
-- Stop unleased, proven slot-owned dev servers after 15 minutes without a proven active worker, restore deliberately stopped servers through configured boot hooks and verified health before worker continuation, and report TCP port pressure in fleet health and operator alerts. Explicit keep-warm and retained capability ownership remain protected.

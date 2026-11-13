@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.27.5 - 2026-11-13
+
+- `RecipeRunnerOptions.plannedActions` names the actions a command's plan runs (a `call` names its one action), so a host can bundle and bind only those.
+
 ## 0.27.4 - 2026-11-13
 
 - Republish against recipe-runner 0.46.14 so consumers load one copy of it, with blind Mobile CDP broker sockets routed into the trial directory.

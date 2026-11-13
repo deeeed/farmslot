@@ -1,1 +1,0 @@
-- Keep native Claude turns in the foreground so workers and reviewers finish pending tool work before returning, including resumed turns.
