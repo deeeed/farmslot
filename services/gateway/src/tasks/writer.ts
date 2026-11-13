@@ -778,7 +778,7 @@ export async function writeTaskFile(
     throw new Error('Configured execution-template selection requires an explicit run mode.');
   }
   const configuredTemplate = usesConfiguredCatalog
-    ? resolveConfiguredExecutionTemplateForSlot(projectVars, {
+    ? await resolveConfiguredExecutionTemplateForSlot(projectVars, {
         flow: run.flowType,
         platform: slotVars.platform,
         runMode: run.mode!,

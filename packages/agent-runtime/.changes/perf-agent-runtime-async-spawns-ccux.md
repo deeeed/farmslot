@@ -1,0 +1,1 @@
+- Read native launch identities and execution-template source provenance asynchronously for hosts that can await them, preserving gated process ownership and ordered source resolution.

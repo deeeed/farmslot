@@ -15,6 +15,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 import { TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
+import { forgetFarmInstanceMarkers } from '@farmslot/protocol/node/farm-paths';
 import { expandHome } from '@farmslot/protocol/node/farmslot-home';
 
 import {
@@ -566,6 +567,8 @@ export async function migratePaths(
     await save(plan);
     return plan;
   } finally {
+    // This process wrote or removed the instance marker: path resolution reads it again.
+    forgetFarmInstanceMarkers();
     await rm(lock);
   }
 }

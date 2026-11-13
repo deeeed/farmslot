@@ -133,7 +133,7 @@ export async function resolveCandidateTemplateProvenance(
     )
       throw new Error('Proof template axis cannot override the admitted QA snapshot.');
     const vars = await loadProjectVars(project);
-    const snapshot = readConfiguredExecutionTemplateSnapshot(vars, { ...frozen, flow: 'qa' });
+    const snapshot = await readConfiguredExecutionTemplateSnapshot(vars, { ...frozen, flow: 'qa' });
     const provenance = await buildTemplateProvenance({
       flowType: 'qa',
       project,
@@ -176,7 +176,9 @@ export async function resolveCandidateTemplateProvenance(
       (axes.template?.name?.trim().endsWith('.md') ? axes.template.name.trim() : undefined);
     let explicitId: string | undefined;
     if (requestedPath) {
-      const { options } = configuredExecutionTemplateOptions(projectVars, { flow: taskProfile });
+      const { options } = await configuredExecutionTemplateOptions(projectVars, {
+        flow: taskProfile,
+      });
       const exact = options.filter((entry) => entry.relativePath === requestedPath);
       const matches = exact.length
         ? exact
@@ -197,7 +199,7 @@ export async function resolveCandidateTemplateProvenance(
         );
       explicitId = entry.id;
     }
-    const snapshot = resolveConfiguredExecutionTemplate(projectVars, {
+    const snapshot = await resolveConfiguredExecutionTemplate(projectVars, {
       flow: taskProfile,
       runMode: 'autonomous',
       explicitId,

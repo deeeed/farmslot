@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile, execFileSync } from 'node:child_process';
 
 import { alive } from './storage.js';
@@ -38,8 +39,8 @@ export function journalProcesses(
   return processes;
 }
 const columns = 'pid=,ppid=,pgid=,lstart=';
-// Launch registration and supervisor recovery retain their synchronous boundary.
-// Cleanup uses bounded asynchronous, batched censuses below.
+// The standalone supervisor retains its synchronous startup boundary.
+// Gateway launch registration and cleanup use asynchronous censuses below.
 const censusTimeoutMs = 5_000;
 // The shared observer census runs off the event loop. A slow `ps` on a loaded
 // machine is not lost ownership, so observers fail only past this deadline
@@ -62,34 +63,93 @@ function parseProcesses(output: string): Map<number, ProcessIdentity> {
   }
   return result;
 }
+const launchCensusOptions = {
+  maxBuffer: 16 * 1024 * 1024,
+  timeout: censusTimeoutMs,
+  killSignal: 'SIGKILL' as const,
+};
+function missingProcess(
+  pid: number | undefined,
+  status: string | number | null | undefined,
+): boolean {
+  if (pid === undefined || status !== 1) return false;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return true;
+    throw error;
+  }
+}
 function processes(pid?: number): Map<number, ProcessIdentity> {
   // OS process metadata only. Never inspect native stdout or process environments.
   // Start metadata survives exec and process-title changes, unlike command text.
   let output: string;
   try {
-    output = execFileSync(
-      'ps',
-      pid === undefined ? ['-axo', columns] : ['-p', String(pid), '-o', columns],
-      {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        maxBuffer: 16 * 1024 * 1024,
-        timeout: censusTimeoutMs,
-        killSignal: 'SIGKILL',
-      },
-    );
+    output = execFileSync('ps', processArguments(pid), {
+      ...launchCensusOptions,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
   } catch (error) {
-    if (pid !== undefined && (error as { status?: number }).status === 1) {
-      try {
-        process.kill(pid, 0);
-      } catch (probeError) {
-        if ((probeError as NodeJS.ErrnoException).code === 'ESRCH') return new Map();
-        throw probeError;
-      }
-    }
+    if (missingProcess(pid, (error as { status?: number }).status)) return new Map();
     throw error;
   }
   return parseProcesses(output);
+}
+function processArguments(pid?: number): string[] {
+  return pid === undefined ? ['-axo', columns] : ['-p', String(pid), '-o', columns];
+}
+
+/** The embedding host measures its own async launch reads without changing native policy. */
+export type NativeProcessCensusMeasure = (
+  operation: () => Promise<Map<number, ProcessIdentity>>,
+) => Promise<Map<number, ProcessIdentity>>;
+const censusMeasure = new AsyncLocalStorage<NativeProcessCensusMeasure>();
+export function withNativeProcessCensusMeasure<T>(
+  measure: NativeProcessCensusMeasure,
+  operation: () => T,
+): T {
+  return censusMeasure.run(measure, operation);
+}
+
+/** `processes` off the event loop, with the same answers and errors. */
+function processesAsync(pid?: number): Promise<Map<number, ProcessIdentity>> {
+  const run = () =>
+    new Promise<Map<number, ProcessIdentity>>((resolve, reject) => {
+      let bytes = 0;
+      let overran = false;
+      const child = execFile(
+        'ps',
+        processArguments(pid),
+        { ...launchCensusOptions, encoding: 'buffer' },
+        (error, output) => {
+          if (overran)
+            return reject(
+              Object.assign(new Error('Native process census output exceeded its limit'), {
+                code: 'ENOBUFS',
+              }),
+            );
+          if (!error) return resolve(parseProcesses(output.toString('utf8')));
+          try {
+            if (missingProcess(pid, error.code)) resolve(new Map());
+            else reject(error);
+          } catch (probeError) {
+            reject(probeError);
+          }
+        },
+      );
+      // execFileSync caps stdout and stderr together; execFile otherwise caps each separately.
+      const count = (chunk: Buffer) => {
+        bytes += chunk.length;
+        if (bytes <= launchCensusOptions.maxBuffer || overran) return;
+        overran = true;
+        child.kill('SIGKILL');
+      };
+      child.stdout?.on('data', count);
+      child.stderr?.on('data', count);
+    });
+  return censusMeasure.getStore()?.(run) ?? run();
 }
 
 /** Shared OS census for stopped-host reconciliation; failed reads remain unknown. */
@@ -233,14 +293,26 @@ export class NativeProcessTree {
    */
   constructor(
     private readonly root: number,
-    { gated = false }: { gated?: boolean } = {},
+    {
+      gated = false,
+      snapshot = processes(gated ? root : undefined),
+    }: { gated?: boolean; snapshot?: Map<number, ProcessIdentity> } = {},
   ) {
-    const snapshot = processes(gated ? root : undefined);
     const observation = snapshot.get(root);
     if (!observation?.identity) throw new Error('Native process identity is unavailable');
     this.rootIdentity = observation.identity;
     this.rootObservation = { ...observation };
     this.applySnapshot(snapshot);
+  }
+  /** The constructor's census off the caller's event loop: for callers that can await it. */
+  static async create(
+    root: number,
+    { gated = false }: { gated?: boolean } = {},
+  ): Promise<NativeProcessTree> {
+    return new NativeProcessTree(root, {
+      gated,
+      snapshot: await processesAsync(gated ? root : undefined),
+    });
   }
   async capture(): Promise<Map<number, ProcessIdentity>> {
     const snapshot = await cleanupProcesses();

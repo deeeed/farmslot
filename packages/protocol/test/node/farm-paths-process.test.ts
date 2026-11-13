@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import {
+import fs, {
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -9,6 +9,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -18,6 +19,7 @@ import ts from 'typescript';
 
 import {
   currentFarmPaths,
+  forgetFarmInstanceMarkers,
   isNodeFarmPaths,
   legacyRemoteFarmPaths,
   resolveFarmPaths,
@@ -70,7 +72,7 @@ test('legacy process paths keep stdout and stderr clean while reporting override
   assert.equal(result.stderr, '');
 });
 
-test('process paths cache each home and refresh when its instance marker changes', (t) => {
+test('process paths cache each home and refresh when this process writes its instance marker', (t) => {
   const root = fixture(t);
   const envA = { FARMSLOT_HOME: path.join(root, 'a'), FARMSLOT_ROOT: root };
   const envB = { ...envA, FARMSLOT_HOME: path.join(root, 'b') };
@@ -81,14 +83,47 @@ test('process paths cache each home and refresh when its instance marker changes
   const marker = path.join(envA.FARMSLOT_HOME, 'config', 'instance.json');
   mkdirSync(path.dirname(marker), { recursive: true });
   writeFileSync(marker, JSON.stringify({ layout: 2 }));
+  forgetFarmInstanceMarkers();
   const migrated = currentFarmPaths('gateway', envA);
   assert.equal(migrated.layout, 2);
   assert.equal(migrated.state.runs, path.join(envA.FARMSLOT_HOME, 'state', 'runs'));
   writeFileSync(marker, JSON.stringify({ layout: 2, dataRoot: 'other' }));
   utimesSync(marker, new Date(1_000), new Date(2_000));
+  forgetFarmInstanceMarkers();
   assert.equal(currentFarmPaths('gateway', envA).data.root, path.join(envA.FARMSLOT_HOME, 'other'));
   rmSync(marker);
+  forgetFarmInstanceMarkers();
   assert.equal(currentFarmPaths('gateway', envA).layout, 'legacy');
+});
+
+test("the instance marker is read once per second; another process's change shows after it", (t) => {
+  const root = fixture(t);
+  const env = { FARMSLOT_HOME: path.join(root, 'home'), FARMSLOT_ROOT: root };
+  const marker = path.join(env.FARMSLOT_HOME, 'config', 'instance.json');
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const stats: string[] = [];
+  const statSync = fs.statSync;
+  t.mock.method(fs, 'statSync', (...args: Parameters<typeof statSync>) => {
+    if (String(args[0]) === marker) stats.push(String(args[0]));
+    return statSync(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  assert.equal(currentFarmPaths('gateway', env).layout, 'legacy');
+  for (let call = 0; call < 100; call++) currentFarmPaths('gateway', env);
+  assert.equal(stats.length, 1, 'one stat for 101 resolutions within the interval');
+
+  // Another process migrates the home: this process keeps its answer for the rest of the interval.
+  mkdirSync(path.dirname(marker), { recursive: true });
+  writeFileSync(marker, JSON.stringify({ layout: 2 }));
+  t.mock.timers.tick(999);
+  assert.equal(currentFarmPaths('gateway', env).layout, 'legacy');
+  t.mock.timers.tick(1);
+  assert.equal(currentFarmPaths('gateway', env).layout, 2);
+  assert.equal(stats.length, 2);
 });
 
 test('legacy file overrides retain raw handling and layout 2 ignores them', (t) => {
@@ -118,6 +153,7 @@ test('legacy file overrides retain raw handling and layout 2 ignores them', (t) 
   currentFarmPaths('node', env);
   mkdirSync(path.join(env.FARMSLOT_HOME, 'config'), { recursive: true });
   writeFileSync(path.join(env.FARMSLOT_HOME, 'config', 'instance.json'), '{"layout":2}');
+  forgetFarmInstanceMarkers();
   const migrated = currentFarmPaths('gateway', env);
   assert.deepEqual(migrated.envOverrides, []);
   assert.equal(migrated.configFiles.sources, path.join(env.FARMSLOT_HOME, 'config/sources.json'));

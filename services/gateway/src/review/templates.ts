@@ -346,7 +346,7 @@ export async function expandReviewTemplate(
       throw new Error(
         'Review execution_templates must select both static-code and full-live templates',
       );
-    const selected = resolveConfiguredExecutionTemplateForSlot(configured, {
+    const selected = await resolveConfiguredExecutionTemplateForSlot(configured, {
       flow: 'review',
       platform: vars.platform,
       runMode: 'autonomous',

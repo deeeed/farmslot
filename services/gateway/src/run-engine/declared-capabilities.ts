@@ -168,14 +168,21 @@ export async function prepareDispatchRunCapabilities(
     initializedTemplate && run
       ? { frontmatter: await authoredTemplateFrontmatter(run), sha256: initializedTemplate.sha256 }
       : run?.executionTemplate
-        ? readConfiguredExecutionTemplateSnapshot(project, { ...run.executionTemplate, flow }).entry
-        : resolveConfiguredExecutionTemplateForSlot(project, {
-            flow,
-            platform: slot.platform,
-            runMode: input.mode,
-            explicitDomain: run?.domain,
-            slotDomain: slot.domain,
-          }).entry;
+        ? (
+            await readConfiguredExecutionTemplateSnapshot(project, {
+              ...run.executionTemplate,
+              flow,
+            })
+          ).entry
+        : (
+            await resolveConfiguredExecutionTemplateForSlot(project, {
+              flow,
+              platform: slot.platform,
+              runMode: input.mode,
+              explicitDomain: run?.domain,
+              slotDomain: slot.domain,
+            })
+          ).entry;
   assertRecipeDispatchRequirements(
     await checkRecipeDispatchRequirements(project, slot, selected, {
       app: input.app,
