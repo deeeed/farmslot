@@ -4,7 +4,7 @@
 // argv[2]) and writes JSON to the `outputPath` it names. A prepared script is
 // bundled once so the approved bytes are the ones that run.
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, type Stats } from 'node:fs';
 import { access, lstat, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { isBuiltin } from 'node:module';
 import os from 'node:os';
@@ -343,13 +343,9 @@ async function bundleInputs(
   for (const [file, sha256] of inputs) {
     if (sha256 === 'dir') continue;
     if (sha256 === null) {
-      // Deleting a file the resolver read updates its folder: a folder that is gone, or
-      // changed since the build started, may hide a manifest esbuild already used.
-      const parent = await stat(path.dirname(file)).catch((error: NodeJS.ErrnoException) => {
-        if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return undefined;
-        throw error;
-      });
-      if (!parent || parent.mtimeMs >= buildStarted) return undefined;
+      // Deleting a file updates its folder. The nearest folder that exists above an absent
+      // input changed since the build started: it may hide a manifest esbuild already used.
+      if ((await nearestExistingFolder(file)).mtimeMs >= buildStarted) return undefined;
       continue;
     }
     // A file written while esbuild ran may differ from what it read: do not cache.
@@ -406,6 +402,17 @@ async function fileState(file: string): Promise<string | null> {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR') return null;
     throw error;
+  }
+}
+
+async function nearestExistingFolder(file: string): Promise<Stats> {
+  for (let dir = path.dirname(file); ; dir = path.dirname(dir)) {
+    try {
+      return await stat(dir);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if ((code !== 'ENOENT' && code !== 'ENOTDIR') || path.dirname(dir) === dir) throw error;
+    }
   }
 }
 

@@ -1904,6 +1904,44 @@ describe('live adapter scripts', () => {
     assert.match((await prepare())?.sourceText ?? '', /from beside the action/u);
   });
 
+  test('reuses a bundle whose bare import resolves to a package at the library root', async () => {
+    const root = tempRoot('bare-import-adapter-');
+    const dir = path.join(root, 'web', 'team');
+    const pkg = path.join(root, 'node_modules', 'helper-pkg');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(pkg, { recursive: true });
+    fs.writeFileSync(
+      path.join(pkg, 'package.json'),
+      JSON.stringify({ name: 'helper-pkg', main: 'index.js' }),
+    );
+    fs.writeFileSync(path.join(pkg, 'index.js'), 'module.exports = "helper";\n');
+    fs.writeFileSync(
+      path.join(dir, 'probe.mjs'),
+      `import value from 'helper-pkg';\nconsole.log(value);\n`,
+    );
+    // Files written before the build, whose folders the first build must not read as changing.
+    const earlier = new Date(Date.now() - 60_000);
+    for (const entry of [pkg, path.dirname(pkg), dir, path.dirname(dir), root]) {
+      fs.utimesSync(entry, earlier, earlier);
+    }
+    const recorder = new CallTimingRecorder();
+    const prepare = () =>
+      withCallTimings(recorder, () =>
+        prepareLiveAdapterScript({
+          platform: 'web',
+          action: 'team.probe',
+          namespace: 'shop',
+          implementationRoot: root,
+        }),
+      );
+    await prepare();
+    await prepare();
+    assert.deepEqual(
+      [recorder.snapshot().work.liveAdapterBuilt, recorder.snapshot().work.liveAdapterCached],
+      [1, 1],
+    );
+  });
+
   test('does not cache a bundle when a folder of an absent input changed during the build', async () => {
     const root = tempRoot('vanishing-manifest-adapter-');
     const dir = path.join(root, 'web', 'team');
