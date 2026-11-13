@@ -3,8 +3,11 @@
 import { chmod, lstat, open, readdir, readFile, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
+import { type FarmPathEnv, resolveReportedFarmPaths } from '@farmslot/protocol/node/farm-paths';
+
 import {
   isCredentialName,
+  isSecretValue,
   redactCommandCredentials,
   REDACTED_CREDENTIAL,
 } from '../core/credential-redaction.js';
@@ -43,8 +46,7 @@ function scrubValue(
       typeof key === 'string' &&
       isCredentialName(key) &&
       typeof child === 'string' &&
-      child &&
-      child !== REDACTED_CREDENTIAL
+      isSecretValue(child)
     ) {
       // An environment map: { LITELLM_API_KEY: '…' }.
       next = REDACTED_CREDENTIAL;
@@ -105,6 +107,28 @@ async function replaceFile(file: string, text: string, mode: number): Promise<vo
     await rm(temporary, { force: true });
     throw error;
   }
+}
+
+/**
+ * The gateway's run stores, resolved like `farmslot paths`: the runs directory (live runs,
+ * archive/, quarantine/, journals), the run archive, the configured run bundle store, and the
+ * run-archive/ and archive/ beside those stores in their data directory. The farm home itself
+ * holds live credentials and is never a root.
+ */
+export function defaultScrubRoots(env: FarmPathEnv = process.env): string[] {
+  const paths = resolveReportedFarmPaths({ role: 'gateway', env });
+  const { runArchive, runBundles } = paths.data;
+  const dataDirs = [path.dirname(runBundles), path.dirname(runArchive)].filter(
+    (dir) => path.resolve(dir) !== path.resolve(paths.home),
+  );
+  return [
+    ...new Set([
+      paths.state.runs,
+      runArchive,
+      runBundles,
+      ...dataDirs.flatMap((dir) => [path.join(dir, 'run-archive'), path.join(dir, 'archive')]),
+    ]),
+  ];
 }
 
 /** Walks each root (symlinks are not followed); rewrites only with apply. */

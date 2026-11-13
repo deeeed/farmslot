@@ -19,7 +19,7 @@ import {
 } from './store.js';
 
 const FAKE_KEY = 'fixture-provider-value-0001';
-const FAKE_TOKEN = "fixture-quoted'token";
+const FAKE_TOKEN = "fixture-quoted'token-0001";
 const launch = [
   `export LITELLM_API_KEY='${FAKE_KEY}'`,
   `export JIRA_API_TOKEN='${FAKE_TOKEN.replace(/'/g, `'\\''`)}'`,
@@ -40,8 +40,10 @@ test('command redaction keeps names, references and shell shape, and is idempote
   assert.ok(first.text.includes('"LITELLM_API_KEY=$LITELLM_API_KEY"'));
   assert.deepEqual(redactCommandCredentials(first.text), { text: first.text, count: 0 });
   assert.equal(
-    redactCommandCredentials('GIT_CONFIG_KEY_0=credential.helper GH_TOKEN=x cmd').text,
-    'GIT_CONFIG_KEY_0=credential.helper GH_TOKEN=[REDACTED] cmd',
+    redactCommandCredentials(
+      'GIT_CONFIG_KEY_0=credential.helper GH_TOKEN=x GITHUB_TOKEN=fixture-github-value-0004 cmd',
+    ).text,
+    'GIT_CONFIG_KEY_0=credential.helper GH_TOKEN=x GITHUB_TOKEN=[REDACTED] cmd',
   );
 });
 

@@ -84,6 +84,12 @@
     "count": 1
   },
   {
+    "file": "services/gateway/src/runs/credential-scrub.ts",
+    "literal": "run-archive",
+    "reason": "One-shot credential scrub also scans the run-archive directory beside the resolved run bundle store in its data directory; the canonical roots come from resolveReportedFarmPaths.",
+    "count": 1
+  },
+  {
     "file": "services/gateway/src/runs/store.ts",
     "literal": " to production .runs/",
     "reason": "Diagnostic text names the legacy persistence directory; it does not select a path.",
