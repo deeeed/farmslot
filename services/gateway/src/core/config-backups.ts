@@ -62,12 +62,13 @@ async function moveFile(source: string, target: string): Promise<void> {
     await rename(source, target);
     return;
   } catch (error) {
-    // A concurrent save of the same file already moved it: nothing is left to move.
+    // Another process sharing this home already moved it (this process's saves are serialized
+    // per file): nothing is left to move.
     if (errorCode(error) === 'ENOENT') return;
     if (errorCode(error) !== 'EXDEV') throw error;
   }
-  // Two saves of the same file can both reach this copy; whichever finishes second finds the
-  // source already gone, after the other save copied and removed it. The move is complete.
+  // Across volumes, another process saving the same file can copy and remove the source first;
+  // whichever finishes second finds it gone. The move is complete.
   try {
     await copyFile(source, target);
     await unlink(source);
@@ -76,23 +77,52 @@ async function moveFile(source: string, target: string): Promise<void> {
   }
 }
 
+// One save at a time per backup directory, from its copy through the caller's write: two
+// overlapping saves would otherwise each keep only their own new copy and prune the other's.
+// Every pool and project configuration save goes through this gateway process, so an in-process
+// lock is enough.
+const saveTails = new Map<string, Promise<unknown>>();
+
 /**
- * Copy `file` into `<state>/config-backups/<kind>/<name>/` before it is overwritten and return the
- * copy's path. `name` is the pool file basename or the project name, so sources from different
- * directories never share a backup directory. The same file's legacy `<basename>.bak.<stamp>`
- * siblings (the removed writer's minute-precision names) move there too, and only the newest CONFIG_BACKUPS_KEPT copies stay.
+ * Back `file` up into `<state>/config-backups/<kind>/<name>/`, then run `write` to overwrite it,
+ * and return the copy's path. `name` is the pool file basename or the project name, so sources
+ * from different directories never share a backup directory. The same file's legacy
+ * `<basename>.bak.<stamp>` siblings (the removed writer's minute-precision names) move there too,
+ * and only the newest CONFIG_BACKUPS_KEPT copies stay.
  *
- * Every step throws: a failed copy, move or prune fails the save before the source is written.
- * Pruning is not best-effort because a backup directory that cannot be pruned grows without
- * bound, which is the problem this module exists to stop; the operator sees the error instead.
+ * Every step throws: a failed copy, move or prune fails the save before `write` runs. Pruning is
+ * not best-effort because a backup directory that cannot be pruned grows without bound, which is
+ * the problem this module exists to stop; the operator sees the error instead.
  */
-export async function backupConfigFile(
+export async function saveWithConfigBackup(
   kind: ConfigBackupKind,
   name: string,
   file: string,
+  write: () => Promise<void>,
 ): Promise<string> {
-  const basename = path.basename(file);
   const directory = path.join(currentFarmPaths('gateway').state.configBackups, kind, name);
+  const previous = saveTails.get(directory) ?? Promise.resolve();
+  const save = async (): Promise<string> => {
+    const backup = await backupConfigFile(directory, file);
+    await write();
+    return backup;
+  };
+  const current = previous.then(save, save);
+  // A failed save rejects to its own caller below; the queue only waits for it to settle.
+  const tail = current.then(
+    () => undefined,
+    () => undefined,
+  );
+  saveTails.set(directory, tail);
+  try {
+    return await current;
+  } finally {
+    if (saveTails.get(directory) === tail) saveTails.delete(directory);
+  }
+}
+
+async function backupConfigFile(directory: string, file: string): Promise<string> {
+  const basename = path.basename(file);
   await mkdir(directory, { recursive: true });
 
   // Two saves in one millisecond get distinct names instead of overwriting one backup. The
@@ -121,16 +151,26 @@ export async function backupConfigFile(
     if (!current) await moveFile(path.join(sources, entry), path.join(directory, entry));
   }
 
-  // The copy just taken is always kept, even when it sorts oldest (a clock stepped backwards),
-  // alongside the newest of the others.
+  // The copy just taken is always kept, alongside the newest of the others. A copy dated after
+  // now was taken before a clock stepped backwards, so it is older than every copy dated up to
+  // now and is pruned first.
+  const now = stamp.replace('T', '');
   const others = backupNames(await readdir(directory), basename)
     .filter((item) => item.entry !== path.basename(backup))
-    .sort((a, b) => a.time.localeCompare(b.time) || a.sequence - b.sequence);
+    .sort(
+      (a, b) =>
+        Number(b.time > now) - Number(a.time > now) ||
+        a.time.localeCompare(b.time) ||
+        // A legacy copy from minute M is older than a current copy taken at M:00.000.
+        Number(a.current) - Number(b.current) ||
+        a.sequence - b.sequence,
+    );
   for (const { entry } of others.slice(0, Math.max(0, others.length - (CONFIG_BACKUPS_KEPT - 1)))) {
     try {
       await unlink(path.join(directory, entry));
     } catch (error) {
-      // A concurrent save of the same file pruned it first.
+      // Only another process sharing this home can prune it first; the lock above serializes
+      // this process's saves.
       if (errorCode(error) !== 'ENOENT') throw error;
     }
   }

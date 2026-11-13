@@ -47,7 +47,7 @@ import {
   validateAutoRecoveryConfig,
   validateBacklogConfig,
 } from '../core/config.js';
-import { backupConfigFile } from '../core/config-backups.js';
+import { saveWithConfigBackup } from '../core/config-backups.js';
 import { type RawPoolSlot, updateSlotStatus } from '../core/index.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import {
@@ -205,8 +205,9 @@ export async function configProjectBacklogUpdate(
   if (runtimeSettings)
     backupPath = await writeSourceRuntimeSettings(params.project, { backlog: raw.backlog });
   else {
-    backupPath = await backupConfigFile('project', params.project, projectFilePath);
-    await writeFile(projectFilePath, JSON.stringify(raw, null, 2) + '\n', 'utf-8');
+    backupPath = await saveWithConfigBackup('project', params.project, projectFilePath, () =>
+      writeFile(projectFilePath, JSON.stringify(raw, null, 2) + '\n', 'utf-8'),
+    );
   }
 
   invalidateProjectVarsCache(params.project);
@@ -392,9 +393,13 @@ export async function configSlotUpdate(
   }
 
   // Backup + write
-  const backupPath = await backupConfigFile('pool', path.basename(poolFilePath), poolFilePath);
   // A temp file renamed over the pool: a refresh never reads it half-written (F306).
-  await atomicWriteTextFile(poolFilePath, JSON.stringify(raw, null, 2) + '\n');
+  const backupPath = await saveWithConfigBackup(
+    'pool',
+    path.basename(poolFilePath),
+    poolFilePath,
+    () => atomicWriteTextFile(poolFilePath, JSON.stringify(raw, null, 2) + '\n'),
+  );
 
   // Sync into .farm-status.json + cache now — server.ts also calls fleetRefresh()
   // after this returns, but that runs SSH/device health checks and can take 30s+,
@@ -441,8 +446,12 @@ export async function configPoolUpdate(
   const poolFilePath = await loadMachinePoolFile(machine);
 
   // Backup + write
-  const backupPath = await backupConfigFile('pool', path.basename(poolFilePath), poolFilePath);
-  await atomicWriteTextFile(poolFilePath, content.endsWith('\n') ? content : content + '\n');
+  const backupPath = await saveWithConfigBackup(
+    'pool',
+    path.basename(poolFilePath),
+    poolFilePath,
+    () => atomicWriteTextFile(poolFilePath, content.endsWith('\n') ? content : content + '\n'),
+  );
 
   // Sync mode/enabled changes into .farm-status.json + cache now — see
   // configSlotUpdate above for why this is needed before fleetRefresh.
@@ -547,8 +556,9 @@ export async function configProjectAutoRecoveryUpdate(
       auto_recovery: raw.auto_recovery,
     });
   else {
-    backupPath = await backupConfigFile('project', params.project, projectFilePath);
-    await writeFile(projectFilePath, JSON.stringify(raw, null, 2) + '\n', 'utf-8');
+    backupPath = await saveWithConfigBackup('project', params.project, projectFilePath, () =>
+      writeFile(projectFilePath, JSON.stringify(raw, null, 2) + '\n', 'utf-8'),
+    );
   }
 
   invalidateProjectVarsCache(params.project);

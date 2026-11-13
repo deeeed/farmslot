@@ -5,7 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { backupConfigFile, CONFIG_BACKUPS_KEPT } from './config-backups.js';
+import { CONFIG_BACKUPS_KEPT, saveWithConfigBackup } from './config-backups.js';
+
+/** A save whose write changes nothing, for tests that look only at the backups. */
+function backupConfigFile(kind: 'pool' | 'project', name: string, file: string): Promise<string> {
+  return saveWithConfigBackup(kind, name, file, async () => {});
+}
 
 /** The removed writer's stamp, kept verbatim so fixtures match the files it left behind. */
 function removedWriterStamp(iso: string): string {
@@ -170,6 +175,58 @@ test('moved legacy backups are pruned by time, not by raw name order', async (t)
   assert.deepEqual(
     (await readdir(backups)).sort(),
     [path.basename(backup), legacy, ...current.slice(2)].sort(),
+  );
+});
+
+test('overlapping saves of one file keep both new copies after a clock step back', async (t) => {
+  const { file, backups } = await fixture(t);
+  await mkdir(backups, { recursive: true });
+  const future = Array.from(
+    { length: CONFIG_BACKUPS_KEPT },
+    (_, index) => `node-a.json.bak.20271113T12000${index}000`,
+  );
+  for (const name of future) await writeFile(path.join(backups, name), 'future');
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-13T12:00:00.123Z') });
+  const save = (content: string) =>
+    saveWithConfigBackup('pool', 'node-a.json', file, () => writeFile(file, content));
+  const [first, second] = await Promise.all([save('{"save":1}\n'), save('{"save":2}\n')]);
+  // Each copy holds what that save overwrote: the original, then the first save's write.
+  assert.equal(await readFile(first, 'utf8'), '{"machine":"node-a"}\n');
+  assert.equal(await readFile(second, 'utf8'), '{"save":1}\n');
+  assert.equal(await readFile(file, 'utf8'), '{"save":2}\n');
+  assert.equal((await readdir(backups)).length, CONFIG_BACKUPS_KEPT);
+});
+
+test('a failed write still releases the save lock', async (t) => {
+  const { file } = await fixture(t);
+  await assert.rejects(
+    saveWithConfigBackup('pool', 'node-a.json', file, async () => {
+      throw new Error('write failed');
+    }),
+    /write failed/,
+  );
+  const backup = await saveWithConfigBackup('pool', 'node-a.json', file, () =>
+    writeFile(file, '{"after":true}\n'),
+  );
+  assert.equal(await readFile(backup, 'utf8'), '{"machine":"node-a"}\n');
+});
+
+test('a legacy copy sorts before a current copy from the same minute', async (t) => {
+  const { pool, file, backups } = await fixture(t);
+  await mkdir(backups, { recursive: true });
+  // A current copy at exactly 12:30:00.000, then nine later ones; the legacy 12:30 copy is oldest.
+  const current = Array.from(
+    { length: CONFIG_BACKUPS_KEPT },
+    (_, index) => `node-a.json.bak.20261113T12300${index}000`,
+  );
+  for (const name of current) await writeFile(path.join(backups, name), 'current');
+  const legacy = `node-a.json.bak.${removedWriterStamp('2026-11-13T12:30:59.999Z')}`;
+  await writeFile(path.join(pool, legacy), 'legacy');
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-13T13:00:00.000Z') });
+  const backup = await backupConfigFile('pool', 'node-a.json', file);
+  assert.deepEqual(
+    (await readdir(backups)).sort(),
+    [path.basename(backup), ...current.slice(1)].sort(),
   );
 });
 
