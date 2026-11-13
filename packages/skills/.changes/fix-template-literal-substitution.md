@@ -1,1 +1,0 @@
-- Preserve literal source text and validation evidence in cooking task templates.
