@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "External catalog consistency through hosted task initialization",
+  "description": "An isolated gateway and node have different cookbook bytes. A real run.create, node task.runtime and installed CLI must prepare and dispatch using the shipped gateway catalog, preserving the node checkout. No model or production run is used; owned fixture resources are cancelled, archived and cleaned.",
+  "workflow": {
+    "entry": "dispatch",
+    "nodes": {
+      "dispatch": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/external-template-catalog.mts",
+        "timeout_ms": 1200000,
+        "intent": "Use authenticated run.create and actual node/CLI initialization to prove a mutable node catalog cannot replace the gateway's selected bytes.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

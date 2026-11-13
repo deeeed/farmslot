@@ -235,6 +235,65 @@ test('commands in an unchanged tree collect the bundle once and deliver it once'
   assert.equal(node.uploads(), 1);
 });
 
+test('external catalog edits and root bindings invalidate the bundle without rescanning unchanged inputs', async (t) => {
+  aheadClock(t);
+  const name = 'external-cache-farm';
+  const pack = path.join(root, 'projects', name);
+  const firstRoot = path.join(root, 'external-one');
+  const secondRoot = path.join(root, 'external-two');
+  for (const dir of [
+    path.join(pack, 'scripts'),
+    path.join(firstRoot, 'dev'),
+    path.join(secondRoot, 'dev'),
+  ])
+    mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(pack, 'scripts/x.sh'), 'echo catalog\n');
+  writeFileSync(
+    path.join(pack, 'project.json'),
+    JSON.stringify({
+      node_support: { paths: [`projects/${name}/scripts`, `projects/${name}/project.json`] },
+      qa: {
+        default_profile: 'smoke',
+        profiles: [{ id: 'smoke', title: 'Smoke', template_id: 'qa/default' }],
+      },
+      execution_templates: {
+        sources: [{ id: 'package:cook', kind: 'package', root: { env: 'CACHE_COOK_ROOT' } }],
+      },
+    }),
+  );
+  writeFileSync(path.join(firstRoot, 'dev/core.md'), '# First\n- [ ] One\n');
+  writeFileSync(path.join(secondRoot, 'dev/core.md'), '# Second\n- [ ] Two\n');
+  const previousRoot = process.env.CACHE_COOK_ROOT;
+  process.env.CACHE_COOK_ROOT = firstRoot;
+  t.after(() => {
+    if (previousRoot === undefined) delete process.env.CACHE_COOK_ROOT;
+    else process.env.CACHE_COOK_ROOT = previousRoot;
+    for (const dir of [pack, firstRoot, secondRoot]) rmSync(dir, { recursive: true, force: true });
+  });
+  const node = fakeNode();
+  const vars = { ...remoteVars('external-cache-1'), projectName: name };
+  const hook = `bash ~/farmslot-node/projects/${name}/scripts/x.sh`;
+  const command = () => resolveRemoteFarmCommand(vars, hook, { io: node.io });
+  const first = await command();
+  assert.equal(await command(), first);
+  assert.equal(collections, 1);
+  process.env.CACHE_COOK_ROOT = secondRoot;
+  const second = await command();
+  assert.notEqual(
+    second,
+    first,
+    'binding changes cannot wait behind the filesystem check interval',
+  );
+  assert.equal(collections, 2);
+  appendFileSync(path.join(secondRoot, 'dev/core.md'), '\n- [ ] New instruction\n');
+  t.mock.timers.tick(3_000);
+  const edited = await command();
+  assert.notEqual(edited, second);
+  assert.equal(collections, 3);
+  assert.equal(await command(), edited);
+  assert.equal(collections, 3);
+});
+
 test('a support file edit and a file added to or edited in the pack each collect once more', async (t) => {
   aheadClock(t);
   const node = fakeNode();

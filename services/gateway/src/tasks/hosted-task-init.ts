@@ -111,7 +111,11 @@ async function hostedTaskRuntime(
     action,
     taskPath,
     supportDir,
-    env: { ...machineShellEnv(slot), ...(sources ? sourceExecutionEnvironment(sources) : {}) },
+    env: {
+      ...machineShellEnv(slot),
+      ...(sources ? sourceExecutionEnvironment(sources) : {}),
+      ...(action === 'init' ? { FARMSLOT_TASK_SUPPORT_DIR: supportDir } : {}),
+    },
   };
   const signal = cleanupSignal();
   if (local)
@@ -155,7 +159,11 @@ export async function hostedTaskCommand(slot: SlotVars, args: readonly string[])
   const support = expandTemplate('{{farmslot_dir}}', slot);
   const supportArg = isShellHomePath(support) ? support : shellQuote(support);
   const script =
-    'farm="$1"; support="$2"; shift 2; unset FARMSLOT_ROOT; export FARMSLOT_CLI="${FARMSLOT_CLI:-$HOME/.local/bin/farmslot}"; source "$support/scripts/lib/resolve-farmslot-cli.sh" && exec "$FARMSLOT_CLI" --json "$@"';
+    'farm="$1"; support="$2"; shift 2; unset FARMSLOT_ROOT;' +
+    (args[0] === 'internal' && args[1] === 'task-init'
+      ? ' export FARMSLOT_TASK_SUPPORT_DIR="$support";'
+      : '') +
+    ' export FARMSLOT_CLI="${FARMSLOT_CLI:-$HOME/.local/bin/farmslot}"; source "$support/scripts/lib/resolve-farmslot-cli.sh" && exec "$FARMSLOT_CLI" --json "$@"';
   return withMachineEnv(
     `bash -c ${shellQuote(script)} hosted-task ${shellQuote(farm)} ${supportArg} ${args.map(shellQuote).join(' ')}`,
     slot,

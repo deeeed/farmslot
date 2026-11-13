@@ -38,6 +38,9 @@ Hooks that need bundled support should reference the bundle location, not a glob
 bash {{node_support_dir}}/projects/example-mobile-farm/scripts/preflight.sh ...
 ```
 
+Configured external execution-template catalogs are the narrow exception to the
+Farmslot-owned-file boundary defined by [ADR-049 Amendment 4](049-agent-execution-template-selection.md#amendment-4-external-catalogs-in-node-support-2026-11-13).
+
 ## Responsibilities
 
 ### Gateway

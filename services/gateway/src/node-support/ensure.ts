@@ -137,6 +137,9 @@ export function nodeSupportBundlePaths(projectName: string, projectJson: RawProj
   const supportPaths = [...hookSupportPaths];
   for (const requiredPath of [
     'scripts/write-runtime-context.sh',
+    ...(projectJson.execution_templates?.sources?.some((source) => source.root.env)
+      ? [path.posix.join('projects', projectName, 'project.json')]
+      : []),
     ...hostedTaskTemplatePaths(projectName, projectJson),
     ...RUNNER_OBSERVABILITY_SUPPORT_PATHS,
   ]) {
@@ -153,6 +156,8 @@ export function nodeSupportBundlePaths(projectName: string, projectJson: RawProj
 
 /** What a bundle collection read: when none of it changed, collecting again gives the same bundle. */
 export interface NodeSupportBundleInputs {
+  /** Configured external catalog bindings, without serializing values into the bundle. */
+  environment?: Record<string, string | undefined>;
   /**
    * Support files, the support directories walked and the pack directories, read through links
    * as the collection reads them: an added or removed file changes a directory.
@@ -205,6 +210,11 @@ export async function collectNodeSupportBundle(projectName: string, supportPaths
     )
   ).flat();
   for (const file of files) inputs.followed.push(path.join(farmslotRoot(), file.relativePath));
+  const { collectExternalTemplateCatalog } = await import('./template-catalog.js');
+  for (const name of projects) {
+    const project = await loadProjectVarsIfAny(name);
+    if (project) files.push(...(await collectExternalTemplateCatalog(project, inputs)));
+  }
   const shippedErrors = files.flatMap((file) => {
     if (!file.relativePath.startsWith('projects/')) return [];
     return validatePackBytesPortability(

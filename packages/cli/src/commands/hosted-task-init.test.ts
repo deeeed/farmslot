@@ -6,6 +6,12 @@ import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
+import {
+  EXECUTION_TEMPLATE_CATALOG_DIR,
+  EXECUTION_TEMPLATE_CATALOG_FILE,
+  type ExecutionTemplateCatalogSnapshot,
+} from '@farmslot/agent-runtime';
+
 import { fixture } from '../../test/helpers/project-doctor.js';
 
 import {
@@ -197,6 +203,46 @@ test('task-init template drift names the supported pre-launch write-task replay'
       error.userAction.includes('run.replayStep') &&
       error.userAction.includes('write-task'),
   );
+});
+
+test('hosted init uses the selected support catalog outside an installed layout-2 pack and still checks SHA', (t) => {
+  const { catalog, request: qa } = qaCatalog(t, true);
+  const support = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'hosted-support-catalog-')),
+  );
+  const previous = process.env.FARMSLOT_TASK_SUPPORT_DIR;
+  t.after(() => {
+    if (previous === undefined) delete process.env.FARMSLOT_TASK_SUPPORT_DIR;
+    else process.env.FARMSLOT_TASK_SUPPORT_DIR = previous;
+    fs.rmSync(support, { recursive: true, force: true });
+  });
+  const declaration = catalog.project.projectJson.execution_templates?.sources?.[0];
+  assert(declaration);
+  const installed = path.join(
+    catalog.slot.machineEnv!.FIXTURE_COOK_ROOT,
+    'references/templates/qa/default.md',
+  );
+  const bytes = fs.readFileSync(installed, 'utf8');
+  const project = path.join(support, 'projects', catalog.project.projectName);
+  const relativeRoot = `${EXECUTION_TEMPLATE_CATALOG_DIR}/cook`;
+  const frozen = path.join(project, relativeRoot, 'qa/default.md');
+  fs.mkdirSync(path.dirname(frozen), { recursive: true });
+  fs.writeFileSync(frozen, bytes);
+  const snapshot: ExecutionTemplateCatalogSnapshot = {
+    version: 1,
+    sources: [{ declaration, relativeRoot, sourceRevision: 'f'.repeat(40), sourceDirty: false }],
+  };
+  fs.writeFileSync(path.join(project, EXECUTION_TEMPLATE_CATALOG_FILE), JSON.stringify(snapshot));
+  fs.appendFileSync(installed, '\nUpdated independently on the node.\n');
+  assert.throws(() => selectHostedTaskTemplate(catalog, qa), { code: 'TASK_TEMPLATE_CHANGED' });
+  process.env.FARMSLOT_TASK_SUPPORT_DIR = support;
+  const selected = selectHostedTaskTemplate(catalog, qa).selected;
+  assert.equal(selected.entry.sha256, qa.template.sha256);
+  assert.equal(selected.entry.sourceRevision, 'f'.repeat(40));
+  assert.equal(selected.entry.sourceDirty, false);
+  assert(selected.entry.path.startsWith(project));
+  fs.appendFileSync(frozen, '\nTampered shipped template.\n');
+  assert.throws(() => selectHostedTaskTemplate(catalog, qa), { code: 'TASK_TEMPLATE_CHANGED' });
 });
 
 test('a template source whose root only the gateway has refuses with its name and variable', (t) => {

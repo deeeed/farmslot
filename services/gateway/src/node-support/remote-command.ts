@@ -99,6 +99,7 @@ interface HeldInputs {
   list: BundleInput[];
   stamps: InputStamp[];
   machines: string;
+  environment: Record<string, string | undefined>;
 }
 
 /**
@@ -242,7 +243,12 @@ function collectLocalBundle(projectName: string, paths: string[], pathsKey: stri
     if (held) {
       held.inputs = list.some((input, index) => unsettled(input, stamps[index], startedAt))
         ? 'changed'
-        : { list, stamps, machines: collected.inputs.machines.join('\0') };
+        : {
+            list,
+            stamps,
+            machines: collected.inputs.machines.join('\0'),
+            environment: collected.inputs.environment ?? {},
+          };
       held.checkedAt = Date.now();
     }
     return { hash: collected.manifest.hash, paths, collected };
@@ -266,6 +272,11 @@ async function heldBundleCurrent(held: HeldBundle): Promise<boolean> {
   const inputs = held.inputs;
   // Still collecting: callers share the collection.
   if (inputs === undefined) return true;
+  if (
+    inputs !== 'changed' &&
+    Object.entries(inputs.environment).some(([name, value]) => process.env[name] !== value)
+  )
+    return false;
   if (Date.now() - held.startedAt >= LOCAL_MAX_AGE_MS) return false;
   // An input that stays unsettled (a future timestamp, a directory rewritten every second) is
   // collected again at most this often, as a held one is checked.
