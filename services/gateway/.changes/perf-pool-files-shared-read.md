@@ -1,0 +1,1 @@
+- Read the pool directory once for the node-support retention inventory instead of once per slot.
