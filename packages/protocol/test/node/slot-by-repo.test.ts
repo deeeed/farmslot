@@ -302,6 +302,34 @@ test('ignored files in the pool directory are listed but never statted or read',
   assert.deepEqual([...new Set(touched)].sort(), [dir, join(dir, 'a.json')]);
 });
 
+test('a new backup in the pool directory is listed once, not on every later read', (t) => {
+  const dir = tempDir(t);
+  pool(dir, 'a.json', { machine: 'a', slots: [] });
+  const settledAt = Date.now() + 10_000;
+  t.mock.method(Date, 'now', () => settledAt);
+  readPoolFiles(dir);
+  readPoolFiles(dir);
+  const { readdirSync } = fs;
+  let listings = 0;
+  t.mock.method(fs, 'readdirSync', (...args: Parameters<typeof readdirSync>) => {
+    listings += 1;
+    return readdirSync(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  assert.equal(listings, 0, 'a settled directory is not listed again');
+  pool(dir, 'a.json.bak.2026-11-13', { machine: 'bak', slots: [] });
+  for (let i = 0; i < 3; i++)
+    assert.deepEqual(
+      readPoolFiles<{ machine: string }>(dir).map(({ pool }) => pool.machine),
+      ['a'],
+    );
+  assert.equal(listings, 1, 'the changed directory is listed once');
+});
+
 test('node-link policy reads the cached machine pool and still refuses a malformed one', (t) => {
   const dir = tempDir(t);
   assert.equal(

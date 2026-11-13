@@ -181,15 +181,16 @@ export function readPoolFiles<P = SlotPoolFile>(poolDir: string): PoolFileEntry<
     const entry = cachedPoolFile(path.join(poolDir, file), now)?.entry;
     return entry ? [entry] : [];
   });
-  if (
+  const listingTrusted =
+    cached?.listing === listing ? cached.listingTrusted : !isRacyStamp(dirMtimeMs, now);
+  // A directory change that adds no pool (a new backup) keeps the result but not the old listing:
+  // keep the new one, or every later call lists and filters the directory again.
+  const result =
     cached &&
     cached.result.length === entries.length &&
     cached.result.every((entry, index) => entry === entries[index])
-  )
-    return cached.result as PoolFileEntry<P>[];
-  const result = deepFreeze(entries);
-  const listingTrusted =
-    cached?.listing === listing ? cached.listingTrusted : !isRacyStamp(dirMtimeMs, now);
+      ? cached.result
+      : deepFreeze(entries);
   poolDirCache.set(poolDir, { dirMtimeMs, listingTrusted, listing, demoPool, files, result });
   return result as PoolFileEntry<P>[];
 }
