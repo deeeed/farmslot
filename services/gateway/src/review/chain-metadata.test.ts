@@ -85,5 +85,39 @@ test('unpriced receipts and missing warm baselines remain unknown', () => {
   assert.equal(rows[1].costUsd, null);
   assert.equal(rows[1].costReason, 'Earlier session usage unavailable');
   assert.equal(rows[2].costUsd, null);
-  assert.equal(rows[2].costReason, 'Cost not recorded');
+  assert.match(rows[2].costReason ?? '', /unpriced or uncaptured/);
+});
+
+test('an uncaptured replacement cannot turn a captured subtotal into a total', () => {
+  const run = record('replacement', 1, 3);
+  run.sessionUsage!.push({
+    ...run.sessionUsage![0],
+    runnerSessionId: 'replacement-session',
+    source: 'unavailable',
+    totalTokens: null,
+    costUsd: null,
+    costStatus: 'unpriced',
+  });
+  assert.equal(reviewChainWithMetrics([entry(run, 1)], [run])[0].costUsd, null);
+});
+
+test('a token-only retained baseline cannot price a later cumulative receipt', () => {
+  const prior = record('unpriced-prior', 1, null, 'shared');
+  const current = record('priced-current', 2, 8, 'shared');
+  const rows = reviewChainWithMetrics(
+    [entry(prior, 1), entry(current, 2, 'warm')],
+    [prior, current],
+  );
+  assert.equal(rows[1].costUsd, null);
+});
+
+test('a fully priced retained conversation with no growth records zero generation cost', () => {
+  const prior = record('prior-zero', 1, 3, 'shared-zero');
+  const current = record('current-zero', 2, 3, 'shared-zero');
+  current.sessionUsage![0].totalTokens = prior.sessionUsage![0].totalTokens;
+  const rows = reviewChainWithMetrics(
+    [entry(prior, 1), entry(current, 2, 'warm')],
+    [prior, current],
+  );
+  assert.equal(rows[1].costUsd, 0);
 });

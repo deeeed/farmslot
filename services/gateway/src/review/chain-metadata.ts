@@ -1,6 +1,12 @@
 import { primaryRoleForFlow, type ReviewChainEntry, type Run } from '@farmslot/protocol';
 
-import { isHelperSession, sessionUsageContributions } from '../runtime/session-usage-selection.js';
+import { sessionUsageKey } from '../runtime/agent-session-rows.js';
+import {
+  allRunSessionUsageReceipts,
+  isHelperSession,
+  sessionCosts,
+  sessionUsageContributions,
+} from '../runtime/session-usage-selection.js';
 
 /** Carry accounting facts; warm conversation subtraction stays in the existing usage owner. */
 export function reviewChainWithMetrics(
@@ -13,6 +19,7 @@ export function reviewChainWithMetrics(
     return record ? [record] : [];
   });
   const contributions = sessionUsageContributions(chainRuns);
+  const lastInventory = new Map<string, ReturnType<typeof allRunSessionUsageReceipts>[number]>();
   let missingEarlier = false;
   return chain.map((entry) => {
     const record = byId.get(entry.runId);
@@ -23,24 +30,26 @@ export function reviewChainWithMetrics(
     const rows = (contributions.get(record.id) ?? []).filter(
       (row) => row.role === primaryRoleForFlow(record.flowType) && !isHelperSession(row),
     );
-    const priced =
-      rows.length > 0 && rows.every((row) => row.costUsd != null && row.costStatus !== 'unpriced');
-    const unavailableBaseline = missingEarlier && entry.mode === 'warm';
-    const costUsd =
-      priced && !unavailableBaseline
-        ? rows.reduce((sum, row) => sum + (row.costUsd ?? 0), 0)
-        : null;
+    const inventory = allRunSessionUsageReceipts(record).filter(
+      (row) => row.role === primaryRoleForFlow(record.flowType) && !isHelperSession(row),
+    );
+    const baselines = inventory.flatMap((row) => {
+      const key = sessionUsageKey(row);
+      const prior = key ? lastInventory.get(key) : undefined;
+      return prior ? [prior] : [];
+    });
+    const cost =
+      missingEarlier && entry.mode === 'warm'
+        ? { costUsd: null, costReason: 'Earlier session usage unavailable' }
+        : sessionCosts(rows, [...inventory, ...baselines]);
+    for (const row of inventory) {
+      const key = sessionUsageKey(row);
+      if (key) lastInventory.set(key, row);
+    }
     return {
       ...entry,
       durationMs: record.metrics.durationMs ?? null,
-      costUsd,
-      ...(costUsd === null
-        ? {
-            costReason: unavailableBaseline
-              ? 'Earlier session usage unavailable'
-              : 'Cost not recorded',
-          }
-        : { costReason: undefined }),
+      ...cost,
     };
   });
 }
