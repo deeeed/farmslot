@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import type { ExecResult } from '@farmslot/protocol';
 
+import { blindLaunchScript } from '../evals/blind-git.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 
 import { loadSlotVars } from './config.js';
@@ -349,7 +350,13 @@ export function buildTmuxRespawnLaunchCommand(
   command: string,
   remoteRepo: string,
   preserveWindowAfterExit = false,
+  blind = false,
 ): string {
+  if (blind)
+    return blindLaunchScript(
+      command,
+      preserveWindowAfterExit ? [buildDispatchRoleShellCommand(remoteRepo)] : [],
+    );
   if (!preserveWindowAfterExit) return `exec bash -lc ${shellQuote(command)}`;
   return `bash -c ${shellQuote(
     [`bash -lc ${shellQuote(command)}`, buildDispatchRoleShellCommand(remoteRepo)].join('\n'),
@@ -358,6 +365,8 @@ export function buildTmuxRespawnLaunchCommand(
 
 export interface TmuxWindowRespawnOptions {
   preserveWindowAfterExit?: boolean;
+  /** Names a blind trial worker may receive (blindLaunchEnvironment). */
+  blindEnvironment?: readonly string[];
   noRetry?: boolean;
   /** Recheck ownership after publication, immediately before replacing the runner. */
   beforeRespawn?: () => void | Promise<void>;
@@ -365,6 +374,8 @@ export interface TmuxWindowRespawnOptions {
 
 export interface TmuxPaneRespawnOptions {
   preservePaneAfterExit?: boolean;
+  /** Names a blind trial worker may receive (blindLaunchEnvironment). */
+  blindEnvironment?: readonly string[];
   beforeRespawn?: () => void | Promise<void>;
 }
 
@@ -383,7 +394,13 @@ export async function respawnTmuxWindowWithCommand(
   const launchCommand = await writeTmuxLaunchScript(
     vars,
     target,
-    buildTmuxRespawnLaunchCommand(command, vars.remoteRepo, options?.preserveWindowAfterExit),
+    buildTmuxRespawnLaunchCommand(
+      command,
+      vars.remoteRepo,
+      options?.preserveWindowAfterExit,
+      Boolean(options?.blindEnvironment),
+    ),
+    options?.blindEnvironment,
   );
   await options?.beforeRespawn?.();
   const respawned = await execOnSlot(
@@ -421,7 +438,13 @@ export async function respawnTmuxPaneWithCommand(
   const launchCommand = await writeTmuxLaunchScript(
     vars,
     paneId,
-    buildTmuxRespawnLaunchCommand(command, vars.remoteRepo, options?.preservePaneAfterExit),
+    buildTmuxRespawnLaunchCommand(
+      command,
+      vars.remoteRepo,
+      options?.preservePaneAfterExit,
+      Boolean(options?.blindEnvironment),
+    ),
+    options?.blindEnvironment,
   );
   await options?.beforeRespawn?.();
   const respawned = await execOnSlot(

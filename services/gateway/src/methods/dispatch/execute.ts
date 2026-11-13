@@ -77,6 +77,7 @@ import {
 } from '../../run-engine/review-session-chain.js';
 import {
   assertRunnerLaunchPrerequisites,
+  blindLaunchEnvironment,
   buildLaunchCommand,
   effectiveModelQuestionsForRun,
   modelQuestionsForRun,
@@ -170,7 +171,7 @@ export {
   resolvePrRef,
   validateTicketRef,
 } from './ticket-ref.js';
-import { blindTrialWorkerBoundary } from '../../evals/blind-git.js';
+import { blindLaunchScript, blindTrialWorkerBoundary } from '../../evals/blind-git.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
 import { admitWorkerLaunch } from '../../run-engine/worker-launch-preflight.js';
 
@@ -721,11 +722,13 @@ async function respawnRoleWindowWithCommand(
   target: string,
   command: string,
   beforeRespawn: () => Promise<void>,
+  blindEnvironment?: readonly string[],
 ): Promise<void> {
   const launchCommand = await writeTmuxLaunchScript(
     vars,
     target,
-    buildRoleLaunchCommandWithDiagnosticHold(command, vars.remoteRepo),
+    buildRoleLaunchCommandWithDiagnosticHold(command, vars.remoteRepo, Boolean(blindEnvironment)),
+    blindEnvironment,
   );
   await beforeRespawn();
   const respawned = await execOnSlot(
@@ -755,14 +758,14 @@ async function respawnRoleWindowWithCommand(
 export function buildRoleLaunchCommandWithDiagnosticHold(
   command: string,
   remoteRepo: string,
+  blind = false,
 ): string {
   // Keep the wrapper as the tmux pane process so launch failures can preserve
   // stderr briefly for diagnostics. If dispatch cleanup kills the child runner,
   // or a runner exits non-zero during launch/user quit, this outer shell can
   // remain until the diagnostic hold elapses, but the runner process itself is
   // already gone.
-  const lines = [
-    `bash -lc ${shellQuote(command)}`,
+  const after = [
     '__farmslot_status=$?',
     'echo "[farmslot] runner launch command exited $__farmslot_status" >&2',
     'if [ "$__farmslot_status" -ne 0 ]; then',
@@ -771,7 +774,9 @@ export function buildRoleLaunchCommandWithDiagnosticHold(
     'fi',
     buildDispatchRoleShellCommand(remoteRepo),
   ];
-  return `bash -c ${shellQuote(lines.join('\n'))}`;
+  // A blind body runs in the launch script itself, never in a child's argv.
+  if (blind) return blindLaunchScript(command, after);
+  return `bash -c ${shellQuote([`bash -lc ${shellQuote(command)}`, ...after].join('\n'))}`;
 }
 
 async function tmuxSessionExists(
@@ -1876,6 +1881,7 @@ export async function dispatchExecute(
     );
   }
 
+  const blindTrialBoundary = blindTrialWorkerBoundary(currentRun);
   let agentLaunch = buildLaunchCommand(vars, runner, model, taskPrompt, {
     taskFile: `${workerTaskDir}/TASK.md`,
     taskDir: workerTaskDir,
@@ -1888,7 +1894,7 @@ export async function dispatchExecute(
     runtimeDir: projectVars?.runtimeDir,
     // Label only — installer expands credential path on the slot host.
     codexAccountLabel: accountBind?.bind.launchAccountLabel ?? null,
-    blindTrialBoundary: blindTrialWorkerBoundary(currentRun),
+    blindTrialBoundary,
     modelQuestions: modelQuestionsForRun(currentRun),
   });
 
@@ -2026,7 +2032,13 @@ export async function dispatchExecute(
         await runPressureGate();
         if (launchCarriesPrompt) await markPromptDeliveryStarted();
       };
-      await respawnRoleWindowWithCommand(vars, workerTarget, agentLaunch, beforeRoleRespawn);
+      await respawnRoleWindowWithCommand(
+        vars,
+        workerTarget,
+        agentLaunch,
+        beforeRoleRespawn,
+        blindTrialBoundary ? blindLaunchEnvironment(vars, runner, model) : undefined,
+      );
       await settleFreshRoleWindow();
     } else if (!resumedReviewSession) {
       // Some shell init paths (e.g. anaconda's `(base)` prompt activation) query

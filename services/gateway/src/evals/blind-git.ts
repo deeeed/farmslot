@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 
 import { type EvalProofSource, primaryRoleForFlow, type Run } from '@farmslot/protocol';
 
+import { runnerLaunchDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { shSingleQuote } from '../../../../scripts/lib/shell-quote.mjs';
 import { withFarmGitConfig } from '../core/farm-git.js';
 
@@ -36,8 +37,10 @@ export function buildBlindGitCommand(
   action: 'plan' | 'isolate' | 'boundary' | 'verify' | 'restore',
   spec: BlindGitSpec,
 ): string {
+  // Each slot's launch directory, own slot first, as tmux-launch-script.ts writes it.
+  const launchDirs = [spec.repo, ...(spec.siblingRepos ?? [])].map(runnerLaunchDir);
   return withFarmGitConfig(
-    `python3 - ${shSingleQuote(JSON.stringify({ ...spec, action }))} <<'FARMSLOT_BLIND_GIT_PY'\n${script}\nFARMSLOT_BLIND_GIT_PY`,
+    `python3 - ${shSingleQuote(JSON.stringify({ ...spec, launchDirs, action }))} <<'FARMSLOT_BLIND_GIT_PY'\n${script}\nFARMSLOT_BLIND_GIT_PY`,
   );
 }
 
@@ -155,6 +158,68 @@ const BLIND_ENVIRONMENT = [
   'GIT_CONFIG_VALUE_1',
 ];
 
+/** Every name a blind worker may receive: the fixed list plus its runner's model entries. */
+export function blindEnvironmentNames(modelEnvironment: readonly string[] = []): string[] {
+  const names = [...BLIND_ENVIRONMENT, ...modelEnvironment];
+  if (names.some((name) => !/^[A-Z_][A-Z0-9_]*$/.test(name)))
+    throw new Error('Invalid blind model environment name');
+  return names;
+}
+
+/** The blind launch shells' own environment. No credential, no startup file. */
+const BLIND_LAUNCH_SHELL_ENVIRONMENT = [
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'PATH',
+  'SHELL',
+  'TMPDIR',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'LC_MESSAGES',
+  'TZ',
+  'TERM',
+  'COLORTERM',
+  'NO_COLOR',
+  'TMUX',
+  'TMUX_PANE',
+];
+
+/**
+ * tmux pane command for a blind launch script. The pane's own shell exits into
+ * `env -i` and a startup-file-free bash holding only the names above; the
+ * worker's admitted names reach the script's subshell on fd 3, never through a
+ * long-lived ancestor's environment or argv. See ./blind-environment.md.
+ */
+export function blindLaunchShellCommand(script: string, names: readonly string[]): string {
+  const keep = BLIND_LAUNCH_SHELL_ENVIRONMENT.map((name) => `\${${name}+"${name}=$${name}"}`);
+  // Separate `exec`s: a redirect on the final exec would leak the substitution's fd.
+  const stage = [
+    'script=$1; shift',
+    `exec 3< <(for name in "$@"; do [ -z "\${!name+x}" ] || printf '%s=%s\\0' "$name" "\${!name}"; done)`,
+    `exec /usr/bin/env -i ${keep.join(' ')} "$BASH" --noprofile --norc "$script"`,
+  ].join('\n');
+  return `exec bash --noprofile --norc -c ${shSingleQuote(stage)} farmslot-blind-launch ${script} ${names.join(' ')}`;
+}
+
+/**
+ * Blind launch script body. The admitted values are read into an unexported
+ * array; only the worker subshell exports them before its own `env -i`.
+ */
+export function blindLaunchScript(command: string, after: readonly string[] = []): string {
+  return [
+    '__farmslot_env=()',
+    `while IFS= read -r -d '' __farmslot_kv; do __farmslot_env+=("$__farmslot_kv"); done <&3`,
+    'exec 3<&-',
+    '(',
+    '[ ${#__farmslot_env[@]} -eq 0 ] || export "${__farmslot_env[@]}"',
+    command,
+    ')',
+    ...after,
+  ].join('\n');
+}
+
 /**
  * Start a blind worker without GitHub credentials, under the capsule's sandbox
  * profile (blind-git.py). Its gh, credential-helper and SSH-transport calls
@@ -167,9 +232,7 @@ export function withBlindTrialBoundary(
 ): string {
   const boundary = `${trial.capsule}/boundary`;
   const deny = shSingleQuote(`${boundary}/bin/deny`);
-  const names = [...BLIND_ENVIRONMENT, ...modelEnvironment];
-  if (names.some((name) => !/^[A-Z_][A-Z0-9_]*$/.test(name)))
-    throw new Error('Invalid blind model environment name');
+  const names = blindEnvironmentNames(modelEnvironment);
   // Quoted conditional expansion preserves empty values, spaces and newlines,
   // and omits unset variables. No parent environment enumeration or logging.
   const environment = names.map((name) => `\${${name}+"${name}=$${name}"}`).join(' ');
