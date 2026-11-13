@@ -1306,6 +1306,7 @@
         });
         // flows
         const pairCount = {};
+        const labels = [];
         step.flows.forEach(([a, b, kind, label], i) => {
           const A = ST[a],
             B = ST[b],
@@ -1391,18 +1392,12 @@
           // label along the line (staggered for parallel flows), on the offset side
           const t = total > 1 ? 0.3 + (0.4 * n) / (total - 1) : 0.5,
             side = Math.sign(off || -1);
-          const lx = s.x + (e.x - s.x) * t + nx * 16 * side,
-            ly = s.y + (e.y - s.y) * t + ny * 16 * side;
-          ctx.font = "500 12px 'IBM Plex Mono', monospace";
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          const tw = ctx.measureText(label).width + 10;
-          ctx.fillStyle = panel;
-          ctx.globalAlpha = 0.92;
-          ctx.fillRect(lx - tw / 2, ly - 9, tw, 18);
-          ctx.globalAlpha = 1;
-          ctx.fillStyle = c;
-          ctx.fillText(label, lx, ly);
+          labels.push({
+            text: label,
+            color: c,
+            x: s.x + (e.x - s.x) * t + nx * 16 * side,
+            y: s.y + (e.y - s.y) * t + ny * 16 * side,
+          });
         });
         // stations
         Object.entries(ST).forEach(([key, s]) => {
@@ -1421,6 +1416,19 @@
           ctx.fillStyle = soft;
           ctx.font = "400 11.5px 'IBM Plex Mono', monospace";
           ctx.fillText(s.sub, s.x, s.y + (key === 'gw' ? 14 : 12));
+        });
+        // flow labels last, so no station box covers them
+        ctx.font = "500 12px 'IBM Plex Mono', monospace";
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        labels.forEach(({ text, color, x, y }) => {
+          const tw = ctx.measureText(text).width + 10;
+          ctx.fillStyle = panel;
+          ctx.globalAlpha = 0.92;
+          ctx.fillRect(x - tw / 2, y - 9, tw, 18);
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = color;
+          ctx.fillText(text, x, y);
         });
         if (!reduce) requestAnimationFrame(draw);
       }
