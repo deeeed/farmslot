@@ -8,6 +8,11 @@ import { fileURLToPath } from 'node:url';
 
 import { withBlindTrialBoundary } from './blind-git.js';
 
+interface CapsuleProfileRules {
+  profile: string;
+  aliases: Record<string, string[]>;
+}
+
 function generatedProfile(
   t: TestContext,
   slotResourcePorts: Record<string, number> = {},
@@ -231,6 +236,7 @@ test('blind profile denies outbound Unix sockets except the system DNS endpoint'
   // /var/run resolves through /private on macOS and /run on Ubuntu.
   const resolverPaths = new Set([
     '/var/run/mDNSResponder',
+    '/private/var/run/mDNSResponder',
     path.join(realpathSync('/var/run'), 'mDNSResponder'),
   ]);
   assert.equal(
@@ -373,6 +379,60 @@ test('blind profile hides boundary and node internals after runtime read excepti
   assert.ok(profile.includes('(deny file-write-unlink '));
   for (const file of [path.join(home, '.ssh'), path.join(root, 'boundary/sandbox.sb')])
     assert.ok(profile.includes(`(deny file-write* (subpath ${JSON.stringify(file)}))`));
+});
+
+test('blind profile denies capsule writes and links after checkout allowances, with narrow log exceptions', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'capsule-profile-')));
+  t.after(() => rmSync(root, { recursive: true }));
+  const result = spawnSync(
+    'python3',
+    [
+      '-c',
+      `
+import json, os, pathlib, runpy, sys
+from unittest.mock import patch
+blind = runpy.run_path(sys.argv[1], run_name='fixture')
+root = pathlib.Path(sys.argv[2])
+capsules = root / '.farmslot-blind-evals'
+capsule = capsules / 'slot/run-epoch'
+capsule.mkdir(parents=True)
+(capsule / 'state.json').write_text('{"originalIsDirectory":true}')
+link = root / 'capsule-link'
+link.symlink_to(capsule)
+with patch.dict(os.environ, {'HOME': str(root)}, clear=True):
+    print(json.dumps({'profile': blind['sandbox_profile']({'repo': str(root / 'checkout'), 'siblingRepos': [str(root / 'other/checkout')]}, link, [], []),
+                      'aliases': {str(p): blind['path_aliases'](p) for p in [capsules, capsule, link, root / 'other/.farmslot-blind-evals']}}))
+`,
+      fileURLToPath(new URL('./blind-git.py', import.meta.url)),
+      root,
+    ],
+    { encoding: 'utf8', timeout: 4500 },
+  );
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  const { profile, aliases }: CapsuleProfileRules = JSON.parse(result.stdout);
+  const checkoutRule = `(allow file-write* (subpath ${JSON.stringify(path.join(root, 'checkout'))}))`;
+  const logRules = ['attempts.log', 'git-trace.jsonl'].map(
+    (name) =>
+      `(allow file-write* (literal ${JSON.stringify(path.join(root, '.farmslot-blind-evals/slot/run-epoch/boundary', name))}))`,
+  );
+  for (const paths of Object.values(aliases))
+    for (const alias of paths) {
+      const rule = `(deny file-write* file-link (subpath ${JSON.stringify(alias)}))`;
+      // The explicit capsule link and the inferred trees must both be protected.
+      assert.ok(profile.includes(rule), rule);
+      assert.ok(profile.indexOf(rule) > profile.indexOf(checkoutRule));
+      for (const logRule of logRules) assert.ok(profile.indexOf(logRule) > profile.indexOf(rule));
+      const parent = path.dirname(alias);
+      assert.ok(profile.includes(`(literal ${JSON.stringify(parent)})`), parent);
+    }
+  for (const rule of logRules) assert.ok(profile.includes(rule), rule);
+  if (root.startsWith('/private/var/'))
+    assert.ok(
+      Object.values(aliases)
+        .flat()
+        .some((alias) => alias.startsWith('/var/')),
+    );
 });
 
 test('blind browser allocation skips protected and assigned ports and stays stable', (t) => {
