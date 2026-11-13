@@ -345,7 +345,8 @@ async function bundleInputs(
     if (sha256 === null) {
       // Deleting a file updates its folder. The nearest folder that exists above an absent
       // input changed since the build started: it may hide a manifest esbuild already used.
-      if ((await nearestExistingFolder(file)).mtimeMs >= buildStarted) return undefined;
+      const folder = await nearestExistingFolder(file);
+      if (!folder || folder.mtimeMs >= buildStarted) return undefined;
       continue;
     }
     // A file written while esbuild ran may differ from what it read: do not cache.
@@ -405,7 +406,9 @@ async function fileState(file: string): Promise<string | null> {
   }
 }
 
-async function nearestExistingFolder(file: string): Promise<Stats> {
+// The nearest folder that exists above `file`, or undefined when a dangling symbolic link
+// sits in between: its target may have vanished during the build.
+async function nearestExistingFolder(file: string): Promise<Stats | undefined> {
   for (let dir = path.dirname(file); ; dir = path.dirname(dir)) {
     try {
       return await stat(dir);
@@ -413,6 +416,7 @@ async function nearestExistingFolder(file: string): Promise<Stats> {
       const code = (error as NodeJS.ErrnoException).code;
       if ((code !== 'ENOENT' && code !== 'ENOTDIR') || path.dirname(dir) === dir) throw error;
     }
+    if (await pathExists(dir)) return undefined;
   }
 }
 

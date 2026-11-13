@@ -1942,6 +1942,42 @@ describe('live adapter scripts', () => {
     );
   });
 
+  test('does not cache a bundle when a dangling symlink sits above an absent input', async () => {
+    const root = tempRoot('dangling-link-adapter-');
+    const dir = path.join(root, 'web', 'team');
+    const pkg = path.join(root, 'node_modules', 'helper-pkg');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(pkg, { recursive: true });
+    fs.writeFileSync(
+      path.join(pkg, 'package.json'),
+      JSON.stringify({ name: 'helper-pkg', main: 'index.js' }),
+    );
+    fs.writeFileSync(path.join(pkg, 'index.js'), 'module.exports = "helper";\n');
+    fs.writeFileSync(
+      path.join(dir, 'probe.mjs'),
+      `import value from 'helper-pkg';\nconsole.log(value);\n`,
+    );
+    // A node_modules link into a package store that is gone.
+    fs.symlinkSync(path.join(root, 'missing-store'), path.join(dir, 'node_modules'));
+    const earlier = new Date(Date.now() - 60_000);
+    for (const entry of [pkg, path.dirname(pkg), dir, path.dirname(dir), root]) {
+      fs.utimesSync(entry, earlier, earlier);
+    }
+    const recorder = new CallTimingRecorder();
+    const prepare = () =>
+      withCallTimings(recorder, () =>
+        prepareLiveAdapterScript({
+          platform: 'web',
+          action: 'team.probe',
+          namespace: 'shop',
+          implementationRoot: root,
+        }),
+      );
+    await prepare();
+    await prepare();
+    assert.equal(recorder.snapshot().work.liveAdapterCached, 0);
+  });
+
   test('does not cache a bundle when a folder of an absent input changed during the build', async () => {
     const root = tempRoot('vanishing-manifest-adapter-');
     const dir = path.join(root, 'web', 'team');
