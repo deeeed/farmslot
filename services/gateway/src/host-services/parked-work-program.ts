@@ -28,7 +28,24 @@ const metadataRef = ref => ref.replace(root, 'refs/farmslot/parked-meta/');
 function exists(file) { try { return fs.lstatSync(file); } catch (e) { if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return null; throw e; } }
 function nul(buffer) { return buffer.toString('utf8').split('\0').filter(Boolean); }
 function refSha(ref) { const r = git(['rev-parse','--verify','--quiet',ref], { allow:[1,128] }); return r.status === 0 ? r.stdout.toString('utf8').trim() : null; }
-function repositoryKey() { const common = text(['rev-parse','--git-common-dir']); return hash(path.resolve(repo, common)); }
+function repositoryKey() {
+  let common = text(['rev-parse','--git-common-dir']);
+  const runId = text(['config','--local','--get','farmslot.blindRun'], {allow:[1]});
+  if (runId) {
+    // Blind receipts will live in the original repository after Git restoration.
+    const worktree = text(['config','--local','--get','core.worktree']);
+    const capsules = path.join(path.dirname(worktree), '.farmslot-blind-evals', input.slotId);
+    const states = fs.readdirSync(capsules).filter(name => name.startsWith(runId+'-')).map(name =>
+      JSON.parse(fs.readFileSync(path.join(capsules,name,'state.json'),'utf8'))
+    ).filter(state => state.runId === runId && state.slotId === input.slotId &&
+      path.resolve(state.repo) === path.resolve(repo) && state.phase === 'isolated');
+    if (states.length !== 1) fail('INVALID_METADATA','Cannot identify the original blind repository');
+    const state = states[0];
+    if (!state.originalIsDirectory) common =
+      text(['--git-dir='+state.originalDirectory,'rev-parse','--git-common-dir']);
+  }
+  return hash(path.resolve(repo, common));
+}
 function branch() { return text(['symbolic-ref','--quiet','--short','HEAD'], {allow:[1]}) || 'HEAD'; }
 function stageEntries(buffer) {
   return nul(buffer).map(line => { const tab = line.indexOf('\t'); const fields = line.slice(0,tab).split(' '); return { mode:fields[0], sha:fields[1], stage:Number(fields[2]), file:line.slice(tab+1) }; });

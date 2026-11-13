@@ -1,1 +1,1 @@
-- Fix blind trial prepare and replay parking to retain recoverable candidate work through restoration against the verified blind base without requiring origin refs.
+- Fix blind trial prepare and replay parking to retain recoverable candidate work through restoration for standalone and linked worktrees against the verified blind base without requiring origin refs.

@@ -75,33 +75,34 @@ test('isolated blind prepare parking survives restore', async (t) => {
   const { mutateSlotGit, slotParkedInventory } =
     await import('../run-lifecycle/validation-run-commits.js');
   const { parkGitWork, restoreParkedGitWork } = await import('../host-services/parked-work.js');
-  for (const restorePhase of [
-    'normal',
-    'journaled',
-    'exported',
-    'retained',
-    'reattached',
-    'conflicting',
-  ])
-    await t.test(`phase=${restorePhase}`, async () => {
-      const caseRoot = path.join(root, restorePhase);
+  const recoveryCases = [false, true].flatMap((linked) =>
+    ['normal', 'journaled', 'exported', 'retained', 'reattached', 'conflicting'].map(
+      (restorePhase) => ({ linked, restorePhase }),
+    ),
+  );
+  for (const { linked, restorePhase } of recoveryCases)
+    await t.test(`linked=${linked}, phase=${restorePhase}`, async () => {
+      const caseRoot = path.join(root, `${linked}-${restorePhase}`);
       mkdirSync(caseRoot);
-      const repo = path.join(caseRoot, 'repo');
-      mkdirSync(repo);
-      git(repo, 'init', '-q', '-b', 'main');
-      writeFileSync(path.join(repo, 'value.txt'), 'ancestor\n');
-      const ancestor = commit(repo, 'ancestor');
-      writeFileSync(path.join(repo, 'value.txt'), 'base\n');
-      const baseSha = commit(repo, 'base');
-      writeFileSync(path.join(repo, 'answer.txt'), 'reference\n');
-      const reference = commit(repo, 'reference');
-      git(repo, 'remote', 'add', 'origin', path.join(root, 'upstream'));
-      git(repo, 'update-ref', 'refs/remotes/origin/main', reference);
+      const source = path.join(caseRoot, 'source');
+      const repo = linked ? path.join(caseRoot, 'linked') : source;
+      mkdirSync(source);
+      git(source, 'init', '-q', '-b', 'main');
+      writeFileSync(path.join(source, 'value.txt'), 'ancestor\n');
+      const ancestor = commit(source, 'ancestor');
+      writeFileSync(path.join(source, 'value.txt'), 'base\n');
+      const baseSha = commit(source, 'base');
+      writeFileSync(path.join(source, 'answer.txt'), 'reference\n');
+      const reference = commit(source, 'reference');
+      git(source, 'remote', 'add', 'origin', path.join(root, 'upstream'));
+      git(source, 'update-ref', 'refs/remotes/origin/main', reference);
+      if (linked) git(source, 'worktree', 'add', '-q', '--detach', repo, 'main');
+      const originalDirectory = git(repo, 'rev-parse', '--absolute-git-dir');
       const spec: BlindGitSpec = {
         slotId: 'blind-prepare-fixture',
         slotEpoch: 1,
         repo,
-        capsule: path.join(caseRoot, '.farmslot-blind-evals/trial'),
+        capsule: path.join(caseRoot, '.farmslot-blind-evals/blind-prepare-fixture/trial-1'),
         runId: 'trial',
         branch: 'eval/trial',
         baseSha,
@@ -162,7 +163,7 @@ test('isolated blind prepare parking survives restore', async (t) => {
       assert.ok(saved.indexArchiveSha);
       const metadata = git(repo, 'cat-file', 'blob', saved.metadataRef);
       if (restorePhase === 'conflicting') {
-        const original = path.join(spec.capsule, 'original.entry');
+        const original = linked ? originalDirectory : path.join(spec.capsule, 'original.entry');
         for (const ref of [saved.ref, saved.metadataRef]) {
           git(repo, `--git-dir=${original}`, 'update-ref', ref, baseSha);
           assert.throws(() => command('restore', spec), /parked ref conflicts/);
