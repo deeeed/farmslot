@@ -712,3 +712,33 @@ test('a node that does not declare text reads keeps the shell read', async (t) =
   assert.ok(commands.some((command) => command.includes('tail -c 65536')));
   assert.ok(commands.some((command) => command.startsWith('if [ -f ')));
 });
+
+test('a pending read stays bound to its original connection when a replacement starts', async (t) => {
+  const oldSocket = await connectedSocket(t);
+  const newSocket = await connectedSocket(t);
+  const slot = { ...vars, machine: 'pending-metadata-replacement' };
+  registerNode(slot.machine, 1, oldSocket);
+  const oldHold = latch();
+  const newHold = latch();
+  let launches = 0;
+  execute = async () => {
+    const index = ++launches;
+    await (index === 1 ? oldHold.promise : newHold.promise);
+    return { stdout: index === 1 ? 'old-node' : 'new-node', stderr: '', exitCode: 0 };
+  };
+  const oldRead = probes.readSlotProbe(slot, 'metadata read', 'pending-replacement', 5000);
+  let newRead: typeof oldRead | undefined;
+  try {
+    await flush();
+    registerNode(slot.machine, 2, newSocket);
+    newRead = probes.readSlotProbe(slot, 'metadata read', 'pending-replacement', 5000);
+    await flush();
+    assert.equal(launches, 2, 'replacement must not join a pending read on the old socket');
+  } finally {
+    oldHold.release();
+    newHold.release();
+  }
+  assert.equal((await oldRead).stdout, 'old-node');
+  assert.ok(newRead);
+  assert.equal((await newRead).stdout, 'new-node');
+});

@@ -8,6 +8,10 @@
 
 - Keep remote task initialization on the gateway-shipped external template catalog while preserving source identity and digest checks.
 
+## 0.45.13 - 2026-11-13
+
+- Update shared adapter/runtime dependencies for unchanged-call plan reuse.
+
 ## 0.45.12 - 2026-11-13
 
 - Keep native Claude turns in the foreground so workers and reviewers finish pending tool work before returning, including resumed turns.

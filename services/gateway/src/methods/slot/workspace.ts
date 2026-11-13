@@ -35,9 +35,9 @@ import { isActiveSlotHolder, slotPinIsRequestOnly } from '../dispatch/slot-scori
 
 import { REFRESH_REMOTE_REF_LOCKS_COMMAND } from './git-cleanup-commands.js';
 import { readMergedPreparePullRequests, refIncludedInMergedPullRequest } from './unmerged-work.js';
+import { passiveWorkspaceVersions } from './workspace-metadata.js';
 import { probeWorkspace } from './workspace-probe.js';
 import { readWorkspaceRemoteRef } from './workspace-remote-ref.js';
-import { workspaceVersion } from './workspace-version.js';
 
 export function recoveryFromRow(row: Readonly<Record<string, unknown>>): SlotRecovery | undefined {
   const recovery = row.workspace_recovery;
@@ -422,7 +422,13 @@ export function observedFleetWorkspaces(fleet: FleetStatus): FleetStatus {
   return { ...fleet, slots: fleet.slots.map(observedSlotWorkspace) };
 }
 
-export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promise<SlotStatus[]> {
+export async function observeSlotWorkspaces(
+  slots: readonly SlotStatus[],
+  inventory: readonly SlotStatus[] = slots,
+): Promise<SlotStatus[]> {
+  let versions: Promise<Map<string, string>> | undefined;
+  const metadata = () =>
+    (versions ??= passiveWorkspaceVersions(inventory.filter(workspaceObservable)));
   return Promise.all(
     slots.map(async (slot) => {
       if (!workspaceObservable(slot)) return { ...slot, workspace: undefined };
@@ -458,18 +464,7 @@ export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promi
             passive: true,
           });
         const promise = Promise.resolve().then(async () => {
-          try {
-            const vars = await loadSlotVars(slot.slot);
-            const project = await loadProjectVars(vars.projectName);
-            entry.version = await workspaceVersion(
-              vars,
-              getProjectField(project.projectJson, 'default_branch') || DEFAULT_BRANCH,
-            );
-          } catch {
-            // Metadata is only an optimization. The real inspection still
-            // reports unreadable repositories or unavailable node transport;
-            // an unchanged failure keeps its bounded retry deadline below.
-          }
+          entry.version = (await metadata()).get(slot.slot);
           if (
             previous?.key === key &&
             previous.until !== 0 &&

@@ -57,6 +57,8 @@ export class SlotByRepoError extends Error {
  * Pool files every loader skips: non-JSON, the committed template, and the
  * repo's own demo pool (the self-integration example) unless FARMSLOT_DEMO_POOL=1
  * opts it in — a fresh install must not surface demo slots nobody asked for.
+ * readPoolFiles keeps the filtered listing until FARMSLOT_DEMO_POOL changes: another env input
+ * here must join that check.
  */
 export function isIgnoredPoolFile(file: string, env: NodeJS.ProcessEnv = process.env): boolean {
   if (!file.endsWith('.json')) return true;
@@ -116,8 +118,10 @@ interface PoolDirCache {
   dirMtimeMs: number;
   /** The directory had settled when it was listed (see CachedPoolFile.trusted). */
   listingTrusted: boolean;
-  /** Every directory entry; which ones are pools is decided on each call (it reads the env). */
+  /** Every directory entry. Backups make it hundreds of entries, so it is filtered once per listing. */
   listing: string[];
+  /** The FARMSLOT_DEMO_POOL value `files` was filtered with: the only env input of the filter. */
+  demoPool: string | undefined;
   files: string[];
   result: PoolFileEntry<unknown>[];
 }
@@ -168,25 +172,26 @@ export function readPoolFiles<P = SlotPoolFile>(poolDir: string): PoolFileEntry<
     cached && cached.listingTrusted && cached.dirMtimeMs === dirMtimeMs
       ? cached.listing
       : readdirSync(poolDir).sort();
-  const pools = listing.filter((file) => !isIgnoredPoolFile(file));
+  const demoPool = process.env.FARMSLOT_DEMO_POOL;
   const files =
-    cached && cached.files.length === pools.length && cached.files.every((f, i) => f === pools[i])
+    cached && cached.listing === listing && cached.demoPool === demoPool
       ? cached.files
-      : pools;
+      : listing.filter((file) => !isIgnoredPoolFile(file));
   const entries = files.flatMap((file) => {
     const entry = cachedPoolFile(path.join(poolDir, file), now)?.entry;
     return entry ? [entry] : [];
   });
-  if (
+  const listingTrusted =
+    cached?.listing === listing ? cached.listingTrusted : !isRacyStamp(dirMtimeMs, now);
+  // A directory change that adds no pool (a new backup) keeps the result but not the old listing:
+  // keep the new one, or every later call lists and filters the directory again.
+  const result =
     cached &&
     cached.result.length === entries.length &&
     cached.result.every((entry, index) => entry === entries[index])
-  )
-    return cached.result as PoolFileEntry<P>[];
-  const result = deepFreeze(entries);
-  const listingTrusted =
-    cached?.listing === listing ? cached.listingTrusted : !isRacyStamp(dirMtimeMs, now);
-  poolDirCache.set(poolDir, { dirMtimeMs, listingTrusted, listing, files, result });
+      ? cached.result
+      : deepFreeze(entries);
+  poolDirCache.set(poolDir, { dirMtimeMs, listingTrusted, listing, demoPool, files, result });
   return result as PoolFileEntry<P>[];
 }
 

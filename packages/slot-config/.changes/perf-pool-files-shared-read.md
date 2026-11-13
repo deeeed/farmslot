@@ -1,0 +1,1 @@
+- Add `readSlotPools()` so a lookup over many slots can share one pool read with `resolveSlot` and `loadSlotVars`.

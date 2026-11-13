@@ -435,6 +435,8 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
         ...runnerOptions,
         trustedMutation: authorizedMutation,
       });
+    } else {
+      plan = executionPlan;
     }
   }
   return {
@@ -736,8 +738,9 @@ export async function prepareRuntimeIfNeeded(
 ): Promise<boolean> {
   const run = harnessAdapter(adapter).run;
   if (!run?.prepareRuntime) return false;
-  await run.prepareRuntime(projectRoot, blindRuntimeOptions(runtimeOptions));
-  return true;
+  const changed = await run.prepareRuntime(projectRoot, blindRuntimeOptions(runtimeOptions));
+  // Existing providers return void, which conservatively requires a new plan.
+  return changed !== false;
 }
 
 function restoreEnv(key: string, value: string | undefined) {

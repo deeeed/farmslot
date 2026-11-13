@@ -1,0 +1,28 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Background task transfers",
+  "description": "Prove transfer subprocess ownership, copy semantics and isolated authenticated dispatch.",
+  "workflow": {
+    "entry": "transfer-owner",
+    "nodes": {
+      "transfer-owner": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx services/gateway/src/host-services/task-transfer.live.ts",
+        "timeout_ms": 120000,
+        "intent": "SSH/SCP/rsync staging processes belong to the existing background child. Verify marker-last ordering, failed-copy stop, real rsync bytes/exclusions, inherited cancellation and an untimed transfer over ten virtual minutes; no network hosts or farm slots.",
+        "next": "dispatch-smoke"
+      },
+      "dispatch-smoke": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx services/gateway/src/run-lifecycle/safe-idle-slot.live.ts",
+        "timeout_ms": 300000,
+        "intent": "Authenticated create reaches write-task, prepare and dispatch, then cancels, archives and verifies the owned fixture returned to main. Supply immutable FARMSLOT_CLI, fresh FARMSLOT_SAFE_IDLE_PROOF_OUT and TMPDIR on an eligible volume; normal storage floor remains unchanged.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
