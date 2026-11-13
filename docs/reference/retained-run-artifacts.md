@@ -240,10 +240,16 @@ settles at the later of its completion and archive time.
 Every run on an open PR keeps its storage whatever its age. A PR is open when any of
 the run's PR identities (its review-session identity, or its number in the project's
 repository) is in that repository's live open-PR list, even if the run recorded it
-merged or closed. Otherwise a recorded merge or close settles it. A run whose PR state
-is unknown is also kept: its repository's open PRs could not be read, the list
-reached the read limit, or its PR identity could not be resolved. Runs on a closed or
-merged PR, and runs with no PR, follow the age rule.
+closed. A recorded merge settles it, since a merged PR cannot reopen. A recorded close
+settles it only when every open-PR list for the run was read completely. A run whose
+PR state is unknown is also kept: its repository's open PRs could not be read, the
+list reached the read limit, its PR identity could not be resolved, or it is a
+`review-pr` run with no PR identity. A run family shares its members' state, open
+before unknown, so a root that never recorded the PR (for example a `dev` run whose
+`pr-complete` child carries the PR number) is kept with it. Runs on a closed or merged
+PR, and runs with no PR, follow the age rule. A PR opened or reopened during a pass,
+and a review whose prior is recorded only after the pass starts, are picked up by the
+next pass.
 
 An unsettled run holds what it still reads, whatever the PR state. A follow-up
 (`review-pr`, `pr-complete` or `update-branch` with a `parentRunId`) that is not
@@ -253,9 +259,10 @@ from. An in-flight `review-pr` run holds `repeatReviewContext.priorRunId` and
 `repeatReviewContext.session.priorRunId`. The pass computes these at its start and
 again from the current runs just before it moves each run, so a follow-up or review
 dispatched during the pass keeps its sources. Once the reader settles, its sources
-follow the age rule again. A follow-up dispatched later than that cannot inherit
-from an archived parent: writing its task fails and dispatch is refused until the
-parent's storage is restored from its archive manifest (below).
+follow the age rule again. A follow-up dispatched later than that reads the bundle of
+every family member: the root, the parent and the others. If any of them is archived,
+writing its task fails and dispatch is refused until the storage of every archived
+family member is restored from its archive manifest (below).
 
 Eligible task directories, task pins, session archives, local review workspaces,
 local native sessions and run bundles MUST move to `FARMSLOT_RUN_ARCHIVE_ROOT`.

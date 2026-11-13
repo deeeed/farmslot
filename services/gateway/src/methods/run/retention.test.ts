@@ -216,6 +216,7 @@ async function holdsFor(runs: Run[], retentionDays = DEFAULT_RUN_RETENTION_DAYS)
     projectRepo: async () => 'o/r',
     openPrs: async (repo) => {
       if (repo === 'o/down') throw new Error('rate limited');
+      if (repo === 'o/big') return Array.from({ length: 1000 }, (_, i) => i + 10);
       return [1, 2, 3, 4, 7];
     },
   });
@@ -269,6 +270,67 @@ test('every run on an open or unreadable PR is held; the others follow the age r
   const short = await holdsFor(runs, 3);
   assert.equal(short['young-no-pr'], undefined, 'a 3-day setting releases a 4-day-old run');
   assert.equal(short['older-review'], 'PR open', 'the setting never releases an open PR');
+});
+
+test('a run family shares the open or unknown state of any member', async () => {
+  // A dev root never records the PR; its pr-complete child carries the number.
+  const family = (prefix: string, childPr: Partial<Run>): Run[] => [
+    {
+      ...makeRun({
+        id: `${prefix}-root`,
+        familyId: prefix,
+        status: 'done',
+        flowType: 'dev',
+        ticketOrPr: 'PROJ-1',
+      }),
+      completedAt: ago(20),
+    },
+    {
+      ...makeRun({
+        id: `${prefix}-child`,
+        familyId: prefix,
+        parentRunId: `${prefix}-root`,
+        status: 'done',
+        flowType: 'pr-complete',
+        project: 'repo',
+        ticketOrPr: 'PROJ-1',
+        ...childPr,
+      }),
+      completedAt: ago(10),
+    },
+  ];
+  const runs = [
+    ...family('open', { prNumber: 2 }),
+    ...family('unknown', { ticketOrPr: 'o/down#5' }),
+    ...family('closed', { prNumber: 6 }),
+  ];
+  assert.deepEqual(await holdsFor(runs), {
+    'open-root': 'PR open',
+    'open-child': 'PR open',
+    'unknown-root': 'PR state unknown',
+    'unknown-child': 'PR state unknown',
+    'closed-root': undefined,
+    'closed-child': undefined,
+  });
+});
+
+test('a recorded close settles only on a complete read, and a review with no PR identity is unknown', async () => {
+  const runs = [
+    reviewRun('closed-unreadable', 'o/down#2', 20, { prState: 'CLOSED' }),
+    reviewRun('closed-truncated', 'o/big#2', 20, { prState: 'CLOSED' }),
+    reviewRun('closed-read', 'o/r#6', 20, { prState: 'CLOSED' }),
+    // A merged PR cannot reopen, so a recorded merge settles even when the list is unreadable.
+    reviewRun('merged-unreadable', 'o/down#3', 20, { prState: 'MERGED' }),
+    // `r#2` chains for warm review but names no repository to read.
+    reviewRun('no-identity', 'r#2', 20),
+  ];
+  assert.deepEqual(await holdsFor(runs), {
+    'closed-unreadable': 'PR state unknown',
+    'closed-truncated': 'PR state unknown',
+    'closed-read': undefined,
+    'merged-unreadable': undefined,
+    'no-identity': 'PR state unknown',
+  });
 });
 
 test('an unsettled follow-up keeps the family it inherits from', async () => {
@@ -356,7 +418,11 @@ test("the pass reads runRetentionDays from the gateway's run-bundle-retention.js
 });
 
 test('a PR keeps its run unless its repository was read and the PR is not open', async () => {
-  const run = (id: string, overrides: Partial<Run>): Run => ({ ...makeRun({ id }), ...overrides });
+  // Separate families: a family shares its members' PR state.
+  const run = (id: string, overrides: Partial<Run>): Run => ({
+    ...makeRun({ id, familyId: id }),
+    ...overrides,
+  });
   const runs = [
     run('link-open', { links: [{ label: 'PR', url: 'https://github.com/o/r/pull/1' }] }),
     run('ticket-merged', { ticketOrPr: 'o/r#2' }),

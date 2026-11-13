@@ -7,7 +7,11 @@ import { runBundleRetentionSettings, withRunBundleStoreLock } from '@farmslot/ru
 
 import { projectTaskRoots } from '../../core/config.js';
 import { ownsRunSlotCleanup, readSlotRow } from '../../core/index.js';
-import { getFamilyRuns, isFollowUpFlow } from '../../family-observability/context.js';
+import {
+  getFamilyRuns,
+  isFollowUpFlow,
+  resolveFamilyIdentity,
+} from '../../family-observability/context.js';
 import { loadProjectConfig } from '../../fleet/state.js';
 import { github } from '../../integrations/github-client.js';
 import { reviewPRIdentity } from '../../review/session-mode.js';
@@ -93,15 +97,17 @@ async function projectRepo(project: string): Promise<string | undefined> {
   return (await loadProjectConfig(project))?.ci?.repo;
 }
 
-const prRecordedSettled = (run: Run) =>
-  Boolean(run.mergedAt) || run.prState === 'MERGED' || run.prState === 'CLOSED';
-
 /**
  * Each run's PR state for this pass. Every identity a run has (the review-session identity,
  * and its own number in the project's repository) is checked against that repository's open
- * PRs, read once. Any open PR makes the state open, even when the run records it merged or
- * closed, since a PR can be reopened. Otherwise a recorded merge or close settles it; an
- * unresolvable identity, an unreadable repository or a possibly truncated list makes it unknown.
+ * PRs, read once. Any open PR makes the state open, even when the run records it closed, since
+ * a PR can be reopened. A recorded merge settles it (a merged PR cannot reopen); a recorded
+ * close settles it only when every list for the run was read completely. An unreadable or
+ * possibly truncated list, an unresolvable identity, or a review-pr run with no PR identity
+ * makes it unknown.
+ *
+ * A run family shares its members' state, open before unknown: a follow-up inherits from every
+ * member (`getFamilyRuns`), including a root that never recorded the PR.
  *
  * An open or unknown PR keeps every run on it; the age rule applies to the others. Whatever the
  * PR state, an unsettled run holds what it still reads (`activeSourceHolds`).
@@ -143,19 +149,29 @@ export async function retentionContext(
       open.set(repo, undefined);
     }
   }
+  const ownState = (run: Run): RunPrState => {
+    const identity = identities.get(run.id);
+    const lists = identity?.prs.map((pr) => open.get(pr.repo)?.has(pr.number)) ?? [];
+    if (lists.includes(true)) return 'open';
+    if (run.mergedAt || run.prState === 'MERGED') return 'settled';
+    if (lists.includes(undefined)) return 'unknown';
+    if (run.prState === 'CLOSED') return 'settled';
+    if (!identity) return run.flowType === 'review-pr' ? 'unknown' : 'none';
+    return identity.unresolved ? 'unknown' : 'settled';
+  };
+  const familyStates = new Map<string, RunPrState>();
+  for (const run of runs) {
+    const family = resolveFamilyIdentity(run).familyId;
+    const state = ownState(run);
+    if (state === 'open' || (state === 'unknown' && familyStates.get(family) !== 'open'))
+      familyStates.set(family, state);
+  }
   const activeSources = activeSourceHolds(runs, runs);
   return {
     now,
     ageMs: read.retentionDays() * DAY_MS,
     activeSource: (run) => activeSources.get(run.id),
-    prState: (run): RunPrState => {
-      const identity = identities.get(run.id);
-      const lists = identity?.prs.map((pr) => open.get(pr.repo)?.has(pr.number)) ?? [];
-      if (lists.includes(true)) return 'open';
-      if (prRecordedSettled(run)) return 'settled';
-      if (!identity) return 'none';
-      return identity.unresolved || lists.includes(undefined) ? 'unknown' : 'settled';
-    },
+    prState: (run) => familyStates.get(resolveFamilyIdentity(run).familyId) ?? ownState(run),
   };
 }
 

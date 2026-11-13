@@ -68,7 +68,7 @@ beforeEach(() => resetGitHubConditionalCacheForTests());
 
 const NOW = Date.parse('2026-10-20T12:00:00.000Z');
 const onPr = (prNumber: number): Run => ({
-  ...makeRun({ id: `run-${prNumber}` }),
+  ...makeRun({ id: `run-${prNumber}`, familyId: `run-${prNumber}` }),
   prNumber,
   project: 'app',
   ticketOrPr: `PROJ-${prNumber}`,

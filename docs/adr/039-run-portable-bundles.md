@@ -597,9 +597,12 @@ Task pins and run-owned review workspaces are recreatable copies. Retention dele
 ### Decision
 
 Every run on an open PR keeps its storage, whatever its age, as before. So does a run
-whose PR state cannot be read (unreadable repository, possibly truncated open-PR list
-or unresolvable identity). A live open PR counts as open even if a run recorded it
-merged or closed, since a PR can be reopened. Other settled runs keep their storage
+whose PR state cannot be read (unreadable repository, possibly truncated open-PR list,
+unresolvable identity, or a `review-pr` run with no PR identity). A live open PR counts
+as open even if a run recorded it closed, since a PR can be reopened; a recorded close
+settles a run only when its open-PR lists were read completely, and a recorded merge
+always does. A run family shares the open or unknown state of any member, so a root
+that never recorded the PR stays with it. Other settled runs keep their storage
 for 7 days instead of 48 hours. One setting, `runBundleRetention.runRetentionDays` in
 the gateway's `run-bundle-retention.json`, changes that age; task pins use the same
 age.
@@ -622,6 +625,7 @@ disk. When the disk gets tight the operator lowers the setting (for example to 3
 without a code change. Storage still moves to the run archive under Amendments 3
 and 7, so a released run stays restorable.
 
-A follow-up dispatched after its parent's storage was archived fails to write its
-task: inheritance cannot read the parent's archived bundle, so dispatch is refused
-until the operator restores the parent's storage from its archive manifest.
+A follow-up dispatched after any member of its run family was archived fails to write
+its task: inheritance reads the bundles of the root, the parent and every other
+member, so dispatch is refused until the operator restores the storage of every
+archived family member from its archive manifest.
