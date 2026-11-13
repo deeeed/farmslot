@@ -12,12 +12,20 @@ const packageDir = fileURLToPath(new URL('..', import.meta.url));
 interface BootstrapOptions {
   managedRuntime?: boolean;
   pinLayout?: 'legacy' | 2;
+  symlinkPinStore?: boolean;
   farmHome?: string;
 }
 
 async function startBootstrap(t: TestContext, args: string[], options: BootstrapOptions = {}) {
-  const scratch = await mkdtemp(path.join(tmpdir(), 'farmslot-bootstrap-'));
+  const scratch = await realpath(await mkdtemp(path.join(tmpdir(), 'farmslot-bootstrap-')));
   const home = path.join(scratch, 'custom farm');
+  if (options.symlinkPinStore) {
+    const store = path.join(home, ...(options.pinLayout === 2 ? ['state'] : []), 'task-pins');
+    const target = path.join(scratch, 'external', 'task-pins');
+    await mkdir(path.dirname(store), { recursive: true });
+    await mkdir(target, { recursive: true });
+    await symlink(target, store);
+  }
   const root = options.pinLayout
     ? path.join(
         home,
@@ -232,6 +240,15 @@ test(
 for (const pinLayout of ['legacy', 2] as const) {
   test(`a pinned CLI recovers its farm home in layout ${pinLayout}`, async (t) => {
     const fixture = await startBootstrap(t, ['task', 'verify', 'synthetic-task'], { pinLayout });
+    assert.equal(fixture.ready.farmHome, fixture.home);
+    fixture.child.kill('SIGTERM');
+    assert.deepEqual(await fixture.closed, { code: 23, signal: null });
+  });
+  test(`a pinned CLI preserves its logical home through a symlinked layout ${pinLayout} store`, async (t) => {
+    const fixture = await startBootstrap(t, ['task', 'verify', 'synthetic-task'], {
+      pinLayout,
+      symlinkPinStore: true,
+    });
     assert.equal(fixture.ready.farmHome, fixture.home);
     fixture.child.kill('SIGTERM');
     assert.deepEqual(await fixture.closed, { code: 23, signal: null });

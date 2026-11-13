@@ -24,7 +24,13 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // A task invokes its retained installation directly, outside the original checkout.
 // Recover that installation's home before the entry loads checkout env or state.
 if (!process.env.FARMSLOT_HOME?.trim()) {
-  for (let directory = root; dirname(directory) !== directory; directory = dirname(directory)) {
+  // Node canonicalizes the module URL, but argv preserves a symlinked pin store's home.
+  const invokedRoot = resolve(dirname(process.argv[1]), '..');
+  for (
+    let directory = invokedRoot;
+    dirname(directory) !== directory;
+    directory = dirname(directory)
+  ) {
     const store = dirname(dirname(directory));
     if (basename(directory) !== 'cli' || basename(store) !== 'task-pins') continue;
     let home = dirname(store);

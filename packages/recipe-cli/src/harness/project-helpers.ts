@@ -455,11 +455,12 @@ export async function withTaskProjectHost<T>(
       adapter: false,
     });
     const poolEnv = readProjectPool(context)?.env;
-    const authorizedRoot = providerEnvironmentRoot(config.recipe.provider, {
+    const configuredProvider = providerEnvironmentRoot(config.recipe.provider, {
       env: options.load?.env ?? process.env,
+      poolEnv,
       authorizedProviders: options.authorizedProviders,
     });
-    const root = authorizedRoot ?? poolEnv?.[variable];
+    const root = configuredProvider?.root;
     if (typeof root === 'string' && root.trim()) {
       try {
         poolProviderRoot = fs.realpathSync(root);
@@ -467,7 +468,7 @@ export async function withTaskProjectHost<T>(
         // Rollouts may remove the pool's installation. The verified pin already
         // retains the provider and its dependencies; explicit overrides still fail.
         if (
-          authorizedRoot !== undefined ||
+          configuredProvider?.source !== 'pool' ||
           !(error instanceof Error && 'code' in error && error.code === 'ENOENT')
         )
           throw error;

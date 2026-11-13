@@ -977,7 +977,7 @@ export async function resolveProjectContext(
             env: options.load?.env ?? process.env,
             poolEnv: pool?.env,
             authorizedProviders: options.authorizedProviders,
-          }) ?? environment[ref.env])
+          })?.root ?? environment[ref.env])
         : environment[ref.env]
       : path.resolve(options.resolveSourceBinding ? root : checkoutRoot, ref.projectPath!);
     if (!value)
