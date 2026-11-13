@@ -1,0 +1,24 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native reviewer private shell state",
+  "description": "Opt-in real reviewer call in a disposable read-only source workspace. Supply provider credentials and optionally FARMSLOT_REVIEW_PROOF_BINARY and FARMSLOT_REVIEW_PROOF_MODEL. Assert the native Bash result succeeds under the production sandbox and close the owned process.",
+  "workflow": {
+    "entry": "shell-state",
+    "nodes": {
+      "shell-state": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/native-review-cwd-state.mts",
+        "timeout_ms": 180000,
+        "intent": "Source inspection completes when runner-private cwd state stays in the task directory.",
+        "next": "retained-terminal"
+      },
+      "retained-terminal": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test packages/agent-runtime/src/native/review-terminal-trust.test.ts",
+        "intent": "The real terminal control helper receives the current runner's private-state declaration even when its frozen support predates that declaration, with the terminal process boundary intercepted.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

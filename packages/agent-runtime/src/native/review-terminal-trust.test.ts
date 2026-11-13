@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -112,17 +112,23 @@ test('a scripts-only frozen terminal bundle refuses a Grok terminal review befor
     await assert.rejects(readFile(file), /ENOENT/);
 });
 
-for (const runner of ['pi', 'opencode'])
+for (const runner of ['pi', 'opencode', 'claude', 'claude-retained'])
   test(`${runner} terminal review resolves profile roots from the final execution environment`, async (t) => {
     const root = await mkdtemp(path.join(tmpdir(), 'terminal-profile-roots-'));
     t.after(() => rm(root, { recursive: true, force: true }));
     const staged = path.join(root, 'scripts');
     await cp(scripts, staged, { recursive: true });
+    if (runner === 'claude-retained')
+      await appendFile(
+        path.join(staged, 'workspace-trust.cjs'),
+        '\ndelete module.exports.reviewTemporaryDirectoryVariablesByRunner;\n',
+      );
     const source = path.join(root, 'source');
     const task = path.join(root, 'task');
     const bin = path.join(root, 'bin');
     for (const directory of [source, task, bin]) await mkdir(directory);
     const captured = path.join(root, 'roots.json');
+    const launchEnvironment = path.join(root, 'environment.json');
     await writeFile(
       path.join(staged, 'review-filesystem.cjs'),
       `module.exports={sandbox:async(_policy,roots)=>{require('node:fs').writeFileSync(${JSON.stringify(captured)},JSON.stringify(roots));return {temporaryDirectory:${JSON.stringify(task)},sandbox:{executable:'/usr/bin/env',args:[]}}}};`,
@@ -132,7 +138,7 @@ for (const runner of ['pi', 'opencode'])
     });
     await writeFile(
       path.join(bin, 'tmux'),
-      '#!/bin/sh\nif [ "$1" = has-session ]; then exit 1; fi\n',
+      `#!/bin/sh\nif [ "$1" = has-session ]; then exit 1; fi\nprintf '%s\\n' "$@" > '${launchEnvironment}'\n`,
       { mode: 0o700 },
     );
     const selected = {
@@ -141,6 +147,8 @@ for (const runner of ['pi', 'opencode'])
       XDG_CACHE_HOME: path.join(root, 'cache'),
       XDG_STATE_HOME: path.join(root, 'state'),
       XDG_CONFIG_HOME: path.join(root, 'config'),
+      CLAUDE_CONFIG_DIR: path.join(root, 'selected-claude'),
+      CLAUDE_CODE_TMPDIR: path.join(root, 'stale-tmp'),
     };
     const result = spawnSync(
       process.execPath,
@@ -148,7 +156,10 @@ for (const runner of ['pi', 'opencode'])
         path.join(staged, 'review-terminal.cjs'),
         JSON.stringify({
           action: 'launch',
-          runner,
+          runner: runner === 'claude-retained' ? 'claude' : runner,
+          ...(runner === 'claude-retained'
+            ? { temporaryDirectoryVariables: ['CLAUDE_CODE_TMPDIR'] }
+            : {}),
           model: 'fixture',
           runId: 'fixture',
           workspaceId: 'fixture',
@@ -176,11 +187,28 @@ for (const runner of ['pi', 'opencode'])
       JSON.parse(await readFile(captured, 'utf8')),
       runner === 'pi'
         ? [selected.PI_CODING_AGENT_DIR]
-        : [
-            path.join(selected.XDG_DATA_HOME, 'opencode'),
-            path.join(root, '.cache/opencode'),
-            path.join(selected.XDG_STATE_HOME, 'opencode'),
-            path.join(selected.XDG_CONFIG_HOME, 'opencode'),
-          ],
+        : runner.startsWith('claude')
+          ? [
+              selected.CLAUDE_CONFIG_DIR,
+              ...(typeof process.getuid === 'function'
+                ? [path.join('/tmp', `claude-${process.getuid()}`)]
+                : []),
+            ]
+          : [
+              path.join(selected.XDG_DATA_HOME, 'opencode'),
+              path.join(root, '.cache/opencode'),
+              path.join(selected.XDG_STATE_HOME, 'opencode'),
+              path.join(selected.XDG_CONFIG_HOME, 'opencode'),
+            ],
+    );
+    const launchArgs = (await readFile(launchEnvironment, 'utf8')).trimEnd().split('\n');
+    const environment = launchArgs.flatMap((value, index) =>
+      value === '-e' ? [launchArgs[index + 1]] : [],
+    );
+    assert(environment.includes(`TMPDIR=${task}`));
+    assert(
+      environment.includes(
+        `CLAUDE_CODE_TMPDIR=${runner.startsWith('claude') ? task : selected.CLAUDE_CODE_TMPDIR}`,
+      ),
     );
   });
