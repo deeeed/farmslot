@@ -238,6 +238,15 @@ function normalizeCapture(input) {
 }
 
 function brokerOwnerPath(socketPath) {
+  const blindDirectory = process.env.FARMSLOT_BLIND_BROKER_DIR;
+  if (blindDirectory && path.dirname(socketPath) === path.resolve(blindDirectory)) {
+    // The blind broker directory admits sockets only. Keep ownership claims in
+    // general trial temp, where directories carry no Unix-connect allowance.
+    return path.join(
+      path.dirname(path.resolve(blindDirectory)),
+      `${path.basename(socketPath)}.owner`,
+    );
+  }
   return `${socketPath}.owner`;
 }
 

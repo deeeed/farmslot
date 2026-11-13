@@ -167,20 +167,28 @@ selection rules. Non-blind recipes retain slot and explicit-flag precedence.
 The boundary allocates a mode-0700 directory under `/private/tmp/fs-blind-*`,
 retains its protected `boundary/tmp` link across launches, and removes the
 directory during restoration. The wrapper assigns `TMPDIR`, `TMP`, `TEMP` and
-`FARMSLOT_BLIND_BROKER_DIR` and `MAC_CHROMIUM_TMPDIR` from that link, replacing
-ambient values. Chromium on macOS uses the latter for its singleton socket
-directory; `TMPDIR` alone does not redirect it. The shared
-broker package uses `FARMSLOT_BLIND_BROKER_DIR` for its hashed socket paths.
+`MAC_CHROMIUM_TMPDIR` from that link, replacing ambient values. Chromium on macOS
+uses the latter for its singleton socket directory; `TMPDIR` alone does not
+redirect it. The boundary also creates a fixed `broker` child directory and sets
+`FARMSLOT_BLIND_BROKER_DIR` there. The shared broker package puts hashed socket
+paths there and ownership sidecars in general trial temp, outside `broker`.
 Non-blind broker paths remain independent of `TMPDIR`.
 
 Seatbelt denies shared temporary writes, including `/tmp`, `/var/tmp` and
 `/var/folders`, then admits the trial directory and existing task write scope.
-Outbound Unix connections admit the resolver and the trial directory. Other
+Outbound Unix connections admit the resolver and direct children of `broker`,
+using an anchored path regex. That directory admits only socket vnodes, so
+workers cannot create or import directories, regular files or symlinks there,
+or move or replace the directory itself. Other
 trials' socket connections, writes, chmod, unlink and directory renames remain
 denied, including through symlinks in the admitted directory. The boundary bin,
 routing link and existing private inputs remain protected after these allowances.
-Seatbelt denies writes and hardlinks on socket vnodes outside the trial directory,
-so a worker cannot rename or hardlink a home-based control socket into it.
+Seatbelt denies writes and hardlinks on socket vnodes outside the trial directory.
+It also denies socket unlink and hardlink outside `broker`, so moving a containing
+directory into general temp cannot enable a second-step socket import. Chromium
+can bind its singleton in general temp, but that socket has no connect allowance.
+The harness reuses its browser through TCP CDP; Metro also uses TCP. Neither
+needs another Unix-connect exception.
 
 macOS refuses the setuid `/bin/ps` inside Seatbelt. Boundary preparation copies
 the installed system binary, removes setuid and signs the copy ad hoc. The

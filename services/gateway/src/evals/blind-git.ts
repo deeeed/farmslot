@@ -178,7 +178,7 @@ export function withBlindTrialBoundary(
     `export GH_CONFIG_DIR=${shSingleQuote(`${boundary}/gh-config`)}`,
     `export PATH=${shSingleQuote(`${boundary}/bin`)}:"$PATH"`,
     `TMPDIR="$(/usr/bin/readlink ${shSingleQuote(`${boundary}/tmp`)})"`,
-    'export TMPDIR TMP="$TMPDIR" TEMP="$TMPDIR" FARMSLOT_BLIND_BROKER_DIR="$TMPDIR" MAC_CHROMIUM_TMPDIR="$TMPDIR"',
+    'export TMPDIR TMP="$TMPDIR" TEMP="$TMPDIR" FARMSLOT_BLIND_BROKER_DIR="$TMPDIR/broker" MAC_CHROMIUM_TMPDIR="$TMPDIR"',
     'export GIT_TERMINAL_PROMPT=0',
     // Browser children must stay in this seatbelt; preserve TMUX_PANE for hooks.
     'export FARMSLOT_BLIND_SEATBELT=1',

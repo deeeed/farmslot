@@ -378,8 +378,9 @@ test('blind boundary strips gateway credentials, routing, tmux and SSH agent var
     timeout: 4500,
   });
   assert.equal(worker.status, 0, worker.stderr);
-  for (const name of ['TMPDIR', 'TMP', 'TEMP', 'FARMSLOT_BLIND_BROKER_DIR', 'MAC_CHROMIUM_TMPDIR'])
+  for (const name of ['TMPDIR', 'TMP', 'TEMP', 'MAC_CHROMIUM_TMPDIR'])
     assert.ok(worker.stdout.includes(`${name}=${temporary}\n`));
+  assert.ok(worker.stdout.includes(`FARMSLOT_BLIND_BROKER_DIR=${temporary}/broker\n`));
   assert.doesNotMatch(worker.stdout, /^TMUX(?:_TMPDIR)?=/mu);
   assert.doesNotMatch(worker.stdout, /^SSH_(?:AUTH_SOCK|AGENT_PID)=/mu);
   assert.doesNotMatch(

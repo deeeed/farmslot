@@ -351,8 +351,22 @@ def sandbox_profile(spec, capsule, tmux_sockets=None, network_ports=None):
     rules += [tmux_socket_rules(tmux_sockets or []), gateway_network_rules(spec, network_ports)]
     if temporary.exists():
         rules += ['(allow file-write* (subpath %s))' % quote(p) for p in path_aliases(temporary)]
-        rules += ['(allow network-outbound (remote unix-socket (subpath %s)))' % quote(p)
-                  for p in path_aliases(temporary)]
+        broker = temporary / 'broker'
+        # Seatbelt regex literals retain backslashes. The validated allocation
+        # uses only /private/tmp/fs-blind- plus tempfile's regex-safe suffix.
+        rules += ['(allow network-outbound (remote unix-socket (regex #%s)))'
+                  % quote('^' + p + '/[^/]+$') for p in path_aliases(broker)]
+        # Only bind sockets directly in this fixed directory. In particular a
+        # directory rename must never import a foreign socket into an allowance.
+        rules += ['(deny file-write* file-link (require-all (subpath %s) '
+                  '(require-not (vnode-type SOCKET))))' % quote(p)
+                  for p in path_aliases(broker)]
+        # Also block two-step imports: move a containing directory into general
+        # temp, then rename/link its socket into the broker. Chromium may bind
+        # its singleton in general temp, but cannot move it into the broker.
+        rules += ['(deny file-write-unlink file-link (require-all (vnode-type SOCKET) '
+                  '(require-not (require-any ' + ' '.join('(subpath %s)' % quote(p)
+                      for p in path_aliases(broker)) + '))))']
         # Keep the allocated root and its routing link fixed across retained launches.
         rules += ['(deny file-write* (literal %s))' % quote(p) for p in path_aliases(temporary)]
         rules += rename_guard_rules([temporary.resolve() / 'owned-entry'])
@@ -370,7 +384,7 @@ def worker_temp(capsule):
     link = capsule / 'boundary/tmp'
     directory = link.resolve()
     if (not link.is_symlink() or directory.parent != Path('/private/tmp')
-            or not directory.name.startswith('fs-blind-') or not directory.is_dir()
+            or not re.fullmatch(r'fs-blind-[a-z0-9_]+', directory.name) or not directory.is_dir()
             or directory.stat().st_uid != os.getuid() or directory.stat().st_mode & 0o077):
         raise RuntimeError('Blind worker temporary directory is not private')
     return directory
@@ -470,7 +484,10 @@ def prepare_boundary(spec, capsule):
     temporary = root / 'tmp'
     if not temporary.is_symlink():
         temporary.symlink_to(tempfile.mkdtemp(prefix='fs-blind-', dir='/private/tmp'))
-    worker_temp(capsule)
+    broker = worker_temp(capsule) / 'broker'
+    broker.mkdir(mode=0o700, exist_ok=True)
+    if broker.is_symlink() or broker.stat().st_uid != os.getuid() or broker.stat().st_mode & 0o077:
+        raise RuntimeError('Blind worker broker directory is not private')
     # macOS refuses setuid exec under Seatbelt. A non-setuid, ad-hoc signed
     # system ps retains its CLI and sandbox, without a privileged helper.
     ps = root / 'bin/ps'

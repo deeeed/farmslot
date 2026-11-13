@@ -127,6 +127,80 @@ function worker(
 }
 
 test(
+  'directory imports cannot acquire broker connect access under the real blind wrapper',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const root = fixture();
+    t.after(() => rmSync(root, { recursive: true }));
+    profile(root);
+    for (const destination of ['temp', 'broker']) {
+      const source = path.join(root, destination + '-run');
+      mkdirSync(source);
+      const server = net.createServer((socket) => socket.destroy());
+      t.after(
+        () =>
+          new Promise<void>((resolve, reject) =>
+            server.close((error) => (error ? reject(error) : resolve())),
+          ),
+      );
+      server.listen(path.join(source, 'control.sock'));
+      await once(server, 'listening');
+      await t.test(`home directory into ${destination} cannot connect`, () => {
+        const result = worker(
+          root,
+          `exec ${q(process.execPath)} --input-type=module -e ${q(`
+import assert from 'node:assert/strict'; import * as fs from 'node:fs'; import net from 'node:net';
+const source = ${JSON.stringify(source)};
+const target = (${JSON.stringify(destination)} === 'broker'
+  ? process.env.FARMSLOT_BLIND_BROKER_DIR : process.env.TMPDIR) + '/imported';
+let relocationError;
+try { fs.renameSync(source, target); } catch (error) { relocationError = error; }
+const error = await new Promise(resolve => net.connect(target + '/control.sock')
+  .on('error', resolve).on('connect', () => { throw Error('imported directory socket connected'); }));
+if (${JSON.stringify(destination)} === 'broker') assert.equal(relocationError?.code, 'EPERM');
+else assert.equal(relocationError, undefined, 'general temp import must reach the connect check');
+assert.equal(error.code, ${JSON.stringify(destination)} === 'broker' ? 'ENOENT' : 'EPERM');
+// A directory moved into general temp must not provide a second-step socket import.
+if (!relocationError) for (const operation of ['renameSync', 'linkSync']) {
+  const socket = process.env.FARMSLOT_BLIND_BROKER_DIR + '/' + operation + '.sock';
+  assert.throws(() => fs[operation](target + '/control.sock', socket), { code: 'EPERM' });
+}
+`)}`,
+        );
+        assert.ifError(result.error);
+        assert.equal(result.status, 0, result.stderr);
+      });
+    }
+    // Seed an otherwise forbidden nested directory outside Seatbelt to prove
+    // that the connect filter itself admits only direct broker children.
+    const nested = path.join(root, 'boundary/tmp/broker/nested');
+    mkdirSync(nested);
+    const nestedServer = net.createServer((socket) => socket.destroy());
+    t.after(
+      () =>
+        new Promise<void>((resolve, reject) =>
+          nestedServer.close((error) => (error ? reject(error) : resolve())),
+        ),
+    );
+    nestedServer.listen(path.join(nested, 'control.sock'));
+    await once(nestedServer, 'listening');
+    await t.test('nested broker socket cannot connect', () => {
+      const result = worker(
+        root,
+        `exec ${q(process.execPath)} --input-type=module -e ${q(`
+import assert from 'node:assert/strict'; import net from 'node:net';
+const error = await new Promise(resolve => net.connect(process.env.FARMSLOT_BLIND_BROKER_DIR + '/nested/control.sock')
+  .on('error', resolve).on('connect', () => { throw Error('nested broker socket connected'); }));
+assert.equal(error.code, 'EPERM');
+`)}`,
+      );
+      assert.ifError(result.error);
+      assert.equal(result.status, 0, result.stderr);
+    });
+  },
+);
+
+test(
   'Mobile broker and temp ownership under the real blind wrapper',
   { skip: process.platform !== 'darwin' },
   async (t) => {
@@ -139,13 +213,12 @@ test(
     const allocated = realpathSync(own);
     profile(root);
     assert.equal(realpathSync(own), allocated, 'retained launches must reuse the same temp');
-    // On the old boundary use a synthetic local socket to prove the missing allow.
-    mkdirSync(own, { recursive: true });
     mkdirSync(path.join(root, 'hidden/pins'), { recursive: true });
     writeFileSync(path.join(root, 'hidden/pins/input'), 'synthetic other-task pin');
     writeFileSync(path.join(root, 'blind-git.py'), 'synthetic protected boundary');
     writeFileSync(path.join(other, 'state'), 'synthetic other-run state');
-    const ownSocket = path.join(realpathSync(own), 'broker.sock');
+    const brokerDir = path.join(realpathSync(own), 'broker');
+    const ownSocket = path.join(brokerDir, 'broker.sock');
     // A synthetic flat socket also exercises the legacy /tmp/mmh-cdp-* layout.
     const otherSocket = other + '.sock';
     symlinkSync(other, path.join(own, 'foreign'));
@@ -189,20 +262,32 @@ test(
       }`),
     );
     for (const [index, operation] of ['renameSync', 'linkSync'].entries()) {
-      await t.test(`home socket ${operation} into trial temp is EPERM`, () =>
-        run(`
+      for (const directory of ['TMPDIR', 'FARMSLOT_BLIND_BROKER_DIR'])
+        await t.test(`home socket ${operation} into ${directory} is EPERM`, () =>
+          run(`
       import assert from 'node:assert/strict'; import * as fs from 'node:fs'; import net from 'node:net';
       const source = ${JSON.stringify(homeSockets[index])};
-      const target = process.env.TMPDIR + '/imported-${operation}.sock';
+      const target = process.env.${directory} + '/imported-${operation}.sock';
       let relocationError;
       try { fs.${operation}(source, target); } catch (error) { relocationError = error; }
       const connectionError = await new Promise(resolve => net.connect(target)
         .on('error', resolve).on('connect', () => { throw Error('imported socket connected'); }));
       assert.equal(relocationError?.code, 'EPERM');
-      assert.equal(connectionError.code, 'ENOENT');
+      assert.ok(['EPERM', 'ENOENT'].includes(connectionError.code));
       assert.ok(fs.existsSync(source));`),
-      );
+        );
     }
+    await t.test('broker admits sockets only and cannot be moved or replaced', () =>
+      run(`
+      import assert from 'node:assert/strict'; import * as fs from 'node:fs';
+      const broker = process.env.FARMSLOT_BLIND_BROKER_DIR;
+      assert.throws(() => fs.mkdirSync(broker + '/nested'), { code: 'EPERM' });
+      assert.throws(() => fs.writeFileSync(broker + '/file', 'fixture'), { code: 'EPERM' });
+      assert.throws(() => fs.symlinkSync(process.env.TMPDIR, broker + '/alias'), { code: 'EPERM' });
+      assert.throws(() => fs.renameSync(broker, broker + '-moved'), { code: 'EPERM' });
+      assert.throws(() => fs.rmdirSync(broker), { code: 'EPERM' });
+      assert.throws(() => fs.chmodSync(broker, 0o777), { code: 'EPERM' });`),
+    );
     await t.test('ps supplies harness identity and health fields', () =>
       run(`
       import assert from 'node:assert/strict'; import { execFileSync } from 'node:child_process';
@@ -227,17 +312,18 @@ test(
       import assert from 'node:assert/strict'; import { writeFileSync, unlinkSync, realpathSync } from 'node:fs';
       assert.equal(realpathSync(process.env.TMPDIR), ${JSON.stringify(realpathSync(own))});
       assert.equal(process.env.TMP, process.env.TMPDIR); assert.equal(process.env.TEMP, process.env.TMPDIR);
-      assert.equal(process.env.FARMSLOT_BLIND_BROKER_DIR, process.env.TMPDIR);
+      assert.equal(process.env.FARMSLOT_BLIND_BROKER_DIR, process.env.TMPDIR + '/broker');
       assert.equal(process.env.MAC_CHROMIUM_TMPDIR, process.env.TMPDIR);
       const file = process.env.TMPDIR + '/own-file'; writeFileSync(file, 'fixture'); unlinkSync(file);`),
     );
     await t.test('production broker exchanges commands in the boundary allocation', () =>
       run(`
       import assert from 'node:assert/strict';
+      import * as fs from 'node:fs';
       import broker from ${JSON.stringify(fileURLToPath(new URL('../../../../packages/recipe-runner/cdp-broker/cdp-broker.cjs', import.meta.url)))};
       import path from 'node:path';
       const first = broker.brokerSocketPath('/synthetic/runtime', 8081);
-      assert.equal(path.dirname(first), process.env.TMPDIR);
+      assert.equal(path.dirname(first), process.env.FARMSLOT_BLIND_BROKER_DIR);
       assert.notEqual(first, broker.brokerSocketPath('/synthetic/runtime', 8082));
       assert.ok(Buffer.byteLength(first) < 104);
       const sessions = new Map([['fixture', { deviceId: 'fixture', name: 'synthetic', opened: true, brokerReady: true }]]);
@@ -245,8 +331,12 @@ test(
       let client;
       try {
         client = await broker.createBrokerClient(first, 'fixture', 1000);
+        assert.ok(fs.statSync(process.env.TMPDIR + '/' + path.basename(first) + '.owner').isDirectory());
+        assert.ok(fs.readdirSync(process.env.FARMSLOT_BLIND_BROKER_DIR).every(name => fs.lstatSync(path.dirname(first) + '/' + name).isSocket()));
+        assert.throws(() => broker.createCdpBroker({ socketPath: first, sessions, sendCommand: async () => ({}) }), /socket is owned/);
         assert.deepEqual(await client.send('Runtime.evaluate', { expression: 'synthetic' }, 1000), { fixture: true });
-      } finally { client?.close(); server.close(); }`),
+      } finally { client?.close(); server.close(); }
+      assert.equal(fs.existsSync(process.env.TMPDIR + '/' + path.basename(first) + '.owner'), false);`),
     );
     await t.test('routing link and ps cannot be replaced or moved', () =>
       run(`
