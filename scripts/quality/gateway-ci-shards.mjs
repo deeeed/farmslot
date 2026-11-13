@@ -4,6 +4,24 @@ import { join, relative, resolve } from 'node:path';
 import { formatDuration, isMainModule, REPO_ROOT } from './lib/step-timing.mjs';
 import { discoverTests, parseShard, verifyAssignment } from './run-tsx-tests.mjs';
 
+export function readGatewayShardReports(directory) {
+  const latest = new Map();
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const match = /^gateway-test-shard-(\d+)-attempt-(\d+)$/.exec(entry.name);
+    if (!match) continue;
+    const [, shard, attempt] = match;
+    const previous = latest.get(shard);
+    if (!previous || Number(attempt) > previous.attempt) {
+      latest.set(shard, { name: entry.name, attempt: Number(attempt) });
+    }
+  }
+  // Successful shards may be from earlier attempts when only failed jobs rerun.
+  return [...latest.values()].map(({ name }) =>
+    JSON.parse(readFileSync(join(directory, name, 'tsx-tests-gateway.json'), 'utf8')),
+  );
+}
+
 export function verifyGatewayShards(reports, discovered) {
   if (!reports.length) throw new Error('Gateway shard reports are missing');
   const total = reports[0].shard?.total;
@@ -51,11 +69,7 @@ export function shardSummary(reports) {
 
 if (isMainModule(import.meta.url)) {
   const directory = resolve(process.argv[2]);
-  const reports = readdirSync(directory, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) =>
-      JSON.parse(readFileSync(join(directory, entry.name, 'tsx-tests-gateway.json'), 'utf8')),
-    );
+  const reports = readGatewayShardReports(directory);
   const summary = shardSummary(reports);
   console.log(summary);
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
