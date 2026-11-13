@@ -263,6 +263,7 @@ test('native resumed receipts count only first-seen messages in each run window'
       cold,
       cold,
       { ...cold, timestamp: warm.timestamp },
+      { ...warm, message: { ...warm.message, usage: {} } },
       warm,
       warm,
       { type: 'system', subtype: 'compact_boundary', timestamp: retry.timestamp },

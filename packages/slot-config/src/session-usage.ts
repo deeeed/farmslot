@@ -424,7 +424,13 @@ async function summarizeClaude(
   for await (const obj of safeJsonLines(filePath)) {
     const message = obj.message;
     if (window) {
-      if (obj.type !== 'assistant' || !object(message) || !object(message.usage)) continue;
+      if (
+        obj.type !== 'assistant' ||
+        !object(message) ||
+        !object(message.usage) ||
+        !Object.keys(message.usage).length
+      )
+        continue;
       if (typeof message.id !== 'string')
         throw new Error('Run usage requires assistant message ids');
       if (seen.has(message.id)) continue;
