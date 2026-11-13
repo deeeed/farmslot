@@ -22,7 +22,7 @@ and proof; retention itself grants neither.
 Use the existing `RunBundleManifest` v1 and logical layout:
 
 ```text
-FARMSLOT_HOME/run-bundles/sha256/<bundle-digest>/
+<bundle store root>/sha256/<bundle-digest>/       # store root: see below
   manifest.json
   runs/<run-id>.json
   tasks/<task-key>/...                 # captured task-relative files
@@ -34,7 +34,9 @@ The owning Run store binds its bundle root once, in durable Run-store metadata. 
 `runBundleRetention.storeRoot` names another root, it is the owner's `run-bundles`
 data directory: `FARMSLOT_DATA/run-bundles` on layout 2 (the instance's `dataRoot`,
 else `FARMSLOT_DATA`, else `<owner FARMSLOT_HOME>/data`), and
-`<owner FARMSLOT_HOME>/run-bundles` on the legacy layout. All readers,
+`<owner FARMSLOT_HOME>/run-bundles` on the legacy layout. On the legacy layout with
+`FARMSLOT_RUNS_DIR` set and no `FARMSLOT_HOME`, it is `<runs dir>/bundle-home/run-bundles`.
+All readers,
 capture writers and GC resolve that same binding, keyed by the canonical Run
 store, including when `FARMSLOT_RUNS_DIR` is shared. A sandbox's isolated
 authentication home MUST NOT establish or replace that binding. A missing or

@@ -46,7 +46,7 @@ export {
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { computePRRecommendation, prStatus } from '../methods/pr.js';
 import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
-import { getRun, updateRun, updateRunStep } from '../runs/store.js';
+import { getRun, prRelinked, updateRun, updateRunStep } from '../runs/store.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 
@@ -179,6 +179,8 @@ export async function monitorCI(
 ): Promise<CIOutcome> {
   const run = getRun(runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
+  // The PR this watch observes. The run record is updated in place, so keep a copy.
+  const watchedPR = { prNumber: run.prNumber, links: run.links?.map((link) => ({ ...link })) };
 
   const config = await loadCIConfig(run.project);
   const startedAt = Date.now();
@@ -613,12 +615,14 @@ export async function monitorCI(
       // gateway ever learns a PR merged, and a work-graph `merged` edge can only
       // read it off the run — so dropping it here strands every downstream node
       // behind an upstream that has actually shipped.
-      // The response can arrive after the run was relinked to another PR or the watch was
-      // stopped; it then describes a PR the run no longer has and must not settle it.
+      // The response can arrive after the run was relinked to another PR (another number, or
+      // its PR link moved to another repository or removed). It then describes a PR the run no
+      // longer has and must not settle it. A stopped watch whose run still links this PR keeps
+      // its observation: a later relink clears it in the store.
       const current = getRun(runId);
-      if (signal.aborted || current?.prNumber !== prNumber) {
+      if (!current || current.prNumber !== prNumber || prRelinked(watchedPR, current)) {
         console.log(
-          `[ci-monitor] run ${runId.slice(0, 8)} — dropped PR #${prNumber} ${pr.prState}: the run now links PR ${current?.prNumber ?? 'none'}${signal.aborted ? ' and the watch stopped' : ''}`,
+          `[ci-monitor] run ${runId.slice(0, 8)} — dropped PR #${prNumber} ${pr.prState}: the run now links another PR (#${current?.prNumber ?? 'none'})`,
         );
         return buildOutcome('aborted');
       }

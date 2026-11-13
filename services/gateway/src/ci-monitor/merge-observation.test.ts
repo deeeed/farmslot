@@ -94,3 +94,52 @@ test('a merge response for a PR the run no longer links does not settle it', asy
   assert.equal(observed?.prState, undefined, "PR 406's merge must not settle PR 407");
   assert.equal(observed?.mergedAt, undefined);
 });
+
+const prLink = (repo: string, number: number) => ({
+  label: 'PR',
+  url: `https://github.com/${repo}/pull/${number}`,
+});
+
+test('a merge response does not settle a run whose PR link moved to another repository', async () => {
+  await loadAllRuns();
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000048',
+    prNumber: 408,
+  });
+  updateRun(run.id, { links: [prLink('owner/repo', 408)] });
+  // The run is republished to the same number in another repository mid-read.
+  whileReading = () => updateRun(run.id, { links: [prLink('owner/other', 408)] });
+  try {
+    const outcome = await monitorCI(run.id, 408, 'owner/repo', new AbortController().signal);
+    assert.equal(outcome.result, 'aborted');
+  } finally {
+    whileReading = undefined;
+  }
+  assert.equal(
+    getRun(run.id)?.prState,
+    undefined,
+    'owner/repo#408 must not settle owner/other#408',
+  );
+});
+
+test('a watch stopped mid-read still records the merge of the PR the run links', async () => {
+  await loadAllRuns();
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000049',
+    prNumber: 409,
+  });
+  const watch = new AbortController();
+  whileReading = () => watch.abort();
+  try {
+    const outcome = await monitorCI(run.id, 409, 'deeeed/farmslot', watch.signal);
+    assert.equal(outcome.result, 'passed');
+  } finally {
+    whileReading = undefined;
+  }
+  assert.equal(getRun(run.id)?.prState, 'MERGED');
+  assert.equal(getRun(run.id)?.mergedAt, '2026-07-27T12:50:12Z');
+});

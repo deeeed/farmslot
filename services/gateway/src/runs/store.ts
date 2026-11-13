@@ -1415,11 +1415,19 @@ export function prSettlementCleared(
   next: Pick<Run, 'prNumber' | 'links'>,
 ): Pick<Run, 'prState' | 'mergedAt'> | undefined {
   if (run.prState === undefined && run.mergedAt === undefined) return undefined;
+  return prRelinked(run, next) ? { prState: undefined, mergedAt: undefined } : undefined;
+}
+
+/** Whether `next` links another PR than `run`: a different number, or a PR link moved or removed. */
+export function prRelinked(
+  run: Pick<Run, 'prNumber' | 'links'>,
+  next: Pick<Run, 'prNumber' | 'links'>,
+): boolean {
   const before = linkedPRIdentity(run);
   const after = linkedPRIdentity(next);
-  const relinked =
-    before.number !== after.number || (before.repo !== undefined && before.repo !== after.repo);
-  return relinked ? { prState: undefined, mergedAt: undefined } : undefined;
+  return (
+    before.number !== after.number || (before.repo !== undefined && before.repo !== after.repo)
+  );
 }
 
 export function updateRun(id: string, partial: Partial<Run>, authorization?: symbol): Run {
