@@ -7,11 +7,14 @@
  * would be resolved by module order rather than by design.
  */
 import { execLocal } from '../core/exec.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { ResourceCommandUnavailableError } from '../core/resource-command-error.js';
 
 import { commandIncludesFarmPath } from './farm-paths.js';
 import { getNode } from './machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from './node-rpc.js';
+
+const loadRemoteCommand = lazyImport(() => import('../node-support/remote-command.js'));
 
 export interface ResourceCommandResult {
   stdout: string;
@@ -46,7 +49,7 @@ export async function execResourceCommand(
         // "already stopped" and skip its hook. Imported on demand so this
         // module's many importers (device inventory, cleanup, pressure) do not
         // load the node-support graph for commands that never need it.
-        const { resolveSlotFarmCommand } = await import('../node-support/remote-command.js');
+        const { resolveSlotFarmCommand } = await loadRemoteCommand();
         try {
           remoteCmd = await resolveSlotFarmCommand(slotId, cmd, timeout);
         } catch (err) {

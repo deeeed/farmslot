@@ -74,9 +74,9 @@ export function runnerUsageMetrics(usage: RunnerSessionUsage): Partial<Run['metr
   };
 }
 
-/** Static reviews have one primary session; resumed chain totals stay in deduplicated receipts. */
+/** Static reviews project a verified per-run receipt; legacy warm totals remain separate. */
 export function workspaceUsageMetrics(run: Run): Run['metrics'] {
-  if (!run.reviewWorkspace || run.slotId || usesReviewChainSessionTotal(run)) return run.metrics;
+  if (!run.reviewWorkspace || run.slotId) return run.metrics;
   const context = run.agentContexts?.find(
     (entry) => entry.role === primaryRoleForFlow(run.flowType),
   );
@@ -88,11 +88,13 @@ export function workspaceUsageMetrics(run: Run): Run['metrics'] {
       row.runnerSessionId === context.runnerSessionId,
   );
   if (!receipt) return run.metrics;
+  if (usesReviewChainSessionTotal(run) && receipt.scope !== 'run-delta') return run.metrics;
   return {
     ...run.metrics,
     runnerSessionId: receipt.runnerSessionId ?? null,
     runnerSessionPath: receipt.runnerSessionPath ?? null,
     ...runnerUsageMetrics(receipt),
+    ...(usesReviewChainSessionTotal(run) ? { sessionUsageScope: 'review-generation-delta' } : {}),
     sessionUsageError: receipt.error,
   };
 }

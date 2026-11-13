@@ -20,6 +20,7 @@ import {
   type TaskSchema,
   type TaskStepProgress,
   type TaskStepStatus,
+  ticketCriteriaAsRegistered,
 } from '@farmslot/protocol';
 import { signalFileForChecklist } from '@farmslot/protocol/checklist-target';
 
@@ -31,6 +32,7 @@ import {
   resolveTaskPaths,
   resolveTaskRelDir,
 } from '../core/config.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import {
   ORCHESTRATOR_LOCALITY,
@@ -48,6 +50,7 @@ import {
   readReviewWorkspaceProgress,
   reviewWorkspaceProgressLocation,
 } from '../review-workspaces/task.js';
+import { inheritedAcceptanceView } from '../run-completion/inherited-acceptance-view.js';
 import { loadProjectVarsOrNull } from '../run-engine/project-vars.js';
 import { getRun, listRuns } from '../runs/store.js';
 import { readAcceptanceStatusForDisplay } from '../tasks/acceptance-status.js';
@@ -67,6 +70,12 @@ import {
   subtaskUnitsForParentChecklist,
 } from '../tasks/subtasks.js';
 import { generateTaskSchema } from '../tasks/writer.js';
+
+// The watcher imports this module, and the acceptance source pulls in the run-engine graph.
+const loadWatcher = lazyImport(() => import('../tasks/watcher.js'));
+const loadInheritedAcceptance = lazyImport(
+  () => import('../run-completion/inherited-acceptance.js'),
+);
 
 export interface TaskProgressReadOptions {
   /** Set only by the shared observed-read dispatch, never by domain params. */
@@ -89,7 +98,7 @@ export async function taskProgress(
     !requested ||
     !params.slotId ||
     (requested.slotId === params.slotId && slot?.currentRunId === requested.id);
-  const { slotHasActiveWorkerTask } = await import('../tasks/watcher.js');
+  const { slotHasActiveWorkerTask } = await loadWatcher();
   const context = boundRun ? progressContext(boundRun, params) : undefined;
   const settledPath =
     params.slotId && boundRun && context?.completedAt && TERMINAL_AGENT_STATUSES.has(context.status)
@@ -229,7 +238,7 @@ async function admitProgressSource(
       check();
     };
   }
-  const { assertLiveSlotProgressObservationAdmitted } = await import('../tasks/watcher.js');
+  const { assertLiveSlotProgressObservationAdmitted } = await loadWatcher();
   const check = assertLiveSlotProgressObservationAdmitted({
     ...params,
     ...(file ? { taskFile: file } : {}),
@@ -609,21 +618,15 @@ async function attachAcceptanceStatus(
   // can be read, so the panel says "unreadable" instead of quietly showing nothing.
   const read = await readAcceptanceStatusForDisplay(vars, path.dirname(effectiveMdPath));
   if (run?.acceptanceRegistration) {
-    const { ticketCriteriaAsRegistered } = await import('@farmslot/protocol');
     read.criteria = ticketCriteriaAsRegistered(
       run.ticketData?.acceptanceCriteria ?? [],
       run.acceptanceRegistration,
     );
     if (run.parentRunId) {
       try {
-        const { readInheritedAcceptanceSource } =
-          await import('../run-completion/inherited-acceptance.js');
+        const { readInheritedAcceptanceSource } = await loadInheritedAcceptance();
         const inherited = await readInheritedAcceptanceSource(run);
-        if (inherited) {
-          const { inheritedAcceptanceView } =
-            await import('../run-completion/inherited-acceptance-view.js');
-          read.ledger = inheritedAcceptanceView(inherited, read.ledger);
-        }
+        if (inherited) read.ledger = inheritedAcceptanceView(inherited, read.ledger);
       } catch (error) {
         // This display read must preserve ordinary progress. No inherited
         // verdict is added, and completion still performs full qualification.

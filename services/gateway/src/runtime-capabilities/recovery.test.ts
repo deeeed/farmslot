@@ -199,7 +199,7 @@ test('restart rejects stale provenance and ambiguous exclusive ownership', async
   assert.equal((await stale.status({ slotId: 'slot-a' })).leases[0]?.state, 'error');
 
   const ambiguousStore = await seededStore(t);
-  const snapshot = ambiguousStore.snapshot();
+  const snapshot = ambiguousStore.copyForWrite();
   snapshot.leases.push({
     ...structuredClone(snapshot.leases[0]!),
     id: 'lease-browser-other',
@@ -218,7 +218,7 @@ test('restart rejects stale provenance and ambiguous exclusive ownership', async
 
 test('restart adopts an exclusive holder without counting its queued sibling as an owner', async (t) => {
   const store = await seededStore(t);
-  const snapshot = store.snapshot();
+  const snapshot = store.copyForWrite();
   snapshot.leases.push({
     ...structuredClone(snapshot.leases[0]!),
     id: 'lease-browser-queued',
@@ -247,7 +247,7 @@ test('restart adopts an exclusive holder without counting its queued sibling as 
 
 test('restart resumes an interrupted release instead of adopting it as acquired', async (t) => {
   const store = await seededStore(t);
-  const snapshot = store.snapshot();
+  const snapshot = store.copyForWrite();
   snapshot.leases[0]!.state = 'releasing';
   await store.replace(snapshot);
   const actions: string[] = [];
@@ -271,7 +271,7 @@ test('restart resumes an interrupted release instead of adopting it as acquired'
 
 test('restart preserves an interrupted release cleanup failure as an error lease', async (t) => {
   const store = await seededStore(t);
-  const snapshot = store.snapshot();
+  const snapshot = store.copyForWrite();
   snapshot.leases[0]!.state = 'releasing';
   await store.replace(snapshot);
   const registry = recoveringRegistry(store, [browser()], async (_slot, action) => ({
@@ -430,7 +430,7 @@ test('a lease written before claim scopes existed stays slot-scoped', async (t) 
     true,
   );
   // Strip what a pre-scope Gateway never wrote, then reload from disk.
-  const snapshot = store.snapshot();
+  const snapshot = store.copyForWrite();
   for (const lease of snapshot.leases) {
     delete lease.claims;
     delete lease.machine;

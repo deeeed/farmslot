@@ -109,6 +109,7 @@ for (const providerSelection of [
   'environment',
   'environment-module',
   'retained',
+  'pruned',
 ] as const)
   test(`a task recorded with harness 0.94.1 resumes on ${providerSelection} 0.94.6 with a warning`, async (t) => {
     const f = fixture(t);
@@ -177,7 +178,7 @@ for (const providerSelection of [
       path.join(f.taskDir, 'artifacts/harness-provenance.json'),
     );
     if (providerSelection === 'pool' || providerSelection === 'ambient') writePool(providers[1]!);
-    else if (providerSelection !== 'retained') {
+    else if (providerSelection !== 'retained' && providerSelection !== 'pruned') {
       options.authorizedProviders = [
         providerSelection === 'environment-module'
           ? path.join(providers[1]!, 'provider.mjs')
@@ -189,6 +190,83 @@ for (const providerSelection of [
         if (previous === undefined) delete process.env.FIXTURE_HARNESS_ROOT;
         else process.env.FIXTURE_HARNESS_ROOT = previous;
       });
+    }
+    if (providerSelection === 'pruned') {
+      writePool(providers[1]!);
+      for (const directory of providers) fs.rmSync(directory, { recursive: true });
+      execFileSync('git', ['init', '-q'], { cwd: f.checkout });
+      const command = `node -e "process.stdout.write('synthetic CI check')"`;
+      fs.writeFileSync(
+        path.join(f.taskDir, 'REVIEW-FIX.md'),
+        '- [ ] CI [DETERMINISTIC: ci.local_check]\n',
+      );
+      fs.writeFileSync(
+        path.join(f.taskDir, 'inputs/worker-terminal-contract.REVIEW-FIX.json'),
+        JSON.stringify({
+          ...builtinTerminalContract('review-fix'),
+          deterministicChecks: [
+            { checklist: 'REVIEW-FIX.md', stepNumber: 1, reference: 'ci.local_check', command },
+          ],
+        }),
+      );
+      const warning = t.mock.method(console, 'warn', () => {});
+      await withTaskProjectHost(options, f.taskDir, async (host) => {
+        assert.equal(host.context.project?.provider.version, '0.94.1');
+        assert.ok(
+          host.context.project?.provider.root.startsWith(
+            `${verifySelectedTask(f.taskDir).pin}${path.sep}`,
+          ),
+        );
+        assert.deepEqual((await host.provider.runtime.runtimeStatus(f.checkout)).reasons, [
+          '0.94.1',
+        ]);
+        assert.equal(
+          await handleChecklist(
+            ['mark', f.taskDir, '1', '--checklist', 'REVIEW-FIX.md'],
+            host.provider.commandOptions?.task,
+          ),
+          0,
+        );
+      });
+      const ci = JSON.parse(
+        fs.readFileSync(
+          path.join(f.taskDir, 'artifacts/deterministic-checks/REVIEW-FIX.md/1.json'),
+          'utf8',
+        ),
+      );
+      assert.equal(ci.status, 'passed');
+      assert.equal(ci.command, command);
+      const actual = JSON.parse(
+        fs.readFileSync(path.join(f.taskDir, 'artifacts/provider-execution.json'), 'utf8'),
+      );
+      assert.equal(actual.provider.version, '0.94.1');
+      assert.ok(actual.provider.identity.sourceFingerprint);
+      assert.equal(actual.fallback.configuredRoot, providers[1]);
+      assert.equal(actual.fallback.reason, 'pool-provider-unavailable');
+      assert.match(String(warning.mock.calls[0]?.arguments[0]), /using retained harness/);
+      assert.deepEqual(
+        fs.readFileSync(path.join(f.taskDir, 'artifacts/harness-provenance.json')),
+        originalReceipt,
+      );
+      // Explicitly authorized roots and broken installed providers still fail closed.
+      for (const explicitRoot of [path.join(f.root, 'explicit-missing'), providers[1]!])
+        await assert.rejects(
+          withTaskProjectHost(
+            {
+              ...options,
+              authorizedProviders: ['fixture-harness/provider'],
+              load: { env: { FIXTURE_HARNESS_ROOT: explicitRoot } },
+            },
+            f.taskDir,
+            async () => assert.fail('missing authorized provider ran'),
+          ),
+          { code: 'ENOENT' },
+        );
+      fs.mkdirSync(providers[1]!);
+      await assert.rejects(
+        withTaskProjectHost(options, f.taskDir, async () => assert.fail('broken provider ran')),
+      );
+      return;
     }
     if (providerSelection === 'retained') {
       fs.unlinkSync(path.join(pool, 'local.json'));

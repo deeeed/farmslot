@@ -32,6 +32,7 @@ import {
   SourceMaterializer,
 } from '@farmslot/slot-config/sources';
 
+import { lazyImport } from '../core/lazy-import.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { assertNodeReconnectCurrent, sendNodeRequest, waitForNode } from '../fleet/node-rpc.js';
 import { loadFleetStatus, loadPoolConfigs, loadProjectConfig } from '../fleet/state.js';
@@ -64,6 +65,9 @@ import {
   type ProspectiveSlotSourcePlans,
   type RunSlotSourcePlans,
 } from './slot-planning.js';
+
+// Test module mocks replace the slot state module with partial exports.
+const loadSlotState = lazyImport(() => import('../core/state.js'));
 
 let authority: SourceAuthority | undefined;
 let gateway: SourceMaterializer | undefined;
@@ -819,7 +823,7 @@ export async function withSlotSources<T>(slotId: string, operation: () => Promis
   if (!authority) return operation();
   const { slot, pool } = await resolveSlot(slotId);
   const project = slot.project ?? pool.project;
-  const { readSlotField } = await import('../core/state.js');
+  const { readSlotField } = await loadSlotState();
   const currentRunId = await readSlotField(slotId, 'current_run_id');
   const owner = typeof currentRunId === 'string' ? getRun(currentRunId) : undefined;
   if (owner?.slotId === slotId) return withRunSources(owner, operation);

@@ -1,0 +1,1 @@
+- Native conversations: every message, tool command, raw tool output and plan has a Copy action that copies its exact text, and http(s) addresses in message text open in the browser. Other schemes stay plain text.

@@ -27,6 +27,7 @@ import {
 } from '../fleet/node-rpc.js';
 import { loadFleetStatus, loadPoolConfigs } from '../fleet/state.js';
 import { isFreeSlot } from '../methods/dispatch/slot-scoring.js';
+import { comparisonReviewContext } from '../review/comparison-context.js';
 import { assertReviewNativeRunnerHealthy } from '../runners/native/review-health.js';
 import {
   getRunnerDefinition,
@@ -58,6 +59,9 @@ export type DirectWorkflowRequest = ReviewQaDispatchInput &
     | 'slotId'
     | 'allowedSlots'
     | 'reviewMode'
+    | 'reviewContext'
+    | 'lane'
+    | 'variant'
     | 'reviewAutoFinish'
     | 'mode'
     | 'executionTemplateId'
@@ -184,6 +188,8 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
     original.flowType === 'qa' || original.reviewValidationDepth === 'full-live'
       ? 'qa'
       : 'review-pr';
+  const reviewContext = comparisonReviewContext(original);
+  if (reviewContext !== original.reviewContext) original = { ...original, reviewContext };
   if (flow === 'review-pr') {
     if (original.taskTemplate)
       unavailable('Workspace review requires the configured static-review catalog template');

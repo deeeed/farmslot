@@ -6,7 +6,7 @@ import { type ChildProcess, fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import {
-  recordHostOperationExec,
+  captureHostOperationExec,
   registerHostOperations,
 } from '../../observability/performance.js';
 
@@ -45,6 +45,8 @@ export interface BackgroundHostStatus {
 export interface BackgroundRequestOptions {
   /** How long the caller waits for the answer once the request is sent; a miss counts toward a wedge restart. */
   deadlineMs: number;
+  /** Cancellation stops the child command; closeout still owns settlement. */
+  signal?: AbortSignal;
 }
 
 export interface BackgroundHost {
@@ -111,6 +113,8 @@ interface PendingRequest {
   reject: (error: Error) => void;
   /** The startup wait, then the answer deadline once the request is sent. */
   timer?: ReturnType<typeof setTimeout>;
+  removeAbortListener?: () => void;
+  recordExec: (tally: ExecTally) => void;
 }
 
 const DEFAULT_RESTART_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
@@ -141,6 +145,7 @@ export class ForkedBackgroundHost implements BackgroundHost {
   private readyGate: Promise<void> = new Promise(() => {});
   private openReadyGate: () => void = () => {};
   private readonly pending = new Map<number, PendingRequest>();
+  private readonly completedAttribution = new Map<number, (tally: ExecTally) => void>();
   private nextId = 1;
   private state: BackgroundHostState = 'stopped';
   private since = new Date().toISOString();
@@ -188,7 +193,7 @@ export class ForkedBackgroundHost implements BackgroundHost {
   request<O extends BackgroundOperation>(
     operation: O,
     params: BackgroundParams<O>,
-    { deadlineMs }: BackgroundRequestOptions,
+    { deadlineMs, signal }: BackgroundRequestOptions,
   ): Promise<BackgroundResult<O>> {
     const child = this.child;
     if (!child || this.state === 'restarting' || !this.active()) {
@@ -210,8 +215,17 @@ export class ForkedBackgroundHost implements BackgroundHost {
         // The child built this value from the same operation contract.
         resolve: (value) => resolve(value as BackgroundResult<O>),
         reject,
+        recordExec: captureHostOperationExec(operation),
       };
       this.pending.set(id, pending);
+      const cancel = () => {
+        if (this.child !== child || !child.connected) return;
+        child.send({ type: 'cancel', id }, (error) => {
+          if (error) this.settle(id, new BackgroundUnavailableError(error.message));
+        });
+      };
+      signal?.addEventListener('abort', cancel, { once: true });
+      pending.removeAbortListener = () => signal?.removeEventListener('abort', cancel);
       // A cold start (importing the probe modules) can take a while under load. Waiting for it is
       // not a missed deadline, so it never counts toward a wedge restart.
       const startupMs = this.options.startupBudgetMs ?? DEFAULT_STARTUP_BUDGET_MS;
@@ -238,6 +252,7 @@ export class ForkedBackgroundHost implements BackgroundHost {
         pending.timer.unref();
         child.send(message, (error) => {
           if (error) this.settle(id, new BackgroundUnavailableError(error.message));
+          else if (signal?.aborted) cancel();
         });
       });
     });
@@ -313,8 +328,13 @@ export class ForkedBackgroundHost implements BackgroundHost {
     if (Object.keys(message.exec).length) {
       this.exec[message.operation] = addTally(this.exec[message.operation] ?? {}, message.exec);
       // The child ran these commands for this process: they count here, under the operation.
-      recordHostOperationExec(message.operation, message.exec);
+      const attribution =
+        this.pending.get(message.id)?.recordExec ??
+        this.completedAttribution.get(message.id) ??
+        captureHostOperationExec(message.operation);
+      attribution(message.exec);
     }
+    this.completedAttribution.delete(message.id);
     if (!this.pending.has(message.id)) return; // the caller's deadline already passed
     this.missedDeadlines = 0;
     if (message.ok) this.settle(message.id, undefined, message.value);
@@ -332,6 +352,9 @@ export class ForkedBackgroundHost implements BackgroundHost {
     if (!pending) return;
     this.pending.delete(id);
     clearTimeout(pending.timer);
+    pending.removeAbortListener?.();
+    if (error instanceof BackgroundTimeoutError)
+      this.completedAttribution.set(id, pending.recordExec);
     if (error) pending.reject(error);
     else pending.resolve(value);
   }
@@ -349,6 +372,7 @@ export class ForkedBackgroundHost implements BackgroundHost {
 
   private exited(child: ChildProcess, code: number | null, signal: string | null): void {
     if (child !== this.child) return;
+    this.completedAttribution.clear();
     this.child = undefined;
     this.missedDeadlines = 0;
     this.lastExit = { code, signal, at: new Date().toISOString() };

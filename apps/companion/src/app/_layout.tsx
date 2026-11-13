@@ -102,7 +102,12 @@ export default function RootLayout() {
             <Stack.Screen name="connection" options={{ title: 'Gateway connection' }} />
             <Stack.Screen name="pair" options={{ title: 'Pair Companion' }} />
             <Stack.Protected guard={farm || renderAccess === 'none'}>
-              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+              {/* One tab navigator: a link pushed into the tabs (a deep link to /fleet) reuses it. */}
+              <Stack.Screen
+                name="(tabs)"
+                dangerouslySingular={() => 'tabs'}
+                options={{ headerShown: false }}
+              />
             </Stack.Protected>
             <Stack.Protected guard={farm || renderAccess === 'native'}>
               <Stack.Screen name="native" options={{ title: 'Conversations' }} />

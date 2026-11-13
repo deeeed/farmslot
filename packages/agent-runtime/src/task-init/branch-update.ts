@@ -10,9 +10,17 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import type { BranchMaintenanceOperation } from '@farmslot/protocol';
 
+import {
+  GIT_PUSH_TIMEOUT_SETTING,
+  GitPushTimeoutError,
+  gitPushTimeoutError,
+  gitPushTimeoutMs,
+  withFarmGitArgv,
+} from '../../scripts/farm-git.cjs';
 import { gitDiffArgs } from '../../scripts/git-diff.cjs';
 
 export interface BranchMaintenanceRequest {
@@ -95,14 +103,30 @@ export function normalizeMaintenanceBranch(value: string): string {
 }
 
 function git(repo: string, args: string[], input?: string, authorEnv?: NodeJS.ProcessEnv): string {
-  return execFileSync('git', args[0] === 'diff' ? gitDiffArgs(args.slice(1)) : args, {
-    cwd: repo,
-    ...(authorEnv ? { env: { ...process.env, ...authorEnv } } : {}),
-    encoding: 'utf8',
-    stdio: ['pipe', 'pipe', 'pipe'],
-    input,
-    maxBuffer: 16 * 1024 * 1024,
-  }).trimEnd();
+  const push = args[0] === 'push';
+  const timeout = push ? gitPushTimeoutMs(process.env[GIT_PUSH_TIMEOUT_SETTING]) : 0;
+  const argv = push
+    ? [
+        process.execPath,
+        fileURLToPath(new URL('../../scripts/farm-git.cjs', import.meta.url)),
+        ...args,
+      ]
+    : args[0] === 'fetch'
+      ? withFarmGitArgv(['git', ...args])
+      : ['git', ...(args[0] === 'diff' ? gitDiffArgs(args.slice(1)) : args)];
+  try {
+    return execFileSync(argv[0], argv.slice(1), {
+      cwd: repo,
+      ...(authorEnv ? { env: { ...process.env, ...authorEnv } } : {}),
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      input,
+      maxBuffer: 16 * 1024 * 1024,
+    }).trimEnd();
+  } catch (error) {
+    if (push && (error as { status?: number }).status === 124) throw gitPushTimeoutError(timeout);
+    throw error;
+  }
 }
 
 function ancestor(repo: string, left: string, right: string): boolean {
@@ -502,6 +526,7 @@ export function pushBranchMaintenance(
       `--force-with-lease=refs/heads/${operation.branch}:${operation.remoteHeadSha}`,
     ]);
   } catch (error) {
+    if (error instanceof GitPushTimeoutError) throw error;
     throw new BranchMaintenanceRefusal('PUSH_REFUSED', error);
   }
   recordReceipt(operation, { ...receipt, pushedHeadSha: head });

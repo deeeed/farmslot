@@ -1,0 +1,1 @@
+- Fleet, Decision inbox, PR dashboard, Backlog, Roadmap and Co-Pilot open again from Advanced, links and the inbox notification instead of landing on Review, and pairing or a deep link no longer stacks a second copy of the tabs.

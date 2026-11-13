@@ -26,6 +26,7 @@ import {
 } from '../core/active-run-selection.js';
 import { resolveTaskPaths } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { slotFileExists, slotMkdir, slotReadFile } from '../core/slot-io.js';
 import { updateSlotStatus } from '../core/state.js';
@@ -56,6 +57,9 @@ import {
   subtaskUnitsForParentChecklist,
 } from './subtasks.js';
 import { normalizeWorkerSignal } from './worker-signals.js';
+
+// Lazy: watcher-remote-subtask.test.ts mocks this module after the real graph loads.
+const loadAcceptanceSync = lazyImport(() => import('./acceptance-registration-sync.js'));
 
 // Keep imperative watch consumers compatible while recording shared-read admission centrally.
 const sendNodeRequest: typeof sendRawNodeRequest = (node, method, params, options) => {
@@ -1192,7 +1196,7 @@ function scheduleAcceptanceSync(key: string, sw: SlotWatch): void {
       const before = acceptanceSyncState(sw.runId);
       const previousError = sw.acceptanceSyncError;
       try {
-        const { syncAcceptanceRegistration } = await import('./acceptance-registration-sync.js');
+        const { syncAcceptanceRegistration } = await loadAcceptanceSync();
         await syncAcceptanceRegistration(sw.runId, sw.slotId, sw, path.dirname(sw.taskFilePath));
         sw.acceptanceSyncError = undefined;
       } catch (error) {

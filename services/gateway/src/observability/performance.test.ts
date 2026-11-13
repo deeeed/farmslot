@@ -142,3 +142,44 @@ test('commands a host service starts outside a request are counted under its ope
   recordHostOperationExec('fixture.read', { git: { calls: 3, seconds: 1.5 } });
   assert.equal(execCalls('host:fixture.read', 'git'), 4);
 });
+
+test('overlapping background requests keep separate execution tallies', async () => {
+  const { withExecutionTally } = await import('./performance.js');
+  const first: import('./performance.js').ExecTally = {};
+  const second: import('./performance.js').ExecTally = {};
+  let finish: () => void = () => assert.fail('missing execution gate');
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const pending = withExecutionTally(first, () =>
+    measureManagedOperation('exec', 'shell', () => gate),
+  );
+  await withExecutionTally(second, () =>
+    measureManagedOperation('exec', 'git', async () => undefined),
+  );
+  finish();
+  await pending;
+  assert.equal(first.shell?.calls, 1);
+  assert.equal(first.git, undefined);
+  assert.equal(second.git?.calls, 1);
+  assert.equal(second.shell, undefined);
+});
+
+test('a background IPC reply retains its initiating request attribution', async () => {
+  const { captureHostOperationExec } = await import('./performance.js');
+  const metrics = new PerformanceRecorder('gateway', { methods: new Set(['foreground']) });
+  await measureGatewayRequest(
+    'foreground',
+    async () => {
+      const reply = captureHostOperationExec('commands.read');
+      await Promise.resolve();
+      reply({ shell: { calls: 2, seconds: 0.25 } });
+    },
+    metrics,
+  );
+  const counter = metrics
+    .snapshot()
+    .counters.find((row) => row.name === 'farmslot_exec_calls_total');
+  assert.equal(counter?.labels.method, 'foreground');
+  assert.equal(counter?.value, 2);
+});

@@ -474,7 +474,6 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `pr.list.updated`               | pr        | Pr List Updated gateway event.               |
 | `pr.updated`                    | pr        | Pr Updated gateway event.                    |
 | `prPush.updated`                | prPush    | PrPush Updated gateway event.                |
-| `prRules.updated`               | prRules   | PrRules Updated gateway event.               |
 | `prWatch.policy.updated`        | prWatch   | PrWatch Policy Updated gateway event.        |
 | `prWatch.updated`               | prWatch   | PrWatch Updated gateway event.               |
 | `queue.updated`                 | queue     | Queue Updated gateway event.                 |

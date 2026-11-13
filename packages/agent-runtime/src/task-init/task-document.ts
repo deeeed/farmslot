@@ -20,6 +20,7 @@ import {
   type WorkerTerminalContractDocument,
 } from '@farmslot/protocol';
 
+import { GIT_PUSH_TIMEOUT_SETTING, gitPushTimeoutMs } from '../../scripts/farm-git.cjs';
 import { REVIEW_DIFF_SCOPE_RULE } from '../../scripts/review-diff-scope.cjs';
 
 import { normalizeMaintenanceBranch } from './branch-update.js';
@@ -88,7 +89,11 @@ export function buildBranchUpdateGuardCommand(
       baseRef: vars.PUBLICATION_BASE,
     });
   const scope = phase === 'push' && vars.CI_FIX_SCOPE ? ` ${quote(vars.CI_FIX_SCOPE)}` : '';
-  return `${script} ${phase} ${quote(context)}${scope}`;
+  const budget =
+    phase === 'push' && vars[GIT_PUSH_TIMEOUT_SETTING] !== undefined
+      ? `${GIT_PUSH_TIMEOUT_SETTING}=${quote(String(gitPushTimeoutMs(vars[GIT_PUSH_TIMEOUT_SETTING])))} `
+      : '';
+  return `${budget}${script} ${phase} ${quote(context)}${scope}`;
 }
 
 /**

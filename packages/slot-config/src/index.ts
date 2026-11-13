@@ -16,6 +16,7 @@ export type {
   IncrementalSessionUsageState,
   PiModelCostMetadata,
   SessionAction,
+  SessionUsageWindow,
 } from './session-usage.js';
 export {
   advanceIncrementalFromBytes,

@@ -383,7 +383,9 @@ test('Claude worker rollup recomputes a removed session from its verified archiv
   assert.equal(usage.totalTokens, 106);
   assert.equal(current.metrics.sessionTurns, 2);
   await writeFile(transcript, raw + '{}\n');
-  await assert.rejects(extractRunWorkerSessionUsage(current, makeVars()), /SHA256/);
+  const unavailable = await extractRunWorkerSessionUsage(current, makeVars());
+  assert.equal(unavailable?.source, 'unavailable');
+  assert.match(unavailable?.error ?? '', /SHA256/);
 });
 
 // Arthur 11-02: below the free-space floor nothing is written, not even the archive directory

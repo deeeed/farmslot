@@ -7,7 +7,7 @@ import { recoverWorkspaceUsageBindings } from '../runners/session-usage-recovery
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 
 import { recoveredWorkerSessionReceipt, upsertSessionUsage } from './agent-session-rows.js';
-import { extractNativeAgentSessionUsage } from './native-session-usage.js';
+import { extractNativeAgentSessionUsage, nativeRunUsageWindow } from './native-session-usage.js';
 import { extractRunnerSessionUsage, unavailableRunnerSessionUsage } from './session-usage.js';
 import { workspaceUsageMetrics } from './session-usage-result.js';
 
@@ -88,6 +88,7 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
           runnerSessionId: row.runnerSessionId ?? null,
           runnerSessionPath: row.runnerSessionPath,
           nativeSession: row.nativeSession,
+          usageWindow: nativeRunUsageWindow(run, row),
         }),
       );
     }

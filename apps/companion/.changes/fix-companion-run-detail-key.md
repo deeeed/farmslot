@@ -1,0 +1,1 @@
+- Run Detail no longer logs a duplicate-key warning on every open: the title stopped sharing the linked-tickets control's key, which still resets the ticket draft per run.

@@ -28,6 +28,7 @@ mock.module('../core/config.js', {
 interface TerminalLaunch {
   command: string;
   environment: { set: Record<string, string>; unset: string[] };
+  temporaryDirectoryVariables: string[];
 }
 const terminalInputs: TerminalLaunch[] = [];
 mock.module('../core/exec.js', {
@@ -88,6 +89,10 @@ for (const [runner, switched] of [
       await reviewTmuxOperation(run, 'launch', 'Review the PR');
       const terminalInput = terminalInputs.at(-1);
       assert.ok(terminalInput);
+      assert.deepEqual(
+        terminalInput.temporaryDirectoryVariables,
+        runner === 'claude' ? ['CLAUDE_CODE_TMPDIR'] : [],
+      );
       if (mode === 'autonomous') assert.match(terminalInput.command, switched);
       else assert.doesNotMatch(terminalInput.command, /AskUserQuestion|request_user_input/u);
     }

@@ -43,6 +43,7 @@ import {
   SLOT_RELEASING_SINCE,
   type SlotVars,
 } from '../core/index.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { shellQuote, tmuxSessionCandidates, tmuxShellSnippet } from '../core/tmux.js';
 import {
   fleetStaleThresholdMs,
@@ -81,6 +82,8 @@ import {
   type SlotProbeOutcome,
   slotProbeScript,
 } from './slot-probe-batch.js';
+
+const loadExec = lazyImport(() => import('../core/exec.js'));
 
 const SLOT_CHECK_CONCURRENCY = 4;
 const SLOT_CHECK_TIMEOUT_MS = 5_000;
@@ -1554,7 +1557,7 @@ async function readHealth(pj: RawProjectJson, result: SlotProbeOutcome): Promise
   if (!parseCmd) return 'OK';
   try {
     // Parse through project's parse command
-    const { execLocal } = await import('../core/exec.js');
+    const { execLocal } = await loadExec();
     const parsed = await execLocal(`echo '${raw.replace(/'/g, "'\\''")}' | ${parseCmd}`, {
       timeout: SLOT_CHECK_TIMEOUT_MS,
     });

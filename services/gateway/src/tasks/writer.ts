@@ -51,6 +51,7 @@ import {
   loadSlotVars,
   resolveProjectTaskDirName,
 } from '../core/config.js';
+import { gitPushTimeoutMs } from '../core/git-push-budget.js';
 import {
   collectPlaceholderTokens,
   expandTemplate,
@@ -1299,6 +1300,7 @@ export async function writeTaskFile(
   vars.CI_PARITY_CHECKLIST =
     splitChecklist && !scriptedCommand ? EXECUTION_CHECKLIST_DOCUMENT : 'TASK.md';
   if (publicationBase) {
+    vars.FARMSLOT_GIT_PUSH_TIMEOUT_MS = String(await gitPushTimeoutMs(slotVars));
     const operation = await prepareBranchMaintenance(run, slotVars, defaultBranch);
     if (operation) {
       vars.BRANCH_UPDATE_CONTEXT = JSON.stringify(operation);

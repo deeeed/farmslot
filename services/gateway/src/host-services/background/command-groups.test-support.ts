@@ -53,6 +53,8 @@ serveBackgroundRequests(
       return [];
     },
     'decisions.scan': async () => process.exit(3),
+    'commands.read': ({ command, ...options }, context) =>
+      execLocal(command, { ...options, signal: context?.signal }),
   },
   new Set(['fleet.probeMachine']),
   env.FIXTURE_GUARD_OWNER ? { guardOwnerPid: Number(env.FIXTURE_GUARD_OWNER) } : {},

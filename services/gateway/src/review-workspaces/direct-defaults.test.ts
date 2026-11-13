@@ -9,6 +9,7 @@ import type {
   PRWorkspaceExecutionProfile,
   ReviewRequestContext,
   ReviewSequence,
+  RunCreateParams,
 } from '@farmslot/protocol';
 import { executionModelFromSelection } from '@farmslot/review-dispatch';
 
@@ -184,6 +185,37 @@ const request = {
   ticketOrPr: 'example/app#42',
   mode: 'autonomous' as const,
 };
+
+test('comparison default precedes a WARM farm mode and preserves explicit lineage', async () => {
+  const configured = await loadProjectConfig('farm');
+  assert(configured);
+  const project = {
+    ...configured,
+    workflowDefaults: {
+      ...configured.workflowDefaults,
+      'review-pr': { execution, review: { mode: 'warm' as const } },
+    },
+  };
+  const input: RunCreateParams = { ...request, lane: 'comparison', variant: 'candidate' };
+  for (const purpose of ['preview', 'queue', 'run'] as const) {
+    const result = await resolveDirectWorkflowDefaults(input, project, {
+      purpose,
+      ownerId: 'owner',
+    });
+    assert.equal(result.params.reviewMode, 'cold');
+    assert.deepEqual(result.params.reviewContext, { freshChain: true, reviewLineages: [null] });
+    const context: ReviewRequestContext = {
+      reviewLineages: [{ repository: 'example/app', prNumber: 42, reviewId: 'reference' }],
+    };
+    const retained = await resolveDirectWorkflowDefaults(
+      { ...input, reviewMode: 'warm', reviewContext: context },
+      project,
+      { purpose, ownerId: 'owner' },
+    );
+    assert.equal(retained.params.reviewMode, 'warm');
+    assert.deepEqual(retained.params.reviewContext, context);
+  }
+});
 
 test('flat constraints retain exact machines, models, efforts and native-profile identity', () => {
   const nativeProfile = {
@@ -472,6 +504,9 @@ test('delayed queue dispatch uses frozen alternatives when farm defaults change'
     await deleteRun(busy.id);
     await queue.removeQueueItemInternalNow(queued.item.id, 'test-cleanup');
     writeFileSync(projectPath, JSON.stringify(raw));
+    // Fixture edits bypass the watcher that invalidates project settings in production.
+    const { invalidateProjectVarsCache } = await import('../core/config.js');
+    invalidateProjectVarsCache('farm');
   });
   writeFileSync(
     projectPath,

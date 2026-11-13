@@ -1,0 +1,1 @@
+- Route blind Mobile CDP broker sockets into the trial's fixed socket-only directory and keep ownership files in general trial temp.

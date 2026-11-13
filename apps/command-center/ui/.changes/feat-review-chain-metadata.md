@@ -1,0 +1,1 @@
+- Show reviewer, model, recorded duration and generation cost in review-chain rows, with a wrapping layout on narrow screens.

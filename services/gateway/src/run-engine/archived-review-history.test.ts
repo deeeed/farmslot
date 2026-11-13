@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 
-import type { AgentContext, RunReviewResult } from '@farmslot/protocol';
+import type { AgentContext, RunCreateParams, RunReviewResult } from '@farmslot/protocol';
 
 const github = await import('../external/github.js');
 mock.module('../external/github.js', {
@@ -22,7 +22,7 @@ const result: RunReviewResult = {
   reviewSnapshot: { source: 'github-pr', headSha: head, capturedAt: '2026-11-12T00:00:00Z' },
 };
 
-for (const mode of ['warm', 'cold', 'fresh'] as const) {
+for (const mode of ['warm', 'cold', 'fresh', 'comparison', 'comparison-lineage'] as const) {
   test(`a new ${mode} review handles archived history without restoring it`, async (t) => {
     const prior = createRun({
       flowType: 'review-pr',
@@ -51,19 +51,26 @@ for (const mode of ['warm', 'cold', 'fresh'] as const) {
     t.after(() => deleteArchivedRun(prior.id));
     const archive = path.join(runsDirectory(), 'archive', `${prior.id}.json`);
     const before = await readFile(archive);
-    const current = createRun({
+    const request: RunCreateParams = {
       flowType: 'review-pr',
       project: prior.project,
       ticketOrPr: prior.ticketOrPr,
+      ...(mode.startsWith('comparison')
+        ? { lane: 'comparison' as const, variant: 'candidate' }
+        : {}),
       reviewMode: mode === 'warm' ? 'warm' : 'cold',
-      reviewContext: {
-        ...(mode === 'fresh' ? { freshChain: true } : {}),
-        reviewLineages:
-          mode === 'fresh'
-            ? [null]
-            : [{ reviewId: 'lineage', repository: 'owner/repo', prNumber: 42 }],
-      },
-    });
+      reviewContext:
+        mode === 'comparison'
+          ? undefined
+          : {
+              ...(mode === 'fresh' ? { freshChain: true } : {}),
+              reviewLineages:
+                mode === 'fresh'
+                  ? [null]
+                  : [{ reviewId: 'lineage', repository: 'owner/repo', prNumber: 42 }],
+            },
+    };
+    const current = createRun(request);
     t.after(async () => {
       updateRun(current.id, { status: 'done' });
       await deleteRun(current.id);
@@ -73,12 +80,12 @@ for (const mode of ['warm', 'cold', 'fresh'] as const) {
       prNumber: 42,
       headSha: 'b'.repeat(40),
     });
-    if (mode === 'fresh') assert.equal(selected, null);
+    if (mode === 'fresh' || mode === 'comparison') assert.equal(selected, null);
     else {
       assert.equal(selected?.priorRunId, prior.id);
       assert.equal(selected?.session?.reviewId, 'lineage');
       assert.equal(selected?.priorReviewedHeadSha, head);
-      assert.equal(selected?.mode, mode);
+      assert.equal(selected?.mode, mode === 'comparison-lineage' ? 'cold' : mode);
     }
     assert.equal(getRun(prior.id), undefined);
     assert.deepEqual(await readFile(archive), before);

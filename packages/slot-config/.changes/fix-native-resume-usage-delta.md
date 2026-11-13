@@ -1,0 +1,1 @@
+- Count resumed Claude and Pi usage once per message and derive Codex tokens and cost from cumulative usage deltas, tolerating usage-free cancellation notifications.

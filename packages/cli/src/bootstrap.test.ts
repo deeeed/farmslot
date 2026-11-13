@@ -9,8 +9,43 @@ import { fileURLToPath } from 'node:url';
 
 const packageDir = fileURLToPath(new URL('..', import.meta.url));
 
-async function startBootstrap(t: TestContext, args: string[], managedRuntime = false) {
-  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-bootstrap-'));
+interface BootstrapOptions {
+  managedRuntime?: boolean;
+  pinLayout?: 'legacy' | 2;
+  symlinkPinStore?: boolean;
+  externalBinLink?: boolean;
+  symlinkBinDirectory?: boolean;
+  decoyPinCli?: 'missing' | 'different';
+  farmHome?: string;
+}
+
+async function startBootstrap(t: TestContext, args: string[], options: BootstrapOptions = {}) {
+  const scratch = await realpath(await mkdtemp(path.join(tmpdir(), 'farmslot-bootstrap-')));
+  const home = path.join(scratch, 'custom farm');
+  if (options.symlinkPinStore) {
+    const store = path.join(home, ...(options.pinLayout === 2 ? ['state'] : []), 'task-pins');
+    const target = path.join(scratch, 'external', 'task-pins');
+    await mkdir(path.dirname(store), { recursive: true });
+    await mkdir(target, { recursive: true });
+    await symlink(target, store);
+  }
+  const root = options.pinLayout
+    ? path.join(
+        home,
+        ...(options.pinLayout === 2 ? ['state'] : []),
+        'task-pins',
+        'fixture',
+        'cli',
+        'packages',
+        'cli',
+      )
+    : scratch;
+  const managedRuntime = options.managedRuntime;
+  if (options.pinLayout === 2) {
+    await mkdir(path.join(home, 'config'), { recursive: true });
+    await writeFile(path.join(home, 'config/instance.json'), '{"layout":2}');
+  }
+  await mkdir(root, { recursive: true });
   await mkdir(path.join(root, 'bin'));
   await mkdir(path.join(root, 'src'));
   const managedDir = path.join(root, 'managed runtime');
@@ -38,7 +73,7 @@ async function startBootstrap(t: TestContext, args: string[], managedRuntime = f
       clearInterval(timer);
       process.exitCode = 23;
     });
-    console.log(JSON.stringify({ pid: process.pid, execPath: process.execPath, entry: '${name}', args: process.argv.slice(2), value }));
+    console.log(JSON.stringify({ pid: process.pid, execPath: process.execPath, entry: '${name}', args: process.argv.slice(2), value, farmHome: process.env.FARMSLOT_HOME }));
   `;
   await writeFile(path.join(root, 'src/entry.ts'), entry('normal'));
   await writeFile(path.join(root, 'src/scripted-runner-entry.ts'), entry('scripted'));
@@ -59,32 +94,58 @@ async function startBootstrap(t: TestContext, args: string[], managedRuntime = f
     syncBuiltinESMExports();
   `,
   );
-  const child = spawn(
-    process.execPath,
-    ['--import', cacheGuard, path.join(root, 'bin/farmslot.mjs'), ...args],
-    {
-      cwd: tmpdir(),
-      env: {
-        ...process.env,
-        TSX_TSCONFIG_PATH: 'missing-parent/tsconfig.json',
-        TSX_DISABLE_CACHE: '',
-        FARMSLOT_NODE22_BIN: managedRuntime ? managedDir : '',
-      },
-      stdio: 'pipe',
-      detached: true,
+  let executable = path.join(root, 'bin/farmslot.mjs');
+  if (options.externalBinLink) {
+    const target = executable;
+    executable = path.join(scratch, 'external-bin/farmslot-task');
+    if (options.symlinkBinDirectory) {
+      const bin = path.join(scratch, '.local/bin');
+      await mkdir(bin, { recursive: true });
+      await symlink('.local/bin', path.join(scratch, 'bin'));
+      await symlink(path.relative(bin, target), path.join(bin, 'farmslot-task'));
+      executable = path.join(scratch, 'bin/farmslot-task');
+    } else {
+      if (options.decoyPinCli) {
+        const decoy = path.join(scratch, 'decoy/task-pins/fixture/cli');
+        executable = path.join(decoy, 'bin/farmslot-task');
+        if (options.decoyPinCli === 'different') {
+          const cli = path.join(decoy, 'packages/cli/bin/farmslot.mjs');
+          await mkdir(path.dirname(cli), { recursive: true });
+          await writeFile(cli, '// A different CLI must not select this home.');
+        }
+      }
+      await mkdir(path.dirname(executable), { recursive: true });
+      await symlink(path.relative(path.dirname(executable), target), executable);
+    }
+  }
+  const child = spawn(process.execPath, ['--import', cacheGuard, executable, ...args], {
+    cwd: tmpdir(),
+    env: {
+      ...process.env,
+      TSX_TSCONFIG_PATH: 'missing-parent/tsconfig.json',
+      TSX_DISABLE_CACHE: '',
+      FARMSLOT_NODE22_BIN: managedRuntime ? managedDir : '',
+      FARMSLOT_HOME: options.farmHome,
     },
-  );
+    stdio: 'pipe',
+    detached: true,
+  });
   let output = '';
   let stderr = '';
   let runtimePid: number | undefined;
   child.stderr.on('data', (chunk: Buffer) => {
     stderr += chunk.toString();
   });
+  let didClose = false;
   const closed = new Promise<{ code: number | null; signal: string | null }>((resolve) => {
-    child.once('close', (code, signal) => resolve({ code, signal }));
+    child.once('close', (code, signal) => {
+      didClose = true;
+      resolve({ code, signal });
+    });
   });
   t.after(async () => {
-    for (const pid of new Set([child.pid, runtimePid])) {
+    // After close the process group can disappear or be reused. Kill only a live fixture.
+    for (const pid of didClose ? [] : new Set([child.pid, runtimePid])) {
       if (!pid) continue;
       try {
         process.kill(-pid, 'SIGKILL');
@@ -93,7 +154,7 @@ async function startBootstrap(t: TestContext, args: string[], managedRuntime = f
       }
     }
     await closed;
-    await rm(root, { recursive: true, force: true });
+    await rm(scratch, { recursive: true, force: true });
   });
   const ready = await new Promise<{
     pid: number;
@@ -101,8 +162,9 @@ async function startBootstrap(t: TestContext, args: string[], managedRuntime = f
     entry: string;
     args: string[];
     value: number;
+    farmHome?: string;
   }>((resolve, reject) => {
-    const deadline = setTimeout(() => reject(new Error(`bootstrap not ready: ${stderr}`)), 3000);
+    const deadline = setTimeout(() => reject(new Error(`bootstrap not ready: ${stderr}`)), 4500);
     child.once('error', reject);
     child.once('close', () => {
       clearTimeout(deadline);
@@ -119,6 +181,7 @@ async function startBootstrap(t: TestContext, args: string[], managedRuntime = f
   });
   return {
     child,
+    home: await realpath(scratch).then((directory) => path.join(directory, 'custom farm')),
     ready,
     closed,
     managedNode: path.join(managedDir, path.basename(process.execPath)),
@@ -179,7 +242,7 @@ test(
     const fixture = await startBootstrap(
       t,
       ['rpc', 'runtime.capability.list', '{"slotId":"fixture"}'],
-      true,
+      { managedRuntime: true },
     );
     assert.equal(fixture.ready.execPath, await realpath(fixture.managedNode));
     assert.equal(
@@ -196,3 +259,63 @@ test(
     assert.deepEqual(await fixture.closed, { code: 23, signal: null });
   },
 );
+
+for (const pinLayout of ['legacy', 2] as const) {
+  test(`a pinned CLI recovers its farm home in layout ${pinLayout}`, async (t) => {
+    const fixture = await startBootstrap(t, ['task', 'verify', 'synthetic-task'], { pinLayout });
+    assert.equal(fixture.ready.farmHome, fixture.home);
+    fixture.child.kill('SIGTERM');
+    assert.deepEqual(await fixture.closed, { code: 23, signal: null });
+  });
+  test(`a pinned CLI preserves its logical home through a symlinked layout ${pinLayout} store`, async (t) => {
+    const fixture = await startBootstrap(t, ['task', 'verify', 'synthetic-task'], {
+      pinLayout,
+      symlinkPinStore: true,
+    });
+    assert.equal(fixture.ready.farmHome, fixture.home);
+    fixture.child.kill('SIGTERM');
+    assert.deepEqual(await fixture.closed, { code: 23, signal: null });
+  });
+  for (const symlinkPinStore of [false, true]) {
+    for (const symlinkBinDirectory of [false, true]) {
+      test(`an external bin link${symlinkBinDirectory ? ' in a symlinked bin directory' : ''} recovers its home through a ${symlinkPinStore ? 'symlinked' : 'direct'} layout ${pinLayout} store`, async (t) => {
+        const fixture = await startBootstrap(t, ['task', 'verify', 'synthetic-task'], {
+          pinLayout,
+          symlinkPinStore,
+          externalBinLink: true,
+          symlinkBinDirectory,
+        });
+        assert.equal(fixture.ready.farmHome, fixture.home);
+        fixture.child.kill('SIGTERM');
+        assert.deepEqual(await fixture.closed, { code: 23, signal: null });
+      });
+    }
+  }
+}
+
+for (const decoyPinCli of ['missing', 'different'] as const) {
+  test(`a pin-shaped link with a ${decoyPinCli} CLI cannot select the farm home`, async (t) => {
+    const fixture = await startBootstrap(t, ['task', 'verify', 'synthetic-task'], {
+      pinLayout: 'legacy',
+      externalBinLink: true,
+      decoyPinCli,
+    });
+    assert.equal(fixture.ready.farmHome, fixture.home);
+    fixture.child.kill('SIGTERM');
+    assert.deepEqual(await fixture.closed, { code: 23, signal: null });
+  });
+}
+
+for (const externalBinLink of [false, true]) {
+  test(`a pinned CLI preserves an explicit farm home${externalBinLink ? ' through an external bin link' : ''}`, async (t) => {
+    const fixture = await startBootstrap(t, ['task', 'verify', 'synthetic-task'], {
+      pinLayout: 'legacy',
+      symlinkPinStore: externalBinLink,
+      externalBinLink,
+      farmHome: '/explicit/farm',
+    });
+    assert.equal(fixture.ready.farmHome, '/explicit/farm');
+    fixture.child.kill('SIGTERM');
+    assert.deepEqual(await fixture.closed, { code: 23, signal: null });
+  });
+}

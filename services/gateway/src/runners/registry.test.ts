@@ -1705,7 +1705,7 @@ describe('buildLaunchCommand', () => {
         },
       });
       assert.ok(launch.includes("export FARMSLOT_CI_BASE_REF='" + 'a'.repeat(40) + "'"), runner);
-      const boundary = launch.indexOf('unset GH_TOKEN GITHUB_TOKEN');
+      const boundary = launch.indexOf('/usr/bin/env -i');
       const sandbox = launch.indexOf(
         "/usr/bin/sandbox-exec -f '/slots/.farmslot-blind-evals/s/run-1/boundary/sandbox.sb' /bin/sh -c ",
       );
@@ -1717,6 +1717,82 @@ describe('buildLaunchCommand', () => {
         /export GH_CONFIG_DIR='\/slots\/.farmslot-blind-evals\/s\/run-1\/boundary\/gh-config'/u,
       );
     }
+  });
+
+  it('admits only the selected model provider on blind fresh launch and reload', () => {
+    const vars = makeVars({ dispatchCmd: '' });
+    const options = {
+      taskDir: TASK_DIR,
+      blindTrialBoundary: { capsule: '/synthetic/capsule', baseSha: 'a'.repeat(40) },
+    };
+    for (const model of ['litellm/fixture', 'openai/fixture', 'unknown-provider/fixture']) {
+      const expected = model.startsWith('litellm/')
+        ? 'LITELLM_API_KEY'
+        : model.startsWith('openai/')
+          ? 'OPENAI_API_KEY'
+          : undefined;
+      for (const command of [
+        buildLaunchCommand(vars, 'pi', model, PROMPT, options),
+        buildRunnerSessionReloadCommand(vars, 'pi', model, 'fixture-session', options),
+      ]) {
+        const admitted = command.slice(
+          command.indexOf('/usr/bin/env -i'),
+          command.indexOf('/usr/bin/sandbox-exec'),
+        );
+        if (expected) assert.ok(admitted.includes(expected));
+        assert.equal(admitted.includes('ANTHROPIC_API_KEY'), false);
+        assert.equal(admitted.includes('GH_REGISTRY_PAT'), false);
+        if (expected !== 'OPENAI_API_KEY') assert.equal(admitted.includes('OPENAI_API_KEY'), false);
+      }
+    }
+  });
+
+  it('scopes Pi extension discovery and auth to the selected provider, including configured router ids', () => {
+    const capability = getRunnerDefinition('pi').blindModelEnvironment;
+    assert.ok(capability);
+    const secrets = [
+      'FARMSLOT_PI_ROUTER_KEY',
+      'LITELLM_API_KEY',
+      'OLLAMA_API_KEY',
+      'OPENAI_API_KEY',
+      'GH_REGISTRY_PAT',
+    ];
+    for (const routerId of ['localsparks', 'sparks', 'custom-router']) {
+      for (const [provider, expected] of [
+        [routerId, 'FARMSLOT_PI_ROUTER_KEY'],
+        ['router', 'FARMSLOT_PI_ROUTER_KEY'],
+        ['litellm', 'LITELLM_API_KEY'],
+        ['ollama', 'OLLAMA_API_KEY'],
+        ['openai', 'OPENAI_API_KEY'],
+        ['unselected-custom', undefined],
+      ] as const) {
+        const admitted = capability(`${provider}/fixture`, { FARMSLOT_PI_ROUTER_ID: routerId });
+        const kind =
+          provider === routerId || provider === 'router' ? 'ROUTER' : provider.toUpperCase();
+        for (const source of ['ROUTER', 'LITELLM', 'OLLAMA'] as const) {
+          const selected = source === kind;
+          for (const setting of ['CONTEXT', 'MAX_TOKENS', 'REASONING', 'MODEL_LIMITS'])
+            assert.equal(admitted.includes(`FARMSLOT_PI_${source}_${setting}`), selected);
+          const endpoint = {
+            ROUTER: 'FARMSLOT_PI_ROUTER_URL',
+            LITELLM: 'LITELLM_URL',
+            OLLAMA: 'FARMSLOT_PI_OLLAMA_URL',
+          }[source];
+          assert.equal(admitted.includes(endpoint), selected);
+        }
+        assert.ok(admitted.includes('FARMSLOT_PI_REQUEST_TIMEOUT_MODE'));
+        assert.deepEqual(
+          secrets.filter((name) => admitted.includes(name)),
+          expected ? [expected] : [],
+        );
+      }
+    }
+    assert.equal(
+      getRunnerDefinition('opencode')
+        .blindModelEnvironment?.('litellm/fixture')
+        .includes('FARMSLOT_PI_ROUTER_URL'),
+      false,
+    );
   });
 
   it('resumes a blind trial worker session inside the same sandbox', () => {
@@ -1733,8 +1809,8 @@ describe('buildLaunchCommand', () => {
       const sandbox = reload.indexOf(
         "/usr/bin/sandbox-exec -f '/slots/.farmslot-blind-evals/s/run-1/",
       );
-      assert.ok(reload.indexOf("export GH_TOKEN='pool-token'") < reload.indexOf('unset GH_TOKEN'));
-      assert.ok(reload.indexOf('unset GH_TOKEN') < sandbox, runner);
+      assert.ok(reload.indexOf("export GH_TOKEN='pool-token'") < reload.indexOf('/usr/bin/env -i'));
+      assert.ok(reload.indexOf('/usr/bin/env -i') < sandbox, runner);
       assert.ok(sandbox < reload.indexOf('sess-1'), runner);
     }
   });

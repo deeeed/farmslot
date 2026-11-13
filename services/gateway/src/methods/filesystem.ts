@@ -30,8 +30,10 @@ import {
   type Run,
   type RunArtifactBundleRef,
 } from '@farmslot/protocol';
+import { resolveRunBundleEntry } from '@farmslot/run-bundle';
 
 import { farmslotRoot } from '../core/index.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { type ConnectedNode, getNode } from '../fleet/machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from '../fleet/node-rpc.js';
@@ -43,6 +45,14 @@ import {
   serveBufferWithRange,
   serveLocalFileWithRange,
 } from './filesystem/range-serving.js';
+
+// The run store imports this module, and test module mocks replace these modules with
+// partial exports, so they are not static imports.
+const loadRunStore = lazyImport(() => import('../runs/store.js'));
+const loadRetainedArtifacts = lazyImport(() => import('../run-completion/retained-artifacts.js'));
+const loadSlotState = lazyImport(() => import('../core/state.js'));
+const loadSlotIo = lazyImport(() => import('../core/slot-io.js'));
+const loadConfig = lazyImport(() => import('../core/config.js'));
 
 const EXT_LANGUAGE: Record<string, string> = {
   '.ts': 'typescript',
@@ -230,7 +240,7 @@ async function getCachedRecipeRunGroups(
   }
 
   const promise = (async () => {
-    const { retainedRecipeRunGroups } = await import('../run-completion/retained-artifacts.js');
+    const { retainedRecipeRunGroups } = await loadRetainedArtifacts();
     const groups = await retainedRecipeRunGroups(run, ref);
     const simplified = groups.map((group) => ({
       id: group.id,
@@ -337,7 +347,7 @@ function assertConditionalParams(
 /** The status row is the slot claim itself; read it fresh, not from the fleet snapshot. */
 async function assertSlotRun(slotId: string, runId: string | null | undefined): Promise<void> {
   if (runId === undefined) return;
-  const { readSlotRow } = await import('../core/state.js');
+  const { readSlotRow } = await loadSlotState();
   const claimed = (await readSlotRow(slotId))?.current_run_id;
   const currentRunId = typeof claimed === 'string' && claimed ? claimed : null;
   if (currentRunId !== runId) throw fsConflict('run', { runId: currentRunId });
@@ -794,8 +804,8 @@ export async function serveFile(req: IncomingMessage, res: ServerResponse): Prom
     } else {
       // Remote: progress-aware chunked read (small files still one-shot inside helper).
       // Preserve repo root confinement — never collapse node RPC root to `/`.
-      const { slotReadFileBuffer } = await import('../core/slot-io.js');
-      const vars = await (await import('../core/config.js')).loadSlotVars(slotId);
+      const { slotReadFileBuffer } = await loadSlotIo();
+      const vars = await (await loadConfig()).loadSlotVars(slotId);
       const remoteRoot = repoPath.replace(/\\/g, '/').replace(/\/+$/, '');
       const remoteRel = filePath.replace(/^\/+/, '');
       const remoteAbs = path.posix.join(remoteRoot, remoteRel);
@@ -870,7 +880,7 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
     ) {
       throw Object.assign(new Error('Path traversal not allowed'), { code: 'EACCES' });
     }
-    const { getRun } = await import('../runs/store.js');
+    const { getRun } = await loadRunStore();
     const run = getRun(runId);
     if (!run) throw new Error('Run not found.');
     const {
@@ -878,8 +888,7 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
       retainedRunTaskDirectory,
       runBundleStore,
       selectedRetainedRecipeGroup,
-    } = await import('../run-completion/retained-artifacts.js');
-    const { resolveRunBundleEntry } = await import('@farmslot/run-bundle');
+    } = await loadRetainedArtifacts();
     const recipeRunId = url.searchParams.get('recipeRunId');
     const decisionId =
       url.searchParams.get('decisionId') ??

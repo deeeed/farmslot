@@ -200,7 +200,7 @@ export class PRMonitorStore {
   }
 
   get(id: string, ownerId: string): PRMonitor {
-    return structuredClone(this.find(this.data, id, ownerId));
+    return this.find(this.data, id, ownerId);
   }
 
   async subscribe(

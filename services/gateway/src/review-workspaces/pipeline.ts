@@ -15,6 +15,7 @@ import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { upsertAgentContext } from '../agents/contexts.js';
 import { loadProjectVars } from '../core/config.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { fetchGitHubPR } from '../external/github.js';
 import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
@@ -93,6 +94,9 @@ import {
   cancelReviewWorkspaceAllocation,
   cleanupReviewWorkspace,
 } from './workspace.js';
+
+// The retention module reaches this one through the orchestrator (a cycle).
+const loadRetention = lazyImport(() => import('./retention.js'));
 
 interface ReviewOutputRepair {
   requestedAt: string;
@@ -676,7 +680,7 @@ export function reconcileReviewWorkspaceCleanup(
         }
       }
     }
-    const { cleanupExpiredReviewWorkspaces } = await import('./retention.js');
+    const { cleanupExpiredReviewWorkspaces } = await loadRetention();
     await cleanupExpiredReviewWorkspaces();
   })().finally(() => {
     cleanupInProgress = undefined;

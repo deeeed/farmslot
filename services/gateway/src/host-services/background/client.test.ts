@@ -27,6 +27,7 @@ process.on('message', (message) => {
     if (mode === 'ignore-shutdown') return;
     process.exit(0);
   }
+  if (message.type === 'cancel') return;
   const base = { type: 'result', id: message.id, operation: message.operation, rssBytes: 1_048_576 };
   if (mode === 'hang') return;
   if (mode === 'crash') process.exit(3);

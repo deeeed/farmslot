@@ -400,7 +400,7 @@ test('successful feedback handling stays unresolved on GitHub and does not clear
     current.incidents.find((incident) => incident.signal.kind === 'check')?.handledAt,
     undefined,
   );
-  const next = planMonitorRepair(current, undefined, Date.now() + 60_001);
+  const next = planMonitorRepair(structuredClone(current), undefined, Date.now() + 60_001);
   assert.equal(next?.incidentIds.length, 1);
   assert.equal(
     current.incidents.find((incident) => incident.id === next?.incidentIds[0])?.signal.kind,

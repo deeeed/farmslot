@@ -53,6 +53,7 @@ import {
 } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
 import { watchedEventPath } from '../core/file-observation.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { committedStatusText, onStatusCommit, statusFileStamp } from '../core/state.js';
 import {
   gatewayStorageRoots,
@@ -77,6 +78,11 @@ import { publishWorkerResources } from '../resources/worker-changes.js';
 import { rememberPoolFile, resolveMachinePoolConfig } from './machine-pool.js';
 import { enrichSlotHostLoad, getAllMachineHealth } from './node-health.js';
 import { getActiveResources, getCachedSlotResources } from './resource-manager.js';
+
+// These modules import this one (a cycle).
+const loadPRRules = lazyImport(() => import('../methods/pr-rules.js'));
+const loadDeviceInventory = lazyImport(() => import('./device-inventory.js'));
+const loadFleetMethods = lazyImport(() => import('../methods/fleet.js'));
 
 const VALID_SAFETY_TIERS: SafetyTier[] = ['sandboxed', 'full-auto', 'dangerous'];
 export function isValidSafetyTier(value: unknown): value is SafetyTier {
@@ -837,7 +843,7 @@ export function startFileWatcher() {
   const prRulesFile = path.resolve(farmslotRoot(), '.pr-rules.json');
   const reloadPRRules = async () => {
     try {
-      const { reloadPRRulesFromFile } = await import('../methods/pr-rules.js');
+      const { reloadPRRulesFromFile } = await loadPRRules();
       await reloadPRRulesFromFile();
     } catch (error) {
       // The owning store latches this failure and refuses reads/actions until a valid reload.
@@ -893,9 +899,9 @@ export function startFileWatcher() {
         // whole TTL, on the one surface whose job is telling them which slot
         // owns a device. Imported lazily to keep the fleet module out of the
         // inventory's import graph.
-        const { clearDeviceInventoryCache } = await import('./device-inventory.js');
+        const { clearDeviceInventoryCache } = await loadDeviceInventory();
         clearDeviceInventoryCache();
-        const { fleetHealthRefresh } = await import('../methods/fleet.js');
+        const { fleetHealthRefresh } = await loadFleetMethods();
         await fleetHealthRefresh();
       } catch (err) {
         console.error('[state] pool refresh failed:', (err as Error).message);

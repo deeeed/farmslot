@@ -12,12 +12,19 @@
         "intent": "Create an isolated review request through the actual CLI and gateway, keep fresh selection on disk, reject standing-policy defaults and inherited lineage, and keep previous runs unchanged.",
         "next": "task-inputs"
       },
+      "comparison-policy": {
+        "action": "command",
+        "cmd": "node --input-type=module -e 'import fs from \"node:fs\"; import assert from \"node:assert/strict\"; const r=JSON.parse(fs.readFileSync(\"temp/fresh-review-chain/rpc.json\",\"utf8\")); const m=JSON.parse(fs.readFileSync(\"temp/fresh-review-chain/materialization.json\",\"utf8\")); assert(m.comparisonInputsOmitted); assert(r.comparisonDefaultFresh && r.comparisonModeOverridesWarmDefault && r.explicitComparisonLineagePreserved); console.log(\"Authenticated comparison default and explicit-lineage exception verified\");'",
+        "timeout_ms": 10000,
+        "intent": "Verify the actual gateway selects a fresh comparison chain before a WARM farm default and preserves explicitly requested primary lineage.",
+        "next": "done"
+      },
       "task-inputs": {
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json FARMSLOT_FRESH_CHAIN_MATERIALIZATION_OUT=temp/fresh-review-chain/materialization.json node --import tsx --test services/gateway/src/review-workspaces/fresh-chain.live.ts",
         "timeout_ms": 180000,
         "intent": "Materialize the existing static review task without a previous-review file or instruction.",
-        "next": "done"
+        "next": "comparison-policy"
       },
       "done": {
         "action": "end",

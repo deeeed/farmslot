@@ -233,3 +233,186 @@ test('native Pi accounting uses supplied worker prices rather than the node proc
   assert.ok('output' in row && typeof row.output === 'string');
   assert.match(row.output, /cost_usd=0\.0076870000/);
 });
+
+test('native resumed receipts count only first-seen messages in each run window', async (t) => {
+  const f = await fixture(t);
+  const request = f.request('claude');
+  const transcript = path.join(f.root, 'resumed.jsonl');
+  const assistant = (id: string, timestamp: string, input: number, output: number) => ({
+    type: 'assistant',
+    sessionId: request.runnerSessionId,
+    timestamp,
+    message: {
+      id,
+      model: 'claude-opus-5-5',
+      usage: {
+        input_tokens: input,
+        output_tokens: output,
+        cache_creation_input_tokens: input * 2,
+        cache_read_input_tokens: input * 10,
+      },
+    },
+  });
+  const cold = assistant('cold', '2026-01-01T00:01:00Z', 100, 200);
+  const warm = assistant('warm', '2026-01-02T00:01:00Z', 20, 30);
+  const retry = assistant('retry', '2026-01-02T00:02:00Z', 5, 7);
+  const next = assistant('next', '2026-01-03T00:01:00Z', 3, 4);
+  await writeFile(
+    transcript,
+    [
+      cold,
+      cold,
+      { ...cold, timestamp: warm.timestamp },
+      { ...warm, message: { ...warm.message, usage: {} } },
+      warm,
+      warm,
+      { type: 'system', subtype: 'compact_boundary', timestamp: retry.timestamp },
+      retry,
+      retry,
+      next,
+    ]
+      .map((row) => JSON.stringify(row))
+      .join('\n') + '\n',
+  );
+  request.sessionPath = transcript;
+  const rows = await f.run([
+    { ...request, key: 'cold' },
+    Object.assign(
+      { ...request, key: 'warm' },
+      {
+        usageWindow: {
+          startedAt: '2026-01-02T00:00:00Z',
+          completedAt: '2026-01-02T01:00:00Z',
+        },
+      },
+    ),
+    Object.assign(
+      { ...request, key: 'next' },
+      { usageWindow: { startedAt: '2026-01-03T00:00:00Z' } },
+    ),
+  ]);
+  assert('output' in rows[0] && typeof rows[0].output === 'string');
+  assert.match(rows[0].output, /input_tokens=128\n/);
+  assert('output' in rows[1] && typeof rows[1].output === 'string');
+  assert.match(rows[1].output, /turns=2\n/);
+  assert.match(
+    rows[1].output,
+    /input_tokens=25\noutput_tokens=37\ncache_creation=50\ncache_read=250\n/,
+  );
+  assert.match(rows[1].output, /cost_usd=0.0011900000/);
+  assert('output' in rows[2] && typeof rows[2].output === 'string');
+  assert.match(rows[2].output, /input_tokens=3\noutput_tokens=4\n/);
+});
+
+test('native accounting refuses an older installed module that ignores run windows', async (t) => {
+  const f = await fixture(t);
+  const transcript = path.join(f.root, 'session.jsonl');
+  const legacyModule = path.join(f.root, 'legacy.mjs');
+  const request = f.request('claude');
+  request.sessionPath = transcript;
+  request.usageWindow = { startedAt: '2026-01-02T00:00:00Z' };
+  await writeFile(transcript, JSON.stringify({ sessionId: request.runnerSessionId }) + '\n');
+  await writeFile(
+    legacyModule,
+    'export async function runSessionUsage() { return "total_tokens=999\\n"; }',
+  );
+  const argv = nativeSessionUsageArgv([request], legacyModule);
+  const result = await execute(process.execPath, argv.slice(1));
+  assert.match(result.stdout, /did not apply the requested run usage window/);
+  assert(!result.stdout.includes('total_tokens=999'));
+});
+
+for (const runner of ['claude', 'codex', 'pi'])
+  for (const skew of [-30_000, 30_000]) {
+    test(`native ${runner} accounting uses node journal boundaries with clock skew ${skew}ms`, async (t) => {
+      const f = await fixture(t);
+      await f.journal(runner);
+      const request = f.request(runner);
+      const journal = path.join(f.root, 'native/sessions/host-session.journal');
+      const nodeStart = Date.parse('2026-01-02T00:00:00Z') + skew;
+      const at = (offset: number) => new Date(nodeStart + offset).toISOString();
+      await writeFile(
+        journal,
+        (await readFile(journal, 'utf8')) +
+          [
+            {
+              commands: [{ commandId: 'warm-command', leaseId: 'warm' }],
+              event: { type: 'command.submitted', commandId: 'warm-command', at: at(0) },
+            },
+            {
+              commands: [{ commandId: 'next-command', leaseId: 'next' }],
+              event: { type: 'command.submitted', commandId: 'next-command', at: at(10_000) },
+            },
+          ]
+            .map((row) => JSON.stringify(row))
+            .join('\n') +
+          '\n',
+      );
+      const message = (id: string, offset: number, input: number) =>
+        runner === 'codex'
+          ? {
+              type: 'event_msg',
+              timestamp: at(offset),
+              payload: {
+                type: 'token_count',
+                info: {
+                  total_token_usage: {
+                    input_tokens: input,
+                    output_tokens: input === 100 ? 1 : input === 120 ? 2 : 3,
+                    total_tokens: input + (input === 100 ? 1 : input === 120 ? 2 : 3),
+                  },
+                },
+              },
+            }
+          : runner === 'pi'
+            ? {
+                type: 'message',
+                id,
+                timestamp: at(offset),
+                message: {
+                  role: 'assistant',
+                  model: 'fixture',
+                  usage: { input, output: 1, cost: { total: 0.1 } },
+                },
+              }
+            : {
+                type: 'assistant',
+                sessionId: request.runnerSessionId,
+                timestamp: at(offset),
+                message: {
+                  id,
+                  model: 'claude-opus-5-5',
+                  usage: { input_tokens: input, output_tokens: 1 },
+                },
+              };
+      request.sessionPath = path.join(f.root, 'skew.jsonl');
+      await writeFile(
+        request.sessionPath,
+        [
+          ...(runner === 'codex'
+            ? [{ type: 'session_meta', payload: { id: request.runnerSessionId } }]
+            : runner === 'pi'
+              ? [{ type: 'session', id: request.runnerSessionId }]
+              : []),
+          message('prior', -1, 100),
+          message('warm', 1, runner === 'codex' ? 120 : 20),
+          message('final', 9999, runner === 'codex' ? 125 : 5),
+          message('next', 10000, 300),
+        ]
+          .map((row) => JSON.stringify(row))
+          .join('\n') + '\n',
+      );
+      request.usageWindow = {
+        startedAt: '2026-01-02T00:00:00Z',
+        completedAt: '2026-01-02T00:00:10Z',
+        nativeLeaseIds: ['warm'],
+      };
+      const [row] = await f.run([request]);
+      assert.ok('output' in row && typeof row.output === 'string', JSON.stringify(row));
+      assert.match(row.output, /input_tokens=25\noutput_tokens=2\n/);
+      request.usageWindow.nativeLeaseIds = ['unknown-lease'];
+      const [missing] = await f.run([request]);
+      assert.ok('error' in missing);
+      assert.match(String(missing.error), /no submitted command/);
+    });
+  }

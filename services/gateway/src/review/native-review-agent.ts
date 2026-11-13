@@ -47,6 +47,7 @@ import {
   persistRunNow,
   updateRun,
 } from '../runs/store.js';
+import { nativeRunUsageWindow } from '../runtime/native-session-usage.js';
 import { preferSessionUsage } from '../runtime/reviewer-usage.js';
 import { extractNativeAgentSessionUsage } from '../runtime/session-usage.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
@@ -1019,6 +1020,11 @@ async function runNativeReviewAttempt(
             ? retained?.runnerSessionPath
             : null),
         nativeSession: context.nativeSession,
+        usageWindow: nativeRunUsageWindow(admit(), {
+          runner,
+          runnerSessionId: context.runnerSessionId,
+          startedAt: context.nativeSession?.launchRequestedAt ?? context.startedAt ?? startedAt,
+        }),
       }),
     );
     measuredUsage = usage;
@@ -1249,6 +1255,12 @@ async function runNativeReviewAttempt(
             runnerSessionId: captured.runnerSessionId ?? null,
             runnerSessionPath: captured.runnerSessionPath,
             nativeSession: captured.nativeSession,
+            usageWindow: nativeRunUsageWindow(admit(), {
+              runner,
+              runnerSessionId: captured.runnerSessionId,
+              startedAt:
+                captured.nativeSession?.launchRequestedAt ?? captured.startedAt ?? startedAt,
+            }),
           }));
         await withNativeReviewMutation(() =>
           upsertAgentContext(

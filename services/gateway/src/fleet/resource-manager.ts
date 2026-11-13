@@ -29,6 +29,7 @@ import { withSourceEnvironment } from '@farmslot/slot-config';
 import { loadProjectVars, loadSlotVars, type RawProjectJson, resolveSlot } from '../core/config.js';
 import { execLocal } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { withProjectMachineEnv } from '../core/project-env.js';
 import { runtimeBootTimeoutMs } from '../core/project-timeouts.js';
 import { reportSlotResourceLifecycle } from '../core/resource-lifecycle-log.js';
@@ -75,6 +76,10 @@ const RESOURCE_POLL_CONCURRENCY = 4;
 let pollAllInFlight = false;
 const warnedUnconfiguredResources = new Map<string, string>();
 const loggedLegacySharedProviderInferences = new Set<string>();
+
+// Both modules import this one (a cycle).
+const loadSourcesRuntime = lazyImport(() => import('../sources/runtime.js'));
+const loadIdleDevServer = lazyImport(() => import('../run-lifecycle/idle-devserver-service.js'));
 
 function publishSlotResourceObservation(slotId: string): void {
   // Fleet coherence depends on resource status and run ownership, not PID or stream frames.
@@ -474,7 +479,7 @@ export async function executeResourceHealth(
   /** See `executeResourceControl`: the leased device identity wins over slot resources. */
   extraVars?: Record<string, string>,
 ): Promise<{ ok: boolean; detail?: string }> {
-  const { withSlotSources } = await import('../sources/runtime.js');
+  const { withSlotSources } = await loadSourcesRuntime();
   return withSlotSources(slotId, () =>
     executeResourceHealthWithSources(slotId, resourceId, extraVars),
   );
@@ -827,7 +832,7 @@ async function pollAllResources(): Promise<void> {
     await mapWithConcurrency(slotIds, RESOURCE_POLL_CONCURRENCY, async (id) => {
       try {
         await pollSlotResources(id);
-        const { reapIdleDevServers } = await import('../run-lifecycle/idle-devserver-service.js');
+        const { reapIdleDevServers } = await loadIdleDevServer();
         await reapIdleDevServers(id);
       } catch (err) {
         failures.push(`${id}: ${(err as Error).message}`);
@@ -1039,7 +1044,7 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
     let totalWatches = 0;
     for (const slot of machineSlots) {
       try {
-        const { withSlotSources } = await import('../sources/runtime.js');
+        const { withSlotSources } = await loadSourcesRuntime();
         await withSlotSources(slot.slot, async () => {
           const { pool, slot: slotCfg } = await resolveSlot(slot.slot);
           const projectName = slotCfg.project ?? pool.project;
@@ -1383,7 +1388,7 @@ export async function executeResourceControl(
   ownerRunId?: string,
   options?: ResourceControlOptions,
 ): Promise<ResourceControlResult> {
-  const { withSlotSources } = await import('../sources/runtime.js');
+  const { withSlotSources } = await loadSourcesRuntime();
   return withSlotSources(slotId, () =>
     executeResourceControlWithSources(slotId, resourceId, action, extraVars, ownerRunId, options),
   );

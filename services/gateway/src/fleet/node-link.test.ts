@@ -720,7 +720,14 @@ test('a process timeout returns its confirmed result after teardown rather than 
   const previousHome = process.env.FARMSLOT_HOME;
   process.env.FARMSLOT_HOME = root;
   const machine = 'node-link-deadline';
-  const { principal } = await linkedNode(t, root, machine);
+  const { principal, agent } = await linkedNode(t, root, machine);
+  const handle = agent.handle.bind(agent);
+  t.mock.method(agent, 'handle', async (method: string, value: unknown) => {
+    // Admission can take longer than the process's own execution budget.
+    if (method === 'node.link.command')
+      await new Promise<void>((resolve) => setTimeout(resolve, 150));
+    return handle(method, value);
+  });
   t.after(async () => {
     if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
     else process.env.FARMSLOT_HOME = previousHome;
@@ -747,10 +754,12 @@ test('a process timeout returns its confirmed result after teardown rather than 
         approval: 'framework',
       },
       assertCurrent: () => undefined,
-      timeoutMs: 100,
+      // Keep admission separate from the 100 ms process timeout above.
+      timeoutMs: 5000,
     },
   );
   assert.equal(receipt.closeoutConfirmed, true);
+  assert.equal(receipt.error, undefined);
   assert(receipt.result && typeof receipt.result === 'object' && 'exitCode' in receipt.result);
   assert.equal(receipt.result.exitCode, 124);
 });

@@ -1,4 +1,9 @@
-import { primaryRoleForFlow, type Run, type RunnerSessionUsage } from '@farmslot/protocol';
+import {
+  type GateCostSummary,
+  primaryRoleForFlow,
+  type Run,
+  type RunnerSessionUsage,
+} from '@farmslot/protocol';
 
 import {
   registerContextSessionUsage,
@@ -136,6 +141,20 @@ export function sessionUsageContributions(runs: readonly Run[]): Map<string, Run
   )) {
     const contributions: RunnerSessionUsage[] = [];
     for (const row of runSessionUsageReceipts(run)) {
+      if (row.scope === 'run-delta') {
+        const key = sessionUsageKey(row);
+        if (key) {
+          const baseline = { ...seen.get(key) };
+          for (const field of counters) {
+            const value = row[field];
+            if (typeof value === 'number' && Number.isFinite(value))
+              baseline[field] = (baseline[field] ?? 0) + value;
+          }
+          seen.set(key, baseline);
+        }
+        contributions.push(row);
+        continue;
+      }
       const key = sessionUsageKey(row);
       const previous = key ? seen.get(key) : undefined;
       const highWater = { ...previous };
@@ -157,4 +176,28 @@ export function sessionUsageContributions(runs: readonly Run[]): Map<string, Run
     result.set(run.id, contributions);
   }
   return result;
+}
+
+export function sessionUsageNumber(value: number | null | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+export function sessionCosts(
+  rows: readonly GateCostSummary[],
+  inventory: readonly GateCostSummary[] = rows,
+): GateCostSummary {
+  const complete =
+    inventory.length > 0 &&
+    inventory.every(
+      (row) => typeof row.costUsd === 'number' && Number.isFinite(row.costUsd) && row.costUsd >= 0,
+    );
+  return complete
+    ? { costUsd: rows.reduce((sum, row) => sum + sessionUsageNumber(row.costUsd), 0) }
+    : {
+        costUsd: null,
+        costReason:
+          inventory.length && inventory.every((row) => row.costReason === 'local, unpriced')
+            ? 'local, unpriced'
+            : 'Includes unpriced or uncaptured sessions',
+      };
 }

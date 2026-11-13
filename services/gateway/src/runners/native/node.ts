@@ -26,6 +26,7 @@ import {
   type NativeSessionRequester,
 } from '@farmslot/protocol';
 
+import { lazyImport } from '../../core/lazy-import.js';
 import { GatewayMethodError } from '../../core/method-error.js';
 import { type ConnectedNode, getAllNodes, getNode } from '../../fleet/machine-registry.js';
 import {
@@ -45,6 +46,10 @@ import { ownsLocalNativeProfile } from '../../security/native-owner.js';
 
 import { knownNativeExecutionNodes } from './execution-nodes.js';
 import { nativeSessionManager, validateNativeRunner } from './manager.js';
+
+// Both modules route through this one (a cycle).
+const loadNativeObservations = lazyImport(() => import('../../resources/native-observations.js'));
+const loadNativeWorkspace = lazyImport(() => import('../../methods/native-workspace.js'));
 
 type AuthorizedNativeNode = ConnectedNode & {
   nativeSessions: NonNullable<ConnectedNode['nativeSessions']>;
@@ -199,7 +204,7 @@ export async function routeNativeExecution(
   // Resolve the observation owner after the native route module initializes.
   // Its authorization helper also uses this route; eager imports form a cycle.
   const { admitNativeCollectionNode, isNativeObservedRead, nativeObservations } =
-    await import('../../resources/native-observations.js');
+    await loadNativeObservations();
   const executionNodeId = params.executionNodeId ?? 'local';
   if (typeof executionNodeId !== 'string' || !executionNodeId.trim())
     throw new GatewayMethodError('INVALID_PARAMS', 'executionNodeId must be a nonempty string');
@@ -219,7 +224,7 @@ export async function routeNativeExecution(
     )
       throw new GatewayMethodError('INVALID_PARAMS', 'Expected native runner and model strings');
     validateNativeRunner(params.runner, params.model, params.effort);
-    const { nativeModelNodeBlocker } = await import('../../methods/native-workspace.js');
+    const { nativeModelNodeBlocker } = await loadNativeWorkspace();
     const blocker = await nativeModelNodeBlocker(params.runner, params.model, executionNodeId);
     if (blocker) throw new GatewayMethodError('INVALID_PARAMS', blocker);
   }

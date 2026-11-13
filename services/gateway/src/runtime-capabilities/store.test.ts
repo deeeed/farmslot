@@ -235,3 +235,26 @@ test('a store written before fence entries existed keeps its fence', () => {
   assert.equal(compacted.terminalOwnerEntries?.[0]?.id, 'run-legacy');
   assert.equal(compacted.terminalFamilyEntries?.[0]?.id, 'fam-legacy');
 });
+
+test('readers share a frozen capability snapshot until a new state commits', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'runtime-capability-shared-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = path.join(directory, 'leases.json');
+  const store = new RuntimeCapabilityStore(file);
+  await store.replace({ version: 1, leases: [lease(0, 'acquired')], proofPlans: {}, events: [] });
+  const first = store.snapshot();
+  assert.equal(store.snapshot(), first, 'unchanged reads must not clone the entire store');
+  assert.equal(await store.load(), first);
+  assert.throws(() => {
+    first.leases[0].owner.runId = 'outside';
+  }, TypeError);
+  const next = structuredClone(first);
+  next.leases[0].state = 'released';
+  await store.replace(next);
+  next.leases[0].owner.runId = 'caller-mutation';
+  assert.notEqual(store.snapshot(), first);
+  assert.equal(first.leases[0].state, 'acquired');
+  assert.equal(store.snapshot().leases[0].state, 'released');
+  assert.equal(store.snapshot().leases[0].owner.runId, 'run-0');
+  assert.deepEqual(await new RuntimeCapabilityStore(file).load(), store.snapshot());
+});
