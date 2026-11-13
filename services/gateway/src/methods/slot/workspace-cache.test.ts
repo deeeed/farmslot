@@ -4,12 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
 
-import { slotRecoveryEligibility } from '@farmslot/protocol';
 import { WebSocket } from 'ws';
 
-import type { ConnectedNode } from '../../fleet/machine-registry.js';
+import { slotRecoveryEligibility } from '@farmslot/protocol';
 
 import type { SlotVars } from '../../core/index.js';
+import type { ConnectedNode } from '../../fleet/machine-registry.js';
 
 import type { WorkspaceProbe } from './workspace-probe.js';
 
