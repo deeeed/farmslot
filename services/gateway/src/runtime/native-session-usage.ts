@@ -34,10 +34,13 @@ import { parseSessionUsageOutput, unavailableRunnerSessionUsage } from './sessio
 
 const execute = promisify(execFile);
 
-/** Retain this run's earliest launch when retries or contexts reuse one conversation. */
+/** Retain this run's task leases; the node journal supplies accounting timestamps. */
 export function nativeRunUsageWindow(
   run: Run,
-  session: Pick<RunnerSessionUsage, 'runner' | 'runnerSessionId' | 'startedAt' | 'completedAt'>,
+  session: Pick<
+    RunnerSessionUsage,
+    'runner' | 'runnerSessionId' | 'startedAt' | 'completedAt' | 'usageLeaseIds'
+  >,
 ): SessionUsageWindow {
   const starts = [
     session.startedAt,
@@ -49,8 +52,30 @@ export function nativeRunUsageWindow(
   ]
     .filter((value): value is string => !!value && Number.isFinite(Date.parse(value)))
     .sort((a, b) => Date.parse(a) - Date.parse(b));
-  if (!starts[0]) throw new Error('Native run usage has no recorded launch boundary');
-  return { startedAt: starts[0], completedAt: session.completedAt ?? undefined };
+  const nativeLeaseIds = [
+    ...new Set([
+      ...(session.usageLeaseIds ?? []),
+      ...(run.sessionUsage ?? [])
+        .filter(
+          (row) => row.runner === session.runner && row.runnerSessionId === session.runnerSessionId,
+        )
+        .flatMap((row) => row.usageLeaseIds ?? []),
+      ...(run.agentContexts ?? [])
+        .filter(
+          (row) => row.runner === session.runner && row.runnerSessionId === session.runnerSessionId,
+        )
+        .flatMap((row) => [row.nativeSession, ...(row.nativeSessionHistory ?? [])])
+        .flatMap((binding) => (binding ? [binding.leaseId] : [])),
+    ]),
+  ];
+  if (!nativeLeaseIds.length)
+    throw new Error('Native run usage has no recorded task lease boundary');
+  // Lifecycle timestamps remain metadata. The node replaces them with journal boundaries.
+  return {
+    startedAt: starts[0] ?? run.createdAt,
+    completedAt: session.completedAt ?? undefined,
+    nativeLeaseIds,
+  };
 }
 type NativeSessionUsageVars =
   | SlotVars

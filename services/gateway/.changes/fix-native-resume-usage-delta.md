@@ -1,1 +1,1 @@
-- Attribute native session tokens and cost to the owning run's launch window when a conversation resumes, and preserve those deltas in family totals.
+- Attribute resumed native session tokens and cost using node journal task boundaries, preserve deltas through family and gate totals and eval receipt replay, and reconcile later whole-session readings.

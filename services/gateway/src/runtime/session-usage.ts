@@ -125,40 +125,51 @@ export async function extractRunWorkerSessionUsage(
   const slotVars = vars ?? (await loadSlotVars(slotId));
   const usages = await Promise.all(
     unique.map(async (session) => {
-      const context = run.agentContexts?.find((row) => row.id === session.contextId);
-      const receipt = run.sessionUsage?.find(
-        (row) =>
-          row.runner === run.metrics.runner && row.runnerSessionId === session.runnerSessionId,
-      );
-      const nativeSession = receipt?.nativeSession ?? context?.nativeSession;
-      const usageWindow = nativeSession
-        ? nativeRunUsageWindow(run, {
-            runner: run.metrics.runner,
-            runnerSessionId: session.runnerSessionId,
-            startedAt:
-              receipt?.startedAt ?? context?.nativeSession?.launchRequestedAt ?? context?.startedAt,
-            completedAt: run.completedAt,
-          })
-        : undefined;
-      const input = {
-        slotId,
-        vars: slotVars,
-        runner: run.metrics.runner,
-        ...session,
-      };
-      const usage = nativeSession
-        ? await extractNativeAgentSessionUsage({
-            ...input,
-            runner: run.metrics.runner ?? '',
-            nativeSession,
-            usageWindow,
-          })
-        : await extractRunnerSessionUsage(input);
-      if (!usage.error) return usage;
-      const archived = await provider?.recoverArchive?.(run, session);
-      if (!archived) return usage;
-      const recovered = await archivedSessionUsage(run, archived, session, slotVars, usageWindow);
-      return { ...recovered, scope: usageWindow ? 'run-delta' : recovered.scope };
+      try {
+        const context = run.agentContexts?.find((row) => row.id === session.contextId);
+        const receipt = run.sessionUsage?.find(
+          (row) =>
+            row.runner === run.metrics.runner && row.runnerSessionId === session.runnerSessionId,
+        );
+        const nativeSession = receipt?.nativeSession ?? context?.nativeSession;
+        const usageWindow = nativeSession
+          ? nativeRunUsageWindow(run, {
+              runner: run.metrics.runner,
+              runnerSessionId: session.runnerSessionId,
+              startedAt:
+                receipt?.startedAt ??
+                context?.nativeSession?.launchRequestedAt ??
+                context?.startedAt,
+              completedAt: run.completedAt,
+            })
+          : undefined;
+        const input = {
+          slotId,
+          vars: slotVars,
+          runner: run.metrics.runner,
+          ...session,
+        };
+        const usage = nativeSession
+          ? await extractNativeAgentSessionUsage({
+              ...input,
+              runner: run.metrics.runner ?? '',
+              nativeSession,
+              usageWindow,
+            })
+          : await extractRunnerSessionUsage(input);
+        if (!usage.error) return usage;
+        const archived = await provider?.recoverArchive?.(run, session);
+        if (!archived) return usage;
+        const recovered = await archivedSessionUsage(run, archived, session, slotVars, usageWindow);
+        return { ...recovered, scope: usageWindow ? 'run-delta' : recovered.scope };
+      } catch (error) {
+        // A missing source/boundary is local to this conversation. Retain sibling receipts.
+        return unavailableRunnerSessionUsage({
+          runner: run.metrics.runner,
+          ...session,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }),
   );
   usages.forEach((usage, index) => record?.(unique[index], usage));

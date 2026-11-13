@@ -66,6 +66,7 @@ test('native run accounting keeps the earliest conversation launch through retri
       runner: 'claude',
       runnerSessionId: 'conversation',
       startedAt: '2026-01-02T00:00:00Z',
+      usageLeaseIds: ['first-lease'],
       measuredAt: '2026-01-02T00:01:00Z',
       source: 'runner-transcript',
     },
@@ -75,12 +76,17 @@ test('native run accounting keeps the earliest conversation launch through retri
       runner: 'claude',
       runnerSessionId: 'conversation',
       startedAt: '2026-01-02T00:02:00Z',
+      usageLeaseIds: ['retry-lease'],
     }),
-    { startedAt: '2026-01-02T00:00:00Z', completedAt: undefined },
+    {
+      startedAt: '2026-01-02T00:00:00Z',
+      completedAt: undefined,
+      nativeLeaseIds: ['retry-lease', 'first-lease'],
+    },
   );
   assert.throws(
     () => nativeRunUsageWindow(run, { runner: 'claude', runnerSessionId: 'different' }),
-    /no recorded launch boundary/,
+    /no recorded task lease boundary/,
   );
 });
 

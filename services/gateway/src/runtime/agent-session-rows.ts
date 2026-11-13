@@ -72,6 +72,9 @@ export function upsertSessionUsage(
     roles,
     contextIds: [...new Set([...(previous.contextIds ?? []), ...(receipt.contextIds ?? [])])],
     nativeSession: receipt.nativeSession ?? previous.nativeSession,
+    usageLeaseIds: [
+      ...new Set([...(previous.usageLeaseIds ?? []), ...(receipt.usageLeaseIds ?? [])]),
+    ],
     runnerSessionPath:
       best.runnerSessionPath ?? receipt.runnerSessionPath ?? previous.runnerSessionPath,
     startedAt,
@@ -134,6 +137,9 @@ export function contextSessionReceipt(
     runner: context.runner,
     runnerSessionId,
     runnerSessionPath: captured?.runnerSessionPath ?? context.runnerSessionPath ?? null,
+    usageLeaseIds: context.nativeSession
+      ? [context.nativeSession.leaseId]
+      : captured?.usageLeaseIds,
     nativeSession: context.nativeSession
       ? {
           sessionId: context.nativeSession.sessionId,

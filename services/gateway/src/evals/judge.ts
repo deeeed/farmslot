@@ -89,7 +89,8 @@ function readUsage(value: unknown): RunnerSessionUsage | undefined {
     if (text !== undefined) usage[key] = text;
   }
   if (value.scope !== undefined) {
-    if (value.scope !== 'session-total') throw new Error('Eval judge usage scope is invalid');
+    if (value.scope !== 'session-total' && value.scope !== 'run-delta')
+      throw new Error('Eval judge usage scope is invalid');
     usage.scope = value.scope;
   }
   if (value.error !== undefined) {

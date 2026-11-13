@@ -688,6 +688,8 @@ export interface RunnerSessionUsage {
     import('./agents.js').NativeWorkerSessionBinding,
     'sessionId' | 'ownerPrincipalId' | 'executionNodeId' | 'stateDirectory'
   >;
+  /** All node-owned task leases contributing to this run's conversation receipt. */
+  usageLeaseIds?: string[];
   startedAt?: string | null;
   completedAt?: string | null;
   durationMs?: number | null;

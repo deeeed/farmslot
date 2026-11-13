@@ -30,9 +30,11 @@ export type { PiModelCostMetadata, PiModelCostRates } from './litellm-model-info
 export type SessionAction = 'snapshot' | 'report' | 'total';
 
 export interface SessionUsageWindow {
-  /** Earliest persisted launch boundary for this conversation in the owning run. */
+  /** Inclusive boundary in the transcript clock, or lifecycle metadata until native resolution. */
   startedAt: string;
   completedAt?: string;
+  /** Resolve these leases against the execution node journal before parsing transcripts. */
+  nativeLeaseIds?: string[];
 }
 
 function usageTimestamp(record: Record<string, unknown>): number {
@@ -42,10 +44,15 @@ function usageTimestamp(record: Record<string, unknown>): number {
   return timestamp;
 }
 
-function inUsageWindow(timestamp: number, window: SessionUsageWindow): boolean {
+interface ParsedSessionUsageWindow {
+  startedAt: number;
+  completedAt?: number;
+}
+
+function inUsageWindow(timestamp: number, window: ParsedSessionUsageWindow): boolean {
   return (
-    timestamp >= Date.parse(window.startedAt) &&
-    (!window.completedAt || timestamp <= Date.parse(window.completedAt))
+    timestamp >= window.startedAt &&
+    (window.completedAt === undefined || timestamp <= window.completedAt)
   );
 }
 
@@ -416,7 +423,7 @@ async function chooseSession(
 
 async function summarizeClaude(
   filePath: string,
-  window?: SessionUsageWindow,
+  window?: ParsedSessionUsageWindow,
 ): Promise<SessionTotals> {
   const totals = emptyTotals();
   let state = emptyIncrementalSessionUsageState();
@@ -481,7 +488,7 @@ function codexUsageTotal(usage: Record<string, unknown>): number {
 
 async function summarizeCodex(
   filePath: string,
-  window?: SessionUsageWindow,
+  window?: ParsedSessionUsageWindow,
 ): Promise<SessionTotals> {
   const totals = emptyTotals();
   let latestUsage: Record<string, unknown> | null = null;
@@ -493,10 +500,10 @@ async function summarizeCodex(
     const payload = (obj.payload as Record<string, unknown>) ?? {};
 
     if (
-      window?.completedAt &&
+      window?.completedAt !== undefined &&
       typ === 'turn_context' &&
       typeof obj.timestamp === 'string' &&
-      Date.parse(obj.timestamp) > Date.parse(window.completedAt)
+      Date.parse(obj.timestamp) > window.completedAt
     )
       continue;
 
@@ -507,10 +514,18 @@ async function summarizeCodex(
       const isTurn =
         typ === 'response_item' && payload.type === 'message' && payload.role === 'assistant';
       if (!isUsage && !isTurn) continue;
+      const info = object(payload.info) ? payload.info : {};
+      // Rate-limit/cancellation notifications can legitimately contain no usage.
+      if (
+        isUsage &&
+        typ === 'event_msg' &&
+        info.total_token_usage == null &&
+        info.last_token_usage == null
+      )
+        continue;
       const timestamp = usageTimestamp(obj);
-      if (window.completedAt && timestamp > Date.parse(window.completedAt)) continue;
+      if (window.completedAt !== undefined && timestamp > window.completedAt) continue;
       if (isUsage) {
-        const info = object(payload.info) ? payload.info : {};
         const usage = info.total_token_usage ?? obj.usage;
         if (!object(usage)) throw new Error('Codex run usage requires cumulative token totals');
         if (
@@ -526,7 +541,7 @@ async function summarizeCodex(
           throw new Error('Codex cumulative usage reset within the transcript');
         previousCumulative = usage;
       }
-      if (timestamp < Date.parse(window.startedAt)) {
+      if (timestamp < window.startedAt) {
         const info = object(payload.info) ? payload.info : {};
         const usage = info.total_token_usage ?? obj.usage;
         if (object(usage)) baseline = usage;
@@ -558,6 +573,8 @@ async function summarizeCodex(
       if (usage) latestUsage = usage;
     }
   }
+
+  if (window && !latestUsage) throw new Error('Codex run has no cumulative usage evidence');
 
   if (latestUsage) {
     totals.input_tokens = (latestUsage.input_tokens as number) ?? 0;
@@ -895,7 +912,7 @@ async function summarizePi(
   filePath: string,
   environment: NodeJS.ProcessEnv,
   liteLlmPrices?: Map<string, PiModelCostMetadata>,
-  window?: SessionUsageWindow,
+  window?: ParsedSessionUsageWindow,
 ): Promise<SessionTotals> {
   const totals = emptyTotals();
   let cost = 0;
@@ -1054,9 +1071,15 @@ async function summarize(
   liteLlmPrices?: Map<string, PiModelCostMetadata>,
   window?: SessionUsageWindow,
 ): Promise<SessionTotals> {
-  if (runner === 'claude') return summarizeClaude(sessionPath, window);
-  if (runner === 'codex') return summarizeCodex(sessionPath, window);
-  if (runner === 'pi') return summarizePi(sessionPath, environment, liteLlmPrices, window);
+  const parsed = window
+    ? {
+        startedAt: Date.parse(window.startedAt),
+        completedAt: window.completedAt === undefined ? undefined : Date.parse(window.completedAt),
+      }
+    : undefined;
+  if (runner === 'claude') return summarizeClaude(sessionPath, parsed);
+  if (runner === 'codex') return summarizeCodex(sessionPath, parsed);
+  if (runner === 'pi') return summarizePi(sessionPath, environment, liteLlmPrices, parsed);
   if (window) throw new Error('Runner has no run-window accounting provider');
   if (runner === 'grok') return summarizeGrok(sessionPath, home);
   if (runner === 'cursor') return summarizeCursor(sessionPath);
@@ -1633,6 +1656,8 @@ export async function runSessionUsage(params: {
 
   if (action === 'total') {
     const window = params.usageWindow;
+    if (window?.nativeLeaseIds)
+      throw new Error('Native usage window requires execution node journal resolution');
     if (
       window &&
       (!Number.isFinite(Date.parse(window.startedAt)) ||

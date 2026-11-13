@@ -129,3 +129,28 @@ test('Claude compaction records and replays preserve the run window without subt
   await f.write([{ ...warm, message: { ...warm.message, id: undefined } }]);
   await assert.rejects(f.measure, /requires assistant message ids/);
 });
+
+test('Codex usage-free cancellation notifications are skipped before and inside the run', async (t) => {
+  const notification = (timestamp: string) => ({
+    type: 'event_msg',
+    timestamp,
+    payload: { type: 'token_count', info: null },
+  });
+  const reading = (timestamp: string, total: number) => ({
+    type: 'event_msg',
+    timestamp,
+    payload: {
+      type: 'token_count',
+      info: { total_token_usage: { input_tokens: total, total_tokens: total } },
+    },
+  });
+  const f = await fixture(t, 'codex', [
+    notification('2026-01-01T00:00:00Z'),
+    reading('2026-01-01T00:01:00Z', 100),
+    notification('2026-01-02T00:00:01Z'),
+    reading('2026-01-02T00:00:02Z', 120),
+  ]);
+  assert.match(await f.measure(), /total_tokens=20\n/);
+  await f.write([notification('2026-01-02T00:00:01Z')]);
+  await assert.rejects(f.measure, /no cumulative usage evidence/);
+});

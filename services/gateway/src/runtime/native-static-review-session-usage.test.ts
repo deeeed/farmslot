@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -68,6 +68,30 @@ test('slotless native review persists cold and resumed run receipts through froz
     await deleteRun(run.id);
     await rm(root, { recursive: true, force: true });
   });
+  const stateDirectory = path.join(root, 'workers/owner/host');
+  await mkdir(stateDirectory, { recursive: true });
+  await mkdir(path.join(root, 'sessions'));
+  const journal = path.join(root, 'sessions/host.journal');
+  const submission = (leaseId: string, commandId: string, at: string) =>
+    JSON.stringify({
+      commands: [{ leaseId, commandId }],
+      event: { type: 'command.submitted', commandId, at },
+    }) + '\n';
+  await writeFile(
+    journal,
+    JSON.stringify({
+      info: {
+        id: 'host',
+        nativeSessionId: 'native-review',
+        ownerPrincipalId: 'owner',
+        executionNodeId: 'review-node',
+        runner: 'pi',
+        cwd: root,
+      },
+    }) +
+      '\n' +
+      submission('lease', 'command', '2026-11-10T14:00:00Z'),
+  );
   const transcript = path.join(root, 'pi-session.jsonl');
   await writeFile(
     transcript,
@@ -120,6 +144,7 @@ test('slotless native review persists cold and resumed run receipts through froz
     completedAt: '2026-11-10T14:10:00Z',
     nativeSession: {
       sessionId: 'host',
+      stateDirectory,
       ownerPrincipalId: 'owner',
       executionNodeId: 'review-node',
       leaseId: 'lease',
@@ -136,6 +161,7 @@ test('slotless native review persists cold and resumed run receipts through froz
   assert.deepEqual(requests[0].usageWindow, {
     startedAt: '2026-11-10T14:00:00Z',
     completedAt: '2026-11-10T14:10:00Z',
+    nativeLeaseIds: ['lease'],
   });
   assert.equal(result.sessionUsage![0].scope, 'run-delta');
   assert.equal(result.sessionUsage![0].totalTokens, 400);
@@ -162,6 +188,7 @@ test('slotless native review persists cold and resumed run receipts through froz
     metrics: result.metrics,
     reviewWorkspace: result.reviewWorkspace,
   });
+  await appendFile(journal, submission('warm-lease', 'warm-command', '2026-11-11T14:00:00Z'));
   const message = {
     type: 'message',
     id: 'warm-answer',
@@ -187,6 +214,7 @@ test('slotless native review persists cold and resumed run receipts through froz
     completedAt: '2026-11-11T14:10:00Z',
     nativeSession: {
       sessionId: 'host',
+      stateDirectory,
       ownerPrincipalId: 'owner',
       executionNodeId: 'review-node',
       leaseId: 'warm-lease',
