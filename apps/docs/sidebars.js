@@ -34,6 +34,7 @@ const sidebars = {
         'architecture/gateway-intelligence',
         'architecture/configurable-flows',
         'architecture/resource-management-and-streaming',
+        'architecture/run-data-flow',
         'architecture/multi-node-security',
         'architecture/gateway-api-protocol',
         'architecture/recipe-runner',
