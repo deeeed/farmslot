@@ -606,7 +606,12 @@ export class NativeSessionManager {
     // Ordinary native conversations never write trust into the operator's configuration.
     const sessionEnvironment = nativeEnvironment(resolved.executable, {
       ...environment,
-      ...(hostProtection ? { TMPDIR: hostProtection.temporaryDirectory } : {}),
+      ...(hostProtection
+        ? {
+            TMPDIR: hostProtection.temporaryDirectory,
+            ...transport.reviewTemporaryEnvironment?.(hostProtection.temporaryDirectory),
+          }
+        : {}),
     });
     // A worker resolves Node like its launch probe: project-pinned tools ahead of the runner's own
     // directory, which may hold the Node the runner was installed with (F318).

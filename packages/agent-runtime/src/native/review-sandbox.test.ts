@@ -159,7 +159,7 @@ test(
     try {
       for (const dir of [source, output, metadata, other]) await mkdir(dir);
       for (const dir of [source, metadata, other]) await writeFile(join(dir, 'file'), 'original');
-      const { sandbox } = await reviewProcessSandbox(
+      const { sandbox, temporaryDirectory } = await reviewProcessSandbox(
         { readOnlyRoots: [source, metadata], writableRoots: [output] },
         [],
       );
@@ -179,6 +179,26 @@ test(
       });
       assert.equal(await readFile(join(source, 'file'), 'utf8'), 'original');
       assert.equal(await readFile(join(output, 'file'), 'utf8'), 'changed');
+      // Claude's Bash wrapper ignores TMPDIR for its cwd state and defaults to /tmp.
+      // Override a stale profile value with the task-private directory in both transports.
+      const environment = {
+        ...process.env,
+        CLAUDE_CODE_TMPDIR: other,
+        TMPDIR: temporaryDirectory,
+        ...nativeRunnerDefinitions.claude.reviewTemporaryEnvironment?.(temporaryDirectory),
+      };
+      const cwdState = await exec(
+        sandbox.executable,
+        [
+          ...sandbox.args,
+          process.execPath,
+          '-e',
+          `const fs=require('node:fs'),path=require('node:path');const file=path.join(process.env.CLAUDE_CODE_TMPDIR||'/tmp','claude-fixture-cwd');fs.writeFileSync(file,process.cwd());console.log(fs.readFileSync(file,'utf8'));`,
+        ],
+        { cwd: source, env: environment },
+      );
+      assert.equal(cwdState.stdout.trim(), source);
+      assert.equal(await readFile(join(temporaryDirectory, 'claude-fixture-cwd'), 'utf8'), source);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

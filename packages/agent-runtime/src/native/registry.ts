@@ -50,6 +50,10 @@ const workspaceTrust = createRequire(import.meta.url)('../../scripts/workspace-t
   grokHome(environment: NodeJS.ProcessEnv): string;
   reviewConfigurationRootsByRunner: Record<string, (cwd: string) => string[]>;
   reviewRuntimeRootsByRunner: Record<string, (env: NodeJS.ProcessEnv) => string[]>;
+  reviewTemporaryEnvironmentByRunner: Record<
+    string,
+    (temporaryDirectory: string) => Record<string, string>
+  >;
   terminalReviewRefusalByRunner: Record<string, string>;
   grokReviewHomeAccess(environment: NodeJS.ProcessEnv): NativeReviewRuntimeAccess;
   codexWorkspaceTrustConfig(cwd: string, trust: 'trusted' | 'untrusted'): string;
@@ -87,6 +91,8 @@ export interface NativeRunnerDefinition {
   /** Exclude repository configuration before the sandbox can deny its startup read. */
   reviewStartupArgs?: readonly string[];
   reviewRuntimeRoots?: (environment: NodeJS.ProcessEnv) => string[];
+  /** Runner-private temporary state stays inside the review's writable task directory. */
+  reviewTemporaryEnvironment?: (temporaryDirectory: string) => Record<string, string>;
   /** Why this runner cannot take a terminal (tmux) review workspace, when it cannot. */
   terminalReviewRefusal?: string;
   /** When set, all a review may write inside its runtime roots. */
@@ -138,6 +144,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     trustWorkspace: workspaceTrustByRunner.claude,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
     reviewRuntimeRoots: workspaceTrust.reviewRuntimeRootsByRunner.claude,
+    reviewTemporaryEnvironment: workspaceTrust.reviewTemporaryEnvironmentByRunner.claude,
     adapter: claudeNativeAdapter,
     binary: 'claude',
     supportsWorkers: true,

@@ -202,6 +202,7 @@ async function main() {
     reviewConfigurationRootsByRunner,
     terminalReviewRefusalByRunner,
     reviewRuntimeRootsByRunner,
+    reviewTemporaryEnvironmentByRunner,
   } = require('./workspace-trust.cjs');
   if (terminalReviewRefusalByRunner[input.runner])
     throw new Error(terminalReviewRefusalByRunner[input.runner]);
@@ -214,6 +215,10 @@ async function main() {
     reviewConfigurationRootsByRunner[input.runner]?.(cwd) ?? [],
   );
   environment.TMPDIR = guard.temporaryDirectory;
+  Object.assign(
+    environment,
+    reviewTemporaryEnvironmentByRunner[input.runner]?.(guard.temporaryDirectory),
+  );
   environment.FARMSLOT_SIGNAL_ATTEMPT_ID =
     previousAttempt?.signalAttemptId ?? require('node:crypto').randomUUID();
   // This helper accepts only the gateway's farm review launch, after identity and source-policy checks.

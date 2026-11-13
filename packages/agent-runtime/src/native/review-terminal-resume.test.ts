@@ -101,6 +101,7 @@ async function fixture(
           reviewConfigurationRootsByRunner: {},
           terminalReviewRefusalByRunner: {},
           reviewRuntimeRootsByRunner: {},
+          reviewTemporaryEnvironmentByRunner: {},
         };
       if (name === './review-codex-folder-access.cjs')
         return {

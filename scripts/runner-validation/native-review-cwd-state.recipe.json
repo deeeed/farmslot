@@ -1,0 +1,17 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native reviewer private shell state",
+  "description": "Opt-in real reviewer call in a disposable read-only source workspace. Supply provider credentials and optionally FARMSLOT_REVIEW_PROOF_BINARY and FARMSLOT_REVIEW_PROOF_MODEL. Assert the native Bash result succeeds under the production sandbox and close the owned process.",
+  "workflow": {
+    "entry": "shell-state",
+    "nodes": {
+      "shell-state": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/native-review-cwd-state.mts",
+        "intent": "Source inspection completes when runner-private cwd state stays in the task directory.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
