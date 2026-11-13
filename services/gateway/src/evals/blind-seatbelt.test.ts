@@ -491,7 +491,8 @@ import json, os, pathlib, runpy, sys
 from unittest.mock import patch, Mock
 blind = runpy.run_path(sys.argv[1], run_name='fixture')
 root = pathlib.Path(sys.argv[2])
-spec = {'repo': str(root), 'slotResourcePorts': {'cdp_port': 19222}}
+spec = {'repo': str(root), 'slotResourcePorts': {'cdp_port': 19222},
+        'launchDirs': [str(root / '.farmslot-runtime/repo/.agent/.launch')]}
 temporary = root / 'temporary'
 temporary.mkdir()
 globals = blind['prepare_boundary'].__globals__
