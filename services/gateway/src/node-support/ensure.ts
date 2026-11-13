@@ -151,6 +151,21 @@ export function nodeSupportBundlePaths(projectName: string, projectJson: RawProj
   return supportPaths.sort();
 }
 
+/** What a bundle collection read: when none of it changed, collecting again gives the same bundle. */
+export interface NodeSupportBundleInputs {
+  /**
+   * Support files, the support directories walked and the pack directories, read through links
+   * as the collection reads them: an added or removed file changes a directory.
+   */
+  followed: string[];
+  /** Pack-owned files (`PackCheckInputs`), stamped as they are: a link as a link. */
+  exact: string[];
+  /** Ownership rules and their directories, which may be absent until they appear. */
+  optional: string[];
+  /** The pool machine names the packs were checked against. */
+  machines: string[];
+}
+
 /** Read and hash the bundle's files from this gateway's tree. */
 export async function collectNodeSupportBundle(projectName: string, supportPaths: string[]) {
   const projects = new Set([
@@ -160,14 +175,20 @@ export async function collectNodeSupportBundle(projectName: string, supportPaths
   const machines = packMachineNames(poolDirectory());
   // One project at a time, in insertion order: the primary pack's failure surfaces first.
   const portabilityErrors: string[] = [];
-  for (const name of projects)
-    portabilityErrors.push(
-      ...(await validateProjectPackPortability(
-        path.join(projectsDirectory(), name),
-        `projects/${name}`,
-        machines,
-      )),
+  const inputs: NodeSupportBundleInputs = { followed: [], exact: [], optional: [], machines };
+  for (const name of projects) {
+    const checked = await validateProjectPackPortability(
+      path.join(projectsDirectory(), name),
+      `projects/${name}`,
+      machines,
     );
+    portabilityErrors.push(...checked.errors);
+    inputs.exact.push(...checked.inputs.files);
+    // Through links: a pack root may be one. The walk descends real directories only.
+    inputs.followed.push(...checked.inputs.directories);
+    // A rule deleted or added changes its directory too (`.git/info` has no other input).
+    inputs.optional.push(...checked.inputs.rules, ...checked.inputs.rules.map(path.dirname));
+  }
   if (portabilityErrors.length)
     throw new Error(`Project pack is not portable:\n${portabilityErrors.join('\n')}`);
   const farmslotRootRealPath = await realpath(farmslotRoot());
@@ -179,10 +200,11 @@ export async function collectNodeSupportBundle(projectName: string, supportPaths
         if (!pathWithin(farmslotRootRealPath, sourceRealPath)) {
           throw new Error(`Node support path escapes Farmslot root: ${supportPath}`);
         }
-        return collectSupportFiles(sourcePath, supportPath);
+        return collectSupportFiles(sourcePath, supportPath, inputs.followed);
       }),
     )
   ).flat();
+  for (const file of files) inputs.followed.push(path.join(farmslotRoot(), file.relativePath));
   const shippedErrors = files.flatMap((file) => {
     if (!file.relativePath.startsWith('projects/')) return [];
     return validatePackBytesPortability(
@@ -206,7 +228,7 @@ export async function collectNodeSupportBundle(projectName: string, supportPaths
       size: file.size,
     })),
   };
-  return { files, manifest };
+  return { files, manifest, inputs };
 }
 
 /** Where a bundle lives on a node. */
@@ -235,7 +257,7 @@ export async function ensureNodeSupportBundle(
     /** False for read-only prerequisites: preserve the slot's launch selection. */
     selectSlot?: boolean;
     /** The bundle already read for this project; reused when its paths still match. */
-    collected?: Awaited<ReturnType<typeof collectNodeSupportBundle>>;
+    collected?: Pick<Awaited<ReturnType<typeof collectNodeSupportBundle>>, 'files' | 'manifest'>;
   } = {},
 ): Promise<NodeSupportBundleState | null> {
   if (currentProjectSources() ?? options.projectVars?.sourceContext) {
