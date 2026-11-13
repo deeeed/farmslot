@@ -44,6 +44,11 @@ interface TaskProjectSelection {
   manifest?: string;
 }
 
+interface TaskProviderFallback {
+  reason: 'pool-provider-unavailable';
+  configuredRoot: string;
+}
+
 function source(value: unknown): value is RecipeConformanceSource {
   return (
     isRecord(value) &&
@@ -441,6 +446,7 @@ export async function withTaskProjectHost<T>(
   const config = readProject(path.join(packRoot, 'project.json'));
   if (!config.recipe) throw new Error('The retained project has no recipe declaration.');
   let poolProviderRoot: string | undefined;
+  let fallback: TaskProviderFallback | undefined;
   const variable = config.recipe.provider.root?.env;
   if (variable) {
     const context = await resolveHarnessContext({
@@ -448,12 +454,26 @@ export async function withTaskProjectHost<T>(
       tokens: ['--target', selected.target],
       adapter: false,
     });
-    const root = providerEnvironmentRoot(config.recipe.provider, {
+    const poolEnv = readProjectPool(context)?.env;
+    const authorizedRoot = providerEnvironmentRoot(config.recipe.provider, {
       env: options.load?.env ?? process.env,
-      poolEnv: readProjectPool(context)?.env,
       authorizedProviders: options.authorizedProviders,
     });
-    if (typeof root === 'string' && root.trim()) poolProviderRoot = fs.realpathSync(root);
+    const root = authorizedRoot ?? poolEnv?.[variable];
+    if (typeof root === 'string' && root.trim()) {
+      try {
+        poolProviderRoot = fs.realpathSync(root);
+      } catch (error) {
+        // Rollouts may remove the pool's installation. The verified pin already
+        // retains the provider and its dependencies; explicit overrides still fail.
+        if (
+          authorizedRoot !== undefined ||
+          !(error instanceof Error && 'code' in error && error.code === 'ENOENT')
+        )
+          throw error;
+        fallback = { reason: 'pool-provider-unavailable', configuredRoot: root };
+      }
+    }
   }
   const retained = (file: string): string => {
     if (
@@ -583,12 +603,13 @@ export async function withTaskProjectHost<T>(
             recipe: {
               ...config.recipe,
               provider: {
-                module: poolProviderRoot
-                  ? config.recipe.provider.module
-                  : path.relative(provider.root, provider.module),
+                module:
+                  poolProviderRoot || fallback
+                    ? config.recipe.provider.module
+                    : path.relative(provider.root, provider.module),
                 root: { projectPath: retained(provider.root) },
                 export: provider.export,
-                ...(poolProviderRoot && config.recipe.provider.package
+                ...((poolProviderRoot || fallback) && config.recipe.provider.package
                   ? { package: config.recipe.provider.package }
                   : {}),
               },
@@ -607,10 +628,11 @@ export async function withTaskProjectHost<T>(
       ],
     },
     async (host) => {
-      if (poolProviderRoot) {
+      if (poolProviderRoot || fallback) {
         const actual = host.context.project!.provider;
-        const warning =
-          provider.version !== actual.version
+        const warning = fallback
+          ? `Selected provider is unavailable (${fallback.configuredRoot}); using retained harness ${actual.version ?? 'unknown'} (${actual.root}).`
+          : provider.version !== actual.version
             ? `Task recorded harness ${provider.version ?? 'unknown'}; using selected ${actual.version ?? 'unknown'} (${actual.root}).`
             : undefined;
         fs.mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
@@ -622,6 +644,7 @@ export async function withTaskProjectHost<T>(
               recordedAt: new Date().toISOString(),
               recommendedVersion: provider.version ?? null,
               provider: actual,
+              ...(fallback ? { fallback } : {}),
               ...(warning ? { warning } : {}),
             },
             null,

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Load the CLI in this process so its signal handlers own the invoked PID.
-import { realpathSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // Agent tool shells can restore a different PATH than the worker launch. Honor
@@ -21,6 +21,22 @@ if (configuredNodeBin) {
 }
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// A task invokes its retained installation directly, outside the original checkout.
+// Recover that installation's home before the entry loads checkout env or state.
+if (!process.env.FARMSLOT_HOME?.trim()) {
+  for (let directory = root; dirname(directory) !== directory; directory = dirname(directory)) {
+    const store = dirname(dirname(directory));
+    if (basename(directory) !== 'cli' || basename(store) !== 'task-pins') continue;
+    let home = dirname(store);
+    const marker = resolve(home, '../config/instance.json');
+    if (basename(home) === 'state' && existsSync(marker)) {
+      const config = JSON.parse(readFileSync(marker, 'utf8'));
+      if (config.layout === 2) home = dirname(home);
+    }
+    process.env.FARMSLOT_HOME = home;
+    break;
+  }
+}
 const entry = resolve(
   root,
   'src',

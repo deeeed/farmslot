@@ -1,0 +1,1 @@
+- Recover the farm home from a retained task CLI so generated helpers work without a shell home override.
