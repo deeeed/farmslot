@@ -21,6 +21,7 @@ import {
   readSlotRow,
 } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
+import { type ConnectedNode, getNode } from '../../fleet/machine-registry.js';
 import { setWorkspaceOverlay } from '../../fleet/state.js';
 import { readSlotCommand } from '../../host-services/read-command.js';
 import { GitHubHttpError } from '../../integrations/github-errors.js';
@@ -363,8 +364,11 @@ interface WorkspaceInspection {
   version?: string;
   workspace?: SlotWorkspace;
   error?: string;
+  retryAt?: number;
+  connection?: ConnectedNode['ws'];
 }
 const PASSIVE_WORKSPACE_MAX_AGE_MS = 90_000;
+const UNAVAILABLE_WORKSPACE_RETRY_MS = 60_000;
 const inspections = new Map<string, WorkspaceInspection>();
 export function invalidateSlotWorkspaceObservations(slotId: string): void {
   const cached = inspections.get(slotId);
@@ -424,6 +428,9 @@ export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promi
       if (!workspaceObservable(slot)) return { ...slot, workspace: undefined };
       const key = workspaceObservationKey(slot);
       let cached = inspections.get(slot.slot);
+      const connection = getNode(slot.machine)?.ws;
+      if (cached && (cached.error || cached.workspace?.error) && cached.connection !== connection)
+        cached.until = 0;
       while (cached?.pending && cached.key !== key) {
         try {
           await cached.promise;
@@ -436,7 +443,13 @@ export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promi
         }
         cached = inspections.get(slot.slot);
       }
-      if (!cached || (!cached.pending && (cached.key !== key || cached.until < Date.now()))) {
+      if (
+        !cached ||
+        (!cached.pending &&
+          (cached.key !== key ||
+            cached.until < Date.now() ||
+            (cached.retryAt !== undefined && cached.retryAt <= Date.now())))
+      ) {
         const previous = cached;
         const bindingKey = workspaceObservationKey(slot, 'binding');
         const inspect = () =>
@@ -454,8 +467,21 @@ export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promi
             );
           } catch {
             // Metadata is only an optimization. The real inspection still
-            // reports unreadable repositories or unavailable node transport.
-            return inspect();
+            // reports unreadable repositories or unavailable node transport;
+            // an unchanged failure keeps its bounded retry deadline below.
+          }
+          if (
+            previous?.key === key &&
+            previous.until !== 0 &&
+            previous.connection === connection &&
+            previous.version === entry.version &&
+            previous.retryAt !== undefined &&
+            previous.retryAt > Date.now()
+          ) {
+            // Reusing an unavailable result must not postpone the original retry.
+            entry.retryAt = previous.retryAt;
+            if (previous.error) throw new Error(previous.error);
+            if (previous.workspace?.error) return previous.workspace;
           }
           const retained = previous?.workspace;
           if (
@@ -489,6 +515,7 @@ export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promi
         const entry: WorkspaceInspection = {
           key,
           bindingKey,
+          connection,
           pending: true,
           until: Date.now() + 15_000,
           ...(previous?.key === key && previous.until !== 0
@@ -510,6 +537,8 @@ export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promi
               // A slow inspection must have a useful cache window after it
               // settles. Explicit invalidation during the read still wins.
               if (entry.until !== 0) entry.until = Date.now() + 15_000;
+              if (entry.error || entry.workspace?.error)
+                entry.retryAt ??= Date.now() + UNAVAILABLE_WORKSPACE_RETRY_MS;
             }),
         };
         cached = entry;

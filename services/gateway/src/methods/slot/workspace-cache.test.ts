@@ -4,9 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
 
+import { WebSocket } from 'ws';
+
 import { slotRecoveryEligibility } from '@farmslot/protocol';
 
 import type { SlotVars } from '../../core/index.js';
+import type { ConnectedNode } from '../../fleet/machine-registry.js';
 
 import type { WorkspaceProbe } from './workspace-probe.js';
 
@@ -74,7 +77,17 @@ await writeFile(
   }),
 );
 await import('../../runtime/mock-pty.test-support.js');
+const registry = await import('../../fleet/machine-registry.js');
+let observedNode: ConnectedNode | undefined;
+mock.module('../../fleet/machine-registry.js', {
+  namedExports: {
+    ...registry,
+    getNode: (machine: string) =>
+      machine === 'fixture' && observedNode ? observedNode : registry.getNode(machine),
+  },
+});
 let probes = 0;
+let defaultRefMissing = false;
 let refFailure: Error | undefined;
 let passiveRefPause: ProbePause | undefined;
 let probeFailure: Error | undefined;
@@ -127,7 +140,9 @@ mock.module('../../core/read-probes.js', {
         stdout:
           scope === 'workspace' || scope === 'workspace-recovery'
             ? JSON.stringify(probe)
-            : `${scope.includes('publication') ? probe.headSha : 'a'.repeat(40)}\trefs/heads/main\n`,
+            : defaultRefMissing && scope === 'workspace-default'
+              ? ''
+              : `${scope.includes('publication') ? probe.headSha : 'a'.repeat(40)}\trefs/heads/main\n`,
         stderr: '',
       };
     },
@@ -584,4 +599,99 @@ test('concurrent passive refs share a flight and failed reads are retried', asyn
     3,
     'a failed ref never becomes a completed cached answer',
   );
+});
+
+test('unchanged unavailable inspections wait sixty seconds without moving their retry deadline', async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  invalidateSlotWorkspaceObservations('cache-slot');
+  const before = probes;
+  probeFailure = new Error('Read probe did not complete (exit 124)');
+  const failed = await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.match(failed.slots[0]?.workspaceError ?? '', /exit 124/);
+  for (let i = 0; i < 3; i++) {
+    now += 16_000;
+    const retained = await enrichFleetWorkspaces(await loadFleetStatus(true));
+    assert.equal(probes, before + 1, 'intermediate reads must not launch another inspection');
+    assert.match(retained.slots[0]?.workspaceError ?? '', /exit 124/);
+  }
+  now += 13_000;
+  const retried = await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(probes, before + 2, 'the original sixty-second deadline permits a retry');
+  assert.equal(retried.slots[0]?.workspaceError, undefined);
+});
+
+test('metadata changes and acting reads bypass unavailable-inspection backoff', async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const gitDir = path.join(root, 'repo/.git');
+  await mkdir(gitDir, { recursive: true });
+  t.after(() => rm(gitDir, { recursive: true, force: true }));
+  await writeFile(path.join(gitDir, 'HEAD'), 'a'.repeat(40) + '\n');
+  const index = path.join(gitDir, 'index');
+  await writeFile(index, 'index');
+  await utimes(index, 1_700_000_000, 1_700_000_000);
+  invalidateSlotWorkspaceObservations('cache-slot');
+  const before = probes;
+  probeFailure = new Error('unavailable workspace');
+  await enrichFleetWorkspaces(await loadFleetStatus(true));
+  now += 16_000;
+  await utimes(index, 1_700_000_001, 1_700_000_001);
+  await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(probes, before + 2, 'changed metadata retries before sixty seconds');
+  invalidateSlotWorkspaceObservations('cache-slot');
+  probeFailure = new Error('unavailable again');
+  await enrichFleetWorkspaces(await loadFleetStatus(true));
+  await inspectSlotWorkspace('cache-slot');
+  assert.equal(probes, before + 4, 'acting inspection always reads actual workspace');
+  invalidateSlotWorkspaceObservations('cache-slot');
+  await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(probes, before + 5, 'explicit invalidation also bypasses backoff');
+});
+
+test('an unchanged unavailable workspace retains its original observation time', async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const original = { ...probe };
+  t.after(() => {
+    Object.assign(probe, original);
+    defaultRefMissing = false;
+  });
+  probe.originKey = 'unavailable-object';
+  defaultRefMissing = true;
+  invalidateSlotWorkspaceObservations('cache-slot');
+  const first = await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.match(first.slots[0]?.workspace?.error ?? '', /Remote default is unavailable/);
+  const before = probes;
+  now += 16_000;
+  const retained = await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(probes, before);
+  assert.equal(retained.slots[0]?.workspace, first.slots[0]?.workspace);
+  assert.equal(retained.slots[0]?.workspace?.observedAt, first.slots[0]?.workspace?.observedAt);
+});
+
+test('a replacement node connection bypasses unavailable backoff immediately', async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  t.after(() => {
+    observedNode = undefined;
+  });
+  // ws supports address=null for an unattached server-side socket. Validate it at runtime;
+  // no connection, listener, file descriptor or timer is started.
+  const first: unknown = Reflect.construct(WebSocket, [null, undefined, {}]);
+  const second: unknown = Reflect.construct(WebSocket, [null, undefined, {}]);
+  assert.ok(first instanceof WebSocket);
+  assert.ok(second instanceof WebSocket);
+  observedNode = { machine: 'fixture', pid: 1, connectedAt: 'fixture', ws: first };
+  invalidateSlotWorkspaceObservations('cache-slot');
+  const before = probes;
+  probeFailure = new Error('node transport unavailable');
+  await enrichFleetWorkspaces(await loadFleetStatus(true));
+  now += 16_000;
+  await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(probes, before + 1, 'same connection keeps the failure');
+  observedNode = { ...observedNode, ws: second };
+  now += 1;
+  await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(probes, before + 2, 'new connection invalidates before the metadata interval');
 });

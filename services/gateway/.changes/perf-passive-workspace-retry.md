@@ -1,0 +1,1 @@
+- Retry unchanged unavailable passive workspace inspections once per minute while preserving metadata checks, fresh actions and the original observation time.
