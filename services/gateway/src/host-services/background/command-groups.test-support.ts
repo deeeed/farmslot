@@ -17,6 +17,7 @@ import type { BackgroundHandlerContext } from './handlers.js';
 import type { BackgroundCommandParams } from './protocol.js';
 import { serveBackgroundRequests } from './serve.js';
 
+// Keep this fixture independent of production handlers and their fleet-monitor imports.
 function command(
   { command, ...options }: BackgroundCommandParams,
   context?: BackgroundHandlerContext,

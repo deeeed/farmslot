@@ -438,3 +438,32 @@ test('a successful capture repair clears missing media and restores the PNG', as
   await copyTaskFilesToSlot(f.run.id, { artifactsOnly: true });
   assert.deepEqual(await readFile(path.join(f.dir, f.artifact.path)), f.media);
 });
+
+test('remote task-sync stages mkdir, task and subdirectories through the background owner', async (t) => {
+  const { backgroundHost } = await import('../host-services/background/client.js');
+  for (const dir of ['assets', 'inputs', 'artifacts'])
+    await mkdir(path.join(taskDir, dir), { recursive: true });
+  await writeFile(taskFile, '# Task\n');
+  t.mock.method(backgroundHost, 'active', () => true);
+  const request = t.mock.method(backgroundHost, 'request', async () => ({
+    stdout: '',
+    stderr: '',
+    exitCode: 0,
+  }));
+  const before = tools.calls().length;
+  await copyTaskFilesToSlot('run-1');
+  const commands = request.mock.calls.map((call) => {
+    assert.equal(call.arguments[0], 'taskFiles.transfer');
+    const params = call.arguments[1];
+    assert.ok(params);
+    assert.ok('command' in params);
+    return params.command;
+  });
+  assert.match(commands[0] ?? '', /^ssh .*mkdir -p/);
+  assert.match(commands[1] ?? '', /^scp .*TASK\.md/);
+  for (const subdir of ['assets', 'inputs', 'artifacts'])
+    assert.ok(
+      commands.some((command) => command.startsWith('rsync ') && command.includes(`${subdir}/`)),
+    );
+  assert.equal(tools.calls().length, before, 'parent must not execute task-sync transfers');
+});
