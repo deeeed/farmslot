@@ -8,7 +8,7 @@ import { appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { Run } from '../../../packages/protocol/src/index.js';
+import { isTerminalRunStatus, type Run } from '../../../packages/protocol/src/index.js';
 import { cleanupOnExit, poll, startReaper } from '../lib/isolated-stack.mjs';
 import { startRemoteNodeStack, type RemoteNodeStack } from '../lib/remote-node-stack.mjs';
 
@@ -51,10 +51,13 @@ const cleanup = cleanupOnExit(async () => {
   const errors: string[] = [];
   if (stack && run) {
     try {
-      await save(
-        'CANCEL.json',
-        await stack.connection().call('run.cancel', { runId: run.id }, { timeoutMs: 180000 }),
-      );
+      const latest = (await stack.call<{ run: Run }>('run.get', { runId: run.id })).run;
+      if (!isTerminalRunStatus(latest.status)) {
+        await save(
+          'CANCEL.json',
+          await stack.connection().call('run.cancel', { runId: run.id }, { timeoutMs: 180000 }),
+        );
+      }
       await save(
         'ARCHIVE.json',
         await stack.connection().call('run.archive', { runId: run.id }, { timeoutMs: 180000 }),
