@@ -1,5 +1,5 @@
 // clip.ts — `farmslot clip`: push copy-ready text or a link to the farm's Companion clipboard.
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 
 import type { Command } from 'commander';
 
@@ -64,14 +64,18 @@ export function clipPushParams(
   };
 }
 
-/** The tmux session this command runs in, so a clip says which lane sent it. */
+/**
+ * The tmux session this command runs in, so a clip says which lane sent it. The source is only
+ * a label: when tmux cannot answer (no binary, a stale socket) the clip is sent without one.
+ */
 function tmuxSession(): string | undefined {
   if (!process.env.TMUX) return undefined;
   const target = process.env.TMUX_PANE ? ['-t', process.env.TMUX_PANE] : [];
-  const name = execFileSync('tmux', ['display-message', '-p', ...target, '#S'], {
+  const result = spawnSync('tmux', ['display-message', '-p', ...target, '#S'], {
     encoding: 'utf8',
-  }).trim();
-  return name || undefined;
+  });
+  if (result.error || result.status !== 0) return undefined;
+  return result.stdout.trim() || undefined;
 }
 
 export function registerClipCommand(program: Command): void {

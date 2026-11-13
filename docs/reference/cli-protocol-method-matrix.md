@@ -90,10 +90,10 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## clip.\*
 
-| Method      | Surface       | CLI command     | TUI | Note                                         |
-| ----------- | ------------- | --------------- | --- | -------------------------------------------- |
-| `clip.push` | typed-command | `farmslot clip` |     |                                              |
-| `clip.list` | na            |                 |     | Companion and Command Center clipboard list. |
+| Method      | Surface       | CLI command     | TUI | Note                      |
+| ----------- | ------------- | --------------- | --- | ------------------------- |
+| `clip.push` | typed-command | `farmslot clip` |     |                           |
+| `clip.list` | na            |                 |     | Companion clipboard list. |
 
 ## config.\*
 

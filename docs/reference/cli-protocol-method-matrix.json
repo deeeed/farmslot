@@ -213,7 +213,7 @@
     },
     "clip.list": {
       "surface": "na",
-      "note": "Companion and Command Center clipboard list."
+      "note": "Companion clipboard list."
     },
     "clip.push": {
       "surface": "typed-command",

@@ -58,6 +58,10 @@ test('rejects empty, oversized and malformed clips', (t) => {
   assert.throws(() => clipPush(lane, { text: 'not a url', kind: 'link' }), invalid);
   assert.throws(() => clipPush(lane, { text: 'x', kind: 'file' }), invalid);
   assert.throws(() => clipPush(lane, { text: 'x', label: 'l'.repeat(200) }), invalid);
+  // Fits before redaction (65,536 bytes) but its markers would store about 139 KB.
+  const expanding = 'token=x '.repeat(CLIP_TEXT_MAX_BYTES / 8);
+  assert.equal(Buffer.byteLength(expanding), CLIP_TEXT_MAX_BYTES);
+  assert.throws(() => clipPush(lane, { text: expanding }), /after redaction/);
   assert.deepEqual(clipList().clips, []);
   assert.equal(
     clipPush(lane, { text: 'x'.repeat(CLIP_TEXT_MAX_BYTES) }).clip.text.length,

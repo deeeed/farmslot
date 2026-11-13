@@ -477,7 +477,7 @@ export const Methods = {
   RUNNER_VISIBLE_MODELS_GET: 'runner.visibleModels.get',
   RUNNER_VISIBLE_MODELS_SET: 'runner.visibleModels.set',
 
-  // Copy-ready text and links an agent hands its principal's clients.
+  // Copy-ready text and links agents hand the farm's admins (Companion clipboard).
   CLIP_PUSH: 'clip.push',
   CLIP_LIST: 'clip.list',
 } as const;

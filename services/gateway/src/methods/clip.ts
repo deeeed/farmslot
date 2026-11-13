@@ -48,10 +48,18 @@ export function clipPush(principal: Principal, params: unknown): ClipPushResult 
     throw new GatewayMethodError('INVALID_PARAMS', 'A link clip must be one http(s) URL');
   const label = optionalText(input.label, 'label', CLIP_LABEL_MAX_LENGTH);
   const source = optionalText(input.source, 'source', CLIP_SOURCE_MAX_LENGTH);
+  const text = redactLogContent(kind === 'link' ? input.text.trim() : input.text);
+  // Redaction markers can be longer than what they replace, so the stored text is checked too.
+  const storedBytes = Buffer.byteLength(text, 'utf8');
+  if (storedBytes > CLIP_TEXT_MAX_BYTES)
+    throw new GatewayMethodError(
+      'INVALID_PARAMS',
+      `Clip text is ${storedBytes} bytes after redaction; the limit is ${CLIP_TEXT_MAX_BYTES}`,
+    );
   const clip: Clip = {
     id: randomUUID(),
     kind,
-    text: redactLogContent(kind === 'link' ? input.text.trim() : input.text),
+    text,
     ...(label ? { label: redactLogContent(label) } : {}),
     principalId: principal.id,
     ...(source ? { source } : {}),
