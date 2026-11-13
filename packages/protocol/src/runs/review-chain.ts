@@ -132,6 +132,8 @@ export function currentReviewChainEntry(
     runner: run.metrics.runner ?? null,
     model: run.metrics.actualModel ?? run.metrics.model ?? null,
     ...(context.session ? { session: context.session } : {}),
+    durationMs: run.metrics.durationMs ?? null,
+    ...context.currentMetrics,
     createdAt: run.createdAt,
     ...(run.completedAt ? { completedAt: run.completedAt } : {}),
   };
