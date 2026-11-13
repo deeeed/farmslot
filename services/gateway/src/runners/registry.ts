@@ -1,6 +1,11 @@
 import { CLAUDE_ACP_EFFORTS } from '@farmslot/agent-runtime/native/claude-acp';
 import { nativeRunnerDefinitions } from '@farmslot/agent-runtime/native/registry';
 
+import {
+  PI_CONFIG_ENVIRONMENT,
+  piProviderAuthEnvironment,
+} from '../../../../scripts/runners/pi-farmslot-providers.mjs';
+
 import { resolvePiBinary, resolvePiModel } from './launch-command.js';
 import {
   runnerPaneContainsInstruction,
@@ -246,7 +251,10 @@ function blindProviderEnvironment(model: string): readonly string[] {
 
 export interface RunnerDefinition {
   /** Environment required by this runner's selected model, for blind workers only. */
-  blindModelEnvironment?: (model?: string | null) => readonly string[];
+  blindModelEnvironment?: (
+    model?: string | null,
+    environment?: NodeJS.ProcessEnv,
+  ) => readonly string[];
   /** Hook destination for a read-only terminal review, shared by launch and observation. */
   reviewObservabilityDir?: (taskDir: string) => string;
   /** Tmux launches install and verify the copied runner observability bundle. */
@@ -686,7 +694,16 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     usesObservabilityBundle: true,
     reviewObservabilityDir: (taskDir) => path.posix.join(taskDir, '.observability'),
     id: 'pi',
-    blindModelEnvironment: (model) => blindProviderEnvironment(resolvePiModel(model)),
+    blindModelEnvironment: (model, environment) => {
+      const selected = resolvePiModel(model);
+      return [
+        ...new Set([
+          ...PI_CONFIG_ENVIRONMENT,
+          ...blindProviderEnvironment(selected),
+          ...piProviderAuthEnvironment(selected, environment),
+        ]),
+      ];
+    },
     sessionContinuation: {
       native: true,
       terminal: { args: (sessionId) => ['--session', sessionId], workspace: 'retained' },

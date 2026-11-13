@@ -1747,6 +1747,42 @@ describe('buildLaunchCommand', () => {
     }
   });
 
+  it('scopes Pi extension auth to the selected provider, including configured router ids', () => {
+    const capability = getRunnerDefinition('pi').blindModelEnvironment;
+    assert.ok(capability);
+    const secrets = [
+      'FARMSLOT_PI_ROUTER_KEY',
+      'LITELLM_API_KEY',
+      'OLLAMA_API_KEY',
+      'OPENAI_API_KEY',
+      'GH_REGISTRY_PAT',
+    ];
+    for (const routerId of ['localsparks', 'sparks', 'custom-router']) {
+      for (const [provider, expected] of [
+        [routerId, 'FARMSLOT_PI_ROUTER_KEY'],
+        ['router', 'FARMSLOT_PI_ROUTER_KEY'],
+        ['litellm', 'LITELLM_API_KEY'],
+        ['ollama', 'OLLAMA_API_KEY'],
+        ['openai', 'OPENAI_API_KEY'],
+        ['unselected-custom', undefined],
+      ]) {
+        const admitted = capability(`${provider}/fixture`, { FARMSLOT_PI_ROUTER_ID: routerId });
+        assert.ok(admitted.includes('LITELLM_URL'));
+        assert.ok(admitted.includes('FARMSLOT_PI_REQUEST_TIMEOUT_MODE'));
+        assert.deepEqual(
+          secrets.filter((name) => admitted.includes(name)),
+          expected ? [expected] : [],
+        );
+      }
+    }
+    assert.equal(
+      getRunnerDefinition('opencode')
+        .blindModelEnvironment?.('litellm/fixture')
+        .includes('FARMSLOT_PI_ROUTER_URL'),
+      false,
+    );
+  });
+
   it('resumes a blind trial worker session inside the same sandbox', () => {
     const vars = makeVars({ dispatchCmd: '', machineEnv: { GH_TOKEN: 'pool-token' } });
     for (const runner of ['claude', 'codex', 'grok']) {

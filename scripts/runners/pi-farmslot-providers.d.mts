@@ -19,3 +19,6 @@ export function parsePiProviderDiscovery(
   ids: readonly string[],
 ): { configuredProviders: string[]; reported: boolean };
 export const PI_REQUEST_TIMEOUT_RETRIES: number;
+
+export const PI_CONFIG_ENVIRONMENT: readonly string[];
+export function piProviderAuthEnvironment(model: string, env?: NodeJS.ProcessEnv): string[];

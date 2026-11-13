@@ -595,7 +595,10 @@ export function buildRunnerSessionReloadCommand(
       ? withBlindTrialBoundary(
           command,
           opts.blindTrialBoundary,
-          getRunnerDefinition(runner).blindModelEnvironment?.(model),
+          getRunnerDefinition(runner).blindModelEnvironment?.(model, {
+            ...process.env,
+            ...vars.machineEnv,
+          }),
         )
       : command;
 
@@ -1052,7 +1055,10 @@ export function buildLaunchCommand(
             ? withBlindTrialBoundary(
                 command,
                 opts.blindTrialBoundary,
-                getRunnerDefinition(runner).blindModelEnvironment?.(model),
+                getRunnerDefinition(runner).blindModelEnvironment?.(model, {
+                  ...process.env,
+                  ...vars.machineEnv,
+                }),
               )
             : command,
         ),

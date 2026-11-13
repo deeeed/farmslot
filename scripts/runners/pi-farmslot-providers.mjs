@@ -16,6 +16,37 @@ const { normalizeLiteLlmModelInfo } = await import(
     : '../../packages/slot-config/src/litellm-model-info.mjs'
 );
 
+/** Non-secret settings read by this provider helper and the Pi extension. */
+export const PI_CONFIG_ENVIRONMENT = Object.freeze([
+  'FARMSLOT_PI_ROUTER_ID',
+  'FARMSLOT_PI_ROUTER_URL',
+  'LITELLM_URL',
+  'LITELLM_BASE_URL',
+  'FARMSLOT_PI_OLLAMA',
+  'FARMSLOT_PI_OLLAMA_URL',
+  'OLLAMA_BASE_URL',
+  'OLLAMA_HOST',
+  'FARMSLOT_PI_REQUEST_TIMEOUT_MS',
+  'FARMSLOT_PI_REQUEST_TIMEOUT_MODE',
+  'FARMSLOT_PI_PROVIDERS_DEBUG',
+  'FARMSLOT_PI_WORKSPACE_TRUST',
+  ...['ROUTER', 'LITELLM', 'OLLAMA'].flatMap((kind) =>
+    ['CONTEXT', 'MAX_TOKENS', 'REASONING', 'MODEL_LIMITS'].map(
+      (setting) => `FARMSLOT_PI_${kind}_${setting}`,
+    ),
+  ),
+]);
+
+/** Only the selected extension provider receives its authentication variable. */
+export function piProviderAuthEnvironment(model, env = process.env) {
+  const provider = model.split('/')[0];
+  if (provider === 'litellm') return ['LITELLM_API_KEY'];
+  if (provider === 'ollama') return ['OLLAMA_API_KEY'];
+  if (provider === 'router' || provider === piRouterProviderId(env))
+    return ['FARMSLOT_PI_ROUTER_KEY'];
+  return [];
+}
+
 /** Bound worker HTTP requests through the final response byte. Pi owns retries. */
 export function deadlinePiFetch(fetchImpl, timeoutMs = 5 * 60_000, onExhausted, mode = 'total') {
   let consecutiveTimeouts = 0;

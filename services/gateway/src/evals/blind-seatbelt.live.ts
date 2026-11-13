@@ -4,6 +4,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import {
   copyFileSync,
+  cpSync,
   existsSync,
   linkSync,
   mkdirSync,
@@ -22,7 +23,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 import { shSingleQuote as q } from '../../../../scripts/lib/shell-quote.mjs';
+import { buildLaunchCommand, buildRunnerSessionReloadCommand } from '../runners/launch-command.js';
 import { getRunnerDefinition } from '../runners/registry.js';
+import { makeVars } from '../runners/test-fixtures.js';
 
 import { withBlindTrialBoundary } from './blind-git.js';
 
@@ -181,6 +184,120 @@ console.log('ambient secrets absent; tooling, task, pane and synthetic model con
   },
 );
 
+for (const provider of ['localsparks', 'router', 'litellm', 'ollama'] as const) {
+  test(
+    `blind pi ${provider} pool config survives fresh launch and retained reload`,
+    { skip: process.platform !== 'darwin' },
+    async (t) => {
+      const root = fixture();
+      t.after(() => rmSync(root, { recursive: true }));
+      profile(root);
+      const agent = path.join(root, 'pi-agent');
+      mkdirSync(agent);
+      const binary = path.join(root, 'pi-fixture.mjs');
+      const selectedKind = provider === 'localsparks' ? 'router' : provider;
+      const secrets = [
+        'GH_REGISTRY_PAT',
+        'OPENAI_API_KEY',
+        'ANTHROPIC_API_KEY',
+        'LITELLM_API_KEY',
+        'OLLAMA_API_KEY',
+        'FARMSLOT_PI_ROUTER_KEY',
+      ];
+      const selectedKey = {
+        router: 'FARMSLOT_PI_ROUTER_KEY',
+        litellm: 'LITELLM_API_KEY',
+        ollama: 'OLLAMA_API_KEY',
+      }[selectedKind];
+      const config = {
+        FARMSLOT_PI_ROUTER_ID: 'localsparks',
+        FARMSLOT_PI_ROUTER_URL: 'http://router.invalid/v1',
+        LITELLM_URL: 'http://litellm.invalid/v1',
+        FARMSLOT_PI_OLLAMA: '1',
+        FARMSLOT_PI_OLLAMA_URL: 'http://ollama.invalid/v1',
+        FARMSLOT_PI_REQUEST_TIMEOUT_MS: '12345',
+        FARMSLOT_PI_REQUEST_TIMEOUT_MODE: 'idle',
+        ...Object.fromEntries(
+          ['ROUTER', 'LITELLM', 'OLLAMA'].flatMap((kind) => [
+            [`FARMSLOT_PI_${kind}_CONTEXT`, '64000'],
+            [`FARMSLOT_PI_${kind}_MAX_TOKENS`, '4096'],
+            [`FARMSLOT_PI_${kind}_REASONING`, 'true'],
+            [
+              `FARMSLOT_PI_${kind}_MODEL_LIMITS`,
+              JSON.stringify({
+                fixture: {
+                  contextWindow: 32000,
+                  maxTokens: 2048,
+                  reasoning: true,
+                },
+              }),
+            ],
+          ]),
+        ),
+      };
+      writeFileSync(
+        binary,
+        `
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+const extension = process.argv[process.argv.indexOf('-e') + 1];
+const { resolvePiProviderCatalog } = await import(pathToFileURL(path.join(path.dirname(extension), 'pi-farmslot-providers.mjs')));
+for (const [name, value] of Object.entries(${JSON.stringify(config)})) assert.equal(process.env[name], value, name);
+for (const name of ${JSON.stringify(secrets.filter((name) => name !== selectedKey))})
+  assert.equal(process.env[name], undefined, name + ' leaked');
+assert.equal(process.env[${JSON.stringify(selectedKey)}], 'synthetic-selected-auth');
+const catalog = await resolvePiProviderCatalog(process.env, {
+  fetchImpl: async () => Response.json({ data: [{ id: 'fixture' }] }),
+});
+const source = catalog.find(source => source.kind === ${JSON.stringify(selectedKind)});
+assert.ok(source, 'selected pool provider must be registered');
+assert.equal(source.id, ${JSON.stringify(selectedKind === 'router' ? 'localsparks' : selectedKind)});
+assert.equal(source.apiKey, 'synthetic-selected-auth');
+assert.equal(source.models[0].contextWindow, 32000);
+assert.equal(source.models[0].maxTokens, 2048);
+assert.equal(source.models[0].reasoning, true);
+console.log('synthetic provider config and scoped auth passed');
+`,
+      );
+      const vars = makeVars({
+        remoteRepo: root,
+        piPath: `${q(process.execPath)} ${q(binary)}`,
+        machineEnv: {
+          ...config,
+          PI_CODING_AGENT_DIR: agent,
+          ...Object.fromEntries(secrets.map((name) => [name, 'synthetic-unselected-auth'])),
+          [selectedKey]: 'synthetic-selected-auth',
+        },
+      });
+      const options = {
+        taskDir: path.join(root, 'task'),
+        blindTrialBoundary: { capsule: root, baseSha: 'a'.repeat(40) },
+      };
+      for (const [stage, command] of Object.entries({
+        fresh: buildLaunchCommand(vars, 'pi', `${provider}/fixture`, 'Synthetic task', options),
+        retained: buildRunnerSessionReloadCommand(
+          vars,
+          'pi',
+          `${provider}/fixture`,
+          'synthetic-session',
+          options,
+        ),
+      }))
+        await t.test(stage, () => {
+          const result = spawnSync('/bin/bash', ['-c', command], {
+            env,
+            encoding: 'utf8',
+            timeout: 10_000,
+          });
+          assert.ifError(result.error);
+          assert.equal(result.status, 0, result.stderr);
+          assert.match(result.stdout, /synthetic provider config and scoped auth passed/);
+        });
+    },
+  );
+}
+
 test(
   'frozen mark helper verifies its CLI and marks progress under the real seatbelt',
   { skip: process.platform !== 'darwin' },
@@ -263,6 +380,146 @@ test(
     t.diagnostic(
       'real frozen mark verified its receipt and wrote CHECKLIST; boundary builder and sandbox profile contents remain denied',
     );
+  },
+);
+
+test(
+  'hosted static init and retained init keep mark usable inside Seatbelt',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const root = fixture();
+    t.after(() => rmSync(root, { recursive: true }));
+    const checkout = fileURLToPath(new URL('../../../../', import.meta.url));
+    const installed = path.join(root, 'installed');
+    // Copy program sources into a disposable installation. No build,
+    // operator configuration, package install, or shared distribution is touched.
+    for (const directory of [
+      'packages/cli/src',
+      'packages/agent-runtime/src',
+      'packages/agent-runtime/scripts',
+      'packages/agent-runtime/bin',
+    ]) {
+      cpSync(path.join(checkout, directory), path.join(installed, directory), {
+        recursive: true,
+        filter: (file) =>
+          !file.endsWith('.test.ts') &&
+          !file.endsWith('.test.tsx') &&
+          !['.env', '.npmrc', '.pi', '.ssh'].includes(path.basename(file)) &&
+          !path.basename(file).startsWith('.env.'),
+      });
+    }
+    symlinkSync(path.join(checkout, 'node_modules'), path.join(root, 'node_modules'));
+    writeFileSync(path.join(installed, 'package.json'), '{"type":"module"}');
+    writeFileSync(path.join(installed, 'yarn.lock'), '# synthetic immutable installation');
+    writeFileSync(path.join(installed, 'DEPLOYED-REVISION.json'), '{}');
+    const cli = path.join(installed, 'packages/cli');
+    writeFileSync(
+      path.join(cli, 'package.json'),
+      '{"name":"@farmslot/cli","version":"1.0.0","type":"module"}',
+    );
+    mkdirSync(path.join(cli, 'bin'));
+    writeFileSync(
+      path.join(cli, 'bin/farmslot.mjs'),
+      `#!/bin/sh\nexec ${q(process.execPath)} ${q(path.join(checkout, 'packages/cli/bin/farmslot.mjs'))} "$@"\n`,
+      { mode: 0o755 },
+    );
+    const tsconfig = JSON.parse(
+      readFileSync(path.join(checkout, 'packages/cli/tsconfig.json'), 'utf8'),
+    );
+    for (const [name, paths] of Object.entries(tsconfig.compilerOptions.paths)) {
+      assert.ok(Array.isArray(paths));
+      tsconfig.compilerOptions.paths[name] = paths.map((entry: string) =>
+        path.resolve(checkout, 'packages/cli', entry),
+      );
+    }
+    tsconfig.compilerOptions.paths['@farmslot/agent-runtime'] = [
+      path.join(installed, 'packages/agent-runtime/src/index.ts'),
+    ];
+    tsconfig.extends = path.join(checkout, 'apps/command-center/tsconfig.base.json');
+    const configFile = path.join(installed, 'tsconfig.json');
+    writeFileSync(configFile, JSON.stringify(tsconfig));
+    const boundarySource = path.join(installed, 'services/gateway/src/evals/blind-git.py');
+    mkdirSync(path.dirname(boundarySource), { recursive: true });
+    writeFileSync(boundarySource, '# synthetic private boundary builder');
+    const pack = path.join(root, 'projects/fixture');
+    mkdirSync(path.join(pack, 'templates/worker'), { recursive: true });
+    writeFileSync(path.join(pack, 'project.json'), '{"name":"fixture","task_dir":"tasks"}');
+    writeFileSync(
+      path.join(pack, 'templates/worker/dev.md'),
+      '---\nplatforms: [core]\n---\n# Synthetic task\n- [ ] 1. Prove hosted marker progress\n',
+    );
+    mkdirSync(path.join(pack, 'tasks'));
+    writeFileSync(path.join(pack, 'tasks/unretained.txt'), 'synthetic task output');
+    mkdirSync(path.join(root, 'pool'));
+    writeFileSync(
+      path.join(root, 'pool/local.json'),
+      JSON.stringify({
+        host: 'localhost',
+        project: 'fixture',
+        slots: [{ id: 'fixture-core-1', repo: root, platform: 'core' }],
+      }),
+    );
+    const task = path.join(root, 'tasks/dev/proof');
+    const driver = path.join(root, 'hosted-init.mjs');
+    writeFileSync(
+      driver,
+      `
+import assert from 'node:assert/strict';
+import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync, writeFileSync } from 'node:fs';
+const { runHostedTaskInit } = await import(${JSON.stringify(path.join(cli, 'src/commands/hosted-task-init.ts'))});
+const file = ${JSON.stringify(root)} + '/.task-init-' + randomUUID() + '.json';
+writeFileSync(file, JSON.stringify({ version: 1, slotId: 'fixture-core-1', binding: 'static',
+  task: { taskDir: ${JSON.stringify(task)}, flow: 'dev', platform: 'core',
+    task: { title: 'Synthetic static task', sourceKind: 'text' },
+    handoff: { surface: 'farmslot', project: 'fixture', attemptId: 'synthetic-run' } },
+  template: { sourceId: 'project:fixture', id: 'dev/default', selectionReason: 'single-general-candidate',
+    sha256: createHash('sha256').update(readFileSync(${JSON.stringify(path.join(pack, 'templates/worker/dev.md'))})).digest('hex') }
+}));
+const result = await runHostedTaskInit(file);
+assert.ok(result.executionProvenance);
+const pack = result.executionProvenance.retainedInputs.find(input => input.source === ${JSON.stringify(pack)});
+assert.ok(pack);
+console.log(JSON.stringify({ pin: result.executionProvenance.pin, pack: pack.path }));
+`,
+    );
+    const launchEnv = {
+      ...env,
+      FARMSLOT_HOME: path.join(root, 'farm'),
+      FARMSLOT_POOL_DIR: path.join(root, 'pool'),
+      FARMSLOT_PROJECTS_DIR: path.join(root, 'projects'),
+      TSX_TSCONFIG_PATH: configFile,
+    };
+    const initialize = () => {
+      const result = spawnSync(
+        process.execPath,
+        ['--import', path.join(checkout, 'node_modules/tsx/dist/loader.mjs'), driver],
+        {
+          env: launchEnv,
+          encoding: 'utf8',
+          timeout: 20_000,
+        },
+      );
+      assert.ifError(result.error);
+      assert.equal(result.status, 0, result.stderr);
+      return JSON.parse(result.stdout.trim());
+    };
+    const fresh = initialize();
+    profile(root, launchEnv);
+    for (const stage of ['fresh', 'retained'])
+      await t.test(stage, () => {
+        if (stage === 'retained') assert.deepEqual(initialize(), fresh);
+        const marked = worker(root, `${q(path.join(task, 'mark'))} 1`, launchEnv);
+        assert.ifError(marked.error);
+        assert.equal(marked.status, 0, stage + ': ' + marked.stderr + marked.stdout);
+        assert.match(readFileSync(path.join(task, 'CHECKLIST.md'), 'utf8'), /- \[x\] 1\./);
+      });
+    assert.equal(
+      existsSync(path.join(fresh.pin, 'cli/services/gateway/src/evals/blind-git.py')),
+      false,
+    );
+    assert.equal(existsSync(path.join(fresh.pack, 'tasks/unretained.txt')), false);
+    assert.equal(existsSync(path.join(fresh.pack, 'project.json')), true);
   },
 );
 
