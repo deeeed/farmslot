@@ -1,0 +1,1 @@
+- The gateway API reference no longer lists the `prRules.updated` event.

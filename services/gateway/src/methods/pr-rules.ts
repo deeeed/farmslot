@@ -81,8 +81,9 @@ export async function initPRRules(
   service = new PRRuleService(
     store,
     isOwnerAdmin,
-    (id) => {
-      publish(id, Events.PR_RULES_UPDATED, service!.list(id));
+    // Clients read the rules through prRules.list when the store publishes its `pr-automation`
+    // resource change, and only for a commit that changed the file. No event carries the list.
+    () => {
       if (poll) dispatcher?.wake();
     },
     (team, rule) => collectPRRuleSources(team, rule, checkpoints),

@@ -587,10 +587,8 @@ test('the actual PR rule file observer reloads replacements and refuses malforme
     { type: 'person', displayName: 'Private rule reader' },
     [{ role: 'admin', scope: { kind: 'global' } }],
   );
-  const publications: unknown[] = [];
-  const publish = (...args: unknown[]) => {
-    publications.push(args);
-  };
+  const publish = () => {};
+  const prAutomation = { family: 'pr-automation', scope: 'farm' } as const;
   const monitors = await initPRMonitoring(auth, publish, false);
   const rules = await initPRRules(auth, publish, false, monitors);
   const config: PRTeamConfig = {
@@ -632,12 +630,13 @@ test('the actual PR rule file observer reloads replacements and refuses malforme
     const external = structuredClone(rules.store.snapshot());
     external.teams[0].config.name = 'External team';
     await writeFile(`${file}.tmp`, JSON.stringify(external));
+    const beforeRename = resourceRevisions.revision(prAutomation);
     await watcher.observe(file, () => rename(`${file}.tmp`, file));
     await clock.until(
       () => rules.store.snapshot().teams[0].config.name === 'External team',
       'External rule rename must replace readable memory',
     );
-    assert(publications.length > 0);
+    assert(resourceRevisions.revision(prAutomation) > beforeRename);
     for (const breakSource of [() => writeFile(file, '{broken'), () => rm(file)]) {
       await watcher.drain(file);
       await watcher.observe(file, breakSource);
