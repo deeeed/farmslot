@@ -4,26 +4,39 @@ export interface TextLinkPart {
   href?: string;
 }
 
-// An http or https address that starts a word, up to whitespace, a quote, a backtick or an
-// angle bracket. Every other scheme (javascript:, file:, app schemes) stays plain text.
-const WEB_ADDRESS = /\bhttps?:\/\/[^\s<>"`]+/gi;
+// An http or https address after the start, whitespace or punctuation (so `_https://…_` links),
+// up to whitespace, a quote, a backtick, an angle bracket, an invisible or control character
+// (zero-width, bidi, C0/C1) or CJK punctuation (。、「」（），：；！？). Those stay visible in the
+// text but never enter a link. Every other scheme (javascript:, file:, app schemes) stays plain
+// text. A host starting with a non-ASCII letter (`https://ąbc.pl`) stays plain; its punycode
+// form links.
+const WEB_ADDRESS =
+  /(^|[^a-z0-9])(https?:\/\/[^\s<>"`\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff\u3000-\u303f\uff01\uff08\uff09\uff0c\uff1a\uff1b\uff1f]+)/gi;
 // A host must follow the scheme: a letter, a digit, or an IPv6 bracket.
 const WITH_HOST = /^https?:\/\/[a-z0-9[]/i;
-// Punctuation that ends a sentence, not an address.
-const TRAILING = ".,;:!?'*";
+// Punctuation that ends a sentence or emphasis, not an address.
+const TRAILING = ".,;:!?'*_";
 const OPENING: Record<string, string> = { ')': '(', ']': '[', '}': '{' };
 
 const count = (text: string, char: string) => text.split(char).length - 1;
 
-/** The address without the punctuation after it; a closing bracket stays when it closes one inside. */
+/**
+ * The address without the punctuation after it; a closing bracket stays when it closes one inside.
+ * Linear: trimming removes only closers and punctuation, never openers, so each closer's excess
+ * over its opener is counted once and decremented as closers come off.
+ */
 function trimAddress(address: string): string {
+  const unclosed: Record<string, number> = {};
+  for (const [close, open] of Object.entries(OPENING))
+    unclosed[close] = count(address, close) - count(address, open);
   let end = address.length;
   while (end > 0) {
     const last = address[end - 1];
-    const opening = OPENING[last];
-    const head = address.slice(0, end);
-    if (TRAILING.includes(last) || (opening && count(head, last) > count(head, opening))) end--;
-    else break;
+    if (TRAILING.includes(last)) end--;
+    else if (unclosed[last] > 0) {
+      unclosed[last]--;
+      end--;
+    } else break;
   }
   return address.slice(0, end);
 }
@@ -37,11 +50,12 @@ export function textLinkParts(text: string): TextLinkPart[] {
   const parts: TextLinkPart[] = [];
   let at = 0;
   for (const match of text.matchAll(WEB_ADDRESS)) {
-    const href = trimAddress(match[0]);
+    const href = trimAddress(match[2]);
     if (!WITH_HOST.test(href)) continue;
-    if (match.index > at) parts.push({ text: text.slice(at, match.index) });
+    const start = match.index + match[1].length;
+    if (start > at) parts.push({ text: text.slice(at, start) });
     parts.push({ text: href, href });
-    at = match.index + href.length;
+    at = start + href.length;
   }
   if (at < text.length) parts.push({ text: text.slice(at) });
   return parts;

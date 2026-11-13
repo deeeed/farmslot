@@ -64,6 +64,57 @@ test('punctuation after an address is not part of it', () => {
   );
 });
 
+test('markdown emphasis, full-width punctuation and invisible characters stay out of a link', () => {
+  assert.deepEqual(links('_https://a.com/x_ and *https://b.com/y*'), [
+    'https://a.com/x',
+    'https://b.com/y',
+  ]);
+  assert.deepEqual(links('見て https://a.com/x。次、https://b.com/y、'), [
+    'https://a.com/x',
+    'https://b.com/y',
+  ]);
+  for (const invisible of ['\u200b', '\u200e', '\u202e', '\u2060', '\ufeff', '\u0007', '\u0085']) {
+    const text = `https://a.com/x${invisible}next`;
+    assert.deepEqual(links(text), ['https://a.com/x'], JSON.stringify(invisible));
+    assert.equal(
+      textLinkParts(text)
+        .map((part) => part.text)
+        .join(''),
+      text,
+    );
+  }
+  // A host starting with a non-ASCII letter stays plain; its punycode form links.
+  assert.deepEqual(links('https://ąbc.pl/x'), []);
+  assert.deepEqual(links('https://xn--bc-oia.pl/x'), ['https://xn--bc-oia.pl/x']);
+});
+
+/** CPU milliseconds `run` takes, so a loaded machine does not make a linear parse look slow. */
+const cpuMs = (run: () => void) => {
+  const before = process.cpuUsage();
+  run();
+  const used = process.cpuUsage(before);
+  return (used.user + used.system) / 1000;
+};
+
+test('long inputs parse in linear time', () => {
+  const inputs = {
+    closers: 'https://a.com/' + ')'.repeat(100_000),
+    'closers and dots': 'https://a.com/' + ').'.repeat(50_000),
+    dots: 'https://a.com/' + '.'.repeat(100_000),
+    openers: 'https://a.com/' + '('.repeat(100_000),
+    'no whitespace': 'https://a.com/' + 'a.(b)'.repeat(20_000),
+    'scheme repeats': 'https://'.repeat(12_500),
+    'no address': 'x'.repeat(50_000) + '://' + 'y'.repeat(50_000),
+  };
+  for (const [name, text] of Object.entries(inputs)) {
+    let parts: ReturnType<typeof textLinkParts> = [];
+    const ms = cpuMs(() => (parts = textLinkParts(text)));
+    assert.ok(ms < 50, `${name}: ${ms.toFixed(1)} ms`);
+    assert.equal(parts.map((part) => part.text).join(''), text, name);
+  }
+  assert.deepEqual(links(inputs.closers), ['https://a.com/']);
+});
+
 test('text without an address is one plain part', () => {
   assert.deepEqual(textLinkParts('no links here'), [{ text: 'no links here' }]);
   assert.deepEqual(textLinkParts(''), []);

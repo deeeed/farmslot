@@ -110,6 +110,7 @@ export const NativeTimelineCard = memo(function NativeTimelineCard({
                 {command}
               </Text>
               <NativeCopyButton
+                id={`${entry.key}:command`}
                 text={command}
                 action="Copy command"
                 testID="companion-native-copy-command"
@@ -141,7 +142,9 @@ export const NativeTimelineCard = memo(function NativeTimelineCard({
                 />
               ))
             : null}
-          {expanded && (!command || raw) ? <NativeToolRaw tool={entry.event.tool} /> : null}
+          {expanded && (!command || raw) ? (
+            <NativeToolRaw id={`${entry.key}:raw`} tool={entry.event.tool} />
+          ) : null}
         </>
       ) : (
         <>
@@ -152,7 +155,12 @@ export const NativeTimelineCard = memo(function NativeTimelineCard({
             muted={entry.kind === 'status'}
             onDisclosure={onDisclosure}
           />
-          <NativeCopyButton text={entry.text} />
+          <NativeCopyButton
+            // Keyed: a recycled cell never shows another message's Copied.
+            key={entry.key}
+            id={String(entry.key)}
+            text={entry.text}
+          />
         </>
       )}
     </View>
@@ -160,7 +168,7 @@ export const NativeTimelineCard = memo(function NativeTimelineCard({
 });
 
 /** A tool's raw input and output, with a copy of the same JSON. */
-function NativeToolRaw({ tool }: { tool?: NativeSessionTool }) {
+function NativeToolRaw({ id, tool }: { id: string; tool?: NativeSessionTool }) {
   const json = JSON.stringify(tool, null, 2);
   return (
     <>
@@ -169,7 +177,7 @@ function NativeToolRaw({ tool }: { tool?: NativeSessionTool }) {
           {json}
         </Text>
       </ScrollView>
-      <NativeCopyButton text={json} action="Copy raw" testID="companion-native-copy-raw" />
+      <NativeCopyButton id={id} text={json} action="Copy raw" testID="companion-native-copy-raw" />
     </>
   );
 }
@@ -206,7 +214,12 @@ function NativePlanBody({
           markdown
           onDisclosure={onDisclosure}
         />
-        <NativeCopyButton text={plan.text} action="Copy plan" testID="companion-native-plan-copy" />
+        <NativeCopyButton
+          id={choiceId}
+          text={plan.text}
+          action="Copy plan"
+          testID="companion-native-plan-copy"
+        />
         {onImplement ? (
           <Pressable
             testID="companion-native-plan-implement"
@@ -247,6 +260,7 @@ function NativePlanBody({
             </Text>
           ))}
           <NativeCopyButton
+            id={choiceId}
             text={[
               plan.text,
               ...plan.steps.map((step) => `${nativePlanStepMark(step.status)} ${step.text}`),
@@ -283,7 +297,7 @@ export function NativePendingMessageCard({
         preview={nativeMessagePreview(text)}
         onDisclosure={onDisclosure}
       />
-      <NativeCopyButton text={text} />
+      <NativeCopyButton id="pending" text={text} />
       {edit ? (
         <Pressable
           testID="companion-native-edit"

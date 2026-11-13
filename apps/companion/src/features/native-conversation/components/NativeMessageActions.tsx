@@ -8,16 +8,19 @@ import { useCopyText } from '../use-copy-text';
 
 /** Copies one message's exact text; shows Copied, or Copy failed, after the copy. */
 export function NativeCopyButton({
+  id,
   text,
   action = 'Copy',
   testID = 'companion-native-copy',
 }: {
+  /** The message and part copied; feedback belongs to it, not to whatever row shows it next. */
+  id: string;
   text: string;
   /** The label before a copy: what gets copied. */
   action?: string;
   testID?: string;
 }) {
-  const { copied, copy } = useCopyText(text);
+  const { copied, copy } = useCopyText(id, text);
   return (
     <Pressable
       testID={testID}
