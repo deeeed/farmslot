@@ -27,6 +27,7 @@ import {
 import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { isGitHubAncestor } from '../external/github.js';
+import { reviewChainWithMetrics } from '../review/chain-metadata.js';
 import { runReviewRoundBudget } from '../review/review-round-budget.js';
 import { assertEvidenceAttestationReceipt } from '../run-completion/evidence-attestation.js';
 import {
@@ -305,30 +306,34 @@ function priorReviewChain(
   subject: CurrentReviewSubject,
   payload: RunReviewResult | null,
   artifactRefs: EvidenceManifestEntry[],
+  allRuns: readonly Run[],
 ): ReviewChainEntry[] {
   const existing = reviewChainForRun(prior);
-  if (existing.length > 0) return existing;
-  return [
-    {
-      chainId: prior.id,
-      generation: 1,
-      runId: prior.id,
-      familyId: prior.familyId,
-      repository: subject.repository,
-      prNumber: subject.prNumber,
-      ...(payload?.reviewSnapshot?.baseSha ? { baseSha: payload.reviewSnapshot.baseSha } : {}),
-      ...(payload?.reviewSnapshot?.headSha ? { headSha: payload.reviewSnapshot.headSha } : {}),
-      mode: resolveReviewMode({ run: prior }),
-      validationDepth: prior.reviewValidationDepth ?? 'static-code',
-      verdict: payload?.recommendation?.trim() || 'pending',
-      unresolvedCount: payload ? payload.lineComments.length : null,
-      artifactRefs,
-      runner: prior.metrics.runner ?? null,
-      model: prior.metrics.actualModel ?? prior.metrics.model ?? null,
-      createdAt: prior.createdAt,
-      ...(prior.completedAt ? { completedAt: prior.completedAt } : {}),
-    },
-  ];
+  if (existing.length > 0) return reviewChainWithMetrics(existing, [...allRuns, prior]);
+  return reviewChainWithMetrics(
+    [
+      {
+        chainId: prior.id,
+        generation: 1,
+        runId: prior.id,
+        familyId: prior.familyId,
+        repository: subject.repository,
+        prNumber: subject.prNumber,
+        ...(payload?.reviewSnapshot?.baseSha ? { baseSha: payload.reviewSnapshot.baseSha } : {}),
+        ...(payload?.reviewSnapshot?.headSha ? { headSha: payload.reviewSnapshot.headSha } : {}),
+        mode: resolveReviewMode({ run: prior }),
+        validationDepth: prior.reviewValidationDepth ?? 'static-code',
+        verdict: payload?.recommendation?.trim() || 'pending',
+        unresolvedCount: payload ? payload.lineComments.length : null,
+        artifactRefs,
+        runner: prior.metrics.runner ?? null,
+        model: prior.metrics.actualModel ?? prior.metrics.model ?? null,
+        createdAt: prior.createdAt,
+        ...(prior.completedAt ? { completedAt: prior.completedAt } : {}),
+      },
+    ],
+    [...allRuns, prior],
+  );
 }
 
 export function buildRepeatReviewContext(
@@ -394,7 +399,7 @@ export function buildRepeatReviewContext(
       priorRunId: prior.id,
       reviewId: priorReviewId,
     },
-    priorGenerations: priorReviewChain(prior, subject, payload, artifactRefs),
+    priorGenerations: priorReviewChain(prior, subject, payload, artifactRefs, allRuns),
   };
 }
 

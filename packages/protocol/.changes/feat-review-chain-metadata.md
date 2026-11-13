@@ -1,0 +1,1 @@
+- Carry recorded duration and canonical session cost into review-chain summaries, including archived generations.
