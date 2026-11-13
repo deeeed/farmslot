@@ -1,4 +1,9 @@
-import { primaryRoleForFlow, type Run, type RunnerSessionUsage } from '@farmslot/protocol';
+import {
+  type GateCostSummary,
+  primaryRoleForFlow,
+  type Run,
+  type RunnerSessionUsage,
+} from '@farmslot/protocol';
 
 import {
   registerContextSessionUsage,
@@ -157,4 +162,28 @@ export function sessionUsageContributions(runs: readonly Run[]): Map<string, Run
     result.set(run.id, contributions);
   }
   return result;
+}
+
+export function sessionUsageNumber(value: number | null | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+export function sessionCosts(
+  rows: readonly GateCostSummary[],
+  inventory: readonly GateCostSummary[] = rows,
+): GateCostSummary {
+  const complete =
+    inventory.length > 0 &&
+    inventory.every(
+      (row) => typeof row.costUsd === 'number' && Number.isFinite(row.costUsd) && row.costUsd >= 0,
+    );
+  return complete
+    ? { costUsd: rows.reduce((sum, row) => sum + sessionUsageNumber(row.costUsd), 0) }
+    : {
+        costUsd: null,
+        costReason:
+          inventory.length && inventory.every((row) => row.costReason === 'local, unpriced')
+            ? 'local, unpriced'
+            : 'Includes unpriced or uncaptured sessions',
+      };
 }

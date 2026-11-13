@@ -189,9 +189,35 @@ export const runDetailStyles = css`
     display: grid;
     font-size: 11px;
     gap: ${unsafeCSS(spacing.sm)};
-    grid-template-columns: 34px minmax(120px, 0.8fr) minmax(150px, 1fr) minmax(150px, 1fr) auto;
+    grid-template-columns:
+      34px minmax(120px, 0.8fr) minmax(180px, 1.2fr) minmax(130px, 1fr) minmax(140px, 1fr)
+      auto;
     padding: 5px 6px;
     text-decoration: none;
+  }
+  .review-chain-execution {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .review-chain-metrics {
+    color: ${unsafeCSS(colors.textMuted)};
+  }
+  @media (max-width: 900px) {
+    .review-chain-row {
+      grid-template-columns: 34px minmax(0, 1fr);
+    }
+    .review-chain-row > span:not(.review-chain-generation) {
+      grid-column: 2;
+    }
+    .review-chain-generation {
+      grid-row: 1 / span 5;
+      align-self: start;
+    }
+    .review-chain-session {
+      justify-self: start;
+    }
   }
   .review-chain-row:hover {
     background: ${unsafeCSS(colors.bgCardHover)};

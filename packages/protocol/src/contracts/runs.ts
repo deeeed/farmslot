@@ -560,8 +560,15 @@ export interface ReviewSessionTrace {
   fallback?: ReviewSessionFallback;
 }
 
+/** Recorded generation display values, projected by the gateway from retained review records. */
+export interface ReviewChainMetrics {
+  durationMs?: number | null;
+  costUsd?: number | null;
+  costReason?: string;
+}
+
 /** Frozen summary for one run in a repeated-PR review chain. */
-export interface ReviewChainEntry {
+export interface ReviewChainEntry extends ReviewChainMetrics {
   chainId: string;
   generation: number;
   runId: string;
@@ -605,6 +612,8 @@ export interface RepeatReviewContext {
   session?: ReviewSessionTrace;
   /** Completed predecessors, oldest first. The current run is derived from this Run record. */
   priorGenerations?: ReviewChainEntry[];
+  /** Current generation accounting, carried with the run read rather than derived in clients. */
+  currentMetrics?: ReviewChainMetrics;
 }
 
 export type ReviewRunnerId = string;

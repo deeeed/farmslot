@@ -1,6 +1,13 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomUUID } from 'node:crypto';
-import { constants, createWriteStream, existsSync, readFileSync, type Stats } from 'node:fs';
+import {
+  constants,
+  createWriteStream,
+  existsSync,
+  readFileSync,
+  type Stats,
+  statSync,
+} from 'node:fs';
 import {
   chmod,
   copyFile,
@@ -84,21 +91,41 @@ function absoluteStoreRoot(root: string): string {
   return path.resolve(expanded);
 }
 
+interface CachedRetentionDocument {
+  stamp: string;
+  trusted: boolean;
+  document: Record<string, unknown>;
+}
+
+const retentionDocuments = new Map<string, CachedRetentionDocument>();
+
 function retentionDocument(home: string): Record<string, unknown> {
-  let raw: string;
+  const file = path.join(
+    resolveFarmPaths({ home, role: 'node' }).config,
+    'run-bundle-retention.json',
+  );
   try {
-    raw = readFileSync(
-      path.join(resolveFarmPaths({ home, role: 'node' }).config, 'run-bundle-retention.json'),
-      'utf8',
-    );
+    const now = Date.now();
+    const stamp = statsStamp(statSync(file), now);
+    const cached = retentionDocuments.get(file);
+    if (cached?.trusted && cached.stamp === stamp.key) return cached.document;
+    const value: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    if (!isRecord(value) || !isRecord(value.runBundleRetention))
+      throw new Error('Invalid runBundleRetention settings.');
+    retentionDocuments.set(file, {
+      stamp: stamp.key,
+      // A recent stamp can hide a second write on a coarse-timestamp filesystem.
+      trusted: !stamp.racy,
+      document: value,
+    });
+    return value;
   } catch (error) {
-    if (hasCode(error, 'ENOENT')) return { runBundleRetention: {} };
+    if (hasCode(error, 'ENOENT')) {
+      retentionDocuments.delete(file);
+      return { runBundleRetention: {} };
+    }
     throw error;
   }
-  const value: unknown = JSON.parse(raw);
-  if (!isRecord(value) || !isRecord(value.runBundleRetention))
-    throw new Error('Invalid runBundleRetention settings.');
-  return value;
 }
 
 /** Configuration stays in the owning home even when the heavy store lives on another volume. */
@@ -1857,6 +1884,13 @@ const runInventoryCache = new Map<
   }
 >();
 
+function statsStamp(stats: Stats, now: number): { key: string; racy: boolean } {
+  return {
+    key: `${stats.ino}:${stats.mtimeMs}:${stats.ctimeMs}:${stats.size}`,
+    racy: isRacyStamp(Math.max(stats.mtimeMs, stats.ctimeMs), now),
+  };
+}
+
 /** A file's stat stamp, and whether it changed too recently for the stamp to be trusted. */
 async function fileStamp(file: string, now: number): Promise<{ key: string; racy: boolean }> {
   let stats: Stats;
@@ -1866,11 +1900,7 @@ async function fileStamp(file: string, now: number): Promise<{ key: string; racy
     if (hasCode(error, 'ENOENT')) return { key: 'missing', racy: false };
     throw error;
   }
-  const changedAtMs = Math.max(stats.mtimeMs, stats.ctimeMs);
-  return {
-    key: `${stats.ino}:${stats.mtimeMs}:${stats.ctimeMs}:${stats.size}`,
-    racy: isRacyStamp(changedAtMs, now),
-  };
+  return statsStamp(stats, now);
 }
 
 async function runInventoryEntry(file: string, journal: string): Promise<RunInventoryEntry | null> {

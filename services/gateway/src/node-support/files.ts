@@ -20,12 +20,14 @@ export interface NodeSupportFile {
 export async function collectSupportFiles(
   sourcePath: string,
   relativeDest: string,
+  /** Receives every directory walked, so a caller can tell when the tree changed. */
+  directories?: string[],
 ): Promise<NodeSupportFile[]> {
   if ((await lstat(sourcePath)).isSymbolicLink()) {
     throw new Error(`Node support refuses symlinked path ${sourcePath}`);
   }
   const rootRealPath = await realpath(sourcePath);
-  return collectEntry(sourcePath, relativeDest, rootRealPath, []);
+  return collectEntry(sourcePath, relativeDest, rootRealPath, [], directories);
 }
 
 async function collectEntry(
@@ -34,6 +36,7 @@ async function collectEntry(
   rootRealPath: string,
   /** Real paths of the directories above sourcePath, outermost first. */
   ancestors: string[],
+  directories?: string[],
 ): Promise<NodeSupportFile[]> {
   let st = await lstat(sourcePath);
   let realPath = ancestors.length
@@ -60,6 +63,7 @@ async function collectEntry(
     if (ancestors.includes(realPath)) {
       throw new Error(`Node support refuses symlink ${sourcePath}: it loops back to ${realPath}`);
     }
+    directories?.push(sourcePath);
     const files: NodeSupportFile[] = [];
     for (const entry of await readdir(sourcePath, { withFileTypes: true })) {
       if (entry.name === '.git' || entry.name === 'node_modules') continue;
@@ -69,6 +73,7 @@ async function collectEntry(
           path.join(relativeDest, entry.name),
           rootRealPath,
           [...ancestors, realPath],
+          directories,
         )),
       );
     }
