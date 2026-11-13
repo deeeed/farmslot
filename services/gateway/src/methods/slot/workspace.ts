@@ -24,6 +24,7 @@ import {
 import { readSlotProbe } from '../../core/read-probes.js';
 import { shellQuote } from '../../core/tmux.js';
 import { setWorkspaceOverlay } from '../../fleet/state.js';
+import { readSlotCommand } from '../../host-services/read-command.js';
 import { GitHubHttpError } from '../../integrations/github-errors.js';
 import { slotResourceChanges } from '../../resources/slot-run-bindings.js';
 import {
@@ -242,13 +243,13 @@ export async function inspectSlotWorkspace(
     // Only inspect committed ancestry already present locally; never fetch on a status read.
     const base = options.fetch ? remote.sha : probe.localDefaultSha;
     if (base) {
-      const contains = await execOnSlot(
+      const contains = await readSlotCommand(
         vars,
         withFarmGitConfig(`${git} merge-base --is-ancestor HEAD ${shellQuote(base)}`),
         { timeout: timeoutMs },
       );
       if (contains.exitCode === 0) return { ...work, publication: 'merged' };
-      const cherry = await execOnSlot(
+      const cherry = await readSlotCommand(
         vars,
         withFarmGitConfig(`${git} cherry ${shellQuote(base)} HEAD`),
         {
@@ -262,7 +263,7 @@ export async function inspectSlotWorkspace(
             .filter((line) => line.startsWith('- '))
             .map((line) => line.slice(2).trim()),
         );
-        const commits = await execOnSlot(
+        const commits = await readSlotCommand(
           vars,
           withFarmGitConfig(`${git} rev-list ${shellQuote(`${base}..HEAD`)}`),
           {
@@ -304,7 +305,7 @@ export async function inspectSlotWorkspace(
           if (fetched.exitCode !== 0)
             return { ...work, error: 'Publication ref could not be fetched' };
         }
-        const contains = await execOnSlot(
+        const contains = await readSlotCommand(
           vars,
           withFarmGitConfig(`${git} merge-base --is-ancestor HEAD ${shellQuote(sha)}`),
           { timeout: timeoutMs },
@@ -379,6 +380,7 @@ export async function inspectSlotWorkspace(
 
 interface WorkspaceInspection {
   key: string;
+  bindingKey: string;
   pending: boolean;
   until: number;
   promise: Promise<SlotWorkspace>;
@@ -396,14 +398,15 @@ export function invalidateSlotWorkspaceObservations(slotId: string): void {
   slotResourceChanges.overlayChanged(slotId);
 }
 
-function workspaceObservationKey(slot: SlotStatus): string {
+function workspaceObservationKey(
+  slot: SlotStatus,
+  kind: 'observation' | 'binding' = 'observation',
+): string {
   return JSON.stringify([
     slot.slot,
     slot.machine,
     slot.project,
     slot.repo,
-    slot.headSha,
-    slot.branch,
     slot.currentRunId,
     slot.slotEpoch,
     slot.cleanupRunId,
@@ -412,6 +415,7 @@ function workspaceObservationKey(slot: SlotStatus): string {
     slot.agent,
     slot.phase,
     slot.heldReason,
+    ...(kind === 'observation' ? [slot.headSha, slot.branch] : []),
   ]);
 }
 
@@ -458,6 +462,7 @@ export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promi
       }
       if (!cached || (!cached.pending && (cached.key !== key || cached.until < Date.now()))) {
         const previous = cached;
+        const bindingKey = workspaceObservationKey(slot, 'binding');
         const inspect = () =>
           inspectSlotWorkspace(slot.slot, {
             network: slot.lifecycle !== 'busy' && slot.agent !== 'working',
@@ -477,7 +482,7 @@ export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promi
           }
           const retained = previous?.workspace;
           if (
-            previous?.key === key &&
+            previous?.bindingKey === bindingKey &&
             previous.until !== 0 &&
             entry.version !== undefined &&
             previous.version === entry.version &&
@@ -506,6 +511,7 @@ export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promi
         });
         const entry: WorkspaceInspection = {
           key,
+          bindingKey,
           pending: true,
           until: Date.now() + 15_000,
           ...(previous?.key === key && previous.until !== 0

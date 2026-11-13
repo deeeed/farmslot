@@ -90,7 +90,30 @@ test('the forked child probes a local machine and walks decisions', async () => 
     decisions.map((file) => file.decision.id),
     ['smoke-decision'],
   );
+  const output = await background.request(
+    'commands.read',
+    { command: 'printf background-read', cwd: checkout, timeout: 5000 },
+    { deadlineMs: 10000 },
+  );
+  assert.equal(output.stdout, 'background-read');
+  assert.equal(output.exitCode, 0);
   const status = background.status();
+  assert.equal(status.exec['commands.read']?.shell?.calls, 1);
+  const abort = new AbortController();
+  const marker = path.join(root, 'cancel-read-started');
+  const heldRead = background.request(
+    'commands.read',
+    { command: `printf started > '${marker}'; sleep 60`, cwd: checkout, timeout: 5000 },
+    { deadlineMs: 10000, signal: abort.signal },
+  );
+  const until = Date.now() + 2000;
+  while (!(await import('node:fs')).existsSync(marker)) {
+    assert.ok(Date.now() < until, 'child read command did not start');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  abort.abort();
+  const cancelled = await heldRead;
+  assert.equal(cancelled.exitCode, 130, 'abort reaches the child command closeout');
   assert.ok(status.exec['fleet.probeMachine']?.shell?.calls, 'probe commands are tallied');
   assert.equal(status.exec['decisions.scan'], undefined, 'the walk runs no commands');
   console.log(`[smoke] child rss after a refresh: ${status.rssBytes} bytes`);
