@@ -335,3 +335,26 @@ Required testing guidance could be absent during development while review requir
 ### Public surface
 
 Add pack skill requirements and extend ADR-049 provenance, consumed by shared prepare and dev/review materialization. Shared data types belong to `@farmslot/protocol`; selection stays in `@farmslot/agent-runtime`, and harnesses inherit it. No new selector service, CLI or RPC. Specify additive schema/version changes before implementation.
+
+## Amendment 4: external catalogs in node support, 2026-11-13
+
+**Status:** Accepted. Lead approved the plan on 2026-11-13; both independent contract reviews passed before implementation.
+**Specification:** [Hosted task initialization](../reference/project-recipe-contract.md#hosted-task-initialization).
+
+### Decision
+
+Remote hosted initialization selects declared external template catalogs from the
+gateway's content-hashed node-support bundle. The bundle carries catalog bytes
+and provenance; task data cannot supply catalog authority. Retain configured
+source, applicability and selected SHA checks. Initialized tasks keep their receipts.
+
+### Rationale and consequences
+
+A separately updated node checkout must not invalidate every new task selected
+by the gateway. No dispatch-time Git mutation or weaker digest check is needed.
+
+### Public surface
+
+Add catalog snapshot descriptors to `@farmslot/agent-runtime`, consumed by the
+gateway bundle builder and shared source resolver. No CLI or RPC change;
+existing source-lock bindings and standalone catalog resolution remain intact.

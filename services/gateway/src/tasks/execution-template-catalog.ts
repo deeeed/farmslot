@@ -12,6 +12,7 @@ import {
   listExecutionTemplates,
   projectWorkerTemplateSource,
   readExecutionTemplateSnapshot,
+  type ResolvedExecutionTemplateSources,
   type SelectedExecutionTemplate,
   selectExecutionTemplate,
 } from '@farmslot/agent-runtime';
@@ -65,21 +66,25 @@ function projectPackRoot(projectVars: ProjectVars): string {
   return path.dirname(projectVars.projectConfig);
 }
 
-async function configuredCatalog(projectVars: ProjectVars): Promise<{
-  sources: ExecutionTemplateSource[];
-  unavailable: ExecutionTemplateOptions['unavailableSources'];
-}> {
+/** Preview, selection and node support resolve the same configured source bindings. */
+export async function configuredExecutionTemplateSources(
+  projectVars: ProjectVars,
+): Promise<ResolvedExecutionTemplateSources> {
   const root = projectPackRoot(projectVars);
   const sources = currentProjectSources() ?? projectVars.sourceContext;
-  const configured = await resolveConfiguredExecutionTemplateSources(
-    projectVars.projectJson.execution_templates,
-    {
-      projectPackRoot: root,
-      resolveSourceBinding: sources
-        ? (selection) => resolveSourceBinding(selection, sources.materialization)
-        : undefined,
-    },
-  );
+  return resolveConfiguredExecutionTemplateSources(projectVars.projectJson.execution_templates, {
+    projectPackRoot: root,
+    resolveSourceBinding: sources
+      ? (selection) => resolveSourceBinding(selection, sources.materialization)
+      : undefined,
+  });
+}
+
+async function configuredCatalog(
+  projectVars: ProjectVars,
+): Promise<ResolvedExecutionTemplateSources> {
+  const root = projectPackRoot(projectVars);
+  const configured = await configuredExecutionTemplateSources(projectVars);
   return {
     sources: [
       projectWorkerTemplateSource(

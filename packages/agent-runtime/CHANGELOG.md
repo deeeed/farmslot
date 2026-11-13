@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.46.0 - 2026-11-13
+
+- Keep remote task initialization on the gateway-shipped external template catalog while preserving source identity and digest checks.
+
 ## 0.45.13 - 2026-11-13
 
 - Update shared adapter/runtime dependencies for unchanged-call plan reuse.
