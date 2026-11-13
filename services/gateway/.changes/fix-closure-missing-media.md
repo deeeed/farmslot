@@ -1,1 +1,0 @@
-- Run completion keeps evidence screenshots whose name mentions a token, secret or credential, so publication closure no longer fails with a missing artifact file.

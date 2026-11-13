@@ -6,6 +6,22 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.36.2 - 2026-11-13
+
+- Expand checklist step titles to read their instructions, collapsed by default.
+- Show implementation and review costs, shared-session labels, and reasons for incomplete family pricing.
+- Park local commits and dirty work before slot resets, with scoped list/restore and a bounded fleet summary.
+- Show reviewer, model, recorded duration and generation cost in review-chain rows, with a wrapping layout on narrow screens.
+- Show retained review machine, slot and checkout placement in run details and reviewer sessions.
+- The acceptance panel renders proof steps from the shared run evidence view-model, the same projection `farmslot recipe view` reads.
+- Launch default eval candidates with the configured project template instead of a fixed worker path.
+- Offer a fresh review chain in PR review setup through the shared picker.
+- Show whether the visible view is synced, syncing, or using timestamped cached data while persistence recovers.
+- Prepare, Force Reset and Force Refresh in the slot actions panel are disabled while the fleet is stale, like the panel's other actions.
+- The store notice counts a fleet or PR list catch-up ("Syncing 20 of 107") and updates as each page lands.
+- Streaming native chat stays smooth in long conversations: a delta renders and sanitizes only the message block it extends, and unchanged messages are not drawn again.
+- Lists read the smaller `run.list` rows. The runs list evidence chips and the eval catalog preview use the gateway's evidence summary, or compute it from a row cached before the change; the catalog shows the same numbers as before. Run detail paints its header region (source status, ref, status, tickets, tags, actions, title) from the list row while `run.get` loads, in the same layout as the loaded page with actions disabled until the detail is ready, and the fleet map's expanded slot shows the row's mini pipeline until the full pipeline's detail arrives.
+
 ## 0.36.1 - 2026-11-08
 
 - Map proof-eval candidates to QA execution and preserve their frozen QA selection in queued cells.

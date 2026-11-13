@@ -1,4 +1,0 @@
-- Entity sync (ADR-071 Amendment 4): `fleet.status` and `pr.list` gain the `{ versions: true }` and `{ ids }` read shapes, `resource.changed` entries carry `changedEntity` and `membershipRevision`, and the gateway advertises `resourceChanges.entitySync`. The shared client cache holds slots, machines and PRs as entities, applies pushed ones without a read, verifies each collection after a reconnect and keeps the rows offline.
-- `ResourceSyncState` gains `catch-up` with `done` and `total`.
-- `computeSummary` and `reattachHostLoad` are exported for clients.
-- `HelloPayload` is empty: `hello` no longer carries the fleet.

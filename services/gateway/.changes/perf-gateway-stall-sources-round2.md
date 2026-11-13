@@ -1,5 +1,0 @@
-- Keep the gateway responsive under load:
-  - verify and hash sign-in secrets off the event loop;
-  - skip the full PR monitor store round trip when a repair plan changes nothing;
-  - read only the root process when a native session starts;
-  - check each slot's health with one process instead of one per probe.

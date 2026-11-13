@@ -6,6 +6,50 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.83.2 - 2026-11-13
+
+- Carry multiline checklist step detail in progress and shared display state.
+- Add `clip.push` and `clip.list` with the farm `clipboard` resource key, so clients can show the last 20 clips agents sent the farm.
+- Expose implementation, review, and family dollar costs with explicit unpriced reasons in gate summaries.
+- Add `textLinkParts`, which splits message text into plain runs and http(s) links, and `nativeMessageCopyLabel` for message copy actions.
+- Park local commits and dirty work before slot resets, with scoped list/restore and a bounded fleet summary.
+- Show localsparks models in node model pickers.
+- Carry recorded duration and canonical session cost into review-chain summaries, including archived generations.
+- Retain optional worker launch placement for historical review display.
+- Record the separate contained-browser CDP endpoint for blind trials.
+- Re-arm automatic storage recovery only when the previously failed query or collection write succeeds, so later transient failures recover without looping on partially unavailable storage.
+- Honor trial-level `review:false` across retries and resumes, reject contradictory reviewer overrides, and reject unknown `eval.trial.start` parameters.
+- Retain eval trial reviewer overrides, reject conflicting retries, and finalize disabled judge reviews as unjudged without counting success or failure.
+- Add an explicit fresh-chain choice for new PR review requests while preserving existing continuation behavior.
+- Add TCP pressure samples and a shared macOS/Linux collector for node and local gateway metrics.
+- Share CLI bin directories between deployment refresh and path migration so installed entrypoints keep working.
+- Distinguish per-run session usage deltas from whole-session receipts and retain their task lease identities.
+- Recover persistent caches after I/O failures, reverify retained runs with the gateway, and expose sync status for observed views.
+- Label result acceptance as "Accept and close without publishing" so its terminal effect is explicit.
+- Record exclusive reviewer workspace transfers and explicit delta-review fallback when session continuation is unsupported.
+- The client cache applies the stale-fleet rule (`staleFleet`) to the entity-sync fleet when the versions reply says the snapshot is stale. `FLEET_STALE_MS_DEFAULT` exports the gateway's default threshold, now 10 minutes, so scripts and tests read one value.
+- Allow dispatch replay to continue a retained static reviewer while preserving workspace identity and refusing reviewer replacement.
+- Show pending review publication as Waiting for posting decision across shared run views.
+- Preserve literal replacement text in template helpers and checklist renumbering.
+- Entity sync (ADR-071 Amendment 4): `fleet.status` and `pr.list` gain the `{ versions: true }` and `{ ids }` read shapes, `resource.changed` entries carry `changedEntity` and `membershipRevision`, and the gateway advertises `resourceChanges.entitySync`. The shared client cache holds slots, machines and PRs as entities, applies pushed ones without a read, verifies each collection after a reconnect and keeps the rows offline.
+- `ResourceSyncState` gains `catch-up` with `done` and `total`.
+- `computeSummary` and `reattachHostLoad` are exported for clients.
+- `HelloPayload` is empty: `hello` no longer carries the fleet.
+- `currentFarmPaths` reads the instance marker at most once a second per home instead of on every call; `forgetFarmInstanceMarkers` makes the next resolution read it again after this process writes one.
+- Cache parsed pool files and re-read only a file whose stat changed, so slot lookups and node-link policy checks stop re-reading every pool on each call. A file changed less than two seconds before it was read is read again until it settles, since coarse filesystem timestamps can hide a quick second write.
+- Add `deepFreeze` and `isRacyStamp` for stat-stamp caches.
+- Cache resolved farm paths by the environment variables they read and the instance marker's file stamp, instead of scanning the whole environment on every call.
+- Add `fs.readText` and `fs.isFile` node file reads (`NodeFsReadTextParams`, `NODE_FS_READ_TEXT_MAX_BYTES`) and the `textReads` node observation capability.
+- Report gateway HTTP request counts, status classes and duration alongside managed work in performance diagnostics.
+- Keep unchanged native conversation entries and rows as the same objects across streamed updates, so clients re-render only what changed.
+- Export `validatePackEntries`, the portability policy over a pack's owned entries, so a caller that lists the entries can check them without a second scan.
+- Check a project pack's portability without blocking the gateway on file reads: the asynchronous scan reads paths, links and file contents and removes its temporary repository with `fs/promises`.
+- Add `validatePackPortabilityAsync` and `listPackOwnedEntriesAsync`, which run the pack ownership scan's Git calls through a caller-supplied runner; the synchronous functions are unchanged.
+- Remove the `prRules.updated` event name: the gateway no longer sends it. Read the rules with `prRules.list` when the `pr-automation` resource changes.
+- Add `RunListRow`, the honest type of a `run.list` row, and `runListRow(run)`, the row the gateway serves: the run without its heavy keys. It drops `resourcePosture`, `sessionUsage`, `visualJudgmentReceipts` and `templateProvenance`, leaves the output file manifest out as `trimRunForList` does, and keeps the step outputs list surfaces read (through `listStepOutputs`, each such key in the bounded shape its view reads, CI check names and fix labels capped). Any other step-output value of at most `RUN_LIST_STEP_OUTPUT_VALUE_LIMIT` (512 B) is served as stored; a larger one keeps only its videos, before/after visuals and diff files, each where the step held it, an entry as its path, purpose and size. On every stored run measured, a client build older than the served summary keeps its evidence chips, Diff file and diff stat and never counts more than it did; ADR-071 Amendment 3 lists the known differences for such a build. Decisions are the ones `trimRunForList` serves, without their selection, attestation and the heavy keys of their payload; engine state, agent contexts, metrics, the ticket, the review result and the review subject leave out only their heavy keys. Every small field stays. A row says what it left out: `payloadTrimmed` names payload keys, `outputsTrimmed: true` marks a step, `detailTrimmed: true` marks a row that left out any other heavy key, and `runHasTrimmedDetail` reads all of them. Row versions are still `sha256(trimRunForList(run))`.
+- `RunEvidenceSummary` also carries `diffStat`, `diffArtifactPath` (the file `diffArtifactCandidate`, now shared from protocol, picks for a run's Diff action) and `catalogCounts`, the eval catalog's counts of a run's step-output artifacts (`runCatalogCounts`), kept apart from the list chips' counts. `summarizeRunEvidence` always computes from what it is given; `runListEvidenceSummary(row)` returns a row's served summary, or computes one from a row cached before slim rows.
+- The client cache never derives a run detail version by hashing a slim row: until the version list is held, a slim row does not mark its stored detail as changed, so a cold start no longer rereads `run.get` for every listed run. Full rows from an older gateway keep the derived version.
+
 ## 0.83.1 - 2026-11-09
 
 - Match raw ticket criteria to task-init definitions without changing stored criteria or derived proof identity.

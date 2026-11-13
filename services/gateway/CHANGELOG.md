@@ -4,9 +4,138 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Surface terminal Pi request aborts in static reviews and worker decisions; add opt-in streaming idle deadlines while preserving total deadlines by default.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.39.2 - 2026-11-13
+
+- Surface terminal Pi request aborts in static reviews and worker decisions; add opt-in streaming idle deadlines while preserving total deadlines by default.
+- `run.adoptPublishedPr` adopts a same-repository PR on any branch when its change, between the SHAs read with the PR facts, matches byte for byte the gate's current package as certified by the gate's review policy. A mismatch refuses with the differing files and the attested command; an attested head stays the override. The receipt and the resolved gate record the match type, both branch names, the compared range and the reason; evidence refresh and chained CI work follow the adopted PR's branch.
+- Include each checklist step’s instructions in task progress.
+- Keep the farm's last 20 clips in memory, readable and pushable by admins, each with its source principal and session; text is redacted like logs, and admin clients are notified when one arrives.
+- Resolve instance storage and execution paths at call time, export migrated instance shell roots without changing legacy command environments, and protect pool, runs and projects in blind trials while retaining legacy local checkout helpers and refusing slots claimed by another instance.
+- Report implementation and review costs without charging shared sessions twice; preserve incomplete family pricing and use the owning worker's pricing settings, including slotless native reviews with frozen domain recipe-library bindings.
+- Park local commits and dirty work before slot resets, with scoped list/restore and a bounded fleet summary.
+- Configure Pi router provider names while preserving existing worker aliases and default catalogs; keep native pickers and placement checks faithful to the native registry.
+- Carry recorded duration and canonical session cost into review-chain summaries, including archived generations.
+- Record native worker launch machine and canonical checkout so review placement survives slot reuse.
+- A scripted command run whose project command declares `runtime: "self-managed"` no longer boots the slot's dev-server, browser or device before the command. Other runs boot them as before.
+- A multi-PR backlog item (such as a standing nightly item) starts again after a failed run: `backlog.enqueue` archives that item's own failed runs first (history kept, slot released through the archive path) and the next run records their ids. A live run or another item's run on the ticket is never archived. Replaying a run of a multi-PR item other than its current one is refused: start a new run from the item.
+- Match raw ticket criteria to task-init definitions without changing stored criteria or derived proof identity.
+- Restore missing retained task files before slot activation replays prepare on the original checkout; refuse a different pinned checkout before rebinding, preserve existing worker documents, and roll back the slot binding if staging fails.
+- Release a terminal static review's source checkout through guarded cleanup before archiving, preserving its result, task artifacts and conversation files.
+- Keep archived review records available to WARM lineage lookup without restoring finished runs or relaxing session checks.
+- Keep initialized submodules working during blind trials, including nested submodules and linked worktrees, without exposing reference-only history. Refuse dirty modules regardless of ignore settings, preserve candidate module commits on restore and retry, including legacy journals for cached deinitialized modules, and retain original module metadata apart from added objects and candidate refs.
+- Blocked blind workers from dedicated gateway and configured debug-browser ports, browser session stores, SSH and control-plane credentials while preserving local task markers, shared provider HTTP(S) ports and contained recipe browsers. Boundary diagnostics identify shared gateway ports and slot resource collisions. Blind trials allocate a separate contained browser CDP endpoint for tasks, launchers and recipes.
+- Block blind workers from controlling existing or future tmux servers through Unix sockets while preserving pane identity and enabling browser proofs inside the seatbelt.
+- Give blind eval workers and their frozen changed-file checks the recorded replay base, including session reloads, without requiring remote refs.
+- Build blind worker environments from an explicit allowlist on fresh launches and retained reloads, preserving task tooling, selected Pi provider endpoints, configuration and authentication, and keep recipe CDP routing on the trial browser.
+- Isolate blind worker temporary files and Mobile CDP broker sockets per trial, restrict Unix connections to a fixed socket-only broker directory with escaped physical paths to prevent external socket imports through lookalike capsule directories, and provide process listing inside the worker sandbox.
+- Offer a result decision when review stops blocked after a verified worker result, keeping its findings and operator actions instead of leaving an idle blocked run.
+- Keep capture errors and missing-media declarations after a transfer timeout so review can restore required task artifacts without failing on unavailable optional media.
+- Load Pi model catalog provider extensions from the verified node support bundle so regular listing slots discover configured providers without a prior worker install. Keep shell-inherited Ollama endpoints optional unless Farmslot explicitly opts in. Report missing bundled extensions as failures and preserve native-only listing on nodes without support.
+- List per-node model catalogs through the machine's regular pool slot when available, and finish support-bundle activation before starting the listing's timeout.
+- Keep empty prompt suggestions out of the native delivery draft guard and disable suggestions in farm-scoped session settings, preserving typed drafts and native acceptance checks.
+- Run completion keeps evidence screenshots whose name mentions a token, secret or credential, so publication closure no longer fails with a missing artifact file.
+- Start comparison review variants in fresh chains by default.
+- Preserve continuation when a primary review lineage is explicitly requested.
+- Run hooks from selected immutable support when a node uses a configured workspace root, including prepare and staged worker launches.
+- Resolve eval candidate templates through the project's catalog defaults and nested paths, reject ambiguous names, and reject saved strategies whose template digest no longer matches.
+- Honor trial-level `review:false` across retries and resumes, reject contradictory reviewer overrides, and permanently cancel queued cells with unknown `eval.trial.start` parameters so later cells can dispatch.
+- Retain eval trial reviewer overrides, reject conflicting retries, and finalize disabled judge reviews as unjudged without counting success or failure.
+- Prevent farm-owned slot Git operations, including publication freshness, stacked diffs, review prechecks, prepare hooks, and blind trial isolation/restoration, from starting automatic maintenance that blocks preparation, while preserving ordinary worker Git settings.
+- Use declared farm support paths for dirty/recovery checks and guarded untracked-only release/recovery cleanup.
+- Start an independent PR review chain without carrying prior findings, artifacts or reviewer sessions when requested.
+- Stop unleased, proven slot-owned dev servers after 15 minutes without a proven active worker, restore deliberately stopped servers through configured boot hooks and verified health before worker continuation, and report TCP port pressure in fleet health and operator alerts. Explicit keep-warm and retained capability ownership remain protected.
+- Attribute resumed native session tokens and cost using node journal task boundaries, including retained archives after original transcripts are pruned, fail visibly when native boundaries are unavailable, preserve deltas through family and gate totals and eval receipt replay, and reconcile later whole-session readings.
+- List pi models with the slot's installed provider extension, preserve static models alongside discovered models for listings and workers, retry incomplete catalogs after discovery failures, retain the last good models, and confirm large configured-provider removals before publishing them. Native pickers use pi's registry without the worker extension. Slots without an installed extension retain legacy listings.
+- Retry failed per-node model listings with capped backoff after gateway restarts, so Pi and other node-command catalogs recover without opening a model picker.
+- Correct review summary counts when a later pass supersedes earlier findings on the current package head.
+- Stop Pi workers cleanly when their model cannot honor requested thinking, restore the terminal, and fail dispatch with the configuration error before accepting the task.
+- Read Pi compatible-provider token prices and LiteLLM thinking-level declarations from model metadata; keep unreported prices unknown and preserve requested supported effort.
+- Make the Pi completion tool close the final checklist row and refuse unfinished earlier rows before reporting success.
+- Fail static reviews with pi's structured request-timeout reason after retry exhaustion, keeping proven current input monitored before the first task mark using the runner's effective deadline policy.
+- Refuse silent Pi reasoning-effort changes before sending requests and declare image input for every worker model.
+- Declare image input for router models, so Pi workers on the Sparks DeepSeek endpoint can read screenshots instead of getting "Current model does not support images".
+- Accept router model reasoning metadata with a boolean `default_enabled` so Pi can load its provider catalog while still refusing non-reasoning router models.
+- Load verified provider support for Pi terminal reviews and confirm their task-scoped input receipts so router and LiteLLM reviews can start and accept report corrections in read-only workspaces.
+- Preserve pool-declared Pi reasoning support when static model definitions are composed at worker startup.
+- PR data prefetches Jira tickets the PR body links as browse URLs on the project Jira (`Fixes: …/browse/TAT-4355`), so they reach the task as linked tickets. Bare keys in prose stay ignored.
+- Preserve unpublished run branches through cleanup and archive, including inherited baselines. Fresh prepare of that retained branch refuses to overwrite its work.
+- Leave tmux server options untouched when PTY support is imported or an existing session is reused; apply tuning only after creating a session.
+- Present Retry Gate when publication preparation exceeds its storage and output-capture queue wait budget, retain settled review verdicts, and flag gates stuck beyond ten minutes in the fleet health feed without triggering recovery.
+- A refreshed publication package no longer reads as changed evidence when the run has a marker baseline receipt. The receipt's inventory entry records only its path, purpose, size and hash, so re-retaining the run no longer changes it.
+- Keep SSH Git connections alive through pre-push hooks and give publication and branch-maintenance pushes a configurable fifteen-minute hook budget with clear timeout errors.
+- Distinguish automatic queued slot placement from explicit caller pins in run audit output.
+- Retention no longer freezes the gateway while it deletes a run's task pins or review workspace: each is moved aside at once and removed without blocking other requests, and an interrupted removal is finished on the next pass.
+- Retention deletes recreatable task pins and run-owned review workspaces after the existing eligibility and ownership checks, records deletions in storage manifests, and reports deleted bytes separately from archived bytes. Other run storage and permanent run records keep their existing retention behavior.
+- Finish pending run archives at the start of retention passes so gateway restarts cannot strand staged storage.
+- Retry automatic slot selection when another run claims the reusable candidate during preview, preserving slot pins and the rival's ownership.
+- Pass current runner temporary-state settings when resuming terminal reviews with retained support bundles.
+- Re-review fixes to PR descriptions and worker reports instead of returning stale findings to the decision gate.
+- Pass the selected machine's pool environment to slotless terminal reviews so configured providers are available while frozen review support paths retain precedence.
+- Resolve review workspace pools by machine and project so separate project pools can share a review machine, while rejecting overlapping review capacity with the matching pool IDs.
+- Launch runners through private slot runtime scripts so large commands no longer exceed tmux's command size limit during dispatch or relaunch.
+- Move retained evidence to the run archive before capacity blocks new proof, and publish capacity and archive warnings to the board health feed.
+- Configure the retained store independently of the gateway home, pause capture on unavailable storage while runs continue, and migrate stores with a verified local operator command that retains the backup.
+- Preserve selected terminal reasoning effort across launch, resume and refinement, including pool templates without an effort placeholder.
+- Verify runner support and copied Pi observability against the gateway deployment before launch; refuse stale or missing bundles instead of using an unverified installer.
+- Continue retained reviewer conversations through the shared runner capability, preserving delta scope and workspace ownership.
+- An artifact-only scripted command run is judged by its command result (`artifacts/scripted-command-result.json`: exit 0, no timeout), not by the project's worker checklist and terminal gates. A green nightly no longer sits in `reconciling` holding its slot because a deterministic checklist step it never ran had no receipt.
+- The blind trial worker sandbox denies writes to the node's slot pool, including through links.
+- Stop detached diagnostic browsers with checkout-owned profiles after workers are verified quiescent, even outside the managed CDP port.
+- Exercise forced workspace recovery through the authenticated CLI with a cold observation cache and real Git, retaining workspace identity fences.
+- Stop and verify detached processes started by slot preflight, including groups whose leader exited, before releasing the slot. Preserve borrowed resources and newer prepare owners.
+- A fleet whose snapshot is past the freshness threshold or has no `checked_at` is now served stale, with no slot dispatchable, to the clients that read it through the shared cache and entity sync. They learn each change, including a status file that can no longer be read, without a reload. The default threshold is now 10 minutes (`FARMSLOT_FLEET_STALE_MS` still overrides it): a full refresh of a 108-slot, three-machine fleet measured 170-215 s, and the fleet monitor starts one at half the threshold, at startup too and while a slow violation scan runs. A fleet whose refresh completes in time never shows stale; one whose refresh takes longer than half the threshold still does. Every stale read joins the running health refresh.
+- Derive static review line comments from authoritative findings and keep output-contract failures recoverable in their original workspace and reviewer session.
+- Exclude idle retained reviews from admission capacity while reserving active native and terminal follow-ups, and fill static review result identity and digest fields in the gateway.
+- Release allocated checkouts after setup failures that never launched a reviewer, allowing archive and a new admission.
+- Keep static-review tasks focused on frozen inputs and enforced output contracts, leaving skill and subtask execution to the selected checklist.
+- Capture terminal static-review session usage and estimated cost, including failed reviews, through the shared receipt collector; recover exact workspace transcripts during offline backfill.
+- Node support retention keeps the bundles a failed, unarchived run named while it ran. That run can be replayed, and a replay used to find its pinned support bundle deleted by another launch on the same node. A failed run is frozen at those references and does not acquire later bundles on its slot. Archiving the run ends that retention.
+- Keep acceptance criterion IDs as plain text when Jira incorrectly links them as issue keys, preserving real ticket links in task documents.
+- Resume initialized tasks after template changes using retained requirements and a verified worker; preserve signals on refused admission and prevent stale outcomes on admitted cold, warm and nudge dispatch.
+- Preserve literal dollar patterns in review findings and generated task, prompt, and command templates.
+- Cancel a terminal repaint that is still pending when its viewer unsubscribes, switches terminals or disconnects, and stop keeping it once its window ends.
+- Stop rewriting the PR rule store when a transaction leaves it unchanged, and move the full records of withdrawn PR review intents untouched for a day to an append-only `.pr-rules.archive.jsonl` beside it, synced to disk before the store is replaced. The store keeps the intent with its title and author; only the details of rules that no longer apply move out.
+- Release finished slots when a slow resource shutdown completes and verifies within the cleanup grace period.
+- Keep native launch registration and template-source Git reads off the request loop and include those commands in managed execution metrics.
+- A retention pass no longer rewrites the manifest of every run archived earlier: finished archive entries are skipped, so resuming the archive costs no manifest writes and no longer blocks the gateway for seconds on large manifests.
+- Archiving, changing or deleting an archived run no longer makes the gateway re-read the whole run archive: the store updates that one record, and readers after a restart share a single scan.
+- `/api/run-artifact` and the other per-request, per-tick and per-event paths (file serving and fs writes, slot command execution, task progress, PR list, native routing and workspace reads, runner observation, resource polls, fleet watchers, review-workspace cleanup, live-recipe run reads) load their lazily imported modules once instead of calling `import()` on every request; a load that fails is retried on the next call. Under tsx each call re-ran the resolve hooks; in the operator profile that was 17.2 s of the artifact route's 19.3 s.
+- Strengthen authentication's post-verification fence to a forced content reread while reducing ordinary credential-file checks.
+- Entity sync for the fleet, machine health and the PR list (ADR-071 Amendment 4): `fleet.status` and `pr.list` answer `{ versions: true }` and `{ ids }`, and change notifications carry the changed slot, PR or machine. A data-only change costs clients no read; one slot no longer re-sends the fleet, `fleet.updated` and `pr.list.updated` reach a connection that reads the fleet as entities without their list, and `hello` carries no fleet.
+- A machine sample no longer advances the slot keys of that machine.
+- Farm-path resolution no longer stats `instance.json` on every call, and a node-support hash scan looks up the legacy support root and builds its pattern once instead of for every string of every run record.
+- Return genuinely refreshed fleet health without blocking on workspace inspection, share one health producer, and check remote slots within the existing four-worker host bound.
+- Run list refreshes no longer stall the gateway: each run's list version is derived once per change instead of hashing every run on every refresh, and local runner progress files are read without starting a shell.
+- Check a slot's fixtures with one remote command instead of one or two per fixture file and directory, cutting process spawns (and ssh connections for remote slots) on every slot check.
+- Answer native ownership and node-assignment checks from a credential store snapshot that is re-read only when the file changes, instead of reading and validating the whole store on each native request. A revocation is still seen on the next check.
+- Copy and compare the PR monitor and PR rule stores through their saved JSON text instead of cloning and deep-comparing the whole store on every transaction and snapshot, and stop re-reading the rule store when the file watcher reports the gateway's own write.
+- Serialize each native conversation update once and share that JSON across every viewer's event frame, instead of serializing a frame per viewer.
+- Build the fleet after the gateway's own status write from the text it just committed, and load each pool config through the stat-checked pool cache (an unreadable pool file is still skipped on its own), instead of re-reading the status file and every pool file on each slot write. A status file replaced or edited by anything else is read from disk, so a newer outside write always wins.
+- Escape each terminal output chunk once for all viewers, and close a terminal viewer whose socket holds more than 1 MiB of unsent output (code 1013) instead of queuing more. Output is never dropped: the client reconnects and subscribes again, and the gateway makes tmux repaint a terminal when a viewer joins it while it is already running.
+- Keep the gateway responsive under load:
+  - verify and hash sign-in secrets off the event loop;
+  - skip the full PR monitor store round trip when a repair plan changes nothing;
+  - read only the root process when a native session starts;
+  - check each slot's health with one process instead of one per probe.
+- Local fleet slot checks and the pending-decision walk run in a `gateway-background` child process, off the request loop, and local fixture hashes are read in-process and reused while a file is unchanged. If the child is down, fleet refreshes, decision resolution and a decision listing with no earlier scan fail, and gateway.doctor's "Background process" check says so; `FARMSLOT_GATEWAY_BACKGROUND=0` runs these probes in-process. Each command the child starts runs in its own process group, killed when the child stops, loses the gateway or exits, and by its own guard within about a second if the child is killed outright.
+- Publication secret scanning runs in a separate process, so a large log no longer holds the gateway for seconds. Publication waits for the completed scan and refuses when the scan fails, the scan process exits, scanning is stopped, or 32 scans are already waiting.
+- Runner progress files on remote slots are read through the node's `fs.readText` and `fs.isFile` instead of a shell per poll; nodes that do not declare the reads keep the shell read.
+- GitHub reads and writes run in the gateway process over HTTP instead of one `gh` process per request, with ETag revalidation so unchanged data costs no rate limit. `gh` is still used to read the keyring token and sign-in status and to find a slot's PR from its checkout when the project names no repository; the token is re-read at most once a minute, so `gh auth switch` takes effect within a minute. `FARMSLOT_GITHUB_API_URL` points every GitHub host at one origin for fixtures and proofs; with it set, the keyring is never read and only `FARMSLOT_GITHUB_FIXTURE_TOKEN` is sent.
+- Commands a host service starts outside a request are counted under `host:<operation>` in the exec metrics instead of `_background`.
+- Measure HTTP routes through the shared ingress so artifact requests, refusals and disconnects appear in performance diagnostics.
+- Measure each native conversation update once for all viewers, authorize relay delivery once per synchronous pass with the per-emit reader check kept, rate-limit fleet broadcasts during steady slot writes without starving them, and collect gateway host metrics without blocking the event loop.
+- Remote slot commands collect the node-support bundle once per change of the files, packs and pool it is built from, instead of every 2 seconds; a prepare's hundreds of commands no longer re-walk, re-hash and re-check the bundle on the request loop.
+- A node-support activation no longer re-reads and re-parses the record file of every live run to find the bundles runs still reference: the gateway uses the records it holds in memory, which already won over disk, and reads only files it does not hold. Every live run is counted from memory, including past the 500 rows a run list returns. A corrupt file of a run the gateway holds no longer disables pruning, because its in-memory record is the one used; a corrupt file of any other run still does.
+- Collecting a node-support bundle no longer blocks the gateway while the pack portability check reads the pack's files.
+- Check a project pack's portability without blocking the gateway: its Git ownership scan no longer stalls requests while a node-support bundle is collected.
+- PR-rules reconciliation reads each review intent from the shared frozen snapshot instead of copying all of them every turn.
+- PR review intake and PR monitoring no longer copy their whole store on every read: readers share the committed state, frozen, so listing PR rules and the reconcile passes stop blocking the gateway for several milliseconds per call.
+- A PR rule change no longer pushes the whole rules list (about 580 KB on the operator's store) to every connected client as `prRules.updated`. Clients already read the rules through `prRules.list` when the `pr-automation` resource changes, which the store announces only for a commit that changed it. On an idle operator gateway that was 12-19 events and 7-11 MB a minute per Command Center page.
+- `run.list` and its ids catch-up page serve slim `runListRow` rows with the run's `evidenceSummary` instead of whole runs; the page byte cap counts the served rows. Row versions are unchanged (`sha256(trimRunForList(run))`), so clients keep the rows they hold. A run's row, its size and its version are derived once per run change and shared by every request, so a plain list or a catch-up page no longer rebuilds the rows it serves.
+- Share frozen capability and owner-filtered PR monitor state between reads, copying only when a write needs its own draft.
+- Reuse verified workspace inspections across sparse health samples and run local read probes in the existing background process.
 
 ## 0.39.1 - 2026-11-08
 

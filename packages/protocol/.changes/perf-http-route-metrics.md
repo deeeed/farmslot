@@ -1,1 +1,0 @@
-- Report gateway HTTP request counts, status classes and duration alongside managed work in performance diagnostics.

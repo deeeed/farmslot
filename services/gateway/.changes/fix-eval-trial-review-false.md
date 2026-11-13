@@ -1,1 +1,0 @@
-- Honor trial-level `review:false` across retries and resumes, reject contradictory reviewer overrides, and permanently cancel queued cells with unknown `eval.trial.start` parameters so later cells can dispatch.

@@ -1,1 +1,0 @@
-- Declare image input for router models, so Pi workers on the Sparks DeepSeek endpoint can read screenshots instead of getting "Current model does not support images".

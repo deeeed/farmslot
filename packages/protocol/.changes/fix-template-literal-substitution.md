@@ -1,1 +1,0 @@
-- Preserve literal replacement text in template helpers and checklist renumbering.

@@ -1,1 +1,0 @@
-- Preserve selected terminal reasoning effort across launch, resume and refinement, including pool templates without an effort placeholder.

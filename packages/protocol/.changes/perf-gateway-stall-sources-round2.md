@@ -1,1 +1,0 @@
-- Cache resolved farm paths by the environment variables they read and the instance marker's file stamp, instead of scanning the whole environment on every call.

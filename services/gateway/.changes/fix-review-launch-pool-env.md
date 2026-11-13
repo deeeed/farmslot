@@ -1,1 +1,0 @@
-- Pass the selected machine's pool environment to slotless terminal reviews so configured providers are available while frozen review support paths retain precedence.

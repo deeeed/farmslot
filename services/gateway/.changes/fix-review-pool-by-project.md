@@ -1,1 +1,0 @@
-- Resolve review workspace pools by machine and project so separate project pools can share a review machine, while rejecting overlapping review capacity with the matching pool IDs.

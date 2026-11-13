@@ -1,1 +1,0 @@
-- Stop and verify detached processes started by slot preflight, including groups whose leader exited, before releasing the slot. Preserve borrowed resources and newer prepare owners.
