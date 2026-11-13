@@ -41,37 +41,15 @@ import {
   isHelperSession,
   isReviewSession,
   runSessionUsageReceipts,
+  sessionCosts,
   sessionUsageContributions,
+  sessionUsageNumber as num,
 } from '../runtime/session-usage-selection.js';
 
 import { publicationReviewMatchesPreparedPackage } from './gate-policy.js';
 
 /** Family flows whose token cost rolls up into a root gate's grand total. */
 const FIX_LOOP_FLOWS: ReadonlySet<FlowType> = new Set<FlowType>(['pr-complete', 'update-branch']);
-
-function num(value: number | null | undefined): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
-}
-
-function sessionCosts(
-  rows: readonly GateCostSummary[],
-  inventory: readonly GateCostSummary[] = rows,
-): GateCostSummary {
-  const complete =
-    inventory.length > 0 &&
-    inventory.every(
-      (row) => typeof row.costUsd === 'number' && Number.isFinite(row.costUsd) && row.costUsd >= 0,
-    );
-  return complete
-    ? { costUsd: rows.reduce((sum, row) => sum + num(row.costUsd), 0) }
-    : {
-        costUsd: null,
-        costReason:
-          inventory.length && inventory.every((row) => row.costReason === 'local, unpriced')
-            ? 'local, unpriced'
-            : 'Includes unpriced or uncaptured sessions',
-      };
-}
 
 /** One token-bearing entry folded into the per-model rollup. */
 interface TokenContribution extends GateCostSummary {

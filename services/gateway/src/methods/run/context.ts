@@ -3,6 +3,7 @@ import {
   attachRunListSummaries,
   type LiveRecipeContext,
   type RecipeRunArtifactGroup,
+  reviewChainForRun,
   type Run,
   type RunForSlotParams,
   type RunForSlotResult,
@@ -24,6 +25,7 @@ import {
 import { GatewayMethodError } from '../../core/method-error.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 import { attachRetainedLiveRecipeContext } from '../../live-recipe/context.js';
+import { reviewChainWithMetrics } from '../../review/chain-metadata.js';
 import { attachReviewRoundBudget } from '../../review/review-round-budget.js';
 import { outputManifestDigest } from '../../run-completion/output.js';
 import {
@@ -44,6 +46,7 @@ import {
   getAllRuns,
   getLiveRunsByIds,
   getRun,
+  getRunWithArchived,
   listRuns,
   listRunsForSlotHistory,
 } from '../../runs/store.js';
@@ -53,6 +56,28 @@ import { readRunRecordedEvidence } from './evidence-review.js';
 /** Serve a run to the UI with live-recipe context + lazy gate-summary backfill. */
 async function presentRun(run: Run): Promise<Run> {
   run = inspectedRun(run);
+  if (run.repeatReviewContext) {
+    const chain = reviewChainForRun(run);
+    const records: Run[] = [];
+    for (const entry of chain) {
+      const record = entry.runId === run.id ? run : await getRunWithArchived(entry.runId);
+      if (record) records.push(record);
+    }
+    const enriched = reviewChainWithMetrics(chain, records);
+    const current = enriched.find((entry) => entry.runId === run.id);
+    run = {
+      ...run,
+      repeatReviewContext: {
+        ...run.repeatReviewContext,
+        priorGenerations: enriched.filter((entry) => entry.runId !== run.id),
+        currentMetrics: {
+          durationMs: current?.durationMs,
+          costUsd: current?.costUsd,
+          costReason: current?.costReason,
+        },
+      },
+    };
+  }
   if (run.artifactBundle || run.output?.artifactBundle) {
     const groups = await retainedRecipeRunGroups(run);
     const selected = selectedRetainedRecipeGroup(groups);
