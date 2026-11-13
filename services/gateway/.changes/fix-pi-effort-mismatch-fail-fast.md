@@ -1,1 +1,0 @@
-- Stop Pi workers cleanly when their model cannot honor requested thinking, restore the terminal, and fail dispatch with the configuration error before accepting the task.

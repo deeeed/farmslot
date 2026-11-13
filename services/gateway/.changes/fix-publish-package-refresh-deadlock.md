@@ -1,1 +1,0 @@
-- A refreshed publication package no longer reads as changed evidence when the run has a marker baseline receipt. The receipt's inventory entry records only its path, purpose, size and hash, so re-retaining the run no longer changes it.

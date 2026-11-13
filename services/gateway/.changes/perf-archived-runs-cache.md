@@ -1,1 +1,0 @@
-- Archiving, changing or deleting an archived run no longer makes the gateway re-read the whole run archive: the store updates that one record, and readers after a restart share a single scan.

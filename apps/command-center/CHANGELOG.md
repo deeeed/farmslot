@@ -6,6 +6,19 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.20.2 - 2026-11-13
+
+- Add a live-run browser proof for checklist step detail.
+- Add a validation probe for incomplete family pricing.
+- Add a live browser check for review execution placement using shared candidate-source routing.
+- Preserve SQLite transaction failures and automatically replace a failed browser worker so cached run data resynchronizes without a reload.
+- Add repeatable browser proofs for durable storage recovery, schema isolation and gateway resynchronization.
+- Browser profile cleanup and the slot-facts live proof read the gateway's fleet stale threshold (now 10 minutes) from the protocol package instead of a 5-minute copy.
+- Make the upstream-collectors proof fixture answer the status-check query in the shape the gateway reads, so the PR list can be proven against it again.
+- The progressive gate proof script waits for the gateway's now-asynchronous sign-in checks.
+- Proof scripts read GitHub through a local HTTP fixture instead of a fake `gh`.
+- Add CDP probes that measure native chat render cost per streamed delta and check follow, jump to latest, fold collapse and search on a long timeline.
+
 ## 0.20.1 - 2026-11-08
 
 - Add a repeatable browser check for offline-storage failure notices and recovery after reconnecting.

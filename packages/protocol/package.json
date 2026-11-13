@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/protocol",
-  "version": "0.83.1",
+  "version": "0.83.2",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

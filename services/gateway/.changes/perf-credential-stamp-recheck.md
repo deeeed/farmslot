@@ -1,1 +1,0 @@
-- Strengthen authentication's post-verification fence to a forced content reread while reducing ordinary credential-file checks.

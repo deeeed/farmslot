@@ -4,6 +4,14 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.45.12 - 2026-11-13
+
+- Keep native Claude turns in the foreground so workers and reviewers finish pending tool work before returning, including resumed turns.
+- Keep worker branch-update SSH pushes alive during pre-push hooks and enforce the shared configurable push budget.
+- Keep reviewer shell working-directory state in the task's private writable directory so source inspection commands complete under the review sandbox.
+- Preserve literal text in child checklists, task preambles, and replay instructions.
+- Read native launch identities and execution-template source provenance asynchronously for hosts that can await them, preserving gated process ownership and ordered source resolution.
+
 ## 0.45.11 - 2026-11-13
 
 - Republish the 0.45.10 sources against adapter-sdk 0.27.4, and through it recipe-runner 0.46.14 so consumers load one copy of recipe-runner and adapter-sdk, including the CDP broker that honours `FARMSLOT_BLIND_BROKER_DIR`. Only the version and the dependency pins changed.

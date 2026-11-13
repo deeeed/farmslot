@@ -6,6 +6,18 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.6 - 2026-11-13
+
+- Keep blind recipe runs and calls on their allocated trial browser when slot context or explicit CDP options name the protected slot browser.
+- Resume retained tasks with their verified provider copy when a rollout removes the pool-selected installation, recording the fallback and actual provider identity.
+- Preserve literal file URLs when generating live adapter imports.
+- `call` records where its time goes: each phase's wall and CPU time, the child processes it started and how often it built a runner or took a provenance snapshot, in `call-timings.json` beside the call's evidence, as `timings` in `--json`, and as one `Timing:` line in human output.
+- `call` plans its action once: it keeps the runner and plan it made before healing unless healing installed the overlay, recovered the runtime or changed the run environment.
+- `call` binds its provenance from before its runner bundles any action: the start snapshot comes before the manifest is read and the runner is built, and an edit after it refuses the call before its action runs. Each snapshot reads a Git source root with one `git status --porcelain=v2 -z --ignore-submodules=none` (HEAD from the repository's files, the bytes of every listed path hashed, renames and copies read from their structured records; the full diff only for an untracked directory, a submodule or a symbolic link), every Git command runs with `gc.auto=0`, `maintenance.auto=false`, no hooks or fsmonitor and `GIT_OPTIONAL_LOCKS=0`, the work tree and origin of a directory are read once per process, and an installed package is hashed once per version.
+- A plan is checked again before execution only when the platform prepared its runtime after it was made, and this process's own start time is read once for the journal and the checkout lock.
+- `call` names its one action to the host's runner (`plannedActions`), and a live adapter bundle is cached by the exact bytes esbuild read and every `package.json`, `tsconfig.json` and `node_modules` entry that could change how an import resolves: a later call reuses it until one of them changes, and a bundle whose inputs changed while it was built is not cached.
+- `call` records no video unless `--record-video=full-run` (or `--record`) asks for one, and `--record-video=off` needs no `--recording-reason`; recipe runs keep recording UI proof by default.
+
 ## 0.35.5 - 2026-11-13
 
 - Republish the 0.35.4 sources against recipe-runner 0.46.14, adapter-sdk 0.27.4 and agent-runtime 0.45.11 so consumers load one copy of recipe-runner and adapter-sdk, including the CDP broker that honours `FARMSLOT_BLIND_BROKER_DIR`. Only the version and the dependency pins changed.

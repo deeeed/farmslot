@@ -1,1 +1,0 @@
-- Pass current runner temporary-state settings when resuming terminal reviews with retained support bundles.

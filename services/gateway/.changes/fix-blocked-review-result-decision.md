@@ -1,1 +1,0 @@
-- Offer a result decision when review stops blocked after a verified worker result, keeping its findings and operator actions instead of leaving an idle blocked run.

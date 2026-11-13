@@ -1,1 +1,0 @@
-- Verify runner support and copied Pi observability against the gateway deployment before launch; refuse stale or missing bundles instead of using an unverified installer.

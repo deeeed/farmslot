@@ -1,1 +1,0 @@
-- Preserve SQLite transaction failures and automatically replace a failed browser worker so cached run data resynchronizes without a reload.
