@@ -1,0 +1,1 @@
+- Node-support retention inventories rescan only the runs that changed since the last inventory, instead of every string of every unarchived run.

@@ -25,6 +25,7 @@ import {
 } from '../core/config.js';
 import { shellQuote } from '../core/tmux.js';
 import { farmPathsForSlot } from '../fleet/farm-paths.js';
+import { runChangeStamp } from '../resources/run-changes.js';
 import { nodeSupportHashPath } from '../runners/runner-observability.js';
 
 export interface NodeSupportRetentionReferences {
@@ -61,17 +62,8 @@ function isHistoricalRun(record: unknown): boolean {
 }
 
 /** Historical outputs can refer to an older bundle than the slot now selects. */
-function supportHashes(values: readonly unknown[], supportRoot?: string): string[] {
+function supportHashes(value: unknown, pattern: RegExp): string[] {
   const hashes = new Set<string>();
-  // Built once per scan: the visit below reaches every string of every run record.
-  const roots = [
-    legacyRemoteFarmPaths().code.support.slice(1),
-    ...(supportRoot ? [supportRoot] : []),
-  ];
-  const pattern = new RegExp(
-    `(?:${roots.map((root) => root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})/([a-f0-9]{64})(?=$|[\\s/"'\\\\])`,
-    'g',
-  );
   const visit = (value: unknown): void => {
     if (typeof value === 'string') {
       if (/^[a-f0-9]{64}$/.test(value)) hashes.add(value);
@@ -80,9 +72,19 @@ function supportHashes(values: readonly unknown[], supportRoot?: string): string
     } else if (Array.isArray(value)) value.forEach(visit);
     else if (value && typeof value === 'object') Object.values(value).forEach(visit);
   };
-  values.forEach(visit);
+  visit(value);
   return [...hashes];
 }
+
+interface RunSupportHashScan {
+  /** The record that was read: a load, archive read or disk read gives a new object. */
+  run: Run;
+  stamp: string;
+  hashes: string[];
+}
+
+/** Each support pattern's last scan of each run, kept until the run changes or leaves the list. */
+const runSupportHashScans = new Map<string, Map<string, RunSupportHashScan>>();
 
 /**
  * A failed run stays replayable until archived, so its references stay retained. Unsettled runs
@@ -93,11 +95,37 @@ function retainsNodeSupport(run: Run): boolean {
   return !run.archivedAt && isActiveListRun(run);
 }
 
+/**
+ * A run is scanned again only when its record object or its change stamp differs from the last
+ * scan (resources/run-changes.ts): a stale entry would let retention prune a referenced bundle.
+ */
 export function referencedNodeSupportHashes(runs: readonly Run[], supportRoot?: string): string[] {
-  return supportHashes(
-    runs.filter((run) => !run.archivedAt && !isHistoricalRun(run)),
-    supportRoot,
+  // Built once per call: the scan reaches every string of every changed run record.
+  const roots = [
+    legacyRemoteFarmPaths().code.support.slice(1),
+    ...(supportRoot ? [supportRoot] : []),
+  ];
+  const pattern = new RegExp(
+    `(?:${roots.map((root) => root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})/([a-f0-9]{64})(?=$|[\\s/"'\\\\])`,
+    'g',
   );
+  let scans = runSupportHashScans.get(pattern.source);
+  if (!scans) runSupportHashScans.set(pattern.source, (scans = new Map()));
+  const hashes = new Set<string>();
+  const listed = new Set<string>();
+  for (const run of runs) {
+    if (run.archivedAt || isHistoricalRun(run)) continue;
+    listed.add(run.id);
+    const stamp = runChangeStamp(run);
+    let scan = scans.get(run.id);
+    if (scan?.run !== run || scan.stamp !== stamp) {
+      scan = { run, stamp, hashes: supportHashes(run, pattern) };
+      scans.set(run.id, scan);
+    }
+    for (const hash of scan.hashes) hashes.add(hash);
+  }
+  for (const id of scans.keys()) if (!listed.has(id)) scans.delete(id);
+  return [...hashes];
 }
 
 /**

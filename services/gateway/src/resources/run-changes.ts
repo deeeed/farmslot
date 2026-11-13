@@ -31,6 +31,14 @@ export function publishProgressResources(
   if (slotId) revisions.advance({ family: 'slot', slotId });
 }
 
+/**
+ * Changes whenever a live run's facts change. Every run writer advances the run's resource
+ * revision after the facts are readable; the few in-place writers that skip it stamp `updatedAt`.
+ */
+export function runChangeStamp(run: Pick<Run, 'id' | 'updatedAt'>): string {
+  return `${resourceRevisions.revision({ family: 'run', runId: run.id })}|${run.updatedAt}`;
+}
+
 /** Capture before an in-place write so former membership is invalidated too. */
 export function captureRunResources(run: RunResourceRecord): RunResourceSnapshot {
   const decisionExpiresAt = completedDecisionExpiresAt(run);

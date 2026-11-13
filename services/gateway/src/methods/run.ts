@@ -100,6 +100,7 @@ import { readTriagePolicy } from '../intelligence/triage/policy.js';
 import { admittedFailureSnapshot } from '../intelligence/triage/snapshot.js';
 import type { MachineParkGateRestoreResult } from '../machine-parking/service.js';
 import { assertStartRefSkipPrepareEligible } from '../projects/start-ref-policy.js';
+import { captureRunResources, publishRunResources } from '../resources/run-changes.js';
 import {
   assertReviewRoundAvailable,
   prepareReviewRoundAvailabilityCheck,
@@ -994,6 +995,8 @@ async function runCreateWithSources(
       if (options.awaitPersist) {
         Object.assign(run, linkedState);
         run.updatedAt = new Date().toISOString();
+        // A read since creation can share this millisecond: advance the revision as updateRun does.
+        publishRunResources(captureRunResources(run));
         await persistRunNow(run, 'create-soft-link');
       } else {
         run = updateRun(run.id, linkedState);
