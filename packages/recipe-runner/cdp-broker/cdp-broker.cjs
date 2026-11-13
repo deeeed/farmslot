@@ -41,7 +41,7 @@ function brokerSocketPath(runtimeDir, endpointIdentity) {
       ? runtimePath
       : `${runtimePath}\u0000${String(endpointIdentity)}`;
   const identity = createHash('sha256').update(socketIdentity).digest('hex').slice(0, 20);
-  return path.join('/tmp', `mmh-cdp-${identity}.sock`);
+  return path.join(process.env.FARMSLOT_BLIND_BROKER_DIR || '/tmp', `mmh-cdp-${identity}.sock`);
 }
 
 function deviceIdFromUrl(wsUrl) {

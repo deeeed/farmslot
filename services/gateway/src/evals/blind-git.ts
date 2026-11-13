@@ -140,6 +140,8 @@ const BLIND_ENVIRONMENT = [
   'FARMSLOT_CI_BASE_REF',
   'FARMSLOT_BLIND_SEATBELT',
   'FARMSLOT_BLIND_CDP_PORT',
+  'FARMSLOT_BLIND_BROKER_DIR',
+  'MAC_CHROMIUM_TMPDIR',
   'CDP_PORT',
   'RECIPE_CDP_PORT',
   'GIT_TRACE2_EVENT',
@@ -175,6 +177,8 @@ export function withBlindTrialBoundary(
     `export FARMSLOT_CI_BASE_REF=${shSingleQuote(trial.baseSha)}`,
     `export GH_CONFIG_DIR=${shSingleQuote(`${boundary}/gh-config`)}`,
     `export PATH=${shSingleQuote(`${boundary}/bin`)}:"$PATH"`,
+    `TMPDIR="$(/usr/bin/readlink ${shSingleQuote(`${boundary}/tmp`)})"`,
+    'export TMPDIR TMP="$TMPDIR" TEMP="$TMPDIR" FARMSLOT_BLIND_BROKER_DIR="$TMPDIR" MAC_CHROMIUM_TMPDIR="$TMPDIR"',
     'export GIT_TERMINAL_PROMPT=0',
     // Browser children must stay in this seatbelt; preserve TMUX_PANE for hooks.
     'export FARMSLOT_BLIND_SEATBELT=1',

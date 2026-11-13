@@ -19,9 +19,9 @@ inherited Git configuration cannot cross the boundary.
 | `USER`                            | Standard process identity, executable search, temporary storage, locale or terminal rendering.      |
 | `LOGNAME`                         | Standard process identity, executable search, temporary storage, locale or terminal rendering.      |
 | `SHELL`                           | Standard process identity, executable search, temporary storage, locale or terminal rendering.      |
-| `TMPDIR`                          | Standard process identity, executable search, temporary storage, locale or terminal rendering.      |
-| `TMP`                             | Standard process identity, executable search, temporary storage, locale or terminal rendering.      |
-| `TEMP`                            | Standard process identity, executable search, temporary storage, locale or terminal rendering.      |
+| `TMPDIR`                          | Assigned by the boundary to the trial's private temporary directory.                                |
+| `TMP`                             | Assigned by the boundary to the same private temporary directory.                                   |
+| `TEMP`                            | Assigned by the boundary to the same private temporary directory.                                   |
 | `LANG`                            | Standard process identity, executable search, temporary storage, locale or terminal rendering.      |
 | `LC_ALL`                          | Standard process identity, executable search, temporary storage, locale or terminal rendering.      |
 | `LC_CTYPE`                        | Standard process identity, executable search, temporary storage, locale or terminal rendering.      |
@@ -161,6 +161,36 @@ selection rules. Non-blind recipes retain slot and explicit-flag precedence.
 | `RECIPE_TASK_DIR`                             | Locates the admitted recipe task and its artifacts.                                               |
 | `RECIPE_SLOT_ID`                              | Identifies the recipe slot to adapter tools.                                                      |
 | `IOS_SIMULATOR`, `SIM_UDID`, `ANDROID_DEVICE` | Preserve the assigned Mobile device names consumed by adapter tools.                              |
+
+## Trial temporary files and Mobile broker
+
+The boundary allocates a mode-0700 directory under `/private/tmp/fs-blind-*`,
+retains its protected `boundary/tmp` link across launches, and removes the
+directory during restoration. The wrapper assigns `TMPDIR`, `TMP`, `TEMP` and
+`FARMSLOT_BLIND_BROKER_DIR` and `MAC_CHROMIUM_TMPDIR` from that link, replacing
+ambient values. Chromium on macOS uses the latter for its singleton socket
+directory; `TMPDIR` alone does not redirect it. The shared
+broker package uses `FARMSLOT_BLIND_BROKER_DIR` for its hashed socket paths.
+Non-blind broker paths remain independent of `TMPDIR`.
+
+Seatbelt denies shared temporary writes, including `/tmp`, `/var/tmp` and
+`/var/folders`, then admits the trial directory and existing task write scope.
+Outbound Unix connections admit the resolver and the trial directory. Other
+trials' socket connections, writes, chmod, unlink and directory renames remain
+denied, including through symlinks in the admitted directory. The boundary bin,
+routing link and existing private inputs remain protected after these allowances.
+
+macOS refuses the setuid `/bin/ps` inside Seatbelt. Boundary preparation copies
+the installed system binary, removes setuid and signs the copy ad hoc. The
+protected `boundary/bin/ps` handles PATH-based harness calls inside the same
+sandbox. It gains no process-info allowance. Seatbelt target filters do not
+restrict `ps`'s sysctl process-table reads, so process listing is not confined to
+the trial's descendants. `/bin/ps` remains unavailable. No outside-sandbox
+process helper is used.
+
+Mobile producers and clients must use a broker package version supporting this
+directory override. A harness pinned to an earlier package still uses `/tmp` and
+will fail closed. Changing `TMPDIR` alone cannot redirect that older broker.
 
 ## Review regressions
 

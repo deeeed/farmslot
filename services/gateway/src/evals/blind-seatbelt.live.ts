@@ -32,8 +32,12 @@ import { withBlindTrialBoundary } from './blind-git.js';
 const python = fileURLToPath(new URL('./blind-git.py', import.meta.url));
 const adapter = fileURLToPath(new URL('../../../../packages/adapter-web/', import.meta.url));
 const { stopWebDappBrowser } = await import(path.join(adapter, 'src/web-dapp/lib/processes.mjs'));
-const syntheticHome = realpathSync(mkdtempSync(path.join('/tmp', 'seatbelt-home-')));
+const syntheticHome = realpathSync(mkdtempSync(path.join(os.homedir(), '.seatbelt-home-')));
 after(() => rmSync(syntheticHome, { recursive: true }));
+const allocatedTempRoots = new Set<string>();
+after(() => {
+  for (const root of allocatedTempRoots) rmSync(root, { recursive: true, force: true });
+});
 const env = {
   PATH: process.env.PATH,
   HOME: syntheticHome,
@@ -43,7 +47,7 @@ const env = {
 };
 
 function fixture() {
-  const root = realpathSync(mkdtempSync(path.join('/tmp', 'blind-seatbelt-live-')));
+  const root = realpathSync(mkdtempSync(path.join(syntheticHome, 'blind-seatbelt-live-')));
   mkdirSync(path.join(root, 'boundary'));
   writeFileSync(path.join(root, 'state.json'), '{"originalIsDirectory":true}');
   writeFileSync(
@@ -89,6 +93,8 @@ blind['prepare_boundary']({'repo': str(root), 'siblingRepos': [str(root / 'hidde
     ],
     { env: launchEnv, encoding: 'utf8', timeout: 10_000 },
   );
+  const temporary = path.join(root, 'boundary/tmp');
+  if (existsSync(temporary)) allocatedTempRoots.add(realpathSync(temporary));
 }
 function worker(
   root: string,
@@ -119,6 +125,134 @@ function worker(
     },
   );
 }
+
+test(
+  'Mobile broker and temp ownership under the real blind wrapper',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const root = fixture();
+    const other = realpathSync(mkdtempSync('/tmp/mmh-cdp-fixture-'));
+    t.after(() => rmSync(root, { recursive: true }));
+    t.after(() => rmSync(other, { recursive: true }));
+    profile(root);
+    const own = path.join(root, 'boundary/tmp');
+    const allocated = realpathSync(own);
+    profile(root);
+    assert.equal(realpathSync(own), allocated, 'retained launches must reuse the same temp');
+    // On the old boundary use a synthetic local socket to prove the missing allow.
+    mkdirSync(own, { recursive: true });
+    mkdirSync(path.join(root, 'hidden/pins'), { recursive: true });
+    writeFileSync(path.join(root, 'hidden/pins/input'), 'synthetic other-task pin');
+    writeFileSync(path.join(root, 'blind-git.py'), 'synthetic protected boundary');
+    writeFileSync(path.join(other, 'state'), 'synthetic other-run state');
+    const ownSocket = path.join(realpathSync(own), 'broker.sock');
+    // A synthetic flat socket also exercises the legacy /tmp/mmh-cdp-* layout.
+    const otherSocket = other + '.sock';
+    symlinkSync(other, path.join(own, 'foreign'));
+    symlinkSync(otherSocket, path.join(own, 'foreign.sock'));
+    const servers = [ownSocket, otherSocket].map((socketPath) => {
+      const server = net.createServer((socket) => socket.end('fixture-ok'));
+      t.after(
+        () =>
+          new Promise<void>((resolve, reject) =>
+            server.close((error) => (error ? reject(error) : resolve())),
+          ),
+      );
+      server.listen(socketPath);
+      return server;
+    });
+    await Promise.all(servers.map((server) => once(server, 'listening')));
+    const run = (source: string) => {
+      const result = worker(
+        root,
+        `exec ${q(process.execPath)} --input-type=module -e ${q(source)}`,
+        { ...env, TMPDIR: other, TMP: other, TEMP: other, FARMSLOT_BLIND_BROKER_DIR: other },
+      );
+      assert.ifError(result.error);
+      assert.equal(result.status, 0, result.stderr);
+    };
+    await t.test('own broker connects', () =>
+      run(`
+      import assert from 'node:assert/strict'; import net from 'node:net';
+      const socket = net.connect(${JSON.stringify(ownSocket)});
+      socket.on('error', error => { throw error; });
+      await new Promise(resolve => socket.once('connect', resolve)); socket.destroy();`),
+    );
+    await t.test('other broker connect is EPERM', () =>
+      run(`
+      import assert from 'node:assert/strict'; import net from 'node:net';
+      for (const target of ${JSON.stringify([otherSocket, path.join(own, 'foreign.sock')])}) {
+        const error = await new Promise(resolve => net.connect(target)
+          .on('error', resolve).on('connect', () => { throw Error('foreign socket connected'); }));
+        assert.equal(error.code, 'EPERM');
+      }`),
+    );
+    await t.test('ps supplies harness identity and health fields', () =>
+      run(`
+      import assert from 'node:assert/strict'; import { execFileSync } from 'node:child_process';
+      for (const fields of ['lstart=', 'etime=,rss=', 'command=', 'comm=', 'ppid=,args='])
+        assert.ok(execFileSync('ps', ['-ww', '-p', String(process.pid), '-o', fields], { encoding: 'utf8' }).trim());
+      assert.ok(execFileSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' }).includes(String(process.pid)));`),
+    );
+    await t.test('other temp state cannot be deleted or written', () =>
+      run(`
+      import assert from 'node:assert/strict';
+      import { unlinkSync, rmdirSync, writeFileSync, renameSync, chmodSync } from 'node:fs';
+      for (const target of ${JSON.stringify([otherSocket, path.join(other, 'state'), path.join(own, 'foreign/state')])}) {
+        assert.throws(() => unlinkSync(target), { code: 'EPERM' });
+        assert.throws(() => chmodSync(target, 0o777), { code: 'EPERM' });
+      }
+      assert.throws(() => rmdirSync(${JSON.stringify(other)}), { code: 'EPERM' });
+      assert.throws(() => renameSync(${JSON.stringify(other)}, ${JSON.stringify(other + '-moved')}), { code: 'EPERM' });
+      assert.throws(() => writeFileSync(${JSON.stringify(path.join(other, 'state'))}, 'changed'), { code: 'EPERM' });`),
+    );
+    await t.test('boundary assigns writable private temp and broker paths', () =>
+      run(`
+      import assert from 'node:assert/strict'; import { writeFileSync, unlinkSync, realpathSync } from 'node:fs';
+      assert.equal(realpathSync(process.env.TMPDIR), ${JSON.stringify(realpathSync(own))});
+      assert.equal(process.env.TMP, process.env.TMPDIR); assert.equal(process.env.TEMP, process.env.TMPDIR);
+      assert.equal(process.env.FARMSLOT_BLIND_BROKER_DIR, process.env.TMPDIR);
+      assert.equal(process.env.MAC_CHROMIUM_TMPDIR, process.env.TMPDIR);
+      const file = process.env.TMPDIR + '/own-file'; writeFileSync(file, 'fixture'); unlinkSync(file);`),
+    );
+    await t.test('production broker exchanges commands in the boundary allocation', () =>
+      run(`
+      import assert from 'node:assert/strict';
+      import broker from ${JSON.stringify(fileURLToPath(new URL('../../../../packages/recipe-runner/cdp-broker/cdp-broker.cjs', import.meta.url)))};
+      import path from 'node:path';
+      const first = broker.brokerSocketPath('/synthetic/runtime', 8081);
+      assert.equal(path.dirname(first), process.env.TMPDIR);
+      assert.notEqual(first, broker.brokerSocketPath('/synthetic/runtime', 8082));
+      assert.ok(Buffer.byteLength(first) < 104);
+      const sessions = new Map([['fixture', { deviceId: 'fixture', name: 'synthetic', opened: true, brokerReady: true }]]);
+      const server = broker.createCdpBroker({ socketPath: first, sessions, sendCommand: async () => ({ fixture: true }) });
+      let client;
+      try {
+        client = await broker.createBrokerClient(first, 'fixture', 1000);
+        assert.deepEqual(await client.send('Runtime.evaluate', { expression: 'synthetic' }, 1000), { fixture: true });
+      } finally { client?.close(); server.close(); }`),
+    );
+    await t.test('routing link and ps cannot be replaced or moved', () =>
+      run(`
+      import assert from 'node:assert/strict'; import { unlinkSync, renameSync, writeFileSync } from 'node:fs';
+      for (const target of ${JSON.stringify([own, path.join(root, 'boundary/bin/ps')])}) {
+        assert.throws(() => unlinkSync(target), { code: 'EPERM' });
+        assert.throws(() => renameSync(target, target + '-moved'), { code: 'EPERM' });
+      }
+      assert.throws(() => writeFileSync(${JSON.stringify(path.join(root, 'boundary/bin/ps'))}, 'changed'), { code: 'EPERM' });`),
+    );
+    await t.test('boundary chmod/dd and other task pin reads stay EPERM', () =>
+      run(`
+      import assert from 'node:assert/strict'; import { chmodSync, readFileSync } from 'node:fs';
+      import { spawnSync } from 'node:child_process';
+      const file = ${JSON.stringify(path.join(root, 'blind-git.py'))};
+      assert.throws(() => chmodSync(file, 0o777), { code: 'EPERM' });
+      const result = spawnSync('/bin/dd', ['if=/dev/zero', 'of=' + file, 'count=1'], { encoding: 'utf8' });
+      assert.notEqual(result.status, 0); assert.match(result.stderr, /Operation not permitted/);
+      assert.throws(() => readFileSync(${JSON.stringify(path.join(root, 'hidden/pins/input'))}), { code: 'EPERM' });`),
+    );
+  },
+);
 
 test(
   'blind launch admits tooling and provider config without ambient secrets',
@@ -1443,7 +1577,12 @@ try {
     );
     const result = worker(root, `exec ${q(process.execPath)} ${q(probe)}`);
     assert.ifError(result.error);
-    assert.equal(result.status, 0, result.stderr);
+    const browserLog = path.join(root, 'temp/recipe/runtime/terminal/browser.log');
+    assert.equal(
+      result.status,
+      0,
+      result.stderr + (existsSync(browserLog) ? readFileSync(browserLog, 'utf8') : ''),
+    );
     assert.match(result.stdout, /Chrome CDP served; outer read denial retained/u);
     t.diagnostic(result.stdout.trim());
     for (const mode of ['SIGTERM', 'SIGINT', 'parent-death'] as const) {

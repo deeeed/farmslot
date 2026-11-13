@@ -302,13 +302,16 @@ from unittest.mock import patch, Mock
 blind = runpy.run_path(sys.argv[1], run_name='fixture')
 root = pathlib.Path(sys.argv[2])
 spec = {'repo': str(root), 'slotResourcePorts': {'cdp_port': 19222}}
+temporary = root / 'temporary'
+temporary.mkdir()
 globals = blind['prepare_boundary'].__globals__
 probe = Mock()
 probe.__enter__ = Mock(return_value=probe)
 probe.__exit__ = Mock(return_value=False)
 probe.getsockname.side_effect = [('127.0.0.1', p) for p in [7777, 19222, 19444]]
 with patch.dict(os.environ, {'HOME': str(root / 'home')}, clear=True), \
-     patch.dict(globals, {'require_sandbox': lambda: None, 'live_tmux_sockets': lambda: []}), \
+     patch.dict(globals, {'require_sandbox': lambda: None, 'live_tmux_sockets': lambda: [], 'worker_temp': lambda capsule: temporary}), \
+     patch('tempfile.mkdtemp', return_value=str(temporary)), \
      patch('socket.socket', return_value=probe) as sockets, \
      patch('subprocess.run', return_value=Mock(returncode=0)):
     assert blind['prepare_boundary'](spec, root) == 19444
@@ -334,6 +337,10 @@ with patch.dict(os.environ, {'HOME': str(root / 'home')}, clear=True), \
 test('blind boundary strips gateway credentials, routing, tmux and SSH agent variables, keeps tools and pane identity', (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'seatbelt-env-'));
   t.after(() => rmSync(root, { recursive: true }));
+  mkdirSync(path.join(root, 'boundary'));
+  const temporary = path.join(root, 'temporary');
+  mkdirSync(temporary);
+  symlinkSync(temporary, path.join(root, 'boundary/tmp'));
   const command = withBlindTrialBoundary(
     'env',
     {
@@ -371,6 +378,8 @@ test('blind boundary strips gateway credentials, routing, tmux and SSH agent var
     timeout: 4500,
   });
   assert.equal(worker.status, 0, worker.stderr);
+  for (const name of ['TMPDIR', 'TMP', 'TEMP', 'FARMSLOT_BLIND_BROKER_DIR', 'MAC_CHROMIUM_TMPDIR'])
+    assert.ok(worker.stdout.includes(`${name}=${temporary}\n`));
   assert.doesNotMatch(worker.stdout, /^TMUX(?:_TMPDIR)?=/mu);
   assert.doesNotMatch(worker.stdout, /^SSH_(?:AUTH_SOCK|AGENT_PID)=/mu);
   assert.doesNotMatch(
