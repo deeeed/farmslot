@@ -1,0 +1,1 @@
+- A node-support activation no longer re-reads and re-parses the record file of every live run to find the bundles runs still reference: the gateway uses the records it holds in memory, which already won over disk, and reads only files it does not hold. The bundles kept and pruned are the same.
