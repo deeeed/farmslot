@@ -173,7 +173,7 @@ for (const kind of ['dirty', 'unpushed'] as const) {
       }),
       { kind: 'ready' },
     );
-    assert.deepEqual(modes, ['force']);
+    assert.deepEqual(modes, ['safe']);
   });
 }
 for (const kind of ['dirty', 'unpushed'] as const) {
@@ -182,8 +182,8 @@ for (const kind of ['dirty', 'unpushed'] as const) {
     if (kind === 'dirty') workspace.dirtyCount = 1;
     else workspace.publication = 'unpushed';
     const result = await reuseSafeIdleSlot('proof', () => {});
-    assert.equal(result.kind, 'local-work');
-    assert.deepEqual(recovered, []);
+    assert.equal(result.kind, 'ready');
+    assert.equal(recovered.length, 1, 'local work goes through fenced parking recovery');
   });
 }
 // F291 (c9562e49 on mini-mmt-3): a finished artifact-only run's own commits kept the next dispatch
@@ -220,7 +220,7 @@ for (const completionPolicy of ['artifact-only', 'default'] as const) {
     workspace.branch = run.branch!;
     workspace.publication = 'unpushed';
     assert.deepEqual(await releaseFor(run.id), { kind: 'ready' });
-    assert.deepEqual(modes, ['force']);
+    assert.deepEqual(modes, ['safe']);
     assert.deepEqual(parkRunIds, ['validation']);
   });
 }
@@ -230,8 +230,8 @@ test('ownerless history without a recorded head cannot reclaim reused-branch com
   runs = [run];
   workspace.branch = run.branch!;
   workspace.publication = 'unpushed';
-  assert.equal((await releaseFor(run.id)).kind, 'local-work');
-  assert.deepEqual(recovered, []);
+  assert.equal((await releaseFor(run.id)).kind, 'ready');
+  assert.deepEqual(parkRunIds, [undefined], 'unattributed work is prior work, not a checkpoint');
 });
 
 test("work that isn't a finished run's own is still kept", async () => {
@@ -246,16 +246,16 @@ test("work that isn't a finished run's own is still kept", async () => {
     workspace.branch = run.branch!;
     workspace.dirtyCount = 0;
     setup();
-    assert.equal((await releaseFor(run.id)).kind, 'local-work', label);
+    assert.equal((await releaseFor(run.id)).kind, 'ready', label);
   }
   // Without a named run nothing is parked, however parkable the checkout looks.
   runs = [validationRun()];
   workspace.branch = 'TAT-4146-feat-farm-validation';
   assert.equal(
     (await reuseSafeIdleSlot('proof', () => {}, { epoch: 7, runId: null })).kind,
-    'local-work',
+    'ready',
   );
-  assert.deepEqual(recovered, []);
+  assert.ok(recovered.length > 0);
 });
 
 test('a checkout COMPLETE already released returns to idle when its run closes', async () => {
@@ -288,19 +288,19 @@ test('a checkout COMPLETE already released returns to idle when its run closes',
     null,
   );
   workspace.headSha = 'e'.repeat(40);
-  assert.equal((await returnReleasedCheckoutToIdle(run, () => {}))?.kind, 'local-work');
-  assert.deepEqual(parkRunIds, ['validation']);
+  assert.equal((await returnReleasedCheckoutToIdle(run, () => {}))?.kind, 'ready');
+  assert.deepEqual(parkRunIds, ['validation', undefined]);
 });
 
-test('unknown publication and a deleted remote ref never grant reset authority', async () => {
+test('unknown remote publication preserves local work before reset', async () => {
   workspace.publication = 'unknown';
   workspace.error = 'Publication ref is absent';
   for (const retainedCandidate of [false, true])
     assert.deepEqual(
       await reuseSafeIdleSlot('proof', () => {}, { epoch: 7, runId: null, retainedCandidate }),
-      { kind: 'unavailable', reason: workspace.error },
+      { kind: 'ready' },
     );
-  assert.deepEqual(recovered, []);
+  assert.equal(recovered.length, 2);
 });
 test('a released successor epoch refuses an older terminal cleanup', async () => {
   const result = await reuseSafeIdleSlot('proof', () => {}, { epoch: 6, runId: null });

@@ -312,7 +312,7 @@ try {
       body: 'This is a private transport/retention proof. No app, network or publication work.',
       capturedAt: new Date().toISOString(),
     };
-    const template = resolveConfiguredExecutionTemplate(await loadProjectVars('fixture'), {
+    const template = await resolveConfiguredExecutionTemplate(await loadProjectVars('fixture'), {
       flow: 'review-pr',
       platform: 'cli',
       runMode: 'autonomous',

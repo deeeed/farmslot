@@ -4,7 +4,6 @@ import { mkdir, mkdtemp, readFile, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
-import { resolveConfiguredExecutionTemplateSources } from '@farmslot/agent-runtime';
 import { durableWrite } from '@farmslot/agent-runtime/native/storage';
 import {
   type ExecResult,
@@ -33,6 +32,7 @@ import {
   slotWriteFiles,
 } from '../core/slot-io.js';
 import { loadPoolConfigs } from '../fleet/state.js';
+import { resolveConfiguredExecutionTemplateSources } from '../host-services/execution-template-sources.js';
 import { execNativeNodeArgv, requestNativeNode } from '../runners/native/node.js';
 import { getRun, persistRunNow, runsDirectory, updateRun } from '../runs/store.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
@@ -175,17 +175,17 @@ async function optionalJson<T>(file: string): Promise<T | undefined> {
 }
 
 /** Metadata includes ctime/inode as well as content size/mtime, including dirty source trees. */
-function sourceFingerprint(
+async function sourceFingerprint(
   projectConfig: string,
   config: ReviewWorkspaceSupportConfig,
   env: NodeJS.ProcessEnv,
-): string {
+): Promise<string> {
   const definitions = [
     ...(config.skills ?? []),
     ...(config.libraries ?? []),
     ...(config.runtime ? [config.runtime] : []),
   ];
-  const resolution = resolveConfiguredExecutionTemplateSources(
+  const resolution = await resolveConfiguredExecutionTemplateSources(
     {
       sources: definitions.map((source, i) => ({
         id: String(i),
@@ -256,7 +256,7 @@ async function gatewayBundle(
     }
     const bundle = await deps.collect(project, config, { env: deps.env() });
     verifyReviewWorkspaceSupport(bundle, bundle.manifest.sha256);
-    if (sourceFingerprint(project.projectConfig, config, deps.env()) !== fingerprint)
+    if ((await sourceFingerprint(project.projectConfig, config, deps.env())) !== fingerprint)
       throw new Error('Review support sources changed while freezing');
     const directory = path.join(deps.cacheRoot(), 'bundles', bundle.manifest.sha256);
     const parent = path.dirname(directory);
@@ -530,10 +530,10 @@ export async function ensureReviewWorkspaceSupport(
         )
       )
         throw new Error('Cannot add review support after reviewer launch');
-      const fingerprint = sourceFingerprint(project.projectConfig, config, deps.env());
+      const fingerprint = await sourceFingerprint(project.projectConfig, config, deps.env());
       manifest = await gatewayBundle(project, config, fingerprint, deps);
       if (
-        sourceFingerprint(project.projectConfig, config, deps.env()) !== fingerprint ||
+        (await sourceFingerprint(project.projectConfig, config, deps.env())) !== fingerprint ||
         !isDeepStrictEqual(
           (await deps.loadProjectVars(initial.project)).projectJson.static_review?.support,
           config,

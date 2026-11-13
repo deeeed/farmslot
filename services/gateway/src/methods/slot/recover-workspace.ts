@@ -3,10 +3,10 @@ import { randomUUID } from 'node:crypto';
 import {
   DEFAULT_BRANCH,
   isTerminalRunStatus,
-  parksSlotCommits,
   sameSlotWorkspace,
   type SlotParkedCommits,
   slotParkedDetail,
+  slotParkedSummary,
   type SlotRecovery,
   slotRecoveryEligibility,
   type SlotRecoveryPhase,
@@ -38,7 +38,7 @@ import {
   beginTerminalTeardown,
   endTerminalTeardown,
 } from '../../run-engine/terminal-teardown-registry.js';
-import { parkSlotBranch, parkSlotCommits } from '../../run-lifecycle/validation-run-commits.js';
+import { captureSlotWork } from '../../run-lifecycle/validation-run-commits.js';
 import { getRun, getRunWithArchived } from '../../runs/store.js';
 import { checkFixtures } from '../fleet.js';
 
@@ -82,8 +82,8 @@ interface SlotRecoveryOptions {
   parkRunId?: string;
   /** The exact head an ownerless return to idle may park. */
   parkHeadSha?: string;
-  /** An operator release parks unpushed commits when no live run owns the checkout. */
-  parkOwnerlessCommits?: boolean;
+  /** Ordinary refresh keeps its existing resources instead of tearing them down. */
+  resetOnly?: boolean;
 }
 
 export async function recoverSlotWorkspace(
@@ -161,26 +161,23 @@ export async function recoverSlotWorkspace(
         phase: 'inspect',
       };
     parked = workspace.recovery?.parked?.slice() ?? [];
-    if (params.expectedWorkspace && !sameSlotWorkspace(workspace, params.expectedWorkspace))
-      return refuse(
-        'identity-changed',
-        'Workspace changed; inspect and confirm again',
-        workspace.branch,
-      );
+    if (
+      params.expectedWorkspace &&
+      (['epoch', 'currentRunId', 'cleanupRunId', 'handoffRunId', 'recoveryId'] as const).some(
+        (key) => workspace[key] !== params.expectedWorkspace?.[key],
+      )
+    )
+      return refuse('identity-changed', 'Slot ownership changed; inspect again', workspace.branch);
     const fleet = await loadFleetStatus(true);
     const status = fleet.slots.find((slot) => slot.slot === params.slotId);
     let keepWarm = status?.warm ?? false;
-    const eligibility = slotRecoveryEligibility(status ? { ...status, workspace } : undefined);
+    const eligibility = slotRecoveryEligibility(
+      status ? { ...status, workspace, workspaceError: undefined } : undefined,
+    );
     if (!eligibility.allowed)
       return refuse(
         eligibility.reason ?? 'protected',
         eligibility.detail ?? 'Slot is protected',
-        workspace.branch,
-      );
-    if (eligibility.confirmationRequired && (params.mode !== 'force' || !params.expectedWorkspace))
-      return refuse(
-        eligibility.reason ?? 'dirty',
-        'Confirm discarding the current local work',
         workspace.branch,
       );
     const existing = workspace.recovery;
@@ -306,20 +303,10 @@ export async function recoverSlotWorkspace(
     });
     if (!sameSlotWorkspace(workspace, authorized))
       throw new Error('Workspace changed during publication verification');
-    if (workspace.publication === 'unknown')
-      throw new Error(workspace.error ?? 'Publication is unknown');
     if (marker.completed.includes('reset') && workspace.headSha !== workspace.remoteDefaultSha)
       marker.completed = marker.completed.filter(
         (phase) => phase === 'cleanup' || phase === 'inspect',
       );
-    // Preserve unpublished work before teardown when no live run owns the recovery.
-    const parkOwnerless =
-      !!options?.parkOwnerlessCommits && !options.parkRunId && parksSlotCommits(workspace);
-    if (
-      (workspace.dirtyCount > 0 || (workspace.publication === 'unpushed' && !parkOwnerless)) &&
-      params.mode !== 'force'
-    )
-      throw new Error('Local work requires discard confirmation');
     const resetLinked = await detectLinkedWorktree(vars);
     const targetBranch = resetLinked
       ? resolveSlotTrackingBranchFromProject(project.projectJson, vars, project, resetLinked)
@@ -344,28 +331,18 @@ export async function recoverSlotWorkspace(
       await save('inspect');
       output('park', slotParkedDetail([entry]));
     };
-    if (parkOwnerless) {
-      await verifyWork();
-      const entry = await parkSlotCommits(vars, execOnSlot, {
-        headSha: authorized.headSha,
+    const capture = await captureSlotWork(
+      vars,
+      project.projectJson,
+      {
         defaultBranch,
-      });
-      if (!entry) throw new Error('Unpushed commits changed before parking; inspect again');
-      await recordPark(entry);
-    }
-    if (
-      options?.parkOwnerlessCommits &&
-      (!workspace.currentRunId || workspace.terminalOwner) &&
-      targetBranch !== workspace.branch &&
-      expect.branches?.[targetBranch]
-    )
-      await recordPark(
-        await parkSlotBranch(vars, execOnSlot, {
-          branch: targetBranch,
-          defaultBranch,
-          headSha: authorized.headSha,
-        }),
-      );
+        runId: workspace.currentRunId ?? options?.parkRunId,
+        targetBranches: [targetBranch],
+        targetTrees: [`origin/${defaultBranch}`],
+      },
+      execOnSlot,
+    );
+    for (const receipt of capture.receipts) await recordPark(slotParkedSummary(receipt));
     await save('cleanup', 'inspect');
     if (!marker.completed.includes('cleanup')) {
       const linked = await detectLinkedWorktree(vars);
@@ -376,11 +353,9 @@ export async function recoverSlotWorkspace(
         linked,
       );
       const baseline =
-        !authorized.currentRunId &&
-        isSlotIdleBranch(workspace.branch, tracking, defaultBranch, linked);
-      // Parking happens only in the release below; an idle-branch reset would skip it.
-      if (baseline && options?.parkRunId)
-        throw new Error('A checkout on the idle branch holds no run branch commits to park');
+        options?.resetOnly ||
+        (!authorized.currentRunId &&
+          isSlotIdleBranch(workspace.branch, tracking, defaultBranch, linked));
       if (!baseline) {
         await verifyWork();
         const released = await slotRelease(
@@ -391,7 +366,7 @@ export async function recoverSlotWorkspace(
               id: marker.id,
               epoch: authorized.epoch,
               verifyWork,
-              discardLocalWork: params.mode === 'force',
+              discardLocalWork: true,
               skipRecycle: options?.skipRecycle,
               expect,
               parked: parked.length > 0,
@@ -427,7 +402,7 @@ export async function recoverSlotWorkspace(
             : 'Verified published work',
       );
       await resetSlotRepoToIdle(vars, project.projectJson, project, defaultBranch, {
-        discardLocalWork: params.mode === 'force',
+        discardLocalWork: true,
         expect,
         verifyWork,
       });

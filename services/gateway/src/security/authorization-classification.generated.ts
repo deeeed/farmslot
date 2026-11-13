@@ -355,6 +355,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'slot.fixtureRefresh': { classification: 'admin' },
   'slot.monitor': { classification: 'admin' },
   'slot.openEditor': { classification: 'admin' },
+  'slot.parked': { classification: 'admin' },
   'slot.prepare': { classification: 'admin' },
   'slot.prepareStatus': { classification: 'admin' },
   'slot.recycle': { classification: 'admin' },

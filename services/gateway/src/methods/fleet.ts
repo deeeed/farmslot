@@ -329,6 +329,7 @@ export interface SlotCheckResult {
 
 interface PreviousSlotStatus {
   workspace_recovery?: unknown;
+  parked_work?: unknown;
   lifecycle?: string | null;
   phase?: string | null;
   warm?: boolean | null;
@@ -843,6 +844,7 @@ export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus
     // would let a stale teardown's epoch guard pass again.
     slot_epoch: Number(prev.slot_epoch) || 0,
     ...(prev.workspace_recovery ? { workspace_recovery: prev.workspace_recovery } : {}),
+    ...(prev.parked_work ? { parked_work: prev.parked_work } : {}),
     handoff_run_id: prev.handoff_run_id ?? null,
     task_id: prev.task_id ?? null,
     task_file: prev.task_file ?? null,

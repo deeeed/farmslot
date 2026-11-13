@@ -2,11 +2,6 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
-import {
-  executionTemplateSourceDirty,
-  executionTemplateSourceRevision,
-  resolveConfiguredExecutionTemplateSources,
-} from '@farmslot/agent-runtime';
 import type {
   ExecutionTemplateSourceRoot,
   ReviewWorkspaceSupportBinding,
@@ -20,6 +15,12 @@ import {
   resolveSourceBinding,
   staticReviewSupportPlaceholdersAllowed,
 } from '@farmslot/slot-config';
+
+import {
+  executionTemplateSourceDirty,
+  executionTemplateSourceRevision,
+  resolveConfiguredExecutionTemplateSources,
+} from '../host-services/execution-template-sources.js';
 export type {
   ReviewWorkspaceSupportConfig,
   ReviewWorkspaceSupportEntry,
@@ -219,7 +220,7 @@ export async function collectReviewWorkspaceSupport(
     )
       throw new Error(`Unsupported review support environment binding: ${name}`);
   }
-  const resolution = resolveConfiguredExecutionTemplateSources(
+  const resolution = await resolveConfiguredExecutionTemplateSources(
     {
       sources: definitions.map((source) => ({
         id: `${source.kind}:${source.name}`,
@@ -253,8 +254,8 @@ export async function collectReviewWorkspaceSupport(
           : definition.kind === 'library'
             ? `libraries/${definition.name}`
             : 'runtime/package';
-      const sourceRevision = executionTemplateSourceRevision(source.root);
-      const sourceDirty = executionTemplateSourceDirty(source.root);
+      const sourceRevision = await executionTemplateSourceRevision(source.root);
+      const sourceDirty = await executionTemplateSourceDirty(source.root);
       const identity: SourceManifest = {
         kind: definition.kind,
         name: definition.name,

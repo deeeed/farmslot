@@ -174,6 +174,7 @@ export const GATEWAY_COMMAND_METHODS = [
   Methods.SLOT_RECYCLE,
   Methods.SLOT_REFRESH,
   Methods.SLOT_RELEASE,
+  Methods.SLOT_PARKED,
   Methods.SOURCES_PIN,
   Methods.SOURCES_SYNC,
   Methods.SOURCES_UNPIN,

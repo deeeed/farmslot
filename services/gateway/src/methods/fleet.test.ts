@@ -1291,3 +1291,16 @@ test('a slot whose config could not be loaded carries the error on its row (F306
   assert.equal(row.config_error, "Duplicate resource field 'port' in slot macwork-mm-4");
   assert.equal(buildRefreshSlotRow(makeRefreshRow(), {}).config_error, undefined);
 });
+
+test('fleet refresh preserves the durable parked inventory independently of recovery', () => {
+  const parked_work = {
+    namespace: 'refs/farmslot/parked/proof/',
+    repoKey: 'repository',
+    count: 2,
+    latestRef: 'refs/farmslot/parked/proof/run/snapshot',
+    latestAt: '2026-11-13T00:00:00Z',
+  };
+  const before = makeRefreshRow({ parked_work });
+  const refreshed = buildFleetRefreshSnapshot([before], [makeRefreshRow()], [], 'now').slots[0];
+  assert.deepEqual(refreshed.parked_work, parked_work);
+});

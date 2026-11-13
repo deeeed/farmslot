@@ -20,6 +20,7 @@ import {
   isRunArchiving,
 } from '../../run-lifecycle/archive-fence.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
+import { makeVars } from '../../runners/test-fixtures.js';
 import {
   createRun,
   deleteRun,
@@ -72,7 +73,15 @@ function blockedRun(t: test.TestContext, label: string, steps: Run['steps']): Ru
   return updateRun(run.id, { status: 'blocked', error: 'worker blocked', steps, decisions: [] });
 }
 
-const clean = { unmergedWork: null } as SlotReleasePreflight;
+const clean: SlotReleasePreflight = {
+  vars: makeVars(),
+  boundOwner: null,
+  ownerTerminal: false,
+  projectVars: undefined,
+  projectJson: {},
+  defaultBranch: 'main',
+  blindMarker: null,
+};
 
 test('blocked archive authority permits only its owner-bound release preflight', async (t) => {
   const run = blockedRun(t, 'archive-owner-preflight', [{ name: 'monitor', status: 'done' }]);
@@ -281,26 +290,6 @@ test('a slot release guard refusing refuses the archive with its reason', async 
   assert.equal(getRun(run.id)?.status, 'blocked', 'the run stays in the store, still blocked');
   assert.equal(getRun(run.id)?.slotId, slotId);
   assert.equal(await readSlotField(slotId, 'current_run_id'), run.id, 'slot still held');
-  assert.equal(isRunArchiving(run.id), false);
-});
-
-test('unpushed work on the slot refuses the archive before the release touches the worker', async (t) => {
-  const run = blockedRun(t, 'archive-unpushed', [{ name: 'monitor', status: 'done' }]);
-  await holdSlotFor(t, run.id);
-  const before = structuredClone(getRun(run.id)!);
-  const { calls, slot } = recordingSlot({
-    ...clean,
-    unmergedWork: { branch: 'PROJ-1-fix', details: '2 unpushed commits' },
-  });
-
-  await assert.rejects(
-    runArchive({ runId: run.id }, noopEmit, slot),
-    /slot demo-work-1 has work on 'PROJ-1-fix' \(2 unpushed commits\) that releasing it would lose/,
-  );
-  assert.equal(calls.releases.length, 0, 'the release (and its worker kill) never ran');
-  assert.deepEqual(getRun(run.id), before, 'the run is unchanged');
-  assert.equal(await readSlotField(slotId, 'current_run_id'), run.id, 'slot still held');
-  assert.equal(await readSlotField(slotId, 'lifecycle'), 'held');
   assert.equal(isRunArchiving(run.id), false);
 });
 
