@@ -21,4 +21,4 @@ export function parsePiProviderDiscovery(
 export const PI_REQUEST_TIMEOUT_RETRIES: number;
 
 export const PI_CONFIG_ENVIRONMENT: readonly string[];
-export function piProviderAuthEnvironment(model: string, env?: NodeJS.ProcessEnv): string[];
+export function piProviderEnvironment(model: string, env?: NodeJS.ProcessEnv): string[];

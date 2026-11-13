@@ -1,1 +1,1 @@
-- Build blind worker environments from an explicit allowlist on fresh launches and retained reloads, preserving task tooling, Pi provider configuration and selected authentication, and keep recipe CDP routing on the trial browser.
+- Build blind worker environments from an explicit allowlist on fresh launches and retained reloads, preserving task tooling, selected Pi provider endpoints, configuration and authentication, and keep recipe CDP routing on the trial browser.

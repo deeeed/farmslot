@@ -1,10 +1,7 @@
 import { CLAUDE_ACP_EFFORTS } from '@farmslot/agent-runtime/native/claude-acp';
 import { nativeRunnerDefinitions } from '@farmslot/agent-runtime/native/registry';
 
-import {
-  PI_CONFIG_ENVIRONMENT,
-  piProviderAuthEnvironment,
-} from '../../../../scripts/runners/pi-farmslot-providers.mjs';
+import { piProviderEnvironment } from '../../../../scripts/runners/pi-farmslot-providers.mjs';
 
 import { resolvePiBinary, resolvePiModel } from './launch-command.js';
 import {
@@ -698,9 +695,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
       const selected = resolvePiModel(model);
       return [
         ...new Set([
-          ...PI_CONFIG_ENVIRONMENT,
           ...blindProviderEnvironment(selected),
-          ...piProviderAuthEnvironment(selected, environment),
+          ...piProviderEnvironment(selected, environment),
         ]),
       ];
     },

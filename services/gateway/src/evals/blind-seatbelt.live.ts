@@ -217,6 +217,8 @@ for (const provider of ['localsparks', 'router', 'litellm', 'ollama'] as const) 
         FARMSLOT_PI_OLLAMA_URL: 'http://ollama.invalid/v1',
         FARMSLOT_PI_REQUEST_TIMEOUT_MS: '12345',
         FARMSLOT_PI_REQUEST_TIMEOUT_MODE: 'idle',
+        FARMSLOT_PI_PROVIDERS_DEBUG: '1',
+        FARMSLOT_PI_WORKSPACE_TRUST: '1',
         ...Object.fromEntries(
           ['ROUTER', 'LITELLM', 'OLLAMA'].flatMap((kind) => [
             [`FARMSLOT_PI_${kind}_CONTEXT`, '64000'],
@@ -243,13 +245,30 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 const extension = process.argv[process.argv.indexOf('-e') + 1];
 const { resolvePiProviderCatalog } = await import(pathToFileURL(path.join(path.dirname(extension), 'pi-farmslot-providers.mjs')));
-for (const [name, value] of Object.entries(${JSON.stringify(config)})) assert.equal(process.env[name], value, name);
 for (const name of ${JSON.stringify(secrets.filter((name) => name !== selectedKey))})
   assert.equal(process.env[name], undefined, name + ' leaked');
 assert.equal(process.env[${JSON.stringify(selectedKey)}], 'synthetic-selected-auth');
+const requests = [];
 const catalog = await resolvePiProviderCatalog(process.env, {
-  fetchImpl: async () => Response.json({ data: [{ id: 'fixture' }] }),
+  fetchImpl: async (url, options) => {
+    requests.push([url, new Headers(options.headers).get('Authorization')]);
+    return Response.json({ data: [{ id: 'fixture' }] });
+  },
 });
+const selectedUrl = ${JSON.stringify(config[`${selectedKind === 'router' ? 'FARMSLOT_PI_ROUTER' : selectedKind === 'litellm' ? 'LITELLM' : 'FARMSLOT_PI_OLLAMA'}_URL`])};
+assert.ok(requests.length > 0, 'discovery must run through the real wrapper');
+const leaked = requests.find(([url, authorization]) => authorization === 'Bearer synthetic-selected-auth' && !url.startsWith(selectedUrl + '/'));
+assert.ok(!leaked, 'selected credential reached an unselected endpoint: ' + leaked?.[0]);
+for (const [url, authorization] of requests) {
+  assert.ok(url.startsWith(selectedUrl + '/'), 'discovery reached an unselected endpoint: ' + url);
+  assert.ok(authorization === 'Bearer synthetic-selected-auth', 'endpoint received incorrect auth');
+}
+for (const [name, value] of Object.entries(${JSON.stringify(config)})) {
+  const shared = ['FARMSLOT_PI_REQUEST_TIMEOUT_MS', 'FARMSLOT_PI_REQUEST_TIMEOUT_MODE', 'FARMSLOT_PI_PROVIDERS_DEBUG', 'FARMSLOT_PI_WORKSPACE_TRUST'].includes(name);
+  const selected = name.startsWith('FARMSLOT_PI_' + ${JSON.stringify(selectedKind.toUpperCase())}) || name.startsWith(${JSON.stringify(selectedKind.toUpperCase())} + '_');
+  assert.equal(process.env[name], shared || selected ? value : undefined, name);
+}
+assert.deepEqual(catalog.map(source => source.kind), [${JSON.stringify(selectedKind)}]);
 const source = catalog.find(source => source.kind === ${JSON.stringify(selectedKind)});
 assert.ok(source, 'selected pool provider must be registered');
 assert.equal(source.id, ${JSON.stringify(selectedKind === 'router' ? 'localsparks' : selectedKind)});

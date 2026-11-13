@@ -1747,7 +1747,7 @@ describe('buildLaunchCommand', () => {
     }
   });
 
-  it('scopes Pi extension auth to the selected provider, including configured router ids', () => {
+  it('scopes Pi extension discovery and auth to the selected provider, including configured router ids', () => {
     const capability = getRunnerDefinition('pi').blindModelEnvironment;
     assert.ok(capability);
     const secrets = [
@@ -1765,9 +1765,21 @@ describe('buildLaunchCommand', () => {
         ['ollama', 'OLLAMA_API_KEY'],
         ['openai', 'OPENAI_API_KEY'],
         ['unselected-custom', undefined],
-      ]) {
+      ] as const) {
         const admitted = capability(`${provider}/fixture`, { FARMSLOT_PI_ROUTER_ID: routerId });
-        assert.ok(admitted.includes('LITELLM_URL'));
+        const kind =
+          provider === routerId || provider === 'router' ? 'ROUTER' : provider.toUpperCase();
+        for (const source of ['ROUTER', 'LITELLM', 'OLLAMA'] as const) {
+          const selected = source === kind;
+          for (const setting of ['CONTEXT', 'MAX_TOKENS', 'REASONING', 'MODEL_LIMITS'])
+            assert.equal(admitted.includes(`FARMSLOT_PI_${source}_${setting}`), selected);
+          const endpoint = {
+            ROUTER: 'FARMSLOT_PI_ROUTER_URL',
+            LITELLM: 'LITELLM_URL',
+            OLLAMA: 'FARMSLOT_PI_OLLAMA_URL',
+          }[source];
+          assert.equal(admitted.includes(endpoint), selected);
+        }
         assert.ok(admitted.includes('FARMSLOT_PI_REQUEST_TIMEOUT_MODE'));
         assert.deepEqual(
           secrets.filter((name) => admitted.includes(name)),

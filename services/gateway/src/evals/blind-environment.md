@@ -134,15 +134,14 @@ as its own login files are.
 | Pi, `ollama/…`                         | `OLLAMA_API_KEY`                                                                             | Authenticate only Ollama.                                                                                |
 | Other providers                        | None                                                                                         | Use runner-owned model/auth configuration; never infer credential names from arbitrary parent variables. |
 
-Pi also admits the exact non-secret names exported as `PI_CONFIG_ENVIRONMENT`
-from `scripts/runners/pi-farmslot-providers.mjs`, the extension's provider reader.
-That list owns router identity/URL, LiteLLM and Ollama endpoints, request timeout
-and mode, debug/trust settings, and each source kind's context, token, reasoning
-and per-model limit settings. The capability consumes the export directly.
-Authentication follows the selected model, using the configured router id from
-the machine environment, including `sparks` or `localsparks`, or its `router`
-alias. Router selection admits only the router key, including when LiteLLM is
-also configured. Unselected provider keys remain absent.
+Pi admits shared non-secret timeout, mode, debug and workspace trust settings
+from `PI_CONFIG_ENVIRONMENT`. The extension's `piProviderEnvironment` export adds
+only the selected provider's endpoint, authentication and context, token,
+reasoning and per-model limit settings. Router selection uses the configured
+machine router id, including `sparks` or `localsparks`, or its `router` alias.
+Unselected provider configuration and keys remain absent. Blind discovery uses
+`FARMSLOT_MODEL` to restrict sources, including default Ollama discovery, and
+never falls back from the router key to the LiteLLM key.
 
 Pi's default and unqualified `grok-*` models resolve to `xai/…` through its shared
 model adapter. Custom providers that require another environment name must add
