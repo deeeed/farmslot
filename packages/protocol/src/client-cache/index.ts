@@ -20,6 +20,7 @@ export * from './store.js';
 export * from './sync-state.js';
 export * from './terminal-text.js';
 export * from './text-diff.js';
+export * from './text-links.js';
 export {
   createResourceCacheTransport,
   requestResourceRead,

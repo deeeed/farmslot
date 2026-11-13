@@ -197,7 +197,12 @@ export function nativePlanStepMark(status: NativePlanStep['status']): string {
 
 /** A proposal's copy action, before a copy (`undefined`), after it, and when it failed. */
 export function nativePlanCopyLabel(copied?: boolean): string {
-  return copied === undefined ? 'Copy plan' : copied ? 'Copied' : 'Copy failed';
+  return nativeMessageCopyLabel(copied, 'Copy plan');
+}
+
+/** A message's copy action (`action`), after a copy, and when the copy failed. */
+export function nativeMessageCopyLabel(copied?: boolean, action = 'Copy'): string {
+  return copied === undefined ? action : copied ? 'Copied' : 'Copy failed';
 }
 
 /** The first message of the session Implement starts: the proposed plan, to carry out. */
