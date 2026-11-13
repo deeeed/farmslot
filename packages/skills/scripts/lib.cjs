@@ -3,6 +3,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { literalReplacement } = require('@farmslot/protocol/scripts/literal-replacement.mjs');
 
 function readJsonIfExists(filePath) {
   if (!filePath || !fs.existsSync(filePath)) return null;
@@ -39,8 +40,8 @@ function expandTemplate(template, vars = {}) {
   let result = String(template || '');
   for (const [key, value] of Object.entries(vars)) {
     const rendered = value == null ? '' : String(value);
-    result = result.replaceAll(`{{${key}}}`, rendered);
-    result = result.replaceAll(`{{${String(key).toUpperCase()}}}`, rendered);
+    result = result.replaceAll(`{{${key}}}`, literalReplacement(rendered));
+    result = result.replaceAll(`{{${String(key).toUpperCase()}}}`, literalReplacement(rendered));
   }
   return result;
 }

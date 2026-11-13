@@ -10,6 +10,7 @@ import {
   normalizeRunner,
 } from '@farmslot/protocol';
 import { currentFarmPaths, legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 
 // Placeholder guard lives in @farmslot/protocol so agent-runtime renders with the
 // same rule; re-exported here for the gateway's existing imports.
@@ -89,15 +90,15 @@ function expandTemplateInternal(
   // and resource fields — apply them first so later passes see no placeholder.
   if (extraVars) {
     for (const [key, value] of Object.entries(extraVars)) {
-      result = result.replaceAll(`{{${key}}}`, value);
-      result = result.replaceAll(`{{${key.toUpperCase()}}}`, value);
+      result = result.replaceAll(`{{${key}}}`, literalReplacement(value));
+      result = result.replaceAll(`{{${key.toUpperCase()}}}`, literalReplacement(value));
     }
   }
   // Dynamic resource vars
   for (const [field, value] of Object.entries(slotVars.resourceVars)) {
-    result = result.replaceAll(`{{${field}}}`, value);
+    result = result.replaceAll(`{{${field}}}`, literalReplacement(value));
     // Also support uppercase form (e.g. {{PLATFORM}}, {{ADB_SERIAL}})
-    result = result.replaceAll(`{{${field.toUpperCase()}}}`, value);
+    result = result.replaceAll(`{{${field.toUpperCase()}}}`, literalReplacement(value));
   }
   // Optional resource placeholders are valid even when a slot does not carry
   // that resource (for example iOS slots have no adb_serial/avd). Match the
@@ -119,12 +120,12 @@ function expandTemplateInternal(
   const runtimeDir = projectVars?.runtimeDir ?? '.agent';
   const artifactDir = projectVars?.artifactDir ?? '.task';
   const recipeDir = projectVars?.recipeDir ?? `${runtimeDir}/recipes`;
-  result = result.replaceAll('{{runtime_dir}}', runtimeDir);
-  result = result.replaceAll('{{RUNTIME_DIR}}', runtimeDir);
-  result = result.replaceAll('{{artifact_dir}}', artifactDir);
-  result = result.replaceAll('{{ARTIFACT_DIR}}', artifactDir);
-  result = result.replaceAll('{{recipe_dir}}', recipeDir);
-  result = result.replaceAll('{{RECIPE_DIR}}', recipeDir);
+  result = result.replaceAll('{{runtime_dir}}', literalReplacement(runtimeDir));
+  result = result.replaceAll('{{RUNTIME_DIR}}', literalReplacement(runtimeDir));
+  result = result.replaceAll('{{artifact_dir}}', literalReplacement(artifactDir));
+  result = result.replaceAll('{{ARTIFACT_DIR}}', literalReplacement(artifactDir));
+  result = result.replaceAll('{{recipe_dir}}', literalReplacement(recipeDir));
+  result = result.replaceAll('{{RECIPE_DIR}}', literalReplacement(recipeDir));
   // farmslot_dir: local = repo root, remote = agent deployment dir
   const slotHost = slotVars.host.replace(/\.local$/, '');
   const isLocal =
@@ -136,40 +137,40 @@ function expandTemplateInternal(
       : isLocal
         ? currentFarmPaths('gateway').code.checkout
         : legacyRemoteFarmPaths(slotVars.machineEnv).code.templateNode;
-  result = result.replaceAll('{{farmslot_dir}}', farmslotDir);
-  result = result.replaceAll('{{FARMSLOT_DIR}}', farmslotDir);
+  result = result.replaceAll('{{farmslot_dir}}', literalReplacement(farmslotDir));
+  result = result.replaceAll('{{FARMSLOT_DIR}}', literalReplacement(farmslotDir));
   // Legacy aliases
   const port = slotVars.resourceVars.port ?? '';
-  result = result.replaceAll('{{WATCHER_PORT}}', port);
-  result = result.replaceAll('{{watcher_port}}', port);
+  result = result.replaceAll('{{WATCHER_PORT}}', literalReplacement(port));
+  result = result.replaceAll('{{watcher_port}}', literalReplacement(port));
   // SESSION = configured tmux session name. Do not infer it from slot id:
   // machine ids can contain hyphens and session names are independently configured.
   const session = slotVars.session;
-  result = result.replaceAll('{{SLOT_ID}}', slotVars.slotId);
-  result = result.replaceAll('{{slot_id}}', slotVars.slotId);
-  result = result.replaceAll('{{SESSION}}', session);
-  result = result.replaceAll('{{session}}', session);
+  result = result.replaceAll('{{SLOT_ID}}', literalReplacement(slotVars.slotId));
+  result = result.replaceAll('{{slot_id}}', literalReplacement(slotVars.slotId));
+  result = result.replaceAll('{{SESSION}}', literalReplacement(session));
+  result = result.replaceAll('{{session}}', literalReplacement(session));
   // REPO = slot checkout path as a shell-usable path: the bash implementation
   // substituted REMOTE_REPO (tilde-expanded for the slot's machine) because a
   // quoted '~/...' never expands in hooks. primary_repo = canonical project
   // tree (worktree sandboxes).
   const repoForShell = slotVars.remoteRepo || slotVars.repo;
-  result = result.replaceAll('{{REPO}}', repoForShell);
-  result = result.replaceAll('{{repo}}', repoForShell);
+  result = result.replaceAll('{{REPO}}', literalReplacement(repoForShell));
+  result = result.replaceAll('{{repo}}', literalReplacement(repoForShell));
   const primaryRepo =
     typeof projectVars?.projectJson.primary_repo === 'string' &&
     projectVars.projectJson.primary_repo.trim()
       ? projectVars.projectJson.primary_repo.trim()
       : slotVars.repo;
-  result = result.replaceAll('{{primary_repo}}', primaryRepo);
-  result = result.replaceAll('{{PRIMARY_REPO}}', primaryRepo);
+  result = result.replaceAll('{{primary_repo}}', literalReplacement(primaryRepo));
+  result = result.replaceAll('{{PRIMARY_REPO}}', literalReplacement(primaryRepo));
   // Reference repos — derive path from slot repo parent + local_name
   if (projectVars?.projectJson.reference_repos) {
     for (const [key, ref] of Object.entries(projectVars.projectJson.reference_repos)) {
       const refPath = referenceRepoPath(slotVars.repo, ref.local_name);
       const placeholder = referenceRepoPlaceholder(key);
-      result = result.replaceAll(placeholder, refPath);
-      result = result.replaceAll(placeholder.toUpperCase(), refPath);
+      result = result.replaceAll(placeholder, literalReplacement(refPath));
+      result = result.replaceAll(placeholder.toUpperCase(), literalReplacement(refPath));
     }
   }
   if (includeProjectTemplateVars && projectVars?.projectJson.vars) {
@@ -181,8 +182,8 @@ function expandTemplateInternal(
         false,
         extraVars,
       );
-      result = result.replaceAll(`{{${key}}}`, value);
-      result = result.replaceAll(`{{${key.toUpperCase()}}}`, value);
+      result = result.replaceAll(`{{${key}}}`, literalReplacement(value));
+      result = result.replaceAll(`{{${key.toUpperCase()}}}`, literalReplacement(value));
     }
   }
   // Per-call variables supplied by the caller (e.g. the prepare-requirement
@@ -195,8 +196,8 @@ function expandTemplateInternal(
   // so an unselected overlay path stays literal and skips quietly.
   if (!leaveUnresolvedDomain || slotVars.domain) {
     const domainValue = slotVars.domain ?? '';
-    result = result.replaceAll('{{domain}}', domainValue);
-    result = result.replaceAll('{{DOMAIN}}', domainValue);
+    result = result.replaceAll('{{domain}}', literalReplacement(domainValue));
+    result = result.replaceAll('{{DOMAIN}}', literalReplacement(domainValue));
   }
 
   return result;
@@ -342,11 +343,11 @@ export function expandTemplateWithReservedLast(
 ): string {
   let masked = template;
   for (const key of Object.keys(reserved)) {
-    masked = masked.replaceAll(`{{${key}}}`, `\u0000${key}\u0000`);
+    masked = masked.replaceAll(`{{${key}}}`, literalReplacement(`\u0000${key}\u0000`));
   }
   let expanded = expandTemplate(masked, slotVars, projectVars, extraVars);
   for (const [key, value] of Object.entries(reserved)) {
-    expanded = expanded.replaceAll(`\u0000${key}\u0000`, value);
+    expanded = expanded.replaceAll(`\u0000${key}\u0000`, literalReplacement(value));
   }
   return expanded;
 }
@@ -495,14 +496,14 @@ export function expandDispatchCmd(
       runnerArgsAttached = true;
       return `${binary}${runnerArgsSuffix}`;
     });
-  cmd = cmd.replaceAll('{repo}', slotVars.remoteRepo);
+  cmd = cmd.replaceAll('{repo}', literalReplacement(slotVars.remoteRepo));
   cmd = replaceBinary(cmd, '{runner}', runner);
   cmd = replaceBinary(cmd, '{runner_path}', runnerPath);
   cmd = cmd.replaceAll(
     '{model}',
-    context.model ? quoteRunnerArgValue(context.model) : (context.model ?? ''),
+    literalReplacement(context.model ? quoteRunnerArgValue(context.model) : (context.model ?? '')),
   );
-  cmd = cmd.replaceAll('{task_file}', context.taskFile ?? '');
+  cmd = cmd.replaceAll('{task_file}', literalReplacement(context.taskFile ?? ''));
   // Replacement callbacks keep `$`, `$'`, and `$&` in the prompt as literals.
   // String replacement patterns would treat them as JS insert tokens.
   cmd = cmd.replaceAll('{task_prompt}', () => context.taskPrompt ?? '');
@@ -513,9 +514,11 @@ export function expandDispatchCmd(
   }
   cmd = cmd.replaceAll(
     '{effort}',
-    context.effort ? quoteRunnerArgValue(context.effort) : (context.effort ?? ''),
+    literalReplacement(
+      context.effort ? quoteRunnerArgValue(context.effort) : (context.effort ?? ''),
+    ),
   );
-  cmd = cmd.replaceAll('{safety_flags}', context.safetyFlags ?? '');
+  cmd = cmd.replaceAll('{safety_flags}', literalReplacement(context.safetyFlags ?? ''));
   for (const [placeholder, owner, fallback] of [
     ['{claude_path}', 'claude', slotVars.claudePath],
     ['{codex_path}', 'codex', slotVars.codexPath],
@@ -526,7 +529,7 @@ export function expandDispatchCmd(
   ] as const) {
     cmd = replaceBinary(cmd, placeholder, runner === owner ? runnerPath : fallback);
   }
-  cmd = cmd.replaceAll('{adb_serial}', slotVars.resourceVars.adb_serial ?? '');
+  cmd = cmd.replaceAll('{adb_serial}', literalReplacement(slotVars.resourceVars.adb_serial ?? ''));
 
   // Empty placeholders (e.g. `{safety_flags}` for runners with no extra flags)
   // leave behind double spaces. Collapse runs of spaces and tabs so the final
@@ -557,8 +560,8 @@ export function expandDispatchCmd(
 export function expandRecycleCmd(slotVars: SlotVars): string {
   let cmd = slotVars.recycleCmd;
   if (!cmd) return '';
-  cmd = cmd.replaceAll('{repo}', slotVars.remoteRepo);
-  cmd = cmd.replaceAll('{adb_serial}', slotVars.resourceVars.adb_serial ?? '');
+  cmd = cmd.replaceAll('{repo}', literalReplacement(slotVars.remoteRepo));
+  cmd = cmd.replaceAll('{adb_serial}', literalReplacement(slotVars.resourceVars.adb_serial ?? ''));
   return cmd;
 }
 

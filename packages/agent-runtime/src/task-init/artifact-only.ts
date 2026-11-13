@@ -1,3 +1,5 @@
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
+
 import {
   assertArtifactOnlyTaskGuard,
   evaluateArtifactOnlyTaskGuard,
@@ -60,34 +62,47 @@ export function applyArtifactOnlyTaskPolicy(
     .filter(Boolean)
     .join('\n');
 
-  let result = markdown.replace(/^(#.+\n)/, `$1\n${artifactOnlyPreamble}`);
+  let result = markdown.replace(
+    /^(#.+\n)/,
+    (_match, heading: string) => `${heading}\n${artifactOnlyPreamble}`,
+  );
 
   result = result.replace(
     / {2}- \*\*If PR_NUMBER is empty\*\* — create the branch and draft PR:[\s\S]*? {4}Update `PR_NUMBER:`[^\n]*(?:\n|$)/g,
-    [
-      '  - **If PR_NUMBER is empty** — artifact-only replay mode: do not open a PR and do not publish. Confirm a local work branch exists only:',
-      '    ```bash',
-      `    cd "${repo.replace(/"/g, '\\"')}"`,
-      `    branch="${branch.replace(/"/g, '\\"')}"`,
-      '    current=$(git symbolic-ref --short HEAD 2>/dev/null || true)',
-      '    if [ "$current" != "$branch" ]; then',
-      '      git checkout -B "$branch"',
-      '    fi',
-      '    git status --short',
-      '    ```',
-      '    Leave `PR_NUMBER:` empty. This run ends with local artifacts and working-tree diff only.',
-      '',
-    ].join('\n'),
+    literalReplacement(
+      [
+        '  - **If PR_NUMBER is empty** — artifact-only replay mode: do not open a PR and do not publish. Confirm a local work branch exists only:',
+        '    ```bash',
+        `    cd "${repo.replace(/"/g, '\\"')}"`,
+        `    branch="${branch.replace(/"/g, '\\"')}"`,
+        '    current=$(git symbolic-ref --short HEAD 2>/dev/null || true)',
+        '    if [ "$current" != "$branch" ]; then',
+        '      git checkout -B "$branch"',
+        '    fi',
+        '    git status --short',
+        '    ```',
+        '    Leave `PR_NUMBER:` empty. This run ends with local artifacts and working-tree diff only.',
+        '',
+      ].join('\n'),
+    ),
   );
 
   result = result.replace(
     /or create it from `[^`]+` if needed\./g,
-    `or verify it was prepared from replay base \`${replayBase}\`; do not recreate it from \`main\`.`,
+    literalReplacement(
+      `or verify it was prepared from replay base \`${replayBase}\`; do not recreate it from \`main\`.`,
+    ),
   );
-  result = result.replace(/git diff main\.\.\.HEAD/g, `git diff ${replayBase}`);
-  result = result.replace(/git diff main\.\.HEAD/g, `git diff ${replayBase}`);
-  result = result.replace(/git log main\.\.HEAD/g, `git log ${replayBase}..HEAD`);
-  result = result.replace(/git log HEAD\.\.main/g, `git log HEAD..${replayBase}`);
+  result = result.replace(/git diff main\.\.\.HEAD/g, literalReplacement(`git diff ${replayBase}`));
+  result = result.replace(/git diff main\.\.HEAD/g, literalReplacement(`git diff ${replayBase}`));
+  result = result.replace(
+    /git log main\.\.HEAD/g,
+    literalReplacement(`git log ${replayBase}..HEAD`),
+  );
+  result = result.replace(
+    /git log HEAD\.\.main/g,
+    literalReplacement(`git log HEAD..${replayBase}`),
+  );
   result = result.replace(/commit\/push approval/g, 'artifact-only completion approval');
   result = result.replace(
     /- \[ \] \*\*(\d+)\. On approval — commit, push, update PR:\*\*[\s\S]*?(?=\s*Write completion signal:|\n- \[ \] \*\*\d+\.)/g,
