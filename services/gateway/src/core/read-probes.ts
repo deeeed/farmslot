@@ -37,8 +37,8 @@ export function readSlotProbe(
   const key = JSON.stringify([vars.machine, vars.remoteRepo, scope, command, cwd]);
   const connection = getNode(vars.machine)?.ws;
   const existing = pending.get(key);
-  if (existing && (!existing.unconfirmed || existing.connection === connection))
-    return existing.promise;
+  // A replacement node cannot attest a read still pending on the old socket.
+  if (existing && existing.connection === connection) return existing.promise;
 
   const entry: ReadProbe = {
     connection,
