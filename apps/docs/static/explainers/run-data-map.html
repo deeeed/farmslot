@@ -699,8 +699,8 @@
                 <td><span class="pill p-checkpoint">hourly pass</span></td>
                 <td class="num">task dir, bundle, sessions</td>
                 <td>
-                  settled for the retention period (default 7 days), not an open PR's latest review,
-                  no keep tag, slot not held
+                  settled for the retention period (default 7 days), no run in the family on an open
+                  or unknown PR, not read by an unsettled follow-up, no keep tag, slot not held
                 </td>
                 <td><code>runs/retention.ts:66</code>, <code>runs/storage-archive.ts:197</code></td>
               </tr>
@@ -900,10 +900,11 @@
           in <code>run-bundle-retention.json</code>, default 7 days; see
           <a
             class="full-link"
-            href="https://github.com/deeeed/farmslot/blob/main/docs/adr/039-run-portable-bundles.md#amendment-8-2026-11-13-seven-day-retention-latest-review-per-open-pr"
+            href="https://github.com/deeeed/farmslot/blob/main/docs/adr/039-run-portable-bundles.md#amendment-8-2026-11-13-seven-day-retention-for-runs-not-on-an-open-pr"
             >ADR-039 Amendment 8</a
-          >), has no <code>keep</code> tag and holds no slot. The latest review of each open PR is
-          kept regardless of age; other runs on an open PR follow the age rule.
+          >), has no <code>keep</code> tag and holds no slot. Every run on an open PR, or whose PR
+          state is unknown, is kept whatever its age, together with its run family. An unsettled
+          follow-up keeps its run family, and an in-flight review keeps the prior run it reads.
         </p>
       </section>
 
@@ -1217,7 +1218,7 @@
           key: 'archive',
           label: 'Retention',
           title: 'Hourly retention moves the bytes',
-          when: '10 min after the gateway starts, then hourly. Only for runs that are done, cancelled or archived and settled for the retention period (default 7 days), with no keep tag and no held slot. The latest review of each open PR is kept regardless of age.',
+          when: '10 min after the gateway starts, then hourly. Only for runs that are done, cancelled or archived and settled for the retention period (default 7 days), with no keep tag and no held slot. Runs on an open or unknown PR, and their families, are kept whatever their age.',
           flows: [
             ['gw', 'archive', 'checkpoint', 'task dir · sessions'],
             ['bundles', 'archive', 'checkpoint', 'bundle dir'],

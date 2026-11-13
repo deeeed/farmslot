@@ -115,11 +115,14 @@ archive, where it is kept forever. The hourly retention pass moves a settled
 run's **bytes** (task directory, bundle, session archives, native sessions) to
 `FARMSLOT_RUN_ARCHIVE_ROOT` once the run has been settled for the retention
 period, has no `keep` tag and holds no slot. The period is
-`runBundleRetention.runRetentionDays` in `run-bundle-retention.json` under the
-farm home, default 7 days; see
-[ADR-039 Amendment 8](https://github.com/deeeed/farmslot/blob/main/docs/adr/039-run-portable-bundles.md#amendment-8-2026-11-13-seven-day-retention-latest-review-per-open-pr) and
-[Settled-run retention](https://github.com/deeeed/farmslot/blob/main/docs/reference/retained-run-artifacts.md#settled-run-retention). The latest review of each open PR is kept
-regardless of age; other runs on an open PR follow the age rule. Task pins and review
+`runBundleRetention.runRetentionDays` in `run-bundle-retention.json` in the
+farm's config directory (`config/` under the farm home on layout 2, the farm
+home itself on the legacy layout), default 7 days; see
+[ADR-039 Amendment 8](https://github.com/deeeed/farmslot/blob/main/docs/adr/039-run-portable-bundles.md#amendment-8-2026-11-13-seven-day-retention-for-runs-not-on-an-open-pr) and
+[Settled-run retention](https://github.com/deeeed/farmslot/blob/main/docs/reference/retained-run-artifacts.md#settled-run-retention).
+Every run on an open PR, or whose PR state is unknown, is kept whatever its age,
+and so is the rest of its run family. An unsettled follow-up keeps its run
+family, and an in-flight review keeps the prior run it reads. Task pins and review
 workspaces can be recreated, so retention deletes them. Restore from the archive
 is manual.
 
