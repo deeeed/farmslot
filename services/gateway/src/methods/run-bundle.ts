@@ -18,7 +18,7 @@ import {
 
 import { assertHeavyWriteRoom, assertHeavyWriteRootPresent } from '../core/heavy-write-room.js';
 import { farmslotRoot } from '../projects/repo-root.js';
-import { runBundleHome } from '../run-completion/retained-artifacts.js';
+import { runBundleHome, runBundleStoreRoot } from '../run-completion/retained-artifacts.js';
 import { captureRunEpisode } from '../run-completion/run-episode.js';
 import { getRun, loadAllRuns, runsDirectory } from '../runs/store.js';
 
@@ -50,12 +50,8 @@ export async function runBundleImport(
   // writes run records and their media into the gateway's stores. Each may be its own volume.
   const configured = runBundleRetentionSettings(runBundleHome()).storeRoot;
   if (configured) await assertHeavyWriteRootPresent(configured, 'runBundleRetention.storeRoot');
-  for (const dir of [
-    tmpdir(),
-    farmslotRoot(),
-    runsDirectory(),
-    configured ?? path.join(runBundleHome(), 'run-bundles'),
-  ])
+  // The store root the store itself opens; on layout 2 that is the data root's volume.
+  for (const dir of [tmpdir(), farmslotRoot(), runsDirectory(), runBundleStoreRoot()])
     await assertHeavyWriteRoom(dir);
   const result = await importBundle({
     farmslotRoot: farmslotRoot(),
