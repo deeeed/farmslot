@@ -5,7 +5,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { type Clip, clipLinkUrl, clipTextParts } from '@farmslot/protocol';
+import { type Clip, clipLinkUrl } from '@farmslot/protocol';
+import { textLinkParts } from '@farmslot/protocol/client-cache';
 
 import { useShownMarker } from '../../hooks/useShownMarker';
 import { baseStyles, colors, fonts, radii, spacing } from '../../lib/theme';
@@ -37,10 +38,17 @@ export default function ClipboardScreen() {
       (reason: unknown) =>
         setError(`Copy failed: ${reason instanceof Error ? reason.message : String(reason)}`),
     );
-  const open = (url: string) =>
-    Linking.openURL(url).catch((reason: unknown) =>
+  // Opens only a validated http(s) URL, whatever the gateway sent.
+  const open = (text: string) => {
+    const url = clipLinkUrl(text);
+    if (!url) {
+      setError('Not a web link; copy it instead.');
+      return;
+    }
+    Linking.openURL(url.href).catch((reason: unknown) =>
       setError(`Could not open link: ${reason instanceof Error ? reason.message : String(reason)}`),
     );
+  };
 
   const copyButton = (clip: Clip) => (
     <Pressable
@@ -81,7 +89,7 @@ export default function ClipboardScreen() {
           <Pressable
             accessibilityRole="link"
             style={styles.linkBody}
-            onPress={() => void open(clip.text)}
+            onPress={() => open(clip.text)}
           >
             <Text style={styles.label} numberOfLines={1}>
               {clip.label ?? clipLinkUrl(clip.text)?.host ?? clip.text}
@@ -109,12 +117,12 @@ export default function ClipboardScreen() {
             {copyButton(clip)}
           </View>
           <Text style={styles.body} selectable numberOfLines={12}>
-            {clipTextParts(clip.text).map((part, index) =>
-              part.url ? (
+            {textLinkParts(clip.text).map((part, index) =>
+              part.href ? (
                 <Text
                   key={index}
                   style={styles.inlineLink}
-                  onPress={() => void open(part.url!)}
+                  onPress={() => open(part.href!)}
                   accessibilityRole="link"
                 >
                   {part.text}

@@ -23,6 +23,10 @@ test('--text and --link need no stdin; a link must be one URL', () => {
     text: 'https://github.com/org/repo/pull/1',
     kind: 'link',
   });
+  assert.equal(
+    clipPushParams({ link: 'https://en.wikipedia.org/wiki/Clipboard_(computing)' }, undefined).text,
+    'https://en.wikipedia.org/wiki/Clipboard_(computing)',
+  );
   assert.throws(() => clipPushParams({ link: 'github.com/pull/1' }, undefined), /Not an http/);
   assert.throws(
     () => clipPushParams({ link: 'https://example.com', text: 'x' }, undefined),

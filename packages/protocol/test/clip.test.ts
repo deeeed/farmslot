@@ -2,26 +2,34 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { resourceQuery } from '../src/client-cache/registry.js';
-import { clipLinkUrl, clipTextParts } from '../src/rpc/clip.js';
+import { textLinkParts } from '../src/client-cache/text-links.js';
+import { clipLinkUrl } from '../src/rpc/clip.js';
 import { Methods } from '../src/rpc/registry.js';
 
-test('clip text splits into plain runs and tappable http(s) links', () => {
-  assert.deepEqual(clipTextParts('PRs: https://github.com/o/r/pull/1, and http://x.test/a.'), [
-    { text: 'PRs: ' },
-    { text: 'https://github.com/o/r/pull/1', url: 'https://github.com/o/r/pull/1' },
-    { text: ', and ' },
-    { text: 'http://x.test/a', url: 'http://x.test/a' },
-    { text: '.' },
-  ]);
-  assert.deepEqual(clipTextParts('no links here'), [{ text: 'no links here' }]);
-  assert.deepEqual(clipTextParts('ftp://x.test'), [{ text: 'ftp://x.test' }]);
-});
-
-test('a link clip is exactly one http(s) URL', () => {
+test('a link clip is exactly one http(s) address, balanced brackets included', () => {
+  assert.equal(
+    clipLinkUrl(' https://en.wikipedia.org/wiki/Clipboard_(computing) ')?.pathname,
+    '/wiki/Clipboard_(computing)',
+  );
   assert.equal(clipLinkUrl(' https://claude.ai/code/artifact/1 ')?.host, 'claude.ai');
   assert.equal(clipLinkUrl('https://a.test b'), undefined);
-  assert.equal(clipLinkUrl('javascript:alert(1)'), undefined);
   assert.equal(clipLinkUrl('see https://a.test'), undefined);
+  // Trailing punctuation is not part of an address, so this is not one link.
+  assert.equal(clipLinkUrl('https://a.test.'), undefined);
+  assert.equal(clipLinkUrl('javascript:alert(1)'), undefined);
+  assert.equal(clipLinkUrl('file:///etc/hosts'), undefined);
+  assert.equal(clipLinkUrl('farmslot://pair?x=1'), undefined);
+});
+
+test('links inside clip text keep balanced brackets and drop sentence punctuation', () => {
+  assert.deepEqual(textLinkParts('See https://en.wikipedia.org/wiki/Clipboard_(computing).'), [
+    { text: 'See ' },
+    {
+      text: 'https://en.wikipedia.org/wiki/Clipboard_(computing)',
+      href: 'https://en.wikipedia.org/wiki/Clipboard_(computing)',
+    },
+    { text: '.' },
+  ]);
 });
 
 test('clip.list is a live read of the farm clipboard key', () => {
