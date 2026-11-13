@@ -38,16 +38,16 @@ const observer = await client.connect().catch((error) => {
   connection.close();
   throw error;
 });
-// The second client reads the rules again whenever the gateway announces a PR automation change.
-const updates: Promise<PRRulesListResult>[] = [];
-observer.onEvent((event) => {
+// The second client is told about PR automation changes and reads the rules itself once.
+let announced = false;
+const stopObserving = observer.onEvent((event) => {
   if (
     event.event === 'resource.changed' &&
     (event.payload as ResourceChangedPayload).changes.some(
       (change) => change.key.family === 'pr-automation',
     )
   )
-    updates.push(observer.call<PRRulesListResult>('prRules.list'));
+    announced = true;
 });
 let receipt: PRReviewRequestResult | undefined;
 try {
@@ -135,6 +135,9 @@ try {
     assert.equal(queued.effort, 'high');
     assert.equal(queued.runId, undefined);
   }
+  for (let waited = 0; !announced && waited < 5_000; waited += 50)
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  stopObserving();
   const after = await observer.call<PRRulesListResult>('prRules.list');
   assert.equal(
     after.rules.length,
@@ -142,9 +145,7 @@ try {
     'Human intake must not create trigger rules',
   );
   assert(
-    (await Promise.all(updates)).some((state) =>
-      state.submissions?.some((item) => item.id === receipt?.submission.id),
-    ),
+    announced && after.submissions?.some((item) => item.id === receipt?.submission.id),
     'Second client must receive durable intake updates',
   );
   await cancel();
