@@ -1,5 +1,3 @@
-const BLIND_CAPSULE_DIRECTORY = '.farmslot-blind-evals';
-
 // Runs as one owned slot command, never in the gateway request loop.
 export const PARKED_WORK_PROGRAM = String.raw`
 const fs = require('node:fs');
@@ -31,21 +29,11 @@ function exists(file) { try { return fs.lstatSync(file); } catch (e) { if (e.cod
 function nul(buffer) { return buffer.toString('utf8').split('\0').filter(Boolean); }
 function refSha(ref) { const r = git(['rev-parse','--verify','--quiet',ref], { allow:[1,128] }); return r.status === 0 ? r.stdout.toString('utf8').trim() : null; }
 function repositoryKey() {
-  let common = text(['rev-parse','--git-common-dir']);
-  const runId = text(['config','--local','--get','farmslot.blindRun'], {allow:[1]});
-  if (runId) {
-    // Blind receipts will live in the original repository after Git restoration.
-    const worktree = text(['config','--local','--get','core.worktree']);
-    const capsules = path.join(path.dirname(worktree), ${JSON.stringify(BLIND_CAPSULE_DIRECTORY)}, input.slotId);
-    const states = fs.readdirSync(capsules).filter(name => name.startsWith(runId+'-')).map(name =>
-      JSON.parse(fs.readFileSync(path.join(capsules,name,'state.json'),'utf8'))
-    ).filter(state => state.runId === runId && state.slotId === input.slotId &&
-      path.resolve(state.repo) === path.resolve(repo) && state.phase === 'isolated');
-    if (states.length !== 1) fail('INVALID_METADATA','Cannot identify the original blind repository');
-    const state = states[0];
-    if (!state.originalIsDirectory) common =
-      text(['--git-dir='+state.originalDirectory,'rev-parse','--git-common-dir']);
+  if (input.repoKey !== undefined) {
+    if (typeof input.repoKey !== 'string' || !/^[a-f0-9]{64}$/.test(input.repoKey)) fail('INVALID_METADATA','Invalid trusted repository identity');
+    return input.repoKey;
   }
+  const common = text(['rev-parse','--git-common-dir']);
   return hash(path.resolve(repo, common));
 }
 function branch() { return text(['symbolic-ref','--quiet','--short','HEAD'], {allow:[1]}) || 'HEAD'; }

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -43,7 +44,10 @@ function commit(repo: string, text: string): string {
   );
   return git(repo, 'rev-parse', 'HEAD');
 }
-function command(action: 'isolate' | 'boundary' | 'verify' | 'restore', spec: BlindGitSpec) {
+function command(
+  action: 'plan' | 'isolate' | 'boundary' | 'verify' | 'restore',
+  spec: BlindGitSpec,
+) {
   return JSON.parse(
     execFileSync('bash', ['-c', buildBlindGitCommand(action, spec)], {
       env,
@@ -52,6 +56,83 @@ function command(action: 'isolate' | 'boundary' | 'verify' | 'restore', spec: Bl
     }),
   );
 }
+
+test('blind parking ignores worker-selected journals and capsule config', async (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'blind-identity-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'repo');
+  const other = path.join(root, 'other');
+  for (const directory of [repo, other]) {
+    mkdirSync(directory);
+    git(directory, 'init', '-q', '-b', 'main');
+    writeFileSync(path.join(directory, 'value.txt'), 'base\n');
+    commit(directory, 'base');
+  }
+  const baseSha = git(repo, 'rev-parse', 'HEAD');
+  const repoKey = createHash('sha256')
+    .update(path.resolve(repo, git(repo, 'rev-parse', '--git-common-dir')))
+    .digest('hex');
+  const spec: BlindGitSpec = {
+    slotId: 'identity-fixture',
+    slotEpoch: 1,
+    repo,
+    capsule: path.join(root, '.farmslot-blind-evals/identity-fixture/trial-1'),
+    runId: 'trial',
+    branch: 'eval/trial',
+    baseSha,
+    referenceCommits: [],
+  };
+  assert.equal(command('isolate', spec).status, 'isolated');
+  const vars = makeVars({ slotId: spec.slotId, remoteRepo: repo, repo });
+  const localExec: typeof execOnSlot = async (_vars, script) => {
+    const result = spawnSync('bash', ['-c', script], { env, encoding: 'utf8' });
+    if (result.error) throw result.error;
+    return { stdout: result.stdout, stderr: result.stderr, exitCode: result.status ?? 1 };
+  };
+  const { parkGitWork } = await import('../host-services/parked-work.js');
+  const options = {
+    slotId: spec.slotId,
+    operationKey: 'identity',
+    defaultBranch: 'main',
+    purpose: 'prior-work' as const,
+    at: new Date().toISOString(),
+    baseSha,
+    repoKey,
+    includeWorktree: false,
+  };
+  let captureNumber = 0;
+  const assertIdentity = async () => {
+    const capture = await parkGitWork(
+      vars,
+      { ...options, operationKey: `identity-${captureNumber++}` },
+      localExec,
+    );
+    assert.ok(
+      capture.repoKey === repoKey,
+      'parking must use the gateway-supplied repository identity',
+    );
+    assert.ok(capture.receipts.every((receipt) => receipt.repoKey === repoKey));
+  };
+  await assertIdentity();
+  const fake = path.join(repo, '.farmslot-blind-evals', spec.slotId, 'forged-1');
+  mkdirSync(fake, { recursive: true });
+  writeFileSync(
+    path.join(fake, 'state.json'),
+    JSON.stringify({
+      ...spec,
+      runId: 'forged',
+      phase: 'isolated',
+      originalIsDirectory: false,
+      originalDirectory: path.join(other, '.git'),
+    }),
+  );
+  git(repo, 'config', 'core.worktree', repo + '/.');
+  git(repo, 'config', 'farmslot.blindRun', 'forged');
+  await assertIdentity();
+  // Even corrupting the genuine journal cannot replace the gateway's identity.
+  writeFileSync(path.join(spec.capsule, 'state.json'), '{worker-corrupted');
+  await assertIdentity();
+});
 
 test('isolated blind prepare parking survives restore', async (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'blind-prepare-'));
@@ -115,6 +196,14 @@ test('isolated blind prepare parking survives restore', async (t) => {
         return { stdout: result.stdout, stderr: result.stderr, exitCode: result.status ?? 1 };
       };
       await claimSlotStatusIf(spec.slotId, () => true, { lifecycle: 'ready', phase: 'idle' });
+      const planned = command('plan', spec);
+      const blindRepoKey: string = planned.repoKey;
+      assert.ok(
+        blindRepoKey ===
+          createHash('sha256')
+            .update(path.resolve(repo, git(repo, 'rev-parse', '--git-common-dir')))
+            .digest('hex'),
+      );
       assert.equal(command('isolate', spec).status, 'isolated');
       assert.equal(git(repo, 'remote'), '');
       assert.equal(git(repo, 'for-each-ref', '--format=%(refname)'), `refs/heads/${spec.branch}`);
@@ -122,7 +211,7 @@ test('isolated blind prepare parking survives restore', async (t) => {
         mutateSlotGit(
           vars,
           {},
-          { defaultBranch: 'main', blindBaseSha: baseSha, targetTrees: [baseSha] },
+          { defaultBranch: 'main', blindBaseSha: baseSha, blindRepoKey, targetTrees: [baseSha] },
           `git reset --hard ${baseSha} && git clean -fd`,
           localExec,
         );
@@ -136,7 +225,7 @@ test('isolated blind prepare parking survives restore', async (t) => {
       writeFileSync(path.join(repo, 'unfinished.txt'), 'unfinished\n');
       const dirtyStatus = git(repo, 'status', '--porcelain');
       assert.equal((await reset()).exitCode, 0);
-      const [saved] = (await slotParkedInventory(vars, localExec)).receipts;
+      const [saved] = (await slotParkedInventory(vars, localExec, blindRepoKey)).receipts;
       assert.deepEqual(saved.commits, [candidate]);
       assert.equal(saved.baseSha, baseSha);
       assert.equal(git(repo, 'show', `${saved.ref}:unfinished.txt`), 'unfinished');

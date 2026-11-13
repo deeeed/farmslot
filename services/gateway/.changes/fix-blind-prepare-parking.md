@@ -1,1 +1,1 @@
-- Fix blind trial prepare and replay parking to retain recoverable candidate work through restoration for standalone and linked worktrees against the verified blind base without requiring origin refs.
+- Fix blind trial prepare and replay parking to retain recoverable candidate work through restoration for standalone and linked worktrees against the verified blind base without requiring origin refs. Bind blind receipts to the original repository identity retained by the gateway before isolation, and refuse older runs without that identity.

@@ -36,12 +36,6 @@
     "count": 1
   },
   {
-    "file": "services/gateway/src/host-services/parked-work-program.ts",
-    "literal": ".farmslot-blind-evals",
-    "reason": "Existing blind Git capsule leaf beside the supplied checkout, not an instance root. Parking reads its journal to preserve original repository identity.",
-    "count": 1
-  },
-  {
     "file": "services/gateway/src/node-support/activation.ts",
     "literal": ": farmslot-node-support-activate\npython3 -c ",
     "reason": "Support activation command identification marker, not a path.",

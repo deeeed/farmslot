@@ -32,6 +32,8 @@ export interface SlotPrepareInternalOptions {
   preserveBranch?: boolean;
   /** Trusted base after the owning eval has isolated the Git object store. */
   blindBaseSha?: string;
+  /** Original repository identity retained in the gateway before blind isolation. */
+  blindRepoKey?: string;
   /** Only with durable evidence that this run has not started branch setup. */
   allowMissingReplayBranch?: boolean;
   beforeBranchSetup?: () => Promise<void>;

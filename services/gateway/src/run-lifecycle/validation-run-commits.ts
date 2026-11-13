@@ -32,6 +32,8 @@ interface SlotWorkOptions {
   defaultBranch: string;
   /** Verified base of a blind capsule, which deliberately has no origin refs. */
   blindBaseSha?: string;
+  /** Original repository identity retained in the gateway before blind isolation. */
+  blindRepoKey?: string;
   runId?: string;
   operationKey?: string;
   targetBranches?: string[];
@@ -62,6 +64,11 @@ export async function captureSlotWork(
   options: SlotWorkOptions,
   exec: typeof execOnSlot,
 ): Promise<SlotWorkCapture> {
+  if (options.blindBaseSha && !options.blindRepoKey)
+    throw new ParkedWorkError(
+      'MISSING_BLIND_IDENTITY',
+      'Blind trial trusted repository identity is missing. Restore this trial and create a new blind run.',
+    );
   const row = await readSlotRow(vars.slotId);
   if (!row) throw new ParkedWorkError('SLOT_MISSING', `Slot ${vars.slotId} has no inventory row`);
   await excludeSlotScaffolding(vars, project, exec);
@@ -97,6 +104,7 @@ export async function captureSlotWork(
       // Normal checkouts must still prove the fetched default exists; stale tracking
       // refs cannot prove other work is published.
       baseSha: options.blindBaseSha,
+      repoKey: options.blindBaseSha ? options.blindRepoKey : undefined,
       notRevs: [options.blindBaseSha ?? `origin/${options.defaultBranch}`],
       extraRefs: (options.targetBranches ?? []).map((branch) => `refs/heads/${branch}`),
       targetTrees: options.targetTrees,
@@ -104,7 +112,13 @@ export async function captureSlotWork(
     exec,
   );
   if (run) for (const receipt of capture.receipts) await recordParkedRunCommits(run.id, receipt);
-  await persistSlotParkedInventory(vars, exec, true, row);
+  await persistSlotParkedInventory(
+    vars,
+    exec,
+    true,
+    row,
+    options.blindBaseSha ? options.blindRepoKey : undefined,
+  );
   return {
     ...capture,
     assertOwner: async () => {
@@ -130,6 +144,7 @@ export async function mutateSlotGit(
     vars,
     {
       slotId: vars.slotId,
+      repoKey: options.blindBaseSha ? options.blindRepoKey : undefined,
       extraRefs: (options.targetBranches ?? []).map((branch) => `refs/heads/${branch}`),
       targetTrees: options.targetTrees,
     },
@@ -526,6 +541,7 @@ export async function persistSlotParkedInventory(
   exec: typeof execOnSlot,
   required = false,
   expected?: Readonly<Record<string, unknown>>,
+  repoKey?: string,
 ): Promise<void> {
   const row = await readSlotRow(vars.slotId);
   if (!row) {
@@ -537,7 +553,7 @@ export async function persistSlotParkedInventory(
       );
     return;
   }
-  const inventory = await slotParkedInventory(vars, exec);
+  const inventory = await slotParkedInventory(vars, exec, repoKey);
   const binding = {
     namespace: inventory.namespace,
     repoKey: inventory.repoKey,
@@ -557,8 +573,12 @@ export async function persistSlotParkedInventory(
 }
 
 /** A narrow inventory reconciles legacy refs from their exact recorded run, never a run scan. */
-export async function slotParkedInventory(vars: SlotVars, exec: typeof execOnSlot) {
-  const inventory = await readParkedGitWork(vars, vars.slotId, exec);
+export async function slotParkedInventory(
+  vars: SlotVars,
+  exec: typeof execOnSlot,
+  repoKey?: string,
+) {
+  const inventory = await readParkedGitWork(vars, vars.slotId, exec, repoKey);
   const legacy: import('@farmslot/protocol').LegacyParkedWork[] = [];
   const { getRunWithArchived } = await import('../runs/store.js');
   for (const row of inventory.legacy) {

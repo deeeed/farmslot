@@ -970,7 +970,11 @@ if __name__ == '__main__':
     action = request.pop('action')
     if action == 'plan':
         capsule = Path(request['repo']).resolve().parent / '.farmslot-blind-evals' / request['slotId'] / (request['runId'] + '-' + str(request['slotEpoch']))
-        result = {'status': 'planned', 'capsule': str(capsule)}
+        # Plan runs before the swap and before any worker. Never recover identity from a journal.
+        repo = Path(request['repo'])
+        common = git(repo, 'rev-parse', '--git-common-dir').stdout.decode().strip()
+        repo_key = hashlib.sha256(os.path.abspath(repo / common).encode()).hexdigest()
+        result = {'status': 'planned', 'capsule': str(capsule), 'repoKey': repo_key}
     else:
         result = {'isolate': isolate, 'boundary': boundary, 'verify': verify, 'restore': restore}[action](request)
     print(json.dumps(result))

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -542,12 +543,20 @@ test('blind prepare parks against its shallow base without origin refs, includin
   const options = {
     defaultBranch: 'main',
     blindBaseSha: base,
+    blindRepoKey: createHash('sha256')
+      .update(path.resolve(vars.remoteRepo, git('rev-parse', '--git-common-dir')))
+      .digest('hex'),
     runId: validation.id,
     targetBranches: ['main', validation.branch!],
     targetTrees: [base],
   };
   const reset = () =>
     mutateSlotGit(vars, {}, options, `git reset --hard ${base} && git clean -fd`, localExec);
+  await assert.rejects(
+    captureSlotWork(vars, {}, { ...options, blindRepoKey: undefined }, localExec),
+    /trusted repository identity.*missing/i,
+    'older blind isolation without a gateway-owned key must fail closed',
+  );
   assert.equal((await reset()).exitCode, 0);
   assert.deepEqual((await slotParkedInventory(vars, localExec)).receipts, []);
   git('commit', '-qm', 'candidate', '--allow-empty');

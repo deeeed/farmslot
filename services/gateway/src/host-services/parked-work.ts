@@ -47,6 +47,8 @@ export interface ParkedCaptureOptions {
   includeWorktree?: boolean;
   onlyThreatened?: boolean;
   baseSha?: string;
+  /** Gateway-owned original repository identity for a blind capture. */
+  repoKey?: string;
   notRevs?: string[];
   checks?: { branch?: string; headSha?: string; baseSha?: string };
 }
@@ -224,8 +226,9 @@ export async function readParkedGitWork(
   vars: SlotVars,
   slotId: string,
   exec: Executor = execOnSlot,
+  repoKey?: string,
 ): Promise<ParkedInventory> {
-  const value = await request(vars, 'list', { slotId }, exec);
+  const value = await request(vars, 'list', { slotId, repoKey }, exec);
   if (!isRecord(value) || typeof value.repoKey !== 'string' || typeof value.namespace !== 'string')
     throw new ParkedWorkError('INVALID_METADATA', 'Invalid parked inventory result');
   return receiptsFromRows(value.items, value.repoKey, value.namespace);
@@ -233,7 +236,7 @@ export async function readParkedGitWork(
 
 export async function executeParkedGitMutation(
   vars: SlotVars,
-  options: Pick<ParkedCaptureOptions, 'slotId' | 'extraRefs' | 'targetTrees'>,
+  options: Pick<ParkedCaptureOptions, 'slotId' | 'extraRefs' | 'targetTrees' | 'repoKey'>,
   capture: ParkedCapture,
   command: string,
   exec: Executor = execOnSlot,

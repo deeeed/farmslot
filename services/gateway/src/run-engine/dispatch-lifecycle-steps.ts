@@ -438,6 +438,10 @@ export async function executePrepareStep(
         ...(current.engineState?.evalExperiment?.blind
           ? { blindBaseSha: current.engineState.evalExperiment.blind.baseSha }
           : {}),
+        // Isolation happens in beforeBranchSetup; read its durable result at capture time.
+        get blindRepoKey() {
+          return getRun(runId)?.engineState?.evalExperiment?.blind?.isolation?.repoKey;
+        },
         allowMissingReplayBranch,
         beforeBranchSetup: branchIdentity
           ? async () => {

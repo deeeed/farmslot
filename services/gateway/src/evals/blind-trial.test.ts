@@ -92,6 +92,21 @@ mock.module('../core/exec.js', {
           stderr: '',
         };
       }
+      if (command.includes('"action":"plan"'))
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            status: 'planned',
+            capsule: '/owned/capsule',
+            repoKey: 'd'.repeat(64),
+          }),
+          stderr: '',
+        };
+      if (command.includes('"action":"isolate"'))
+        assert.ok(
+          run.engineState?.evalExperiment?.blind?.isolation?.repoKey === 'd'.repeat(64),
+          'identity must be in gateway state before the swap',
+        );
       if (command.includes('git rev-parse HEAD'))
         return { exitCode: 0, stdout: checkout, stderr: '' };
       verifications++;
@@ -202,6 +217,7 @@ async function fixture(t: TestContext) {
             slotId: 'owned',
             slotEpoch: 7,
             capsulePath: '/owned/capsule',
+            repoKey: 'd'.repeat(64),
             verifiedAt: 'now',
           },
         },
@@ -282,6 +298,33 @@ test('a completion recovery cannot relabel reviewed output as the first output',
     'First output was not frozen before review started.',
   );
   assert.equal(captures, 1);
+});
+
+test('isolation persists the original identity before swapping Git and reuses it on replay', async (t) => {
+  await fixture(t);
+  delete run.engineState!.evalExperiment!.blind!.isolation;
+  slotCommands.length = 0;
+  await prepareBlindTrialGit(run.id);
+  assert.ok(run.engineState!.evalExperiment!.blind!.isolation!.repoKey === 'd'.repeat(64));
+  await prepareBlindTrialGit(run.id);
+  assert.equal(slotCommands.filter((command) => command.includes('"action":"plan"')).length, 1);
+});
+
+test('an older isolated run without a trusted identity fails before reading capsule state', async (t) => {
+  await fixture(t);
+  delete run.engineState!.evalExperiment!.blind!.isolation!.repoKey;
+  slotCommands.length = 0;
+  await assert.rejects(prepareBlindTrialGit(run.id), /trusted repository identity is missing/);
+  assert.equal(slotCommands.length, 0);
+});
+
+test('a failed identity persistence never swaps Git', async (t) => {
+  await fixture(t);
+  delete run.engineState!.evalExperiment!.blind!.isolation;
+  failPersist = true;
+  slotCommands.length = 0;
+  await assert.rejects(prepareBlindTrialGit(run.id), /simulated restart/);
+  assert.equal(slotCommands.filter((command) => command.includes('"action":"isolate"')).length, 0);
 });
 
 test('the worker boundary uses the pool-selected credential home and resolved sibling checkouts', async (t) => {
