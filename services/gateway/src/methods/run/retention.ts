@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import type { Run } from '@farmslot/protocol';
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
-import { withRunBundleStoreLock } from '@farmslot/run-bundle';
+import { runBundleRetentionSettings, withRunBundleStoreLock } from '@farmslot/run-bundle';
 
 import { projectTaskRoots } from '../../core/config.js';
 import { ownsRunSlotCleanup, readSlotRow } from '../../core/index.js';
@@ -13,6 +13,7 @@ import { reviewPRIdentity } from '../../review/session-mode.js';
 import { reclaimReviewWorkspaceStorage } from '../../review-workspaces/storage-use.js';
 import {
   archiveRunArtifactHousekeeping,
+  runBundleHome,
   runBundleStore,
   warnRunBundleCapacity,
 } from '../../run-completion/retained-artifacts.js';
@@ -20,10 +21,12 @@ import { captureMissingRunEpisodes } from '../../run-completion/run-episode.js';
 import { parkedWorkRetentionPass } from '../../run-lifecycle/parked-work-retention.js';
 import { nativeSessionManager } from '../../runners/native/manager.js';
 import {
+  DAY_MS,
   diskBytes,
   planRunRetention,
   retentionStoreAction,
   retiredTaskPins,
+  runIsSettled,
   runOwnedPaths,
   type RunPrState,
   type RunRetentionContext,
@@ -31,6 +34,7 @@ import {
   type RunRetentionPlan,
   type RunRetentionRoots,
   type RunRetentionStore,
+  runSettledAt,
 } from '../../runs/retention.js';
 import {
   assertArchiveRoot,
@@ -96,13 +100,17 @@ const prRecordedSettled = (run: Run) =>
  * Each run's PR state for this pass. A PR the run records as merged or closed is settled.
  * Otherwise every identity it has (the review-session identity, and its own number in the
  * project's repository) is checked against that repository's open PRs, read once. Any
- * open PR keeps the run; so does an unresolvable identity, an unreadable repository or a
- * possibly truncated list.
+ * open PR makes the state open; an unresolvable identity, an unreadable repository or a
+ * possibly truncated list makes it unknown.
+ *
+ * Only the latest review of each PR is held for an open or unknown PR: the review-pr run
+ * of that repository and PR that settled last. A review-pr run whose PR identity cannot be
+ * resolved is its own latest review.
  */
 export async function retentionContext(
   runs: Run[],
   now = Date.now(),
-  read: Pick<RunRetentionDeps, 'openPrs' | 'projectRepo'> = { openPrs: readOpenPrs, projectRepo },
+  read: Pick<RunRetentionDeps, 'openPrs' | 'projectRepo' | 'retentionDays'> = RUN_RETENTION_DEPS,
 ): Promise<RunRetentionContext> {
   const identities = new Map<
     string,
@@ -137,8 +145,19 @@ export async function retentionContext(
       open.set(repo, undefined);
     }
   }
+  const latest = new Map<string, Run>();
+  for (const run of runs) {
+    if (run.flowType !== 'review-pr' || !runIsSettled(run)) continue;
+    const pr = identities.get(run.id)?.prs[0];
+    const key = pr ? `${pr.repo.toLowerCase()}#${pr.number}` : run.id;
+    const current = latest.get(key);
+    if (!current || runSettledAt(run) > runSettledAt(current)) latest.set(key, run);
+  }
+  const latestReviews = new Set([...latest.values()].map((run) => run.id));
   return {
     now,
+    ageMs: read.retentionDays() * DAY_MS,
+    latestReview: (run) => latestReviews.has(run.id),
     prState: (run): RunPrState => {
       if (prRecordedSettled(run)) return 'settled';
       const identity = identities.get(run.id);
@@ -158,6 +177,8 @@ export interface RunRetentionDeps {
   holdsSlot: (run: Run) => Promise<boolean>;
   openPrs: (repo: string) => Promise<number[]>;
   projectRepo: (project: string) => Promise<string | undefined>;
+  /** Days a settled run keeps its storage. */
+  retentionDays: () => number;
   withBundleLock: <T>(operation: () => Promise<T>) => Promise<T>;
 }
 
@@ -165,6 +186,7 @@ export const RUN_RETENTION_DEPS: RunRetentionDeps = {
   holdsSlot: runHoldsSlot,
   openPrs: readOpenPrs,
   projectRepo,
+  retentionDays: () => runBundleRetentionSettings(runBundleHome()).runRetentionDays,
   // Each eligible run's walk and stage is one turn under the lock; waiters allow a turn an hour.
   withBundleLock: async (operation) =>
     withRunBundleStoreLock(await runBundleStore(), operation, {
@@ -271,7 +293,7 @@ export async function runRetentionPass(
         const pins = await retiredTaskPins(
           roots.taskPins,
           new Set(files.filter((file) => file.store === 'task-dirs').map((file) => file.source)),
-          context.now,
+          context,
           new Set(others.flatMap(runTaskDirectories)),
         );
         for (const source of pins)

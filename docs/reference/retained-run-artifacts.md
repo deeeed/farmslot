@@ -141,12 +141,14 @@ The owning gateway reads overrides from `${FARMSLOT_HOME}/run-bundle-retention.j
     "maxBundleBytes": 2147483648,
     "maxStoreBytes": 25769803776,
     "metadataReserveBytes": 536870912,
-    "mediaRetentionDays": 30
+    "mediaRetentionDays": 30,
+    "runRetentionDays": 7
   }
 }
 ```
 
 This example explicitly sets a 24 GiB store budget; the default remains 20 GiB.
+`runRetentionDays` sets the settled-run retention age (see below).
 Inventory existing gateway acquisition trees before rollout and set the deployment
 budget against their full physical size and available disk headroom. Historical
 copies remain charged, including preserved unique media of deleted runs. Do not
@@ -215,10 +217,34 @@ and `.runs/archive/<id>.json` in place permanently. It MUST NOT emit `RUN_DELETE
 or release backlog/history links during retention.
 
 Storage is eligible only when the run is done/cancelled/archived, settled at least
-48 hours, holds no slot or native worker, has no open decision, uncleaned review
-workspace, pending closeout/backlog reconciliation or `keep` tag, and its PR is
-absent or confirmed closed/merged. Unreadable/ambiguous PR state keeps storage.
-Shared paths and admitted task directories MUST remain available to their owners.
+the retention age, holds no slot or native worker, has no open decision, uncleaned
+review workspace, pending closeout/backlog reconciliation or `keep` tag, and is not
+the latest review of an open PR. Shared paths and admitted task directories MUST
+remain available to their owners.
+
+The retention age is `runBundleRetention.runRetentionDays` in
+`${FARMSLOT_HOME}/run-bundle-retention.json`, default 7 (ADR-039 Amendment 8).
+It is a positive number of days; any other value makes every reader of the file
+refuse, as an invalid capacity key does, and the pass fails loudly. To keep a
+shorter window, for example 3 days, set it next to the other `runBundleRetention`
+keys:
+
+```json
+{ "runBundleRetention": { "runRetentionDays": 3 } }
+```
+
+Each pass reads it when it starts, so no restart is needed. Task pins whose
+task directory is gone are removed once they are older than the same age. A run
+settles at the later of its completion and archive time.
+
+The latest review of a PR is the `review-pr` run for that repository and PR (its
+review-session identity, or its number in the project's repository) with the
+latest settle time. Runs that have not settled do not compete. Past the age it
+keeps its storage while the PR is open, or while the PR's state is unknown: its
+repository's open PRs could not be read, the list reached the read limit, or its
+PR identity could not be resolved, in which case the run counts as its own latest
+review. Every other run on the PR, including older reviews and development,
+fix-bug and `pr-complete` runs, follows the age rule.
 
 Eligible task directories, task pins, session archives, local review workspaces,
 local native sessions and run bundles MUST move to `FARMSLOT_RUN_ARCHIVE_ROOT`.

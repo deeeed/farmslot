@@ -583,9 +583,35 @@ evidence or datasets they hold move to `FARMSLOT_DATA` first. Settled task pins
 are archived to `FARMSLOT_DATA`, never deleted. Directories with no reader are
 archived there too.
 
-
 ## Amendment 7: 2026-11-09 recreatable run storage is deleted, not archived
 
 **Status:** Accepted by Arthur, 2026-11-09.
 
 Task pins and run-owned review workspaces are recreatable copies. Retention deletes them under the same eligibility, admission and ownership checks used for archival, and journals each intent before deletion in the run's storage manifest, without a destination, for recovery at the next pass. Recovery records missing sources as deleted; surviving sources go through eligibility checks again and become deleted or kept with a reason. Archival and restore skip these entries. Shared review caches remain untouched. Everything else keeps Amendments 3 and 5 archival, including agent logs and session archives, final reports and task directories, run bundles and evidence. Run records are still never deleted. Existing archived pins and workspaces remain archived.
+
+## Amendment 8: 2026-11-13 seven-day retention, latest review per open PR
+
+**Status:** Accepted by Arthur, 2026-11-13.
+**Specification:** [Settled-run retention](../reference/retained-run-artifacts.md#settled-run-retention).
+
+### Decision
+
+A settled run keeps its storage for 7 days instead of 48 hours. One setting,
+`runBundleRetention.runRetentionDays` in the gateway's `run-bundle-retention.json`,
+changes that age; task pins use the same age. An open PR no longer holds every run
+on it. Past the age, only the latest review of each open PR keeps its storage: the
+`review-pr` run for that repository and PR that settled last. Development,
+fix-bug, `pr-complete` and older review runs on that PR follow the age rule. A PR
+whose state cannot be read (unreadable repository, possibly truncated open-PR list
+or unresolvable identity) still holds its latest review, so a failed read releases
+only what the age rule already allows. The other holds stay as they were.
+
+### Rationale and consequences
+
+48 hours was too short for warm reviews of PRs that wait days for a re-review, and
+holding every run on an open PR kept development task trees, recordings and
+sessions for as long as a PR stayed open. A warm review continues only from its
+PR's latest review, so that run is the one worth holding. Seven days keeps a week
+of history on local disk; when the disk gets tight the operator can lower the
+setting (for example to 3) without a code change. Storage still moves to the run
+archive under Amendments 3 and 7, so a released run stays restorable.

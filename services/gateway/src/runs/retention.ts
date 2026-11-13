@@ -8,8 +8,7 @@ import { runNeedsExecutionStorage } from '../review-workspaces/storage-use.js';
 
 import { isTaskDirectoryAdmitting, runTaskDirectories } from './store.js';
 
-/** A settled run keeps its storage this long (ADR-039 Amendment 2). */
-export const RUN_RETENTION_AGE_MS = 48 * 60 * 60 * 1000;
+export const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * The one tag that keeps a run's storage in place. Archiving moves storage with a restore
@@ -57,27 +56,37 @@ export type RunPrState = 'none' | 'settled' | 'open' | 'unknown';
 
 export interface RunRetentionContext {
   now: number;
+  /** How long a settled run keeps its storage: `runBundleRetention.runRetentionDays` (ADR-039 Amendment 8). */
+  ageMs: number;
   prState: (run: Run) => RunPrState;
+  /** Whether the run is the most recently settled review-pr run of its PR. */
+  latestReview: (run: Run) => boolean;
 }
 
 const time = (value: string | undefined) => (value ? Date.parse(value) || 0 : 0);
 
+export const runIsSettled = (run: Run) =>
+  Boolean(run.archivedAt) || run.status === 'done' || run.status === 'cancelled';
+
+/** Periodic bookkeeping (e.g. resource posture) keeps touching settled runs' updatedAt. */
+export const runSettledAt = (run: Run) =>
+  Math.max(time(run.completedAt), time(run.archivedAt)) || time(run.updatedAt);
+
 /** Why a run keeps its storage, or undefined when retention may remove it. */
 export function runRetentionHold(
   run: Run,
-  { now, prState }: RunRetentionContext,
+  { now, ageMs, prState, latestReview }: RunRetentionContext,
 ): string | undefined {
-  if (!run.archivedAt && run.status !== 'done' && run.status !== 'cancelled')
-    return 'not done, cancelled or archived';
+  if (!runIsSettled(run)) return 'not done, cancelled or archived';
   if (run.tags?.includes(RUN_RETENTION_KEEP_TAG)) return 'tagged keep';
   if (runNeedsExecutionStorage(run)) return 'still needs its execution storage';
   if (run.backlogReconcilePending) return 'backlog reconciliation pending';
+  if (now - runSettledAt(run) < ageMs) return `settled less than ${ageMs / DAY_MS} days ago`;
+  // A warm review continues from its PR's latest review, so only that run outlives the age.
+  if (!latestReview(run)) return undefined;
   const pr = prState(run);
-  if (pr === 'open') return 'PR open';
-  if (pr === 'unknown') return 'PR state unknown';
-  // Periodic bookkeeping (e.g. resource posture) keeps touching settled runs' updatedAt.
-  const settledAt = Math.max(time(run.completedAt), time(run.archivedAt)) || time(run.updatedAt);
-  if (now - settledAt < RUN_RETENTION_AGE_MS) return 'settled less than 48 h ago';
+  if (pr === 'open') return 'latest review of an open PR';
+  if (pr === 'unknown') return 'latest review of a PR in unknown state';
   return undefined;
 }
 
@@ -152,7 +161,7 @@ export function runOwnedPaths(
 export async function retiredTaskPins(
   pinRoot: string,
   removedTaskDirs: ReadonlySet<string>,
-  now: number,
+  { now, ageMs }: Pick<RunRetentionContext, 'now' | 'ageMs'>,
   pendingTaskDirs: ReadonlySet<string> = new Set(),
 ): Promise<string[]> {
   let names: string[];
@@ -175,7 +184,7 @@ export async function retiredTaskPins(
     } catch {
       continue; // A pin still being written, or unreadable, is not retired.
     }
-    if (typeof taskDir !== 'string' || now - writtenAt < RUN_RETENTION_AGE_MS) continue;
+    if (typeof taskDir !== 'string' || now - writtenAt < ageMs) continue;
     const resolved = path.resolve(taskDir);
     if (pendingTaskDirs.has(resolved) || isTaskDirectoryAdmitting(resolved)) continue;
     if (removedTaskDirs.has(resolved) || !(await exists(resolved))) retired.push(pin);
@@ -254,7 +263,7 @@ export async function planRunRetention(
     'task-pins': await retiredTaskPins(
       roots.taskPins,
       new Set(owned['task-dirs']),
-      context.now,
+      context,
       new Set(kept.flatMap(runTaskDirectories)),
     ),
   };

@@ -23,10 +23,13 @@ import {
   type RunArtifactBundleRef,
   type RunDecision,
 } from '@farmslot/protocol';
+import { resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
+import { DEFAULT_RUN_RETENTION_DAYS } from '@farmslot/run-bundle';
 
+import { runBundleHome } from '../../run-completion/retained-artifacts.js';
 import {
+  DAY_MS,
   planRunRetention,
-  RUN_RETENTION_AGE_MS,
   type RunPrState,
   type RunRetentionContext,
   runRetentionHold,
@@ -53,10 +56,13 @@ import {
 import { makeRun } from './test-fixtures.js';
 
 const NOW = Date.parse('2026-10-20T12:00:00.000Z');
+const RUN_RETENTION_AGE_MS = DEFAULT_RUN_RETENTION_DAYS * DAY_MS;
 const settled = new Date(NOW - RUN_RETENTION_AGE_MS - 60_000).toISOString();
-const context = (pr: RunPrState = 'none'): RunRetentionContext => ({
+const context = (pr: RunPrState = 'none', latestReview = false): RunRetentionContext => ({
   now: NOW,
+  ageMs: RUN_RETENTION_AGE_MS,
   prState: () => pr,
+  latestReview: () => latestReview,
 });
 
 const openDecision: RunDecision = {
@@ -141,7 +147,7 @@ async function pin(roots: RunRetentionRoots, name: string, taskDir: string, writ
   return path.dirname(provenance);
 }
 
-test('retention archives settled run storage only after 48h with nothing open', () => {
+test('retention archives settled run storage only after 7 days with nothing open', () => {
   const done: Run = { ...makeRun({ status: 'done' }), updatedAt: settled };
   assert.equal(runRetentionHold(done, context()), undefined);
   assert.equal(runRetentionHold({ ...done, status: 'cancelled' }, context()), undefined);
@@ -157,9 +163,9 @@ test('retention archives settled run storage only after 48h with nothing open', 
   const recent = new Date(NOW - RUN_RETENTION_AGE_MS + 60_000).toISOString();
   assert.equal(
     runRetentionHold({ ...done, completedAt: recent }, context()),
-    'settled less than 48 h ago',
+    'settled less than 7 days ago',
   );
-  // Bookkeeping that touches a long-completed run does not restart its 48 h.
+  // Bookkeeping that touches a long-completed run does not restart its 7 days.
   assert.equal(
     runRetentionHold({ ...done, completedAt: settled, updatedAt: recent }, context()),
     undefined,
@@ -171,9 +177,77 @@ test('retention archives settled run storage only after 48h with nothing open', 
   // Archiving is a reversible move, so only the keep tag holds a run's storage in place.
   assert.equal(runRetentionHold({ ...done, tags: ['demo', 'unsteered'] }, context()), undefined);
   assert.equal(runRetentionHold({ ...done, tags: ['perps', 'keep'] }, context()), 'tagged keep');
-  assert.equal(runRetentionHold(done, context('open')), 'PR open');
-  assert.equal(runRetentionHold(done, context('unknown')), 'PR state unknown');
-  assert.equal(runRetentionHold(done, context('settled')), undefined);
+  // Past the age, only the latest review of an open or unknown PR keeps its storage.
+  assert.equal(runRetentionHold(done, context('open')), undefined);
+  assert.equal(runRetentionHold(done, context('unknown')), undefined);
+  assert.equal(runRetentionHold(done, context('open', true)), 'latest review of an open PR');
+  assert.equal(
+    runRetentionHold(done, context('unknown', true)),
+    'latest review of a PR in unknown state',
+  );
+  assert.equal(runRetentionHold(done, context('settled', true)), undefined);
+});
+
+test('the age comes from runRetentionDays and only the latest review of an open PR outlives it', async () => {
+  const ago = (days: number) => new Date(NOW - days * DAY_MS).toISOString();
+  const onPr = (id: string, days: number, overrides: Partial<Run> = {}): Run => ({
+    ...makeRun({ id, status: 'done', flowType: 'review-pr', ticketOrPr: 'o/r#1' }),
+    completedAt: ago(days),
+    ...overrides,
+  });
+  const runs = [
+    onPr('six-days', 6, { ticketOrPr: 'PROJ-6', flowType: 'fix-bug' }),
+    onPr('eight-days', 8, { ticketOrPr: 'PROJ-8', flowType: 'fix-bug' }),
+    onPr('four-days', 4, { ticketOrPr: 'PROJ-4', flowType: 'fix-bug' }),
+    onPr('older-review', 20),
+    onPr('newer-review', 10),
+    // A review still running does not displace the settled review a warm review continues from.
+    onPr('running-review', 1, { status: 'monitoring' }),
+    onPr('dev-on-open-pr', 10, { flowType: 'pr-complete', prNumber: 1, project: 'repo' }),
+    onPr('closed-review', 10, { ticketOrPr: 'o/r#2' }),
+    onPr('older-unknown', 20, { ticketOrPr: 'o/down#3' }),
+    onPr('newer-unknown', 10, { ticketOrPr: 'o/down#3' }),
+  ];
+  const holds = async (retentionDays: number) => {
+    const context = await retentionContext(runs, NOW, {
+      retentionDays: () => retentionDays,
+      projectRepo: async () => 'o/r',
+      openPrs: async (repo) => {
+        if (repo === 'o/down') throw new Error('rate limited');
+        return [1];
+      },
+    });
+    return Object.fromEntries(runs.map((run) => [run.id, runRetentionHold(run, context)]));
+  };
+  assert.deepEqual(await holds(DEFAULT_RUN_RETENTION_DAYS), {
+    'six-days': 'settled less than 7 days ago',
+    'eight-days': undefined,
+    'four-days': 'settled less than 7 days ago',
+    'older-review': undefined,
+    'newer-review': 'latest review of an open PR',
+    'running-review': 'not done, cancelled or archived',
+    'dev-on-open-pr': undefined,
+    'closed-review': undefined,
+    'older-unknown': undefined,
+    'newer-unknown': 'latest review of a PR in unknown state',
+  });
+  const short = await holds(3);
+  assert.equal(short['four-days'], undefined, 'a 3-day setting releases a 4-day-old run');
+  assert.equal(short['six-days'], undefined);
+  assert.equal(short['newer-review'], 'latest review of an open PR');
+});
+
+test("the pass reads runRetentionDays from the gateway's run-bundle-retention.json", async (t) => {
+  const config = path.join(
+    resolveFarmPaths({ home: runBundleHome(), role: 'node' }).config,
+    'run-bundle-retention.json',
+  );
+  assert.equal(existsSync(config), false, 'the test home has no settings file');
+  assert.equal(RUN_RETENTION_DEPS.retentionDays(), DEFAULT_RUN_RETENTION_DAYS);
+  await mkdir(path.dirname(config), { recursive: true });
+  t.after(() => rm(config, { force: true }));
+  await writeFile(config, JSON.stringify({ runBundleRetention: { runRetentionDays: 3 } }));
+  assert.equal(RUN_RETENTION_DEPS.retentionDays(), 3);
 });
 
 test('a PR keeps its run unless its repository was read and the PR is not open', async () => {
@@ -192,6 +266,7 @@ test('a PR keeps its run unless its repository was read and the PR is not open',
   ];
   const reads: string[] = [];
   const { prState } = await retentionContext(runs, NOW, {
+    retentionDays: () => DEFAULT_RUN_RETENTION_DAYS,
     projectRepo: async (project) => ({ big: 'o/big', repo: 'o/r' })[project],
     openPrs: async (repo) => {
       reads.push(repo);
@@ -298,7 +373,7 @@ const privateDeps = {
   withBundleLock: async <T>(operation: () => Promise<T>) => operation(),
 };
 
-test('a settled untagged 48h run keeps both live and archived records while all eligible storage moves', async (t) => {
+test('a settled untagged 7-day-old run keeps both live and archived records while all eligible storage moves', async (t) => {
   const roots = await retentionRoots(t, runsDirectory());
   const runIds: string[] = [];
   const originals: string[] = [];

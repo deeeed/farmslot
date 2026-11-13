@@ -1,0 +1,1 @@
+- `runBundleRetentionSettings` reads `runBundleRetention.runRetentionDays` (default 7) and rejects a value that is not a positive number.

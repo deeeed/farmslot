@@ -1,0 +1,1 @@
+- Settled runs keep their storage 7 days instead of 48 hours, set by `runBundleRetention.runRetentionDays` in `run-bundle-retention.json`. Past that age only the latest review of each open PR, or of a PR whose state could not be read, keeps its storage; other runs on the PR follow the age rule.

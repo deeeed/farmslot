@@ -107,6 +107,21 @@ test('configured roots use realpath, expand tilde, retain default pairing and re
   assert.throws(() => bundles.runBundleRetentionSettings(f.home), /absolute/);
 });
 
+test('settled runs keep their storage 7 days unless runRetentionDays says otherwise', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'bundle-retention-days-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  assert.equal(bundles.runBundleRetentionSettings(home).runRetentionDays, 7, 'no file');
+  const config = path.join(home, 'run-bundle-retention.json');
+  await writeFile(config, JSON.stringify({ runBundleRetention: { maxStoreBytes: 123456 } }));
+  assert.equal(bundles.runBundleRetentionSettings(home).runRetentionDays, 7, 'unset');
+  await writeFile(config, JSON.stringify({ runBundleRetention: { runRetentionDays: 3 } }));
+  assert.equal(bundles.runBundleRetentionSettings(home).runRetentionDays, 3);
+  for (const invalid of [0, -1, '3']) {
+    await writeFile(config, JSON.stringify({ runBundleRetention: { runRetentionDays: invalid } }));
+    assert.throws(() => bundles.runBundleRetentionSettings(home), /runRetentionDays/);
+  }
+});
+
 test('a configured root with a missing parent is never recreated', async (t) => {
   const f = await fixture(t);
   const storeRoot = path.join(f.root, 'unmounted', 'store');

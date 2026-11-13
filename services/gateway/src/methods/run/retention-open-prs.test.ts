@@ -74,6 +74,7 @@ const onPr = (prNumber: number): Run => ({
   ticketOrPr: `PROJ-${prNumber}`,
 });
 const read = {
+  retentionDays: () => 7,
   projectRepo: async () => 'org/app',
   openPrs: RUN_RETENTION_DEPS.openPrs,
 };
