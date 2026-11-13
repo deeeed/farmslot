@@ -47,6 +47,20 @@ test('command redaction keeps names, references and shell shape, and is idempote
   );
 });
 
+test('command redaction catches single-class passwords but keeps key slugs', () => {
+  const password = ['qzvxw', 'plmkr', 'tnbyhd'].join('');
+  const passphrase = ['amber', 'canyon', 'violet', 'harbor'].join('-');
+  assert.deepEqual(
+    redactCommandCredentials(
+      `DB_PASSWORD=${password} SMTP_SECRET='${passphrase}' ANTIPATTERN_REPO_KEY=fixture-repo-slugs MM_X_API_KEY_INDEX=3 cmd`,
+    ),
+    {
+      text: 'DB_PASSWORD=[REDACTED] SMTP_SECRET=[REDACTED] ANTIPATTERN_REPO_KEY=fixture-repo-slugs MM_X_API_KEY_INDEX=3 cmd',
+      count: 2,
+    },
+  );
+});
+
 test('persisted and served dispatch outputs keep credential names, never values', async (t) => {
   const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: randomUUID() });
   t.after(async () => {

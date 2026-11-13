@@ -49,21 +49,23 @@ function unquote(value: string): string {
   return value;
 }
 
+/** Names that only ever hold a credential, e.g. DB_PASSWORD or WEBHOOK_SECRET. */
+const STRONG_CREDENTIAL_NAME = /(?:^|_)(?:SECRET|PASSWORD|PASSWD)$/;
+
 /**
  * True for a literal that looks like a secret: a provider shape, or 16+ characters mixing at least
- * two of lowercase, uppercase and digits. References, placeholders such as `local`, numbers and
- * single-case words or slugs such as `metamask-extension` or `org/repo` are not secrets.
+ * two of lowercase, uppercase and digits. Under a `_SECRET`/`_PASSWORD`/`_PASSWD` name any 12+
+ * character value counts, so single-case passwords and passphrases are caught. References,
+ * placeholders such as `local`, numbers, URLs and single-case slugs such as `metamask-extension`
+ * or `org/repo` are not secrets.
  */
-export function isSecretValue(value: string): boolean {
+export function isSecretValue(value: string, name = ''): boolean {
   if (PROVIDER_TOKEN_VALUE.test(value)) return true;
+  if (value.includes('$') || /\s/.test(value) || SLUG_OR_PATH.test(value)) return false;
+  if (STRONG_CREDENTIAL_NAME.test(name))
+    return value.length >= 12 && !/^\d+$/.test(value) && !/^[a-z][\w+.-]*:\/\//i.test(value);
   const classes = [/[a-z]/, /[A-Z]/, /\d/].filter((pattern) => pattern.test(value)).length;
-  return (
-    value.length >= 16 &&
-    classes >= 2 &&
-    !value.includes('$') &&
-    !/\s/.test(value) &&
-    !SLUG_OR_PATH.test(value)
-  );
+  return value.length >= 16 && classes >= 2;
 }
 
 /** Replaces credential values in text (shell lines, prose, embedded JSON). */
@@ -72,7 +74,7 @@ export function redactCommandCredentials(command: string): { text: string; count
   const assigned = command.replace(
     ASSIGNMENT,
     (match, quote: string, name: string, separator: string, value: string) => {
-      if (!isCredentialName(name) || !isSecretValue(unquote(value))) return match;
+      if (!isCredentialName(name) || !isSecretValue(unquote(value), name)) return match;
       count += 1;
       const marker =
         separator === '=' || !/^["']/.test(value)

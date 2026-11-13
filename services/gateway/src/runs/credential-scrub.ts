@@ -46,7 +46,7 @@ function scrubValue(
       typeof key === 'string' &&
       isCredentialName(key) &&
       typeof child === 'string' &&
-      isSecretValue(child)
+      isSecretValue(child, key)
     ) {
       // An environment map: { LITELLM_API_KEY: '…' }.
       next = REDACTED_CREDENTIAL;

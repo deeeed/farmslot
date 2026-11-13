@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import {
   mkdirSync,
   mkdtempSync,
@@ -164,6 +165,39 @@ test('credential values and provider shapes are redacted in commands, maps, jour
   assert.deepEqual(scrubRecordText(lines.text, true)!.values, 0);
 });
 
+// Single-class values, assembled at runtime: a lowercase password and a hyphenated passphrase.
+const LOWER_PASSWORD = ['qzvxw', 'plmkr', 'tnbyhd'].join('');
+const PASSPHRASE = ['amber', 'canyon', 'violet', 'harbor'].join('-');
+
+test('single-class values under password and secret names are redacted; key slugs are kept', () => {
+  const record = {
+    steps: [{ outputs: { launchCommand: `export DB_PASSWORD='${LOWER_PASSWORD}' && pi` } }],
+    environment: {
+      SMTP_PASSWD: PASSPHRASE,
+      WEBHOOK_SECRET: LOWER_PASSWORD,
+      ANTIPATTERN_REPO_KEY: 'fixture-repo-slugs',
+      MM_X_API_KEY_INDEX: '3',
+      DB_PASSWORD: 'local',
+      PIN_PASSWORD: '123456789012',
+      TOKEN_SECRET: '$TOKEN_SECRET',
+    },
+  };
+  const scrubbed = scrubRecordText(JSON.stringify(record), false)!;
+  assert.deepEqual(scrubbed.fields, [
+    '$.steps[0].outputs.launchCommand',
+    '$.environment.SMTP_PASSWD',
+    '$.environment.WEBHOOK_SECRET',
+  ]);
+  assert.ok(!scrubbed.text.includes(LOWER_PASSWORD));
+  assert.ok(!scrubbed.text.includes(PASSPHRASE));
+  const after = JSON.parse(scrubbed.text);
+  assert.equal(after.steps[0].outputs.launchCommand, 'export DB_PASSWORD=[REDACTED] && pi');
+  assert.deepEqual(
+    { ...after.environment, SMTP_PASSWD: undefined, WEBHOOK_SECRET: undefined },
+    { ...record.environment, SMTP_PASSWD: undefined, WEBHOOK_SECRET: undefined },
+  );
+});
+
 test('default roots follow the farm home, bundle store config and data dir, never the farm home', (t) => {
   const base = mkdtempSync(path.join(os.tmpdir(), 'credential-scrub-roots-'));
   t.after(() => rmSync(base, { recursive: true, force: true }));
@@ -192,4 +226,51 @@ test('default roots follow the farm home, bundle store config and data dir, neve
       path.join(data, 'archive'),
     ],
   );
+});
+
+test('--root replaces the default roots in both flag forms; unknown flags scan nothing', (t) => {
+  const base = mkdtempSync(path.join(os.tmpdir(), 'credential-scrub-only-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const home = path.join(base, 'home');
+  const data = path.join(base, 'data');
+  const chosen = path.join(base, 'chosen');
+  for (const dir of [home, path.join(data, 'archive'), chosen]) mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    path.join(home, 'run-bundle-retention.json'),
+    JSON.stringify({ runBundleRetention: { storeRoot: path.join(data, 'run-bundles') } }),
+  );
+  const env = { FARMSLOT_HOME: home, FARMSLOT_RUNS_DIR: path.join(base, 'runs') };
+  const skipped = path.join(data, 'archive/run-skip.json');
+  assert.ok(defaultScrubRoots(env).includes(path.dirname(skipped)));
+  const record = JSON.stringify({ environment: { CODEX_LB_API_KEY: FAKE_KEY } });
+  writeFileSync(skipped, record);
+  const script = path.resolve(import.meta.dirname, '../../../../scripts/scrub-run-credentials.mts');
+  for (const rootArgs of [['--root', chosen], [`--root=${chosen}`]]) {
+    const target = path.join(chosen, 'run-pick.json');
+    writeFileSync(target, record);
+    const output = execFileSync(
+      process.execPath,
+      ['--import', 'tsx', script, ...rootArgs, '--apply'],
+      {
+        encoding: 'utf8',
+        env: {
+          PATH: process.env.PATH,
+          ...env,
+          TSX_TSCONFIG_PATH: path.resolve(import.meta.dirname, '../../tsconfig.json'),
+        },
+      },
+    );
+    assert.equal(readFileSync(skipped, 'utf8'), record, rootArgs.join(' '));
+    assert.ok(!readFileSync(target, 'utf8').includes(FAKE_KEY), rootArgs.join(' '));
+    assert.ok(!output.includes(path.dirname(skipped)), output);
+  }
+  assert.throws(
+    () =>
+      execFileSync(process.execPath, ['--import', 'tsx', script, '--roots', chosen, '--apply'], {
+        stdio: 'ignore',
+        env: { PATH: process.env.PATH, ...env },
+      }),
+    { status: 2 },
+  );
+  assert.equal(readFileSync(skipped, 'utf8'), record);
 });
