@@ -76,3 +76,11 @@ test('renderPlaceholders refuses the same unknown tokens as the protocol guard',
     assert.equal(mirrored, canonical, `refusal drifted for ${JSON.stringify(fixture)}`);
   }
 });
+
+test('child checklists insert replacement patterns verbatim', () => {
+  const title = "Synthetic $' | $& | $` | $$ | $1";
+  const template = '- [ ] {{TITLE}}\n- [ ] Complete\n';
+  const expected = `- [ ] ${title}\n- [ ] Complete\n`;
+  assert.equal(cjs.renderPlaceholders(template, { TITLE: title }, 'fixture'), expected);
+  assert.equal(renderTemplatePlaceholders(template, { TITLE: title }), expected);
+});

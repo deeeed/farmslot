@@ -1,4 +1,4 @@
-import { type Run } from '@farmslot/protocol';
+import { isRecord, type Run } from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
@@ -89,6 +89,30 @@ PY`;
 export function createPiHookObservability(): RunnerObservability {
   return {
     ...claudeHookObservability,
+    async promptAcceptedInSession(vars, _target, sessionId, sessionPath, prompt, since) {
+      const result = await execOnSlot(
+        vars,
+        buildPiPromptAcceptanceCommand(vars.remoteRepo, sessionId, sessionPath, prompt, since),
+        { timeout: 10_000, maxBuffer: 4096 },
+      );
+      if (result.exitCode !== 0) return null;
+      const value: unknown = JSON.parse(result.stdout);
+      return isRecord(value) &&
+        value.accepted === true &&
+        typeof value.observedAt === 'number' &&
+        Number.isFinite(value.observedAt) &&
+        value.observedAt >= since &&
+        typeof value.turnToken === 'string'
+        ? {
+            value: true,
+            source: 'signal',
+            confidence: 'high',
+            observedAt: value.observedAt,
+            turnToken: value.turnToken,
+            exactPromptMatch: true,
+          }
+        : null;
+    },
     async listSessionFiles(vars) {
       const result = await execOnSlot(vars, buildPiSessionDiscoveryCommand(vars.remoteRepo), {
         timeout: 10_000,
@@ -98,6 +122,58 @@ export function createPiHookObservability(): RunnerObservability {
       return JSON.parse(result.stdout) as string[];
     },
   };
+}
+
+/** The retained Pi header binds a bounded native user-message read to its exact cwd. */
+export function buildPiPromptAcceptanceCommand(
+  repo: string,
+  sessionId: string,
+  sessionPath: string,
+  prompt: string,
+  since: number,
+): string {
+  return `python3 - <<'PY'
+import json,os
+from datetime import datetime
+from pathlib import Path
+repo=${JSON.stringify(repo)}
+session=${JSON.stringify(sessionId)}
+file=Path(${JSON.stringify(sessionPath)})
+prompt=${JSON.stringify(prompt)}
+since=${Math.floor(since)}
+def unavailable():
+ print('{}');raise SystemExit(0)
+try:
+ with file.open('rb') as stream:
+  before=os.fstat(stream.fileno());header=json.loads(stream.readline(65536))
+  offset=max(0,before.st_size-8*1024*1024);stream.seek(offset);data=stream.read(8*1024*1024+1);after=os.fstat(stream.fileno())
+ current=file.stat()
+except (OSError,ValueError):unavailable()
+identity=lambda s:(s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns)
+if identity(before)!=identity(after) or identity(after)!=identity(current) or not data.endswith(b'\\n'):unavailable()
+if not isinstance(header,dict) or header.get('type')!='session' or header.get('id')!=session or os.path.realpath(header.get('cwd',''))!=os.path.realpath(repo):unavailable()
+if offset:
+ boundary=data.find(b'\\n')
+ if boundary<0:unavailable()
+ data=data[boundary+1:]
+latest=None
+for line in data.splitlines():
+ try:row=json.loads(line)
+ except (ValueError,UnicodeError):unavailable()
+ if not isinstance(row,dict) or row.get('type')!='message':continue
+ message=row.get('message')
+ if not isinstance(message,dict) or message.get('role')!='user':continue
+ content=message.get('content')
+ if isinstance(content,list):
+  if any(not isinstance(x,dict) or x.get('type')!='text' or not isinstance(x.get('text'),str) for x in content):continue
+  content=''.join(x['text'] for x in content)
+ if not isinstance(content,str) or not isinstance(row.get('id'),str):continue
+ try:stamp=datetime.fromisoformat(row.get('timestamp','').replace('Z','+00:00')).timestamp()*1000
+ except (ValueError,TypeError,AttributeError):continue
+ if stamp<since:continue
+ latest={'accepted':content.replace('\\r\\n','\\n').strip()==prompt.replace('\\r\\n','\\n').strip(),'observedAt':stamp,'turnToken':session+':'+str(int(stamp))}
+print(json.dumps(latest or {}))
+PY`;
 }
 
 /** A reused fix context can own several Pi sessions. Reviewers never enter its rollup. */

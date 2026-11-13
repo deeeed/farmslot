@@ -8,6 +8,8 @@ import { promisify } from 'node:util';
 
 import type { ExecResult } from '@farmslot/protocol';
 
+import { claimSlotStatusIf } from '../core/state.js';
+
 // Same harness as core-prepare.test.ts: real git and the test runner's private tmux server.
 const tmuxSandbox =
   !process.env.TMUX &&
@@ -101,6 +103,13 @@ test(
         ],
       })}\n`,
     );
+
+    await claimSlotStatusIf(slotId, () => true, {
+      lifecycle: 'ready',
+      phase: null,
+      agent: 'idle',
+      current_run_id: null,
+    });
 
     // farmslot-farm's typecheck profile supplies its own preflight hook.
     await slotPrepare(

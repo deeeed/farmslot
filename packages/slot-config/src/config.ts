@@ -56,6 +56,7 @@ import {
   resolveApprovalPolicy,
   type ReviewApprovalPolicy,
 } from '@farmslot/protocol/review-approval-policy.cjs';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 
 import { SlotConfigError } from './error.js';
 import { referenceRepoKeysIn, referenceRepoPlaceholder } from './hooks.js';
@@ -739,7 +740,7 @@ export function resolveRemoteRepo(repo: string, osType: string, sshUser: string)
   if (repo.startsWith('/')) return repo;
   if (repo.startsWith('~')) {
     const homeDir = osType === 'darwin' ? `/Users/${sshUser}` : `/home/${sshUser}`;
-    return repo.replace(/^~/, homeDir);
+    return repo.replace(/^~/, literalReplacement(homeDir));
   }
   return repo;
 }
@@ -939,8 +940,8 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   // The schema documents recipe_dir's default as "{{runtime_dir}}/recipes" —
   // resolve that reference here so a config using the documented form works.
   const recipeDir = (projectJson.paths?.recipe_dir || `${runtimeDir}/recipes`)
-    .replaceAll('{{runtime_dir}}', runtimeDir)
-    .replaceAll('{{RUNTIME_DIR}}', runtimeDir);
+    .replaceAll('{{runtime_dir}}', literalReplacement(runtimeDir))
+    .replaceAll('{{RUNTIME_DIR}}', literalReplacement(runtimeDir));
   // Path values are substituted verbatim into hooks, task files, and prompts —
   // any other {{...}} token here would ship raw to a worker (same rule as
   // resource values).

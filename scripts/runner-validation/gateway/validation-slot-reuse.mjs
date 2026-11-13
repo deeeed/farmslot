@@ -1,6 +1,6 @@
 // Disposable-gateway proof that a closed or archived artifact-only validation run leaves its slot
 // reusable (F291): unpublished commits keep their named branch and an immutable parking ref.
-// The slot returns to idle. Fresh prepare refuses to overwrite that branch; other tickets can use
+// The slot returns to idle. Fresh prepare parks that branch before reuse; other tickets can use
 // the slot. Covers archive after COMPLETE released the slot (c9562e49), named discard of a run held at a
 // refused COMPLETE (29ce2ab4), the archive of a cancelled run, and a stacked commit that is not the
 // run's own. Engine start is disabled; every release goes through the production RPCs.
@@ -128,10 +128,16 @@ function assertReturned(slot, run, label) {
     slot.head,
     `${label}: branch retained`,
   );
-  const ref = `refs/farmslot/parked/${slot.runId}/${slot.head}`;
-  assert.equal(git(slot.repo, 'rev-parse', ref), slot.head, `${label}: parked ref keeps the head`);
-  const parked = run.parkedCommits?.find((entry) => entry.ref === ref);
-  assert.ok(parked, `${label}: the run records the parking`);
+  const parked = run.parkedCommits?.find(
+    (entry) =>
+      entry.slotId === slot.id && entry.headSha === slot.head && entry.purpose !== 'prior-work',
+  );
+  assert.ok(parked, `${label}: the run records its checkpoint`);
+  assert.equal(
+    git(slot.repo, 'rev-parse', parked.ref),
+    slot.head,
+    `${label}: parked ref keeps the head`,
+  );
   assert.deepEqual(
     [parked.slotId, parked.branch, parked.baseSha, parked.headSha, parked.commits.length],
     [slot.id, slot.branch, slot.base, slot.head, 2],
@@ -424,31 +430,35 @@ try {
     assert.equal(slotRow(released.id).owner, null);
     return parked;
   });
-  scenario('fresh prepare refuses the retained unpublished branch', () => {
-    const before = git(released.repo, 'rev-parse', 'HEAD');
-    assert.throws(
-      () =>
-        rpc('slot.prepare', {
-          slotId: released.id,
-          branch: released.branch,
-          prepareProfile: 'git',
-        }),
-      (error) => {
-        assert.match(String(error.stderr ?? error.message), /unpushed commits/);
-        return true;
-      },
+  scenario('fresh prepare parks the retained branch and proceeds on the same ticket', () => {
+    const inventory = rpc('slot.parked', { action: 'list', slotId: released.id });
+    assert.ok(inventory.receipts.some((receipt) => receipt.headSha === released.head));
+    rpc('slot.prepare', {
+      slotId: released.id,
+      branch: released.branch,
+      forceNewBranch: true,
+      prepareProfile: 'git',
+    });
+    assert.equal(git(released.repo, 'branch', '--show-current'), released.branch);
+    assert.equal(git(released.repo, 'rev-parse', 'HEAD'), git(origin, 'rev-parse', 'main'));
+    assert.ok(
+      rpc('slot.parked', { action: 'list', slotId: released.id }).receipts.some(
+        (receipt) => receipt.headSha === released.head,
+      ),
     );
-    assert.equal(git(released.repo, 'rev-parse', 'HEAD'), before, 'refusal leaves HEAD alone');
-    assert.equal(git(released.repo, 'rev-parse', `refs/heads/${released.branch}`), released.head);
-    return 'unpublished branch retained; overwrite refused';
+    return 'prior commits retained; fresh same-ticket prepare succeeds';
   });
   scenario('another ticket prepares on the freed slot', () => {
     const branch = 'TAT-9007-validation';
     rpc('slot.prepare', { slotId: released.id, branch, prepareProfile: 'git' });
     assert.equal(git(released.repo, 'branch', '--show-current'), branch);
     assert.equal(git(released.repo, 'rev-parse', 'HEAD'), git(origin, 'rev-parse', 'main'));
-    assert.equal(git(released.repo, 'rev-parse', `refs/heads/${released.branch}`), released.head);
-    return 'fresh branch from main, earlier unpublished branch preserved';
+    assert.ok(
+      rpc('slot.parked', { action: 'list', slotId: released.id }).receipts.some(
+        (receipt) => receipt.headSha === released.head,
+      ),
+    );
+    return 'fresh branch from main, earlier work retained in the inventory';
   });
 
   // 2. 29ce2ab4: the named discard of a run held at a refused COMPLETE parks before its reset.
@@ -472,16 +482,17 @@ try {
     return 'parked';
   });
 
-  // 4. A commit stacked after COMPLETE is not the run's: the archive leaves the checkout untouched.
-  scenario('a commit stacked after COMPLETE is kept', () => {
+  // Stacked work is prior work, preserved without pretending it is this run's checkpoint.
+  scenario('a commit stacked after COMPLETE is parked before reuse', () => {
     assert.equal(rpc('run.archive', { runId: stacked.runId }).ok, true);
-    assert.equal(git(stacked.repo, 'branch', '--show-current'), stacked.branch);
-    assert.equal(git(stacked.repo, 'rev-parse', 'HEAD'), stacked.head);
-    assert.equal(git(stacked.repo, 'for-each-ref', 'refs/farmslot/'), '');
-    const stackedRun = storedRun(stacked.runId);
-    assert.equal(stackedRun.parkedCommits, undefined);
-    assert.match(stackedRun.slotTeardownSkipped ?? '', /Checkout retained/);
-    return stackedRun.slotTeardownSkipped;
+    assert.equal(git(stacked.repo, 'rev-parse', 'HEAD'), git(origin, 'rev-parse', 'main'));
+    const inventory = rpc('slot.parked', { action: 'list', slotId: stacked.id });
+    assert.ok(
+      inventory.receipts.some(
+        (receipt) => receipt.headSha === stacked.head && receipt.purpose === 'prior-work',
+      ),
+    );
+    return 'unattributed stacked work retained as prior work';
   });
 
   // 5. 2aecebfe: closing the output retries cleanup through the done release, which returns the

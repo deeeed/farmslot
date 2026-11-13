@@ -145,6 +145,46 @@ const execForTest = async (_vars: unknown, cmd: string) => {
   }
   return ok();
 };
+const realState = await import('../../core/state.js');
+mock.module('../../core/state.js', {
+  namedExports: {
+    ...realState,
+    readSlotRow: async () => slotRow,
+    updateSlotStatusIf: async (
+      _id: string,
+      predicate: (row: Readonly<Record<string, unknown>>) => boolean,
+      fields: Record<string, unknown>,
+    ) => applies(predicate, fields),
+  },
+});
+const parking = await import('../../host-services/parked-work.js');
+const fakePark: typeof parking.parkGitWork = async (_vars, options) => ({
+  receipts: [],
+  fingerprint: 'fixture',
+  repoKey: 'fixture',
+  namespace: `refs/farmslot/parked/${options.slotId}/`,
+});
+const fakeInventory: typeof parking.readParkedGitWork = async (_vars, slotId) => ({
+  receipts: [],
+  legacy: [],
+  repoKey: 'fixture',
+  namespace: `refs/farmslot/parked/${slotId}/`,
+});
+const fakeMutation: typeof parking.executeParkedGitMutation = async (
+  vars,
+  _options,
+  _capture,
+  command,
+) => execForTest(vars, command);
+mock.module('../../host-services/parked-work.js', {
+  namedExports: {
+    ...parking,
+    parkGitWork: fakePark,
+    readParkedGitWork: fakeInventory,
+    executeParkedGitMutation: fakeMutation,
+  },
+});
+
 const realExec = await import('../../core/exec.js');
 mock.module('../../core/exec.js', { namedExports: { ...realExec, execOnSlot: execForTest } });
 
@@ -814,7 +854,7 @@ test('a browser session process that survives keeps the slot held and names it',
 });
 
 // Delete and archive end a cancelled run, and the run view's Release frees its slot:
-// delete and explicit Release keep their reset policy; archive preserves local work.
+// delete and explicit Release park before reset; archive preserves the checkout.
 async function releaseFromRunView(): Promise<void> {
   const hold = cancelledRunSlotHold({
     slot: SLOT_ID,
@@ -858,8 +898,8 @@ for (const [action, release, endsRun] of CANCELLED_SLOT_RELEASES) {
           String(call.arguments[0]),
         ),
       ).length,
-      action === 'archive' ? 0 : 1,
-      'archive preserves local work; explicit reset records its discard',
+      0,
+      'release preserves local work rather than discarding it',
     );
     assert.ok(
       !slotCommands.some((cmd) => cmd.startsWith('lsof -a -d cwd')),

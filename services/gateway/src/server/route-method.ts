@@ -257,7 +257,7 @@ import {
 } from '../fleet/resource-manager.js';
 import { slotCleanup } from '../fleet/slot-cleanup.js';
 import { fleetStatusIds, fleetStatusVersions } from '../fleet/slot-entities.js';
-import { loadFleetStatus } from '../fleet/state.js';
+import { loadFleetStatus, slotEntityBase } from '../fleet/state.js';
 import { forgetGitHubAccountsClientInterest } from '../integrations/github-accounts.js';
 import {
   machinePauseExecute,
@@ -378,7 +378,12 @@ import {
   fsWrite,
 } from '../methods/filesystem.js';
 import { finetuneExportDPO, finetuneExportSFT, finetuneIndex } from '../methods/finetune.js';
-import { fleetRefresh, fleetStatus, refreshServedWorkspaceObservations } from '../methods/fleet.js';
+import {
+  fleetRefresh,
+  fleetStatus,
+  refreshServedWorkspaceObservations,
+  refreshStaleFleet,
+} from '../methods/fleet.js';
 import {
   fleetPrSummary,
   fleetRefreshSlots,
@@ -506,6 +511,7 @@ import {
   slotShow,
   slotSoftRefresh,
 } from '../methods/slot.js';
+import { slotParked } from '../methods/slot/parked.js';
 import { slotActionList, slotActionRun } from '../methods/slot-actions.js';
 import {
   type SourceMutationCaller,
@@ -933,6 +939,8 @@ async function routeAuthorizedMethod(
       if (read.shape && 'versions' in read.shape) {
         const listing = await fleetStatusVersions();
         refreshServedWorkspaceObservations();
+        const served = slotEntityBase();
+        if (served) refreshStaleFleet(served);
         return listing;
       }
       if (read.shape) return fleetStatusIds(read.shape.ids);
@@ -955,6 +963,8 @@ async function routeAuthorizedMethod(
       return slotPrepare(p as SlotPrepareParams, emit);
     case Methods.SLOT_RELEASE:
       return slotRelease(p as SlotReleaseParams, emit);
+    case Methods.SLOT_PARKED:
+      return slotParked(p, emit);
     case Methods.SLOT_RECYCLE:
       return slotRecycle(p as SlotRecycleParams, emit);
     case Methods.SLOT_REFRESH:

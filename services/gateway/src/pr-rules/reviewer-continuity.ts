@@ -95,12 +95,14 @@ export function preferRetainedReviewer(
         metrics: { runner: choice.runner, model: choice.model },
       };
       if (!compatibleWorkspaceReviewer(workspaceRun, prior)) return [];
-      configureWorkspaceContinuity(workspaceRun, prior, selected);
+      configureWorkspaceContinuity(workspaceRun, prior, selected, undefined, runs);
       if (selected.session?.fallback?.reason === 'retention-expired')
         return [{ ...choice, mode: 'cold' as const }];
-      return selected.session?.continuity === 'resumed' ? [choice] : [];
+      return selected.session?.continuity === 'resumed' || Boolean(selected.session?.fallback)
+        ? [choice]
+        : [];
     }
-    return resolveRepeatReviewResumePlan(
+    const plan = resolveRepeatReviewResumePlan(
       {
         ...identity,
         slotId: choice.slotId,
@@ -110,9 +112,8 @@ export function preferRetainedReviewer(
       choice.runner,
       choice.model,
       choice.effort,
-    ).kind === 'resume'
-      ? [choice]
-      : [];
+    );
+    return ['resume', 'native-resume', 'delta-cold'].includes(plan.kind) ? [choice] : [];
   });
   return retained;
 }

@@ -766,7 +766,7 @@ historical commits. Injection does not change ownership boundaries:
 
 ## Fleet slot recovery
 
-Status: Accepted under [ADR-042 Amendment 1](../adr/042-slot-tracking-branches.md#amendment-1-fleet-release-and-update-to-main-2026-10-25), lead approval on 2026-10-25 of proposal `4951004d`. Implementation: PR #1490.
+The original contract shipped in PR #1490 under Amendment 1 and PR #1515 under Amendment 2. Status: Accepted local-work amendment under [ADR-042 Amendment 3](../adr/042-slot-tracking-branches.md#amendment-3-park-before-reset-2026-11-13). Existing ownership, source, resource and readiness requirements remain authoritative.
 
 ### Workspace evidence and shared model
 
@@ -774,23 +774,31 @@ Add optional gateway-owned `SlotStatus.workspace`, persisted in the existing slo
 
 Publication states are `baseline`, `merged`, `pushed`, `unpushed`, `unknown`. Baseline equals the observed remote default; merged work is fully contained, patch-equivalent, or covered by a verified merged PR into that default. Pushed means the actual HEAD is reachable from a verified publication ref, including a fork. Unpushed requires positive evidence of local unpublished commits. Dirty work is a separate warning. Neither deleted upstreams nor stale local refs prove publication. Even the default/tracking branch must be inspected for local commits and dirt.
 
-Fleet status reads never fetch or write refs, index, checkout, task inputs or fixture selection. Use local evidence plus cached read-only network evidence; network probes run only for idle candidates, use existing request caching and a five-second probe timeout, with at most one in-flight inspection per slot and one default-ref query per repository per refresh. Cache results by HEAD and observed default SHA, with timestamps; no browser/GitHub poller per client. A cache miss or failed probe stays unknown. The destructive path fetches and verifies publication inside its fence before cleanup. The stricter release-mode inspector is authoritative; existing non-release teardown callers retain their current policy, including their deleted-upstream shortcut, except automatic find-slot and settlement resets, which require this release-mode evidence.
+Fleet status reads never fetch or write refs, index, checkout, task inputs or fixture selection. Use local evidence plus cached read-only network evidence; network probes run only for idle candidates, use existing request caching and a five-second probe timeout, with at most one in-flight inspection per slot and one default-ref query per repository per refresh. Cache results by HEAD and observed default SHA, with timestamps; no browser/GitHub poller per client. A cache miss or failed probe stays unknown. The mutation path inspects current work inside its fence. Publication uncertainty requires conservative parking when local Git work can be captured; it is not permission to discard. All reset callers share the park-before-reset rule below. A deleted upstream or default-branch name never proves publication or ownership.
 
 `@farmslot/protocol` provides one pure recovery eligibility predicate for the gateway's fresh recheck and `FleetRefreshViewModel` in `@farmslot/review-dispatch`. The model owns both clients' labels, logical filters, target set/count, confirmations, RPC parameters and progress. Move browser fleet-refresh logic into it and remove duplicate eligibility/substring-based force decisions for this action. `fleet.prSummary` becomes a thin projection of the same workspace evidence, not a second lookup or release authority.
 
 ### Recovery ownership and confirmation
 
-Bulk targets only enabled, online, non-manual `ready` slots with no worker, current/cleanup owner, handoff, occupancy or protected hold and clean baseline/merged/pushed work or clean ownerless unpushed commits. Recheck before each start. Held/occupied rows are excluded from bulk. A single-slot action may release an ordinary terminal owner only through existing owner guards. Active workers/runs, publication gates, park records, retained-result or refused-completion holds, deferred cleanup, occupancy and manual slots refuse with their required existing action. Cancelled replay holds reuse the existing owner-bound cancelled-hold release UI; this action does not discard them implicitly.
+Bulk targets only enabled, online, non-manual `ready` slots with no worker, current/cleanup owner, handoff, occupancy or protected hold with readable local work that can be durably parked when needed. Recheck before each start. Held/occupied rows are excluded from bulk. A single-slot action may release an ordinary terminal owner only through existing owner guards. Active workers/runs, publication gates, run-gate/machine park records, retained-result or refused-completion holds, deferred cleanup, occupancy and manual slots refuse with their required existing action. Cancelled replay holds reuse the existing owner-bound cancelled-hold release UI; this action does not discard them implicitly.
 
-Extend `SlotRefreshParams` and each `FleetRefreshSlotsParams.slots` entry with optional `release: true` and `expectedWorkspace`. Identity includes epoch, explicit current/cleanup/handoff owners or null, branch, HEAD, dirty-work fingerprint and recovery ID or null. The gateway fingerprint covers staged, unstaged and relevant untracked paths/content, using existing scaffolding exclusions. Expose only hashes/counts, never file contents. Check identity atomically when acquiring the release fence and again before destructive work. Owned phase writes advance the recorded verified identity; foreign changes refuse.
+Extend `SlotRefreshParams` and each `FleetRefreshSlotsParams.slots` entry with optional `release: true` and `expectedWorkspace`. Identity includes epoch, explicit current/cleanup/handoff owners or null, branch, HEAD, dirty-work fingerprint and recovery ID or null. The gateway fingerprint covers staged, unstaged and relevant untracked paths/content, using existing scaffolding exclusions. Expose only hashes/counts, never file contents. Check owner/epoch/recovery identity atomically when acquiring the release fence and again before mutation. Capture current branch/HEAD/dirt inside that fence; stale client Git evidence requires fresh capture, not local-work refusal. If work changes before mutation, capture it again or fail safely. Owned phase writes advance verified identity; foreign owner changes refuse.
 
-An operator release (`slot.refresh` release mode, single or bulk) parks an ownerless checkout's unpushed commits at `refs/farmslot/parked/manual-<slot>-<ts>/<head>` (created, never moved) before resetting, and reports the ref, branch and commit count. Automatic safe reuse never parks ownerless commits. A single dirty row, or one whose unpushed commits belong to a run, offers **Discard local work and update** with branch and affected counts. Only confirmation sends `mode: force` with that evidence. Changed dirt/untracked content requires renewed confirmation even at unchanged HEAD/epoch. Unknown offers re-inspection only. In release mode, force skips only the unpublished-work refusal: do not translate it into broad `slot.release.forceReset` authority or the `forceReset` + `expectedRunId` protected-owner exemption. The expected workspace epoch is an ordinary CAS guard, not replay-rollback authority from `SlotReleaseOptions.expectedSlotEpoch`. Existing artifact collection/discard logging remains enabled.
+Every eligible operation that would delete, overwrite, move off or reset local unpublished or dirty work MUST park first. This covers release/force, refresh, archive/close return-to-idle, recovery, automatic find-slot, fresh same-branch prepare and restore. Preserve every threatened head, including a requested or idle branch that will be overwritten. Create and verify immutable `refs/farmslot/parked/<slot>/<run-or-timestamp>/<snapshot-key>` refs through the existing parking owner. Dirty work uses a stash-style commit graph retaining staged/index, unstaged and relevant untracked contents, including modes and symlinks. Apply ADR-037 farm-owned untracked exclusions, never filename guesses. Ignored user files outside the cleanup set remain untouched; anything the operation would remove must first be retained.
+
+Use `ParkedRunCommits` as the one canonical receipt across runs and ownerless work, extended for dirty snapshots and verified checkpoint versus prior-work provenance. Retain the commit list and count, slot/repository, optional run, original branch/HEAD, retained ref/snapshot SHA, kind/version and actual parking time. `SlotParkedCommits` remains only a derived progress summary of this receipt, not a second inventory or writer. Recording prior work on an incoming run never makes it that run's replay checkpoint.
+
+The existing `validation-run-commits` parking owner is the single writer. Persist each canonical receipt as Git metadata beside its immutable snapshot ref, using a companion `refs/farmslot/parked-meta/<slot>/<run-or-timestamp>/<snapshot-key>` ref and one create-only Git ref transaction. The raw slot status row's durable `parked_work` inventory binding stores the namespace and bounded count/latest-ref summary; it is not cleared with `workspace_recovery`. Detailed receipts stay in Git metadata, not full arrays in every fleet row or scans of all runs. Legacy refs are found from their exact run receipt by ID or the slot in the manual key, without whole-run-store scans; unproven legacy association/age remains unknown.
+
+Write order is Git snapshot+receipt refs, run receipt when present, then slot inventory/verified phase in the existing owner/epoch CAS; reset starts only after every required write succeeds. A distinct captured head or dirty snapshot gets a distinct snapshot key covering retained index/worktree state, not just the run ID or original HEAD. Exact retries reuse the persisted key. Failed capture/ref/receipt persistence leaves work intact with a typed reason and existing retry/manual-repair instruction; there is no discard-without-parking escape. A crash after ref creation but before registration leaves the checkout intact; retry or the existing retention pass reconciles orphan per-slot refs. Recheck the dirty fingerprint and threatened refs in the same node-side mutation batch before reset; changed work requires another saved snapshot, never an unchecked reset.
+
+Then proceed without a local-work picker, stale/unpushed/dirty refusal or discard confirmation. `--keep-work` still keeps the current branch/content because it performs no reset; a later archive captures at its own mutation boundary. Git parked-work receipts grant no ownership. Existing machine/run parking, protected holds and explicit protected-owner exemptions retain their authority; never translate automatic local-work preservation into broader `forceReset` or replay-rollback authority.
 
 ### One operation through existing RPCs
 
-Release mode composes existing `slot.release` cleanup, shared idle reset and project fixture sync, retaining one release fence/epoch through verification. Acquire the status-row releasing fence and persist the recovery marker in the same CAS, blocking dispatch even on an unowned baseline checkout. No unguarded client-side release-then-refresh chain or intermediate ready state. The baseline path uses existing refresh reset plus fixture sync and skips only worker/browser/recycle teardown. Non-release RPC requests retain their defaults and safety policy.
+Release mode composes existing `slot.release` cleanup, shared idle reset and project fixture sync, retaining one release fence/epoch through verification. Acquire the status-row releasing fence and persist the recovery marker in the same CAS, blocking dispatch even on an unowned baseline checkout. No unguarded client-side release-then-refresh chain or intermediate ready state. The baseline path uses existing refresh reset plus fixture sync and skips only worker/browser/recycle teardown. Non-release callers retain their defaults and owner policy but use the same local-work parking rule.
 
-The new fleet action replaces stale-row force groups and the dangerous override in the current refresh UI. Bulk release entries accept only safe mode; `recoverableViaForce` is false there. Legacy non-release RPC entry semantics remain unchanged but are not an alternate bulk discard path in the new UI. Reuse the existing bulk scheduler, per-machine serialization, global cap, cancellation and `fleet.refresh.*`/request-scoped script events. Add typed refusal codes to refresh results/events for dirty, stale, unpushed, unknown, identity change, protected guard and failed phase; do not infer permissions from output text. Companion adds a thin progress renderer for the shared state.
+The new fleet action replaces stale-row force groups and the dangerous override in the current refresh UI. Bulk release entries keep safe mode; parkable local work needs no force path. Legacy force options do not gain owner/hold authority. Reuse the existing bulk scheduler, per-machine serialization, global cap, cancellation and `fleet.refresh.*`/request-scoped script events. Keep typed identity, protected-owner, unavailable and failed-phase reasons; parkable local work is no longer a refusal; do not infer permissions from output text. Companion adds a thin progress renderer for the shared state.
 
 Freeze logical displayed slot-ID membership after all current filters, including project, machine and text search. In Command Center that membership is the selected fleet table rows that are still visible; with none selected, or a selection the filters hide, the bulk action is disabled. Use that exact set for the scope/count and request targets. Virtualization does not narrow logical membership; later matching or hidden slots never expand the batch. Skip newly unsafe rows with a reason. Failure/cancellation reports actual per-slot outcomes and does not claim fleet-wide success.
 
@@ -800,12 +808,13 @@ Before publishing ready, verify fetched `origin/<default>`, configured default/t
 
 Persist a per-slot recovery ID, epoch/owners, verified completed phases and failed/interrupted phase. On failure use existing `held`/`occupied` plus `held_reason` and that typed marker. Fleet refresh, orphan reconciliation and restart must preserve the non-dispatchable hold. An interrupted releasing fence may be reclaimed into this failed hold, never directly into ready; legacy fences without a recovery marker keep their existing policy. Other release/refresh paths cannot clear a recovery hold without verification.
 
-The same `slot.refresh` release mode, bound to the held recovery ID and a fresh expected workspace, retries from the last verified phase. Recheck owners and work, renew changed-content discard confirmation, and do not blindly repeat verified destructive cleanup. Clear the hold only after all completion checks pass. Preserve evidence and show the failed phase. No new RPC, retry daemon, scheduler or job store.
+The same `slot.refresh` release mode, bound to the held recovery ID and a fresh expected workspace, retries from the last verified phase. Recheck owners and current work, park changed content before proceeding, and do not blindly repeat verified destructive cleanup. Clear the hold only after all completion checks pass. Preserve evidence and show the failed phase. No new RPC, retry daemon, scheduler or job store.
 
 ### Automatic safe reuse
 
-Status: Accepted under ADR-042 Amendment 2 and ADR-054's 2026-10-27 settlement
-amendment; lead approval and paired amendment reviews of `7e7e6e19`. Implementation: PR #1515.
+The existing automatic-reuse contract shipped under ADR-042 Amendment 2 and
+ADR-054 in PR #1515. Its revised local-work clauses below are Accepted under
+Amendment 3; protected-owner and admission rules remain Accepted.
 
 Before a stale-work decision, automatic find-slot MUST inspect the selected free
 candidate's actual dirt and publication evidence, including default-branch local
@@ -815,37 +824,36 @@ Use the existing default/tracking branch and owner/epoch fences. A numeric stale
 score MUST NOT substitute for work evidence.
 
 Selection MUST continue past a refused or unavailable candidate and preserve its
-reason. Ask for work-preservation input only when all otherwise eligible free
-candidates have verified dirty or unpublished work. Unknown Git/publication or
-node state MUST NOT grant reset authority; existing admission waits/refusals
-remain truthful. If no candidate is reusable and any candidate is unknown or
+reason. Park readable dirty/unpublished work rather than asking for a work-preservation
+choice. Unknown publication uses conservative parking; unreadable Git or node
+state cannot authorize reset. Existing owner/source/resource admission remains
+authoritative. If no candidate is reusable and any candidate is unknown or
 refused, find-slot MUST refuse with its recorded per-candidate reasons; the
-operator may replay find-slot once the evidence returns. Keep the existing picker
-payload and reason enum. This uses existing step inputs and error reporting.
+operator may replay find-slot once the evidence returns. Keep the existing `slot_picker` payload/reason enum for non-local-work admission choices; local dirty/unpublished work alone never opens it. This uses existing step inputs and error reporting.
 Never clear a held recovery or a protected owner to make a slot eligible. Pinned
 slot and skip-prepare/warm selection retain their existing paths. Normal prepare
 retains fixture setup responsibility.
 
-Both automatic paths MUST use `slotRecoveryEligibility` and release-mode
-`baseline`/`merged`/`pushed` evidence, fetched and rechecked inside the fence. A
+Both automatic paths MUST use `slotRecoveryEligibility`, fresh local-work
+capture and the parking rule inside the existing fence. A
 default-branch name, deleted upstream or legacy release preflight alone MUST NOT
-authorize reset. A park record protects its owner or an ownerless workspace. A
+authorize reset. Machine/run parking protects its owner or an ownerless retained workspace; a Git parked-work receipt does not reserve the slot. A
 named finished successor is judged on its own work; preserve the parked ref and
 align the shared workspace guard with existing owner-bound release.
 
 After `done`, explicit output close or archive, existing owned cleanup MUST
-attempt the same safe idle return. Dirty, unpublished or unverified work MUST
-remain intact with a reported reason. Existing cancelled replay, recoverable
+attempt the same safe idle return. Dirty/unpublished work MUST be parked before normalization; unavailable local
+evidence or failed parking MUST remain intact with a reported reason. Existing cancelled replay, recoverable
 completion, result-decision, successor and provider ownership guards apply.
 Archive, including cancelled archive, MUST NOT imply local-work discard permission.
 This supersedes the 10-19/10-23 cancelled-archive reset rule under Arthur's new
 archive instruction; cancelled delete and explicit owner-bound force release
-retain their existing policy. Active pinned warm, native or skip-prepare
+retain their ownership policy but park threatened local work before reset. Active pinned warm, native or skip-prepare
 successors MUST prevent reset. A replay after prepare MUST verify its recorded
 branch/HEAD and refuse a changed checkout with "replay from prepare or earlier".
 The existing prepare-step outputs retain `checkoutBeforeIdleReturn` with the slot,
 branch and settlement HEAD; the dispatch HEAD is not the settlement checkout.
-Records, branch refs and
+Records, parked refs and
 retained evidence MUST survive checkout normalization. Readiness MUST NOT be
 published across an unconfirmed reset or a changed owner/epoch.
 
@@ -857,7 +865,7 @@ fallback, exhausted unknown/refused candidates, an older parked owner beside a
 finished successor, deleted publication refs, active pinned successors, changed
 checkout replay and ownership/epoch-change refusals. Prove done or output-close
 return independently of cancelled archive, and preserve cancelled archive dirt.
-The manual-action proof seeds dirty/unpublished work requiring a human choice.
+The manual-action proof seeds dirty/unpublished work and verifies parking before recovery proceeds.
 No product run or model turn is needed.
 
 ### Cold runtime on reused slots
@@ -897,11 +905,23 @@ cold configured resources and configured-root reopen. No recurring/scheduled
 smoke jobs or further pre-merge canary runs. Preserve existing task pins, workers
 and foreign resources; clean only proof-owned runtime.
 
+### Parked work inventory and restore
+
+One `slot.parked` RPC accepts `list` or `restore`, scoped and authorized like slot release. The CLI is `farmslot slot parked list <slot>` and `farmslot slot parked restore <slot> <ref>`. `list` reads verified receipt availability without checkout/ref mutation. `restore` validates membership and snapshot identity in the authorized slot/repository inventory, rechecks normal owner/held/source guards, parks threatened current work, and recovers into a fresh local branch. Return its actual branch/HEAD. Preserve configured posture and add no manual hold; a later dispatch may park/reset it again. Operators reserve slots through existing occupancy. Recover staged, unstaged and untracked contents; do not resume Git merge/rebase automation, a run or worker, or fabricate review/evidence results. Parking/restore never grants remote-write authority. Failures preserve saved and current work under the existing recovery fence.
+
+The inventory has one writer and narrow slot reads. `@farmslot/protocol` owns proposed `SlotParkedParams`, `SlotParkedResult`, `SlotParkedWorkSummary` and the extended canonical `ParkedRunCommits` receipt; SDK transport and CLI consume them. Fleet rows expose only a bounded count/latest-ref summary, not full inventories or whole-run-store scans. The existing shared model supplies Command Center's slot-row line. Unknown/unavailable inventory differs from verified empty. Existing URL view-state rules apply to any persistent choice. No client implements Git or independent policy.
+
+The existing hourly `startRunRetention` owner in `services/gateway/src/methods/run/retention.ts` prunes refs older than `FARMSLOT_PARKED_WORK_RETENTION_DAYS`, default 14, or, for commit-only records, whose retained tip is verifiably reachable from a remote branch. Dirty snapshots age out; reachability of their original HEAD does not qualify. Use actual parking time, never commit age; unknown legacy timestamps do not authorize age pruning. Protect snapshots required by protected/in-flight operations, verify expected ref identity, update inventory/summary and record truthful prune provenance. Publication uncertainty never proves early-prune eligibility. Legacy entries retain only proven facts, not invented dirty snapshots or age. Existing `<run>/<head>` and `manual-<slot>-<time>/<head>` refs remain listable/restorable through their recorded facts; age pruning requires a real `parkedAt`. A replay that needs a pruned/missing checkpoint MUST refuse with that reason, not silently prepare fresh; prior-work receipts never authorize checkpoint replay.
+
+These additive experimental contracts require matching protocol, gateway, CLI/SDK and client readers before activation. Harnesses inherit parking through prepare/release; no new hook, daemon or job store.
+
+Reproduce the archive branch-loss and keep-work-then-archive incidents plus dirty-release and fresh same-branch refusal, then prove durable run/slot receipts before reset, complete restore and next dispatch. Include default/tracking and linked-worktree heads, index/worktree/untracked content, retries/crash windows, owner/epoch changes, protected holds, unavailable volume/persistence, retention/remote-reachability and legacy gaps. Use real production RPC/CLI paths with temporary Git/remotes, plus create/write-task/prepare/dispatch smoke and cancel/release. Validate the Command Center line via its real update path.
+
 ### Acceptance proof
 
 1. Both real fleet renderers show branch, actual owners/holds, publication state and behind-default count, including unknown/error states. Real presses drive actions against the authenticated gateway; screenshots are rendering proof, not a substitute for RPC/slot-row effects.
 2. Cover both explicit fleet recovery and automatic safe reuse. An unpinned `run.create` with one free clean merged-branch fixture MUST recover and select it without `engine_no_suitable_slot`; manual fleet recovery remains separately available. Assert the fetched idle HEAD, ownership and normal prepare fixtures through real reads.
-3. Bulk includes every safe target in its displayed scope, including search, and excludes hidden/unsafe/held rows. Single-slot cancel leaves work intact. Alter a dirty/untracked file at unchanged HEAD to prove confirmation invalidation; change ownership/epoch to prove successor protection.
+3. Bulk includes every safe target in its displayed scope, including search, and excludes hidden/unsafe/held rows. Single-slot cancel leaves work intact. Alter a dirty/untracked file at unchanged HEAD to prove fresh capture before mutation; change ownership/epoch to prove successor protection.
 4. Cover primary clones, linked worktrees, squash merges/deleted refs, dirty idle branches, unknown publication, absent fixtures and per-slot progress. Fail fixture sync, age/restart the gateway and prove the slot stays held; retry through the same RPC and verify before ready. Real Git/fixtures and a command/scripted engineering runner suffice; no occupied product slot, model turn or `#dev` bypass.
 5. Source-breaking controls must fail the recovery-to-dispatch and failed-recovery guards, followed by exact restoration. Retain one shared model/predicate; do not weaken work-preservation, ownership or pressure admission to pass.
 

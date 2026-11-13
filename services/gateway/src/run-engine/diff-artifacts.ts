@@ -43,6 +43,7 @@ import {
   type GitHubPrDiffOptions,
 } from '../external/github.js';
 import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
+import { usesPreviousReviewDelta } from '../review/session-mode.js';
 import { getRunWithArchived } from '../runs/store.js';
 
 import { atomicWriteTextFile, parseDiffTooLargeBytes, withTimeout } from './diff-artifact-utils.js';
@@ -1120,12 +1121,19 @@ function unavailableInputDiff(
 
 async function readExistingAvailableReviewInputArtifacts(
   inputsDir: string,
+  run: Pick<Run, 'reviewMode' | 'repeatReviewContext' | 'prWork'>,
 ): Promise<ArtifactRef[] | null> {
   const diffStatPath = path.join(inputsDir, 'diff-stat.json');
   if (!existsSync(diffStatPath)) return null;
   try {
     const parsed: unknown = JSON.parse(await readFile(diffStatPath, 'utf-8'));
     if (!isFamilyDiffProvenance(parsed) || parsed.kind !== 'review-input' || !parsed.available)
+      return null;
+    if (
+      usesPreviousReviewDelta(run) &&
+      (parsed.baseSha !== run.repeatReviewContext?.priorReviewedHeadSha ||
+        parsed.headSha !== run.repeatReviewContext?.currentHeadSha)
+    )
       return null;
     return [
       { path: 'inputs/commit.json', purpose: 'input-commit' },
@@ -1165,7 +1173,7 @@ async function readFreshReviewInputArtifacts(
     )
       return null;
     if (
-      resolveReviewMode({ run }) === 'warm' &&
+      usesPreviousReviewDelta(run) &&
       parsed.baseSha !== run.repeatReviewContext?.priorReviewedHeadSha
     )
       return null;
@@ -1268,7 +1276,7 @@ async function captureReviewInputArtifactsForRunUnlocked(
   const now = new Date().toISOString();
   const prRef = await resolveRunPrRef(run);
   if (!prRef) {
-    const existing = await readExistingAvailableReviewInputArtifacts(inputsDir);
+    const existing = await readExistingAvailableReviewInputArtifacts(inputsDir, run);
     if (existing) return existing;
     const unavailable: FamilyInputCommitMetadata = {
       capturedAt: now,
@@ -1309,11 +1317,10 @@ async function captureReviewInputArtifactsForRunUnlocked(
             `Review head advanced from ${run.repeatReviewContext.currentHeadSha} to ${fetchedPr.headSha}; choose continuation again.`,
           );
         }
-        const incrementalBase =
-          resolveReviewMode({ run }) === 'warm'
-            ? run.repeatReviewContext?.priorReviewedHeadSha
-            : undefined;
-        if (resolveReviewMode({ run }) === 'warm' && !incrementalBase)
+        const incrementalBase = usesPreviousReviewDelta(run)
+          ? run.repeatReviewContext?.priorReviewedHeadSha
+          : undefined;
+        if (usesPreviousReviewDelta(run) && !incrementalBase)
           throw new Error('WARM review unavailable: missing last reviewed head');
         const fetchedFiles = incrementalBase
           ? await (deps.fetchGitHubCompareFiles ?? fetchGitHubCompareFiles)(
@@ -1336,14 +1343,12 @@ async function captureReviewInputArtifactsForRunUnlocked(
     const inputCommit: FamilyInputCommitMetadata = {
       repository: prRef.repo,
       prNumber: prRef.prNumber,
-      baseRef:
-        resolveReviewMode({ run }) === 'warm'
-          ? run.repeatReviewContext?.priorReviewedHeadSha
-          : pr.baseRef,
-      baseSha:
-        resolveReviewMode({ run }) === 'warm'
-          ? run.repeatReviewContext?.priorReviewedHeadSha
-          : pr.baseSha,
+      baseRef: usesPreviousReviewDelta(run)
+        ? run.repeatReviewContext?.priorReviewedHeadSha
+        : pr.baseRef,
+      baseSha: usesPreviousReviewDelta(run)
+        ? run.repeatReviewContext?.priorReviewedHeadSha
+        : pr.baseSha,
       headRef: pr.branch,
       headSha: pr.headSha,
       reviewMode: resolveReviewMode({ run }),
@@ -1369,14 +1374,12 @@ async function captureReviewInputArtifactsForRunUnlocked(
       ...(stat.files > 0 ? { artifactPath: 'inputs/diff.txt' } : {}),
       repository: prRef.repo,
       prNumber: prRef.prNumber,
-      baseRef:
-        resolveReviewMode({ run }) === 'warm'
-          ? run.repeatReviewContext?.priorReviewedHeadSha
-          : pr.baseRef,
-      baseSha:
-        resolveReviewMode({ run }) === 'warm'
-          ? run.repeatReviewContext?.priorReviewedHeadSha
-          : pr.baseSha,
+      baseRef: usesPreviousReviewDelta(run)
+        ? run.repeatReviewContext?.priorReviewedHeadSha
+        : pr.baseRef,
+      baseSha: usesPreviousReviewDelta(run)
+        ? run.repeatReviewContext?.priorReviewedHeadSha
+        : pr.baseSha,
       headRef: pr.branch,
       headSha: pr.headSha,
       reviewMode: resolveReviewMode({ run }),
@@ -1404,7 +1407,7 @@ async function captureReviewInputArtifactsForRunUnlocked(
     ];
   } catch (err) {
     if ((err as Error).message.startsWith('Review head advanced from ')) throw err;
-    const existing = await readExistingAvailableReviewInputArtifacts(inputsDir);
+    const existing = await readExistingAvailableReviewInputArtifacts(inputsDir, run);
     if (existing) return existing;
     const pr = captureState.fetchedPrMetadata ?? null;
     const missingReason = pr ? 'github-pr-input-partial' : 'github-pr-input-unavailable';
@@ -1414,8 +1417,12 @@ async function captureReviewInputArtifactsForRunUnlocked(
       reviewMode: resolveReviewMode({ run }),
       ...(pr
         ? {
-            baseRef: pr.baseRef,
-            baseSha: pr.baseSha,
+            baseRef: usesPreviousReviewDelta(run)
+              ? run.repeatReviewContext?.priorReviewedHeadSha
+              : pr.baseRef,
+            baseSha: usesPreviousReviewDelta(run)
+              ? run.repeatReviewContext?.priorReviewedHeadSha
+              : pr.baseSha,
             headRef: pr.branch,
             headSha: pr.headSha,
           }
@@ -1435,8 +1442,12 @@ async function captureReviewInputArtifactsForRunUnlocked(
           prNumber: prRef.prNumber,
           ...(pr
             ? {
-                baseRef: pr.baseRef,
-                baseSha: pr.baseSha,
+                baseRef: usesPreviousReviewDelta(run)
+                  ? run.repeatReviewContext?.priorReviewedHeadSha
+                  : pr.baseRef,
+                baseSha: usesPreviousReviewDelta(run)
+                  ? run.repeatReviewContext?.priorReviewedHeadSha
+                  : pr.baseSha,
                 headRef: pr.branch,
                 headSha: pr.headSha,
               }

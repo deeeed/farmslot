@@ -6,9 +6,19 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type { SlotVars } from '../../core/config.js';
+import { claimSlotStatusIf } from '../../core/state.js';
 import { farmslotRoot } from '../../projects/repo-root.js';
 
 import { resetSlotRepoToIdle } from './slot-tracking.js';
+
+async function reset(...args: Parameters<typeof resetSlotRepoToIdle>) {
+  await claimSlotStatusIf(args[0].slotId, () => true, {
+    lifecycle: 'ready',
+    phase: 'idle',
+    agent: 'idle',
+  });
+  return resetSlotRepoToIdle(...args);
+}
 
 function git(cwd: string, ...args: string[]) {
   const result = spawnSync('git', ['-c', 'core.hooksPath=.git/hooks', ...args], {
@@ -77,7 +87,12 @@ test('resetSlotRepoToIdle returns linked worktree to tracking branch @ origin/ma
     git(worktree, 'add', 'README.md');
     git(worktree, 'commit', '-qm', 'feature');
 
-    const result = await resetSlotRepoToIdle(
+    await claimSlotStatusIf(slotVars(worktree, 'ff-2').slotId, () => true, {
+      lifecycle: 'ready',
+      agent: 'idle',
+      phase: 'idle',
+    });
+    const result = await reset(
       slotVars(worktree, 'ff-2'),
       { slot_tracking_branch: 'wt/{{session}}' },
       undefined,
@@ -101,7 +116,7 @@ test('resetSlotRepoToIdle refuses to reset the gateway operator root (no destruc
   // control-plane working tree. We point the slot at the real operator root; the
   // guard throws before running git, so the operator repo is never mutated.
   await assert.rejects(
-    resetSlotRepoToIdle(slotVars(farmslotRoot(), 'fs-main'), {}, undefined, 'main', {
+    reset(slotVars(farmslotRoot(), 'fs-main'), {}, undefined, 'main', {
       linkedWorktree: false,
     }),
     /operator root/,
@@ -115,7 +130,7 @@ test('resetSlotRepoToIdle refuses a slot pointing at a SUBDIRECTORY of the opera
   // owning worktree root (git rev-parse --show-toplevel) and rejects it.
   const subdir = path.join(farmslotRoot(), 'services');
   await assert.rejects(
-    resetSlotRepoToIdle(slotVars(subdir, 'fs-sub'), {}, undefined, 'main', {
+    reset(slotVars(subdir, 'fs-sub'), {}, undefined, 'main', {
       linkedWorktree: false,
     }),
     /operator root/,
@@ -133,7 +148,7 @@ test('resetSlotRepoToIdle returns primary clone to default branch @ origin/main'
     git(primary, 'add', 'README.md');
     git(primary, 'commit', '-qm', 'feature');
 
-    const result = await resetSlotRepoToIdle(slotVars(primary, 'fs-main'), {}, undefined, 'main', {
+    const result = await reset(slotVars(primary, 'fs-main'), {}, undefined, 'main', {
       linkedWorktree: false,
     });
 
@@ -162,7 +177,7 @@ test('an operator commit made during fetch refuses the idle reset and remains on
   );
   git(repo, 'config', 'remote.origin.uploadpack', `sh ${upload}`);
   await assert.rejects(
-    resetSlotRepoToIdle(slotVars(repo, 'fetch-race'), {}, undefined, 'main', {
+    reset(slotVars(repo, 'fetch-race'), {}, undefined, 'main', {
       linkedWorktree: false,
       expect: { headSha: expected, branches: { main: expected } },
     }),
@@ -182,7 +197,7 @@ test('idle reset clears an old unowned index lock without discard confirmation',
   writeFileSync(lock, '');
   const old = new Date(Date.now() - 60_000);
   utimesSync(lock, old, old);
-  await resetSlotRepoToIdle(slotVars(repo, 'stale-lock'), {}, undefined, 'main', {
+  await reset(slotVars(repo, 'stale-lock'), {}, undefined, 'main', {
     expect: { headSha: head, branches: { main: head } },
   });
   assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
@@ -201,7 +216,29 @@ test('idle reset on its target branch clears an unmerged index', async (t) => {
   writeFileSync(path.join(repo, 'README.md'), 'main\n');
   git(repo, 'commit', '-qam', 'test: main');
   assert.equal(spawnSync('git', ['merge', 'topic'], { cwd: repo }).status, 1);
-  await resetSlotRepoToIdle(slotVars(repo, 'conflict'), {}, undefined, 'main');
+  await reset(slotVars(repo, 'conflict'), {}, undefined, 'main');
   assert.equal(git(repo, 'status', '--porcelain'), '');
   assert.equal(git(repo, 'rev-parse', 'HEAD'), git(repo, 'rev-parse', 'origin/main'));
+});
+
+test('idle refresh repairs an old unowned remote-ref lock before fetching', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'idle-stale-remote-lock-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'slot');
+  initPrimaryRepo(repo, path.join(root, 'origin.git'));
+  const previous = git(repo, 'rev-parse', 'HEAD');
+  git(repo, '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-qm', 'remote advanced');
+  git(repo, 'push', 'origin', 'main');
+  git(repo, 'reset', '--hard', previous);
+  git(repo, 'update-ref', 'refs/remotes/origin/main', previous);
+  const lock = path.join(
+    repo,
+    git(repo, 'rev-parse', '--git-path', 'refs/remotes/origin/main.lock'),
+  );
+  writeFileSync(lock, '');
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(lock, old, old);
+  await reset(slotVars(repo, 'stale-ref'), {}, undefined, 'main');
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), git(repo, 'rev-parse', 'origin/main'));
+  git(repo, 'fetch', 'origin', 'main');
 });

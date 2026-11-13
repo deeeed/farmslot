@@ -33,6 +33,7 @@ import {
 import { getAllRuns, getRunWithArchived } from '../../runs/store.js';
 import { isActiveSlotHolder, slotPinIsRequestOnly } from '../dispatch/slot-scoring.js';
 
+import { REFRESH_REMOTE_REF_LOCKS_COMMAND } from './git-cleanup-commands.js';
 import { readMergedPreparePullRequests, refIncludedInMergedPullRequest } from './unmerged-work.js';
 import { probeWorkspace } from './workspace-probe.js';
 import { workspaceVersion } from './workspace-version.js';
@@ -175,7 +176,7 @@ export async function inspectSlotWorkspace(
     const fetched = await execOnSlot(
       vars,
       withFarmGitConfig(
-        `${git} fetch --no-tags origin ${shellQuote(`+refs/heads/${branch}:refs/remotes/origin/${branch}`)}`,
+        `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_REMOTE_REF_LOCKS_COMMAND}; } && git fetch --no-tags origin ${shellQuote(`+refs/heads/${branch}:refs/remotes/origin/${branch}`)}`,
       ),
       { timeout: 120_000, noRetry: true },
     );

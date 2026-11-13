@@ -3,7 +3,11 @@ import { customElement, property } from 'lit/decorators.js';
 
 import type { RunListRow, SlotStatus, TaskProgressStructured } from '@farmslot/protocol';
 import { cancelledRunSlotHold, isTerminalRunStatus, runDisplayTitle } from '@farmslot/protocol';
-import { fleetBehindDefaultIfBehind, fleetSlotBranch } from '@farmslot/review-dispatch';
+import {
+  fleetBehindDefaultIfBehind,
+  fleetSlotBranch,
+  fleetSlotParkedWork,
+} from '@farmslot/review-dispatch';
 
 import '../shared/cancelled-run-slot-release.js';
 import '../shared/status-badge.js';
@@ -512,6 +516,9 @@ export class SlotCard extends LitElement {
                 : ''}
               ${branchLabel ? html`<div class="${branchClass}">${branchLabel}</div>` : ''}
               <div class="behind" title=${behind ?? ''}>${behind ?? ''}</div>
+              <div class="behind parked-work" title=${s.parkedWork?.latestRef ?? ''}>
+                ${fleetSlotParkedWork(s) ?? ''}
+              </div>
               ${s.taskId ? html`<div class="task">${this._formatTaskId(s.taskId)}</div>` : ''}
               ${s.currentLane
                 ? html`<div class="runner">

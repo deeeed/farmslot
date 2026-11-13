@@ -425,6 +425,10 @@
     "./scripts/recipe-library-identity.mjs": {
       "types": "./scripts/recipe-library-identity.d.mts",
       "default": "./scripts/recipe-library-identity.mjs"
+    },
+    "./scripts/literal-replacement.mjs": {
+      "types": "./scripts/literal-replacement.d.mts",
+      "default": "./scripts/literal-replacement.mjs"
     }
   },
   "scripts": {
@@ -477,6 +481,8 @@
     "scripts/acceptance.d.mts",
     "scripts/review-approval-policy.cjs",
     "scripts/review-approval-policy.d.cts",
+    "scripts/literal-replacement.mjs",
+    "scripts/literal-replacement.d.mts",
     "recipe-shape.mjs",
     "recipe-shape.d.mts",
     "scripts/recipe-library-identity.mjs",

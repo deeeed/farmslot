@@ -11,6 +11,7 @@ import {
   resolveReportedFarmPaths,
 } from '@farmslot/protocol/node/farm-paths';
 import { expandHome } from '@farmslot/protocol/node/farmslot-home';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 import { shellQuote } from '@farmslot/recipe-cli/harness';
 
 import {
@@ -699,7 +700,7 @@ export async function planMigration(options: MigrationOptions): Promise<Migratio
         const prior = path.posix.join(value.workspace.taskPath, name);
         const next = translate(prior, plan.mappings);
         if (next !== prior && prompt.includes(shellQuote(prior))) {
-          prompt = prompt.replaceAll(shellQuote(prior), shellQuote(next));
+          prompt = prompt.replaceAll(shellQuote(prior), literalReplacement(shellQuote(next)));
           changes.push({ source: prior, target: next });
         }
       }

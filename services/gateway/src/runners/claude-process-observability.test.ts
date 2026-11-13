@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
+  buildClaudePromptAcceptanceCommand,
   claudeProcessRegistration,
   readClaudeProcessBinding,
   readClaudeProcessState,
+  readClaudePromptAcceptance,
 } from './claude-process-observability.js';
 import { makeVars } from './test-fixtures.js';
 
@@ -115,5 +121,91 @@ test('native process observation refuses a pane handoff or a replacement runner 
     });
     if (changed === 'none') assert.equal(state?.status, 'idle');
     else assert.equal(state, null);
+  }
+});
+
+test('native exact prompt acceptance excludes subagents, tool results, stale and later inputs', (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'claude-prompt-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, 'saved-review.jsonl');
+  const row = (text: string, stamp: number, extra = {}) => ({
+    type: 'user',
+    sessionId: 'saved-review',
+    isSidechain: false,
+    timestamp: new Date(stamp).toISOString(),
+    message: { role: 'user', content: [{ type: 'text', text }] },
+    ...extra,
+  });
+  const read = () =>
+    JSON.parse(
+      execFileSync(
+        'bash',
+        ['-c', buildClaudePromptAcceptanceCommand('saved-review', file, 'Current task', 1500)],
+        { encoding: 'utf8', timeout: 2000 },
+      ),
+    );
+  const write = (rows: unknown[], partial = false) =>
+    writeFileSync(
+      file,
+      rows.map((value) => JSON.stringify(value)).join('\n') + (partial ? '' : '\n'),
+    );
+  write([
+    row('Current task', 2000),
+    row('Different child', 2100, { isSidechain: true }),
+    {
+      ...row('', 2200),
+      message: { role: 'user', content: [{ type: 'tool_result', content: 'Tool output' }] },
+    },
+  ]);
+  assert.equal(read().accepted, true);
+  write([row('Current task', 1000)]);
+  assert.equal(read().accepted, undefined);
+  write([row('Current task', 2000), row('Different task', 2200)]);
+  assert.equal(read().accepted, false);
+  write([row('Current task', 2000)], true);
+  assert.equal(read().accepted, undefined);
+});
+
+test('native prompt acceptance rechecks the exact live process after reading its transcript', async () => {
+  for (const replace of [false, true]) {
+    let calls = 0;
+    let changed = false;
+    const result = await readClaudePromptAcceptance(
+      makeVars(),
+      'review',
+      'saved-review',
+      '/sessions/saved-review.jsonl',
+      'Current task',
+      1500,
+      {
+        pane: async () => ({ paneId: '%owned', panePid: '7' }),
+        process: async () => ({ state: 'present', pid: changed ? '43' : '42' }),
+        exec: async () => {
+          calls++;
+          if (calls === 2) {
+            changed = replace;
+            return {
+              stdout: JSON.stringify({
+                accepted: true,
+                observedAt: 2000,
+                turnToken: 'saved-review:2000',
+              }),
+              stderr: '',
+              exitCode: 0,
+            };
+          }
+          return {
+            stdout: JSON.stringify({
+              record: registration,
+              processStartedAt: 900,
+              sessionPath: '/sessions/saved-review.jsonl',
+            }),
+            stderr: '',
+            exitCode: 0,
+          };
+        },
+      },
+    );
+    assert.equal(result?.exactPromptMatch ?? false, !replace);
   }
 });

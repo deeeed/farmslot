@@ -472,6 +472,39 @@ export function applyRepeatReviewSelection(
   };
 }
 
+async function applyReviewContinuationCapability(
+  current: Run,
+  selected: RepeatReviewContext,
+  prior?: Run,
+): Promise<RepeatReviewContext> {
+  if (selected.mode === 'warm' && current.metrics.runner) {
+    const { runnerSupportsSessionContinuation } = await import('../runners/registry.js');
+    if (
+      !runnerSupportsSessionContinuation(
+        current.metrics.runner,
+        current.transport === 'native' ? 'native' : 'tmux',
+      )
+    ) {
+      const { resolveRepeatReviewResumePlan } = await import('./review-session-chain.js');
+      const previous = prior ?? (await getRunWithArchived(selected.priorRunId));
+      if (!previous) throw new Error('The prior reviewer baseline is unavailable');
+      const plan = resolveRepeatReviewResumePlan(
+        { ...current, repeatReviewContext: selected },
+        previous,
+        current.metrics.runner,
+        current.metrics.model,
+        current.effort,
+      );
+      if (plan.kind !== 'delta-cold')
+        throw new Error(
+          `WARM review unavailable: ${plan.kind === 'refused' ? plan.reason : 'unverified fallback'}`,
+        );
+      return { ...selected, mode: 'cold', session: plan.trace };
+    }
+  }
+  return selected;
+}
+
 export async function handleRepeatReviewDecision(
   runId: string,
   current: Run,
@@ -491,7 +524,13 @@ export async function handleRepeatReviewDecision(
     current.repeatReviewContext.repository === subject.repository.toLowerCase() &&
     current.repeatReviewContext.prNumber === subject.prNumber
   ) {
-    return current.repeatReviewContext;
+    const generation = current.engineState?.generation ?? 0;
+    const selected = await applyReviewContinuationCapability(current, current.repeatReviewContext);
+    if (runSupersededSince(getRun(runId), generation))
+      throw new Error('Review ownership changed before freezing continuation scope');
+    if (selected !== current.repeatReviewContext)
+      updateRun(runId, { repeatReviewContext: selected, reviewMode: selected.mode });
+    return selected;
   }
   const allRuns = startsFreshReviewChain(current) ? [] : await getAllRunsWithArchived();
   const prior = findLatestPriorReviewRun(current, allRuns);
@@ -518,7 +557,14 @@ export async function handleRepeatReviewDecision(
   if (runSupersededSince(getRun(runId), generation))
     throw new Error(`Run ${runId.slice(0, 8)} changed during the review ancestry lookup`);
   const options = current.prWork?.review?.options ?? { mode: requestedMode };
-  const selected = automatedRepeatReviewSelection(context, { ...options, mode: requestedMode });
+  const selected = await applyReviewContinuationCapability(
+    current,
+    automatedRepeatReviewSelection(context, { ...options, mode: requestedMode }),
+    prior,
+  );
+  if (runSupersededSince(getRun(runId), generation))
+    throw new Error('Review ownership changed before freezing continuation scope');
+
   updateRun(runId, {
     repeatReviewContext: selected,
     reviewMode: selected.mode,

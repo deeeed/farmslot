@@ -13,6 +13,7 @@ import {
   SLOT_DESTRUCTIVE_OPS,
   type SlotPrepareParams,
 } from '@farmslot/protocol';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 import { loadMachineSlots, resolveEffectiveDomain } from '@farmslot/slot-config';
 
 import { withFarmGitConfig } from '../../core/farm-git.js';
@@ -26,7 +27,6 @@ import {
   loadProjectVars,
   loadSlotVars,
   type ProjectVars,
-  type RawProjectJson,
   readSlotField,
   readSlotRow,
   SLOT_PHASE_RELEASING,
@@ -57,7 +57,7 @@ import {
   type StartRefResolution,
 } from '../../projects/start-ref-resolution.js';
 import { executeEvalHarnessLifecycle } from '../../run-engine/eval-harness-lifecycle.js';
-import { restoreParkedBranch } from '../../run-lifecycle/validation-run-commits.js';
+import { mutateSlotGit, restoreParkedBranch } from '../../run-lifecycle/validation-run-commits.js';
 import {
   assertNativeSlotReplacementOwner,
   retireNativeWorkersForSlot,
@@ -124,70 +124,16 @@ import {
 import {
   assertSlotNotOperatorRoot,
   detectLinkedWorktree,
-  isSlotIdleBranch,
   remoteBranchRefspec,
+  resetSlotRepoToIdle,
   resolvePrepareMergeMainStrategy,
-  resolveSlotTrackingBranchFromProject,
   shouldSoftFailPrepareIntegration,
   worktreeBaseResetRef,
 } from './slot-tracking.js';
-import {
-  assertPrepareCommitsPublished,
-  assertPublishedPrepareBranchContained,
-} from './unmerged-work.js';
+import { assertPublishedPrepareBranchContained } from './unmerged-work.js';
 
 export { type PrepareHealthCommands, verifyPrepareHealth } from './prepare-health.js';
 export { isLinkedGitWorktreeMarker, worktreeBaseResetRef } from './slot-tracking.js';
-
-/**
- * Refuse a detached HEAD the remote does not show: it may hold local-only
- * commits, so prepare names why and leaves it. Returns the commit.
- */
-async function assertDetachedHeadOnRemote(vars: SlotVars): Promise<string> {
-  const repo = shellQuote(vars.remoteRepo);
-  const head = (
-    await execOnSlot(vars, withFarmGitConfig(`git -C ${repo} rev-parse HEAD`))
-  ).stdout.trim();
-  try {
-    await resolveStartRefInRepo({
-      repo: vars.remoteRepo,
-      requestedRef: head,
-      exec: (command) => execOnSlot(vars, withFarmGitConfig(command)),
-    });
-  } catch (error) {
-    throw new Error(
-      `Slot is detached at ${head.slice(0, 12) || 'an unreadable HEAD'}, which origin does not show (${(error as Error).message}). Push or preserve it, or run 'farmslot slot release'.`,
-    );
-  }
-  return head;
-}
-
-/** Move a slot off a detached HEAD the remote contains, back to its idle branch. */
-async function returnDetachedSlotToIdle(
-  vars: SlotVars,
-  projectJson: RawProjectJson,
-  projectVars: ProjectVars | undefined,
-  step: (name: string, detail: string) => void,
-): Promise<string> {
-  const head = await assertDetachedHeadOnRemote(vars);
-  const idle = resolveSlotTrackingBranchFromProject(
-    projectJson,
-    vars,
-    projectVars,
-    await detectLinkedWorktree(vars),
-  );
-  const checkout = await execOnSlot(
-    vars,
-    withFarmGitConfig(`git -C ${shellQuote(vars.remoteRepo)} checkout -q ${shellQuote(idle)} --`),
-  );
-  if (checkout.exitCode !== 0) {
-    throw new Error(
-      `Slot is detached at ${head.slice(0, 12)} and checking out '${idle}' failed: ${checkout.stderr.slice(-200) || checkout.stdout.slice(-200)}. Run 'farmslot slot release' first.`,
-    );
-  }
-  step('branch', `Left detached ${head.slice(0, 12)}, which origin contains, for '${idle}'`);
-  return idle;
-}
 
 async function assertWorkspaceRecoverySettled(
   slotId: string,
@@ -467,15 +413,15 @@ async function slotPrepareInner(
   const remapHookSupport = (command: string): string => {
     if (!hookSupportDir || !command) return command;
     const mapped = command
-      .replaceAll('{{node_support_dir}}', hookSupportDir)
-      .replaceAll('{{NODE_SUPPORT_DIR}}', hookSupportDir)
-      .replaceAll(`${farmslotRoot()}/projects/`, `${hookSupportDir}/projects/`)
-      .replaceAll(`${farmslotRoot()}/scripts/`, `${hookSupportDir}/scripts/`);
+      .replaceAll('{{node_support_dir}}', literalReplacement(hookSupportDir))
+      .replaceAll('{{NODE_SUPPORT_DIR}}', literalReplacement(hookSupportDir))
+      .replaceAll(`${farmslotRoot()}/projects/`, literalReplacement(`${hookSupportDir}/projects/`))
+      .replaceAll(`${farmslotRoot()}/scripts/`, literalReplacement(`${hookSupportDir}/scripts/`));
     return farmCommandRootsForSlot(vars).reduce(
       (cmd, root) =>
         cmd
-          .replaceAll(`${root}/projects/`, `${hookSupportDir}/projects/`)
-          .replaceAll(`${root}/scripts/`, `${hookSupportDir}/scripts/`),
+          .replaceAll(`${root}/projects/`, literalReplacement(`${hookSupportDir}/projects/`))
+          .replaceAll(`${root}/scripts/`, literalReplacement(`${hookSupportDir}/scripts/`)),
       mapped,
     );
   };
@@ -662,29 +608,6 @@ async function slotPrepareInner(
   // off it. A start-ref prepare keeps HEAD, and any changes on it, until its
   // reset to its own head, after every refusal below; other prepares go back
   // to the idle branch first.
-  let detachedHeadOnRemote = false;
-  if (phaseEnabled('git') && !branch && current === 'HEAD') {
-    if (opts?.startRef) {
-      const head = await assertDetachedHeadOnRemote(vars);
-      detachedHeadOnRemote = true;
-      step(
-        'branch',
-        `Detached ${head.slice(0, 12)}, which origin contains, stays until the start-ref reset`,
-      );
-    } else {
-      current = await returnDetachedSlotToIdle(vars, projectJson, projectVars, step);
-    }
-  }
-
-  // The existing preserveBranch path never resets or deletes the branch.
-  if (phaseEnabled('git') && !opts?.preserveBranch)
-    await assertPrepareCommitsPublished(vars, branch || '', execOnSlot, {
-      headOnRemote: detachedHeadOnRemote,
-      defaultBranch,
-      githubRepo: getProjectField(projectJson, 'ci.repo') || undefined,
-      projectJson,
-    });
-
   if (!phaseEnabled('git')) {
     // Profiles without the git phase reuse the slot's current checkout. Branch,
     // start-ref and mergeMain runs never reach here — selection forces git on for them.
@@ -693,52 +616,10 @@ async function slotPrepareInner(
       `git sync skipped (profile ${profileName()}; HEAD stays on '${current || 'unknown'}')`,
     );
   } else {
-    if (!branch && current && current !== defaultBranch && !detachedHeadOnRemote) {
-      const linkedWorktree = await detectLinkedWorktree(vars);
-      const trackingBranch = resolveSlotTrackingBranchFromProject(
-        projectJson,
-        vars,
-        projectVars,
-        linkedWorktree,
-      );
-      if (!isSlotIdleBranch(current, trackingBranch, defaultBranch, linkedWorktree)) {
-        const expected = linkedWorktree
-          ? `'${trackingBranch}' or '${defaultBranch}'`
-          : `'${defaultBranch}'`;
-        throw new Error(
-          `Slot is on '${current}', expected ${expected}. Run 'farmslot slot release' first.`,
-        );
-      }
-      const fetchDefaultR = await execOnSlot(
-        vars,
-        withFarmGitConfig(
-          `cd ${shellQuote(vars.remoteRepo)} && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
-        ),
-      );
-      if (fetchDefaultR.exitCode !== 0) {
-        throw new Error(
-          `git fetch origin ${defaultBranch} failed on ${vars.slotId} (${vars.remoteRepo}): ${fetchDefaultR.stderr.slice(-200) || fetchDefaultR.stdout.slice(-200)}`,
-        );
-      }
-      const headR = await execOnSlot(
-        vars,
-        withFarmGitConfig(
-          `cd ${shellQuote(vars.remoteRepo)} && git rev-parse HEAD ${shellQuote(`origin/${defaultBranch}`)} 2>/dev/null`,
-        ),
-      );
-      const refs = headR.stdout.trim().split(/\s+/).filter(Boolean);
-      const worktreeAtDefault = headR.exitCode === 0 && refs.length === 2 && refs[0] === refs[1];
-      if (!worktreeAtDefault) {
-        throw new Error(
-          `Slot is on '${current}', expected '${trackingBranch}' @ origin/${defaultBranch}. Run 'farmslot slot release' first.`,
-        );
-      }
-      step(
-        'branch',
-        linkedWorktree
-          ? `Worktree tracking branch '${current}' matches origin/${defaultBranch}; proceeding`
-          : `HEAD matches origin/${defaultBranch}; proceeding`,
-      );
+    if (!branch && !opts?.startRef) {
+      const idle = await resetSlotRepoToIdle(vars, projectJson, projectVars, defaultBranch);
+      current = idle.linkedWorktree ? idle.trackingBranch : defaultBranch;
+      step('branch', `Returned to idle ${current}`);
     }
 
     // 2b. Force local view of origin/HEAD to defaultBranch.
@@ -770,6 +651,25 @@ async function slotPrepareInner(
       step('origin-head', `origin/HEAD = ${expectedHead}`);
     }
   }
+
+  const gitOperationKey = params.runId ?? params.requestId ?? randomUUID();
+  const mutateGit = (command: string, targetTrees: string[] = []) =>
+    mutateSlotGit(
+      vars,
+      projectJson,
+      {
+        defaultBranch,
+        runId: params.runId,
+        operationKey: gitOperationKey,
+        targetBranches: [defaultBranch, ...(branch ? [branch] : [])],
+        targetTrees,
+        verifyWork: async () => {
+          checkAborted();
+        },
+      },
+      command,
+      execOnSlot,
+    );
 
   // A requested start ref must resolve to structured provenance on every branch
   // path: a slot already on the work branch, a preserved replay branch, or a
@@ -829,11 +729,9 @@ async function slotPrepareInner(
       return r.exitCode === 0 && r.stdout.trim() === `${branch}\n${sha}`;
     };
     if (await atBase()) return;
-    await execOnSlot(
-      vars,
-      withFarmGitConfig(
-        `cd ${shellQuote(vars.remoteRepo)} && git checkout -B ${shellQuote(branch)} ${shellQuote(sha)}`,
-      ),
+    await mutateGit(
+      `cd ${shellQuote(vars.remoteRepo)} && git checkout -B ${shellQuote(branch)} ${shellQuote(sha)}`,
+      [sha],
     );
     if (!(await atBase())) {
       throw new Error(
@@ -857,11 +755,9 @@ async function slotPrepareInner(
     // The same index refresh every other reset --hard in this file runs first,
     // so a stale index.lock cannot fail it (the flag sweep runs as its own
     // command on the paths that need it: it ends with exit).
-    const resetR = await execOnSlot(
-      vars,
-      withFarmGitConfig(
-        `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard ${shellQuote(resolvedStartRef.resolvedSha)} && git clean -fd; }`,
-      ),
+    const resetR = await mutateGit(
+      `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard ${shellQuote(resolvedStartRef.resolvedSha)} && git clean -fd; }`,
+      [resolvedStartRef.resolvedSha],
     );
     if (resetR.exitCode !== 0) {
       throw new Error(
@@ -899,7 +795,10 @@ async function slotPrepareInner(
     // its replay gets the branch back from the parked head.
     const parked =
       !localExists && params.runId
-        ? await restoreParkedBranch(getRun(params.runId), vars, branch, execOnSlot)
+        ? await restoreParkedBranch(getRun(params.runId), vars, branch, execOnSlot, {
+            project: projectJson,
+            defaultBranch,
+          })
         : null;
     if (parked) {
       localExists = true;
@@ -938,11 +837,8 @@ async function slotPrepareInner(
         throw new Error(`Replay branch creation failed: ${create.stderr || create.stdout}`);
       step('branch', `Created ${branch} after prepare failed before branch setup`);
     } else if (current !== branch) {
-      const checkoutR = await execOnSlot(
-        vars,
-        withFarmGitConfig(
-          `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)}`,
-        ),
+      const checkoutR = await mutateGit(
+        `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)}`,
       );
       if (checkoutR.exitCode !== 0) {
         throw new Error(
@@ -966,22 +862,17 @@ async function slotPrepareInner(
         ),
       );
       if (fetchBranchR.exitCode === 0) {
-        const refreshCurrentBranchR = await execOnSlot(
-          vars,
-          withFarmGitConfig(
-            `cd ${shellQuote(vars.remoteRepo)} && { ${CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND}; }`,
-          ),
+        const refreshCurrentBranchR = await mutateGit(
+          `cd ${shellQuote(vars.remoteRepo)} && { ${CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND}; }`,
         );
         if (refreshCurrentBranchR.exitCode !== 0) {
           throw new Error(
             `failed to clear skip-worktree/assume-unchanged flags on ${vars.slotId} (${vars.remoteRepo}): ${refreshCurrentBranchR.stderr.slice(-200) || refreshCurrentBranchR.stdout.slice(-200)}`,
           );
         }
-        const resetBranchR = await execOnSlot(
-          vars,
-          withFarmGitConfig(
-            `cd ${shellQuote(vars.remoteRepo)} && git reset --hard ${shellQuote(`origin/${branch}`)} && git clean -fd`,
-          ),
+        const resetBranchR = await mutateGit(
+          `cd ${shellQuote(vars.remoteRepo)} && git reset --hard ${shellQuote(`origin/${branch}`)} && git clean -fd`,
+          [`origin/${branch}`],
         );
         if (resetBranchR.exitCode !== 0) {
           throw new Error(
@@ -1026,11 +917,8 @@ async function slotPrepareInner(
           });
         }
         if (resolvedStartRef) {
-          const refreshLocalBranchR = await execOnSlot(
-            vars,
-            withFarmGitConfig(
-              `cd ${shellQuote(vars.remoteRepo)} && { ${CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND}; }`,
-            ),
+          const refreshLocalBranchR = await mutateGit(
+            `cd ${shellQuote(vars.remoteRepo)} && { ${CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND}; }`,
           );
           if (refreshLocalBranchR.exitCode !== 0) {
             throw new Error(
@@ -1092,9 +980,8 @@ async function slotPrepareInner(
       // argument parsing keeps the final mutation), so combining them silently
       // leaves skip-worktree intact and the next `reset --hard <ref>` trips on
       // "Entry not uptodate. Cannot merge." Run them as separate invocations.
-      const flagSweep = await execOnSlot(
-        vars,
-        withFarmGitConfig(`cd ${shellQuote(vars.remoteRepo)} && { ${CLEAR_INDEX_FLAGS_COMMAND}; }`),
+      const flagSweep = await mutateGit(
+        `cd ${shellQuote(vars.remoteRepo)} && { ${CLEAR_INDEX_FLAGS_COMMAND}; }`,
       );
       if (flagSweep.exitCode !== 0)
         throw new Error(
@@ -1120,11 +1007,8 @@ async function slotPrepareInner(
       // Same prefix detects + clears a stale `.git/index.lock` left by a crashed
       // prior git invocation — without this, every retry within ~5min hits
       // "Could not reset index file" until the lock ages out.
-      const resetR = await execOnSlot(
-        vars,
-        withFarmGitConfig(
-          `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard HEAD; }`,
-        ),
+      const resetR = await mutateGit(
+        `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard HEAD; }`,
       );
       if (resetR.exitCode !== 0)
         throw new Error(
@@ -1143,11 +1027,9 @@ async function slotPrepareInner(
       if (linkedWorktree) {
         // Git worktrees cannot checkout `main` when it is active in the primary clone.
         // Reset the current worktree branch directly to the resolved base commit instead.
-        const ffR = await execOnSlot(
-          vars,
-          withFarmGitConfig(
-            `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard ${shellQuote(baseResetRef)}; }`,
-          ),
+        const ffR = await mutateGit(
+          `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard ${shellQuote(baseResetRef)}; }`,
+          [baseResetRef],
         );
         if (ffR.exitCode !== 0)
           throw new Error(
@@ -1166,19 +1048,16 @@ async function slotPrepareInner(
         }
         step('branch', `Worktree synced to ${baseResetRef} without checking out ${defaultBranch}`);
       } else {
-        const coDefaultR = await execOnSlot(
-          vars,
-          withFarmGitConfig(`cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch}`),
+        const coDefaultR = await mutateGit(
+          `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch}`,
         );
         if (coDefaultR.exitCode !== 0)
           throw new Error(
             `checkout ${defaultBranch} failed on ${vars.slotId} (${vars.remoteRepo}): ${coDefaultR.stderr.slice(-200) || coDefaultR.stdout.slice(-200)}`,
           );
-        const ffR = await execOnSlot(
-          vars,
-          withFarmGitConfig(
-            `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard origin/${defaultBranch}; }`,
-          ),
+        const ffR = await mutateGit(
+          `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard origin/${defaultBranch}; }`,
+          [`origin/${defaultBranch}`],
         );
         if (ffR.exitCode !== 0)
           throw new Error(
@@ -1227,18 +1106,12 @@ async function slotPrepareInner(
         // New work flow (fix-bug/dev): delete stale remote branch and recreate from defaultBranch
         step('branch', `Deleting stale remote ${branch} (forceNewBranch)...`);
         if (!linkedWorktree) {
-          await execOnSlot(
-            vars,
-            withFarmGitConfig(
-              `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch} 2>/dev/null`,
-            ),
+          await mutateGit(
+            `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch} 2>/dev/null`,
           );
         }
-        await execOnSlot(
-          vars,
-          withFarmGitConfig(
-            `cd ${shellQuote(vars.remoteRepo)} && git branch -D ${shellQuote(branch)} 2>/dev/null`,
-          ),
+        await mutateGit(
+          `cd ${shellQuote(vars.remoteRepo)} && git branch -D ${shellQuote(branch)} 2>/dev/null`,
         );
         await execOnSlot(
           vars,
@@ -1247,11 +1120,9 @@ async function slotPrepareInner(
           ),
         );
         branchCreatedFromBase = true;
-        await execOnSlot(
-          vars,
-          withFarmGitConfig(
-            `cd ${shellQuote(vars.remoteRepo)} && git checkout -b ${shellQuote(branch)} ${shellQuote(newBranchBase)}`,
-          ),
+        await mutateGit(
+          `cd ${shellQuote(vars.remoteRepo)} && git checkout -b ${shellQuote(branch)} ${shellQuote(newBranchBase)}`,
+          [newBranchBase],
         );
         step('branch', `Recreated ${branch} from ${newBranchBaseLabel}`);
       } else if (remoteExists) {
@@ -1265,11 +1136,9 @@ async function slotPrepareInner(
             )
           ).exitCode === 0;
         if (localExists) {
-          const coR = await execOnSlot(
-            vars,
-            withFarmGitConfig(
-              `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)} && git reset --hard ${shellQuote(`origin/${branch}`)}`,
-            ),
+          const coR = await mutateGit(
+            `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)} && git reset --hard ${shellQuote(`origin/${branch}`)}`,
+            [`origin/${branch}`],
           );
           if (coR.exitCode !== 0)
             throw new Error(
@@ -1278,11 +1147,9 @@ async function slotPrepareInner(
           step('branch', `Switched to ${branch} (reset to origin/${branch})`);
           await resetBranchToStartRef();
         } else {
-          const coR = await execOnSlot(
-            vars,
-            withFarmGitConfig(
-              `cd ${shellQuote(vars.remoteRepo)} && git checkout -b ${shellQuote(branch)} ${shellQuote(`origin/${branch}`)}`,
-            ),
+          const coR = await mutateGit(
+            `cd ${shellQuote(vars.remoteRepo)} && git checkout -b ${shellQuote(branch)} ${shellQuote(`origin/${branch}`)}`,
+            [`origin/${branch}`],
           );
           if (coR.exitCode !== 0)
             throw new Error(
@@ -1304,45 +1171,32 @@ async function slotPrepareInner(
         if (localExists) {
           if (forceNewBranch) {
             if (linkedWorktree) {
-              await execOnSlot(
-                vars,
-                withFarmGitConfig(
-                  `cd ${shellQuote(vars.remoteRepo)} && git branch -D ${shellQuote(branch)} 2>/dev/null`,
-                ),
+              await mutateGit(
+                `cd ${shellQuote(vars.remoteRepo)} && git branch -D ${shellQuote(branch)} 2>/dev/null`,
               );
             } else {
-              await execOnSlot(
-                vars,
-                withFarmGitConfig(
-                  `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch} 2>/dev/null && git branch -D ${shellQuote(branch)} 2>/dev/null`,
-                ),
+              await mutateGit(
+                `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch} 2>/dev/null && git branch -D ${shellQuote(branch)} 2>/dev/null`,
               );
             }
             branchCreatedFromBase = true;
-            await execOnSlot(
-              vars,
-              withFarmGitConfig(
-                `cd ${shellQuote(vars.remoteRepo)} && git checkout -b ${shellQuote(branch)} ${shellQuote(newBranchBase)}`,
-              ),
+            await mutateGit(
+              `cd ${shellQuote(vars.remoteRepo)} && git checkout -b ${shellQuote(branch)} ${shellQuote(newBranchBase)}`,
+              [newBranchBase],
             );
             step('branch', `Recreated local ${branch} from ${newBranchBaseLabel}`);
           } else {
-            await execOnSlot(
-              vars,
-              withFarmGitConfig(
-                `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)}`,
-              ),
+            await mutateGit(
+              `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)}`,
             );
             step('branch', `Switched to existing local ${branch}`);
             await resetBranchToStartRef();
           }
         } else {
           branchCreatedFromBase = true;
-          await execOnSlot(
-            vars,
-            withFarmGitConfig(
-              `cd ${shellQuote(vars.remoteRepo)} && git checkout -b ${shellQuote(branch)} ${shellQuote(newBranchBase)}`,
-            ),
+          await mutateGit(
+            `cd ${shellQuote(vars.remoteRepo)} && git checkout -b ${shellQuote(branch)} ${shellQuote(newBranchBase)}`,
+            [newBranchBase],
           );
           step('branch', `Created ${branch} from ${newBranchBaseLabel}`);
         }
@@ -1353,20 +1207,14 @@ async function slotPrepareInner(
     // (checked above). Detaching first keeps that branch where it was; release
     // checks it out again.
     await resolveRequestedStartRef();
-    const flagSweep = await execOnSlot(
-      vars,
-      withFarmGitConfig(
-        `cd ${shellQuote(vars.remoteRepo)} && { ${CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND}; }`,
-      ),
+    const flagSweep = await mutateGit(
+      `cd ${shellQuote(vars.remoteRepo)} && { ${CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND}; }`,
     );
     if (flagSweep.exitCode !== 0)
       throw new Error(
         `failed to clear skip-worktree/assume-unchanged flags on ${vars.slotId} (${vars.remoteRepo}): ${flagSweep.stderr.slice(-200) || flagSweep.stdout.slice(-200)}`,
       );
-    const detachR = await execOnSlot(
-      vars,
-      withFarmGitConfig(`cd ${shellQuote(vars.remoteRepo)} && git checkout --detach`),
-    );
+    const detachR = await mutateGit(`cd ${shellQuote(vars.remoteRepo)} && git checkout --detach`);
     if (detachR.exitCode !== 0)
       throw new Error(
         `git checkout --detach failed on ${vars.slotId} (${vars.remoteRepo}): ${detachR.stderr.slice(-200) || detachR.stdout.slice(-200)}`,
@@ -1386,11 +1234,9 @@ async function slotPrepareInner(
     const softFailIntegration = shouldSoftFailPrepareIntegration(params.flowType);
     const linkedWorktree = await detectLinkedWorktree(vars);
     const resetToOriginBranch = async (detail: string) => {
-      await execOnSlot(
-        vars,
-        withFarmGitConfig(
-          `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)} 2>/dev/null && git reset --hard ${shellQuote(`origin/${branch}`)} 2>/dev/null`,
-        ),
+      await mutateGit(
+        `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)} 2>/dev/null && git reset --hard ${shellQuote(`origin/${branch}`)} 2>/dev/null`,
+        [`origin/${branch}`],
       );
       step('merge', detail);
     };

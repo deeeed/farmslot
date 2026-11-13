@@ -14,6 +14,10 @@ const { disableMacCodeSignClone } = require('../../../packages/adapter-web/src/c
 const {
   profileProcessPids,
 } = require('../../../packages/adapter-web/src/validation-process-ownership.cjs');
+// The gateway's default threshold: a fleet older than it is not trusted for ownership even when
+// the gateway did not mark it stale. A literal, so launching Chrome needs no built protocol; it is
+// protocol's FLEET_STALE_MS_DEFAULT, and scripts/tests/chrome-profile-cleanup.test.mjs pins it.
+const FLEET_STALE_MS_DEFAULT = 600_000;
 
 const cacheDir = (home) => path.join(home, '.cache', 'farmslot');
 
@@ -48,7 +52,7 @@ function slotIsInactive(fleet, port, machine, stopping) {
     fleet.stale ||
     !Array.isArray(fleet.slots) ||
     !Number.isFinite(Date.parse(fleet.checkedAt)) ||
-    Date.now() - Date.parse(fleet.checkedAt) > 300000
+    Date.now() - Date.parse(fleet.checkedAt) > FLEET_STALE_MS_DEFAULT
   )
     return false;
   const local = fleet.slots.filter((slot) => slot.machine === machine);

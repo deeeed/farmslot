@@ -1685,7 +1685,7 @@ function assertNativeWorkersReleased(run: Run): void {
     throw new Error(
       'Review workspace ownership cannot leave the run store before durable cleanup closeout',
     );
-  if (run.reviewWorkspace && !run.reviewWorkspace.cleanedAt) {
+  if (run.reviewWorkspace && !run.reviewWorkspace.cleanedAt && !run.reviewWorkspace.transferredTo) {
     throw new Error(
       'Review workspace ownership cannot leave the run store before checkout cleanup',
     );
@@ -1946,6 +1946,39 @@ export async function getRunWithArchived(id: string): Promise<Run | undefined> {
   return getRun(id) ?? archived;
 }
 
+/** Claim the stopped source once, including when its result record was archived. */
+export async function claimReviewWorkspaceTransfer(
+  id: string,
+  expected: NonNullable<Run['reviewWorkspace']>,
+  successor: NonNullable<NonNullable<Run['reviewWorkspace']>['transferredTo']>,
+  assertCurrent: (prior: Run) => void,
+): Promise<Run> {
+  const check = (run: Run) => {
+    assertRunNotArchiving(id);
+    assertCurrent(run);
+    const { transferredTo, ...binding } = run.reviewWorkspace ?? {};
+    const expectedBinding = { ...expected };
+    delete expectedBinding.transferredTo;
+    if (
+      !isTerminalRunStatus(run.status) ||
+      !run.reviewWorkspace?.executionStoppedAt ||
+      run.reviewWorkspace.cleanedAt ||
+      run.reviewWorkspace.retirement ||
+      !isDeepStrictEqual(binding, expectedBinding) ||
+      (transferredTo && !isDeepStrictEqual(transferredTo, successor))
+    )
+      throw new Error('Retained review workspace is unavailable or already transferred');
+  };
+  return commitRetainedRunMutation(
+    id,
+    (run) => ({
+      ...run,
+      reviewWorkspace: { ...run.reviewWorkspace!, transferredTo: successor },
+    }),
+    check,
+  );
+}
+
 /** Retention records the restore manifest without evicting live or archived history. */
 export async function recordRunStorageArchive(id: string, manifest: string): Promise<void> {
   const url = pathToFileURL(manifest).href;
@@ -1972,7 +2005,16 @@ export async function recordParkedRunCommits(
   await commitRetainedRunMutation(
     id,
     (run) => {
-      if (run.parkedCommits?.some((entry) => entry.ref === record.ref)) return run;
+      const existing = run.parkedCommits?.find((entry) => entry.ref === record.ref);
+      if (existing)
+        return record.prunedAt
+          ? {
+              ...run,
+              parkedCommits: run.parkedCommits?.map((entry) =>
+                entry.ref === record.ref ? record : entry,
+              ),
+            }
+          : run;
       const records = [...(run.parkedCommits ?? [])];
       // Historical backfill must not replace the already authoritative replay head.
       const before = beforeRef ? records.findIndex((entry) => entry.ref === beforeRef) : -1;

@@ -369,3 +369,23 @@ test('reviewer continuity does not cross automation owner generations', () => {
   assert.deepEqual(plan(1, undefined), { kind: 'refused', reason: 'missing-session' });
   assert.equal(plan(1, 1).kind, 'resume');
 });
+
+test('an adapter without continuation uses the verified delta even without a saved conversation', () => {
+  const { current, prior } = runs();
+  const source: Run = {
+    ...prior,
+    agentContexts: prior.agentContexts.map((context) => ({
+      ...context,
+      runner: 'opencode',
+      runnerSessionId: null,
+      runnerSessionPath: null,
+    })),
+  };
+  const plan = resolveRepeatReviewResumePlan(current, source, 'opencode', 'gpt-6-astra');
+  assert.equal(plan.kind, 'delta-cold');
+  if (plan.kind !== 'delta-cold') return;
+  assert.equal(plan.trace.reviewId, 'review-lineage-1');
+  assert.equal(plan.trace.fallback?.reason, 'session-resume-unsupported');
+  assert.deepEqual(plan.trace.fallback?.comparedRanges, ['1111111..2222222']);
+  assert.equal(plan.trace.sessionId, undefined);
+});

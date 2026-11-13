@@ -61,6 +61,9 @@
     "prepack": "cd ../.. && node scripts/quality/check-farmslot-package-readiness.mjs --require-changelog --packages @farmslot/handoff && yarn workspace @farmslot/handoff build",
     "prepublishOnly": "node ../../scripts/quality/check-farmslot-package-readiness.mjs --publish --packages @farmslot/handoff"
   },
+  "dependencies": {
+    "@farmslot/protocol": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "eslint": "^10.3.0",

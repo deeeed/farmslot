@@ -8,6 +8,7 @@ import type {
   SlotEntity,
 } from '../contracts/slots.js';
 import { reattachHostLoad } from '../fleet/host-load.js';
+import { staleFleet } from '../fleet/stale.js';
 import { computeSummary } from '../fleet/summary.js';
 import type { FleetStatusResult } from '../rpc/fleet.js';
 import type { PRListResult } from '../rpc/pr.js';
@@ -321,6 +322,8 @@ interface FleetMeta {
   machines?: MachineHealth[];
   checkedAt: string;
   poolErrors?: FleetPoolReadError[];
+  /** The gateway found the snapshot past its freshness threshold. */
+  stale?: true;
 }
 
 const SUMMARY_FIELDS = [
@@ -345,7 +348,8 @@ function isFleetMeta(value: unknown): value is FleetMeta {
     isFleetSummary(value.summary) &&
     (value.machines === undefined ||
       (Array.isArray(value.machines) && value.machines.every(isMachineHealthEntity))) &&
-    (value.poolErrors === undefined || Array.isArray(value.poolErrors))
+    (value.poolErrors === undefined || Array.isArray(value.poolErrors)) &&
+    (value.stale === undefined || value.stale === true)
   );
 }
 
@@ -368,6 +372,7 @@ export function createFleetEntityView(): EntityView {
         checkedAt: data.checkedAt,
         ...(data.machines === undefined ? {} : { machines: data.machines }),
         ...(data.poolErrors === undefined ? {} : { poolErrors: data.poolErrors }),
+        ...(data.stale === undefined ? {} : { stale: data.stale }),
       };
       return isFleetMeta(meta) ? meta : undefined;
     },
@@ -425,21 +430,22 @@ export function createFleetEntityView(): EntityView {
           checkedAt: fleet.checkedAt,
           ...(fleet.machines === undefined ? {} : { machines: fleet.machines }),
           ...(fleet.poolErrors === undefined ? {} : { poolErrors: fleet.poolErrors }),
+          ...(fleet.stale === true ? { stale: true } : {}),
         },
       };
     },
     answer: (rows, meta, current): FleetStatusResult => {
       const slots = reattachHostLoad(rows, meta.machines);
-      return {
-        fleet: {
-          checkedAt: meta.checkedAt,
-          slots,
-          // A partial collection keeps the gateway's own counts until every row is held.
-          summary: current ? computeSummary(slots) : meta.summary,
-          ...(meta.machines ? { machines: meta.machines } : {}),
-          ...(meta.poolErrors ? { poolErrors: meta.poolErrors } : {}),
-        },
+      const fleet = {
+        checkedAt: meta.checkedAt,
+        slots,
+        // A partial collection keeps the gateway's own counts until every row is held.
+        summary: current ? computeSummary(slots) : meta.summary,
+        ...(meta.machines ? { machines: meta.machines } : {}),
+        ...(meta.poolErrors ? { poolErrors: meta.poolErrors } : {}),
       };
+      // The full read's rule, after the counts as the gateway takes them.
+      return { fleet: meta.stale ? staleFleet(fleet) : fleet };
     },
   });
 }
