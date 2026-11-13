@@ -6,12 +6,13 @@ import { HANDOFF_INPUT, readTaskProvenance } from '@farmslot/agent-runtime';
 import { DEFAULT_TASK_DIR, type TemplateProvenance } from '@farmslot/protocol';
 
 import { loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
-import { execLocal, isLocal } from '../core/exec.js';
+import { isLocal } from '../core/index.js';
 import { RSYNC_SSH_SHELL_OPTION, SSH_CONNECT_SHELL_OPTIONS } from '../core/ssh-options.js';
 import { shellQuote } from '../core/tmux.js';
 import { auditBlindTrialTask } from '../evals/blind-trial.js';
 import { usesNodeLink } from '../fleet/node-link-policy.js';
 import { copyTaskThroughNodeLink } from '../fleet/node-link-task-copy.js';
+import { runTaskTransfer } from '../host-services/task-transfer.js';
 import {
   invalidateArtifactTextCache,
   invalidateLiveRecipeContextMemo,
@@ -75,7 +76,7 @@ export async function copyTaskFilesToSlot(
       console.log(`[run-engine] copied task files to ${workerTaskAbs}`);
     } else {
       const sshTarget = vars.sshTarget;
-      const mkdirRes = await execLocal(
+      const mkdirRes = await runTaskTransfer(
         `ssh ${SSH_CONNECT_SHELL_OPTIONS} ${shellQuote(sshTarget)} ${shellQuote(`mkdir -p ${shellQuote(workerTaskAbs)}`)}`,
       );
       if (mkdirRes.exitCode !== 0) {
@@ -84,7 +85,7 @@ export async function copyTaskFilesToSlot(
         );
       }
       if (!artifactsOnly) {
-        const scpRes = await execLocal(
+        const scpRes = await runTaskTransfer(
           `scp -q ${SSH_CONNECT_SHELL_OPTIONS} ${shellQuote(run.taskFile)} ${shellQuote(`${sshTarget}:${workerTaskAbs}/TASK.md`)}`,
         );
         if (scpRes.exitCode !== 0) {
@@ -100,7 +101,7 @@ export async function copyTaskFilesToSlot(
         // tree; WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES only applies to
         // worker-to-gateway release copies where gateway-owned outputs must
         // not be overwritten.
-        const rsyncRes = await execLocal(
+        const rsyncRes = await runTaskTransfer(
           `rsync -az ${subdir === 'artifacts' ? '--ignore-existing ' : ''}${RSYNC_SSH_SHELL_OPTION} ${shellQuote(`${localDir}/`)} ${shellQuote(`${sshTarget}:${workerTaskAbs}/${subdir}/`)}`,
         );
         if (rsyncRes.exitCode !== 0) {

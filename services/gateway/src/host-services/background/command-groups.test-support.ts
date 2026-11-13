@@ -13,7 +13,16 @@ import { writeFile } from 'node:fs/promises';
 
 import { execLocal } from '../../core/exec.js';
 
+import type { BackgroundHandlerContext } from './handlers.js';
+import type { BackgroundCommandParams } from './protocol.js';
 import { serveBackgroundRequests } from './serve.js';
+
+function command(
+  { command, ...options }: BackgroundCommandParams,
+  context?: BackgroundHandlerContext,
+) {
+  return execLocal(command, { ...options, signal: context?.signal });
+}
 
 export interface FixtureCommand {
   command: string;
@@ -53,8 +62,8 @@ serveBackgroundRequests(
       return [];
     },
     'decisions.scan': async () => process.exit(3),
-    'commands.read': ({ command, ...options }, context) =>
-      execLocal(command, { ...options, signal: context?.signal }),
+    'commands.read': command,
+    'taskFiles.transfer': command,
   },
   new Set(['fleet.probeMachine']),
   env.FIXTURE_GUARD_OWNER ? { guardOwnerPid: Number(env.FIXTURE_GUARD_OWNER) } : {},
