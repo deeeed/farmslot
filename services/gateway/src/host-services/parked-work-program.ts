@@ -1,3 +1,5 @@
+const BLIND_CAPSULE_DIRECTORY = '.farmslot-blind-evals';
+
 // Runs as one owned slot command, never in the gateway request loop.
 export const PARKED_WORK_PROGRAM = String.raw`
 const fs = require('node:fs');
@@ -34,7 +36,7 @@ function repositoryKey() {
   if (runId) {
     // Blind receipts will live in the original repository after Git restoration.
     const worktree = text(['config','--local','--get','core.worktree']);
-    const capsules = path.join(path.dirname(worktree), '.farmslot-blind-evals', input.slotId);
+    const capsules = path.join(path.dirname(worktree), ${JSON.stringify(BLIND_CAPSULE_DIRECTORY)}, input.slotId);
     const states = fs.readdirSync(capsules).filter(name => name.startsWith(runId+'-')).map(name =>
       JSON.parse(fs.readFileSync(path.join(capsules,name,'state.json'),'utf8'))
     ).filter(state => state.runId === runId && state.slotId === input.slotId &&
