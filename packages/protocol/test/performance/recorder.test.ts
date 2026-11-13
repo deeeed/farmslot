@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  isClientPerformanceReport,
   measureClientRequest,
   performanceBudgetVerdicts,
   PerformanceRecorder,
@@ -261,4 +262,34 @@ test('Doctor keeps foreground and background response bytes with their own durat
   assert.equal(visible.bytes / visible.count, 100);
   assert.equal(refreshed.bytes / refreshed.count, 10240);
   assert.equal(visible.causes.includes('payload'), false);
+});
+
+test('HTTP status classes keep independent request counters', () => {
+  const metrics = new PerformanceRecorder('gateway');
+  metrics.increment('farmslot_http_requests_total', {
+    method: 'fleet.status',
+    status_class: '2xx',
+  });
+  metrics.increment('farmslot_http_requests_total', {
+    method: 'fleet.status',
+    status_class: '4xx',
+  });
+  const counts = metrics.snapshot().counters;
+  assert.equal(counts.length, 2);
+  assert.ok(counts.every((row) => row.value === 1));
+  const client = new PerformanceRecorder('command-center');
+  client.increment('farmslot_http_requests_total', { method: 'run.get', status_class: '4xx' });
+  const report = client.beginReport();
+  assert.ok(report);
+  assert.equal(isClientPerformanceReport(report), true);
+  assert.equal(
+    isClientPerformanceReport({
+      ...report,
+      counters: report.counters.map((row) => ({
+        ...row,
+        labels: { ...row.labels, status_class: 'private-value' },
+      })),
+    }),
+    false,
+  );
 });

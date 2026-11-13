@@ -3,6 +3,7 @@ import {
   COUNTER_METRICS,
   GAUGE_METRICS,
   HISTOGRAM_METRICS,
+  HTTP_STATUS_CLASSES,
 } from './types.js';
 const object = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -14,7 +15,16 @@ function labels(v: unknown): boolean {
   if (
     !object(v) ||
     Object.keys(v).some(
-      (k) => !['method', 'side', 'action_class', 'kind', 'cache_source', 'query'].includes(k),
+      (k) =>
+        ![
+          'method',
+          'side',
+          'action_class',
+          'kind',
+          'cache_source',
+          'query',
+          'status_class',
+        ].includes(k),
     )
   )
     return false;
@@ -27,13 +37,15 @@ function labels(v: unknown): boolean {
           ? ['cached-paint', 'interactive-read', 'gate-action', 'background-refresh'].includes(
               String(x),
             )
-          : k === 'kind'
-            ? ['git', 'tmux', 'ssh', 'node', 'shell', 'other'].includes(String(x))
-            : k === 'cache_source'
-              ? ['memory', 'stored', 'network', 'unknown'].includes(String(x))
-              : k === 'query'
-                ? typeof x === 'string' && /^q[0-9]+$/.test(x)
-                : bounded(x)),
+          : k === 'status_class'
+            ? HTTP_STATUS_CLASSES.some((status) => status === x)
+            : k === 'kind'
+              ? ['git', 'tmux', 'ssh', 'node', 'shell', 'other'].includes(String(x))
+              : k === 'cache_source'
+                ? ['memory', 'stored', 'network', 'unknown'].includes(String(x))
+                : k === 'query'
+                  ? typeof x === 'string' && /^q[0-9]+$/.test(x)
+                  : bounded(x)),
   );
 }
 export function isClientPerformanceReport(v: unknown): v is ClientPerformanceReport {

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Gateway HTTP route metrics",
+  "description": "Isolated production HTTP requests and authenticated RPC/Prometheus readback, including artifact misses and auth refusals.",
+  "workflow": {
+    "entry": "http-metrics",
+    "nodes": {
+      "http-metrics": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/http-route-metrics.mjs \"$FARMSLOT_HTTP_PROOF_OUTPUT\"",
+        "timeout_ms": 120000,
+        "intent": "HTTP route counts and completed response durations reach both authenticated metrics and gateway.performance.get; raw paths, query values and credentials never become labels. The production gateway and all writes are isolated to a temporary fixture.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

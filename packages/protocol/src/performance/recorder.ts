@@ -40,7 +40,9 @@ interface RecorderOptions {
 const empty = (): State => ({ histograms: new Map(), counters: new Map(), dropped: 0 });
 const id = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 const key = (name: string, l: PerformanceLabels) =>
-  [name, l.method, l.side, l.action_class, l.kind, l.cache_source, l.query].join('|');
+  [name, l.method, l.side, l.action_class, l.kind, l.cache_source, l.query, l.status_class].join(
+    '|',
+  );
 export class PerformanceRecorder {
   readonly side: PerformanceSide;
   readonly clock: () => number;

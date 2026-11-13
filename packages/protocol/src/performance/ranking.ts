@@ -59,6 +59,7 @@ export function slowestActions(snapshot: PerformanceSnapshot): SlowAction[] {
   }
   const phases = {
     farmslot_rpc_duration_seconds: 'RPC',
+    farmslot_http_duration_seconds: 'HTTP',
     farmslot_client_cached_paint_seconds: 'Cached paint',
     farmslot_client_visible_read_seconds: 'Visible read',
     farmslot_native_text_render_seconds: 'Text render',

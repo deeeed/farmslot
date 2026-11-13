@@ -1,16 +1,30 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import type { ServerResponse } from 'node:http';
 import path from 'node:path';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 
 import { Methods } from '@farmslot/protocol';
 import {
   type ExecutionKind,
+  HTTP_STATUS_CLASSES,
+  type HttpStatusClass,
   performanceActionClass,
   PerformanceRecorder,
 } from '@farmslot/protocol/performance';
 
-/** Method labels the recorder keeps: RPC methods, plus the host-service operations registered below. */
-const knownMethods = new Set<string>(Object.values(Methods));
+/** Bounded RPC, HTTP and registered host-service method labels. */
+export const GATEWAY_HTTP_METHODS = [
+  'http.health',
+  'http.metrics',
+  'http.file',
+  'http.run-artifact',
+  'http.webhook-github',
+  'http.webhook-jira',
+  'http.options',
+  'http.ui',
+  'http.other',
+] as const;
+const knownMethods = new Set<string>([...Object.values(Methods), ...GATEWAY_HTTP_METHODS]);
 export const gatewayPerformance = new PerformanceRecorder('gateway', { methods: knownMethods });
 interface RequestCost {
   method: string;
@@ -52,11 +66,7 @@ export function startPerformanceSampling(): () => void {
     loop.disable();
   };
 }
-export async function measureGatewayRequest<T>(
-  method: string,
-  operation: () => Promise<T>,
-  metrics = gatewayPerformance,
-): Promise<T> {
+function createRequestCost(method: string, metrics: PerformanceRecorder): RequestCost {
   const cost: RequestCost = {
     method,
     metrics,
@@ -67,8 +77,60 @@ export async function measureGatewayRequest<T>(
     lag: 0,
     active: true,
   };
-  const started = performance.now();
   active.add(cost);
+  return cost;
+}
+
+function finishRequestCost(
+  cost: RequestCost,
+  started: number,
+  transport: 'rpc' | 'http',
+  statusClass?: HttpStatusClass,
+): void {
+  if (!cost.active) return;
+  cost.active = false;
+  active.delete(cost);
+  const { method, metrics } = cost;
+  const duration = (performance.now() - started) / 1000;
+  // Streams have no action budget; older Doctor clients skip unfamiliar histograms without one.
+  const labels =
+    transport === 'rpc' ? { method, action_class: performanceActionClass(method) } : { method };
+  metrics.observe(
+    transport === 'rpc' ? 'farmslot_rpc_duration_seconds' : 'farmslot_http_duration_seconds',
+    labels,
+    duration,
+  );
+  if (transport === 'rpc') {
+    if (cost.bytes !== undefined)
+      metrics.observe('farmslot_rpc_response_bytes', labels, cost.bytes);
+    if (cost.failed) metrics.increment('farmslot_rpc_errors_total', labels);
+  } else {
+    metrics.increment('farmslot_http_requests_total', { ...labels, status_class: statusClass });
+  }
+  metrics.observe('farmslot_event_loop_lag_seconds', labels, cost.lag);
+  if (duration > 2)
+    console.warn(
+      `[performance] slow ${transport.toUpperCase()}`,
+      JSON.stringify({
+        method: knownMethods.has(method) ? method : '_unknown',
+        outcome: cost.failed ? 'error' : 'ok',
+        seconds: duration,
+        bytes: cost.bytes,
+        execSeconds: cost.exec,
+        nodeSeconds: cost.node,
+        nodeWaitSeconds: cost.wait,
+        loopLagSeconds: cost.lag,
+      }),
+    );
+}
+
+export async function measureGatewayRequest<T>(
+  method: string,
+  operation: () => Promise<T>,
+  metrics = gatewayPerformance,
+): Promise<T> {
+  const cost = createRequestCost(method, metrics);
+  const started = performance.now();
   return current.run(cost, async () => {
     try {
       return await operation();
@@ -76,29 +138,48 @@ export async function measureGatewayRequest<T>(
       cost.failed = true;
       throw error;
     } finally {
-      cost.active = false;
-      active.delete(cost);
-      const duration = (performance.now() - started) / 1000;
-      const labels = { method, action_class: performanceActionClass(method) };
-      metrics.observe('farmslot_rpc_duration_seconds', labels, duration);
-      if (cost.bytes !== undefined)
-        metrics.observe('farmslot_rpc_response_bytes', labels, cost.bytes);
-      if (cost.failed) metrics.increment('farmslot_rpc_errors_total', labels);
-      metrics.observe('farmslot_event_loop_lag_seconds', labels, cost.lag);
-      if (duration > 2)
-        console.warn(
-          '[performance] slow RPC',
-          JSON.stringify({
-            method: knownMethods.has(method) ? method : '_unknown',
-            outcome: cost.failed ? 'error' : 'ok',
-            seconds: duration,
-            bytes: cost.bytes,
-            execSeconds: cost.exec,
-            nodeSeconds: cost.node,
-            nodeWaitSeconds: cost.wait,
-            loopLagSeconds: cost.lag,
-          }),
-        );
+      finishRequestCost(cost, started, 'rpc');
+    }
+  });
+}
+
+export type GatewayHttpMethod = (typeof GATEWAY_HTTP_METHODS)[number];
+
+/** The dispatch branch owns its route name; no request URLs enter metric labels. */
+export function recordGatewayHttpRoute(method: GatewayHttpMethod): void {
+  const cost = current.getStore();
+  if (cost?.active && cost.method.startsWith('http.')) cost.method = method;
+}
+
+/** One ingress owner for HTTP/TLS, including auth refusals, streams and early disconnects. */
+export function measureGatewayHttpRequest(
+  res: ServerResponse,
+  operation: () => void,
+  metrics = gatewayPerformance,
+): void {
+  const cost = createRequestCost('http.other', metrics);
+  const started = performance.now();
+  const complete = (aborted: boolean) => {
+    res.off('finish', onFinish);
+    res.off('close', onClose);
+    cost.failed = aborted || res.statusCode >= 400;
+    const statusClass = aborted
+      ? 'aborted'
+      : res.statusCode >= 100 && res.statusCode < 600
+        ? HTTP_STATUS_CLASSES[Math.floor(res.statusCode / 100) - 1]
+        : 'other';
+    finishRequestCost(cost, started, 'http', statusClass);
+  };
+  const onFinish = () => complete(false);
+  const onClose = () => complete(!res.writableFinished);
+  res.once('finish', onFinish);
+  res.once('close', onClose);
+  current.run(cost, () => {
+    try {
+      operation();
+    } catch (error) {
+      complete(true);
+      throw error;
     }
   });
 }
