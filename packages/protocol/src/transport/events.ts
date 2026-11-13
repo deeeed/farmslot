@@ -378,8 +378,12 @@ export interface RunCreatedPayload {
   run: Run;
 }
 
+/** What `run.updated` carries on the wire: which run changed and its lifecycle. */
+export type RunUpdateNotice = Pick<Run, 'id' | 'project' | 'status' | 'slotId' | 'updatedAt'>;
+
+/** Read the rest of the run with `run.get`; entity-sync clients reread it on its resource change. */
 export interface RunUpdatedPayload {
-  run: Run;
+  run: RunUpdateNotice;
 }
 
 export interface RunCompletedPayload {

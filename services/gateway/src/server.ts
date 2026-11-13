@@ -22,6 +22,8 @@ import {
   type RequestFrame,
   type ResponseFrame,
   ReviewQaConfigurationError,
+  type Run,
+  type RunUpdatedPayload,
 } from '@farmslot/protocol';
 import {
   entitySyncRead,
@@ -1166,7 +1168,28 @@ function sendResponse(
 
 function sendEvent(ws: WebSocket, event: string, payload: unknown): void {
   if (ws.readyState !== WebSocket.OPEN) return;
-  ws.send(eventFrameText(event, payload, ++eventSeq));
+  ws.send(eventFrameText(event, wirePayload(event, payload), ++eventSeq));
+}
+
+/**
+ * The payload as a connection receives it. `run.updated` goes out as a notice: the CLI's run
+ * watch and recipe proofs read only its fields, and other clients reread the run. The gateway's
+ * own observers keep the whole run, in-process.
+ */
+function wirePayload(event: string, payload: unknown): unknown {
+  if (event !== Events.RUN_UPDATED) return payload;
+  const run = (payload as { run?: Run } | undefined)?.run;
+  if (!run) return payload;
+  const notice: RunUpdatedPayload = {
+    run: {
+      id: run.id,
+      project: run.project,
+      status: run.status,
+      slotId: run.slotId,
+      updatedAt: run.updatedAt,
+    },
+  };
+  return notice;
 }
 
 let resourcePublicationTail: Promise<void> = Promise.resolve();
@@ -1274,12 +1297,12 @@ export function broadcast(frame: EventFrame, ownerId?: string, ownerGeneration?:
     broadcastResourceChanges(frame.payload as import('@farmslot/protocol').ResourceChangedPayload);
     return;
   }
-  const payload: unknown = frame.payload;
-  noteRunEvent(frame.event, payload);
+  noteRunEvent(frame.event, frame.payload);
+  const sent: EventFrame = { ...frame, payload: wirePayload(frame.event, frame.payload) };
   // Each variant is serialized once, and only when a connection receives it.
   let whole: string | undefined;
   let notice: string | undefined;
-  const withoutList = withoutHeldList(frame);
+  const withoutList = withoutHeldList(sent);
   let authorizationFaultLogged = false;
   for (const [ws, state] of clients) {
     if (ws.readyState !== WebSocket.OPEN || activeAuthRuntime === null) continue;
@@ -1307,7 +1330,7 @@ export function broadcast(frame: EventFrame, ownerId?: string, ownerGeneration?:
     }
     if (!canReceive) continue;
     if (withoutList && state.entitySync) ws.send((notice ??= JSON.stringify(withoutList)));
-    else ws.send((whole ??= JSON.stringify(frame)));
+    else ws.send((whole ??= JSON.stringify(sent)));
   }
 }
 
