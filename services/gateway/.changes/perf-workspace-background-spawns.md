@@ -1,0 +1,1 @@
+- Reuse verified workspace inspections across sparse health samples and run local read probes in the existing background process.

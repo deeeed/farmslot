@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync, fork } from 'node:child_process';
+import { execFileSync, fork, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -90,7 +90,48 @@ test('the forked child probes a local machine and walks decisions', async () => 
     decisions.map((file) => file.decision.id),
     ['smoke-decision'],
   );
+  const output = await background.request(
+    'commands.read',
+    { command: 'printf background-read', cwd: checkout, timeout: 5000 },
+    { deadlineMs: 10000 },
+  );
+  assert.equal(output.stdout, 'background-read');
+  assert.equal(output.exitCode, 0);
+  const cwdRead = await background.request(
+    'commands.read',
+    { command: 'sleep 0.02; printf "%s\\n" "$$"; pwd', cwd: checkout, timeout: 5000 },
+    { deadlineMs: 10000 },
+  );
+  const [group, commandCwd] = cwdRead.stdout.trim().split('\n');
+  const { realpath } = await import('node:fs/promises');
+  assert.equal(
+    commandCwd,
+    await realpath(checkout),
+    'the command retains its requested working directory',
+  );
+  const census = spawnSync('lsof', ['-a', '-g', group, '-d', 'cwd', '-Fn'], { encoding: 'utf8' });
+  assert.ok(census.status === 0 || census.status === 1, 'command-group cwd census unavailable');
+  assert.ok(
+    !census.stdout.split('\n').includes(`n${await realpath(checkout)}`),
+    'a completed read must leave no checkout occupant in its command group',
+  );
   const status = background.status();
+  assert.equal(status.exec['commands.read']?.shell?.calls, 2);
+  const abort = new AbortController();
+  const marker = path.join(root, 'cancel-read-started');
+  const heldRead = background.request(
+    'commands.read',
+    { command: `printf started > '${marker}'; sleep 60`, cwd: checkout, timeout: 5000 },
+    { deadlineMs: 10000, signal: abort.signal },
+  );
+  const until = Date.now() + 2000;
+  while (!(await import('node:fs')).existsSync(marker)) {
+    assert.ok(Date.now() < until, 'child read command did not start');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  abort.abort();
+  const cancelled = await heldRead;
+  assert.equal(cancelled.exitCode, 130, 'abort reaches the child command closeout');
   assert.ok(status.exec['fleet.probeMachine']?.shell?.calls, 'probe commands are tallied');
   assert.equal(status.exec['decisions.scan'], undefined, 'the walk runs no commands');
   console.log(`[smoke] child rss after a refresh: ${status.rssBytes} bytes`);
@@ -124,4 +165,47 @@ test('the child starts no timers or watchers on import and exits with its parent
   const exited = new Promise<number | null>((resolve) => child.once('exit', resolve));
   child.disconnect();
   assert.equal(await exited, 0);
+});
+
+test('the shared IPC read stays in its inherited terminal-cleanup scope', async (t) => {
+  const original = new Map(Object.keys(env).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, env);
+  const { backgroundHost } = await import('./client.js');
+  const { readSlotCommand } = await import('../read-command.js');
+  const { withCleanupSignal, drainCleanupCommands } = await import('../../core/cleanup-scope.js');
+  const { makeVars } = await import('../../runners/test-fixtures.js');
+  t.after(async () => {
+    await backgroundHost.stop();
+    for (const [key, value] of original) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  backgroundHost.start();
+  await backgroundHost.request('decisions.scan', {}, { deadlineMs: 10000 });
+  const commands = { pending: new Set<Promise<unknown>>(), unconfirmed: false };
+  const cancellation = new AbortController();
+  const marker = path.join(root, 'cleanup-read-started');
+  const vars = makeVars({ host: 'localhost', machine: 'fixture', remoteRepo: checkout });
+  const pending = withCleanupSignal(
+    cancellation.signal,
+    () =>
+      readSlotCommand(vars, `printf started > '${marker}'; sleep 60`, { timeout: 5000, cwd: '/' }),
+    commands,
+  );
+  try {
+    const until = Date.now() + 2000;
+    while (!(await import('node:fs')).existsSync(marker)) {
+      assert.ok(Date.now() < until, 'cleanup-scoped child read did not start');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    assert.equal(commands.pending.size, 1);
+    cancellation.abort();
+    assert.equal((await pending).exitCode, 130);
+    assert.equal(await drainCleanupCommands(commands), true);
+    assert.equal(commands.pending.size, 0);
+  } finally {
+    cancellation.abort();
+    await pending;
+  }
 });

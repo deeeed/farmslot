@@ -110,6 +110,14 @@ mock.module('../../core/index.js', {
     },
   },
 });
+// Recovery uses this same simulated transport for ancestry reads in the background owner.
+const simulatedCore = await import('../../core/index.js');
+mock.module('../../host-services/read-command.js', {
+  namedExports: {
+    readSlotCommand: (...args: Parameters<typeof core.execOnSlot>) =>
+      simulatedCore.execOnSlot(...args),
+  },
+});
 mock.module('../../core/read-probes.js', {
   namedExports: {
     readSlotProbe: async () => ({
