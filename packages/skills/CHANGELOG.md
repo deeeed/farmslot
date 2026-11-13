@@ -4,7 +4,13 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 ## Unreleased
 
+- Preserve literal source text and validation evidence in cooking task templates.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.13.5 - 2026-11-13
+
+- Update shared adapter/runtime dependencies for unchanged-call plan reuse.
 
 ## 0.13.4 - 2026-11-12
 

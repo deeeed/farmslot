@@ -2,7 +2,16 @@
 
 ## Unreleased
 
+- Park local commits and dirty work before slot resets, with scoped list/restore and a bounded fleet summary.
+- Share fresh review-chain selection and validation across PR review clients.
+- Show that accepting a result closes it without publishing in the shared decision view.
+- Run activity, provenance, checklist, CI watch and recovered-review helpers accept `RunListRow` as well as `Run`, and give the same result from a served row as from the full run.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.25.2 - 2026-11-13
+
+- Update shared adapter/runtime dependencies for unchanged-call plan reuse.
 
 ## 0.25.1 - 2026-11-12
 

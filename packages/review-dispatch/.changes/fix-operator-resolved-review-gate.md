@@ -1,1 +1,0 @@
-- Show that accepting a result closes it without publishing in the shared decision view.
