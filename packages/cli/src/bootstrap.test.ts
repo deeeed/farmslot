@@ -13,6 +13,7 @@ interface BootstrapOptions {
   managedRuntime?: boolean;
   pinLayout?: 'legacy' | 2;
   symlinkPinStore?: boolean;
+  externalBinLink?: boolean;
   farmHome?: string;
 }
 
@@ -91,22 +92,25 @@ async function startBootstrap(t: TestContext, args: string[], options: Bootstrap
     syncBuiltinESMExports();
   `,
   );
-  const child = spawn(
-    process.execPath,
-    ['--import', cacheGuard, path.join(root, 'bin/farmslot.mjs'), ...args],
-    {
-      cwd: tmpdir(),
-      env: {
-        ...process.env,
-        TSX_TSCONFIG_PATH: 'missing-parent/tsconfig.json',
-        TSX_DISABLE_CACHE: '',
-        FARMSLOT_NODE22_BIN: managedRuntime ? managedDir : '',
-        FARMSLOT_HOME: options.farmHome,
-      },
-      stdio: 'pipe',
-      detached: true,
+  let executable = path.join(root, 'bin/farmslot.mjs');
+  if (options.externalBinLink) {
+    const target = executable;
+    executable = path.join(scratch, 'external-bin/farmslot-task');
+    await mkdir(path.dirname(executable));
+    await symlink(path.relative(path.dirname(executable), target), executable);
+  }
+  const child = spawn(process.execPath, ['--import', cacheGuard, executable, ...args], {
+    cwd: tmpdir(),
+    env: {
+      ...process.env,
+      TSX_TSCONFIG_PATH: 'missing-parent/tsconfig.json',
+      TSX_DISABLE_CACHE: '',
+      FARMSLOT_NODE22_BIN: managedRuntime ? managedDir : '',
+      FARMSLOT_HOME: options.farmHome,
     },
-  );
+    stdio: 'pipe',
+    detached: true,
+  });
   let output = '';
   let stderr = '';
   let runtimePid: number | undefined;
@@ -253,14 +257,30 @@ for (const pinLayout of ['legacy', 2] as const) {
     fixture.child.kill('SIGTERM');
     assert.deepEqual(await fixture.closed, { code: 23, signal: null });
   });
+  for (const symlinkPinStore of [false, true]) {
+    test(`an external bin link recovers its home through a ${symlinkPinStore ? 'symlinked' : 'direct'} layout ${pinLayout} store`, async (t) => {
+      const fixture = await startBootstrap(t, ['task', 'verify', 'synthetic-task'], {
+        pinLayout,
+        symlinkPinStore,
+        externalBinLink: true,
+      });
+      assert.equal(fixture.ready.farmHome, fixture.home);
+      fixture.child.kill('SIGTERM');
+      assert.deepEqual(await fixture.closed, { code: 23, signal: null });
+    });
+  }
 }
 
-test('a pinned CLI preserves an explicit farm home', async (t) => {
-  const fixture = await startBootstrap(t, ['task', 'verify', 'synthetic-task'], {
-    pinLayout: 'legacy',
-    farmHome: '/explicit/farm',
+for (const externalBinLink of [false, true]) {
+  test(`a pinned CLI preserves an explicit farm home${externalBinLink ? ' through an external bin link' : ''}`, async (t) => {
+    const fixture = await startBootstrap(t, ['task', 'verify', 'synthetic-task'], {
+      pinLayout: 'legacy',
+      symlinkPinStore: externalBinLink,
+      externalBinLink,
+      farmHome: '/explicit/farm',
+    });
+    assert.equal(fixture.ready.farmHome, '/explicit/farm');
+    fixture.child.kill('SIGTERM');
+    assert.deepEqual(await fixture.closed, { code: 23, signal: null });
   });
-  assert.equal(fixture.ready.farmHome, '/explicit/farm');
-  fixture.child.kill('SIGTERM');
-  assert.deepEqual(await fixture.closed, { code: 23, signal: null });
-});
+}
