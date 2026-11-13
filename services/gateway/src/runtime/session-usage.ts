@@ -1,5 +1,5 @@
 import type { Run, RunnerSessionUsage } from '@farmslot/protocol';
-import { runSessionUsage } from '@farmslot/slot-config';
+import { runSessionUsage, type SessionUsageWindow } from '@farmslot/slot-config';
 
 import { loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot, isLocal } from '../core/exec.js';
@@ -13,6 +13,7 @@ import {
   registerContextSessionUsage,
   upsertSessionUsage,
 } from './agent-session-rows.js';
+import { extractNativeAgentSessionUsage, nativeRunUsageWindow } from './native-session-usage.js';
 import {
   parseSessionUsageOutput,
   runnerUsageMetrics,
@@ -88,6 +89,7 @@ async function archivedSessionUsage(
   archived: string,
   session: Pick<RunnerSessionUsage, 'runnerSessionId' | 'runnerSessionPath'> = {},
   vars?: SlotVars,
+  usageWindow?: SessionUsageWindow,
 ): Promise<RunnerSessionUsage> {
   return parseSessionUsageOutput(
     await runSessionUsage({
@@ -97,6 +99,7 @@ async function archivedSessionUsage(
       forcedPath: archived,
       forcedRunner: run.metrics.runner,
       environment: { ...process.env, ...vars?.machineEnv },
+      usageWindow,
     }),
     { runner: run.metrics.runner, ...session },
   );
@@ -122,16 +125,40 @@ export async function extractRunWorkerSessionUsage(
   const slotVars = vars ?? (await loadSlotVars(slotId));
   const usages = await Promise.all(
     unique.map(async (session) => {
-      const usage = await extractRunnerSessionUsage({
+      const context = run.agentContexts?.find((row) => row.id === session.contextId);
+      const receipt = run.sessionUsage?.find(
+        (row) =>
+          row.runner === run.metrics.runner && row.runnerSessionId === session.runnerSessionId,
+      );
+      const nativeSession = receipt?.nativeSession ?? context?.nativeSession;
+      const usageWindow = nativeSession
+        ? nativeRunUsageWindow(run, {
+            runner: run.metrics.runner,
+            runnerSessionId: session.runnerSessionId,
+            startedAt:
+              receipt?.startedAt ?? context?.nativeSession?.launchRequestedAt ?? context?.startedAt,
+            completedAt: run.completedAt,
+          })
+        : undefined;
+      const input = {
         slotId,
         vars: slotVars,
         runner: run.metrics.runner,
         ...session,
-      });
+      };
+      const usage = nativeSession
+        ? await extractNativeAgentSessionUsage({
+            ...input,
+            runner: run.metrics.runner ?? '',
+            nativeSession,
+            usageWindow,
+          })
+        : await extractRunnerSessionUsage(input);
       if (!usage.error) return usage;
       const archived = await provider?.recoverArchive?.(run, session);
       if (!archived) return usage;
-      return archivedSessionUsage(run, archived, session, slotVars);
+      const recovered = await archivedSessionUsage(run, archived, session, slotVars, usageWindow);
+      return { ...recovered, scope: usageWindow ? 'run-delta' : recovered.scope };
     }),
   );
   usages.forEach((usage, index) => record?.(unique[index], usage));

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 
 import type { ProjectVars } from '../core/config.js';
 import type { NativeSessionUsageRequest } from '../runners/native-session-usage-command.js';
+import { makeVars } from '../runners/test-fixtures.js';
 
 await import('./mock-pty.test-support.js');
 const config = await import('../core/config.js');
@@ -50,7 +51,7 @@ const { createRun, updateRun, getRun, deleteRun } = await import('../runs/store.
 const { upsertAgentContext } = await import('../agents/contexts.js');
 const { captureRunSessionUsage } = await import('./agent-session-usage.js');
 
-test('slotless native review accounts through its frozen launch bindings without a tmux target', async (t) => {
+test('slotless native review persists cold and resumed run receipts through frozen launch bindings', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'native-static-review-usage-'));
   const run = createRun(
     {
@@ -74,6 +75,8 @@ test('slotless native review accounts through its frozen launch bindings without
       { type: 'session', id: 'native-review', cwd: root },
       {
         type: 'message',
+        id: 'answer',
+        timestamp: '2026-11-10T14:05:00Z',
         message: {
           role: 'assistant',
           model: 'fixture-model',
@@ -85,6 +88,7 @@ test('slotless native review accounts through its frozen launch bindings without
       .join('\n') + '\n',
   );
   updateRun(run.id, {
+    createdAt: '2026-11-10T14:00:00Z',
     domain: 'trading',
     metrics: { ...run.metrics, runner: 'pi', model: 'fixture-model' },
     reviewWorkspaceTarget: { machine: 'review-node' },
@@ -129,6 +133,118 @@ test('slotless native review accounts through its frozen launch bindings without
   assert.equal(result.sessionUsage![0].source, 'runner-transcript', result.sessionUsage![0].error);
   assert.equal(requests.length, 1);
   assert.equal(requests[0].cwd, root);
+  assert.deepEqual(requests[0].usageWindow, {
+    startedAt: '2026-11-10T14:00:00Z',
+    completedAt: '2026-11-10T14:10:00Z',
+  });
+  assert.equal(result.sessionUsage![0].scope, 'run-delta');
   assert.equal(result.sessionUsage![0].totalTokens, 400);
   assert.equal(result.sessionUsage![0].costUsd, 0.002);
+
+  updateRun(run.id, { status: 'done' });
+  const warm = createRun(
+    {
+      flowType: 'review-pr',
+      project: 'fixture',
+      ticketOrPr: 'owner/repo#1',
+      transport: 'native',
+      reviewWorkspaceTarget: { machine: 'review-node' },
+    },
+    { nativeOwnerPrincipalId: 'owner' },
+  );
+  t.after(async () => {
+    updateRun(warm.id, { status: 'cancelled', agentContexts: [], reviewWorkspace: undefined });
+    await deleteRun(warm.id);
+  });
+  updateRun(warm.id, {
+    // A queued successor can be created before its predecessor finishes.
+    createdAt: '2026-11-09T14:00:00Z',
+    metrics: result.metrics,
+    reviewWorkspace: result.reviewWorkspace,
+  });
+  const message = {
+    type: 'message',
+    id: 'warm-answer',
+    timestamp: '2026-11-11T14:05:00Z',
+    message: {
+      role: 'assistant',
+      model: 'fixture-model',
+      usage: { input: 20, output: 4, cacheRead: 16, cost: { total: 0.0002 } },
+    },
+  };
+  await appendFile(
+    transcript,
+    [message, message].map((row) => JSON.stringify(row)).join('\n') + '\n',
+  );
+  await upsertAgentContext(warm.id, 'review', {
+    id: 'review',
+    runner: 'pi',
+    runnerSessionId: 'native-review',
+    runnerSessionPath: transcript,
+    effort: 'high',
+    status: 'complete',
+    startedAt: '2026-11-11T14:00:00Z',
+    completedAt: '2026-11-11T14:10:00Z',
+    nativeSession: {
+      sessionId: 'host',
+      ownerPrincipalId: 'owner',
+      executionNodeId: 'review-node',
+      leaseId: 'warm-lease',
+      commandId: 'warm-command',
+      launchRequestedAt: '2026-11-11T14:00:00Z',
+      releasedAt: '2026-11-11T14:10:00Z',
+    },
+  });
+  await captureRunSessionUsage(warm.id);
+  await captureRunSessionUsage(warm.id);
+  const receipt = getRun(warm.id)!.sessionUsage![0];
+  assert.equal(receipt.scope, 'run-delta');
+  assert.equal(receipt.turns, 1);
+  assert.equal(receipt.totalTokens, 40);
+  assert.equal(receipt.costUsd, 0.0002);
+  assert.equal(requests.length, 2, 'A settled receipt is measured once');
+  const { piSessionUsageProvider } = await import('../runners/session-usage-provider.js');
+  const { extractRunWorkerSessionUsage } = await import('./session-usage.js');
+  t.mock.method(piSessionUsageProvider, 'recoverSessions', async () => [
+    {
+      contextId: 'review',
+      runnerSessionId: 'native-review',
+      runnerSessionPath: transcript,
+    },
+  ]);
+  const completionUsage = await extractRunWorkerSessionUsage(
+    { ...getRun(warm.id)!, slotId: 'fixture-slot' },
+    makeVars(),
+  );
+  assert.equal(completionUsage?.scope, 'run-delta');
+  assert.equal(completionUsage?.totalTokens, 40, 'Completion recovery preserves the run window');
+  assert.equal(completionUsage?.costUsd, 0.0002);
+  updateRun(warm.id, {
+    repeatReviewContext: {
+      version: 1,
+      chainId: 'fixture-chain',
+      generation: 2,
+      priorRunId: run.id,
+      priorFamilyId: run.id,
+      repository: 'owner/repo',
+      prNumber: 1,
+      currentHeadSha: 'b'.repeat(40),
+      verdict: 'issues',
+      unresolvedFindings: [],
+      artifactRefs: [],
+      farmslotEvidenceRefs: [],
+      mode: 'warm',
+      validationDepth: 'static-code',
+      session: {
+        mode: 'warm',
+        continuity: 'resumed',
+        priorRunId: run.id,
+        sessionId: 'native-review',
+      },
+    },
+  });
+  await captureRunSessionUsage(warm.id);
+  assert.equal(getRun(warm.id)!.metrics.sessionTotalTokens, 40);
+  assert.equal(getRun(warm.id)!.metrics.costEstimate, 0.0002);
+  assert.equal(getRun(warm.id)!.metrics.sessionUsageScope, 'review-generation-delta');
 });

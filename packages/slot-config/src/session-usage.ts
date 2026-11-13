@@ -29,6 +29,26 @@ export type { PiModelCostMetadata, PiModelCostRates } from './litellm-model-info
 
 export type SessionAction = 'snapshot' | 'report' | 'total';
 
+export interface SessionUsageWindow {
+  /** Earliest persisted launch boundary for this conversation in the owning run. */
+  startedAt: string;
+  completedAt?: string;
+}
+
+function usageTimestamp(record: Record<string, unknown>): number {
+  const timestamp = typeof record.timestamp === 'string' ? Date.parse(record.timestamp) : NaN;
+  if (!Number.isFinite(timestamp))
+    throw new Error('Run usage requires timestamped transcript usage records');
+  return timestamp;
+}
+
+function inUsageWindow(timestamp: number, window: SessionUsageWindow): boolean {
+  return (
+    timestamp >= Date.parse(window.startedAt) &&
+    (!window.completedAt || timestamp <= Date.parse(window.completedAt))
+  );
+}
+
 // ─── Pricing tables ──────────────────────────────────────────────────────────
 
 interface ClaudePricing {
@@ -394,11 +414,24 @@ async function chooseSession(
 
 // ─── Claude summarizer ────────────────────────────────────────────────────────
 
-async function summarizeClaude(filePath: string): Promise<SessionTotals> {
+async function summarizeClaude(
+  filePath: string,
+  window?: SessionUsageWindow,
+): Promise<SessionTotals> {
   const totals = emptyTotals();
   let state = emptyIncrementalSessionUsageState();
+  const seen = new Set<string>();
   for await (const obj of safeJsonLines(filePath)) {
     const message = obj.message;
+    if (window) {
+      if (obj.type !== 'assistant' || !object(message) || !object(message.usage)) continue;
+      if (typeof message.id !== 'string')
+        throw new Error('Run usage requires assistant message ids');
+      if (seen.has(message.id)) continue;
+      // Deduplicate before applying the window. A replayed old message is still old work.
+      seen.add(message.id);
+      if (!inUsageWindow(usageTimestamp(obj), window)) continue;
+    }
     if (
       obj.type === 'assistant' &&
       message &&
@@ -440,13 +473,60 @@ function codexUsageTotal(usage: Record<string, unknown>): number {
   return ((usage.input_tokens as number) ?? 0) + ((usage.output_tokens as number) ?? 0);
 }
 
-async function summarizeCodex(filePath: string): Promise<SessionTotals> {
+async function summarizeCodex(
+  filePath: string,
+  window?: SessionUsageWindow,
+): Promise<SessionTotals> {
   const totals = emptyTotals();
   let latestUsage: Record<string, unknown> | null = null;
+  let baseline: Record<string, unknown> | null = null;
+  let previousCumulative: Record<string, unknown> | null = null;
 
   for await (const obj of safeJsonLines(filePath)) {
     const typ = obj.type as string;
     const payload = (obj.payload as Record<string, unknown>) ?? {};
+
+    if (
+      window?.completedAt &&
+      typ === 'turn_context' &&
+      typeof obj.timestamp === 'string' &&
+      Date.parse(obj.timestamp) > Date.parse(window.completedAt)
+    )
+      continue;
+
+    if (window && typ !== 'session_meta' && typ !== 'turn_context') {
+      const isUsage =
+        (typ === 'event_msg' && payload.type === 'token_count') ||
+        (typ === 'turn.completed' && obj.usage);
+      const isTurn =
+        typ === 'response_item' && payload.type === 'message' && payload.role === 'assistant';
+      if (!isUsage && !isTurn) continue;
+      const timestamp = usageTimestamp(obj);
+      if (window.completedAt && timestamp > Date.parse(window.completedAt)) continue;
+      if (isUsage) {
+        const info = object(payload.info) ? payload.info : {};
+        const usage = info.total_token_usage ?? obj.usage;
+        if (!object(usage)) throw new Error('Codex run usage requires cumulative token totals');
+        if (
+          previousCumulative &&
+          [
+            'input_tokens',
+            'output_tokens',
+            'cached_input_tokens',
+            'reasoning_output_tokens',
+            'total_tokens',
+          ].some((key) => Number(usage[key] ?? 0) < Number(previousCumulative?.[key] ?? 0))
+        )
+          throw new Error('Codex cumulative usage reset within the transcript');
+        previousCumulative = usage;
+      }
+      if (timestamp < Date.parse(window.startedAt)) {
+        const info = object(payload.info) ? payload.info : {};
+        const usage = info.total_token_usage ?? obj.usage;
+        if (object(usage)) baseline = usage;
+        continue;
+      }
+    }
 
     if (typ === 'session_meta') {
       const model =
@@ -479,6 +559,23 @@ async function summarizeCodex(filePath: string): Promise<SessionTotals> {
     totals.cache_read = (latestUsage.cached_input_tokens as number) ?? 0;
     totals.reasoning_output_tokens = (latestUsage.reasoning_output_tokens as number) ?? 0;
     totals.total_tokens = codexUsageTotal(latestUsage);
+    if (window && baseline) {
+      totals.input_tokens -= Number(baseline.input_tokens ?? 0);
+      totals.output_tokens -= Number(baseline.output_tokens ?? 0);
+      totals.cache_read -= Number(baseline.cached_input_tokens ?? 0);
+      totals.reasoning_output_tokens -= Number(baseline.reasoning_output_tokens ?? 0);
+      totals.total_tokens -= codexUsageTotal(baseline);
+      if (
+        [
+          totals.input_tokens,
+          totals.output_tokens,
+          totals.cache_read,
+          totals.reasoning_output_tokens,
+          totals.total_tokens,
+        ].some((value) => value < 0)
+      )
+        throw new Error('Codex cumulative usage reset within the run window');
+    }
   }
 
   const prices = Object.entries(OPENAI_PRICING).find(
@@ -792,12 +889,14 @@ async function summarizePi(
   filePath: string,
   environment: NodeJS.ProcessEnv,
   liteLlmPrices?: Map<string, PiModelCostMetadata>,
+  window?: SessionUsageWindow,
 ): Promise<SessionTotals> {
   const totals = emptyTotals();
   let cost = 0;
   let completeCost = true;
   const prices = new Map<string, PiRequestCost>();
   let gatewayPrices = liteLlmPrices;
+  const seen = new Set<string>();
   for await (const record of safeJsonLines(filePath)) {
     const quote = piRequestCost(record);
     if (quote) {
@@ -817,6 +916,12 @@ async function summarizePi(
       });
     const usage = readPiAssistantUsage(record, prices, gatewayPrices);
     if (!usage) continue;
+    if (window) {
+      if (typeof record.id !== 'string') throw new Error('Run usage requires Pi entry ids');
+      if (seen.has(record.id)) continue;
+      seen.add(record.id);
+      if (!inUsageWindow(usageTimestamp(record), window)) continue;
+    }
     totals.turns += 1;
     totals.input_tokens += usage.inputTokens;
     totals.output_tokens += usage.outputTokens;
@@ -829,7 +934,8 @@ async function summarizePi(
       totals.cost_reason = usage.costReason;
     } else cost += usage.costUsd;
   }
-  if (totals.turns === 0) throw new Error('ERROR: Pi transcript contains no assistant usage');
+  if (totals.turns === 0 && !window)
+    throw new Error('ERROR: Pi transcript contains no assistant usage');
   totals.cost_usd = completeCost ? cost : null;
   return totals;
 }
@@ -940,10 +1046,12 @@ async function summarize(
   home: string,
   environment: NodeJS.ProcessEnv,
   liteLlmPrices?: Map<string, PiModelCostMetadata>,
+  window?: SessionUsageWindow,
 ): Promise<SessionTotals> {
-  if (runner === 'claude') return summarizeClaude(sessionPath);
-  if (runner === 'codex') return summarizeCodex(sessionPath);
-  if (runner === 'pi') return summarizePi(sessionPath, environment, liteLlmPrices);
+  if (runner === 'claude') return summarizeClaude(sessionPath, window);
+  if (runner === 'codex') return summarizeCodex(sessionPath, window);
+  if (runner === 'pi') return summarizePi(sessionPath, environment, liteLlmPrices, window);
+  if (window) throw new Error('Runner has no run-window accounting provider');
   if (runner === 'grok') return summarizeGrok(sessionPath, home);
   if (runner === 'cursor') return summarizeCursor(sessionPath);
   throw new Error(`ERROR: Unsupported runner for usage extraction: ${runner}`);
@@ -1445,6 +1553,8 @@ export async function runSessionUsage(params: {
   environment?: NodeJS.ProcessEnv;
   /** Credential-free prices resolved through the owning worker's environment. */
   liteLlmPrices?: Map<string, PiModelCostMetadata>;
+  /** Attribute only usage first recorded during this run. No shared snapshot files. */
+  usageWindow?: SessionUsageWindow;
 }): Promise<string> {
   const { repo, slotId, action, forcedPath, forcedRunner, environment = process.env } = params;
 
@@ -1516,10 +1626,32 @@ export async function runSessionUsage(params: {
   }
 
   if (action === 'total') {
-    const current = await summarize(runner, sessionFile, home, environment, params.liteLlmPrices);
+    const window = params.usageWindow;
+    if (
+      window &&
+      (!Number.isFinite(Date.parse(window.startedAt)) ||
+        (window.completedAt !== undefined &&
+          (!Number.isFinite(Date.parse(window.completedAt)) ||
+            Date.parse(window.completedAt) < Date.parse(window.startedAt))))
+    )
+      throw new Error('Invalid run usage window');
+    const current = await summarize(
+      runner,
+      sessionFile,
+      home,
+      environment,
+      params.liteLlmPrices,
+      window,
+    );
     const lines = await sessionLineCount(sessionFile);
     const header = [`Session:  ${name}`, `Runner:   ${runner}`, `Lines:    ${lines}`, `---`];
-    return [...header, ...formatTotals(current)].join('\n') + '\n';
+    return (
+      [
+        ...header,
+        ...(window ? [`usage_window=${JSON.stringify(window)}`] : []),
+        ...formatTotals(current),
+      ].join('\n') + '\n'
+    );
   }
 
   throw new Error(`Unknown action: ${action}`);

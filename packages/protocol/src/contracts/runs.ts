@@ -709,8 +709,8 @@ export interface RunnerSessionUsage {
   costUsd?: number | null;
   measuredAt: string;
   source: 'runner-transcript' | 'provider-response' | 'unavailable';
-  /** What this measurement covers. `session-total` is the runner transcript total at measurement time. */
-  scope?: 'session-total';
+  /** Transcript total at measurement time, or usage first observed within the owning run. */
+  scope?: 'session-total' | 'run-delta';
   error?: string;
 }
 

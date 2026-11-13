@@ -1,0 +1,1 @@
+- Distinguish per-run session usage deltas from whole-session usage receipts.

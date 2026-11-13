@@ -93,3 +93,16 @@ for (const cost of [0, 0.25])
     assert.equal(summary.runsWithMetrics, 1);
     assert.equal(source.sessionUsage![0].totalTokens, null);
   });
+
+test('native run deltas add across resumes without a second family-level subtraction', () => {
+  const cold = run('cold', 1, 100, 1);
+  const warm = run('warm', 2, 20, 0.2);
+  const resumedAgain = run('resumed-again', 3, 10, 0.1);
+  warm.sessionUsage![0].scope = 'run-delta';
+  resumedAgain.sessionUsage![0].scope = 'run-delta';
+  const contributions = sessionUsageContributions([cold, warm, resumedAgain]);
+  assert.equal(sum(contributions.get('warm')!, 'totalTokens'), 20);
+  assert.equal(sum(contributions.get('warm')!, 'costUsd'), 0.2);
+  assert.equal(sum([...contributions.values()].flat(), 'totalTokens'), 130);
+  assert.equal(sum([...contributions.values()].flat(), 'costUsd'), 1.3);
+});

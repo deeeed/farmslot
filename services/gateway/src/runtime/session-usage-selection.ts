@@ -136,6 +136,10 @@ export function sessionUsageContributions(runs: readonly Run[]): Map<string, Run
   )) {
     const contributions: RunnerSessionUsage[] = [];
     for (const row of runSessionUsageReceipts(run)) {
+      if (row.scope === 'run-delta') {
+        contributions.push(row);
+        continue;
+      }
       const key = sessionUsageKey(row);
       const previous = key ? seen.get(key) : undefined;
       const highWater = { ...previous };

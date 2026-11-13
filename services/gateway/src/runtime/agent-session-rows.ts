@@ -169,7 +169,7 @@ export function contextSessionReceipt(
     durationMs,
     measuredAt,
     source: captured?.source ?? 'unavailable',
-    scope: 'session-total',
+    scope: captured?.scope ?? 'session-total',
     ...(!captured
       ? {
           error: runnerSessionId

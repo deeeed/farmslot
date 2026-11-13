@@ -1,5 +1,5 @@
 import type { NativeWorkerSessionBinding } from '@farmslot/protocol';
-import type { PiModelCostMetadata } from '@farmslot/slot-config';
+import type { PiModelCostMetadata, SessionUsageWindow } from '@farmslot/slot-config';
 
 export type NativeSessionUsageIdentity = Pick<
   NativeWorkerSessionBinding,
@@ -19,6 +19,7 @@ export interface NativeSessionUsageRequest {
   liteLlmPrices?: Array<[string, PiModelCostMetadata]>;
   /** Explicit pool node for terminal sessions, which have no native host binding. */
   executionNodeId?: string;
+  usageWindow?: SessionUsageWindow;
 }
 
 const SESSION_USAGE_MODULE = String.raw`
@@ -146,10 +147,12 @@ const results = [];
 for (const request of input) {
   try {
     const file = await locate(request);
-    const key = JSON.stringify([request.provider, request.runnerSessionId, file, request.liteLlmPrices]);
+    const key = JSON.stringify([request.provider, request.runnerSessionId, file, request.liteLlmPrices, request.usageWindow]);
     let output = measured.get(key);
     if (!output) {
-      output = await runSessionUsage({ repo: '', slotId: request.slotId, action: 'total', forcedPath: file, forcedRunner: request.runner, ...(request.liteLlmPrices ? { liteLlmPrices: new Map(request.liteLlmPrices) } : {}) });
+      output = await runSessionUsage({ repo: '', slotId: request.slotId, action: 'total', forcedPath: file, forcedRunner: request.runner, usageWindow: request.usageWindow, ...(request.liteLlmPrices ? { liteLlmPrices: new Map(request.liteLlmPrices) } : {}) });
+      if (request.usageWindow && !output.split('\n').includes('usage_window=' + JSON.stringify(request.usageWindow)))
+        throw Error('Installed accounting module did not apply the requested run usage window');
       measured.set(key, output);
     }
     results.push({ key: request.key, runnerSessionId: request.runnerSessionId, sessionPath: file, output });

@@ -5,9 +5,10 @@ import { promisify } from 'node:util';
 import {
   collectPlaceholderTokens,
   type NativeWorkerSessionBinding,
+  type Run,
   type RunnerSessionUsage,
 } from '@farmslot/protocol';
-import { loadLiteLlmPrices } from '@farmslot/slot-config';
+import { loadLiteLlmPrices, type SessionUsageWindow } from '@farmslot/slot-config';
 
 import {
   loadMachinePool,
@@ -32,6 +33,25 @@ import { getRunnerSessionUsageProvider } from '../runners/registry.js';
 import { parseSessionUsageOutput, unavailableRunnerSessionUsage } from './session-usage-result.js';
 
 const execute = promisify(execFile);
+
+/** Retain this run's earliest launch when retries or contexts reuse one conversation. */
+export function nativeRunUsageWindow(
+  run: Run,
+  session: Pick<RunnerSessionUsage, 'runner' | 'runnerSessionId' | 'startedAt' | 'completedAt'>,
+): SessionUsageWindow {
+  const starts = [
+    session.startedAt,
+    ...(run.sessionUsage ?? [])
+      .filter(
+        (row) => row.runner === session.runner && row.runnerSessionId === session.runnerSessionId,
+      )
+      .map((row) => row.startedAt),
+  ]
+    .filter((value): value is string => !!value && Number.isFinite(Date.parse(value)))
+    .sort((a, b) => Date.parse(a) - Date.parse(b));
+  if (!starts[0]) throw new Error('Native run usage has no recorded launch boundary');
+  return { startedAt: starts[0], completedAt: session.completedAt ?? undefined };
+}
 type NativeSessionUsageVars =
   | SlotVars
   | (Pick<SlotVars, 'remoteRepo' | 'slotId'> & Partial<Pick<SlotVars, 'projectName' | 'domain'>>);
@@ -43,6 +63,7 @@ export interface NativeAgentUsageInput {
   runnerSessionId: string | null;
   runnerSessionPath?: string | null;
   nativeSession?: NativeSessionUsageIdentity & Partial<NativeWorkerSessionBinding>;
+  usageWindow?: SessionUsageWindow;
 }
 
 export async function extractNativeAgentSessionUsage(
@@ -63,6 +84,7 @@ export async function extractNativeAgentSessionUsage(
     cwd: vars.remoteRepo,
     slotId: vars.slotId,
     sessionPath: input.runnerSessionPath,
+    usageWindow: input.usageWindow,
     nativeSession: {
       sessionId: nativeSession.sessionId,
       ownerPrincipalId: nativeSession.ownerPrincipalId,
@@ -151,11 +173,16 @@ export async function extractNativeAgentSessionUsage(
       typeof row.output !== 'string'
     )
       return unavailable('Agent session accounting response lacks a transcript result');
-    return parseSessionUsageOutput(row.output, {
+    const usage = parseSessionUsageOutput(row.output, {
       runner,
       runnerSessionId,
       runnerSessionPath: row.sessionPath,
     });
+    return {
+      ...usage,
+      ...(input.usageWindow ? { startedAt: input.usageWindow.startedAt } : {}),
+      scope: input.usageWindow ? 'run-delta' : 'session-total',
+    };
   } catch (error) {
     // Supporting accounting must not change lifecycle outcomes when history is unavailable.
     return unavailable(error instanceof Error ? error.message : String(error));
