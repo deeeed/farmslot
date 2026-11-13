@@ -183,7 +183,7 @@ for (const budget of ['2500', '500']) {
       },
       'push',
     );
-    const result = spawnSync(process.platform === 'darwin' ? 'zsh' : 'bash', ['-c', command], {
+    const result = spawnSync(process.platform === 'darwin' ? 'zsh' : 'sh', ['-c', command], {
       cwd: f.repo,
       env: { ...process.env, GIT_SSH_COMMAND: `'${ssh}'`, GIT_SSH_VARIANT: 'ssh' },
       encoding: 'utf8',

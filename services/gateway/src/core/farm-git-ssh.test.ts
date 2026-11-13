@@ -17,6 +17,7 @@ for (const source of [
   'GIT_SSH',
   'auto',
   'argv',
+  'POSIX',
 ]) {
   test(`farm SSH keepalives compose with ${source} configuration`, (t) => {
     const root = mkdtempSync(path.join(tmpdir(), 'farm-ssh-'));
@@ -48,7 +49,7 @@ for (const source of [
     git('init', '-q', repo);
     git('init', '-q', '--bare', remote);
     const custom = `env FIXTURE_SSH='custom with spaces' ${shellQuote(ssh)} -p 2222 -o StrictHostKeyChecking=yes`;
-    if (source === 'environment' || source === 'auto') {
+    if (source === 'environment' || source === 'auto' || source === 'POSIX') {
       env.GIT_SSH_COMMAND = custom;
       git('-C', repo, 'config', 'core.sshCommand', 'must-not-run');
     } else if (source === 'repository') {
@@ -73,9 +74,9 @@ for (const source of [
     ];
     // Run outside the repo so core.sshCommand must resolve in Git's own cwd.
     const wrapped = withFarmGitArgv(argv);
-    if (['parameters', 'count', 'default', 'GIT_SSH'].includes(source)) {
+    if (['parameters', 'count', 'default', 'GIT_SSH', 'POSIX'].includes(source)) {
       execFileSync(
-        process.platform === 'darwin' ? 'zsh' : 'bash',
+        source === 'POSIX' ? 'sh' : process.platform === 'darwin' ? 'zsh' : 'sh',
         ['-c', withFarmGitConfig(argv.map(shellQuote).join(' '))],
         {
           cwd: root,
@@ -89,7 +90,9 @@ for (const source of [
     const actual = readFileSync(capture, 'utf8').trim().split('\n');
     assert.ok(actual.includes('ServerAliveInterval=20'), actual.join(' '));
     assert.ok(actual.includes('ServerAliveCountMax=30'), actual.join(' '));
-    if (['environment', 'repository', 'parameters', 'count', 'auto', 'argv'].includes(source)) {
+    if (
+      ['environment', 'repository', 'parameters', 'count', 'auto', 'argv', 'POSIX'].includes(source)
+    ) {
       assert.equal(actual[0], 'custom with spaces');
       assert.ok(actual.includes('2222'));
       assert.ok(actual.includes('StrictHostKeyChecking=yes'));
