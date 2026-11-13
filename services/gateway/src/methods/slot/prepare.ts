@@ -13,6 +13,7 @@ import {
   SLOT_DESTRUCTIVE_OPS,
   type SlotPrepareParams,
 } from '@farmslot/protocol';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 import { loadMachineSlots, resolveEffectiveDomain } from '@farmslot/slot-config';
 
 import { withFarmGitConfig } from '../../core/farm-git.js';
@@ -412,15 +413,15 @@ async function slotPrepareInner(
   const remapHookSupport = (command: string): string => {
     if (!hookSupportDir || !command) return command;
     const mapped = command
-      .replaceAll('{{node_support_dir}}', hookSupportDir)
-      .replaceAll('{{NODE_SUPPORT_DIR}}', hookSupportDir)
-      .replaceAll(`${farmslotRoot()}/projects/`, `${hookSupportDir}/projects/`)
-      .replaceAll(`${farmslotRoot()}/scripts/`, `${hookSupportDir}/scripts/`);
+      .replaceAll('{{node_support_dir}}', literalReplacement(hookSupportDir))
+      .replaceAll('{{NODE_SUPPORT_DIR}}', literalReplacement(hookSupportDir))
+      .replaceAll(`${farmslotRoot()}/projects/`, literalReplacement(`${hookSupportDir}/projects/`))
+      .replaceAll(`${farmslotRoot()}/scripts/`, literalReplacement(`${hookSupportDir}/scripts/`));
     return farmCommandRootsForSlot(vars).reduce(
       (cmd, root) =>
         cmd
-          .replaceAll(`${root}/projects/`, `${hookSupportDir}/projects/`)
-          .replaceAll(`${root}/scripts/`, `${hookSupportDir}/scripts/`),
+          .replaceAll(`${root}/projects/`, literalReplacement(`${hookSupportDir}/projects/`))
+          .replaceAll(`${root}/scripts/`, literalReplacement(`${hookSupportDir}/scripts/`)),
       mapped,
     );
   };

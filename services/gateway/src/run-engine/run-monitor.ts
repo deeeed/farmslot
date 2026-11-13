@@ -1,6 +1,5 @@
 // run-monitor.ts — Per-run monitoring: violation detection, nudge sending, decision creation
 // Ported from farm-monitor skill logic to be gateway-resident and persistent.
-
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -26,6 +25,7 @@ import {
   type WorkerSignalProbeResult,
   type WorkerTerminalContractDocument,
 } from '@farmslot/protocol';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 
 import { resolveAgentTarget, selectAgentContext } from '../agents/contexts.js';
 import {
@@ -3044,9 +3044,11 @@ async function createBlockedDecision(
       run.transport === 'native' && reason === 'interactive_handoff'
         ? description.replace(
             INTERACTIVE_HANDOFF_DESCRIPTION,
-            resumeNativeWorker
-              ? 'The worker has not reported task completion. Resume its saved conversation to continue, or check for a completion report.'
-              : `The worker has not reported task completion. ${resumeUnavailableReason ?? 'Check for a completion report or continue through its available task controls.'}`,
+            literalReplacement(
+              resumeNativeWorker
+                ? 'The worker has not reported task completion. Resume its saved conversation to continue, or check for a completion report.'
+                : `The worker has not reported task completion. ${resumeUnavailableReason ?? 'Check for a completion report or continue through its available task controls.'}`,
+            ),
           )
         : description,
     actions:

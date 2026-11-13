@@ -1299,3 +1299,74 @@ test('a cold start with unchanged slot versions reads no slot bodies', async () 
     await client.close();
   }
 });
+
+test('an entity-sync client learns a stale fleet at the boundary and at recovery, one versions read each', async () => {
+  const gateway = new EntityGateway();
+  for (const id of ['a', 'b']) gateway.slots.set(id, slot(id));
+  const client = setup(gateway);
+  try {
+    client.watch(fleetQuery);
+    await flush();
+    assert.deepEqual(client.read(fleetQuery).data, gateway.fullFleet());
+    const versions = () => gateway.requests('fleet.status', 'versions').length;
+    const ids = () => gateway.requests('fleet.status', 'ids').length;
+    const before = { versions: versions(), ids: ids() };
+
+    gateway.setStale(true);
+    await flush();
+    const stale = client.read(fleetQuery);
+    assert.equal(stale.data?.fleet.stale, true);
+    assert.deepEqual(
+      stale.data?.fleet.slots.map((row) => row.dispatchable),
+      [false, false],
+    );
+    assert.deepEqual(stale.data, gateway.fullFleet(), 'the same fleet as the full read');
+    assert.equal(versions(), before.versions + 1, 'one versions read at the boundary');
+    assert.equal(ids(), before.ids, 'no slot body is read');
+
+    gateway.setStale(false);
+    await flush();
+    const recovered = client.read(fleetQuery);
+    assert.equal(recovered.data?.fleet.stale, undefined);
+    assert.deepEqual(
+      recovered.data?.fleet.slots.map((row) => row.dispatchable),
+      [true, true],
+    );
+    assert.deepEqual(recovered.data, gateway.fullFleet());
+    assert.equal(versions(), before.versions + 2, 'one versions read at recovery');
+    assert.equal(ids(), before.ids);
+    assert.equal(gateway.requests('fleet.status', 'full').length, 0);
+  } finally {
+    await client.close();
+  }
+});
+
+test('a client on a gateway without entity sync gets the stale fleet and its recovery too', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1_000 });
+  t.mock.method(performance, 'now', () => Date.now());
+  const gateway = new EntityGateway({ entitySync: false });
+  gateway.slots.set('a', slot('a'));
+  const client = setup(gateway);
+  try {
+    client.watch(fleetQuery);
+    await flush();
+    gateway.setStale(true);
+    await flush();
+    assert.equal(client.read(fleetQuery).status, 'stale', 'marked stale at the boundary');
+    // A full fleet read waits for the farm slots floor (RESOURCE_REREAD_INTERVAL_MS).
+    t.mock.timers.tick(10_000);
+    await flush();
+    assert.equal(client.read(fleetQuery).data?.fleet.stale, true);
+    assert.deepEqual(
+      client.read(fleetQuery).data?.fleet.slots.map((row) => row.dispatchable),
+      [false],
+    );
+    gateway.setStale(false);
+    t.mock.timers.tick(10_000);
+    await flush();
+    assert.equal(client.read(fleetQuery).data?.fleet.stale, undefined);
+    assert.equal(client.read(fleetQuery).data?.fleet.slots[0].dispatchable, true);
+  } finally {
+    await client.close();
+  }
+});

@@ -35,6 +35,7 @@ import {
   validateRecipeActionManifestDocument,
   validateRecipeArtifactPackage,
 } from '@farmslot/protocol';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 
 import {
   getOrchestratorTaskRoot,
@@ -781,8 +782,8 @@ export function expandRecipeRunHookTemplate(
     run_id: runtime.runId ?? '',
     recipe_run_id: runtime.recipeRunId ?? '',
   })
-    .replaceAll('{{recipe_path}}', recipePath)
-    .replaceAll('{{artifacts_dir}}', artifactsDir);
+    .replaceAll('{{recipe_path}}', literalReplacement(recipePath))
+    .replaceAll('{{artifacts_dir}}', literalReplacement(artifactsDir));
 }
 
 export function canRecipeRerunOnSlot(

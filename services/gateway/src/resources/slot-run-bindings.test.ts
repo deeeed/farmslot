@@ -216,3 +216,96 @@ test('bursts publish only resource keys and the latest slot revision', async () 
     revisions.dispose();
   }
 });
+
+test('the fleet collection marker moves at the stale boundary and at recovery, and not otherwise', async (t) => {
+  const previousThreshold = process.env.FARMSLOT_FLEET_STALE_MS;
+  process.env.FARMSLOT_FLEET_STALE_MS = '1000';
+  t.after(() => {
+    if (previousThreshold === undefined) delete process.env.FARMSLOT_FLEET_STALE_MS;
+    else process.env.FARMSLOT_FLEET_STALE_MS = previousThreshold;
+  });
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 10000 });
+  const revisions = new GatewayResourceRevisions();
+  const collection = { family: 'slots', scope: 'farm' } as const;
+  // As slot-entities registers it: an entity-sync collection.
+  revisions.registerEntityCollection(
+    (key) => key.family === 'slots' && Object.keys(key).length === 2,
+  );
+  const slots = new SlotResourceChanges(revisions);
+  const snapshot = statusSlotResources({
+    slots: [{ slot: 'proof', project: 'project', machine: 'node', current_run_id: null }],
+  });
+  slots.observe(snapshot, new Date().toISOString());
+  const marker = revisions.membershipRevision(collection);
+  t.mock.timers.tick(500);
+  slots.observe(snapshot, new Date().toISOString());
+  assert.equal(revisions.membershipRevision(collection), marker, 'a fresh commit moves no marker');
+  t.mock.timers.tick(1001);
+  assert.equal(revisions.membershipRevision(collection), marker + 1, 'the stale boundary');
+  t.mock.timers.tick(5000);
+  assert.equal(revisions.membershipRevision(collection), marker + 1, 'once per boundary');
+  slots.observe(snapshot, new Date().toISOString());
+  assert.equal(revisions.membershipRevision(collection), marker + 2, 'the commit that ends it');
+  slots.observe(snapshot, new Date().toISOString());
+  assert.equal(revisions.membershipRevision(collection), marker + 2, 'a fresh commit again');
+});
+
+test('the fleet marker moves exactly when the published stale state changes', async (t) => {
+  const previousThreshold = process.env.FARMSLOT_FLEET_STALE_MS;
+  process.env.FARMSLOT_FLEET_STALE_MS = '1000';
+  t.after(() => {
+    if (previousThreshold === undefined) delete process.env.FARMSLOT_FLEET_STALE_MS;
+    else process.env.FARMSLOT_FLEET_STALE_MS = previousThreshold;
+  });
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 100_000 });
+  const revisions = new GatewayResourceRevisions();
+  t.after(() => revisions.dispose());
+  const collection = { family: 'slots', scope: 'farm' } as const;
+  revisions.registerEntityCollection(
+    (key) => key.family === 'slots' && Object.keys(key).length === 2,
+  );
+  const slots = new SlotResourceChanges(revisions);
+  const snapshot = statusSlotResources({
+    slots: [{ slot: 'proof', project: 'project', machine: 'node', current_run_id: null }],
+  });
+  const now = () => new Date().toISOString();
+  const marker = () => revisions.membershipRevision(collection);
+  slots.observe(snapshot, now());
+  let expected = marker();
+
+  // An older snapshot replaces a fresh one: already stale, no deadline left to fire.
+  slots.observe(snapshot, new Date(Date.now() - 5000).toISOString());
+  assert.equal(marker(), ++expected, 'an already-stale replacement');
+  t.mock.timers.tick(5000);
+  assert.equal(marker(), expected, 'nothing more while it stays stale');
+  slots.observe(snapshot, now());
+  assert.equal(marker(), ++expected, 'its recovery');
+
+  // A snapshot without checked_at is stale; repairing it recovers.
+  slots.observe(snapshot, undefined);
+  assert.equal(marker(), ++expected, 'a missing checked_at');
+  slots.observe(snapshot, now());
+  assert.equal(marker(), ++expected, 'a repaired checked_at');
+
+  // The deadline publishes stale; the clock then moves back before a fresh commit.
+  t.mock.timers.tick(1001);
+  assert.equal(marker(), ++expected, 'the deadline');
+  t.mock.timers.setTime(Date.now() - 60_000);
+  slots.observe(snapshot, now());
+  assert.equal(marker(), ++expected, 'recovery after the clock moved back');
+
+  // The source becomes unreadable while fresh: clients read again and meet the source error.
+  slots.unavailable();
+  assert.equal(marker(), ++expected, 'availability loss');
+  slots.unavailable();
+  t.mock.timers.tick(5000);
+  assert.equal(marker(), expected, 'nothing more while unavailable');
+  slots.observe(snapshot, now());
+  assert.equal(marker(), ++expected, 'recovery after a failure');
+
+  // Fresh commits and a deadline replaced by a newer one move nothing.
+  t.mock.timers.tick(500);
+  slots.observe(snapshot, now());
+  t.mock.timers.tick(600);
+  assert.equal(marker(), expected, 'a fresh fleet stays quiet');
+});

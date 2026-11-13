@@ -1,3 +1,4 @@
+import { literalReplacement } from '../../scripts/literal-replacement.mjs';
 import { enumerateChecklistCheckboxes } from '../checklist-target.js';
 
 /**
@@ -53,8 +54,14 @@ export function renderTemplatePlaceholders(
   if (hasParityPart) {
     const lines = content.split('\n');
     for (const item of enumerateChecklistCheckboxes(content)) {
-      const label = item.rawLabel.replace(/^(\*{0,2})\d+[.)]\s/, `$1${item.stepNumber}. `);
-      lines[item.lineIndex] = lines[item.lineIndex].replace(item.rawLabel, label);
+      const label = item.rawLabel.replace(
+        /^(\*{0,2})\d+[.)]\s/,
+        (_match, emphasis: string) => `${emphasis}${item.stepNumber}. `,
+      );
+      lines[item.lineIndex] = lines[item.lineIndex].replace(
+        item.rawLabel,
+        literalReplacement(label),
+      );
     }
     content = lines.join('\n');
   }

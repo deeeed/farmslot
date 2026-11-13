@@ -23,6 +23,7 @@ import {
   type SafetyTier,
   type ScriptedRunnerConfig,
 } from '@farmslot/protocol';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 import { currentProjectSources, sourceWorkerEnvironment } from '@farmslot/slot-config';
 
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
@@ -591,7 +592,16 @@ export function buildRunnerSessionReloadCommand(
     ? ` ${shellQuote(opts.initialPrompt.trim())}`
     : '';
   const blind = (command: string): string =>
-    opts.blindTrialBoundary ? withBlindTrialBoundary(command, opts.blindTrialBoundary) : command;
+    opts.blindTrialBoundary
+      ? withBlindTrialBoundary(
+          command,
+          opts.blindTrialBoundary,
+          getRunnerDefinition(runner).blindModelEnvironment?.(model, {
+            ...process.env,
+            ...vars.machineEnv,
+          }),
+        )
+      : command;
 
   if (runner === 'claude') {
     const installCommand = buildRunnerObservabilityInstallCommand(
@@ -1043,7 +1053,14 @@ export function buildLaunchCommand(
         // Innermost, so neither pool nor project environment restores a credential.
         withSourceInputs(
           opts.blindTrialBoundary
-            ? withBlindTrialBoundary(command, opts.blindTrialBoundary)
+            ? withBlindTrialBoundary(
+                command,
+                opts.blindTrialBoundary,
+                getRunnerDefinition(runner).blindModelEnvironment?.(model, {
+                  ...process.env,
+                  ...vars.machineEnv,
+                }),
+              )
             : command,
         ),
         repo,
@@ -1360,10 +1377,13 @@ function injectCodexWorkerConfigFlags(
 ): string {
   const configuredPath = vars.codexPath?.trim();
   if (configuredPath && command.includes(configuredPath)) {
-    return command.replace(configuredPath, `${configuredPath}${flags}`);
+    return command.replace(configuredPath, literalReplacement(`${configuredPath}${flags}`));
   }
   // Inline fallback intentionally targets the bare PATH-resolved `codex`
   // command. Configured absolute paths are handled above, so this regex does
   // not need to match `/path/to/codex`.
-  return command.replace(/(^|[\s;&|])(codex)(?=$|[\s;&|])/u, `$1$2${flags}`);
+  return command.replace(
+    /(^|[\s;&|])(codex)(?=$|[\s;&|])/u,
+    (_match, prefix: string, executable: string) => `${prefix}${executable}${flags}`,
+  );
 }

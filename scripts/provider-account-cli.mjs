@@ -14,7 +14,6 @@
  *   node scripts/provider-account-cli.mjs select --slot-id S [--provider codex] [--preferred L] [--exclude a,b]
  *   node scripts/provider-account-cli.mjs probe-identity --provider codex|grok
  */
-
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -143,7 +142,9 @@ function main() {
       for (const label of eligible) {
         const timeoutMs = Number(guard.timeoutMs) > 0 ? Number(guard.timeoutMs) : 8000;
         const cmd = guard.command.map((part) =>
-          String(part).replaceAll('{{label}}', label).replaceAll('{{provider}}', provider),
+          String(part)
+            .replaceAll('{{label}}', () => label)
+            .replaceAll('{{provider}}', () => provider),
         );
         const result = spawnSync(cmd[0], cmd.slice(1), {
           encoding: 'utf8',

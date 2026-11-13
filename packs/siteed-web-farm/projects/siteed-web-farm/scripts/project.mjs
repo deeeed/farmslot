@@ -155,7 +155,7 @@ async function stop() {
 
 if (operation === 'serve') {
   const command = configuration.command.map((arg) =>
-    arg.replaceAll('{{port}}', String(ports[0])).replaceAll('{{repo}}', root),
+    arg.replaceAll('{{port}}', () => String(ports[0])).replaceAll('{{repo}}', () => root),
   );
   const child = spawn(command[0], command.slice(1), { cwd: root, stdio: 'inherit' });
   const [code, signal] = await once(child, 'exit');

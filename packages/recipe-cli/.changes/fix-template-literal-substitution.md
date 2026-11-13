@@ -1,0 +1,1 @@
+- Preserve literal file URLs when generating live adapter imports.

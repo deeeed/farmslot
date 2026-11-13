@@ -1,0 +1,1 @@
+- Preserve literal supplied values in bug prompts, setup commands, and task path migration.

@@ -2,6 +2,7 @@ import path from 'node:path';
 
 import type { Run } from '@farmslot/protocol';
 import type { ChecklistTarget } from '@farmslot/protocol/checklist-target';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 
 export interface ReviewTemplatePaths extends ChecklistTarget {
   /** Feedback path relative to the task directory. */
@@ -28,7 +29,7 @@ export function reviewTemplateBindings(paths: ReviewTemplatePaths): Record<strin
 export function renderReviewTemplatePaths(template: string, paths: ReviewTemplatePaths): string {
   let rendered = template;
   for (const [key, value] of Object.entries(reviewTemplateBindings(paths))) {
-    rendered = rendered.replaceAll(`{{${key}}}`, value);
+    rendered = rendered.replaceAll(`{{${key}}}`, literalReplacement(value));
   }
   return rendered
     .replace(

@@ -1,11 +1,11 @@
 // Domain-neutral refinement session launch/attach helpers shared by roadmap and backlog.
-
 import { execFile } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
 import type { SafetyTier, TmuxWorkerRef } from '@farmslot/protocol';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 
 import { isLocal } from '../core/exec.js';
 import { assertNoUnknownPlaceholders } from '../core/hooks.js';
@@ -140,7 +140,7 @@ export function expandRefinementRunnerCommand(
   assertNoUnknownPlaceholders(command, Object.keys(replacements), label);
   let expanded = command;
   for (const [key, value] of Object.entries(replacements)) {
-    expanded = expanded.replaceAll(`{{${key}}}`, value);
+    expanded = expanded.replaceAll(`{{${key}}}`, literalReplacement(value));
   }
   if (!command.includes('{{prompt_path}}'))
     expanded = `${expanded} ${shellQuote(context.promptPath)}`;

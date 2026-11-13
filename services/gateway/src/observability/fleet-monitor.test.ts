@@ -9,6 +9,13 @@ const realFleet = await import('../methods/fleet.js');
 let cachedFleet: FleetStatus;
 let refreshes = 0;
 let workspaceRefreshes = 0;
+/** The machine probe: records a new checked_at. A test can replace it with a slower one. */
+const instantProbe = async () => {
+  refreshes++;
+  cachedFleet = { ...cachedFleet, checkedAt: new Date().toISOString(), stale: false };
+  return { fleet: cachedFleet };
+};
+let probe = instantProbe;
 mock.module('../methods/fleet.js', {
   namedExports: {
     ...realFleet,
@@ -22,12 +29,22 @@ mock.module('../methods/fleet.js', {
             return value;
           },
         },
-        refresh: async () => {
-          refreshes++;
-          cachedFleet = { ...cachedFleet, checkedAt: new Date().toISOString(), stale: false };
-          return { fleet: cachedFleet };
-        },
+        refresh: () => probe(),
       }),
+  },
+});
+/** While set, the monitor's violation scan waits for it, as a slow scan would. */
+let scanHeld: Promise<void> | undefined;
+const realGateStall = await import('./publication-gate-stall.js');
+mock.module('./publication-gate-stall.js', {
+  namedExports: {
+    ...realGateStall,
+    publicationGateStallReason: async (
+      ...args: Parameters<typeof realGateStall.publicationGateStallReason>
+    ) => {
+      await scanHeld;
+      return realGateStall.publicationGateStallReason(...args);
+    },
   },
 });
 const { detectFleetMonitorViolations, detectPublicationGateViolations, startMonitor, stopMonitor } =
@@ -422,4 +439,118 @@ test('the production monitor routes gate stalls only to its notification callbac
     await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(flags, 1);
   assert.deepEqual(recoverable, [], 'stuck-gate flags never reach the recovery callback');
+});
+
+/** The production monitor loop on a fake clock, its probe taking `probeMs`. Returns what it published. */
+async function runMonitorLoop(
+  t: import('node:test').TestContext,
+  probeMs: number,
+  turns: number,
+): Promise<FleetStatus[]> {
+  t.mock.timers.enable({
+    apis: ['setInterval', 'setTimeout', 'Date'],
+    now: Date.parse('2026-06-01T00:00:00Z'),
+  });
+  cachedFleet = {
+    ...fleet([slot({ lifecycle: 'ready', dispatchable: true })]),
+    checkedAt: new Date().toISOString(),
+  };
+  refreshes = 0;
+  // One refresh at a time, joined by every kick meanwhile, as the gateway's coordinator does.
+  probe = realFleet.withFollowUpRefresh(async () => {
+    await new Promise<void>((resolve) => setTimeout(resolve, probeMs));
+    return instantProbe();
+  }).join;
+  t.after(() => {
+    probe = instantProbe;
+  });
+  const published: FleetStatus[] = [];
+  startMonitor({
+    onPublicationGateStall() {},
+    onFleetUpdated: (value) => published.push(value),
+    onDecisionNew() {},
+    onViolation() {},
+  });
+  t.after(stopMonitor);
+  for (let turn = 0; turn < turns; turn++) {
+    // A second at a time, so a probe ending mid-turn lands when it would.
+    for (let second = 0; second < 30; second++) {
+      t.mock.timers.tick(1_000);
+      for (let i = 0; i < 5; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  }
+  return published;
+}
+
+test('the monitor loop keeps a fleet fresh when its refresh fits the lead', async (t) => {
+  const { fleetRefreshDueAgeMs, fleetStaleThresholdMs } = await import('../fleet/freshness.js');
+  // A refresh that fits: started a 30 s turn after the due age, it ends 30 s early.
+  const fits = fleetStaleThresholdMs() - fleetRefreshDueAgeMs() - 60_000;
+  // 40 minutes of turns.
+  const published = await runMonitorLoop(t, fits, 80);
+  assert.equal(published.length, 80);
+  assert.deepEqual(
+    published.flatMap((value, turn) => (value.stale ? [turn] : [])),
+    [],
+    'no turn published a stale fleet',
+  );
+  assert.ok(refreshes >= 3, `the loop refreshed, saw ${refreshes}`);
+});
+
+test('the monitor loop turns stale when the refresh cannot fit before the threshold', async (t) => {
+  const { fleetRefreshDueAgeMs, fleetStaleThresholdMs } = await import('../fleet/freshness.js');
+  // Started at the due age at the earliest, it ends past the threshold.
+  const tooSlow = fleetStaleThresholdMs() - fleetRefreshDueAgeMs() + 1_000;
+  const published = await runMonitorLoop(t, tooSlow, 80);
+  assert.ok(
+    published.some((value) => value.stale),
+    'a refresh longer than the lead leaves stale turns',
+  );
+});
+
+test('a slow violation scan does not stop the reads that keep the fleet fresh', async (t) => {
+  const { createRun, updateRun, deleteRun } = await import('../runs/store.js');
+  // A run on the slot, so each scan reaches the held gate check.
+  const run = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'slow-scan' });
+  let release!: () => void;
+  scanHeld = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  t.after(async () => {
+    release();
+    scanHeld = undefined;
+    for (let i = 0; i < 5; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+    updateRun(run.id, { status: 'done' });
+    await deleteRun(run.id);
+  });
+  updateRun(run.id, { status: 'human-gating', slotId: 'runner-browser-2' });
+  t.mock.timers.enable({
+    apis: ['setInterval', 'setTimeout', 'Date'],
+    now: Date.parse('2026-06-01T00:00:00Z'),
+  });
+  cachedFleet = {
+    ...fleet([slot({ lifecycle: 'ready', dispatchable: true, currentRunId: run.id })]),
+    checkedAt: new Date().toISOString(),
+  };
+  refreshes = 0;
+  const published: FleetStatus[] = [];
+  startMonitor({
+    onPublicationGateStall() {},
+    onFleetUpdated: (value) => published.push(value),
+    onDecisionNew() {},
+    onViolation() {},
+  });
+  t.after(stopMonitor);
+  // The first scan never finishes; 40 minutes of turns follow.
+  for (let turn = 0; turn < 80; turn++) {
+    t.mock.timers.tick(30_000);
+    for (let i = 0; i < 5; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.equal(published.length, 80, 'every turn read the fleet');
+  assert.deepEqual(
+    published.flatMap((value, turn) => (value.stale ? [turn] : [])),
+    [],
+    'no turn published a stale fleet',
+  );
+  assert.ok(refreshes >= 3, `the loop kept refreshing, saw ${refreshes}`);
 });
