@@ -11,7 +11,7 @@
     "serve": "docusaurus serve --host 0.0.0.0",
     "clear": "docusaurus clear",
     "deploy": "docusaurus deploy",
-    "quality": "yarn workspace @farmslot/protocol build && yarn build",
+    "quality": "yarn workspace @farmslot/protocol build && yarn build && git -C ../.. diff --exit-code -- apps/docs/docs docs/reference/template-variables.md",
     "capture:first-video": "node scripts/capture-command-center-parallel-watch.mjs",
     "capture:recipe-evidence": "node scripts/capture-recipe-evidence-loop.mjs",
     "capture:gateway-intelligence": "node scripts/capture-command-center-gateway-intelligence.mjs",

@@ -54,6 +54,17 @@ test('an unaffected file selects only the repo-wide target', () => {
   assert.deepEqual(matched, ['repo']);
 });
 
+test('generated documentation source changes select docs quality', () => {
+  for (const file of [
+    'docs/reference/agent-runtime.md',
+    'docs/operations/onboarding.md',
+    'scripts/docs/template-variable-catalog.mjs',
+  ]) {
+    assert.deepEqual(selectTargets([file], { full: true }).matched, ['repo', 'docs'], file);
+  }
+  assert.ok(selectTargets(['.prettierrc.json'], { full: true }).matched.includes('docs'));
+});
+
 test('selection is deterministic and order-independent for the same change set', () => {
   const files = ['packages/protocol/src/types.ts', 'apps/companion/src/App.tsx'];
   const first = selectTargets(files, { full: true });

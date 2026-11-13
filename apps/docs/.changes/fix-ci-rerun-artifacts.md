@@ -1,0 +1,1 @@
+- Fail docs quality checks when the build changes committed generated pages or the template-variable reference.

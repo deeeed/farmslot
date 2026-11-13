@@ -365,8 +365,6 @@ const SHARED_STATE_READ_ONLY = {
     'writes one process-unique projects/ fixture (physical-devices-<pid>) and removes it on teardown',
   'src/backlog/store.test.ts':
     'writes only process-unique .sandbox and project fixture paths, so concurrent lanes cannot collide',
-  'src/intelligence/improvement-apply.test.ts':
-    'uses a process-unique project fixture and restores every touched file',
   'src/intelligence/learnings-router.test.ts':
     'uses a process-unique project fixture and restores every touched file',
   'src/projects/repo-root.test.ts': 'asserts resolved paths only; never writes',
