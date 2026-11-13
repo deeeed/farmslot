@@ -24,6 +24,7 @@ import {
 import { readSlotProbe } from '../../core/read-probes.js';
 import { shellQuote } from '../../core/tmux.js';
 import { setWorkspaceOverlay } from '../../fleet/state.js';
+import { readSlotCommand } from '../../host-services/read-command.js';
 import { GitHubHttpError } from '../../integrations/github-errors.js';
 import { slotResourceChanges } from '../../resources/slot-run-bindings.js';
 import {
@@ -140,6 +141,7 @@ async function remoteDefault(
     ),
     fresh || recoveryBudget ? 'workspace-recovery-default' : 'workspace-default',
     timeoutMs,
+    '/',
   ).then((result) => ({
     sha: result.stdout.trim().split(/\s+/)[0] || null,
     observedAt: new Date().toISOString(),
@@ -172,6 +174,15 @@ export async function inspectSlotWorkspace(
   const branch = getProjectField(project, 'default_branch') || DEFAULT_BRANCH;
   const timeoutMs = options.timeoutMs ?? (options.fetch ? 120_000 : 5000);
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
+  const readWorkspaceCommand: typeof execOnSlot = (slot, command, executionOptions) => {
+    const readOptions =
+      typeof executionOptions === 'string' ? { cwd: executionOptions } : executionOptions;
+    return readSlotCommand(slot, command, {
+      ...readOptions,
+      timeout: readOptions?.timeout ?? timeoutMs,
+      cwd: readOptions?.cwd ?? '/',
+    });
+  };
   if (options.fetch) {
     const fetched = await execOnSlot(
       vars,
@@ -242,17 +253,18 @@ export async function inspectSlotWorkspace(
     // Only inspect committed ancestry already present locally; never fetch on a status read.
     const base = options.fetch ? remote.sha : probe.localDefaultSha;
     if (base) {
-      const contains = await execOnSlot(
+      const contains = await readSlotCommand(
         vars,
         withFarmGitConfig(`${git} merge-base --is-ancestor HEAD ${shellQuote(base)}`),
-        { timeout: timeoutMs },
+        { timeout: timeoutMs, cwd: '/' },
       );
       if (contains.exitCode === 0) return { ...work, publication: 'merged' };
-      const cherry = await execOnSlot(
+      const cherry = await readSlotCommand(
         vars,
         withFarmGitConfig(`${git} cherry ${shellQuote(base)} HEAD`),
         {
           timeout: timeoutMs,
+          cwd: '/',
         },
       );
       if (cherry.exitCode === 0 && cherry.stdout.trim()) {
@@ -262,11 +274,12 @@ export async function inspectSlotWorkspace(
             .filter((line) => line.startsWith('- '))
             .map((line) => line.slice(2).trim()),
         );
-        const commits = await execOnSlot(
+        const commits = await readSlotCommand(
           vars,
           withFarmGitConfig(`${git} rev-list ${shellQuote(`${base}..HEAD`)}`),
           {
             timeout: timeoutMs,
+            cwd: '/',
           },
         );
         // git cherry omits merge commits; an unverified merge resolution is not a merged patch.
@@ -289,6 +302,7 @@ export async function inspectSlotWorkspace(
         ),
         timeoutMs > 5000 ? 'workspace-recovery-publication' : 'workspace-publication',
         timeoutMs,
+        '/',
       );
       const sha = published.stdout.trim().split(/\s+/)[0];
       if (sha === probe.headSha) return { ...work, publication: 'pushed' };
@@ -304,10 +318,10 @@ export async function inspectSlotWorkspace(
           if (fetched.exitCode !== 0)
             return { ...work, error: 'Publication ref could not be fetched' };
         }
-        const contains = await execOnSlot(
+        const contains = await readSlotCommand(
           vars,
           withFarmGitConfig(`${git} merge-base --is-ancestor HEAD ${shellQuote(sha)}`),
-          { timeout: timeoutMs },
+          { timeout: timeoutMs, cwd: '/' },
         );
         if (contains.exitCode === 0) return { ...work, publication: 'pushed' };
         if (contains.exitCode !== 1)
@@ -338,7 +352,7 @@ export async function inspectSlotWorkspace(
             'HEAD',
             branch,
             repo,
-            execOnSlot,
+            options.fetch ? execOnSlot : readWorkspaceCommand,
             async () => [pr],
             {
               allowFetch: options.fetch === true,
@@ -356,10 +370,10 @@ export async function inspectSlotWorkspace(
       }
       if (merged.length) return { ...work, error: 'Merged PR coverage could not be verified' };
     }
-    const commits = await execOnSlot(
+    const commits = await readWorkspaceCommand(
       vars,
       withFarmGitConfig(`${git} rev-list --count ${shellQuote(`origin/${branch}..HEAD`)}`),
-      { timeout: timeoutMs },
+      { timeout: timeoutMs, cwd: '/' },
     );
     if (commits.exitCode !== 0)
       return { ...work, error: 'Unpublished commits could not be inspected' };
@@ -379,6 +393,7 @@ export async function inspectSlotWorkspace(
 
 interface WorkspaceInspection {
   key: string;
+  bindingKey: string;
   pending: boolean;
   until: number;
   promise: Promise<SlotWorkspace>;
@@ -396,14 +411,15 @@ export function invalidateSlotWorkspaceObservations(slotId: string): void {
   slotResourceChanges.overlayChanged(slotId);
 }
 
-function workspaceObservationKey(slot: SlotStatus): string {
+function workspaceObservationKey(
+  slot: SlotStatus,
+  kind: 'observation' | 'binding' = 'observation',
+): string {
   return JSON.stringify([
     slot.slot,
     slot.machine,
     slot.project,
     slot.repo,
-    slot.headSha,
-    slot.branch,
     slot.currentRunId,
     slot.slotEpoch,
     slot.cleanupRunId,
@@ -412,6 +428,7 @@ function workspaceObservationKey(slot: SlotStatus): string {
     slot.agent,
     slot.phase,
     slot.heldReason,
+    ...(kind === 'observation' ? [slot.headSha, slot.branch] : []),
   ]);
 }
 
@@ -458,6 +475,7 @@ export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promi
       }
       if (!cached || (!cached.pending && (cached.key !== key || cached.until < Date.now()))) {
         const previous = cached;
+        const bindingKey = workspaceObservationKey(slot, 'binding');
         const inspect = () =>
           inspectSlotWorkspace(slot.slot, {
             network: slot.lifecycle !== 'busy' && slot.agent !== 'working',
@@ -477,7 +495,7 @@ export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promi
           }
           const retained = previous?.workspace;
           if (
-            previous?.key === key &&
+            previous?.bindingKey === bindingKey &&
             previous.until !== 0 &&
             entry.version !== undefined &&
             previous.version === entry.version &&
@@ -506,6 +524,7 @@ export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promi
         });
         const entry: WorkspaceInspection = {
           key,
+          bindingKey,
           pending: true,
           until: Date.now() + 15_000,
           ...(previous?.key === key && previous.until !== 0

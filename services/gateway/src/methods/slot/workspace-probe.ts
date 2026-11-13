@@ -79,6 +79,7 @@ export async function probeWorkspace(
     workspaceProbeCommand(vars, project, defaultBranch),
     timeoutMs > 5000 ? 'workspace-recovery' : 'workspace',
     timeoutMs,
+    '/',
   );
   const data: unknown = JSON.parse(result.stdout);
   if (

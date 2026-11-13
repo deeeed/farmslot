@@ -1,6 +1,9 @@
 // The gateway-background process contract: which operations it serves and the IPC messages that
 // carry them. Types only, plus the operation names, so either process can import it cheaply.
-import type { ExecutionKind } from '@farmslot/protocol/performance';
+import type { ExecResult } from '@farmslot/protocol';
+
+import type { ExecTally } from '../../observability/performance.js';
+export type { ExecTally } from '../../observability/performance.js';
 
 import type { HostCheck, PoolSlotEntry, SlotCheckResult } from '../../methods/fleet.js';
 import type { FileDecision } from '../../observability/fleet-monitor.js';
@@ -9,6 +12,7 @@ import type { FileDecision } from '../../observability/fleet-monitor.js';
 export const BACKGROUND_OPERATIONS = {
   fleetProbeMachine: 'fleet.probeMachine',
   decisionsScan: 'decisions.scan',
+  readCommand: 'commands.read',
 } as const;
 
 export interface BackgroundOperationContract {
@@ -19,6 +23,17 @@ export interface BackgroundOperationContract {
   };
   /** The pending-decision walk over every project task root. */
   'decisions.scan': { params: Record<string, never>; result: FileDecision[] };
+  /** Read-only commands from the shared probe/workspace readers, never owned mutations. */
+  'commands.read': {
+    params: {
+      command: string;
+      cwd: string;
+      timeout: number;
+      maxBuffer?: number;
+      closeoutTimeoutMs?: number;
+    };
+    result: ExecResult;
+  };
 }
 
 export type BackgroundOperation = keyof BackgroundOperationContract;
@@ -26,9 +41,6 @@ export type BackgroundParams<O extends BackgroundOperation> =
   BackgroundOperationContract[O]['params'];
 export type BackgroundResult<O extends BackgroundOperation> =
   BackgroundOperationContract[O]['result'];
-
-/** Commands the background process ran for one operation, by kind. */
-export type ExecTally = Partial<Record<ExecutionKind, { calls: number; seconds: number }>>;
 
 export type BackgroundRequestMessage = {
   [O in BackgroundOperation]: {
@@ -41,7 +53,14 @@ export type BackgroundRequestMessage = {
 export interface BackgroundShutdownMessage {
   type: 'shutdown';
 }
-export type BackgroundParentMessage = BackgroundRequestMessage | BackgroundShutdownMessage;
+export interface BackgroundCancelMessage {
+  type: 'cancel';
+  id: number;
+}
+export type BackgroundParentMessage =
+  | BackgroundRequestMessage
+  | BackgroundShutdownMessage
+  | BackgroundCancelMessage;
 
 export interface BackgroundReadyMessage {
   type: 'ready';
