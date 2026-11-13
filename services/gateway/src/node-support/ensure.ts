@@ -154,13 +154,13 @@ export function nodeSupportBundlePaths(projectName: string, projectJson: RawProj
 /** What a bundle collection read: when none of it changed, collecting again gives the same bundle. */
 export interface NodeSupportBundleInputs {
   /**
-   * Support files and the support directories walked, read through links as the collection reads
-   * them: an added or removed file changes a directory.
+   * Support files, the support directories walked and the pack directories, read through links
+   * as the collection reads them: an added or removed file changes a directory.
    */
   followed: string[];
-  /** Pack-owned files and pack directories (`PackCheckInputs`), stamped as they are. */
+  /** Pack-owned files (`PackCheckInputs`), stamped as they are: a link as a link. */
   exact: string[];
-  /** Ownership rules that may be absent until they appear: Git indexes and ignore files. */
+  /** Ownership rules and their directories, which may be absent until they appear. */
   optional: string[];
   /** The pool machine names the packs were checked against. */
   machines: string[];
@@ -183,8 +183,11 @@ export async function collectNodeSupportBundle(projectName: string, supportPaths
       machines,
     );
     portabilityErrors.push(...checked.errors);
-    inputs.exact.push(...checked.inputs.files, ...checked.inputs.directories);
-    inputs.optional.push(...checked.inputs.rules);
+    inputs.exact.push(...checked.inputs.files);
+    // Through links: a pack root may be one. The walk descends real directories only.
+    inputs.followed.push(...checked.inputs.directories);
+    // A rule deleted or added changes its directory too (`.git/info` has no other input).
+    inputs.optional.push(...checked.inputs.rules, ...checked.inputs.rules.map(path.dirname));
   }
   if (portabilityErrors.length)
     throw new Error(`Project pack is not portable:\n${portabilityErrors.join('\n')}`);

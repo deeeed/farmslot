@@ -8,6 +8,7 @@ import fs, {
   mkdirSync,
   mkdtempSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -70,22 +71,39 @@ symlinkSync('not-there.md', path.join(packRoot, 'docs', 'dangling.md'));
 symlinkSync('self', path.join(packRoot, 'docs', 'self'));
 execFileSync('git', ['init', '-q', packRoot]);
 
-// Each collection checks the pack once, starting with one `git -C <pack> ls-files -c`.
+// A second pack whose project directory is a link to it, elsewhere in the root.
+const LINKED = 'linked-farm';
+const linkedTarget = path.join(root, 'packs', LINKED);
+mkdirSync(path.join(linkedTarget, 'scripts'), { recursive: true });
+writeFileSync(
+  path.join(linkedTarget, 'project.json'),
+  JSON.stringify({
+    node_support: { paths: [`projects/${LINKED}/scripts`, `projects/${LINKED}/project.json`] },
+    qa: {
+      default_profile: 'smoke',
+      profiles: [{ id: 'smoke', title: 'Smoke', template_id: 'qa/default' }],
+    },
+  }),
+);
+writeFileSync(path.join(linkedTarget, 'scripts', 'z.sh'), 'echo linked\n');
+execFileSync('git', ['init', '-q', linkedTarget]);
+symlinkSync(linkedTarget, path.join(root, 'projects', LINKED));
+
+// Each collection checks its pack once, starting with one `git -C <pack> ls-files -c`.
 let collections = 0;
 /** Runs when a collection starts checking the pack: lets a test change an input meanwhile. */
 let duringCollection: (() => void) | undefined;
+/** Runs when a collection, its pack listed, locates the pack's ownership rules. */
+let duringRules: (() => void) | undefined;
 const execFile = childProcess.execFile;
 mock.method(childProcess, 'execFile', (...args: Parameters<typeof execFile>) => {
   const argv = args[1];
-  if (
-    Array.isArray(argv) &&
-    argv[0] === '-C' &&
-    argv[1] === packRoot &&
-    argv[2] === 'ls-files' &&
-    argv[3] === '-c'
-  ) {
-    collections++;
-    duringCollection?.();
+  if (Array.isArray(argv) && argv[0] === '-C' && argv[1].startsWith(`${root}/projects/`)) {
+    if (argv[2] === 'ls-files' && argv[3] === '-c') {
+      collections++;
+      duringCollection?.();
+    }
+    if (argv[2] === 'rev-parse') duringRules?.();
   }
   return execFile(...args);
 });
@@ -188,8 +206,10 @@ function aheadClock(t: test.TestContext, apis: ('Date' | 'setTimeout')[] = ['Dat
   resetRemoteFarmCommandCache();
   collections = 0;
   duringCollection = undefined;
+  duringRules = undefined;
   t.after(() => {
     duringCollection = undefined;
+    duringRules = undefined;
     poolUnreadable = false;
     resetRemoteFarmCommandCache();
   });
@@ -302,15 +322,98 @@ test('an input written in the same coarse timestamp tick as a collection is coll
     utimesSync(script, second, second);
   };
   await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
-  // Within the check interval: the bundle cannot be trusted, so it is collected again at once.
+  // Within the check interval it is served, as any bundle is between checks.
   t.mock.timers.tick(1);
   await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
+  assert.equal(collections, 1);
+  // Past it, it cannot be trusted and is collected again; that write is settled by now.
+  await later(t, node.io);
   assert.equal(collections, 2);
-  // Still within the settling margin of that write; 3 s later it is settled and the bundle held.
   await later(t, node.io);
-  assert.equal(collections, 3);
-  await later(t, node.io);
-  assert.equal(collections, 3, 'and then held');
+  assert.equal(collections, 2, 'and then held');
+});
+
+test('an input that stays unsettled is collected again at most every 2 seconds', async (t) => {
+  aheadClock(t);
+  const node = fakeNode();
+  t.after(() => writeFileSync(script, 'echo one\n'));
+  // Copied from a host whose clock runs an hour ahead.
+  const ahead = Date.now() / 1000 + 3_600;
+  utimesSync(script, ahead, ahead);
+  for (let command = 0; command < 20; command++) {
+    await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
+    t.mock.timers.tick(500);
+  }
+  // Ten seconds of commands every 500 ms.
+  assert.equal(collections, 5);
+});
+
+test('a held bundle is collected again after 10 minutes whatever its inputs show', async (t) => {
+  aheadClock(t);
+  const node = fakeNode();
+  await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
+  t.mock.timers.tick(9 * 60_000);
+  await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
+  assert.equal(collections, 1);
+  t.mock.timers.tick(60_000);
+  await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
+  assert.equal(collections, 2);
+});
+
+test('an ignore rule deleted while the pack is checked is collected again', async (t) => {
+  aheadClock(t);
+  const node = fakeNode();
+  const exclude = path.join(packRoot, '.git', 'info', 'exclude');
+  const secret = path.join(packRoot, 'secret.md');
+  writeFileSync(exclude, 'secret.md\n');
+  writeFileSync(secret, 'cat /Users/someone/secret\n');
+  t.after(() => {
+    writeFileSync(exclude, '');
+    rmSync(secret, { force: true });
+  });
+  // After the pack's files were listed with the rule, before the inputs are stamped.
+  duringRules = () => {
+    duringRules = undefined;
+    rmSync(exclude);
+    const now = Date.now() / 1000;
+    utimesSync(path.dirname(exclude), now, now);
+  };
+  await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
+  await assert.rejects(later(t, node.io), /not portable/);
+  assert.equal(collections, 2);
+});
+
+test('a pack whose .git is unusable is checked as a copied pack', async (t) => {
+  aheadClock(t);
+  const node = fakeNode();
+  const gitDir = path.join(packRoot, '.git');
+  renameSync(gitDir, `${gitDir}-aside`);
+  // A worktree pointer to a pruned repository.
+  writeFileSync(gitDir, 'gitdir: /nonexistent/worktree\n');
+  t.after(() => {
+    rmSync(gitDir, { force: true });
+    renameSync(`${gitDir}-aside`, gitDir);
+  });
+  const first = await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
+  assert.equal(await later(t, node.io), first);
+  assert.equal(collections, 1);
+});
+
+test('a file added at a linked pack root collects once more', async (t) => {
+  aheadClock(t);
+  const node = fakeNode();
+  const linkedVars = { ...remoteVars(), projectName: LINKED };
+  const linkedHook = `bash ~/farmslot-node/projects/${LINKED}/scripts/z.sh`;
+  const fresh = path.join(linkedTarget, 'fresh.md');
+  t.after(() => rmSync(fresh, { force: true }));
+  const command = () => resolveRemoteFarmCommand(linkedVars, linkedHook, { io: node.io });
+  await command();
+  t.mock.timers.tick(3_000);
+  await command();
+  writeFileSync(fresh, 'new\n');
+  t.mock.timers.tick(3_000);
+  await command();
+  assert.equal(collections, 2);
 });
 
 test('a failed check does not fail the commands after it', async (t) => {

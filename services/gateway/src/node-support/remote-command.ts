@@ -60,6 +60,12 @@ const VERIFIED_TTL_MS = NODE_SUPPORT_COMMAND_CACHE_MS;
  * command after it at most this late.
  */
 const LOCAL_CHECK_INTERVAL_MS = 2_000;
+/**
+ * How long a held bundle is trusted at most: a change its inputs cannot show (a global excludes
+ * file, Git config, a nested repository's index) is picked up within this. One collection per
+ * project per period.
+ */
+const LOCAL_MAX_AGE_MS = 10 * 60_000;
 /** Concurrent stats while stamping a bundle's inputs. */
 const STAMP_CONCURRENCY = 16;
 
@@ -104,6 +110,8 @@ interface HeldBundle {
    * collection for its stamp to be trusted (collect again next time).
    */
   inputs?: HeldInputs | 'changed';
+  /** When the collection started. */
+  startedAt: number;
   checkedAt: number;
   check?: Promise<boolean>;
 }
@@ -236,7 +244,7 @@ function collectLocalBundle(projectName: string, paths: string[], pathsKey: stri
     }
     return { hash: collected.manifest.hash, paths, collected };
   })();
-  held = { pathsKey, bundle, checkedAt: startedAt };
+  held = { pathsKey, bundle, startedAt, checkedAt: startedAt };
   localBundles.set(projectName, held);
   return held;
 }
@@ -255,8 +263,11 @@ async function heldBundleCurrent(held: HeldBundle): Promise<boolean> {
   const inputs = held.inputs;
   // Still collecting: callers share the collection.
   if (inputs === undefined) return true;
-  if (inputs === 'changed') return false;
+  if (Date.now() - held.startedAt >= LOCAL_MAX_AGE_MS) return false;
+  // An input that stays unsettled (a future timestamp, a directory rewritten every second) is
+  // collected again at most this often, as a held one is checked.
   if (Date.now() - held.checkedAt < LOCAL_CHECK_INTERVAL_MS) return true;
+  if (inputs === 'changed') return false;
   // Cleared once settled, after it is stored: a failed check never stays for the next command.
   held.check ??= inputsUnchanged(held, inputs).finally(() => {
     held.check = undefined;

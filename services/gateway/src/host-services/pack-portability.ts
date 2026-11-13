@@ -103,36 +103,34 @@ async function walkPackDirectories(
   return { directories, ignoreFiles };
 }
 
+/** A copied pack: its ownership follows its files, so the directories holding them suffice. */
+function copiedPackInputs(root: string, files: string[]): PackCheckInputs {
+  const directories = new Set([root]);
+  for (const file of files)
+    for (let dir = path.dirname(file); dir.startsWith(`${root}/`); dir = path.dirname(dir))
+      directories.add(dir);
+  return { files, directories: [...directories], rules: [] };
+}
+
 async function packCheckInputs(root: string, files: string[]): Promise<PackCheckInputs> {
-  let ownRepository = true;
   try {
     await lstat(path.join(root, '.git'));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    ownRepository = false;
+    return copiedPackInputs(root, files);
   }
-  if (!ownRepository) {
-    // A copied pack: its ownership follows its files, so the directories holding them suffice.
-    const directories = new Set([root]);
-    for (const file of files)
-      for (let dir = path.dirname(file); dir.startsWith(`${root}/`); dir = path.dirname(dir))
-        directories.add(dir);
-    return { files, directories: [...directories], rules: [] };
-  }
-  const [gitPaths, ignored] = await Promise.all([
-    runGit(['-C', root, 'rev-parse', '--git-path', 'index', '--git-path', 'info/exclude']),
-    // Directories an ignore rule matches, not ones that only hold ignored files; no index write.
-    runGit([
-      '-C',
-      root,
-      '--no-optional-locks',
-      'status',
-      '--porcelain=v1',
-      '-z',
-      '--ignored=matching',
-      '--untracked-files=all',
-    ]),
+  const gitPaths = await runGit([
+    '-C',
+    root,
+    'rev-parse',
+    '--git-path',
+    'index',
+    '--git-path',
+    'info/exclude',
   ]);
+  // An unusable `.git` (a pruned worktree, a `safe.directory` refusal): the ownership walk reads
+  // the pack as a copied one, and so does this.
+  if (gitPaths.status === 128) return copiedPackInputs(root, files);
   const rules = gitPaths.stdout
     .toString()
     .split('\n')
@@ -140,6 +138,17 @@ async function packCheckInputs(root: string, files: string[]): Promise<PackCheck
     .map((line) => path.resolve(root, line));
   if (gitPaths.status !== 0 || rules.length !== 2)
     throw new Error('Cannot locate the pack repository for the pack check');
+  // Directories an ignore rule matches, not ones that only hold ignored files; no index write.
+  const ignored = await runGit([
+    '-C',
+    root,
+    '--no-optional-locks',
+    'status',
+    '--porcelain=v1',
+    '-z',
+    '--ignored=matching',
+    '--untracked-files=all',
+  ]);
   const skipped = new Set(
     gitLines(ignored, 'ignored pack directories')
       .filter((entry) => entry.startsWith('!! ') && entry.endsWith('/'))
