@@ -163,6 +163,17 @@ and writes of the operator's zsh and bash startup files and histories,
 target. A worker that resets `ZDOTDIR` or runs `bash -l` still reads none of them.
 Tools that read those files for registry authentication see them as absent.
 
+Tmux launch scripts live in the slot runtime beside each checkout
+(`<parent>/.farmslot-runtime/<slot>/.agent/.launch`, from `runnerLaunchDir`), and
+a non-blind one inlines its pool credentials. The gateway passes every slot's
+launch directory to the boundary. Seatbelt denies reads, writes and links in each
+`.farmslot-runtime` tree except the trial's own slot runtime, which holds its
+runner homes and observability bundle. It also denies every launch directory,
+the trial's own included, and any `.farmslot-runtime/*/.agent/.launch` path.
+Boundary preparation creates the own slot runtime, since the worker cannot create
+it inside the denied tree. Measured in a live launch, the worker writes only
+`.agent/.observability` there; the gateway writes `.agent/.launch` from outside.
+
 ## Launch shells
 
 A blind tmux launch (fresh dispatch, retained reload and parked-worker reload)

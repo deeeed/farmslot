@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 
 import { type EvalProofSource, primaryRoleForFlow, type Run } from '@farmslot/protocol';
 
+import { runnerLaunchDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { shSingleQuote } from '../../../../scripts/lib/shell-quote.mjs';
 import { withFarmGitConfig } from '../core/farm-git.js';
 
@@ -36,8 +37,10 @@ export function buildBlindGitCommand(
   action: 'plan' | 'isolate' | 'boundary' | 'verify' | 'restore',
   spec: BlindGitSpec,
 ): string {
+  // Each slot's launch directory, own slot first, as tmux-launch-script.ts writes it.
+  const launchDirs = [spec.repo, ...(spec.siblingRepos ?? [])].map(runnerLaunchDir);
   return withFarmGitConfig(
-    `python3 - ${shSingleQuote(JSON.stringify({ ...spec, action }))} <<'FARMSLOT_BLIND_GIT_PY'\n${script}\nFARMSLOT_BLIND_GIT_PY`,
+    `python3 - ${shSingleQuote(JSON.stringify({ ...spec, launchDirs, action }))} <<'FARMSLOT_BLIND_GIT_PY'\n${script}\nFARMSLOT_BLIND_GIT_PY`,
   );
 }
 

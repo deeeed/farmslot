@@ -2,10 +2,12 @@
 // server, with every ancestor's environment read from outside via KERN_PROCARGS2.
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -18,6 +20,7 @@ import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
+import { runnerLaunchDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { shSingleQuote as q } from '../../../../scripts/lib/shell-quote.mjs';
 
 const isolated =
@@ -109,6 +112,15 @@ test(
     const capsule = path.join(home, '.farmslot-blind-evals/fixture/run-epoch');
     mkdirSync(path.join(capsule, 'boundary'), { recursive: true });
     mkdirSync(root);
+    execFileSync('git', ['init', '-q', root]);
+    // A sibling slot's non-blind launch script inlines pool credentials.
+    const sibling = path.join(home, 'sibling');
+    mkdirSync(sibling);
+    const siblingLaunch = path.join(runnerLaunchDir(sibling), 'synthetic.sh');
+    mkdirSync(path.dirname(siblingLaunch), { recursive: true });
+    writeFileSync(siblingLaunch, `export JIRA_API_TOKEN=${q('FAKE_SECRET-sibling-launch')}\n`, {
+      mode: 0o600,
+    });
     writeFileSync(path.join(capsule, 'state.json'), '{"originalIsDirectory":true}');
     symlinkSync(path.join(capsule, 'boundary'), path.join(root, 'boundary'));
     execFileSync(
@@ -118,10 +130,14 @@ test(
         '-c',
         `import pathlib, runpy, sys
 blind = runpy.run_path(sys.argv[1], run_name='fixture')
-blind['prepare_boundary']({'repo': sys.argv[2], 'siblingRepos': [], 'slotResourcePorts': {}}, pathlib.Path(sys.argv[3]))`,
+blind['prepare_boundary']({'repo': sys.argv[2], 'siblingRepos': [sys.argv[4]], 'launchDirs': sys.argv[5:], 'slotResourcePorts': {}}, pathlib.Path(sys.argv[3]))`,
         fileURLToPath(new URL('./blind-git.py', import.meta.url)),
         root,
         capsule,
+        sibling,
+        // As buildBlindGitCommand passes them: own slot first.
+        runnerLaunchDir(root),
+        runnerLaunchDir(sibling),
       ],
       { env: { PATH: process.env.PATH, HOME: home }, encoding: 'utf8', timeout: 20_000 },
     );
@@ -135,9 +151,31 @@ blind['prepare_boundary']({'repo': sys.argv[2], 'siblingRepos': [], 'slotResourc
       LOGIN_SECRETS.map((name) => `export ${name}=${q(`FAKE_SECRET-login-${name}`)}\n`).join(''),
     );
     const standIn = path.join(root, 'pi-stand-in.mjs');
+    const ownLaunch = path.join(
+      runnerLaunchDir(root),
+      `${createHash('sha256').update('blind:worker').digest('hex')}.sh`,
+    );
+    writeFileSync(
+      path.join(root, 'probe.test.mjs'),
+      "import test from 'node:test';\ntest('ok', () => {});\n",
+    );
+    // Inside the sandbox: launch scripts are unreadable; git, node --test and ps still work.
     writeFileSync(
       standIn,
-      `console.log('BLIND-STAND-IN-PID=' + process.pid); setInterval(() => {}, 1000);\n`,
+      `import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+const read = (file) => { try { readFileSync(file); return 'readable'; } catch (error) { return error.code; } };
+const run = (command, args) => spawnSync(command, args, { cwd: ${JSON.stringify(root)}, stdio: 'ignore' }).status;
+console.log('BLIND-PROBES ' + JSON.stringify({
+  siblingLaunch: read(${JSON.stringify(siblingLaunch)}),
+  ownLaunch: read(${JSON.stringify(ownLaunch)}),
+  git: run('git', ['status', '--short']),
+  nodeTest: run(process.execPath, ['--test', 'probe.test.mjs']),
+  ps: run('ps', ['-o', 'pid=', '-p', String(process.pid)]),
+}));
+console.log('BLIND-STAND-IN-PID=' + process.pid);
+setInterval(() => {}, 1000);
+`,
     );
 
     const socket = path.join(process.env.TMUX_TMPDIR!, `tmux-${process.getuid!()}`, 'default');
@@ -234,6 +272,16 @@ blind['prepare_boundary']({'repo': sys.argv[2], 'siblingRepos': [], 'slotResourc
           worker,
           `stand-in worker did not start:\n${existsSync(log) ? readFileSync(log, 'utf8').slice(-3000) : ''}`,
         );
+        const pane = tmux('capture-pane', '-p', '-J', '-S', '-', '-t', target);
+        const probes = JSON.parse([...pane.matchAll(/BLIND-PROBES (\{.*\})/g)].at(-1)![1]!);
+        t.diagnostic(`${stage} probes: ${JSON.stringify(probes)}`);
+        assert.deepEqual(probes, {
+          siblingLaunch: 'EPERM',
+          ownLaunch: 'EPERM',
+          git: 0,
+          nodeTest: 0,
+          ps: 0,
+        });
         try {
           const tree = parents();
           const chain: number[] = [];
@@ -272,5 +320,10 @@ blind['prepare_boundary']({'repo': sys.argv[2], 'siblingRepos': [], 'slotResourc
         }
       });
     }
+    // Names only: what the launches and the sandboxed worker created in this slot's runtime.
+    const own = path.dirname(path.dirname(runnerLaunchDir(root)));
+    t.diagnostic(
+      `own slot runtime: ${(readdirSync(own, { recursive: true }) as string[]).sort().join(' ')}`,
+    );
   },
 );

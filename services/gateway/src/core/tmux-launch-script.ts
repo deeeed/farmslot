@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
-import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
+import { runnerLaunchDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { blindLaunchShellCommand } from '../evals/blind-git.js';
 import { commandIncludesFarmPath } from '../fleet/farm-paths.js';
 import { usesNodeLink } from '../fleet/node-link-policy.js';
@@ -36,7 +36,7 @@ export async function writeTmuxLaunchScript(
   // Transport files belong to the slot's default runtime, independent of task
   // evidence or project runtime overrides. Hash exact window/pane targets so
   // role names cannot escape the directory or collide after sanitization.
-  const dir = path.posix.join(runnerRuntimeDir(vars.remoteRepo), '.launch');
+  const dir = runnerLaunchDir(vars.remoteRepo);
   const file = path.posix.join(dir, `${createHash('sha256').update(target).digest('hex')}.sh`);
   await slotMkdir(vars, dir);
   await slotWriteFileAtomic(vars, file, `#!/bin/bash\n${command}\n`, { mode: 0o600 });

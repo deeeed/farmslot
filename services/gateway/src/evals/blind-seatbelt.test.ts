@@ -6,7 +6,9 @@ import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { withBlindTrialBoundary } from './blind-git.js';
+import { runnerLaunchDir } from '../../../../scripts/lib/runner-runtime.cjs';
+
+import { buildBlindGitCommand, withBlindTrialBoundary } from './blind-git.js';
 
 interface CapsuleProfileRules {
   profile: string;
@@ -646,5 +648,67 @@ test('boundary ps refuses environment output in every option form and passes oth
     const result = ps(...args);
     assert.equal(result.status, 0, args.join(' '));
     assert.equal(result.stdout, `RAN unix2003 ${args.join(' ')}\n`);
+  }
+});
+
+test('blind profile denies every slot runtime but its own, and every launch directory', () => {
+  // Nothing is created: rules come from paths alone, outside /tmp and /var aliases.
+  const root = '/blind-runtime-fixture';
+  const repo = path.join(root, 'slots/product-1');
+  const sibling = path.join(root, 'other/product-2');
+  const spec = {
+    slotId: 'slot',
+    slotEpoch: 1,
+    repo,
+    capsule: path.join(root, 'capsule'),
+    siblingRepos: [sibling],
+    runId: 'run',
+    branch: 'blind',
+    baseSha: 'a'.repeat(40),
+    referenceCommits: [],
+  };
+  // The gateway passes each slot's launch directory from the same helper tmux uses.
+  const command = buildBlindGitCommand('boundary', spec);
+  const launchDirs = [runnerLaunchDir(repo), runnerLaunchDir(sibling)];
+  assert.ok(command.includes(JSON.stringify(launchDirs).slice(1, -1)));
+  const rules = (withLaunchDirs: boolean) => {
+    const result = spawnSync(
+      'python3',
+      [
+        '-c',
+        `import json, pathlib, runpy, sys
+blind = runpy.run_path(sys.argv[1], run_name='fixture')
+spec = json.loads(sys.argv[2])
+print('\\n'.join(blind['slot_runtime_rules'](spec, pathlib.Path(spec['repo']), [pathlib.Path(p) for p in spec['siblingRepos']])))`,
+        fileURLToPath(new URL('./blind-git.py', import.meta.url)),
+        JSON.stringify(withLaunchDirs ? { ...spec, launchDirs } : spec),
+      ],
+      { encoding: 'utf8', timeout: 4500 },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout;
+  };
+  // With launchDirs, and with the fallback a directly prepared boundary uses.
+  for (const profile of [rules(true), rules(false)]) {
+    assert.equal(profile, rules(true));
+    const own = path.join(root, 'slots/.farmslot-runtime/product-1');
+    for (const operation of ['file-read*', 'file-write*', 'file-link']) {
+      for (const tree of ['slots', 'other'])
+        assert.ok(
+          profile.includes(
+            `(deny ${operation} (require-all (subpath ${JSON.stringify(path.join(root, tree, '.farmslot-runtime'))}) (require-not (require-any (subpath ${JSON.stringify(own)})))))`,
+          ),
+          `${operation} ${tree}`,
+        );
+      for (const launch of launchDirs)
+        assert.ok(profile.includes(`(deny ${operation} (subpath ${JSON.stringify(launch)}))`));
+      assert.ok(
+        profile.includes(
+          `(deny ${operation} (regex #"/[.]farmslot-runtime/[^/]+/[.]agent/[.]launch(/|$)"))`,
+        ),
+      );
+    }
+    // Renaming a runtime tree must not carry a launch script out of the denial.
+    assert.ok(profile.includes(`(literal ${JSON.stringify(path.join(root, 'other'))})`));
   }
 });

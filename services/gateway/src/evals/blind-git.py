@@ -352,6 +352,38 @@ def worker_private_rules(capsule):
     return rules
 
 
+def slot_launch_dirs(spec, repo, checkouts):
+    # Slot runtimes sit beside the checkouts (scripts/lib/runner-runtime.cjs) and
+    # hold every slot's tmux launch scripts. The gateway passes each slot's launch
+    # directory, own slot first; the fallback mirrors its default layout.
+    return [Path(os.path.expanduser(p)) for p in spec.get('launchDirs', [])] or [
+        p.parent / '.farmslot-runtime' / p.name / '.agent/.launch' for p in [repo] + checkouts]
+
+
+def slot_runtime_rules(spec, repo, checkouts):
+    quote = lambda value: json.dumps(str(value), ensure_ascii=False)
+    launches = slot_launch_dirs(spec, repo, checkouts)
+    own = launches[0].parent.parent
+    trees = sorted({p.parent.parent.parent for p in launches
+                    if p.parent.parent.parent.name == '.farmslot-runtime'})
+    operations = ['file-read*', 'file-write*', 'file-link']
+    # Every slot runtime is denied except this slot's own, which holds the
+    # worker's runner homes and observability bundle.
+    keep = ' '.join('(subpath %s)' % quote(p) for p in path_aliases(own))
+    rules = ['(deny %s (require-all (subpath %s) (require-not (require-any %s))))'
+             % (operation, quote(p), keep)
+             for operation in operations for tree in trees for p in path_aliases(tree)]
+    # Node realpath stats the root on the way to the own runtime's extensions.
+    rules += ['(allow file-read-metadata (literal %s))' % quote(p)
+              for tree in trees for p in path_aliases(tree)]
+    rules += ['(deny %s (subpath %s))' % (operation, quote(p))
+              for operation in operations for launch in launches for p in path_aliases(launch)]
+    # Slots this node does not list keep the same layout.
+    rules += ['(deny %s (regex #"/[.]farmslot-runtime/[^/]+/[.]agent/[.]launch(/|$)"))' % operation
+              for operation in operations]
+    return rules + rename_guard_rules(trees + launches)
+
+
 def sandbox_profile(spec, capsule, tmux_sockets=None, network_ports=None):
     # Deny reads of other slot checkouts, the original checkout a linked worktree
     # shares objects with, every blind capsule except this boundary, and the
@@ -429,6 +461,7 @@ def sandbox_profile(spec, capsule, tmux_sockets=None, network_ports=None):
     # Tmux launch scripts inline the node's pool environment, credentials included.
     rules += ['(deny %s (subpath %s))' % (operation, quote(p))
               for operation in ['file-read*', 'file-write*'] for p in path_aliases(repo / '.agent/.launch')]
+    rules += slot_runtime_rules(spec, repo, checkouts)
     rules += worker_private_rules(capsule)
     return '\n'.join(rules + [''])
 
@@ -535,6 +568,9 @@ def prepare_boundary(spec, capsule):
     # Empty ZDOTDIR: worker zsh shells read no startup files. Seatbelt keeps it read-only.
     (root / 'shell').mkdir(exist_ok=True)
     (root / 'bin').mkdir(exist_ok=True)
+    # The worker cannot create its slot runtime inside the denied runtime tree.
+    slot_launch_dirs(spec, Path(spec['repo']).resolve(), [])[0].parent.parent.mkdir(
+        parents=True, exist_ok=True)
     # Keep socket paths below sockaddr_un's macOS limit even for deep capsules.
     temporary = root / 'tmp'
     if not temporary.is_symlink():
