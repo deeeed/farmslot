@@ -34,6 +34,12 @@ mock.module('../core/exec.js', {
     execOnSlot: (...args: Parameters<typeof execute>) => execute(...args),
   },
 });
+// Keep the existing probe/admission fixture at its simulated execution boundary.
+mock.module('../host-services/read-command.js', {
+  namedExports: {
+    readSlotCommand: (...args: Parameters<typeof execute>) => execute(...args),
+  },
+});
 mock.module('./templates.js', {
   namedExports: { ...templates, resolveWorkerTaskDir: async () => 'temp/tasks/chart' },
 });

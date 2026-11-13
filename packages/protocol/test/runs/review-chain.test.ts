@@ -174,3 +174,19 @@ test('latest historical payload is the fallback and missing legacy values stay u
     null,
   );
 });
+
+test('current chain entry carries server accounting without deriving a session cost in the client', () => {
+  const run = repeatReviewRun('warm');
+  run.metrics.durationMs = 5000;
+  run.metrics.costEstimate = 999;
+  run.repeatReviewContext!.currentMetrics = { durationMs: 4000, costUsd: 0 };
+  assert.equal(currentReviewChainEntry(run)?.durationMs, 4000);
+  assert.equal(currentReviewChainEntry(run)?.costUsd, 0);
+  run.repeatReviewContext!.currentMetrics = {
+    durationMs: null,
+    costUsd: null,
+    costReason: 'Unpriced',
+  };
+  assert.equal(currentReviewChainEntry(run)?.costUsd, null);
+  assert.equal(currentReviewChainEntry(run)?.costReason, 'Unpriced');
+});

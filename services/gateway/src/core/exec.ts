@@ -132,10 +132,11 @@ export function ownLocalCommands(owner: LocalCommandOwner | undefined): void {
  * - It only ever signals its own group, whose id is not reused while the guard is in it.
  * - A reused owner pid can only look alive and delay the kill (a leak in a rare case); a pid that
  *   now belongs to another user fails `kill -0`, which is right, as the owner is then gone.
+ * - Its cwd is /, so its last polling interval cannot hold a completed checkout.
  * - Its stdio is /dev/null, so it never holds the command's pipes.
  */
 const GUARD_PRELUDE =
-  'o=$1; shift; (trap \'\' TERM; while kill -0 "$$" 2>/dev/null; do kill -0 "$o" 2>/dev/null || kill -KILL 0; sleep 1; done) </dev/null >/dev/null 2>&1 & exec "$@"';
+  'o=$1; shift; (cd / || kill -KILL 0; trap \'\' TERM; while kill -0 "$$" 2>/dev/null; do kill -0 "$o" 2>/dev/null || kill -KILL 0; sleep 1; done) </dev/null >/dev/null 2>&1 & exec "$@"';
 
 /**
  * Whether the prelude's `exec` runs what spawn would: an existing cwd, and an executable spawn

@@ -389,6 +389,15 @@ test('passive reuse is bounded, preserves observed time, and never replaces an a
   const reused = await enrichFleetWorkspaces(await loadFleetStatus(true));
   assert.equal(probes, before + 1, 'unchanged metadata avoids another full Git inspection');
   assert.equal(reused.slots[0]?.workspace?.observedAt, first.slots[0]?.workspace?.observedAt);
+  const missingHealthHead = {
+    ...first,
+    slots: first.slots.map((slot) => ({ ...slot, branch: '-', headSha: undefined })),
+  };
+  const sparse = await enrichFleetWorkspaces(missingHealthHead);
+  assert.equal(probes, before + 1, 'a sparse health sample must not repeat verified Git work');
+  assert.equal(sparse.slots[0]?.workspace?.observedAt, first.slots[0]?.workspace?.observedAt);
+  await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(probes, before + 1, 'recovered health fields also reuse unchanged Git metadata');
   await inspectSlotWorkspace('cache-slot');
   assert.equal(probes, before + 2, 'acting reads always inspect actual contents');
   await utimes(index, 1_700_000_001, 1_700_000_001);

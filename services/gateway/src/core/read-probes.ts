@@ -1,8 +1,9 @@
 import { type ConnectedNode, getNode } from '../fleet/machine-registry.js';
 import { NodeExecUnconfirmedError } from '../fleet/node-rpc.js';
+import { readSlotCommand } from '../host-services/read-command.js';
 
 import type { SlotVars } from './config.js';
-import { execOnSlot, type ExecResult, isLocal } from './exec.js';
+import { type ExecResult, isLocal } from './exec.js';
 
 interface ReadProbe {
   promise: Promise<ExecResult>;
@@ -31,8 +32,9 @@ export function readSlotProbe(
   command: string,
   scope: string,
   timeout: number,
+  cwd = vars.remoteRepo,
 ): Promise<ExecResult> {
-  const key = JSON.stringify([vars.machine, vars.remoteRepo, scope, command]);
+  const key = JSON.stringify([vars.machine, vars.remoteRepo, scope, command, cwd]);
   const connection = getNode(vars.machine)?.ws;
   const existing = pending.get(key);
   if (existing && (!existing.unconfirmed || existing.connection === connection))
@@ -53,7 +55,8 @@ export function readSlotProbe(
       const timer = setTimeout(() => controller.abort(), timeout);
       timer.unref();
       try {
-        const result = await execOnSlot(vars, command, {
+        const result = await readSlotCommand(vars, command, {
+          cwd,
           timeout,
           signal: controller.signal,
           noRetry: true,

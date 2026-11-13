@@ -37,6 +37,14 @@ interface RequestCost {
   lag: number;
   active: boolean;
 }
+export type ExecTally = Partial<Record<ExecutionKind, { calls: number; seconds: number }>>;
+const executionTally = new AsyncLocalStorage<ExecTally>();
+
+/** A background request collects the same measurements the shared exec wrapper records. */
+export function withExecutionTally<T>(tally: ExecTally, operation: () => Promise<T>): Promise<T> {
+  return executionTally.run(tally, operation);
+}
+
 const current = new AsyncLocalStorage<RequestCost>();
 const active = new Set<RequestCost>();
 const loop = monitorEventLoopDelay({ resolution: 20 });
@@ -221,15 +229,25 @@ export function withHostOperation<T>(operation: string, run: () => T): T {
 /** Commands another process ran for a host operation (the background child's tally). */
 export function recordHostOperationExec(
   operation: string,
-  tally: Partial<Record<ExecutionKind, { calls: number; seconds: number }>>,
+  tally: ExecTally,
+  cost = current.getStore(),
 ): void {
+  const metrics = cost?.metrics ?? gatewayPerformance;
+  const method = cost?.active ? cost.method : hostMethod(operation);
   for (const [kind, { calls, seconds }] of Object.entries(tally) as Array<
     [ExecutionKind, { calls: number; seconds: number }]
   >) {
-    const labels = { method: hostMethod(operation), kind };
-    gatewayPerformance.increment('farmslot_exec_calls_total', labels, calls);
-    gatewayPerformance.increment('farmslot_exec_seconds_total', labels, seconds);
+    const labels = { method, kind };
+    metrics.increment('farmslot_exec_calls_total', labels, calls);
+    metrics.increment('farmslot_exec_seconds_total', labels, seconds);
+    if (cost?.active) cost.exec += seconds;
   }
+}
+
+/** IPC replies retain the initiating RPC's attribution until that RPC has ended. */
+export function captureHostOperationExec(operation: string): (tally: ExecTally) => void {
+  const cost = current.getStore();
+  return (tally) => recordHostOperationExec(operation, tally, cost);
 }
 
 export function measureManagedOperation<T>(
@@ -239,6 +257,7 @@ export function measureManagedOperation<T>(
 ): Promise<T> {
   const cost = current.getStore();
   const operationName = hostOperation.getStore();
+  const tally = executionTally.getStore();
   const metrics = cost?.metrics ?? gatewayPerformance;
   const start = performance.now();
   const finish = () => {
@@ -249,6 +268,10 @@ export function measureManagedOperation<T>(
         : '_background';
     const labels = { method, kind };
     const elapsed = (performance.now() - start) / 1000;
+    if (type === 'exec' && tally) {
+      const prior = tally[kind] ?? { calls: 0, seconds: 0 };
+      tally[kind] = { calls: prior.calls + 1, seconds: prior.seconds + elapsed };
+    }
     if (type !== 'wait')
       metrics.increment(
         type === 'exec' ? 'farmslot_exec_calls_total' : 'farmslot_node_calls_total',
