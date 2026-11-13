@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 
 import { inferGatewayProfileKindFromUrl } from '../../lib/gateway-profile-kind';
@@ -15,6 +16,7 @@ import type { ProfileConnectionTestState } from '../settings/use-gateway-profile
 export function useNativeConnectionController(options: { pairingLink?: string } = {}) {
   const { pairingLink } = options;
   const connection = useConnectionStore();
+  const router = useRouter();
   const [name, setName] = useState('My gateway');
   const [url, setUrl] = useState(connection.gatewayUrl);
   const [authMode, setAuthMode] = useState<GatewayProfileAuthMode>('token');
@@ -73,6 +75,13 @@ export function useNativeConnectionController(options: { pairingLink?: string } 
     }
   };
   const canOpen = connection.status === 'connected' && connection.workspaceAccess !== 'none';
+  const home = workspaceHome(connection.workspaceAccess);
+  // Back to the workspace already under this screen, not a second copy of it on the stack: a
+  // pushed connection or pair screen replaced by the tabs left the old tabs behind it.
+  const openWorkspace = () => router.dismissTo(home);
+  useEffect(() => {
+    if (paired && canOpen) router.dismissTo(home);
+  }, [paired, canOpen, home, router]);
   return {
     viewModel: {
       name,
@@ -91,11 +100,10 @@ export function useNativeConnectionController(options: { pairingLink?: string } 
       principalId: connection.principalId,
       access: connection.workspaceAccess,
       connectionError: connection.lastProbeError,
-      home: workspaceHome(connection.workspaceAccess),
       canOpen,
-      leaveToHome: paired && canOpen,
     },
     actions: {
+      openWorkspace,
       setName,
       setUrl,
       setSecret,

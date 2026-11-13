@@ -15,6 +15,13 @@ import { workspaceHome } from '../../lib/workspace-access';
 // React Navigation passes tab icons a string; RN 0.88 widened ColorValue to null and numbers.
 const tabIconColor = (color: ColorValue) => (typeof color === 'string' ? color : undefined);
 
+// Screens opened from links (Advanced, PR links, notifications) and never from the tab bar.
+// Expo Router 58 turns `href: null` into a hidden tab and replaces a focused hidden tab with the
+// first visible one, so with farm access these only drop their tab-bar button. Without it they
+// stay hidden, and the redirect is what keeps them out of reach.
+const linkOnlyTab = (farmTabs: boolean) =>
+  farmTabs ? { tabBarItemStyle: { display: 'none' as const } } : { href: null };
+
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const access = useWorkspaceRenderAccess();
@@ -69,7 +76,7 @@ export default function TabLayout() {
             name="fleet"
             options={{
               title: 'Fleet',
-              href: null,
+              ...linkOnlyTab(farmTabs),
               tabBarIcon: ({ color, size }) => (
                 <Ionicons name="grid-outline" size={size} color={tabIconColor(color)} />
               ),
@@ -92,7 +99,7 @@ export default function TabLayout() {
             name="prs"
             options={{
               title: 'PRs',
-              href: null,
+              ...linkOnlyTab(farmTabs),
               tabBarIcon: ({ color, size }) => (
                 <Ionicons name="git-pull-request-outline" size={size} color={tabIconColor(color)} />
               ),
@@ -103,7 +110,7 @@ export default function TabLayout() {
             name="copilot"
             options={{
               title: 'Co-Pilot',
-              href: null,
+              ...linkOnlyTab(farmTabs),
               tabBarIcon: ({ color, size }) => (
                 <Ionicons
                   name="chatbubble-ellipses-outline"
@@ -118,7 +125,7 @@ export default function TabLayout() {
             name="backlog"
             options={{
               title: 'Backlog',
-              href: null,
+              ...linkOnlyTab(farmTabs),
               header: () => filteredHeader,
             }}
           />
@@ -126,7 +133,7 @@ export default function TabLayout() {
             name="roadmap"
             options={{
               title: 'Roadmap',
-              href: null,
+              ...linkOnlyTab(farmTabs),
               header: () => filteredHeader,
             }}
           />
@@ -134,7 +141,7 @@ export default function TabLayout() {
             name="inbox"
             options={{
               title: 'Inbox',
-              href: null,
+              ...linkOnlyTab(farmTabs),
               tabBarIcon: ({ color, size }) => (
                 <Ionicons name="mail-outline" size={size} color={tabIconColor(color)} />
               ),
