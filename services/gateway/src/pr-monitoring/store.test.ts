@@ -270,3 +270,19 @@ test('a repair plan that changes nothing does not parse or rewrite the store', a
   assert.equal(await readFile(file, 'utf8'), persisted);
   assert.deepEqual(store.get(monitor.id, 'owner'), monitor);
 });
+
+test('owner-filtered monitor reads share frozen committed state without cloning', async (t) => {
+  const { store } = await fixture(t);
+  const monitor = await store.subscribe('owner', config);
+  const first = store.get(monitor.id, 'owner');
+  assert.equal(store.get(monitor.id, 'owner'), first, 'reconcile reads must not clone a monitor');
+  assert.equal(first, store.snapshot().monitors[0]);
+  assert.throws(() => {
+    first.config.project = 'outside';
+  }, TypeError);
+  assert.throws(() => store.get(monitor.id, 'other-owner'), /not found/);
+  await store.setLifecycle(monitor.id, 'owner', monitor.revision, 'paused');
+  assert.notEqual(store.get(monitor.id, 'owner'), first);
+  assert.equal(first.lifecycle, 'active');
+  assert.equal(store.get(monitor.id, 'owner').lifecycle, 'paused');
+});
