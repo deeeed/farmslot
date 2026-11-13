@@ -4,8 +4,8 @@ import { test } from 'node:test';
 import type { Run, RunnerSessionUsage } from '@farmslot/protocol';
 
 import { buildFamilyObservabilityTokenSummary } from '../family-observability/token-summary.js';
-import { buildTokenSummary } from '../run-engine/gate-summary.js';
 import { makeRun } from '../run-completion/test-fixtures.js';
+import { buildTokenSummary } from '../run-engine/gate-summary.js';
 
 import {
   allRunSessionUsageReceipts,
