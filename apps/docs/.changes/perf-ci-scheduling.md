@@ -1,0 +1,1 @@
+- Run docs script tests as part of docs quality checks.

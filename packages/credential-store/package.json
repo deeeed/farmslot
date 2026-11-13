@@ -12,7 +12,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint \"src/**/*.ts\"",
-    "quality": "prettier --check . && eslint \"src/**/*.ts\" && tsc --noEmit"
+    "quality": "prettier --check . && eslint \"src/**/*.ts\" && tsc --noEmit && yarn test",
+    "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src"
   },
   "dependencies": {
     "@farmslot/protocol": "workspace:*"
