@@ -56,6 +56,15 @@ function backupNames(entries: string[], basename: string): BackupName[] {
   });
 }
 
+function compareBackups(a: BackupName, b: BackupName): number {
+  return (
+    a.time.localeCompare(b.time) ||
+    // A legacy copy from minute M is older than a current copy taken at M:00.000.
+    Number(a.current) - Number(b.current) ||
+    a.sequence - b.sequence
+  );
+}
+
 /** Move one legacy backup; a pool dir and the farm home can sit on different volumes. */
 async function moveFile(source: string, target: string): Promise<void> {
   try {
@@ -77,10 +86,11 @@ async function moveFile(source: string, target: string): Promise<void> {
   }
 }
 
-// One save at a time per backup directory, from its copy through the caller's write: two
-// overlapping saves would otherwise each keep only their own new copy and prune the other's.
-// Every pool and project configuration save goes through this gateway process, so an in-process
-// lock is enough.
+// One save at a time per backup directory, from its copy through the caller's write, so each
+// backup holds exactly what its save overwrote. The lock covers this gateway's saves only: other
+// gateways sharing the home and writers that bypass this helper (CLI onboarding, the improvement
+// engine) are not serialized with it. The retention rule in backupConfigFile keeps their backups
+// safe from this process.
 const saveTails = new Map<string, Promise<unknown>>();
 
 /**
@@ -88,7 +98,7 @@ const saveTails = new Map<string, Promise<unknown>>();
  * and return the copy's path. `name` is the pool file basename or the project name, so sources
  * from different directories never share a backup directory. The same file's legacy
  * `<basename>.bak.<stamp>` siblings (the removed writer's minute-precision names) move there too,
- * and only the newest CONFIG_BACKUPS_KEPT copies stay.
+ * and the copies older than the new one are pruned so CONFIG_BACKUPS_KEPT remain.
  *
  * Every step throws: a failed copy, move or prune fails the save before `write` runs. Pruning is
  * not best-effort because a backup directory that cannot be pruned grows without bound, which is
@@ -151,26 +161,26 @@ async function backupConfigFile(directory: string, file: string): Promise<string
     if (!current) await moveFile(path.join(sources, entry), path.join(directory, entry));
   }
 
-  // The copy just taken is always kept, alongside the newest of the others. A copy dated after
-  // now was taken before a clock stepped backwards, so it is older than every copy dated up to
-  // now and is pruned first.
-  const now = stamp.replace('T', '');
-  const others = backupNames(await readdir(directory), basename)
-    .filter((item) => item.entry !== path.basename(backup))
-    .sort(
-      (a, b) =>
-        Number(b.time > now) - Number(a.time > now) ||
-        a.time.localeCompare(b.time) ||
-        // A legacy copy from minute M is older than a current copy taken at M:00.000.
-        Number(a.current) - Number(b.current) ||
-        a.sequence - b.sequence,
-    );
-  for (const { entry } of others.slice(0, Math.max(0, others.length - (CONFIG_BACKUPS_KEPT - 1)))) {
+  // A save deletes only copies strictly older than its own and keeps the newest of those beside
+  // its own copy. It never touches a copy dated the same as or after its own stamp, so another
+  // process sharing this home never loses a newer copy to it. The cost: after a clock steps
+  // backwards the directory can hold more than CONFIG_BACKUPS_KEPT copies until the clock passes
+  // the future-dated ones.
+  const own: BackupName = {
+    entry: path.basename(backup),
+    time: stamp.replace('T', ''),
+    sequence,
+    current: true,
+  };
+  const older = backupNames(await readdir(directory), basename)
+    .filter((item) => item.entry !== own.entry && compareBackups(item, own) < 0)
+    .sort(compareBackups);
+  const pruned = older.slice(0, Math.max(0, older.length - (CONFIG_BACKUPS_KEPT - 1)));
+  for (const { entry } of pruned) {
     try {
       await unlink(path.join(directory, entry));
     } catch (error) {
-      // Only another process sharing this home can prune it first; the lock above serializes
-      // this process's saves.
+      // Another process sharing this home pruned it first; the lock serializes only this one.
       if (errorCode(error) !== 'ENOENT') throw error;
     }
   }

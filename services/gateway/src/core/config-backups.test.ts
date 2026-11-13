@@ -118,7 +118,7 @@ test('a save after pruning numbers its copy above the kept ones and keeps it', a
   assert.equal(existsSync(path.join(backups, `node-a.json.bak.${stamp}-11`)), false);
 });
 
-test('a clock stepped backwards still keeps the copy just taken', async (t) => {
+test('a clock stepped backwards keeps the copy just taken and every future-dated one', async (t) => {
   const { file, backups } = await fixture(t);
   await mkdir(backups, { recursive: true });
   const future = Array.from(
@@ -129,10 +129,8 @@ test('a clock stepped backwards still keeps the copy just taken', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-13T12:00:00.123Z') });
   const backup = await backupConfigFile('pool', 'node-a.json', file);
   assert.equal(await readFile(backup, 'utf8'), '{"machine":"node-a"}\n');
-  assert.deepEqual(
-    (await readdir(backups)).sort(),
-    [path.basename(backup), ...future.slice(1)].sort(),
-  );
+  // Nothing is older than the new copy, so nothing is pruned: 11 copies until the clock catches up.
+  assert.deepEqual((await readdir(backups)).sort(), [path.basename(backup), ...future].sort());
 });
 
 test('legacy backups of the saved file move out; other backup names stay', async (t) => {
@@ -194,7 +192,32 @@ test('overlapping saves of one file keep both new copies after a clock step back
   assert.equal(await readFile(first, 'utf8'), '{"machine":"node-a"}\n');
   assert.equal(await readFile(second, 'utf8'), '{"save":1}\n');
   assert.equal(await readFile(file, 'utf8'), '{"save":2}\n');
-  assert.equal((await readdir(backups)).length, CONFIG_BACKUPS_KEPT);
+  // Neither save may delete the future-dated copies, so 12 remain until the clock catches up.
+  assert.equal((await readdir(backups)).length, CONFIG_BACKUPS_KEPT + 2);
+});
+
+test('a save never deletes a newer copy another process took', async (t) => {
+  const { file, backups } = await fixture(t);
+  await mkdir(backups, { recursive: true });
+  const old = Array.from(
+    { length: CONFIG_BACKUPS_KEPT },
+    (_, index) => `node-a.json.bak.20261113T11000${index}000`,
+  );
+  for (const name of old) await writeFile(path.join(backups, name), 'old');
+  // Process B stamps T+1 ms and finishes first; process A, which listed at T, prunes after it.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-13T12:00:00.124Z') });
+  const fromB = await backupConfigFile('pool', 'node-a.json', file);
+  t.mock.timers.setTime(Date.parse('2026-11-13T12:00:00.123Z'));
+  const fromA = await backupConfigFile('pool', 'node-a.json', file);
+  assert.equal(path.basename(fromB), 'node-a.json.bak.20261113T120000124');
+  assert.equal(path.basename(fromA), 'node-a.json.bak.20261113T120000123');
+  assert.equal(existsSync(fromB), true);
+  assert.equal(existsSync(fromA), true);
+  // B pruned the oldest copy; A then kept its own and the 9 older ones, leaving B's newer copy.
+  assert.deepEqual(
+    (await readdir(backups)).sort(),
+    [path.basename(fromA), path.basename(fromB), ...old.slice(1)].sort(),
+  );
 });
 
 test('a failed write still releases the save lock', async (t) => {
