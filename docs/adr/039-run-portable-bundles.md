@@ -599,35 +599,39 @@ Task pins and run-owned review workspaces are recreatable copies. Retention dele
 A settled run keeps its storage for 7 days instead of 48 hours. One setting,
 `runBundleRetention.runRetentionDays` in the gateway's `run-bundle-retention.json`,
 changes that age; task pins use the same age. An open PR no longer holds every run
-on it. Past the age, an open PR holds only the runs a later warm review would
-continue from: for each review chain on the PR, the run the warm-review lookup
-returns. A chain is the PR and project, optionally narrowed to one review lineage
-and to one intake owner and profile. The lookup takes the latest finished
-`review-pr` run with a review result, by completion time, so a cancelled re-review
-without a result or an older review archived later does not take the hold. Other
-review runs and development, fix-bug and `pr-complete` runs on that PR follow the
-age rule. A PR whose state cannot be read (unreadable repository or possibly
-truncated open-PR list) still holds those runs, so a failed read releases only what
-the age rule already allows.
+on it. Past the age, an open PR holds only the review runs a later warm review could
+continue from. Warm-review readers first narrow the PR's review runs (by principal
+owner, by reviewer session owner, runner and lineage, by lineage, or by intake owner
+and profile, where a first-time intake falls back to the latest manual run) and then
+take the latest finished `review-pr` run with a review result, by completion time.
+Retention keeps every run that some such view would select, using the same lookup.
+Other review runs and development, fix-bug and `pr-complete` runs on that PR follow
+the age rule. A PR whose state cannot be read (unreadable repository, possibly
+truncated open-PR list, or a ticket that names no repository) still holds those
+runs, and a live open PR counts as open even if a run recorded it closed.
 
-A follow-up run (`review-pr`, `pr-complete` or `update-branch` with a parent) that
-has not settled holds its run family, the runs it inherits recipes and evidence
-from, whatever the PR state. The other holds stay as they were.
+Whatever the PR state, an unsettled run holds what it still reads: a follow-up
+(`review-pr`, `pr-complete` or `update-branch` with a parent) holds its run family,
+and an in-flight review holds the prior run its repeat-review context recorded. The
+pass checks these again from the current runs just before it moves each run. The
+other holds stay as they were.
 
 ### Rationale and consequences
 
 48 hours was too short for warm reviews of PRs that wait days for a re-review, and
 holding every run on an open PR kept development task trees, recordings and
 sessions for as long as a PR stayed open. A `review-pr` warm review reads its
-predecessor's task directory, so that predecessor is the run worth holding, and the
-hold uses the same lookup so the two cannot disagree. Seven days keeps a week of
-history on local disk; when the disk gets tight the operator can lower the setting
-(for example to 3) without a code change. Storage still moves to the run archive
-under Amendments 3 and 7, so a released run stays restorable.
+predecessor's task directory, so the predecessors are the runs worth holding, and the
+hold uses the readers' own lookup over every narrowing they apply. Seven days keeps a
+week of history on local disk; when the disk gets tight the operator can lower the
+setting (for example to 3) without a code change. Storage still moves to the run
+archive under Amendments 3 and 7, so a released run stays restorable.
 
 Gate reviews inside a run family continue from reviewer sessions of earlier runs in
 that family, and a follow-up dispatched later inherits from the family's task
-directories. Once no follow-up of the family is active, those earlier development
-runs are released after the retention age even while their PR is open. A gate
-review or follow-up started after that falls back to a cold review or runs without
-the inherited recipe and evidence until the storage is restored.
+directories and bundles. Once no follow-up of the family is active, those earlier
+development runs are released after the retention age even while their PR is open.
+A gate review started after that cannot resume the earlier reviewer session. A
+follow-up dispatched after that fails to write its task: inheritance cannot read the
+parent's archived bundle, so dispatch is refused until the operator restores the
+parent's storage from its archive manifest.

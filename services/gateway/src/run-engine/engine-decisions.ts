@@ -43,7 +43,7 @@ import {
   updateRun,
   updateRunStep,
 } from '../runs/store.js';
-import { samePrincipalOwner } from '../security/work-originator.js';
+import { runPrincipalOwner, samePrincipalOwner } from '../security/work-originator.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
 import {
@@ -264,10 +264,29 @@ export function findLatestPriorReviewRun(
   );
 }
 
+/** A request no intake round matches yet: an owner or profile reviewing the PR for the first time. */
+const UNSEEN_INTAKE: NonNullable<Run['prWork']> = {
+  kind: 'review',
+  id: '',
+  sourceId: '',
+  pr: { host: '', repo: '', number: 0 },
+  headSha: '',
+  review: { profile: '', ownerId: '', options: { mode: 'cold' } },
+};
+
+/** Who may resume a reviewer context: its native owner, or the tmux run's creator and generation. */
+const reviewSessionOwner = (run: Run, context: AgentContext) =>
+  context.nativeSession
+    ? `native:${context.nativeSession.ownerPrincipalId}`
+    : `tmux:${run.createdByPrincipalId ?? ''}:${run.createdByPrincipalGeneration ?? 0}`;
+
 /**
- * The runs a later warm review could continue from: `findLatestPriorReviewRun`'s answer for
- * every chain the existing review runs define. A chain is one PR identity and project,
- * optionally narrowed to one review lineage and to one intake owner and profile.
+ * The runs a later warm review could continue from. Readers narrow a PR's review runs before
+ * `findLatestPriorReviewRun` selects: by principal owner (workspace pipeline, PR-rule
+ * continuity), by reviewer session owner, runner and lineage (retained sessions), by lineage and
+ * by intake owner and profile, where a manual run is what a first-time intake falls back to.
+ * A run is kept when it is the selection in the narrowest such view that still contains it;
+ * every wider view a reader can use contains that view, so its selection is no older.
  */
 export function warmReviewPredecessorIds(allRuns: readonly Run[]): Set<string> {
   const groups = new Map<string, Run[]>();
@@ -278,43 +297,56 @@ export function warmReviewPredecessorIds(allRuns: readonly Run[]): Set<string> {
     groups.set(key, [...(groups.get(key) ?? []), run]);
   }
   const ids = new Set<string>();
-  for (const group of groups.values()) {
-    const lineages = new Set(
-      group.flatMap(
-        (run) =>
-          run.agentContexts?.flatMap((context) =>
-            context.role === 'review' && context.reviewId ? [context.reviewId] : [],
-          ) ?? [],
-      ),
-    );
-    const intakes: NonNullable<Run['prWork']>[] = [];
+  for (const group of groups.values())
     for (const run of group) {
-      const review = run.prWork?.kind === 'review' ? run.prWork.review : undefined;
-      if (
-        review &&
-        !intakes.some(
-          (seen) =>
-            samePrincipalOwner(seen.review!, review) && seen.review!.profile === review.profile,
-        )
-      )
-        intakes.push(run.prWork!);
-    }
-    for (const reviewId of [undefined, ...lineages])
-      for (const prWork of [undefined, ...intakes]) {
-        const prior = findLatestPriorReviewRun(
-          {
-            id: '',
-            project: group[0].project,
-            ticketOrPr: group[0].ticketOrPr,
-            flowType: 'review-pr',
-            prWork,
-            reviewContext: { reviewLineages: reviewId ? [{ reviewId }] : [] },
-          },
-          group,
-        );
-        if (prior) ids.add(prior.id);
+      if (!reviewResultForRun(run)) continue;
+      const intake =
+        run.prWork?.kind !== 'review' ? UNSEEN_INTAKE : run.prWork.review ? run.prWork : undefined;
+      const owner = runPrincipalOwner(run);
+      const owned = owner
+        ? group.filter((candidate) => {
+            const candidateOwner = runPrincipalOwner(candidate);
+            return !!candidateOwner && samePrincipalOwner(owner, candidateOwner);
+          })
+        : undefined;
+      const contexts = run.agentContexts?.filter((context) => context.role === 'review') ?? [];
+      const lineages = [...new Set(contexts.flatMap((context) => context.reviewId ?? []))];
+      const views: { runs: readonly Run[]; reviewId?: string; prWork?: Run['prWork'] }[] = [];
+      for (const reviewId of lineages.length ? lineages : [undefined]) {
+        views.push({ runs: group, reviewId, prWork: intake });
+        if (owned) views.push({ runs: owned, reviewId, prWork: intake });
       }
-  }
+      for (const context of contexts) {
+        const sessionOwner = reviewSessionOwner(run, context);
+        views.push({
+          runs: group.filter((candidate) =>
+            candidate.agentContexts?.some(
+              (other) =>
+                other.role === 'review' &&
+                other.reviewId === context.reviewId &&
+                other.runner === context.runner &&
+                reviewSessionOwner(candidate, other) === sessionOwner,
+            ),
+          ),
+          reviewId: context.reviewId,
+        });
+      }
+      const selected = views.some(
+        (view) =>
+          findLatestPriorReviewRun(
+            {
+              id: '',
+              project: run.project,
+              ticketOrPr: run.ticketOrPr,
+              flowType: 'review-pr',
+              prWork: view.prWork,
+              reviewContext: { reviewLineages: view.reviewId ? [{ reviewId: view.reviewId }] : [] },
+            },
+            view.runs,
+          )?.id === run.id,
+      );
+      if (selected) ids.add(run.id);
+    }
   return ids;
 }
 

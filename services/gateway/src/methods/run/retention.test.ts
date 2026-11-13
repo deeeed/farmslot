@@ -48,6 +48,11 @@ import {
   updateRun,
   withTaskAdmission,
 } from '../../runs/store.js';
+import {
+  type PrincipalOwner,
+  runPrincipalOwner,
+  samePrincipalOwner,
+} from '../../security/work-originator.js';
 
 import {
   formatRunRetention,
@@ -63,13 +68,13 @@ const settled = new Date(NOW - RUN_RETENTION_AGE_MS - 60_000).toISOString();
 const context = (
   pr: RunPrState = 'none',
   warmReviewSource = false,
-  followUpSource = false,
+  activeSource?: string,
 ): RunRetentionContext => ({
   now: NOW,
   ageMs: RUN_RETENTION_AGE_MS,
   prState: () => pr,
   warmReviewSource: () => warmReviewSource,
-  followUpSource: () => followUpSource,
+  activeSource: () => activeSource,
 });
 
 const openDecision: RunDecision = {
@@ -194,7 +199,7 @@ test('retention archives settled run storage only after 7 days with nothing open
   );
   assert.equal(runRetentionHold(done, context('settled', true)), undefined);
   assert.equal(
-    runRetentionHold(done, context('none', false, true)),
+    runRetentionHold(done, context('none', false, 'inherited by an unsettled follow-up')),
     'inherited by an unsettled follow-up',
   );
   assert.equal(
@@ -396,6 +401,234 @@ test('an unsettled follow-up keeps the family it inherits from', async () => {
   });
   const settledChild = { ...child, status: 'done' as const, completedAt: ago(8) };
   assert.equal((await holdsFor([parent, settledChild, other])).parent, undefined);
+});
+
+/** A review intake's PR work: `ownerId` reviews o/r#`number` under `profile`. */
+const intakeWork = (ownerId: string, profile: string, number: number): Run['prWork'] => ({
+  kind: 'review',
+  id: `review:${ownerId}:${profile}`,
+  sourceId: ownerId,
+  pr: { host: 'github.com', repo: 'o/r', number },
+  headSha: 'bbbbbbbbbbbbbbbb',
+  review: { profile, ownerId, options: { mode: 'cold' } },
+});
+
+/** A native reviewer context in lineage `reviewId`, run by `runner` and owned by `owner`. */
+function nativeReviewer(
+  runId: string,
+  reviewId: string,
+  runner = 'codex',
+  owner = 'fa',
+): AgentContext {
+  return {
+    ...reviewerContext(runId, reviewId),
+    id: `review-${reviewId}-${runner}-${owner}`,
+    runner,
+    nativeSession: {
+      sessionId: `${runId}-${reviewId}`,
+      executionNodeId: 'local',
+      ownerPrincipalId: owner,
+      leaseId: 'lease',
+      commandId: 'command',
+      stateDirectory: `/native/${runId}`,
+      releasedAt: settled,
+    },
+  };
+}
+
+/** The warm-review request a reader would build. */
+const nextReview = (pr: string, prWork?: Run['prWork'], reviewId?: string): Run => ({
+  ...makeRun({ id: 'next', flowType: 'review-pr', project: 'p', ticketOrPr: pr }),
+  prWork,
+  reviewContext: { reviewLineages: reviewId ? [{ reviewId }] : [] },
+});
+
+const sameOwnerAs = (owner: PrincipalOwner | undefined) => (run: Run) => {
+  const candidate = runPrincipalOwner(run);
+  return !!owner && !!candidate && samePrincipalOwner(owner, candidate);
+};
+
+test('readers that narrow by owner or fall back to a manual run keep their predecessor', async () => {
+  const runs = [
+    // The workspace pipeline and PR-rule continuity only continue from the same owner's runs.
+    reviewRun('fa-review', 'o/r#1', 20, { reviewResult: reviewed, createdByPrincipalId: 'fa' }),
+    reviewRun('legacy-review', 'o/r#1', 10, {
+      reviewResult: reviewed,
+      createdByPrincipalId: 'legacy',
+    }),
+    // A first intake round of a new owner or profile falls back to the latest manual run.
+    reviewRun('manual', 'o/r#2', 20, { reviewResult: reviewed }),
+    reviewRun('intake-a', 'o/r#2', 10, {
+      reviewResult: reviewed,
+      prWork: intakeWork('a', 'standard', 2),
+    }),
+    // The same holds inside one lineage.
+    reviewRun('manual-codex', 'o/r#3', 20, {
+      reviewResult: reviewed,
+      agentContexts: [reviewerContext('manual-codex', 'codex')],
+    }),
+    reviewRun('intake-codex', 'o/r#3', 10, {
+      reviewResult: reviewed,
+      prWork: intakeWork('a', 'standard', 3),
+      agentContexts: [reviewerContext('intake-codex', 'codex')],
+    }),
+  ];
+  const holds = await holdsFor(runs);
+  const pipeline = (owner: string) =>
+    findLatestPriorReviewRun(nextReview('o/r#1'), runs.filter(sameOwnerAs({ ownerId: owner })))?.id;
+  assert.deepEqual(
+    [
+      pipeline('fa'),
+      pipeline('legacy'),
+      findLatestPriorReviewRun(nextReview('o/r#2', intakeWork('b', 'standard', 2)), runs)?.id,
+      findLatestPriorReviewRun(nextReview('o/r#2', intakeWork('a', 'deep', 2)), runs)?.id,
+      findLatestPriorReviewRun(nextReview('o/r#3', intakeWork('a', 'deep', 3), 'codex'), runs)?.id,
+    ],
+    ['fa-review', 'legacy-review', 'manual', 'manual', 'manual-codex'],
+  );
+  for (const run of runs) assert.equal(holds[run.id], 'warm review source of an open PR', run.id);
+});
+
+/** Deterministic PRNG, so every failing history can be replayed from its seed. */
+function mulberry32(seed: number) {
+  return () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let value = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    value = (value + Math.imul(value ^ (value >>> 7), 61 | value)) ^ value;
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+test('every warm review reader selects a run that retention holds (seeded histories)', async () => {
+  const owners = ['fa', 'legacy'];
+  const lineages = ['codex', 'claude'];
+  const runners = ['codex', 'claude'];
+  const intakes = [
+    ['a', 'standard'],
+    ['a', 'deep'],
+    ['b', 'standard'],
+  ] as const;
+  let checked = 0;
+  for (let seed = 1; seed <= 300; seed++) {
+    const random = mulberry32(seed);
+    const pick = <T>(values: readonly T[]) => values[Math.floor(random() * values.length)];
+    const runs: Run[] = [];
+    for (let index = 0, count = 2 + Math.floor(random() * 8); index < count; index++) {
+      const id = `s${seed}-r${index}`;
+      const days = 8 + random() * 30;
+      const intake = random() < 0.4 ? pick(intakes) : undefined;
+      runs.push(
+        reviewRun(id, 'o/r#1', days, {
+          status: pick(['done', 'done', 'done', 'cancelled', 'failed', 'blocked'] as const),
+          ...(random() < 0.75 ? { reviewResult: reviewed } : {}),
+          ...(random() < 0.3 ? { archivedAt: ago(8 + random() * (days - 8)) } : {}),
+          ...(random() < 0.7 ? { createdByPrincipalId: pick(owners) } : {}),
+          ...(intake ? { prWork: intakeWork(intake[0], intake[1], 1) } : {}),
+          agentContexts: Array.from({ length: Math.floor(random() * 3) }, () =>
+            nativeReviewer(id, pick(lineages), pick(runners), pick(owners)),
+          ),
+        }),
+      );
+    }
+    const context = await retentionContext(runs, NOW, {
+      retentionDays: () => DEFAULT_RUN_RETENTION_DAYS,
+      projectRepo: async () => 'o/r',
+      openPrs: async () => [1],
+    });
+    const expectHeld = (reader: string, selected: Run | null) => {
+      if (!selected) return;
+      checked++;
+      assert.ok(
+        runRetentionHold(selected, context),
+        `seed ${seed}: ${reader} continues from ${selected.id}, which retention releases`,
+      );
+    };
+    for (const reviewId of [undefined, ...lineages, 'unseen'])
+      for (const intake of [undefined, ...intakes, ['z', 'unseen'] as const]) {
+        const request = nextReview(
+          'o/r#1',
+          intake && intakeWork(intake[0], intake[1], 1),
+          reviewId,
+        );
+        expectHeld('unfiltered', findLatestPriorReviewRun(request, runs));
+        for (const owner of owners)
+          expectHeld(
+            `pipeline(${owner})`,
+            findLatestPriorReviewRun(request, runs.filter(sameOwnerAs({ ownerId: owner }))),
+          );
+        if (intake)
+          expectHeld(
+            `continuity(${intake[0]})`,
+            findLatestPriorReviewRun(request, runs.filter(sameOwnerAs({ ownerId: intake[0] }))),
+          );
+      }
+    for (const reviewId of lineages)
+      for (const runner of runners)
+        for (const owner of owners)
+          expectHeld(
+            `session(${reviewId}, ${runner}, ${owner})`,
+            findLatestPriorReviewRun(
+              nextReview('o/r#1', undefined, reviewId),
+              runs.filter((run) =>
+                run.agentContexts?.some(
+                  (agent) =>
+                    agent.reviewId === reviewId &&
+                    agent.runner === runner &&
+                    agent.nativeSession?.ownerPrincipalId === owner,
+                ),
+              ),
+            ),
+          );
+  }
+  assert.ok(checked > 1000, `only ${checked} selections were checked`);
+});
+
+test('an in-flight review keeps the prior it recorded', async () => {
+  const prior = (id: string) => reviewRun(id, 'o/r#9', 20);
+  const inFlight: Run = {
+    ...reviewRun('in-flight', 'o/r#9', 1, { status: 'monitoring' }),
+    repeatReviewContext: {
+      version: 1,
+      chainId: 'chain',
+      generation: 2,
+      priorRunId: 'recorded-prior',
+      priorFamilyId: 'recorded-prior',
+      repository: 'o/r',
+      prNumber: 9,
+      currentHeadSha: 'cccccccccccccccc',
+      verdict: 'request changes',
+      unresolvedFindings: [],
+      artifactRefs: [],
+      farmslotEvidenceRefs: [],
+      mode: 'warm',
+      validationDepth: 'static-code',
+      session: { mode: 'warm', continuity: 'resumed', priorRunId: 'session-prior' },
+    },
+  };
+  const runs = [prior('recorded-prior'), prior('session-prior'), prior('unrelated'), inFlight];
+  assert.deepEqual(await holdsFor(runs), {
+    'recorded-prior': 'prior of an in-flight review',
+    'session-prior': 'prior of an in-flight review',
+    unrelated: undefined,
+    'in-flight': 'not done, cancelled or archived',
+  });
+  const done = { ...inFlight, status: 'done' as const, completedAt: ago(8) };
+  assert.equal((await holdsFor([prior('recorded-prior'), done]))['recorded-prior'], undefined);
+});
+
+test('a warm source fails closed when its PR resolves to no state, and a reopened PR counts as open', async () => {
+  const runs = [
+    // `repo#5` chains for warm review but names no GitHub repository.
+    reviewRun('bare-ref', 'repo#5', 20, { reviewResult: reviewed }),
+    // Recorded closed, but the live open list has it again.
+    reviewRun('reopened', 'o/r#2', 20, { reviewResult: reviewed, prState: 'CLOSED' }),
+    reviewRun('closed', 'o/r#6', 20, { reviewResult: reviewed, prState: 'CLOSED' }),
+  ];
+  assert.deepEqual(await holdsFor(runs), {
+    'bare-ref': 'warm review source of a PR in unknown state',
+    reopened: 'warm review source of an open PR',
+    closed: undefined,
+  });
 });
 
 test("the pass reads runRetentionDays from the gateway's run-bundle-retention.json", async (t) => {
@@ -736,6 +969,48 @@ test('missing and unwritable archive roots fail before touching run records or s
   }
   assert.equal(await readFile(record, 'utf8'), before);
   assert.equal(await readFile(path.join(task, 'bytes'), 'utf8'), 'x'.repeat(4096));
+});
+
+test('a follow-up dispatched during a pass keeps its parent from being staged', async (t) => {
+  const roots = await retentionRoots(t, runsDirectory());
+  const parent = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    mode: 'autonomous',
+    ticketOrPr: 'RETENTION-FOLLOW-UP',
+  });
+  const task = path.join(roots.taskRoots[0], parent.id);
+  updateRun(parent.id, {
+    status: 'done',
+    completedAt: settled,
+    taskFile: path.join(task, 'TASK.md'),
+  });
+  await persistRunNow(parent);
+  await file(path.join(task, 'TASK.md'));
+  let dispatched = false;
+  const result = await runRetentionPass(
+    { apply: true, roots, now: Date.now() + RUN_RETENTION_AGE_MS + 60_000 },
+    {
+      ...privateDeps,
+      // The first lock turn comes after the pass computed its context.
+      withBundleLock: async (operation) => {
+        if (!dispatched) {
+          dispatched = true;
+          const child = createRun({
+            flowType: 'pr-complete',
+            project: 'farmslot-farm',
+            mode: 'autonomous',
+            ticketOrPr: 'RETENTION-FOLLOW-UP',
+          });
+          updateRun(child.id, { parentRunId: parent.id, familyId: parent.familyId });
+        }
+        return operation();
+      },
+    },
+  );
+  assert.ok(dispatched);
+  assert.equal(result.runs.includes(parent.id), false, 'the parent is not archived');
+  assert.ok(existsSync(path.join(task, 'TASK.md')), 'the follow-up can still inherit its task');
 });
 
 test('a processed run replayed before the next candidate keeps its shared task', async (t) => {

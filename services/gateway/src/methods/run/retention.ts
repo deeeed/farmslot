@@ -98,15 +98,15 @@ const prRecordedSettled = (run: Run) =>
   Boolean(run.mergedAt) || run.prState === 'MERGED' || run.prState === 'CLOSED';
 
 /**
- * Each run's PR state for this pass. A PR the run records as merged or closed is settled.
- * Otherwise every identity it has (the review-session identity, and its own number in the
- * project's repository) is checked against that repository's open PRs, read once. Any
- * open PR makes the state open; an unresolvable identity, an unreadable repository or a
- * possibly truncated list makes it unknown.
+ * Each run's PR state for this pass. Every identity a run has (the review-session identity,
+ * and its own number in the project's repository) is checked against that repository's open
+ * PRs, read once. Any open PR makes the state open, even when the run records it merged or
+ * closed, since a PR can be reopened. Otherwise a recorded merge or close settles it; an
+ * unresolvable identity, an unreadable repository or a possibly truncated list makes it unknown.
  *
- * Past the age, an open or unknown PR holds only the runs a later warm review would
- * continue from, one per review chain (`warmReviewPredecessorIds`). Any PR state holds the
- * family of a follow-up that has not settled, which it inherits from (`getFamilyRuns`).
+ * Past the age, an open or unknown PR holds only the runs a later warm review would continue
+ * from (`warmReviewPredecessorIds`). Whatever the PR state, an unsettled run holds what it still
+ * reads (`activeSourceHolds`).
  */
 export async function retentionContext(
   runs: Run[],
@@ -119,7 +119,6 @@ export async function retentionContext(
   >();
   const projectRepos = new Map<string, string | undefined>();
   for (const run of runs) {
-    if (prRecordedSettled(run)) continue;
     const prs: { repo: string; number: number }[] = [];
     const review = reviewPRIdentity(run);
     if (review) prs.push({ repo: review.repository, number: review.prNumber });
@@ -147,27 +146,57 @@ export async function retentionContext(
     }
   }
   const warmSources = warmReviewPredecessorIds(runs);
-  const followUpSources = new Set<string>();
-  for (const run of runs) {
-    if (runIsSettled(run) || !run.parentRunId || !isFollowUpFlow(run.flowType)) continue;
-    const { parentRun, rootRun, otherFamilyRuns } = getFamilyRuns(run, runs);
-    for (const source of [parentRun, rootRun, ...otherFamilyRuns])
-      if (source && source.id !== run.id) followUpSources.add(source.id);
-  }
+  const activeSources = activeSourceHolds(runs, runs);
   return {
     now,
     ageMs: read.retentionDays() * DAY_MS,
     warmReviewSource: (run) => warmSources.has(run.id),
-    followUpSource: (run) => followUpSources.has(run.id),
+    activeSource: (run) => activeSources.get(run.id),
     prState: (run): RunPrState => {
-      if (prRecordedSettled(run)) return 'settled';
       const identity = identities.get(run.id);
-      if (!identity) return 'none';
-      const lists = identity.prs.map((pr) => open.get(pr.repo)?.has(pr.number));
+      const lists = identity?.prs.map((pr) => open.get(pr.repo)?.has(pr.number)) ?? [];
       if (lists.includes(true)) return 'open';
+      if (prRecordedSettled(run)) return 'settled';
+      if (!identity) return 'none';
       return identity.unresolved || lists.includes(undefined) ? 'unknown' : 'settled';
     },
   };
+}
+
+/**
+ * Runs that unsettled runs among `live` still read, with why: a follow-up inherits task
+ * artifacts from its run family (`getFamilyRuns` over `members`), and an in-flight review reads
+ * the prior run its repeat-review context recorded.
+ */
+export function activeSourceHolds(live: readonly Run[], members: Run[]): Map<string, string> {
+  const holds = new Map<string, string>();
+  for (const run of live) {
+    if (runIsSettled(run)) continue;
+    if (run.parentRunId && isFollowUpFlow(run.flowType)) {
+      const { parentRun, rootRun, otherFamilyRuns } = getFamilyRuns(run, members);
+      for (const source of [parentRun, rootRun, ...otherFamilyRuns])
+        if (source && source.id !== run.id)
+          holds.set(source.id, 'inherited by an unsettled follow-up');
+    }
+    if (run.flowType === 'review-pr')
+      for (const prior of [
+        run.repeatReviewContext?.priorRunId,
+        run.repeatReviewContext?.session?.priorRunId,
+      ])
+        if (prior && !holds.has(prior)) holds.set(prior, 'prior of an in-flight review');
+  }
+  return holds;
+}
+
+/**
+ * The hold right before a candidate moves: the pass's context, plus what runs dispatched since
+ * the pass started now read.
+ */
+function currentRetentionHold(run: Run, context: RunRetentionContext): string | undefined {
+  return (
+    runRetentionHold(run, context) ??
+    activeSourceHolds(getAllRuns(), [run, ...getAllRuns()]).get(run.id)
+  );
 }
 
 export async function runHoldsSlot(run: Run): Promise<boolean> {
@@ -273,7 +302,7 @@ export async function runRetentionPass(
           return;
         }
         const run = await getRunWithArchived(candidate.id);
-        const hold = run ? runRetentionHold(run, context) : 'run missing';
+        const hold = run ? currentRetentionHold(run, context) : 'run missing';
         if (!run || hold) {
           await keepStorageDeletions(roots.archiveRoot, candidate.id, hold ?? 'run missing');
           return;
@@ -331,7 +360,7 @@ export async function runRetentionPass(
           archiveFiles,
           () => {
             const latest = getCachedRunWithArchived(run.id);
-            if (!latest || runRetentionHold(latest, context)) return false;
+            if (!latest || currentRetentionHold(latest, context)) return false;
             const current = [...runs, ...getAllRuns()].filter(
               (other) =>
                 other.id !== run.id &&

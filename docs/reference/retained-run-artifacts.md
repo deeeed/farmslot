@@ -218,10 +218,10 @@ or release backlog/history links during retention.
 
 Storage is eligible only when the run is done/cancelled/archived, settled at least
 the retention age, holds no slot or native worker, has no open decision, uncleaned
-review workspace, pending closeout/backlog reconciliation or `keep` tag, is not in
-the family of an unsettled follow-up, and is not the run a warm review chain on an
-open PR would continue from. Shared paths and admitted task directories MUST remain
-available to their owners.
+review workspace, pending closeout/backlog reconciliation or `keep` tag, is not read
+by an unsettled run, and is not a run a warm review on an open PR could continue
+from. Shared paths and admitted task directories MUST remain available to their
+owners.
 
 The retention age is `runBundleRetention.runRetentionDays` in
 `${FARMSLOT_HOME}/run-bundle-retention.json`, default 7 (ADR-039 Amendment 8).
@@ -238,22 +238,35 @@ Each pass reads it when it starts, so no restart is needed. Task pins whose
 task directory is gone are removed once they are older than the same age. A run
 settles at the later of its completion and archive time.
 
-Past the age, an open PR holds the run each of its warm review chains would continue
-from, as `findLatestPriorReviewRun` selects it: the latest `review-pr` run with a
-review result that is done, cancelled, failed or blocked, ordered by completion time
-(not archive time). A chain is one PR (`owner/repo#N` ticket) and project, either
-across all review runs or narrowed to one review lineage (`reviewId`) or one intake
-owner and profile. A cancelled re-review without a result, or an older review
+Past the age, an open PR holds every review run a warm review could continue from.
+`findLatestPriorReviewRun` selects the latest `review-pr` run with a review result
+that is done, cancelled, failed or blocked, ordered by completion time (not archive
+time), among runs with the same `owner/repo#N` ticket and project. Its readers narrow
+those runs first: the workspace pipeline and PR-rule continuity to one principal
+owner, retained reviewer sessions to one session owner, runner and lineage, and a
+request to one lineage (`reviewId`) and one intake owner and profile, where a
+first-time intake falls back to the latest manual run. Retention keeps a run when it
+is the selection in the narrowest such view that still contains it; any wider view
+selects a run no older. A cancelled re-review without a result, or an older review
 archived later, does not take the hold. The same runs stay held while the PR's state
-is unknown: its repository's open PRs could not be read or the list reached the read
-limit. Every other run on the PR, including older reviews and development, fix-bug
-and `pr-complete` runs, follows the age rule.
+is unknown: its repository's open PRs could not be read, the list reached the read
+limit, or the ticket names no repository. A PR in the live open list counts as open
+even when the run recorded it merged or closed. Every other run on the PR, including
+older reviews and development, fix-bug and `pr-complete` runs, follows the age rule.
+The ticket carries no GitHub host, so two hosts with the same `owner/repo#N` share
+one chain, as warm review does; each held run still uses its own PR's state.
 
-A follow-up run (`review-pr`, `pr-complete` or `update-branch` with a `parentRunId`)
-that is not done, cancelled or archived holds every run of its family, as
-`getFamilyRuns` lists it: the parent, the family root and the other members it may
-inherit task artifacts from. Once the follow-up settles, the family follows the age
-rule again.
+An unsettled run holds what it still reads, whatever the PR state. A follow-up
+(`review-pr`, `pr-complete` or `update-branch` with a `parentRunId`) that is not
+done, cancelled or archived holds every run of its family, as `getFamilyRuns` lists
+it: the parent, the family root and the other members it may inherit task artifacts
+from. An in-flight `review-pr` run holds `repeatReviewContext.priorRunId` and
+`repeatReviewContext.session.priorRunId`. The pass computes these at its start and
+again from the current runs just before it moves each run, so a follow-up or review
+dispatched during the pass keeps its sources. Once the reader settles, its sources
+follow the age rule again. A follow-up dispatched later than that cannot inherit
+from an archived parent: writing its task fails and dispatch is refused until the
+parent's storage is restored from its archive manifest (below).
 
 Eligible task directories, task pins, session archives, local review workspaces,
 local native sessions and run bundles MUST move to `FARMSLOT_RUN_ARCHIVE_ROOT`.
