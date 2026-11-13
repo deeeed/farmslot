@@ -5,9 +5,10 @@ import { promisify } from 'node:util';
 import {
   collectPlaceholderTokens,
   type NativeWorkerSessionBinding,
+  type Run,
   type RunnerSessionUsage,
 } from '@farmslot/protocol';
-import { loadLiteLlmPrices } from '@farmslot/slot-config';
+import { loadLiteLlmPrices, type SessionUsageWindow } from '@farmslot/slot-config';
 
 import {
   loadMachinePool,
@@ -32,6 +33,50 @@ import { getRunnerSessionUsageProvider } from '../runners/registry.js';
 import { parseSessionUsageOutput, unavailableRunnerSessionUsage } from './session-usage-result.js';
 
 const execute = promisify(execFile);
+
+/** Retain this run's task leases; the node journal supplies accounting timestamps. */
+export function nativeRunUsageWindow(
+  run: Run,
+  session: Pick<
+    RunnerSessionUsage,
+    'runner' | 'runnerSessionId' | 'startedAt' | 'completedAt' | 'usageLeaseIds'
+  >,
+): SessionUsageWindow {
+  const starts = [
+    session.startedAt,
+    ...(run.sessionUsage ?? [])
+      .filter(
+        (row) => row.runner === session.runner && row.runnerSessionId === session.runnerSessionId,
+      )
+      .map((row) => row.startedAt),
+  ]
+    .filter((value): value is string => !!value && Number.isFinite(Date.parse(value)))
+    .sort((a, b) => Date.parse(a) - Date.parse(b));
+  const nativeLeaseIds = [
+    ...new Set([
+      ...(session.usageLeaseIds ?? []),
+      ...(run.sessionUsage ?? [])
+        .filter(
+          (row) => row.runner === session.runner && row.runnerSessionId === session.runnerSessionId,
+        )
+        .flatMap((row) => row.usageLeaseIds ?? []),
+      ...(run.agentContexts ?? [])
+        .filter(
+          (row) => row.runner === session.runner && row.runnerSessionId === session.runnerSessionId,
+        )
+        .flatMap((row) => [row.nativeSession, ...(row.nativeSessionHistory ?? [])])
+        .flatMap((binding) => (binding ? [binding.leaseId] : [])),
+    ]),
+  ];
+  if (!nativeLeaseIds.length)
+    throw new Error('Native run usage has no recorded task lease boundary');
+  // Lifecycle timestamps remain metadata. The node replaces them with journal boundaries.
+  return {
+    startedAt: starts[0] ?? run.createdAt,
+    completedAt: session.completedAt ?? undefined,
+    nativeLeaseIds,
+  };
+}
 type NativeSessionUsageVars =
   | SlotVars
   | (Pick<SlotVars, 'remoteRepo' | 'slotId'> & Partial<Pick<SlotVars, 'projectName' | 'domain'>>);
@@ -43,14 +88,30 @@ export interface NativeAgentUsageInput {
   runnerSessionId: string | null;
   runnerSessionPath?: string | null;
   nativeSession?: NativeSessionUsageIdentity & Partial<NativeWorkerSessionBinding>;
+  usageWindow?: SessionUsageWindow;
+}
+
+interface NativeAgentUsageResolution {
+  usage: RunnerSessionUsage;
+  usageWindow?: SessionUsageWindow;
 }
 
 export async function extractNativeAgentSessionUsage(
   input: NativeAgentUsageInput,
 ): Promise<RunnerSessionUsage> {
+  return (await resolveNativeAgentSessionUsage(input)).usage;
+}
+
+/** Keep node-resolved boundaries even when the original transcript has been pruned. */
+export async function resolveNativeAgentSessionUsage(
+  input: NativeAgentUsageInput,
+): Promise<NativeAgentUsageResolution> {
   const { runner, runnerSessionId, nativeSession, vars } = input;
-  const unavailable = (error: string) =>
-    unavailableRunnerSessionUsage({ runner, runnerSessionId, error });
+  let usageWindow: SessionUsageWindow | undefined;
+  const unavailable = (error: string): NativeAgentUsageResolution => ({
+    usage: unavailableRunnerSessionUsage({ runner, runnerSessionId, error }),
+    usageWindow,
+  });
   if (!nativeSession || !runnerSessionId)
     return unavailable('Agent session has no recorded native conversation identity');
   const provider = getRunnerSessionUsageProvider(runner);
@@ -63,6 +124,7 @@ export async function extractNativeAgentSessionUsage(
     cwd: vars.remoteRepo,
     slotId: vars.slotId,
     sessionPath: input.runnerSessionPath,
+    usageWindow: input.usageWindow,
     nativeSession: {
       sessionId: nativeSession.sessionId,
       ownerPrincipalId: nativeSession.ownerPrincipalId,
@@ -143,7 +205,31 @@ export async function extractNativeAgentSessionUsage(
       row.runnerSessionId !== runnerSessionId
     )
       return unavailable('Agent session accounting response identity changed');
+    if ('usageWindow' in row && row.usageWindow !== undefined) {
+      const window = row.usageWindow;
+      if (
+        !window ||
+        typeof window !== 'object' ||
+        'nativeLeaseIds' in window ||
+        !('startedAt' in window) ||
+        typeof window.startedAt !== 'string' ||
+        !Number.isFinite(Date.parse(window.startedAt)) ||
+        ('completedAt' in window &&
+          (typeof window.completedAt !== 'string' ||
+            !Number.isFinite(Date.parse(window.completedAt)) ||
+            Date.parse(window.completedAt) < Date.parse(window.startedAt)))
+      )
+        return unavailable('Invalid node-resolved usage window');
+      usageWindow = {
+        startedAt: window.startedAt,
+        ...('completedAt' in window && typeof window.completedAt === 'string'
+          ? { completedAt: window.completedAt }
+          : {}),
+      };
+    }
     if ('error' in row && typeof row.error === 'string') return unavailable(row.error);
+    if (input.usageWindow && !usageWindow)
+      return unavailable('Native accounting response lacks a resolved usage window');
     if (
       !('sessionPath' in row) ||
       typeof row.sessionPath !== 'string' ||
@@ -151,11 +237,19 @@ export async function extractNativeAgentSessionUsage(
       typeof row.output !== 'string'
     )
       return unavailable('Agent session accounting response lacks a transcript result');
-    return parseSessionUsageOutput(row.output, {
+    const usage = parseSessionUsageOutput(row.output, {
       runner,
       runnerSessionId,
       runnerSessionPath: row.sessionPath,
     });
+    return {
+      usage: {
+        ...usage,
+        ...(input.usageWindow ? { startedAt: input.usageWindow.startedAt } : {}),
+        scope: input.usageWindow ? 'run-delta' : 'session-total',
+      },
+      usageWindow,
+    };
   } catch (error) {
     // Supporting accounting must not change lifecycle outcomes when history is unavailable.
     return unavailable(error instanceof Error ? error.message : String(error));

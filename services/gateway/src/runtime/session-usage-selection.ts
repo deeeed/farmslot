@@ -141,6 +141,20 @@ export function sessionUsageContributions(runs: readonly Run[]): Map<string, Run
   )) {
     const contributions: RunnerSessionUsage[] = [];
     for (const row of runSessionUsageReceipts(run)) {
+      if (row.scope === 'run-delta') {
+        const key = sessionUsageKey(row);
+        if (key) {
+          const baseline = { ...seen.get(key) };
+          for (const field of counters) {
+            const value = row[field];
+            if (typeof value === 'number' && Number.isFinite(value))
+              baseline[field] = (baseline[field] ?? 0) + value;
+          }
+          seen.set(key, baseline);
+        }
+        contributions.push(row);
+        continue;
+      }
       const key = sessionUsageKey(row);
       const previous = key ? seen.get(key) : undefined;
       const highWater = { ...previous };

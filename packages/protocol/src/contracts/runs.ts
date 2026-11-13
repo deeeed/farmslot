@@ -697,6 +697,8 @@ export interface RunnerSessionUsage {
     import('./agents.js').NativeWorkerSessionBinding,
     'sessionId' | 'ownerPrincipalId' | 'executionNodeId' | 'stateDirectory'
   >;
+  /** All node-owned task leases contributing to this run's conversation receipt. */
+  usageLeaseIds?: string[];
   startedAt?: string | null;
   completedAt?: string | null;
   durationMs?: number | null;
@@ -718,8 +720,8 @@ export interface RunnerSessionUsage {
   costUsd?: number | null;
   measuredAt: string;
   source: 'runner-transcript' | 'provider-response' | 'unavailable';
-  /** What this measurement covers. `session-total` is the runner transcript total at measurement time. */
-  scope?: 'session-total';
+  /** Transcript total at measurement time, or usage first observed within the owning run. */
+  scope?: 'session-total' | 'run-delta';
   error?: string;
 }
 

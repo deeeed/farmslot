@@ -5,6 +5,7 @@ import type { Run, RunnerSessionUsage } from '@farmslot/protocol';
 
 import { buildFamilyObservabilityTokenSummary } from '../family-observability/token-summary.js';
 import { makeRun } from '../run-completion/test-fixtures.js';
+import { buildTokenSummary } from '../run-engine/gate-summary.js';
 
 import {
   allRunSessionUsageReceipts,
@@ -93,3 +94,31 @@ for (const cost of [0, 0.25])
     assert.equal(summary.runsWithMetrics, 1);
     assert.equal(source.sessionUsage![0].totalTokens, null);
   });
+
+test('native run deltas add across resumes without a second family-level subtraction', () => {
+  const cold = run('cold', 1, 100, 1);
+  const warm = run('warm', 2, 20, 0.2);
+  const resumedAgain = run('resumed-again', 3, 10, 0.1);
+  warm.sessionUsage![0].scope = 'run-delta';
+  resumedAgain.sessionUsage![0].scope = 'run-delta';
+  const contributions = sessionUsageContributions([cold, warm, resumedAgain]);
+  assert.equal(sum(contributions.get('warm')!, 'totalTokens'), 20);
+  assert.equal(sum(contributions.get('warm')!, 'costUsd'), 0.2);
+  assert.equal(sum([...contributions.values()].flat(), 'totalTokens'), 130);
+  assert.equal(sum([...contributions.values()].flat(), 'costUsd'), 1.3);
+});
+
+test('later session totals absorb preceding run deltas in family and gate accounting', () => {
+  const cold = run('cold', 1, 100, 1);
+  const warm = run('warm', 2, 20, 0.2);
+  const rollback = run('rollback', 3, 130, 1.3);
+  for (const source of [warm, rollback]) source.flowType = 'pr-complete';
+  warm.sessionUsage![0].scope = 'run-delta';
+  const family = [rollback, warm, cold];
+  const contributions = sessionUsageContributions(family);
+  assert.equal(sum(contributions.get('rollback')!, 'totalTokens'), 10);
+  assert.ok(Math.abs(sum(contributions.get('rollback')!, 'costUsd') - 0.1) < 1e-12);
+  assert.equal(buildFamilyObservabilityTokenSummary(family, cold.id).familyTotalTokens, 130);
+  assert.equal(buildTokenSummary(cold, family).familyTotalTokens, 130);
+  assert.equal(buildTokenSummary(cold, family).familyCostUsd, 1.3);
+});

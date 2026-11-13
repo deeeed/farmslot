@@ -247,3 +247,53 @@ test('local accounting uses pool LiteLLM pricing environment and preserves preci
   );
   assert.equal(recovered.costReason, 'local, unpriced');
 });
+
+test('one missing native boundary retains successful sibling session receipts', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'partial-worker-usage-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const runnerSessionPath = path.join(root, 'valid.jsonl');
+  await writeFile(
+    runnerSessionPath,
+    JSON.stringify({
+      type: 'message',
+      message: {
+        role: 'assistant',
+        model: 'fixture',
+        usage: { input: 20, output: 5, cost: { total: 0.1 } },
+      },
+    }) + '\n',
+  );
+  t.mock.method(piSessionUsageProvider, 'recoverSessions', async () => [
+    {
+      contextId: 'missing',
+      runnerSessionId: 'missing',
+      runnerSessionPath: path.join(root, 'missing.jsonl'),
+    },
+    { contextId: 'valid', runnerSessionId: 'valid', runnerSessionPath },
+  ]);
+  const run = makeRun({
+    slotId: 'fixture-slot',
+    metrics: { nudgeCount: 0, runner: 'pi', model: 'fixture' },
+  });
+  run.sessionUsage = [
+    {
+      runner: 'pi',
+      runnerSessionId: 'missing',
+      source: 'unavailable',
+      measuredAt: run.createdAt,
+      nativeSession: {
+        sessionId: 'host',
+        ownerPrincipalId: 'owner',
+        executionNodeId: 'fixture-node',
+      },
+    },
+  ];
+  const receipts: import('@farmslot/protocol').RunnerSessionUsage[] = [];
+  const result = await extractRunWorkerSessionUsage(run, makeVars(), (_session, usage) =>
+    receipts.push(usage),
+  );
+  assert.equal(result?.source, 'unavailable');
+  assert.equal(receipts.length, 2);
+  assert.match(receipts[0].error ?? '', /task lease boundary/);
+  assert.equal(receipts[1].totalTokens, 25);
+});

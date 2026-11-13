@@ -55,7 +55,40 @@ mock.module('../runners/native/node.js', {
     },
   },
 });
-const { extractNativeAgentSessionUsage } = await import('./native-session-usage.js');
+const { extractNativeAgentSessionUsage, nativeRunUsageWindow } =
+  await import('./native-session-usage.js');
+
+test('native run accounting keeps the earliest conversation launch through retries', async () => {
+  const { makeRun } = await import('../run-completion/test-fixtures.js');
+  const run = makeRun({ id: 'queued-run', createdAt: '2026-01-01T00:00:00Z' });
+  run.sessionUsage = [
+    {
+      runner: 'claude',
+      runnerSessionId: 'conversation',
+      startedAt: '2026-01-02T00:00:00Z',
+      usageLeaseIds: ['first-lease'],
+      measuredAt: '2026-01-02T00:01:00Z',
+      source: 'runner-transcript',
+    },
+  ];
+  assert.deepEqual(
+    nativeRunUsageWindow(run, {
+      runner: 'claude',
+      runnerSessionId: 'conversation',
+      startedAt: '2026-01-02T00:02:00Z',
+      usageLeaseIds: ['retry-lease'],
+    }),
+    {
+      startedAt: '2026-01-02T00:00:00Z',
+      completedAt: undefined,
+      nativeLeaseIds: ['retry-lease', 'first-lease'],
+    },
+  );
+  assert.throws(
+    () => nativeRunUsageWindow(run, { runner: 'claude', runnerSessionId: 'different' }),
+    /no recorded task lease boundary/,
+  );
+});
 
 test('native accounting follows the recorded reviewer owner/node rather than the producing slot', async () => {
   for (const runner of ['claude', 'codex']) {

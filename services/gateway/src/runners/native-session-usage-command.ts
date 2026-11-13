@@ -1,5 +1,5 @@
 import type { NativeWorkerSessionBinding } from '@farmslot/protocol';
-import type { PiModelCostMetadata } from '@farmslot/slot-config';
+import type { PiModelCostMetadata, SessionUsageWindow } from '@farmslot/slot-config';
 
 export type NativeSessionUsageIdentity = Pick<
   NativeWorkerSessionBinding,
@@ -19,6 +19,7 @@ export interface NativeSessionUsageRequest {
   liteLlmPrices?: Array<[string, PiModelCostMetadata]>;
   /** Explicit pool node for terminal sessions, which have no native host binding. */
   executionNodeId?: string;
+  usageWindow?: SessionUsageWindow;
 }
 
 const SESSION_USAGE_MODULE = String.raw`
@@ -62,18 +63,28 @@ function record(line, label) {
 async function contextFor(request) {
   const binding = request.nativeSession;
   const fallback = { home: homedir(), cwd: request.cwd };
-  if (!binding?.stateDirectory) return fallback;
+  if (!binding?.stateDirectory) {
+    if (request.usageWindow?.nativeLeaseIds) throw Error('Native usage journal is unavailable');
+    return fallback;
+  }
   const journal = path.resolve(binding.stateDirectory, '../../..', 'sessions', binding.sessionId + '.journal');
   let stream;
   try { stream = createReadStream(journal); await new Promise((resolve, reject) => { stream.once('open', resolve); stream.once('error', reject); }); }
-  catch (error) { if (error.code === 'ENOENT') return fallback; throw error; }
+  catch (error) { if (error.code === 'ENOENT' && !request.usageWindow?.nativeLeaseIds) return fallback; throw error; }
   const lines = createInterface({ input: stream, crlfDelay: Infinity });
   let context;
   let matched;
+  const commands = new Map();
+  const submissions = [];
+  let conversation;
   try {
     for await (const line of lines) {
       const entry = record(line, 'Native journal');
       context = entry.context || context;
+      conversation = entry.info?.nativeSessionId || conversation;
+      for (const command of entry.commands || []) commands.set(command.commandId, command.leaseId);
+      if (conversation === request.runnerSessionId && entry.event?.type === 'command.submitted')
+        submissions.push(entry.event);
       if (entry.info && entry.info.nativeSessionId === request.runnerSessionId) {
         const info = entry.info;
         if (info.id !== binding.sessionId || info.ownerPrincipalId !== binding.ownerPrincipalId || info.executionNodeId !== binding.executionNodeId || info.runner !== request.runner)
@@ -83,6 +94,19 @@ async function contextFor(request) {
     }
   } finally { lines.close(); stream.destroy(); }
   if (!matched) throw Error('Native journal does not bind the recorded conversation');
+  if (request.usageWindow?.nativeLeaseIds) {
+    const leases = new Set(request.usageWindow.nativeLeaseIds);
+    const first = submissions.findIndex(event => leases.has(commands.get(event.commandId)));
+    if (first < 0) throw Error('Native usage journal has no submitted command for the recorded task leases');
+    const next = submissions.findIndex((event, index) => index > first && !leases.has(commands.get(event.commandId)));
+    if (next >= 0 && submissions.slice(next).some(event => leases.has(commands.get(event.commandId))))
+      throw Error('Native usage task leases are interleaved with another run');
+    const start = Date.parse(submissions[first].at);
+    const end = next < 0 ? undefined : Date.parse(submissions[next].at) - 1;
+    if (!Number.isFinite(start) || (end !== undefined && (!Number.isFinite(end) || end < start)))
+      throw Error('Native usage journal has invalid command timestamps');
+    matched.usageWindow = { startedAt: new Date(start).toISOString(), ...(end === undefined ? {} : { completedAt: new Date(end).toISOString() }) };
+  }
   return matched;
 }
 async function verifyConversation(file, request) {
@@ -103,7 +127,7 @@ async function verifyConversation(file, request) {
     throw Error('Transcript has no verifiable conversation identity');
   } finally { lines.close(); stream.destroy(); }
 }
-async function locate(request) {
+async function locate(request, context) {
   if (request.sessionPath) {
     try {
       const file = await realpath(request.sessionPath);
@@ -111,7 +135,6 @@ async function locate(request) {
       return file;
     } catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
-  const context = await contextFor(request);
   const home = context.home || homedir();
   if (path.basename(request.runnerSessionId) !== request.runnerSessionId || ['.', '..'].includes(request.runnerSessionId)) throw Error('Invalid recorded conversation id');
   const matches = new Set();
@@ -144,16 +167,21 @@ async function locate(request) {
 const measured = new Map();
 const results = [];
 for (const request of input) {
+  let usageWindow;
   try {
-    const file = await locate(request);
-    const key = JSON.stringify([request.provider, request.runnerSessionId, file, request.liteLlmPrices]);
+    const context = await contextFor(request);
+    usageWindow = context.usageWindow || request.usageWindow;
+    const file = await locate(request, context);
+    const key = JSON.stringify([request.provider, request.runnerSessionId, file, request.liteLlmPrices, usageWindow]);
     let output = measured.get(key);
     if (!output) {
-      output = await runSessionUsage({ repo: '', slotId: request.slotId, action: 'total', forcedPath: file, forcedRunner: request.runner, ...(request.liteLlmPrices ? { liteLlmPrices: new Map(request.liteLlmPrices) } : {}) });
+      output = await runSessionUsage({ repo: '', slotId: request.slotId, action: 'total', forcedPath: file, forcedRunner: request.runner, usageWindow, ...(request.liteLlmPrices ? { liteLlmPrices: new Map(request.liteLlmPrices) } : {}) });
+      if (usageWindow && !output.split('\n').includes('usage_window=' + JSON.stringify(usageWindow)))
+        throw Error('Installed accounting module did not apply the requested run usage window');
       measured.set(key, output);
     }
-    results.push({ key: request.key, runnerSessionId: request.runnerSessionId, sessionPath: file, output });
-  } catch (error) { results.push({ key: request.key, runnerSessionId: request.runnerSessionId, error: error.message }); }
+    results.push({ key: request.key, runnerSessionId: request.runnerSessionId, sessionPath: file, output, usageWindow });
+  } catch (error) { results.push({ key: request.key, runnerSessionId: request.runnerSessionId, error: error.message, usageWindow }); }
 }
 process.stdout.write(JSON.stringify(results));
 `;

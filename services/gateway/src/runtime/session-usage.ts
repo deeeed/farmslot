@@ -1,5 +1,5 @@
 import type { Run, RunnerSessionUsage } from '@farmslot/protocol';
-import { runSessionUsage } from '@farmslot/slot-config';
+import { runSessionUsage, type SessionUsageWindow } from '@farmslot/slot-config';
 
 import { loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot, isLocal } from '../core/exec.js';
@@ -13,6 +13,7 @@ import {
   registerContextSessionUsage,
   upsertSessionUsage,
 } from './agent-session-rows.js';
+import { nativeRunUsageWindow, resolveNativeAgentSessionUsage } from './native-session-usage.js';
 import {
   parseSessionUsageOutput,
   runnerUsageMetrics,
@@ -88,6 +89,7 @@ async function archivedSessionUsage(
   archived: string,
   session: Pick<RunnerSessionUsage, 'runnerSessionId' | 'runnerSessionPath'> = {},
   vars?: SlotVars,
+  usageWindow?: SessionUsageWindow,
 ): Promise<RunnerSessionUsage> {
   return parseSessionUsageOutput(
     await runSessionUsage({
@@ -97,6 +99,7 @@ async function archivedSessionUsage(
       forcedPath: archived,
       forcedRunner: run.metrics.runner,
       environment: { ...process.env, ...vars?.machineEnv },
+      usageWindow,
     }),
     { runner: run.metrics.runner, ...session },
   );
@@ -122,16 +125,66 @@ export async function extractRunWorkerSessionUsage(
   const slotVars = vars ?? (await loadSlotVars(slotId));
   const usages = await Promise.all(
     unique.map(async (session) => {
-      const usage = await extractRunnerSessionUsage({
+      const context = run.agentContexts?.find((row) => row.id === session.contextId);
+      const receipt = run.sessionUsage?.find(
+        (row) =>
+          row.runner === run.metrics.runner && row.runnerSessionId === session.runnerSessionId,
+      );
+      const nativeSession = receipt?.nativeSession ?? context?.nativeSession;
+      let usageWindow: SessionUsageWindow | undefined;
+      if (nativeSession) {
+        try {
+          usageWindow = nativeRunUsageWindow(run, {
+            runner: run.metrics.runner,
+            runnerSessionId: session.runnerSessionId,
+            startedAt:
+              receipt?.startedAt ?? context?.nativeSession?.launchRequestedAt ?? context?.startedAt,
+            completedAt: run.completedAt,
+          });
+        } catch (error) {
+          // A missing boundary is local to this conversation. Retain sibling receipts.
+          return unavailableRunnerSessionUsage({
+            runner: run.metrics.runner,
+            ...session,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      const input = {
         slotId,
         vars: slotVars,
         runner: run.metrics.runner,
         ...session,
-      });
+      };
+      let usage: RunnerSessionUsage;
+      if (nativeSession) {
+        const resolved = await resolveNativeAgentSessionUsage({
+          ...input,
+          runner: run.metrics.runner ?? '',
+          nativeSession,
+          usageWindow,
+        });
+        usage = resolved.usage;
+        usageWindow = resolved.usageWindow;
+        // No archive can safely attribute native usage without node-owned boundaries.
+        if (!usageWindow) return usage;
+      } else {
+        usage = await extractRunnerSessionUsage(input);
+      }
       if (!usage.error) return usage;
-      const archived = await provider?.recoverArchive?.(run, session);
-      if (!archived) return usage;
-      return archivedSessionUsage(run, archived, session, slotVars);
+      try {
+        const archived = await provider?.recoverArchive?.(run, session);
+        if (!archived) return usage;
+        const recovered = await archivedSessionUsage(run, archived, session, slotVars, usageWindow);
+        return { ...recovered, scope: usageWindow ? 'run-delta' : recovered.scope };
+      } catch (error) {
+        // Failed archive verification/accounting must not discard successful siblings.
+        return unavailableRunnerSessionUsage({
+          runner: run.metrics.runner,
+          ...session,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }),
   );
   usages.forEach((usage, index) => record?.(unique[index], usage));
@@ -200,6 +253,22 @@ export async function projectArchivedRunnerUsage(storedRun: Run): Promise<Run> {
       return workerUsage?.error
         ? { ...run, metrics: { ...run.metrics, sessionUsageError: workerUsage.error } }
         : run;
+    if (
+      run.transport === 'native' ||
+      run.agentContexts?.some(
+        (context) => context.nativeSession || context.nativeSessionHistory?.length,
+      ) ||
+      run.sessionUsage?.some((receipt) => receipt.nativeSession || receipt.usageLeaseIds?.length)
+    ) {
+      return {
+        ...run,
+        metrics: {
+          ...run.metrics,
+          sessionUsageError:
+            workerUsage?.error ?? 'Native run usage requires a resolved task boundary',
+        },
+      };
+    }
     const archived = await verifiedRunnerSessionArchivePath(run);
     if (!archived) {
       const reason =

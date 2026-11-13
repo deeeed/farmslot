@@ -135,6 +135,7 @@ test('warm receipts retain the whole observed conversation duration', async () =
     completedAt: '2026-11-05T00:02:00Z',
     durationMs: 120000,
     totalTokens: 100,
+    usageLeaseIds: ['first-lease'],
   };
   const later = {
     ...base,
@@ -143,11 +144,13 @@ test('warm receipts retain the whole observed conversation duration', async () =
     completedAt: '2026-11-05T00:05:00Z',
     durationMs: 60000,
     totalTokens: 200,
+    usageLeaseIds: ['retry-lease'],
   };
   const rows = upsertSessionUsage([base], later);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].durationMs, 300000);
   assert.equal(rows[0].totalTokens, 200);
+  assert.deepEqual(rows[0].usageLeaseIds, ['first-lease', 'retry-lease']);
 });
 
 test('a native reservation remains unavailable until its exact conversation arrives', async () => {

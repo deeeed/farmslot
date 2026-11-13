@@ -136,10 +136,15 @@ for (const proof of [false, true])
           diffHash: first.diffSha256,
         },
         usage: {
-          source: 'unavailable',
+          source: 'runner-transcript',
+          ...(proof
+            ? { scope: 'run-delta' }
+            : verdict === 'pass'
+              ? { scope: 'session-total' }
+              : {}),
           measuredAt: first.capturedAt,
-          costUsd: null,
-          error: 'Reviewer usage unavailable',
+          totalTokens: 20,
+          costUsd: 0.1,
         },
         attempts: [
           {
@@ -160,6 +165,11 @@ for (const proof of [false, true])
       assert.equal(cached?.result.verdict, verdict);
       assert.deepEqual(cached?.result.issues, result.issues);
       assert.deepEqual(cached?.result.usage, result.usage);
+      const invalid = JSON.parse(original.toString());
+      invalid.result.usage.scope = 'invalid';
+      await writeFile(receiptFile, JSON.stringify(invalid));
+      await assert.rejects(readEvalJudgeReceipt(getRun(run.id)!), /scope is invalid/);
+      await writeFile(receiptFile, original);
       if (proof) {
         await writeFile(
           receiptFile,
