@@ -6,6 +6,11 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.13.5 - 2026-11-13
+
+- Preserve literal source text and validation evidence in cooking task templates.
+- Update shared adapter/runtime dependencies for unchanged-call plan reuse.
+
 ## 0.13.4 - 2026-11-12
 
 - Republish against recipe-runner 0.46.13 so consumers load one copy of it, with the faster `status` on checkouts that hold many stale operation records.
