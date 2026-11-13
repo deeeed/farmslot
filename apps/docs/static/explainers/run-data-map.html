@@ -1,0 +1,1594 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Run Data Map</title>
+    <script>
+      // Before paint: ?theme=light|dark follows the docs site's color mode; ?embed=1 shows only the map.
+      (function () {
+        var q = new URLSearchParams(location.search),
+          root = document.documentElement;
+        var theme = q.get('theme');
+        if (theme === 'light' || theme === 'dark') root.setAttribute('data-theme', theme);
+        if (q.get('embed') === '1') root.classList.add('embed');
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+    />
+    <style>
+      /* Layout: one schematic "line map" of the farm on top (canvas, stepped by checkpoint), then reference sections set like an engineering handbook: tables, rules, known limitations. */
+      :root {
+        --paper: #f2f5f4;
+        --panel: #ffffff;
+        --ink: #142320;
+        --ink-soft: #4a5b57;
+        --rule: #d3dcd9;
+        --line: #9fb2ad;
+        --signal: #0d7a6a; /* push / live */
+        --checkpoint: #b8730a; /* moves only at a checkpoint */
+        --demand: #3d5fb8; /* on demand / when opened */
+        --never: #b0435a; /* not copied / gap */
+        --signal-wash: #dcefeb;
+        --checkpoint-wash: #f6ead4;
+        --demand-wash: #e1e8f7;
+        --never-wash: #f5e1e5;
+        --display: 'Archivo', 'Helvetica Neue', Arial, sans-serif;
+        --body: 'IBM Plex Sans', 'Helvetica Neue', Arial, sans-serif;
+        --mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+        --s-1: 0.8125rem;
+        --s0: 0.9375rem;
+        --s1: 1.0625rem;
+        --s2: 1.375rem;
+        --s3: 1.875rem;
+        --s4: 2.75rem;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme='light']) {
+          color-scheme: dark;
+          --paper: #0f1716;
+          --panel: #16211f;
+          --ink: #e3ece9;
+          --ink-soft: #9db0ab;
+          --rule: #2a3a37;
+          --line: #4d625d;
+          --signal: #3cc4ae;
+          --checkpoint: #e3a33c;
+          --demand: #8aa6f0;
+          --never: #ec7d94;
+          --signal-wash: #163430;
+          --checkpoint-wash: #362a14;
+          --demand-wash: #1d2846;
+          --never-wash: #3a1d25;
+        }
+      }
+      :root[data-theme='dark'] {
+        color-scheme: dark;
+        --paper: #0f1716;
+        --panel: #16211f;
+        --ink: #e3ece9;
+        --ink-soft: #9db0ab;
+        --rule: #2a3a37;
+        --line: #4d625d;
+        --signal: #3cc4ae;
+        --checkpoint: #e3a33c;
+        --demand: #8aa6f0;
+        --never: #ec7d94;
+        --signal-wash: #163430;
+        --checkpoint-wash: #362a14;
+        --demand-wash: #1d2846;
+        --never-wash: #3a1d25;
+      }
+      :root {
+        color-scheme: light;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      img {
+        max-width: 100%;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font: 400 var(--s0)/1.6 var(--body);
+        padding-left: max(16px, env(safe-area-inset-left, 0px));
+        padding-right: max(16px, env(safe-area-inset-right, 0px));
+      }
+      .wrap {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding-block: 40px 72px;
+        display: grid;
+        gap: 56px;
+      }
+      h1,
+      h2,
+      h3 {
+        font-family: var(--display);
+        text-wrap: balance;
+        margin: 0;
+        letter-spacing: -0.01em;
+      }
+      h1 {
+        font-size: var(--s4);
+        font-weight: 800;
+        line-height: 1.05;
+      }
+      h2 {
+        font-size: var(--s3);
+        font-weight: 700;
+        line-height: 1.15;
+      }
+      h3 {
+        font-size: var(--s1);
+        font-weight: 700;
+      }
+      p {
+        margin: 0;
+        max-width: 68ch;
+      }
+      code,
+      .mono {
+        font-family: var(--mono);
+        font-size: 0.86em;
+      }
+      .eyebrow {
+        font: 500 var(--s-1)/1 var(--mono);
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: var(--ink-soft);
+      }
+      header.top {
+        display: grid;
+        gap: 14px;
+      }
+      header.top p {
+        color: var(--ink-soft);
+        font-size: var(--s1);
+      }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 18px;
+        font: 500 var(--s-1)/1.3 var(--mono);
+      }
+      .legend span {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .legend i {
+        width: 22px;
+        height: 3px;
+        border-radius: 2px;
+        display: inline-block;
+      }
+      .legend .l-never i {
+        background: repeating-linear-gradient(90deg, var(--never) 0 5px, transparent 5px 9px);
+      }
+
+      /* Map */
+      .map {
+        display: grid;
+        gap: 16px;
+      }
+      .steps {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .steps button {
+        font: 500 var(--s-1)/1 var(--body);
+        color: var(--ink);
+        background: var(--panel);
+        border: 1px solid var(--rule);
+        border-radius: 999px;
+        padding: 9px 14px;
+        cursor: pointer;
+        display: inline-flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .steps button b {
+        font: 500 0.75rem/1 var(--mono);
+        color: var(--ink-soft);
+      }
+      .steps button[aria-pressed='true'] {
+        background: var(--ink);
+        color: var(--paper);
+        border-color: var(--ink);
+      }
+      .steps button[aria-pressed='true'] b {
+        color: var(--paper);
+        opacity: 0.7;
+      }
+      .steps button:focus-visible,
+      .ctl button:focus-visible {
+        outline: 2px solid var(--signal);
+        outline-offset: 2px;
+      }
+      .stage {
+        display: grid;
+        grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+        gap: 16px;
+        align-items: start;
+      }
+      .canvas-box {
+        background: var(--panel);
+        border: 1px solid var(--rule);
+        border-radius: 10px;
+        overflow-x: auto;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        min-width: 620px;
+        aspect-ratio: 1000 / 500;
+      }
+      .ctl {
+        display: flex;
+        gap: 8px;
+        padding: 10px 12px;
+        border-top: 1px solid var(--rule);
+        align-items: center;
+        min-width: 620px;
+      }
+      .ctl button {
+        font: 500 var(--s-1)/1 var(--body);
+        background: transparent;
+        color: var(--ink);
+        border: 1px solid var(--rule);
+        border-radius: 6px;
+        padding: 7px 12px;
+        cursor: pointer;
+      }
+      .ctl .hint {
+        margin-left: auto;
+        color: var(--ink-soft);
+        font: 400 var(--s-1)/1.3 var(--mono);
+      }
+      .detail {
+        background: var(--panel);
+        border: 1px solid var(--rule);
+        border-radius: 10px;
+        padding: 20px;
+        display: grid;
+        gap: 14px;
+      }
+      .detail h3 {
+        font-size: var(--s2);
+      }
+      .detail .when {
+        color: var(--ink-soft);
+      }
+      .detail ul {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 8px;
+      }
+      .detail li {
+        display: grid;
+        grid-template-columns: 10px 1fr;
+        gap: 10px;
+        align-items: baseline;
+      }
+      .detail li::before {
+        content: '';
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--k, var(--line));
+        transform: translateY(-1px);
+      }
+      .detail li.k-signal {
+        --k: var(--signal);
+      }
+      .detail li.k-checkpoint {
+        --k: var(--checkpoint);
+      }
+      .detail li.k-demand {
+        --k: var(--demand);
+      }
+      .detail li.k-never {
+        --k: var(--never);
+      }
+      .detail .size {
+        font-family: var(--mono);
+        font-size: 0.82em;
+        color: var(--ink-soft);
+      }
+      .detail .sub {
+        font: 600 var(--s-1)/1 var(--mono);
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--ink-soft);
+      }
+      .detail .refs {
+        font: 400 0.78rem/1.5 var(--mono);
+        color: var(--ink-soft);
+        word-break: break-word;
+      }
+      .gapnote {
+        background: var(--never-wash);
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-size: var(--s-1);
+      }
+
+      /* Rules */
+      .rules {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 0;
+        border-top: 2px solid var(--ink);
+      }
+      .rule {
+        padding: 18px 18px 18px 0;
+        border-bottom: 1px solid var(--rule);
+        display: grid;
+        gap: 6px;
+        align-content: start;
+      }
+      .rule .n {
+        font: 800 var(--s3)/1 var(--display);
+        color: var(--signal);
+      }
+      .rule p {
+        color: var(--ink-soft);
+        font-size: var(--s-1);
+      }
+
+      section {
+        display: grid;
+        gap: 18px;
+      }
+      section > p.lede {
+        color: var(--ink-soft);
+      }
+      .tbl {
+        overflow-x: auto;
+        border: 1px solid var(--rule);
+        border-radius: 10px;
+        background: var(--panel);
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        min-width: 720px;
+        font-size: var(--s-1);
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--rule);
+        vertical-align: top;
+      }
+      th {
+        font: 600 0.75rem/1.2 var(--mono);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--ink-soft);
+        background: var(--paper);
+      }
+      tr:last-child td {
+        border-bottom: 0;
+      }
+      td.num {
+        font-variant-numeric: tabular-nums;
+        font-family: var(--mono);
+        white-space: nowrap;
+      }
+      .pill {
+        display: inline-block;
+        font: 600 0.7rem/1 var(--mono);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        padding: 5px 8px;
+        border-radius: 999px;
+        white-space: nowrap;
+      }
+      .p-signal {
+        background: var(--signal-wash);
+        color: var(--signal);
+      }
+      .p-checkpoint {
+        background: var(--checkpoint-wash);
+        color: var(--checkpoint);
+      }
+      .p-demand {
+        background: var(--demand-wash);
+        color: var(--demand);
+      }
+      .p-never {
+        background: var(--never-wash);
+        color: var(--never);
+      }
+      .two {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 16px;
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--rule);
+        border-radius: 10px;
+        padding: 18px;
+        display: grid;
+        gap: 10px;
+        align-content: start;
+      }
+      .card ul {
+        margin: 0;
+        padding-left: 18px;
+        display: grid;
+        gap: 6px;
+      }
+      footer {
+        color: var(--ink-soft);
+        font-size: var(--s-1);
+        border-top: 1px solid var(--rule);
+        padding-top: 16px;
+      }
+      .full-link {
+        font: 500 var(--s-1)/1.3 var(--mono);
+        color: var(--demand);
+      }
+      @media (max-width: 860px) {
+        .stage {
+          grid-template-columns: 1fr;
+        }
+        h1 {
+          font-size: var(--s3);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          scroll-behavior: auto !important;
+        }
+      }
+      /* Embedded in the docs site: the map alone, on the page's own background. */
+      .embed body {
+        padding-left: 0;
+        padding-right: 0;
+      }
+      .embed .wrap {
+        padding-block: 0;
+        gap: 16px;
+      }
+      .embed .wrap > section:not(.map),
+      .embed footer,
+      .embed header.top h1,
+      .embed header.top p,
+      .embed .eyebrow.top-eyebrow {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="top">
+        <span class="eyebrow top-eyebrow">Farmslot · how run data moves</span>
+        <h1>Run Data Map</h1>
+        <p>
+          Where a run's data lives at each moment: on the slot, on the gateway, in the bundle store,
+          in the archive, and in each client's offline store. It also shows what moves between them,
+          when, how much, and what keeps it from moving too often. Every claim comes from the code,
+          and each panel lists the files it comes from. The full reference is
+          <a
+            class="full-link"
+            href="https://github.com/deeeed/farmslot/blob/main/docs/reference/run-data-sync.md"
+            >docs/reference/run-data-sync.md</a
+          >.
+        </p>
+        <div class="legend" aria-label="Line legend">
+          <span><i style="background: var(--signal)"></i>pushed live</span>
+          <span><i style="background: var(--checkpoint)"></i>moves at a checkpoint</span>
+          <span><i style="background: var(--demand)"></i>read on demand</span>
+          <span class="l-never"><i></i>not copied</span>
+        </div>
+      </header>
+
+      <section class="map" aria-label="Interactive map">
+        <div class="steps" role="group" aria-label="Moments in a run" id="steps"></div>
+        <div class="stage">
+          <div class="canvas-box">
+            <canvas
+              id="map"
+              width="1000"
+              height="500"
+              role="img"
+              aria-label="Map of slot, gateway, bundle store, archive and clients, with the flows for the selected moment"
+            ></canvas>
+            <div class="ctl">
+              <button id="prev" type="button">Previous</button>
+              <button id="next" type="button">Next</button>
+              <button id="play" type="button">Play all</button>
+              <span class="hint" id="hint">1 / 8</span>
+            </div>
+          </div>
+          <aside class="detail" id="detail" aria-live="polite"></aside>
+        </div>
+      </section>
+
+      <section>
+        <span class="eyebrow">The mental model</span>
+        <h2>Six rules that keep sync cheap</h2>
+        <div class="rules">
+          <div class="rule">
+            <span class="n">1</span>
+            <h3>Live means small</h3>
+            <p>
+              While a worker runs, only small things stream: checklist and signal files (whole file,
+              1 s debounce, skipped when the checkbox hash is unchanged), the terminal pane only
+              while someone watches it, native conversation deltas, and metrics every 30 s.
+            </p>
+          </div>
+          <div class="rule">
+            <span class="n">2</span>
+            <h3>Big things move at checkpoints</h3>
+            <p>
+              Artifacts, screenshots, videos and diffs stay on the slot until a checkpoint: the
+              terminal signal, completion, the gate package, or an explicit mirror refresh. A mirror
+              skips files whose size and hash are unchanged; <code>task-actions/</code> is copied
+              whole.
+            </p>
+          </div>
+          <div class="rule">
+            <span class="n">3</span>
+            <h3>A bundle is the record</h3>
+            <p>
+              Each capture becomes an immutable, digest-addressed bundle. Readers such as the
+              artifact route, reviews and replay read the bundle, never the slot or the mutable task
+              directory.
+            </p>
+          </div>
+          <div class="rule">
+            <span class="n">4</span>
+            <h3>Clients ask "what changed?" first</h3>
+            <p>
+              A client reads a list of versions, then fetches only the rows whose version moved.
+              Pushes carry a key, plus the entity body only when it changed and fits in 16 KiB.
+            </p>
+          </div>
+          <div class="rule">
+            <span class="n">5</span>
+            <h3>Paint from the store, then refresh</h3>
+            <p>
+              Each client keeps an offline store (SQLite: WASM in Command Center, native in
+              Companion). A screen paints from it before any request; only observed screens refetch,
+              each with a minimum interval between reads.
+            </p>
+          </div>
+          <div class="rule">
+            <span class="n">6</span>
+            <h3>Preload only what you'd open offline</h3>
+            <p>
+              In the background, clients fetch what a pending gate or an active run needs: details,
+              the diff, and both sides of touched files, keeping what fits per-item caps (diff 5
+              MiB, file 1 MiB, image 2 MiB). Everything else loads when opened.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <span class="eyebrow">Layer by layer</span>
+        <h2>What moves, when, and how much</h2>
+        <div class="tbl">
+          <table>
+            <thead>
+              <tr>
+                <th>What</th>
+                <th>Direction</th>
+                <th>When</th>
+                <th>Size / cap</th>
+                <th>Guard against over-sync</th>
+                <th>Where</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Checklist, SIGNAL, acceptance status, subtasks</td>
+                <td>slot → gateway</td>
+                <td><span class="pill p-signal">on change</span></td>
+                <td class="num">whole small file</td>
+                <td>content dedupe, 1 s debounce, checkbox hash</td>
+                <td>
+                  <code>capabilities/src/fs-watch.ts:58</code>,
+                  <code>gateway/src/tasks/watcher.ts:583</code>
+                </td>
+              </tr>
+              <tr>
+                <td>Terminal pane</td>
+                <td>slot → gateway → viewer</td>
+                <td><span class="pill p-demand">while viewed</span></td>
+                <td class="num">pane text, every 500 ms</td>
+                <td>sent only when the pane changed</td>
+                <td><code>runtime/tmux-stream.ts:89</code></td>
+              </tr>
+              <tr>
+                <td>Native conversation</td>
+                <td>node → gateway → viewer</td>
+                <td><span class="pill p-signal">pushed deltas</span></td>
+                <td class="num">≤ 400 rows / 832 KiB on open</td>
+                <td>snapshot once, then deltas</td>
+                <td><code>resources/native-conversations.ts:527</code></td>
+              </tr>
+              <tr>
+                <td>Fleet metrics, tmux workers</td>
+                <td>node → gateway</td>
+                <td><span class="pill p-signal">30 s / 2 s sample</span></td>
+                <td class="num">small</td>
+                <td>only changed snapshots sent</td>
+                <td>
+                  <code>server/route-method.ts:1654</code>,
+                  <code>node commands/tmux-worker-watch.ts:140</code>
+                </td>
+              </tr>
+              <tr>
+                <td>Artifact mirror (evidence, recipe artifacts, PR-body files, task actions)</td>
+                <td>slot → gateway</td>
+                <td><span class="pill p-checkpoint">signal, completion, gate, refresh</span></td>
+                <td class="num">512 KiB chunks, hash-verified</td>
+                <td>
+                  skip when size + remote hash match (task-actions/ copied whole); package caps
+                  checked first
+                </td>
+                <td>
+                  <code>run-completion/artifact-mirror.ts:394</code>,
+                  <code>core/slot-io.ts:489</code>
+                </td>
+              </tr>
+              <tr>
+                <td>Media (screenshots, video)</td>
+                <td>slot → bundle</td>
+                <td><span class="pill p-checkpoint">after bundle metadata commits</span></td>
+                <td class="num">copied once</td>
+                <td>fingerprinted on the slot, never staged in the mirror</td>
+                <td><code>run-completion/retained-artifacts.ts:108</code></td>
+              </tr>
+              <tr>
+                <td>Retained bundle</td>
+                <td>gateway → bundle store</td>
+                <td><span class="pill p-checkpoint">each capture</span></td>
+                <td class="num">immutable, digest-named</td>
+                <td>capture key reuses an identical bundle</td>
+                <td><code>run-bundle/src/retained.ts:2343</code></td>
+              </tr>
+              <tr>
+                <td>Task files on dispatch / resume</td>
+                <td>gateway → slot</td>
+                <td><span class="pill p-checkpoint">dispatch, resume</span></td>
+                <td class="num">TASK.md, inputs/, artifacts/</td>
+                <td>
+                  files already in the slot's artifacts/ are kept; TASK.md, assets/ and inputs/ are
+                  overwritten;
+                  <code>*.worker</code> files never go out
+                </td>
+                <td><code>run-engine/task-sync.ts:38</code></td>
+              </tr>
+              <tr>
+                <td>Node support bundle</td>
+                <td>gateway → node</td>
+                <td><span class="pill p-checkpoint">prepare, per command check</span></td>
+                <td class="num">content-hashed</td>
+                <td>
+                  held until a file stamp changes (checked ≤ every 2 s, 10 min max age); remote
+                  check cached 10 min
+                </td>
+                <td>
+                  <code>node-support/remote-command.ts:181</code>,
+                  <code>node-support/ensure.ts:244</code>
+                </td>
+              </tr>
+              <tr>
+                <td>Storage archive</td>
+                <td>gateway → storage archive</td>
+                <td><span class="pill p-checkpoint">hourly pass</span></td>
+                <td class="num">task dir, bundle, sessions</td>
+                <td>
+                  settled for the retention period (default 7 days), no run in the family on an open
+                  or unknown PR, not read by an unsettled follow-up, no keep tag, slot not held
+                </td>
+                <td><code>runs/retention.ts:66</code>, <code>runs/storage-archive.ts:197</code></td>
+              </tr>
+              <tr>
+                <td>Entity pushes (fleet, machines, PR list)</td>
+                <td>gateway → clients</td>
+                <td><span class="pill p-signal">on change, coalesced</span></td>
+                <td class="num">body only if ≤ 16 KiB</td>
+                <td>200 ms coalescing for busy families</td>
+                <td>
+                  <code>gateway revisions.ts:206</code>, <code>client-cache/keys.ts:114</code>
+                </td>
+              </tr>
+              <tr>
+                <td>Run list</td>
+                <td>gateway → clients</td>
+                <td><span class="pill p-demand">observed, ≥ 30 s apart</span></td>
+                <td class="num">versions, then changed rows</td>
+                <td>versions first, ids only for moved rows</td>
+                <td><code>client-cache/run-list-versions.ts:158</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <span class="eyebrow">Diffs</span>
+        <h2>What a diff carries, by file type</h2>
+        <p class="lede">
+          Four producers write diffs. The worker diff (<code>artifacts/diff.txt</code>, capped at 50
+          MiB, otherwise dropped with a reason) is local git, source-filtered, with binary patches.
+          The review input is GitHub's per-file patches, source-filtered and kept as a display-only
+          snapshot. The gate review diff's committed part and the live <code>git.diff</code> RPC are
+          unfiltered; the gate's uncommitted part is produced like the worker diff. That is why file
+          counts can differ between views. The source filter allows about 60 source extensions and
+          common build files (Dockerfile, Makefile, Gemfile and similar).
+        </p>
+        <div class="tbl">
+          <table>
+            <thead>
+              <tr>
+                <th>File type</th>
+                <th>Worker diff</th>
+                <th>Review input (GitHub)</th>
+                <th>Gate committed part, live git.diff</th>
+                <th>Client prefetch</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Allowlisted source text</td>
+                <td>full hunks</td>
+                <td>GitHub's hunks</td>
+                <td>full hunks</td>
+                <td>diff + both sides, file ≤ 1 MiB</td>
+              </tr>
+              <tr>
+                <td>Lockfiles (yarn.lock, package-lock, pnpm-lock, Cargo/Gemfile/Podfile.lock)</td>
+                <td>left out of text and stats</td>
+                <td>left out</td>
+                <td>included</td>
+                <td>as text, if in the diff</td>
+              </tr>
+              <tr>
+                <td>Images, video, archives</td>
+                <td>left out</td>
+                <td>left out</td>
+                <td>"Binary files differ" line</td>
+                <td>skipped; gate evidence images ≤ 2 MiB fetched separately</td>
+              </tr>
+              <tr>
+                <td>Binary bytes under a text extension (e.g. binary .plist)</td>
+                <td>base85 binary patch, counts toward the 50 MiB cap</td>
+                <td>usually no patch from GitHub, so a placeholder line</td>
+                <td>"Binary files differ" line</td>
+                <td>skipped before any git.show request</td>
+              </tr>
+              <tr>
+                <td>Generated files</td>
+                <td>
+                  no special handling; projects add rules via
+                  <code>diff_analysis.source_filter</code>
+                </td>
+                <td>same filter</td>
+                <td>included</td>
+                <td>as text</td>
+              </tr>
+              <tr>
+                <td>Renames</td>
+                <td>normalized <code>{a => b}</code> in stats, 50% similarity</td>
+                <td>shown under the new path</td>
+                <td>git.diff passes the old path per file</td>
+                <td>both sides</td>
+              </tr>
+              <tr>
+                <td>Submodules</td>
+                <td>gitlink only</td>
+                <td>as GitHub reports it</td>
+                <td>gitlink only</td>
+                <td>skipped</td>
+              </tr>
+              <tr>
+                <td>Untracked ignored files (.env)</td>
+                <td>never listed</td>
+                <td>n/a (commits only)</td>
+                <td>never listed</td>
+                <td>never listed</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="lede">
+          Ignore rules apply to untracked files only. A tracked file that matches an ignore rule
+          appears in every diff like any other tracked file.
+        </p>
+        <p class="mono" style="font-size: var(--s-1); color: var(--ink-soft)">
+          Refs: core/source-diff-filter.ts:7-92, run-engine/diff-artifacts.ts:101,433-851,1035-1053,
+          review/snapshots.ts:272-307, methods/git.ts:104-683, client-cache/prefetch.ts:479-645,
+          client-cache/content.ts:21-180
+        </p>
+      </section>
+
+      <section>
+        <span class="eyebrow">Clients</span>
+        <h2>Preloaded in the background vs loaded when opened</h2>
+        <div class="two">
+          <div class="card">
+            <span class="pill p-signal" style="justify-self: start">background</span>
+            <ul>
+              <li>
+                <b>Run details</b> (<code>run.get</code>) for listed runs on unmetered networks,
+                otherwise pending gates and active runs only. Budget 64 MiB.
+              </li>
+              <li>
+                <b>Pending gates:</b> the package diff (stored only if ≤ 5 MiB), base files via
+                batched <code>git.show</code> (4 MiB per page, 1 MiB per file), evidence images ≤ 2
+                MiB.
+              </li>
+              <li>
+                <b>Active runs</b> on a slot: the worktree diff plus untracked files, always read;
+                base files only when the diff is ≤ 5 MiB. A head check runs at most once a minute
+                and only while a view watches that slot.
+              </li>
+              <li><b>Review rounds:</b> each round's metadata, review diff and fix diff.</li>
+              <li>
+                <b>Companion on LAN only:</b> gate videos and large images, up to 400 MiB in total.
+              </li>
+              <li>
+                Two at a time, foreground and connected only, never on a timer. Prefetch uses at
+                most half the store (2 GiB Command Center, 500 MiB Companion) and gives way to
+                anything the user opened.
+              </li>
+            </ul>
+          </div>
+          <div class="card">
+            <span class="pill p-demand" style="justify-self: start">when opened</span>
+            <ul>
+              <li>Files over 1 MiB or binary, images over 2 MiB.</li>
+              <li>
+                Base files of diffs over 5 MiB. The diff itself may already have downloaded in the
+                background: the cap is checked after it arrives. For a gate it decides whether the
+                diff is stored; for an active run it gates only the base files.
+              </li>
+              <li>Command Center videos.</li>
+              <li>
+                <code>artifacts/diff.txt</code> and the iteration diff (prefetch reads the gate
+                package diff or the live diff instead).
+              </li>
+              <li>
+                Logs, terminal history and native transcripts (bounded to 400 rows / 832 KiB on
+                open).
+              </li>
+              <li>Base files for warm snapshots and GitHub PR snapshots.</li>
+            </ul>
+            <p style="font-size: var(--s-1); color: var(--ink-soft)">
+              The written rule is Content rules 1–6 and Prefetch rules 1–6 in
+              <code>docs/reference/gateway-change-notifications.md</code>, and ADR-071 with
+              amendments 1 and 2.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <span class="eyebrow">Storage</span>
+        <h2>Lifecycle of a run's bytes</h2>
+        <p class="lede">
+          There are two different "archives". <b>Run.archive</b> is an operator action that moves
+          the run <em>record</em> to <code>.runs/archive/</code>; records are kept forever. The
+          <b>storage archive</b> is the hourly pass that moves a settled run's <em>bytes</em> (task
+          dir, bundle, native sessions, session archives) to
+          <code>FARMSLOT_RUN_ARCHIVE_ROOT</code> and deletes recreatable pins and review workspaces.
+          A run's bytes move once it has been settled for the retention period (<code
+            >runBundleRetention.runRetentionDays</code
+          >
+          in <code>run-bundle-retention.json</code>, default 7 days; see
+          <a
+            class="full-link"
+            href="https://github.com/deeeed/farmslot/blob/main/docs/adr/039-run-portable-bundles.md#amendment-8-2026-11-13-seven-day-retention-for-runs-not-on-an-open-pr"
+            >ADR-039 Amendment 8</a
+          >), has no <code>keep</code> tag and holds no slot. Every run on an open PR, or whose PR
+          state is unknown, is kept whatever its age, together with its run family. An unsettled
+          follow-up keeps its run family, and an in-flight review keeps the prior run it reads.
+        </p>
+      </section>
+
+      <section>
+        <span class="eyebrow">Known limitations</span>
+        <h2>Where it syncs too much, or loses data</h2>
+        <p class="lede">
+          Structural gaps in the current code, each checked against the file it cites.
+        </p>
+        <div class="tbl">
+          <table>
+            <thead>
+              <tr>
+                <th>Limitation</th>
+                <th>Effect</th>
+                <th>Where</th>
+              </tr>
+            </thead>
+            <tbody id="gaps"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer>
+        Sources: the gateway, node and client code, with file references in each panel. The
+        canonical reference, with every table and code reference, is
+        <a
+          class="full-link"
+          href="https://github.com/deeeed/farmslot/blob/main/docs/reference/run-data-sync.md"
+          >docs/reference/run-data-sync.md</a
+        >.
+      </footer>
+    </div>
+
+    <script>
+      const ST = {
+        slot: { x: 120, y: 120, w: 180, h: 70, label: 'Slot', sub: 'worker + worktree' },
+        other: {
+          x: 120,
+          y: 380,
+          w: 180,
+          h: 70,
+          label: 'Another slot / node',
+          sub: 'follow-up run',
+        },
+        gw: { x: 440, y: 250, w: 210, h: 120, label: 'Gateway', sub: 'run store · task dir' },
+        bundles: {
+          x: 730,
+          y: 110,
+          w: 170,
+          h: 70,
+          label: 'Bundle store',
+          sub: 'immutable, by digest',
+        },
+        archive: {
+          x: 900,
+          y: 250,
+          w: 150,
+          h: 70,
+          label: 'Storage archive',
+          sub: 'settled ≥ 7 days',
+        },
+        cc: { x: 660, y: 420, w: 170, h: 64, label: 'Command Center', sub: 'SQLite offline store' },
+        comp: { x: 880, y: 420, w: 150, h: 64, label: 'Companion', sub: 'SQLite offline store' },
+      };
+      const GAPS = {
+        diffAfter: {
+          gap: 'Worker diff files are written after the completion capture',
+          effect:
+            'diff.txt, diff-stat.json and session metrics stay in the mutable task dir on the normal path; the bundle can lack them or hold an earlier copy',
+          where:
+            'post-dispatch-steps.ts:1885 vs :681 and run-completion/orchestrator.ts:1201; finalize-step.ts:316',
+        },
+        archiveRead: {
+          gap: 'No archive read-back after the storage pass',
+          effect:
+            'once a bundle directory moves to the storage archive, artifact and report reads for that run fail; restore is manual',
+          where: 'run-bundle retained.ts:1723-1732, methods/filesystem.ts:857',
+        },
+        shortIds: {
+          gap: 'Gate review diff has abbreviated blob ids',
+          effect:
+            "prefetch can't match files it already holds, so base files are sent again and rebuilt new sides are dropped",
+          where: 'review/snapshots.ts:297, client-cache/prefetch.ts:440,479,513',
+        },
+        decisions: {
+          gap: 'decision.list has no versions path',
+          effect: "each read returns the whole list; Companion's query has no minimum interval",
+          where: 'server/route-method.ts:1431, companion gateway-run-sync.ts:53',
+        },
+        artifactOpen: {
+          gap: 'Artifacts re-download on every open',
+          effect: 'no conditional request; files between 1 and 5 MiB are fetched but not stored',
+          where: 'client-cache/artifact-response.ts:61-123',
+        },
+        eager: {
+          gap: 'Artifact browser fetches every listed file, even in a closed panel',
+          effect:
+            'each file row downloads its file as a blob when gateway auth is set, videos included',
+          where: 'artifact-browser.ts:565, gateway-media-src.ts:139-197',
+        },
+        filters: {
+          gap: 'Diff producers filter differently',
+          effect:
+            'lockfiles and binaries appear in some views and not others; file counts can differ',
+          where: 'source-diff-filter.ts, review/snapshots.ts:297, methods/git.ts:477',
+        },
+      };
+      const STEPS = [
+        {
+          key: 'dispatch',
+          label: 'Dispatch',
+          title: 'Dispatch or resume on a slot',
+          when: 'When a run is dispatched, re-synced or resumed. The gateway owns the task; the slot gets a copy.',
+          flows: [
+            ['gw', 'slot', 'checkpoint', 'TASK.md · inputs/ · artifacts/'],
+            ['gw', 'slot', 'checkpoint', 'node support bundle (hash)'],
+            ['bundles', 'gw', 'checkpoint', 'restore own artifacts'],
+          ],
+          moves: [
+            [
+              'checkpoint',
+              'TASK.md, assets/, inputs/, artifacts/ and sidecars; the done marker goes last',
+              'node-link file ops, cp locally, else SSH',
+            ],
+            [
+              'checkpoint',
+              "The run's own artifacts are first restored from its bundle chain into the gateway task dir",
+              'verified bytes, never signals or verdicts',
+            ],
+            [
+              'checkpoint',
+              'Node support files: a content-hashed bundle; uploaded only if the node lacks that hash',
+              'full checksum at prepare',
+            ],
+          ],
+          guards:
+            "Files already in the slot's artifacts/ are kept; TASK.md, assets/ and inputs/ are overwritten. *.worker files never go out. The support bundle is collected again only when a file stamp changes (checked at most every 2 s, 10 min backstop).",
+          refs: 'run-engine/task-sync.ts:38-139 · restore-task-artifacts.ts:120 · node-support/ensure.ts:244-470 · remote-command.ts:181-270',
+          gaps: [],
+        },
+        {
+          key: 'working',
+          label: 'Working',
+          title: 'While the worker runs',
+          when: 'The whole run. Only small, changing files stream; nothing big moves.',
+          flows: [
+            ['slot', 'gw', 'signal', 'checklist · SIGNAL · status'],
+            ['slot', 'gw', 'demand', 'terminal pane (if viewed)'],
+            ['gw', 'cc', 'signal', 'key + body ≤ 16 KiB'],
+            ['gw', 'comp', 'signal', 'key + body ≤ 16 KiB'],
+            ['slot', 'gw', 'never', 'artifacts · screenshots · diff'],
+          ],
+          moves: [
+            [
+              'signal',
+              'Checklist, SIGNAL, acceptance status, subtasks: the whole file on change',
+              'node fs watch, or chokidar for local slots',
+            ],
+            [
+              'demand',
+              'Terminal pane every 500 ms, only while someone views it, and only when it changed',
+              'tmux capture',
+            ],
+            [
+              'signal',
+              'Native conversation deltas, metrics every 30 s, tmux worker samples every 2 s when changed',
+              'pushed',
+            ],
+            [
+              'never',
+              'Artifacts, screenshots, videos, the git diff',
+              'stay on the slot until a checkpoint',
+            ],
+          ],
+          guards:
+            'Content dedupe, a 1 s debounce, and a checkbox hash that skips the broadcast when nothing visible changed. Clients get pushed keys; a body rides along only when it changed and fits 16 KiB.',
+          refs: 'capabilities/src/fs-watch.ts:58-98 · tasks/watcher.ts:175,583-698,1277 · runtime/tmux-stream.ts:89-117 · gateway revisions.ts:206-228',
+          gaps: [],
+        },
+        {
+          key: 'signal',
+          label: 'Signal',
+          title: 'Worker signals done: first capture',
+          when: 'The monitor sees a terminal SIGNAL (60 s poll as fallback).',
+          flows: [
+            ['slot', 'gw', 'checkpoint', 'mirror: changed files'],
+            ['slot', 'bundles', 'checkpoint', 'media, direct'],
+            ['gw', 'bundles', 'checkpoint', 'bundle (digest)'],
+          ],
+          moves: [
+            [
+              'checkpoint',
+              'Mirror: evidence-manifest paths, recipe artifacts, PR-body files, QA closure, gate-review paths, task actions, TASK.md / CHECKLIST.md as *.worker',
+              '512 KiB chunks, hash-verified',
+            ],
+            [
+              'checkpoint',
+              'Media is fingerprinted on the slot and copied straight into the bundle after its metadata commits',
+              'never staged in the mirror',
+            ],
+            [
+              'checkpoint',
+              "Bundle: manifest + run record + task files, named by the manifest's SHA-256; the run gets a ref to it",
+              'immutable',
+            ],
+          ],
+          guards:
+            'The mirror skips a file when size and remote hash match, except task-actions/, which is copied whole. An identical capture key reuses the existing bundle.',
+          refs: 'run-completion/output.ts:265-397 · artifact-mirror.ts:394-719 · core/slot-io.ts:408,489 · retained-artifacts.ts:108-147,598 · run-bundle retained.ts:2343-2658',
+          gaps: [],
+        },
+        {
+          key: 'complete',
+          label: 'Complete + gate',
+          title: 'Completion and the gate package',
+          when: 'The COMPLETE step, then the gate. The diff is written here, after the captures.',
+          flows: [
+            ['slot', 'gw', 'checkpoint', 'review inputs · mirror again'],
+            ['gw', 'bundles', 'checkpoint', 'gate package + its diff'],
+            ['gw', 'gw', 'never', 'diff.txt written after capture'],
+          ],
+          moves: [
+            [
+              'checkpoint',
+              'Review inputs (inputs/diff.txt, diff-stat.json, commit.json), then the completion pipeline captures again',
+              'second mirror walk',
+            ],
+            [
+              'checkpoint',
+              'Gate package: the review-snapshot diff is retained in a new bundle chained to the previous one',
+              'gatewayFiles',
+            ],
+            [
+              'never',
+              'artifacts/diff.txt, diff-stat.json and session-metrics.json are written after the last capture on the normal path',
+              'stay only in the mutable task dir',
+            ],
+          ],
+          guards:
+            'Unchanged files are not copied again; byte cost stays low, but each walk costs round trips.',
+          refs: 'post-dispatch-steps.ts:681,1754,1819,1874,1885 · orchestrator.ts:741-942,1201 · finalize-step.ts:316',
+          gaps: ['diffAfter'],
+        },
+        {
+          key: 'read',
+          label: 'Clients read',
+          title: 'Clients list and open runs',
+          when: 'A screen is opened, or a pushed key says something it shows has changed.',
+          flows: [
+            ['gw', 'cc', 'demand', 'versions → changed rows'],
+            ['gw', 'comp', 'demand', 'versions → changed rows'],
+            ['bundles', 'cc', 'demand', '/api/run-artifact'],
+            ['gw', 'cc', 'checkpoint', 'prefetch: gates, active runs'],
+          ],
+          moves: [
+            [
+              'demand',
+              'Run list: a versions read, then ids pages for changed rows only',
+              'observed screens, ≥ 30 s apart',
+            ],
+            [
+              'demand',
+              'Run detail: run.get on open; artifacts from the bundle through /api/run-artifact (ETag, Range)',
+              'bundle only, never the slot',
+            ],
+            [
+              'checkpoint',
+              'Prefetch for pending gates and active runs, within the caps',
+              'two at a time, foreground only',
+            ],
+          ],
+          guards:
+            'Paint from the offline store first; only observed screens refetch; prefetch never runs on a timer and gives way to what the user opened.',
+          refs: 'client-cache/run-list-versions.ts:158-216 · cache.ts:174,686-748 · methods/filesystem.ts:856-955 · client-cache/prefetch.ts:94-703',
+          gaps: ['shortIds', 'decisions', 'artifactOpen', 'eager', 'filters'],
+        },
+        {
+          key: 'followup',
+          label: 'Follow-up elsewhere',
+          title: 'PR-complete or a fix on another slot or node',
+          when: 'A follow-up flow is a new run with its own task dir, on any slot.',
+          flows: [
+            ['bundles', 'gw', 'checkpoint', "parent's retained bundle"],
+            ['gw', 'other', 'checkpoint', 'inputs/inherited/'],
+            ['slot', 'other', 'never', 'media · diffs · SIGNAL'],
+          ],
+          moves: [
+            [
+              'checkpoint',
+              "From the parent's bundle, on the gateway: TASK.md, CHECKLIST.md, report, learnings, recipe.json, task actions, recipe library, recipe-quality.json, recipe-shape-catalog.json, harness provenance, recipe-coverage.md; recipe.json, task actions and the recipe library are also seeded into the new run's artifacts/ and task-actions/",
+              'into inputs/inherited/',
+            ],
+            [
+              'checkpoint',
+              'Pushed to the new slot with the normal task copy',
+              'dispatch checkpoint',
+            ],
+            [
+              'never',
+              'Parent media, screenshots, video, recipe-run history, diffs, SIGNAL, session metrics',
+              'not copied',
+            ],
+          ],
+          guards:
+            'Code travels by git branch or PR, never as a file copy. Only the small, structured context is inherited.',
+          refs: 'family-observability/context.ts:95-167 · tasks/writer.ts:923,1582-1615 · run-engine/task-sync.ts:169-200',
+          gaps: [],
+        },
+        {
+          key: 'archive',
+          label: 'Retention',
+          title: 'Hourly retention moves the bytes',
+          when: '10 min after the gateway starts, then hourly. Only for runs that are done, cancelled or archived and settled for the retention period (default 7 days), with no keep tag and no held slot. Runs on an open or unknown PR, and their families, are kept whatever their age.',
+          flows: [
+            ['gw', 'archive', 'checkpoint', 'task dir · sessions'],
+            ['bundles', 'archive', 'checkpoint', 'bundle dir'],
+            ['archive', 'cc', 'never', 'no read-back'],
+          ],
+          moves: [
+            [
+              'checkpoint',
+              'Task dir, native sessions, session archives and the bundle directory move to the storage archive, journaled first, verified when copied across volumes',
+              'record keeps a Storage archive link',
+            ],
+            [
+              'checkpoint',
+              'Task pins and review workspaces are deleted (both can be recreated)',
+              'async rm',
+            ],
+            [
+              'never',
+              'Nothing serves reads from the archive; restore is manual',
+              'run record stays listed',
+            ],
+          ],
+          guards:
+            'Media under store pressure (≥ 85% of the store budget) moves first, oldest unpinned, down to 70%. Completed manifest entries are skipped on resume.',
+          refs: 'methods/run/retention.ts:57,184-407 · runs/retention.ts:12,66-184 · runs/storage-archive.ts:104-444 · run-bundle retained.ts:2045-2207',
+          gaps: ['archiveRead'],
+        },
+        {
+          key: 'offline',
+          label: 'Offline + reconnect',
+          title: 'A client goes offline, then reconnects',
+          when: 'Network loss, gateway restart, or a stale fleet.',
+          flows: [
+            ['gw', 'cc', 'demand', 'one versions read per screen'],
+            ['gw', 'comp', 'demand', 'one versions read per screen'],
+            ['gw', 'cc', 'signal', 'fleet stale → commands off'],
+          ],
+          moves: [
+            [
+              'demand',
+              'On start, the store paints up to 8 MiB of the most recently used queries before any request',
+              'marked stale',
+            ],
+            [
+              'demand',
+              'On reconnect: one versions read per observed collection, then only changed rows',
+              'no full refetch',
+            ],
+            [
+              'signal',
+              'If the fleet snapshot is older than 10 min it is shown as stale and slot commands are disabled; the refresh starts at 5 min',
+              'one marker move',
+            ],
+          ],
+          guards:
+            'Data stays on screen while stale. A stale-flag flip costs one versions read and no bodies.',
+          refs: 'client-cache/cache.ts:174,686-740,787-812,920-931 · protocol fleet/stale.ts:8 · fleet/freshness.ts:19 · slot-run-bindings.ts:98-105',
+          gaps: [],
+        },
+      ];
+
+      const canvas = document.getElementById('map');
+      const ctx = canvas.getContext('2d');
+      const reduceQuery = matchMedia('(prefers-reduced-motion: reduce)');
+      let reduce = reduceQuery.matches;
+      // One animation loop at most: a preference change cancels the pending frame first.
+      let frame = 0;
+      reduceQuery.addEventListener('change', (e) => {
+        reduce = e.matches;
+        cancelAnimationFrame(frame);
+        frame = 0;
+        if (reduce) draw(performance.now());
+        else frame = requestAnimationFrame(draw);
+      });
+      let cur = 0,
+        t0 = performance.now(),
+        playing = null;
+
+      function css(name) {
+        return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      }
+      function fit() {
+        const r = canvas.getBoundingClientRect(),
+          dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.round(r.width * dpr);
+        canvas.height = Math.round(r.width * 0.5 * dpr);
+        ctx.setTransform(canvas.width / 1000, 0, 0, canvas.height / 500, 0, 0);
+      }
+      function edgePoint(a, b) {
+        const dx = b.x - a.x,
+          dy = b.y - a.y;
+        const sx = a.w / 2 / Math.abs(dx || 1e-6),
+          sy = a.h / 2 / Math.abs(dy || 1e-6);
+        const s = Math.min(sx, sy);
+        return { x: a.x + dx * s, y: a.y + dy * s };
+      }
+      function rr(x, y, w, h, r) {
+        ctx.beginPath();
+        ctx.roundRect(x, y, w, h, r);
+      }
+      function draw(now) {
+        const colors = {
+          signal: css('--signal'),
+          checkpoint: css('--checkpoint'),
+          demand: css('--demand'),
+          never: css('--never'),
+        };
+        const ink = css('--ink'),
+          soft = css('--ink-soft'),
+          line = css('--line'),
+          panel = css('--panel'),
+          rule = css('--rule'),
+          paper = css('--paper');
+        ctx.clearRect(0, 0, 1000, 500);
+        ctx.fillStyle = panel;
+        ctx.fillRect(0, 0, 1000, 500);
+        const step = STEPS[cur];
+        const active = new Set(step.flows.flatMap((f) => [f[0], f[1]]));
+        // faint backbone
+        ctx.strokeStyle = rule;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([]);
+        [
+          ['slot', 'gw'],
+          ['other', 'gw'],
+          ['gw', 'bundles'],
+          ['gw', 'archive'],
+          ['bundles', 'archive'],
+          ['gw', 'cc'],
+          ['gw', 'comp'],
+        ].forEach(([a, b]) => {
+          ctx.beginPath();
+          ctx.moveTo(ST[a].x, ST[a].y);
+          ctx.lineTo(ST[b].x, ST[b].y);
+          ctx.stroke();
+        });
+        // flows
+        const pairCount = {};
+        const labels = [];
+        step.flows.forEach(([a, b, kind, label], i) => {
+          const A = ST[a],
+            B = ST[b],
+            c = colors[kind];
+          if (a === b) {
+            // a write inside the gateway
+            ctx.strokeStyle = c;
+            ctx.lineWidth = 2.5;
+            ctx.setLineDash([6, 5]);
+            ctx.beginPath();
+            ctx.arc(A.x, A.y - A.h / 2 - 22, 18, 0.15 * Math.PI, 0.85 * Math.PI, true);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.fillStyle = c;
+            ctx.font = "500 12px 'IBM Plex Mono', monospace";
+            ctx.textAlign = 'center';
+            ctx.fillText(label, A.x, A.y - A.h / 2 - 48);
+            return;
+          }
+          const k = [a, b].sort().join('-');
+          const n = (pairCount[k] = (pairCount[k] || 0) + 1) - 1;
+          // Parallel flows between the same stations spread apart, with labels at different points.
+          const total = step.flows.filter(
+            ([fa, fb]) => fa !== fb && [fa, fb].sort().join('-') === k,
+          ).length;
+          const p0 = edgePoint(A, B),
+            p1 = edgePoint(B, A);
+          const dx = p1.x - p0.x,
+            dy = p1.y - p0.y,
+            len = Math.hypot(dx, dy),
+            nx = -dy / len,
+            ny = dx / len;
+          const off = total > 1 ? (n - (total - 1) / 2) * 30 : 0;
+          const s = { x: p0.x + nx * off, y: p0.y + ny * off },
+            e = { x: p1.x + nx * off, y: p1.y + ny * off };
+          ctx.strokeStyle = c;
+          ctx.lineWidth = 2.5;
+          ctx.setLineDash(kind === 'never' ? [6, 5] : []);
+          ctx.beginPath();
+          ctx.moveTo(s.x, s.y);
+          ctx.lineTo(e.x, e.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          // arrowhead
+          const ang = Math.atan2(e.y - s.y, e.x - s.x);
+          ctx.fillStyle = c;
+          ctx.beginPath();
+          ctx.moveTo(e.x, e.y);
+          ctx.lineTo(e.x - 11 * Math.cos(ang - 0.4), e.y - 11 * Math.sin(ang - 0.4));
+          ctx.lineTo(e.x - 11 * Math.cos(ang + 0.4), e.y - 11 * Math.sin(ang + 0.4));
+          ctx.closePath();
+          ctx.fill();
+          if (kind === 'never') {
+            const m = { x: (s.x + e.x) / 2, y: (s.y + e.y) / 2 };
+            ctx.strokeStyle = c;
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.moveTo(m.x - 7, m.y - 7);
+            ctx.lineTo(m.x + 7, m.y + 7);
+            ctx.moveTo(m.x + 7, m.y - 7);
+            ctx.lineTo(m.x - 7, m.y + 7);
+            ctx.stroke();
+          } else {
+            // packets
+            const speed = kind === 'signal' ? 0.55 : kind === 'demand' ? 0.35 : 0.22;
+            const dots = kind === 'signal' ? 3 : 2;
+            for (let d = 0; d < dots; d++) {
+              const f = reduce
+                ? (d + 1) / (dots + 1)
+                : (((now - t0) / 1000) * speed + d / dots) % 1;
+              const px = s.x + (e.x - s.x) * f,
+                py = s.y + (e.y - s.y) * f;
+              ctx.fillStyle = c;
+              ctx.beginPath();
+              if (kind === 'checkpoint') {
+                ctx.rect(px - 5, py - 5, 10, 10);
+              } else {
+                ctx.arc(px, py, kind === 'signal' ? 3.5 : 5, 0, Math.PI * 2);
+              }
+              ctx.fill();
+            }
+          }
+          // label along the line (staggered for parallel flows), on the offset side
+          const t = total > 1 ? 0.3 + (0.4 * n) / (total - 1) : 0.5,
+            side = Math.sign(off || -1);
+          labels.push({
+            text: label,
+            color: c,
+            x: s.x + (e.x - s.x) * t + nx * 16 * side,
+            y: s.y + (e.y - s.y) * t + ny * 16 * side,
+          });
+        });
+        // stations
+        Object.entries(ST).forEach(([key, s]) => {
+          const on = active.has(key);
+          rr(s.x - s.w / 2, s.y - s.h / 2, s.w, s.h, 8);
+          ctx.fillStyle = on ? paper : panel;
+          ctx.fill();
+          ctx.lineWidth = on ? 2 : 1;
+          ctx.strokeStyle = on ? ink : line;
+          ctx.stroke();
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = on ? ink : soft;
+          ctx.font = (key === 'gw' ? '700 18px' : '700 15px') + ' Archivo, sans-serif';
+          ctx.fillText(s.label, s.x, s.y - (key === 'gw' ? 12 : 9));
+          ctx.fillStyle = soft;
+          ctx.font = "400 11.5px 'IBM Plex Mono', monospace";
+          ctx.fillText(s.sub, s.x, s.y + (key === 'gw' ? 14 : 12));
+        });
+        // flow labels last, so no station box covers them
+        ctx.font = "500 12px 'IBM Plex Mono', monospace";
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        labels.forEach(({ text, color, x, y }) => {
+          const tw = ctx.measureText(text).width + 10;
+          ctx.fillStyle = panel;
+          ctx.globalAlpha = 0.92;
+          ctx.fillRect(x - tw / 2, y - 9, tw, 18);
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = color;
+          ctx.fillText(text, x, y);
+        });
+        if (!reduce) frame = requestAnimationFrame(draw);
+      }
+      function renderDetail() {
+        const s = STEPS[cur];
+        const li = s.moves
+          .map(
+            ([k, text, size]) =>
+              `<li class="k-${k}"><span>${text} <span class="size">· ${size}</span></span></li>`,
+          )
+          .join('');
+        const gaps = s.gaps
+          .map(
+            (g) =>
+              `<div class="gapnote"><b>Known limitation:</b> ${GAPS[g].gap}. ${GAPS[g].effect}.</div>`,
+          )
+          .join('');
+        document.getElementById('detail').innerHTML = `
+    <span class="eyebrow">${cur + 1} of ${STEPS.length}</span>
+    <h3>${s.title}</h3><p class="when">${s.when}</p>
+    <span class="sub">What moves</span><ul>${li}</ul>
+    <span class="sub">Why it doesn't over-sync</span><p>${s.guards}</p>
+    ${gaps}
+    <span class="sub">Where in the code</span><p class="refs">${s.refs}</p>`;
+        document
+          .querySelectorAll('#steps button')
+          .forEach((b, i) => b.setAttribute('aria-pressed', String(i === cur)));
+        document.getElementById('hint').textContent = `${cur + 1} / ${STEPS.length}`;
+        if (reduce) draw(performance.now());
+      }
+      function go(i) {
+        cur = (i + STEPS.length) % STEPS.length;
+        renderDetail();
+      }
+      const stepsEl = document.getElementById('steps');
+      STEPS.forEach((s, i) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.id = 'step-' + s.key;
+        b.innerHTML = `<b>${i + 1}</b>${s.label}`;
+        b.onclick = () => {
+          stop();
+          go(i);
+        };
+        stepsEl.appendChild(b);
+      });
+      document.getElementById('prev').onclick = () => {
+        stop();
+        go(cur - 1);
+      };
+      document.getElementById('next').onclick = () => {
+        stop();
+        go(cur + 1);
+      };
+      function stop() {
+        if (playing) {
+          clearInterval(playing);
+          playing = null;
+          document.getElementById('play').textContent = 'Play all';
+        }
+      }
+      document.getElementById('play').onclick = () => {
+        if (playing) return stop();
+        document.getElementById('play').textContent = 'Pause';
+        playing = setInterval(() => go(cur + 1), 6000);
+      };
+      document.getElementById('gaps').innerHTML = Object.values(GAPS)
+        .map(
+          (g) => `<tr><td>${g.gap}</td><td>${g.effect}</td><td><code>${g.where}</code></td></tr>`,
+        )
+        .join('');
+      new ResizeObserver(() => {
+        fit();
+        if (reduce) draw(performance.now());
+      }).observe(canvas);
+      new MutationObserver(() => reduce && draw(performance.now())).observe(
+        document.documentElement,
+        { attributes: true, attributeFilter: ['data-theme'] },
+      );
+      // Embedded in the docs site (same origin): follow its color mode and report the content height.
+      // The parent sends its theme once it listens, so a theme message is also the cue to re-report.
+      if (window.parent !== window) {
+        window.addEventListener('message', (e) => {
+          if (
+            e.source !== window.parent ||
+            e.origin !== location.origin ||
+            !e.data ||
+            e.data.type !== 'run-data-map:theme'
+          )
+            return;
+          if (e.data.theme === 'light' || e.data.theme === 'dark')
+            document.documentElement.setAttribute('data-theme', e.data.theme);
+          report();
+        });
+        const report = () =>
+          window.parent.postMessage(
+            {
+              type: 'run-data-map:height',
+              height: Math.ceil(document.body.getBoundingClientRect().height),
+            },
+            location.origin,
+          );
+        new ResizeObserver(report).observe(document.body);
+        report();
+      }
+      fit();
+      renderDetail();
+      if (!reduce) frame = requestAnimationFrame(draw);
+      else draw(performance.now());
+    </script>
+  </body>
+</html>

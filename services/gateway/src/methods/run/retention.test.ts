@@ -23,10 +23,13 @@ import {
   type RunArtifactBundleRef,
   type RunDecision,
 } from '@farmslot/protocol';
+import { resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
+import { DEFAULT_RUN_RETENTION_DAYS } from '@farmslot/run-bundle';
 
+import { runBundleHome } from '../../run-completion/retained-artifacts.js';
 import {
+  DAY_MS,
   planRunRetention,
-  RUN_RETENTION_AGE_MS,
   type RunPrState,
   type RunRetentionContext,
   runRetentionHold,
@@ -53,10 +56,13 @@ import {
 import { makeRun } from './test-fixtures.js';
 
 const NOW = Date.parse('2026-10-20T12:00:00.000Z');
+const RUN_RETENTION_AGE_MS = DEFAULT_RUN_RETENTION_DAYS * DAY_MS;
 const settled = new Date(NOW - RUN_RETENTION_AGE_MS - 60_000).toISOString();
-const context = (pr: RunPrState = 'none'): RunRetentionContext => ({
+const context = (pr: RunPrState = 'none', activeSource?: string): RunRetentionContext => ({
   now: NOW,
+  ageMs: RUN_RETENTION_AGE_MS,
   prState: () => pr,
+  activeSource: () => activeSource,
 });
 
 const openDecision: RunDecision = {
@@ -141,7 +147,7 @@ async function pin(roots: RunRetentionRoots, name: string, taskDir: string, writ
   return path.dirname(provenance);
 }
 
-test('retention archives settled run storage only after 48h with nothing open', () => {
+test('retention archives settled run storage only after 7 days with nothing open', () => {
   const done: Run = { ...makeRun({ status: 'done' }), updatedAt: settled };
   assert.equal(runRetentionHold(done, context()), undefined);
   assert.equal(runRetentionHold({ ...done, status: 'cancelled' }, context()), undefined);
@@ -157,9 +163,9 @@ test('retention archives settled run storage only after 48h with nothing open', 
   const recent = new Date(NOW - RUN_RETENTION_AGE_MS + 60_000).toISOString();
   assert.equal(
     runRetentionHold({ ...done, completedAt: recent }, context()),
-    'settled less than 48 h ago',
+    'settled less than 7 days ago',
   );
-  // Bookkeeping that touches a long-completed run does not restart its 48 h.
+  // Bookkeeping that touches a long-completed run does not restart its 7 days.
   assert.equal(
     runRetentionHold({ ...done, completedAt: settled, updatedAt: recent }, context()),
     undefined,
@@ -171,13 +177,288 @@ test('retention archives settled run storage only after 48h with nothing open', 
   // Archiving is a reversible move, so only the keep tag holds a run's storage in place.
   assert.equal(runRetentionHold({ ...done, tags: ['demo', 'unsteered'] }, context()), undefined);
   assert.equal(runRetentionHold({ ...done, tags: ['perps', 'keep'] }, context()), 'tagged keep');
+  // An open or unknown PR keeps every run on it, whatever its age.
   assert.equal(runRetentionHold(done, context('open')), 'PR open');
   assert.equal(runRetentionHold(done, context('unknown')), 'PR state unknown');
   assert.equal(runRetentionHold(done, context('settled')), undefined);
+  assert.equal(
+    runRetentionHold(done, context('none', 'inherited by an unsettled follow-up')),
+    'inherited by an unsettled follow-up',
+  );
+  assert.equal(
+    runRetentionHold(
+      { ...done, completedAt: new Date(NOW - 60_000).toISOString() },
+      { ...context(), ageMs: DAY_MS },
+    ),
+    'settled less than 1 day ago',
+  );
+});
+
+const ago = (days: number) => new Date(NOW - days * DAY_MS).toISOString();
+
+/** A settled review-pr run on `pr`, `days` after it completed. */
+const reviewRun = (id: string, pr: string, days: number, overrides: Partial<Run> = {}): Run => ({
+  ...makeRun({
+    id,
+    familyId: id,
+    status: 'done',
+    flowType: 'review-pr',
+    project: 'p',
+    ticketOrPr: pr,
+  }),
+  completedAt: ago(days),
+  ...overrides,
+});
+
+async function holdsFor(runs: Run[], retentionDays = DEFAULT_RUN_RETENTION_DAYS) {
+  const context = await retentionContext(runs, NOW, {
+    retentionDays: () => retentionDays,
+    projectRepo: async () => 'o/r',
+    openPrs: async (repo) => {
+      if (repo === 'o/down') throw new Error('rate limited');
+      if (repo === 'o/big') return Array.from({ length: 1000 }, (_, i) => i + 10);
+      return [1, 2, 3, 4, 7];
+    },
+  });
+  return Object.fromEntries(runs.map((run) => [run.id, runRetentionHold(run, context)]));
+}
+
+test('the age comes from runRetentionDays', async () => {
+  const runs = [6, 8, 4].map((days) => ({
+    ...makeRun({
+      id: `${days}-days`,
+      familyId: `${days}`,
+      status: 'done',
+      ticketOrPr: `PROJ-${days}`,
+    }),
+    completedAt: ago(days),
+  }));
+  assert.deepEqual(await holdsFor(runs), {
+    '6-days': 'settled less than 7 days ago',
+    '8-days': undefined,
+    '4-days': 'settled less than 7 days ago',
+  });
+  assert.deepEqual(await holdsFor(runs, 3), {
+    '6-days': undefined,
+    '8-days': undefined,
+    '4-days': undefined,
+  });
+  assert.equal((await holdsFor(runs, 7.5))['6-days'], 'settled less than 7.5 days ago');
+});
+
+test('every run on an open or unreadable PR is held; the others follow the age rule', async () => {
+  const runs = [
+    reviewRun('older-review', 'o/r#1', 30),
+    reviewRun('newer-review', 'o/r#1', 10),
+    reviewRun('cancelled-review', 'o/r#1', 9, { status: 'cancelled' }),
+    reviewRun('dev-on-open-pr', 'o/r#1', 20, { flowType: 'pr-complete' }),
+    reviewRun('closed-pr', 'o/r#6', 10),
+    reviewRun('unreadable-pr', 'o/down#5', 20),
+    reviewRun('no-pr', 'PROJ-1', 8, { flowType: 'fix-bug' }),
+    reviewRun('young-no-pr', 'PROJ-2', 4, { flowType: 'fix-bug' }),
+  ];
+  assert.deepEqual(await holdsFor(runs), {
+    'older-review': 'PR open',
+    'newer-review': 'PR open',
+    'cancelled-review': 'PR open',
+    'dev-on-open-pr': 'PR open',
+    'closed-pr': undefined,
+    'unreadable-pr': 'PR state unknown',
+    'no-pr': undefined,
+    'young-no-pr': 'settled less than 7 days ago',
+  });
+  const short = await holdsFor(runs, 3);
+  assert.equal(short['young-no-pr'], undefined, 'a 3-day setting releases a 4-day-old run');
+  assert.equal(short['older-review'], 'PR open', 'the setting never releases an open PR');
+});
+
+test('a run family shares the open or unknown state of any member', async () => {
+  // A dev root never records the PR; its pr-complete child carries the number.
+  const family = (prefix: string, childPr: Partial<Run>): Run[] => [
+    {
+      ...makeRun({
+        id: `${prefix}-root`,
+        familyId: prefix,
+        status: 'done',
+        flowType: 'dev',
+        ticketOrPr: 'PROJ-1',
+      }),
+      completedAt: ago(20),
+    },
+    {
+      ...makeRun({
+        id: `${prefix}-child`,
+        familyId: prefix,
+        parentRunId: `${prefix}-root`,
+        status: 'done',
+        flowType: 'pr-complete',
+        project: 'repo',
+        ticketOrPr: 'PROJ-1',
+        ...childPr,
+      }),
+      completedAt: ago(10),
+    },
+  ];
+  const runs = [
+    ...family('open', { prNumber: 2 }),
+    ...family('unknown', { ticketOrPr: 'o/down#5' }),
+    ...family('closed', { prNumber: 6 }),
+  ];
+  assert.deepEqual(await holdsFor(runs), {
+    'open-root': 'PR open',
+    'open-child': 'PR open',
+    'unknown-root': 'PR state unknown',
+    'unknown-child': 'PR state unknown',
+    'closed-root': undefined,
+    'closed-child': undefined,
+  });
+});
+
+test('a recorded close settles only on a complete read, and a review with no PR identity is unknown', async () => {
+  const runs = [
+    reviewRun('closed-unreadable', 'o/down#2', 20, { prState: 'CLOSED' }),
+    reviewRun('closed-truncated', 'o/big#2', 20, { prState: 'CLOSED' }),
+    reviewRun('closed-read', 'o/r#6', 20, { prState: 'CLOSED' }),
+    // A merged PR cannot reopen, so a recorded merge settles even when the list is unreadable.
+    reviewRun('merged-unreadable', 'o/down#3', 20, { prState: 'MERGED' }),
+    // `r#2` chains for warm review but names no repository to read.
+    reviewRun('no-identity', 'r#2', 20),
+  ];
+  assert.deepEqual(await holdsFor(runs), {
+    'closed-unreadable': 'PR state unknown',
+    'closed-truncated': 'PR state unknown',
+    'closed-read': undefined,
+    'merged-unreadable': undefined,
+    'no-identity': 'PR state unknown',
+  });
+});
+
+test('a recorded close does not settle a PR identity with no repository to read', async () => {
+  // The project has no `ci.repo`, so the child's PR number names no list to read.
+  const root: Run = {
+    ...makeRun({
+      id: 'root',
+      familyId: 'no-ci',
+      status: 'done',
+      flowType: 'dev',
+      ticketOrPr: 'PROJ-4',
+    }),
+    completedAt: ago(20),
+  };
+  const child: Run = {
+    ...makeRun({
+      id: 'child',
+      familyId: 'no-ci',
+      parentRunId: 'root',
+      status: 'done',
+      flowType: 'pr-complete',
+      project: 'no-ci',
+      ticketOrPr: 'PROJ-4',
+      prNumber: 4,
+    }),
+    prState: 'CLOSED',
+    completedAt: ago(20),
+    archivedAt: ago(15),
+  };
+  const context = await retentionContext([root, child], NOW, {
+    retentionDays: () => DEFAULT_RUN_RETENTION_DAYS,
+    projectRepo: async () => undefined,
+    openPrs: async () => [],
+  });
+  assert.equal(runRetentionHold(child, context), 'PR state unknown');
+  assert.equal(runRetentionHold(root, context), 'PR state unknown');
+});
+
+test('an unsettled follow-up keeps the family it inherits from', async () => {
+  const parent: Run = {
+    ...makeRun({
+      id: 'parent',
+      familyId: 'parent',
+      status: 'done',
+      flowType: 'fix-bug',
+      ticketOrPr: 'PROJ-1',
+    }),
+    completedAt: ago(20),
+  };
+  const child: Run = makeRun({
+    id: 'child',
+    familyId: 'parent',
+    parentRunId: 'parent',
+    status: 'monitoring',
+    flowType: 'pr-complete',
+    ticketOrPr: 'PROJ-1',
+  });
+  const other: Run = { ...parent, id: 'other', familyId: 'other' };
+  assert.deepEqual(await holdsFor([parent, child, other]), {
+    parent: 'inherited by an unsettled follow-up',
+    child: 'not done, cancelled or archived',
+    other: undefined,
+  });
+  const settledChild = { ...child, status: 'done' as const, completedAt: ago(8) };
+  assert.equal((await holdsFor([parent, settledChild, other])).parent, undefined);
+});
+
+test('an in-flight review keeps the prior it recorded', async () => {
+  const prior = (id: string) => reviewRun(id, 'o/r#9', 20);
+  const inFlight: Run = {
+    ...reviewRun('in-flight', 'o/r#9', 1, { status: 'monitoring' }),
+    repeatReviewContext: {
+      version: 1,
+      chainId: 'chain',
+      generation: 2,
+      priorRunId: 'recorded-prior',
+      priorFamilyId: 'recorded-prior',
+      repository: 'o/r',
+      prNumber: 9,
+      currentHeadSha: 'cccccccccccccccc',
+      verdict: 'request changes',
+      unresolvedFindings: [],
+      artifactRefs: [],
+      farmslotEvidenceRefs: [],
+      mode: 'warm',
+      validationDepth: 'static-code',
+      session: { mode: 'warm', continuity: 'resumed', priorRunId: 'session-prior' },
+    },
+  };
+  const runs = [prior('recorded-prior'), prior('session-prior'), prior('unrelated'), inFlight];
+  assert.deepEqual(await holdsFor(runs), {
+    'recorded-prior': 'prior of an in-flight review',
+    'session-prior': 'prior of an in-flight review',
+    unrelated: undefined,
+    'in-flight': 'not done, cancelled or archived',
+  });
+  const done = { ...inFlight, status: 'done' as const, completedAt: ago(8) };
+  assert.equal((await holdsFor([prior('recorded-prior'), done]))['recorded-prior'], undefined);
+});
+
+test('a reopened PR counts as open even when the run recorded it closed', async () => {
+  const runs = [
+    // Recorded closed, but the live open list has it again.
+    reviewRun('reopened', 'o/r#2', 20, { prState: 'CLOSED' }),
+    reviewRun('closed', 'o/r#6', 20, { prState: 'CLOSED' }),
+  ];
+  assert.deepEqual(await holdsFor(runs), { reopened: 'PR open', closed: undefined });
+});
+
+test("the pass reads runRetentionDays from the gateway's run-bundle-retention.json", async (t) => {
+  const config = path.join(
+    resolveFarmPaths({ home: runBundleHome(), role: 'node' }).config,
+    'run-bundle-retention.json',
+  );
+  assert.equal(existsSync(config), false, 'the test home has no settings file');
+  assert.equal(RUN_RETENTION_DEPS.retentionDays(), DEFAULT_RUN_RETENTION_DAYS);
+  await mkdir(path.dirname(config), { recursive: true });
+  t.after(() => rm(config, { force: true }));
+  await writeFile(config, JSON.stringify({ runBundleRetention: { runRetentionDays: 3 } }));
+  assert.equal(RUN_RETENTION_DEPS.retentionDays(), 3);
 });
 
 test('a PR keeps its run unless its repository was read and the PR is not open', async () => {
-  const run = (id: string, overrides: Partial<Run>): Run => ({ ...makeRun({ id }), ...overrides });
+  // Separate families: a family shares its members' PR state.
+  const run = (id: string, overrides: Partial<Run>): Run => ({
+    ...makeRun({ id, familyId: id }),
+    ...overrides,
+  });
   const runs = [
     run('link-open', { links: [{ label: 'PR', url: 'https://github.com/o/r/pull/1' }] }),
     run('ticket-merged', { ticketOrPr: 'o/r#2' }),
@@ -192,6 +473,7 @@ test('a PR keeps its run unless its repository was read and the PR is not open',
   ];
   const reads: string[] = [];
   const { prState } = await retentionContext(runs, NOW, {
+    retentionDays: () => DEFAULT_RUN_RETENTION_DAYS,
     projectRepo: async (project) => ({ big: 'o/big', repo: 'o/r' })[project],
     openPrs: async (repo) => {
       reads.push(repo);
@@ -298,7 +580,7 @@ const privateDeps = {
   withBundleLock: async <T>(operation: () => Promise<T>) => operation(),
 };
 
-test('a settled untagged 48h run keeps both live and archived records while all eligible storage moves', async (t) => {
+test('a settled untagged 7-day-old run keeps both live and archived records while all eligible storage moves', async (t) => {
   const roots = await retentionRoots(t, runsDirectory());
   const runIds: string[] = [];
   const originals: string[] = [];
@@ -500,6 +782,48 @@ test('missing and unwritable archive roots fail before touching run records or s
   }
   assert.equal(await readFile(record, 'utf8'), before);
   assert.equal(await readFile(path.join(task, 'bytes'), 'utf8'), 'x'.repeat(4096));
+});
+
+test('a follow-up dispatched during a pass keeps its parent from being staged', async (t) => {
+  const roots = await retentionRoots(t, runsDirectory());
+  const parent = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    mode: 'autonomous',
+    ticketOrPr: 'RETENTION-FOLLOW-UP',
+  });
+  const task = path.join(roots.taskRoots[0], parent.id);
+  updateRun(parent.id, {
+    status: 'done',
+    completedAt: settled,
+    taskFile: path.join(task, 'TASK.md'),
+  });
+  await persistRunNow(parent);
+  await file(path.join(task, 'TASK.md'));
+  let dispatched = false;
+  const result = await runRetentionPass(
+    { apply: true, roots, now: Date.now() + RUN_RETENTION_AGE_MS + 60_000 },
+    {
+      ...privateDeps,
+      // The first lock turn comes after the pass computed its context.
+      withBundleLock: async (operation) => {
+        if (!dispatched) {
+          dispatched = true;
+          const child = createRun({
+            flowType: 'pr-complete',
+            project: 'farmslot-farm',
+            mode: 'autonomous',
+            ticketOrPr: 'RETENTION-FOLLOW-UP',
+          });
+          updateRun(child.id, { parentRunId: parent.id, familyId: parent.familyId });
+        }
+        return operation();
+      },
+    },
+  );
+  assert.ok(dispatched);
+  assert.equal(result.runs.includes(parent.id), false, 'the parent is not archived');
+  assert.ok(existsSync(path.join(task, 'TASK.md')), 'the follow-up can still inherit its task');
 });
 
 test('a processed run replayed before the next candidate keeps its shared task', async (t) => {

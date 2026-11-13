@@ -1,0 +1,2 @@
+- The five-minute rescan bound on cached node-support scans uses a monotonic clock, so a system clock step back cannot stretch it.
+- A learnings-draft card that another writer replaced during its ledger write now keeps the resolution's selection data and receipts.

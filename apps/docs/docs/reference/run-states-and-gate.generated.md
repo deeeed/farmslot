@@ -12,27 +12,28 @@ See [How Farmslot works](../concepts/operating-loop.md) for the operating loop.
 
 ## Run states
 
-| State           | Protocol category          |
-| --------------- | -------------------------- |
-| `created`       | Waiting or requires action |
-| `grading`       | Active                     |
-| `writing-task`  | Active                     |
-| `slot-finding`  | Active                     |
-| `preparing`     | Active                     |
-| `dispatching`   | Active                     |
-| `monitoring`    | Active                     |
-| `reviewing`     | Active                     |
-| `fixing`        | Active                     |
-| `review-failed` | Waiting or requires action |
-| `reconciling`   | Active                     |
-| `completing`    | Active                     |
-| `human-gating`  | Waiting or requires action |
-| `ci-watching`   | Active                     |
-| `paused`        | Waiting or requires action |
-| `done`          | Terminal                   |
-| `blocked`       | Waiting or requires action |
-| `failed`        | Terminal                   |
-| `cancelled`     | Terminal                   |
+| State            | Protocol category          |
+| ---------------- | -------------------------- |
+| `created`        | Waiting or requires action |
+| `grading`        | Active                     |
+| `writing-task`   | Active                     |
+| `slot-finding`   | Active                     |
+| `preparing`      | Active                     |
+| `dispatching`    | Active                     |
+| `monitoring`     | Active                     |
+| `reviewing`      | Active                     |
+| `fixing`         | Active                     |
+| `review-failed`  | Waiting or requires action |
+| `reconciling`    | Active                     |
+| `completing`     | Active                     |
+| `human-gating`   | Waiting or requires action |
+| `needs-decision` | Waiting or requires action |
+| `ci-watching`    | Active                     |
+| `paused`         | Waiting or requires action |
+| `done`           | Terminal                   |
+| `blocked`        | Waiting or requires action |
+| `failed`         | Terminal                   |
+| `cancelled`      | Terminal                   |
 
 An active category does not prove that a process is progressing. Uncertain
 delivery requires reconciliation. A terminal state closes execution; `done`
