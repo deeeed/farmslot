@@ -78,7 +78,9 @@ try {
   );
   assert(completion?.tool, 'Expected the matching Bash completion');
   assert.equal(completion.tool.status, 'completed');
-  assert.equal(completion.tool.output?.trim(), 'native source evidence');
+  const output = completion.tool.output;
+  assert(typeof output === 'string', 'Expected textual Bash output');
+  assert.equal(output.trim(), 'native source evidence');
   result.tools = tools;
   const temporaryDirectory = path.join(task, '.review-runtime/tmp');
   result.privateTemporaryFiles = await readdir(temporaryDirectory);
