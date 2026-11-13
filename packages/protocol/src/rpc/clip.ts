@@ -1,10 +1,10 @@
-// clip.push / clip.list: copy-ready snippets an agent hands its principal's clients.
+// clip.push / clip.list: copy-ready snippets agents hand the farm's admins.
 
 /** Largest clip text in UTF-8 bytes. */
 export const CLIP_TEXT_MAX_BYTES = 64 * 1024;
 export const CLIP_LABEL_MAX_LENGTH = 120;
 export const CLIP_SOURCE_MAX_LENGTH = 120;
-/** Clips the gateway keeps per principal; older ones are dropped. */
+/** Clips the gateway keeps for the farm; older ones are dropped. */
 export const CLIP_HISTORY_LIMIT = 20;
 
 /** `link` clips hold exactly one http(s) URL in `text`. */
@@ -15,6 +15,8 @@ export interface Clip {
   kind: ClipKind;
   text: string;
   label?: string;
+  /** The principal that pushed it. */
+  principalId: string;
   /** The session that pushed it, e.g. a tmux session name. */
   source?: string;
   createdAt: string;

@@ -1,4 +1,4 @@
-// clip.ts — clip.push / clip.list: the last few copy-ready snippets per principal.
+// clip.ts — clip.push / clip.list: the farm's last copy-ready snippets, shared by its admins.
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -16,14 +16,10 @@ import {
 import { GatewayMethodError } from '../core/method-error.js';
 import { redactLogContent } from '../observability/log-registry.js';
 import { resourceRevisions } from '../resources/revisions.js';
-import { principalOwnerKey } from '../security/work-originator.js';
 
+// One farm list: lanes push under a service principal while the operator reads as a person.
 // In memory only: clips are a short-lived copy buffer and are gone after a gateway restart.
-const clipsByOwner = new Map<string, Clip[]>();
-
-function ownerKey(principal: Principal): string {
-  return principalOwnerKey({ ownerId: principal.id, ownerGeneration: principal.generation });
-}
+let clips: Clip[] = [];
 
 function optionalText(value: unknown, name: string, max: number): string | undefined {
   if (value === undefined || value === null) return undefined;
@@ -57,20 +53,20 @@ export function clipPush(principal: Principal, params: unknown): ClipPushResult 
     kind,
     text: redactLogContent(kind === 'link' ? input.text.trim() : input.text),
     ...(label ? { label: redactLogContent(label) } : {}),
+    principalId: principal.id,
     ...(source ? { source } : {}),
     createdAt: new Date().toISOString(),
   };
-  const key = ownerKey(principal);
-  clipsByOwner.set(key, [clip, ...(clipsByOwner.get(key) ?? [])].slice(0, CLIP_HISTORY_LIMIT));
-  resourceRevisions.advance({ family: 'clipboard', ownerId: principal.id });
+  clips = [clip, ...clips].slice(0, CLIP_HISTORY_LIMIT);
+  resourceRevisions.advance({ family: 'clipboard', scope: 'farm' });
   return { clip };
 }
 
 /** Newest first. */
-export function clipList(principal: Principal): ClipListResult {
-  return { clips: [...(clipsByOwner.get(ownerKey(principal)) ?? [])] };
+export function clipList(): ClipListResult {
+  return { clips: [...clips] };
 }
 
 export function clearClipsForTests(): void {
-  clipsByOwner.clear();
+  clips = [];
 }

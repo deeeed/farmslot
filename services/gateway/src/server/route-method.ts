@@ -913,7 +913,7 @@ async function routeAuthorizedMethod(
     case Methods.CLIP_PUSH:
       return clipPush(authorizeGatewayMethod(authRuntime, state, method), params);
     case Methods.CLIP_LIST:
-      return clipList(authorizeGatewayMethod(authRuntime, state, method));
+      return clipList();
 
     // Principal and credential management (authorization gate above is admin-only).
     case Methods.PRINCIPAL_CREATE:

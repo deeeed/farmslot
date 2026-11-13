@@ -122,9 +122,8 @@ export function canReadResourceKey(
       return false;
   }
   try {
-    const reader = authorizeGatewayMethod(runtime, state, method);
-    // Clips are private to the principal that pushed them.
-    return key.family !== 'clipboard' || reader.id === key.ownerId;
+    authorizeGatewayMethod(runtime, state, method);
+    return true;
   } catch (error) {
     if (
       error instanceof GatewayMethodError &&

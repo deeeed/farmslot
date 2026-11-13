@@ -87,8 +87,7 @@ export default function ClipboardScreen() {
               {clip.label ?? clipLinkUrl(clip.text)?.host ?? clip.text}
             </Text>
             <Text style={styles.meta} numberOfLines={1}>
-              {clipLinkUrl(clip.text)?.host}
-              {clip.source ? ` · ${clip.source}` : ''}
+              {clipLinkUrl(clip.text)?.host} · {clip.source ?? clip.principalId}
             </Text>
           </Pressable>
           {copyButton(clip)}
@@ -104,8 +103,7 @@ export default function ClipboardScreen() {
                 {clip.label ?? 'Clip'}
               </Text>
               <Text style={styles.meta} numberOfLines={1}>
-                {clip.source ? `${clip.source} · ` : ''}
-                {new Date(clip.createdAt).toLocaleString()}
+                {clip.source ?? clip.principalId} · {new Date(clip.createdAt).toLocaleString()}
               </Text>
             </View>
             {copyButton(clip)}

@@ -37,8 +37,7 @@ export type ResourceKey =
     }
   | { family: 'assessment'; scope: 'farm'; assessmentId?: string }
   | { family: 'copilot'; ownerId: string; sessionId?: string }
-  /** One principal's clips; `ownerId` is the principal id. */
-  | { family: 'clipboard'; ownerId: string }
+  | { family: 'clipboard'; scope: 'farm' }
   | { family: 'gateway-update'; scope: 'gateway' }
   | { family: 'upstream'; integration: 'github' | 'packages' | 'providers'; queryId: string }
   /**

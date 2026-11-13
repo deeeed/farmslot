@@ -1,1 +1,1 @@
-- Keep the last 20 clips per principal in memory, redact them like logs, and notify only that principal's clients when one arrives.
+- Keep the farm's last 20 clips in memory, readable and pushable by admins, each with its source principal and session; text is redacted like logs, and admin clients are notified when one arrives.

@@ -1,4 +1,4 @@
-// clip.ts — `farmslot clip`: push copy-ready text or a link to your Companion and Command Center.
+// clip.ts — `farmslot clip`: push copy-ready text or a link to the farm's Companion clipboard.
 import { execFileSync } from 'node:child_process';
 
 import type { Command } from 'commander';
@@ -77,7 +77,7 @@ function tmuxSession(): string | undefined {
 export function registerClipCommand(program: Command): void {
   program
     .command('clip')
-    .description('Send copy-ready text or a link to your Companion and Command Center')
+    .description('Send copy-ready text or a link to the Companion clipboard')
     .option('--text <text>', 'Text to clip (default: read stdin)')
     .option('--link <url>', 'Clip one URL; clients show it as a tappable link')
     .option('--label <label>', 'Short label shown above the clip')

@@ -24,10 +24,9 @@ test('a link clip is exactly one http(s) URL', () => {
   assert.equal(clipLinkUrl('see https://a.test'), undefined);
 });
 
-test('clip.list is a live read keyed to the reader', () => {
-  const query = resourceQuery(Methods.CLIP_LIST, {}, 'alice');
+test('clip.list is a live read of the farm clipboard key', () => {
+  const query = resourceQuery(Methods.CLIP_LIST, {});
   assert.equal(query.live, true);
-  assert.deepEqual(query.dependencies, [{ family: 'clipboard', ownerId: 'alice' }]);
-  assert.throws(() => resourceQuery(Methods.CLIP_LIST, {}), /authenticated reader/);
-  assert.throws(() => resourceQuery(Methods.CLIP_LIST, { ownerId: 'bob' }, 'alice'));
+  assert.deepEqual(query.dependencies, [{ family: 'clipboard', scope: 'farm' }]);
+  assert.throws(() => resourceQuery(Methods.CLIP_LIST, { ownerId: 'bob' }));
 });
