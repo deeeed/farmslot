@@ -2,7 +2,6 @@
 // runs: the recipe, the product checkout, the runner (the host package), the
 // recipe libraries and any command helper scripts. Drift invalidates the run.
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs, { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
@@ -12,6 +11,9 @@ import { digestRecipeDocument, type RecipeConformanceSource } from '@farmslot/pr
 import type { RecipeArtifactFinalization, RecipeLibrarySource } from '@farmslot/recipe-runner';
 
 import { harnessAdapter } from './adapters.js';
+import { cacheRecordPath, readCacheRecord, writeCacheRecord } from './cache.js';
+import { countCallWork } from './call-timings.js';
+import { gitTopLevel, readGit, readHeadCommit } from './git-read.js';
 import { harnessHost } from './host.js';
 import { isPathWithin } from './paths.js';
 
@@ -26,8 +28,6 @@ export function withRetainedSourceProvenance<T>(
 ): Promise<T> {
   return retainedSourceRoot.run(root ? fs.realpathSync(root) : undefined, invoke);
 }
-
-const gitContexts = new Map<string, { topLevel: string; pathspec: string } | null>();
 
 export type ExecutionProvenancePhase = 'start' | 'pre-execute' | 'end';
 
@@ -96,6 +96,7 @@ export async function captureExecutionProvenance(
   input: ExecutionProvenanceInput,
   phase: ExecutionProvenancePhase,
 ): Promise<ExecutionProvenanceSnapshot> {
+  countCallWork('provenanceSnapshot');
   const recipeDigest = input.recipePath
     ? recipeFileDigest(input.recipePath)
     : digestRecipeDocument(input.recipeDocument);
@@ -279,36 +280,59 @@ export function sourceSnapshot(
     };
   }
   const pathspecs = sourcePathspecs(git, excludedRoots, includedRoots);
-  const status = gitText(git.topLevel, [
+  // Structured (v2, NUL-separated) so renames, copies and submodules parse without guessing,
+  // with every submodule's state whatever its `ignore` setting.
+  const listingBytes = gitBuffer(git.topLevel, [
     'status',
-    '--porcelain=v1',
+    '--porcelain=v2',
+    '-z',
     '--untracked-files=normal',
+    '--ignore-submodules=none',
     '--',
     ...pathspecs,
   ]);
-  let head: Buffer;
-  try {
-    head = gitBuffer(git.topLevel, ['rev-parse', '--verify', 'HEAD']);
-  } catch (error) {
-    // A new checkout has no commit yet; its current bytes still bind the report.
-    if ((error as { status?: number }).status !== 128) throw error;
-    return {
-      head: null,
-      status,
-      sourceFingerprint: directoryFingerprint(root, excludedRoots, includedRoots),
-    };
+  // Paths are read back only when they are exact UTF-8; otherwise the diff decides.
+  const listing = statusListing(listingBytes);
+  // The record keeps one entry per line.
+  const status = listingBytes
+    .toString('utf8')
+    .split('\0')
+    .filter(Boolean)
+    .map((entry) => `${entry}\n`)
+    .join('');
+  let head = readHeadCommit(git.topLevel);
+  if (!head) {
+    try {
+      head = gitText(git.topLevel, ['rev-parse', '--verify', 'HEAD']).trim();
+    } catch (error) {
+      // A new checkout has no commit yet; its current bytes still bind the report.
+      if ((error as { status?: number }).status !== 128) throw error;
+      return {
+        head: null,
+        status,
+        sourceFingerprint: directoryFingerprint(root, excludedRoots, includedRoots),
+      };
+    }
   }
   // Product snapshots follow Git source selection; code inputs also bind ignored delivery bytes.
   const platformFingerprint = adapter ? harnessAdapter(adapter).sourceFingerprint : undefined;
   return {
-    head: head.toString('utf8').trim() || null,
+    head: head || null,
     status,
     sourceFingerprint:
       platformFingerprint && path.resolve(root) === git.topLevel
         ? platformFingerprint(root)
         : adapter
-          ? gitSourceFingerprint(git.topLevel, pathspecs, head)
-          : nestedGitSourceFingerprint(root, git, pathspecs, excludedRoots, includedRoots, head),
+          ? gitSourceFingerprint(git.topLevel, pathspecs, head, listing)
+          : nestedGitSourceFingerprint(
+              root,
+              git,
+              pathspecs,
+              excludedRoots,
+              includedRoots,
+              head,
+              listing,
+            ),
   };
 }
 
@@ -318,9 +342,10 @@ function nestedGitSourceFingerprint(
   pathspecs: string[],
   excludedRoots: string[],
   includedRoots: string[],
-  head: Buffer,
+  head: string,
+  status: string | undefined,
 ): string {
-  const gitFingerprint = gitSourceFingerprint(git.topLevel, pathspecs, head);
+  const gitFingerprint = gitSourceFingerprint(git.topLevel, pathspecs, head, status);
   if (git.pathspec === '.' && includedRoots.length === 0) return gitFingerprint;
   return createHash('sha256')
     .update(gitFingerprint)
@@ -330,32 +355,120 @@ function nestedGitSourceFingerprint(
 }
 
 function gitContext(root: string): { topLevel: string; pathspec: string } | null {
-  const cacheKey = path.resolve(root);
-  if (gitContexts.has(cacheKey)) return gitContexts.get(cacheKey) ?? null;
+  const topLevel = gitTopLevel(root);
+  if (!topLevel) return null;
+  const relative = path.relative(topLevel, fs.realpathSync(path.resolve(root)));
+  return relative === '..' || relative.startsWith(`..${path.sep}`)
+    ? null
+    : { topLevel, pathspec: relative || '.' };
+}
+
+// The source's bytes from its status: HEAD, the status listing, and the mode and
+// bytes of every path it names (a missing one as deleted). A path absent from the
+// listing matches HEAD, so this binds what the full diff and untracked listing bind.
+// When the listing names a submodule, a symbolic link or an untracked directory, the diff decides.
+function gitSourceFingerprint(
+  topLevel: string,
+  pathspecs: string[],
+  head: string,
+  status: string | undefined,
+): string {
+  return (
+    (status === undefined ? undefined : statusSourceFingerprint(topLevel, head, status)) ??
+    diffSourceFingerprint(topLevel, pathspecs, head)
+  );
+}
+
+function statusSourceFingerprint(
+  topLevel: string,
+  head: string,
+  status: string,
+): string | undefined {
+  const paths = statusPaths(status);
+  if (!paths) return undefined;
+  const hash = createHash('sha256');
+  hash.update(`${head}\0status\0`);
+  hash.update(status);
+  for (const relative of paths) {
+    hash.update(`\0path\0${relative}\0`);
+    const absolute = path.join(topLevel, relative);
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(absolute);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      hash.update('deleted');
+      continue;
+    }
+    // A submodule's change is its commit, which only the diff reports, and a symbolic
+    // link keeps the diff's rules (an untracked one is refused there).
+    if (stat.isDirectory() || stat.isSymbolicLink()) return undefined;
+    hash.update(`${stat.mode}\0`);
+    hash.update(readRegularFileNoFollow(absolute));
+  }
+  return hash.digest('hex');
+}
+
+/** A status listing as text, or undefined when a path in it is not valid UTF-8. */
+export function statusListing(bytes: Buffer): string | undefined {
   try {
-    const resolved = cacheKey;
-    const topLevel = fs.realpathSync(gitText(resolved, ['rev-parse', '--show-toplevel']).trim());
-    const relative = path.relative(topLevel, fs.realpathSync(resolved));
-    const context =
-      relative === '..' || relative.startsWith(`..${path.sep}`)
-        ? null
-        : { topLevel, pathspec: relative || '.' };
-    gitContexts.set(cacheKey, context);
-    return context;
-  } catch {
-    gitContexts.set(cacheKey, null);
-    return null;
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch (error) {
+    // A name that does not decode cannot be found again on disk by that name.
+    if (error instanceof TypeError) return undefined;
+    throw error;
   }
 }
 
-function gitSourceFingerprint(topLevel: string, pathspecs: string[], head: Buffer): string {
+// Every path a `status --porcelain=v2 -z` listing names, or undefined when the diff must
+// decide: an untracked directory, a submodule, or a record this parser does not know.
+function statusPaths(listing: string): string[] | undefined {
+  const paths = new Set<string>();
+  const fields = listing.split('\0');
+  for (let index = 0; index < fields.length; index += 1) {
+    const field = fields[index]!;
+    if (!field) continue;
+    const parts = field.split(' ');
+    switch (field[0]) {
+      case '1': // 1 XY sub mH mI mW hH hI path
+        if (parts[2]?.startsWith('S')) return undefined;
+        paths.add(parts.slice(8).join(' '));
+        break;
+      case '2': {
+        // 2 XY sub mH mI mW hH hI Xscore path, then the original path as its own field
+        if (parts[2]?.startsWith('S')) return undefined;
+        paths.add(parts.slice(9).join(' '));
+        index += 1;
+        const original = fields[index];
+        if (!original) return undefined;
+        paths.add(original);
+        break;
+      }
+      case 'u': // u XY sub m1 m2 m3 mW h1 h2 h3 path
+        if (parts[2]?.startsWith('S')) return undefined;
+        paths.add(parts.slice(10).join(' '));
+        break;
+      case '?': {
+        const untracked = field.slice(2);
+        if (untracked.endsWith('/')) return undefined;
+        paths.add(untracked);
+        break;
+      }
+      default:
+        return undefined;
+    }
+  }
+  return [...paths].sort();
+}
+
+function diffSourceFingerprint(topLevel: string, pathspecs: string[], head: string): string {
   const hash = createHash('sha256');
-  hash.update(head);
+  hash.update(`${head}\n`);
   hash.update('\0diff\0');
   hash.update(
     gitBuffer(
       topLevel,
-      gitDiffArgs(['--binary', head.toString('utf8').trim(), '--', ...pathspecs]),
+      gitDiffArgs(['--binary', '--ignore-submodules=none', head, '--', ...pathspecs]),
     ),
   );
   const untracked = gitText(topLevel, [
@@ -403,6 +516,56 @@ function directoryFingerprint(
   excludedRoots: string[],
   includedRoots: string[],
 ): string {
+  const installed = installedPackage(root);
+  if (!installed) return walkDirectory(root, excludedRoots, includedRoots, true);
+  // An installed package changes with its version, so its bytes are hashed once per version.
+  // The sizes and modification times, far cheaper to read, still catch an edit in place.
+  const shape = walkDirectory(root, excludedRoots, includedRoots, false);
+  const record = cacheRecordPath('provenance', {
+    installed,
+    root: path.resolve(root),
+    excludedRoots,
+    includedRoots,
+  });
+  const cached = readCacheRecord(record);
+  if (
+    typeof cached === 'object' &&
+    cached !== null &&
+    'shape' in cached &&
+    cached.shape === shape &&
+    'fingerprint' in cached &&
+    typeof cached.fingerprint === 'string'
+  ) {
+    return cached.fingerprint;
+  }
+  const fingerprint = walkDirectory(root, excludedRoots, includedRoots, true);
+  writeCacheRecord(record, { shape, fingerprint });
+  return fingerprint;
+}
+
+// `<package dir>@<version>` when `root` lies in a package installed under node_modules.
+function installedPackage(root: string): string | undefined {
+  const resolved = path.resolve(root);
+  const marker = `${path.sep}node_modules${path.sep}`;
+  const index = resolved.lastIndexOf(marker);
+  if (index < 0) return undefined;
+  const nodeModules = resolved.slice(0, index + marker.length - 1);
+  for (let dir = resolved; dir.startsWith(`${nodeModules}${path.sep}`); dir = path.dirname(dir)) {
+    const manifest = path.join(dir, 'package.json');
+    if (!fs.existsSync(manifest)) continue;
+    const { version } = JSON.parse(fs.readFileSync(manifest, 'utf8')) as { version?: unknown };
+    return typeof version === 'string' ? `${dir}@${version}` : undefined;
+  }
+  return undefined;
+}
+
+// The files under `root`: their bytes (`content`), or only their sizes and modification times.
+function walkDirectory(
+  root: string,
+  excludedRoots: string[],
+  includedRoots: string[],
+  content: boolean,
+): string {
   const hash = createHash('sha256');
   const resolvedRoot = path.resolve(root);
   const roots = includedRoots.length > 0 ? includedRoots : [''];
@@ -412,6 +575,7 @@ function directoryFingerprint(
       resolvedRoot,
       included,
       new Set(excludedRoots.map((entry) => path.resolve(entry))),
+      content,
     );
   }
   return hash.digest('hex');
@@ -422,6 +586,7 @@ function hashDirectory(
   root: string,
   relative: string,
   excludedRoots: Set<string>,
+  content: boolean,
 ): void {
   const absolute = path.join(root, relative);
   if (
@@ -444,7 +609,7 @@ function hashDirectory(
     // Directories carry no source bytes; files bind their relative path.
     for (const name of fs.readdirSync(absolute).sort()) {
       if (relative === '' && DIRECTORY_IGNORED_ROOTS.has(name)) continue;
-      hashDirectory(hash, root, path.join(relative, name), excludedRoots);
+      hashDirectory(hash, root, path.join(relative, name), excludedRoots, content);
     }
     return;
   }
@@ -454,7 +619,7 @@ function hashDirectory(
       const target = fs.realpathSync(absolute);
       if (isPathWithin(pin, target) && fs.statSync(target).isFile()) {
         hash.update(`link\0${relative}\0${fs.readlinkSync(absolute)}\0`);
-        hash.update(readRegularFileNoFollow(target));
+        hash.update(content ? readRegularFileNoFollow(target) : fileShape(fs.statSync(target)));
         hash.update('\0');
         return;
       }
@@ -462,8 +627,12 @@ function hashDirectory(
     throw new Error(`Execution provenance source must not be a symbolic link: ${absolute}`);
   }
   hash.update(`file\0${relative}\0`);
-  hash.update(readRegularFileNoFollow(absolute));
+  hash.update(content ? readRegularFileNoFollow(absolute) : fileShape(stat));
   hash.update('\0');
+}
+
+function fileShape(stat: fs.Stats): string {
+  return `${stat.size}\0${stat.mtimeMs}`;
 }
 
 export function fileFingerprint(filePath: string): string {
@@ -510,12 +679,7 @@ function gitText(cwd: string, args: string[]): string {
 }
 
 function gitBuffer(cwd: string, args: string[]): Buffer {
-  return execFileSync('git', args, {
-    cwd,
-    encoding: 'buffer',
-    maxBuffer: 128 * 1024 * 1024,
-    stdio: ['ignore', 'pipe', 'ignore'],
-  });
+  return readGit(cwd, args);
 }
 
 function compareSource(

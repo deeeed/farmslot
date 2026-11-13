@@ -83,6 +83,9 @@ export interface RecipeRunnerOptions<TMutation> {
   // A direct operator invocation may trust task-local actions.
   trustTaskActions: boolean;
   trustedMutation?: TMutation;
+  // The actions the plan runs, when the command knows them (a call runs its one action).
+  // A host may bundle and bind only these; unset means any action in the manifest.
+  plannedActions?: readonly string[];
   onActionEvent?(event: RecipeNodeEvent): void;
 }
 

@@ -1,7 +1,6 @@
 // The host's platform adapters: a product preset registers its adapters here,
 // and every generic command resolves platform behaviour through them. No
 // command compares adapter ids.
-import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 
 import {
@@ -15,6 +14,7 @@ import {
 
 import { blindRecipeCdpPort } from './blind-runtime.js';
 import { AdapterAmbiguousError, type AdapterCandidate, type DetectMatch } from './context-state.js';
+import { gitOriginUrl } from './git-read.js';
 import { harnessHost } from './host.js';
 
 let registry: AdapterRegistry = createAdapterRegistry();
@@ -145,15 +145,7 @@ export function pickDetected(
 
 // The checkout's origin URL, or '' when it is not a Git checkout or has none.
 export function checkoutRemote(target: string): string {
-  try {
-    return execFileSync('git', ['-C', target, 'config', '--get', 'remote.origin.url'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-  } catch {
-    // Not a Git checkout, or no origin: only the file checks apply.
-    return '';
-  }
+  return gitOriginUrl(target);
 }
 
 /** The adapter a `--platform` value or positional target names: its own id, or one of its `targets`. */

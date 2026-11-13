@@ -4,21 +4,25 @@
 // argv[2]) and writes JSON to the `outputPath` it names. A prepared script is
 // bundled once so the approved bytes are the ones that run.
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
-import { access, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { existsSync, readFileSync, type Stats } from 'node:fs';
+import { access, lstat, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { isBuiltin } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import type { Plugin, PluginBuild } from 'esbuild';
+import type { Metafile, Plugin, PluginBuild } from 'esbuild';
 
 import type { ActionExecutionContext } from '@farmslot/recipe-runner';
 import { runOwnedRecipeProcess } from '@farmslot/recipe-runner/adapters/core';
 
 import { harnessAdapter, harnessAdapters } from './adapters.js';
+import { cacheRecordPath, readCacheRecord, writeCacheRecord } from './cache.js';
+import { countCallWork } from './call-timings.js';
 import { trackCheckoutChild } from './checkout-lock.js';
 import { recordCommandOutput } from './command-journal.js';
 import { harnessHost, recipeEnvName } from './host.js';
+import { isRecord } from './parse-args.js';
 
 function actionFileStem(action: string) {
   return String(action).replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -195,34 +199,9 @@ export async function prepareLiveAdapterScript({
   if (!isPathWithin(rootReal, entryReal)) {
     throw new Error(`Live adapter ${entryPath} resolves outside ${implementationRoot}.`);
   }
-  // Loaded on first use: every harness command imports this module.
-  const { build } = await import('esbuild');
-  const result = await build({
-    entryPoints: [entryReal],
-    bundle: true,
-    write: false,
-    platform: 'node',
-    format: 'esm',
-    target: `node${process.versions.node.split('.')[0]}`,
-    legalComments: 'none',
-    sourcemap: false,
-    banner: {
-      // The banner is part of the approved bundle's digest: keep its bytes.
-      js:
-        `import { createRequire as __mmCreateRequire } from 'node:module';` +
-        `const require = __mmCreateRequire(import.meta.url);` +
-        `process.argv[1] = ${JSON.stringify(entryReal)};`,
-    },
-    plugins: [bindImportMetaUrls()],
-    logLevel: 'silent',
-  });
-  const output = result.outputFiles[0];
-  if (!output) throw new Error(`Bundling live adapter ${entryReal} produced no executable output.`);
-  const sourceText = output.text;
-  const { init, parse } = await import('es-module-lexer');
-  await init;
-  const [imports] = parse(sourceText);
-  if (!allowRuntimeImports && imports.some((entry) => entry.d >= 0)) {
+  const bundle = await bundleLiveAdapter(entryReal);
+  const { sourceText } = bundle;
+  if (!allowRuntimeImports && bundle.runtimeImports) {
     const error = new Error(
       `Live adapter ${entryReal} contains a runtime dynamic import that cannot be bound to the approved bundle. ` +
         'Replace it with a static import so its implementation bytes are included in the plan digest.',
@@ -243,26 +222,272 @@ export async function prepareLiveAdapterScript({
   };
 }
 
-function bindImportMetaUrls(): Plugin {
+interface LiveAdapterBundle {
+  sourceText: string;
+  // Whether the bundle keeps a dynamic import, which only a trusted source may run.
+  runtimeImports: boolean;
+}
+
+// What a cached bundle was built from: each file's sha256, 'dir' for a directory
+// that must still exist, or null for a path that must still be absent.
+type BundleInput = { path: string; sha256: string | null };
+
+interface CachedLiveAdapterBundle extends LiveAdapterBundle {
+  inputs: BundleInput[];
+}
+
+// Configuration esbuild may read beside any module: a package's `exports`,
+// `imports` (`#subpath`) and `type`, and a tsconfig's paths.
+const RESOLUTION_FILES = ['package.json', 'tsconfig.json', 'jsconfig.json'];
+// Modules esbuild loads with the bundle's default loaders; the plugin reads each one itself.
+// esbuild matches it as a Go regular expression, which takes no `u` flag.
+const LOADED_SOURCES = /\.(?:[cm]?[jt]sx?|json)$/;
+
+// Bundling takes most of a runner's construction, so each bundle is cached by its
+// entry and reused while every file it read, and every file that could change how
+// an import resolves, is as it was.
+async function bundleLiveAdapter(entryReal: string): Promise<LiveAdapterBundle> {
+  // Loaded on first use: every harness command imports this module.
+  const { build, version } = await import('esbuild');
+  // Bump schemaVersion when the build options below change what a bundle contains.
+  const record = cacheRecordPath('live-adapters', {
+    schemaVersion: 2,
+    esbuild: version,
+    node: process.versions.node.split('.')[0],
+    entry: entryReal,
+  });
+  const cached = await reusableBundle(readCacheRecord(record));
+  if (cached) {
+    countCallWork('liveAdapterCached');
+    return cached;
+  }
+  const buildStarted = Date.now();
+  // The sha256 of the exact bytes each module handed esbuild.
+  const loaded = new Map<string, string>();
+  // The state of each resolution file beside a loaded module, captured while esbuild runs.
+  const resolution = new Map<string, string | null>();
+  const result = await build({
+    entryPoints: [entryReal],
+    bundle: true,
+    write: false,
+    metafile: true,
+    platform: 'node',
+    format: 'esm',
+    target: `node${process.versions.node.split('.')[0]}`,
+    legalComments: 'none',
+    sourcemap: false,
+    banner: {
+      // The banner is part of the approved bundle's digest: keep its bytes.
+      js:
+        `import { createRequire as __mmCreateRequire } from 'node:module';` +
+        `const require = __mmCreateRequire(import.meta.url);` +
+        `process.argv[1] = ${JSON.stringify(entryReal)};`,
+    },
+    plugins: [bindImportMetaUrls(loaded, resolution)],
+    logLevel: 'silent',
+  });
+  const output = result.outputFiles[0];
+  if (!output) throw new Error(`Bundling live adapter ${entryReal} produced no executable output.`);
+  const sourceText = output.text;
+  const { init, parse } = await import('es-module-lexer');
+  await init;
+  const [imports] = parse(sourceText);
+  const bundle = { sourceText, runtimeImports: imports.some((entry) => entry.d >= 0) };
+  countCallWork('liveAdapterBuilt');
+  const inputs = await bundleInputs(result.metafile, loaded, resolution, buildStarted);
+  if (inputs) writeCacheRecord(record, { ...bundle, inputs } satisfies CachedLiveAdapterBundle);
+  return bundle;
+}
+
+// What the bundle depended on, or undefined when it cannot be cached: a module the
+// plugin did not read, or any file that changed while esbuild ran.
+async function bundleInputs(
+  metafile: Metafile,
+  loaded: ReadonlyMap<string, string>,
+  resolution: ReadonlyMap<string, string | null>,
+  buildStarted: number,
+): Promise<BundleInput[] | undefined> {
+  const inputs = new Map<string, string | null>();
+  const directories = new Set<string>();
+  for (const [input, details] of Object.entries(metafile.inputs)) {
+    if (/^[a-z-]+:/u.test(input)) return undefined;
+    const file = path.resolve(input);
+    const sha256 = loaded.get(file);
+    if (sha256 === undefined) return undefined;
+    inputs.set(file, sha256);
+    for (let dir = path.dirname(file); ; dir = path.dirname(dir)) {
+      directories.add(dir);
+      if (path.dirname(dir) === dir) break;
+    }
+    for (const entry of details.imports) {
+      const name = entry.original === undefined ? undefined : packageName(entry.original);
+      if (!name || entry.external) continue;
+      // A package installed nearer the importer would win resolution: each nearer
+      // node_modules entry stays as it was (absent, or the directory resolved).
+      for (let dir = path.dirname(file); ; dir = path.dirname(dir)) {
+        const candidate = path.join(dir, 'node_modules', name);
+        const present = await isDirectory(candidate);
+        inputs.set(candidate, present ? 'dir' : null);
+        if (present || path.dirname(dir) === dir) break;
+      }
+    }
+  }
+  for (const dir of directories) {
+    for (const name of RESOLUTION_FILES) {
+      const file = path.join(dir, name);
+      const captured = resolution.get(file);
+      if (!inputs.has(file))
+        inputs.set(file, captured !== undefined ? captured : await fileState(file));
+    }
+  }
+  for (const [file, sha256] of inputs) {
+    if (sha256 === 'dir') continue;
+    if (sha256 === null) {
+      // Deleting a file updates its folder. The nearest folder that exists above an absent
+      // input changed since the build started: it may hide a manifest esbuild already used.
+      const folder = await nearestExistingFolder(file);
+      if (!folder || folder.mtimeMs >= buildStarted) return undefined;
+      continue;
+    }
+    // A file written while esbuild ran may differ from what it read: do not cache.
+    const { mtimeMs } = await stat(file);
+    // At or after the start: a coarse timestamp cannot order the write before the build.
+    if (mtimeMs >= buildStarted || (await fileSha256(file)) !== sha256) return undefined;
+  }
+  return [...inputs]
+    .map(([file, sha256]) => ({ path: file, sha256 }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+}
+
+// The package a bare import names (`pkg`, `@scope/pkg`), or undefined for a relative,
+// absolute, builtin or `#subpath` import.
+function packageName(specifier: string): string | undefined {
+  if (/^(?:\.|\/|#|node:)/u.test(specifier) || isBuiltin(specifier)) return undefined;
+  const parts = specifier.split('/');
+  return specifier.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
+}
+
+async function reusableBundle(record: unknown): Promise<LiveAdapterBundle | undefined> {
+  if (!isCachedBundle(record)) return undefined;
+  for (const input of record.inputs) {
+    if (input.sha256 === null) {
+      // Absent means nothing at the path: neither a file nor a directory.
+      if (await pathExists(input.path)) return undefined;
+    } else if (input.sha256 === 'dir') {
+      if (!(await isDirectory(input.path))) return undefined;
+    } else if ((await fileState(input.path)) !== input.sha256) return undefined;
+  }
+  return { sourceText: record.sourceText, runtimeImports: record.runtimeImports };
+}
+
+function isCachedBundle(value: unknown): value is CachedLiveAdapterBundle {
+  return (
+    isRecord(value) &&
+    typeof value.sourceText === 'string' &&
+    typeof value.runtimeImports === 'boolean' &&
+    Array.isArray(value.inputs) &&
+    value.inputs.every(
+      (input) =>
+        isRecord(input) &&
+        typeof input.path === 'string' &&
+        (input.sha256 === null || typeof input.sha256 === 'string'),
+    )
+  );
+}
+
+// A file's sha256, or null when there is no file at the path.
+async function fileState(file: string): Promise<string | null> {
+  try {
+    return await fileSha256(file);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR') return null;
+    throw error;
+  }
+}
+
+// The nearest folder that exists above `file`, or undefined when a dangling symbolic link
+// sits in between: its target may have vanished during the build.
+async function nearestExistingFolder(file: string): Promise<Stats | undefined> {
+  for (let dir = path.dirname(file); ; dir = path.dirname(dir)) {
+    try {
+      return await stat(dir);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if ((code !== 'ENOENT' && code !== 'ENOTDIR') || path.dirname(dir) === dir) throw error;
+    }
+    if (await pathExists(dir)) return undefined;
+  }
+}
+
+async function pathExists(file: string): Promise<boolean> {
+  try {
+    await lstat(file);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+    throw error;
+  }
+}
+
+async function isDirectory(dir: string): Promise<boolean> {
+  try {
+    return (await stat(dir)).isDirectory();
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+    throw error;
+  }
+}
+
+async function fileSha256(file: string): Promise<string> {
+  return sha256Hex(await readFile(file));
+}
+
+function sha256Hex(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+// Reads every module esbuild loads, so the cache records the exact bytes bundled,
+// and binds each `import.meta.url` to the module's own file URL.
+function bindImportMetaUrls(
+  loaded: Map<string, string>,
+  resolution: Map<string, string | null>,
+): Plugin {
   return {
     name: 'bind-import-meta-urls',
     setup(buildContext: PluginBuild) {
-      buildContext.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, async (args) => {
-        const contents = await readFile(args.path, 'utf8');
-        if (!contents.includes('import.meta.url')) return undefined;
+      buildContext.onLoad({ filter: LOADED_SOURCES }, async (args) => {
+        const bytes = await readFile(args.path);
+        loaded.set(path.resolve(args.path), sha256Hex(bytes));
+        for (let dir = path.dirname(path.resolve(args.path)); ; dir = path.dirname(dir)) {
+          for (const name of RESOLUTION_FILES) {
+            const file = path.join(dir, name);
+            if (!resolution.has(file)) resolution.set(file, await fileState(file));
+          }
+          if (path.dirname(dir) === dir) break;
+        }
+        const contents = bytes.toString('utf8');
         const extension = path.extname(args.path);
         const loader =
-          extension === '.ts' || extension === '.mts' || extension === '.cts'
-            ? 'ts'
-            : extension === '.tsx'
-              ? 'tsx'
-              : extension === '.jsx'
-                ? 'jsx'
-                : 'js';
+          extension === '.json'
+            ? 'json'
+            : extension === '.ts' || extension === '.mts' || extension === '.cts'
+              ? 'ts'
+              : extension === '.tsx'
+                ? 'tsx'
+                : extension === '.jsx'
+                  ? 'jsx'
+                  : 'js';
         return {
-          contents: contents.replaceAll('import.meta.url', () =>
-            JSON.stringify(pathToFileURL(args.path).href),
-          ),
+          // JSON is data: only a module's own `import.meta.url` is bound.
+          contents:
+            loader !== 'json' && contents.includes('import.meta.url')
+              ? contents.replaceAll('import.meta.url', () =>
+                  JSON.stringify(pathToFileURL(args.path).href),
+                )
+              : contents,
           loader,
         };
       });
