@@ -59,8 +59,6 @@ export interface RunRetentionContext {
   /** How long a settled run keeps its storage: `runBundleRetention.runRetentionDays` (ADR-039 Amendment 8). */
   ageMs: number;
   prState: (run: Run) => RunPrState;
-  /** Whether a later warm review of the run's PR would continue from it (`findLatestPriorReviewRun`). */
-  warmReviewSource: (run: Run) => boolean;
   /** Why an unsettled run still reads this run's storage, if one does. */
   activeSource: (run: Run) => string | undefined;
 }
@@ -82,20 +80,19 @@ function retentionAge(ageMs: number): string {
 /** Why a run keeps its storage, or undefined when retention may remove it. */
 export function runRetentionHold(
   run: Run,
-  { now, ageMs, prState, warmReviewSource, activeSource }: RunRetentionContext,
+  { now, ageMs, prState, activeSource }: RunRetentionContext,
 ): string | undefined {
   if (!runIsSettled(run)) return 'not done, cancelled or archived';
   if (run.tags?.includes(RUN_RETENTION_KEEP_TAG)) return 'tagged keep';
   if (runNeedsExecutionStorage(run)) return 'still needs its execution storage';
   if (run.backlogReconcilePending) return 'backlog reconciliation pending';
-  if (now - runSettledAt(run) < ageMs) return `settled less than ${retentionAge(ageMs)} ago`;
   const active = activeSource(run);
   if (active) return active;
-  if (!warmReviewSource(run)) return undefined;
+  // Every run on an open PR keeps its storage, whatever its age (ADR-039 Amendment 8).
   const pr = prState(run);
-  if (pr === 'open') return 'warm review source of an open PR';
-  // A warm source's PR that resolves to no identity fails closed, like an unreadable one.
-  if (pr === 'unknown' || pr === 'none') return 'warm review source of a PR in unknown state';
+  if (pr === 'open') return 'PR open';
+  if (pr === 'unknown') return 'PR state unknown';
+  if (now - runSettledAt(run) < ageMs) return `settled less than ${retentionAge(ageMs)} ago`;
   return undefined;
 }
 

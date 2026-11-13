@@ -219,9 +219,8 @@ or release backlog/history links during retention.
 Storage is eligible only when the run is done/cancelled/archived, settled at least
 the retention age, holds no slot or native worker, has no open decision, uncleaned
 review workspace, pending closeout/backlog reconciliation or `keep` tag, is not read
-by an unsettled run, and is not a run a warm review on an open PR could continue
-from. Shared paths and admitted task directories MUST remain available to their
-owners.
+by an unsettled run, and is not on an open PR. Shared paths and admitted task
+directories MUST remain available to their owners.
 
 The retention age is `runBundleRetention.runRetentionDays` in
 `${FARMSLOT_HOME}/run-bundle-retention.json`, default 7 (ADR-039 Amendment 8).
@@ -238,23 +237,13 @@ Each pass reads it when it starts, so no restart is needed. Task pins whose
 task directory is gone are removed once they are older than the same age. A run
 settles at the later of its completion and archive time.
 
-Past the age, an open PR holds every review run a warm review could continue from.
-`findLatestPriorReviewRun` selects the latest `review-pr` run with a review result
-that is done, cancelled, failed or blocked, ordered by completion time (not archive
-time), among runs with the same `owner/repo#N` ticket and project. Its readers narrow
-those runs first: the workspace pipeline and PR-rule continuity to one principal
-owner, retained reviewer sessions to one session owner, runner and lineage, and a
-request to one lineage (`reviewId`) and one intake owner and profile, where a
-first-time intake falls back to the latest manual run. Retention keeps a run when it
-is the selection in the narrowest such view that still contains it; any wider view
-selects a run no older. A cancelled re-review without a result, or an older review
-archived later, does not take the hold. The same runs stay held while the PR's state
-is unknown: its repository's open PRs could not be read, the list reached the read
-limit, or the ticket names no repository. A PR in the live open list counts as open
-even when the run recorded it merged or closed. Every other run on the PR, including
-older reviews and development, fix-bug and `pr-complete` runs, follows the age rule.
-The ticket carries no GitHub host, so two hosts with the same `owner/repo#N` share
-one chain, as warm review does; each held run still uses its own PR's state.
+Every run on an open PR keeps its storage whatever its age. A PR is open when any of
+the run's PR identities (its review-session identity, or its number in the project's
+repository) is in that repository's live open-PR list, even if the run recorded it
+merged or closed. Otherwise a recorded merge or close settles it. A run whose PR state
+is unknown is also kept: its repository's open PRs could not be read, the list
+reached the read limit, or its PR identity could not be resolved. Runs on a closed or
+merged PR, and runs with no PR, follow the age rule.
 
 An unsettled run holds what it still reads, whatever the PR state. A follow-up
 (`review-pr`, `pr-complete` or `update-branch` with a `parentRunId`) that is not

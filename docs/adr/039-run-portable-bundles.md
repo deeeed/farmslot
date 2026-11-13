@@ -589,26 +589,20 @@ archived there too.
 
 Task pins and run-owned review workspaces are recreatable copies. Retention deletes them under the same eligibility, admission and ownership checks used for archival, and journals each intent before deletion in the run's storage manifest, without a destination, for recovery at the next pass. Recovery records missing sources as deleted; surviving sources go through eligibility checks again and become deleted or kept with a reason. Archival and restore skip these entries. Shared review caches remain untouched. Everything else keeps Amendments 3 and 5 archival, including agent logs and session archives, final reports and task directories, run bundles and evidence. Run records are still never deleted. Existing archived pins and workspaces remain archived.
 
-## Amendment 8: 2026-11-13 seven-day retention, warm review sources per open PR
+## Amendment 8: 2026-11-13 seven-day retention for runs not on an open PR
 
 **Status:** Accepted by Arthur, 2026-11-13.
 **Specification:** [Settled-run retention](../reference/retained-run-artifacts.md#settled-run-retention).
 
 ### Decision
 
-A settled run keeps its storage for 7 days instead of 48 hours. One setting,
-`runBundleRetention.runRetentionDays` in the gateway's `run-bundle-retention.json`,
-changes that age; task pins use the same age. An open PR no longer holds every run
-on it. Past the age, an open PR holds only the review runs a later warm review could
-continue from. Warm-review readers first narrow the PR's review runs (by principal
-owner, by reviewer session owner, runner and lineage, by lineage, or by intake owner
-and profile, where a first-time intake falls back to the latest manual run) and then
-take the latest finished `review-pr` run with a review result, by completion time.
-Retention keeps every run that some such view would select, using the same lookup.
-Other review runs and development, fix-bug and `pr-complete` runs on that PR follow
-the age rule. A PR whose state cannot be read (unreadable repository, possibly
-truncated open-PR list, or a ticket that names no repository) still holds those
-runs, and a live open PR counts as open even if a run recorded it closed.
+Every run on an open PR keeps its storage, whatever its age, as before. So does a run
+whose PR state cannot be read (unreadable repository, possibly truncated open-PR list
+or unresolvable identity). A live open PR counts as open even if a run recorded it
+merged or closed, since a PR can be reopened. Other settled runs keep their storage
+for 7 days instead of 48 hours. One setting, `runBundleRetention.runRetentionDays` in
+the gateway's `run-bundle-retention.json`, changes that age; task pins use the same
+age.
 
 Whatever the PR state, an unsettled run holds what it still reads: a follow-up
 (`review-pr`, `pr-complete` or `update-branch` with a parent) holds its run family,
@@ -618,20 +612,16 @@ other holds stay as they were.
 
 ### Rationale and consequences
 
-48 hours was too short for warm reviews of PRs that wait days for a re-review, and
-holding every run on an open PR kept development task trees, recordings and
-sessions for as long as a PR stayed open. A `review-pr` warm review reads its
-predecessor's task directory, so the predecessors are the runs worth holding, and the
-hold uses the readers' own lookup over every narrowing they apply. Seven days keeps a
-week of history on local disk; when the disk gets tight the operator can lower the
-setting (for example to 3) without a code change. Storage still moves to the run
-archive under Amendments 3 and 7, so a released run stays restorable.
+Holding every run on an open PR keeps every warm review chain, owner and inherited
+run family a PR still needs, without modelling each reader's selection. A narrower
+hold (only the latest review per PR) was tried and dropped: warm-review readers filter
+by owner, lineage, intake and session in ways a single rule kept missing. For runs
+whose PR closed or that never had one, 48 hours released history and evidence before
+follow-ups and re-reviews of slow PRs could use it; seven days keeps a week on local
+disk. When the disk gets tight the operator lowers the setting (for example to 3)
+without a code change. Storage still moves to the run archive under Amendments 3
+and 7, so a released run stays restorable.
 
-Gate reviews inside a run family continue from reviewer sessions of earlier runs in
-that family, and a follow-up dispatched later inherits from the family's task
-directories and bundles. Once no follow-up of the family is active, those earlier
-development runs are released after the retention age even while their PR is open.
-A gate review started after that cannot resume the earlier reviewer session. A
-follow-up dispatched after that fails to write its task: inheritance cannot read the
-parent's archived bundle, so dispatch is refused until the operator restores the
-parent's storage from its archive manifest.
+A follow-up dispatched after its parent's storage was archived fails to write its
+task: inheritance cannot read the parent's archived bundle, so dispatch is refused
+until the operator restores the parent's storage from its archive manifest.

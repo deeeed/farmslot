@@ -19,7 +19,6 @@ import {
   warnRunBundleCapacity,
 } from '../../run-completion/retained-artifacts.js';
 import { captureMissingRunEpisodes } from '../../run-completion/run-episode.js';
-import { warmReviewPredecessorIds } from '../../run-engine/engine-decisions.js';
 import { parkedWorkRetentionPass } from '../../run-lifecycle/parked-work-retention.js';
 import { nativeSessionManager } from '../../runners/native/manager.js';
 import {
@@ -104,9 +103,8 @@ const prRecordedSettled = (run: Run) =>
  * closed, since a PR can be reopened. Otherwise a recorded merge or close settles it; an
  * unresolvable identity, an unreadable repository or a possibly truncated list makes it unknown.
  *
- * Past the age, an open or unknown PR holds only the runs a later warm review would continue
- * from (`warmReviewPredecessorIds`). Whatever the PR state, an unsettled run holds what it still
- * reads (`activeSourceHolds`).
+ * An open or unknown PR keeps every run on it; the age rule applies to the others. Whatever the
+ * PR state, an unsettled run holds what it still reads (`activeSourceHolds`).
  */
 export async function retentionContext(
   runs: Run[],
@@ -145,12 +143,10 @@ export async function retentionContext(
       open.set(repo, undefined);
     }
   }
-  const warmSources = warmReviewPredecessorIds(runs);
   const activeSources = activeSourceHolds(runs, runs);
   return {
     now,
     ageMs: read.retentionDays() * DAY_MS,
-    warmReviewSource: (run) => warmSources.has(run.id),
     activeSource: (run) => activeSources.get(run.id),
     prState: (run): RunPrState => {
       const identity = identities.get(run.id);
