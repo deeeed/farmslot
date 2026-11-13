@@ -169,6 +169,28 @@ describe('CDP broker network capture', () => {
     assert.equal(brokerSocketPath(runtimeDir, 8061), brokerSocketPath(runtimeDir, '8061'));
   });
 
+  it('routes blind brokers into their allocation without changing normal TMPDIR semantics', () => {
+    const previous = process.env.FARMSLOT_BLIND_BROKER_DIR;
+    const previousTmp = process.env.TMPDIR;
+    try {
+      delete process.env.FARMSLOT_BLIND_BROKER_DIR;
+      process.env.TMPDIR = '/synthetic/unrelated-temp';
+      const normal = brokerSocketPath('/synthetic/runtime', 8081);
+      assert.equal(path.dirname(normal), '/tmp');
+      process.env.FARMSLOT_BLIND_BROKER_DIR = '/private/tmp/synthetic-blind-run';
+      const blind = brokerSocketPath('/synthetic/runtime', 8081);
+      assert.equal(path.dirname(blind), process.env.FARMSLOT_BLIND_BROKER_DIR);
+      assert.equal(path.basename(blind), path.basename(normal));
+      process.env.FARMSLOT_BLIND_BROKER_DIR = '/private/tmp/synthetic-other-run';
+      assert.notEqual(brokerSocketPath('/synthetic/runtime', 8081), blind);
+    } finally {
+      if (previous === undefined) delete process.env.FARMSLOT_BLIND_BROKER_DIR;
+      else process.env.FARMSLOT_BLIND_BROKER_DIR = previous;
+      if (previousTmp === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previousTmp;
+    }
+  });
+
   it('resolves one producer/consumer port identity from env, .js.env, or 8081', async () => {
     const appRoot = await mkdtemp(path.join(os.tmpdir(), 'cdp-port-'));
     cleanups.push(() => rm(appRoot, { recursive: true, force: true }));

@@ -4,6 +4,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import {
   copyFileSync,
+  cpSync,
   existsSync,
   linkSync,
   mkdirSync,
@@ -22,14 +23,21 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 import { shSingleQuote as q } from '../../../../scripts/lib/shell-quote.mjs';
+import { buildLaunchCommand, buildRunnerSessionReloadCommand } from '../runners/launch-command.js';
+import { getRunnerDefinition } from '../runners/registry.js';
+import { makeVars } from '../runners/test-fixtures.js';
 
 import { withBlindTrialBoundary } from './blind-git.js';
 
 const python = fileURLToPath(new URL('./blind-git.py', import.meta.url));
 const adapter = fileURLToPath(new URL('../../../../packages/adapter-web/', import.meta.url));
 const { stopWebDappBrowser } = await import(path.join(adapter, 'src/web-dapp/lib/processes.mjs'));
-const syntheticHome = realpathSync(mkdtempSync(path.join('/tmp', 'seatbelt-home-')));
+const syntheticHome = realpathSync(mkdtempSync(path.join(os.homedir(), '.seatbelt-home-')));
 after(() => rmSync(syntheticHome, { recursive: true }));
+const allocatedTempRoots = new Set<string>();
+after(() => {
+  for (const root of allocatedTempRoots) rmSync(root, { recursive: true, force: true });
+});
 const env = {
   PATH: process.env.PATH,
   HOME: syntheticHome,
@@ -39,7 +47,7 @@ const env = {
 };
 
 function fixture() {
-  const root = realpathSync(mkdtempSync(path.join('/tmp', 'blind-seatbelt-live-')));
+  const root = realpathSync(mkdtempSync(path.join(syntheticHome, 'blind-seatbelt-live-')));
   mkdirSync(path.join(root, 'boundary'));
   writeFileSync(path.join(root, 'state.json'), '{"originalIsDirectory":true}');
   writeFileSync(
@@ -85,23 +93,30 @@ blind['prepare_boundary']({'repo': str(root), 'siblingRepos': [str(root / 'hidde
     ],
     { env: launchEnv, encoding: 'utf8', timeout: 10_000 },
   );
+  const temporary = path.join(root, 'boundary/tmp');
+  if (existsSync(temporary)) allocatedTempRoots.add(realpathSync(temporary));
 }
 function worker(
   root: string,
   command: string,
   launchEnv: NodeJS.ProcessEnv = env,
   timeout = 45_000,
+  modelEnvironment: readonly string[] = [],
 ) {
   return spawnSync(
     '/bin/sh',
     [
       '-c',
-      withBlindTrialBoundary(command, {
-        capsule: root,
-        baseSha: 'a'.repeat(40),
-        browserCdpPort: JSON.parse(readFileSync(path.join(root, 'state.json'), 'utf8'))
-          .browserCdpPort,
-      }).replace('/usr/bin/sandbox-exec', 'exec /usr/bin/sandbox-exec'),
+      withBlindTrialBoundary(
+        command,
+        {
+          capsule: root,
+          baseSha: 'a'.repeat(40),
+          browserCdpPort: JSON.parse(readFileSync(path.join(root, 'state.json'), 'utf8'))
+            .browserCdpPort,
+        },
+        modelEnvironment,
+      ).replace('/usr/bin/env -i', 'exec /usr/bin/env -i'),
     ],
     {
       env: launchEnv,
@@ -110,6 +125,804 @@ function worker(
     },
   );
 }
+
+test(
+  'directory imports cannot acquire broker connect access under the real blind wrapper',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const root = fixture();
+    t.after(() => rmSync(root, { recursive: true }));
+    profile(root);
+    for (const destination of ['temp', 'broker']) {
+      const source = path.join(root, destination + '-run');
+      mkdirSync(source);
+      const server = net.createServer((socket) => socket.destroy());
+      t.after(
+        () =>
+          new Promise<void>((resolve, reject) =>
+            server.close((error) => (error ? reject(error) : resolve())),
+          ),
+      );
+      server.listen(path.join(source, 'control.sock'));
+      await once(server, 'listening');
+      await t.test(`home directory into ${destination} cannot connect`, () => {
+        const result = worker(
+          root,
+          `exec ${q(process.execPath)} --input-type=module -e ${q(`
+import assert from 'node:assert/strict'; import * as fs from 'node:fs'; import net from 'node:net';
+const source = ${JSON.stringify(source)};
+const target = (${JSON.stringify(destination)} === 'broker'
+  ? process.env.FARMSLOT_BLIND_BROKER_DIR : process.env.TMPDIR) + '/imported';
+let relocationError;
+try { fs.renameSync(source, target); } catch (error) { relocationError = error; }
+const error = await new Promise(resolve => net.connect(target + '/control.sock')
+  .on('error', resolve).on('connect', () => { throw Error('imported directory socket connected'); }));
+if (${JSON.stringify(destination)} === 'broker') assert.equal(relocationError?.code, 'EPERM');
+else assert.equal(relocationError, undefined, 'general temp import must reach the connect check');
+assert.equal(error.code, ${JSON.stringify(destination)} === 'broker' ? 'ENOENT' : 'EPERM');
+// A directory moved into general temp must not provide a second-step socket import.
+if (!relocationError) for (const operation of ['renameSync', 'linkSync']) {
+  const socket = process.env.FARMSLOT_BLIND_BROKER_DIR + '/' + operation + '.sock';
+  assert.throws(() => fs[operation](target + '/control.sock', socket), { code: 'EPERM' });
+}
+`)}`,
+        );
+        assert.ifError(result.error);
+        assert.equal(result.status, 0, result.stderr);
+      });
+    }
+    // Seed an otherwise forbidden nested directory outside Seatbelt to prove
+    // that the connect filter itself admits only direct broker children.
+    const nested = path.join(root, 'boundary/tmp/broker/nested');
+    mkdirSync(nested);
+    const nestedServer = net.createServer((socket) => socket.destroy());
+    t.after(
+      () =>
+        new Promise<void>((resolve, reject) =>
+          nestedServer.close((error) => (error ? reject(error) : resolve())),
+        ),
+    );
+    nestedServer.listen(path.join(nested, 'control.sock'));
+    await once(nestedServer, 'listening');
+    await t.test('nested broker socket cannot connect', () => {
+      const result = worker(
+        root,
+        `exec ${q(process.execPath)} --input-type=module -e ${q(`
+import assert from 'node:assert/strict'; import net from 'node:net';
+const error = await new Promise(resolve => net.connect(process.env.FARMSLOT_BLIND_BROKER_DIR + '/nested/control.sock')
+  .on('error', resolve).on('connect', () => { throw Error('nested broker socket connected'); }));
+assert.equal(error.code, 'EPERM');
+`)}`,
+      );
+      assert.ifError(result.error);
+      assert.equal(result.status, 0, result.stderr);
+    });
+  },
+);
+
+test(
+  'lookalike capsule directory import is refused while the own broker connects',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const root = fixture();
+    t.after(() => rmSync(root, { recursive: true }));
+    const capsule = path.join(root, '.farmslot-blind-evals/slot/run-epoch');
+    mkdirSync(path.join(capsule, 'boundary'), { recursive: true });
+    writeFileSync(path.join(capsule, 'state.json'), '{"originalIsDirectory":true}');
+    profile(capsule);
+    const source = path.join(root, 'run');
+    mkdirSync(source);
+    const ownBroker = path.join(realpathSync(path.join(capsule, 'boundary/tmp')), 'broker');
+    const servers = [path.join(source, 'control.sock'), path.join(ownBroker, 'own.sock')].map(
+      (socketPath) => {
+        const server = net.createServer((socket) => socket.destroy());
+        t.after(
+          () =>
+            new Promise<void>((resolve, reject) =>
+              server.close((error) => (error ? reject(error) : resolve())),
+            ),
+        );
+        server.listen(socketPath);
+        return server;
+      },
+    );
+    await Promise.all(servers.map((server) => once(server, 'listening')));
+    const run = (source: string) => {
+      const result = worker(
+        capsule,
+        `exec ${q(process.execPath)} --input-type=module -e ${q(source)}`,
+      );
+      assert.ifError(result.error);
+      assert.equal(result.status, 0, result.stderr);
+    };
+    await t.test('own physical and /tmp alias broker connects', () =>
+      run(`
+import net from 'node:net';
+for (const broker of ${JSON.stringify([ownBroker, ownBroker.replace('/private/tmp/', '/tmp/')])}) {
+  await new Promise((resolve, reject) => {
+    const socket = net.connect(broker + '/own.sock');
+    socket.on('error', reject).on('connect', () => { socket.destroy(); resolve(); });
+  });
+}
+`),
+    );
+    await t.test(
+      'relative connect to renamed external socket in lookalike directory is EPERM',
+      () =>
+        run(`
+import assert from 'node:assert/strict'; import * as fs from 'node:fs'; import net from 'node:net';
+const temporary = ${JSON.stringify(path.join(root, '_farmslot-blind-evals/slot/run-epoch/boundary/tmp'))};
+fs.mkdirSync(temporary, { recursive: true });
+fs.renameSync(${JSON.stringify(source)}, temporary + '/broker');
+assert.ok(fs.statSync(temporary + '/broker/control.sock').isSocket());
+process.chdir(temporary);
+const error = await new Promise((resolve, reject) => {
+  const socket = net.connect('broker/control.sock');
+  socket.on('error', resolve).on('connect', () => {
+    socket.destroy(); reject(new Error('lookalike directory socket connected'));
+  });
+});
+assert.equal(error.code, 'EPERM');
+`),
+    );
+  },
+);
+
+test(
+  'Mobile broker and temp ownership under the real blind wrapper',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const root = fixture();
+    const other = realpathSync(mkdtempSync('/tmp/mmh-cdp-fixture-'));
+    t.after(() => rmSync(root, { recursive: true }));
+    t.after(() => rmSync(other, { recursive: true }));
+    profile(root);
+    const own = path.join(root, 'boundary/tmp');
+    const allocated = realpathSync(own);
+    profile(root);
+    assert.equal(realpathSync(own), allocated, 'retained launches must reuse the same temp');
+    mkdirSync(path.join(root, 'hidden/pins'), { recursive: true });
+    writeFileSync(path.join(root, 'hidden/pins/input'), 'synthetic other-task pin');
+    writeFileSync(path.join(root, 'blind-git.py'), 'synthetic protected boundary');
+    writeFileSync(path.join(other, 'state'), 'synthetic other-run state');
+    const brokerDir = path.join(realpathSync(own), 'broker');
+    const ownSocket = path.join(brokerDir, 'broker.sock');
+    // A synthetic flat socket also exercises the legacy /tmp/mmh-cdp-* layout.
+    const otherSocket = other + '.sock';
+    symlinkSync(other, path.join(own, 'foreign'));
+    symlinkSync(otherSocket, path.join(own, 'foreign.sock'));
+    const homeSockets = ['rename', 'link'].map((operation) => path.join(root, operation + '.sock'));
+    const servers = [ownSocket, otherSocket, ...homeSockets].map((socketPath) => {
+      const server = net.createServer((socket) => socket.end('fixture-ok'));
+      t.after(
+        () =>
+          new Promise<void>((resolve, reject) =>
+            server.close((error) => (error ? reject(error) : resolve())),
+          ),
+      );
+      server.listen(socketPath);
+      return server;
+    });
+    await Promise.all(servers.map((server) => once(server, 'listening')));
+    const run = (source: string) => {
+      const result = worker(
+        root,
+        `exec ${q(process.execPath)} --input-type=module -e ${q(source)}`,
+        { ...env, TMPDIR: other, TMP: other, TEMP: other, FARMSLOT_BLIND_BROKER_DIR: other },
+      );
+      assert.ifError(result.error);
+      assert.equal(result.status, 0, result.stderr);
+    };
+    await t.test('own broker connects', () =>
+      run(`
+      import assert from 'node:assert/strict'; import net from 'node:net';
+      const socket = net.connect(${JSON.stringify(ownSocket)});
+      socket.on('error', error => { throw error; });
+      await new Promise(resolve => socket.once('connect', resolve)); socket.destroy();`),
+    );
+    await t.test('other broker connect is EPERM', () =>
+      run(`
+      import assert from 'node:assert/strict'; import net from 'node:net';
+      for (const target of ${JSON.stringify([otherSocket, path.join(own, 'foreign.sock')])}) {
+        const error = await new Promise(resolve => net.connect(target)
+          .on('error', resolve).on('connect', () => { throw Error('foreign socket connected'); }));
+        assert.equal(error.code, 'EPERM');
+      }`),
+    );
+    for (const [index, operation] of ['renameSync', 'linkSync'].entries()) {
+      for (const directory of ['TMPDIR', 'FARMSLOT_BLIND_BROKER_DIR'])
+        await t.test(`home socket ${operation} into ${directory} is EPERM`, () =>
+          run(`
+      import assert from 'node:assert/strict'; import * as fs from 'node:fs'; import net from 'node:net';
+      const source = ${JSON.stringify(homeSockets[index])};
+      const target = process.env.${directory} + '/imported-${operation}.sock';
+      let relocationError;
+      try { fs.${operation}(source, target); } catch (error) { relocationError = error; }
+      const connectionError = await new Promise(resolve => net.connect(target)
+        .on('error', resolve).on('connect', () => { throw Error('imported socket connected'); }));
+      assert.equal(relocationError?.code, 'EPERM');
+      assert.ok(['EPERM', 'ENOENT'].includes(connectionError.code));
+      assert.ok(fs.existsSync(source));`),
+        );
+    }
+    await t.test('broker admits sockets only and cannot be moved or replaced', () =>
+      run(`
+      import assert from 'node:assert/strict'; import * as fs from 'node:fs';
+      const broker = process.env.FARMSLOT_BLIND_BROKER_DIR;
+      assert.throws(() => fs.mkdirSync(broker + '/nested'), { code: 'EPERM' });
+      assert.throws(() => fs.writeFileSync(broker + '/file', 'fixture'), { code: 'EPERM' });
+      assert.throws(() => fs.symlinkSync(process.env.TMPDIR, broker + '/alias'), { code: 'EPERM' });
+      assert.throws(() => fs.renameSync(broker, broker + '-moved'), { code: 'EPERM' });
+      assert.throws(() => fs.rmdirSync(broker), { code: 'EPERM' });
+      assert.throws(() => fs.chmodSync(broker, 0o777), { code: 'EPERM' });`),
+    );
+    await t.test('ps supplies harness identity and health fields', () =>
+      run(`
+      import assert from 'node:assert/strict'; import { execFileSync } from 'node:child_process';
+      for (const fields of ['lstart=', 'etime=,rss=', 'command=', 'comm=', 'ppid=,args='])
+        assert.ok(execFileSync('ps', ['-ww', '-p', String(process.pid), '-o', fields], { encoding: 'utf8' }).trim());
+      assert.ok(execFileSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' }).includes(String(process.pid)));`),
+    );
+    await t.test('other temp state cannot be deleted or written', () =>
+      run(`
+      import assert from 'node:assert/strict';
+      import { unlinkSync, rmdirSync, writeFileSync, renameSync, chmodSync } from 'node:fs';
+      for (const target of ${JSON.stringify([otherSocket, path.join(other, 'state'), path.join(own, 'foreign/state')])}) {
+        assert.throws(() => unlinkSync(target), { code: 'EPERM' });
+        assert.throws(() => chmodSync(target, 0o777), { code: 'EPERM' });
+      }
+      assert.throws(() => rmdirSync(${JSON.stringify(other)}), { code: 'EPERM' });
+      assert.throws(() => renameSync(${JSON.stringify(other)}, ${JSON.stringify(other + '-moved')}), { code: 'EPERM' });
+      assert.throws(() => writeFileSync(${JSON.stringify(path.join(other, 'state'))}, 'changed'), { code: 'EPERM' });`),
+    );
+    await t.test('boundary assigns writable private temp and broker paths', () =>
+      run(`
+      import assert from 'node:assert/strict'; import { writeFileSync, unlinkSync, realpathSync } from 'node:fs';
+      assert.equal(realpathSync(process.env.TMPDIR), ${JSON.stringify(realpathSync(own))});
+      assert.equal(process.env.TMP, process.env.TMPDIR); assert.equal(process.env.TEMP, process.env.TMPDIR);
+      assert.equal(process.env.FARMSLOT_BLIND_BROKER_DIR, process.env.TMPDIR + '/broker');
+      assert.equal(process.env.MAC_CHROMIUM_TMPDIR, process.env.TMPDIR);
+      const file = process.env.TMPDIR + '/own-file'; writeFileSync(file, 'fixture'); unlinkSync(file);`),
+    );
+    await t.test('production broker exchanges commands in the boundary allocation', () =>
+      run(`
+      import assert from 'node:assert/strict';
+      import * as fs from 'node:fs';
+      import broker from ${JSON.stringify(fileURLToPath(new URL('../../../../packages/recipe-runner/cdp-broker/cdp-broker.cjs', import.meta.url)))};
+      import path from 'node:path';
+      const first = broker.brokerSocketPath('/synthetic/runtime', 8081);
+      assert.equal(path.dirname(first), process.env.FARMSLOT_BLIND_BROKER_DIR);
+      assert.notEqual(first, broker.brokerSocketPath('/synthetic/runtime', 8082));
+      assert.ok(Buffer.byteLength(first) < 104);
+      const sessions = new Map([['fixture', { deviceId: 'fixture', name: 'synthetic', opened: true, brokerReady: true }]]);
+      const server = broker.createCdpBroker({ socketPath: first, sessions, sendCommand: async () => ({ fixture: true }) });
+      let client;
+      try {
+        client = await broker.createBrokerClient(first, 'fixture', 1000);
+        assert.ok(fs.statSync(process.env.TMPDIR + '/' + path.basename(first) + '.owner').isDirectory());
+        assert.ok(fs.readdirSync(process.env.FARMSLOT_BLIND_BROKER_DIR).every(name => fs.lstatSync(path.dirname(first) + '/' + name).isSocket()));
+        assert.throws(() => broker.createCdpBroker({ socketPath: first, sessions, sendCommand: async () => ({}) }), /socket is owned/);
+        assert.deepEqual(await client.send('Runtime.evaluate', { expression: 'synthetic' }, 1000), { fixture: true });
+      } finally { client?.close(); server.close(); }
+      assert.equal(fs.existsSync(process.env.TMPDIR + '/' + path.basename(first) + '.owner'), false);`),
+    );
+    await t.test('routing link and ps cannot be replaced or moved', () =>
+      run(`
+      import assert from 'node:assert/strict'; import { unlinkSync, renameSync, writeFileSync } from 'node:fs';
+      for (const target of ${JSON.stringify([own, path.join(root, 'boundary/bin/ps')])}) {
+        assert.throws(() => unlinkSync(target), { code: 'EPERM' });
+        assert.throws(() => renameSync(target, target + '-moved'), { code: 'EPERM' });
+      }
+      assert.throws(() => writeFileSync(${JSON.stringify(path.join(root, 'boundary/bin/ps'))}, 'changed'), { code: 'EPERM' });`),
+    );
+    await t.test('boundary chmod/dd and other task pin reads stay EPERM', () =>
+      run(`
+      import assert from 'node:assert/strict'; import { chmodSync, readFileSync } from 'node:fs';
+      import { spawnSync } from 'node:child_process';
+      const file = ${JSON.stringify(path.join(root, 'blind-git.py'))};
+      assert.throws(() => chmodSync(file, 0o777), { code: 'EPERM' });
+      const result = spawnSync('/bin/dd', ['if=/dev/zero', 'of=' + file, 'count=1'], { encoding: 'utf8' });
+      assert.notEqual(result.status, 0); assert.match(result.stderr, /Operation not permitted/);
+      assert.throws(() => readFileSync(${JSON.stringify(path.join(root, 'hidden/pins/input'))}), { code: 'EPERM' });`),
+    );
+  },
+);
+
+test(
+  'blind launch admits tooling and provider config without ambient secrets',
+  { skip: process.platform !== 'darwin' },
+  (t) => {
+    const root = fixture();
+    t.after(() => rmSync(root, { recursive: true }));
+    profile(root);
+    const agent = path.join(root, 'synthetic-agent');
+    mkdirSync(agent);
+    writeFileSync(
+      path.join(agent, 'models.json'),
+      '{"providers":{"fixture":{"apiKey":"fixture-only"}}}',
+    );
+    const secrets = [
+      'GH_REGISTRY_PAT',
+      'GITHUB_TOKEN',
+      'NPM_TOKEN',
+      'FOO_SECRET',
+      'AWS_ACCESS_KEY_ID',
+      'AWS_SECRET_ACCESS_KEY',
+      'npm_config_auth',
+      'GH_OTHER',
+      'OTHER_API_KEY',
+      'OPENAI_API_KEY',
+    ];
+    const probe = path.join(root, 'env-probe.mjs');
+    writeFileSync(
+      probe,
+      `
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+for (const name of ${JSON.stringify(secrets)}) assert.equal(process.env[name], undefined, name + ' leaked into blind worker');
+assert.equal(process.env.LITELLM_API_KEY, 'fixture-provider');
+assert.equal(process.env.PI_CODING_AGENT_DIR, ${JSON.stringify(agent)});
+assert.equal(JSON.parse(readFileSync(process.env.PI_CODING_AGENT_DIR + '/models.json')).providers.fixture.apiKey, 'fixture-only');
+assert.equal(process.env.TMUX_PANE, '%42');
+assert.equal(process.env.FARMSLOT_TASK_DIR, ${JSON.stringify(root)});
+assert.equal(process.env.ANDROID_HOME, '/synthetic/android');
+assert.ok(process.env.PATH);
+assert.ok(process.env.HOME);
+console.log('ambient secrets absent; tooling, task, pane and synthetic model config available');
+`,
+    );
+    const result = worker(
+      root,
+      `exec ${q(process.execPath)} ${q(probe)}`,
+      {
+        ...env,
+        ...Object.fromEntries(secrets.map((name) => [name, 'fixture-only'])),
+        PI_CODING_AGENT_DIR: agent,
+        TMUX_PANE: '%42',
+        FARMSLOT_TASK_DIR: root,
+        ANDROID_HOME: '/synthetic/android',
+        LITELLM_API_KEY: 'fixture-provider',
+      },
+      45_000,
+      getRunnerDefinition('pi').blindModelEnvironment?.('litellm/fixture'),
+    );
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    t.diagnostic(result.stdout.trim());
+  },
+);
+
+for (const provider of ['localsparks', 'router', 'litellm', 'ollama'] as const) {
+  test(
+    `blind pi ${provider} pool config survives fresh launch and retained reload`,
+    { skip: process.platform !== 'darwin' },
+    async (t) => {
+      const root = fixture();
+      t.after(() => rmSync(root, { recursive: true }));
+      profile(root);
+      const agent = path.join(root, 'pi-agent');
+      mkdirSync(agent);
+      const binary = path.join(root, 'pi-fixture.mjs');
+      const selectedKind = provider === 'localsparks' ? 'router' : provider;
+      const secrets = [
+        'GH_REGISTRY_PAT',
+        'OPENAI_API_KEY',
+        'ANTHROPIC_API_KEY',
+        'LITELLM_API_KEY',
+        'OLLAMA_API_KEY',
+        'FARMSLOT_PI_ROUTER_KEY',
+      ];
+      const selectedKey = {
+        router: 'FARMSLOT_PI_ROUTER_KEY',
+        litellm: 'LITELLM_API_KEY',
+        ollama: 'OLLAMA_API_KEY',
+      }[selectedKind];
+      const config = {
+        FARMSLOT_PI_ROUTER_ID: 'localsparks',
+        FARMSLOT_PI_ROUTER_URL: 'http://router.invalid/v1',
+        LITELLM_URL: 'http://litellm.invalid/v1',
+        FARMSLOT_PI_OLLAMA: '1',
+        FARMSLOT_PI_OLLAMA_URL: 'http://ollama.invalid/v1',
+        FARMSLOT_PI_REQUEST_TIMEOUT_MS: '12345',
+        FARMSLOT_PI_REQUEST_TIMEOUT_MODE: 'idle',
+        FARMSLOT_PI_PROVIDERS_DEBUG: '1',
+        FARMSLOT_PI_WORKSPACE_TRUST: '1',
+        ...Object.fromEntries(
+          ['ROUTER', 'LITELLM', 'OLLAMA'].flatMap((kind) => [
+            [`FARMSLOT_PI_${kind}_CONTEXT`, '64000'],
+            [`FARMSLOT_PI_${kind}_MAX_TOKENS`, '4096'],
+            [`FARMSLOT_PI_${kind}_REASONING`, 'true'],
+            [
+              `FARMSLOT_PI_${kind}_MODEL_LIMITS`,
+              JSON.stringify({
+                fixture: {
+                  contextWindow: 32000,
+                  maxTokens: 2048,
+                  reasoning: true,
+                },
+              }),
+            ],
+          ]),
+        ),
+      };
+      writeFileSync(
+        binary,
+        `
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+const extension = process.argv[process.argv.indexOf('-e') + 1];
+const { resolvePiProviderCatalog } = await import(pathToFileURL(path.join(path.dirname(extension), 'pi-farmslot-providers.mjs')));
+for (const name of ${JSON.stringify(secrets.filter((name) => name !== selectedKey))})
+  assert.equal(process.env[name], undefined, name + ' leaked');
+assert.equal(process.env[${JSON.stringify(selectedKey)}], 'synthetic-selected-auth');
+const requests = [];
+const catalog = await resolvePiProviderCatalog(process.env, {
+  fetchImpl: async (url, options) => {
+    requests.push([url, new Headers(options.headers).get('Authorization')]);
+    return Response.json({ data: [{ id: 'fixture' }] });
+  },
+});
+const selectedUrl = ${JSON.stringify(config[`${selectedKind === 'router' ? 'FARMSLOT_PI_ROUTER' : selectedKind === 'litellm' ? 'LITELLM' : 'FARMSLOT_PI_OLLAMA'}_URL`])};
+assert.ok(requests.length > 0, 'discovery must run through the real wrapper');
+const leaked = requests.find(([url, authorization]) => authorization === 'Bearer synthetic-selected-auth' && !url.startsWith(selectedUrl + '/'));
+assert.ok(!leaked, 'selected credential reached an unselected endpoint: ' + leaked?.[0]);
+for (const [url, authorization] of requests) {
+  assert.ok(url.startsWith(selectedUrl + '/'), 'discovery reached an unselected endpoint: ' + url);
+  assert.ok(authorization === 'Bearer synthetic-selected-auth', 'endpoint received incorrect auth');
+}
+for (const [name, value] of Object.entries(${JSON.stringify(config)})) {
+  const shared = ['FARMSLOT_PI_REQUEST_TIMEOUT_MS', 'FARMSLOT_PI_REQUEST_TIMEOUT_MODE', 'FARMSLOT_PI_PROVIDERS_DEBUG', 'FARMSLOT_PI_WORKSPACE_TRUST'].includes(name);
+  const selected = name.startsWith('FARMSLOT_PI_' + ${JSON.stringify(selectedKind.toUpperCase())}) || name.startsWith(${JSON.stringify(selectedKind.toUpperCase())} + '_');
+  assert.equal(process.env[name], shared || selected ? value : undefined, name);
+}
+assert.deepEqual(catalog.map(source => source.kind), [${JSON.stringify(selectedKind)}]);
+const source = catalog.find(source => source.kind === ${JSON.stringify(selectedKind)});
+assert.ok(source, 'selected pool provider must be registered');
+assert.equal(source.id, ${JSON.stringify(selectedKind === 'router' ? 'localsparks' : selectedKind)});
+assert.equal(source.apiKey, 'synthetic-selected-auth');
+assert.equal(source.models[0].contextWindow, 32000);
+assert.equal(source.models[0].maxTokens, 2048);
+assert.equal(source.models[0].reasoning, true);
+console.log('synthetic provider config and scoped auth passed');
+`,
+      );
+      const vars = makeVars({
+        remoteRepo: root,
+        piPath: `${q(process.execPath)} ${q(binary)}`,
+        machineEnv: {
+          ...config,
+          PI_CODING_AGENT_DIR: agent,
+          ...Object.fromEntries(secrets.map((name) => [name, 'synthetic-unselected-auth'])),
+          [selectedKey]: 'synthetic-selected-auth',
+        },
+      });
+      const options = {
+        taskDir: path.join(root, 'task'),
+        blindTrialBoundary: { capsule: root, baseSha: 'a'.repeat(40) },
+      };
+      for (const [stage, command] of Object.entries({
+        fresh: buildLaunchCommand(vars, 'pi', `${provider}/fixture`, 'Synthetic task', options),
+        retained: buildRunnerSessionReloadCommand(
+          vars,
+          'pi',
+          `${provider}/fixture`,
+          'synthetic-session',
+          options,
+        ),
+      }))
+        await t.test(stage, () => {
+          const result = spawnSync('/bin/bash', ['-c', command], {
+            env,
+            encoding: 'utf8',
+            timeout: 10_000,
+          });
+          assert.ifError(result.error);
+          assert.equal(result.status, 0, result.stderr);
+          assert.match(result.stdout, /synthetic provider config and scoped auth passed/);
+        });
+    },
+  );
+}
+
+test(
+  'frozen mark helper verifies its CLI and marks progress under the real seatbelt',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const { cliTaskInputExclusions } = await import(
+      new URL('../../../../packages/cli/src/commands/task.ts', import.meta.url).href
+    );
+    const { retainTaskExecution } =
+      await import('../../../../packages/agent-runtime/src/task-init/execution-provenance.js');
+    const { buildMarkShim } =
+      await import('../../../../packages/agent-runtime/src/task-init/write.js');
+    const root = fixture();
+    t.after(() => rmSync(root, { recursive: true }));
+    const launchEnv = { ...env, FARMSLOT_HOME: path.join(root, 'farm') };
+    const previous = process.env.FARMSLOT_HOME;
+    process.env.FARMSLOT_HOME = launchEnv.FARMSLOT_HOME;
+    t.after(() => {
+      if (previous === undefined) delete process.env.FARMSLOT_HOME;
+      else process.env.FARMSLOT_HOME = previous;
+    });
+    const installed = path.join(root, 'installed');
+    const task = path.join(root, 'task');
+    const source = path.join(installed, 'services/gateway/src/evals/blind-git.py');
+    mkdirSync(path.dirname(source), { recursive: true });
+    writeFileSync(source, '# synthetic private boundary source\n');
+    writeFileSync(
+      path.join(installed, 'package.json'),
+      '{"name":"@farmslot/cli","version":"1.0.0"}',
+    );
+    const executable = path.join(installed, 'farmslot');
+    // Retain a tiny distribution fixture. The executable invokes the real CLI,
+    // including its receipt verifier and the production checklist marker.
+    writeFileSync(
+      executable,
+      `#!/bin/sh\nexec ${q(process.execPath)} ${q(fileURLToPath(new URL('../../../../packages/cli/bin/farmslot.mjs', import.meta.url)))} "$@"\n`,
+      { mode: 0o755 },
+    );
+    const receipt = retainTaskExecution(task, {
+      executable,
+      packageRoot: installed,
+      distributionRoot: installed,
+      bindingIdentity: null,
+      inputs: [],
+      excludedRoots: cliTaskInputExclusions(installed),
+      selectedConfiguration: '{"identity":null}',
+    });
+    writeFileSync(
+      path.join(task, 'CHECKLIST.md'),
+      '# Synthetic task\n- [ ] 1. Prove marker progress\n',
+    );
+    writeFileSync(
+      path.join(task, 'mark'),
+      buildMarkShim(`${q(receipt.resolvedExecutable)} task mark`, true),
+      { mode: 0o755 },
+    );
+    assert.equal(
+      existsSync(path.join(receipt.pin, 'cli/services/gateway/src/evals/blind-git.py')),
+      false,
+    );
+    profile(root, launchEnv);
+    const result = worker(root, `${q(path.join(task, 'mark'))} 1`, launchEnv);
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr + result.stdout);
+    assert.match(readFileSync(path.join(task, 'CHECKLIST.md'), 'utf8'), /- \[x\] 1\./u);
+    writeFileSync(
+      receipt.resolvedExecutable,
+      readFileSync(receipt.resolvedExecutable, 'utf8') + '# synthetic tamper\n',
+    );
+    const tampered = worker(root, `${q(path.join(task, 'mark'))} start`, launchEnv);
+    assert.notEqual(tampered.status, 0);
+    assert.match(tampered.stdout + tampered.stderr, /TASK_INPUT_CHANGED/u);
+    const denied = worker(
+      root,
+      `cat ${q(source)}; cat ${q(path.join(root, 'boundary/sandbox.sb'))}`,
+      launchEnv,
+    );
+    assert.notEqual(denied.status, 0);
+    assert.doesNotMatch(denied.stdout, /synthetic private boundary source/u);
+    assert.match(denied.stderr, /Operation not permitted/u);
+    t.diagnostic(
+      'real frozen mark verified its receipt and wrote CHECKLIST; boundary builder and sandbox profile contents remain denied',
+    );
+  },
+);
+
+test(
+  'hosted static init and retained init keep mark usable inside Seatbelt',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const root = fixture();
+    t.after(() => rmSync(root, { recursive: true }));
+    const checkout = fileURLToPath(new URL('../../../../', import.meta.url));
+    const installed = path.join(root, 'installed');
+    // Copy program sources into a disposable installation. No build,
+    // operator configuration, package install, or shared distribution is touched.
+    for (const directory of [
+      'packages/cli/src',
+      'packages/agent-runtime/src',
+      'packages/agent-runtime/scripts',
+      'packages/agent-runtime/bin',
+    ]) {
+      cpSync(path.join(checkout, directory), path.join(installed, directory), {
+        recursive: true,
+        filter: (file) =>
+          !file.endsWith('.test.ts') &&
+          !file.endsWith('.test.tsx') &&
+          !['.env', '.npmrc', '.pi', '.ssh'].includes(path.basename(file)) &&
+          !path.basename(file).startsWith('.env.'),
+      });
+    }
+    symlinkSync(path.join(checkout, 'node_modules'), path.join(root, 'node_modules'));
+    writeFileSync(path.join(installed, 'package.json'), '{"type":"module"}');
+    writeFileSync(path.join(installed, 'yarn.lock'), '# synthetic immutable installation');
+    writeFileSync(path.join(installed, 'DEPLOYED-REVISION.json'), '{}');
+    const cli = path.join(installed, 'packages/cli');
+    writeFileSync(
+      path.join(cli, 'package.json'),
+      '{"name":"@farmslot/cli","version":"1.0.0","type":"module"}',
+    );
+    mkdirSync(path.join(cli, 'bin'));
+    writeFileSync(
+      path.join(cli, 'bin/farmslot.mjs'),
+      `#!/bin/sh\nexec ${q(process.execPath)} ${q(path.join(checkout, 'packages/cli/bin/farmslot.mjs'))} "$@"\n`,
+      { mode: 0o755 },
+    );
+    const tsconfig = JSON.parse(
+      readFileSync(path.join(checkout, 'packages/cli/tsconfig.json'), 'utf8'),
+    );
+    for (const [name, paths] of Object.entries(tsconfig.compilerOptions.paths)) {
+      assert.ok(Array.isArray(paths));
+      tsconfig.compilerOptions.paths[name] = paths.map((entry: string) =>
+        path.resolve(checkout, 'packages/cli', entry),
+      );
+    }
+    tsconfig.compilerOptions.paths['@farmslot/agent-runtime'] = [
+      path.join(installed, 'packages/agent-runtime/src/index.ts'),
+    ];
+    tsconfig.extends = path.join(checkout, 'apps/command-center/tsconfig.base.json');
+    const configFile = path.join(installed, 'tsconfig.json');
+    writeFileSync(configFile, JSON.stringify(tsconfig));
+    const boundarySource = path.join(installed, 'services/gateway/src/evals/blind-git.py');
+    mkdirSync(path.dirname(boundarySource), { recursive: true });
+    writeFileSync(boundarySource, '# synthetic private boundary builder');
+    const pack = path.join(root, 'projects/fixture');
+    mkdirSync(path.join(pack, 'templates/worker'), { recursive: true });
+    writeFileSync(path.join(pack, 'project.json'), '{"name":"fixture","task_dir":"tasks"}');
+    writeFileSync(
+      path.join(pack, 'templates/worker/dev.md'),
+      '---\nplatforms: [core]\n---\n# Synthetic task\n- [ ] 1. Prove hosted marker progress\n',
+    );
+    mkdirSync(path.join(pack, 'tasks'));
+    writeFileSync(path.join(pack, 'tasks/unretained.txt'), 'synthetic task output');
+    mkdirSync(path.join(root, 'pool'));
+    writeFileSync(
+      path.join(root, 'pool/local.json'),
+      JSON.stringify({
+        host: 'localhost',
+        project: 'fixture',
+        slots: [{ id: 'fixture-core-1', repo: root, platform: 'core' }],
+      }),
+    );
+    const task = path.join(root, 'tasks/dev/proof');
+    const driver = path.join(root, 'hosted-init.mjs');
+    writeFileSync(
+      driver,
+      `
+import assert from 'node:assert/strict';
+import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync, writeFileSync } from 'node:fs';
+const { runHostedTaskInit } = await import(${JSON.stringify(path.join(cli, 'src/commands/hosted-task-init.ts'))});
+const file = ${JSON.stringify(root)} + '/.task-init-' + randomUUID() + '.json';
+writeFileSync(file, JSON.stringify({ version: 1, slotId: 'fixture-core-1', binding: 'static',
+  task: { taskDir: ${JSON.stringify(task)}, flow: 'dev', platform: 'core',
+    task: { title: 'Synthetic static task', sourceKind: 'text' },
+    handoff: { surface: 'farmslot', project: 'fixture', attemptId: 'synthetic-run' } },
+  template: { sourceId: 'project:fixture', id: 'dev/default', selectionReason: 'single-general-candidate',
+    sha256: createHash('sha256').update(readFileSync(${JSON.stringify(path.join(pack, 'templates/worker/dev.md'))})).digest('hex') }
+}));
+const result = await runHostedTaskInit(file);
+assert.ok(result.executionProvenance);
+const pack = result.executionProvenance.retainedInputs.find(input => input.source === ${JSON.stringify(pack)});
+assert.ok(pack);
+console.log(JSON.stringify({ pin: result.executionProvenance.pin, pack: pack.path }));
+`,
+    );
+    const launchEnv = {
+      ...env,
+      FARMSLOT_HOME: path.join(root, 'farm'),
+      FARMSLOT_POOL_DIR: path.join(root, 'pool'),
+      FARMSLOT_PROJECTS_DIR: path.join(root, 'projects'),
+      TSX_TSCONFIG_PATH: configFile,
+    };
+    const initialize = () => {
+      const result = spawnSync(
+        process.execPath,
+        ['--import', path.join(checkout, 'node_modules/tsx/dist/loader.mjs'), driver],
+        {
+          env: launchEnv,
+          encoding: 'utf8',
+          timeout: 20_000,
+        },
+      );
+      assert.ifError(result.error);
+      assert.equal(result.status, 0, result.stderr);
+      return JSON.parse(result.stdout.trim());
+    };
+    const fresh = initialize();
+    profile(root, launchEnv);
+    for (const stage of ['fresh', 'retained'])
+      await t.test(stage, () => {
+        if (stage === 'retained') assert.deepEqual(initialize(), fresh);
+        const marked = worker(root, `${q(path.join(task, 'mark'))} 1`, launchEnv);
+        assert.ifError(marked.error);
+        assert.equal(marked.status, 0, stage + ': ' + marked.stderr + marked.stdout);
+        assert.match(readFileSync(path.join(task, 'CHECKLIST.md'), 'utf8'), /- \[x\] 1\./);
+      });
+    assert.equal(
+      existsSync(path.join(fresh.pin, 'cli/services/gateway/src/evals/blind-git.py')),
+      false,
+    );
+    assert.equal(existsSync(path.join(fresh.pack, 'tasks/unretained.txt')), false);
+    assert.equal(existsSync(path.join(fresh.pack, 'project.json')), true);
+  },
+);
+
+test(
+  'blind Mobile tooling can reach its synthetic Metro TCP endpoint',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const root = fixture();
+    t.after(() => rmSync(root, { recursive: true }));
+    const metro = net.createServer((socket) => socket.end('synthetic-metro'));
+    t.after(
+      () =>
+        new Promise<void>((resolve, reject) =>
+          metro.close((error) => (error ? reject(error) : resolve())),
+        ),
+    );
+    metro.listen(0, '127.0.0.1');
+    await once(metro, 'listening');
+    const address = metro.address();
+    assert.ok(address && typeof address !== 'string');
+    profile(root, env, { metro_port: address.port });
+    const probe = path.join(root, 'metro-probe.mjs');
+    writeFileSync(
+      probe,
+      `
+import assert from 'node:assert/strict';
+import net from 'node:net';
+assert.equal(process.env.IOS_SIMULATOR, 'Synthetic simulator');
+assert.equal(process.env.SIM_UDID, 'synthetic-device');
+const data = await new Promise((resolve, reject) => {
+  const socket = net.connect({ host: '127.0.0.1', port: Number(process.env.METRO_PORT) });
+  socket.setTimeout(1000, () => socket.destroy(new Error('synthetic Metro timeout')));
+  socket.on('error', reject);
+  let bytes = ''; socket.on('data', chunk => bytes += chunk);
+  socket.on('end', () => resolve(bytes));
+});
+assert.equal(data, 'synthetic-metro');
+`,
+    );
+    // Async spawning lets the parent serve Metro while the child connects.
+    const child = spawn(
+      '/bin/sh',
+      [
+        '-c',
+        withBlindTrialBoundary(`exec ${q(process.execPath)} ${q(probe)}`, {
+          capsule: root,
+          baseSha: 'a'.repeat(40),
+          browserCdpPort: JSON.parse(readFileSync(path.join(root, 'state.json'), 'utf8'))
+            .browserCdpPort,
+        }).replace('/usr/bin/env -i', 'exec /usr/bin/env -i'),
+      ],
+      {
+        env: {
+          ...env,
+          METRO_PORT: String(address.port),
+          IOS_SIMULATOR: 'Synthetic simulator',
+          SIM_UDID: 'synthetic-device',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    const exited = once(child, 'exit');
+    t.after(async () => {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      await exited;
+    });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => (stderr += chunk));
+    child.stdout.resume();
+    const [code] = await exited;
+    assert.equal(code, 0, stderr);
+    t.diagnostic(
+      'synthetic Metro TCP and Mobile device environment passed; no live simulator was contacted',
+    );
+  },
+);
 
 test(
   'gateway network is denied even with a readable valid token; browser stores and operator CDP are denied',
@@ -871,7 +1684,33 @@ try {
   assert.equal(state.cdpPort, cdpPort);
   assert.equal(state.browser.launchMethod, 'spawn');
   assert.equal(state.browser.outerSeatbelt, true);
-  const version = await fetch('http://127.0.0.1:' + cdpPort + '/json/version').then(r => r.json());
+  const { register } = await import(${JSON.stringify(import.meta.resolve('tsx/esm/api'))});
+  const unregister = register({ tsconfig: ${JSON.stringify(fileURLToPath(new URL('../../../../packages/cli/tsconfig.json', import.meta.url)))} });
+  const { createAdapterRegistry } = await import(${JSON.stringify(new URL('../../../../packages/adapter-sdk/src/index.ts', import.meta.url).href)});
+  const { createWebDappAdapter } = await import(${JSON.stringify(path.join(adapter, 'src/web-dapp/index.mjs'))});
+  const { configureHarnessAdapters, harnessAdapter } = await import(${JSON.stringify(new URL('../../../../packages/recipe-cli/src/harness/adapters.ts', import.meta.url).href)});
+  const { activateRecipeRuntimeEnvironment } = await import(${JSON.stringify(new URL('../../../../packages/recipe-cli/src/harness/run-engine.ts', import.meta.url).href)});
+  const { recipeRunOptionsFromCli } = await import(${JSON.stringify(new URL('../../../../packages/recipe-cli/src/harness/run-options.ts', import.meta.url).href)});
+  const adapter = createWebDappAdapter();
+  const registry = createAdapterRegistry();
+  registry.register({ ...adapter, resolveSlotPorts() {
+    // The Extension adapter's context/pool rung overwrites both inherited ports.
+    process.env.CDP_PORT = String(${assignedPort});
+    process.env.RECIPE_CDP_PORT = String(${assignedPort});
+  } });
+  configureHarnessAdapters(registry);
+  harnessAdapter(adapter.id).resolveSlotPorts(root);
+  const options = recipeRunOptionsFromCli(adapter.id, { cdpPort: String(${assignedPort}) });
+  const restore = activateRecipeRuntimeEnvironment(adapter.id, root, options);
+  let version;
+  try {
+    const runtimePort = Number(process.env.CDP_PORT);
+    version = await fetch('http://127.0.0.1:' + runtimePort + '/json/version').then(r => r.json());
+    assert.equal(runtimePort, cdpPort);
+    assert.equal(options.cdpPort, String(cdpPort));
+    assert.equal(process.env.RECIPE_CDP_PORT, String(cdpPort));
+  } finally { restore(); unregister(); }
+
   assert.ok(version.webSocketDebuggerUrl);
   const client = await CdpClient.connect(version.webSocketDebuggerUrl);
   try {
@@ -904,7 +1743,7 @@ try {
   assert.equal(reused.browserPid, state.browserPid);
   const stopped = await stop();
   assert.equal(stopped.stopped.length, 2);
-  console.log('ps denied; ownership/group/state/start identity passed; production adapter launch remapped assigned slot CDP to allocated recipe port; configured port denied; harness launched and reused Chrome; recipe-style CDP target/evaluation passed; Chrome CDP served; outer read denial retained');
+  console.log('ps denied; ownership/group/state/start identity passed; production adapter launch remapped assigned slot CDP to allocated recipe port; configured port denied; harness launched and reused Chrome; recipe slot resolution and explicit slot flags remapped to trial CDP; recipe-style CDP target/evaluation passed; Chrome CDP served; outer read denial retained');
 } finally {
   await cleanup();
 }
@@ -912,7 +1751,12 @@ try {
     );
     const result = worker(root, `exec ${q(process.execPath)} ${q(probe)}`);
     assert.ifError(result.error);
-    assert.equal(result.status, 0, result.stderr);
+    const browserLog = path.join(root, 'temp/recipe/runtime/terminal/browser.log');
+    assert.equal(
+      result.status,
+      0,
+      result.stderr + (existsSync(browserLog) ? readFileSync(browserLog, 'utf8') : ''),
+    );
     assert.match(result.stdout, /Chrome CDP served; outer read denial retained/u);
     t.diagnostic(result.stdout.trim());
     for (const mode of ['SIGTERM', 'SIGINT', 'parent-death'] as const) {
@@ -936,7 +1780,7 @@ try {
             withBlindTrialBoundary(
               `exec ${q(process.execPath)} ${q(probe)} ${q(mode)} ${parent.pid}`,
               { capsule: root, baseSha: 'a'.repeat(40), browserCdpPort: allocatedPort },
-            ).replace('/usr/bin/sandbox-exec', 'exec /usr/bin/sandbox-exec'),
+            ).replace('/usr/bin/env -i', 'exec /usr/bin/env -i'),
           ],
           { env, stdio: ['ignore', 'pipe', 'pipe'] },
         );
@@ -1132,7 +1976,7 @@ try {
               withBlindTrialBoundary(
                 `exec ${q(process.execPath)} ${q(piProbe)} ${q(mode)} ${parent.pid}`,
                 { capsule: root, baseSha: 'a'.repeat(40) },
-              ).replace('/usr/bin/sandbox-exec', 'exec /usr/bin/sandbox-exec'),
+              ).replace('/usr/bin/env -i', 'exec /usr/bin/env -i'),
             ],
             { env, stdio: ['ignore', 'pipe', 'pipe'] },
           );

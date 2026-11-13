@@ -16,6 +16,48 @@ const { normalizeLiteLlmModelInfo } = await import(
     : '../../packages/slot-config/src/litellm-model-info.mjs'
 );
 
+/** Shared non-secret settings read by this helper and the Pi extension. */
+export const PI_CONFIG_ENVIRONMENT = Object.freeze([
+  'FARMSLOT_PI_REQUEST_TIMEOUT_MS',
+  'FARMSLOT_PI_REQUEST_TIMEOUT_MODE',
+  'FARMSLOT_PI_PROVIDERS_DEBUG',
+  'FARMSLOT_PI_WORKSPACE_TRUST',
+]);
+
+const PI_PROVIDER_ENVIRONMENT = Object.fromEntries(
+  Object.entries({
+    router: ['FARMSLOT_PI_ROUTER_ID', 'FARMSLOT_PI_ROUTER_URL', 'FARMSLOT_PI_ROUTER_KEY'],
+    litellm: ['LITELLM_URL', 'LITELLM_BASE_URL', 'LITELLM_API_KEY'],
+    ollama: [
+      'FARMSLOT_PI_OLLAMA',
+      'FARMSLOT_PI_OLLAMA_URL',
+      'OLLAMA_BASE_URL',
+      'OLLAMA_HOST',
+      'OLLAMA_API_KEY',
+    ],
+  }).map(([kind, names]) => [
+    kind,
+    [
+      ...names,
+      ...['CONTEXT', 'MAX_TOKENS', 'REASONING', 'MODEL_LIMITS'].map(
+        (setting) => `FARMSLOT_PI_${kind.toUpperCase()}_${setting}`,
+      ),
+    ],
+  ]),
+);
+
+function piProviderKind(model, env) {
+  const provider = model.split('/')[0];
+  if (provider === 'litellm' || provider === 'ollama') return provider;
+  if (provider === 'router' || provider === piRouterProviderId(env)) return 'router';
+  return undefined;
+}
+
+/** Keep discovery configuration and authentication scoped to the same provider. */
+export function piProviderEnvironment(model, env = process.env) {
+  return [...PI_CONFIG_ENVIRONMENT, ...(PI_PROVIDER_ENVIRONMENT[piProviderKind(model, env)] ?? [])];
+}
+
 /** Bound worker HTTP requests through the final response byte. Pi owns retries. */
 export function deadlinePiFetch(fetchImpl, timeoutMs = 5 * 60_000, onExhausted, mode = 'total') {
   let consecutiveTimeouts = 0;
@@ -319,10 +361,18 @@ export function listPiProviderSources(env = process.env) {
       ...(routerId === 'router' ? {} : { aliases: ['router'] }),
       name: 'OpenAI-compatible router',
       baseUrl: openaiBaseUrl(routerUrl),
-      apiKey: env.FARMSLOT_PI_ROUTER_KEY || env.LITELLM_API_KEY || 'local',
+      apiKey:
+        env.FARMSLOT_PI_ROUTER_KEY ||
+        (env.FARMSLOT_BLIND_SEATBELT === '1' ? undefined : env.LITELLM_API_KEY) ||
+        'local',
     });
   }
-  return sources.filter((source) => source.baseUrl);
+  const blindKind =
+    env.FARMSLOT_BLIND_SEATBELT === '1' ? piProviderKind(env.FARMSLOT_MODEL ?? '', env) : undefined;
+  return sources.filter(
+    (source) =>
+      source.baseUrl && (env.FARMSLOT_BLIND_SEATBELT !== '1' || source.kind === blindKind),
+  );
 }
 
 export async function fetchOpenAiModels(

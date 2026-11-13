@@ -2772,6 +2772,85 @@ describe('run', () => {
     assert.equal(plan.value, 0, plan.stderr.join('\n'));
   });
 
+  test('blind run and call retain the trial CDP through slot hydration, flags and runtime preparation', async () => {
+    process.env.FARMSLOT_BLIND_SEATBELT = '1';
+    process.env.FARMSLOT_BLIND_CDP_PORT = '19444';
+    const web = webAdapter(calls);
+    const seen: string[] = [];
+    const checkPorts = (phase: string) => {
+      assert.equal(process.env.CDP_PORT, '19444', phase);
+      assert.equal(process.env.RECIPE_CDP_PORT, '19444', phase);
+      assert.equal(process.env.WATCHER_PORT, '8081', phase);
+      seen.push(phase);
+    };
+    const registry = createAdapterRegistry();
+    registry.register({
+      ...web,
+      resolveSlotPorts() {
+        process.env.CDP_PORT = '7661';
+        process.env.RECIPE_CDP_PORT = '7661';
+        process.env.WATCHER_PORT = '8081';
+      },
+      run: {
+        ...web.run,
+        activateEnv() {
+          process.env.CDP_PORT = '7661';
+          process.env.RECIPE_CDP_PORT = '7661';
+        },
+        runtimeCheck: () => async () => {
+          checkPorts('check');
+          return null;
+        },
+        prepareRuntime: async (_root, options) => {
+          assert.equal(options.cdpPort, '19444');
+          checkPorts('prepare');
+        },
+        childEnv(base) {
+          assert.equal(base.CDP_PORT, '19444');
+          assert.equal(base.RECIPE_CDP_PORT, '19444');
+          return base;
+        },
+      },
+    });
+    configureHarnessAdapters(registry);
+    const target = checkout();
+    const recipe = recipeFile(target, {
+      ping: { action: 'shop.ping', mode: 'fast', intent: 'Prove trial routing.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const flags = [
+      '--adapter',
+      'web',
+      '--target',
+      target,
+      '--heal',
+      'off',
+      '--cdp-port',
+      '7661',
+      '--json',
+    ];
+    const run = await capture(() => handleRun([recipe, ...flags], runOptions));
+    assert.equal(run.value, 0, run.stderr.join('\n'));
+    const call = await capture(() => handleCall(['shop.ping', 'mode=fast', ...flags], callOptions));
+    assert.equal(call.value, 0, call.stderr.join('\n'));
+    assert.ok(seen.includes('check'));
+    assert.ok(seen.includes('prepare'));
+    assert.equal(process.env.CDP_PORT, '19444');
+    assert.equal(process.env.RECIPE_CDP_PORT, '19444');
+  });
+
+  test('blind recipes refuse a missing or invalid trial allocation', () => {
+    process.env.FARMSLOT_BLIND_SEATBELT = '1';
+    for (const value of [undefined, '', '0', '65536', 'slot:7661']) {
+      if (value === undefined) delete process.env.FARMSLOT_BLIND_CDP_PORT;
+      else process.env.FARMSLOT_BLIND_CDP_PORT = value;
+      assert.throws(
+        () => recipeRunOptionsFromCli('web', {}),
+        /trial-allocated FARMSLOT_BLIND_CDP_PORT/u,
+      );
+    }
+  });
+
   test('the runtime check, the observers and app.network_capture run on the same ports as the engine', async () => {
     const seen: string[] = [];
     const observerEnvs: NodeJS.ProcessEnv[] = [];

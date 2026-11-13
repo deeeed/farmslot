@@ -28,6 +28,7 @@ import {
 } from '@farmslot/recipe-runner';
 
 import { adapterPortEnv, harnessAdapter } from './adapters.js';
+import { blindRecipeCdpPort, blindRuntimeOptions } from './blind-runtime.js';
 import { type ActionCapabilitySource, OFFICIAL_ACTIONS, type RecipeCatalog } from './catalog.js';
 import { color } from './cli-color.js';
 import { CliError } from './cli-error.js';
@@ -601,6 +602,7 @@ export function activateRecipeRuntimeEnvironment(
   projectRoot: string,
   runtimeOptions: RecipeRunOptions,
 ): () => void {
+  runtimeOptions = blindRuntimeOptions(runtimeOptions);
   const surface = harnessAdapter(adapter);
   // Restored when the run ends: the keys every run sets, plus the ones the
   // platform's run may change (slot ports, its activateEnv).
@@ -629,6 +631,11 @@ export function activateRecipeRuntimeEnvironment(
     for (const name of adapterPortEnv()) process.env[name] = runtimeOptions.watcherPort;
   }
   surface.run?.activateEnv?.(projectRoot, runtimeOptions);
+  const cdpPort = blindRecipeCdpPort();
+  if (cdpPort) {
+    process.env.CDP_PORT = cdpPort;
+    process.env.RECIPE_CDP_PORT = cdpPort;
+  }
   return () => {
     for (const [key, value] of Object.entries(previousEnv)) restoreEnv(key, value);
   };
@@ -671,8 +678,8 @@ function recipeRunEnv(
 ): Record<string, string | undefined> {
   const explicitPlatform = hostEnvName('EXPLICIT_PLATFORM');
   const base: Record<string, string | undefined> = {
-    CDP_PORT: runtimeOptions.cdpPort ?? process.env.CDP_PORT,
-    RECIPE_CDP_PORT: runtimeOptions.cdpPort ?? process.env.RECIPE_CDP_PORT,
+    CDP_PORT: blindRecipeCdpPort() ?? runtimeOptions.cdpPort ?? process.env.CDP_PORT,
+    RECIPE_CDP_PORT: blindRecipeCdpPort() ?? runtimeOptions.cdpPort ?? process.env.RECIPE_CDP_PORT,
     FARMSLOT_SLOT_ID: runtimeOptions.slot ?? process.env.FARMSLOT_SLOT_ID,
     SLOT_ID: runtimeOptions.slot ?? process.env.SLOT_ID,
     PLATFORM: process.env.PLATFORM,
@@ -687,7 +694,10 @@ export async function prepareRuntimeIfNeeded(
   projectRoot: string,
   runtimeOptions: RecipeRunOptions,
 ): Promise<void> {
-  await harnessAdapter(adapter).run?.prepareRuntime?.(projectRoot, runtimeOptions);
+  await harnessAdapter(adapter).run?.prepareRuntime?.(
+    projectRoot,
+    blindRuntimeOptions(runtimeOptions),
+  );
 }
 
 function restoreEnv(key: string, value: string | undefined) {
