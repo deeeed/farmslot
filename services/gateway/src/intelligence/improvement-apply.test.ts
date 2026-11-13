@@ -1,20 +1,42 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 
 import type { ImprovementDiffPayload, Run, RunDecision } from '@farmslot/protocol';
 
-import { farmslotRoot } from '../fleet/state.js';
-import { runResolveDecision } from '../methods/run.js';
-import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
+const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'improvement-apply-')));
+after(() => rmSync(root, { recursive: true, force: true }));
+for (const dir of ['scripts', 'services/gateway', 'projects', 'pool']) {
+  mkdirSync(path.join(root, dir), { recursive: true });
+}
+writeFileSync(path.join(root, 'CLAUDE.md'), '# Test root\n');
+writeFileSync(path.join(root, 'scripts/dev.sh'), '#!/bin/sh\n');
+writeFileSync(path.join(root, 'services/gateway/package.json'), '{}\n');
+execFileSync('git', ['init', '-q'], { cwd: root });
+process.env.FARMSLOT_ROOT = root;
+process.env.FARMSLOT_HOME = path.join(root, 'home');
+process.env.FARMSLOT_PROJECTS_DIR = path.join(root, 'projects');
+process.env.FARMSLOT_POOL_DIR = path.join(root, 'pool');
 
-import { applyImprovement } from './improvement-engine.js';
+// Root-dependent modules must initialize against the private repository.
+const { farmslotRoot } = await import('../fleet/state.js');
+const { runResolveDecision } = await import('../methods/run.js');
+const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
+const { applyImprovement } = await import('./improvement-engine.js');
+assert.equal(farmslotRoot(), root);
 
-// Scratch project inside projects/ (gitignored by the root repo). Applies
-// force-add files to the root index, so cleanup must unstage them too.
 const TEST_PROJECT = `.improve-apply-test-${process.pid}`;
 const TEST_PROJECT_DIR = path.join(farmslotRoot(), 'projects', TEST_PROJECT);
 
@@ -29,11 +51,7 @@ function setupProject(options: { validateHook?: boolean } = {}): void {
 }
 
 function teardownProject(): void {
-  try {
-    execFileSync('git', ['reset', '-q', '--', `projects/${TEST_PROJECT}`], { cwd: farmslotRoot() });
-  } catch {
-    // Nothing was staged for this path — reset has nothing to do.
-  }
+  execFileSync('git', ['reset', '-q', '--', `projects/${TEST_PROJECT}`], { cwd: root });
   rmSync(TEST_PROJECT_DIR, { recursive: true, force: true });
 }
 
@@ -193,6 +211,14 @@ test('apply creates a new file when the card declares an empty before', async (t
 
   assert.equal(result.applied.length, 1);
   assert.equal(await readFile(path.join(farmslotRoot(), rel), 'utf-8'), 'brand new guidance\n');
+  assert.equal(
+    execFileSync('git', ['diff', '--cached', '--name-only'], {
+      cwd: root,
+      encoding: 'utf8',
+    }).trim(),
+    rel,
+    'the applied file is staged in the private repository',
+  );
 });
 
 test('apply refuses a grown-but-tail-truncated payload', async (t) => {
