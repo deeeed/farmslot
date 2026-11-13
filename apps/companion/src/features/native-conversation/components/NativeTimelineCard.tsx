@@ -1,15 +1,17 @@
-import * as Clipboard from 'expo-clipboard';
-import { memo, useState } from 'react';
+import { memo } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
-import { type NativeSessionPlan, viewToggleField } from '@farmslot/protocol';
+import {
+  type NativeSessionPlan,
+  type NativeSessionTool,
+  viewToggleField,
+} from '@farmslot/protocol';
 import {
   nativeCommandText,
   nativeEntryPreview,
   type NativeMessagePreview,
   nativeMessagePreview,
   nativeMessageToggleLabel,
-  nativePlanCopyLabel,
   nativePlanStepMark,
   type NativeTimelineEntry,
   nativeToolDiffText,
@@ -21,6 +23,8 @@ import { MobileDiffViewer } from '../../../components/MobileDiffViewer';
 import { useViewChoice, useViewToggle } from '../../../components/view-state';
 import { formatDocumentCached } from '../../../lib/document-format-cache';
 import { nativeStyles as styles } from '../styles/native-conversation.styles';
+
+import { NativeCopyButton, NativeLinkedText } from './NativeMessageActions';
 
 interface NativeTimelineCardProps {
   entry: NativeTimelineEntry;
@@ -105,6 +109,11 @@ export const NativeTimelineCard = memo(function NativeTimelineCard({
               <Text selectable style={styles.code}>
                 {command}
               </Text>
+              <NativeCopyButton
+                text={command}
+                action="Copy command"
+                testID="companion-native-copy-command"
+              />
               <Pressable
                 accessibilityRole="button"
                 accessibilityState={{ expanded: raw }}
@@ -132,26 +141,38 @@ export const NativeTimelineCard = memo(function NativeTimelineCard({
                 />
               ))
             : null}
-          {expanded && (!command || raw) ? (
-            <ScrollView nestedScrollEnabled style={styles.detail}>
-              <Text selectable style={styles.code}>
-                {JSON.stringify(entry.event.tool, null, 2)}
-              </Text>
-            </ScrollView>
-          ) : null}
+          {expanded && (!command || raw) ? <NativeToolRaw tool={entry.event.tool} /> : null}
         </>
       ) : (
-        <NativeMessageText
-          choiceId={String(entry.key)}
-          text={entry.text}
-          preview={preview}
-          muted={entry.kind === 'status'}
-          onDisclosure={onDisclosure}
-        />
+        <>
+          <NativeMessageText
+            choiceId={String(entry.key)}
+            text={entry.text}
+            preview={preview}
+            muted={entry.kind === 'status'}
+            onDisclosure={onDisclosure}
+          />
+          <NativeCopyButton text={entry.text} />
+        </>
       )}
     </View>
   );
 });
+
+/** A tool's raw input and output, with a copy of the same JSON. */
+function NativeToolRaw({ tool }: { tool?: NativeSessionTool }) {
+  const json = JSON.stringify(tool, null, 2);
+  return (
+    <>
+      <ScrollView nestedScrollEnabled style={styles.detail}>
+        <Text selectable style={styles.code}>
+          {json}
+        </Text>
+      </ScrollView>
+      <NativeCopyButton text={json} action="Copy raw" testID="companion-native-copy-raw" />
+    </>
+  );
+}
 
 /** A checklist's progress and steps, or a proposed plan with copy and implement actions. */
 function NativePlanBody({
@@ -175,7 +196,6 @@ function NativePlanBody({
   onImplement?: () => void;
   implementing?: boolean;
 }) {
-  const [copied, setCopied] = useState<boolean>();
   if (plan.kind === 'proposal')
     return (
       <>
@@ -186,19 +206,7 @@ function NativePlanBody({
           markdown
           onDisclosure={onDisclosure}
         />
-        <Pressable
-          testID="companion-native-plan-copy"
-          accessibilityRole="button"
-          style={styles.messageToggle}
-          onPress={() =>
-            Clipboard.setStringAsync(plan.text).then(
-              () => setCopied(true),
-              () => setCopied(false),
-            )
-          }
-        >
-          <Text style={styles.buttonText}>{nativePlanCopyLabel(copied)}</Text>
-        </Pressable>
+        <NativeCopyButton text={plan.text} action="Copy plan" testID="companion-native-plan-copy" />
         {onImplement ? (
           <Pressable
             testID="companion-native-plan-implement"
@@ -238,6 +246,16 @@ function NativePlanBody({
               {nativePlanStepMark(step.status)} {step.text}
             </Text>
           ))}
+          <NativeCopyButton
+            text={[
+              plan.text,
+              ...plan.steps.map((step) => `${nativePlanStepMark(step.status)} ${step.text}`),
+            ]
+              .filter(Boolean)
+              .join('\n')}
+            action="Copy plan"
+            testID="companion-native-plan-copy"
+          />
         </>
       ) : null}
     </>
@@ -265,6 +283,7 @@ export function NativePendingMessageCard({
         preview={nativeMessagePreview(text)}
         onDisclosure={onDisclosure}
       />
+      <NativeCopyButton text={text} />
       {edit ? (
         <Pressable
           testID="companion-native-edit"
@@ -303,10 +322,13 @@ function NativeMessageText({
     <>
       {markdown && whole ? (
         <FormattedDocument blocks={formatDocumentCached('plan.md', text)} />
-      ) : (
+      ) : preview && !expanded ? (
+        // A preview may end inside an address: it stays plain until the whole text shows.
         <Text selectable style={muted ? styles.muted : styles.text}>
-          {preview && !expanded ? preview.text : text}
+          {preview.text}
         </Text>
+      ) : (
+        <NativeLinkedText text={text} style={muted ? styles.muted : styles.text} />
       )}
       {preview ? (
         <Pressable

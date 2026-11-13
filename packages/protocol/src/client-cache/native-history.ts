@@ -200,6 +200,11 @@ export function nativePlanCopyLabel(copied?: boolean): string {
   return copied === undefined ? 'Copy plan' : copied ? 'Copied' : 'Copy failed';
 }
 
+/** A message's copy action (`action`), after a copy, and when the copy failed. */
+export function nativeMessageCopyLabel(copied?: boolean, action = 'Copy'): string {
+  return copied === undefined ? action : copied ? 'Copied' : 'Copy failed';
+}
+
 /** The first message of the session Implement starts: the proposed plan, to carry out. */
 export function nativeImplementPrompt(plan: string): string {
   return `PLEASE IMPLEMENT THIS PLAN:\n${plan}`;

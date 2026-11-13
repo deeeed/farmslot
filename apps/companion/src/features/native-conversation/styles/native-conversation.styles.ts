@@ -68,6 +68,7 @@ export const nativeStyles = StyleSheet.create({
     justifyContent: 'center',
   },
   buttonText: { color: colors.accent, fontWeight: '700', fontSize: fonts.sizeSm },
+  link: { color: colors.accent, textDecorationLine: 'underline' },
   disabled: { opacity: 0.45 },
   messageToggle: { minHeight: 44, justifyContent: 'center' },
   input: {

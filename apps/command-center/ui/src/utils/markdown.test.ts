@@ -140,3 +140,14 @@ test('unchanged blocks come from the cache; a streamed delta renders only the ta
   renderChatMarkdown(closed);
   assert.equal(sanitize.mock.callCount(), 1, 'the finished tail is now cached');
 });
+
+test('a bare address in an assistant message is a link opening in a new tab', () => {
+  const html = renderChatMarkdown('Opened https://github.com/o/r/pull/7. Also javascript:alert(1)');
+  assert.ok(
+    html.includes(
+      `<a${NEW_TAB} href="https://github.com/o/r/pull/7">https://github.com/o/r/pull/7</a>.`,
+    ),
+    html,
+  );
+  assert.ok(!html.includes('href="javascript'), html);
+});

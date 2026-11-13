@@ -226,6 +226,9 @@ export const nativeSessionStyles = css`
   .text .body {
     white-space: pre-wrap;
   }
+  .text .body a {
+    color: ${unsafeCSS(colors.accent)};
+  }
   .message-toggle {
     display: block;
     min-height: 44px;
@@ -281,7 +284,8 @@ export const nativeSessionStyles = css`
     border-radius: 6px;
     padding: 10px;
   }
-  .plan-copy {
+  .plan-copy,
+  .copy-text {
     min-height: 44px;
   }
   /* A turn's changed files; each opens its diff below it. */
