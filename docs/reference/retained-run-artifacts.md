@@ -141,12 +141,14 @@ The owning gateway reads overrides from `${FARMSLOT_HOME}/run-bundle-retention.j
     "maxBundleBytes": 2147483648,
     "maxStoreBytes": 25769803776,
     "metadataReserveBytes": 536870912,
-    "mediaRetentionDays": 30
+    "mediaRetentionDays": 30,
+    "runRetentionDays": 7
   }
 }
 ```
 
 This example explicitly sets a 24 GiB store budget; the default remains 20 GiB.
+`runRetentionDays` sets the settled-run retention age (see below).
 Inventory existing gateway acquisition trees before rollout and set the deployment
 budget against their full physical size and available disk headroom. Historical
 copies remain charged, including preserved unique media of deleted runs. Do not
@@ -215,10 +217,53 @@ and `.runs/archive/<id>.json` in place permanently. It MUST NOT emit `RUN_DELETE
 or release backlog/history links during retention.
 
 Storage is eligible only when the run is done/cancelled/archived, settled at least
-48 hours, holds no slot or native worker, has no open decision, uncleaned review
-workspace, pending closeout/backlog reconciliation or `keep` tag, and its PR is
-absent or confirmed closed/merged. Unreadable/ambiguous PR state keeps storage.
-Shared paths and admitted task directories MUST remain available to their owners.
+the retention age, holds no slot or native worker, has no open decision, uncleaned
+review workspace, pending closeout/backlog reconciliation or `keep` tag, is not read
+by an unsettled run, and is not on an open PR. Shared paths and admitted task
+directories MUST remain available to their owners.
+
+The retention age is `runBundleRetention.runRetentionDays` in
+`${FARMSLOT_HOME}/run-bundle-retention.json`, default 7 (ADR-039 Amendment 8).
+It is a positive number of days; any other value makes every reader of the file
+refuse, as an invalid capacity key does, and the pass fails loudly. To keep a
+shorter window, for example 3 days, set it next to the other `runBundleRetention`
+keys:
+
+```json
+{ "runBundleRetention": { "runRetentionDays": 3 } }
+```
+
+Each pass reads it when it starts, so no restart is needed. Task pins whose
+task directory is gone are removed once they are older than the same age. A run
+settles at the later of its completion and archive time.
+
+Every run on an open PR keeps its storage whatever its age. A PR is open when any of
+the run's PR identities (its review-session identity, or its number in the project's
+repository) is in that repository's live open-PR list, even if the run recorded it
+closed. A recorded merge settles it, since a merged PR cannot reopen. A recorded close
+settles it only when every open-PR list for the run was read completely. A run whose
+PR state is unknown is also kept: its repository's open PRs could not be read, the
+list reached the read limit, its PR identity could not be resolved, or it is a
+`review-pr` run with no PR identity. A run family shares its members' state, open
+before unknown, so a root that never recorded the PR (for example a `dev` run whose
+`pr-complete` child carries the PR number) is kept with it. Runs on a closed or merged
+PR, and runs with no PR, follow the age rule. A PR opened or reopened during a pass,
+and a review whose prior is recorded only after the pass starts, are picked up by the
+next pass.
+
+An unsettled run holds what it still reads, whatever the PR state. A follow-up
+(`review-pr`, `pr-complete` or `update-branch` with a `parentRunId`) that is not
+done, cancelled or archived holds every run of its family, as `getFamilyRuns` lists
+it: the parent, the family root and the other members it may inherit task artifacts
+from. An in-flight `review-pr` run holds `repeatReviewContext.priorRunId` and
+`repeatReviewContext.session.priorRunId`. The pass computes these at its start and
+again from the current runs just before it moves each run, so a follow-up or review
+dispatched during the pass keeps its sources. Once the reader settles, its sources
+follow the age rule again. A follow-up dispatched later than that reads the bundle of
+every family member with a live run record: the root, the parent and the others.
+Members whose record was archived are skipped. If any live member's storage is
+archived, writing its task fails and dispatch is refused until the storage of every
+such member is restored from its archive manifest (below).
 
 Eligible task directories, task pins, session archives, local review workspaces,
 local native sessions and run bundles MUST move to `FARMSLOT_RUN_ARCHIVE_ROOT`.

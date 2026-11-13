@@ -79,9 +79,14 @@ export const DEFAULT_RUN_BUNDLE_RETENTION: Readonly<RunBundleRetentionPolicy> = 
   mediaRetentionDays: 30,
 };
 
+/** Days a settled run keeps its storage before the gateway's hourly pass may move it (ADR-039 Amendment 8). */
+export const DEFAULT_RUN_RETENTION_DAYS = 7;
+
 export interface RunBundleRetentionSettings {
   policy: RunBundleRetentionPolicy;
   storeRoot?: string;
+  /** `runBundleRetention.runRetentionDays`: how long a settled run keeps its storage. */
+  runRetentionDays: number;
 }
 
 function absoluteStoreRoot(root: string): string {
@@ -142,8 +147,20 @@ export function runBundleRetentionSettings(home: string): RunBundleRetentionSett
   }
   if (settings.storeRoot !== undefined && typeof settings.storeRoot !== 'string')
     throw new Error('Invalid runBundleRetention.storeRoot.');
+  // Only an absent key takes the default; an explicit null is invalid like any other non-number.
+  const runRetentionDays =
+    settings.runRetentionDays === undefined
+      ? DEFAULT_RUN_RETENTION_DAYS
+      : settings.runRetentionDays;
+  if (
+    typeof runRetentionDays !== 'number' ||
+    !Number.isFinite(runRetentionDays) ||
+    runRetentionDays <= 0
+  )
+    throw new Error('Invalid runBundleRetention.runRetentionDays: a positive number of days.');
   return {
     policy,
+    runRetentionDays,
     ...(settings.storeRoot === undefined
       ? {}
       : { storeRoot: absoluteStoreRoot(settings.storeRoot) }),
