@@ -867,6 +867,36 @@ test('a capture after the gateway writes its diff files retains them', async (t)
   assert.equal(await readRetainedRunText(second, 'artifacts/diff.txt'), patch);
 });
 
+test('a capture after the gateway rewrites a task input retains the new input', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'late-task-input-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await mkdir(path.join(dir, 'artifacts'));
+  await mkdir(path.join(dir, 'inputs'));
+  await writeFile(path.join(dir, 'artifacts/report.md'), '# Completed output\n');
+  await writeFile(path.join(dir, 'inputs/diff-stat.json'), '{"files":1}\n');
+  const run = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'late-input' });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed' });
+      await deleteRun(run.id);
+    }
+  });
+  updateRun(run.id, {
+    taskFile: path.join(dir, 'TASK.md'),
+    completionPolicy: 'artifact-only',
+    lane: 'comparison',
+  });
+  await captureRunOutput(run.id, false, true);
+  const first = getRun(run.id)!.output!;
+  // Review input capture rewrites the frozen inputs after the completion capture.
+  await writeFile(path.join(dir, 'inputs/diff-stat.json'), '{"files":2}\n');
+  await captureRunOutput(run.id, false, true);
+  const second = getRun(run.id)!;
+  assert.equal(second.output!.manifestDigest, first.manifestDigest);
+  assert.notEqual(second.output!.artifactBundle!.bundleDigest, first.artifactBundle!.bundleDigest);
+  assert.equal(await readRetainedRunText(second, 'inputs/diff-stat.json'), '{"files":2}\n');
+});
+
 test('publication capture expires behind an unbudgeted predecessor without running or breaking capture order', async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'output-capture-budget-'));
   await mkdir(path.join(dir, 'artifacts'));

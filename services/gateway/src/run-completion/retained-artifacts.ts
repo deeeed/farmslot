@@ -659,6 +659,27 @@ export async function retainCapturedRunArtifacts(input: {
       if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
     }
   }
+  // The capture key names the content of every file the output identity leaves out: the gateway
+  // diff files and the task files added above. Otherwise a capture after the gateway writes one
+  // of them reuses the earlier bundle, which lacks the change, while the output lists it.
+  const uncovered = await Promise.all(
+    artifacts
+      .filter(
+        (artifact, index) =>
+          index >= input.artifacts.length || GATEWAY_OWNED_DIFF_ARTIFACT_PATHS.has(artifact.path),
+      )
+      .sort((a, b) => a.path.localeCompare(b.path))
+      .map(async ({ path: file, sha256 }) => [
+        file,
+        sha256 ??
+          (await sha256File(
+            path.join(
+              input.gatewayFiles?.includes(file) ? path.dirname(input.run.taskFile!) : taskDir,
+              file,
+            ),
+          )),
+      ]),
+  );
   return materializeRunBundle({
     store,
     farmslotRoot: farmslotRoot(),
@@ -678,16 +699,7 @@ export async function retainCapturedRunArtifacts(input: {
       input.run.taskFile,
       input.run.engineState?.generation,
       input.manifestDigest,
-      // Files the output identity leaves out still decide what the bundle holds. Without them,
-      // a capture after the gateway writes its diff files reuses the earlier bundle that lacks them.
-      ...artifacts
-        .filter(
-          (artifact) =>
-            artifact.path.startsWith('task-actions/') ||
-            GATEWAY_OWNED_DIFF_ARTIFACT_PATHS.has(artifact.path),
-        )
-        .sort((a, b) => a.path.localeCompare(b.path))
-        .map(({ path, sha256 }) => [path, sha256]),
+      ...uncovered,
     ]),
     policy: await retentionPolicy(),
     allowChanged: input.allowChanged,

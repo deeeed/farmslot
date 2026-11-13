@@ -37,7 +37,8 @@ import {
 } from './retained-artifacts.js';
 
 // Completion writes the gateway diff files after the worker output gate opens.
-// Keep them browsable without changing the report and evidence being reviewed.
+// Keep them browsable without changing the report and evidence being reviewed. The retained
+// capture key still names their content, so a capture after they change keeps the new bytes.
 export function outputManifestDigest(artifacts: ArtifactRef[]): string {
   return createHash('sha256')
     .update(

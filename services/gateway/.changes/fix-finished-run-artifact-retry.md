@@ -1,1 +1,1 @@
-- A run whose diff files are written after its first output capture now keeps them in its retained bundle, so its diff, diff stat and iteration diff open instead of returning 404.
+- An artifact-only run now keeps the diff files written at completion (diff, diff stat, iteration diff) in its retained bundle, so they open instead of returning 404. Any task input the gateway rewrites after an earlier capture is retained the same way.
