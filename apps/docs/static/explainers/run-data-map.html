@@ -673,7 +673,8 @@
                 <td><span class="pill p-checkpoint">dispatch, resume</span></td>
                 <td class="num">TASK.md, inputs/, artifacts/</td>
                 <td>
-                  files already in the slot's artifacts/ are kept; TASK.md and inputs/ are replaced;
+                  files already in the slot's artifacts/ are kept; TASK.md, assets/ and inputs/ are
+                  overwritten;
                   <code>*.worker</code> files never go out
                 </td>
                 <td><code>run-engine/task-sync.ts:38</code></td>
@@ -861,8 +862,8 @@
               <li>Files over 1 MiB or binary, images over 2 MiB.</li>
               <li>
                 Base files of diffs over 5 MiB. The diff itself may already have downloaded in the
-                background: the 5 MiB cap is checked after it arrives and decides only whether it is
-                stored.
+                background: the cap is checked after it arrives. For a gate it decides whether the
+                diff is stored; for an active run it gates only the base files.
               </li>
               <li>Command Center videos.</li>
               <li>
@@ -893,12 +894,14 @@
           <b>storage archive</b> is the hourly pass that moves a settled run's <em>bytes</em> (task
           dir, bundle, native sessions, session archives) to
           <code>FARMSLOT_RUN_ARCHIVE_ROOT</code> and deletes recreatable pins and review workspaces.
-          A run's bytes move once it has been settled for the configured retention period (default 7
-          days; see the retention setting in
+          A run's bytes move once it has been settled for the retention period (<code
+            >runBundleRetention.runRetentionDays</code
+          >
+          in <code>run-bundle-retention.json</code>, default 7 days; see
           <a
             class="full-link"
-            href="https://github.com/deeeed/farmslot/blob/main/docs/adr/039-run-portable-bundles.md"
-            >ADR-039</a
+            href="https://github.com/deeeed/farmslot/blob/main/docs/adr/039-run-portable-bundles.md#amendment-8-2026-11-13-seven-day-retention-latest-review-per-open-pr"
+            >ADR-039 Amendment 8</a
           >), has no <code>keep</code> tag and holds no slot. The latest review of each open PR is
           kept regardless of age; other runs on an open PR follow the age rule.
         </p>
@@ -1038,7 +1041,7 @@
             ],
           ],
           guards:
-            "Files already in the slot's artifacts/ are kept; TASK.md, assets/ and inputs/ are replaced. *.worker files never go out. The support bundle is collected again only when a file stamp changes (checked at most every 2 s, 10 min backstop).",
+            "Files already in the slot's artifacts/ are kept; TASK.md, assets/ and inputs/ are overwritten. *.worker files never go out. The support bundle is collected again only when a file stamp changes (checked at most every 2 s, 10 min backstop).",
           refs: 'run-engine/task-sync.ts:38-139 · restore-task-artifacts.ts:120 · node-support/ensure.ts:244-470 · remote-command.ts:181-270',
           gaps: [],
         },
@@ -1280,12 +1283,14 @@
       const ctx = canvas.getContext('2d');
       const reduceQuery = matchMedia('(prefers-reduced-motion: reduce)');
       let reduce = reduceQuery.matches;
-      // Follow a preference change while open: the animation loop stops itself or restarts.
+      // One animation loop at most: a preference change cancels the pending frame first.
+      let frame = 0;
       reduceQuery.addEventListener('change', (e) => {
-        const wasReduced = reduce;
         reduce = e.matches;
+        cancelAnimationFrame(frame);
+        frame = 0;
         if (reduce) draw(performance.now());
-        else if (wasReduced) requestAnimationFrame(draw);
+        else frame = requestAnimationFrame(draw);
       });
       let cur = 0,
         t0 = performance.now(),
@@ -1475,7 +1480,7 @@
           ctx.fillStyle = color;
           ctx.fillText(text, x, y);
         });
-        if (!reduce) requestAnimationFrame(draw);
+        if (!reduce) frame = requestAnimationFrame(draw);
       }
       function renderDetail() {
         const s = STEPS[cur];
@@ -1581,7 +1586,7 @@
       }
       fit();
       renderDetail();
-      if (!reduce) requestAnimationFrame(draw);
+      if (!reduce) frame = requestAnimationFrame(draw);
       else draw(performance.now());
     </script>
   </body>
