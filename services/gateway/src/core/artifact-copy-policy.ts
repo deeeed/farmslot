@@ -6,6 +6,10 @@ export const GATEWAY_OWNED_DIFF_ARTIFACTS = [
   'iteration-diff.txt',
   'iteration-diff-stat.json',
 ] as const;
+/** Task-relative paths of the diff files the gateway writes after the worker's output. */
+export const GATEWAY_OWNED_DIFF_ARTIFACT_PATHS: ReadonlySet<string> = new Set(
+  GATEWAY_OWNED_DIFF_ARTIFACTS.map((name) => `artifacts/${name}`),
+);
 export const GATEWAY_OWNED_RUN_ARTIFACTS = ['session-metrics.json'] as const;
 export const PUBLICATION_SELECTION_DIR = 'pr-package-evidence';
 export const BASELINE_MARKER_DIR = 'baseline-marker-verification';

@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.31.13 - 2026-11-13
+
+- Republish the 0.31.12 sources against agent-runtime 0.45.11 so consumers load one copy of recipe-runner and adapter-sdk, including the CDP broker that honours `FARMSLOT_BLIND_BROKER_DIR`. Only the version and the dependency pins changed.
+
 ## 0.31.12 - 2026-11-13
 
 - Republish against recipe-runner 0.46.14 so consumers load one copy of it, with blind Mobile CDP broker sockets routed into the trial directory.

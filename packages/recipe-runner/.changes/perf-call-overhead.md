@@ -1,0 +1,1 @@
+- `processIdentity(process.pid)` reads this process's start time once instead of running `ps` on every call.

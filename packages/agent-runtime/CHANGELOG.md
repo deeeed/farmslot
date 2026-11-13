@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.45.11 - 2026-11-13
+
+- Republish the 0.45.10 sources against adapter-sdk 0.27.4, and through it recipe-runner 0.46.14 so consumers load one copy of recipe-runner and adapter-sdk, including the CDP broker that honours `FARMSLOT_BLIND_BROKER_DIR`. Only the version and the dependency pins changed.
+
 ## 0.45.10 - 2026-11-12
 
 - Allow catalog template selection before slot assignment while retaining platform compatibility checks when a platform is supplied.

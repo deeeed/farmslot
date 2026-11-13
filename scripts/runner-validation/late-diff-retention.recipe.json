@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "An artifact-only run keeps the diff files COMPLETE writes",
+  "description": "Start an isolated gateway with its own pool, projects, runs, home and tmux server (no node: the slot is local). A scripted worker commits one change in an artifact-only dev run. MONITOR captures the worker's output, then COMPLETE writes artifacts/diff.txt and its siblings and captures again. Every diff file the run lists must return 200 from /api/run-artifact, served from the bundle run.get names, and the output identity must stay the one MONITOR captured while the bundle changes. Negative control: with the retained capture key that leaves the diff files out, the reads return 404 and the bundle digest stays the worker capture's.",
+  "workflow": {
+    "entry": "late-diff-retention",
+    "nodes": {
+      "late-diff-retention": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/gateway/late-diff-retention.mts",
+        "timeout_ms": 1500000,
+        "intent": "The diff files written at COMPLETE are served from the run's retained bundle without changing its output identity.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

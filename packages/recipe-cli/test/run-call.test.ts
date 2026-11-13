@@ -28,7 +28,14 @@ import {
   type RecipeRecordingOptions,
   type RecipeRunResult,
 } from '@farmslot/recipe-runner';
+import { processIdentity } from '@farmslot/recipe-runner/runtime/operation';
 
+import {
+  CALL_TIMINGS_FILE,
+  CallTimingRecorder,
+  type CallTimings,
+  withCallTimings,
+} from '../src/harness/call-timings.js';
 import {
   actionExampleCommand,
   actionLibraryContextArgs,
@@ -37,7 +44,11 @@ import {
   resolveActionCapabilityMatrix,
 } from '../src/harness/catalog.js';
 import { acquireCheckoutLock } from '../src/harness/checkout-lock.js';
-import { callArtifactsLayout, redactCallValue } from '../src/harness/commands/call.js';
+import {
+  CALL_RECORDING_OFF_REASON,
+  callArtifactsLayout,
+  redactCallValue,
+} from '../src/harness/commands/call.js';
 import { renderHumanActionCatalog } from '../src/harness/commands/discover.js';
 import { provenanceFailure, reportTrustFailure } from '../src/harness/commands/run.js';
 import {
@@ -93,6 +104,8 @@ import {
 } from '../src/harness/run-engine.js';
 
 const DEFAULT_HOST = harnessHost();
+// Child processes one stubbed call may start: the checkout's provenance reads through git.
+const CALL_PROCESS_BUDGET = 7;
 const roots: string[] = [];
 
 function tempRoot(prefix: string): string {
@@ -172,6 +185,8 @@ function manifestFor(adapter: string, team = false): RecipeActionManifestDocumen
 
 interface Calls {
   runners: Array<{ adapter: string; trustedMutation?: string; trustTaskActions: boolean }>;
+  // The planned actions each runner was created with (undefined: every action).
+  plannedActions: Array<readonly string[] | undefined>;
   // The HUD policy each runner was created with (undefined: the engine's default, on).
   autoHud: Array<boolean | undefined>;
   // Each trustedMutation hook call, as `<hook>:<adapter it received>`.
@@ -185,6 +200,7 @@ interface Calls {
 function newCalls(): Calls {
   return {
     runners: [],
+    plannedActions: [],
     autoHud: [],
     mutationHooks: [],
     events: [],
@@ -280,6 +296,7 @@ function shopEngine(
     actionCapabilities: (action) =>
       action === 'shop.ping' ? ['host-read-export'] : ['arbitrary-code'],
     async createRunner(adapter, manifest, options) {
+      calls.plannedActions.push(options.plannedActions);
       calls.runners.push({
         adapter,
         ...(options.trustedMutation ? { trustedMutation: options.trustedMutation.bound } : {}),
@@ -3409,6 +3426,75 @@ describe('--record-video', () => {
     });
   });
 
+  test('a call records only on --record; a recipe run keeps the runner default', async () => {
+    const requests: Array<{ recordVideo: unknown; recordingReason: unknown }> = [];
+    const watched: ShopEngine = {
+      ...recordingEngine,
+      async createRunner(adapter, manifest, options) {
+        const runner = await recordingEngine.createRunner(adapter, manifest, options);
+        return {
+          preflight: (request) => runner.preflight(request),
+          run: (request) => {
+            requests.push({
+              recordVideo: request.recordVideo,
+              recordingReason: request.recordingReason,
+            });
+            return runner.run(request);
+          },
+        };
+      },
+    };
+    const target = checkout();
+    const artifactsRoot = tempRoot('recipe-cli-call-video-');
+    let runs = 0;
+    const call = async (...flags: string[]) => {
+      runs += 1;
+      const result = await capture(() =>
+        handleCall(
+          [
+            'shop.ping',
+            'mode=fast',
+            '--adapter',
+            'web',
+            '--target',
+            target,
+            '--heal',
+            'off',
+          ].concat(['--artifacts-dir', path.join(artifactsRoot, String(runs)), '--json'], flags),
+          { engine: watched },
+        ),
+      );
+      assert.equal(result.value, 0, result.stdout.join('\n') + result.stderr.join('\n'));
+    };
+    await call();
+    // Turning recording off needs no reason of the caller's.
+    await call('--record-video=off');
+    await call('--record-video=off', '--recording-reason', 'Inspect locators only');
+    await call('--record');
+    const off = { recordVideo: false, recordingReason: CALL_RECORDING_OFF_REASON };
+    assert.deepEqual(requests, [
+      off,
+      off,
+      { recordVideo: false, recordingReason: 'Inspect locators only' },
+      { recordVideo: 'full-run', recordingReason: undefined },
+    ]);
+    assert.deepEqual(recorded, ['web']);
+
+    const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
+    const run = await capture(() =>
+      handleRun(
+        [recipe, '--adapter', 'web', '--target', target, '--heal', 'off'].concat([
+          '--artifacts-dir',
+          path.join(artifactsRoot, 'run'),
+          '--json',
+        ]),
+        { engine: watched },
+      ),
+    );
+    assert.equal(run.value, 0, run.stderr.join('\n'));
+    assert.deepEqual(requests.at(-1), { recordVideo: undefined, recordingReason: undefined });
+  });
+
   test('call refuses it before execution on an adapter that cannot record', async () => {
     const target = checkout();
     const json = await capture(() =>
@@ -3714,9 +3800,10 @@ describe('call', () => {
       ),
     );
     assert.equal(call.value, 0, call.stderr.join('\n'));
-    assert.equal(calls.runners.length, 2);
+    // Healing changed nothing, so the call keeps the one runner it planned with.
+    assert.equal(calls.runners.length, 1);
     assert.ok(calls.runners.every((runner) => runner.trustedMutation === undefined));
-    assert.deepEqual(calls.mutationHooks, ['load:web', 'load:web']);
+    assert.deepEqual(calls.mutationHooks, ['load:web']);
   });
 
   test("writes under the task's artifacts like run, each call in its own directory", async () => {
@@ -4350,6 +4437,200 @@ describe('call', () => {
       none.stdout.join(''),
       /No action matches "zzz" for the web adapter[\s\S]*shop-harness actions --adapter web/u,
     );
+  });
+});
+
+describe('call timings', () => {
+  async function timedCall(...flags: string[]) {
+    const target = checkout();
+    const artifacts = path.join(tempRoot('recipe-cli-call-timings-'), 'call');
+    const call = await capture(() =>
+      handleCall(
+        [
+          'shop.ping',
+          'mode=fast',
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--artifacts-dir',
+          artifacts,
+          ...flags,
+        ],
+        callOptions,
+      ),
+    );
+    assert.equal(call.value, 0, call.stdout.join('\n') + call.stderr.join('\n'));
+    return { call, artifacts };
+  }
+
+  test("records each phase's time and child processes in call-timings.json and --json", async () => {
+    const { call, artifacts } = await timedCall('--json');
+    const timings = lastJson(call.stdout).timings as CallTimings;
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(artifacts, CALL_TIMINGS_FILE), 'utf8')),
+      timings,
+    );
+    assert.equal(timings.schemaVersion, 1);
+    const names = timings.phases.map((phase) => phase.name);
+    for (const name of ['bootstrap', 'resolve', 'preflight', 'heal', 'execute', 'report']) {
+      assert.ok(names.includes(name), `${name} in ${names.join(', ')}`);
+    }
+    // The checkout's provenance is read through git, so the call starts processes.
+    assert.ok(timings.processes > 0);
+    assert.equal(
+      timings.phases.reduce((sum, phase) => sum + phase.processes, 0),
+      timings.processes,
+    );
+    assert.ok(timings.work.createRunner > 0 && timings.work.provenanceSnapshot > 0);
+    assert.equal(typeof timings.nodeMs, 'number');
+  });
+
+  test('keeps the plan made before healing when healing changes nothing', async () => {
+    const { call } = await timedCall('--json');
+    const timings = lastJson(call.stdout).timings as CallTimings;
+    assert.equal(timings.work.createRunner, 1);
+    assert.equal(
+      timings.phases.some((phase) => phase.name === 'replan'),
+      false,
+    );
+  });
+
+  test('plans again when healing recovered the runtime', async () => {
+    const recovering = webAdapter(calls);
+    const registry = createAdapterRegistry();
+    registry.register({
+      ...recovering,
+      run: {
+        ...recovering.run,
+        runtimeCheck:
+          ({ state }) =>
+          async () => {
+            state.recovered.push('shop-runtime');
+            return null;
+          },
+      },
+    });
+    configureHarnessAdapters(registry);
+    const { call } = await timedCall('--json');
+    const envelope = lastJson(call.stdout);
+    const timings = envelope.timings as CallTimings;
+    assert.deepEqual(envelope.recovered, ['shop-runtime']);
+    assert.equal(timings.work.createRunner, 2);
+    assert.ok(timings.phases.some((phase) => phase.name === 'replan'));
+  });
+
+  test('binds the call from before its runner bundles anything to after its action', async () => {
+    const { call, artifacts } = await timedCall('--json');
+    const timings = lastJson(call.stdout).timings as CallTimings;
+    const provenance = JSON.parse(
+      fs.readFileSync(path.join(artifacts, 'execution-provenance.json'), 'utf8'),
+    ) as { snapshots: Array<{ phase: string }> };
+    assert.deepEqual(
+      provenance.snapshots.map((snapshot) => snapshot.phase),
+      ['start', 'pre-execute', 'end'],
+    );
+    assert.equal(timings.work.provenanceSnapshot, 3);
+  });
+
+  test('refuses a kept plan when its library changed after the runner was built', async () => {
+    const editing: ShopEngine = {
+      ...engine,
+      async createRunner(adapter, manifest, options) {
+        const runner = await engine.createRunner(adapter, manifest, options);
+        // An edit while the call prepares: the runner already holds the old bytes.
+        fs.writeFileSync(path.join(library, 'notes.txt'), 'edited after bundling\n');
+        return runner;
+      },
+    };
+    const target = checkout();
+    const call = await capture(() =>
+      handleCall(
+        [
+          'shop.ping',
+          'mode=fast',
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--json',
+        ],
+        { engine: editing },
+      ),
+    );
+    assert.notEqual(call.value, 0);
+    const error = lastJson(call.stdout).error as {
+      code?: string;
+      drift?: Array<{ phase: string }>;
+    };
+    assert.equal(error.code, 'PROVENANCE_DRIFT');
+    assert.equal(error.drift?.[0]?.phase, 'pre-execute');
+    assert.equal(
+      calls.events.some((event) => event.action === 'shop.ping'),
+      false,
+    );
+  });
+
+  test('names its one action to the runner, so a host prepares only that action', async () => {
+    await timedCall('--json');
+    assert.deepEqual(calls.plannedActions, [['shop.ping']]);
+  });
+
+  test('plans once when the platform prepares no runtime, and again after one that does', async () => {
+    const target = checkout();
+    const api = await capture(() =>
+      handleCall(
+        ['command', 'cmd=pwd', '--adapter', 'api', '--target', target, '--heal', 'off', '--json'],
+        callOptions,
+      ),
+    );
+    assert.equal(api.value, 0, api.stdout.join('\n') + api.stderr.join('\n'));
+    assert.equal((lastJson(api.stdout).timings as CallTimings).work.runnerPreflight, 1);
+    const { call } = await timedCall('--json');
+    assert.equal((lastJson(call.stdout).timings as CallTimings).work.runnerPreflight, 2);
+  });
+
+  test("reads this process's own start time once, for the journal and the checkout lock", async () => {
+    const recorder = new CallTimingRecorder();
+    await withCallTimings(recorder, async () => {
+      assert.equal(processIdentity(process.pid), processIdentity(process.pid));
+    });
+    assert.ok(recorder.snapshot().processes <= 1);
+  });
+
+  test('prints one timing line for a person', async () => {
+    const { call } = await timedCall();
+    const line = call.stdout
+      .join('\n')
+      .split('\n')
+      .find((entry) => entry.startsWith('Timing:'));
+    assert.match(
+      line ?? '',
+      /^Timing: \d+\.\ds \(node \d+\.\ds\): .* · \d+ processes · runner \d+× · provenance \d+×$/u,
+    );
+  });
+
+  // CI gate: the work one call repeats. Wall time is reported, never gated.
+  test('a call builds one runner, takes one git process per root per snapshot and stays in its process budget', async () => {
+    const { call } = await timedCall('--json');
+    const timings = lastJson(call.stdout).timings as CallTimings;
+    console.error(
+      `[call budget] wall ${timings.wallMs - (timings.phases[0]?.wallMs ?? 0)} ms after bootstrap · processes ${timings.processes} · ${JSON.stringify(timings.work)}`,
+    );
+    assert.equal(timings.work.createRunner, 1);
+    // Start (before bundling), pre-execute and end.
+    assert.ok(timings.work.provenanceSnapshot <= 3, `${timings.work.provenanceSnapshot} snapshots`);
+    // One git process per snapshot for the one Git source root (the checkout), plus one
+    // work-tree lookup per source root (checkout, runner, library) for the whole call.
+    assert.ok(
+      timings.work.git <= timings.work.provenanceSnapshot + 3,
+      `${timings.work.git} git processes`,
+    );
+    assert.ok(timings.processes <= CALL_PROCESS_BUDGET, `${timings.processes} processes`);
   });
 });
 
