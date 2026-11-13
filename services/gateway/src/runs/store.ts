@@ -78,6 +78,7 @@ import { invalidateRecipeRunGroupCache } from '../methods/filesystem.js';
 import { normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import { assertCurrentReviewConfiguration } from '../quality/review-config.js';
 import { captureRunResources, publishRunResources } from '../resources/run-changes.js';
+import { comparisonReviewContext } from '../review/comparison-context.js';
 import {
   assertReviewWorkspaceAdmissionOpen,
   hasReviewWorkspaceRetirement,
@@ -1007,6 +1008,8 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
   const id = options?.runId ?? randomUUID();
   const familyId = params.familyId ?? id;
   const { lane, variant } = normalizeRunClassification(params);
+  const reviewContext = comparisonReviewContext(params);
+  if (reviewContext !== params.reviewContext) params = { ...params, reviewContext };
   const startRef = normalizeStartRefRequest(params);
   // Only pin a concrete safetyTier at create time when the runner is already
   // decided — either explicitly via params.runner, or implicitly by explicit

@@ -3,6 +3,8 @@ import test from 'node:test';
 
 import type { ReadyGatePayload, ReviewGatePayload, Run, RunDecision } from '@farmslot/protocol';
 
+import { comparisonReviewContext } from '../review/comparison-context.js';
+
 import {
   applyRepeatReviewSelection,
   automatedRepeatReviewSelection,
@@ -155,6 +157,47 @@ test('an explicit fresh review chain does not select a prior review of the same 
   const original = structuredClone(prior);
   current.reviewContext = { reviewLineages: [null], freshChain: true };
   assert.equal(findLatestPriorReviewRun(current, [prior]), null);
+  assert.deepEqual(prior, original);
+});
+
+test('comparison reviews start independently unless their primary lineage is explicit', () => {
+  const prior = makeRun({
+    id: 'reference-review',
+    flowType: 'review-pr',
+    ticketOrPr: 'Owner/Repo#42',
+    status: 'done',
+    decisions: [reviewDecision()],
+  });
+  prior.agentContexts = [
+    {
+      id: 'review',
+      role: 'review',
+      label: 'Review',
+      status: 'complete',
+      runId: prior.id,
+      slotId: null,
+      reviewId: 'reference-lineage',
+    },
+  ];
+  const current = makeRun({
+    id: 'comparison-review',
+    flowType: 'review-pr',
+    ticketOrPr: prior.ticketOrPr,
+    lane: 'comparison',
+    variant: 'candidate',
+  });
+  const original = structuredClone(prior);
+  assert.equal(findLatestPriorReviewRun(current, [prior])?.id, prior.id);
+  current.reviewContext = comparisonReviewContext(current);
+  assert.equal(findLatestPriorReviewRun(current, [prior]), null);
+  current.reviewContext = { freshChain: false, reviewLineages: [null] };
+  current.reviewContext = comparisonReviewContext(current);
+  assert.equal(findLatestPriorReviewRun(current, [prior]), null);
+  current.reviewContext = {
+    reviewLineages: [{ reviewId: 'reference-lineage', repository: 'Owner/Repo', prNumber: 42 }],
+  };
+  current.reviewContext = comparisonReviewContext(current);
+  assert.equal(findLatestPriorReviewRun(current, [prior])?.id, prior.id);
   assert.deepEqual(prior, original);
 });
 

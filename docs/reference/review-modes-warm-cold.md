@@ -474,8 +474,17 @@ review capability alone MUST NOT expose it in a persistent policy editor.
 The selection MUST survive existing request serialization, queue persistence
 and replay of that request. It MUST NOT change a previously frozen request's
 policy or reset its review budget. Omitted or false retains the current COLD or
-WARM continuation contract. Fresh plus WARM or retained lineage context is
+WARM continuation contract outside the comparison default below. Fresh plus WARM or retained lineage context is
 invalid. QA and publication-gate review requests MUST reject the fresh policy.
+
+A new `review-pr` request with `lane: "comparison"` and a nonempty `variant`
+MUST default to a fresh chain unless its primary review context explicitly
+supplies a retained `reviewId`. Omitted mode selects COLD before a configured
+WARM default. Explicit lineage continues through the existing mode, identity
+and session checks. This default applies through preview, queue and creation;
+it adds no CLI flag or SDK field. Production requests keep their existing
+continuation contract. Runner or model names MUST NOT imply comparison
+classification. Historical run records and frozen inputs remain unchanged.
 
 The shared review-and-dispatch model owns this request choice. New review-pr
 hosts opt in; publication-gate hosts do not. Command Center and Companion use
