@@ -26,6 +26,7 @@ import {
   resolveTaskRelDir,
 } from '../core/config.js';
 import { sha256File } from '../core/file-hash.js';
+import { lazyImport } from '../core/lazy-import.js';
 import {
   inferArtifactPurpose,
   inferTypedArtifactPurpose,
@@ -47,6 +48,9 @@ import {
   shouldSkipArtifactName,
   shouldVisitArtifactDirectory,
 } from './artifact-filters.js';
+
+// The retained-artifact module imports this one (a cycle).
+const loadRetainedArtifacts = lazyImport(() => import('../run-completion/retained-artifacts.js'));
 
 interface ArtifactScanResult {
   refs: ArtifactRef[];
@@ -248,7 +252,7 @@ export async function readPortableTextIfExists(
     if (!run.taskFile) return null;
     const relative = path.relative(path.dirname(run.taskFile), filePath).replaceAll('\\', '/');
     if (relative.startsWith('../') || path.isAbsolute(relative)) return null;
-    const { readOptionalRetainedRunText } = await import('../run-completion/retained-artifacts.js');
+    const { readOptionalRetainedRunText } = await loadRetainedArtifacts();
     return (await readOptionalRetainedRunText(run, relative)) ?? null;
   }
   if (TERMINAL_RUN_STATUSES.includes(run.status)) return null;
@@ -954,7 +958,7 @@ export async function listRecipeRunArtifactGroupsForRun(
   run: Run,
 ): Promise<RecipeRunArtifactGroup[]> {
   if (run.artifactBundle || run.output?.artifactBundle) {
-    const { retainedRecipeRunGroups } = await import('../run-completion/retained-artifacts.js');
+    const { retainedRecipeRunGroups } = await loadRetainedArtifacts();
     return retainedRecipeRunGroups(run);
   }
   if (TERMINAL_RUN_STATUSES.includes(run.status)) return [];
@@ -1066,8 +1070,7 @@ export async function listRecipeRunArtifactGroupsForRun(
 
 export async function loadLiveRecipeContextForRun(run: Run): Promise<LiveRecipeContext | null> {
   if (run.artifactBundle || run.output?.artifactBundle) {
-    const { retainedRecipeRunGroups, selectedRetainedRecipeGroup } =
-      await import('../run-completion/retained-artifacts.js');
+    const { retainedRecipeRunGroups, selectedRetainedRecipeGroup } = await loadRetainedArtifacts();
     return selectedRetainedRecipeGroup(await retainedRecipeRunGroups(run)) ?? null;
   }
   if (TERMINAL_RUN_STATUSES.includes(run.status)) return null;

@@ -30,6 +30,7 @@ import {
 import { formatTcpSnapshotDetail } from '@farmslot/protocol/node/tcp-metrics';
 
 import { isMissingProjectConfigError, SlotConfigError } from '../core/config.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { readDeviceInventory } from '../fleet/device-inventory.js';
 import { getNode } from '../fleet/machine-registry.js';
 import {
@@ -58,6 +59,9 @@ import {
 } from '../fleet/resource-manager.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { DEFAULT_HOST_PRESSURE_THRESHOLDS } from '../runtime-capabilities/host-pressure-config.js';
+
+const loadTmuxWorkers = lazyImport(() => import('./tmux-workers.js'));
+const loadRunStore = lazyImport(() => import('../runs/store.js'));
 
 const RESOURCE_STATUSES: ResourceStatus[] = ['unknown', 'running', 'stopped', 'error', 'stale'];
 const PRESSURE_RESOURCE_RESOLUTION_CONCURRENCY = 4;
@@ -369,8 +373,8 @@ export async function resourcePressureSnapshot(
   }
   const fleet = await loadFleetStatus();
   const [{ tmuxWorkerList }, { getAllRuns }] = await Promise.all([
-    import('./tmux-workers.js'),
-    import('../runs/store.js'),
+    loadTmuxWorkers(),
+    loadRunStore(),
   ]);
   const machineFilter = combinedFilter(params.machine, params.machines);
   const projectFilter = combinedFilter(params.project, params.projects);

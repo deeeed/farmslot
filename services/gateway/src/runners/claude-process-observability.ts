@@ -1,10 +1,14 @@
 import { isRecord } from '@farmslot/protocol';
 
 import { execOnSlot } from '../core/exec.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { resolveExactTmuxWindowPane } from '../core/tmux.js';
 
 import type { SlotVars } from './observability-types.js';
 import type { probeRunnerDescendantPid } from './session-process.js';
+
+// The session process module reaches this one through the registry (a cycle).
+const loadSessionProcess = lazyImport(() => import('./session-process.js'));
 
 interface ClaudeProcessBindingRegistration {
   sessionId: string;
@@ -112,8 +116,7 @@ export async function readClaudeProcessBinding(
 ) {
   const source: ProcessReaders = {
     pane: resolveExactTmuxWindowPane,
-    process: async (...args) =>
-      (await import('./session-process.js')).probeRunnerDescendantPid(...args),
+    process: async (...args) => (await loadSessionProcess()).probeRunnerDescendantPid(...args),
     exec: execOnSlot,
     ...overrides,
   };

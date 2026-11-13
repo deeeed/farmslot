@@ -38,6 +38,7 @@ import {
 import { reviewFindingEntries, reviewFixInProgress } from '@farmslot/review-dispatch';
 
 import { findingsDigest } from '../core/findings-digest.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { ORCHESTRATOR_LOCALITY } from '../core/slot-io.js';
 import { evalWorkerBlockedReason } from '../evals/blocked-first-output.js';
@@ -121,6 +122,11 @@ import { runSupersededSince } from './run-generation.js';
 import { readTaskArtifactText } from './task-artifacts.js';
 import { visualRepairEvidenceReasons } from './visual-repair.js';
 
+// Tests mock the inherited-acceptance module.
+const loadInheritedAcceptance = lazyImport(
+  () => import('../run-completion/inherited-acceptance.js'),
+);
+
 export interface GatePrerequisiteReaders {
   deterministic(run: Run): Promise<unknown>;
   acceptance(run: Run): Promise<GateAcceptanceRead>;
@@ -184,8 +190,8 @@ export async function readGateAcceptance(run: Run): Promise<GateAcceptanceRead> 
     };
   try {
     const inheritedSource = run.parentRunId
-      ? await import('../run-completion/inherited-acceptance.js').then(
-          ({ readInheritedAcceptanceSource }) => readInheritedAcceptanceSource(run),
+      ? await loadInheritedAcceptance().then(({ readInheritedAcceptanceSource }) =>
+          readInheritedAcceptanceSource(run),
         )
       : null;
     if (inheritedSource && acceptanceCriteriaMatch(expected, inheritedSource.acceptance.criteria)) {

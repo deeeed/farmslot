@@ -18,8 +18,14 @@ import { executionKind, measureManagedOperation } from '../observability/perform
 import { assertCleanupCurrent, cleanupSignal, trackCleanupCommand } from './cleanup-scope.js';
 import type { SlotVars } from './config.js';
 import { currentSlotCommandExecutor } from './exec-scope.js';
+import { lazyImport } from './lazy-import.js';
 
 export type { ExecResult };
+
+// These modules execute through this one, so they are not static imports.
+const loadSourcesRuntime = lazyImport(() => import('../sources/runtime.js'));
+const loadRemoteCommand = lazyImport(() => import('../node-support/remote-command.js'));
+const loadNodeLinkProcess = lazyImport(() => import('../fleet/node-link-process.js'));
 
 const LOCAL_HOSTNAME = os.hostname();
 
@@ -402,7 +408,7 @@ export async function execOnSlot(
   const sources = currentProjectSources();
   if (sources) {
     const execution = sources.execution ?? sources.materialization;
-    const { verifyExecutionSources } = await import('../sources/runtime.js');
+    const { verifyExecutionSources } = await loadSourcesRuntime();
     await verifyExecutionSources(slotVars.machine, execution);
     const env = sourceExecutionEnvironment(sources);
     const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
@@ -426,8 +432,7 @@ export async function execOnSlot(
   // (ledger F15). Loaded lazily: node-support itself executes through here.
   const timeout = opts.timeout;
   if (commandIncludesFarmPath(cmd, slotVars)) {
-    const { NodeSupportPendingError, resolveRemoteFarmCommand } =
-      await import('../node-support/remote-command.js');
+    const { NodeSupportPendingError, resolveRemoteFarmCommand } = await loadRemoteCommand();
     try {
       cmd = await resolveRemoteFarmCommand(slotVars, cmd, {
         budgetMs: timeout,
@@ -441,7 +446,7 @@ export async function execOnSlot(
     }
   }
   if (usesNodeLink(slotVars.machine)) {
-    const { execThroughNodeLink } = await import('../fleet/node-link-process.js');
+    const { execThroughNodeLink } = await loadNodeLinkProcess();
     const shell =
       slotVars.osType === 'darwin' || slotVars.osType === 'macos' ? '/bin/zsh' : '/bin/bash';
     const args = shell === '/bin/zsh' ? ['-f', '-c'] : ['--noprofile', '--norc', '-c'];
@@ -475,7 +480,7 @@ export async function execArgvOnSlot(
     return execFileArgv(argv, { ...opts, cwd, signal });
   }
   if (usesNodeLink(slotVars.machine)) {
-    const { execThroughNodeLink } = await import('../fleet/node-link-process.js');
+    const { execThroughNodeLink } = await loadNodeLinkProcess();
     return execThroughNodeLink(
       slotVars,
       argv,

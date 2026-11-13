@@ -47,6 +47,7 @@ import {
 import { writeAuditRecord } from '../auto-recovery/audit-writer.js';
 import type { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { slotWriteFiles } from '../core/slot-io.js';
 import {
   DEVSERVER_LOG_WINDOW_NAME,
@@ -891,14 +892,18 @@ KNOWN_RUNNERS['claude-acp'] = {
   acceptsEffort: (_model, effort) => CLAUDE_ACP_EFFORTS.includes(effort),
 };
 
+// Kept lazy as before; the background-work module imports the registry back.
+const loadClaudePendingQuestion = lazyImport(() => import('./claude-pending-question.js'));
+const loadClaudeBackgroundWork = lazyImport(() => import('./claude-background-work.js'));
+
 const KNOWN_RUNNER_OBSERVABILITY: Record<string, RunnerObservability> = {
   claude: {
     ...claudeHookObservability,
     supportsMidTurnPrompt: true,
     getPendingQuestion: async (vars, target) =>
-      (await import('./claude-pending-question.js')).readClaudePendingQuestion(vars, target),
+      (await loadClaudePendingQuestion()).readClaudePendingQuestion(vars, target),
     getBackgroundWorkState: async (vars, target) =>
-      (await import('./claude-background-work.js')).readClaudeBackgroundWorkState(vars, target),
+      (await loadClaudeBackgroundWork()).readClaudeBackgroundWorkState(vars, target),
   },
   codex: codexSessionObservability,
   cursor: createCursorLogObservability(),

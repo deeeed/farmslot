@@ -40,6 +40,7 @@ import {
 } from '@farmslot/protocol';
 
 import { isLocal } from '../core/exec.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { findFamilyStateSummaryForPR, sortRunsByFreshness } from '../family-observability/state.js';
 import {
@@ -84,6 +85,9 @@ import {
 } from './pr/served-list.js';
 
 const execFileAsync = promisify(execFile);
+
+const loadPRRules = lazyImport(() => import('./pr-rules.js'));
+const loadPRWatch = lazyImport(() => import('./pr-watch.js'));
 
 // ─── Internal types ───
 
@@ -606,8 +610,8 @@ async function loadPRList(
   //    rules/monitoring module graph, which already imports this file.
   {
     const [{ listActiveReviewPRs }, { listActiveMonitoredPRs }] = await Promise.all([
-      import('./pr-rules.js'),
-      import('./pr-watch.js'),
+      loadPRRules(),
+      loadPRWatch(),
     ]);
     for (const candidate of trackedPRCandidates(
       [...listActiveReviewPRs(), ...listActiveMonitoredPRs()],

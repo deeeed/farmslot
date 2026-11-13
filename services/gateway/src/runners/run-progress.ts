@@ -12,6 +12,7 @@ import {
 
 import { resolveAgentTarget, selectAgentContext } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { nativeFixTurnIsActive } from '../review/native-fix.js';
 import { runnerTurnLeaseIsActive } from '../review/worker-lifecycle.js';
 
@@ -86,6 +87,8 @@ interface RunProgressReaders {
   retainedTarget: typeof readRetainedWorkerProgressTarget;
 }
 
+const loadRegistry = lazyImport(() => import('./registry.js'));
+
 const progressReaders: RunProgressReaders = {
   native: readNativeWorkerSnapshot,
   workspace: readReviewWorkspaceWorker,
@@ -98,7 +101,7 @@ const progressReaders: RunProgressReaders = {
   background: readRunnerBackgroundWorkState,
   turnActive: runnerTurnLeaseIsActive,
   // Registry and lifecycle consumers form a cycle; look up this capability after initialization.
-  taskProgress: async (input) => (await import('./registry.js')).readRunnerTaskProgress(input),
+  taskProgress: async (input) => (await loadRegistry()).readRunnerTaskProgress(input),
   retainedTarget: readRetainedWorkerProgressTarget,
 };
 

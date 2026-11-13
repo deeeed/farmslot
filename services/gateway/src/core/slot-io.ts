@@ -46,7 +46,12 @@ import { sha256File } from './file-hash.js';
 import {
   AggregateTransferSession,
   copyFileChunked,
+  emitFileTransferProgress,
+  endFileTransferSession,
+  FileTransferCancelledError,
+  FileTransferIdleTimeoutError,
   readRemoteFileChunkedToBuffer,
+  startFileTransferSession,
 } from './file-transfer.js';
 import { assertHeavyWriteRoom } from './heavy-write-room.js';
 import { replaceReadOnlyDestination } from './owned-copy.js';
@@ -580,7 +585,6 @@ export async function slotReadFileBuffer(
   } = {},
 ): Promise<Buffer> {
   if (local(ctx)) {
-    const { readFile } = await import('node:fs/promises');
     const buf = await readFile(remotePath);
     if (options.maxBytes != null && buf.byteLength > options.maxBytes) {
       throw new Error(`Remote artifact too large to proxy (${buf.byteLength} bytes)`);
@@ -706,13 +710,6 @@ export async function slotWriteFileBuffer(
     }
     return;
   }
-  const { randomUUID } = await import('node:crypto');
-  const {
-    emitFileTransferProgress,
-    endFileTransferSession,
-    FileTransferCancelledError,
-    startFileTransferSession,
-  } = await import('./file-transfer.js');
   const transferId = randomUUID();
   const label = options.label ?? path.basename(remotePath);
   const phase = options.phase ?? 'upload';
@@ -1111,8 +1108,6 @@ export async function slotCopyDir(
             transferred && typeof entry.size === 'number' ? entry.size : 0,
           );
         } catch (err) {
-          const { FileTransferCancelledError, FileTransferIdleTimeoutError } =
-            await import('./file-transfer.js');
           if (err instanceof FileTransferCancelledError || aggregate.signal.aborted) {
             aggregate.fail(err instanceof Error ? err.message : String(err));
             throw err instanceof FileTransferCancelledError

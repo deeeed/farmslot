@@ -17,6 +17,7 @@ import { packMachineNames } from '@farmslot/protocol/node/pack-portability';
 import { currentProjectSources, poolDirectory } from '@farmslot/slot-config';
 
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/index.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { farmCommandRootsForSlot, farmPathsForSlot } from '../fleet/farm-paths.js';
 
 import { NODE_SUPPORT_COMMAND_CACHE_MS, wrapNodeSupportReadCommand } from './activation.js';
@@ -29,6 +30,8 @@ import {
   type NodeSupportBundleState,
   type NodeSupportIo,
 } from './ensure.js';
+
+const loadCore = lazyImport(() => import('../core/index.js'));
 
 /**
  * A remote farm reference, as `{{farmslot_dir}}` expands on a node: a file
@@ -428,7 +431,7 @@ export async function resolveSlotFarmCommand(
   command: string,
   budgetMs?: number,
 ): Promise<string> {
-  const { loadSlotVars } = await import('../core/index.js');
+  const { loadSlotVars } = await loadCore();
   return resolveRemoteFarmCommand(await loadSlotVars(slotId), command, { budgetMs });
 }
 

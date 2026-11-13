@@ -22,6 +22,7 @@ import {
   resolveTaskRelDir,
   type SlotVars,
 } from '../core/config.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { slotWriteFiles } from '../core/slot-io.js';
 import { reviewPRIdentity } from '../review/session-mode.js';
 import { assessRecordedAcceptance } from '../run-engine/acceptance-proof.js';
@@ -39,6 +40,9 @@ import {
   verifyReadyGateSelectedEvidenceFiles,
 } from './ready-gate-package.js';
 import { readOptionalRetainedRunText, readRetainedRunText } from './retained-artifacts.js';
+
+// Tests mock the gate prerequisites module.
+const loadGatePrerequisites = lazyImport(() => import('../run-engine/gate-prerequisites.js'));
 
 export interface InheritedAcceptanceCandidate {
   run: Run;
@@ -127,7 +131,7 @@ export async function readInheritedAcceptanceSource(
 ): Promise<InheritedAcceptanceSource | null> {
   const source = await readInheritedAcceptanceCandidate(run);
   if (!source) return null;
-  const { readGateAcceptance } = await import('../run-engine/gate-prerequisites.js');
+  const { readGateAcceptance } = await loadGatePrerequisites();
   const acceptance = await readGateAcceptance(source.run);
   const inputs = (await readGateRecordedEvidenceSources(source.run, source.prPackage)).map(
     ({ input }) => input,
