@@ -11,6 +11,7 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -27,7 +28,7 @@ import { buildLaunchCommand, buildRunnerSessionReloadCommand } from '../runners/
 import { getRunnerDefinition } from '../runners/registry.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
-import { withBlindTrialBoundary } from './blind-git.js';
+import { type BlindGitSpec, buildBlindGitCommand, withBlindTrialBoundary } from './blind-git.js';
 
 const python = fileURLToPath(new URL('./blind-git.py', import.meta.url));
 const adapter = fileURLToPath(new URL('../../../../packages/adapter-web/', import.meta.url));
@@ -45,11 +46,17 @@ const env = {
   TMUX_TMPDIR: process.env.TMUX_TMPDIR,
   PYTHONDONTWRITEBYTECODE: '1',
 };
+const fixtureCapsules = new Map<string, string>();
 
 function fixture() {
   const root = realpathSync(mkdtempSync(path.join(syntheticHome, 'blind-seatbelt-live-')));
-  mkdirSync(path.join(root, 'boundary'));
-  writeFileSync(path.join(root, 'state.json'), '{"originalIsDirectory":true}');
+  const capsule = path.join(root, '.farmslot-blind-evals/fixture/run-epoch');
+  fixtureCapsules.set(root, capsule);
+  mkdirSync(path.join(capsule, 'boundary'), { recursive: true });
+  writeFileSync(path.join(capsule, 'state.json'), '{"originalIsDirectory":true}');
+  // Keep probe paths stable while using a separate checkout and capsule, as in production.
+  symlinkSync(path.join(capsule, 'boundary'), path.join(root, 'boundary'));
+  symlinkSync(path.join(capsule, 'state.json'), path.join(root, 'state.json'));
   writeFileSync(
     path.join(root, 'owned-cleanup.mjs'),
     `
@@ -85,11 +92,12 @@ function profile(
 import json, pathlib, runpy, sys
 blind = runpy.run_path(sys.argv[1], run_name='fixture')
 root = pathlib.Path(sys.argv[2])
-blind['prepare_boundary']({'repo': str(root), 'siblingRepos': [str(root / 'hidden')], 'slotResourcePorts': json.loads(sys.argv[3])}, root)
+blind['prepare_boundary']({'repo': str(root), 'siblingRepos': [str(root / 'hidden')], 'slotResourcePorts': json.loads(sys.argv[3])}, pathlib.Path(sys.argv[4]))
 `,
       python,
       root,
       JSON.stringify(slotResourcePorts),
+      fixtureCapsules.get(root) ?? root,
     ],
     { env: launchEnv, encoding: 'utf8', timeout: 10_000 },
   );
@@ -110,7 +118,7 @@ function worker(
       withBlindTrialBoundary(
         command,
         {
-          capsule: root,
+          capsule: fixtureCapsules.get(root) ?? root,
           baseSha: 'a'.repeat(40),
           browserCdpPort: JSON.parse(readFileSync(path.join(root, 'state.json'), 'utf8'))
             .browserCdpPort,
@@ -125,6 +133,174 @@ function worker(
     },
   );
 }
+
+test(
+  'blind worker cannot mutate capsule journals, stores, siblings or ancestors while checkout and logs stay writable',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const root = fixture();
+    t.after(() => rmSync(root, { recursive: true }));
+    const repo = path.join(root, 'checkout');
+    mkdirSync(repo);
+    const gitEnv = { ...env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-C', repo, ...args], { env: gitEnv, encoding: 'utf8' }).trim();
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.name', 'Fixture');
+    git('config', 'user.email', 'fixture@example.invalid');
+    git('config', 'commit.gpgsign', 'false');
+    writeFileSync(path.join(repo, 'value'), 'base\n');
+    git('add', '.');
+    git('commit', '-qm', 'base');
+    const capsule = path.join(root, '.farmslot-blind-evals/slot/run-epoch');
+    const spec: BlindGitSpec = {
+      repo,
+      capsule,
+      slotId: 'slot',
+      slotEpoch: 1,
+      runId: 'run',
+      branch: 'eval/run',
+      baseSha: git('rev-parse', 'HEAD'),
+      referenceCommits: [],
+      siblingRepos: [path.join(root, 'other/checkout')],
+    };
+    for (const action of ['isolate', 'boundary'] as const)
+      execFileSync('/bin/sh', ['-c', buildBlindGitCommand(action, spec)], {
+        env: gitEnv,
+        encoding: 'utf8',
+        timeout: 10_000,
+      });
+    allocatedTempRoots.add(realpathSync(path.join(capsule, 'boundary/tmp')));
+    const targets = [
+      path.join(capsule, 'state.json'),
+      path.join(capsule, 'original.entry/config'),
+      path.join(capsule, 'prepared.git/config'),
+      path.join(capsule, 'candidate.git/config'),
+      path.join(capsule, 'boundary/gh-config/config'),
+      path.join(root, '.farmslot-blind-evals/slot/other-run/state.json'),
+      path.join(root, '.farmslot-blind-evals/sibling/run/state.json'),
+      path.join(root, 'other/.farmslot-blind-evals/sibling/run/state.json'),
+    ];
+    for (const target of targets) {
+      mkdirSync(path.dirname(target), { recursive: true });
+      if (!existsSync(target)) writeFileSync(target, 'synthetic retained store');
+    }
+    const saved = targets.map((target) => readFileSync(target));
+    const alias = path.join(repo, 'capsule-alias');
+    symlinkSync(capsule, alias);
+    const aliases = [...targets, path.join(alias, 'state.json')];
+    const routing = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'capsule-alias-')));
+    t.after(() => rmSync(routing, { recursive: true }));
+    symlinkSync(capsule, path.join(routing, 'capsule'));
+    aliases.push(path.join(routing, 'capsule/state.json'));
+    // Exercise both spellings of the macOS /var or /tmp alias, independent of TMPDIR.
+    for (const target of [...targets, path.join(routing, 'capsule/state.json')])
+      if (/^\/private\/(var|tmp)\//u.test(target)) aliases.push(target.slice('/private'.length));
+
+    await t.test('boundary logs, private temp and normal checkout Git writes succeed', () => {
+      const result = worker(
+        capsule,
+        `exec ${q(process.execPath)} --input-type=module -e ${q(`
+import assert from 'node:assert/strict'; import * as fs from 'node:fs'; import { execFileSync } from 'node:child_process';
+const repo = ${JSON.stringify(repo)};
+for (const name of ['attempts.log', 'git-trace.jsonl'])
+  fs.appendFileSync(${JSON.stringify(capsule)} + '/boundary/' + name, 'synthetic log\\n');
+fs.writeFileSync(process.env.TMPDIR + '/worker-file', 'synthetic temp');
+fs.writeFileSync(repo + '/value', 'candidate\\n');
+for (const args of [['add', 'value'], ['commit', '-qm', 'candidate'], ['status', '--porcelain']])
+  execFileSync('git', ['-C', repo, ...args]);
+assert.equal(fs.readFileSync(repo + '/value', 'utf8'), 'candidate\\n');
+`)}`,
+        gitEnv,
+      );
+      assert.ifError(result.error);
+      assert.equal(result.status, 0, result.stderr);
+      for (const name of ['attempts.log', 'git-trace.jsonl'])
+        assert.match(readFileSync(path.join(capsule, 'boundary', name), 'utf8'), /synthetic log/u);
+      assert.equal(git('log', '-1', '--format=%s'), 'candidate');
+    });
+
+    for (const operation of [
+      'write',
+      'append',
+      'create',
+      'rename-in',
+      'rename-out',
+      'unlink',
+      'link-in',
+      'link-out',
+      'symlink',
+    ])
+      await t.test(`${operation} is denied for every capsule target and alias`, () => {
+        const incoming = path.join(repo, 'incoming');
+        writeFileSync(incoming, 'synthetic replacement');
+        const result = worker(
+          capsule,
+          `exec ${q(process.execPath)} --input-type=module -e ${q(`
+import * as fs from 'node:fs';
+const results = [];
+for (const [index, target] of ${JSON.stringify(aliases)}.entries()) {
+  const outgoing = ${JSON.stringify(repo)} + '/outgoing-' + index;
+  try {
+    switch (${JSON.stringify(operation)}) {
+      case 'write': fs.writeFileSync(target, 'tampered'); break;
+      case 'append': fs.appendFileSync(target, 'tampered'); break;
+      case 'create': fs.writeFileSync(target + '.new', 'tampered'); break;
+      case 'rename-in': fs.renameSync(${JSON.stringify(incoming)}, target); break;
+      case 'rename-out': fs.renameSync(target, outgoing); break;
+      case 'unlink': fs.unlinkSync(target); break;
+      case 'link-in': fs.linkSync(${JSON.stringify(incoming)}, target + '.link'); break;
+      case 'link-out': fs.linkSync(target, outgoing); break;
+      case 'symlink': fs.symlinkSync(${JSON.stringify(incoming)}, target + '.symlink'); break;
+    }
+    results.push('ALLOWED');
+  } catch (error) { results.push(error.code); }
+}
+console.log(JSON.stringify(results));
+`)}`,
+          gitEnv,
+        );
+        // Reset outside Seatbelt so every attack also runs independently on the vulnerable profile.
+        for (const [index, target] of targets.entries()) writeFileSync(target, saved[index]);
+        for (const target of targets)
+          for (const suffix of ['.new', '.link', '.symlink'])
+            rmSync(target + suffix, { force: true });
+        for (const index of aliases.keys())
+          rmSync(path.join(repo, 'outgoing-' + index), { force: true });
+        assert.ifError(result.error);
+        assert.equal(result.status, 0, result.stderr);
+        const outcomes: string[] = JSON.parse(result.stdout);
+        for (const [index, outcome] of outcomes.entries())
+          assert.equal(outcome, 'EPERM', `${operation}: ${aliases[index]}`);
+      });
+
+    for (const directory of [
+      capsule,
+      path.dirname(capsule),
+      path.dirname(path.dirname(capsule)),
+      path.join(root, 'other/.farmslot-blind-evals'),
+      path.join(root, 'other'),
+      root,
+    ])
+      await t.test(
+        `ancestor rename is denied: ${path.relative(root, directory) || 'fixture root'}`,
+        () => {
+          const moved = directory + '-moved';
+          const result = worker(
+            capsule,
+            `exec ${q(process.execPath)} --input-type=module -e ${q(`
+import assert from 'node:assert/strict'; import { renameSync } from 'node:fs';
+assert.throws(() => renameSync(${JSON.stringify(directory)}, ${JSON.stringify(moved)}), { code: 'EPERM' });
+`)}`,
+            gitEnv,
+          );
+          if (existsSync(moved)) renameSync(moved, directory);
+          assert.ifError(result.error);
+          assert.equal(result.status, 0, result.stderr);
+        },
+      );
+  },
+);
 
 test(
   'directory imports cannot acquire broker connect access under the real blind wrapper',
@@ -1410,7 +1586,7 @@ for (const file of ${JSON.stringify(denied.filter((file) => file !== profileAlia
   assert.throws(() => renameSync(file, file + '-moved'), { code: 'EPERM' });
   assert.throws(() => linkSync(file, file + '-linked'), { code: 'EPERM' });
 }
-for (const directory of ${JSON.stringify(['.pi', '.pi/agent', 'farmslot-node', 'farmslot-node-dev'].map((file) => path.join(home, file)).concat([path.join(root, 'boundary')]))}) assert.throws(() => renameSync(directory, directory + '-moved'), { code: 'EPERM' });
+for (const directory of ${JSON.stringify(['.pi', '.pi/agent', 'farmslot-node', 'farmslot-node-dev'].map((file) => path.join(home, file)).concat([realpathSync(path.join(root, 'boundary'))]))}) assert.throws(() => renameSync(directory, directory + '-moved'), { code: 'EPERM' });
 for (const installation of ['farmslot-node', 'farmslot-node-dev']) assert.throws(() => readdirSync(${JSON.stringify(home)} + '/' + installation), { code: 'EPERM' });
 for (const file of ${JSON.stringify(allowed.map((file) => path.join(home, file)))}) {
   assert.equal(readFileSync(file, 'utf8'), "console.log('synthetic helper executed');");

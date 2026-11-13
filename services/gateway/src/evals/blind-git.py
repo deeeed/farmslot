@@ -86,10 +86,11 @@ def path_aliases(value):
     path = Path(value).absolute()
     paths = {str(path), str(path.resolve())}
     for item in list(paths):
-        if item.startswith('/private/tmp/'):
-            paths.add(item[len('/private'):])
-        elif item.startswith('/tmp/'):
-            paths.add('/private' + item)
+        for prefix in ['/tmp', '/var']:
+            if item == '/private' + prefix or item.startswith('/private' + prefix + '/'):
+                paths.add(item[len('/private'):])
+            elif item == prefix or item.startswith(prefix + '/'):
+                paths.add('/private' + item)
     return sorted(paths)
 
 
@@ -336,8 +337,6 @@ def sandbox_profile(spec, capsule, tmux_sockets=None, network_ports=None):
                       *worker_access_rules(repo),
                       '(deny file-read* ' + ' '.join('(subpath %s)' % quote(path) for path in denied) + ')',
                       '(allow file-read* (subpath %s))' % quote((capsule / 'boundary').resolve())]
-    rules += ['(allow file-write* (literal %s))' % quote((capsule / 'boundary' / name).resolve())
-              for name in ['attempts.log', 'git-trace.jsonl']]
     if spec.get('proofBoundary'):
         scope = proof_scope(spec)
         rules += ['(deny file-read* ' + ' '.join('(subpath %s)' % quote(p) for p in scope['denied']) + ')',
@@ -345,6 +344,15 @@ def sandbox_profile(spec, capsule, tmux_sockets=None, network_ports=None):
                   '(deny file-write* (subpath %s))' % quote(repo)]
         rules += ['(allow file-write* (subpath %s))' % quote(p) for p in [scope['task']] + scope['runtime']]
         rules += ['(deny file-write* (subpath %s))' % quote(p) for p in scope['pinned']]
+    # Restore trusts the retained journal and stores. Protect this capsule and
+    # all sibling trees after checkout/runtime exceptions, including aliases.
+    protected_capsules = capsules | {capsule}
+    rules += ['(deny file-write* file-link (subpath %s))' % quote(p)
+              for value in sorted(protected_capsules) for p in path_aliases(value)]
+    rules += rename_guard_rules(protected_capsules)
+    rules += ['(allow file-write* (literal %s))' % quote(p)
+              for name in ['attempts.log', 'git-trace.jsonl']
+              for p in path_aliases(capsule / 'boundary' / name)]
     # Instance pool, runs and projects stay read-only, even through worker-created links.
     rules += ['(deny file-write* (subpath %s))' % quote(Path(os.path.expanduser(p)).resolve())
               for p in spec.get('farmConfigRoots', [])]
