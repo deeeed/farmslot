@@ -7,6 +7,7 @@ import path from 'node:path';
 import {
   defaultScrubRoots,
   scrubRunCredentials,
+  unsafeScrubRoot,
 } from '../services/gateway/src/runs/credential-scrub.js';
 
 const flags = process.argv.slice(2);
@@ -32,6 +33,13 @@ if (help || invalid) {
       'FARMSLOT_RUN_ARCHIVE_ROOT).',
   );
   process.exit(invalid ? 2 : 0);
+}
+for (const root of roots) {
+  const refused = unsafeScrubRoot(root);
+  if (refused) {
+    console.error(`refusing --root ${root}: ${refused}`);
+    process.exit(2);
+  }
 }
 if (!roots.length) roots.push(...defaultScrubRoots());
 console.log(`${apply ? 'apply' : 'dry run'} roots:`);

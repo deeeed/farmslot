@@ -1,0 +1,2 @@
+- Credential redaction catches quoted passphrases with spaces under `_SECRET`/`_PASSWORD`/`_PASSWD` names, in commands and env maps; `_KEY`/`_TOKEN` values with spaces are still left alone.
+- `scripts/scrub-run-credentials.mts` refuses a `--root` that resolves (following symlinks) to `/`, the home directory, the farm home or a directory containing it, and exits with status 2 before scanning.

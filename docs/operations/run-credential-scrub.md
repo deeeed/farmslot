@@ -26,14 +26,18 @@ missing ones.
 Pass `--root <dir>` or `--root=<dir>` (repeatable) to scan exactly those
 directories: any `--root` replaces the default list, so stores you leave out
 (an `archive/` you mean to keep, say) are neither scanned nor rewritten. An
-unknown argument exits with status 2 before anything is scanned.
+unknown argument exits with status 2 before anything is scanned. So does a
+`--root` that resolves, symlinks followed, to `/`, the home directory, the farm
+home (it holds `credentials.json`) or any directory containing the farm home;
+the message names the refused root and why.
 
 Only real credential values change: a value assigned to a name ending in
 `_KEY`, `_TOKEN`, `_PAT` or `_CREDENTIALS` when it looks like a secret (16+
 characters mixing at least two of lowercase, uppercase and digits; not a
 `$NAME` reference or an `org/repo` path); any 12+ character value under a name
 ending in `_SECRET`, `_PASSWORD` or `_PASSWD`, single-case passwords and
-hyphenated passphrases included (not a reference, path, URL or plain number);
+hyphenated or quoted spaced passphrases included (not a reference, path, URL or
+plain number; an unquoted shell value ends at the first space);
 and provider token shapes (`sk-`, `sk-ant-`, `ghp_`/`gho_`/`ghs_`/
 `github_pat_`, Atlassian `ATATT`, `xoxb-`/`xoxp-`, `AKIA…`, `glpat-`, `npm_`,
 `AIza…`, `hf_`, `xai-`, `fw_`) wherever they appear. Placeholders such as `local`, numbers,

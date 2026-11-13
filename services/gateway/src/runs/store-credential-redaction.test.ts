@@ -61,6 +61,29 @@ test('command redaction catches single-class passwords but keeps key slugs', () 
   );
 });
 
+test('command redaction catches quoted spaced passphrases under password names only', () => {
+  const spaced = ['amber', 'canyon', 'violet', 'harbor'].join(' ');
+  assert.deepEqual(
+    redactCommandCredentials(
+      `DB_PASSWORD='${spaced}' SMTP_SECRET="${spaced}" LITELLM_API_KEY='${spaced}' cmd`,
+    ),
+    {
+      text: `DB_PASSWORD=[REDACTED] SMTP_SECRET=[REDACTED] LITELLM_API_KEY='${spaced}' cmd`,
+      count: 2,
+    },
+  );
+  assert.deepEqual(redactCommandCredentials(`{"DB_PASSWORD": "${spaced}"}`), {
+    text: '{"DB_PASSWORD": "[REDACTED]"}',
+    count: 1,
+  });
+  for (const prose of [
+    'set DB_PASSWORD in the env',
+    `DB_PASSWORD: ${spaced}`,
+    `DB_PASSWORD="$DB_PASSWORD and more words"`,
+  ])
+    assert.deepEqual(redactCommandCredentials(prose), { text: prose, count: 0 });
+});
+
 test('persisted and served dispatch outputs keep credential names, never values', async (t) => {
   const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: randomUUID() });
   t.after(async () => {

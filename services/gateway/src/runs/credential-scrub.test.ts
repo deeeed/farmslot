@@ -7,13 +7,19 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
-import { defaultScrubRoots, scrubRecordText, scrubRunCredentials } from './credential-scrub.js';
+import {
+  defaultScrubRoots,
+  scrubRecordText,
+  scrubRunCredentials,
+  unsafeScrubRoot,
+} from './credential-scrub.js';
 
 const FAKE_KEY = 'fixture-provider-value-0002';
 
@@ -198,6 +204,20 @@ test('single-class values under password and secret names are redacted; key slug
   );
 });
 
+test('spaced passphrases in env maps are redacted under password names only', () => {
+  const spaced = ['amber', 'canyon', 'violet', 'harbor'].join(' ');
+  const record = {
+    environment: { DB_PASSWORD: spaced, LITELLM_API_KEY: spaced, SMTP_SECRET: ' padded value ' },
+    note: 'set DB_PASSWORD in the env',
+  };
+  const scrubbed = scrubRecordText(JSON.stringify(record), false)!;
+  assert.deepEqual(scrubbed.fields, ['$.environment.DB_PASSWORD']);
+  assert.deepEqual(JSON.parse(scrubbed.text), {
+    ...record,
+    environment: { ...record.environment, DB_PASSWORD: '[REDACTED]' },
+  });
+});
+
 test('default roots follow the farm home, bundle store config and data dir, never the farm home', (t) => {
   const base = mkdtempSync(path.join(os.tmpdir(), 'credential-scrub-roots-'));
   t.after(() => rmSync(base, { recursive: true, force: true }));
@@ -273,4 +293,59 @@ test('--root replaces the default roots in both flag forms; unknown flags scan n
     { status: 2 },
   );
   assert.equal(readFileSync(skipped, 'utf8'), record);
+});
+
+test('--root refuses the filesystem root, home directory and farm home before scanning', (t) => {
+  const base = mkdtempSync(path.join(os.tmpdir(), 'credential-scrub-refuse-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const userHome = path.join(base, 'user');
+  const farmHome = path.join(base, 'farm/home');
+  const store = path.join(farmHome, 'run-archive');
+  mkdirSync(store, { recursive: true });
+  mkdirSync(path.join(userHome, 'runs'), { recursive: true });
+  const record = JSON.stringify({ environment: { CODEX_LB_API_KEY: FAKE_KEY } });
+  const files = [path.join(farmHome, 'credentials.json'), path.join(store, 'run-a.json')];
+  for (const file of files) writeFileSync(file, record);
+  symlinkSync(path.join(base, 'farm'), path.join(userHome, 'farm-link'));
+  const script = path.resolve(import.meta.dirname, '../../../../scripts/scrub-run-credentials.mts');
+  const env = {
+    PATH: process.env.PATH,
+    HOME: userHome,
+    FARMSLOT_HOME: farmHome,
+    FARMSLOT_RUNS_DIR: path.join(base, 'runs'),
+    TSX_TSCONFIG_PATH: path.resolve(import.meta.dirname, '../../tsconfig.json'),
+  };
+  // The filesystem root is checked without the script so a regression cannot scan the real disk.
+  assert.equal(unsafeScrubRoot('/', env), 'filesystem root');
+  for (const [root, reason] of [
+    [userHome, /home directory/u],
+    [farmHome, /farm home/u],
+    [path.join(base, 'farm'), /contains the farm home/u],
+    [base, /contains the farm home/u],
+    [path.join(userHome, 'farm-link'), /contains the farm home .*resolves to/u],
+  ] as const) {
+    let failure: { status?: number; stderr?: string; stdout?: string } = {};
+    try {
+      execFileSync(process.execPath, ['--import', 'tsx', script, '--root', root, '--apply'], {
+        encoding: 'utf8',
+        stdio: 'pipe',
+        env,
+      });
+    } catch (error) {
+      failure = error as typeof failure;
+    }
+    assert.equal(failure.status, 2, root);
+    assert.match(
+      failure.stderr ?? '',
+      new RegExp(`refusing --root ${root}: ${reason.source}`, 'u'),
+    );
+    assert.equal(failure.stdout, '', root);
+    for (const file of files) assert.equal(readFileSync(file, 'utf8'), record, `${root} ${file}`);
+  }
+  const output = execFileSync(
+    process.execPath,
+    ['--import', 'tsx', script, '--root', path.join(userHome, 'runs')],
+    { encoding: 'utf8', env },
+  );
+  assert.match(output, /scanned=0/u);
 });

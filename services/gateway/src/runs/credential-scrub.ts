@@ -1,6 +1,8 @@
 // One-shot scrub of credential values already stored in run records. Reports
 // names, record ids and field paths only; never a value. No backup copies.
+import { realpathSync } from 'node:fs';
 import { chmod, lstat, open, readdir, readFile, rename, rm } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import { type FarmPathEnv, resolveReportedFarmPaths } from '@farmslot/protocol/node/farm-paths';
@@ -129,6 +131,34 @@ export function defaultScrubRoots(env: FarmPathEnv = process.env): string[] {
       ...dataDirs.flatMap((dir) => [path.join(dir, 'run-archive'), path.join(dir, 'archive')]),
     ]),
   ];
+}
+
+/** The real path, following symlinks; a missing tail is joined to its nearest real ancestor. */
+function realPath(target: string): string {
+  const resolved = path.resolve(target);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    const parent = path.dirname(resolved);
+    return parent === resolved ? resolved : path.join(realPath(parent), path.basename(resolved));
+  }
+}
+
+/**
+ * Why an explicit root must not be scanned, or '' when it may be: the filesystem root, the home
+ * directory, the farm home (it holds live credentials) or a directory containing it, compared by
+ * real path.
+ */
+export function unsafeScrubRoot(root: string, env: FarmPathEnv = process.env): string {
+  const real = realPath(root);
+  const farmHome = realPath(resolveReportedFarmPaths({ role: 'gateway', env }).home);
+  const shown = real === path.resolve(root) ? '' : ` (resolves to ${real})`;
+  if (real === path.parse(real).root) return `filesystem root${shown}`;
+  if (real === realPath(os.homedir())) return `home directory${shown}`;
+  if (real === farmHome) return `farm home${shown}`;
+  if (farmHome.startsWith(`${real}${path.sep}`))
+    return `contains the farm home ${farmHome}${shown}`;
+  return '';
 }
 
 /** Walks each root (symlinks are not followed); rewrites only with apply. */
