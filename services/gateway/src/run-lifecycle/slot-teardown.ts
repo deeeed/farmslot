@@ -402,7 +402,9 @@ export async function recordSlotTeardownBlocker(
 
 /** Name what slot cleanup kept or could not stop on the run, or clear it. */
 export async function recordSlotTeardownSkipped(run: Run, reason: string | null): Promise<void> {
-  if (!getRun(run.id)) return;
+  const current = getRun(run.id);
+  // The held-slot retry finds the same blocker every minute: that is no change to write or announce.
+  if (!current || current.slotTeardownSkipped === (reason ?? undefined)) return;
   const updated = updateRun(run.id, { slotTeardownSkipped: reason ?? undefined });
   const { broadcastEvent } = await import('../server.js');
   broadcastEvent(Events.RUN_UPDATED, { run: updated });

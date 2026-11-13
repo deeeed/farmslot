@@ -1124,12 +1124,11 @@ process.stdout.write(JSON.stringify(body));
     }
 
     const publicationEvents: unknown[] = [];
+    // run.updated is a notice (id, project, status, slotId, updatedAt); the publication is read with run.get.
     const unsubscribePublication = connection.onEvent((event) => {
-      const run = (
-        event.payload as { run?: { id: string; reviewPublication?: unknown } } | undefined
-      )?.run;
+      const run = (event.payload as { run?: { id: string } } | undefined)?.run;
       if (event.event === 'run.updated' && run?.id === 'ui-automatic-qa')
-        publicationEvents.push(run.reviewPublication);
+        publicationEvents.push(run);
     });
     const publicationBefore = JSON.parse(
       cdp(

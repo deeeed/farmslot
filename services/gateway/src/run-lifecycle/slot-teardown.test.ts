@@ -599,6 +599,18 @@ test('a failed runtime shutdown is recorded and does not publish the slot ready'
   assert.deepEqual(stoppedResources, ['ios-sim', 'browser', 'dev-server']);
 });
 
+test('a cleanup retry that finds the same blocker does not rewrite the run', async () => {
+  run.status = 'done';
+  run.slotTeardownSkipped = undefined;
+  otherRuns = [{ ...run, id: 'live-child', parentRunId: run.id, status: 'monitoring' }];
+  for (let pass = 0; pass < 3; pass++)
+    assert.equal((await releaseCompletedRunSlot(run)).released, false);
+  assert.deepEqual(
+    runUpdates.filter((patch) => 'slotTeardownSkipped' in patch),
+    [{ slotTeardownSkipped: 'Another active run live-child uses this slot' }],
+  );
+});
+
 test('a failed browser shutdown settles once instead of rerunning teardown on every reconcile', async () => {
   run.status = 'done';
   configuredResources = slotRuntimeResources();

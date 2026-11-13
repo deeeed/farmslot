@@ -4,7 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 
-import { type EventFrame, Events, Methods, type RunUpdatedPayload } from '@farmslot/protocol';
+import {
+  type EventFrame,
+  Events,
+  Methods,
+  type Run,
+  type RunUpdatedPayload,
+} from '@farmslot/protocol';
 
 const runsDir = mkdtempSync(path.join(os.tmpdir(), 'farmslot-run-route-'));
 process.env.FARMSLOT_RUNS_DIR = runsDir;
@@ -66,8 +72,10 @@ test('metadata edits also broadcast the authoritative run to other clients', asy
       broadcast: (frame) => broadcasts.push(frame),
     },
   );
-  const update = broadcasts.find((frame) => frame.event === Events.RUN_UPDATED)
-    ?.payload as RunUpdatedPayload;
+  // The in-process frame still holds the whole run; the socket sends its notice.
+  const update = broadcasts.find((frame) => frame.event === Events.RUN_UPDATED)?.payload as {
+    run?: Run;
+  };
   assert.equal(update?.run?.id, run.id);
   assert.deepEqual(update?.run?.tags, ['deferred-ci']);
   assert.deepEqual(callerEvents, []);

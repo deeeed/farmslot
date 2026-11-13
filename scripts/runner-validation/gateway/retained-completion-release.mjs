@@ -73,7 +73,7 @@ function git(cwd, ...args) {
   );
 }
 
-// A second client that never calls slot.release; it records the run's updates.
+// A second client that never calls slot.release; it records the run's update notices.
 async function watchRunUpdates(url, token, id) {
   const ws = new WebSocket(url);
   const updates = [];
@@ -442,11 +442,10 @@ try {
   assert.ok(refusedStep.outputs.gatePrerequisiteRefusal, 'the refusal stays as history');
   assert.equal(typeof refusedStep.outputs.gatePrerequisiteDiscardedAt, 'string');
   // The release's own events go to its caller only; the discard reaches every client.
+  // A notice names the run, its slot and when it changed; the step outputs are read above with run.get.
+  const discardedAt = Date.parse(refusedStep.outputs.gatePrerequisiteDiscardedAt);
   const observedDiscard = () =>
-    observer.updates.some(
-      (run) =>
-        run.steps.find((step) => step.name === 'complete')?.outputs?.gatePrerequisiteDiscardedAt,
-    );
+    observer.updates.some((run) => run.slotId == null && Date.parse(run.updatedAt) >= discardedAt);
   for (let attempt = 0; !observedDiscard() && attempt < 50; attempt++)
     await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(observedDiscard(), true, 'another client receives the discarded run');
