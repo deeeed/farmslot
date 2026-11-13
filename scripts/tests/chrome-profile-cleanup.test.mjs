@@ -143,6 +143,13 @@ test("a fleet is trusted for ownership up to protocol's default stale threshold"
   const reap = (fleet) => cleanup.reapProfiles({ ...f.options, getFleet: () => fleet });
   assert.deepEqual((await reap(aged(FLEET_STALE_MS_DEFAULT + 5000))).removed, []);
   assert.deepEqual((await reap(aged(FLEET_STALE_MS_DEFAULT - 5000))).removed, [f.profile]);
+  // The script keeps its own literal so launching Chrome needs no build output; it must equal protocol's.
+  const source = fs.readFileSync(
+    new URL('../../apps/command-center/scripts/chrome-profile-cleanup.cjs', import.meta.url),
+    'utf8',
+  );
+  const literal = source.match(/const FLEET_STALE_MS_DEFAULT = ([\d_]+);/)?.[1];
+  assert.equal(Number(literal?.replaceAll('_', '')), FLEET_STALE_MS_DEFAULT);
 });
 
 test('excludes the launching profile and scopes stop cleanup to its own profile', async (t) => {
