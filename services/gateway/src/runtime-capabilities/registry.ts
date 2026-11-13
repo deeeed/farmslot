@@ -972,7 +972,7 @@ export class RuntimeCapabilityRegistry {
 
   async acquire(params: RuntimeCapabilityAcquireParams): Promise<RuntimeCapabilityAcquireResult> {
     return this.mutate(async () => {
-      const snapshot = this.options.store.snapshot();
+      const snapshot = this.options.store.copyForWrite();
       const catalog = await this.options.catalogForSlot(params.slotId);
       const result = await this.acquireInternal(snapshot, catalog, params, true);
       await this.persist(snapshot);
@@ -993,7 +993,7 @@ export class RuntimeCapabilityRegistry {
     )
       throw new Error('A posture acquisition batch must have one slot and run owner');
     return this.mutate(async () => {
-      const snapshot = this.options.store.snapshot();
+      const snapshot = this.options.store.copyForWrite();
       const catalog = await this.options.catalogForSlot(first.slotId);
       const held = new Set(
         snapshot.leases
@@ -2342,7 +2342,7 @@ export class RuntimeCapabilityRegistry {
     params: RuntimeCapabilityAcquireParams,
   ): Promise<RuntimeCapabilityScopedWaitConflict | null> {
     return this.mutate(async () => {
-      const snapshot = this.options.store.snapshot();
+      const snapshot = this.options.store.copyForWrite();
       const catalog = await this.options.catalogForSlot(params.slotId);
       const entry = catalog.capabilities.find(
         (capability) => capability.id === params.capabilityId,
@@ -2446,7 +2446,7 @@ export class RuntimeCapabilityRegistry {
     outcome: { retain: boolean; detail: string },
   ): Promise<'retained' | 'released' | 'not-reserved'> {
     return this.mutate(async () => {
-      const snapshot = this.options.store.snapshot();
+      const snapshot = this.options.store.copyForWrite();
       const lease = snapshot.leases.find((candidate) => candidate.id === leaseId);
       // Completed, released, or already settled. Not an error: the ordinary
       // outcome is that the completion took the lease over.
@@ -2564,7 +2564,7 @@ export class RuntimeCapabilityRegistry {
    */
   async abandonClaimWaits(slotId: string, ownerRunId: string): Promise<RuntimeCapabilityLease[]> {
     return this.mutate(async () => {
-      const snapshot = this.options.store.snapshot();
+      const snapshot = this.options.store.copyForWrite();
       const waiting = snapshot.leases.filter(
         (lease) =>
           lease.slotId === slotId &&
@@ -2617,7 +2617,7 @@ export class RuntimeCapabilityRegistry {
     maxAgeMs: number = STALE_RESERVATION_MS,
   ): Promise<RuntimeCapabilityLease[]> {
     return this.mutate(async () => {
-      const snapshot = this.options.store.snapshot();
+      const snapshot = this.options.store.copyForWrite();
       const cutoff = this.now().getTime() - maxAgeMs;
       const stale = snapshot.leases.filter(
         (lease) => isClaimReservation(lease) && Date.parse(lease.updatedAt) <= cutoff,
@@ -2947,7 +2947,7 @@ export class RuntimeCapabilityRegistry {
     ownerRunId: string,
   ): Promise<RuntimeCapabilityReleaseResult> {
     return this.mutate(async () => {
-      const snapshot = this.options.store.snapshot();
+      const snapshot = this.options.store.copyForWrite();
       const catalog = await this.options.catalogForSlot(slotId);
       const selected = snapshot.leases.filter(
         (lease) =>
@@ -3194,7 +3194,7 @@ export class RuntimeCapabilityRegistry {
     const { force, keepWarmFor } = options;
     const expandDependencies = options.expandDependencies !== false;
     return this.mutate(async () => {
-      const snapshot = this.options.store.snapshot();
+      const snapshot = this.options.store.copyForWrite();
       const catalog = await this.options.catalogForSlot(slotId);
       const roots = snapshot.leases.filter(
         (lease) => lease.slotId === slotId && blocksAcquisition(lease) && select(lease),
@@ -3455,7 +3455,7 @@ export class RuntimeCapabilityRegistry {
         failures: [],
         effects: [],
       };
-      const snapshot = this.options.store.snapshot();
+      const snapshot = this.options.store.copyForWrite();
       const selected = snapshot.leases.filter(
         (lease) =>
           (lease.state === 'released' ||
@@ -3656,7 +3656,7 @@ export class RuntimeCapabilityRegistry {
     );
     const stillShared = new Set(swept.stillHeld.map((lease) => lease.id));
     await this.mutate(async () => {
-      const snapshot = this.options.store.snapshot();
+      const snapshot = this.options.store.copyForWrite();
       const active = snapshot.leases.filter(
         (lease) =>
           (ACTIVE_STATES.has(lease.state) || stillShared.has(lease.id)) &&

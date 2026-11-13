@@ -8,6 +8,8 @@ import type {
   RuntimeCapabilityProofPlan,
 } from '@farmslot/protocol';
 
+import { freezeStoreState } from '../core/store-snapshot.js';
+
 export interface RuntimeCapabilityStoreSnapshot {
   version: 1;
   leases: RuntimeCapabilityLease[];
@@ -211,7 +213,7 @@ export function compactRuntimeCapabilitySnapshot(
 }
 
 export class RuntimeCapabilityStore {
-  private snapshotValue: RuntimeCapabilityStoreSnapshot = emptySnapshot();
+  private snapshotValue = freezeStoreState(emptySnapshot());
   private loaded = false;
 
   constructor(readonly path: string) {}
@@ -221,25 +223,30 @@ export class RuntimeCapabilityStore {
     try {
       const parsed: unknown = JSON.parse(await readFile(this.path, 'utf8'));
       if (!isSnapshot(parsed)) throw new Error('store does not match version 1 contract');
-      this.snapshotValue = structuredClone(parsed);
+      this.snapshotValue = freezeStoreState(parsed);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         throw new Error(
           `Failed to load runtime capability store ${this.path}: ${(error as Error).message}`,
         );
       }
-      this.snapshotValue = emptySnapshot();
+      this.snapshotValue = freezeStoreState(emptySnapshot());
     }
     this.loaded = true;
     return this.snapshot();
   }
 
   snapshot(): RuntimeCapabilityStoreSnapshot {
+    return this.snapshotValue;
+  }
+
+  /** Mutations own their draft; read-only callers share the frozen committed state. */
+  copyForWrite(): RuntimeCapabilityStoreSnapshot {
     return structuredClone(this.snapshotValue);
   }
 
   async replace(snapshot: RuntimeCapabilityStoreSnapshot): Promise<void> {
-    const compacted = compactRuntimeCapabilitySnapshot(snapshot);
+    const compacted = freezeStoreState(structuredClone(compactRuntimeCapabilitySnapshot(snapshot)));
     await mkdir(path.dirname(this.path), { recursive: true });
     const temporaryPath = `${this.path}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
     try {
@@ -248,7 +255,7 @@ export class RuntimeCapabilityStore {
     } finally {
       await rm(temporaryPath, { force: true });
     }
-    this.snapshotValue = structuredClone(compacted);
+    this.snapshotValue = compacted;
     this.loaded = true;
   }
 }

@@ -1828,7 +1828,7 @@ test('an owner evicted past the fence bound is still refused through the run sto
 
   // Evict it the way churn past the bound would: the durable list no longer
   // names this owner, so only the run-store predicate can still refuse it.
-  const snapshot = store.snapshot();
+  const snapshot = store.copyForWrite();
   snapshot.terminalOwners = [];
   await store.replace(snapshot);
   const restarted = new RuntimeCapabilityRegistry({
@@ -1932,7 +1932,7 @@ test('a queued lease of a fenced owner is dropped instead of blocking the capabi
   assert.equal((await acquire(registry, 'browser', 'run-a', 'fam-a')).ok, true);
   // A second owner queues behind the exclusive holder, then the holder's family
   // goes terminal — the queue slot outlives the run that wanted it.
-  const snapshot = store.snapshot();
+  const snapshot = store.copyForWrite();
   snapshot.leases.push({
     ...structuredClone(snapshot.leases[0]!),
     id: 'lease-queued',
@@ -3666,7 +3666,7 @@ test('a released queue place frees no claim and cannot promote the next waiter',
   // `claims`. That is the case where the re-check cannot see it, and the ONLY
   // thing standing between run-c and a device run-a is still using is the rule
   // that a released queue place freed nothing.
-  const snapshot = store.snapshot();
+  const snapshot = store.copyForWrite();
   const holder = snapshot.leases.find((lease) => lease.slotId === SLOT);
   assert.ok(holder);
   delete holder.claims;
@@ -3695,7 +3695,7 @@ test('a queued lease with no claims is never handed a reservation', async (t) =>
   // A lease written before scoped claims existed carries no `claims`. It cannot
   // be a scoped waiter, and reading its claims as "none, so nothing blocks it"
   // reserved it for a claim it had never asked for.
-  const snapshot = store.snapshot();
+  const snapshot = store.copyForWrite();
   const waiter = snapshot.leases.find((lease) => lease.state === 'queued');
   assert.ok(waiter);
   delete waiter.claims;
@@ -4819,7 +4819,7 @@ test('terminal recovery preserves a live siblings warm provider', async (t) => {
     assert.equal((await acquire(registry, 'shared', id)).ok, true);
   await registry.releaseOwnership(SLOT, 'ending');
   // Restart can retain a warm sibling record beside a deferred terminal record.
-  const snapshot = store.snapshot();
+  const snapshot = store.copyForWrite();
   const sibling = snapshot.leases.find((lease) => lease.owner.runId === 'live-sibling')!;
   sibling.state = 'released';
   sibling.keepWarmUntil = '2026-08-11T00:01:00.000Z';

@@ -1,0 +1,1 @@
+- Share frozen capability and owner-filtered PR monitor state between reads, copying only when a write needs its own draft.
