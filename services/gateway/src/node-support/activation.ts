@@ -57,17 +57,19 @@ function isHistoricalRun(record: unknown): boolean {
 /** Historical outputs can refer to an older bundle than the slot now selects. */
 function supportHashes(values: readonly unknown[], supportRoot?: string): string[] {
   const hashes = new Set<string>();
+  // Built once per scan: the visit below reaches every string of every run record.
+  const roots = [
+    legacyRemoteFarmPaths().code.support.slice(1),
+    ...(supportRoot ? [supportRoot] : []),
+  ];
+  const pattern = new RegExp(
+    `(?:${roots.map((root) => root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})/([a-f0-9]{64})(?=$|[\\s/"'\\\\])`,
+    'g',
+  );
   const visit = (value: unknown): void => {
     if (typeof value === 'string') {
       if (/^[a-f0-9]{64}$/.test(value)) hashes.add(value);
-      const roots = [
-        legacyRemoteFarmPaths().code.support.slice(1),
-        ...(supportRoot ? [supportRoot] : []),
-      ];
-      const pattern = new RegExp(
-        `(?:${roots.map((root) => root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})/([a-f0-9]{64})(?=$|[\\s/"'\\\\])`,
-        'g',
-      );
+      // matchAll iterates a copy, so the shared pattern's lastIndex never carries between strings.
       for (const match of value.matchAll(pattern)) hashes.add(match[1]);
     } else if (Array.isArray(value)) value.forEach(visit);
     else if (value && typeof value === 'object') Object.values(value).forEach(visit);
