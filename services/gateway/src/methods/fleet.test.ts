@@ -513,7 +513,7 @@ test('fleet staleness helpers honor the env-configured threshold', () => {
   const previous = process.env.FARMSLOT_FLEET_STALE_MS;
   try {
     delete process.env.FARMSLOT_FLEET_STALE_MS;
-    assert.equal(fleetStaleThresholdMs(), 5 * 60_000);
+    assert.equal(fleetStaleThresholdMs(), 10 * 60_000);
     process.env.FARMSLOT_FLEET_STALE_MS = '1000';
     assert.equal(fleetStaleThresholdMs(), 1000);
 

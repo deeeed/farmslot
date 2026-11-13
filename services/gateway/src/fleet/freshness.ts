@@ -1,4 +1,4 @@
-const FLEET_STALE_MS_DEFAULT = 5 * 60_000;
+import { FLEET_STALE_MS_DEFAULT } from '@farmslot/protocol';
 
 export function fleetStaleThresholdMs(): number {
   const raw = Number(process.env.FARMSLOT_FLEET_STALE_MS);
@@ -8,6 +8,20 @@ export function fleetStaleThresholdMs(): number {
 export function isFleetCheckedAtStale(checkedAt: string, nowMs = Date.now()): boolean {
   const ts = Date.parse(checkedAt);
   return !Number.isFinite(ts) || nowMs - ts > fleetStaleThresholdMs();
+}
+
+/**
+ * The snapshot age at which the monitor starts a refresh: half the threshold. A fleet whose
+ * refresh completes within the other half, less one monitor turn, never shows stale; a slower one
+ * still crosses the threshold.
+ */
+export function fleetRefreshDueAgeMs(): number {
+  return fleetStaleThresholdMs() / 2;
+}
+
+export function isFleetRefreshDue(checkedAt: string, nowMs = Date.now()): boolean {
+  const ts = Date.parse(checkedAt);
+  return !Number.isFinite(ts) || nowMs - ts > fleetRefreshDueAgeMs();
 }
 
 /** First clock millisecond at which the existing strict stale comparison becomes true. */

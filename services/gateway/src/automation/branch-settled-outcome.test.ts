@@ -40,8 +40,9 @@ const { assertBranchObservationsAdmitted, unwatchBranch, watchBranch } =
 const fleetKey = { family: 'slots', scope: 'farm' } as const;
 const marker = () => resourceRevisions.membershipRevision(fleetKey);
 
+// Fresh: a stale fleet's reads start a health refresh, whose commit moves the marker.
 const fleet: FleetStatus = {
-  checkedAt: '2026-11-12T00:00:00.000Z',
+  checkedAt: new Date().toISOString(),
   slots: [
     {
       slot: SLOT,

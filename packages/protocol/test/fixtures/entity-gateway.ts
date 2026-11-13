@@ -15,6 +15,7 @@ import {
 } from '../../src/client-cache/index.js';
 import type { PRStatus } from '../../src/contracts/reviews.js';
 import type { MachineHealth, SlotEntity } from '../../src/contracts/slots.js';
+import { staleFleet } from '../../src/fleet/stale.js';
 import { computeSummary } from '../../src/fleet/summary.js';
 import type { UpstreamObservation } from '../../src/rpc/resource-observers.js';
 import type {
@@ -136,6 +137,8 @@ export class EntityGateway implements ResourceCacheTransport {
     fetchedAt: '2026-11-12T00:00:00.000Z',
   };
   checkedAt = '2026-11-12T00:00:00.000Z';
+  /** The snapshot is past the gateway's freshness threshold (setStale). */
+  stale = false;
   readonly log: Logged[] = [];
   readonly observers: unknown[] = [];
   /** Requests and observer acknowledgements in arrival order. */
@@ -324,6 +327,7 @@ export class EntityGateway implements ResourceCacheTransport {
         summary: computeSummary(slots),
         ...(machines.length ? { machines } : {}),
         checkedAt: this.checkedAt,
+        ...(this.stale ? { stale: true } : {}),
         membershipRevision: this.marker(SLOTS_KEY),
       };
     if (Array.isArray(params.ids)) {
@@ -336,14 +340,34 @@ export class EntityGateway implements ResourceCacheTransport {
         versions: entities.map((row) => ({ id: row.slot, version: versionOf(row) })),
       };
     }
-    return {
-      fleet: {
-        checkedAt: this.checkedAt,
-        slots,
-        summary: computeSummary(slots),
-        ...(machines.length ? { machines } : {}),
-      },
+    const fleet = {
+      checkedAt: this.checkedAt,
+      slots,
+      summary: computeSummary(slots),
+      ...(machines.length ? { machines } : {}),
     };
+    return { fleet: this.stale ? staleFleet(fleet) : fleet };
+  }
+
+  /** The full read's reply, as a gateway without entity sync would send it. */
+  fullFleet() {
+    return JSON.parse(JSON.stringify(this.fleet({})));
+  }
+
+  /**
+   * The snapshot crosses the freshness threshold, either way. As the gateway does: every slot key
+   * advances with its unchanged version, and the fleet marker moves (the deadline, or the commit
+   * that ends staleness).
+   */
+  setStale(stale: boolean): void {
+    this.stale = stale;
+    this.publish([
+      ...[...this.slots.values()].map((row) => ({
+        key: { family: 'slot', slotId: row.slot } as const,
+        changedEntity: { family: 'slot', version: versionOf(row) } as const,
+      })),
+      { key: SLOTS_KEY, membership: true },
+    ]);
   }
 
   prKey(project?: string): ResourceKey {

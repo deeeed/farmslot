@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 
 import WebSocket from 'ws';
 
@@ -21,6 +21,15 @@ import {
 } from '@farmslot/protocol';
 
 await import('../runtime/mock-pty.test-support.js');
+// Each fleet read the server answers hands its rows to the shared stale-refresh kick.
+const realFleet = await import('../methods/fleet.js');
+const staleKicks: string[] = [];
+mock.module('../methods/fleet.js', {
+  namedExports: {
+    ...realFleet,
+    refreshStaleFleet: (served: FleetStatus) => staleKicks.push(served.checkedAt),
+  },
+});
 const { createGatewayAuthRuntime } = await import('../security/auth.js');
 const { broadcastEvent, createWebSocketServer, hasConnectedViewers } = await import('../server.js');
 const { setCachedFleetForTests } = await import('../fleet/state.js');
@@ -156,8 +165,9 @@ async function startServer() {
   };
 }
 
+// A fresh snapshot: a stale one would start a background fleet refresh on every read.
 const fleet: FleetStatus = {
-  checkedAt: '2026-11-12T00:00:00.000Z',
+  checkedAt: new Date().toISOString(),
   slots: [slot('a'), slot('b')],
   summary: {
     total: 2,
@@ -380,4 +390,22 @@ test('pushed entities reach only principals whose read would return them', async
     'an operator may read node.health but not fleet.status or pr.list',
   );
   assert.equal(nobody.changes.length, 0);
+});
+
+test('the versions read and the observed full read start the stale-fleet refresh', async (t) => {
+  const stale = { ...fleet, checkedAt: '2000-01-01T00:00:00.000Z' };
+  setCachedFleetForTests(stale);
+  const harness = await startServer();
+  t.after(async () => {
+    setCachedFleetForTests(null);
+    await harness.close();
+  });
+  const { ws } = await harness.connect(['admin']);
+  staleKicks.length = 0;
+  const versions = await harness.request(ws, 'fleet.status', { versions: true }, true);
+  assert.equal(versions.ok, true, JSON.stringify(versions.error));
+  assert.deepEqual(staleKicks, [stale.checkedAt], 'the versions read');
+  const full = await harness.request(ws, 'fleet.status', {}, true);
+  assert.equal(full.ok, true, JSON.stringify(full.error));
+  assert.deepEqual(staleKicks, [stale.checkedAt, stale.checkedAt], 'the observed full read');
 });
