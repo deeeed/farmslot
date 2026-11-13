@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 
-import { usablePython } from './python.mjs';
+import { PYTHON_TIMEOUT_MS, usablePython } from './python.mjs';
 
 // This opt-in is supplied by the blind worker boundary, never a general Chrome
 // flag. LaunchServices would delegate to an unsandboxed service, so spawn directly.
@@ -18,7 +18,7 @@ lib = ctypes.CDLL('/usr/lib/libsandbox.dylib')
 print(lib.sandbox_check(os.getpid(), None, 0))
 `,
       ],
-      { encoding: 'utf8', timeout: 2000 },
+      { encoding: 'utf8', timeout: PYTHON_TIMEOUT_MS },
     ).trim() === '1'
   );
 }
