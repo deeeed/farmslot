@@ -829,6 +829,57 @@ describe('execution provenance', () => {
     await snapshot('deletion', 3);
   });
 
+  test('sees a submodule commit even when the submodule is configured as ignored', async () => {
+    const sub = checkout('provenance-sub-', { 'sub.txt': 'sub\n' });
+    const root = checkout('provenance-super-', { 'app.txt': 'app\n' });
+    execFileSync(
+      'git',
+      ['-C', root, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'sub'],
+      { stdio: 'ignore' },
+    );
+    git(
+      root,
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=test@example.invalid',
+      'commit',
+      '-qm',
+      'submodule',
+    );
+    git(root, 'config', 'submodule.sub.ignore', 'all');
+    const before = sourceSnapshot(root).sourceFingerprint;
+    git(
+      path.join(root, 'sub'),
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=test@example.invalid',
+      'commit',
+      '--allow-empty',
+      '-qm',
+      'moved',
+    );
+    assert.notEqual(sourceSnapshot(root).sourceFingerprint, before);
+  });
+
+  test('follows a work-tree rename to the renamed file', async () => {
+    const lines = Array.from({ length: 20 }, (_, index) => `line ${index}`);
+    const root = checkout('provenance-rename-', { 'old.txt': `${lines.join('\n')}\n` });
+    fs.renameSync(path.join(root, 'old.txt'), path.join(root, 'new.txt'));
+    git(root, 'add', '-N', 'new.txt');
+    const before = sourceSnapshot(root).sourceFingerprint;
+    // Still similar enough to stay a rename, so the listing reads the same.
+    fs.writeFileSync(path.join(root, 'new.txt'), `${['edited', ...lines.slice(1)].join('\n')}\n`);
+    assert.notEqual(sourceSnapshot(root).sourceFingerprint, before);
+  });
+
+  test('refuses an untracked symbolic link as the diff always has', async () => {
+    const root = checkout('provenance-link-', { 'app.txt': 'app\n' });
+    fs.symlinkSync(path.join(root, 'app.txt'), path.join(root, 'link.txt'));
+    assert.throws(() => sourceSnapshot(root), /symbolic link/u);
+  });
+
   test('hashes an installed runner package once per version and again after an edit', () => {
     const previous = process.env.FARMSLOT_RECIPE_CACHE_DIR;
     const cache = tempRoot('provenance-cache-');
@@ -1788,6 +1839,24 @@ describe('live adapter scripts', () => {
     assert.match((await prepare())?.sourceText ?? '', /from a/u);
     imports('./web/team/b.mjs');
     assert.match((await prepare())?.sourceText ?? '', /from b/u);
+  });
+
+  test('bundles JSON as written, even when it contains import.meta.url', async () => {
+    const root = tempRoot('json-adapter-');
+    const dir = path.join(root, 'web', 'team');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'data.json'), JSON.stringify({ text: 'see import.meta.url' }));
+    fs.writeFileSync(
+      path.join(dir, 'probe.mjs'),
+      `import data from './data.json' with { type: 'json' };\nconsole.log(data.text);\n`,
+    );
+    const prepared = await prepareLiveAdapterScript({
+      platform: 'web',
+      action: 'team.probe',
+      namespace: 'shop',
+      implementationRoot: root,
+    });
+    assert.match(prepared?.sourceText ?? '', /see import\.meta\.url/u);
   });
 
   test('does not cache a bundle whose input changed while it was built', async () => {

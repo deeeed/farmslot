@@ -280,13 +280,23 @@ export function sourceSnapshot(
     };
   }
   const pathspecs = sourcePathspecs(git, excludedRoots, includedRoots);
-  const status = gitText(git.topLevel, [
+  // Structured (v2, NUL-separated) so renames, copies and submodules parse without guessing,
+  // with every submodule's state whatever its `ignore` setting.
+  const listing = gitText(git.topLevel, [
     'status',
-    '--porcelain=v1',
+    '--porcelain=v2',
+    '-z',
     '--untracked-files=normal',
+    '--ignore-submodules=none',
     '--',
     ...pathspecs,
   ]);
+  // The record keeps one entry per line.
+  const status = listing
+    .split('\0')
+    .filter(Boolean)
+    .map((entry) => `${entry}\n`)
+    .join('');
   let head = readHeadCommit(git.topLevel);
   if (!head) {
     try {
@@ -310,7 +320,7 @@ export function sourceSnapshot(
       platformFingerprint && path.resolve(root) === git.topLevel
         ? platformFingerprint(root)
         : adapter
-          ? gitSourceFingerprint(git.topLevel, pathspecs, head, status)
+          ? gitSourceFingerprint(git.topLevel, pathspecs, head, listing)
           : nestedGitSourceFingerprint(
               root,
               git,
@@ -318,7 +328,7 @@ export function sourceSnapshot(
               excludedRoots,
               includedRoots,
               head,
-              status,
+              listing,
             ),
   };
 }
@@ -353,7 +363,7 @@ function gitContext(root: string): { topLevel: string; pathspec: string } | null
 // The source's bytes from its status: HEAD, the status listing, and the mode and
 // bytes of every path it names (a missing one as deleted). A path absent from the
 // listing matches HEAD, so this binds what the full diff and untracked listing bind.
-// When the listing cannot be read back exactly, or names a submodule, the diff decides.
+// When the listing names a submodule, a symbolic link or an untracked directory, the diff decides.
 function gitSourceFingerprint(
   topLevel: string,
   pathspecs: string[],
@@ -387,87 +397,66 @@ function statusSourceFingerprint(
       hash.update('deleted');
       continue;
     }
-    // A submodule's change is its commit, which only the diff reports.
-    if (stat.isDirectory()) return undefined;
+    // A submodule's change is its commit, which only the diff reports, and a symbolic
+    // link keeps the diff's rules (an untracked one is refused there).
+    if (stat.isDirectory() || stat.isSymbolicLink()) return undefined;
     hash.update(`${stat.mode}\0`);
-    hash.update(
-      stat.isSymbolicLink() ? fs.readlinkSync(absolute) : readRegularFileNoFollow(absolute),
-    );
+    hash.update(readRegularFileNoFollow(absolute));
   }
   return hash.digest('hex');
 }
 
-// Every path a `status --porcelain=v1` listing names, or undefined when one cannot be
-// read back exactly: an untracked directory, an unparsable quote, an ambiguous rename.
-function statusPaths(status: string): string[] | undefined {
+// Every path a `status --porcelain=v2 -z` listing names, or undefined when the diff must
+// decide: an untracked directory, a submodule, or a record this parser does not know.
+function statusPaths(listing: string): string[] | undefined {
   const paths = new Set<string>();
-  for (const line of status.split('\n')) {
-    if (!line) continue;
-    if (line.length < 4 || line[2] !== ' ') return undefined;
-    const rest = line.slice(3);
-    const names = line[0] === 'R' || line[0] === 'C' ? renamedPaths(rest) : [statusPath(rest)];
-    if (!names) return undefined;
-    for (const name of names) {
-      if (name === undefined || name.endsWith('/')) return undefined;
-      paths.add(name);
+  const fields = listing.split('\0');
+  for (let index = 0; index < fields.length; index += 1) {
+    const field = fields[index]!;
+    if (!field) continue;
+    const parts = field.split(' ');
+    switch (field[0]) {
+      case '1': // 1 XY sub mH mI mW hH hI path
+        if (parts[2]?.startsWith('S')) return undefined;
+        paths.add(parts.slice(8).join(' '));
+        break;
+      case '2': {
+        // 2 XY sub mH mI mW hH hI Xscore path, then the original path as its own field
+        if (parts[2]?.startsWith('S')) return undefined;
+        paths.add(parts.slice(9).join(' '));
+        index += 1;
+        const original = fields[index];
+        if (!original) return undefined;
+        paths.add(original);
+        break;
+      }
+      case 'u': // u XY sub m1 m2 m3 mW h1 h2 h3 path
+        if (parts[2]?.startsWith('S')) return undefined;
+        paths.add(parts.slice(10).join(' '));
+        break;
+      case '?': {
+        const untracked = field.slice(2);
+        if (untracked.endsWith('/')) return undefined;
+        paths.add(untracked);
+        break;
+      }
+      default:
+        return undefined;
     }
   }
   return [...paths].sort();
-}
-
-function renamedPaths(field: string): Array<string | undefined> | undefined {
-  if (field.startsWith('"')) {
-    const end = quotedEnd(field);
-    if (end === undefined || !field.startsWith(' -> ', end)) return undefined;
-    return [statusPath(field.slice(0, end)), statusPath(field.slice(end + 4))];
-  }
-  const arrow = field.indexOf(' -> ');
-  if (arrow < 0 || field.indexOf(' -> ', arrow + 1) >= 0) return undefined;
-  return [statusPath(field.slice(0, arrow)), statusPath(field.slice(arrow + 4))];
-}
-
-// The index just past a C-quoted field's closing quote.
-function quotedEnd(field: string): number | undefined {
-  for (let index = 1; index < field.length; index += 1) {
-    if (field[index] === '\\') index += 1;
-    else if (field[index] === '"') return index + 1;
-  }
-  return undefined;
-}
-
-// A status path: as written, or C-unquoted when Git quoted it.
-function statusPath(field: string): string | undefined {
-  if (!field.startsWith('"')) return field.includes('"') ? undefined : field;
-  if (quotedEnd(field) !== field.length) return undefined;
-  const bytes: number[] = [];
-  const escapes: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13 };
-  for (let index = 1; index < field.length - 1; index += 1) {
-    const char = field[index]!;
-    if (char !== '\\') {
-      bytes.push(...Buffer.from(char, 'utf8'));
-      continue;
-    }
-    const next = field[index + 1] ?? '';
-    if (/^[0-7]{3}$/u.test(field.slice(index + 1, index + 4))) {
-      bytes.push(Number.parseInt(field.slice(index + 1, index + 4), 8));
-      index += 3;
-    } else if (next in escapes) {
-      bytes.push(escapes[next]!);
-      index += 1;
-    } else if (next === '"' || next === '\\') {
-      bytes.push(next.charCodeAt(0));
-      index += 1;
-    } else return undefined;
-  }
-  const decoded = Buffer.from(bytes).toString('utf8');
-  return decoded.includes('\uFFFD') ? undefined : decoded;
 }
 
 function diffSourceFingerprint(topLevel: string, pathspecs: string[], head: string): string {
   const hash = createHash('sha256');
   hash.update(`${head}\n`);
   hash.update('\0diff\0');
-  hash.update(gitBuffer(topLevel, gitDiffArgs(['--binary', head, '--', ...pathspecs])));
+  hash.update(
+    gitBuffer(
+      topLevel,
+      gitDiffArgs(['--binary', '--ignore-submodules=none', head, '--', ...pathspecs]),
+    ),
+  );
   const untracked = gitText(topLevel, [
     'ls-files',
     '--others',

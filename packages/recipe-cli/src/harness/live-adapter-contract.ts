@@ -339,7 +339,7 @@ async function bundleInputs(
     if (sha256 === null || sha256 === 'dir') continue;
     // A file written while esbuild ran may differ from what it read: do not cache.
     const { mtimeMs } = await stat(file);
-    if (mtimeMs >= buildStarted - 1 || (await fileSha256(file)) !== sha256) return undefined;
+    if (mtimeMs > buildStarted || (await fileSha256(file)) !== sha256) return undefined;
   }
   return [...inputs]
     .map(([file, sha256]) => ({ path: file, sha256 }))
@@ -430,11 +430,13 @@ function bindImportMetaUrls(loaded: Map<string, string>): Plugin {
                   ? 'jsx'
                   : 'js';
         return {
-          contents: contents.includes('import.meta.url')
-            ? contents.replaceAll('import.meta.url', () =>
-                JSON.stringify(pathToFileURL(args.path).href),
-              )
-            : contents,
+          // JSON is data: only a module's own `import.meta.url` is bound.
+          contents:
+            loader !== 'json' && contents.includes('import.meta.url')
+              ? contents.replaceAll('import.meta.url', () =>
+                  JSON.stringify(pathToFileURL(args.path).href),
+                )
+              : contents,
           loader,
         };
       });
