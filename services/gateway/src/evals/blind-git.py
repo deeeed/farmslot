@@ -384,8 +384,9 @@ def slot_runtime_rules(spec, repo, checkouts):
     return rules + rename_guard_rules(trees + launches)
 
 
-# Operator credential stores, runner sessions and transcripts under HOME.
-HOME_SECRET_STORES = ['.claude', '.codex', '.pi', '.grok', '.config', '.farmslot', 'farm-paths-brief',
+# Operator credential stores, runner sessions and transcripts under HOME;
+# gateway_homes() adds every farm home.
+HOME_SECRET_STORES = ['.claude', '.codex', '.pi', '.grok', '.config', 'farm-paths-brief',
                       'xreview', 'Library/Application Support', 'Library/Preferences',
                       'Library/HTTPStorages', 'Library/Keychains', 'Library/Cookies']
 # Operator stores at the root of a data volume that holds slot checkouts.
