@@ -17,6 +17,7 @@ import { packMachineNames } from '@farmslot/protocol/node/pack-portability';
 import { currentProjectSources, poolDirectory } from '@farmslot/slot-config';
 
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/index.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { farmCommandRootsForSlot, farmPathsForSlot } from '../fleet/farm-paths.js';
 
 import { NODE_SUPPORT_COMMAND_CACHE_MS, wrapNodeSupportReadCommand } from './activation.js';
@@ -30,10 +31,7 @@ import {
   type NodeSupportIo,
 } from './ensure.js';
 
-// Loaded on first use, once: under tsx each import() call runs the resolve hooks again,
-// and every resource command paid it.
-let coreModule: Promise<typeof import('../core/index.js')> | undefined;
-const loadCore = () => (coreModule ??= import('../core/index.js'));
+const loadCore = lazyImport(() => import('../core/index.js'));
 
 /**
  * A remote farm reference, as `{{farmslot_dir}}` expands on a node: a file

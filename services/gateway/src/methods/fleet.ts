@@ -43,6 +43,7 @@ import {
   SLOT_RELEASING_SINCE,
   type SlotVars,
 } from '../core/index.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { shellQuote, tmuxSessionCandidates, tmuxShellSnippet } from '../core/tmux.js';
 import {
   fleetStaleThresholdMs,
@@ -82,10 +83,7 @@ import {
   slotProbeScript,
 } from './slot-probe-batch.js';
 
-// Loaded on first health parse, once: under tsx each import() call runs the resolve
-// hooks again, and every slot probe paid it.
-let execModule: Promise<typeof import('../core/exec.js')> | undefined;
-const loadExec = () => (execModule ??= import('../core/exec.js'));
+const loadExec = lazyImport(() => import('../core/exec.js'));
 
 const SLOT_CHECK_CONCURRENCY = 4;
 const SLOT_CHECK_TIMEOUT_MS = 5_000;

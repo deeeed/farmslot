@@ -1,5 +1,6 @@
 import {
   isPickerCatalogModel,
+  Methods,
   type NativeSessionCatalogResult,
   type NativeSessionExecutionNode,
   type Principal,
@@ -8,6 +9,7 @@ import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { loadSlotVars } from '../core/config.js';
 import { farmslotRoot, isLocal } from '../core/index.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { nodeModelCatalogs } from '../runners/model-catalog.js';
@@ -25,6 +27,10 @@ import { nativeOwnerAssignedMachines } from '../security/native-node.js';
 import { ownsLocalNativeProfile } from '../security/native-owner.js';
 
 import { standaloneCatalogTargets } from './native-catalog-targets.js';
+
+// The native session module imports this one (a cycle), and tests mock the originator module.
+const loadNativeSession = lazyImport(() => import('./native-session.js'));
+const loadWorkOriginator = lazyImport(() => import('../security/work-originator.js'));
 
 export {
   nativeWorkspaceChanges,
@@ -187,9 +193,8 @@ export async function resolveObservedNativeWorkspace(
   principal: import('@farmslot/protocol').Principal,
   params: Record<string, unknown>,
 ): Promise<import('../resources/workspace-read.js').NativeWorkspaceIdentity> {
-  const { nativeSessionRoute } = await import('./native-session.js');
-  const { Methods } = await import('@farmslot/protocol');
-  const { runWithSessionOriginator } = await import('../security/work-originator.js');
+  const { nativeSessionRoute } = await loadNativeSession();
+  const { runWithSessionOriginator } = await loadWorkOriginator();
   const { session } = (await runWithSessionOriginator(principal, () =>
     nativeSessionRoute(
       Methods.NATIVE_SESSION_READ,

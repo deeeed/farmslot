@@ -17,6 +17,7 @@ import {
 import type { ChatToolTraceEntry, StepLLMUsage } from '@farmslot/protocol';
 
 import { execLocal } from '../core/exec.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { captureHelperAttempt, observeHelperUsage } from '../runtime/agent-usage-context.js';
 
 import { resolveAuth } from './auth-resolve.js';
@@ -36,16 +37,17 @@ import { getLLMConfig } from './config.js';
 // Exported read access is a test seam; production code only writes via
 // ensureOAuthCredentialSeeded.
 export const piCredentialStore = new InMemoryCredentialStore();
-let piModelsPromise: Promise<PiModels> | null = null;
-// Exported so tests can swap a faux provider into the live collection.
-export function piModels(): Promise<PiModels> {
-  piModelsPromise ??= import('@earendil-works/pi-ai/providers/all').then((mod) => {
+const loadPiModels = lazyImport(() =>
+  import('@earendil-works/pi-ai/providers/all').then((mod) => {
     const models = mod.builtinModels({ credentials: piCredentialStore });
     registerCodexAstra(models);
     registerCodexLb(models);
     return models;
-  });
-  return piModelsPromise;
+  }),
+);
+// Exported so tests can swap a faux provider into the live collection.
+export function piModels(): Promise<PiModels> {
+  return loadPiModels();
 }
 
 // Last seeded access token per provider — re-seed only on rotation so the

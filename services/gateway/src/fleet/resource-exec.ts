@@ -7,17 +7,14 @@
  * would be resolved by module order rather than by design.
  */
 import { execLocal } from '../core/exec.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { ResourceCommandUnavailableError } from '../core/resource-command-error.js';
 
 import { commandIncludesFarmPath } from './farm-paths.js';
 import { getNode } from './machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from './node-rpc.js';
 
-// Loaded on the first farm-path command, once: under tsx each import() call runs the
-// resolve hooks again, and every resource command paid it.
-let remoteCommandModule: Promise<typeof import('../node-support/remote-command.js')> | undefined;
-const loadRemoteCommand = () =>
-  (remoteCommandModule ??= import('../node-support/remote-command.js'));
+const loadRemoteCommand = lazyImport(() => import('../node-support/remote-command.js'));
 
 export interface ResourceCommandResult {
   stdout: string;

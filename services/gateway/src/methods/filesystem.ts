@@ -33,6 +33,7 @@ import {
 import { resolveRunBundleEntry } from '@farmslot/run-bundle';
 
 import { farmslotRoot } from '../core/index.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { type ConnectedNode, getNode } from '../fleet/machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from '../fleet/node-rpc.js';
@@ -46,21 +47,12 @@ import {
 } from './filesystem/range-serving.js';
 
 // The run store imports this module, and test module mocks replace these modules with
-// partial exports, so they load on first use, once: under tsx each import() call runs
-// the resolve hooks again, which every request paid.
-let runStoreModule: Promise<typeof import('../runs/store.js')> | undefined;
-const loadRunStore = () => (runStoreModule ??= import('../runs/store.js'));
-let retainedArtifactsModule:
-  | Promise<typeof import('../run-completion/retained-artifacts.js')>
-  | undefined;
-const loadRetainedArtifacts = () =>
-  (retainedArtifactsModule ??= import('../run-completion/retained-artifacts.js'));
-let slotStateModule: Promise<typeof import('../core/state.js')> | undefined;
-const loadSlotState = () => (slotStateModule ??= import('../core/state.js'));
-let slotIoModule: Promise<typeof import('../core/slot-io.js')> | undefined;
-const loadSlotIo = () => (slotIoModule ??= import('../core/slot-io.js'));
-let configModule: Promise<typeof import('../core/config.js')> | undefined;
-const loadConfig = () => (configModule ??= import('../core/config.js'));
+// partial exports, so they are not static imports.
+const loadRunStore = lazyImport(() => import('../runs/store.js'));
+const loadRetainedArtifacts = lazyImport(() => import('../run-completion/retained-artifacts.js'));
+const loadSlotState = lazyImport(() => import('../core/state.js'));
+const loadSlotIo = lazyImport(() => import('../core/slot-io.js'));
+const loadConfig = lazyImport(() => import('../core/config.js'));
 
 const EXT_LANGUAGE: Record<string, string> = {
   '.ts': 'typescript',

@@ -40,6 +40,7 @@ import {
 } from '@farmslot/protocol';
 
 import { isLocal } from '../core/exec.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { findFamilyStateSummaryForPR, sortRunsByFreshness } from '../family-observability/state.js';
 import {
@@ -85,12 +86,8 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-// Loaded on first use, once (see loadPRList): under tsx each import() call runs the
-// resolve hooks again, and every PR list build paid it.
-let prRulesModule: Promise<typeof import('./pr-rules.js')> | undefined;
-const loadPRRules = () => (prRulesModule ??= import('./pr-rules.js'));
-let prWatchModule: Promise<typeof import('./pr-watch.js')> | undefined;
-const loadPRWatch = () => (prWatchModule ??= import('./pr-watch.js'));
+const loadPRRules = lazyImport(() => import('./pr-rules.js'));
+const loadPRWatch = lazyImport(() => import('./pr-watch.js'));
 
 // ─── Internal types ───
 

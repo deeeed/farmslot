@@ -12,6 +12,7 @@ import {
 
 import { resolveAgentTarget, selectAgentContext } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { nativeFixTurnIsActive } from '../review/native-fix.js';
 import { runnerTurnLeaseIsActive } from '../review/worker-lifecycle.js';
 
@@ -86,9 +87,7 @@ interface RunProgressReaders {
   retainedTarget: typeof readRetainedWorkerProgressTarget;
 }
 
-// Loaded on first use, once: under tsx each import() call runs the resolve hooks again.
-let registryModule: Promise<typeof import('./registry.js')> | undefined;
-const loadRegistry = () => (registryModule ??= import('./registry.js'));
+const loadRegistry = lazyImport(() => import('./registry.js'));
 
 const progressReaders: RunProgressReaders = {
   native: readNativeWorkerSnapshot,

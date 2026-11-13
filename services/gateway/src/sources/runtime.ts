@@ -32,6 +32,7 @@ import {
   SourceMaterializer,
 } from '@farmslot/slot-config/sources';
 
+import { lazyImport } from '../core/lazy-import.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { assertNodeReconnectCurrent, sendNodeRequest, waitForNode } from '../fleet/node-rpc.js';
 import { loadFleetStatus, loadPoolConfigs, loadProjectConfig } from '../fleet/state.js';
@@ -65,11 +66,8 @@ import {
   type RunSlotSourcePlans,
 } from './slot-planning.js';
 
-// Test module mocks replace the slot state module with partial exports, so slot
-// actions load it on first use, once: under tsx each import() call runs the resolve
-// hooks again, and every resource poll paid it.
-let slotStateModule: Promise<typeof import('../core/state.js')> | undefined;
-const loadSlotState = () => (slotStateModule ??= import('../core/state.js'));
+// Test module mocks replace the slot state module with partial exports.
+const loadSlotState = lazyImport(() => import('../core/state.js'));
 
 let authority: SourceAuthority | undefined;
 let gateway: SourceMaterializer | undefined;

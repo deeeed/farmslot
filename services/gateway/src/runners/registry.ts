@@ -45,6 +45,7 @@ import {
 import { writeAuditRecord } from '../auto-recovery/audit-writer.js';
 import type { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { slotWriteFiles } from '../core/slot-io.js';
 import {
   DEVSERVER_LOG_WINDOW_NAME,
@@ -841,14 +842,9 @@ KNOWN_RUNNERS['claude-acp'] = {
   acceptsEffort: (_model, effort) => CLAUDE_ACP_EFFORTS.includes(effort),
 };
 
-// Observation reads load these on first use, once: under tsx each import() call runs
-// the resolve hooks again, and every observation tick paid it.
-let claudePendingQuestionModule: Promise<typeof import('./claude-pending-question.js')> | undefined;
-const loadClaudePendingQuestion = () =>
-  (claudePendingQuestionModule ??= import('./claude-pending-question.js'));
-let claudeBackgroundWorkModule: Promise<typeof import('./claude-background-work.js')> | undefined;
-const loadClaudeBackgroundWork = () =>
-  (claudeBackgroundWorkModule ??= import('./claude-background-work.js'));
+// Kept lazy as before; the background-work module imports the registry back.
+const loadClaudePendingQuestion = lazyImport(() => import('./claude-pending-question.js'));
+const loadClaudeBackgroundWork = lazyImport(() => import('./claude-background-work.js'));
 
 const KNOWN_RUNNER_OBSERVABILITY: Record<string, RunnerObservability> = {
   claude: {

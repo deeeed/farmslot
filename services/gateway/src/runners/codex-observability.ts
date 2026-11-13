@@ -3,6 +3,7 @@ import path from 'node:path';
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { resolveExactTmuxWindowPane, resolveTmuxPaneId, shellQuote } from '../core/tmux.js';
 
 import { claudeHookObservability } from './claude-observability.js';
@@ -11,10 +12,8 @@ import type { RunnerObservability, SlotVars } from './observability-types.js';
 import { buildRunnerOpenFileProbeCommand, parseOpenFilePaths } from './process-open-files.js';
 import type { probeRunnerDescendantPid } from './session-process.js';
 
-// The session process module reaches this one through the registry, so it loads on
-// first use, once: under tsx each import() call runs the resolve hooks again.
-let sessionProcessModule: Promise<typeof import('./session-process.js')> | undefined;
-const loadSessionProcess = () => (sessionProcessModule ??= import('./session-process.js'));
+// The session process module reaches this one through the registry (a cycle).
+const loadSessionProcess = lazyImport(() => import('./session-process.js'));
 
 type CodexPromptProbe =
   | { status: 'matched'; observedAt: number; turnId: string }

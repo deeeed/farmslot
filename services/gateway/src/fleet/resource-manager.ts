@@ -29,6 +29,7 @@ import { withSourceEnvironment } from '@farmslot/slot-config';
 import { loadProjectVars, loadSlotVars, type RawProjectJson, resolveSlot } from '../core/config.js';
 import { execLocal } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { withProjectMachineEnv } from '../core/project-env.js';
 import { runtimeBootTimeoutMs } from '../core/project-timeouts.js';
 import { reportSlotResourceLifecycle } from '../core/resource-lifecycle-log.js';
@@ -76,15 +77,9 @@ let pollAllInFlight = false;
 const warnedUnconfiguredResources = new Map<string, string>();
 const loggedLegacySharedProviderInferences = new Set<string>();
 
-// Both modules import this one, so polls load them on first use, once: under tsx each
-// import() call runs the resolve hooks again, and every poll tick paid it.
-let sourcesRuntimeModule: Promise<typeof import('../sources/runtime.js')> | undefined;
-const loadSourcesRuntime = () => (sourcesRuntimeModule ??= import('../sources/runtime.js'));
-let idleDevServerModule:
-  | Promise<typeof import('../run-lifecycle/idle-devserver-service.js')>
-  | undefined;
-const loadIdleDevServer = () =>
-  (idleDevServerModule ??= import('../run-lifecycle/idle-devserver-service.js'));
+// Both modules import this one (a cycle).
+const loadSourcesRuntime = lazyImport(() => import('../sources/runtime.js'));
+const loadIdleDevServer = lazyImport(() => import('../run-lifecycle/idle-devserver-service.js'));
 
 function publishSlotResourceObservation(slotId: string): void {
   // Fleet coherence depends on resource status and run ownership, not PID or stream frames.

@@ -26,6 +26,7 @@ import {
   type NativeSessionRequester,
 } from '@farmslot/protocol';
 
+import { lazyImport } from '../../core/lazy-import.js';
 import { GatewayMethodError } from '../../core/method-error.js';
 import { type ConnectedNode, getAllNodes, getNode } from '../../fleet/machine-registry.js';
 import {
@@ -46,16 +47,9 @@ import { ownsLocalNativeProfile } from '../../security/native-owner.js';
 import { knownNativeExecutionNodes } from './execution-nodes.js';
 import { nativeSessionManager, validateNativeRunner } from './manager.js';
 
-// Both modules route through this one, so they load on first use, once: under tsx each
-// import() call runs the resolve hooks again, and every native read paid it.
-let nativeObservationsModule:
-  | Promise<typeof import('../../resources/native-observations.js')>
-  | undefined;
-const loadNativeObservations = () =>
-  (nativeObservationsModule ??= import('../../resources/native-observations.js'));
-let nativeWorkspaceModule: Promise<typeof import('../../methods/native-workspace.js')> | undefined;
-const loadNativeWorkspace = () =>
-  (nativeWorkspaceModule ??= import('../../methods/native-workspace.js'));
+// Both modules route through this one (a cycle).
+const loadNativeObservations = lazyImport(() => import('../../resources/native-observations.js'));
+const loadNativeWorkspace = lazyImport(() => import('../../methods/native-workspace.js'));
 
 type AuthorizedNativeNode = ConnectedNode & {
   nativeSessions: NonNullable<ConnectedNode['nativeSessions']>;

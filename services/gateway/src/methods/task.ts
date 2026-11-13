@@ -32,6 +32,7 @@ import {
   resolveTaskPaths,
   resolveTaskRelDir,
 } from '../core/config.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import {
   ORCHESTRATOR_LOCALITY,
@@ -70,16 +71,11 @@ import {
 } from '../tasks/subtasks.js';
 import { generateTaskSchema } from '../tasks/writer.js';
 
-// The watcher imports this module, and the acceptance source pulls in the run-engine
-// graph, so they load on first use, once: under tsx each import() call runs the
-// resolve hooks again, and every progress read paid it.
-let watcherModule: Promise<typeof import('../tasks/watcher.js')> | undefined;
-const loadWatcher = () => (watcherModule ??= import('../tasks/watcher.js'));
-let inheritedAcceptanceModule:
-  | Promise<typeof import('../run-completion/inherited-acceptance.js')>
-  | undefined;
-const loadInheritedAcceptance = () =>
-  (inheritedAcceptanceModule ??= import('../run-completion/inherited-acceptance.js'));
+// The watcher imports this module, and the acceptance source pulls in the run-engine graph.
+const loadWatcher = lazyImport(() => import('../tasks/watcher.js'));
+const loadInheritedAcceptance = lazyImport(
+  () => import('../run-completion/inherited-acceptance.js'),
+);
 
 export interface TaskProgressReadOptions {
   /** Set only by the shared observed-read dispatch, never by domain params. */

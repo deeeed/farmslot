@@ -26,6 +26,7 @@ import {
 } from '../core/active-run-selection.js';
 import { resolveTaskPaths } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
+import { lazyImport } from '../core/lazy-import.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { slotFileExists, slotMkdir, slotReadFile } from '../core/slot-io.js';
 import { updateSlotStatus } from '../core/state.js';
@@ -57,10 +58,8 @@ import {
 } from './subtasks.js';
 import { normalizeWorkerSignal } from './worker-signals.js';
 
-// Loaded on first sync, once: under tsx each import() call runs the resolve hooks again.
-let acceptanceSyncModule: Promise<typeof import('./acceptance-registration-sync.js')> | undefined;
-const loadAcceptanceSync = () =>
-  (acceptanceSyncModule ??= import('./acceptance-registration-sync.js'));
+// Lazy: watcher-remote-subtask.test.ts mocks this module after the real graph loads.
+const loadAcceptanceSync = lazyImport(() => import('./acceptance-registration-sync.js'));
 
 // Keep imperative watch consumers compatible while recording shared-read admission centrally.
 const sendNodeRequest: typeof sendRawNodeRequest = (node, method, params, options) => {

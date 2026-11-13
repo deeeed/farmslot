@@ -26,6 +26,7 @@ import {
   resolveTaskRelDir,
 } from '../core/config.js';
 import { sha256File } from '../core/file-hash.js';
+import { lazyImport } from '../core/lazy-import.js';
 import {
   inferArtifactPurpose,
   inferTypedArtifactPurpose,
@@ -48,13 +49,8 @@ import {
   shouldVisitArtifactDirectory,
 } from './artifact-filters.js';
 
-// The retained-artifact module imports this one, so run reads load it on first use,
-// once: under tsx each import() call runs the resolve hooks again.
-let retainedArtifactsModule:
-  | Promise<typeof import('../run-completion/retained-artifacts.js')>
-  | undefined;
-const loadRetainedArtifacts = () =>
-  (retainedArtifactsModule ??= import('../run-completion/retained-artifacts.js'));
+// The retained-artifact module imports this one (a cycle).
+const loadRetainedArtifacts = lazyImport(() => import('../run-completion/retained-artifacts.js'));
 
 interface ArtifactScanResult {
   refs: ArtifactRef[];

@@ -18,19 +18,14 @@ import { executionKind, measureManagedOperation } from '../observability/perform
 import { assertCleanupCurrent, cleanupSignal, trackCleanupCommand } from './cleanup-scope.js';
 import type { SlotVars } from './config.js';
 import { currentSlotCommandExecutor } from './exec-scope.js';
+import { lazyImport } from './lazy-import.js';
 
 export type { ExecResult };
 
-// These modules execute through this one, so they load on first use, once: under tsx
-// each import() call runs the resolve hooks again, and every slot command paid it.
-let sourcesRuntimeModule: Promise<typeof import('../sources/runtime.js')> | undefined;
-const loadSourcesRuntime = () => (sourcesRuntimeModule ??= import('../sources/runtime.js'));
-let remoteCommandModule: Promise<typeof import('../node-support/remote-command.js')> | undefined;
-const loadRemoteCommand = () =>
-  (remoteCommandModule ??= import('../node-support/remote-command.js'));
-let nodeLinkProcessModule: Promise<typeof import('../fleet/node-link-process.js')> | undefined;
-const loadNodeLinkProcess = () =>
-  (nodeLinkProcessModule ??= import('../fleet/node-link-process.js'));
+// These modules execute through this one, so they are not static imports.
+const loadSourcesRuntime = lazyImport(() => import('../sources/runtime.js'));
+const loadRemoteCommand = lazyImport(() => import('../node-support/remote-command.js'));
+const loadNodeLinkProcess = lazyImport(() => import('../fleet/node-link-process.js'));
 
 const LOCAL_HOSTNAME = os.hostname();
 
