@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import cleanup from '../../apps/command-center/scripts/chrome-profile-cleanup.cjs';
+import { FLEET_STALE_MS_DEFAULT } from '../../packages/protocol/dist/fleet/stale.js';
 
 function fixture(t, port = 47201) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'chrome-profile-cleanup-test-'));
@@ -134,6 +135,14 @@ test('preserves profiles when fleet ownership is stale, missing or unavailable',
   });
   assert.equal(result.skipped, 'gateway slot ownership unavailable');
   assert.equal(fs.existsSync(f.profile), true);
+});
+
+test("a fleet is trusted for ownership up to protocol's default stale threshold", async (t) => {
+  const f = fixture(t);
+  const aged = (ms) => ({ ...f.fleet, checkedAt: new Date(Date.now() - ms).toISOString() });
+  const reap = (fleet) => cleanup.reapProfiles({ ...f.options, getFleet: () => fleet });
+  assert.deepEqual((await reap(aged(FLEET_STALE_MS_DEFAULT + 5000))).removed, []);
+  assert.deepEqual((await reap(aged(FLEET_STALE_MS_DEFAULT - 5000))).removed, [f.profile]);
 });
 
 test('excludes the launching profile and scopes stop cleanup to its own profile', async (t) => {
