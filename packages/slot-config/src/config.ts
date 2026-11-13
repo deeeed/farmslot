@@ -571,10 +571,16 @@ export interface ResolvedSlot {
 
 const MAX_AVAILABLE_SLOT_IDS = 20;
 
-export async function resolveSlot(slotId: string): Promise<ResolvedSlot> {
-  let pools: ReturnType<typeof readPoolFiles<RawPoolJson>>;
+/** The pool files of the pool directory, as one slot lookup reads them. */
+export type SlotPools = readonly PoolFileEntry<RawPoolJson>[];
+
+/**
+ * The pool files every slot lookup reads. Each read re-checks the directory and every pool file,
+ * so an operation that looks up many slots reads them once and passes them to each lookup.
+ */
+export function readSlotPools(): SlotPools {
   try {
-    pools = readPoolFiles<RawPoolJson>(currentPoolDir());
+    return readPoolFiles<RawPoolJson>(currentPoolDir());
   } catch {
     throw new SlotConfigError(
       'POOL_DIR_NOT_FOUND',
@@ -585,7 +591,12 @@ export async function resolveSlot(slotId: string): Promise<ResolvedSlot> {
       },
     );
   }
+}
 
+export async function resolveSlot(
+  slotId: string,
+  pools: SlotPools = readSlotPools(),
+): Promise<ResolvedSlot> {
   const availableSlotIds: string[] = [];
   for (const { file: poolFile, pool } of pools) {
     if (!Array.isArray(pool.slots)) continue;
@@ -747,8 +758,9 @@ export function resolveRemoteRepo(repo: string, osType: string, sshUser: string)
 
 // ─── loadSlotVars ───
 
-export async function loadSlotVars(slotId: string): Promise<SlotVars> {
-  const { pool, slot } = await resolveSlot(slotId);
+/** `pools`: one readSlotPools() shared by the lookups of one operation; read now when omitted. */
+export async function loadSlotVars(slotId: string, pools?: SlotPools): Promise<SlotVars> {
+  const { pool, slot } = await resolveSlot(slotId, pools);
 
   const machine = pool.machine;
   const platform = slot.platform || pool.platform;

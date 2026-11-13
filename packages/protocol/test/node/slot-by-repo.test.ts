@@ -272,6 +272,36 @@ test('pool reads are cached until a pool file or the directory changes', (t) => 
   assert.deepEqual(machines(), ['b2']);
 });
 
+test('ignored files in the pool directory are listed but never statted or read', (t) => {
+  const dir = tempDir(t);
+  pool(dir, 'a.json', { machine: 'a', slots: [] });
+  pool(dir, 'example.json', { machine: 'example', slots: [] });
+  pool(dir, 'agent-contexts-1.json', { machine: 'contexts', slots: [] });
+  pool(dir, 'a.json.tmp', { machine: 'tmp', slots: [] });
+  for (let i = 0; i < 20; i++) pool(dir, `a.json.bak.2026-11-${i}`, { machine: 'bak', slots: [] });
+  const touched: string[] = [];
+  const { statSync, readFileSync } = fs;
+  t.mock.method(fs, 'statSync', (...args: Parameters<typeof statSync>) => {
+    touched.push(String(args[0]));
+    return statSync(...args);
+  });
+  t.mock.method(fs, 'readFileSync', (...args: Parameters<typeof readFileSync>) => {
+    touched.push(String(args[0]));
+    return readFileSync(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  assert.deepEqual(
+    readPoolFiles<{ machine: string }>(dir).map(({ pool }) => pool.machine),
+    ['a'],
+  );
+  readPoolFiles(dir);
+  assert.deepEqual([...new Set(touched)].sort(), [dir, join(dir, 'a.json')]);
+});
+
 test('node-link policy reads the cached machine pool and still refuses a malformed one', (t) => {
   const dir = tempDir(t);
   assert.equal(

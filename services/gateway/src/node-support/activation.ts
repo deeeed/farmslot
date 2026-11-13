@@ -16,7 +16,13 @@ import { isRecord } from '@farmslot/protocol/recipe';
 import { parseRunRecordFile } from '@farmslot/run-bundle';
 import { expandFixturePath } from '@farmslot/slot-config';
 
-import { loadMachineSlots, loadProjectVars, loadSlotVars, type SlotVars } from '../core/config.js';
+import {
+  loadMachineSlots,
+  loadProjectVars,
+  loadSlotVars,
+  readSlotPools,
+  type SlotVars,
+} from '../core/config.js';
 import { shellQuote } from '../core/tmux.js';
 import { farmPathsForSlot } from '../fleet/farm-paths.js';
 import { nodeSupportHashPath } from '../runners/runner-observability.js';
@@ -181,10 +187,13 @@ export async function nodeSupportRetentionReferences(
   ].filter((run) => !isHistoricalRun(run));
   const selectionPaths = [];
   const activeRuns: ActiveRunSupportReferences[] = [];
-  for (const slot of await loadMachineSlots(vars.machine)) {
+  const machineSlots = await loadMachineSlots(vars.machine);
+  // One pool read for every slot: each read stats the pool directory and every pool file.
+  const pools = readSlotPools();
+  for (const slot of machineSlots) {
     // Disabled slots retain their selection too. An unreadable config refuses
     // pruning instead of guessing that the slot holds no bundle.
-    const selected = await loadSlotVars(slot.id);
+    const selected = await loadSlotVars(slot.id, pools);
     const project = await loadProjectVars(selected.projectName);
     const selection = nodeSupportHashPath(selected.remoteRepo, project.runtimeDir);
     selectionPaths.push(selection);
