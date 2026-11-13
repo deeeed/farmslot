@@ -16,6 +16,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { createServer } from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -2355,6 +2356,189 @@ test(
     // KERN_PROCARGS2 sysctl, so a deliberate read still sees same-uid environments.
     t.diagnostic(
       `ps forms refused for gateway, tmux server, pane and parent; own tools passed in ${elapsed}ms`,
+    );
+  },
+);
+
+test(
+  'host credential stores are EPERM while the trial checkout, runtime, pins and own Pi home work',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const root = fixture();
+    let server: ReturnType<typeof createServer> | undefined;
+    t.after(async () => {
+      if (server) await new Promise((resolve) => server!.close(resolve));
+      rmSync(root, { recursive: true });
+    });
+    // Synthetic operator home and data volume holding fake credentials only.
+    const home = path.join(root, 'home');
+    const data = path.join(root, 'data');
+    const volume = path.join(root, 'volume');
+    const secrets = [
+      ...[
+        '.claude/.credentials.json',
+        '.claude/sessions/s.json',
+        '.codex/auth.json',
+        '.codex/sessions/s.jsonl',
+        '.pi/agent/auth.json',
+        '.pi/agent/sessions/--other--/s.jsonl',
+        '.grok/sessions/s.json',
+        '.config/litellm/api-key',
+        '.config/farmslot-env/env',
+        '.farmslot-dev/credentials.json',
+        '.farmslot-dev/operator-backups/x.json',
+        '.farmslot-rollout-backups/home/credentials.json',
+        'Library/Application Support/x/secret',
+        'Library/Preferences/x.plist',
+        'Library/Keychains/x.keychain-db',
+        'Library/Cookies/Cookies.binarycookies',
+        'xreview/notes.md',
+        'farm-paths-brief/x.md',
+      ].map((name) => path.join(home, name)),
+      path.join(data, 'run-archive/run/transcript.jsonl'),
+      path.join(volume, 'lanes/lane/REPORT.md'),
+      path.join(volume, 'farmslot-archive/run.json'),
+    ];
+    for (const file of secrets) {
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, 'FAKE_SECRET synthetic credential only');
+    }
+    const pin = path.join(home, '.farmslot-dev/task-pins/pin/cli/farmslot.mjs');
+    mkdirSync(path.dirname(pin), { recursive: true });
+    writeFileSync(pin, 'synthetic pinned CLI');
+    mkdirSync(path.join(home, '.pi/agent/bin'), { recursive: true });
+    const tool = path.join(home, '.pi/agent/bin/fd');
+    writeFileSync(tool, '#!/bin/sh\necho fd-fixture\n', { mode: 0o755 });
+    // The Pi home of another trial in the same slot runtime.
+    const otherPi = path.join(
+      path.dirname(root),
+      '.farmslot-runtime',
+      path.basename(root),
+      '.blind-pi/other-run/s.jsonl',
+    );
+    mkdirSync(path.dirname(otherPi), { recursive: true });
+    writeFileSync(otherPi, 'FAKE_SECRET other trial session');
+    const launchEnv = {
+      ...env,
+      HOME: home,
+      FARMSLOT_BLIND_DENIED_PATHS: [
+        path.join(volume, 'lanes'),
+        path.join(volume, 'farmslot-archive'),
+      ].join(':'),
+    };
+    execFileSync(
+      'python3',
+      [
+        '-c',
+        `import json, pathlib, runpy, sys
+blind = runpy.run_path(sys.argv[1], run_name='fixture')
+blind['prepare_boundary'](json.loads(sys.argv[2]), pathlib.Path(sys.argv[3]))`,
+        python,
+        JSON.stringify({ repo: root, siblingRepos: [], hostDeniedRoots: [data] }),
+        fixtureCapsules.get(root)!,
+      ],
+      { env: launchEnv, encoding: 'utf8', timeout: 10_000 },
+    );
+    allocatedTempRoots.add(realpathSync(path.join(root, 'boundary/tmp')));
+    execFileSync('git', ['-C', root, 'init', '-q', '-b', 'main'], { env });
+    writeFileSync(
+      path.join(root, 'tiny.test.mjs'),
+      "import test from 'node:test'; test('tiny', () => {});\n",
+    );
+    // Pi refuses an unreadable auth.json; the trial's own Pi home must serve it.
+    server = createServer((request, response) => {
+      request.resume();
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      const chunk = {
+        id: 'f',
+        object: 'chat.completion.chunk',
+        created: 0,
+        model: 'fixture',
+        choices: [
+          {
+            index: 0,
+            delta: { role: 'assistant', content: 'host-deny-fixture-ok' },
+            finish_reason: null,
+          },
+        ],
+      };
+      response.write(`data: ${JSON.stringify(chunk)}\n\n`);
+      response.write(
+        `data: ${JSON.stringify({ ...chunk, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`,
+      );
+      response.end('data: [DONE]\n\n');
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const port = (server.address() as { port: number }).port;
+    const extension = path.join(root, 'fixture-provider.mjs');
+    writeFileSync(
+      extension,
+      `export default function (pi) { pi.registerProvider('fixture', { baseUrl: 'http://127.0.0.1:${port}/v1', api: 'openai-completions', apiKey: 'fixture-only', models: [{ id: 'fixture', name: 'Fixture', reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 4096, maxTokens: 128 }] }); }\n`,
+    );
+    const pi = execFileSync('/usr/bin/which', ['pi'], { env, encoding: 'utf8' }).trim();
+    const probe = path.join(root, 'host-probe.mjs');
+    writeFileSync(
+      probe,
+      `
+import assert from 'node:assert/strict';
+import { linkSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+const code = (action) => { try { action(); return 'OK'; } catch (error) { return error.code; } };
+for (const file of ${JSON.stringify([...secrets, otherPi])}) {
+  assert.equal(code(() => readFileSync(file)), 'EPERM', file);
+  assert.equal(code(() => linkSync(file, ${JSON.stringify(path.join(root, 'linked'))})), 'EPERM', 'link ' + file);
+}
+for (const directory of ${JSON.stringify(['.config', '.claude', 'Library/Keychains'].map((name) => path.join(home, name)))})
+  assert.equal(code(() => readdirSync(directory)), 'EPERM', directory);
+assert.equal(readFileSync(${JSON.stringify(pin)}, 'utf8'), 'synthetic pinned CLI');
+assert.equal(code(() => writeFileSync(${JSON.stringify(pin)}, 'x')), 'EPERM', 'pinned CLI write');
+assert.ok(process.env.PI_CODING_AGENT_DIR.startsWith(${JSON.stringify(path.dirname(path.dirname(otherPi)))} + '/'), 'own Pi home');
+writeFileSync(${JSON.stringify(path.join(root, 'checkout-write'))}, 'ok');
+console.log('host stores EPERM; own checkout, pin and Pi home usable');
+`,
+    );
+    const script = [
+      `${q(process.execPath)} ${q(probe)}`,
+      `${q(tool)} | grep -q fd-fixture && echo PI-TOOL-OK`,
+      `git -C ${q(root)} status --porcelain >/dev/null && echo GIT-OK`,
+      `cd ${q(root)} && ${q(process.execPath)} --test tiny.test.mjs >/dev/null 2>&1 && echo NODE-TEST-OK`,
+      'ps -o pid= -p $$ >/dev/null && echo PS-OK',
+      `cd ${q(root)} && ${q(pi)} --print --approve --extension ${q(extension)} --provider fixture --model fixture Reply </dev/null`,
+    ].join(' && ');
+    const started = Date.now();
+    // Asynchronous: the fixture model endpoint is served from this process.
+    const child = spawn(
+      '/bin/sh',
+      [
+        '-c',
+        withBlindTrialBoundary(script, {
+          capsule: fixtureCapsules.get(root)!,
+          baseSha: 'a'.repeat(40),
+        }),
+      ],
+      { env: launchEnv, stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    let output = '';
+    child.stdout.on('data', (chunk) => (output += chunk));
+    child.stderr.on('data', (chunk) => (output += chunk));
+    const timer = setTimeout(() => child.kill('SIGKILL'), 60_000);
+    const [status] = await once(child, 'close');
+    clearTimeout(timer);
+    assert.equal(status, 0, output.replaceAll('FAKE_SECRET', '[fake]'));
+    assert.doesNotMatch(output, /FAKE_SECRET/u);
+    for (const marker of [
+      'host stores EPERM',
+      'PI-TOOL-OK',
+      'GIT-OK',
+      'NODE-TEST-OK',
+      'PS-OK',
+      'host-deny-fixture-ok',
+    ])
+      assert.ok(output.includes(marker), marker);
+    // The real Pi wrote its session into the trial's home, never the operator's.
+    assert.ok(!existsSync(path.join(home, '.pi/agent/auth.json.lock')));
+    t.diagnostic(
+      `${secrets.length + 1} stores EPERM; own tools and real Pi passed in ${Date.now() - started}ms`,
     );
   },
 );

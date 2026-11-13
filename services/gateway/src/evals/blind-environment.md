@@ -174,6 +174,54 @@ Boundary preparation creates the own slot runtime, since the worker cannot creat
 it inside the denied tree. Measured in a live launch, the worker writes only
 `.agent/.observability` there; the gateway writes `.agent/.launch` from outside.
 
+## Host credential stores
+
+A credential sweep under a deployed blind sandbox found logins, API keys and
+session transcripts readable across the operator's home and data volume. The
+last rules in the profile deny reads, writes and hard links in these stores,
+with each resolved alias and rename guards on their ancestors:
+
+| Store                                                                                                                          | Holds                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| `~/.claude`, `~/.codex`, `~/.pi`, `~/.grok`                                                                                    | Runner logins, sessions, histories and shell snapshots. |
+| `~/.config`                                                                                                                    | Provider API keys, environment files and backups.       |
+| `~/.farmslot` and every other `~/.farmslot*` directory, `FARMSLOT_HOME`, `FARMSLOT_CONFIG_DIR`                                 | Gateway credentials, native sessions, operator backups. |
+| `~/Library/{Application Support,Preferences,HTTPStorages,Keychains,Cookies}`                                                   | Application tokens, keychains and cookies.              |
+| `~/farm-paths-brief`, `~/xreview`                                                                                              | Operator notes and review lanes.                        |
+| The gateway's farm home, data root, backups, run bundles, run and task pin archives, runs                                      | Other runs' transcripts, artifacts and backups.         |
+| On a `/Volumes/<name>` volume holding slot checkouts: `lanes`, `slot-retained`, `xreview`, `dev/xreview-personal`, `*archive*` | Lanes, retained slots and archives.                     |
+| `FARMSLOT_BLIND_DENIED_PATHS` (machine environment, colon separated)                                                           | Node-local additions.                                   |
+| `<slot runtime>/.blind-pi` except this trial's directory                                                                       | Earlier trials' Pi homes on this slot.                  |
+
+A store that contains the operator's home is skipped. These carve-outs remain,
+each excluded from the denial only, never added as an allowance:
+
+| Kept                                                                                                                               | Access         | Reason                                                                                    |
+| ---------------------------------------------------------------------------------------------------------------------------------- | -------------- | ----------------------------------------------------------------------------------------- |
+| The trial's checkout, capsule and slot runtime                                                                                     | Read and write | The worker's own work; earlier rules still apply.                                         |
+| `<slot runtime>/.blind-pi/<capsule>`                                                                                               | Read and write | This trial's Pi home (below).                                                             |
+| `task-pins`, `state/task-pins` and `code` in each farm home, and the gateway's pin store and CLI, support and runtime script roots | Read only      | `./mark` and task tools run the pinned CLI; layout 2 installs node code in the farm home. |
+| `~/.pi/agent/bin`                                                                                                                  | Read only      | Pi's managed `fd`, linked from the trial's Pi home.                                       |
+
+Each kept path's ancestors inside a store admit `file-read-metadata` only, for
+Node's realpath.
+
+Pi locks and reads `auth.json` in its agent directory before using any provider
+and refuses one it cannot read. When `PI_CODING_AGENT_DIR` is unset, boundary
+preparation creates `<slot runtime>/.blind-pi/<capsule>` and links it as
+`boundary/pi-agent`; the launch wrapper exports it. The trial's Pi sessions,
+trust and lock files stay there across retained launches. Its providers come
+from the pool through the Farmslot extension; the operator's `models.json` is
+not read. An explicitly configured `PI_CODING_AGENT_DIR` is kept and must lie
+outside the denied stores.
+
+Residual: other runs' task pins (pinned CLI copies and retained recipe inputs)
+stay readable; `~/.claude.json`, other home files, other checkouts on the volume
+that are not slots of this node, and anything outside these lists remain
+readable until reads are denied by default under a separate uid. Claude, Codex,
+Grok and OpenCode blind workers must use a runner home outside the denied
+stores.
+
 ## Launch shells
 
 A blind tmux launch (fresh dispatch, retained reload and parked-worker reload)

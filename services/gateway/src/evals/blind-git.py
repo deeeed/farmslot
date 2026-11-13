@@ -384,6 +384,71 @@ def slot_runtime_rules(spec, repo, checkouts):
     return rules + rename_guard_rules(trees + launches)
 
 
+# Operator credential stores, runner sessions and transcripts under HOME;
+# gateway_homes() adds every farm home.
+HOME_SECRET_STORES = ['.claude', '.codex', '.pi', '.grok', '.config', 'farm-paths-brief',
+                      'xreview', 'Library/Application Support', 'Library/Preferences',
+                      'Library/HTTPStorages', 'Library/Keychains', 'Library/Cookies']
+# Operator stores at the root of a data volume that holds slot checkouts.
+VOLUME_SECRET_STORES = ['lanes', 'slot-retained', 'xreview', 'dev/xreview-personal', '*archive*']
+
+
+def blind_pi_home(spec, capsule):
+    # Pi's operator home holds its logins and every session, and Pi refuses an
+    # unreadable auth.json. A blind Pi without its own home gets one per trial.
+    runtime = slot_launch_dirs(spec, Path(spec['repo']).resolve(), [])[0].parent.parent
+    return runtime / '.blind-pi', runtime / '.blind-pi' / capsule.name
+
+
+def host_secret_paths(spec, repo, capsule, checkouts):
+    home = Path.home()
+    denied = [home / name for name in HOME_SECRET_STORES] + sorted(gateway_homes())
+    # Other trials' Pi homes in this slot runtime.
+    denied.append(blind_pi_home(spec, capsule)[0])
+    # The gateway passes the node's farm home, data, archive and run roots.
+    denied += [Path(os.path.expanduser(p)) for p in spec.get('hostDeniedRoots', [])]
+    volumes = {Path(*p.parts[:3]) for p in [repo] + checkouts
+               if len(p.parts) > 3 and p.parts[1] == 'Volumes'}
+    for volume in sorted(volumes):
+        denied += [p for name in VOLUME_SECRET_STORES
+                   for p in (volume.glob(name) if '*' in name else [volume / name])]
+    # Node-local additions from the machine environment, colon separated.
+    denied += [Path(os.path.expanduser(p))
+               for p in os.environ.get('FARMSLOT_BLIND_DENIED_PATHS', '').split(':') if p]
+    return denied
+
+
+def host_secret_rules(spec, repo, capsule, checkouts):
+    quote = lambda value: json.dumps(str(value), ensure_ascii=False)
+    # The worker's own checkout, capsule, slot runtime and Pi home stay usable.
+    writable = [repo, capsule, slot_launch_dirs(spec, repo, checkouts)[0].parent.parent,
+                blind_pi_home(spec, capsule)[1]]
+    # Read-only: pinned task CLIs, installed node code and Pi's managed fd/rg.
+    readable = writable + [Path.home() / '.pi/agent/bin']
+    readable += [h / p for h in gateway_homes() for p in ['task-pins', 'state/task-pins', 'code']]
+    readable += [Path(os.path.expanduser(p)) for p in spec.get('hostReadableRoots', [])]
+    home = Path.home().resolve()
+    roots = sorted({Path(p) for value in host_secret_paths(spec, repo, capsule, checkouts)
+                    for p in [Path(value).resolve()] if not inside(home, p)})
+    rules, metadata = [], set()
+    for operations, kept in [(['file-read*'], readable), (['file-write*', 'file-link'], writable)]:
+        kept = [Path(p).resolve() for p in kept]
+        for root in roots:
+            inner = [p for p in kept if inside(p, root)]
+            if root in inner:
+                continue
+            keep = ' '.join('(subpath %s)' % quote(a) for p in inner for a in path_aliases(p))
+            # Node realpath stats each ancestor on the way to an admitted path.
+            metadata |= {a for p in inner for parent in [p, *p.parents]
+                         if inside(parent, root) and parent != p for a in path_aliases(parent)}
+            rules += [('(deny %s (require-all (subpath %s) (require-not (require-any %s))))'
+                       % (operation, quote(a), keep)) if keep
+                      else '(deny %s (subpath %s))' % (operation, quote(a))
+                      for operation in operations for a in path_aliases(root)]
+    rules += ['(allow file-read-metadata (literal %s))' % quote(p) for p in sorted(metadata)]
+    return rules + rename_guard_rules(roots)
+
+
 def sandbox_profile(spec, capsule, tmux_sockets=None, network_ports=None):
     # Deny reads of other slot checkouts, the original checkout a linked worktree
     # shares objects with, every blind capsule except this boundary, and the
@@ -460,9 +525,11 @@ def sandbox_profile(spec, capsule, tmux_sockets=None, network_ports=None):
     rules += ['(deny file-write* (subpath %s))' % quote((capsule / 'boundary/bin').resolve())]
     # Tmux launch scripts inline the node's pool environment, credentials included.
     rules += ['(deny %s (subpath %s))' % (operation, quote(p))
-              for operation in ['file-read*', 'file-write*'] for p in path_aliases(repo / '.agent/.launch')]
+              for operation in ['file-read*', 'file-write*', 'file-link'] for p in path_aliases(repo / '.agent/.launch')]
     rules += slot_runtime_rules(spec, repo, checkouts)
     rules += worker_private_rules(capsule)
+    # Last: no later allowance reopens a credential store.
+    rules += host_secret_rules(spec, repo, capsule, checkouts)
     return '\n'.join(rules + [''])
 
 
@@ -571,6 +638,15 @@ def prepare_boundary(spec, capsule):
     # The worker cannot create its slot runtime inside the denied runtime tree.
     slot_launch_dirs(spec, Path(spec['repo']).resolve(), [])[0].parent.parent.mkdir(
         parents=True, exist_ok=True)
+    # The launch selects this trial's Pi home (blind-environment.md), reusing the
+    # operator's managed fd/rg binaries read-only.
+    pi = blind_pi_home(spec, capsule)[1]
+    pi.mkdir(mode=0o700, parents=True, exist_ok=True)
+    tools = Path.home() / '.pi/agent/bin'
+    if tools.is_dir() and not os.path.lexists(pi / 'bin'):
+        (pi / 'bin').symlink_to(tools)
+    if not (root / 'pi-agent').is_symlink():
+        (root / 'pi-agent').symlink_to(pi)
     # Keep socket paths below sockaddr_un's macOS limit even for deep capsules.
     temporary = root / 'tmp'
     if not temporary.is_symlink():
