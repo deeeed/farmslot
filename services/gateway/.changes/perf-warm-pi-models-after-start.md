@@ -1,0 +1,1 @@
+- Load the LLM model collection right after an orchestrating gateway starts, so the first helper call no longer stalls the event loop for seconds mid-traffic. Validation stacks and test gateways still load it on first use.
