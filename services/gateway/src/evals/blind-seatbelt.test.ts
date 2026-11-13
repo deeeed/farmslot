@@ -259,6 +259,94 @@ test('blind profile blocks SSH and remote shell TCP, SSH executables and credent
   }
 });
 
+test('broker regex paths match metacharacters literally and use only validated physical aliases', (t) => {
+  const root = realpathSync(mkdtempSync('/tmp/seatbelt-regex-'));
+  t.after(() => rmSync(root, { recursive: true }));
+  const result = spawnSync(
+    'python3',
+    [
+      '-c',
+      `
+import os, pathlib, runpy, sys
+from unittest.mock import patch
+blind = runpy.run_path(sys.argv[1], run_name='fixture')
+root = pathlib.Path(sys.argv[2])
+capsule = root / '.farmslot-blind-evals/slot/run-epoch'
+(capsule / 'boundary').mkdir(parents=True)
+(capsule / 'state.json').write_text('{"originalIsDirectory":true}')
+temporary = root / 'allocated.+([x])^$|?*{2}\\\\dir"'
+temporary.mkdir()
+(capsule / 'boundary/tmp').symlink_to(temporary)
+with patch.dict(os.environ, {'HOME': str(root)}, clear=True), \\
+     patch.dict(blind['sandbox_profile'].__globals__, {'worker_temp': lambda capsule: temporary}):
+    print(blind['sandbox_profile']({'repo': str(root)}, capsule, [], []))
+`,
+      fileURLToPath(new URL('./blind-git.py', import.meta.url)),
+      root,
+    ],
+    { encoding: 'utf8', timeout: 4500 },
+  );
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  const prefix = '(allow network-outbound (remote unix-socket (regex ';
+  const suffix = ')))';
+  const rules = result.stdout.split('\n').filter((line) => line.startsWith(prefix));
+  const physical = path.join(root, 'allocated.+([x])^$|?*{2}\\dir"/broker');
+  const aliases = new Set([
+    physical,
+    physical.startsWith('/private') ? physical.slice(8) : '/private' + physical,
+  ]);
+  assert.equal(rules.length, aliases.size);
+  for (const rule of rules) {
+    // An ordinary SBPL string decodes JSON escapes before regex compilation.
+    const pattern: string = JSON.parse(rule.slice(prefix.length, -suffix.length));
+    const regex = new RegExp(pattern);
+    const alias = [...aliases].find((value) => regex.test(value + '/own.sock'));
+    assert.ok(alias, pattern);
+    assert.ok(pattern.includes(String.raw`allocated\.\+\(\[x\]\)\^\$\|\?\*\{2\}\\dir"/broker`));
+    for (const target of [
+      alias.replace('allocated.', 'allocated_') + '/own.sock',
+      alias.replace('+', '') + '/own.sock',
+      alias + '/nested/own.sock',
+      alias + '/own.sock/extra',
+      alias + '-other/own.sock',
+    ])
+      assert.equal(regex.test(target), false, target);
+    assert.equal(
+      regex.test(
+        path.join(root, '.farmslot-blind-evals/slot/run-epoch/boundary/tmp/broker/own.sock'),
+      ),
+      false,
+    );
+    if (process.platform === 'darwin' && alias === physical) {
+      // Compile the generated expression with Seatbelt, including quotes and
+      // backslashes, and prove a lookalike path does not match its denial.
+      for (const [target, denied] of [
+        [physical + '/own.sock', true],
+        [physical.replace('allocated.', 'allocated_') + '/own.sock', false],
+        [physical.replace('+', '') + '/own.sock', false],
+        [physical + '/nested/own.sock', false],
+      ] as const) {
+        mkdirSync(path.dirname(target), { recursive: true });
+        writeFileSync(target, 'synthetic');
+        const probe = spawnSync(
+          '/usr/bin/sandbox-exec',
+          [
+            '-p',
+            `(version 1)(allow default)(deny file-read-data (regex ${JSON.stringify(pattern)}))`,
+            '/bin/cat',
+            target,
+          ],
+          { encoding: 'utf8', timeout: 1000 },
+        );
+        assert.ifError(probe.error);
+        assert.equal(probe.status, denied ? 1 : 0, probe.stderr);
+        if (denied) assert.match(probe.stderr, /Operation not permitted/u);
+      }
+    }
+  }
+});
+
 test('blind profile hides boundary and node internals after runtime read exceptions', (t) => {
   const { root, home, profile } = generatedProfile(t);
   for (const installation of ['farmslot-node', 'farmslot-node-dev']) {
@@ -302,13 +390,16 @@ from unittest.mock import patch, Mock
 blind = runpy.run_path(sys.argv[1], run_name='fixture')
 root = pathlib.Path(sys.argv[2])
 spec = {'repo': str(root), 'slotResourcePorts': {'cdp_port': 19222}}
+temporary = root / 'temporary'
+temporary.mkdir()
 globals = blind['prepare_boundary'].__globals__
 probe = Mock()
 probe.__enter__ = Mock(return_value=probe)
 probe.__exit__ = Mock(return_value=False)
 probe.getsockname.side_effect = [('127.0.0.1', p) for p in [7777, 19222, 19444]]
 with patch.dict(os.environ, {'HOME': str(root / 'home')}, clear=True), \
-     patch.dict(globals, {'require_sandbox': lambda: None, 'live_tmux_sockets': lambda: []}), \
+     patch.dict(globals, {'require_sandbox': lambda: None, 'live_tmux_sockets': lambda: [], 'worker_temp': lambda capsule: temporary}), \
+     patch('tempfile.mkdtemp', return_value=str(temporary)), \
      patch('socket.socket', return_value=probe) as sockets, \
      patch('subprocess.run', return_value=Mock(returncode=0)):
     assert blind['prepare_boundary'](spec, root) == 19444
@@ -334,17 +425,26 @@ with patch.dict(os.environ, {'HOME': str(root / 'home')}, clear=True), \
 test('blind boundary strips gateway credentials, routing, tmux and SSH agent variables, keeps tools and pane identity', (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'seatbelt-env-'));
   t.after(() => rmSync(root, { recursive: true }));
-  const command = withBlindTrialBoundary('env', {
-    capsule: root,
-    baseSha: 'a'.repeat(40),
-    browserCdpPort: 19444,
-  });
+  mkdirSync(path.join(root, 'boundary'));
+  const temporary = path.join(root, 'temporary');
+  mkdirSync(temporary);
+  symlinkSync(temporary, path.join(root, 'boundary/tmp'));
+  const command = withBlindTrialBoundary(
+    'env',
+    {
+      capsule: root,
+      baseSha: 'a'.repeat(40),
+      browserCdpPort: 19444,
+    },
+    ['OPENAI_API_KEY'],
+  );
   // Inspect the shell setup on every platform without launching a real sandbox.
   const setup = command.slice(0, command.indexOf('/usr/bin/sandbox-exec'));
   const worker = spawnSync('/bin/sh', ['-c', `${setup} env`], {
     encoding: 'utf8',
     env: {
       PATH: process.env.PATH,
+      FARMSLOT_BLIND_CDP_PORT: '19222',
       CDP_PORT: '19222',
       RECIPE_CDP_PORT: '19222',
       TMUX: '/fixture/socket,1,0',
@@ -366,6 +466,9 @@ test('blind boundary strips gateway credentials, routing, tmux and SSH agent var
     timeout: 4500,
   });
   assert.equal(worker.status, 0, worker.stderr);
+  for (const name of ['TMPDIR', 'TMP', 'TEMP', 'MAC_CHROMIUM_TMPDIR'])
+    assert.ok(worker.stdout.includes(`${name}=${temporary}\n`));
+  assert.ok(worker.stdout.includes(`FARMSLOT_BLIND_BROKER_DIR=${temporary}/broker\n`));
   assert.doesNotMatch(worker.stdout, /^TMUX(?:_TMPDIR)?=/mu);
   assert.doesNotMatch(worker.stdout, /^SSH_(?:AUTH_SOCK|AGENT_PID)=/mu);
   assert.doesNotMatch(
@@ -379,5 +482,6 @@ test('blind boundary strips gateway credentials, routing, tmux and SSH agent var
   assert.match(worker.stdout, /^FARMSLOT_BLIND_SEATBELT=1$/mu);
   assert.match(worker.stdout, /^RECIPE_CDP_PORT=19444$/mu);
   assert.match(worker.stdout, /^CDP_PORT=19444$/mu);
+  assert.match(worker.stdout, /^FARMSLOT_BLIND_CDP_PORT=19444$/mu);
   assert.match(worker.stdout, /^FARMSLOT_CI_BASE_REF=a{40}$/mu);
 });

@@ -1,0 +1,1 @@
+- Keep unused blind boundary-builder sources out of retained CLI pins, including static hosted tasks, so task markers can verify their tooling inside the blind Seatbelt.

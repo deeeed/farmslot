@@ -261,6 +261,38 @@ test('listPiProviderSources adds LiteLLM and a distinct custom router', () => {
   );
 });
 
+test('blind discovery selects one endpoint and never borrows another provider key', () => {
+  const env = {
+    FARMSLOT_PI_ROUTER_ID: 'localsparks',
+    FARMSLOT_PI_ROUTER_URL: 'http://router.test/v1',
+    LITELLM_URL: 'http://litellm.test/v1',
+    LITELLM_API_KEY: 'synthetic-litellm-auth',
+  };
+  assert.ok(
+    listPiProviderSources(env).find((source) => source.kind === 'router').apiKey ===
+      env.LITELLM_API_KEY,
+  );
+  for (const [provider, kind, baseUrl] of [
+    ['litellm', 'litellm', env.LITELLM_URL],
+    ['localsparks', 'router', env.FARMSLOT_PI_ROUTER_URL],
+    ['router', 'router', env.FARMSLOT_PI_ROUTER_URL],
+    ['ollama', 'ollama', 'http://127.0.0.1:11434/v1'],
+  ]) {
+    const sources = listPiProviderSources({
+      ...env,
+      FARMSLOT_BLIND_SEATBELT: '1',
+      FARMSLOT_MODEL: `${provider}/fixture`,
+    });
+    assert.deepEqual(
+      sources.map((source) => [source.kind, source.baseUrl]),
+      [[kind, baseUrl]],
+    );
+    if (kind === 'router')
+      assert.ok(sources[0].apiKey === 'local', 'blind router must not borrow LiteLLM auth');
+  }
+  assert.deepEqual(listPiProviderSources({ ...env, FARMSLOT_BLIND_SEATBELT: '1' }), []);
+});
+
 test('router id validation rejects malformed and reserved provider ids', () => {
   for (const id of [
     '',

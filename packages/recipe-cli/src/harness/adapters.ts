@@ -13,6 +13,7 @@ import {
   type ProjectRuntime,
 } from '@farmslot/adapter-sdk';
 
+import { blindRecipeCdpPort } from './blind-runtime.js';
 import { AdapterAmbiguousError, type AdapterCandidate, type DetectMatch } from './context-state.js';
 import { harnessHost } from './host.js';
 
@@ -28,7 +29,17 @@ export function harnessAdapters(): AdapterRegistry {
 }
 
 export function harnessAdapter(id: string): ProjectRuntime {
-  return registry.get(id);
+  const adapter = registry.get(id);
+  const cdpPort = blindRecipeCdpPort();
+  if (!cdpPort) return adapter;
+  return {
+    ...adapter,
+    resolveSlotPorts(target) {
+      adapter.resolveSlotPorts(target);
+      process.env.CDP_PORT = cdpPort;
+      process.env.RECIPE_CDP_PORT = cdpPort;
+    },
+  };
 }
 
 function registered(): ProjectRuntime[] {

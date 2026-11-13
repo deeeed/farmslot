@@ -44,6 +44,14 @@ export function taskHelperArgv(command: Command, includePlatform = false): strin
   return forwarded;
 }
 
+/** The marker never executes the control-plane boundary builder. Its retained
+ * tree must be hashable inside a blind seatbelt, where these sources are denied. */
+export function cliTaskInputExclusions(distributionRoot: string): string[] {
+  return ['py', 'ts', 'js'].map((extension) =>
+    path.join(distributionRoot, `services/gateway/src/evals/blind-git.${extension}`),
+  );
+}
+
 export function cliInstallation(): Omit<TaskExecutionInput, 'bindingIdentity' | 'inputs'> {
   const packageRoot = fs.realpathSync(fileURLToPath(new URL('../..', import.meta.url)));
   const workspace = path.resolve(packageRoot, '../..');
@@ -60,9 +68,11 @@ export function cliInstallation(): Omit<TaskExecutionInput, 'bindingIdentity' | 
       },
     );
   }
+  const distributionRoot = workspaceInstall ? workspace : packageRoot;
   return {
     packageRoot,
-    distributionRoot: workspaceInstall ? workspace : packageRoot,
+    distributionRoot,
+    excludedRoots: cliTaskInputExclusions(distributionRoot),
     executable: path.join(packageRoot, 'bin/farmslot.mjs'),
   };
 }
