@@ -14,6 +14,101 @@ title: 'Agent Runtime'
 | `@farmslot/agent-runtime` | Task-local marking, `SIGNAL.json`, checklist timing, worker terminal contract resolution, closeout artifact checks, and recipe-quality artifact building. |
 | `@farmslot/skills`        | Agent instructions and installer behavior; legacy runtime paths are shims.                                                                                |
 
+## Native host cleanup recovery
+
+[ADR-057 Amendment 1](https://github.com/deeeed/farmslot/blob/main/docs/adr/057-structured-runner-transports.md#amendment-1-reconcile-stopped-native-hosts-2026-10-15)
+owns recovery of a stopped host whose cleanup marker remains unresolved.
+
+- The supervisor MUST hold the existing exclusive startup claim before checking
+  or reclaiming an old host lock. A live supervisor or host MUST block recovery.
+- An unresolved marker MUST identify the recorded host. Existing observations MUST
+  identify its processes/groups. Recovery MUST obtain a successful fresh OS census and verify
+  that the failed host's recorded processes and groups are stopped. Failed probes
+  remain unknown. Live supervisor or host PIDs retain the existing startup refusal.
+- If the first census failed before the host recorded any session, missing or empty
+  observations MAY be quarantined after fresh and independent checks prove its
+  supervisor, host and process group stopped. Every historical journal MUST still
+  be complete, terminal and confirmed stopped. A journal from that unobserved host
+  MUST refuse this fallback. Archive the original marker and verification facts in
+  `cleanup-quarantine/` before reclaiming ownership; preserve all journal bytes.
+- Every retained session journal MUST be complete and readable. Its latest state
+  MUST be closed or failed, its process stop confirmed, and its runner group absent.
+  Recorded detached descendants and their groups MUST also be absent.
+  Malformed or torn records MUST refuse recovery, and so MUST active or unconfirmed
+  records except as below.
+- A session whose recorded runner belongs to the failed host MAY still be active or
+  unconfirmed, because that host stopped before its cleanup could record the stop.
+  Its runner, runner group and recorded descendants MUST then pass the same fresh
+  absence checks. Recovery leaves the journal unchanged; the new host marks it failed.
+- Journal process observations MUST come from the failed host's latest session
+  generations, using the normal journal process projection. Older confirmed stops
+  MUST NOT block because an unrelated process reused a historical PID. A different
+  OS birth identity proves process reuse; a different living group leader proves
+  group reuse. Orphaned groups and unreadable identities MUST remain blocked.
+- Before reclaiming the host lock, the runtime MUST durably archive the original
+  cleanup marker, journal hashes and verification facts under `cleanup-recoveries/`.
+  It MUST preserve journal bytes, session/native IDs, generations, command outcomes,
+  pending requests, owner/account bindings and run links. It MUST NOT signal a
+  process, reset state, resume a runner or resend a command.
+- A process census failure MUST fail every observer of the shared observer census,
+  which stops the host when the observer is its supervisor. A slow census is a
+  failure only once `ps` runs past 30 seconds
+  ([ADR-057 Amendment 3](https://github.com/deeeed/farmslot/blob/main/docs/adr/057-structured-runner-transports.md#amendment-3-a-slow-process-census-does-not-stop-the-native-host-2026-10-20));
+  a failed `ps` or an observer's own failure still fails at once. Synchronous
+  reads by session launch, runner stop, cleanup and startup recovery keep a
+  5-second timeout.
+
+### Public surface
+
+Retry the existing native RPC with the same owner and execution node. The gateway
+and node use `@farmslot/agent-runtime`'s existing `NativeSessionClient` startup;
+the supervisor and shared process census own reconciliation. There is no new CLI
+flag, RPC or harness configuration. A consuming runtime upgrade is required.
+
+## Native reviewer completion turn
+
+[ADR-057 Amendment 4](https://github.com/deeeed/farmslot/blob/main/docs/adr/057-structured-runner-transports.md#amendment-4-one-completion-turn-for-an-unfinished-native-reviewer-2026-10-23)
+owns this completion policy, accepted after paired policy review on 2026-10-23.
+
+- The gateway MUST offer exactly one automatic completion turn when the current
+  admitted native command has ended, the reviewer's own current signal is
+  nonterminal, and its scoped result passes the existing artifact validator. Both
+  completed and failed commands qualify. An interrupted command, pending native
+  request, invalid artifact, stale signal or unconfirmed turn ending MUST refuse.
+- The gateway MUST persist the completion instruction and stable command identity
+  on the existing reviewer context before delivering it. A restart, repeated poll
+  or lost acknowledgment MUST reconcile that same reservation and receipt. Neither
+  an accepted command nor an uncertain receipt authorizes a second instruction.
+- A live idle reviewer MUST receive the instruction through the existing native
+  worker control boundary. A stopped process MUST have confirmed cleanup and
+  verified saved-conversation resume before delivery. Owner, node, lease, launch
+  settings, runner, model, account profile and saved runner session MUST match.
+  Resume MAY establish a new native process generation; its ownership checks and
+  durable recovery intent MUST still apply. No fresh-conversation fallback is allowed.
+- The continuation MUST retain the original review admission, reviewed base/head,
+  task, scoped checklist/signal and completed artifacts. It MUST NOT reset checklist
+  progress, launch a new review round or repeat the reviewed diff. The instruction
+  asks the reviewer to finish the existing checklist and terminal mark.
+- After acceptance, monitoring and schema-bound visual-result collection MUST
+  use the completion command's verified receipt and generation. The original
+  failed command remains failed in history. A successful completion still requires
+  a valid terminal signal and all existing result and visual validation.
+- If that one continuation ends without a valid terminal signal, the gateway MUST
+  fail the attempt with a clear completion-turn reason. The existing inactivity and
+  review budgets remain active. Cancellation, pause, supersession, a released lease,
+  changed task or foreign slot ownership MUST prevent delivery and adoption.
+- Initial launch uncertainty, missing results and invalid terminal artifacts retain
+  their current failure/reconciliation behavior. This policy does not authorize
+  parsing runner output, changing providers or editing credentials.
+
+### Public surface
+
+The gateway consumes existing native worker send/resume operations and the durable
+command journal. Existing reviewer instruction fields carry the reservation. There
+is no new public RPC, CLI flag, SDK export, record field or harness setting, and no
+runtime package or native-host update is required. WARM/COLD and round accounting
+remain governed by ADR-063.
+
 ## Task Directory
 
 A runtime-compatible task directory contains:
@@ -94,7 +189,9 @@ Ownership rules, all enforced by `mark`:
 [ADR-062](https://github.com/deeeed/farmslot/blob/main/docs/adr/062-recorded-run-evidence.md) owns the sole normal verdict
 writer: the recipe engine. A successful selected attempt transfers its schema-2
 ledger into `artifacts/acceptance-status.json`; this task-namespace projection is
-transport, never an independent reducer or a recorded package.
+transport, never an independent reducer or a recorded package. A QA task records
+one package per case, so its projection merges case executions by claim id and
+each row names its case execution ([QA case ledger](https://github.com/deeeed/farmslot/blob/main/docs/reference/recorded-run-evidence.md#qa-case-ledger)).
 
 `farmslot-agent ac list` reads the registered criteria and verdicts; `ac render`
 prints structured coverage. When a recipe exists, the terminal contract still
@@ -113,14 +210,19 @@ and supplies no measured timeline. Current readers do not derive AC links from
 manifest `covers` or read `recipe-coverage.md` as a coverage fallback.
 
 Successful completion requires every registered criterion to have an engine
-verdict, including contracts without an opt-in. Missing ledgers or unreadable
+verdict, including contracts without an opt-in. For PR follow-ups,
+[ADR-062 inherited acceptance](https://github.com/deeeed/farmslot/blob/main/docs/reference/recorded-run-evidence.md#inherited-acceptance-for-pr-completion)
+permits a matching provisional parent reference instead of a new task ledger;
+gateway completion independently qualifies the original proof. `acceptance.requireFresh`
+retains the task-owned requirement. Otherwise, missing ledgers or unreadable
 handoffs refuse. Weak or missing engine verdicts refuse unless
 `acceptance.allowWeak` is set. No-change and self-review keep their existing
 outcome contracts. `acceptance.require` cannot disable successful-completion
 enforcement. Schema-2 verdicts are engine-owned. Local commands refuse every
 change, including an actor-labelled untestable override. A gateway-generated
 `claimReviewGate` contract lets ordinary completion reach human review after the
-canonical SDK reader validates and binds the selected package. Unresolved verdicts
+canonical SDK reader validates and binds the selected package (for a QA case
+ledger, each row's case package). Unresolved verdicts
 still block approval. A credential-backed person uses `farmslot run gate <runId>
 --action mark-untestable --claim <id> --recipe-run <id> --reason <text>`; the gateway
 stores the receipt without changing engine or task bytes. Flows without a human
@@ -144,6 +246,59 @@ The builder preserves additive metadata under `extra` while protecting the requi
 ## Compatibility
 
 The previous script paths in `@farmslot/skills` and `scripts/quality/` remain compatibility shims for one migration window. New templates should point to `packages/agent-runtime/scripts/*` in the Farmslot monorepo or use `farmslot-agent` when installed as a package.
+
+## Native worker launch
+
+A native worker, dispatched or static-review, starts through its runner's native adapter, as a standalone session does (ADR-057 Amendment 10).
+
+- The gateway's launch names an executable only when the machine's pool configures one for that runner. Otherwise the host uses the adapter's own.
+- A native run for a runner without a native adapter is refused before its slot is claimed or prepared.
+
+## Native account default
+
+A native session or worker without `profileId` runs on the node's own login for its runner (ADR-057 Amendment 11). That login lives in the runner's standard directory, the one such a session uses: `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `GROK_HOME` when the node sets it, otherwise `~/.claude`, `~/.codex` or `~/.grok`; for Cursor, the home directory. Each runner definition exposes it once as `account.standardDirectory`.
+
+- No registration is needed for it, and clients enable it without reading the profile list.
+- A failed profile sample on the node (an unreadable profile file, or a profile removed during the sample) leaves session observation ready; observed profile reads fail with `NATIVE_PROFILES_UNAVAILABLE` until a later sample succeeds.
+- `native.profile.add` refuses the standard directory with "This is the node's own login; no profile is needed". It compares canonical paths (`~/` expanded, symlinks resolved), before the existing-profile check.
+- Profiles register additional configuration directories only.
+
+## Pi and OpenCode native sessions
+
+Pi and OpenCode run natively for chat and workers (ADR-057 Amendment 12).
+
+- OpenCode runs `opencode acp` through the shared ACP adapter. With no model, a session uses the model OpenCode is configured with. At the sandboxed tier, or with none, each tool asks through native approvals. Other tiers keep OpenCode's own permission rules.
+- Pi runs `pi --mode rpc`. Pi never asks before a tool, so its sessions report no approvals, as its terminal does. A turn fails only when Pi's last answer is an error, so a retry Pi makes itself can still complete it. Stop clears Pi's queued steering first. A `provider/id` model must match exactly; a bare ID leaves the provider to Pi.
+- A Pi profile is an agent directory (`PI_CODING_AGENT_DIR`); an OpenCode profile is a data home (`XDG_DATA_HOME`). Pi reads as signed in while its RPC model list is not empty. OpenCode reads as signed in once its ACP server starts; its login is unconditional and its own free models need no sign-in.
+
+## Managed native reviewer approval policy
+
+The gateway sets the private worker launch `approvalPolicy` to `never` only for the review role. Native Codex applies that policy to both `thread/start` and `thread/resume`. Reviewers keep the run's safety tier and the same sandbox, Git metadata write roots and optional filesystem policy they already had. Producing workers and standalone sessions keep their existing approval defaults.
+
+This optional private field accepts only `never`. It is not a public session parameter. The gateway rederives it on reviewer resume; it does not enter the launch digest, so applying the approved policy does not invalidate retained reviewer sessions. The tier, environment and filesystem grants remain digest-bound. The gateway continues to deny any unexpected approval request, and never grants sandbox escalation.
+
+## In-flight reviewer continuity
+
+**Status:** Accepted under ADR-057 Amendment 6 (approved by the lead 2026-10-24).
+
+A running HUMAN_GATE MUST retain publication-review recovery ownership after its
+review-request decision has been consumed. Startup MUST ingest its completed
+reviewer or re-arm the existing bounded watcher while that reviewer runs. The
+watcher MUST retain attempt freshness, lineage, captured-head and artifact checks;
+collecting a relaunch fallback MUST update its existing review rather than leave
+older findings authoritative. Existing held/accepted approval priority stays intact.
+
+Reattaching an accepted, still-live native reviewer MUST validate its persisted
+slot, task, owner, profile, lease and process generation and monitor that generation.
+It MUST NOT rebuild launch configuration or redeliver the task because pool,
+project or source settings changed. The existing process retains its original
+launch settings and filesystem grants. Unconfirmed launches, stopped processes,
+explicit recovery, task transfers and parking restores retain their existing
+launch-digest checks.
+
+This gateway-only behavior uses existing native snapshot and command contracts.
+It adds no public RPC, field, CLI flag, SDK export or harness configuration and
+requires no runtime publication or native-host restart.
 
 ## Native session host
 
@@ -179,11 +334,76 @@ Session journals append events and changed metadata/receipts, fsyncing command
 intent before submission. Receipts distinguish pending, unknown, accepted, failed
 and completed. `submitted` records a submission attempt; only `accepted` records
 native acknowledgement. A lost reply or unknown receipt never triggers a resend.
+`native.session.cancel` (host method `cancelCommand`; `native.worker.cancelCommand` under
+the worker's generation and lease) removes a command still queued for the next turn. The
+host persists it as `failed`, never submitted, with outcome `cancelled`, before it replies;
+a repeated call returns the same receipt. It refuses a command that was submitted, is
+unknown, settled otherwise, or belongs to another generation or worker lease. Removal and
+the queue's own submission are each decided synchronously on the host's event loop, so
+exactly one wins. Sessions on a host that removes queued commands report
+`capabilities.cancelQueued`, except in a pinned worker read the gateway serves for a run
+whose worker messages are acceptance sources, where the gateway refuses removal. An older
+host refuses the method as unknown
+([ADR-057 Amendment 9](https://github.com/deeeed/farmslot/blob/main/docs/adr/057-structured-runner-transports.md#amendment-9-queued-messages-steering-plans-and-per-turn-changes-2026-10-31)).
+A send with `delivery: 'steer'` (host method `steer`; `native.worker.steer` under the
+worker's lease) adds the message to the running turn when the adapter declares
+`capabilities.steer`, the session is `running`, no request is pending and no submission is in
+flight; otherwise it is an ordinary send. The intent is journaled before the runner write. The
+runner's reply is acceptance, an error reply fails the command without a resend, and a lost reply
+(the runner stopped, or the request timed out) stays unknown. The receipt carries `steered: true` and settles with the turn it
+joined. Codex steers with `turn/steer` (`expectedTurnId`, the command ID as
+`clientUserMessageId`); Claude and ACP do not declare `steer`. An older host refuses the method
+as unknown.
 `read` accepts `after` and `limit`, returns a cursor and `hasMore`, and exposes the
 latest 100 receipts. Older IDs remain deduplicated across process generations;
 a missing receipt in a page does not mean the command was never submitted. Consume each page once and
 persist its returned cursor. Pending interactions are separate from the event
 page. Respond with `request.id`; `nativeId` is evidence, not an input token.
+The `approval.resolved` event that ends a pending interaction carries its `request`
+and, when this host delivered the response, that `response` (`decision` or
+`answers`). A resolution the host did not deliver has no `response`: its decision
+is unknown ([ADR-057 Amendment 7](https://github.com/deeeed/farmslot/blob/main/docs/adr/057-structured-runner-transports.md#amendment-7-record-how-an-approval-or-question-was-resolved-2026-10-31)).
+
+Adapters normalize each tool call into `tool.kind`, `tool.command` and `tool.paths`
+([ADR-057 Amendment 8](https://github.com/deeeed/farmslot/blob/main/docs/adr/057-structured-runner-transports.md#amendment-8-normalized-tool-kinds-2026-10-31));
+`tool.name` keeps the runner's own name. Claude maps `Bash` to `command`, `Read` to
+`file-read`, `Edit`, `MultiEdit`, `Write` and `NotebookEdit` to `file-edit`, `Grep` and
+`Glob` to `search` (their search root as the path), and `WebFetch` and `WebSearch` to
+`web`; any other Claude tool is `other`. Codex maps `commandExecution` to `command`, with
+the command line inside the shell Codex wraps it in (`/bin/zsh -lc 'git status'` is
+`git status`; anything that is not one quoted word stays as sent), `fileChange` to `file-edit` with its changed paths, `webSearch` to `web`, and any other
+item to `other`. ACP maps the tool call's `kind`: `execute` to `command` (with
+`rawInput.command`), `read` to `file-read`, `edit`, `delete` and `move` to `file-edit`,
+`search` to `search`, `fetch` to `web` and any other value to `other`, with its
+`locations` as paths. An ACP update that omits them keeps the call's earlier values, and a
+call that never sends a kind has none.
+
+A `plan.updated` event carries the runner's whole plan, which replaces its earlier plan of
+the same kind in that turn
+([ADR-057 Amendment 9](https://github.com/deeeed/farmslot/blob/main/docs/adr/057-structured-runner-transports.md#amendment-9-queued-messages-steering-plans-and-per-turn-changes-2026-10-31)):
+a `checklist` of steps (`pending`, `in-progress` or `completed`, with an optional note) or a
+`proposal` in markdown. Codex maps `turn/plan/updated` to a checklist (its `explanation` is
+the note) and a completed `plan` item to a proposal, ignoring the item's streamed deltas; it
+starts each thread with `tools.update_plan.enabled`, without which the app-server sends no
+plan updates. ACP
+maps a `plan` update to a checklist, dropping entry `priority`. Claude sends no plans yet.
+
+For a session whose working directory is in a Git working tree and not read-only, the
+host checkpoints the working tree before each turn (after journaling its first command,
+which follows the previous turn's `turn.changes`, and before the runner write) and after it
+([ADR-057 Amendment 9](https://github.com/deeeed/farmslot/blob/main/docs/adr/057-structured-runner-transports.md#amendment-9-queued-messages-steering-plans-and-per-turn-changes-2026-10-31)).
+Delivery waits for the previous turn's checkpoint and its own at most 3 s in all; a slower
+one is reported unavailable. A checkpoint is a commit built in the session's own index (in
+the host's state directory, seeded from the worktree's index and reseeded when that
+changes), with `HEAD` as parent and untracked files Git does not ignore (each up to 10 MiB
+when first seen), kept under `refs/farmslot/native/<sessionId>/`; the worktree, its index,
+`HEAD` and branches are untouched. After the turn the host appends `turn.changes` with both
+checkpoints and the changed files (repository-relative paths, line counts, at most 500), or
+why they are `unavailable`. `native.session.turn.diff` returns one listed file's diff
+between them; a pinned worker reads the event within its lease. A session keeps its last
+100 checkpoints and deletes its refs and index at close, also after a failure or a host
+restart (a failed deletion is an `error` event; closing again retries); a diff whose
+checkpoints are no longer under the session's refs is refused as no longer retained.
 
 After runner or host failure, reads expose failure and recovery instructions.
 Explicit `create` with the recorded `resumeSessionId` retains the Farmslot session

@@ -1,0 +1,144 @@
+---
+title: Run data flow
+description: Where a run's data lives on the slot, the gateway, the bundle store, the archive and each client, and what moves between them.
+---
+
+import { useEffect, useRef, useState } from 'react';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+import { useColorMode } from '@docusaurus/theme-common';
+
+export const RunDataMap = () => {
+  const frame = useRef(null);
+  const [height, setHeight] = useState(760);
+  const { colorMode } = useColorMode();
+  const src = useBaseUrl('/explainers/run-data-map.html');
+  const sendTheme = (theme) =>
+    frame.current?.contentWindow?.postMessage(
+      { type: 'run-data-map:theme', theme },
+      window.location.origin,
+    );
+  useEffect(() => {
+    const onMessage = (event) => {
+      if (event.source !== frame.current?.contentWindow) return;
+      if (event.origin !== window.location.origin) return;
+      const next = event.data?.type === 'run-data-map:height' ? Number(event.data.height) : 0;
+      if (next > 0) setHeight(Math.min(Math.ceil(next), 6000));
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
+  useEffect(() => sendTheme(colorMode), [colorMode]);
+  return (
+    <figure style={{ margin: '1.5rem 0' }}>
+      <iframe
+        ref={frame}
+        src={`${src}?embed=1`}
+        onLoad={() => sendTheme(document.documentElement.getAttribute('data-theme'))}
+        title="Run Data Map: an interactive map of how a run's data moves, in eight steps"
+        loading="lazy"
+        style={{ width: '100%', height: `${height}px`, border: 0, display: 'block' }}
+      />
+      <figcaption style={{ marginTop: '0.5rem', fontSize: '0.875rem' }}>
+        Step through the eight moments of a run.{' '}
+        <a href={`${src}?theme=${colorMode}`} target="_blank" rel="noopener">
+          Open the full explainer
+        </a>{' '}
+        for the rules, tables and known limitations.
+      </figcaption>
+    </figure>
+  );
+};
+
+# Run data flow
+
+A run's data lives in five places: the slot running the worker, the gateway,
+the bundle store, the storage archive, and each client's offline store. This page
+shows what moves between them and when. The canonical reference, with every
+size, cap, guard and code reference, is
+[Run data sync](https://github.com/deeeed/farmslot/blob/main/docs/reference/run-data-sync.md).
+
+<RunDataMap />
+
+## Six rules
+
+1. **Live means small.** While a worker runs, only the checklist, `SIGNAL.json`,
+   acceptance status and subtasks stream to the gateway, as whole small files
+   after a 1 s debounce. The terminal pane streams only while someone watches it.
+2. **Big things move at checkpoints.** Artifacts, screenshots, video and diffs
+   stay on the slot until the terminal signal, completion, the gate package or an
+   explicit mirror refresh. A mirror skips files whose size and hash are
+   unchanged (task actions are copied whole) and moves the rest in
+   hash-verified 512 KiB chunks.
+3. **A bundle is the record.** Each capture becomes an immutable bundle named by
+   its manifest's SHA-256. Readers use the bundle, never the slot or the mutable
+   task directory.
+4. **Clients ask what changed first.** A client reads ids and versions, then
+   fetches only the rows whose version moved. A push carries a key, and an
+   entity body only when it changed and fits in 16 KiB.
+5. **Paint from the store, then refresh.** Command Center and Companion keep an
+   offline SQLite store and paint from it before any request. Only observed
+   screens refetch, with a minimum interval for busy families.
+6. **Preload only what you would open offline.** In the background, clients
+   fetch what a pending gate or an active run needs: details, the diff, and both
+   sides of touched files. It keeps what fits the caps of 5 MiB per diff,
+   1 MiB per file and 2 MiB per image. A larger diff is still downloaded; its
+   base files load when opened, and a gate's oversized diff is not stored. Everything else loads when
+   opened.
+
+## A run's checkpoints
+
+```mermaid
+sequenceDiagram
+  participant S as Slot
+  participant G as Gateway
+  participant B as Bundle store
+  G->>S: Dispatch or resume: TASK.md, inputs/, artifacts/
+  S-->>G: Progress files on change
+  S->>G: Terminal signal: mirror changed files
+  G->>B: Bundle, media copied from the slot
+  S->>G: Completion: mirror again
+  G->>B: Bundle
+  G->>B: Gate package, with its diff
+```
+
+A follow-up run on another slot or node, such as PR completion or a fix, gets
+the parent's small structured context (task, checklist, report, learnings,
+recipe, task actions, recipe library and quality files) from the parent's bundle
+in `inputs/inherited/`; the recipe, task actions and recipe library are also
+seeded into the new run's own artifacts. Media, diffs and
+signals are not copied, and code travels by git branch or PR.
+
+## Storage
+
+There are two archives. `run.archive` moves a run **record** to the record
+archive, where it is kept forever. The hourly retention pass moves a settled
+run's **bytes** (task directory, bundle, session archives, native sessions) to
+`FARMSLOT_RUN_ARCHIVE_ROOT` once the run has been settled for the retention
+period, has no `keep` tag and holds no slot. The period is
+`runBundleRetention.runRetentionDays` in `run-bundle-retention.json` in the
+farm's config directory (`config/` under the farm home on layout 2, the farm
+home itself on the legacy layout), default 7 days; see
+[ADR-039 Amendment 8](https://github.com/deeeed/farmslot/blob/main/docs/adr/039-run-portable-bundles.md#amendment-8-2026-11-13-seven-day-retention-for-runs-not-on-an-open-pr) and
+[Settled-run retention](https://github.com/deeeed/farmslot/blob/main/docs/reference/retained-run-artifacts.md#settled-run-retention).
+Every run on an open PR, or whose PR state is unknown, is kept whatever its age,
+and so is the rest of its run family. An unsettled follow-up keeps its run
+family, and an in-flight review keeps the prior run it reads. Task pins and review
+workspaces can be recreated, so retention deletes them. Restore from the archive
+is manual.
+
+## Known limitations
+
+The reference lists structural gaps in the current code, each with the file it
+cites: some diff files are written after the last capture, archived bundles are
+not read back, gate diffs use abbreviated blob ids that defeat prefetch reuse,
+the decision list has no versions path, artifacts download again on each open,
+the Command Center artifact browser fetches listed files eagerly, and the four
+diff producers filter files differently. See
+[Known limitations](https://github.com/deeeed/farmslot/blob/main/docs/reference/run-data-sync.md#known-limitations).
+
+## Related
+
+- [Resource management and streaming](./resource-management-and-streaming.md)
+- [Gateway control plane](./gateway.md)
+- [Retained run artifacts](https://github.com/deeeed/farmslot/blob/main/docs/reference/retained-run-artifacts.md)
+- [Gateway change notifications](https://github.com/deeeed/farmslot/blob/main/docs/reference/gateway-change-notifications.md)
