@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.19.9 - 2026-11-13
+
+- Republish against recipe-runner 0.46.14 so consumers load one copy of it, with blind Mobile CDP broker sockets routed into the trial directory.
+
 ## 0.19.8 - 2026-11-12
 
 - Launch blind trial browsers on their allocated recipe CDP endpoint while configured slot endpoints remain protected.

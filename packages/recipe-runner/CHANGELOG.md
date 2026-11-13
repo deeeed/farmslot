@@ -6,6 +6,11 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.46.14 - 2026-11-13
+
+- Route blind Mobile CDP broker sockets into the trial's fixed socket-only directory and keep ownership files in general trial temp.
+- Preserve literal platform values in visual review artifact templates.
+
 ## 0.46.13 - 2026-11-12
 
 - Process liveness checks skip `ps` for dead processes and share one `ps` listing per burst, so reading a checkout with many stale operation records no longer spawns `ps` once per record.

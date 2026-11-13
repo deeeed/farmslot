@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.31.12 - 2026-11-13
+
+- Republish against recipe-runner 0.46.14 so consumers load one copy of it, with blind Mobile CDP broker sockets routed into the trial directory.
+
 ## 0.31.11 - 2026-11-12
 
 - An iOS simulator recording that stops without writing its file now fails with "simctl recordVideo produced no file", the exit code or signal and the tail of simctl's stderr, instead of a bare ENOENT.
