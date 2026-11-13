@@ -11,6 +11,7 @@ mock.module('./exec.js', {
   namedExports: {
     EXEC_TIMEOUT_EXIT_CODE: 124,
     isLocal: () => true,
+    slotFilesReadInProcess: () => true,
     execLocal: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     execArgvOnSlot: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     execFileArgv: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
