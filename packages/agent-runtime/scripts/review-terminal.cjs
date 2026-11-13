@@ -202,7 +202,7 @@ async function main() {
     reviewConfigurationRootsByRunner,
     terminalReviewRefusalByRunner,
     reviewRuntimeRootsByRunner,
-    reviewTemporaryEnvironmentByRunner,
+    reviewTemporaryDirectoryVariablesByRunner,
   } = require('./workspace-trust.cjs');
   if (terminalReviewRefusalByRunner[input.runner])
     throw new Error(terminalReviewRefusalByRunner[input.runner]);
@@ -217,7 +217,13 @@ async function main() {
   environment.TMPDIR = guard.temporaryDirectory;
   Object.assign(
     environment,
-    reviewTemporaryEnvironmentByRunner[input.runner]?.(guard.temporaryDirectory),
+    Object.fromEntries(
+      (
+        input.temporaryDirectoryVariables ??
+        reviewTemporaryDirectoryVariablesByRunner?.[input.runner] ??
+        []
+      ).map((name) => [name, guard.temporaryDirectory]),
+    ),
   );
   environment.FARMSLOT_SIGNAL_ATTEMPT_ID =
     previousAttempt?.signalAttemptId ?? require('node:crypto').randomUUID();

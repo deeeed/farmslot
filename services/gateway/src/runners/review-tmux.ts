@@ -297,6 +297,9 @@ export async function reviewTmuxOperation(
       runtimeRoots: nativeRunnerDefinitions[runner]?.reviewRuntimeRoots?.({ HOME: '~' }) ?? [
         '~/.codex',
       ],
+      // Retained tasks may freeze a runtime from before this runner declared its private state.
+      temporaryDirectoryVariables:
+        nativeRunnerDefinitions[runner]?.reviewTemporaryDirectoryVariables ?? [],
       ...(action === 'resume' ? { resumeSessionId, resumeCommandId } : {}),
     });
   }

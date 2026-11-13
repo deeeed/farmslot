@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -112,12 +112,17 @@ test('a scripts-only frozen terminal bundle refuses a Grok terminal review befor
     await assert.rejects(readFile(file), /ENOENT/);
 });
 
-for (const runner of ['pi', 'opencode', 'claude'])
+for (const runner of ['pi', 'opencode', 'claude', 'claude-retained'])
   test(`${runner} terminal review resolves profile roots from the final execution environment`, async (t) => {
     const root = await mkdtemp(path.join(tmpdir(), 'terminal-profile-roots-'));
     t.after(() => rm(root, { recursive: true, force: true }));
     const staged = path.join(root, 'scripts');
     await cp(scripts, staged, { recursive: true });
+    if (runner === 'claude-retained')
+      await appendFile(
+        path.join(staged, 'workspace-trust.cjs'),
+        '\ndelete module.exports.reviewTemporaryDirectoryVariablesByRunner;\n',
+      );
     const source = path.join(root, 'source');
     const task = path.join(root, 'task');
     const bin = path.join(root, 'bin');
@@ -151,7 +156,10 @@ for (const runner of ['pi', 'opencode', 'claude'])
         path.join(staged, 'review-terminal.cjs'),
         JSON.stringify({
           action: 'launch',
-          runner,
+          runner: runner === 'claude-retained' ? 'claude' : runner,
+          ...(runner === 'claude-retained'
+            ? { temporaryDirectoryVariables: ['CLAUDE_CODE_TMPDIR'] }
+            : {}),
           model: 'fixture',
           runId: 'fixture',
           workspaceId: 'fixture',
@@ -179,7 +187,7 @@ for (const runner of ['pi', 'opencode', 'claude'])
       JSON.parse(await readFile(captured, 'utf8')),
       runner === 'pi'
         ? [selected.PI_CODING_AGENT_DIR]
-        : runner === 'claude'
+        : runner.startsWith('claude')
           ? [
               selected.CLAUDE_CONFIG_DIR,
               ...(typeof process.getuid === 'function'
@@ -200,7 +208,7 @@ for (const runner of ['pi', 'opencode', 'claude'])
     assert(environment.includes(`TMPDIR=${task}`));
     assert(
       environment.includes(
-        `CLAUDE_CODE_TMPDIR=${runner === 'claude' ? task : selected.CLAUDE_CODE_TMPDIR}`,
+        `CLAUDE_CODE_TMPDIR=${runner.startsWith('claude') ? task : selected.CLAUDE_CODE_TMPDIR}`,
       ),
     );
   });

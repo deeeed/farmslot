@@ -609,7 +609,12 @@ export class NativeSessionManager {
       ...(hostProtection
         ? {
             TMPDIR: hostProtection.temporaryDirectory,
-            ...transport.reviewTemporaryEnvironment?.(hostProtection.temporaryDirectory),
+            ...Object.fromEntries(
+              (transport.reviewTemporaryDirectoryVariables ?? []).map((name) => [
+                name,
+                hostProtection.temporaryDirectory,
+              ]),
+            ),
           }
         : {}),
     });

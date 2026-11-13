@@ -273,8 +273,8 @@ const reviewConfigurationRootsByRunner = {
   opencode: reviewConfigurationRoots,
 };
 // Claude's Bash cwd-state files use this override, not the child's TMPDIR.
-const reviewTemporaryEnvironmentByRunner = {
-  claude: (temporaryDirectory) => ({ CLAUDE_CODE_TMPDIR: temporaryDirectory }),
+const reviewTemporaryDirectoryVariablesByRunner = {
+  claude: ['CLAUDE_CODE_TMPDIR'],
 };
 
 // The review sandbox denies repository configuration. Exclude it before Claude
@@ -289,7 +289,7 @@ const claudeReadOnlyReviewArgs = [
 
 module.exports = {
   reviewRuntimeRootsByRunner,
-  reviewTemporaryEnvironmentByRunner,
+  reviewTemporaryDirectoryVariablesByRunner,
   piReadOnlyReviewArgs,
   claudeReadOnlyReviewArgs,
   codexHome,

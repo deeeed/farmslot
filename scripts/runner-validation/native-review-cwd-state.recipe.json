@@ -7,8 +7,15 @@
     "nodes": {
       "shell-state": {
         "action": "command",
-        "cmd": "node --import tsx scripts/runner-validation/native-review-cwd-state.mts",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/native-review-cwd-state.mts",
+        "timeout_ms": 180000,
         "intent": "Source inspection completes when runner-private cwd state stays in the task directory.",
+        "next": "retained-terminal"
+      },
+      "retained-terminal": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test packages/agent-runtime/src/native/review-terminal-trust.test.ts",
+        "intent": "The real terminal control helper receives the current runner's private-state declaration even when its frozen support predates that declaration, with the terminal process boundary intercepted.",
         "next": "done"
       },
       "done": { "action": "end", "status": "pass" }

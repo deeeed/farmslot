@@ -185,7 +185,12 @@ test(
         ...process.env,
         CLAUDE_CODE_TMPDIR: other,
         TMPDIR: temporaryDirectory,
-        ...nativeRunnerDefinitions.claude.reviewTemporaryEnvironment?.(temporaryDirectory),
+        ...Object.fromEntries(
+          (nativeRunnerDefinitions.claude.reviewTemporaryDirectoryVariables ?? []).map((name) => [
+            name,
+            temporaryDirectory,
+          ]),
+        ),
       };
       const cwdState = await exec(
         sandbox.executable,
