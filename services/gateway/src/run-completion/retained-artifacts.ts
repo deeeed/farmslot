@@ -48,6 +48,7 @@ import {
 } from '@farmslot/run-bundle';
 
 import { reportGatewayWarning } from '../chat/copilot-observer.js';
+import { GATEWAY_OWNED_DIFF_ARTIFACT_PATHS } from '../core/artifact-copy-policy.js';
 import { EVAL_TASK_FLOW, loadProjectVars, loadSlotVars } from '../core/config.js';
 import { sha256File } from '../core/file-hash.js';
 import {
@@ -677,8 +678,14 @@ export async function retainCapturedRunArtifacts(input: {
       input.run.taskFile,
       input.run.engineState?.generation,
       input.manifestDigest,
+      // Files the output identity leaves out still decide what the bundle holds. Without them,
+      // a capture after the gateway writes its diff files reuses the earlier bundle that lacks them.
       ...artifacts
-        .filter((artifact) => artifact.path.startsWith('task-actions/'))
+        .filter(
+          (artifact) =>
+            artifact.path.startsWith('task-actions/') ||
+            GATEWAY_OWNED_DIFF_ARTIFACT_PATHS.has(artifact.path),
+        )
         .sort((a, b) => a.path.localeCompare(b.path))
         .map(({ path, sha256 }) => [path, sha256]),
     ]),

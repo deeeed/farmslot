@@ -1,0 +1,1 @@
+- A run file that fails to load stays failed instead of being requested again on every render; it loads again only when the run or file link changes, or when the view opens again.

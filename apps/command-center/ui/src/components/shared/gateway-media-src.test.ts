@@ -274,6 +274,43 @@ test('Markdown text renders before media and survives an unexpected loader failu
   assert.deepEqual(view.render(input, 'html'), unsafeHTML(safeText));
   await flush();
   assert.deepEqual(view.values, [unsafeHTML(safeText)]);
-  assert.deepEqual(view.render(input, 'html'), unsafeHTML(safeText));
+  assert.equal(view.render(input, 'html'), noChange, 'the failure stays on screen, not reloaded');
   view.disconnect();
+});
+
+test('a missing artifact settles: re-rendering its URL does not fetch it again', async (t) => {
+  setGatewayMemoryAuth({ token: 'service-fixture' }, 'ws://localhost:7777/ws');
+  t.after(clearGatewayMemoryAuth);
+  const calls: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL) => {
+    calls.push(new URL(String(input)).searchParams.get('runId') ?? '');
+    return new Response('Artifact was not retained', { status: 404 });
+  });
+  const errors = t.mock.method(console, 'error', () => {});
+  const settle = async () => {
+    for (let i = 0; i < 10; i++) await flush();
+  };
+  const view = new MediaHarness({
+    type: PartType.ATTRIBUTE,
+    name: 'href',
+    strings: ['', ''],
+    tagName: 'A',
+  });
+  const missing = '/api/run-artifact?runId=run-1&path=artifacts/diff.txt';
+  assert.equal(view.render(missing), nothing);
+  await settle();
+  for (let i = 0; i < 5; i++) assert.equal(view.render(missing), noChange);
+  await settle();
+  assert.deepEqual(calls, ['run-1']);
+  assert.deepEqual(view.values, [nothing]);
+  assert.equal(errors.mock.callCount(), 1);
+  // Another run's link is a new source: it loads once.
+  view.render('/api/run-artifact?runId=run-2&path=artifacts/diff.txt');
+  await settle();
+  assert.deepEqual(calls, ['run-1', 'run-2']);
+  // The view mounting again loads it once more.
+  view.disconnect();
+  view.render(missing);
+  await settle();
+  assert.deepEqual(calls, ['run-1', 'run-2', 'run-1']);
 });

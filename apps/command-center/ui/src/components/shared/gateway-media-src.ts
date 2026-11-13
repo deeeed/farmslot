@@ -190,7 +190,8 @@ export class GatewayMedia extends AsyncDirective {
       })
       .catch((error: unknown) => {
         if (abort.signal.aborted) return;
-        this.source = undefined;
+        // The failure stays settled for this source: a re-render of the same URL does not
+        // fetch it again. Another URL, or the view mounting again, loads it once more.
         this.setValue(this.initial);
         // Fetch failures remain visible and never fall back to a credential-bearing URL.
         console.error('Gateway media could not be loaded.', error);

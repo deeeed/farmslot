@@ -1,0 +1,1 @@
+- A run whose diff files are written after its first output capture now keeps them in its retained bundle, so its diff, diff stat and iteration diff open instead of returning 404.
