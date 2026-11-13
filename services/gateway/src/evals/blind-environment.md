@@ -97,6 +97,7 @@ inherited Git configuration cannot cross the boundary.
 | `NODE_ENV`                        | Selects installed toolchains or project build mode.                                                 |
 | `PYTHONDONTWRITEBYTECODE`         | Selects installed toolchains or project build mode.                                                 |
 | `GH_CONFIG_DIR`                   | Assigned by the boundary wrapper; prevents inherited transport or browser authority.                |
+| `ZDOTDIR`                         | Assigned by the boundary wrapper to the empty, read-only `boundary/shell`; zsh reads no home rc.    |
 | `GIT_TERMINAL_PROMPT`             | Assigned by the boundary wrapper; prevents inherited transport or browser authority.                |
 | `FARMSLOT_CI_BASE_REF`            | Assigned by the boundary wrapper; prevents inherited transport or browser authority.                |
 | `FARMSLOT_BLIND_SEATBELT`         | Assigned by the boundary wrapper; prevents inherited transport or browser authority.                |
@@ -113,8 +114,11 @@ inherited Git configuration cannot cross the boundary.
 
 The runner registry's `blindModelEnvironment` capability adds the runner's
 model authentication, endpoint and provider configuration variables. Authentication
-entries are deliberate credential exceptions, visible to that model's tools just
-as its own login files are.
+entries are deliberate credential exceptions. Native runner keys stay visible to
+that model's tools just as its own login files are. Pi's provider extension holds
+the router, LiteLLM and Ollama keys it registers and removes them from its
+environment before any tool shell starts; Pi's built-in providers read their keys
+from the environment per request, so those remain visible to Pi's tool shells.
 
 | Runner or selected provider            | Additional exact entries                                                                     | Reason                                                                                                   |
 | -------------------------------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -147,6 +151,17 @@ Pi's default and unqualified `grok-*` models resolve to `xai/…` through its sh
 model adapter. Custom providers that require another environment name must add
 an exact capability entry and a regression test. Prefer the runner's own config
 for custom provider authentication.
+
+## Shell startup files
+
+`BASH_ENV`, `ENV` and the operator's `ZDOTDIR` never cross `env -i`. The wrapper
+sets `ZDOTDIR` to the capsule's empty `boundary/shell`. Seatbelt also denies reads
+and writes of the operator's zsh and bash startup files and histories,
+`~/.config/secrets`, `~/.netrc`, `~/.npmrc`, `~/.yarnrc(.yml)`, `~/.pypirc`,
+`~/.docker/config.json`, `~/.git-credentials`, `~/.aws`, `~/.kube/config`,
+`~/.gnupg` and the checkout's `.agent/.launch` scripts, with each resolved symlink
+target. A worker that resets `ZDOTDIR` or runs `bash -l` still reads none of them.
+Tools that read those files for registry authentication see them as absent.
 
 ## Trial browser routing
 

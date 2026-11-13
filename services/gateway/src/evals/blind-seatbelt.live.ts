@@ -2220,3 +2220,52 @@ try {
     );
   },
 );
+
+test(
+  'worker shells start without operator startup files or their secrets',
+  { skip: process.platform !== 'darwin' },
+  (t) => {
+    const root = fixture();
+    t.after(() => rmSync(root, { recursive: true }));
+    // Synthetic operator home: startup files are links into a dotfiles checkout
+    // and source a secrets file, as on farm hosts. Fake values only.
+    const home = path.join(root, 'home');
+    const dotfiles = path.join(root, 'dotfiles');
+    mkdirSync(path.join(home, '.config/secrets'), { recursive: true });
+    mkdirSync(dotfiles);
+    const secrets = path.join(home, '.config/secrets/env.zsh');
+    writeFileSync(secrets, 'export FAKE_SECRET=fixture-value\n');
+    const startup = `export FAKE_SECRET=fixture-value\n. ${q(secrets)}\n`;
+    for (const name of ['zshenv', 'zshrc', 'zprofile']) {
+      writeFileSync(path.join(dotfiles, name), startup);
+      symlinkSync(path.join(dotfiles, name), path.join(home, `.${name}`));
+    }
+    for (const name of ['.bashrc', '.bash_profile', '.profile'])
+      writeFileSync(path.join(home, name), startup);
+    const launchEnv = {
+      ...env,
+      HOME: home,
+      FAKE_SECRET: 'fixture-value',
+      BASH_ENV: path.join(home, '.bashrc'),
+      ENV: path.join(home, '.profile'),
+    };
+    profile(root, launchEnv);
+    const shells = ['env', 'zsh -c env', 'bash -lc env', 'zsh -ic env', 'bash -ic env'];
+    const script = [
+      ...shells.map((shell) => `echo ${q(`== ${shell}`)}; ${shell} </dev/null 2>&1`),
+      // Seatbelt alone: a worker that drops the boundary's ZDOTDIR still reads nothing.
+      'echo "== unset ZDOTDIR"; (unset ZDOTDIR; zsh -lic env) </dev/null 2>&1',
+      ...[path.join(home, '.zshenv'), path.join(dotfiles, 'zshenv'), secrets].map(
+        (file) => `if cat ${q(file)} >/dev/null 2>&1; then echo READ; else echo DENIED; fi`,
+      ),
+    ].join('; ');
+    const started = Date.now();
+    const result = worker(root, script, launchEnv);
+    const output = `${result.stdout}\n${result.stderr}`;
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(output, /fixture-value|FAKE_SECRET/u);
+    assert.equal(output.match(/^HOME=/gmu)?.length, shells.length + 1, 'each shell printed env');
+    assert.deepEqual(output.match(/^(?:READ|DENIED)$/gmu), ['DENIED', 'DENIED', 'DENIED']);
+    t.diagnostic(`six shells and three reads checked in ${Date.now() - started}ms`);
+  },
+);

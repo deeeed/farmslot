@@ -81,6 +81,40 @@ test('router aliases resolve in Pi while available models show only the configur
   });
 });
 
+test('blind workers keep registered provider keys out of the environment Pi gives tool shells', async () => {
+  await withAliasExtension(async () => {
+    assert.equal(process.env.FARMSLOT_PI_ROUTER_KEY, 'synthetic-test-key', 'non-blind unchanged');
+  });
+  const held = Symbol.for('farmslot.pi.providerCredentials');
+  try {
+    await withAliasExtension(
+      async ({ configurations, native }) => {
+        // Pi copies process.env into each bash tool spawn.
+        assert.equal(process.env.FARMSLOT_PI_ROUTER_KEY, undefined);
+        assert.ok(!Object.values(process.env).includes('synthetic-test-key'));
+        assert.equal(configurations.get('localsparks').apiKey, 'synthetic-test-key');
+        const models = createModels();
+        models.setProvider(native.get('router'));
+        const saved = models.getModel('router', MODEL);
+        assert.equal((await models.getAuth(saved)).auth.apiKey, 'synthetic-test-key');
+        // An extension reload in the same Pi process registers the held key again.
+        const reloaded = new Map();
+        await install({
+          on: () => {},
+          registerProvider: (id, configuration) => {
+            if (typeof id === 'string') reloaded.set(id, configuration);
+          },
+        });
+        assert.equal(reloaded.get('localsparks').apiKey, 'synthetic-test-key');
+        assert.equal(process.env.FARMSLOT_PI_ROUTER_KEY, undefined);
+      },
+      { FARMSLOT_BLIND_SEATBELT: '1', FARMSLOT_MODEL: `localsparks/${MODEL}` },
+    );
+  } finally {
+    delete globalThis[held];
+  }
+});
+
 test('alias request pricing joins its saved provider and cannot report unknown cost as zero', async () => {
   await withAliasExtension(async ({ configurations, native, events, records, directory }) => {
     const alias = native.get('router').getModels()[0];

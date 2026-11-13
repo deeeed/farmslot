@@ -288,6 +288,20 @@ def gateway_credential_paths():
     return protected
 
 
+def operator_shell_secret_paths():
+    # Shell startup files export operator credentials; path_aliases adds each
+    # resolved dotfiles target. The worker's own ZDOTDIR is the empty boundary/shell.
+    home = Path.home()
+    homes = {home} | ({Path(os.path.expanduser(os.environ['ZDOTDIR']))} if os.environ.get('ZDOTDIR') else set())
+    startup = ['.zshenv', '.zshrc', '.zprofile', '.zlogin', '.zlogout', '.zsh_history', '.zsh_sessions']
+    protected = [root / name for root in homes for name in startup]
+    protected += [home / name for name in [
+        '.bashrc', '.bash_profile', '.bash_login', '.bash_logout', '.bash_history', '.profile',
+        '.config/secrets', '.netrc', '.npmrc', '.yarnrc', '.yarnrc.yml', '.pypirc',
+        '.docker/config.json', '.git-credentials', '.aws', '.kube/config', '.gnupg']]
+    return protected
+
+
 def worker_private_rules(capsule):
     quote = lambda value: json.dumps(str(value), ensure_ascii=False)
     rules = []
@@ -295,6 +309,7 @@ def worker_private_rules(capsule):
     # node_modules. Resolve symlinks before entering the sandbox as well.
     protected = [Path.home() / '.ssh', Path.home() / '.pi/agent/settings.json',
                  capsule / 'boundary/sandbox.sb'] + gateway_credential_paths() + operator_browser_paths()
+    protected += operator_shell_secret_paths()
     for value in protected:
         rules += ['(deny %s (subpath %s))' % (operation, quote(p))
                   for operation in ['file-read*', 'file-write*'] for p in path_aliases(value)]
@@ -384,6 +399,9 @@ def sandbox_profile(spec, capsule, tmux_sockets=None, network_ports=None):
               '(require-not (require-any ' + ' '.join('(subpath %s)' % quote(p)
                   for p in path_aliases(temporary)) + '))))']
     rules += ['(deny file-write* (subpath %s))' % quote((capsule / 'boundary/bin').resolve())]
+    # Tmux launch scripts inline the node's pool environment, credentials included.
+    rules += ['(deny %s (subpath %s))' % (operation, quote(p))
+              for operation in ['file-read*', 'file-write*'] for p in path_aliases(repo / '.agent/.launch')]
     rules += worker_private_rules(capsule)
     return '\n'.join(rules + [''])
 
@@ -487,6 +505,8 @@ def prepare_boundary(spec, capsule):
     require_sandbox()
     root = capsule / 'boundary'
     (root / 'gh-config').mkdir(parents=True, exist_ok=True)
+    # Empty ZDOTDIR: worker zsh shells read no startup files. Seatbelt keeps it read-only.
+    (root / 'shell').mkdir(exist_ok=True)
     (root / 'bin').mkdir(exist_ok=True)
     # Keep socket paths below sockaddr_un's macOS limit even for deep capsules.
     temporary = root / 'tmp'

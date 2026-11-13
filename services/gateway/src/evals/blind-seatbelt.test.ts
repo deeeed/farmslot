@@ -74,6 +74,13 @@ function generatedProfile(
   );
   for (const directory of browserDirs) mkdirSync(directory, { recursive: true });
   symlinkSync(path.join(root, 'operator-debug'), path.join(home, '.chrome-farmslot-alias'));
+  // Startup files are links into a dotfiles checkout, as on farm hosts.
+  mkdirSync(path.join(root, 'dotfiles'));
+  mkdirSync(path.join(home, '.config/secrets'), { recursive: true });
+  for (const name of ['zshenv', 'zshrc']) {
+    writeFileSync(path.join(root, 'dotfiles', name), 'export FAKE_SECRET=fixture-value\n');
+    symlinkSync(path.join(root, 'dotfiles', name), path.join(home, `.${name}`));
+  }
   // Each home/config must contribute, rather than only the selected/active profile.
   const profileFiles = gatewayFiles.filter((file) => path.basename(file) === 'gateways.json');
   for (const [index, file] of profileFiles.entries())
@@ -214,6 +221,39 @@ test('blind profile denies gateway credentials after all runtime exceptions, inc
       assert.ok(profile.includes(`(literal ${JSON.stringify(path.dirname(alias))})`), alias);
     }
   }
+});
+
+test('blind profile denies shell startup and secret files, including resolved dotfile targets, after read exceptions', (t) => {
+  const { root, home, profile } = generatedProfile(t);
+  const files = [
+    ...[
+      '.zshenv',
+      '.zshrc',
+      '.zprofile',
+      '.zlogin',
+      '.bashrc',
+      '.bash_profile',
+      '.profile',
+      '.config/secrets',
+      '.netrc',
+      '.npmrc',
+      '.yarnrc.yml',
+      '.pypirc',
+      '.docker/config.json',
+    ].map((name) => path.join(home, name)),
+    path.join(root, 'dotfiles/zshenv'),
+    path.join(root, 'dotfiles/zshrc'),
+    path.join(root, '.agent/.launch'),
+  ];
+  for (const file of files)
+    for (const operation of ['file-read*', 'file-write*']) {
+      const rule = `(deny ${operation} (subpath ${JSON.stringify(file)}))`;
+      assert.ok(profile.includes(rule), file);
+      assert.ok(profile.indexOf(rule) > profile.lastIndexOf('(allow file-read*'), file);
+      assert.ok(profile.indexOf(rule) > profile.lastIndexOf('(allow file-write*'), file);
+    }
+  // Moving the dotfiles checkout must not carry the startup file out of the denial.
+  assert.ok(profile.includes(`(literal ${JSON.stringify(path.join(root, 'dotfiles'))})`));
 });
 
 test('blind profile denies outbound Unix sockets except the system DNS endpoint', (t) => {
@@ -522,6 +562,9 @@ test('blind boundary strips gateway credentials, routing, tmux and SSH agent var
       FARMSLOT_HOME: '/synthetic/tools-home',
       FARMSLOT_TASK_DIR: '/synthetic/task',
       OPENAI_API_KEY: 'synthetic-provider',
+      ZDOTDIR: '/synthetic/operator-zdotdir',
+      BASH_ENV: '/synthetic/operator-bashrc',
+      ENV: '/synthetic/operator-profile',
     },
     timeout: 4500,
   });
@@ -544,4 +587,6 @@ test('blind boundary strips gateway credentials, routing, tmux and SSH agent var
   assert.match(worker.stdout, /^CDP_PORT=19444$/mu);
   assert.match(worker.stdout, /^FARMSLOT_BLIND_CDP_PORT=19444$/mu);
   assert.match(worker.stdout, /^FARMSLOT_CI_BASE_REF=a{40}$/mu);
+  assert.ok(worker.stdout.includes(`ZDOTDIR=${root}/boundary/shell\n`));
+  assert.doesNotMatch(worker.stdout, /^(?:BASH_ENV|ENV)=/mu);
 });
