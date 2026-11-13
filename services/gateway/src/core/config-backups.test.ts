@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { backupConfigFile, CONFIG_BACKUPS_KEPT } from './config-backups.js';
+
+/** The removed writer's stamp, kept verbatim so fixtures match the files it left behind. */
+function removedWriterStamp(iso: string): string {
+  return new Date(iso).toISOString().replace(/[:.]/g, '').slice(0, 15);
+}
 
 interface BackupFixture {
   home: string;
@@ -75,7 +81,7 @@ test('only the newest backups are kept and the oldest are pruned', async (t) => 
   await mkdir(backups, { recursive: true });
   const stamp = '20261113T120000123';
   const seeded = [
-    'node-a.json.bak.20250101T000000',
+    `node-a.json.bak.${removedWriterStamp('2025-01-01T00:00:00.000Z')}`,
     'node-a.json.bak.20250101T000001123',
     'node-a.json.bak.20250101T000002123-1',
     `node-a.json.bak.${stamp}`,
@@ -92,21 +98,79 @@ test('only the newest backups are kept and the oldest are pruned', async (t) => 
   assert.deepEqual((await readdir(backups)).sort(), kept.sort());
 });
 
+test('a save after pruning numbers its copy above the kept ones and keeps it', async (t) => {
+  const { file, backups } = await fixture(t);
+  await mkdir(backups, { recursive: true });
+  const stamp = '20261113T120000123';
+  // What pruning leaves after 21 saves in one millisecond: -11 to -20.
+  for (let sequence = 11; sequence <= 20; sequence += 1)
+    await writeFile(path.join(backups, `node-a.json.bak.${stamp}-${sequence}`), 'old');
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-13T12:00:00.123Z') });
+  const backup = await backupConfigFile('pool', 'node-a.json', file);
+  assert.equal(path.basename(backup), `node-a.json.bak.${stamp}-21`);
+  assert.equal(await readFile(backup, 'utf8'), '{"machine":"node-a"}\n');
+  assert.equal((await readdir(backups)).length, CONFIG_BACKUPS_KEPT);
+  assert.equal(existsSync(path.join(backups, `node-a.json.bak.${stamp}-11`)), false);
+});
+
+test('a clock stepped backwards still keeps the copy just taken', async (t) => {
+  const { file, backups } = await fixture(t);
+  await mkdir(backups, { recursive: true });
+  const future = Array.from(
+    { length: CONFIG_BACKUPS_KEPT },
+    (_, index) => `node-a.json.bak.20271113T12000${index}000`,
+  );
+  for (const name of future) await writeFile(path.join(backups, name), 'future');
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-13T12:00:00.123Z') });
+  const backup = await backupConfigFile('pool', 'node-a.json', file);
+  assert.equal(await readFile(backup, 'utf8'), '{"machine":"node-a"}\n');
+  assert.deepEqual(
+    (await readdir(backups)).sort(),
+    [path.basename(backup), ...future.slice(1)].sort(),
+  );
+});
+
 test('legacy backups of the saved file move out; other backup names stay', async (t) => {
   const { pool, file, backups } = await fixture(t);
-  const legacy = ['node-a.json.bak.20251111T101010', 'node-a.json.bak.20251111T101011'];
+  const legacy = [
+    `node-a.json.bak.${removedWriterStamp('2025-11-11T10:10:59.999Z')}`,
+    `node-a.json.bak.${removedWriterStamp('2026-11-12T15:30:00.000Z')}`,
+  ];
+  assert.deepEqual(legacy, ['node-a.json.bak.2025-11-11T1010', 'node-a.json.bak.2026-11-12T1530']);
   const untouched = [
     'node-a.json.bak-pre-harness-0.96.13',
     'node-a.json.bak.goal',
+    'node-a.json.bak.goal-2',
     'node-a.json.bak.reliability-provider',
-    'node-b.json.bak.20251111T101010',
-    'node-a.json.bak.20251111T101010.extra',
+    'node-a.json.bak.2026-11-12T1530-node',
+    'node-a.json.bak.2026-11-12T1530-cdp-fix',
+    'node-a.json.bak.20261111T1229-pre-localsparks-proof',
+    `node-b.json.bak.${removedWriterStamp('2025-11-11T10:10:00.000Z')}`,
   ];
   for (const name of [...legacy, ...untouched]) await writeFile(path.join(pool, name), name);
   const backup = await backupConfigFile('pool', 'node-a.json', file);
   assert.deepEqual((await readdir(pool)).sort(), ['node-a.json', ...untouched].sort());
   assert.deepEqual((await readdir(backups)).sort(), [...legacy, path.basename(backup)].sort());
   assert.equal(await readFile(path.join(backups, legacy[0]), 'utf8'), legacy[0]);
+});
+
+test('moved legacy backups are pruned by time, not by raw name order', async (t) => {
+  const { pool, file, backups } = await fixture(t);
+  await mkdir(backups, { recursive: true });
+  // Ten copies this module wrote at 11:00, then a legacy copy from 12:30 the same day.
+  const current = Array.from(
+    { length: CONFIG_BACKUPS_KEPT },
+    (_, index) => `node-a.json.bak.20261113T11000${index}000`,
+  );
+  for (const name of current) await writeFile(path.join(backups, name), 'current');
+  const legacy = `node-a.json.bak.${removedWriterStamp('2026-11-13T12:30:00.000Z')}`;
+  await writeFile(path.join(pool, legacy), 'legacy');
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-13T13:00:00.000Z') });
+  const backup = await backupConfigFile('pool', 'node-a.json', file);
+  assert.deepEqual(
+    (await readdir(backups)).sort(),
+    [path.basename(backup), legacy, ...current.slice(2)].sort(),
+  );
 });
 
 test('a failed backup copy fails the save', async (t) => {

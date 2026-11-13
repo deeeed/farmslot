@@ -111,6 +111,14 @@ try {
   for (const name of await readdir(path.dirname(owner.poolFile)))
     if (name.startsWith(`${path.basename(owner.poolFile)}.bak.`))
       await remember(path.join(path.dirname(owner.poolFile), name));
+  // Backups from earlier runs are restored, not deleted: the run's saves may prune them.
+  let earlierBackups = [];
+  try {
+    earlierBackups = await readdir(poolBackups);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  for (const name of earlierBackups) await remember(path.join(poolBackups, name));
   await navigate(`config/pool/${pool.machine}`);
   const before = await until(
     (v) =>
@@ -319,7 +327,8 @@ try {
         );
         await rm(file);
       } catch (error) {
-        failures.push(error);
+        // A later save in this run already pruned it, so nothing is left to remove.
+        if (error.code !== 'ENOENT') failures.push(error);
       }
     }
   await writeFile(
