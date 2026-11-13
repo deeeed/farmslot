@@ -29,6 +29,7 @@ import {
 
 import { adapterPortEnv, harnessAdapter } from './adapters.js';
 import { blindRecipeCdpPort, blindRuntimeOptions } from './blind-runtime.js';
+import { countCallWork } from './call-timings.js';
 import { type ActionCapabilitySource, OFFICIAL_ACTIONS, type RecipeCatalog } from './catalog.js';
 import { color } from './cli-color.js';
 import { CliError } from './cli-error.js';
@@ -91,6 +92,8 @@ export type RecipeEngineRunOptions = RecipeRunOptions & {
   cli?: CommandOptions;
   /** Read-only planning/conformance validates authority without publishing execution claims. */
   readOnly?: boolean;
+  /** The actions the recipe runs, passed to the host's runner (`RecipeRunnerOptions`). */
+  plannedActions?: readonly string[];
   /** Command-specific artifacts join the engine package before its final validation. */
   finalizeArtifacts?(
     context: RecipeArtifactFinalization,
@@ -136,11 +139,14 @@ export async function runRecipe<TMutation, TAllowlist extends ConsoleAllowlist>(
     throw new Error('Read-only preflight cannot execute; resolve an executing plan first.');
   const { runner, runRequest, absoluteArtifactsDir, provenanceInput, provenanceSnapshots } =
     execution;
-  if (!wasPreflighted) await runner.preflight(runRequest);
-  await prepareRuntimeIfNeeded(adapter, projectRoot, runtimeOptions);
-  // The prepared runner owns frozen action bundles. Rechecking its plan here
-  // does not reconstruct adapters or replace their approved bytes.
-  await runner.preflight(runRequest);
+  if (!wasPreflighted) await planRun(runner, runRequest);
+  // A platform that prepared its runtime after the plan was made gets the plan
+  // checked again. The prepared runner owns frozen action bundles: rechecking its
+  // plan does not reconstruct adapters or replace their approved bytes.
+  if (await prepareRuntimeIfNeeded(adapter, projectRoot, runtimeOptions)) {
+    await planRun(runner, runRequest);
+  }
+  // The start snapshot was taken when the runner froze its bundles: any edit since refuses the run.
   const preExecute = await captureExecutionProvenance(provenanceInput, 'pre-execute');
   provenanceSnapshots.push(preExecute);
   const preExecuteDrift = executionProvenanceDrift(provenanceSnapshots[0]!, preExecute);
@@ -246,8 +252,36 @@ export async function preflightRecipe<TMutation, TAllowlist extends ConsoleAllow
     actionManifestPath,
     runtimeOptions,
   );
-  const plan = execution.plan ?? (await execution.runner.preflight(execution.runRequest));
+  const plan = execution.plan ?? (await planRun(execution.runner, execution.runRequest));
   return { ...execution, plan };
+}
+
+// Every plan the engine asks for; a call's timings count them.
+function planRun(runner: RecipeRunner, request: RecipeRunRequest): Promise<RecipeExecutionPlan> {
+  countCallWork('runnerPreflight');
+  return runner.preflight(request);
+}
+
+/**
+ * Whether a prepared execution can still run as planned after healing: healing
+ * installed and recovered nothing, and the environment the plan runs in is unchanged.
+ */
+export function preparedExecutionCurrent(
+  execution: PreparedRecipeExecution,
+  adapter: string,
+  runtimeOptions: RecipeEngineRunOptions,
+  state: HealState,
+): boolean {
+  if (state.mutations.length > 0 || state.recovered.length > 0) return false;
+  const planned = execution.runRequest.env ?? {};
+  const sourceMap = recipeEnvName('ACTION_SOURCE_MAP');
+  const current: Record<string, string | undefined> = {
+    ...recipeProcessEnvironment(),
+    ...recipeRunEnv(adapter, runtimeOptions),
+    [sourceMap]: planned[sourceMap],
+  };
+  const keys = new Set([...Object.keys(planned), ...Object.keys(current)]);
+  return [...keys].every((key) => planned[key] === current[key]);
 }
 
 /** Register recovery/mutation metadata with the engine's single final writer. */
@@ -284,12 +318,6 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     runtimeOptions.librarySources,
     trust.source?.trust ?? 'trusted',
   );
-  const { manifest, actionSources } = await engine.resolveActionManifest(
-    adapter,
-    actionManifestPath,
-    librarySources,
-    process.env[recipeEnvName('LIVE_ADAPTER_DIR')],
-  );
   const recipeDocument = runtimeRecipeDocument(recipe, absoluteRecipePath);
   const mutation = engine.trustedMutation;
   const mutationInput: TrustedMutationLoadInput = {
@@ -306,6 +334,35 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
   const hud: RecipeHudUnavailable | undefined = suppressAutoHud
     ? { state: 'unavailable', reason: 'opaque-runtime' }
     : undefined;
+  // Bound before any runner bundles its actions, so an edit after this point,
+  // even one a bundle already holds, shows as drift before execution.
+  const context = harnessContext();
+  const projectBinding =
+    context?.target.value === path.resolve(projectRoot) ? context.project : undefined;
+  const provenanceInput: ExecutionProvenanceInput = {
+    adapter,
+    projectRoot,
+    recipeDocument: recipeDocument ?? recipe,
+    ...(absoluteRecipePath ? { recipePath: absoluteRecipePath } : {}),
+    ...(librarySources ? { librarySources } : {}),
+    excludedProductRoots: [
+      absoluteArtifactsDir,
+      ...(projectBinding ? recipeOutputRoots(projectRoot, projectBinding) : []),
+      recipeRuntimePath(projectRoot, 'operations'),
+      recipeRuntimePath(projectRoot, 'lock-members'),
+    ],
+    helperPaths: commandHelperPaths(recipeDocument ?? recipe, projectRoot),
+    runnerIncludes: engine.runnerIncludes,
+  };
+  const provenanceSnapshots = runtimeOptions.readOnly
+    ? []
+    : [await captureExecutionProvenance(provenanceInput, 'start')];
+  const { manifest, actionSources } = await engine.resolveActionManifest(
+    adapter,
+    actionManifestPath,
+    librarySources,
+    process.env[recipeEnvName('LIVE_ADAPTER_DIR')],
+  );
   const runnerOptions = {
     captureHudEvidence: !suppressAutoHud && !surface.headless,
     quietStdout: runtimeOptions.stdoutIsMachineContract === true,
@@ -319,9 +376,11 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     // task-local adapter. Inherited gateway provenance remains authoritative,
     // so an untrusted worker cannot promote itself with CLI flags.
     trustTaskActions: (trust.source?.trust ?? 'trusted') === 'trusted',
+    ...(runtimeOptions.plannedActions ? { plannedActions: runtimeOptions.plannedActions } : {}),
   };
   // The loaded mutation is not bound to a plan yet, so the runner that computes
   // the plan gets none; only an authorized mutation reaches execution.
+  countCallWork('createRunner');
   let runner = await engine.createRunner(adapter, manifest, runnerOptions);
   const runRequest: RecipeRunRequest = {
     ...(hud ? { hud } : {}),
@@ -354,7 +413,7 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
   };
   let plan: RecipeExecutionPlan | undefined;
   if (runtimeOptions.readOnly) {
-    plan = await runner.preflight(runRequest);
+    plan = await planRun(runner, runRequest);
     if (mutation && !mutation.preflight)
       throw Object.assign(
         new CliError('The provider has no read-only mutation authorization preflight.', EXIT.usage),
@@ -366,38 +425,18 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
       );
     await mutation?.preflight?.(mutationInput, plan);
   } else if (mutation && trustedMutation) {
-    const executionPlan = await runner.preflight(runRequest);
+    const executionPlan = await planRun(runner, runRequest);
     const authorizedMutation = await mutation.authorize(trustedMutation, executionPlan, {
       adapter,
     });
     if (authorizedMutation !== undefined) {
+      countCallWork('createRunner');
       runner = await engine.createRunner(adapter, manifest, {
         ...runnerOptions,
         trustedMutation: authorizedMutation,
       });
     }
   }
-  const context = harnessContext();
-  const projectBinding =
-    context?.target.value === path.resolve(projectRoot) ? context.project : undefined;
-  const provenanceInput: ExecutionProvenanceInput = {
-    adapter,
-    projectRoot,
-    recipeDocument: recipeDocument ?? recipe,
-    ...(absoluteRecipePath ? { recipePath: absoluteRecipePath } : {}),
-    ...(librarySources ? { librarySources } : {}),
-    excludedProductRoots: [
-      absoluteArtifactsDir,
-      ...(projectBinding ? recipeOutputRoots(projectRoot, projectBinding) : []),
-      recipeRuntimePath(projectRoot, 'operations'),
-      recipeRuntimePath(projectRoot, 'lock-members'),
-    ],
-    helperPaths: commandHelperPaths(recipeDocument ?? recipe, projectRoot),
-    runnerIncludes: engine.runnerIncludes,
-  };
-  const provenanceSnapshots = runtimeOptions.readOnly
-    ? []
-    : [await captureExecutionProvenance(provenanceInput, 'start')];
   return {
     readOnly: runtimeOptions.readOnly === true,
     ...(plan ? { plan } : {}),
@@ -689,15 +728,16 @@ function recipeRunEnv(
   return run?.childEnv ? run.childEnv(base) : base;
 }
 
+/** Run the platform's prepareRuntime hook; whether it has one. */
 export async function prepareRuntimeIfNeeded(
   adapter: string,
   projectRoot: string,
   runtimeOptions: RecipeRunOptions,
-): Promise<void> {
-  await harnessAdapter(adapter).run?.prepareRuntime?.(
-    projectRoot,
-    blindRuntimeOptions(runtimeOptions),
-  );
+): Promise<boolean> {
+  const run = harnessAdapter(adapter).run;
+  if (!run?.prepareRuntime) return false;
+  await run.prepareRuntime(projectRoot, blindRuntimeOptions(runtimeOptions));
+  return true;
 }
 
 function restoreEnv(key: string, value: string | undefined) {

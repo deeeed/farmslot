@@ -28,6 +28,8 @@ import {
   type SummaryDocument,
 } from '@farmslot/recipe-runner';
 
+import { CallTimingRecorder, withCallTimings } from '../src/harness/call-timings.js';
+import { statusListing } from '../src/harness/execution-provenance.js';
 import {
   beginRunDiagnostics,
   captureExecutionProvenance,
@@ -51,6 +53,7 @@ import {
   recipeRunOptionsFromCli,
   recipeTrustFailure,
   runLiveAdapterScript,
+  sourceSnapshot,
   validateRuntimeProof,
   validateRuntimeProofPlan,
   verifyConsoleCapture,
@@ -787,6 +790,144 @@ describe('execution provenance', () => {
     );
   });
 
+  test('a snapshot reads each Git root with one git process and still sees every edit', async () => {
+    const root = checkout('provenance-status-', {
+      'app/a.txt': 'one\n',
+      'app/spaced name é.txt': 'two\n',
+      'app/tool.sh': 'echo hi\n',
+    });
+    const recorder = new CallTimingRecorder();
+    const seen = new Set<string>();
+    const snapshot = async (label: string, gitAtMost: number) => {
+      const before = recorder.snapshot().work.git;
+      const fingerprint = await withCallTimings(recorder, async () => sourceSnapshot(root)).then(
+        (source) => source.sourceFingerprint,
+      );
+      assert.ok(recorder.snapshot().work.git - before <= gitAtMost, `${label}: git processes`);
+      assert.equal(seen.has(fingerprint), false, `${label}: the edit changes the fingerprint`);
+      seen.add(fingerprint);
+    };
+    await snapshot('clean', 2); // the work-tree lookup, once, plus status
+    fs.writeFileSync(path.join(root, 'app', 'a.txt'), 'uno\n');
+    await snapshot('tracked edit', 1);
+    fs.writeFileSync(path.join(root, 'app', 'a.txt'), 'une\n');
+    await snapshot('second edit of a modified file', 1);
+    fs.writeFileSync(path.join(root, 'app', 'spaced name é.txt'), 'deux\n');
+    await snapshot('quoted path edit', 1);
+    fs.chmodSync(path.join(root, 'app', 'tool.sh'), 0o755);
+    await snapshot('mode change', 1);
+    fs.writeFileSync(path.join(root, 'app', 'new.txt'), 'new\n');
+    await snapshot('untracked file', 1);
+    fs.writeFileSync(path.join(root, 'app', 'new.txt'), 'newer\n');
+    await snapshot('untracked edit', 1);
+    // A new directory is listed collapsed, so the untracked listing reads its files.
+    fs.mkdirSync(path.join(root, 'fresh'));
+    fs.writeFileSync(path.join(root, 'fresh', 'inside.txt'), 'in\n');
+    await snapshot('untracked directory', 3);
+    fs.writeFileSync(path.join(root, 'fresh', 'inside.txt'), 'inner\n');
+    await snapshot('edit inside an untracked directory', 3);
+    fs.rmSync(path.join(root, 'app', 'a.txt'));
+    await snapshot('deletion', 3);
+  });
+
+  test('sees a submodule commit even when the submodule is configured as ignored', async () => {
+    const sub = checkout('provenance-sub-', { 'sub.txt': 'sub\n' });
+    const root = checkout('provenance-super-', { 'app.txt': 'app\n' });
+    execFileSync(
+      'git',
+      ['-C', root, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'sub'],
+      { stdio: 'ignore' },
+    );
+    git(
+      root,
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=test@example.invalid',
+      'commit',
+      '-qm',
+      'submodule',
+    );
+    git(root, 'config', 'submodule.sub.ignore', 'all');
+    const before = sourceSnapshot(root).sourceFingerprint;
+    git(
+      path.join(root, 'sub'),
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=test@example.invalid',
+      'commit',
+      '--allow-empty',
+      '-qm',
+      'moved',
+    );
+    assert.notEqual(sourceSnapshot(root).sourceFingerprint, before);
+  });
+
+  test('follows a work-tree rename to the renamed file', async () => {
+    const lines = Array.from({ length: 20 }, (_, index) => `line ${index}`);
+    const root = checkout('provenance-rename-', { 'old.txt': `${lines.join('\n')}\n` });
+    fs.renameSync(path.join(root, 'old.txt'), path.join(root, 'new.txt'));
+    git(root, 'add', '-N', 'new.txt');
+    const before = sourceSnapshot(root).sourceFingerprint;
+    // Still similar enough to stay a rename, so the listing reads the same.
+    fs.writeFileSync(path.join(root, 'new.txt'), `${['edited', ...lines.slice(1)].join('\n')}\n`);
+    assert.notEqual(sourceSnapshot(root).sourceFingerprint, before);
+  });
+
+  test('refuses an untracked symbolic link as the diff always has', async () => {
+    const root = checkout('provenance-link-', { 'app.txt': 'app\n' });
+    fs.symlinkSync(path.join(root, 'app.txt'), path.join(root, 'link.txt'));
+    assert.throws(() => sourceSnapshot(root), /symbolic link/u);
+  });
+
+  test('a status path that is not valid UTF-8 leaves the fingerprint to the diff', () => {
+    assert.equal(statusListing(Buffer.from('? caf\u00e9.txt\0', 'utf8')), '? caf\u00e9.txt\0');
+    assert.equal(
+      statusListing(Buffer.from([0x3f, 0x20, 0xff, 0x2e, 0x74, 0x78, 0x74, 0x00])),
+      undefined,
+    );
+  });
+
+  test('hashes an installed runner package once per version and again after an edit', () => {
+    const previous = process.env.FARMSLOT_RECIPE_CACHE_DIR;
+    const cache = tempRoot('provenance-cache-');
+    process.env.FARMSLOT_RECIPE_CACHE_DIR = cache;
+    try {
+      const runner = path.join(
+        tempRoot('provenance-installed-'),
+        'node_modules',
+        '@acme',
+        'harness',
+      );
+      fs.mkdirSync(path.join(runner, 'dist'), { recursive: true });
+      fs.writeFileSync(
+        path.join(runner, 'package.json'),
+        JSON.stringify({ name: '@acme/harness', version: '1.0.0' }),
+      );
+      fs.writeFileSync(path.join(runner, 'dist', 'index.js'), 'export const v = 1;\n');
+      const fingerprint = () =>
+        sourceSnapshot(runner, undefined, [], ['dist', 'package.json']).sourceFingerprint;
+      const first = fingerprint();
+      const records = path.join(cache, 'provenance');
+      const [record] = fs.existsSync(records) ? fs.readdirSync(records) : [];
+      assert.ok(record, 'the fingerprint is cached for the installed version');
+      // While no file changed, the cached hash is reused: a planted value comes back.
+      const file = path.join(records, record);
+      const cached = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+      fs.writeFileSync(file, JSON.stringify({ ...cached, fingerprint: 'planted' }));
+      assert.equal(fingerprint(), 'planted');
+      // An edit in place changes a file's size or time, so the bytes are hashed again.
+      fs.writeFileSync(path.join(runner, 'dist', 'index.js'), 'export const v = 22;\n');
+      const edited = fingerprint();
+      assert.notEqual(edited, 'planted');
+      assert.notEqual(edited, first);
+    } finally {
+      if (previous === undefined) delete process.env.FARMSLOT_RECIPE_CACHE_DIR;
+      else process.env.FARMSLOT_RECIPE_CACHE_DIR = previous;
+    }
+  });
+
   test('a colocated library ignores generated output but still binds its recipe source', async () => {
     const product = tempRoot('colocated-library-');
     const recipePath = path.join(product, 'smoke.recipe.json');
@@ -1500,6 +1641,16 @@ describe('run report', () => {
 });
 
 describe('live adapter scripts', () => {
+  // Bundles are cached per user; each test keeps its own cache.
+  const cachedEnv = process.env.FARMSLOT_RECIPE_CACHE_DIR;
+  beforeEach(() => {
+    process.env.FARMSLOT_RECIPE_CACHE_DIR = tempRoot('live-adapter-cache-');
+  });
+  afterEach(() => {
+    if (cachedEnv === undefined) delete process.env.FARMSLOT_RECIPE_CACHE_DIR;
+    else process.env.FARMSLOT_RECIPE_CACHE_DIR = cachedEnv;
+  });
+
   function context(root: string) {
     return {
       nodeId: 'probe',
@@ -1636,6 +1787,260 @@ describe('live adapter scripts', () => {
       prepared: approved,
     });
     assert.deepEqual(executed?.result, { value: 'approved' });
+  });
+
+  test('reuses a bundle until one of its inputs changes', async () => {
+    const root = tempRoot('cached-adapter-');
+    const actionPath = path.join(root, 'web', 'team', 'probe.mjs');
+    const helperPath = path.join(root, 'web', 'team', 'helper.mjs');
+    fs.mkdirSync(path.dirname(actionPath), { recursive: true });
+    fs.writeFileSync(helperPath, 'export const value = 1;\n');
+    fs.writeFileSync(actionPath, `import { value } from './helper.mjs';\nconsole.log(value);\n`);
+    const recorder = new CallTimingRecorder();
+    const prepare = () =>
+      withCallTimings(recorder, () =>
+        prepareLiveAdapterScript({
+          platform: 'web',
+          action: 'team.probe',
+          namespace: 'shop',
+          implementationRoot: root,
+        }),
+      );
+    const first = await prepare();
+    const second = await prepare();
+    assert.ok(first && second);
+    assert.equal(second.sourceText, first.sourceText);
+    assert.equal(second.sourceDigest, first.sourceDigest);
+    assert.deepEqual(
+      [recorder.snapshot().work.liveAdapterBuilt, recorder.snapshot().work.liveAdapterCached],
+      [1, 1],
+    );
+    fs.writeFileSync(helperPath, 'export const value = 2;\n');
+    const changed = await prepare();
+    assert.notEqual(changed?.sourceDigest, first.sourceDigest);
+    assert.match(changed?.sourceText ?? '', /value = 2/u);
+    assert.equal(recorder.snapshot().work.liveAdapterBuilt, 2);
+  });
+
+  test("rebuilds a cached bundle when a package's import map changes", async () => {
+    const root = tempRoot('cached-import-map-');
+    const dir = path.join(root, 'web', 'team');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'a.mjs'), 'export const value = "from a";\n');
+    fs.writeFileSync(path.join(dir, 'b.mjs'), 'export const value = "from b";\n');
+    const imports = (target: string) =>
+      fs.writeFileSync(
+        path.join(root, 'package.json'),
+        JSON.stringify({ type: 'module', imports: { '#helper': target } }),
+      );
+    imports('./web/team/a.mjs');
+    fs.writeFileSync(
+      path.join(dir, 'probe.mjs'),
+      `import { value } from '#helper';\nconsole.log(value);\n`,
+    );
+    const prepare = () =>
+      prepareLiveAdapterScript({
+        platform: 'web',
+        action: 'team.probe',
+        namespace: 'shop',
+        implementationRoot: root,
+      });
+    assert.match((await prepare())?.sourceText ?? '', /from a/u);
+    imports('./web/team/b.mjs');
+    assert.match((await prepare())?.sourceText ?? '', /from b/u);
+  });
+
+  test('does not cache a bundle whose input is stamped exactly at the build start', async (t) => {
+    const root = tempRoot('coarse-adapter-');
+    const dir = path.join(root, 'web', 'team');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'probe.mjs'), 'console.log("probe");\n');
+    // A coarse clock: the build starts on a whole second and the input is stamped with it.
+    const start = (Math.floor(Date.now() / 1000) + 60) * 1000;
+    fs.utimesSync(path.join(dir, 'probe.mjs'), start / 1000, start / 1000);
+    t.mock.method(Date, 'now', () => start);
+    const recorder = new CallTimingRecorder();
+    const prepare = () =>
+      withCallTimings(recorder, () =>
+        prepareLiveAdapterScript({
+          platform: 'web',
+          action: 'team.probe',
+          namespace: 'shop',
+          implementationRoot: root,
+        }),
+      );
+    await prepare();
+    await prepare();
+    assert.equal(recorder.snapshot().work.liveAdapterCached, 0);
+  });
+
+  test('rebuilds when a package appears nearer than the one a cached bundle resolved', async () => {
+    const root = tempRoot('shadowed-adapter-');
+    const dir = path.join(root, 'web', 'team');
+    const install = (at: string, value: string) => {
+      const pkg = path.join(at, 'node_modules', 'helper-pkg');
+      fs.mkdirSync(pkg, { recursive: true });
+      fs.writeFileSync(
+        path.join(pkg, 'package.json'),
+        JSON.stringify({ name: 'helper-pkg', main: 'index.js' }),
+      );
+      fs.writeFileSync(path.join(pkg, 'index.js'), `module.exports = ${JSON.stringify(value)};\n`);
+    };
+    fs.mkdirSync(dir, { recursive: true });
+    install(root, 'from the root');
+    fs.writeFileSync(
+      path.join(dir, 'probe.mjs'),
+      `import value from 'helper-pkg';\nconsole.log(value);\n`,
+    );
+    const prepare = () =>
+      prepareLiveAdapterScript({
+        platform: 'web',
+        action: 'team.probe',
+        namespace: 'shop',
+        implementationRoot: root,
+      });
+    assert.match((await prepare())?.sourceText ?? '', /from the root/u);
+    install(dir, 'from beside the action');
+    assert.match((await prepare())?.sourceText ?? '', /from beside the action/u);
+  });
+
+  test('reuses a bundle whose bare import resolves to a package at the library root', async () => {
+    const root = tempRoot('bare-import-adapter-');
+    const dir = path.join(root, 'web', 'team');
+    const pkg = path.join(root, 'node_modules', 'helper-pkg');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(pkg, { recursive: true });
+    fs.writeFileSync(
+      path.join(pkg, 'package.json'),
+      JSON.stringify({ name: 'helper-pkg', main: 'index.js' }),
+    );
+    fs.writeFileSync(path.join(pkg, 'index.js'), 'module.exports = "helper";\n');
+    fs.writeFileSync(
+      path.join(dir, 'probe.mjs'),
+      `import value from 'helper-pkg';\nconsole.log(value);\n`,
+    );
+    // Files written before the build, whose folders the first build must not read as changing.
+    const earlier = new Date(Date.now() - 60_000);
+    for (const entry of [pkg, path.dirname(pkg), dir, path.dirname(dir), root]) {
+      fs.utimesSync(entry, earlier, earlier);
+    }
+    const recorder = new CallTimingRecorder();
+    const prepare = () =>
+      withCallTimings(recorder, () =>
+        prepareLiveAdapterScript({
+          platform: 'web',
+          action: 'team.probe',
+          namespace: 'shop',
+          implementationRoot: root,
+        }),
+      );
+    await prepare();
+    await prepare();
+    assert.deepEqual(
+      [recorder.snapshot().work.liveAdapterBuilt, recorder.snapshot().work.liveAdapterCached],
+      [1, 1],
+    );
+  });
+
+  test('does not cache a bundle when a dangling symlink sits above an absent input', async () => {
+    const root = tempRoot('dangling-link-adapter-');
+    const dir = path.join(root, 'web', 'team');
+    const pkg = path.join(root, 'node_modules', 'helper-pkg');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(pkg, { recursive: true });
+    fs.writeFileSync(
+      path.join(pkg, 'package.json'),
+      JSON.stringify({ name: 'helper-pkg', main: 'index.js' }),
+    );
+    fs.writeFileSync(path.join(pkg, 'index.js'), 'module.exports = "helper";\n');
+    fs.writeFileSync(
+      path.join(dir, 'probe.mjs'),
+      `import value from 'helper-pkg';\nconsole.log(value);\n`,
+    );
+    // A node_modules link into a package store that is gone.
+    fs.symlinkSync(path.join(root, 'missing-store'), path.join(dir, 'node_modules'));
+    const earlier = new Date(Date.now() - 60_000);
+    for (const entry of [pkg, path.dirname(pkg), dir, path.dirname(dir), root]) {
+      fs.utimesSync(entry, earlier, earlier);
+    }
+    const recorder = new CallTimingRecorder();
+    const prepare = () =>
+      withCallTimings(recorder, () =>
+        prepareLiveAdapterScript({
+          platform: 'web',
+          action: 'team.probe',
+          namespace: 'shop',
+          implementationRoot: root,
+        }),
+      );
+    await prepare();
+    await prepare();
+    assert.equal(recorder.snapshot().work.liveAdapterCached, 0);
+  });
+
+  test('does not cache a bundle when a folder of an absent input changed during the build', async () => {
+    const root = tempRoot('vanishing-manifest-adapter-');
+    const dir = path.join(root, 'web', 'team');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'probe.mjs'), 'console.log("probe");\n');
+    // A manifest deleted after esbuild resolved through it leaves only its folder's new time.
+    const later = new Date(Date.now() + 60_000);
+    fs.utimesSync(dir, later, later);
+    const recorder = new CallTimingRecorder();
+    const prepare = () =>
+      withCallTimings(recorder, () =>
+        prepareLiveAdapterScript({
+          platform: 'web',
+          action: 'team.probe',
+          namespace: 'shop',
+          implementationRoot: root,
+        }),
+      );
+    await prepare();
+    await prepare();
+    assert.equal(recorder.snapshot().work.liveAdapterCached, 0);
+  });
+
+  test('bundles JSON as written, even when it contains import.meta.url', async () => {
+    const root = tempRoot('json-adapter-');
+    const dir = path.join(root, 'web', 'team');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'data.json'), JSON.stringify({ text: 'see import.meta.url' }));
+    fs.writeFileSync(
+      path.join(dir, 'probe.mjs'),
+      `import data from './data.json' with { type: 'json' };\nconsole.log(data.text);\n`,
+    );
+    const prepared = await prepareLiveAdapterScript({
+      platform: 'web',
+      action: 'team.probe',
+      namespace: 'shop',
+      implementationRoot: root,
+    });
+    assert.match(prepared?.sourceText ?? '', /see import\.meta\.url/u);
+  });
+
+  test('does not cache a bundle whose input changed while it was built', async () => {
+    const root = tempRoot('racing-adapter-');
+    const dir = path.join(root, 'web', 'team');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'probe.mjs'), 'console.log("probe");\n');
+    // A modification time at or after the build's start reads as a write during it.
+    const later = new Date(Date.now() + 60_000);
+    fs.utimesSync(path.join(dir, 'probe.mjs'), later, later);
+    const recorder = new CallTimingRecorder();
+    const prepare = () =>
+      withCallTimings(recorder, () =>
+        prepareLiveAdapterScript({
+          platform: 'web',
+          action: 'team.probe',
+          namespace: 'shop',
+          implementationRoot: root,
+        }),
+      );
+    await prepare();
+    await prepare();
+    assert.equal(recorder.snapshot().work.liveAdapterBuilt, 2);
+    assert.equal(recorder.snapshot().work.liveAdapterCached, 0);
   });
 
   test('rejects computed dynamic imports unless runtime imports are allowed', async () => {

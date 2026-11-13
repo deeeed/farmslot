@@ -12,6 +12,16 @@ import { type TaskOperation, validateOperationRecord } from '@farmslot/protocol'
  * setuid /bin/ps inside any sandbox (EPERM). The identity is then unknown, not absent.
  */
 export function processIdentity(pid: number): string | null | undefined {
+  if (pid === process.pid && ownIdentity) return ownIdentity.value;
+  const value = readProcessIdentity(pid);
+  // This process's own start time cannot change while it runs: read it once.
+  if (pid === process.pid) ownIdentity = { value };
+  return value;
+}
+
+let ownIdentity: { value: string | null | undefined } | undefined;
+
+function readProcessIdentity(pid: number): string | null | undefined {
   try {
     const value = execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
       encoding: 'utf8',
