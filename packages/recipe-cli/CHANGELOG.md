@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.5 - 2026-11-13
+
+- Republish the 0.35.4 sources against recipe-runner 0.46.14, adapter-sdk 0.27.4 and agent-runtime 0.45.11 so consumers load one copy of recipe-runner and adapter-sdk, including the CDP broker that honours `FARMSLOT_BLIND_BROKER_DIR`. Only the version and the dependency pins changed.
+
 ## 0.35.4 - 2026-11-12
 
 - `status --watch` groups the page into task, now, acceptance and checklist sections with colored headings, shows the approved implementation plan (`inputs/plan.md`, its hash, approver and base) and the active step, leads "now" with the innermost running operation, and keeps acceptance criteria to one line in a terminal.
