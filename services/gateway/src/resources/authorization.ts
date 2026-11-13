@@ -79,6 +79,9 @@ export function canReadResourceKey(
       if (key.ownerId !== 'gateway-copilot') return false;
       method = key.sessionId === undefined ? Methods.COPILOT_STATUS : Methods.CHAT_SESSION_CONTEXT;
       break;
+    case 'clipboard':
+      method = Methods.CLIP_LIST;
+      break;
     case 'configuration':
       method = Methods.CONFIG_PROJECTS;
       break;
@@ -119,8 +122,9 @@ export function canReadResourceKey(
       return false;
   }
   try {
-    authorizeGatewayMethod(runtime, state, method);
-    return true;
+    const reader = authorizeGatewayMethod(runtime, state, method);
+    // Clips are private to the principal that pushed them.
+    return key.family !== 'clipboard' || reader.id === key.ownerId;
   } catch (error) {
     if (
       error instanceof GatewayMethodError &&

@@ -37,6 +37,8 @@ export type ResourceKey =
     }
   | { family: 'assessment'; scope: 'farm'; assessmentId?: string }
   | { family: 'copilot'; ownerId: string; sessionId?: string }
+  /** One principal's clips; `ownerId` is the principal id. */
+  | { family: 'clipboard'; ownerId: string }
   | { family: 'gateway-update'; scope: 'gateway' }
   | { family: 'upstream'; integration: 'github' | 'packages' | 'providers'; queryId: string }
   /**
@@ -73,6 +75,7 @@ const RESOURCE_KEY_FAMILIES: Record<ResourceKey['family'], true> = {
   planning: true,
   assessment: true,
   copilot: true,
+  clipboard: true,
   'gateway-update': true,
   upstream: true,
 };

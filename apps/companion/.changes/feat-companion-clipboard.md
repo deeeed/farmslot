@@ -1,0 +1,1 @@
+- Add Clipboard under Advanced: tappable Links and copy-ready text agents sent you, one-tap Copy, and a banner when a new clip arrives.

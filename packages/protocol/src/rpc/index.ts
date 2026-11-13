@@ -3,6 +3,7 @@ export * from './acceptance-evidence.js';
 export * from './auth.js';
 export * from './backlog.js';
 export * from './chat.js';
+export * from './clip.js';
 export * from './config.js';
 export * from './copilot.js';
 export * from './copilot-runtime.js';

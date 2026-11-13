@@ -1,0 +1,1 @@
+- Add `clip.push` and `clip.list` with the `clipboard` resource key, so clients can show the last 20 clips an agent sent their principal.

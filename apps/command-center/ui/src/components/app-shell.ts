@@ -74,6 +74,7 @@ import './device-grid/device-grid.js';
 import './chat/chat-panel.js';
 import './config/config-panel.js';
 import './doctor/gateway-doctor.js';
+import './clipboard/clipboard-panel.js';
 
 import {
   COMMAND_CENTER_APP_VERSION,
@@ -170,6 +171,7 @@ type Route =
   | 'analytics'
   | 'config'
   | 'doctor'
+  | 'clipboard'
   | 'slot'
   | 'dev';
 
@@ -212,6 +214,7 @@ const NAV_ITEMS: NavItem[] = [
   { route: 'finetune', icon: '%', label: 'Finetune', maturity: 'alpha' },
   { route: 'config', icon: '~', label: 'Config' },
   { route: 'doctor', icon: '+', label: 'Doctor' },
+  { route: 'clipboard', icon: 'c', label: 'Clipboard' },
 ];
 
 // Alpha routes are hidden from the nav and blocked from direct hash
@@ -959,6 +962,7 @@ export class FarmApp extends LitElement {
       'analytics',
       'config',
       'doctor',
+      'clipboard',
     ];
     this.route = valid.includes(hash as Route) ? (hash as Route) : 'fleet';
     // Deep links to Setup while a gateway is connected land on the fleet
@@ -2089,6 +2093,8 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
         return html`<config-panel .initialPath=${this.configParam}></config-panel>`;
       case 'doctor':
         return html`<gateway-doctor></gateway-doctor>`;
+      case 'clipboard':
+        return html`<clipboard-panel></clipboard-panel>`;
       case 'slot':
         return html`<slot-view
           .slotId=${this.slotParam}

@@ -933,9 +933,11 @@ async function dispatchMessage(
         'Unsupported observed-read version',
       );
     // One typed adapter validates all marked reads. Domain params do not carry view flags.
-    // Visible-model preferences are principal-scoped too; their key needs the reader identity.
+    // Visible-model preferences and clips are principal-scoped too; their key needs the reader identity.
     const reader =
-      frame.method.startsWith('native.') || frame.method === Methods.RUNNER_VISIBLE_MODELS_GET
+      frame.method.startsWith('native.') ||
+      frame.method === Methods.RUNNER_VISIBLE_MODELS_GET ||
+      frame.method === Methods.CLIP_LIST
         ? authorizeGatewayMethod(authRuntime, state, frame.method)
         : undefined;
     // Real history cursor pages keep after/limit on the route; durable query identity excludes them.

@@ -1,0 +1,76 @@
+// clip.ts — clip.push / clip.list: the last few copy-ready snippets per principal.
+import { randomUUID } from 'node:crypto';
+
+import {
+  type Clip,
+  CLIP_HISTORY_LIMIT,
+  CLIP_LABEL_MAX_LENGTH,
+  CLIP_SOURCE_MAX_LENGTH,
+  CLIP_TEXT_MAX_BYTES,
+  clipLinkUrl,
+  type ClipListResult,
+  type ClipPushResult,
+  type Principal,
+} from '@farmslot/protocol';
+
+import { GatewayMethodError } from '../core/method-error.js';
+import { redactLogContent } from '../observability/log-registry.js';
+import { resourceRevisions } from '../resources/revisions.js';
+import { principalOwnerKey } from '../security/work-originator.js';
+
+// In memory only: clips are a short-lived copy buffer and are gone after a gateway restart.
+const clipsByOwner = new Map<string, Clip[]>();
+
+function ownerKey(principal: Principal): string {
+  return principalOwnerKey({ ownerId: principal.id, ownerGeneration: principal.generation });
+}
+
+function optionalText(value: unknown, name: string, max: number): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string')
+    throw new GatewayMethodError('INVALID_PARAMS', `${name} must be a string`);
+  const trimmed = value.trim();
+  if (trimmed.length > max)
+    throw new GatewayMethodError('INVALID_PARAMS', `${name} is longer than ${max} characters`);
+  return trimmed || undefined;
+}
+
+export function clipPush(principal: Principal, params: unknown): ClipPushResult {
+  const input = (params ?? {}) as Record<string, unknown>;
+  const kind = input.kind ?? 'text';
+  if (kind !== 'text' && kind !== 'link')
+    throw new GatewayMethodError('INVALID_PARAMS', "kind must be 'text' or 'link'");
+  if (typeof input.text !== 'string' || !input.text.trim())
+    throw new GatewayMethodError('INVALID_PARAMS', 'text is required');
+  const bytes = Buffer.byteLength(input.text, 'utf8');
+  if (bytes > CLIP_TEXT_MAX_BYTES)
+    throw new GatewayMethodError(
+      'INVALID_PARAMS',
+      `Clip text is ${bytes} bytes; the limit is ${CLIP_TEXT_MAX_BYTES}`,
+    );
+  if (kind === 'link' && !clipLinkUrl(input.text))
+    throw new GatewayMethodError('INVALID_PARAMS', 'A link clip must be one http(s) URL');
+  const label = optionalText(input.label, 'label', CLIP_LABEL_MAX_LENGTH);
+  const source = optionalText(input.source, 'source', CLIP_SOURCE_MAX_LENGTH);
+  const clip: Clip = {
+    id: randomUUID(),
+    kind,
+    text: redactLogContent(kind === 'link' ? input.text.trim() : input.text),
+    ...(label ? { label: redactLogContent(label) } : {}),
+    ...(source ? { source } : {}),
+    createdAt: new Date().toISOString(),
+  };
+  const key = ownerKey(principal);
+  clipsByOwner.set(key, [clip, ...(clipsByOwner.get(key) ?? [])].slice(0, CLIP_HISTORY_LIMIT));
+  resourceRevisions.advance({ family: 'clipboard', ownerId: principal.id });
+  return { clip };
+}
+
+/** Newest first. */
+export function clipList(principal: Principal): ClipListResult {
+  return { clips: [...(clipsByOwner.get(ownerKey(principal)) ?? [])] };
+}
+
+export function clearClipsForTests(): void {
+  clipsByOwner.clear();
+}

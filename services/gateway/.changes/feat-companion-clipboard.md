@@ -1,0 +1,1 @@
+- Keep the last 20 clips per principal in memory, redact them like logs, and notify only that principal's clients when one arrives.

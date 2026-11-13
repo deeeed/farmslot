@@ -476,4 +476,8 @@ export const Methods = {
   RUNNER_MODEL_CATALOG: 'runner.modelCatalog',
   RUNNER_VISIBLE_MODELS_GET: 'runner.visibleModels.get',
   RUNNER_VISIBLE_MODELS_SET: 'runner.visibleModels.set',
+
+  // Copy-ready text and links an agent hands its principal's clients.
+  CLIP_PUSH: 'clip.push',
+  CLIP_LIST: 'clip.list',
 } as const;

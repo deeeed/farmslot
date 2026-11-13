@@ -788,6 +788,19 @@ export const RESOURCE_QUERY_DEFINITIONS = {
       return [{ family: 'profiles', scope: 'owner', ownerId: readerId }];
     },
   },
+  // The reader's own clips; clip.push stays imperative.
+  [Methods.CLIP_LIST]: {
+    persisted: true,
+    maxBytes: 2 * mb,
+    retention: { maxEntries: 4, maxBytes: 2 * mb },
+    live: true,
+    requiresObservedRead: true,
+    normalizeParams: (params: unknown) => domainParams(params, []),
+    dependencies: (_params: unknown, readerId?: string) => {
+      if (!readerId) throw new Error('Clips require the authenticated reader');
+      return [{ family: 'clipboard', ownerId: readerId }];
+    },
+  },
   // D07 observations. Their imperative siblings are deliberately absent.
   [Methods.PR_WATCH_LIST]: domainDefinition,
   [Methods.PR_WATCH_GET]: {

@@ -318,6 +318,7 @@ import {
   chatSessions,
   chatSessionsBulkDelete,
 } from '../methods/chat.js';
+import { clipList, clipPush } from '../methods/clip.js';
 import {
   configGitHubAccounts,
   configPool,
@@ -909,6 +910,10 @@ async function routeAuthorizedMethod(
       return runnerVisibleModelsGet(p);
     case Methods.RUNNER_VISIBLE_MODELS_SET:
       return runnerVisibleModelsSet(p);
+    case Methods.CLIP_PUSH:
+      return clipPush(authorizeGatewayMethod(authRuntime, state, method), params);
+    case Methods.CLIP_LIST:
+      return clipList(authorizeGatewayMethod(authRuntime, state, method));
 
     // Principal and credential management (authorization gate above is admin-only).
     case Methods.PRINCIPAL_CREATE:
