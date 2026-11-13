@@ -1,0 +1,1 @@
+- Preserve literal platform values in visual review artifact templates.

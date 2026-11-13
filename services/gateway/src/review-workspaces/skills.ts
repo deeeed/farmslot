@@ -8,6 +8,7 @@ import type {
   ReviewWorkspaceSupportConfig,
   Run,
 } from '@farmslot/protocol';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 import {
   currentProjectSources,
   type RawProjectJson,
@@ -374,11 +375,11 @@ export function bindReviewWorkspaceSupportValue(
   value: string,
   support: Pick<ReviewWorkspaceSupportBinding, 'path' | 'references'>,
 ): string {
-  let bound = value.replaceAll('{{support}}', support.path);
+  let bound = value.replaceAll('{{support}}', literalReplacement(support.path));
   for (const reference of support.references ?? [])
     bound = bound.replaceAll(
       referenceRepoPlaceholder(reference.name),
-      reference.missing ? '' : reference.path,
+      literalReplacement(reference.missing ? '' : reference.path),
     );
   return bound;
 }

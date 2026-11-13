@@ -1,14 +1,75 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { collectSupportFiles, supportHash } from './files.js';
+
+test('bundled provider CLI runs without node_modules and preserves literal guard arguments', async (t) => {
+  const { base } = await tree(t);
+  const bundle = path.join(base, 'code/support', 'a'.repeat(64));
+  for (const relativePath of [
+    'scripts/provider-account-cli.mjs',
+    'scripts/lib/provider-accounts.mjs',
+    'scripts/lib/provider-identity.mjs',
+  ]) {
+    const source = fileURLToPath(new URL(`../../../../${relativePath}`, import.meta.url));
+    for (const file of await collectSupportFiles(source, relativePath)) {
+      const destination = path.join(bundle, file.relativePath);
+      await mkdir(path.dirname(destination), { recursive: true });
+      await writeFile(destination, Buffer.from(file.contentBase64, 'base64'));
+    }
+  }
+
+  const configDir = path.join(base, 'config');
+  await mkdir(configDir);
+  const literal = "Synthetic $' | $& | $` | $$ | $1";
+  const label = `label ${literal}`;
+  const provider = `provider ${literal}`;
+  const observed = path.join(base, 'guard-arguments.json');
+  await writeFile(
+    path.join(configDir, 'provider-accounts.json'),
+    JSON.stringify({
+      version: 1,
+      accounts: { [label]: { provider, authPath: path.join(configDir, 'auth.json') } },
+      guard: {
+        enabled: true,
+        command: [
+          process.execPath,
+          '-e',
+          'require("node:fs").writeFileSync(process.argv[1], JSON.stringify(process.argv.slice(2))); console.log(JSON.stringify({ decision: "safe" }));',
+          observed,
+          '{{label}}',
+          '{{provider}}',
+        ],
+      },
+    }),
+  );
+  const { stdout } = await promisify(execFile)(
+    process.execPath,
+    [
+      path.join(bundle, 'scripts/provider-account-cli.mjs'),
+      'select',
+      '--home',
+      configDir,
+      '--slot-id',
+      'fixture-slot',
+      '--provider',
+      provider,
+      '--preferred',
+      label,
+    ],
+    { cwd: base, env: { PATH: process.env.PATH, FARMSLOT_HOME: configDir } },
+  );
+  assert.equal(JSON.parse(stdout).chosen, label);
+  assert.deepEqual(JSON.parse(await readFile(observed, 'utf8')), [label, provider]);
+});
 
 test('collectSupportFiles preserves binary bytes and executable mode', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'farmslot-support-'));

@@ -247,7 +247,7 @@ function validateActionCatalogEntry(
     ctx.findings.push(
       ...nodeResult.findings.map((finding) => ({
         ...finding,
-        path: finding.path.replace(/^workflow\.nodes\.example/u, examplePath),
+        path: finding.path.replace(/^workflow\.nodes\.example/u, () => examplePath),
       })),
     );
     if (action === 'call' && isNonEmptyString(example.ref) && isDynamicRecipeRef(example.ref)) {

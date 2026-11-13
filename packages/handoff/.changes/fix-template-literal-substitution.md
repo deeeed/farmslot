@@ -1,0 +1,1 @@
+- Preserve literal finding and evidence text in generated PR descriptions.
