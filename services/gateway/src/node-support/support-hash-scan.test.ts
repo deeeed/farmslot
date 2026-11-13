@@ -15,7 +15,8 @@ mock.module('@farmslot/protocol/node/farm-paths', {
 });
 const { makeRun } = await import('../run-engine/test-fixtures.js');
 const { resourceRevisions } = await import('../resources/revisions.js');
-const { referencedNodeSupportHashes } = await import('./activation.js');
+const { RUN_SUPPORT_SCAN_MAX_AGE_MS, RUN_SUPPORT_SCAN_PATTERNS, referencedNodeSupportHashes } =
+  await import('./activation.js');
 
 const hash = (index: number) => index.toString(16).padStart(64, '0');
 
@@ -94,6 +95,32 @@ test('each support root keeps its own scans and gives its own hashes', () => {
   assert.deepEqual(referencedNodeSupportHashes([a.run], '/other/support'), [hash(11)]);
   assert.deepEqual(referencedNodeSupportHashes([a.run], '/farm/support'), [hash(10)]);
   assert.equal(a.scans(), 2);
+});
+
+test('a scan older than the maximum age is read again, though the run did not change', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-13T00:00:00.000Z') });
+  const a = countedRun('cache-expiry', { dir: `/farm/support/${hash(12)}` });
+  referencedNodeSupportHashes([a.run], '/farm/support');
+  t.mock.timers.tick(RUN_SUPPORT_SCAN_MAX_AGE_MS - 1);
+  assert.deepEqual(referencedNodeSupportHashes([a.run], '/farm/support'), [hash(12)]);
+  assert.equal(a.scans(), 1);
+  // A writer that skips the stamp: its change goes unseen for one window at most.
+  a.run.steps[0].outputs = { dir: `/farm/support/${hash(13)}` };
+  t.mock.timers.tick(1);
+  assert.deepEqual(referencedNodeSupportHashes([a.run], '/farm/support'), [hash(13)]);
+  assert.equal(a.scans(), 2);
+});
+
+test('only the most recently used support roots keep their scans', () => {
+  const a = countedRun('cache-turnover', { dir: `/farm/support/${hash(14)}` });
+  for (let index = 0; index <= RUN_SUPPORT_SCAN_PATTERNS; index++)
+    referencedNodeSupportHashes([a.run], `/turnover/${index}`);
+  assert.equal(a.scans(), RUN_SUPPORT_SCAN_PATTERNS + 1);
+  // The latest root reuses its scan; the first root's scans were dropped for the ones after it.
+  referencedNodeSupportHashes([a.run], `/turnover/${RUN_SUPPORT_SCAN_PATTERNS}`);
+  assert.equal(a.scans(), RUN_SUPPORT_SCAN_PATTERNS + 1);
+  referencedNodeSupportHashes([a.run], '/turnover/0');
+  assert.equal(a.scans(), RUN_SUPPORT_SCAN_PATTERNS + 2);
 });
 
 test('one support-hash scan looks up the legacy support root once, however many strings it reads', () => {

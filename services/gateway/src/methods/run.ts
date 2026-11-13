@@ -2654,6 +2654,32 @@ export async function resolveRunDecision(
       }
     }
 
+    // Human gate for routed domain drafts: bind the consumed feedback to the
+    // rule BEFORE resolving, so a ledger failure leaves the card pending instead
+    // of recording an approval with no trace. Idempotent by (candidate, rule).
+    let releaseLearningsDraft: (() => void) | null = null;
+    if (decision.type === 'engine_learnings_draft') {
+      const { beginLearningsDraftResolution, recordLearningsDraftLanded } =
+        await import('../intelligence/learnings-router.js');
+      // Serializes landed/dismiss on one card; released once the resolution is persisted.
+      releaseLearningsDraft = beginLearningsDraftResolution(params.decisionId);
+      if (params.actionId === 'landed') {
+        try {
+          // A dismiss that won the lock during the import above already resolved
+          // the card; recheck before anything reaches the ledger.
+          assertDecisionStillUnresolved(params.runId, params.decisionId);
+          await recordLearningsDraftLanded(existing, decision);
+          assertDecisionStillUnresolved(params.runId, params.decisionId);
+        } catch (err) {
+          releaseLearningsDraft();
+          throw err;
+        }
+      }
+    }
+
+    // The stored decision changes only from here, with no await before the resolution
+    // publishes it: a refusal above leaves it as it was, and no reader sees a write the
+    // run's change stamp does not cover.
     // Both person authorities have passed before either receipt is written.
     if (attestation) decision.evidenceAttestation = attestation;
     // The gate shows the description approval publishes, not the reviewed one.
@@ -2689,29 +2715,6 @@ export async function resolveRunDecision(
         ...(params.selectionData ?? {}),
         ...(params.resourcePosture ? { resourcePosture: params.resourcePosture } : {}),
       };
-    }
-
-    // Human gate for routed domain drafts: bind the consumed feedback to the
-    // rule BEFORE resolving, so a ledger failure leaves the card pending instead
-    // of recording an approval with no trace. Idempotent by (candidate, rule).
-    let releaseLearningsDraft: (() => void) | null = null;
-    if (decision.type === 'engine_learnings_draft') {
-      const { beginLearningsDraftResolution, recordLearningsDraftLanded } =
-        await import('../intelligence/learnings-router.js');
-      // Serializes landed/dismiss on one card; released once the resolution is persisted.
-      releaseLearningsDraft = beginLearningsDraftResolution(params.decisionId);
-      if (params.actionId === 'landed') {
-        try {
-          // A dismiss that won the lock during the import above already resolved
-          // the card; recheck before anything reaches the ledger.
-          assertDecisionStillUnresolved(params.runId, params.decisionId);
-          await recordLearningsDraftLanded(existing, decision);
-          assertDecisionStillUnresolved(params.runId, params.decisionId);
-        } catch (err) {
-          releaseLearningsDraft();
-          throw err;
-        }
-      }
     }
 
     if (params.triageAssessmentId) decision.triageAssessmentId = params.triageAssessmentId;

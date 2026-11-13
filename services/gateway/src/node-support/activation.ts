@@ -80,8 +80,17 @@ interface RunSupportHashScan {
   /** The record that was read: a load, archive read or disk read gives a new object. */
   run: Run;
   stamp: string;
+  scannedAt: number;
   hashes: string[];
 }
+
+/**
+ * A scan is reused for at most this long, even if the run's stamp never changes: a writer that
+ * skips the stamp then leaves a referenced bundle unretained for one window, not for good.
+ */
+export const RUN_SUPPORT_SCAN_MAX_AGE_MS = 5 * 60_000;
+/** Support patterns whose scans are kept; the least recently used one goes first. */
+export const RUN_SUPPORT_SCAN_PATTERNS = 8;
 
 /** Each support pattern's last scan of each run, kept until the run changes or leaves the list. */
 const runSupportHashScans = new Map<string, Map<string, RunSupportHashScan>>();
@@ -96,8 +105,9 @@ function retainsNodeSupport(run: Run): boolean {
 }
 
 /**
- * A run is scanned again only when its record object or its change stamp differs from the last
- * scan (resources/run-changes.ts): a stale entry would let retention prune a referenced bundle.
+ * A run is scanned again when its record object or its change stamp differs from the last scan
+ * (resources/run-changes.ts), or when that scan is older than RUN_SUPPORT_SCAN_MAX_AGE_MS: a
+ * stale entry would let retention prune a referenced bundle.
  */
 export function referencedNodeSupportHashes(runs: readonly Run[], supportRoot?: string): string[] {
   // Built once per call: the scan reaches every string of every changed run record.
@@ -109,8 +119,16 @@ export function referencedNodeSupportHashes(runs: readonly Run[], supportRoot?: 
     `(?:${roots.map((root) => root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})/([a-f0-9]{64})(?=$|[\\s/"'\\\\])`,
     'g',
   );
-  let scans = runSupportHashScans.get(pattern.source);
-  if (!scans) runSupportHashScans.set(pattern.source, (scans = new Map()));
+  // Most recently used last: a retired root's scans, and the records they hold, go once
+  // RUN_SUPPORT_SCAN_PATTERNS more recent patterns are in use.
+  const scans = runSupportHashScans.get(pattern.source) ?? new Map<string, RunSupportHashScan>();
+  runSupportHashScans.delete(pattern.source);
+  runSupportHashScans.set(pattern.source, scans);
+  for (const source of runSupportHashScans.keys()) {
+    if (runSupportHashScans.size <= RUN_SUPPORT_SCAN_PATTERNS) break;
+    runSupportHashScans.delete(source);
+  }
+  const now = Date.now();
   const hashes = new Set<string>();
   const listed = new Set<string>();
   for (const run of runs) {
@@ -118,8 +136,12 @@ export function referencedNodeSupportHashes(runs: readonly Run[], supportRoot?: 
     listed.add(run.id);
     const stamp = runChangeStamp(run);
     let scan = scans.get(run.id);
-    if (scan?.run !== run || scan.stamp !== stamp) {
-      scan = { run, stamp, hashes: supportHashes(run, pattern) };
+    if (
+      scan?.run !== run ||
+      scan.stamp !== stamp ||
+      now - scan.scannedAt >= RUN_SUPPORT_SCAN_MAX_AGE_MS
+    ) {
+      scan = { run, stamp, scannedAt: now, hashes: supportHashes(run, pattern) };
       scans.set(run.id, scan);
     }
     for (const hash of scan.hashes) hashes.add(hash);
