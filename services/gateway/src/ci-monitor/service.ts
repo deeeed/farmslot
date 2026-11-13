@@ -613,6 +613,15 @@ export async function monitorCI(
       // gateway ever learns a PR merged, and a work-graph `merged` edge can only
       // read it off the run — so dropping it here strands every downstream node
       // behind an upstream that has actually shipped.
+      // The response can arrive after the run was relinked to another PR or the watch was
+      // stopped; it then describes a PR the run no longer has and must not settle it.
+      const current = getRun(runId);
+      if (signal.aborted || current?.prNumber !== prNumber) {
+        console.log(
+          `[ci-monitor] run ${runId.slice(0, 8)} — dropped PR #${prNumber} ${pr.prState}: the run now links PR ${current?.prNumber ?? 'none'}${signal.aborted ? ' and the watch stopped' : ''}`,
+        );
+        return buildOutcome('aborted');
+      }
       updateRun(runId, { prState: pr.prState, mergedAt: pr.mergedAt ?? null });
       broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
       return buildOutcome('passed');
