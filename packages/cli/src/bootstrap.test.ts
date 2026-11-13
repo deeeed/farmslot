@@ -14,6 +14,8 @@ interface BootstrapOptions {
   pinLayout?: 'legacy' | 2;
   symlinkPinStore?: boolean;
   externalBinLink?: boolean;
+  symlinkBinDirectory?: boolean;
+  decoyPinCli?: 'missing' | 'different';
   farmHome?: string;
 }
 
@@ -96,8 +98,25 @@ async function startBootstrap(t: TestContext, args: string[], options: Bootstrap
   if (options.externalBinLink) {
     const target = executable;
     executable = path.join(scratch, 'external-bin/farmslot-task');
-    await mkdir(path.dirname(executable));
-    await symlink(path.relative(path.dirname(executable), target), executable);
+    if (options.symlinkBinDirectory) {
+      const bin = path.join(scratch, '.local/bin');
+      await mkdir(bin, { recursive: true });
+      await symlink('.local/bin', path.join(scratch, 'bin'));
+      await symlink(path.relative(bin, target), path.join(bin, 'farmslot-task'));
+      executable = path.join(scratch, 'bin/farmslot-task');
+    } else {
+      if (options.decoyPinCli) {
+        const decoy = path.join(scratch, 'decoy/task-pins/fixture/cli');
+        executable = path.join(decoy, 'bin/farmslot-task');
+        if (options.decoyPinCli === 'different') {
+          const cli = path.join(decoy, 'packages/cli/bin/farmslot.mjs');
+          await mkdir(path.dirname(cli), { recursive: true });
+          await writeFile(cli, '// A different CLI must not select this home.');
+        }
+      }
+      await mkdir(path.dirname(executable), { recursive: true });
+      await symlink(path.relative(path.dirname(executable), target), executable);
+    }
   }
   const child = spawn(process.execPath, ['--import', cacheGuard, executable, ...args], {
     cwd: tmpdir(),
@@ -258,17 +277,33 @@ for (const pinLayout of ['legacy', 2] as const) {
     assert.deepEqual(await fixture.closed, { code: 23, signal: null });
   });
   for (const symlinkPinStore of [false, true]) {
-    test(`an external bin link recovers its home through a ${symlinkPinStore ? 'symlinked' : 'direct'} layout ${pinLayout} store`, async (t) => {
-      const fixture = await startBootstrap(t, ['task', 'verify', 'synthetic-task'], {
-        pinLayout,
-        symlinkPinStore,
-        externalBinLink: true,
+    for (const symlinkBinDirectory of [false, true]) {
+      test(`an external bin link${symlinkBinDirectory ? ' in a symlinked bin directory' : ''} recovers its home through a ${symlinkPinStore ? 'symlinked' : 'direct'} layout ${pinLayout} store`, async (t) => {
+        const fixture = await startBootstrap(t, ['task', 'verify', 'synthetic-task'], {
+          pinLayout,
+          symlinkPinStore,
+          externalBinLink: true,
+          symlinkBinDirectory,
+        });
+        assert.equal(fixture.ready.farmHome, fixture.home);
+        fixture.child.kill('SIGTERM');
+        assert.deepEqual(await fixture.closed, { code: 23, signal: null });
       });
-      assert.equal(fixture.ready.farmHome, fixture.home);
-      fixture.child.kill('SIGTERM');
-      assert.deepEqual(await fixture.closed, { code: 23, signal: null });
-    });
+    }
   }
+}
+
+for (const decoyPinCli of ['missing', 'different'] as const) {
+  test(`a pin-shaped link with a ${decoyPinCli} CLI cannot select the farm home`, async (t) => {
+    const fixture = await startBootstrap(t, ['task', 'verify', 'synthetic-task'], {
+      pinLayout: 'legacy',
+      externalBinLink: true,
+      decoyPinCli,
+    });
+    assert.equal(fixture.ready.farmHome, fixture.home);
+    fixture.child.kill('SIGTERM');
+    assert.deepEqual(await fixture.closed, { code: 23, signal: null });
+  });
 }
 
 for (const externalBinLink of [false, true]) {

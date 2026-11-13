@@ -21,7 +21,7 @@ if (configuredNodeBin) {
 }
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-function findPinHome(executable) {
+function findPinHome(executable, canonical) {
   for (
     let directory = resolve(dirname(executable), '..');
     dirname(directory) !== directory;
@@ -29,6 +29,8 @@ function findPinHome(executable) {
   ) {
     const store = dirname(dirname(directory));
     if (basename(directory) !== 'cli' || basename(store) !== 'task-pins') continue;
+    const pinCli = resolve(directory, 'packages/cli/bin/farmslot.mjs');
+    if (!existsSync(pinCli) || realpathSync(pinCli) !== canonical) continue;
     let home = dirname(store);
     const marker = resolve(home, '../config/instance.json');
     if (basename(home) === 'state' && existsSync(marker)) {
@@ -41,16 +43,16 @@ function findPinHome(executable) {
 
 // Recover the retained installation's home before loading checkout env or state.
 if (!process.env.FARMSLOT_HOME?.trim()) {
+  const canonical = realpathSync(fileURLToPath(import.meta.url));
   let executable = resolve(process.argv[1]);
-  let home = findPinHome(executable);
+  let home = findPinHome(executable, canonical);
   if (!home) {
-    const canonical = realpathSync(executable);
     // Follow file links first so directory links can retain the logical farm home.
     while (!home && executable !== canonical) {
       executable = lstatSync(executable).isSymbolicLink()
-        ? resolve(dirname(executable), readlinkSync(executable))
+        ? resolve(realpathSync(dirname(executable)), readlinkSync(executable))
         : canonical;
-      home = findPinHome(executable);
+      home = findPinHome(executable, canonical);
     }
   }
   if (home) process.env.FARMSLOT_HOME = home;

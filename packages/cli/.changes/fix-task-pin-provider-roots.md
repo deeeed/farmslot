@@ -1,1 +1,1 @@
-- Recover the farm home from a retained task CLI, including external bin links and symlinked pin stores, so generated helpers work without a shell home override.
+- Recover the farm home from a verified retained task CLI, including relative bin links through symlinked directories and symlinked pin stores, so generated helpers work without a shell home override.
