@@ -480,7 +480,13 @@ export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promi
         }
         cached = inspections.get(slot.slot);
       }
-      if (!cached || (!cached.pending && (cached.key !== key || cached.until < Date.now()))) {
+      if (
+        !cached ||
+        (!cached.pending &&
+          (cached.key !== key ||
+            cached.until < Date.now() ||
+            (cached.retryAt !== undefined && cached.retryAt <= Date.now())))
+      ) {
         const previous = cached;
         const bindingKey = workspaceObservationKey(slot, 'binding');
         const inspect = () =>

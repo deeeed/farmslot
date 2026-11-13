@@ -4,9 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
 
+import { WebSocket } from 'ws';
+
 import { slotRecoveryEligibility } from '@farmslot/protocol';
 
 import type { SlotVars } from '../../core/index.js';
+import type { ConnectedNode } from '../../fleet/machine-registry.js';
 
 import type { WorkspaceProbe } from './workspace-probe.js';
 
@@ -74,6 +77,15 @@ await writeFile(
   }),
 );
 await import('../../runtime/mock-pty.test-support.js');
+const registry = await import('../../fleet/machine-registry.js');
+let observedNode: ConnectedNode | undefined;
+mock.module('../../fleet/machine-registry.js', {
+  namedExports: {
+    ...registry,
+    getNode: (machine: string) =>
+      machine === 'fixture' && observedNode ? observedNode : registry.getNode(machine),
+  },
+});
 let probes = 0;
 let defaultRefMissing = false;
 let probeFailure: Error | undefined;
@@ -475,15 +487,13 @@ test('unchanged unavailable inspections wait sixty seconds without moving their 
   probeFailure = new Error('Read probe did not complete (exit 124)');
   const failed = await enrichFleetWorkspaces(await loadFleetStatus(true));
   assert.match(failed.slots[0]?.workspaceError ?? '', /exit 124/);
-  now += 16_000;
-  const retained = await enrichFleetWorkspaces(await loadFleetStatus(true));
-  assert.equal(
-    probes,
-    before + 1,
-    'unchanged unavailable workspace must not launch another inspection',
-  );
-  assert.match(retained.slots[0]?.workspaceError ?? '', /exit 124/);
-  now += 45_000;
+  for (let i = 0; i < 3; i++) {
+    now += 16_000;
+    const retained = await enrichFleetWorkspaces(await loadFleetStatus(true));
+    assert.equal(probes, before + 1, 'intermediate reads must not launch another inspection');
+    assert.match(retained.slots[0]?.workspaceError ?? '', /exit 124/);
+  }
+  now += 13_000;
   const retried = await enrichFleetWorkspaces(await loadFleetStatus(true));
   assert.equal(probes, before + 2, 'the original sixty-second deadline permits a retry');
   assert.equal(retried.slots[0]?.workspaceError, undefined);
@@ -536,4 +546,30 @@ test('an unchanged unavailable workspace retains its original observation time',
   assert.equal(probes, before);
   assert.equal(retained.slots[0]?.workspace, first.slots[0]?.workspace);
   assert.equal(retained.slots[0]?.workspace?.observedAt, first.slots[0]?.workspace?.observedAt);
+});
+
+test('a replacement node connection bypasses unavailable backoff immediately', async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  t.after(() => {
+    observedNode = undefined;
+  });
+  // ws supports address=null for an unattached server-side socket. Validate it at runtime;
+  // no connection, listener, file descriptor or timer is started.
+  const first: unknown = Reflect.construct(WebSocket, [null, undefined, {}]);
+  const second: unknown = Reflect.construct(WebSocket, [null, undefined, {}]);
+  assert.ok(first instanceof WebSocket);
+  assert.ok(second instanceof WebSocket);
+  observedNode = { machine: 'fixture', pid: 1, connectedAt: 'fixture', ws: first };
+  invalidateSlotWorkspaceObservations('cache-slot');
+  const before = probes;
+  probeFailure = new Error('node transport unavailable');
+  await enrichFleetWorkspaces(await loadFleetStatus(true));
+  now += 16_000;
+  await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(probes, before + 1, 'same connection keeps the failure');
+  observedNode = { ...observedNode, ws: second };
+  now += 1;
+  await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(probes, before + 2, 'new connection invalidates before the metadata interval');
 });
