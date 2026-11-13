@@ -511,6 +511,7 @@ import {
   slotShow,
   slotSoftRefresh,
 } from '../methods/slot.js';
+import { slotParked } from '../methods/slot/parked.js';
 import { slotActionList, slotActionRun } from '../methods/slot-actions.js';
 import {
   type SourceMutationCaller,
@@ -962,6 +963,8 @@ async function routeAuthorizedMethod(
       return slotPrepare(p as SlotPrepareParams, emit);
     case Methods.SLOT_RELEASE:
       return slotRelease(p as SlotReleaseParams, emit);
+    case Methods.SLOT_PARKED:
+      return slotParked(p, emit);
     case Methods.SLOT_RECYCLE:
       return slotRecycle(p as SlotRecycleParams, emit);
     case Methods.SLOT_REFRESH:

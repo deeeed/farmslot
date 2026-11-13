@@ -11,6 +11,7 @@ import {
   type SlotCommandResult,
   type SlotFixtureRefreshResult,
   type SlotMonitorResult,
+  type SlotParkedResult,
   type SlotRefreshParams,
   type SlotRefreshResult,
   slotWorkspaceIdentity,
@@ -113,6 +114,57 @@ function refreshFailureMessage(slotId: string, result: SlotRefreshResult): strin
 
 export function registerSlotCommand(program: Command): void {
   const slot = program.command('slot').description('Slot lifecycle operations');
+
+  const parked = slot.command('parked').description('List or restore locally saved work');
+  parked
+    .command('list')
+    .argument('<id>', 'Slot ID')
+    .action(async (id: string, _opts: unknown, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
+      try {
+        const result = await client.call<SlotParkedResult>('slot.parked', {
+          action: 'list',
+          slotId: resolveSlotId(id),
+        });
+        if (emit.machine) emit.ok(result);
+        else if (result.action === 'list') {
+          for (const entry of result.receipts)
+            output.write(
+              `${entry.ref} ${entry.branch} ${entry.kind ?? 'commits'} ${entry.parkedAt}\n`,
+            );
+          for (const entry of result.legacy) output.write(`${entry.ref} ${entry.reason}\n`);
+          if (result.summary.count === 0) output.write('No parked work\n');
+        }
+      } catch (error) {
+        emit.fail(error);
+      }
+    });
+  parked
+    .command('restore')
+    .argument('<id>', 'Slot ID')
+    .argument('<ref>', 'Exact parked ref')
+    .action(async (id: string, ref: string, _opts: unknown, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
+      try {
+        const connection = await client.connect();
+        try {
+          const result = await connection.call<SlotParkedResult>(
+            'slot.parked',
+            { action: 'restore', slotId: resolveSlotId(id), ref },
+            { timeoutMs: 180_000 },
+          );
+          if (emit.machine) emit.ok(result);
+          else if (result.action === 'restore')
+            output.write(`Restored ${result.branch} at ${result.headSha}\n`);
+        } finally {
+          connection.close();
+        }
+      } catch (error) {
+        emit.fail(error);
+      }
+    });
 
   slot
     .command('current')

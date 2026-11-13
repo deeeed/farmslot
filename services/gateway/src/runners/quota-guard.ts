@@ -2,8 +2,9 @@
  * Optional advisory quota preflight (CodexBar guard, etc.).
  * Off by default; fail-open on any uncertainty. Never writes the exhaustion ledger.
  */
-
 import { spawn } from 'node:child_process';
+
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 
 import { loadProviderAccountsConfig, type ProviderAccountsConfig } from './provider-accounts.js';
 
@@ -118,8 +119,8 @@ export async function consultQuotaGuard(options: {
   // Best-effort inject account label if the template uses a placeholder.
   const argv = command.map((part) =>
     part
-      .replaceAll('{{account}}', options.accountLabel ?? '')
-      .replaceAll('{{provider}}', options.provider ?? 'codex'),
+      .replaceAll('{{account}}', literalReplacement(options.accountLabel ?? ''))
+      .replaceAll('{{provider}}', literalReplacement(options.provider ?? 'codex')),
   );
 
   try {

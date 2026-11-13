@@ -1,0 +1,1 @@
+- Preserve literal configured values and review findings during hook and task template expansion.

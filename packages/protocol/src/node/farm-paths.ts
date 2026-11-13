@@ -514,15 +514,37 @@ interface CachedFarmPaths {
 const processPaths: CachedFarmPaths[] = [];
 const PROCESS_PATHS_LIMIT = 32;
 
+/**
+ * Each home's marker stamp, read at most once per interval: gateway paths resolve thousands of
+ * times a minute and each read was a `stat`. Only `farmslot paths migrate` and node deploys write
+ * the marker; this process forgets the stamp when it writes one (`forgetFarmInstanceMarkers`),
+ * and a marker another process writes is seen within one interval. Migration refuses a running
+ * gateway, so that interval never decides which layout a live gateway serves.
+ */
+const MARKER_RECHECK_MS = 1_000;
+const markerStamps = new Map<string, { stamp: string; readAt: number }>();
+
 function instanceMarker(home: string): string {
+  const now = Date.now();
+  const known = markerStamps.get(home);
+  if (known && now >= known.readAt && now - known.readAt < MARKER_RECHECK_MS) return known.stamp;
+  let stamp: string;
   try {
     const info = statSync(path.join(home, 'config', 'instance.json'));
-    return `${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
+    stamp = `${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
   } catch (error) {
     // A missing marker selects legacy; permission and other filesystem errors must surface.
     if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
-    return 'absent';
+    stamp = 'absent';
   }
+  if (markerStamps.size >= PROCESS_PATHS_LIMIT && !known) markerStamps.clear();
+  markerStamps.set(home, { stamp, readAt: now });
+  return stamp;
+}
+
+/** This process wrote or moved an instance marker: the next resolution reads it again. */
+export function forgetFarmInstanceMarkers(): void {
+  markerStamps.clear();
 }
 
 export function currentFarmPaths(

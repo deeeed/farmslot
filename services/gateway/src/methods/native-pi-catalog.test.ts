@@ -30,8 +30,10 @@ await writeFile(path.join(home, 'scripts/dev.sh'), '#!/bin/sh\n');
 await writeFile(path.join(home, 'services/gateway/package.json'), '{}');
 await writeFile(path.join(home, 'projects/fixture/project.json'), '{}');
 const checkout = fileURLToPath(new URL('../../../../', import.meta.url));
-for (const relativePath of RUNNER_OBSERVABILITY_COPY_PATHS)
+for (const relativePath of RUNNER_OBSERVABILITY_COPY_PATHS) {
+  await mkdir(path.dirname(path.join(home, relativePath)), { recursive: true });
   await copyFile(path.join(checkout, relativePath), path.join(home, relativePath));
+}
 const { piNativeAdapter } = await import('@farmslot/agent-runtime/native/pi');
 const { nodeModelCatalogs } = await import('../runners/model-catalog.js');
 const { NodeModelCatalogObservation } =

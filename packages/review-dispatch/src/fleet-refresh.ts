@@ -109,11 +109,12 @@ export function fleetWorkspaceRow(slot: SlotStatus): FleetWorkspaceRow {
         : work?.recovery
           ? 'Retry release and update to main'
           : 'Release and update to main',
-    warning: eligibility.confirmationRequired
-      ? `${work?.dirtyCount ?? 0} changed files, ${work?.unpublishedCount ?? 0} unpublished commits on ${work?.branch ?? slot.branch}`
-      : eligibility.allowed && work && parksSlotCommits(work)
-        ? `${work.unpublishedCount} unpushed commit${work.unpublishedCount === 1 ? '' : 's'} on ${work.branch} will be parked under refs/farmslot/parked before the update`
-        : (eligibility.detail ?? slot.workspaceError ?? ''),
+    warning:
+      eligibility.allowed && work?.dirtyCount
+        ? `${work.dirtyCount} changed files on ${work.branch} will be parked before the update`
+        : eligibility.allowed && work && parksSlotCommits(work)
+          ? `${work.unpublishedCount} unpushed commit${work.unpublishedCount === 1 ? '' : 's'} on ${work.branch} will be parked under refs/farmslot/parked before the update`
+          : (eligibility.detail ?? slot.workspaceError ?? ''),
     eligibility,
   };
 }
@@ -535,4 +536,14 @@ export class FleetRefreshViewModel {
     this.detach();
     this.listeners.clear();
   }
+}
+
+/** Both fleet renderers consume only the held bounded inventory summary. */
+export function fleetSlotParkedWork(slot: SlotStatus): string | null {
+  const count = slot.parkedWork?.count;
+  return count === undefined || count === null
+    ? 'Parked work unknown'
+    : count > 0
+      ? `${count} parked snapshot${count === 1 ? '' : 's'}`
+      : null;
 }

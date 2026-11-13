@@ -9,13 +9,14 @@ import { type PiModelCostMetadata, runSessionUsage } from './session-usage.js';
 
 const fixture = fileURLToPath(new URL('../test/fixtures/pi-session.jsonl', import.meta.url));
 
-test('Pi total extraction uses recorded tokens and cost from real assistant JSONL', async () => {
+test('Pi extraction keeps tokens but rejects unquoted LiteLLM SDK cost', async () => {
   const output = await runSessionUsage({
     repo: '',
     slotId: 'pi-test',
     action: 'total',
     forcedPath: fixture,
     forcedRunner: 'pi',
+    environment: {},
   });
   assert.match(output, /turns=3\n/);
   assert.match(output, /input_tokens=8\n/);
@@ -23,10 +24,11 @@ test('Pi total extraction uses recorded tokens and cost from real assistant JSON
   assert.match(output, /cache_creation=38822\n/);
   assert.match(output, /cache_read=58613\n/);
   assert.match(output, /total_tokens=98185\n/);
-  assert.match(output, /cost_usd=0\.2324/);
+  assert.doesNotMatch(output, /cost_usd=/);
+  assert.match(output, /cost_reason=No verified model price/);
 });
 
-test('Pi never estimates a missing native cost or reports absent usage as zero', async (t) => {
+test('Pi without a price quote preserves missing cost and rejects absent usage', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'pi-usage-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const file = path.join(root, 'session.jsonl');
@@ -42,6 +44,7 @@ test('Pi never estimates a missing native cost or reports absent usage as zero',
     action: 'total',
     forcedPath: file,
     forcedRunner: 'pi',
+    environment: {},
   });
   assert.doesNotMatch(output, /cost_usd=/);
   await writeFile(file, JSON.stringify(records[0]) + '\n');
@@ -52,6 +55,7 @@ test('Pi never estimates a missing native cost or reports absent usage as zero',
       action: 'total',
       forcedPath: file,
       forcedRunner: 'pi',
+      environment: {},
     }),
     /no assistant usage/,
   );
@@ -98,6 +102,7 @@ test('unknown provider pricing cannot turn Pi SDK placeholder zeros into a compl
       action: 'total',
       forcedPath: file,
       forcedRunner: 'pi',
+      environment: {},
     });
   };
   assert.doesNotMatch(await summarize(null, message.message.usage), /cost_usd=/);
@@ -130,7 +135,7 @@ test('unknown provider pricing cannot turn Pi SDK placeholder zeros into a compl
   assert.doesNotMatch(await summarize(paid, message.message.usage), /cost_usd=/);
   assert.match(
     await summarize(paid, { ...message.message.usage, cost: { total: 0.00028 } }),
-    /cost_usd=0\.0003/,
+    /cost_usd=0\.0002800000/,
   );
   const noUsage = { ...message.message.usage, input: 0, output: 0 };
   assert.doesNotMatch(await summarize(paid, noUsage), /cost_usd=/);
@@ -151,7 +156,7 @@ test('unknown provider pricing cannot turn Pi SDK placeholder zeros into a compl
   );
   assert.match(
     await summarize(tiered, { ...message.message.usage, input: 200001, cost: { total: 0.800084 } }),
-    /cost_usd=0\.8001/,
+    /cost_usd=0\.8000840000/,
   );
   assert.doesNotMatch(
     await summarize(
@@ -172,6 +177,6 @@ test('unknown provider pricing cannot turn Pi SDK placeholder zeros into a compl
       { ...paid, cacheWrite1h: 4 },
       { ...message.message.usage, cacheWrite: 20, cacheWrite1h: 20, cost: { total: 0.00036 } },
     ),
-    /cost_usd=0\.0004/,
+    /cost_usd=0\.0003600000/,
   );
 });

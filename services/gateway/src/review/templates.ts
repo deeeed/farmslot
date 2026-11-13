@@ -18,6 +18,7 @@ import {
   type Run,
   ticketCriteriaAsRegistered,
 } from '@farmslot/protocol';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 import { expandSourceBindings } from '@farmslot/slot-config';
 
 import {
@@ -345,7 +346,7 @@ export async function expandReviewTemplate(
       throw new Error(
         'Review execution_templates must select both static-code and full-live templates',
       );
-    const selected = resolveConfiguredExecutionTemplateForSlot(configured, {
+    const selected = await resolveConfiguredExecutionTemplateForSlot(configured, {
       flow: 'review',
       platform: vars.platform,
       runMode: 'autonomous',
@@ -477,7 +478,7 @@ Use the task's mark wrapper for this reviewer checklist. Preserve the parent wor
   // ports/ids, so re-expanding them in the second pass is a non-issue.
   let expanded = template;
   for (const [key, val] of Object.entries(replacements)) {
-    expanded = expanded.replaceAll(`{{${key}}}`, val);
+    expanded = expanded.replaceAll(`{{${key}}}`, literalReplacement(val));
   }
   // Second pass: slot resources, project.json vars, reference repos — same
   // coverage as CI-fix task rendering, so templates can use {{recipe_*}} etc.

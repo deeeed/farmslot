@@ -8,10 +8,7 @@ import {
 import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { primaryReviewedHeadForSession } from '../review/session-mode.js';
-import {
-  runnerRetainedSessionHandoff,
-  runnerSupportsNativeTaskReuse,
-} from '../runners/registry.js';
+import { runnerSupportsSessionContinuation } from '../runners/registry.js';
 import {
   deliverPromptToRetainedRunnerSession,
   type RunnerSessionReactivationOptions,
@@ -33,6 +30,7 @@ export type RepeatReviewResumePlan =
   | { kind: 'fresh' }
   | { kind: 'resume'; binding: RepeatReviewResumeBinding }
   | { kind: 'native-resume'; binding: Omit<RepeatReviewResumeBinding, 'runnerSessionPath'> }
+  | { kind: 'delta-cold'; trace: ReviewSessionTrace }
   | { kind: 'refused'; reason: ReviewSessionRefusalReason };
 
 export type RepeatReviewResumeAttempt =
@@ -78,13 +76,10 @@ export function resolveRepeatReviewResumePlan(
   const reviewId = context.session?.reviewId;
   if (!reviewId) return { kind: 'refused', reason: 'missing-session' };
   const native = current.transport === 'native';
-  if (
-    native
-      ? !runnerSupportsNativeTaskReuse(runner)
-      : runnerRetainedSessionHandoff(runner) !== 'resume-with-prompt'
-  ) {
-    return { kind: 'refused', reason: 'unsupported-runner' };
-  }
+  const supportsContinuation = runnerSupportsSessionContinuation(
+    runner,
+    native ? 'native' : 'tmux',
+  );
   if (
     !prior ||
     prior.id !== context.priorRunId ||
@@ -151,20 +146,21 @@ export function resolveRepeatReviewResumePlan(
         candidate.reviewId === reviewId &&
         candidate.runner === runner &&
         candidate.slotId === current.slotId &&
-        candidate.runnerSessionId?.trim() &&
-        (native
-          ? candidate.nativeSession?.generation &&
-            candidate.nativeSession.acceptedAt &&
-            !candidate.nativeSession.releasedAt &&
-            !candidate.nativeSession.recovery
-          : candidate.runnerSessionPath?.trim()),
+        (!supportsContinuation ||
+          (candidate.runnerSessionId?.trim() &&
+            (native
+              ? candidate.nativeSession?.generation &&
+                candidate.nativeSession.acceptedAt &&
+                !candidate.nativeSession.releasedAt &&
+                !candidate.nativeSession.recovery
+              : candidate.runnerSessionPath?.trim()))),
     )
     .sort((left, right) => {
       const leftAt = left.completedAt ?? left.updatedAt ?? left.startedAt ?? '';
       const rightAt = right.completedAt ?? right.updatedAt ?? right.startedAt ?? '';
       return rightAt.localeCompare(leftAt) || right.id.localeCompare(left.id);
     })[0];
-  if (!reviewer?.runnerSessionId?.trim() || (!native && !reviewer.runnerSessionPath?.trim())) {
+  if (!reviewer) {
     const anotherRunner = (prior.agentContexts ?? []).some(
       (candidate) => candidate.role === 'review' && candidate.runner !== runner,
     );
@@ -178,12 +174,16 @@ export function resolveRepeatReviewResumePlan(
     return { kind: 'refused', reason: 'effort-mismatch' };
   const reviewedHead = context.priorReviewedHeadSha;
   const headProvenance =
-    primaryReviewedHeadForSession(prior, {
-      reviewId,
-      runnerSessionId: reviewer.runnerSessionId,
-      repository: context.repository,
-      prNumber: context.prNumber,
-    }) === reviewedHead ||
+    (reviewer.runnerSessionId &&
+      primaryReviewedHeadForSession(prior, {
+        reviewId,
+        runnerSessionId: reviewer.runnerSessionId,
+        repository: context.repository,
+        prNumber: context.prNumber,
+      }) === reviewedHead) ||
+    (!supportsContinuation &&
+      (!prior.reviewResult?.session || prior.reviewResult.session.reviewId === reviewId) &&
+      prior.reviewResult?.reviewSnapshot?.headSha === reviewedHead) ||
     prior.decisions?.some((decision) => {
       const payload = decision.payload as
         | {
@@ -207,6 +207,29 @@ export function resolveRepeatReviewResumePlan(
         ['pass', 'issues'].includes(review.verdict),
     );
   if (!reviewedHead || !context.currentHeadSha || !headProvenance)
+    return { kind: 'refused', reason: 'missing-session' };
+  if (!supportsContinuation) {
+    return {
+      kind: 'delta-cold',
+      trace: {
+        mode: 'cold',
+        continuity: 'fresh',
+        reviewId,
+        priorRunId: prior.id,
+        priorSessionId: reviewer.runnerSessionId?.trim() || undefined,
+        repository: context.repository,
+        prNumber: context.prNumber,
+        lastReviewedHeadSha: reviewedHead,
+        fallback: {
+          reason: 'session-resume-unsupported',
+          detail:
+            'The runner cannot continue its saved session; reviewing the retained delta in a fresh session.',
+          comparedRanges: [`${reviewedHead}..${context.currentHeadSha}`],
+        },
+      },
+    };
+  }
+  if (!reviewer.runnerSessionId?.trim() || (!native && !reviewer.runnerSessionPath?.trim()))
     return { kind: 'refused', reason: 'missing-session' };
   if (native)
     return {

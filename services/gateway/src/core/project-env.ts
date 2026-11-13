@@ -176,6 +176,19 @@ export function withMachineEnv(
   return prefix ? `${prefix} && ${command}` : command;
 }
 
+/** Slot/project expansion shared by launch and native transcript accounting. */
+export function projectCommandEnvOptions(
+  vars: SlotVars,
+  projectVars?: ProjectVars,
+  domain = vars.domain,
+): ProjectCommandEnvOptions {
+  return {
+    ...(domain ? { domain } : {}),
+    expandDomainValue: (value) =>
+      expandTemplate(value, vars, projectVars, { domain: domain ?? '' }),
+  };
+}
+
 /** Project/domain defaults first, then the selected node's pool environment. */
 export function withProjectMachineEnv(
   command: string,
@@ -190,10 +203,6 @@ export function withProjectMachineEnv(
       ...vars,
       machineEnv: { ...vars.machineEnv, FARMSLOT_MACHINE: vars.machine },
     }),
-    {
-      ...(domain ? { domain } : {}),
-      expandDomainValue: (value) =>
-        expandTemplate(value, vars, projectVars, { domain: domain ?? '' }),
-    },
+    projectCommandEnvOptions(vars, projectVars, domain),
   );
 }

@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 import { projectPackRoot } from '@farmslot/slot-config';
 
 import { assertNoUnknownPlaceholders } from './hooks.js';
@@ -35,9 +36,9 @@ export async function loadPromptTemplate(
   const known = new Set<string>();
   let expanded = raw;
   for (const [key, val] of Object.entries(vars)) {
-    expanded = expanded.replaceAll(`{{${key}}}`, val);
-    expanded = expanded.replaceAll(`{{${key.toUpperCase()}}}`, val);
-    expanded = expanded.replaceAll(`{{${key.toLowerCase()}}}`, val);
+    expanded = expanded.replaceAll(`{{${key}}}`, literalReplacement(val));
+    expanded = expanded.replaceAll(`{{${key.toUpperCase()}}}`, literalReplacement(val));
+    expanded = expanded.replaceAll(`{{${key.toLowerCase()}}}`, literalReplacement(val));
     known.add(key);
     known.add(key.toUpperCase());
     known.add(key.toLowerCase());

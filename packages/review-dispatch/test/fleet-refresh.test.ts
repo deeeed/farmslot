@@ -312,7 +312,7 @@ test('a 37-second fleet inspection retains eligible rows without retimestamping 
   model.dispose();
 });
 
-test('slow-inspection grace never admits busy, protected, dirty or owned unpublished bulk work', () => {
+test('slow-inspection grace keeps owner guards while local work uses parking', () => {
   const observed = Date.parse('2026-10-27T00:00:00.000Z');
   const check = (work: Partial<SlotWorkspace>, fields: Partial<SlotStatus> = {}) =>
     slotRecoveryEligibility(
@@ -321,21 +321,21 @@ test('slow-inspection grace never admits busy, protected, dirty or owned unpubli
     );
   assert.equal(check({ protectedReason: 'publication gate' }).allowed, false);
   assert.equal(check({}, { agent: 'working', lifecycle: 'busy' }).allowed, false);
-  assert.equal(check({ dirtyCount: 1 }).bulkAllowed, false);
-  // An ownerless checkout's unpushed commits are parked before the reset; dirty files are not.
+  assert.equal(check({ dirtyCount: 1 }).bulkAllowed, true);
+  // All readable local work is parked before reset.
   assert.equal(check({ publication: 'unpushed', unpublishedCount: 1 }).bulkAllowed, true);
   assert.equal(
     check({ publication: 'unpushed', unpublishedCount: 1, dirtyCount: 1 }).bulkAllowed,
-    false,
+    true,
   );
   const owned = check(
     { publication: 'unpushed', unpublishedCount: 1, currentRunId: 'run-1', terminalOwner: true },
     { lifecycle: 'held', currentRunId: 'run-1' },
   );
   assert.equal(owned.allowed, true);
-  assert.equal(owned.confirmationRequired, true, "a run's own commits keep their confirmation");
+  assert.equal(owned.confirmationRequired, false);
   assert.equal(owned.bulkAllowed, false);
-  assert.equal(check({ publication: 'unknown' }).allowed, false);
+  assert.equal(check({ publication: 'unknown' }).allowed, true);
   assert.equal(check({ cleanupRunId: 'cleanup' }).allowed, false);
 });
 
@@ -439,7 +439,7 @@ test('late inspection cannot overwrite a newer scoped inspection', async () => {
   model.dispose();
 });
 
-test('bulk freezes visible membership, never includes held, dirty or unknown work, and parks ownerless commits', async () => {
+test('bulk freezes visible membership, excludes holds and parks all readable local work', async () => {
   const { model, calls } = setup([
     slot('shown'),
     slot('hidden'),
@@ -449,7 +449,7 @@ test('bulk freezes visible membership, never includes held, dirty or unknown wor
     slot('held', {}, { lifecycle: 'held' }),
   ]);
   await model.load(['shown', 'dirty', 'local', 'unknown', 'held']);
-  assert.equal(model.bulkCount, 2);
+  assert.equal(model.bulkCount, 4);
   assert.match(
     model.rows.find((row) => row.slotId === 'local')?.warning ?? '',
     /2 unpushed commits on feature will be parked/,
@@ -468,7 +468,7 @@ test('bulk freezes visible membership, never includes held, dirty or unknown wor
   };
   assert.deepEqual(request?.params, {
     requestId: 'proof-1',
-    slots: ['shown', 'local'].map((slotId) => ({
+    slots: ['shown', 'dirty', 'local', 'unknown'].map((slotId) => ({
       slotId,
       mode: 'safe',
       release: true,
@@ -566,24 +566,19 @@ test('behind counts name the actual project default branch', () => {
   );
 });
 
-test('discard requires an explicit confirmation and sends the exact observed content identity', async () => {
+test('dirty release parks automatically and sends the exact observed content identity', async () => {
   const { model, calls } = setup([
     slot('dirty', { dirtyCount: 2, publication: 'unpushed', unpublishedCount: 1 }),
   ]);
   await model.load(['dirty']);
   await model.release('dirty');
-  assert.ok(model.confirmation);
-  assert.equal(calls.length, 1);
-  model.cancelConfirmation();
-  assert.equal(calls.length, 1);
-  await model.release('dirty');
-  await model.confirmDiscard();
+  assert.equal(model.confirmation, null);
   const request = calls.find((call) => call.method === Methods.SLOT_REFRESH);
   assert.ok(request);
   assert.equal(typeof request.params, 'object');
   assert.deepEqual(request.params, {
     slotId: 'dirty',
-    mode: 'force',
+    mode: 'safe',
     release: true,
     expectedWorkspace: {
       epoch: 2,
@@ -679,8 +674,8 @@ test('expired evidence reports the pending inspection and never queues a release
 test('a completed failed inspection ends pending feedback and retains its failure', async () => {
   for (const failed of [
     slot('expired', {}, { workspace: undefined, workspaceError: 'Node unavailable' }),
-    slot('expired', { publication: 'unknown', error: 'Lookup unavailable' }),
-    slot('expired', { publication: 'unknown' }),
+    slot('expired', { publication: 'unknown', headSha: '', error: 'Local Git unavailable' }),
+    slot('expired', { publication: 'unknown', dirtyFingerprint: '' }),
   ]) {
     const { model, calls, setSlots, emit } = setup([
       slot('expired', { observedAt: '2000-01-01T00:00:00Z' }),
@@ -761,15 +756,14 @@ test('changing farms after inspection cannot send the old workspace identity to 
   model.dispose();
 });
 
-test('farm changes invalidate both bulk requests and an open discard confirmation', async () => {
+test('farm changes invalidate both bulk and dirty release requests', async () => {
   for (const confirm of [false, true]) {
     const { model, calls, setContext } = setup([
       slot('same-slot', confirm ? { dirtyCount: 1 } : {}),
     ]);
     await model.load(['same-slot']);
-    if (confirm) await model.release('same-slot');
     setContext('farm-b');
-    if (confirm) await model.confirmDiscard();
+    if (confirm) await model.release('same-slot');
     else await model.releaseIdle();
     assert.equal(
       calls.filter(

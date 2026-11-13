@@ -124,7 +124,7 @@ test('Pi worker rollup counts the initial session and both fix rounds once', asy
   });
   const usage = await extractRunWorkerSessionUsage(run, makeVars());
   assert.equal(usage?.totalTokens, 50999041);
-  assert.equal(usage?.costUsd, 31.8);
+  assert.equal(usage?.costUsd, 31.7999998);
   assert.equal(usage?.turns, 3);
   assert.equal(run.metrics.sessionTotalTokens, 38036157, 'reading does not rewrite stored metrics');
   await writeFile(
@@ -176,6 +176,74 @@ test('Claude historical rollup deduplicates message blocks and session reference
   const usage = await extractRunWorkerSessionUsage(run, makeVars());
   assert.equal(usage?.turns, 2);
   assert.equal(usage.totalTokens, 312);
-  assert.equal(usage.costUsd, 0.0003);
+  assert.equal(usage.costUsd, 0.000296);
   assert.equal(run.metrics.sessionTurns, 3, 'historical reads preserve stored data');
+});
+
+test('local accounting uses pool LiteLLM pricing environment and preserves precise USD', async (t) => {
+  const { extractRunnerSessionUsage } = await import('./session-usage.js');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'litellm-pool-usage-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = path.join(root, 'session.jsonl');
+  await writeFile(
+    file,
+    JSON.stringify({
+      type: 'message',
+      message: {
+        role: 'assistant',
+        provider: 'litellm',
+        model: 'fixture-model',
+        usage: {
+          input: 4,
+          output: 4,
+          cacheRead: 38195,
+          cacheWrite: 0,
+          cost: { total: 0 },
+        },
+      },
+    }) + '\n',
+  );
+  t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+    assert.equal(String(input), 'https://pool.example/v1/model/info');
+    assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer pool-fixture-key');
+    return Response.json({
+      data: [
+        {
+          model_name: 'fixture-model',
+          model_info: {
+            input_cost_per_token: 0.000002,
+            output_cost_per_token: 0.00001,
+            cache_read_input_token_cost: 0.0000002,
+            cache_creation_input_token_cost: 0.0000025,
+          },
+        },
+      ],
+    });
+  });
+  const usage = await extractRunnerSessionUsage({
+    slotId: 'synthetic-local',
+    runner: 'pi',
+    runnerSessionPath: file,
+    vars: makeVars({
+      host: '127.0.0.1',
+      machineEnv: {
+        LITELLM_URL: 'https://pool.example/v1',
+        LITELLM_API_KEY: 'pool-fixture-key',
+        FARMSLOT_LITELLM_PRICING_CACHE_DIR: root,
+      },
+    }),
+  });
+  assert.equal(usage.costUsd, 0.007687);
+  assert.equal(usage.cacheRead, 38195);
+  const local = parseSessionUsageOutput('total_tokens=10\ncost_reason=local, unpriced\n');
+  assert.equal(local.costUsd, null);
+  assert.equal(local.costReason, 'local, unpriced');
+  assert.equal(local.costStatus, 'unpriced');
+  const { recoveredWorkerSessionReceipt } = await import('./agent-session-rows.js');
+  const recovered = recoveredWorkerSessionReceipt(
+    makeRun({ flowType: 'dev' }),
+    { runnerSessionId: 'synthetic-local', runnerSessionPath: file, contextId: 'dev' },
+    local,
+  );
+  assert.equal(recovered.costReason, 'local, unpriced');
 });

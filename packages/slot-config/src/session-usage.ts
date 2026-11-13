@@ -5,9 +5,27 @@
 // effects on HOME. HOME is resolved at call time so tests can set process.env.HOME
 // before invoking runSessionUsage and see the correct temp directory.
 
-import { open, readdir, readFile, realpath as fsRealpath, stat, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import {
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  realpath as fsRealpath,
+  rename,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+
+import {
+  isLiteLlmPriceField,
+  normalizeLiteLlmModelInfo,
+  type PiModelCostMetadata,
+  type PiModelCostRates,
+} from './litellm-model-info.mjs';
+export type { PiModelCostMetadata, PiModelCostRates } from './litellm-model-info.mjs';
 
 export type SessionAction = 'snapshot' | 'report' | 'total';
 
@@ -61,6 +79,7 @@ interface SessionTotals {
   model: string;
   total_tokens: number;
   cost_usd: number | null;
+  cost_reason?: string;
 }
 
 function emptyTotals(): SessionTotals {
@@ -473,18 +492,94 @@ async function summarizeCodex(filePath: string): Promise<SessionTotals> {
   return totals;
 }
 
-export interface PiModelCostRates {
-  input: number | null;
-  output: number | null;
-  cacheRead: number | null;
-  cacheWrite: number | null;
-  cacheWrite1h?: number | null;
-  reasoningOutput?: number | null;
+// Native readers load this module directly with Node's type stripper.
+const DAY_MS = 86_400_000;
+
+function object(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-/** USD per million tokens; null is an unreported price, not a free category. */
-export interface PiModelCostMetadata extends PiModelCostRates {
-  tiers?: Array<PiModelCostRates & { inputTokensAbove: number }>;
+/** Gateway rates are per token; accounting uses USD per million tokens. */
+export function parseLiteLlmPrices(payload: unknown): Map<string, PiModelCostMetadata> {
+  const prices = new Map<string, PiModelCostMetadata>();
+  if (!object(payload) || !Array.isArray(payload.data)) return prices;
+  for (const row of payload.data) {
+    if (!object(row) || typeof row.model_name !== 'string' || !object(row.model_info)) continue;
+    const cost = normalizeLiteLlmModelInfo(row.model_info);
+    if (cost) prices.set(row.model_name, cost);
+  }
+  return prices;
+}
+
+interface LiteLlmPricingOptions {
+  environment?: NodeJS.ProcessEnv;
+  baseUrl?: string;
+  apiKey?: string;
+  cacheDir?: string;
+  now?: () => number;
+  fetchImpl?: typeof fetch;
+}
+
+/** A failed refresh leaves work explicitly unpriced, rather than silently using expired prices. */
+export async function loadLiteLlmPrices(
+  options: LiteLlmPricingOptions = {},
+): Promise<Map<string, PiModelCostMetadata>> {
+  const environment = options.environment ?? process.env;
+  const baseUrl = (
+    options.baseUrl ??
+    (environment.LITELLM_URL || environment.LITELLM_BASE_URL)
+  )?.replace(/\/+$/, '');
+  const apiKey = options.apiKey ?? environment.LITELLM_API_KEY;
+  if (!baseUrl || !apiKey) return new Map();
+  const cacheDir =
+    options.cacheDir ??
+    environment.FARMSLOT_LITELLM_PRICING_CACHE_DIR ??
+    path.join(os.homedir(), '.cache', 'farmslot', 'litellm-prices');
+  const identity = createHash('sha256').update(`${baseUrl}\n${apiKey}`).digest('hex');
+  const file = path.join(cacheDir, `${identity}.json`);
+  const now = (options.now ?? Date.now)();
+  try {
+    const cached: unknown = JSON.parse(await readFile(file, 'utf8'));
+    if (
+      object(cached) &&
+      typeof cached.fetchedAt === 'number' &&
+      now >= cached.fetchedAt &&
+      now - cached.fetchedAt < DAY_MS
+    )
+      return parseLiteLlmPrices(cached);
+  } catch (error) {
+    // Missing or damaged caches are rebuilt from the gateway. Other I/O errors are surfaced.
+    if (!(error instanceof SyntaxError) && !(object(error) && error.code === 'ENOENT')) throw error;
+  }
+  let payload: unknown;
+  try {
+    const url = `${baseUrl.endsWith('/v1') ? baseUrl : `${baseUrl}/v1`}/model/info`;
+    const response = await (options.fetchImpl ?? fetch)(url, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) return new Map();
+    payload = await response.json();
+  } catch {
+    // Network/JSON failures cannot justify a charge. Callers retain tokens with an unpriced reason.
+    return new Map();
+  }
+  const prices = parseLiteLlmPrices(payload);
+  if (!prices.size || !object(payload) || !Array.isArray(payload.data)) return prices;
+  // Persist only names and prices, never gateway params, credentials or deployment metadata.
+  const data = payload.data.filter(object).map((row) => ({
+    model_name: row.model_name,
+    model_info: object(row.model_info)
+      ? Object.fromEntries(
+          Object.entries(row.model_info).filter(([key]) => isLiteLlmPriceField(key)),
+        )
+      : {},
+  }));
+  await mkdir(cacheDir, { recursive: true, mode: 0o700 });
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  await writeFile(temporary, JSON.stringify({ fetchedAt: now, data }), { mode: 0o600 });
+  await rename(temporary, file);
+  return prices;
 }
 
 type PiRequestCost = PiModelCostMetadata | null | 'legacy';
@@ -550,13 +645,12 @@ function piAmountsMatch(a: number | null | undefined, b: number | null): boolean
   );
 }
 
-function piCostMatchesPrices(
+function piQuotedCost(
   cost: PiModelCostMetadata | null,
   tokens: { inputTokens: number; outputTokens: number; cacheCreation: number; cacheRead: number },
   longWrites: number,
-  recorded: number | null,
-): boolean {
-  if (cost === null || recorded === null) return false;
+): number | null {
+  if (cost === null) return null;
   let rates: PiModelCostRates = cost;
   let threshold = -1;
   const input = tokens.inputTokens + tokens.cacheCreation + tokens.cacheRead;
@@ -572,8 +666,9 @@ function piCostMatchesPrices(
     'reasoningOutput' in rates &&
     !piAmountsMatch(rates.reasoningOutput, rates.output)
   )
-    return false;
+    return null;
   const shortWrites = tokens.cacheCreation - longWrites;
+  if (longWrites < 0 || shortWrites < 0) return null;
   if (
     (tokens.inputTokens > 0 && rates.input === null) ||
     (tokens.outputTokens > 0 && rates.output === null) ||
@@ -581,8 +676,7 @@ function piCostMatchesPrices(
     (shortWrites > 0 && rates.cacheWrite === null) ||
     (longWrites > 0 && rates.cacheWrite1h == null)
   )
-    return false;
-  // This quote validates an existing native cost; it never fills a missing cost.
+    return null;
   const quoted =
     (tokens.inputTokens * (rates.input ?? 0) +
       tokens.outputTokens * (rates.output ?? 0) +
@@ -590,7 +684,7 @@ function piCostMatchesPrices(
       shortWrites * (rates.cacheWrite ?? 0) +
       longWrites * (rates.cacheWrite1h ?? 0)) /
     1_000_000;
-  return piAmountsMatch(recorded, quoted);
+  return quoted;
 }
 
 export interface PiAssistantUsage {
@@ -600,13 +694,15 @@ export interface PiAssistantUsage {
   cacheRead: number;
   totalTokens: number;
   costUsd: number | null;
+  costReason?: string;
   model: string | null;
 }
 
-/** Pi reports separate, per-message token categories and its own dollar cost. */
+/** Pi token categories are disjoint; LiteLLM costs can be quoted from gateway prices. */
 export function readPiAssistantUsage(
   record: Record<string, unknown>,
   prices?: ReadonlyMap<string, PiRequestCost>,
+  gatewayPrices?: ReadonlyMap<string, PiModelCostMetadata>,
 ): PiAssistantUsage | null {
   const message = record.message;
   if (record.type !== 'message' || !message || typeof message !== 'object') return null;
@@ -639,38 +735,87 @@ export function readPiAssistantUsage(
     if (
       pricing === 'legacy'
         ? costUsd === 0
-        : !piCostMatchesPrices(
-            pricing,
-            { inputTokens, outputTokens, cacheCreation, cacheRead },
-            piNumber('cacheWrite1h' in usage ? usage.cacheWrite1h : null) ?? 0,
+        : !piAmountsMatch(
             costUsd,
+            piQuotedCost(
+              pricing,
+              { inputTokens, outputTokens, cacheCreation, cacheRead },
+              piNumber('cacheWrite1h' in usage ? usage.cacheWrite1h : null) ?? 0,
+            ),
           )
     )
       costUsd = null;
   }
+  if (
+    provider === 'litellm' &&
+    gatewayPrices === undefined &&
+    pricing === undefined &&
+    !providerCharge
+  )
+    costUsd = null;
+  if (provider === 'litellm' && gatewayPrices !== undefined && !providerCharge) {
+    costUsd =
+      inputTokens + outputTokens + cacheCreation + cacheRead > 0
+        ? piQuotedCost(
+            gatewayPrices.get(model ?? '') ?? null,
+            { inputTokens, outputTokens, cacheCreation, cacheRead },
+            piNumber('cacheWrite1h' in usage ? usage.cacheWrite1h : null) ?? 0,
+          )
+        : null;
+  }
+  if (
+    provider &&
+    ['ollama', 'sparks', 'localsparks', 'lmstudio'].includes(provider) &&
+    !providerCharge
+  )
+    costUsd = null;
   return {
     inputTokens,
     outputTokens,
     cacheCreation,
     cacheRead,
+    ...(costUsd === null
+      ? {
+          costReason:
+            provider && ['ollama', 'sparks', 'localsparks', 'lmstudio'].includes(provider)
+              ? 'local, unpriced'
+              : 'No verified model price for all used token categories',
+        }
+      : {}),
     totalTokens: inputTokens + outputTokens + cacheCreation + cacheRead,
     costUsd,
     model,
   };
 }
 
-async function summarizePi(filePath: string): Promise<SessionTotals> {
+async function summarizePi(
+  filePath: string,
+  environment: NodeJS.ProcessEnv,
+  liteLlmPrices?: Map<string, PiModelCostMetadata>,
+): Promise<SessionTotals> {
   const totals = emptyTotals();
   let cost = 0;
   let completeCost = true;
   const prices = new Map<string, PiRequestCost>();
+  let gatewayPrices = liteLlmPrices;
   for await (const record of safeJsonLines(filePath)) {
     const quote = piRequestCost(record);
     if (quote) {
       prices.set(quote.key, quote.cost);
       continue;
     }
-    const usage = readPiAssistantUsage(record, prices);
+    const message = record.message;
+    if (
+      message &&
+      typeof message === 'object' &&
+      'provider' in message &&
+      message.provider === 'litellm' &&
+      (environment.LITELLM_URL || environment.LITELLM_BASE_URL)
+    )
+      gatewayPrices ??= await loadLiteLlmPrices({
+        environment,
+      });
+    const usage = readPiAssistantUsage(record, prices, gatewayPrices);
     if (!usage) continue;
     totals.turns += 1;
     totals.input_tokens += usage.inputTokens;
@@ -679,8 +824,10 @@ async function summarizePi(filePath: string): Promise<SessionTotals> {
     totals.cache_read += usage.cacheRead;
     totals.total_tokens += usage.totalTokens;
     if (usage.model) totals.model = usage.model;
-    if (usage.costUsd === null) completeCost = false;
-    else cost += usage.costUsd;
+    if (usage.costUsd === null) {
+      completeCost = false;
+      totals.cost_reason = usage.costReason;
+    } else cost += usage.costUsd;
   }
   if (totals.turns === 0) throw new Error('ERROR: Pi transcript contains no assistant usage');
   totals.cost_usd = completeCost ? cost : null;
@@ -791,10 +938,12 @@ async function summarize(
   runner: string,
   sessionPath: string,
   home: string,
+  environment: NodeJS.ProcessEnv,
+  liteLlmPrices?: Map<string, PiModelCostMetadata>,
 ): Promise<SessionTotals> {
   if (runner === 'claude') return summarizeClaude(sessionPath);
   if (runner === 'codex') return summarizeCodex(sessionPath);
-  if (runner === 'pi') return summarizePi(sessionPath);
+  if (runner === 'pi') return summarizePi(sessionPath, environment, liteLlmPrices);
   if (runner === 'grok') return summarizeGrok(sessionPath, home);
   if (runner === 'cursor') return summarizeCursor(sessionPath);
   throw new Error(`ERROR: Unsupported runner for usage extraction: ${runner}`);
@@ -852,8 +1001,9 @@ function formatTotals(totals: SessionTotals): string[] {
     `total_tokens=${totals.total_tokens}`,
   ];
   if (totals.cost_usd !== null) {
-    lines.push(`cost_usd=${totals.cost_usd.toFixed(4)}`);
+    lines.push(`cost_usd=${totals.cost_usd.toFixed(10)}`);
   }
+  if (totals.cost_reason) lines.push(`cost_reason=${totals.cost_reason}`);
   return lines;
 }
 
@@ -1291,8 +1441,12 @@ export async function runSessionUsage(params: {
   forcedPath?: string;
   /** Override: runner name when forcedPath is set. Falls back to path-based heuristic. */
   forcedRunner?: string | null;
+  /** Worker pool environment for in-process pricing; never written to the transcript. */
+  environment?: NodeJS.ProcessEnv;
+  /** Credential-free prices resolved through the owning worker's environment. */
+  liteLlmPrices?: Map<string, PiModelCostMetadata>;
 }): Promise<string> {
-  const { repo, slotId, action, forcedPath, forcedRunner } = params;
+  const { repo, slotId, action, forcedPath, forcedRunner, environment = process.env } = params;
 
   // Read HOME at call time — not at module load — so tests that set
   // process.env.HOME before invoking see the correct temp directory.
@@ -1317,7 +1471,7 @@ export async function runSessionUsage(params: {
   const name = await sessionName(sessionFile);
 
   if (action === 'snapshot') {
-    const totals = await summarize(runner, sessionFile, home);
+    const totals = await summarize(runner, sessionFile, home, environment, params.liteLlmPrices);
     const data: SnapshotData = { runner, session: name, path: sessionFile, totals };
     await writeFile(snapshotFile, JSON.stringify(data), 'utf-8');
     return `Snapshot saved: ${name}\n`;
@@ -1335,7 +1489,7 @@ export async function runSessionUsage(params: {
       throw err;
     }
     const snapData = JSON.parse(snapshotRaw) as SnapshotData;
-    const current = await summarize(runner, sessionFile, home);
+    const current = await summarize(runner, sessionFile, home, environment, params.liteLlmPrices);
     const base = snapData.totals;
     const header = [
       `Session:  ${name}`,
@@ -1344,6 +1498,7 @@ export async function runSessionUsage(params: {
       `---`,
     ];
     const diff: SessionTotals = {
+      cost_reason: current.cost_reason ?? base.cost_reason,
       model: current.model,
       turns: current.turns - base.turns,
       input_tokens: current.input_tokens - base.input_tokens,
@@ -1361,7 +1516,7 @@ export async function runSessionUsage(params: {
   }
 
   if (action === 'total') {
-    const current = await summarize(runner, sessionFile, home);
+    const current = await summarize(runner, sessionFile, home, environment, params.liteLlmPrices);
     const lines = await sessionLineCount(sessionFile);
     const header = [`Session:  ${name}`, `Runner:   ${runner}`, `Lines:    ${lines}`, `---`];
     return [...header, ...formatTotals(current)].join('\n') + '\n';

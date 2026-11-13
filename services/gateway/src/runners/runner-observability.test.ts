@@ -159,41 +159,11 @@ test('remote observability install falls back when an immutable bundle is incomp
     run();
     assert.equal(readFileSync(selectedPath, 'utf8').trim(), fallbackInstaller);
 
-    mkdirSync(path.join(supportRoot, 'scripts/lib'), { recursive: true });
-    mkdirSync(path.join(supportRoot, 'scripts/runners'), { recursive: true });
-    writeFileSync(path.join(supportRoot, 'scripts/lib/provider-accounts.mjs'), 'dependency\n');
-    writeFileSync(path.join(supportRoot, 'scripts/lib/runner-runtime.cjs'), 'dependency\n');
-    writeFileSync(
-      path.join(supportRoot, 'scripts/lib/runner-observability-bundle.mjs'),
-      'dependency\n',
-    );
-    mkdirSync(path.join(supportRoot, 'packages/agent-runtime/scripts'), { recursive: true });
-    writeFileSync(
-      path.join(supportRoot, 'packages/agent-runtime/scripts/toml-scan.cjs'),
-      'dependency\n',
-    );
-    writeFileSync(
-      path.join(supportRoot, 'packages/agent-runtime/scripts/workspace-trust.cjs'),
-      'dependency\n',
-    );
-    writeFileSync(
-      path.join(supportRoot, 'packages/agent-runtime/scripts/review-account-preflight.cjs'),
-      'dependency\n',
-    );
-    writeFileSync(
-      path.join(supportRoot, 'scripts/runners/pi-farmslot-observability.ts'),
-      'extension\n',
-    );
-    writeFileSync(
-      path.join(supportRoot, 'scripts/runners/pi-farmslot-hook-writer.mjs'),
-      'writer\n',
-    );
-    writeFileSync(
-      path.join(supportRoot, 'scripts/runners/pi-farmslot-providers.mjs'),
-      'providers\n',
-    );
-    writeFileSync(path.join(supportRoot, 'scripts/runners/pi-farmslot-task.mjs'), 'task\n');
-    writeFileSync(path.join(supportRoot, 'scripts/runners/hook-progress.mjs'), 'progress\n');
+    for (const relativePath of RUNNER_OBSERVABILITY_SUPPORT_PATHS) {
+      const destination = path.join(supportRoot, relativePath);
+      mkdirSync(path.dirname(destination), { recursive: true });
+      writeFileSync(destination, 'dependency\n');
+    }
     run();
     assert.equal(readFileSync(selectedPath, 'utf8').trim(), immutableInstaller);
   } finally {

@@ -260,8 +260,7 @@ function bindImportMetaUrls(): Plugin {
                 ? 'jsx'
                 : 'js';
         return {
-          contents: contents.replaceAll(
-            'import.meta.url',
+          contents: contents.replaceAll('import.meta.url', () =>
             JSON.stringify(pathToFileURL(args.path).href),
           ),
           loader,

@@ -63,7 +63,8 @@ its slot until existing ownership rules permit release.
 
 Add six bounded recovery scenarios in CI, covering published-branch replay,
 live-worker release, shell delivery refusal, stale-runtime recovery, idle branch
-contention and orphan-runtime cleanup. Use production gateway paths, temporary
+contention and orphan-runtime cleanup. Idle-branch scenarios consume ADR-042 parking
+for local dirty/unpublished work; protected owners and holds still refuse. Use production gateway paths, temporary
 Git repositories and controlled provider/transport fixtures. These are regression
 checks; separate live acceptance proves actual runner and device behavior.
 

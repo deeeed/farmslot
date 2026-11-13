@@ -1,3 +1,4 @@
+import { literalReplacement } from '../../scripts/literal-replacement.mjs';
 import type { ExecResult } from '../contracts/common.js';
 import { DEFAULT_BRANCH } from '../contracts/runs.js';
 
@@ -70,7 +71,7 @@ function refspecDestination(spec: string, ref: string): string | null {
   const captured = refPatternCapture(src, ref);
   if (captured === null) return null;
   if (!src.includes('*')) return dst;
-  return dst.includes('*') ? dst.replace('*', captured) : null;
+  return dst.includes('*') ? dst.replace('*', literalReplacement(captured)) : null;
 }
 
 /**
@@ -193,8 +194,8 @@ export const LINKED_WORKTREE_SESSION_BRANCH_PREFIX = 'wt/';
 
 export function expandSlotTrackingTemplate(template: string, ctx: SlotTrackingSlotContext): string {
   return template
-    .replace(/\{\{session\}\}/g, ctx.session ?? '')
-    .replace(/\{\{slot_id\}\}/g, ctx.slotId ?? '');
+    .replace(/\{\{session\}\}/g, literalReplacement(ctx.session ?? ''))
+    .replace(/\{\{slot_id\}\}/g, literalReplacement(ctx.slotId ?? ''));
 }
 
 export function resolveSlotTrackingBranch(

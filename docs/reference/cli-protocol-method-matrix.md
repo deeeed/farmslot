@@ -544,24 +544,25 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## slot.\*
 
-| Method                | Surface       | CLI command     | TUI | Note                                                                                           |
-| --------------------- | ------------- | --------------- | --- | ---------------------------------------------------------------------------------------------- |
-| `slot.check`          | typed-command | `farmslot slot` |     |                                                                                                |
-| `slot.prepare`        | typed-command | `farmslot slot` | yes |                                                                                                |
-| `slot.release`        | typed-command | `farmslot slot` |     |                                                                                                |
-| `slot.recycle`        | typed-command | `farmslot slot` |     |                                                                                                |
-| `slot.refresh`        | typed-command | `farmslot slot` |     |                                                                                                |
-| `slot.cleanup`        | rpc-only      |                 |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `slot.prepareStatus`  | rpc-only      |                 |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `slot.fixtureRefresh` | typed-command | `farmslot slot` |     |                                                                                                |
-| `slot.monitor`        | typed-command | `farmslot slot` |     |                                                                                                |
-| `slot.show`           | typed-command | `farmslot slot` |     |                                                                                                |
-| `slot.softRefresh`    | typed-command | `farmslot slot` |     |                                                                                                |
-| `slot.reopen`         | typed-command | `farmslot slot` |     |                                                                                                |
-| `slot.autoRefresh`    | typed-command | `farmslot slot` |     |                                                                                                |
-| `slot.openEditor`     | typed-command | `farmslot slot` |     |                                                                                                |
-| `slot.action.list`    | typed-command | `farmslot slot` |     |                                                                                                |
-| `slot.action.run`     | typed-command | `farmslot slot` |     |                                                                                                |
+| Method                | Surface       | CLI command            | TUI | Note                                                                                           |
+| --------------------- | ------------- | ---------------------- | --- | ---------------------------------------------------------------------------------------------- |
+| `slot.check`          | typed-command | `farmslot slot`        |     |                                                                                                |
+| `slot.prepare`        | typed-command | `farmslot slot`        | yes |                                                                                                |
+| `slot.release`        | typed-command | `farmslot slot`        |     |                                                                                                |
+| `slot.parked`         | typed-command | `farmslot slot parked` |     |                                                                                                |
+| `slot.recycle`        | typed-command | `farmslot slot`        |     |                                                                                                |
+| `slot.refresh`        | typed-command | `farmslot slot`        |     |                                                                                                |
+| `slot.cleanup`        | rpc-only      |                        |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `slot.prepareStatus`  | rpc-only      |                        |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `slot.fixtureRefresh` | typed-command | `farmslot slot`        |     |                                                                                                |
+| `slot.monitor`        | typed-command | `farmslot slot`        |     |                                                                                                |
+| `slot.show`           | typed-command | `farmslot slot`        |     |                                                                                                |
+| `slot.softRefresh`    | typed-command | `farmslot slot`        |     |                                                                                                |
+| `slot.reopen`         | typed-command | `farmslot slot`        |     |                                                                                                |
+| `slot.autoRefresh`    | typed-command | `farmslot slot`        |     |                                                                                                |
+| `slot.openEditor`     | typed-command | `farmslot slot`        |     |                                                                                                |
+| `slot.action.list`    | typed-command | `farmslot slot`        |     |                                                                                                |
+| `slot.action.run`     | typed-command | `farmslot slot`        |     |                                                                                                |
 
 ## sources.\*
 

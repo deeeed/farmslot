@@ -1121,7 +1121,7 @@ async function previewDispatch(
           resolveStaticReviewOwner('live').ownerId,
         ));
       const projectVars = await loadProjectVars(params.project);
-      const selected = resolveConfiguredExecutionTemplateForSlot(projectVars, {
+      const selected = await resolveConfiguredExecutionTemplateForSlot(projectVars, {
         flow: 'review-pr',
         platform: await resolveReviewWorkspacePlatform(admission.pool, params.project),
         runMode: params.mode ?? 'autonomous',
@@ -1309,7 +1309,7 @@ async function previewDispatch(
         throw new Error('Configured execution-template preview requires an explicit run mode.');
       }
       const slotVars = await loadSlotVars(slotInfo.slot);
-      const selected = resolveConfiguredExecutionTemplateForSlot(projectVars, {
+      const selected = await resolveConfiguredExecutionTemplateForSlot(projectVars, {
         flow: params.flowType,
         platform: slotVars.platform,
         runMode: params.mode,

@@ -35,6 +35,7 @@ import {
   resolveAfterNodeReconnect,
   sendNodeRequest,
 } from '../../fleet/node-rpc.js';
+import { withMeasuredNativeProcessCensus } from '../../host-services/native-process.js';
 import { readCredentialStoreSnapshot } from '../../security/credential-store.js';
 import {
   nativeOwnerAssignedMachines,
@@ -228,15 +229,17 @@ export async function routeNativeExecution(
         'AUTH_FORBIDDEN',
         'Native local execution is unavailable for this owner',
       );
-    if (isNativeObservedRead() && method === Methods.NATIVE_PROFILE_STATUS) {
-      validateNativeProfileParams(params);
-      if (typeof params.profileId !== 'string' || !params.profileId.trim())
-        throw new GatewayMethodError('INVALID_PARAMS', 'Native profile ID required');
-      return nativeObservations.localProfileStatus(owner, params.profileId);
-    }
-    return worker
-      ? routeNativeWorkerSession(nativeSessionManager, owner, method, params)
-      : routeNativeSession(nativeSessionManager, owner, method, params, requester);
+    return withMeasuredNativeProcessCensus(() => {
+      if (isNativeObservedRead() && method === Methods.NATIVE_PROFILE_STATUS) {
+        validateNativeProfileParams(params);
+        if (typeof params.profileId !== 'string' || !params.profileId.trim())
+          throw new GatewayMethodError('INVALID_PARAMS', 'Native profile ID required');
+        return nativeObservations.localProfileStatus(owner, params.profileId);
+      }
+      return worker
+        ? routeNativeWorkerSession(nativeSessionManager, owner, method, params)
+        : routeNativeSession(nativeSessionManager, owner, method, params, requester);
+    });
   }
   const resolved = resolveAfterNodeReconnect(executionNodeId, () =>
     resolveNativeExecutionNode(owner, executionNodeId),

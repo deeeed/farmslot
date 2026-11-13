@@ -514,6 +514,7 @@ export function reviewValidationDepthForLoop(
 export type ReviewSessionContinuity = 'fresh' | 'resumed' | 'resume-unconfirmed' | 'refused';
 
 export type ReviewSessionRefusalReason =
+  | 'session-resume-unsupported'
   | 'unsupported-runner'
   | 'repository-mismatch'
   | 'pr-mismatch'
@@ -959,9 +960,27 @@ export interface ReviewSummary {
   summaryText?: string;
 }
 
+export interface GateCostSummary {
+  /** Null/absent means incomplete pricing, never free work. */
+  costUsd?: number | null;
+  costReason?: string;
+}
+
+export interface GateReviewTokenSummary extends GateCostSummary {
+  id: string;
+  model: string | null;
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheCreation?: number;
+  total: number;
+  roundNumber?: number;
+  costScope?: 'session-total' | 'shared-session' | 'unavailable';
+}
+
 /** Token cost of reaching a gate, including chained family fix-loops. */
 export interface GateTokenSummary {
-  mainWorker: {
+  mainWorker: GateCostSummary & {
     model: string | null;
     input: number;
     output: number;
@@ -975,30 +994,26 @@ export interface GateTokenSummary {
    * input/output/cache split is present when the review's usage record carried
    * it; older entries may only have `total`.
    */
-  reviews: Array<{
-    id: string;
-    model: string | null;
-    input?: number;
-    output?: number;
-    cacheRead?: number;
-    cacheCreation?: number;
-    total: number;
-  }>;
+  reviews: GateReviewTokenSummary[];
+  /** Attempt-level history. Shared session totals are explicitly not a round charge. */
+  reviewRounds?: GateReviewTokenSummary[];
   /**
    * Token totals grouped by model across worker + reviews + family fix-loops.
    * The single scannable "what did each model cost us, in tokens" rollup. `input`
    * etc. sum only the entries that carried a split; `total` always covers every
    * entry for that model.
    */
-  byModel: Array<{
-    model: string | null;
-    input: number;
-    output: number;
-    cacheRead: number;
-    cacheCreation: number;
-    total: number;
-    turns: number;
-  }>;
+  byModel: Array<
+    GateCostSummary & {
+      model: string | null;
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheCreation: number;
+      total: number;
+      turns: number;
+    }
+  >;
   /**
    * Work attributable to review-triggered re-work — family fix-loops plus human
    * nudges. Tokens/turns only; dollar cost is intentionally deferred (pricing is
@@ -1011,23 +1026,27 @@ export interface GateTokenSummary {
     nudgeCount?: number;
   };
   /** pr-complete / update-branch fix loops in the same family that ran after this gate's run. */
-  familyChainedLoops?: Array<{
-    runId: string;
-    flowType: FlowType;
-    role: 'fix-loop' | 'review';
-    model: string | null;
-    tokens: {
-      input: number;
-      output: number;
-      total: number;
-      cacheRead: number;
-      cacheCreation: number;
-    };
-    perTurnSessionPath?: string;
-    createdAt: string;
-  }>;
+  familyChainedLoops?: Array<
+    GateCostSummary & {
+      runId: string;
+      flowType: FlowType;
+      role: 'fix-loop' | 'review';
+      model: string | null;
+      tokens: {
+        input: number;
+        output: number;
+        total: number;
+        cacheRead: number;
+        cacheCreation: number;
+      };
+      perTurnSessionPath?: string;
+      createdAt: string;
+    }
+  >;
   /** mainWorker + reviews + all familyChainedLoops. */
   familyTotalTokens: number;
+  familyCostUsd?: number | null;
+  familyCostReason?: string;
   perTurnDetailsAvailable: boolean;
   /** All runner-session JSONL paths backing this summary, for per-turn drill-down. */
   runnerSessionPaths?: string[];
@@ -1953,7 +1972,7 @@ export type RunCompletionPolicy = 'default' | 'artifact-only';
 export function isRunCompletionPolicy(value: unknown): value is RunCompletionPolicy {
   return value === 'default' || value === 'artifact-only';
 }
-/** One parking of an artifact-only run's own branch commits (see `Run.parkedCommits`). */
+/** Local work retained before a checkout mutation; also used for ownerless work. */
 export interface ParkedRunCommits {
   slotId: string;
   ref: string;
@@ -1963,6 +1982,19 @@ export interface ParkedRunCommits {
   /** The parked commits not on any remote, newest first. */
   commits: string[];
   parkedAt: string;
+  kind?: 'commits' | 'worktree';
+  purpose?: 'checkpoint' | 'prior-work';
+  sourceHeadSha?: string;
+  indexArchiveSha?: string;
+  fingerprint?: string;
+  operationKey?: string;
+  repoKey?: string;
+  metadataRef?: string;
+  worktreeTreeSha?: string;
+  runId?: string;
+  storageVersion?: number;
+  prunedAt?: string;
+  pruneReason?: 'age' | 'remote';
 }
 
 /** `none`: the REVIEW step's pipeline code review does not run. Only for artifact-only dev runs. */
@@ -3026,8 +3058,8 @@ export interface Run {
   /** A cancelled replay hold was released on demand for another run, preserving its record. */
   slotReclaimed?: { slotId: string; byRunId: string; at: string };
   /**
-   * Branch commits of this artifact-only run, parked when its slot returned to idle (append-only).
-   * Each `ref` (`refs/farmslot/parked/<run>/<head>`) keeps `headSha` reachable on the slot.
+   * Canonical retained-work receipts recorded before checkout mutation. Prior work is not a replay checkpoint.
+   * Immutable slot/run/snapshot refs keep the commits and saved index/worktree state reachable.
    */
   parkedCommits?: ParkedRunCommits[];
   /**

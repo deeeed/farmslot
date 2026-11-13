@@ -186,13 +186,13 @@ test('run.sessionCommand selects the requested role instead of the primary worke
 
 test('run.sessionCommand returns a typed unsupported reason for a runner with no session reload', async () => {
   const run = codexWorkerRun({
-    metrics: { nudgeCount: 0, model: 'auto', runner: 'cursor' },
+    metrics: { nudgeCount: 0, model: 'auto', runner: 'opencode' },
     agentContexts: [
       agentContext({
-        runner: 'cursor',
+        runner: 'opencode',
         model: 'auto',
-        runnerSessionId: 'cursor-session-1',
-        runnerSessionPath: '/tmp/cursor-session-1.json',
+        runnerSessionId: 'opencode-session-1',
+        runnerSessionPath: '/tmp/opencode-session-1.json',
       }),
     ],
   });
@@ -203,7 +203,7 @@ test('run.sessionCommand returns a typed unsupported reason for a runner with no
   if (result.supported) return;
   assert.equal(result.reason, 'session-reload-unsupported');
   assert.equal(result.role, 'fix-bug');
-  assert.match(result.detail, /cursor/);
+  assert.match(result.detail, /opencode/);
   assert.equal('reopenCommand' in result, false);
 });
 
@@ -802,3 +802,30 @@ test('an unreadable pane inventory reports unknown, never dead', async () => {
   assert.equal(result.supported && result.liveness, 'unknown');
   assert.match((result.supported && result.livenessReason) || '', /inventory .* is unavailable/);
 });
+
+for (const [runner, flag] of [
+  ['cursor', '--resume'],
+  ['pi', '--session'],
+] as const) {
+  test(`run.sessionCommand uses the ${runner} saved-session capability`, async () => {
+    const sessionId = `${runner}-saved-session`;
+    const run = codexWorkerRun({
+      metrics: { nudgeCount: 0, model: 'auto', runner },
+      agentContexts: [
+        agentContext({
+          runner,
+          model: 'auto',
+          runnerSessionId: sessionId,
+          runnerSessionPath: `/owned/${sessionId}.jsonl`,
+        }),
+      ],
+    });
+    const result = await runSessionCommand({ runId: run.id }, deps(run));
+    assert.equal(result.supported, true);
+    if (!result.supported) return;
+    assert.equal(result.runner, runner);
+    assert.equal(result.sessionId, sessionId);
+    assert(result.reopenCommand.includes(flag));
+    assert(result.reopenCommand.includes(sessionId));
+  });
+}

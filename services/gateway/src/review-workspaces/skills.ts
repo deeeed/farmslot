@@ -2,17 +2,13 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
-import {
-  executionTemplateSourceDirty,
-  executionTemplateSourceRevision,
-  resolveConfiguredExecutionTemplateSources,
-} from '@farmslot/agent-runtime';
 import type {
   ExecutionTemplateSourceRoot,
   ReviewWorkspaceSupportBinding,
   ReviewWorkspaceSupportConfig,
   Run,
 } from '@farmslot/protocol';
+import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 import {
   currentProjectSources,
   type RawProjectJson,
@@ -20,12 +16,19 @@ import {
   resolveSourceBinding,
   staticReviewSupportPlaceholdersAllowed,
 } from '@farmslot/slot-config';
+
+import {
+  executionTemplateSourceDirty,
+  executionTemplateSourceRevision,
+  resolveConfiguredExecutionTemplateSources,
+} from '../host-services/execution-template-sources.js';
 export type {
   ReviewWorkspaceSupportConfig,
   ReviewWorkspaceSupportEntry,
   ReviewWorkspaceSupportSource,
 } from '@farmslot/protocol';
 
+import type { ProjectCommandEnvOptions } from '../core/project-env.js';
 import { collectSupportFiles, type NodeSupportFile, supportHash } from '../node-support/files.js';
 
 interface SourceManifest {
@@ -218,7 +221,7 @@ export async function collectReviewWorkspaceSupport(
     )
       throw new Error(`Unsupported review support environment binding: ${name}`);
   }
-  const resolution = resolveConfiguredExecutionTemplateSources(
+  const resolution = await resolveConfiguredExecutionTemplateSources(
     {
       sources: definitions.map((source) => ({
         id: `${source.kind}:${source.name}`,
@@ -252,8 +255,8 @@ export async function collectReviewWorkspaceSupport(
           : definition.kind === 'library'
             ? `libraries/${definition.name}`
             : 'runtime/package';
-      const sourceRevision = executionTemplateSourceRevision(source.root);
-      const sourceDirty = executionTemplateSourceDirty(source.root);
+      const sourceRevision = await executionTemplateSourceRevision(source.root);
+      const sourceDirty = await executionTemplateSourceDirty(source.root);
       const identity: SourceManifest = {
         kind: definition.kind,
         name: definition.name,
@@ -335,6 +338,25 @@ export async function collectReviewWorkspaceSupport(
   };
 }
 
+/** Native launch and accounting use the same frozen workspace environment bindings. */
+export function reviewWorkspaceCommandEnvOptions(
+  workspace: NonNullable<Run['reviewWorkspace']>,
+  domain?: string,
+): ProjectCommandEnvOptions {
+  const support = workspace.support;
+  return {
+    domain,
+    overrides: support
+      ? Object.fromEntries(
+          Object.entries(support.environment).map(([name, value]) => [
+            name,
+            bindReviewWorkspaceSupportValue(value, support),
+          ]),
+        )
+      : undefined,
+  };
+}
+
 /** Both launch transports grant the same frozen source and reference inputs. */
 export function reviewWorkspaceReadOnlyRoots(
   workspace: NonNullable<Run['reviewWorkspace']>,
@@ -353,11 +375,11 @@ export function bindReviewWorkspaceSupportValue(
   value: string,
   support: Pick<ReviewWorkspaceSupportBinding, 'path' | 'references'>,
 ): string {
-  let bound = value.replaceAll('{{support}}', support.path);
+  let bound = value.replaceAll('{{support}}', literalReplacement(support.path));
   for (const reference of support.references ?? [])
     bound = bound.replaceAll(
       referenceRepoPlaceholder(reference.name),
-      reference.missing ? '' : reference.path,
+      literalReplacement(reference.missing ? '' : reference.path),
     );
   return bound;
 }

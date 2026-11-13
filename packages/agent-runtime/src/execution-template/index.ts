@@ -51,9 +51,14 @@ export type {
   UnavailableExecutionTemplateSource,
 } from './source-config.js';
 export {
+  type ExecutionTemplateGitResult,
+  type ExecutionTemplateGitRunner,
   executionTemplateSourceDirty,
+  executionTemplateSourceDirtyAsync,
   executionTemplateSourceRevision,
+  executionTemplateSourceRevisionAsync,
   resolveConfiguredExecutionTemplateSources,
+  resolveConfiguredExecutionTemplateSourcesAsync,
 } from './source-config.js';
 export type {
   CreateExecutionTemplateOptions,

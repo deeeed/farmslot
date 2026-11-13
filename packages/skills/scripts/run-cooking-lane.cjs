@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
+const { literalReplacement } = require('@farmslot/protocol/scripts/literal-replacement.mjs');
 const { expandTemplate } = require('./lib.cjs');
 
 const DEFAULT_SCENARIO_CONFIG = path.resolve(__dirname, '../templates/recipe-cook/scenarios.json');
@@ -820,10 +821,10 @@ function injectValidationEvidence(taskMarkdown, evidenceBlock) {
   if (/## Validation Evidence[\s\S]*?(?=\n## |\s*$)/.test(next)) {
     next = next.replace(
       /## Validation Evidence[\s\S]*?(?=\n## |\s*$)/,
-      `## Validation Evidence\n\n${evidenceBlock}\n`,
+      literalReplacement(`## Validation Evidence\n\n${evidenceBlock}\n`),
     );
   } else if (next.includes('RECIPE_COOK_VALIDATION_PENDING')) {
-    next = next.replace('RECIPE_COOK_VALIDATION_PENDING', evidenceBlock);
+    next = next.replace('RECIPE_COOK_VALIDATION_PENDING', literalReplacement(evidenceBlock));
   } else {
     next = `${next.trim()}\n\n## Validation Evidence\n\n${evidenceBlock}\n`;
   }
@@ -835,7 +836,10 @@ function normalizeTaskArtifactDir(taskMarkdown, artifactsDir) {
   if (!/ARTIFACT_DIR:/.test(taskMarkdown)) {
     return taskMarkdown;
   }
-  return taskMarkdown.replace(/ARTIFACT_DIR:\s*.*/, `ARTIFACT_DIR: ${artifactsDir}`);
+  return taskMarkdown.replace(
+    /ARTIFACT_DIR:\s*.*/,
+    literalReplacement(`ARTIFACT_DIR: ${artifactsDir}`),
+  );
 }
 
 function mapVerdict(value, validationResults) {

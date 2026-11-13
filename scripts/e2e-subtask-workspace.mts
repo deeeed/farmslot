@@ -163,7 +163,7 @@ async function main(): Promise<void> {
   const { runsDirectory } = await import('../services/gateway/src/runs/store.js');
 
   const project = await loadProjectVars(PROJECT);
-  const template = resolveConfiguredExecutionTemplate(project, {
+  const template = await resolveConfiguredExecutionTemplate(project, {
     flow: 'review-pr',
     platform: 'cli',
     runMode: 'autonomous',

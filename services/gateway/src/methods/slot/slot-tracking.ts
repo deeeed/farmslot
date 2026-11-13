@@ -30,10 +30,12 @@ import {
 import { shellQuote } from '../../core/tmux.js';
 import { farmslotRoot } from '../../projects/repo-root.js';
 import type { StartRefResolution } from '../../projects/start-ref-resolution.js';
+import { mutateSlotGit } from '../../run-lifecycle/validation-run-commits.js';
 
 import {
   CLEAR_INDEX_FLAGS_COMMAND,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
+  REFRESH_REMOTE_REF_LOCKS_COMMAND,
 } from './git-cleanup-commands.js';
 
 export type MergeMainStrategy = 'merge' | 'rebase';
@@ -225,7 +227,7 @@ export async function resetSlotRepoToIdle(
   const fetched = await execOnSlot(
     vars,
     withFarmGitConfig(
-      `git -C ${repo} fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+      `cd ${repo} && { ${REFRESH_REMOTE_REF_LOCKS_COMMAND}; } && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
     ),
   );
   if (fetched.exitCode !== 0)
@@ -242,9 +244,6 @@ export async function resetSlotRepoToIdle(
             ? `[ "$(git rev-parse --verify --quiet ${shellQuote(`refs/heads/${branch}`)})" = ${shellQuote(sha)} ]`
             : `! git rev-parse --verify --quiet ${shellQuote(`refs/heads/${branch}`)} >/dev/null`,
         ),
-        ...(!options?.discardLocalWork
-          ? ['[ -z "$(git status --porcelain --untracked-files=all)" ]']
-          : []),
       ]
     : [];
   const guard = (checks: string[]) =>
@@ -257,25 +256,15 @@ export async function resetSlotRepoToIdle(
   const script = [
     `cd ${repo}`,
     guard(guards),
+    `git remote set-head origin ${shellQuote(defaultBranch)}`,
+    `[ "$(git symbolic-ref refs/remotes/origin/HEAD)" = ${shellQuote(`refs/remotes/origin/${defaultBranch}`)} ]`,
     `base=$(git rev-parse ${shellQuote(baseRef)})`,
     `{ ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; }`,
-    ...(options?.discardLocalWork
-      ? [
-          `{ ${CLEAR_INDEX_FLAGS_COMMAND}; }`,
-          `{ ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard HEAD; }`,
-        ]
-      : []),
-    // On the target branch the final hard reset clears the index, including merge conflicts.
-    ...(currentBranch !== target
-      ? ['if git ls-files --error-unmatch . >/dev/null 2>&1; then git checkout -- .; fi']
-      : []),
+    `{ ${CLEAR_INDEX_FLAGS_COMMAND}; }`,
+    `{ ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard HEAD; }`,
     'git clean -fd',
-    guard(guards.filter((check) => !check.includes('status --porcelain'))),
-    ...(currentBranch !== target
-      ? [
-          `if git show-ref --verify --quiet ${shellQuote(`refs/heads/${target}`)}; then git checkout ${shellQuote(target)}; else git checkout -b ${shellQuote(target)} "$base"; fi`,
-        ]
-      : []),
+    guard(guards),
+    `if [ "$(git symbolic-ref --quiet --short HEAD)" != ${shellQuote(target)} ]; then if git show-ref --verify --quiet ${shellQuote(`refs/heads/${target}`)}; then git checkout ${shellQuote(target)}; else git checkout -b ${shellQuote(target)} "$base"; fi; fi`,
     ...(expect
       ? [
           guard([
@@ -286,7 +275,18 @@ export async function resetSlotRepoToIdle(
       : []),
     `{ ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard "$base"; }`,
   ].join(' && ');
-  const reset = await execOnSlot(vars, withFarmGitConfig(script), { noRetry: true });
+  const reset = await mutateSlotGit(
+    vars,
+    projectJson,
+    {
+      defaultBranch,
+      targetBranches: [target],
+      targetTrees: [baseRef],
+      verifyWork: options?.verifyWork,
+    },
+    script,
+    execOnSlot,
+  );
   if (reset.exitCode !== 0)
     throw new Error(`Idle reset refused on ${vars.slotId}: ${reset.stderr || reset.stdout}`);
   return { trackingBranch, previousBranch: currentBranch, linkedWorktree };
