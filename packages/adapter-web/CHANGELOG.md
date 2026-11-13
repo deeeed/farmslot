@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.19.11 - 2026-11-13
+
+- Resolve a python3 shim (asdf, pyenv) to its real interpreter once, ignoring executable overrides and keeping the install-stub guard, and give python probes a 15 s budget, so a loaded host no longer fails launch or readiness with `ETIMEDOUT`; a failed rollback or focus-check probe no longer replaces the launch error.
+
 ## 0.19.10 - 2026-11-13
 
 - Republish against protocol 0.83.2, recipe-runner 0.46.15 and adapter-sdk 0.27.5 so consumers load one copy of each.
