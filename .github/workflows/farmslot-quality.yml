@@ -22,6 +22,100 @@ permissions:
   pull-requests: read
 
 jobs:
+  repository-scheduling-measurement:
+    name: Measure repository guards ${{ matrix.mode }}
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/perf/ci-scheduling'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [sequential, overlap]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: corepack enable
+      - run: yarn install --immutable
+      - run: yarn workspace @farmslot/recipe-runner build
+      - name: Measure all parity guards and deploy tests
+        env:
+          MODE: ${{ matrix.mode }}
+        run: |
+          parity() {
+            node --input-type=module -e "import {spawnSync} from 'node:child_process'; import {ciParitySteps} from './scripts/quality/ci-local.mjs'; import {runTimedSteps} from './scripts/quality/lib/step-timing.mjs'; const steps=ciParitySteps(null,process.cwd()); console.log(JSON.stringify({coverage:steps})); const {failure}=runTimedSteps(steps,{prefix:'measure-parity',spawn:spawnSync,cwd:process.cwd()}); process.exitCode=failure?.status??0;"
+          }
+          start=$(date +%s)
+          mkdir -p "$RUNNER_TEMP/repository-timings"
+          node -p 'JSON.stringify({cpus:require("node:os").availableParallelism(),node:process.version,platform:process.platform})' > "$RUNNER_TEMP/repository-timings/environment.json"
+          result=0
+          if [ "$MODE" = overlap ]; then
+            parity > "$RUNNER_TEMP/repository-timings/parity.log" 2>&1 & parity_pid=$!
+            node --test scripts/deploy-node.test.mjs > "$RUNNER_TEMP/repository-timings/deploy.log" 2>&1 & deploy_pid=$!
+            if wait "$parity_pid"; then :; else result=1; fi
+            if wait "$deploy_pid"; then :; else result=1; fi
+          else
+            if parity > "$RUNNER_TEMP/repository-timings/parity.log" 2>&1; then :; else result=1; fi
+            if node --test scripts/deploy-node.test.mjs > "$RUNNER_TEMP/repository-timings/deploy.log" 2>&1; then :; else result=1; fi
+          fi
+          elapsed=$(( $(date +%s) - start ))
+          printf '{"mode":"%s","seconds":%s,"exit":%s}\n' "$MODE" "$elapsed" "$result" > "$RUNNER_TEMP/repository-timings/result.json"
+          exit "$result"
+      - name: Retain repository comparison
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scheduling-repository-${{ matrix.mode }}
+          path: ${{ runner.temp }}/repository-timings
+          if-no-files-found: error
+
+  scheduling-measurement:
+    name: Measure ${{ matrix.suite }} workers=${{ matrix.workers }}
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/perf/ci-scheduling'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        workers: [2, 4]
+        suite: [ui, protocol, recipe-runner, cli]
+    env:
+      FARMSLOT_TSX_TEST_WORKERS: ${{ matrix.workers }}
+      FARMSLOT_QUALITY_TIMINGS_DIR: ${{ runner.temp }}/scheduling-timings
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: corepack enable
+      - run: yarn install --immutable
+      - name: Build suite prerequisites
+        run: yarn workspace @farmslot/recipe-runner build
+      - name: Measure full suite
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          start=$(date +%s)
+          mkdir -p "$FARMSLOT_QUALITY_TIMINGS_DIR"
+          node -p 'JSON.stringify({cpus:require("node:os").availableParallelism(),node:process.version,platform:process.platform})' > "$FARMSLOT_QUALITY_TIMINGS_DIR/environment.json"
+          if [ "$SUITE" = ui ]; then
+            if yarn --cwd apps/command-center test:ui; then result=0; else result=$?; fi
+          else
+            if yarn workspace "@farmslot/$SUITE" test; then result=0; else result=$?; fi
+          fi
+          elapsed=$(( $(date +%s) - start ))
+          mkdir -p "$FARMSLOT_QUALITY_TIMINGS_DIR"
+          printf '{"suite":"%s","workers":%s,"seconds":%s,"exit":%s}\n' "$SUITE" "$FARMSLOT_TSX_TEST_WORKERS" "$elapsed" "$result" > "$FARMSLOT_QUALITY_TIMINGS_DIR/suite.json"
+          exit "$result"
+      - name: Retain comparison timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scheduling-${{ matrix.suite }}-${{ matrix.workers }}
+          path: ${{ runner.temp }}/scheduling-timings
+          if-no-files-found: error
+
   # Every job in this repo's workflows runs on ubuntu-24.04, not ubuntu-latest. ubuntu-26.04 (latest
   # from 2026-10-30) breaks CI twice: its uutils mkdir is not exclusive under concurrency, so the
   # mkdir lock in scripts/lib/node-cli-refresh.sh admits several holders (deploy-node.test), and a
