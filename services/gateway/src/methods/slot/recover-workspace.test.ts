@@ -146,6 +146,7 @@ mock.module('./workspace-probe.js', {
         behind: 0,
         defaultFetchedAt: null,
         originKey: 'example',
+        publicationRemoteKey: 'example',
         publicationRemote: 'origin',
         publicationRef: `refs/heads/${branch}`,
       };

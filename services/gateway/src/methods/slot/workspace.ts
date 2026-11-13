@@ -19,9 +19,7 @@ import {
   loadSlotVars,
   type RawProjectJson,
   readSlotRow,
-  type SlotVars,
 } from '../../core/index.js';
-import { readSlotProbe } from '../../core/read-probes.js';
 import { shellQuote } from '../../core/tmux.js';
 import { setWorkspaceOverlay } from '../../fleet/state.js';
 import { readSlotCommand } from '../../host-services/read-command.js';
@@ -37,6 +35,7 @@ import { isActiveSlotHolder, slotPinIsRequestOnly } from '../dispatch/slot-scori
 import { REFRESH_REMOTE_REF_LOCKS_COMMAND } from './git-cleanup-commands.js';
 import { readMergedPreparePullRequests, refIncludedInMergedPullRequest } from './unmerged-work.js';
 import { probeWorkspace } from './workspace-probe.js';
+import { readWorkspaceRemoteRef } from './workspace-remote-ref.js';
 import { workspaceVersion } from './workspace-version.js';
 
 export function recoveryFromRow(row: Readonly<Record<string, unknown>>): SlotRecovery | undefined {
@@ -117,47 +116,6 @@ export async function workspaceProtectedReason(
   return undefined;
 }
 
-interface RemoteObservation {
-  sha: string | null;
-  observedAt: string;
-}
-const remoteDefaults = new Map<string, { until: number; promise: Promise<RemoteObservation> }>();
-
-async function remoteDefault(
-  vars: SlotVars,
-  key: string,
-  branch: string,
-  fresh: boolean,
-  timeoutMs: number,
-): Promise<RemoteObservation> {
-  const cacheKey = `${key}:${branch}`;
-  const recoveryBudget = timeoutMs > 5000;
-  const cached = remoteDefaults.get(cacheKey);
-  if (!fresh && !recoveryBudget && cached && cached.until > Date.now()) return cached.promise;
-  const promise = readSlotProbe(
-    vars,
-    withFarmGitConfig(
-      `git -C ${shellQuote(vars.remoteRepo)} ls-remote --heads origin ${shellQuote(`refs/heads/${branch}`)}`,
-    ),
-    fresh || recoveryBudget ? 'workspace-recovery-default' : 'workspace-default',
-    timeoutMs,
-    '/',
-  ).then((result) => ({
-    sha: result.stdout.trim().split(/\s+/)[0] || null,
-    observedAt: new Date().toISOString(),
-  }));
-  if (fresh || recoveryBudget) {
-    const observation = await promise;
-    remoteDefaults.set(cacheKey, {
-      until: Date.now() + 15_000,
-      promise: Promise.resolve(observation),
-    });
-    return observation;
-  }
-  remoteDefaults.set(cacheKey, { until: Date.now() + 15_000, promise });
-  return promise;
-}
-
 export async function inspectSlotWorkspace(
   slotId: string,
   options: {
@@ -166,6 +124,8 @@ export async function inspectSlotWorkspace(
     timeoutMs?: number;
     /** Answer only whether HEAD is the remote default; skip the publication analysis. */
     baselineOnly?: boolean;
+    /** Only the passive fleet observation owner may reuse remote-ref answers. */
+    passive?: boolean;
   } = {},
 ): Promise<SlotWorkspace> {
   const vars = await loadSlotVars(slotId);
@@ -237,13 +197,16 @@ export async function inspectSlotWorkspace(
   if (options.network === false) return work;
   if (options.baselineOnly && (probe.branch !== branch || probe.dirtyCount)) return work;
   try {
-    const remote = await remoteDefault(
+    const passive = options.passive === true && !options.fetch && timeoutMs <= 5000;
+    const remote = await readWorkspaceRemoteRef({
       vars,
-      probe.originKey,
-      branch,
-      options.fetch === true,
+      remoteKey: probe.originKey,
+      remote: 'origin',
+      ref: `refs/heads/${branch}`,
+      scope: options.fetch || timeoutMs > 5000 ? 'workspace-recovery-default' : 'workspace-default',
       timeoutMs,
-    );
+      passive,
+    });
     work.remoteDefaultSha = remote.sha;
     work.remoteObservedAt = remote.observedAt;
     work.remoteAdvanced = remote.sha !== probe.localDefaultSha;
@@ -295,16 +258,16 @@ export async function inspectSlotWorkspace(
       }
     }
     if (probe.publicationRemote !== '.') {
-      const published = await readSlotProbe(
+      const published = await readWorkspaceRemoteRef({
         vars,
-        withFarmGitConfig(
-          `${git} ls-remote --heads ${shellQuote(probe.publicationRemote)} ${shellQuote(probe.publicationRef)}`,
-        ),
-        timeoutMs > 5000 ? 'workspace-recovery-publication' : 'workspace-publication',
+        remoteKey: probe.publicationRemoteKey,
+        remote: probe.publicationRemote,
+        ref: probe.publicationRef,
+        scope: timeoutMs > 5000 ? 'workspace-recovery-publication' : 'workspace-publication',
         timeoutMs,
-        '/',
-      );
-      const sha = published.stdout.trim().split(/\s+/)[0];
+        passive,
+      });
+      const sha = published.sha;
       if (sha === probe.headSha) return { ...work, publication: 'pushed' };
       if (sha) {
         if (options.fetch) {
@@ -479,6 +442,7 @@ export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promi
         const inspect = () =>
           inspectSlotWorkspace(slot.slot, {
             network: slot.lifecycle !== 'busy' && slot.agent !== 'working',
+            passive: true,
           });
         const promise = Promise.resolve().then(async () => {
           try {
