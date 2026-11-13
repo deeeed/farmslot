@@ -38,7 +38,11 @@ import {
   resolveActionCapabilityMatrix,
 } from '../src/harness/catalog.js';
 import { acquireCheckoutLock } from '../src/harness/checkout-lock.js';
-import { callArtifactsLayout, redactCallValue } from '../src/harness/commands/call.js';
+import {
+  CALL_RECORDING_OFF_REASON,
+  callArtifactsLayout,
+  redactCallValue,
+} from '../src/harness/commands/call.js';
 import { renderHumanActionCatalog } from '../src/harness/commands/discover.js';
 import { provenanceFailure, reportTrustFailure } from '../src/harness/commands/run.js';
 import {
@@ -3335,6 +3339,75 @@ describe('--record-video', () => {
       exitCode: 4,
       originalError: unsupported.message,
     });
+  });
+
+  test('a call records only on --record; a recipe run keeps the runner default', async () => {
+    const requests: Array<{ recordVideo: unknown; recordingReason: unknown }> = [];
+    const watched: ShopEngine = {
+      ...recordingEngine,
+      async createRunner(adapter, manifest, options) {
+        const runner = await recordingEngine.createRunner(adapter, manifest, options);
+        return {
+          preflight: (request) => runner.preflight(request),
+          run: (request) => {
+            requests.push({
+              recordVideo: request.recordVideo,
+              recordingReason: request.recordingReason,
+            });
+            return runner.run(request);
+          },
+        };
+      },
+    };
+    const target = checkout();
+    const artifactsRoot = tempRoot('recipe-cli-call-video-');
+    let runs = 0;
+    const call = async (...flags: string[]) => {
+      runs += 1;
+      const result = await capture(() =>
+        handleCall(
+          [
+            'shop.ping',
+            'mode=fast',
+            '--adapter',
+            'web',
+            '--target',
+            target,
+            '--heal',
+            'off',
+          ].concat(['--artifacts-dir', path.join(artifactsRoot, String(runs)), '--json'], flags),
+          { engine: watched },
+        ),
+      );
+      assert.equal(result.value, 0, result.stdout.join('\n') + result.stderr.join('\n'));
+    };
+    await call();
+    // Turning recording off needs no reason of the caller's.
+    await call('--record-video=off');
+    await call('--record-video=off', '--recording-reason', 'Inspect locators only');
+    await call('--record');
+    const off = { recordVideo: false, recordingReason: CALL_RECORDING_OFF_REASON };
+    assert.deepEqual(requests, [
+      off,
+      off,
+      { recordVideo: false, recordingReason: 'Inspect locators only' },
+      { recordVideo: 'full-run', recordingReason: undefined },
+    ]);
+    assert.deepEqual(recorded, ['web']);
+
+    const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
+    const run = await capture(() =>
+      handleRun(
+        [recipe, '--adapter', 'web', '--target', target, '--heal', 'off'].concat([
+          '--artifacts-dir',
+          path.join(artifactsRoot, 'run'),
+          '--json',
+        ]),
+        { engine: watched },
+      ),
+    );
+    assert.equal(run.value, 0, run.stderr.join('\n'));
+    assert.deepEqual(requests.at(-1), { recordVideo: undefined, recordingReason: undefined });
   });
 
   test('call refuses it before execution on an adapter that cannot record', async () => {

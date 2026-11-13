@@ -2,3 +2,4 @@
 - `call` plans its action once: it keeps the runner and plan it made before healing unless healing installed the overlay, recovered the runtime or changed the run environment.
 - `call` binds its provenance with two snapshots, right before its action runs and after it, instead of four, and an installed harness package is hashed once per version: later snapshots compare only file sizes and times and rehash after an edit.
 - `call` names its one action to the host's runner (`plannedActions`), and a live adapter bundle is cached by the files it read: a later call reuses it until one of them changes.
+- `call` records no video unless `--record-video=full-run` (or `--record`) asks for one, and `--record-video=off` needs no `--recording-reason`; recipe runs keep recording UI proof by default.

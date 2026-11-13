@@ -87,6 +87,10 @@ import {
   runFailureUserAction,
 } from './run.js';
 
+/** Why a call without --record records no video: a recipe run is the recorded proof. */
+export const CALL_RECORDING_OFF_REASON =
+  'A single action call records video only with --record-video=full-run.';
+
 export interface CallCommandOptions<TMutation, TAllowlist extends ConsoleAllowlist> {
   engine: RecipeEngine<TMutation, TAllowlist>;
   /** Already checked against the bound provider's command grammar. */
@@ -489,6 +493,13 @@ async function runCall<TMutation, TAllowlist extends ConsoleAllowlist>(
   const callRuntimeOptions: RecipeEngineRunOptions = {
     signal: commandOptions.signal,
     ...requestedRuntimeOptions,
+    // A call records only on --record; its reason for not recording is the call's own.
+    ...(requestedRuntimeOptions.recordVideo === 'full-run'
+      ? {}
+      : {
+          recordVideo: false,
+          recordingReason: requestedRuntimeOptions.recordingReason ?? CALL_RECORDING_OFF_REASON,
+        }),
     claims,
     ...(resolvedAction === 'app.hud'
       ? { autoHud: false, requestedAutoHud: requestedRuntimeOptions.autoHud }
