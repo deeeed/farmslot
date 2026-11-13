@@ -29,6 +29,7 @@ import {
   type RecipeRunResult,
 } from '@farmslot/recipe-runner';
 
+import { CALL_TIMINGS_FILE, type CallTimings } from '../src/harness/call-timings.js';
 import {
   actionExampleCommand,
   actionLibraryContextArgs,
@@ -4270,6 +4271,67 @@ describe('call', () => {
     assert.match(
       none.stdout.join(''),
       /No action matches "zzz" for the web adapter[\s\S]*shop-harness actions --adapter web/u,
+    );
+  });
+});
+
+describe('call timings', () => {
+  async function timedCall(...flags: string[]) {
+    const target = checkout();
+    const artifacts = path.join(tempRoot('recipe-cli-call-timings-'), 'call');
+    const call = await capture(() =>
+      handleCall(
+        [
+          'shop.ping',
+          'mode=fast',
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--artifacts-dir',
+          artifacts,
+          ...flags,
+        ],
+        callOptions,
+      ),
+    );
+    assert.equal(call.value, 0, call.stdout.join('\n') + call.stderr.join('\n'));
+    return { call, artifacts };
+  }
+
+  test("records each phase's time and child processes in call-timings.json and --json", async () => {
+    const { call, artifacts } = await timedCall('--json');
+    const timings = lastJson(call.stdout).timings as CallTimings;
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(artifacts, CALL_TIMINGS_FILE), 'utf8')),
+      timings,
+    );
+    assert.equal(timings.schemaVersion, 1);
+    const names = timings.phases.map((phase) => phase.name);
+    for (const name of ['bootstrap', 'resolve', 'preflight', 'heal', 'execute', 'report']) {
+      assert.ok(names.includes(name), `${name} in ${names.join(', ')}`);
+    }
+    // The checkout's provenance is read through git, so the call starts processes.
+    assert.ok(timings.processes > 0);
+    assert.equal(
+      timings.phases.reduce((sum, phase) => sum + phase.processes, 0),
+      timings.processes,
+    );
+    assert.ok(timings.work.createRunner > 0 && timings.work.provenanceSnapshot > 0);
+    assert.equal(typeof timings.nodeMs, 'number');
+  });
+
+  test('prints one timing line for a person', async () => {
+    const { call } = await timedCall();
+    const line = call.stdout
+      .join('\n')
+      .split('\n')
+      .find((entry) => entry.startsWith('Timing:'));
+    assert.match(
+      line ?? '',
+      /^Timing: \d+\.\ds \(node \d+\.\ds\): .* · \d+ processes · runner \d+× · provenance \d+×$/u,
     );
   });
 });

@@ -13,6 +13,12 @@ import type { RecipeLibrarySource } from '@farmslot/recipe-runner';
 import { fuzzyResolveActions, resolveActionCapabilityRefusal } from '../../action-catalog.js';
 import { harnessAdapter } from '../adapters.js';
 import {
+  CallTimingRecorder,
+  formatCallTimings,
+  withCallTimings,
+  writeCallTimings,
+} from '../call-timings.js';
+import {
   actionExampleCommand,
   actionLibraryContextArgs,
   type DescribedAction,
@@ -96,6 +102,15 @@ export interface CallCommandOptions<TMutation, TAllowlist extends ConsoleAllowli
 export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>(
   argv: string[],
   commandOptions: CallCommandOptions<TMutation, TAllowlist>,
+): Promise<number> {
+  const timings = new CallTimingRecorder();
+  return withCallTimings(timings, () => runCall(argv, commandOptions, timings));
+}
+
+async function runCall<TMutation, TAllowlist extends ConsoleAllowlist>(
+  argv: string[],
+  commandOptions: CallCommandOptions<TMutation, TAllowlist>,
+  timings: CallTimingRecorder,
 ): Promise<number> {
   const { engine } = commandOptions;
   const host = harnessHost().name;
@@ -504,6 +519,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
   );
   try {
     let preflightedExecution: PreparedRecipeExecution | undefined;
+    timings.phase('preflight');
     try {
       preflightedExecution = await preflightRecipe(
         engine,
@@ -529,6 +545,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
       return EXIT.validation;
     }
 
+    timings.phase('heal');
     const lock = acquireCheckoutLock(target, 'call');
     if ('message' in lock) {
       return checkoutBusyOut(json, 'call', lock.message, lock.path);
@@ -540,6 +557,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
       });
       if (typeof prepared === 'number') return prepared;
       const { state } = prepared;
+      timings.phase('replan');
       preflightedExecution = await preflightRecipe(
         engine,
         adapter,
@@ -550,6 +568,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
         callRuntimeOptions,
       );
 
+      timings.phase('observers');
       const started = await startRunObservers(adapter, target, artifactsDir);
       observers = started;
       let executionResult;
@@ -558,6 +577,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
         observers = undefined;
         await commandOptions.beforeResult?.();
       };
+      timings.phase('execute');
       try {
         executionResult = await executeWithHealBounds(
           () => {
@@ -610,6 +630,9 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
         throw error;
       }
       const { result, violation } = executionResult;
+      timings.phase('report');
+      const callTimings = timings.snapshot(readCallNodeMs(result.tracePath));
+      writeCallTimings(artifactsDir, callTimings);
       if (violation !== null) {
         const conciseFailure = violation.originalError
           ? conciseFailureForHuman(violation.originalError)
@@ -653,6 +676,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
               ...(screenshots.length > 0 ? { screenshots } : {}),
               recovered: state.recovered,
               mutations: state.mutations,
+              timings: callTimings,
               exitCode: result.status === 'pass' ? EXIT.ok : EXIT.runtime,
               ...(result.status === 'fail'
                 ? {
@@ -685,7 +709,8 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
             screenshots
               .map((shot) => `${out('label', 'Screenshot:')} ${out('path', shot)}\n`)
               .join('') +
-            `${out('label', 'Artifacts:')} ${out('path', result.artifactManifestPath)}` +
+            `${out('label', 'Artifacts:')} ${out('path', result.artifactManifestPath)}\n` +
+            `${out('label', 'Timing:')} ${formatCallTimings(callTimings)}` +
             (result.status === 'fail' ? `\n  Next: ${failureUserAction}` : ''),
         );
       }
@@ -873,6 +898,17 @@ export function callArtifactsLayout(action: string): RecipeArtifactsLayout {
 }
 
 function readCallOutput(tracePath: string): unknown {
+  const entry = readCallTraceEntry(tracePath);
+  return entry && Object.prototype.hasOwnProperty.call(entry, 'output') ? entry.output : undefined;
+}
+
+// The action node's own duration, so the timing line separates it from the call's overhead.
+function readCallNodeMs(tracePath: string): number | undefined {
+  const durationMs = readCallTraceEntry(tracePath)?.durationMs;
+  return typeof durationMs === 'number' ? durationMs : undefined;
+}
+
+function readCallTraceEntry(tracePath: string): Record<string, unknown> | undefined {
   try {
     const trace = JSON.parse(fs.readFileSync(tracePath, 'utf8'));
     const entries = Array.isArray(trace)
@@ -881,9 +917,7 @@ function readCallOutput(tracePath: string): unknown {
         ? trace.entries
         : [];
     const entry = entries.find((item: unknown) => isRecord(item) && item.nodeId === 'call');
-    return isRecord(entry) && Object.prototype.hasOwnProperty.call(entry, 'output')
-      ? entry.output
-      : undefined;
+    return isRecord(entry) ? entry : undefined;
   } catch {
     return undefined;
   }

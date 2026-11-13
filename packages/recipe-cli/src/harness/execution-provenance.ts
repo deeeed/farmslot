@@ -12,6 +12,7 @@ import { digestRecipeDocument, type RecipeConformanceSource } from '@farmslot/pr
 import type { RecipeArtifactFinalization, RecipeLibrarySource } from '@farmslot/recipe-runner';
 
 import { harnessAdapter } from './adapters.js';
+import { countCallWork } from './call-timings.js';
 import { harnessHost } from './host.js';
 import { isPathWithin } from './paths.js';
 
@@ -96,6 +97,7 @@ export async function captureExecutionProvenance(
   input: ExecutionProvenanceInput,
   phase: ExecutionProvenancePhase,
 ): Promise<ExecutionProvenanceSnapshot> {
+  countCallWork('provenanceSnapshot');
   const recipeDigest = input.recipePath
     ? recipeFileDigest(input.recipePath)
     : digestRecipeDocument(input.recipeDocument);

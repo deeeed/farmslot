@@ -28,6 +28,7 @@ import {
 } from '@farmslot/recipe-runner';
 
 import { adapterPortEnv, harnessAdapter } from './adapters.js';
+import { countCallWork } from './call-timings.js';
 import { type ActionCapabilitySource, OFFICIAL_ACTIONS, type RecipeCatalog } from './catalog.js';
 import { color } from './cli-color.js';
 import { CliError } from './cli-error.js';
@@ -135,11 +136,11 @@ export async function runRecipe<TMutation, TAllowlist extends ConsoleAllowlist>(
     throw new Error('Read-only preflight cannot execute; resolve an executing plan first.');
   const { runner, runRequest, absoluteArtifactsDir, provenanceInput, provenanceSnapshots } =
     execution;
-  if (!wasPreflighted) await runner.preflight(runRequest);
+  if (!wasPreflighted) await planRun(runner, runRequest);
   await prepareRuntimeIfNeeded(adapter, projectRoot, runtimeOptions);
   // The prepared runner owns frozen action bundles. Rechecking its plan here
   // does not reconstruct adapters or replace their approved bytes.
-  await runner.preflight(runRequest);
+  await planRun(runner, runRequest);
   const preExecute = await captureExecutionProvenance(provenanceInput, 'pre-execute');
   provenanceSnapshots.push(preExecute);
   const preExecuteDrift = executionProvenanceDrift(provenanceSnapshots[0]!, preExecute);
@@ -245,8 +246,14 @@ export async function preflightRecipe<TMutation, TAllowlist extends ConsoleAllow
     actionManifestPath,
     runtimeOptions,
   );
-  const plan = execution.plan ?? (await execution.runner.preflight(execution.runRequest));
+  const plan = execution.plan ?? (await planRun(execution.runner, execution.runRequest));
   return { ...execution, plan };
+}
+
+// Every plan the engine asks for; a call's timings count them.
+function planRun(runner: RecipeRunner, request: RecipeRunRequest): Promise<RecipeExecutionPlan> {
+  countCallWork('runnerPreflight');
+  return runner.preflight(request);
 }
 
 /** Register recovery/mutation metadata with the engine's single final writer. */
@@ -321,6 +328,7 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
   };
   // The loaded mutation is not bound to a plan yet, so the runner that computes
   // the plan gets none; only an authorized mutation reaches execution.
+  countCallWork('createRunner');
   let runner = await engine.createRunner(adapter, manifest, runnerOptions);
   const runRequest: RecipeRunRequest = {
     ...(hud ? { hud } : {}),
@@ -353,7 +361,7 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
   };
   let plan: RecipeExecutionPlan | undefined;
   if (runtimeOptions.readOnly) {
-    plan = await runner.preflight(runRequest);
+    plan = await planRun(runner, runRequest);
     if (mutation && !mutation.preflight)
       throw Object.assign(
         new CliError('The provider has no read-only mutation authorization preflight.', EXIT.usage),
@@ -365,11 +373,12 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
       );
     await mutation?.preflight?.(mutationInput, plan);
   } else if (mutation && trustedMutation) {
-    const executionPlan = await runner.preflight(runRequest);
+    const executionPlan = await planRun(runner, runRequest);
     const authorizedMutation = await mutation.authorize(trustedMutation, executionPlan, {
       adapter,
     });
     if (authorizedMutation !== undefined) {
+      countCallWork('createRunner');
       runner = await engine.createRunner(adapter, manifest, {
         ...runnerOptions,
         trustedMutation: authorizedMutation,
