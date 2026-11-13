@@ -1904,6 +1904,29 @@ describe('live adapter scripts', () => {
     assert.match((await prepare())?.sourceText ?? '', /from beside the action/u);
   });
 
+  test('does not cache a bundle when a folder of an absent input changed during the build', async () => {
+    const root = tempRoot('vanishing-manifest-adapter-');
+    const dir = path.join(root, 'web', 'team');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'probe.mjs'), 'console.log("probe");\n');
+    // A manifest deleted after esbuild resolved through it leaves only its folder's new time.
+    const later = new Date(Date.now() + 60_000);
+    fs.utimesSync(dir, later, later);
+    const recorder = new CallTimingRecorder();
+    const prepare = () =>
+      withCallTimings(recorder, () =>
+        prepareLiveAdapterScript({
+          platform: 'web',
+          action: 'team.probe',
+          namespace: 'shop',
+          implementationRoot: root,
+        }),
+      );
+    await prepare();
+    await prepare();
+    assert.equal(recorder.snapshot().work.liveAdapterCached, 0);
+  });
+
   test('bundles JSON as written, even when it contains import.meta.url', async () => {
     const root = tempRoot('json-adapter-');
     const dir = path.join(root, 'web', 'team');

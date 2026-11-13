@@ -341,7 +341,17 @@ async function bundleInputs(
     }
   }
   for (const [file, sha256] of inputs) {
-    if (sha256 === null || sha256 === 'dir') continue;
+    if (sha256 === 'dir') continue;
+    if (sha256 === null) {
+      // Deleting a file the resolver read updates its folder: a folder that is gone, or
+      // changed since the build started, may hide a manifest esbuild already used.
+      const parent = await stat(path.dirname(file)).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return undefined;
+        throw error;
+      });
+      if (!parent || parent.mtimeMs >= buildStarted) return undefined;
+      continue;
+    }
     // A file written while esbuild ran may differ from what it read: do not cache.
     const { mtimeMs } = await stat(file);
     // At or after the start: a coarse timestamp cannot order the write before the build.
