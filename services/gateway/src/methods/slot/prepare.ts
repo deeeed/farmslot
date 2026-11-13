@@ -661,6 +661,8 @@ async function slotPrepareInner(
         defaultBranch,
         runId: params.runId,
         operationKey: gitOperationKey,
+        blindBaseSha: opts?.blindBaseSha,
+        blindRepoKey: opts?.blindRepoKey,
         targetBranches: [defaultBranch, ...(branch ? [branch] : [])],
         targetTrees,
         verifyWork: async () => {

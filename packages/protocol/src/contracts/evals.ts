@@ -340,6 +340,8 @@ export interface EvalBlindTrial {
     slotId: string;
     slotEpoch: number;
     capsulePath: string;
+    /** Original git-common-dir hash captured before isolation, stored only by the gateway. */
+    repoKey?: string;
     /** Separate endpoint for the browser spawned inside the worker seatbelt. */
     browserCdpPort?: number;
     verifiedAt?: string;

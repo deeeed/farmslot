@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -529,6 +530,65 @@ test('a successor claiming the slot after capture prevents reset without losing 
   );
   assert.equal(git('rev-parse', 'HEAD'), head);
   assert.ok(git('for-each-ref', 'refs/farmslot/parked/'));
+});
+
+test('blind prepare parks against its shallow base without origin refs, including replay', async (t) => {
+  const { vars, git, base, validation } = await fixture(t);
+  git('reset', '--hard', base);
+  git('remote', 'remove', 'origin');
+  git('branch', '-D', 'main');
+  await writeFile(path.join(vars.remoteRepo, '.git/shallow'), `${base}\n`);
+  assert.equal(git('remote'), '');
+  assert.equal(git('for-each-ref', '--format=%(refname)'), `refs/heads/${validation.branch}`);
+  const options = {
+    defaultBranch: 'main',
+    blindBaseSha: base,
+    blindRepoKey: createHash('sha256')
+      .update(path.resolve(vars.remoteRepo, git('rev-parse', '--git-common-dir')))
+      .digest('hex'),
+    runId: validation.id,
+    targetBranches: ['main', validation.branch!],
+    targetTrees: [base],
+  };
+  const reset = () =>
+    mutateSlotGit(vars, {}, options, `git reset --hard ${base} && git clean -fd`, localExec);
+  await assert.rejects(
+    captureSlotWork(vars, {}, { ...options, blindRepoKey: undefined }, localExec),
+    /trusted repository identity.*missing/i,
+    'older blind isolation without a gateway-owned key must fail closed',
+  );
+  assert.equal((await reset()).exitCode, 0);
+  assert.deepEqual((await slotParkedInventory(vars, localExec)).receipts, []);
+  git('commit', '-qm', 'candidate', '--allow-empty');
+  const candidate = git('rev-parse', 'HEAD');
+  await writeFile(path.join(vars.remoteRepo, 'candidate.txt'), 'unfinished candidate\n');
+  assert.equal((await reset()).exitCode, 0);
+  assert.equal(git('rev-parse', 'HEAD'), base);
+  assert.equal(git('status', '--porcelain'), '');
+  const receipts = (await slotParkedInventory(vars, localExec)).receipts;
+  const saved = receipts.find((receipt) => receipt.kind === 'worktree');
+  assert.ok(saved);
+  assert.equal(saved.baseSha, base);
+  assert.equal(saved.kind, 'worktree');
+  assert.deepEqual(saved.commits, [candidate]);
+  assert.equal(git('show', `${saved.ref}:candidate.txt`), 'unfinished candidate');
+  assert.equal((await reset()).exitCode, 0, 'prepare replay uses the same verified base');
+  assert.equal((await slotParkedInventory(vars, localExec)).receipts.length, receipts.length);
+  await assert.rejects(
+    captureSlotWork(vars, {}, { ...options, blindBaseSha: 'f'.repeat(40) }, localExec),
+    /Git rev-list failed/,
+    'an unavailable blind base must fail closed',
+  );
+});
+
+test('normal parking still refuses a missing origin default before mutating', async (t) => {
+  const { vars, git, base, head } = await fixture(t);
+  git('update-ref', '-d', 'refs/remotes/origin/main');
+  await assert.rejects(
+    mutateSlotGit(vars, {}, checks, `git reset --hard ${base}`, localExec),
+    /Git rev-list failed.*origin\/main/,
+  );
+  assert.equal(git('rev-parse', 'HEAD'), head);
 });
 
 test('an incoming run prior-work receipt cannot become a replay checkpoint', async (t) => {
