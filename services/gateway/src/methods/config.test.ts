@@ -1,9 +1,9 @@
 // @farmslot:serial — creates and removes real directories under the shared repo `projects/`.
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 
 import { farmslotRoot } from '../core/config.js';
 
@@ -13,6 +13,25 @@ import {
   configProjectBacklogUpdate,
   configTemplatePreview,
 } from './config.js';
+
+// Configuration saves back files up into the farm home: keep them out of the operator's home.
+const backupHome = await mkdtemp(path.join(os.tmpdir(), 'config-test-home-'));
+const previousHome = process.env.FARMSLOT_HOME;
+process.env.FARMSLOT_HOME = backupHome;
+after(async () => {
+  if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
+  else process.env.FARMSLOT_HOME = previousHome;
+  await rm(backupHome, { recursive: true, force: true });
+});
+
+function assertBackupOutside(backup: string, project: string, projectDir: string): void {
+  assert.equal(
+    path.dirname(backup),
+    path.join(backupHome, 'state', 'config-backups', 'project', project),
+  );
+  assert.match(path.basename(backup), /^project\.json\.bak\./);
+  assert.notEqual(path.dirname(backup), projectDir);
+}
 
 async function makeProject(
   t: { after: (fn: () => unknown) => void },
@@ -50,7 +69,7 @@ test('configProjectAutoRecoveryUpdate writes typed auto_recovery config with bac
   assert.equal(result.ok, true);
   assert.equal(result.project.autoRecovery?.enabled, true);
   assert.equal(result.project.autoRecovery?.disabledPatterns?.[0], 'flaky-test');
-  assert.match(result.backup, /project\.json\.bak\./);
+  assertBackupOutside(result.backup, project, projectDir);
   const raw = JSON.parse(await readFile(path.join(projectDir, 'project.json'), 'utf8'));
   assert.deepEqual(raw.auto_recovery.disabled_patterns, ['flaky-test']);
   assert.equal(raw.auto_recovery.llm.timeoutMs, 1500);
@@ -167,7 +186,8 @@ test('configProjectBacklogUpdate writes typed backlog policy with backup', async
 
   assert.equal(result.ok, true);
   assert.equal(result.project.backlog?.autoDispatch?.enabled, true);
-  assert.match(result.backup, /project\.json\.bak\./);
+  assertBackupOutside(result.backup, project, projectDir);
+  assert.deepEqual(await readdir(projectDir), ['project.json']);
   const raw = JSON.parse(await readFile(path.join(projectDir, 'project.json'), 'utf8'));
   assert.equal(raw.backlog.auto_dispatch.enabled, true);
 });

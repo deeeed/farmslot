@@ -6,6 +6,14 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.31.16 - 2026-11-13
+
+- Use the runtime 0.46 catalog snapshot contract for hosted task initialization.
+
+## 0.31.15 - 2026-11-13
+
+- Update shared adapter/runtime dependencies for unchanged-call plan reuse.
+
 ## 0.31.14 - 2026-11-13
 
 - Republish against protocol 0.83.2, recipe-runner 0.46.15 and adapter-sdk 0.27.5 so consumers load one copy of each.

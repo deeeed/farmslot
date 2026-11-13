@@ -44,6 +44,7 @@ writeFileSync(path.join(root, 'scripts/write-runtime-context.sh'), '#!/bin/sh\n'
 writeFileSync(path.join(root, 'services/gateway/package.json'), '{}');
 writeFileSync(path.join(poolDir, 'testbox.json'), JSON.stringify({ machine: 'testbox' }));
 await seedRunnerObservabilityFixture(root);
+writeFileSync(path.join(root, 'scripts/lib/resolve-farmslot-cli.sh'), '#!/bin/sh\n');
 
 const script = path.join(packRoot, 'scripts', 'x.sh');
 const nested = path.join(packRoot, 'scripts', 'sub', 'y.sh');
@@ -233,6 +234,60 @@ test('commands in an unchanged tree collect the bundle once and deliver it once'
   assert.equal(await later(t, node.io), first);
   assert.equal(collections, 1);
   assert.equal(node.uploads(), 1);
+});
+
+test('external catalogs select a bundle without script hooks and invalidate it only when inputs change', async (t) => {
+  aheadClock(t);
+  const name = 'external-cache-farm';
+  const pack = path.join(root, 'projects', name);
+  const firstRoot = path.join(root, 'external-one');
+  const secondRoot = path.join(root, 'external-two');
+  for (const dir of [pack, path.join(firstRoot, 'dev'), path.join(secondRoot, 'dev')])
+    mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    path.join(pack, 'project.json'),
+    JSON.stringify({
+      qa: {
+        default_profile: 'smoke',
+        profiles: [{ id: 'smoke', title: 'Smoke', template_id: 'qa/default' }],
+      },
+      execution_templates: {
+        sources: [{ id: 'package:cook', kind: 'package', root: { env: 'CACHE_COOK_ROOT' } }],
+      },
+    }),
+  );
+  writeFileSync(path.join(firstRoot, 'dev/core.md'), '# First\n- [ ] One\n');
+  writeFileSync(path.join(secondRoot, 'dev/core.md'), '# Second\n- [ ] Two\n');
+  const previousRoot = process.env.CACHE_COOK_ROOT;
+  process.env.CACHE_COOK_ROOT = firstRoot;
+  t.after(() => {
+    if (previousRoot === undefined) delete process.env.CACHE_COOK_ROOT;
+    else process.env.CACHE_COOK_ROOT = previousRoot;
+    for (const dir of [pack, firstRoot, secondRoot]) rmSync(dir, { recursive: true, force: true });
+  });
+  const node = fakeNode();
+  const vars = { ...remoteVars('external-cache-1'), projectName: name };
+  const command = () =>
+    resolveRemoteFarmCommand(vars, '~/farmslot-node', { io: node.io, supportRoot: true });
+  const first = await command();
+  assert.match(first, /\/support\/[a-f0-9]{64}$/);
+  assert.equal(await command(), first);
+  assert.equal(collections, 1);
+  process.env.CACHE_COOK_ROOT = secondRoot;
+  const second = await command();
+  assert.notEqual(
+    second,
+    first,
+    'binding changes cannot wait behind the filesystem check interval',
+  );
+  assert.equal(collections, 2);
+  appendFileSync(path.join(secondRoot, 'dev/core.md'), '\n- [ ] New instruction\n');
+  t.mock.timers.tick(3_000);
+  const edited = await command();
+  assert.notEqual(edited, second);
+  assert.equal(collections, 3);
+  assert.equal(await command(), edited);
+  assert.equal(collections, 3);
 });
 
 test('a support file edit and a file added to or edited in the pack each collect once more', async (t) => {

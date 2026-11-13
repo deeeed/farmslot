@@ -88,8 +88,16 @@ async function commit(file, bytes) {
   await writeFile(file, bytes, { mode: 0o600 });
   produced.set(file, hash(bytes));
 }
+// The gateway keeps pool backups in its home's state; pool/ holds only live configuration.
+const poolBackups = path.join(
+  fixture.home,
+  'state',
+  'config-backups',
+  'pool',
+  path.basename(owner.poolFile),
+);
 function backup(reply) {
-  assert.equal(path.dirname(reply.backup), path.dirname(owner.poolFile));
+  assert.equal(path.dirname(reply.backup), poolBackups);
   assert(path.basename(reply.backup).startsWith(`${path.basename(owner.poolFile)}.bak.`));
   backups.add(reply.backup);
 }
@@ -103,6 +111,14 @@ try {
   for (const name of await readdir(path.dirname(owner.poolFile)))
     if (name.startsWith(`${path.basename(owner.poolFile)}.bak.`))
       await remember(path.join(path.dirname(owner.poolFile), name));
+  // Backups from earlier runs are restored, not deleted: the run's saves may prune them.
+  let earlierBackups = [];
+  try {
+    earlierBackups = await readdir(poolBackups);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  for (const name of earlierBackups) await remember(path.join(poolBackups, name));
   await navigate(`config/pool/${pool.machine}`);
   const before = await until(
     (v) =>
@@ -112,12 +128,12 @@ try {
   const enabled = slot.enabled === false;
   const changed = await rpc('config.slot.update', { slotId: owner.slotId, update: { enabled } });
   assert.equal(changed.ok, true);
-  for (const name of await readdir(path.dirname(owner.poolFile)))
+  for (const name of await readdir(poolBackups))
     if (
       name.startsWith(`${path.basename(owner.poolFile)}.bak.`) &&
-      !originals.has(path.join(path.dirname(owner.poolFile), name))
+      !originals.has(path.join(poolBackups, name))
     )
-      backups.add(path.join(path.dirname(owner.poolFile), name));
+      backups.add(path.join(poolBackups, name));
   produced.set(owner.poolFile, hash(await readFile(owner.poolFile)));
   evidence.poolStructured = await until(
     (v) =>
@@ -311,7 +327,8 @@ try {
         );
         await rm(file);
       } catch (error) {
-        failures.push(error);
+        // A later save in this run already pruned it, so nothing is left to remove.
+        if (error.code !== 'ENOENT') failures.push(error);
       }
     }
   await writeFile(

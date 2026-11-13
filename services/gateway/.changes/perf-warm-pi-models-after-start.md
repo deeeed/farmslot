@@ -1,0 +1,1 @@
+- Load the LLM model collection right after an orchestrating gateway starts listening, so the first helper call no longer stalls mid-traffic. The one-time load (up to about a second) now happens just after listen. Validation stacks and test gateways still load it on first use.

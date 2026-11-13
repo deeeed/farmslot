@@ -63,6 +63,7 @@ import { initCIMonitor } from './ci-monitor/service.js';
 import { initCopilotRuntime } from './copilot-runtime/controller.js';
 import { beginGatewayShutdown, isGatewayShuttingDown } from './core/gateway-shutdown.js';
 import { loadGatewayTlsMaterial } from './core/gateway-tls.js';
+import { isGatewayTestProcess } from './core/isolated-test-path.js';
 import { getGatewayListenSnapshot, setGatewayListenAddress } from './core/listen-address.js';
 import { loadEvalSuiteCaps } from './evals/suite-cap-store.js';
 import {
@@ -92,6 +93,7 @@ import { initGitHubClient } from './integrations/github-client.js';
 import { initPrLinkage } from './integrations/pr-linkage.js';
 import { setFeedbackMonitorSource } from './intelligence/feedback-candidates.js';
 import { initImprovementEngine } from './intelligence/improvement-engine.js';
+import { warmPiModels } from './llm/index.js';
 import { reconcileMachineParking } from './machine-parking/recovery.js';
 import { refreshBranches } from './methods/dispatch.js';
 import { assertPressureAdmissionConfigValid } from './methods/dispatch/pressure-admission.js';
@@ -1125,6 +1127,12 @@ async function main(): Promise<void> {
     })();
   } else {
     console.log('[startup] branch cache pre-warm disabled (set FARMSLOT_STARTUP_BRANCH_PREWARM=1)');
+  }
+
+  // Pay the LLM model load now, not on the first helper call mid-traffic. Validation stacks and
+  // test gateways keep loading it on first use.
+  if (ENABLE_ORCHESTRATION && !isGatewayTestProcess(process.env, process.argv)) {
+    void warmPiModels();
   }
 }
 

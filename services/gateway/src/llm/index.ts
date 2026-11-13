@@ -50,6 +50,19 @@ export function piModels(): Promise<PiModels> {
   return loadPiModels();
 }
 
+/**
+ * Loads the model collection before the first LLM call needs it: compiling the providers blocks
+ * the event loop for seconds, once per process. The failure is only logged here because the
+ * loader does not keep a rejected load: the first real call loads again and reports its error.
+ */
+export async function warmPiModels(): Promise<void> {
+  try {
+    await piModels();
+  } catch (error) {
+    console.error('[llm] model warm-up failed; the first LLM call loads the models again:', error);
+  }
+}
+
 // Last seeded access token per provider — re-seed only on rotation so the
 // store write (serialized per provider) is not on every call's hot path.
 const seededOAuthAccess = new Map<string, string>();

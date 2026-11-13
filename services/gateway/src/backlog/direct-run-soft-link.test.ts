@@ -24,6 +24,7 @@ const SOURCE_REF_RUNCREATE = 'TAT-69003';
 const SOURCE_REF_NONE = 'TAT-69004';
 const SOURCE_REF_SKIP = 'TAT-69005';
 const SOURCE_REF_AWAIT = 'TAT-69006';
+const SOURCE_REF_AWAIT_REVISION = 'TAT-69010';
 const SOURCE_REF_RECONCILE = 'TAT-69007';
 const SOURCE_REF_RECONCILE_MISMATCH = 'TAT-69008';
 const SOURCE_REF_ORPHAN = 'TAT-69999';
@@ -412,6 +413,52 @@ test('runCreate awaitPersist soft-links after durable stamp and persists backlog
       backlogItemId?: string;
     };
     assert.equal(onDisk.backlogItemId, created.item.id);
+  } finally {
+    if (runStore.getRun(run.id)) {
+      runStore.updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await runStore.deleteRun(run.id);
+    }
+  }
+});
+
+test('runCreate awaitPersist soft-link advances the run revision, not only updatedAt', async () => {
+  const { backlog } = await freshStores();
+  const { runCreate } = await import('../methods/run.js');
+  const runStore = await import('../runs/store.js');
+  const { resourceRevisions } = await import('../resources/revisions.js');
+  await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Soft-link on the awaitPersist path is a published run write',
+      sourceKind: 'jira',
+      sourceRef: SOURCE_REF_AWAIT_REVISION,
+      flowType: 'fix-bug',
+      status: 'ready',
+    },
+    { kind: 'system' },
+  );
+  // The durable stamp runs after creation and before the soft-link: a reader can sample here.
+  let stamped: number | undefined;
+  const { run } = await runCreate(
+    {
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      ticketOrPr: SOURCE_REF_AWAIT_REVISION,
+      ticketData: jiraTicketData(SOURCE_REF_AWAIT_REVISION),
+      mode: 'autonomous',
+    },
+    () => {},
+    {
+      awaitPersist: true,
+      durableStamp: async (created) => {
+        stamped = resourceRevisions.revision({ family: 'run', runId: created.id });
+      },
+    },
+  );
+  try {
+    assert.ok(run.backlogItemId, 'the soft-link branch ran');
+    assert.ok(stamped !== undefined);
+    assert.equal(resourceRevisions.revision({ family: 'run', runId: run.id }), stamped + 1);
   } finally {
     if (runStore.getRun(run.id)) {
       runStore.updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });

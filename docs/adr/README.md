@@ -82,6 +82,7 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [068](068-project-recipe-binding-and-conformance.md)     | Project recipe binding and conformance                                  | Accepted |
 | [069](069-declared-pinned-sources.md)                    | Declared and pinned farm sources                                        | Accepted |
 | [071](071-gateway-change-notifications.md)               | Gateway change notifications and shared client cache                    | Accepted |
+| [072](072-warm-call-server.md)                           | Warm recipe call server per slot                                        | Proposed |
 
 ADR-071 has an Accepted [persistent client store amendment](071-gateway-change-notifications.md#amendment-1-2026-10-20-persistent-client-store)
 and a Proposed [offline-first reads amendment](071-gateway-change-notifications.md#amendment-2-2026-11-02-offline-first-reads).
@@ -114,3 +115,5 @@ Its [local run evidence viewer amendment 23](062-recorded-run-evidence.md#amendm
 ADR-040 has a [Accepted retained-run attachment amendment](040-work-graph-orchestration.md#amendment-3-retained-run-stack-attachment) and [normative specification](../reference/stacked-work.md). The base decision remains Accepted.
 
 ADR-039 [Amendment 7](039-run-portable-bundles.md#amendment-7-2026-11-09-recreatable-run-storage-is-deleted-not-archived), Accepted by Arthur, 2026-11-09, deletes and journals recreatable task pins and run-owned review workspaces under the existing retention checks; other storage keeps Amendments 3 and 5 archival, and run records are never deleted.
+
+ADR-039 [Amendment 8](039-run-portable-bundles.md#amendment-8-2026-11-13-seven-day-retention-for-runs-not-on-an-open-pr), Accepted by Arthur, 2026-11-13, keeps every run on an open PR and holds other settled runs 7 days by default (`runBundleRetention.runRetentionDays`) instead of 48 hours; an unsettled follow-up or review holds the runs it still reads.

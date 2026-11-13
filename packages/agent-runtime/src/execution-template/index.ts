@@ -1,3 +1,9 @@
+export {
+  EXECUTION_TEMPLATE_CATALOG_DIR,
+  EXECUTION_TEMPLATE_CATALOG_FILE,
+  type ExecutionTemplateCatalogSnapshot,
+  type ExecutionTemplateCatalogSourceSnapshot,
+} from './bundled-catalog.js';
 export { createExecutionTemplate } from './create.js';
 export {
   frontmatterOptsOutOfChecklist,

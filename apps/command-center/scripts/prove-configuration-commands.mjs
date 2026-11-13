@@ -322,9 +322,17 @@ const projectFile = path.join(
   fixture.project,
   'project.json',
 );
+// Runtime settings back up beside their file; the gateway keeps project.json backups in its
+// home's state.
+const backupDirectories = new Map([
+  [runtimeFile, path.dirname(runtimeFile)],
+  [projectFile, path.join(fixture.home, 'state', 'config-backups', 'project', fixture.project)],
+]);
 async function captureBackup(backup) {
   const source = [runtimeFile, projectFile].find(
-    (file) => backup.startsWith(file + '.bak.') && path.dirname(backup) === path.dirname(file),
+    (file) =>
+      path.basename(backup).startsWith(path.basename(file) + '.bak.') &&
+      path.dirname(backup) === backupDirectories.get(file),
   );
   assert(
     source && !previousBackups.has(backup),
@@ -356,15 +364,16 @@ try {
       : Buffer.from(JSON.stringify({ schemaVersion: 1, project: fixture.project, values: {} })),
   );
   for (const file of [projectFile, runtimeFile]) {
+    const directory = backupDirectories.get(file);
     let names = [];
     try {
-      names = await readdir(path.dirname(file));
+      names = await readdir(directory);
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
     }
     for (const name of names)
       if (name.startsWith(path.basename(file) + '.bak.'))
-        previousBackups.add(path.join(path.dirname(file), name));
+        previousBackups.add(path.join(directory, name));
   }
   const url = new URL(process.env.FARMSLOT_UI_URL);
   assert.equal(url.origin, 'http://127.0.0.1:5195');
