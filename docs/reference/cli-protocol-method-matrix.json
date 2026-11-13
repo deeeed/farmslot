@@ -1338,6 +1338,10 @@
       "surface": "typed-command",
       "command": "farmslot slot"
     },
+    "slot.parked": {
+      "surface": "typed-command",
+      "command": "farmslot slot parked"
+    },
     "slot.prepare": {
       "surface": "typed-command",
       "command": "farmslot slot",

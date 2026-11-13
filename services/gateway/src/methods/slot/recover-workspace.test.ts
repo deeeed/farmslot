@@ -144,6 +144,47 @@ mock.module('./workspace-probe.js', {
     },
   },
 });
+const parking = await import('../../host-services/parked-work.js');
+let savedReceipts: import('@farmslot/protocol').ParkedRunCommits[] = [];
+mock.module('../../host-services/parked-work.js', {
+  namedExports: {
+    ...parking,
+    parkGitWork: async (
+      _vars: SlotVars,
+      options: import('../../host-services/parked-work.js').ParkedCaptureOptions,
+    ) => {
+      savedReceipts = [];
+      if (dirty || head !== remote) {
+        calls.push('park');
+        savedReceipts = [
+          {
+            slotId: 'example-slot',
+            ref: 'refs/farmslot/parked/example-slot/proof/snapshot',
+            branch,
+            baseSha: remote,
+            headSha: head,
+            commits: ['commit-1', 'commit-2', 'commit-3'],
+            parkedAt: options.at,
+            purpose: 'prior-work',
+            kind: dirty ? 'worktree' : 'commits',
+          },
+        ];
+      }
+      return {
+        receipts: savedReceipts,
+        fingerprint: 'captured',
+        repoKey: 'example',
+        namespace: 'refs/farmslot/parked/example-slot/',
+      };
+    },
+    readParkedGitWork: async () => ({
+      receipts: savedReceipts,
+      legacy: [],
+      repoKey: 'example',
+      namespace: 'refs/farmslot/parked/example-slot/',
+    }),
+  },
+});
 const tracking = await import('./slot-tracking.js');
 mock.module('./slot-tracking.js', {
   namedExports: {
@@ -152,6 +193,11 @@ mock.module('./slot-tracking.js', {
     detectLinkedWorktree: async () => false,
     resetSlotRepoToIdle: async (...args: Parameters<typeof tracking.resetSlotRepoToIdle>) => {
       await args[4]?.verifyWork?.();
+      assert.equal(
+        (await core.readSlotRow('example-slot'))?.phase,
+        'releasing',
+        'every reset owns the fence',
+      );
       calls.push('reset');
       head = remote;
       branch = 'main';
@@ -193,6 +239,7 @@ mock.module('../../run-engine/gate-held-lifecycle.js', {
 });
 const { inspectSlotWorkspace } = await import('./workspace.js');
 const { recoverSlotWorkspace } = await import('./recover-workspace.js');
+const { slotRefresh } = await import('./refresh.js');
 const { loadFleetStatus } = await import('../../fleet/state.js');
 const store = await import('../../runs/store.js');
 const recovery = {
@@ -247,7 +294,7 @@ const recover = (extra: Partial<SlotRefreshParams> = {}) =>
     },
     () => {},
     undefined,
-    { parkOwnerlessCommits: true },
+    {},
   );
 beforeEach(async () => {
   head = 'a'.repeat(40);
@@ -308,7 +355,7 @@ test('malformed recovery also resumes with an explicit observed identity', async
     { slotId: 'example-slot', release: true, expectedWorkspace, mode: 'safe' },
     () => {},
     undefined,
-    { parkOwnerlessCommits: true },
+    {},
   );
   assert.equal(result.refreshed, true, result.detail);
 });
@@ -339,18 +386,23 @@ for (const field of ['cleanup_run_id', 'handoff_run_id']) {
     assert.deepEqual(calls, []);
   });
 }
-test('dirty work still requires confirmation and is never reset', async () => {
+test('dirty work is parked before reset without discard confirmation', async () => {
   dirty = 1;
-  assert.equal((await recover()).detail, 'Confirm discarding the current local work');
-  assert.deepEqual(calls, []);
+  onFixtures = async () => {
+    dirty = 0;
+  };
+  const result = await recover();
+  assert.equal(result.refreshed, true, result.detail);
+  assert.deepEqual(calls, ['park', 'reset']);
 });
-test('force without an observed identity cannot discard dirty work', async () => {
+test('force recovery uses the same parking rule without extra authority', async () => {
   dirty = 1;
-  assert.equal(
-    (await recover({ mode: 'force' })).detail,
-    'Confirm discarding the current local work',
-  );
-  assert.deepEqual(calls, []);
+  onFixtures = async () => {
+    dirty = 0;
+  };
+  const result = await recover({ mode: 'force' });
+  assert.equal(result.refreshed, true, result.detail);
+  assert.deepEqual(calls, ['park', 'reset']);
 });
 test('three unpushed commits on a non-default branch are parked before any reset', async () => {
   branch = 'example-feature';
@@ -500,4 +552,23 @@ test('a rival owner arriving during recovery is left untouched', async (t) => {
   assert.equal(row?.current_run_id, rivalId);
   assert.equal(row?.lifecycle, 'busy');
   assert.equal(row?.phase, 'working');
+});
+
+test('ordinary refresh parks dirty local work under the recovery fence and keeps runtime posture', async () => {
+  await seed({
+    lifecycle: 'ready',
+    phase: null,
+    workspace_recovery: null,
+    held_reason: null,
+    warm: true,
+  });
+  branch = 'local-feature';
+  dirty = 1;
+  onFixtures = async () => {
+    dirty = 0;
+  };
+  const result = await slotRefresh({ slotId: 'example-slot' }, () => {});
+  assert.equal(result.refreshed, true, result.detail);
+  assert.deepEqual(calls, ['park', 'reset']);
+  assert.equal((await core.readSlotRow('example-slot'))?.warm, true);
 });

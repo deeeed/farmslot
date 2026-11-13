@@ -294,6 +294,7 @@ for (const [name, actual, expected] of [
       check: Methods.SLOT_CHECK,
       prepare: Methods.SLOT_PREPARE,
       release: Methods.SLOT_RELEASE,
+      parked: Methods.SLOT_PARKED,
       recycle: Methods.SLOT_RECYCLE,
       refresh: Methods.SLOT_REFRESH,
       cleanup: Methods.SLOT_CLEANUP,

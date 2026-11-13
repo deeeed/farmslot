@@ -421,6 +421,13 @@ export function clearBranchOverlay(slotId: string): void {
 // newer fields. Optionality here reflects that honestly so transformSlot's
 // defaults are compiler-enforced instead of hidden behind casts.
 interface RawSlot {
+  parked_work?: {
+    namespace: string;
+    repoKey: string;
+    count: number;
+    latestRef: string | null;
+    latestAt: string | null;
+  };
   workspace_error?: string | null;
   slot_epoch?: number;
   cleanup_run_id?: string | null;
@@ -572,6 +579,13 @@ function transformSlot(raw: RawSlot): SlotStatus {
     taskFile: raw.task_file ?? null,
     currentRunId: raw.current_run_id ?? null,
     slotEpoch: Number(raw.slot_epoch) || 0,
+    parkedWork: raw.parked_work
+      ? {
+          count: raw.parked_work.count,
+          latestRef: raw.parked_work.latestRef,
+          latestAt: raw.parked_work.latestAt,
+        }
+      : undefined,
     cleanupRunId: raw.cleanup_run_id ?? null,
     handoffRunId: raw.handoff_run_id ?? null,
     ...(raw.held_reason ? { heldReason: raw.held_reason } : {}),

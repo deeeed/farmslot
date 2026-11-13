@@ -5,13 +5,135 @@ import {
   type Run,
   type SlotParkedCommits,
   slotParkedDetail,
+  slotParkedSummary,
 } from '@farmslot/protocol';
 
-import type { SlotVars } from '../core/config.js';
+import type { RawProjectJson, SlotVars } from '../core/config.js';
 import type { execOnSlot } from '../core/exec.js';
 import { withFarmGitConfig } from '../core/farm-git.js';
 import { findUnpushedSlotCommits } from '../core/git-publication.js';
+import { readSlotRow, updateSlotStatusIf } from '../core/state.js';
 import { shellQuote } from '../core/tmux.js';
+import { excludeSlotScaffolding } from '../fleet/slot-scaffolding.js';
+import {
+  executeParkedGitMutation,
+  lookupParkedGitWork,
+  type ParkedCapture,
+  type ParkedCaptureOptions,
+  parkedRestoreTargets,
+  ParkedWorkError,
+  parkGitWork,
+  pruneParkedGitWork,
+  readParkedGitWork,
+  restoreParkedGitWork,
+} from '../host-services/parked-work.js';
+
+interface SlotWorkOptions {
+  defaultBranch: string;
+  runId?: string;
+  operationKey?: string;
+  targetBranches?: string[];
+  targetTrees?: string[];
+}
+interface SlotMutationOptions extends SlotWorkOptions {
+  verifyWork?: () => Promise<void>;
+}
+
+interface SlotWorkCapture extends ParkedCapture {
+  assertOwner(): Promise<void>;
+}
+function sameParkingOwner(
+  current: Readonly<Record<string, unknown>>,
+  expected: Readonly<Record<string, unknown>>,
+): boolean {
+  return (
+    ['slot_epoch', 'current_run_id', 'cleanup_run_id', 'handoff_run_id', 'phase'].every(
+      (key) => current[key] === expected[key],
+    ) && JSON.stringify(current.workspace_recovery) === JSON.stringify(expected.workspace_recovery)
+  );
+}
+
+/** Save every threatened head and dirty state before a fenced caller changes Git. */
+export async function captureSlotWork(
+  vars: SlotVars,
+  project: RawProjectJson,
+  options: SlotWorkOptions,
+  exec: typeof execOnSlot,
+): Promise<SlotWorkCapture> {
+  const row = await readSlotRow(vars.slotId);
+  if (!row) throw new ParkedWorkError('SLOT_MISSING', `Slot ${vars.slotId} has no inventory row`);
+  await excludeSlotScaffolding(vars, project, exec);
+  const { getRunWithArchived, recordParkedRunCommits } = await import('../runs/store.js');
+  const runId =
+    options.runId ?? (typeof row.current_run_id === 'string' ? row.current_run_id : undefined);
+  const run = runId ? await getRunWithArchived(runId) : undefined;
+  const recovery =
+    isRecord(row.workspace_recovery) && typeof row.workspace_recovery.id === 'string'
+      ? row.workspace_recovery.id
+      : undefined;
+  const capture = await parkGitWork(
+    vars,
+    {
+      slotId: vars.slotId,
+      operationKey:
+        options.operationKey ??
+        runId ??
+        recovery ??
+        manualParkKey(
+          vars,
+          typeof row.releasing_since === 'string' &&
+            Number.isFinite(Date.parse(row.releasing_since))
+            ? new Date(row.releasing_since)
+            : undefined,
+        ),
+      runId,
+      defaultBranch: options.defaultBranch,
+      purpose: 'prior-work',
+      at: new Date().toISOString(),
+      onlyThreatened: true,
+      // Other stale tracking refs cannot prove work is still published. Save conservatively
+      // against the fetched default; no per-branch network query is needed before reset.
+      notRevs: [`origin/${options.defaultBranch}`],
+      extraRefs: (options.targetBranches ?? []).map((branch) => `refs/heads/${branch}`),
+      targetTrees: options.targetTrees,
+    },
+    exec,
+  );
+  if (run) for (const receipt of capture.receipts) await recordParkedRunCommits(run.id, receipt);
+  await persistSlotParkedInventory(vars, exec, true, row);
+  return {
+    ...capture,
+    assertOwner: async () => {
+      const current = await readSlotRow(vars.slotId);
+      if (!current || !sameParkingOwner(current, row))
+        throw new ParkedWorkError('OWNER_CHANGED', 'Slot ownership changed after parking');
+    },
+  };
+}
+
+/** The fingerprint and all saved refs are checked inside the node-side reset batch. */
+export async function mutateSlotGit(
+  vars: SlotVars,
+  project: RawProjectJson,
+  options: SlotMutationOptions,
+  command: string,
+  exec: typeof execOnSlot,
+): Promise<import('@farmslot/protocol').ExecResult> {
+  const capture = await captureSlotWork(vars, project, options, exec);
+  await options.verifyWork?.();
+  await capture.assertOwner();
+  return executeParkedGitMutation(
+    vars,
+    {
+      slotId: vars.slotId,
+      extraRefs: (options.targetBranches ?? []).map((branch) => `refs/heads/${branch}`),
+      targetTrees: options.targetTrees,
+    },
+    capture,
+    command,
+    exec,
+  );
+}
 
 /**
  * A final run's branch commits must survive cleanup, whether or not it published.
@@ -48,15 +170,7 @@ export function ownsArtifactOnlyBranch(run: Run | undefined): run is Run {
   );
 }
 
-const MARK = '__farmslot_park__';
-
-interface ParkedHead {
-  branch: string;
-  headSha: string;
-  ref: string;
-  /** Commits outside the caller's `notRevs`, newest first. */
-  commits: string[];
-}
+type ParkedHead = ParkedRunCommits;
 
 /**
  * The one park every release uses: the commit stays reachable at
@@ -75,8 +189,6 @@ async function parkHead(
     sourceHeadSha?: string;
     /** The checkout must be on this branch. */
     branch?: string;
-    /** No staged, unstaged or untracked change. */
-    clean?: boolean;
     /** The exact head the caller inspected; anything committed on top since is refused. */
     headSha?: string;
     /** The commits must descend from this base, which is excluded from the record. */
@@ -85,52 +197,42 @@ async function parkHead(
     notRevs: string[];
     /** Park only when there are commits outside `notRevs`. */
     requireCommits?: boolean;
+    runId?: string;
+    defaultBranch?: string;
+    purpose?: 'checkpoint' | 'prior-work';
   },
 ): Promise<ParkedHead | null> {
-  const git = `git -C ${shellQuote(vars.remoteRepo)}`;
-  // One round trip: identify the checkout, check it, park it.
-  const script = [
+  const options: ParkedCaptureOptions = {
+    slotId: vars.slotId,
+    operationKey: checks.key,
+    defaultBranch: checks.defaultBranch ?? 'main',
+    purpose: checks.purpose ?? 'prior-work',
+    at: new Date().toISOString(),
+    runId: checks.runId,
+    baseSha: checks.baseSha,
+    notRevs: checks.notRevs,
+    checks: { branch: checks.branch, headSha: checks.headSha, baseSha: checks.baseSha },
+    includeWorktree: !checks.localBranch,
     ...(checks.localBranch
-      ? [
-          `head=$(${git} rev-parse --verify --quiet ${shellQuote(`${checks.sourceHeadSha ?? `refs/heads/${checks.localBranch}`}^{commit}`)}) || exit 3`,
-          `${git} cat-file -e "$head^{commit}" || exit 3`,
-          `branch=${shellQuote(checks.localBranch)}`,
-        ]
-      : [
-          `head=$(${git} rev-parse HEAD) || exit 3`,
-          `branch=$(${git} symbolic-ref --quiet --short HEAD || echo HEAD)`,
-        ]),
-    ...(checks.branch ? [`[ "$branch" = ${shellQuote(checks.branch)} ] || exit 3`] : []),
-    ...(checks.clean
-      ? [`[ -z "$(${git} status --porcelain --untracked-files=all)" ] || exit 3`]
-      : []),
-    ...(checks.headSha ? [`[ "$head" = ${shellQuote(checks.headSha)} ] || exit 3`] : []),
-    ...(checks.baseSha
-      ? [`${git} merge-base --is-ancestor ${shellQuote(checks.baseSha)} "$head" || exit 3`]
-      : []),
-    `commits=$(${git} rev-list "$head" --not ${checks.notRevs.map(shellQuote).join(' ')}) || exit 4`,
-    ...(checks.requireCommits ? ['[ -n "$commits" ] || exit 3'] : []),
-    `ref=${shellQuote(`refs/farmslot/parked/${checks.key}/`)}"$head"`,
-    `${git} check-ref-format "$ref" || exit 4`,
-    // An empty old value creates the ref or fails: an earlier parking is never moved.
-    `${git} update-ref "$ref" "$head" '' 2>/dev/null || [ "$(${git} rev-parse "$ref")" = "$head" ] || exit 4`,
-    `echo ${MARK} "$head" "$branch" "$ref"`,
-    `printf '%s\\n' "$commits"`,
-  ].join(' && ');
-  const result = await exec(vars, withFarmGitConfig(script));
-  if (result.exitCode === 3) return null;
-  const lines = result.stdout.split('\n').filter(Boolean);
-  const marker = lines.findIndex((line) => line.startsWith(`${MARK} `));
-  if (result.exitCode !== 0 || marker < 0)
-    throw new Error(
-      `Cannot park the commits on ${vars.slotId}: ${(result.stderr || result.stdout).trim()}`,
-    );
-  const [, headSha, branch, ref] = lines[marker].split(' ');
-  return { branch, headSha, ref, commits: lines.slice(marker + 1) };
+      ? {
+          sourceHeads: [
+            {
+              branch: checks.localBranch,
+              headSha: checks.sourceHeadSha ?? `refs/heads/${checks.localBranch}`,
+            },
+          ],
+        }
+      : {}),
+  };
+  const capture = await parkGitWork(vars, options, exec);
+  const parked = capture.receipts.at(-1);
+  return parked && (!checks.requireCommits || parked.commits.length || parked.kind === 'worktree')
+    ? parked
+    : null;
 }
 
 /**
- * Park the checkout's commits when they are exactly this run's own: a clean checkout on the
+ * Park a checkpoint when branch, baseline and recorded-head evidence match the run's own
  * run's branch that descends from its dispatch baseline. The head stays reachable at
  * `refs/farmslot/parked/<run>/<head>` (created, never moved) and the record is appended to
  * `run.parkedCommits` durably before the caller may reset. Returns null, parking nothing, for
@@ -157,9 +259,7 @@ export async function parkRunBranchCommits(
   const branch = run.branch!;
   const checkpoint = run.releasedCheckout;
   const review = run.steps.find((step) => step.name === 'review')?.outputs?.reviewSnapshot;
-  const previous = run.parkedCommits
-    ?.filter((entry) => entry.slotId === vars.slotId && entry.branch === branch)
-    .at(-1);
+  const previous = parkedBranchHead(run, vars.slotId, branch);
   const recorded = [
     {
       head:
@@ -168,7 +268,7 @@ export async function parkRunBranchCommits(
           : undefined,
       at: checkpoint?.at,
     },
-    { head: previous?.headSha, at: previous?.parkedAt },
+    { head: previous?.sourceHeadSha ?? previous?.headSha, at: previous?.parkedAt },
     {
       head: isRecord(review) && typeof review.headSha === 'string' ? review.headSha : undefined,
       at: isRecord(review) && typeof review.capturedAt === 'string' ? review.capturedAt : undefined,
@@ -188,7 +288,10 @@ export async function parkRunBranchCommits(
   for (const sourceHeadSha of sources) {
     const parked = await parkHead(vars, exec, {
       key: run.id,
-      ...(checks.dataOnly ? { localBranch: branch, sourceHeadSha } : { branch, clean: true }),
+      runId: run.id,
+      purpose: 'checkpoint',
+      defaultBranch: checks.defaultBranch,
+      ...(checks.dataOnly ? { localBranch: branch, sourceHeadSha } : { branch }),
       // An ownerless return names the head the run left: anything committed on top since is not its.
       headSha: checks.headSha,
       baseSha,
@@ -196,13 +299,14 @@ export async function parkRunBranchCommits(
     });
     if (!parked) continue;
     const record: ParkedRunCommits = {
+      ...parked,
       slotId: vars.slotId,
       ref: parked.ref,
       branch,
       baseSha,
       headSha: parked.headSha,
       commits: parked.commits,
-      parkedAt: new Date().toISOString(),
+      parkedAt: parked.parkedAt,
     };
     // A failed durable write throws before any caller may reset.
     const { recordParkedRunCommits } = await import('../runs/store.js');
@@ -214,6 +318,7 @@ export async function parkRunBranchCommits(
     console.log(
       `[slot.release] ${vars.slotId}: parked run ${run.id.slice(0, 8)}'s ${record.commits.length} unpushed commit(s) on ${branch} at ${record.ref}`,
     );
+    await persistSlotParkedInventory(vars, exec);
     retained = record;
   }
   return retained;
@@ -238,9 +343,11 @@ export async function parkSlotCommits(
 ): Promise<SlotParkedCommits | null> {
   const parked = await parkHead(vars, exec, {
     key: manualParkKey(vars, checks.now),
+    defaultBranch: checks.defaultBranch,
     headSha: checks.headSha,
     notRevs: [`origin/${checks.defaultBranch}`],
   });
+  if (parked) await persistSlotParkedInventory(vars, exec);
   return parked && report(vars, parked);
 }
 
@@ -255,11 +362,13 @@ export async function parkSlotBranch(
 ): Promise<SlotParkedCommits | null> {
   const parked = await parkHead(vars, exec, {
     key: manualParkKey(vars, checks.now),
+    defaultBranch: checks.defaultBranch,
     localBranch: checks.branch,
     // Commits HEAD also holds are already parked with it.
     notRevs: [`origin/${checks.defaultBranch}`, checks.headSha],
     requireCommits: true,
   });
+  if (parked) await persistSlotParkedInventory(vars, exec);
   return parked && report(vars, parked);
 }
 
@@ -268,7 +377,7 @@ function manualParkKey(vars: SlotVars, now = new Date()): string {
 }
 
 function report(vars: SlotVars, parked: ParkedHead): SlotParkedCommits {
-  const entry = { ref: parked.ref, branch: parked.branch, commits: parked.commits.length };
+  const entry = slotParkedSummary(parked);
   console.log(`[slot.release] ${vars.slotId}: ${slotParkedDetail([entry])}`);
   return entry;
 }
@@ -308,9 +417,55 @@ export async function restoreParkedBranch(
   vars: SlotVars,
   branch: string,
   exec: typeof execOnSlot,
+  options: { project: RawProjectJson; defaultBranch: string } = {
+    project: {},
+    defaultBranch: 'main',
+  },
 ): Promise<ParkedRunCommits | null> {
   const parked = parkedBranchHead(run, vars.slotId, branch);
   if (!parked) return null;
+  const retained = await lookupParkedGitWork(vars, vars.slotId, parked.ref, exec);
+  if (parked.prunedAt || retained.headSha !== parked.headSha)
+    throw new ParkedWorkError(
+      'SNAPSHOT_MISSING',
+      `Replay checkpoint ${parked.ref} is missing or pruned; restore a retained checkpoint before replay`,
+    );
+  if (parked.kind === 'worktree') {
+    const local = await exec(
+      vars,
+      withFarmGitConfig(
+        `git -C ${shellQuote(vars.remoteRepo)} show-ref --verify --quiet ${shellQuote(`refs/heads/${branch}`)}`,
+      ),
+    );
+    if (local.exitCode === 0) return null;
+    if (local.exitCode !== 1)
+      throw new ParkedWorkError('GIT_FAILED', 'Cannot inspect the replay branch');
+    const targetTrees = parkedRestoreTargets(parked);
+    const capture = await captureSlotWork(
+      vars,
+      options.project,
+      {
+        defaultBranch: options.defaultBranch,
+        targetBranches: [branch],
+        targetTrees,
+      },
+      exec,
+    );
+    await capture.assertOwner();
+    await restoreParkedGitWork(
+      vars,
+      {
+        slotId: vars.slotId,
+        extraRefs: [`refs/heads/${branch}`],
+        targetTrees,
+        restoreBranch: branch,
+      },
+      capture,
+      parked,
+      exec,
+    );
+    return parked;
+  }
   const restored = await exec(
     vars,
     withFarmGitConfig(
@@ -327,7 +482,10 @@ function parkedBranchHead(
   branch: string,
 ): ParkedRunCommits | undefined {
   return run?.parkedCommits
-    ?.filter((entry) => entry.slotId === slotId && entry.branch === branch)
+    ?.filter(
+      (entry) =>
+        entry.slotId === slotId && entry.branch === branch && entry.purpose !== 'prior-work',
+    )
     .at(-1);
 }
 
@@ -356,4 +514,128 @@ export async function recordReleasedCheckout(
     headSha,
     at: new Date().toISOString(),
   });
+}
+
+/** The durable binding survives the transient workspace-recovery marker. */
+export async function persistSlotParkedInventory(
+  vars: SlotVars,
+  exec: typeof execOnSlot,
+  required = false,
+  expected?: Readonly<Record<string, unknown>>,
+): Promise<void> {
+  const row = await readSlotRow(vars.slotId);
+  if (!row) {
+    // Data-only retention can outlive a retired pool slot; it performs no reset.
+    if (required)
+      throw new ParkedWorkError(
+        'REGISTRATION_FAILED',
+        `Slot ${vars.slotId} disappeared before parking registration`,
+      );
+    return;
+  }
+  const inventory = await slotParkedInventory(vars, exec);
+  const binding = {
+    namespace: inventory.namespace,
+    repoKey: inventory.repoKey,
+    ...inventory.summary,
+  };
+  const identity = expected ?? row;
+  const saved = await updateSlotStatusIf(
+    vars.slotId,
+    (current) => sameParkingOwner(current, identity),
+    { parked_work: binding },
+  );
+  if (!saved && required)
+    throw new ParkedWorkError(
+      'REGISTRATION_FAILED',
+      `Slot ${vars.slotId} disappeared before parking registration`,
+    );
+}
+
+/** A narrow inventory reconciles legacy refs from their exact recorded run, never a run scan. */
+export async function slotParkedInventory(vars: SlotVars, exec: typeof execOnSlot) {
+  const inventory = await readParkedGitWork(vars, vars.slotId, exec);
+  const legacy: import('@farmslot/protocol').LegacyParkedWork[] = [];
+  const { getRunWithArchived } = await import('../runs/store.js');
+  for (const row of inventory.legacy) {
+    const key = row.ref.split('/')[3];
+    const run = key?.startsWith('manual-') ? undefined : await getRunWithArchived(key);
+    const record = run?.parkedCommits?.find(
+      (entry) =>
+        entry.slotId === vars.slotId && entry.ref === row.ref && entry.headSha === row.headSha,
+    );
+    if (record) inventory.receipts.push(record);
+    else if (key?.startsWith(`manual-${refSafe(vars.slotId)}-`))
+      legacy.push({
+        ...row,
+        reason: 'Legacy commit backup; original branch and parking time are unavailable',
+      });
+  }
+  const latest = inventory.receipts
+    .filter((receipt) => Number.isFinite(Date.parse(receipt.parkedAt)))
+    .slice()
+    .sort((a, b) => Date.parse(b.parkedAt) - Date.parse(a.parkedAt))[0];
+  return {
+    ...inventory,
+    legacy,
+    summary: {
+      count: inventory.receipts.length + legacy.length,
+      latestRef: latest?.ref ?? null,
+      latestAt: latest?.parkedAt ?? null,
+    },
+  };
+}
+
+export async function restoreSlotParkedWork(
+  vars: SlotVars,
+  project: RawProjectJson,
+  defaultBranch: string,
+  ref: string,
+  verifyWork: () => Promise<void>,
+  exec: typeof execOnSlot,
+) {
+  const inventory = await slotParkedInventory(vars, exec);
+  const receipt =
+    inventory.receipts.find((entry) => entry.ref === ref) ??
+    inventory.legacy.find((entry) => entry.ref === ref);
+  if (!receipt)
+    throw new ParkedWorkError(
+      'SNAPSHOT_MISSING',
+      'Select a retained snapshot from this slot inventory',
+    );
+  const options = { defaultBranch, targetTrees: parkedRestoreTargets(receipt) };
+  const capture = await captureSlotWork(vars, project, options, exec);
+  await verifyWork();
+  await capture.assertOwner();
+  return restoreParkedGitWork(
+    vars,
+    { slotId: vars.slotId, targetTrees: options.targetTrees },
+    capture,
+    receipt,
+    exec,
+  );
+}
+
+/** Called by the existing retention owner only on fenced, unowned idle slots. */
+export async function retainSlotParkedWork(
+  vars: SlotVars,
+  protectedRefs: string[],
+  now: Date,
+  days: number,
+  exec: typeof execOnSlot,
+): Promise<void> {
+  const inventory = await slotParkedInventory(vars, exec);
+  const pruned = await pruneParkedGitWork(
+    vars,
+    vars.slotId,
+    inventory.receipts,
+    protectedRefs,
+    new Date(now.getTime() - days * 86_400_000).toISOString(),
+    now.toISOString(),
+    exec,
+  );
+  const { recordParkedRunCommits } = await import('../runs/store.js');
+  for (const receipt of pruned)
+    if (receipt.runId) await recordParkedRunCommits(receipt.runId, receipt);
+  await persistSlotParkedInventory(vars, exec, true);
 }
