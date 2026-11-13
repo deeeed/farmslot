@@ -1,1 +1,0 @@
-- Prevent improvement-apply tests from racing other tests for the checkout's Git index.

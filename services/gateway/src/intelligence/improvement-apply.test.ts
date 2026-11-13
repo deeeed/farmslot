@@ -1,4 +1,3 @@
-// @farmslot:serial: apply and cleanup write the checkout's shared Git index.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
