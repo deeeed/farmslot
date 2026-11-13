@@ -1,0 +1,1 @@
+- Remove the `prRules.updated` event name: the gateway no longer sends it. Read the rules with `prRules.list` when the `pr-automation` resource changes.

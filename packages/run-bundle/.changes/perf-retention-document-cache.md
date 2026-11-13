@@ -1,0 +1,1 @@
+- Reuse unchanged retention settings across bundle-store opens while detecting edits, replacements and removal immediately.
