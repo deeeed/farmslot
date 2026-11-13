@@ -141,6 +141,7 @@ async function remoteDefault(
     ),
     fresh || recoveryBudget ? 'workspace-recovery-default' : 'workspace-default',
     timeoutMs,
+    '/',
   ).then((result) => ({
     sha: result.stdout.trim().split(/\s+/)[0] || null,
     observedAt: new Date().toISOString(),
@@ -173,6 +174,15 @@ export async function inspectSlotWorkspace(
   const branch = getProjectField(project, 'default_branch') || DEFAULT_BRANCH;
   const timeoutMs = options.timeoutMs ?? (options.fetch ? 120_000 : 5000);
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
+  const readWorkspaceCommand: typeof execOnSlot = (slot, command, executionOptions) => {
+    const readOptions =
+      typeof executionOptions === 'string' ? { cwd: executionOptions } : executionOptions;
+    return readSlotCommand(slot, command, {
+      ...readOptions,
+      timeout: readOptions?.timeout ?? timeoutMs,
+      cwd: readOptions?.cwd ?? '/',
+    });
+  };
   if (options.fetch) {
     const fetched = await execOnSlot(
       vars,
@@ -246,7 +256,7 @@ export async function inspectSlotWorkspace(
       const contains = await readSlotCommand(
         vars,
         withFarmGitConfig(`${git} merge-base --is-ancestor HEAD ${shellQuote(base)}`),
-        { timeout: timeoutMs },
+        { timeout: timeoutMs, cwd: '/' },
       );
       if (contains.exitCode === 0) return { ...work, publication: 'merged' };
       const cherry = await readSlotCommand(
@@ -254,6 +264,7 @@ export async function inspectSlotWorkspace(
         withFarmGitConfig(`${git} cherry ${shellQuote(base)} HEAD`),
         {
           timeout: timeoutMs,
+          cwd: '/',
         },
       );
       if (cherry.exitCode === 0 && cherry.stdout.trim()) {
@@ -268,6 +279,7 @@ export async function inspectSlotWorkspace(
           withFarmGitConfig(`${git} rev-list ${shellQuote(`${base}..HEAD`)}`),
           {
             timeout: timeoutMs,
+            cwd: '/',
           },
         );
         // git cherry omits merge commits; an unverified merge resolution is not a merged patch.
@@ -290,6 +302,7 @@ export async function inspectSlotWorkspace(
         ),
         timeoutMs > 5000 ? 'workspace-recovery-publication' : 'workspace-publication',
         timeoutMs,
+        '/',
       );
       const sha = published.stdout.trim().split(/\s+/)[0];
       if (sha === probe.headSha) return { ...work, publication: 'pushed' };
@@ -308,7 +321,7 @@ export async function inspectSlotWorkspace(
         const contains = await readSlotCommand(
           vars,
           withFarmGitConfig(`${git} merge-base --is-ancestor HEAD ${shellQuote(sha)}`),
-          { timeout: timeoutMs },
+          { timeout: timeoutMs, cwd: '/' },
         );
         if (contains.exitCode === 0) return { ...work, publication: 'pushed' };
         if (contains.exitCode !== 1)
@@ -339,7 +352,7 @@ export async function inspectSlotWorkspace(
             'HEAD',
             branch,
             repo,
-            execOnSlot,
+            options.fetch ? execOnSlot : readWorkspaceCommand,
             async () => [pr],
             {
               allowFetch: options.fetch === true,
@@ -357,10 +370,10 @@ export async function inspectSlotWorkspace(
       }
       if (merged.length) return { ...work, error: 'Merged PR coverage could not be verified' };
     }
-    const commits = await execOnSlot(
+    const commits = await readWorkspaceCommand(
       vars,
       withFarmGitConfig(`${git} rev-list --count ${shellQuote(`origin/${branch}..HEAD`)}`),
-      { timeout: timeoutMs },
+      { timeout: timeoutMs, cwd: '/' },
     );
     if (commits.exitCode !== 0)
       return { ...work, error: 'Unpublished commits could not be inspected' };

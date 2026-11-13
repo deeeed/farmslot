@@ -148,3 +148,46 @@ test('the child starts no timers or watchers on import and exits with its parent
   child.disconnect();
   assert.equal(await exited, 0);
 });
+
+test('the shared IPC read stays in its inherited terminal-cleanup scope', async (t) => {
+  const original = new Map(Object.keys(env).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, env);
+  const { backgroundHost } = await import('./client.js');
+  const { readSlotCommand } = await import('../read-command.js');
+  const { withCleanupSignal, drainCleanupCommands } = await import('../../core/cleanup-scope.js');
+  const { makeVars } = await import('../../runners/test-fixtures.js');
+  t.after(async () => {
+    await backgroundHost.stop();
+    for (const [key, value] of original) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  backgroundHost.start();
+  await backgroundHost.request('decisions.scan', {}, { deadlineMs: 10000 });
+  const commands = { pending: new Set<Promise<unknown>>(), unconfirmed: false };
+  const cancellation = new AbortController();
+  const marker = path.join(root, 'cleanup-read-started');
+  const vars = makeVars({ host: 'localhost', machine: 'fixture', remoteRepo: checkout });
+  const pending = withCleanupSignal(
+    cancellation.signal,
+    () =>
+      readSlotCommand(vars, `printf started > '${marker}'; sleep 60`, { timeout: 5000, cwd: '/' }),
+    commands,
+  );
+  try {
+    const until = Date.now() + 2000;
+    while (!(await import('node:fs')).existsSync(marker)) {
+      assert.ok(Date.now() < until, 'cleanup-scoped child read did not start');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    assert.equal(commands.pending.size, 1);
+    cancellation.abort();
+    assert.equal((await pending).exitCode, 130);
+    assert.equal(await drainCleanupCommands(commands), true);
+    assert.equal(commands.pending.size, 0);
+  } finally {
+    cancellation.abort();
+    await pending;
+  }
+});

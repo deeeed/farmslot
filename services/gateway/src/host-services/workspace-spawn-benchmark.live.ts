@@ -60,11 +60,20 @@ try {
   git(root, 'clone', '-q', '--bare', seed, origin);
   const slots = [];
   const rows = [];
-  const head = git(seed, 'rev-parse', 'HEAD');
+  const expectedHeads = new Map<string, string>();
   for (let i = 0; i < count; i++) {
     const id = `proof-${i}`;
     const repo = path.join(root, id);
     git(root, 'clone', '-q', origin, repo);
+    const branch = i % 2 ? `unpublished-${i}` : 'main';
+    if (i % 2) {
+      git(repo, 'checkout', '-qb', branch);
+      await writeFile(path.join(repo, 'local.txt'), `unpublished-${i}\n`);
+      git(repo, 'add', 'local.txt');
+      git(repo, 'commit', '-qm', `local-${i}`);
+    }
+    const slotHead = git(repo, 'rev-parse', 'HEAD');
+    expectedHeads.set(id, slotHead);
     slots.push({ id, repo, session: id });
     rows.push({
       slot: id,
@@ -72,8 +81,8 @@ try {
       project: 'proof',
       platform: 'cli',
       ssh: 'LOCAL',
-      branch: 'main',
-      head_sha: head,
+      branch,
+      head_sha: slotHead,
       agent: 'idle',
       enabled: true,
       dispatchable: true,
@@ -131,7 +140,7 @@ try {
     observations.push(
       observed.slots.map((slot) => {
         assert.equal(slot.workspaceError, undefined);
-        assert.equal(slot.workspace?.headSha, head);
+        assert.equal(slot.workspace?.headSha, expectedHeads.get(slot.slot));
         assert.equal(slot.workspace?.dirtyCount, 0);
         return slot.workspace.observedAt;
       }),
@@ -162,6 +171,7 @@ try {
         sourceHead,
         sourceChanges,
         slots: count,
+        unpublishedSlots: count / 2,
         rounds,
         logicalSampleSeconds: 48,
         elapsedMs,

@@ -32,8 +32,9 @@ export function readSlotProbe(
   command: string,
   scope: string,
   timeout: number,
+  cwd = vars.remoteRepo,
 ): Promise<ExecResult> {
-  const key = JSON.stringify([vars.machine, vars.remoteRepo, scope, command]);
+  const key = JSON.stringify([vars.machine, vars.remoteRepo, scope, command, cwd]);
   const connection = getNode(vars.machine)?.ws;
   const existing = pending.get(key);
   if (existing && (!existing.unconfirmed || existing.connection === connection))
@@ -55,6 +56,7 @@ export function readSlotProbe(
       timer.unref();
       try {
         const result = await readSlotCommand(vars, command, {
+          cwd,
           timeout,
           signal: controller.signal,
           noRetry: true,
