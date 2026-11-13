@@ -5,7 +5,7 @@
 // bundled once so the approved bytes are the ones that run.
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { access, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { access, lstat, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { isBuiltin } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -264,6 +264,8 @@ async function bundleLiveAdapter(entryReal: string): Promise<LiveAdapterBundle> 
   const buildStarted = Date.now();
   // The sha256 of the exact bytes each module handed esbuild.
   const loaded = new Map<string, string>();
+  // The state of each resolution file beside a loaded module, captured while esbuild runs.
+  const resolution = new Map<string, string | null>();
   const result = await build({
     entryPoints: [entryReal],
     bundle: true,
@@ -281,7 +283,7 @@ async function bundleLiveAdapter(entryReal: string): Promise<LiveAdapterBundle> 
         `const require = __mmCreateRequire(import.meta.url);` +
         `process.argv[1] = ${JSON.stringify(entryReal)};`,
     },
-    plugins: [bindImportMetaUrls(loaded)],
+    plugins: [bindImportMetaUrls(loaded, resolution)],
     logLevel: 'silent',
   });
   const output = result.outputFiles[0];
@@ -292,7 +294,7 @@ async function bundleLiveAdapter(entryReal: string): Promise<LiveAdapterBundle> 
   const [imports] = parse(sourceText);
   const bundle = { sourceText, runtimeImports: imports.some((entry) => entry.d >= 0) };
   countCallWork('liveAdapterBuilt');
-  const inputs = await bundleInputs(result.metafile, loaded, buildStarted);
+  const inputs = await bundleInputs(result.metafile, loaded, resolution, buildStarted);
   if (inputs) writeCacheRecord(record, { ...bundle, inputs } satisfies CachedLiveAdapterBundle);
   return bundle;
 }
@@ -302,6 +304,7 @@ async function bundleLiveAdapter(entryReal: string): Promise<LiveAdapterBundle> 
 async function bundleInputs(
   metafile: Metafile,
   loaded: ReadonlyMap<string, string>,
+  resolution: ReadonlyMap<string, string | null>,
   buildStarted: number,
 ): Promise<BundleInput[] | undefined> {
   const inputs = new Map<string, string | null>();
@@ -332,14 +335,17 @@ async function bundleInputs(
   for (const dir of directories) {
     for (const name of RESOLUTION_FILES) {
       const file = path.join(dir, name);
-      if (!inputs.has(file)) inputs.set(file, await fileState(file));
+      const captured = resolution.get(file);
+      if (!inputs.has(file))
+        inputs.set(file, captured !== undefined ? captured : await fileState(file));
     }
   }
   for (const [file, sha256] of inputs) {
     if (sha256 === null || sha256 === 'dir') continue;
     // A file written while esbuild ran may differ from what it read: do not cache.
     const { mtimeMs } = await stat(file);
-    if (mtimeMs > buildStarted || (await fileSha256(file)) !== sha256) return undefined;
+    // At or after the start: a coarse timestamp cannot order the write before the build.
+    if (mtimeMs >= buildStarted || (await fileSha256(file)) !== sha256) return undefined;
   }
   return [...inputs]
     .map(([file, sha256]) => ({ path: file, sha256 }))
@@ -357,7 +363,10 @@ function packageName(specifier: string): string | undefined {
 async function reusableBundle(record: unknown): Promise<LiveAdapterBundle | undefined> {
   if (!isCachedBundle(record)) return undefined;
   for (const input of record.inputs) {
-    if (input.sha256 === 'dir') {
+    if (input.sha256 === null) {
+      // Absent means nothing at the path: neither a file nor a directory.
+      if (await pathExists(input.path)) return undefined;
+    } else if (input.sha256 === 'dir') {
       if (!(await isDirectory(input.path))) return undefined;
     } else if ((await fileState(input.path)) !== input.sha256) return undefined;
   }
@@ -390,6 +399,17 @@ async function fileState(file: string): Promise<string | null> {
   }
 }
 
+async function pathExists(file: string): Promise<boolean> {
+  try {
+    await lstat(file);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+    throw error;
+  }
+}
+
 async function isDirectory(dir: string): Promise<boolean> {
   try {
     return (await stat(dir)).isDirectory();
@@ -410,13 +430,23 @@ function sha256Hex(bytes: Buffer): string {
 
 // Reads every module esbuild loads, so the cache records the exact bytes bundled,
 // and binds each `import.meta.url` to the module's own file URL.
-function bindImportMetaUrls(loaded: Map<string, string>): Plugin {
+function bindImportMetaUrls(
+  loaded: Map<string, string>,
+  resolution: Map<string, string | null>,
+): Plugin {
   return {
     name: 'bind-import-meta-urls',
     setup(buildContext: PluginBuild) {
       buildContext.onLoad({ filter: LOADED_SOURCES }, async (args) => {
         const bytes = await readFile(args.path);
         loaded.set(path.resolve(args.path), sha256Hex(bytes));
+        for (let dir = path.dirname(path.resolve(args.path)); ; dir = path.dirname(dir)) {
+          for (const name of RESOLUTION_FILES) {
+            const file = path.join(dir, name);
+            if (!resolution.has(file)) resolution.set(file, await fileState(file));
+          }
+          if (path.dirname(dir) === dir) break;
+        }
         const contents = bytes.toString('utf8');
         const extension = path.extname(args.path);
         const loader =

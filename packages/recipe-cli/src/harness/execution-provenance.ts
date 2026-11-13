@@ -282,7 +282,7 @@ export function sourceSnapshot(
   const pathspecs = sourcePathspecs(git, excludedRoots, includedRoots);
   // Structured (v2, NUL-separated) so renames, copies and submodules parse without guessing,
   // with every submodule's state whatever its `ignore` setting.
-  const listing = gitText(git.topLevel, [
+  const listingBytes = gitBuffer(git.topLevel, [
     'status',
     '--porcelain=v2',
     '-z',
@@ -291,8 +291,11 @@ export function sourceSnapshot(
     '--',
     ...pathspecs,
   ]);
+  // Paths are read back only when they are exact UTF-8; otherwise the diff decides.
+  const listing = statusListing(listingBytes);
   // The record keeps one entry per line.
-  const status = listing
+  const status = listingBytes
+    .toString('utf8')
     .split('\0')
     .filter(Boolean)
     .map((entry) => `${entry}\n`)
@@ -340,7 +343,7 @@ function nestedGitSourceFingerprint(
   excludedRoots: string[],
   includedRoots: string[],
   head: string,
-  status: string,
+  status: string | undefined,
 ): string {
   const gitFingerprint = gitSourceFingerprint(git.topLevel, pathspecs, head, status);
   if (git.pathspec === '.' && includedRoots.length === 0) return gitFingerprint;
@@ -368,10 +371,10 @@ function gitSourceFingerprint(
   topLevel: string,
   pathspecs: string[],
   head: string,
-  status: string,
+  status: string | undefined,
 ): string {
   return (
-    statusSourceFingerprint(topLevel, head, status) ??
+    (status === undefined ? undefined : statusSourceFingerprint(topLevel, head, status)) ??
     diffSourceFingerprint(topLevel, pathspecs, head)
   );
 }
@@ -404,6 +407,17 @@ function statusSourceFingerprint(
     hash.update(readRegularFileNoFollow(absolute));
   }
   return hash.digest('hex');
+}
+
+/** A status listing as text, or undefined when a path in it is not valid UTF-8. */
+export function statusListing(bytes: Buffer): string | undefined {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch (error) {
+    // A name that does not decode cannot be found again on disk by that name.
+    if (error instanceof TypeError) return undefined;
+    throw error;
+  }
 }
 
 // Every path a `status --porcelain=v2 -z` listing names, or undefined when the diff must

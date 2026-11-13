@@ -29,6 +29,7 @@ import {
 } from '@farmslot/recipe-runner';
 
 import { CallTimingRecorder, withCallTimings } from '../src/harness/call-timings.js';
+import { statusListing } from '../src/harness/execution-provenance.js';
 import {
   beginRunDiagnostics,
   captureExecutionProvenance,
@@ -878,6 +879,14 @@ describe('execution provenance', () => {
     const root = checkout('provenance-link-', { 'app.txt': 'app\n' });
     fs.symlinkSync(path.join(root, 'app.txt'), path.join(root, 'link.txt'));
     assert.throws(() => sourceSnapshot(root), /symbolic link/u);
+  });
+
+  test('a status path that is not valid UTF-8 leaves the fingerprint to the diff', () => {
+    assert.equal(statusListing(Buffer.from('? caf\u00e9.txt\0', 'utf8')), '? caf\u00e9.txt\0');
+    assert.equal(
+      statusListing(Buffer.from([0x3f, 0x20, 0xff, 0x2e, 0x74, 0x78, 0x74, 0x00])),
+      undefined,
+    );
   });
 
   test('hashes an installed runner package once per version and again after an edit', () => {
@@ -1839,6 +1848,60 @@ describe('live adapter scripts', () => {
     assert.match((await prepare())?.sourceText ?? '', /from a/u);
     imports('./web/team/b.mjs');
     assert.match((await prepare())?.sourceText ?? '', /from b/u);
+  });
+
+  test('does not cache a bundle whose input is stamped exactly at the build start', async (t) => {
+    const root = tempRoot('coarse-adapter-');
+    const dir = path.join(root, 'web', 'team');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'probe.mjs'), 'console.log("probe");\n');
+    // A coarse clock: the build starts on a whole second and the input is stamped with it.
+    const start = (Math.floor(Date.now() / 1000) + 60) * 1000;
+    fs.utimesSync(path.join(dir, 'probe.mjs'), start / 1000, start / 1000);
+    t.mock.method(Date, 'now', () => start);
+    const recorder = new CallTimingRecorder();
+    const prepare = () =>
+      withCallTimings(recorder, () =>
+        prepareLiveAdapterScript({
+          platform: 'web',
+          action: 'team.probe',
+          namespace: 'shop',
+          implementationRoot: root,
+        }),
+      );
+    await prepare();
+    await prepare();
+    assert.equal(recorder.snapshot().work.liveAdapterCached, 0);
+  });
+
+  test('rebuilds when a package appears nearer than the one a cached bundle resolved', async () => {
+    const root = tempRoot('shadowed-adapter-');
+    const dir = path.join(root, 'web', 'team');
+    const install = (at: string, value: string) => {
+      const pkg = path.join(at, 'node_modules', 'helper-pkg');
+      fs.mkdirSync(pkg, { recursive: true });
+      fs.writeFileSync(
+        path.join(pkg, 'package.json'),
+        JSON.stringify({ name: 'helper-pkg', main: 'index.js' }),
+      );
+      fs.writeFileSync(path.join(pkg, 'index.js'), `module.exports = ${JSON.stringify(value)};\n`);
+    };
+    fs.mkdirSync(dir, { recursive: true });
+    install(root, 'from the root');
+    fs.writeFileSync(
+      path.join(dir, 'probe.mjs'),
+      `import value from 'helper-pkg';\nconsole.log(value);\n`,
+    );
+    const prepare = () =>
+      prepareLiveAdapterScript({
+        platform: 'web',
+        action: 'team.probe',
+        namespace: 'shop',
+        implementationRoot: root,
+      });
+    assert.match((await prepare())?.sourceText ?? '', /from the root/u);
+    install(dir, 'from beside the action');
+    assert.match((await prepare())?.sourceText ?? '', /from beside the action/u);
   });
 
   test('bundles JSON as written, even when it contains import.meta.url', async () => {
