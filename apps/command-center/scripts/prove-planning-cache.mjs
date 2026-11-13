@@ -434,6 +434,8 @@ async function rawFile() {
 async function configuration() {
   const directory = await realpath(process.env.FARMSLOT_PROJECTS_DIR);
   const file = path.join(directory, project, 'project.json');
+  // The gateway keeps project.json backups in its home's state, not beside the file.
+  const projectBackups = path.join(home, 'state', 'config-backups', 'project', project);
   const original = await readFile(file, 'utf8');
   const source = JSON.parse(original);
   assert.equal(source.name, project, "Only change this case's disposable project");
@@ -528,7 +530,7 @@ async function configuration() {
       project,
       autoRecovery: { enabled: true },
     });
-    assert.equal(path.dirname(mutation.backup), path.dirname(file));
+    assert.equal(path.dirname(mutation.backup), projectBackups);
     assert(path.basename(mutation.backup).startsWith('project.json.bak.'));
     backups.add(mutation.backup);
     for (const reply of [
@@ -563,7 +565,7 @@ async function configuration() {
       project,
       autoRecovery: { enabled: true },
     });
-    assert.equal(path.dirname(repeated.backup), path.dirname(file));
+    assert.equal(path.dirname(repeated.backup), projectBackups);
     assert(path.basename(repeated.backup).startsWith('project.json.bak.'));
     backups.add(repeated.backup);
     evidence.draft = await until(

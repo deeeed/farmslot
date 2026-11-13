@@ -1,0 +1,188 @@
+// Copies of pool and project configuration files taken before each save. They live in the farm
+// home's state, not beside the source, so pool/ and projects/ hold only live configuration.
+import { constants } from 'node:fs';
+import { copyFile, mkdir, readdir, rename, unlink } from 'node:fs/promises';
+import path from 'node:path';
+
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
+
+export type ConfigBackupKind = 'pool' | 'project';
+
+/** Backups kept per source file; older ones are deleted on the next save. */
+export const CONFIG_BACKUPS_KEPT = 10;
+
+// Backups this module writes: `<basename>.bak.<YYYYMMDDTHHMMSSmmm>[-<sequence>]`.
+const CURRENT = String.raw`(\d{8})T(\d{9})(?:-(\d+))?`;
+// The removed writer's stamp, `toISOString().replace(/[:.]/g, '').slice(0, 15)`: dashes kept and
+// minute precision, e.g. `2026-11-13T1234`. Exact and anchored, so hand-made names such as
+// `.bak.2026-11-13T1234-node` or `.bak.goal` never match.
+const LEGACY = String.raw`(\d{4})-(\d{2})-(\d{2})T(\d{4})`;
+
+interface BackupName {
+  entry: string;
+  /** YYYYMMDDHHMMSSmmm; a legacy name counts from the start of its minute. */
+  time: string;
+  sequence: number;
+  current: boolean;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function errorCode(error: unknown): string | undefined {
+  return error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined;
+}
+
+function backupStamp(now: Date): string {
+  // 2026-11-13T12:00:00.123Z → 20261113T120000123
+  return now.toISOString().replace(/[-:.Z]/g, '');
+}
+
+function backupNames(entries: string[], basename: string): BackupName[] {
+  const base = escapeRegExp(basename);
+  const current = new RegExp(`^${base}\\.bak\\.${CURRENT}$`);
+  const legacy = new RegExp(`^${base}\\.bak\\.${LEGACY}$`);
+  return entries.flatMap((entry): BackupName[] => {
+    const now = current.exec(entry);
+    if (now)
+      return [{ entry, time: now[1] + now[2], sequence: Number(now[3] ?? 0), current: true }];
+    const old = legacy.exec(entry);
+    if (old)
+      return [
+        { entry, time: `${old[1]}${old[2]}${old[3]}${old[4]}00000`, sequence: 0, current: false },
+      ];
+    return [];
+  });
+}
+
+function compareBackups(a: BackupName, b: BackupName): number {
+  return (
+    a.time.localeCompare(b.time) ||
+    // A legacy copy from minute M is older than a current copy taken at M:00.000.
+    Number(a.current) - Number(b.current) ||
+    a.sequence - b.sequence
+  );
+}
+
+/** Move one legacy backup; a pool dir and the farm home can sit on different volumes. */
+async function moveFile(source: string, target: string): Promise<void> {
+  try {
+    await rename(source, target);
+    return;
+  } catch (error) {
+    // Another process sharing this home already moved it (this process's saves are serialized
+    // per file): nothing is left to move.
+    if (errorCode(error) === 'ENOENT') return;
+    if (errorCode(error) !== 'EXDEV') throw error;
+  }
+  // Across volumes, another process saving the same file can copy and remove the source first;
+  // whichever finishes second finds it gone. The move is complete.
+  try {
+    await copyFile(source, target);
+    await unlink(source);
+  } catch (error) {
+    if (errorCode(error) !== 'ENOENT') throw error;
+  }
+}
+
+// One save at a time per backup directory, from its copy through the caller's write, so each
+// backup holds exactly what its save overwrote. The lock covers this gateway's saves only: other
+// gateways sharing the home and writers that bypass this helper (CLI onboarding, the improvement
+// engine) are not serialized with it. The retention rule in backupConfigFile keeps their backups
+// safe from this process.
+const saveTails = new Map<string, Promise<unknown>>();
+
+/**
+ * Back `file` up into `<state>/config-backups/<kind>/<name>/`, then run `write` to overwrite it,
+ * and return the copy's path. `name` is the pool file basename or the project name, so sources
+ * from different directories never share a backup directory. The same file's legacy
+ * `<basename>.bak.<stamp>` siblings (the removed writer's minute-precision names) move there too,
+ * and the copies older than the new one are pruned so CONFIG_BACKUPS_KEPT remain.
+ *
+ * Every step throws: a failed copy, move or prune fails the save before `write` runs. Pruning is
+ * not best-effort because a backup directory that cannot be pruned grows without bound, which is
+ * the problem this module exists to stop; the operator sees the error instead.
+ */
+export async function saveWithConfigBackup(
+  kind: ConfigBackupKind,
+  name: string,
+  file: string,
+  write: () => Promise<void>,
+): Promise<string> {
+  const directory = path.join(currentFarmPaths('gateway').state.configBackups, kind, name);
+  const previous = saveTails.get(directory) ?? Promise.resolve();
+  const save = async (): Promise<string> => {
+    const backup = await backupConfigFile(directory, file);
+    await write();
+    return backup;
+  };
+  const current = previous.then(save, save);
+  // A failed save rejects to its own caller below; the queue only waits for it to settle.
+  const tail = current.then(
+    () => undefined,
+    () => undefined,
+  );
+  saveTails.set(directory, tail);
+  try {
+    return await current;
+  } finally {
+    if (saveTails.get(directory) === tail) saveTails.delete(directory);
+  }
+}
+
+async function backupConfigFile(directory: string, file: string): Promise<string> {
+  const basename = path.basename(file);
+  await mkdir(directory, { recursive: true });
+
+  // Two saves in one millisecond get distinct names instead of overwriting one backup. The
+  // sequence starts above the highest one already taken that millisecond, so a name freed by
+  // pruning is never reused for a copy that would sort as the oldest.
+  const stamp = backupStamp(new Date());
+  const prefix = `${basename}.bak.${stamp}`;
+  const taken = backupNames(await readdir(directory), basename).filter(
+    (item) => item.current && item.time === stamp.replace('T', ''),
+  );
+  let sequence = taken.length ? Math.max(...taken.map((item) => item.sequence)) + 1 : 0;
+  let backup: string;
+  for (;;) {
+    backup = path.join(directory, sequence === 0 ? prefix : `${prefix}-${sequence}`);
+    try {
+      await copyFile(file, backup, constants.COPYFILE_EXCL);
+      break;
+    } catch (error) {
+      if (errorCode(error) !== 'EEXIST') throw error;
+      sequence += 1;
+    }
+  }
+
+  const sources = path.dirname(file);
+  for (const { entry, current } of backupNames(await readdir(sources), basename)) {
+    if (!current) await moveFile(path.join(sources, entry), path.join(directory, entry));
+  }
+
+  // A save deletes only copies strictly older than its own and keeps the newest of those beside
+  // its own copy. It never touches a copy dated the same as or after its own stamp, so another
+  // process sharing this home never loses a newer copy to it. The cost: after a clock steps
+  // backwards the directory can hold more than CONFIG_BACKUPS_KEPT copies until the clock passes
+  // the future-dated ones.
+  const own: BackupName = {
+    entry: path.basename(backup),
+    time: stamp.replace('T', ''),
+    sequence,
+    current: true,
+  };
+  const older = backupNames(await readdir(directory), basename)
+    .filter((item) => item.entry !== own.entry && compareBackups(item, own) < 0)
+    .sort(compareBackups);
+  const pruned = older.slice(0, Math.max(0, older.length - (CONFIG_BACKUPS_KEPT - 1)));
+  for (const { entry } of pruned) {
+    try {
+      await unlink(path.join(directory, entry));
+    } catch (error) {
+      // Another process sharing this home pruned it first; the lock serializes only this one.
+      if (errorCode(error) !== 'ENOENT') throw error;
+    }
+  }
+  return backup;
+}
