@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.27.4 - 2026-11-13
+
+- Republish against recipe-runner 0.46.14 so consumers load one copy of it, with blind Mobile CDP broker sockets routed into the trial directory.
+
 ## 0.27.3 - 2026-11-12
 
 - Republish against recipe-runner 0.46.13 so consumers load one copy of it, with the faster `status` on checkouts that hold many stale operation records.
