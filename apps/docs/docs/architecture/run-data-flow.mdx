@@ -107,8 +107,11 @@ signals are not copied, and code travels by git branch or PR.
 There are two archives. `run.archive` moves a run **record** to the record
 archive, where it is kept forever. The hourly retention pass moves a settled
 run's **bytes** (task directory, bundle, session archives, native sessions) to
-`FARMSLOT_RUN_ARCHIVE_ROOT` once the run has been settled for 48 hours, its PR is
-closed or absent, it has no `keep` tag and it holds no slot. Task pins and review
+`FARMSLOT_RUN_ARCHIVE_ROOT` once the run has been settled for the configured
+retention period (default 7 days; see the retention setting in
+[ADR-039](https://github.com/deeeed/farmslot/blob/main/docs/adr/039-run-portable-bundles.md)),
+has no `keep` tag and holds no slot. The latest review of each open PR is kept
+regardless of age; other runs on an open PR follow the age rule. Task pins and review
 workspaces can be recreated, so retention deletes them. Restore from the archive
 is manual.
 

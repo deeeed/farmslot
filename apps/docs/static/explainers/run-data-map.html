@@ -690,7 +690,10 @@
                 <td>gateway → storage archive</td>
                 <td><span class="pill p-checkpoint">hourly pass</span></td>
                 <td class="num">task dir, bundle, sessions</td>
-                <td>settled ≥ 48 h, PR closed or none, no keep tag, slot not held</td>
+                <td>
+                  settled for the retention period (default 7 days), not an open PR's latest review,
+                  no keep tag, slot not held
+                </td>
                 <td><code>runs/retention.ts:66</code>, <code>runs/storage-archive.ts:197</code></td>
               </tr>
               <tr>
@@ -853,8 +856,14 @@
           <b>storage archive</b> is the hourly pass that moves a settled run's <em>bytes</em> (task
           dir, bundle, native sessions, session archives) to
           <code>FARMSLOT_RUN_ARCHIVE_ROOT</code> and deletes recreatable pins and review workspaces.
-          A run's bytes move once it has been settled for 48 h, its PR is closed or absent, it has
-          no <code>keep</code> tag and it holds no slot.
+          A run's bytes move once it has been settled for the configured retention period (default 7
+          days; see the retention setting in
+          <a
+            class="full-link"
+            href="https://github.com/deeeed/farmslot/blob/main/docs/adr/039-run-portable-bundles.md"
+            >ADR-039</a
+          >), has no <code>keep</code> tag and holds no slot. The latest review of each open PR is
+          kept regardless of age; other runs on an open PR follow the age rule.
         </p>
       </section>
 
@@ -909,7 +918,14 @@
           label: 'Bundle store',
           sub: 'immutable, by digest',
         },
-        archive: { x: 900, y: 250, w: 150, h: 70, label: 'Storage archive', sub: 'settled ≥ 48 h' },
+        archive: {
+          x: 900,
+          y: 250,
+          w: 150,
+          h: 70,
+          label: 'Storage archive',
+          sub: 'settled ≥ 7 days',
+        },
         cc: { x: 660, y: 420, w: 170, h: 64, label: 'Command Center', sub: 'SQLite offline store' },
         comp: { x: 880, y: 420, w: 150, h: 64, label: 'Companion', sub: 'SQLite offline store' },
       };
@@ -1161,7 +1177,7 @@
           key: 'archive',
           label: 'Retention',
           title: 'Hourly retention moves the bytes',
-          when: '10 min after the gateway starts, then hourly. Only for runs that are done, settled ≥ 48 h, with no open PR, no keep tag and no held slot.',
+          when: '10 min after the gateway starts, then hourly. Only for runs that are done and settled for the retention period (default 7 days), with no keep tag and no held slot. The latest review of each open PR is kept regardless of age.',
           flows: [
             ['gw', 'archive', 'checkpoint', 'task dir · sessions'],
             ['bundles', 'archive', 'checkpoint', 'bundle dir'],
@@ -1311,6 +1327,10 @@
           }
           const k = [a, b].sort().join('-');
           const n = (pairCount[k] = (pairCount[k] || 0) + 1) - 1;
+          // Parallel flows between the same stations spread apart, with labels at different points.
+          const total = step.flows.filter(
+            ([fa, fb]) => fa !== fb && [fa, fb].sort().join('-') === k,
+          ).length;
           const p0 = edgePoint(A, B),
             p1 = edgePoint(B, A);
           const dx = p1.x - p0.x,
@@ -1318,7 +1338,7 @@
             len = Math.hypot(dx, dy),
             nx = -dy / len,
             ny = dx / len;
-          const off = (n - 0.5) * 16 + (n === 0 ? 8 : 0);
+          const off = total > 1 ? (n - (total - 1) / 2) * 30 : 0;
           const s = { x: p0.x + nx * off, y: p0.y + ny * off },
             e = { x: p1.x + nx * off, y: p1.y + ny * off };
           ctx.strokeStyle = c;
@@ -1368,9 +1388,11 @@
               ctx.fill();
             }
           }
-          // label near the middle, on the offset side
-          const lx = (s.x + e.x) / 2 + nx * 16 * Math.sign(off || 1),
-            ly = (s.y + e.y) / 2 + ny * 16 * Math.sign(off || 1);
+          // label along the line (staggered for parallel flows), on the offset side
+          const t = total > 1 ? 0.3 + (0.4 * n) / (total - 1) : 0.5,
+            side = Math.sign(off || -1);
+          const lx = s.x + (e.x - s.x) * t + nx * 16 * side,
+            ly = s.y + (e.y - s.y) * t + ny * 16 * side;
           ctx.font = "500 12px 'IBM Plex Mono', monospace";
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
