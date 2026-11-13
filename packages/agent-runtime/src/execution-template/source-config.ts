@@ -9,6 +9,11 @@ import type {
   UnavailableExecutionTemplateSource,
 } from '@farmslot/protocol';
 
+import {
+  bundledExecutionTemplateSource,
+  isWithin,
+  readBundledExecutionTemplateCatalog,
+} from './bundled-catalog.js';
 import type { ExecutionTemplateSource } from './types.js';
 
 export type { UnavailableExecutionTemplateSource } from '@farmslot/protocol';
@@ -25,15 +30,9 @@ export interface ResolveConfiguredExecutionTemplateSourcesOptions {
     lockDigest: string;
   };
   projectPackRoot: string;
+  /** Runtime-selected bundle project root, independent of an installed pack's location. */
+  catalogRoot?: string;
   env?: NodeJS.ProcessEnv;
-}
-
-function isWithin(base: string, candidate: string): boolean {
-  const relative = path.relative(base, candidate);
-  return (
-    relative === '' ||
-    (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
-  );
 }
 
 /** A git answer matches spawnSync, including unavailable status on launch/output failure. */
@@ -159,8 +158,17 @@ function* configuredSources(
 ): SourceWalk<ResolvedExecutionTemplateSources> {
   const resolved: ExecutionTemplateSource[] = [];
   const unavailable: UnavailableExecutionTemplateSource[] = [];
+  const bundled = options.resolveSourceBinding
+    ? undefined
+    : readBundledExecutionTemplateCatalog(options.catalogRoot ?? options.projectPackRoot);
 
   for (const source of config?.sources ?? []) {
+    if (bundled && source.root.env) {
+      const selected = bundledExecutionTemplateSource(source, bundled);
+      if ('reason' in selected) unavailable.push(selected);
+      else resolved.push(selected);
+      continue;
+    }
     const rootResult = configuredRoot(source, options);
     if (!rootResult.path) {
       unavailable.push({ id: source.id, reason: rootResult.reason ?? 'invalid-root' });

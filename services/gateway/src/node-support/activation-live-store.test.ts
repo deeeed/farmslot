@@ -30,7 +30,7 @@ mock.module('node:fs/promises', {
 });
 const { makeRun } = await import('../run-engine/test-fixtures.js');
 const { loadSlotVars } = await import('@farmslot/slot-config');
-const { createRun, deleteRun, getRun, loadAllRuns, persistRunNow, updateRun } =
+const { createRun, deleteRun, getRun, loadAllRuns, persistRunNow, updateRun, updateRunStep } =
   await import('../runs/store.js');
 const { nodeSupportRetentionReferences } = await import('./activation.js');
 
@@ -75,14 +75,14 @@ test('a gateway inventory reads live runs from memory and other runs from disk',
 
   const live = getRun('live');
   assert.ok(live);
-  // Settles any load-time write first, so nothing rewrites the file below.
+  // Edited through the store, which stamps the run, so the scan of its old outputs is not reused.
+  updateRunStep('live', 'prepare', { outputs: { nodeSupportHash: hash('c') } });
+  // Settles the step write and any load-time write first, so nothing rewrites the file below.
   await persistRunNow(live);
   // The live record wins over its file, so the file is not read: even a corrupt one.
   await writeFile(path.join(runs, 'live.json'), '{');
   // A record another process wrote is not in memory, so it is still read from disk.
   await writeFile(path.join(runs, 'foreign.json'), record('foreign', 'b'));
-  // Edited in memory and not yet persisted: the in-memory record is the one scanned.
-  live.steps[0].outputs = { nodeSupportHash: hash('c') };
   const references = await nodeSupportRetentionReferences(vars);
   assert.deepEqual(references.runHashes.sort(), [hash('b'), hash('c')]);
   assert.deepEqual(references.runInventory?.runIds.sort(), ['foreign', 'live']);

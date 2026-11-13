@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -33,6 +33,7 @@ const projectRoot = path.join(farmslotRoot(), 'projects', 'ensure-test');
 test('repo-local project hooks still ship the shared prepare runtime writer', () => {
   const paths = nodeSupportBundlePaths('ensure-test', { hooks: { preflight: 'node server.mjs' } });
   assert.ok(paths.includes('scripts/write-runtime-context.sh'));
+  assert.ok(paths.includes('scripts/lib/resolve-farmslot-cli.sh'));
 });
 
 test.before(() => {
@@ -141,6 +142,17 @@ test("a bundle carries the pack's templates and pack-rooted template sources for
   mkdirSync(path.join(pack, 'checklists'), { recursive: true });
   writeFileSync(path.join(pack, 'templates/worker/dev.md'), '# Dev\n');
   writeFileSync(path.join(pack, 'checklists/review.md'), '# Review\n');
+  const outside = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'external-catalog-')));
+  const previousOutside = process.env.OUTSIDE_TEMPLATES;
+  process.env.OUTSIDE_TEMPLATES = outside;
+  t.after(() => {
+    if (previousOutside === undefined) delete process.env.OUTSIDE_TEMPLATES;
+    else process.env.OUTSIDE_TEMPLATES = previousOutside;
+    rmSync(outside, { recursive: true, force: true });
+  });
+  mkdirSync(path.join(outside, 'dev'));
+  const externalMarkdown = '# External dev\n- [ ] Frozen external work\n';
+  writeFileSync(path.join(outside, 'dev/core.md'), externalMarkdown);
   const projectJson: RawProjectJson = {
     qa: {
       default_profile: 'smoke',
@@ -159,10 +171,16 @@ test("a bundle carries the pack's templates and pack-rooted template sources for
   assert.ok(paths.includes(`projects/${name}/templates`));
   assert.ok(paths.includes(`projects/${name}/checklists`));
   assert.ok(!paths.some((entry) => entry.endsWith('/absent')));
-  const { manifest } = await collectNodeSupportBundle(name, paths);
+  const { manifest, files, inputs } = await collectNodeSupportBundle(name, paths);
   const shipped = manifest.files.map((file) => file.path);
   assert.ok(shipped.includes(`projects/${name}/templates/worker/dev.md`));
   assert.ok(shipped.includes(`projects/${name}/checklists/review.md`));
+  assert(
+    files.some((file) => Buffer.from(file.contentBase64, 'base64').toString() === externalMarkdown),
+  );
+  assert(shipped.includes(`projects/${name}/.execution-template-catalog.json`));
+  assert(inputs.followed.includes(path.join(outside, 'dev/core.md')));
+  assert.equal(inputs.environment?.OUTSIDE_TEMPLATES, outside);
 });
 
 test('a local slot uses the checkout directly and touches no node', async () => {
@@ -177,7 +195,11 @@ test('a local slot uses the checkout directly and touches no node', async () => 
   assert.equal(state?.published, false);
   assert.deepEqual(
     state?.paths,
-    [...RUNNER_OBSERVABILITY_SUPPORT_PATHS, 'scripts/write-runtime-context.sh'].sort(),
+    [
+      ...RUNNER_OBSERVABILITY_SUPPORT_PATHS,
+      'scripts/write-runtime-context.sh',
+      'scripts/lib/resolve-farmslot-cli.sh',
+    ].sort(),
     'a project without farm refs still carries the runner installer',
   );
   assert.equal(rec.execs.length, 0);
@@ -207,8 +229,8 @@ test('a slot on a stale bundle gets the current bundle published and selected; l
   assert.ok(manifest.paths.includes('scripts/runners/pi-farmslot-providers.mjs'));
   assert.equal(
     manifest.fileCount,
-    RUNNER_OBSERVABILITY_SUPPORT_PATHS.length + 1,
-    'a project without hooks bundles only the installer files',
+    RUNNER_OBSERVABILITY_SUPPORT_PATHS.length + 2,
+    'a project without hooks bundles installer and hosted-task support files',
   );
   // The slot's pointer is the last write and names the published bundle.
   const selection = rec.written.at(-1)!;

@@ -346,6 +346,15 @@ export function selectHostedTaskTemplate(
     project.projectJson.execution_templates,
     {
       projectPackRoot: path.dirname(project.projectConfig),
+      ...(process.env.FARMSLOT_TASK_SUPPORT_DIR
+        ? {
+            catalogRoot: path.join(
+              process.env.FARMSLOT_TASK_SUPPORT_DIR,
+              'projects',
+              project.projectName,
+            ),
+          }
+        : {}),
       env: { ...slot.machineEnv, ...process.env },
       ...(resolveSourceBinding ? { resolveSourceBinding } : {}),
     },

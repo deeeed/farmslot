@@ -1,0 +1,2 @@
+- Node-support retention inventories rescan only the runs that changed since the last inventory, plus any scan older than five minutes, instead of every string of every unarchived run.
+- A refused decision resolution (for example a learnings-draft ledger failure) no longer leaves its selection data or approval receipts written to the stored card.

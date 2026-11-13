@@ -6,6 +6,10 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.13.6 - 2026-11-13
+
+- Use the runtime 0.46 catalog snapshot contract for hosted task initialization.
+
 ## 0.13.5 - 2026-11-13
 
 - Preserve literal source text and validation evidence in cooking task templates.

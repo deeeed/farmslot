@@ -1,0 +1,1 @@
+- Keep remote task initialization on the gateway-shipped external template catalog while preserving source identity and digest checks.

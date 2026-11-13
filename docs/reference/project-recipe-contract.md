@@ -410,6 +410,43 @@ Private `farmslot internal task-init <input-file>` is the gateway transport cons
 
 The private request is version-1 JSON, at most 8 MiB: `version`, `slotId`, `binding` (`project` or `static`), `task`, `template`, optional `taskDocumentAdditions` and optional `templateProvenance`. `task` uses `TaskInitSpec` data fields without `execution`, `markCommand` or `template`. `template` supplies `sourceId`, `id`, `sha256` and `selectionReason`; the node resolves these through its configured catalog and checks the selected source bytes. Roots and canonical tooling variables are derived there; request variables MUST NOT override node-derived tooling commands. `handoff.attemptId` is the existing run ID and `taskDir` belongs to its selected checkout. Additions are existing gateway Markdown sections, not another checklist or acceptance registry. Return the standard CLI envelope with `TaskInitResult` in `data`; invalid requests use a typed usage refusal. The private wire format belongs to the root CLI. `executionTemplateCatalogFlow` from `@farmslot/agent-runtime` shares existing QA-profile flow selection between this command and gateway previews. The shared producer consumes `applyArtifactOnlyTaskPolicy`; gateway evaluation also consumes the moved `assertArtifactOnlyTaskGuard` and `evaluateArtifactOnlyTaskGuard` from that package. These additive exports follow the same minor-release gate. The existing `isTemplateProvenance` and `isExecutionTemplateReference` validators from `@farmslot/protocol` are shared with this private command, avoiding a second metadata validator; their additive exports require a reviewed minor release.
 
+Under ADR-049 Amendment 4, configured env-rooted template catalogs
+are a narrow external-source exception to ADR-035. Remote support bundles MUST
+place catalog Markdown under reserved
+`projects/<project>/.execution-template-catalog/` and the version-1 descriptor
+at `projects/<project>/.execution-template-catalog.json`. Declared support paths
+MUST NOT collide with these paths.
+
+The descriptor records configured source declarations (id, kind, root selector,
+optional subpath and optional domains), available sources' confined relative roots, the gateway-observed
+`sourceRevision`/`sourceDirty`, and unavailable-source diagnostics. The resolver
+MUST use that recorded provenance, not run Git in the snapshot. The node's
+project config remains authoritative for source declarations and defaults: the
+resolver iterates that list, and a present matching descriptor entry with a
+different kind, domain set or root selector/subpath MUST refuse with
+`TASK_TEMPLATE_CATALOG_INVALID`. A declaration absent from the descriptor remains
+unavailable, not an invitation to use the node's environment.
+
+For both legacy and layout-2 nodes, hosted initialization MUST read the descriptor
+from the gateway-selected `TaskRuntimeRequest.supportDir`, regardless of the
+project config's installation path. Runtime context supplies this root; task JSON
+cannot choose it. Hosted initialization, including the legacy CLI transport, MUST
+select that bundle independently of farm-script hooks or `node_support` declarations.
+Source IDs, flow/platform/domain filtering and selected SHA
+checks remain mandatory. A configured optional source absent/unavailable in the
+snapshot stays unavailable without node-local fallback; only selecting it
+refuses with `TASK_TEMPLATE_SOURCE_UNAVAILABLE`. Malformed descriptors, escaping
+or missing declared roots refuse with `TASK_TEMPLATE_CATALOG_INVALID`. Existing
+bundle verification rejects missing promised files; selected digest mismatch
+retains `TASK_TEMPLATE_CHANGED`.
+
+Existing source-lock bindings keep authority. Catalog file or root-binding
+changes MUST invalidate the bundle cache. Initialized receipts remain unchanged;
+bundles without a descriptor retain existing resolution. Snapshot types/constants
+in `@farmslot/agent-runtime` serve the gateway bundle builder and shared source
+resolver and require a reviewed pre-1.0 minor release. No CLI, RPC or harness
+configuration is added.
+
 `@farmslot/agent-runtime` extends the existing `TaskInitSpec`, consumed by this root command: `template.selection?: SelectedExecutionTemplate`, `operatorPlan?: string`, `taskDocumentAdditions?: string`, `handoff.templateProvenance?: HandoffMetadata['templateProvenance']`, `artifactOnlyReplay?: { base: string; ignoredPaths?: readonly string[] }` and `authored?: Pick<WriteTaskDirInput, 'taskMarkdown' | 'checklistMarkdown' | 'handoff'>`. Add optional string fields `affectedArea`, `screenshotsMarkdown`, `commentsMarkdown`, `linkedTicketsMarkdown`, `linkedDescriptionsMarkdown` and `commentSummaryMarkdown` to `task`; the existing document builder consumes them in their current positions. The host authorizes and resolves a supplied selection before invoking the producer; it cannot override project gates. The producer retains the existing selection reason/reference, renders through the shared helpers, appends the supplied document sections and writes the existing handoff field. `authored` supplies existing document/handoff data to that same producer and writer instead of re-rendering the documents; the node validates its project, flow and identity, preserves authored acceptance IDs and applies the configured terminal/replay policies. Authored documents MUST NOT be reported as unchanged catalog-template bytes. No second renderer or task record is added. When `operatorPlan` is supplied for the existing lightweight interactive layout, it remains the editable `CHECKLIST.md` and the selected template stays in `TASK.md`; the ordinary split layout is unchanged. These additive SDK fields require a reviewed pre-1.0 minor release.
 
 For the existing artifact-only comparison dev/fix-bug replay, the gateway supplies `artifactOnlyReplay` from its completion policy, selected replay base and configured overlay exclusions. Move the existing publication-instruction policy and its guard into the shared producer. Apply them to both task and checklist after document additions and before computing rendered-template and deterministic-check digests. Preserve the replay-base comparisons, publication prohibition and local-artifact completion behavior. The gateway mirrors these final bytes without a second rewrite. Other runs retain their existing publication behavior.

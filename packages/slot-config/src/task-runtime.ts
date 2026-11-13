@@ -139,6 +139,7 @@ export async function runTaskRuntime(
   const support = request.supportDir.startsWith('~/')
     ? path.join(env.HOME || os.homedir(), request.supportDir.slice(2))
     : request.supportDir;
+  if (request.action === 'init') env.FARMSLOT_TASK_SUPPORT_DIR = support;
   env.FARMSLOT_PROJECTS_DIR =
     selected.layout === 2
       ? selected.projects

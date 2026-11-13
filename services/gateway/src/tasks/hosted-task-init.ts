@@ -74,6 +74,20 @@ async function hostedTaskRuntime(
   const supported = nodeLink
     ? node?.nodeLink?.operations?.includes('task.runtime') === true
     : node?.taskRuntime === 1;
+  const local = isLocal(slot.host, slot.machine) && !nodeLink;
+  const support = expandTemplate('{{farmslot_dir}}', slot);
+  let supportDir = support;
+  if (!local) {
+    try {
+      supportDir = await resolveRemoteFarmCommand(slot, support, {
+        budgetMs: TASK_RUNTIME_TIMEOUT_MS[action],
+        supportRoot: true,
+      });
+    } catch (error) {
+      if (!(error instanceof NodeSupportPendingError)) throw error;
+      return { exitCode: EXEC_TIMEOUT_EXIT_CODE, stdout: '', stderr: error.message };
+    }
+  }
   // Negotiate before execution. A failed runtime call may already have changed task files.
   if (!supported) {
     console.warn(
@@ -82,25 +96,13 @@ async function hostedTaskRuntime(
     const command = await hostedTaskCommand(
       slot,
       action === 'init' ? ['internal', 'task-init', taskPath] : ['task', 'verify', taskPath],
+      supportDir,
     );
     return execOnSlot(slot, command, {
       timeout: TASK_RUNTIME_TIMEOUT_MS[action],
       maxBuffer: 8 * 1024 * 1024,
       noRetry: true,
     });
-  }
-  const local = isLocal(slot.host, slot.machine) && !nodeLink;
-  const support = expandTemplate('{{farmslot_dir}}', slot);
-  let supportDir = support;
-  if (!local) {
-    try {
-      supportDir = await resolveRemoteFarmCommand(slot, support, {
-        budgetMs: TASK_RUNTIME_TIMEOUT_MS[action],
-      });
-    } catch (error) {
-      if (!(error instanceof NodeSupportPendingError)) throw error;
-      return { exitCode: EXEC_TIMEOUT_EXIT_CODE, stdout: '', stderr: error.message };
-    }
   }
   const sources = currentProjectSources();
   if (sources) {
@@ -111,7 +113,11 @@ async function hostedTaskRuntime(
     action,
     taskPath,
     supportDir,
-    env: { ...machineShellEnv(slot), ...(sources ? sourceExecutionEnvironment(sources) : {}) },
+    env: {
+      ...machineShellEnv(slot),
+      ...(sources ? sourceExecutionEnvironment(sources) : {}),
+      ...(action === 'init' ? { FARMSLOT_TASK_SUPPORT_DIR: supportDir } : {}),
+    },
   };
   const signal = cleanupSignal();
   if (local)
@@ -150,12 +156,19 @@ export interface HostedTaskInput {
 }
 
 /** Keep CLI distribution, node pools and captured project scripts independently selected. */
-export async function hostedTaskCommand(slot: SlotVars, args: readonly string[]): Promise<string> {
+export async function hostedTaskCommand(
+  slot: SlotVars,
+  args: readonly string[],
+  support: string,
+): Promise<string> {
   const farm = await farmslotDirectoryForSlot(slot);
-  const support = expandTemplate('{{farmslot_dir}}', slot);
   const supportArg = isShellHomePath(support) ? support : shellQuote(support);
   const script =
-    'farm="$1"; support="$2"; shift 2; unset FARMSLOT_ROOT; export FARMSLOT_CLI="${FARMSLOT_CLI:-$HOME/.local/bin/farmslot}"; source "$support/scripts/lib/resolve-farmslot-cli.sh" && exec "$FARMSLOT_CLI" --json "$@"';
+    'farm="$1"; support="$2"; shift 2; unset FARMSLOT_ROOT;' +
+    (args[0] === 'internal' && args[1] === 'task-init'
+      ? ' export FARMSLOT_TASK_SUPPORT_DIR="$support";'
+      : '') +
+    ' export FARMSLOT_CLI="${FARMSLOT_CLI:-$HOME/.local/bin/farmslot}"; source "$support/scripts/lib/resolve-farmslot-cli.sh" && exec "$FARMSLOT_CLI" --json "$@"';
   return withMachineEnv(
     `bash -c ${shellQuote(script)} hosted-task ${shellQuote(farm)} ${supportArg} ${args.map(shellQuote).join(' ')}`,
     slot,
