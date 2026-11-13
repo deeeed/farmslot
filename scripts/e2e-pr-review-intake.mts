@@ -14,8 +14,8 @@ import type {
   PRRulesListResult,
   PRTeamSaveResult,
   QueueItem,
-  ResourceChangedPayload,
 } from '../packages/protocol/src/index.js';
+import { observePRRules } from './lib/pr-rules-observer.mjs';
 
 loadCheckoutEnv(fileURLToPath(new URL('../', import.meta.url)));
 const parsed = parseGitHubPullUrl(process.env.INTAKE_PR_URL);
@@ -38,17 +38,8 @@ const observer = await client.connect().catch((error) => {
   connection.close();
   throw error;
 });
-// The second client is told about PR automation changes and reads the rules itself once.
-let announced = false;
-const stopObserving = observer.onEvent((event) => {
-  if (
-    event.event === 'resource.changed' &&
-    (event.payload as ResourceChangedPayload).changes.some(
-      (change) => change.key.family === 'pr-automation',
-    )
-  )
-    announced = true;
-});
+// The second client reads the rules on each PR automation change, as Command Center does.
+const observed = observePRRules(observer);
 let receipt: PRReviewRequestResult | undefined;
 try {
   const { fleet } = await connection.call<{ fleet: FleetStatus }>('fleet.status');
@@ -88,6 +79,7 @@ try {
       notificationPrincipalIds: [],
     },
   });
+  await observed.mark();
   const request = {
     teamId: team.id,
     pr: { host: 'github.com', repo: parsed.repo, number: parsed.number },
@@ -135,18 +127,16 @@ try {
     assert.equal(queued.effort, 'high');
     assert.equal(queued.runId, undefined);
   }
-  for (let waited = 0; !announced && waited < 5_000; waited += 50)
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  stopObserving();
+  const submissionId = receipt.submission.id;
+  await observed.expect(
+    (state) => !!state.submissions?.some((item) => item.id === submissionId),
+    'Second client must receive durable intake updates',
+  );
   const after = await observer.call<PRRulesListResult>('prRules.list');
   assert.equal(
     after.rules.length,
     before.rules.length,
     'Human intake must not create trigger rules',
-  );
-  assert(
-    announced && after.submissions?.some((item) => item.id === receipt?.submission.id),
-    'Second client must receive durable intake updates',
   );
   await cancel();
   const restarted = await client.call<PRReviewRequestResult>('prReview.get', {
