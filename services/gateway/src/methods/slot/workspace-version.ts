@@ -2,6 +2,8 @@ import path from 'node:path';
 
 import { slotFileExists, type SlotLocality, slotReadFile, slotStat } from '../../core/slot-io.js';
 
+import { WORKSPACE_METADATA_POLICY as policy } from './workspace-metadata-policy.js';
+
 interface WorkspaceVersionSource extends SlotLocality {
   remoteRepo: string;
 }
@@ -17,38 +19,44 @@ export async function localWorkspaceVersion(
   vars: WorkspaceVersionSource,
   defaultBranch: string,
 ): Promise<string | undefined> {
-  const marker = path.posix.join(vars.remoteRepo, '.git');
+  const marker = path.posix.join(vars.remoteRepo, policy.marker);
   if (!(await slotFileExists(vars, marker))) return undefined;
   const markerStat = await slotStat(vars, marker);
   if (!Number.isFinite(markerStat.mtimeMs)) return undefined;
   let gitDir = marker;
   if (markerStat.isFile) {
-    const pointer = /^gitdir: (.+)$/.exec((await slotReadFile(vars, marker)).trim());
-    const target = pointer?.[1];
+    const pointer = (await slotReadFile(vars, marker)).trim();
+    const target = pointer.startsWith(policy.gitPointerPrefix)
+      ? pointer.slice(policy.gitPointerPrefix.length)
+      : undefined;
     if (!target) return undefined;
     gitDir = relativeTo(vars.remoteRepo, target);
   } else if (!markerStat.isDirectory) return undefined;
-  const head = (await slotReadFile(vars, path.posix.join(gitDir, 'HEAD'))).trim();
+  const head = (await slotReadFile(vars, path.posix.join(gitDir, policy.head))).trim();
   // Reftable needs Git's ref resolver; do not guess its compatibility HEAD.
-  if (head === 'ref: refs/heads/.invalid') return undefined;
-  const commonFile = path.posix.join(gitDir, 'commondir');
+  if (head === policy.reftableHead) return undefined;
+  const commonFile = path.posix.join(gitDir, policy.commonDirectory);
   const commonDir = (await slotFileExists(vars, commonFile))
     ? relativeTo(gitDir, (await slotReadFile(vars, commonFile)).trim())
     : gitDir;
-  const ref = /^ref: (refs\/.+)$/.exec(head)?.[1];
+  const target = head.startsWith(policy.symbolicHeadPrefix)
+    ? head.slice(policy.symbolicHeadPrefix.length)
+    : '';
+  const ref =
+    target.startsWith(policy.refRootPrefix) && target.length > policy.refRootPrefix.length
+      ? target
+      : undefined;
   const refFile = ref ? path.posix.join(commonDir, ref) : undefined;
   const refValue =
     refFile && (await slotFileExists(vars, refFile)) ? await slotReadFile(vars, refFile) : null;
   const metadata = await Promise.all(
-    [
-      path.posix.join(gitDir, 'index'),
-      path.posix.join(commonDir, 'packed-refs'),
-      path.posix.join(commonDir, 'config'),
-      path.posix.join(commonDir, 'refs/remotes/origin', defaultBranch),
-      path.posix.join(gitDir, 'FETCH_HEAD'),
-    ].map(async (file) => {
-      if (!(await slotFileExists(vars, file))) return null;
-      const value = await slotStat(vars, file);
+    policy.files.map(async (file) => {
+      const directory = file.directory === 'git' ? gitDir : commonDir;
+      const target = file.appendDefaultBranch
+        ? path.posix.join(directory, file.path, defaultBranch)
+        : path.posix.join(directory, file.path);
+      if (!(await slotFileExists(vars, target))) return null;
+      const value = await slotStat(vars, target);
       if (!Number.isFinite(value.mtimeMs)) throw new Error('Workspace metadata has no timestamp');
       return [value.mtimeMs, value.size];
     }),

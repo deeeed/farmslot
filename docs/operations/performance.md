@@ -83,9 +83,6 @@ Passive workspace default and publication ref queries share a 60-second answer o
 
 Unchanged unavailable passive workspace inspections retry after 60 seconds. Metadata is still checked every 15 seconds; changed source/ownership, explicit invalidation and acting reads bypass the retry delay. Reuse retains the original unavailable observation and its timestamp.
 
-<<<<<<< Updated upstream
 Task staging uses `taskFiles.transfer` in the existing background child. SSH/SCP/rsync commands retain their shell, cwd, copy flags and ordered marker publication. Their previous untimed execution remains untimed; child startup stays bounded and inherited cancellation waits for process closeout. Include `host:taskFiles.transfer` when comparing managed command totals. Moving execution does not itself reduce the number of commands.
-=======
-Passive workspace refresh batches Git metadata through the trusted read-probe executor once per remote node every 15 seconds. Generic node filesystem access to `.git` stays denied. Unchanged metadata retains the existing 90-second inspection limit and original observation time; ownership changes, explicit invalidation and acting reads still force inspection. A missing metadata result cannot justify reuse.
 
-> > > > > > > Stashed changes
+Passive workspace refresh batches Git metadata through the trusted read-probe executor once per remote node every 15 seconds. Generic node filesystem access to `.git` stays denied. Unchanged metadata retains the existing 90-second inspection limit and original observation time; ownership changes, explicit invalidation and acting reads still force inspection. A missing metadata result cannot justify reuse.

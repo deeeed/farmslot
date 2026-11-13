@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx services/gateway/src/host-services/workspace-metadata.live.ts --assert-budget",
         "timeout_ms": 240000,
-        "intent": "Two loopback nodes use production execution and filesystem handlers for the same 67-slot, 630-logical-second mix on base and candidate. Assert real shell rate at most 115/min, verified workspaces and unchanged ownership; no live farm slot.",
+        "intent": "Two loopback nodes use production execution and filesystem handlers for the same 67-slot, 630-logical-second mix on base and candidate. Assert real shell rate at most 115/min, verified workspaces and unchanged ownership; no live farm slot. A pending read survives on its old node while the replacement starts an independent command; assert results by actual node pid.",
         "next": "dispatch-smoke"
       },
       "dispatch-smoke": {
@@ -19,7 +19,10 @@
         "intent": "Authenticated private create, write-task, prepare and dispatch, then cancel/archive/reset. Supply immutable FARMSLOT_CLI, fresh FARMSLOT_SAFE_IDLE_PROOF_OUT and TMPDIR on an eligible volume; normal 50GB floor remains.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
     }
   }
 }

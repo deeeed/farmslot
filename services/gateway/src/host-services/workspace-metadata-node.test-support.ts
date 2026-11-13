@@ -11,6 +11,7 @@ const [endpoint, machine] = process.argv.slice(2);
 const url = new URL(endpoint);
 if (url.hostname !== '127.0.0.1') throw new Error('Proof node requires loopback');
 const socket = new WebSocket(url);
+process.env.FARMSLOT_METADATA_PROOF_NODE_PID = String(process.pid);
 const controllers = new Map<string, AbortController>();
 let executions = 0;
 let denied = 0;

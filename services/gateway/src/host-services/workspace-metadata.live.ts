@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { type ChildProcess, execFileSync, fork } from 'node:child_process';
 import { once } from 'node:events';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -253,6 +254,52 @@ try {
   );
   if (enforceBudget)
     assert.ok(shellsPerMinute <= 115, `metadata reuse shell budget exceeded: ${shellsPerMinute}`);
+  // Separate from the rate window: a new node must not join an old pending read.
+  const { loadSlotVars } = await import('../core/config.js');
+  const { readSlotProbe } = await import('../core/read-probes.js');
+  const { shellQuote } = await import('../core/tmux.js');
+  const vars = await loadSlotVars('metadata-0-0');
+  const oldPid = children[0]?.pid;
+  assert.ok(oldPid);
+  const release = path.join(root, 'release-pending');
+  const readyFile = path.join(root, 'pending-ready-');
+  const command = `printf ready > ${shellQuote(readyFile)}"$FARMSLOT_METADATA_PROOF_NODE_PID"; while [ ! -e ${shellQuote(release)} ]; do sleep 0.02; done; printf '%s' "$FARMSLOT_METADATA_PROOF_NODE_PID"`;
+  const waitUntil = async (condition: () => boolean) => {
+    const deadline = Date.now() + 4000;
+    while (!condition()) {
+      assert.ok(Date.now() < deadline, 'pending fixture did not become ready');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  };
+  const oldRead = readSlotProbe(vars, command, 'pending-node-replacement', 10000);
+  let replacementRead: typeof oldRead | undefined;
+  let replacementPid: number | undefined;
+  try {
+    await waitUntil(() => existsSync(readyFile + oldPid));
+    const replacement = fork(
+      new URL('./workspace-metadata-node.test-support.ts', import.meta.url),
+      [`ws://127.0.0.1:${address.port}`, 'metadata-node-0'],
+      { stdio: ['ignore', 'inherit', 'inherit', 'ipc'] },
+    );
+    children.push(replacement);
+    replacementPid = replacement.pid;
+    assert.ok(replacementPid);
+    await waitUntil(() => registry.getNode('metadata-node-0')?.pid === replacementPid);
+    replacementRead = readSlotProbe(vars, command, 'pending-node-replacement', 10000);
+    assert.notEqual(
+      replacementRead,
+      oldRead,
+      'replacement node must not join the old pending probe',
+    );
+    await waitUntil(() => existsSync(readyFile + replacementPid));
+  } finally {
+    await writeFile(release, 'release');
+    await Promise.allSettled([oldRead, replacementRead ?? oldRead]);
+  }
+  assert.equal((await oldRead).stdout, String(oldPid));
+  assert.ok(replacementRead);
+  assert.equal((await replacementRead).stdout, String(replacementPid));
+  console.log(JSON.stringify({ pendingReplacementSeparated: true, oldPid, replacementPid }));
 } finally {
   mock.timers.reset();
   for (const socket of sockets) unregister?.(socket);
