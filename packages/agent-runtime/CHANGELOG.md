@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.45.13 - 2026-11-13
+
+- Update shared adapter/runtime dependencies for unchanged-call plan reuse.
+
 ## 0.45.12 - 2026-11-13
 
 - Keep native Claude turns in the foreground so workers and reviewers finish pending tool work before returning, including resumed turns.

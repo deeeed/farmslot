@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
@@ -171,6 +179,16 @@ test('pool editor reads and saves the canonical file without overwriting its can
     const content = JSON.stringify({ ...JSON.parse(original), codex_path: '/edited/codex' });
     const result = await configPoolUpdate({ machine: 'review-node', content });
     assert.equal(result.ok, true);
+    // The backup goes to the farm home's state, never into pool/.
+    assert.equal(
+      path.dirname(result.backup),
+      path.join(root, 'home', 'state', 'config-backups', 'pool', 'review-node.json'),
+    );
+    assert.equal(readFileSync(result.backup, 'utf8'), original);
+    assert.deepEqual(readdirSync(path.join(root, 'pool')).sort(), [
+      'canary-review-node.json',
+      'review-node.json',
+    ]);
     assert.equal(JSON.parse(readFileSync(primary, 'utf8')).codex_path, '/edited/codex');
     assert.equal(readFileSync(canary, 'utf8'), canaryOriginal);
   } finally {

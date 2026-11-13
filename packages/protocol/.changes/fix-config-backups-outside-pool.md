@@ -1,0 +1,1 @@
+- Add the gateway `state.configBackups` path, `<home>/state/config-backups` in both layouts.

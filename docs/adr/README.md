@@ -82,6 +82,7 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [068](068-project-recipe-binding-and-conformance.md)     | Project recipe binding and conformance                                  | Accepted |
 | [069](069-declared-pinned-sources.md)                    | Declared and pinned farm sources                                        | Accepted |
 | [071](071-gateway-change-notifications.md)               | Gateway change notifications and shared client cache                    | Accepted |
+| [072](072-warm-call-server.md)                           | Warm recipe call server per slot                                        | Proposed |
 
 ADR-071 has an Accepted [persistent client store amendment](071-gateway-change-notifications.md#amendment-1-2026-10-20-persistent-client-store)
 and a Proposed [offline-first reads amendment](071-gateway-change-notifications.md#amendment-2-2026-11-02-offline-first-reads).

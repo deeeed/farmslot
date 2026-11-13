@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.7 - 2026-11-13
+
+- Reuse the authorized plan when the runner stays unchanged and runtime preparation explicitly reports no changes.
+
 ## 0.35.6 - 2026-11-13
 
 - Keep blind recipe runs and calls on their allocated trial browser when slot context or explicit CDP options name the protected slot browser.

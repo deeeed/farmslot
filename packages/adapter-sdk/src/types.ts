@@ -446,8 +446,12 @@ export interface AdapterRun<
   autoHud?(): boolean;
   // Best-effort cleanup after the runner returns, whatever the outcome.
   teardown?(projectRoot: string, env: Record<string, string | undefined>): Promise<void>;
-  // Make the runtime attachable before a run.
-  prepareRuntime?(projectRoot: string, options: RecipeRunOptions<TPlatform>): Promise<void>;
+  // Make the runtime attachable before a run. Return false only when no runtime
+  // or execution environment changed; void conservatively requires replanning.
+  prepareRuntime?(
+    projectRoot: string,
+    options: RecipeRunOptions<TPlatform>,
+  ): Promise<void | boolean>;
   // Called before the overlay install; returns the check the healthcheck phase
   // runs on the run's ports (exit code to stop, null to continue), or undefined
   // for none.
