@@ -90,6 +90,12 @@ test('read-only probe binds staged, unstaged and untracked content at unchanged 
     'credential configuration separates caches',
   );
   assert.equal(JSON.stringify(changedAuth).includes('fixture-auth-user'), false);
+  git('config', 'branch.main.remote', repo);
+  assert.equal(
+    probe().publicationRemoteKey,
+    changedAuth.originKey,
+    'URL upstreams share the resolved origin identity',
+  );
   git('remote', 'add', 'mirror', repo);
   git('config', 'branch.main.remote', 'mirror');
   assert.equal(

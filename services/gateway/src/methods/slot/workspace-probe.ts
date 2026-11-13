@@ -72,7 +72,7 @@ def authentication_entry(entry):
  key=entry.split(b'\\n',1)[0]
  return key.startswith((b'credential.',b'http.',b'url.')) or key in (b'core.sshcommand',b'ssh.variant') or (key.startswith(b'remote.') and key.endswith((b'.proxy',b'.uploadpack')))
 auth=b'\\x00'.join(entry for entry in configuration if authentication_entry(entry))
-def remote_key(name): return hashlib.sha256(git('remote','get-url',name).strip()+b'\\x00'+auth).hexdigest()
+def remote_key(name): return hashlib.sha256(git('ls-remote','--get-url',name).strip()+b'\\x00'+auth).hexdigest()
 origin_key=remote_key('origin')
 publication_key=origin_key if remote=='origin' else (remote_key(remote) if remote!='.' else '')
 print(json.dumps(dict(branch=branch,headSha=head,dirtyFingerprint=digest.hexdigest(),dirtyCount=count,localDefaultSha=local,behind=int(behind) if behind.isdigit() else None,defaultFetchedAt=fetched,originKey=origin_key,publicationRemote=remote,publicationRef=merge,publicationRemoteKey=publication_key)))
