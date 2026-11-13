@@ -333,6 +333,42 @@ test('a recorded close settles only on a complete read, and a review with no PR 
   });
 });
 
+test('a recorded close does not settle a PR identity with no repository to read', async () => {
+  // The project has no `ci.repo`, so the child's PR number names no list to read.
+  const root: Run = {
+    ...makeRun({
+      id: 'root',
+      familyId: 'no-ci',
+      status: 'done',
+      flowType: 'dev',
+      ticketOrPr: 'PROJ-4',
+    }),
+    completedAt: ago(20),
+  };
+  const child: Run = {
+    ...makeRun({
+      id: 'child',
+      familyId: 'no-ci',
+      parentRunId: 'root',
+      status: 'done',
+      flowType: 'pr-complete',
+      project: 'no-ci',
+      ticketOrPr: 'PROJ-4',
+      prNumber: 4,
+    }),
+    prState: 'CLOSED',
+    completedAt: ago(20),
+    archivedAt: ago(15),
+  };
+  const context = await retentionContext([root, child], NOW, {
+    retentionDays: () => DEFAULT_RUN_RETENTION_DAYS,
+    projectRepo: async () => undefined,
+    openPrs: async () => [],
+  });
+  assert.equal(runRetentionHold(child, context), 'PR state unknown');
+  assert.equal(runRetentionHold(root, context), 'PR state unknown');
+});
+
 test('an unsettled follow-up keeps the family it inherits from', async () => {
   const parent: Run = {
     ...makeRun({

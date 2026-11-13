@@ -154,10 +154,11 @@ export async function retentionContext(
     const lists = identity?.prs.map((pr) => open.get(pr.repo)?.has(pr.number)) ?? [];
     if (lists.includes(true)) return 'open';
     if (run.mergedAt || run.prState === 'MERGED') return 'settled';
-    if (lists.includes(undefined)) return 'unknown';
+    // A list that was not read, or an identity with no repository to read, cannot confirm a close.
+    if (lists.includes(undefined) || identity?.unresolved) return 'unknown';
     if (run.prState === 'CLOSED') return 'settled';
     if (!identity) return run.flowType === 'review-pr' ? 'unknown' : 'none';
-    return identity.unresolved ? 'unknown' : 'settled';
+    return 'settled';
   };
   const familyStates = new Map<string, RunPrState>();
   for (const run of runs) {

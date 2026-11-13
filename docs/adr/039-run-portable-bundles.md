@@ -625,7 +625,8 @@ disk. When the disk gets tight the operator lowers the setting (for example to 3
 without a code change. Storage still moves to the run archive under Amendments 3
 and 7, so a released run stays restorable.
 
-A follow-up dispatched after any member of its run family was archived fails to write
-its task: inheritance reads the bundles of the root, the parent and every other
-member, so dispatch is refused until the operator restores the storage of every
-archived family member from its archive manifest.
+A follow-up dispatched after the storage of a live member of its run family was
+archived fails to write its task: inheritance reads the bundles of the root, the parent
+and every other member with a live run record (members whose record was archived are
+skipped), so dispatch is refused until the operator restores the storage of each such
+member from its archive manifest.

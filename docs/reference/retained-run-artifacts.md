@@ -260,9 +260,10 @@ from. An in-flight `review-pr` run holds `repeatReviewContext.priorRunId` and
 again from the current runs just before it moves each run, so a follow-up or review
 dispatched during the pass keeps its sources. Once the reader settles, its sources
 follow the age rule again. A follow-up dispatched later than that reads the bundle of
-every family member: the root, the parent and the others. If any of them is archived,
-writing its task fails and dispatch is refused until the storage of every archived
-family member is restored from its archive manifest (below).
+every family member with a live run record: the root, the parent and the others.
+Members whose record was archived are skipped. If any live member's storage is
+archived, writing its task fails and dispatch is refused until the storage of every
+such member is restored from its archive manifest (below).
 
 Eligible task directories, task pins, session archives, local review workspaces,
 local native sessions and run bundles MUST move to `FARMSLOT_RUN_ARCHIVE_ROOT`.
