@@ -13,6 +13,11 @@ interface ProviderEnvironment {
   authorizedProviders?: readonly string[];
 }
 
+interface ProviderRootSelection {
+  root: string;
+  source: 'authorized-env' | 'pool';
+}
+
 export function resolveProviderModule(declaration: ProviderDeclaration, root: string): string {
   try {
     return declaration.package
@@ -33,7 +38,7 @@ export function resolveProviderModule(declaration: ProviderDeclaration, root: st
 export function providerEnvironmentRoot(
   declaration: ProviderDeclaration,
   options: ProviderEnvironment,
-): string | undefined {
+): ProviderRootSelection | undefined {
   const variable = declaration.root?.env;
   if (!variable) return undefined;
   const supplied = options.env[variable];
@@ -44,6 +49,7 @@ export function providerEnvironmentRoot(
     (authorized.includes(declaration.module) ||
       authorized.includes(resolveProviderModule(declaration, supplied)))
   )
-    return supplied;
-  return options.poolEnv?.[variable];
+    return { root: supplied, source: 'authorized-env' };
+  const root = options.poolEnv?.[variable];
+  return root === undefined ? undefined : { root, source: 'pool' };
 }

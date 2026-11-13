@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Load the CLI in this process so its signal handlers own the invoked PID.
-import { realpathSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
+import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // Agent tool shells can restore a different PATH than the worker launch. Honor
@@ -21,6 +21,42 @@ if (configuredNodeBin) {
 }
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+function findPinHome(executable, canonical) {
+  for (
+    let directory = resolve(dirname(executable), '..');
+    dirname(directory) !== directory;
+    directory = dirname(directory)
+  ) {
+    const store = dirname(dirname(directory));
+    if (basename(directory) !== 'cli' || basename(store) !== 'task-pins') continue;
+    const pinCli = resolve(directory, 'packages/cli/bin/farmslot.mjs');
+    if (!existsSync(pinCli) || realpathSync(pinCli) !== canonical) continue;
+    let home = dirname(store);
+    const marker = resolve(home, '../config/instance.json');
+    if (basename(home) === 'state' && existsSync(marker)) {
+      const config = JSON.parse(readFileSync(marker, 'utf8'));
+      if (config.layout === 2) home = dirname(home);
+    }
+    return home;
+  }
+}
+
+// Recover the retained installation's home before loading checkout env or state.
+if (!process.env.FARMSLOT_HOME?.trim()) {
+  const canonical = realpathSync(fileURLToPath(import.meta.url));
+  let executable = resolve(process.argv[1]);
+  let home = findPinHome(executable, canonical);
+  if (!home) {
+    // Follow file links first so directory links can retain the logical farm home.
+    while (!home && executable !== canonical) {
+      executable = lstatSync(executable).isSymbolicLink()
+        ? resolve(realpathSync(dirname(executable)), readlinkSync(executable))
+        : canonical;
+      home = findPinHome(executable, canonical);
+    }
+  }
+  if (home) process.env.FARMSLOT_HOME = home;
+}
 const entry = resolve(
   root,
   'src',
