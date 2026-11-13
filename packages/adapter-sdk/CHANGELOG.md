@@ -8,7 +8,7 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## 0.27.6 - 2026-11-13
 
-- Let runtime preparation report that it made no changes, so callers can preserve the current plan.
+- Let `prepareRuntime` return `Promise<void | boolean>`; only explicit `false` preserves the current plan, and existing `void` results still require replanning.
 
 ## 0.27.5 - 2026-11-13
 
