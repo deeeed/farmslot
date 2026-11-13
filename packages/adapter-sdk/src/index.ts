@@ -80,7 +80,6 @@ export {
   type RunObserver,
   type StageHandle,
   type StageProgress,
-  type WorkTreeObservation,
 } from './types.js';
 export type {
   ActiveVideoRecording,

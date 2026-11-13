@@ -36,7 +36,6 @@ export {
   recordSourceBaseline,
   sourceCheck,
   sourceFingerprint,
-  type SourceGitObservation,
   type SourceInputs,
 } from './source-freshness.js';
 export {
