@@ -57,6 +57,10 @@
     "./scripts/evidence-manifest.cjs": {
       "types": "./scripts/evidence-manifest.d.cts",
       "default": "./scripts/evidence-manifest.cjs"
+    },
+    "./scripts/farm-git.cjs": {
+      "types": "./scripts/farm-git.d.cts",
+      "default": "./scripts/farm-git.cjs"
     }
   },
   "scripts": {
@@ -118,7 +122,8 @@
     "scripts/execution-template-cli.mjs",
     "scripts/git-diff.d.cts",
     "scripts/review-diff-scope.d.cts",
-    "scripts/evidence-manifest.d.cts"
+    "scripts/evidence-manifest.d.cts",
+    "scripts/farm-git.d.cts"
   ],
   "publishConfig": {
     "access": "public"

@@ -46,7 +46,7 @@ export async function runtimeOperation<T>(
   const result = await execOnSlot(
     vars,
     withFarmGitConfig(
-      `node ${shellQuote(script)} ${shellQuote(phase)} ${shellQuote(JSON.stringify(input))}`,
+      `${phase === 'push' ? `FARMSLOT_GIT_PUSH_TIMEOUT_MS=${timeout} ` : ''}node ${shellQuote(script)} ${shellQuote(phase)} ${shellQuote(JSON.stringify(input))}`,
     ),
     { timeout, maxBuffer: 1024 * 1024 },
   );
