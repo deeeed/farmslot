@@ -885,7 +885,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gateway-test-shard-${{ matrix.shard }}
+          name: gateway-test-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/gateway-quality/tsx-tests-gateway.json
           if-no-files-found: error
 
