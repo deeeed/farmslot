@@ -7,6 +7,7 @@ import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
 import {
+  candidateExecutionTemplate,
   EXECUTION_TEMPLATE_CATALOG_DIR,
   EXECUTION_TEMPLATE_CATALOG_FILE,
   type ExecutionTemplateCatalogSnapshot,
@@ -501,4 +502,43 @@ test('a worker task cannot claim the scripted-command contract to drop its gates
     result: 'artifacts/scripted-command-result.json',
   });
   assert.equal(projected.acceptance, undefined);
+});
+
+test('hosted trial selects transported candidate bytes without changing the node catalog', (t) => {
+  const { catalog } = qaCatalog(t, true);
+  const markdown = '---\nplatforms: [core]\n---\n# B1\n\n- [ ] Trial candidate.\n';
+  const selected = candidateExecutionTemplate({
+    path: '/experiment/B1.md',
+    relativePath: 'fix-bug/B1.md',
+    markdown,
+    flow: 'fix-bug',
+  });
+  const input = request();
+  input.task.flow = 'fix-bug';
+  input.task.artifactOnlyReplay = { base: 'a'.repeat(40) };
+  input.template = {
+    sourceId: selected.entry.sourceId,
+    id: selected.entry.id,
+    sha256: selected.entry.sha256,
+    selectionReason: 'explicit',
+    candidate: { relativePath: selected.entry.relativePath, markdown },
+  };
+  assert.deepEqual(parseHostedTaskInitRequest(input), input);
+  const trial = selectHostedTaskTemplate(catalog, input);
+  assert.deepEqual(trial.sources, []);
+  assert.equal(trial.selected.reference.sha256, selected.reference.sha256);
+  assert.equal(
+    trial.selected.entry.path,
+    path.join(input.task.taskDir, 'inputs/candidate-template.md'),
+  );
+  input.template.candidate = {
+    relativePath: selected.entry.relativePath,
+    markdown: markdown + 'Changed.',
+  };
+  assert.throws(() => selectHostedTaskTemplate(catalog, input), /identity differs/);
+  const { request: control } = qaCatalog(t, true);
+  assert.equal(
+    selectHostedTaskTemplate(catalog, control).selected.entry.sourceId,
+    'package:fixture-cook',
+  );
 });

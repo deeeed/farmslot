@@ -4,7 +4,9 @@ import path from 'node:path';
 
 import type { ExecutionTemplateReference } from '@farmslot/protocol';
 
-import type { ExecutionTemplateEntry } from './types.js';
+import { inferTemplateMetadata } from './infer.js';
+import { executionTemplateEntryCompatible } from './select.js';
+import type { ExecutionTemplateEntry, SelectedExecutionTemplate } from './types.js';
 
 export function sha256Text(text: string): string {
   return createHash('sha256').update(text).digest('hex');
@@ -69,5 +71,39 @@ export function materializeExecutionTemplate(
   return {
     path: destination,
     reference: executionTemplateReference(entry, snapshot.markdown),
+  };
+}
+
+/** Select one trial-owned Markdown snapshot without scanning or registering a source. */
+export interface CandidateExecutionTemplateInput {
+  path: string;
+  relativePath: string;
+  markdown: string;
+  flow: string;
+  platform?: string;
+  domain?: string;
+}
+
+export function candidateExecutionTemplate(
+  input: CandidateExecutionTemplateInput,
+): SelectedExecutionTemplate & { markdown: string } {
+  const entry = inferTemplateMetadata({
+    absolutePath: input.path,
+    relativePath: input.relativePath,
+    source: {
+      id: 'eval-candidate',
+      kind: 'custom',
+      root: path.dirname(input.path),
+      layout: 'flow-tree',
+    },
+    text: input.markdown,
+  });
+  if (!executionTemplateEntryCompatible(entry, input))
+    throw new Error('Candidate template is incompatible with the trial flow, platform or domain.');
+  return {
+    entry,
+    markdown: input.markdown,
+    reason: 'explicit',
+    reference: executionTemplateReference(entry),
   };
 }

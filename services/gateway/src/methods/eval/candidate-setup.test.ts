@@ -14,6 +14,7 @@ import { makeEvalResultPackage } from '../../run-engine/test-fixtures.js';
 import {
   configuredExecutionTemplateOptions,
   readConfiguredExecutionTemplateSnapshot,
+  resolveConfiguredExecutionTemplateForSlot,
 } from '../../tasks/execution-template-catalog.js';
 
 import { resolveCandidateTemplateProvenance } from './candidate-setup.js';
@@ -315,5 +316,88 @@ test('proof trials retain a package template admitted by the farm QA preset', as
   await assert.rejects(
     resolveCandidateTemplateProvenance(name, 'proof', {}, proof),
     /changed|hash|digest|snapshot/i,
+  );
+});
+
+test('trial-local snapshot leaves the live catalog and default unchanged', async (t) => {
+  const name = `eval-local-${process.pid}-farm`;
+  const root = path.join(farmslotRoot(), 'projects', name);
+  const experiment = await mkdtemp(path.join(os.tmpdir(), 'eval-local-source-'));
+  t.after(() =>
+    Promise.all([
+      rm(root, { recursive: true, force: true }),
+      rm(experiment, { recursive: true, force: true }),
+    ]),
+  );
+  await mkdir(path.join(root, 'templates/worker'), { recursive: true });
+  await writeFile(
+    path.join(root, 'project.json'),
+    JSON.stringify({ name, execution_templates: { sources: [] } }),
+  );
+  await writeFile(
+    path.join(root, 'templates/worker/fix-bug.md'),
+    '# Live default\n\n- [ ] Keep live behavior.\n',
+  );
+  const source = path.join(experiment, 'B1.md');
+  const markdown = '---\nplatforms: [core]\n---\n# Trial B1\n\n- [ ] Use the local candidate.\n';
+  await writeFile(source, markdown);
+  const vars = await loadProjectVars(name);
+  const query = { flow: 'fix-bug', platform: 'core', runMode: 'autonomous' as const };
+  const before = await configuredExecutionTemplateOptions(vars, query);
+  const live = await resolveConfiguredExecutionTemplateForSlot(vars, query);
+  const candidate = await resolveCandidateTemplateProvenance(
+    name,
+    'fix-bug',
+    {},
+    undefined,
+    source,
+  );
+  assert.equal(candidate.templateContent, markdown);
+  assert.equal(candidate.executionTemplate?.sourceId, 'eval-candidate');
+  assert.equal(candidate.axes.template?.hash, candidate.provenance?.contentHash);
+  assert.ok(candidate.executionTemplate);
+  const snapshot = path.join(experiment, 'candidate-template.md');
+  await writeFile(snapshot, markdown);
+  await unlink(source);
+  const frozen = { path: snapshot, reference: candidate.executionTemplate };
+  const selected = await resolveConfiguredExecutionTemplateForSlot(vars, {
+    ...query,
+    candidateTemplate: frozen,
+  });
+  assert.equal(
+    selected.markdown,
+    markdown,
+    'Task writing uses the frozen bytes after the original file is removed.',
+  );
+  assert.equal(selected.reference.sha256, candidate.axes.template?.hash);
+  assert.deepEqual(await configuredExecutionTemplateOptions(vars, query), before);
+  assert.deepEqual(await resolveConfiguredExecutionTemplateForSlot(vars, query), live);
+  await assert.rejects(
+    resolveConfiguredExecutionTemplateForSlot(vars, {
+      ...query,
+      platform: 'ios',
+      candidateTemplate: frozen,
+    }),
+    /incompatible/,
+  );
+  await writeFile(snapshot, markdown + 'Changed.');
+  await assert.rejects(
+    resolveConfiguredExecutionTemplateForSlot(vars, { ...query, candidateTemplate: frozen }),
+    /hash mismatch/,
+  );
+  await writeFile(source, markdown);
+  await assert.rejects(
+    resolveCandidateTemplateProvenance(
+      name,
+      'fix-bug',
+      { template: { hash: 'f'.repeat(64) } },
+      undefined,
+      source,
+    ),
+    /hash mismatch/,
+  );
+  await assert.rejects(
+    resolveCandidateTemplateProvenance(name, 'proof', {}, undefined, source),
+    /Proof template cannot override/,
   );
 });

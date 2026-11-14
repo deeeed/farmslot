@@ -3410,6 +3410,11 @@ export interface RunEngineState {
   };
   /** Artifact-first experiment trial linkage for artifact-only reference/template regression candidates. */
   evalExperiment?: {
+    /** Gateway-owned frozen local candidate; never registered in the project catalog. */
+    candidateTemplate?: {
+      path: string;
+      reference: import('./execution-templates.js').ExecutionTemplateReference;
+    };
     /** Trial-level judging opt-out, retained across retries and resumes. */
     review?: false;
     /** Resolved trial judge override, retained across retries and resumes. */

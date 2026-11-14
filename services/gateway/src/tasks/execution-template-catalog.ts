@@ -35,6 +35,11 @@ import {
   resolveConfiguredExecutionTemplateSources,
 } from '../host-services/execution-template-sources.js';
 
+import {
+  type EvalCandidateTemplate,
+  readEvalCandidateTemplate,
+} from './eval-candidate-template.js';
+
 export interface ExecutionTemplateCatalogQuery {
   flow?: string;
   platform?: string;
@@ -308,8 +313,10 @@ export async function readConfiguredExecutionTemplateSnapshot(
     id: string;
     sourceId: string;
     sha256: string;
+    candidateTemplate?: EvalCandidateTemplate;
   },
 ): Promise<ConfiguredExecutionTemplateSnapshot> {
+  if (query.candidateTemplate) return readEvalCandidateTemplate(query.candidateTemplate);
   if (!projectUsesExecutionTemplateCatalog(projectVars)) {
     throw new Error(`Project "${projectVars.projectName}" has no execution-template catalog.`);
   }
@@ -350,9 +357,18 @@ export async function resolveConfiguredExecutionTemplateForSlot(
     explicitDomain?: string;
     slotDomain?: string;
     explicitId?: string;
+    candidateTemplate?: EvalCandidateTemplate;
   },
 ): Promise<ResolvedSlotExecutionTemplate> {
   const effectiveDomain = resolveEffectiveDomain(query.explicitDomain, query.slotDomain);
+  if (query.candidateTemplate) {
+    const selected = await readEvalCandidateTemplate(query.candidateTemplate, {
+      flow: query.flow,
+      platform: query.platform,
+      domain: effectiveDomain,
+    });
+    return { ...selected, effectiveDomain };
+  }
   return {
     ...(await resolveConfiguredExecutionTemplate(projectVars, {
       flow: query.flow,
