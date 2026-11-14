@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { mock, test } from 'node:test';
+import { mock, test, type TestContext } from 'node:test';
 import * as promiseTimers from 'node:timers/promises';
 
 import {
@@ -397,7 +397,7 @@ test('acceptedAt checkpoint recovery repairs native metrics exactly once', async
   assert.equal(run.agentContexts![0].nativeSession!.acceptedAt, acceptedAt);
 });
 
-test('slotless native review captures its request receipt without a terminal target', async (t) => {
+async function retainedPiReview(t: TestContext) {
   reset();
   await launch();
   const directory = mkdtempSync(path.join(tmpdir(), 'review-receipt-pool-'));
@@ -430,6 +430,10 @@ test('slotless native review captures its request receipt without a terminal tar
     model: run.metrics.model,
     effort: 'off',
   }));
+}
+
+test('slotless native review captures its request receipt without a terminal target', async (t) => {
+  await retainedPiReview(t);
   const observer = registry.getRunnerObservability('pi');
   assert.ok(observer);
   const original = observer.getReasoningReceipt;
@@ -462,6 +466,27 @@ test('slotless native review captures its request receipt without a terminal tar
     runEngineLabel({ runner: 'pi', model: run.metrics.model, effort: runWorkerEffort(run) }),
     'pi/litellm/synthetic-model · default',
   );
+});
+
+test('unavailable reasoning metadata preserves the native review snapshot and liveness', async (t) => {
+  await retainedPiReview(t);
+  const observer = registry.getRunnerObservability('pi');
+  assert.ok(observer);
+  const original = observer.getReasoningReceipt;
+  t.after(() => {
+    observer.getReasoningReceipt = original;
+  });
+  const warnings: unknown[][] = [];
+  t.mock.method(console, 'warn', (...args: unknown[]) => warnings.push(args));
+  observer.getReasoningReceipt = async () => {
+    throw new Error('receipt read unavailable');
+  };
+  const snapshot = await readReviewWorkspaceWorker(run.id);
+  assert.equal(snapshot.session.state, 'idle');
+  assert.equal(snapshot.session.nativeSessionId, 'saved-conversation');
+  assert.equal(run.agentContexts?.[0].reasoningReceipt, undefined);
+  assert.equal(warnings.length, 1);
+  assert.equal(run.effort, 'off');
 });
 
 for (const method of [NATIVE_WORKER_READ, NATIVE_WORKER_ENSURE, NATIVE_WORKER_SEND]) {

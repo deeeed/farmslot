@@ -106,8 +106,15 @@ export function writePiReasoningReceipt(sessionPath, configuration) {
     observedAt: new Date().toISOString(),
     reasoning: configuration.effectiveReasoning,
   };
-  fs.writeFileSync(pending, `${JSON.stringify(receipt)}\n`, { mode: 0o600 });
-  fs.renameSync(pending, file);
+  try {
+    fs.writeFileSync(pending, `${JSON.stringify(receipt)}\n`, { mode: 0o600 });
+    fs.renameSync(pending, file);
+  } catch (error) {
+    // A missing optional label receipt keeps the launch-effort fallback. It must not
+    // abort the model request or replace the runner's own transcript/error handling.
+    console.warn('[farmslot-pi] reasoning receipt unavailable; retaining the launch effort', error);
+    return;
+  }
 }
 
 /**

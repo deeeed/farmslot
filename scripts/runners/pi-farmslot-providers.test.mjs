@@ -1075,6 +1075,7 @@ async function checkExtension(extensionUrl, scenario, obsDir) {
                     'wire-mismatch',
                     'off-reasoning',
                     'no-thinking-reasoning',
+                    'receipt-write-failure',
                   ].includes(scenario),
                 }
               : {}),
@@ -1150,6 +1151,8 @@ async function checkExtension(extensionUrl, scenario, obsDir) {
         });
       },
     };
+    if (scenario === 'receipt-write-failure')
+      ctx.sessionManager = { getSessionFile: () => `${obsDir}/absent/session.jsonl` };
     if (scenario === 'wire-mismatch') {
       await before.events.get('session_start')?.({}, ctx);
       const { default: OpenAI } = await import('openai');
@@ -1279,6 +1282,14 @@ for (const scenario of [
     assert.equal(result.status, 0, result.stderr);
     assert.doesNotMatch(result.stderr, /PI_REASONING_EFFORT_MISMATCH/);
   });
+
+test('a failed optional receipt write does not abort the serialized model request', () => {
+  const result = runExtensionCheck('receipt-write-failure');
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /reasoning receipt unavailable/);
+  assert.match(result.stderr, /fixture inference attempted/);
+  assert.doesNotMatch(result.stderr, /PI_REASONING_EFFORT_MISMATCH/);
+});
 
 for (const [failure, routerId] of ['http', 'timeout', 'json', 'empty'].flatMap((failure) =>
   ['router', 'localsparks'].map((id) => [failure, id]),

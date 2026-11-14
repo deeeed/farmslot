@@ -2136,17 +2136,7 @@ export async function checkAgentLive(
     if (!vars.session) return 'idle';
     const session = (await source.target(slotId, { runId, role, contextId })).target;
     const turn = await source.turn(vars, session, runner ?? '');
-    if (runId) {
-      const currentRun = getRun(runId);
-      if (currentRun) {
-        const { captureRunnerReasoningReceipt } = await import('../runners/reasoning-receipt.js');
-        await captureRunnerReasoningReceipt(
-          currentRun,
-          selectAgentContext(currentRun, { role, contextId }),
-          vars,
-        );
-      }
-    }
+
     if (
       turn?.confidence === 'high' &&
       turn.source !== 'pane' &&
@@ -2157,6 +2147,17 @@ export async function checkAgentLive(
       // continue it (F328). Without the runner's transport classification it is genuine.
       if (turn.failureKind !== 'transport')
         throw new RunnerExecutionError(turn.failure, turn.observedAt);
+    }
+    if (runId) {
+      const currentRun = getRun(runId);
+      if (currentRun) {
+        const { captureRunnerReasoningReceipt } = await import('../runners/reasoning-receipt.js');
+        await captureRunnerReasoningReceipt(
+          currentRun,
+          selectAgentContext(currentRun, { role, contextId }),
+          vars,
+        );
+      }
     }
     const r = await source.exec(
       vars,

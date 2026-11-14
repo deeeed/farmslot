@@ -19,7 +19,12 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import type { AgentContext, NativeSessionInfo, RunGetResult } from '@farmslot/protocol';
+import type {
+  AgentContext,
+  NativeSessionInfo,
+  NativeSessionReadResult,
+  RunGetResult,
+} from '@farmslot/protocol';
 import { createNativeProofFixture } from '../../services/gateway/src/runtime/native-proof-fixture.live-support.js';
 
 const output = process.env.FARMSLOT_PI_REASONING_EVIDENCE;
@@ -175,6 +180,16 @@ test(
     for (const name of Object.keys(process.env))
       if (/TOKEN|API_KEY|PASSWORD|AUTH_TOKEN|FARMSLOT_PI_|ANTHROPIC_|OPENAI_|LITELLM_/u.test(name))
         delete process.env[name];
+    // Local command execution snapshots its environment at import. Keep one private
+    // shell-init file and change its contents only while testing metadata reads.
+    const shellFault = path.join(root, 'receipt-shell-fault');
+    await writeFile(shellFault, '');
+    const previousBashEnv = process.env.BASH_ENV;
+    process.env.BASH_ENV = shellFault;
+    t.after(() => {
+      if (previousBashEnv === undefined) delete process.env.BASH_ENV;
+      else process.env.BASH_ENV = previousBashEnv;
+    });
     execFileSync('git', ['init', '-q', repo]);
     const managed: Array<{ info: NativeSessionInfo; leaseId: string }> = [];
     const { nativeSessionManager } =
@@ -219,10 +234,17 @@ test(
     });
     const vars = await loadSlotVars('receipt-slot');
     const results: unknown[] = [];
-    for (const scenario of ['tmux', 'native', 'native-review'] as const)
-      for (const effort of ['off', 'medium']) {
+    for (const scenario of [
+      'tmux',
+      'native',
+      'native-review',
+      'native-reader-failure',
+      'native-writer-failure',
+    ] as const)
+      for (const effort of scenario.endsWith('-failure') ? ['off'] : ['off', 'medium']) {
         const slotless = scenario === 'native-review';
-        const transport = slotless ? 'native' : scenario;
+        const transport = scenario === 'tmux' ? 'tmux' : 'native';
+        const optionalFailure = scenario.endsWith('-failure');
         const taskPath = path.join(root, 'review-task-' + effort);
         const environment = {
           PATH: path.dirname(process.execPath) + ':/opt/homebrew/bin:/usr/bin:/bin',
@@ -402,6 +424,10 @@ test(
           );
           managed.push({ info, leaseId });
           assert.ok(info.nativeSessionPath, 'real Pi must expose its saved session file');
+          if (scenario === 'native-writer-failure') {
+            // Refuse the atomic rename regardless of the sandbox wrapper's PID.
+            await mkdir(info.nativeSessionPath + '.reasoning-request.json');
+          }
           const commandId = randomUUID();
           context.runnerSessionId = info.nativeSessionId;
           context.nativeSession = {
@@ -420,16 +446,43 @@ test(
             'Return one short sentence.',
           );
         }
-        const observed = await until('Gateway did not persist the adapter receipt', async () => {
-          if (slotless) await readReviewWorkspaceWorker(run.id);
-          else if (transport === 'native') await readNativeWorkerSnapshot(run.id, 'dev', 'dev');
-          else await checkAgentLive('receipt-slot', 'pi', run.id, 'dev', 'dev');
-          const record = (await connection.call<RunGetResult>('run.get', { runId: run.id })).run;
-          return record.agentContexts?.find((item) => item.id === context.id)?.reasoningReceipt
-            ? record
-            : undefined;
-        });
-        const expected = effort === 'off' ? 'default' : 'medium';
+        if (scenario === 'native-reader-failure') {
+          await writeFile(shellFault, "printf 'receipt-only fault\\n'\n");
+        }
+        let observed;
+        try {
+          observed = await until('Gateway did not settle the receipt observation', async () => {
+            let snapshot: NativeSessionReadResult | undefined;
+            if (slotless) snapshot = await readReviewWorkspaceWorker(run.id);
+            else if (transport === 'native')
+              snapshot = await readNativeWorkerSnapshot(run.id, 'dev', 'dev');
+            else await checkAgentLive('receipt-slot', 'pi', run.id, 'dev', 'dev');
+            const record = (await connection.call<RunGetResult>('run.get', { runId: run.id })).run;
+            if (optionalFailure) {
+              const command = snapshot?.commands.find(
+                (entry) => entry.commandId === context.nativeSession?.commandId,
+              );
+              if (!command?.outcome) return undefined;
+              assert.equal(
+                command.outcome,
+                'completed',
+                'optional metadata cannot fail the model turn',
+              );
+              assert.equal(snapshot?.session.state, 'idle');
+              assert.equal(
+                record.agentContexts?.find((item) => item.id === context.id)?.reasoningReceipt,
+                undefined,
+              );
+              return record;
+            }
+            return record.agentContexts?.find((item) => item.id === context.id)?.reasoningReceipt
+              ? record
+              : undefined;
+          });
+        } finally {
+          await writeFile(shellFault, '');
+        }
+        const expected = effort === 'off' ? (optionalFailure ? 'off' : 'default') : 'medium';
         const label = runEngineLabel({
           runner: 'pi',
           model: context.model!,

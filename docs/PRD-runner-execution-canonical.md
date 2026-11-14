@@ -131,7 +131,8 @@ identity and quota remain unknown; credential presence does not prove subscripti
 Reasoning labels use the adapter's serialized request receipt when available. An omitted
 setting displays `default`, an explicit disable displays `off`, and a level displays its
 wire value. The receipt is bound to the worker's session, model and attempt for either
-transport. Runs without a receipt retain their existing effort label.
+transport. Runs without a receipt retain their existing effort label. Unavailable receipt
+metadata cannot change model requests, worker liveness or operational errors.
 
 Runner adapters own native protocol mechanics and declare supported interactions. Clients consume shared session commands and events for text, tools, approval, questions, interruption, and recovery. Acceptance, turn start, and turn completion are separate facts. Missing structured evidence remains unknown; unsupported operations fail closed.
 

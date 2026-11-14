@@ -32,36 +32,48 @@ export async function captureRunnerReasoningReceipt(
     model: context.model,
     attemptStartedAt,
   };
-  vars ??= run.reviewWorkspace
-    ? ((await reviewWorkspaceExecutionVars(run)) ?? undefined)
-    : run.slotId
-      ? await loadSlotVars(run.slotId)
-      : undefined;
-  if (!vars) return;
-  const receipt = await read(vars, {
-    ...expected,
-    since: Date.parse(attemptStartedAt),
-  });
-  if (
-    !receipt ||
-    receipt.sessionId !== expected.sessionId ||
-    receipt.selectedModel !== expected.model ||
-    JSON.stringify(receipt) === JSON.stringify(context.reasoningReceipt)
-  )
+  try {
+    vars ??= run.reviewWorkspace
+      ? ((await reviewWorkspaceExecutionVars(run)) ?? undefined)
+      : run.slotId
+        ? await loadSlotVars(run.slotId)
+        : undefined;
+    if (!vars) return;
+    const receipt = await read(vars, {
+      ...expected,
+      since: Date.parse(attemptStartedAt),
+    });
+    if (
+      !receipt ||
+      receipt.sessionId !== expected.sessionId ||
+      receipt.selectedModel !== expected.model ||
+      JSON.stringify(receipt) === JSON.stringify(context.reasoningReceipt)
+    )
+      return;
+    // The remote read can overlap a relaunch or context transfer.
+    await upsertAgentContext(
+      run.id,
+      context.role,
+      { id: context.id },
+      {
+        resolvePatch: (latest) =>
+          latest?.runnerSessionId === expected.sessionId &&
+          latest.runnerSessionPath === expected.sessionPath &&
+          latest.model === expected.model &&
+          (latest.attemptStartedAt ?? latest.startedAt ?? run.createdAt) ===
+            expected.attemptStartedAt
+            ? { reasoningReceipt: { ...receipt, attemptStartedAt } }
+            : null,
+      },
+    );
+  } catch (error) {
+    // This optional display receipt must not change a worker's operational result.
+    // Leave its existing effort label in place; a later observation can retry capture.
+    console.warn('[reasoning-receipt] unavailable; retaining the launch effort', {
+      runId: run.id,
+      contextId: context.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return;
-  // The remote read can overlap a relaunch or context transfer.
-  await upsertAgentContext(
-    run.id,
-    context.role,
-    { id: context.id },
-    {
-      resolvePatch: (latest) =>
-        latest?.runnerSessionId === expected.sessionId &&
-        latest.runnerSessionPath === expected.sessionPath &&
-        latest.model === expected.model &&
-        (latest.attemptStartedAt ?? latest.startedAt ?? run.createdAt) === expected.attemptStartedAt
-          ? { reasoningReceipt: { ...receipt, attemptStartedAt } }
-          : null,
-    },
-  );
+  }
 }
