@@ -1,0 +1,1 @@
+- Start the scripted runner without loading unrelated workspace configuration, reducing cold startup and late-ack timing failures.

@@ -8,7 +8,7 @@ import type { Command } from 'commander';
 
 import type { ScriptedRunnerScenario, WorkerSignal } from '@farmslot/protocol';
 
-import { repoRoot } from '../onboarding/workspace.js';
+import { repoRoot } from '../onboarding/repo-root.js';
 
 export interface ScriptedRunnerOptions {
   taskDir: string;
