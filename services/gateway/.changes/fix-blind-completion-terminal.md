@@ -1,0 +1,1 @@
+- An artifact-only blind eval trial whose worker is stuck or waiting, and that no nudge can move (the runner takes no nudges or the nudge budget is spent), now ends as a blocked trial output instead of opening a monitor decision that no operator answers.
