@@ -1,11 +1,12 @@
 // Real inference on the disposable remote-node stack, with the production project contracts.
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { appendFile, cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { appendFile, cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { cancelledRunSlotHold, isTerminalRunStatus, isRecord, runOutputCloseUnavailableReason, type BacklogCreateResult, type BacklogEnqueueResult, type BacklogListResult, type NativeSessionReadResult, type Run, type RunCancelResult, type SlotReleaseResult, type SlotStatus } from '../../../packages/protocol/src/index.js';
+import { cancelledRunSlotHold, isTerminalRunStatus, runOutputCloseUnavailableReason, type BacklogCreateResult, type BacklogEnqueueResult, type BacklogListResult, type NativeSessionReadResult, type Run, type RunCancelResult, type SlotReleaseResult, type SlotStatus } from '../../../packages/protocol/src/index.js';
 import { writeJson } from '../lib/isolated-stack.mjs';
 import { startRemoteNodeStack } from '../lib/remote-node-stack.mjs';
 
@@ -31,16 +32,24 @@ export async function runFullflow(options: FullflowOptions): Promise<void> {
   const worker = options.worker ?? FULLFLOW_MODEL;
   const pack = await fullflowPack(root, worker);
   const cases = options.cases ?? FULLFLOW_CASES;
-  const blindRuntime = cases.includes('blind-dispatch') ? '.agent' : undefined;
-  if (blindRuntime) {
-    pack.projectJson.blind_keep_ignored = ['.fullflow'];
-    pack.projectJson.paths = { ...(isRecord(pack.projectJson.paths) ? pack.projectJson.paths : {}), runtime_dir: blindRuntime };
-  }
+  if (cases.includes('blind-dispatch')) pack.projectJson.blind_keep_ignored = ['.fullflow'];
   const controller = new AbortController();
   let inFlight: Promise<void> | undefined;
-  const agent = path.join(evidence, 'pi-agent');
+  if (worker.runner === 'pi' && !process.env.LITELLM_API_KEY) throw new Error('LITELLM_API_KEY is not set in the login shell');
+  let workerRoot: string | undefined;
+  if (cases.includes('blind-dispatch')) {
+    // Blind workers cannot write shared /tmp. Only IPC/control state belongs there.
+    const parent = path.join(homedir(), 'farmslot-canary', 'fixtures');
+    await mkdir(parent, { recursive: true });
+    const owned = await realpath(await mkdtemp(path.join(parent, 'fullflow-')));
+    workerRoot = owned;
+    options.reaper.path(owned);
+    options.onCleanup?.(async () => { await rm(owned, { recursive: true, force: true }); return []; });
+    await writeFile(path.join(owned, '.owner'), `${options.ownerTag} ${process.pid}\n`);
+  }
+  const agent = path.join(workerRoot ?? evidence, 'pi-agent');
+  const turnsFile = path.join(workerRoot ?? evidence, 'pi-turns.jsonl');
   if (worker.runner === 'pi') {
-    if (!process.env.LITELLM_API_KEY) throw new Error('LITELLM_API_KEY is not set in the login shell');
     await mkdir(path.join(agent, 'extensions'), { recursive: true });
     // Disposable provider declaration, no subscription login or credential-file reads.
     await writeJson(path.join(agent, 'models.json'), { providers: { litellm: {
@@ -53,7 +62,7 @@ export async function runFullflow(options: FullflowOptions): Promise<void> {
 export default function(pi) {
   let turns = 0;
   pi.on('turn_end', (event, ctx) => {
-    appendFileSync(${JSON.stringify(path.join(evidence, 'pi-turns.jsonl'))}, JSON.stringify({ at: new Date().toISOString(), pid: process.pid, cwd: ctx.cwd, role: event.message.role, usage: event.message.usage, stopReason: event.message.stopReason, tools: event.message.content.filter((block) => block.type === 'toolCall').map((block) => ({ id: block.id, name: block.name })) }) + '\\n');
+    appendFileSync(${JSON.stringify(turnsFile)}, JSON.stringify({ at: new Date().toISOString(), pid: process.pid, cwd: ctx.cwd, role: event.message.role, usage: event.message.usage, stopReason: event.message.stopReason, tools: event.message.content.filter((block) => block.type === 'toolCall').map((block) => ({ id: block.id, name: block.name })) }) + '\\n');
     if (++turns >= 150) ctx.abort();
   });
 }
@@ -65,11 +74,21 @@ export default function(pi) {
   const workerEnvironment = worker.runner === 'pi' ? { LITELLM_API_KEY: process.env.LITELLM_API_KEY, PI_CODING_AGENT_DIR: agent } : {};
   const stack = await startRemoteNodeStack({
     ...options,
+    workerRoot,
     onCleanup: (stop) => options.onCleanup?.(async () => {
       // Keep RPC alive until every case has captured its final timings and first failure.
       controller.abort();
       const errors: string[] = [];
       try { await inFlight; } catch (error) { errors.push(`case finalization: ${String(error)}`); }
+      if (workerRoot) {
+        try {
+          await mkdir(path.join(evidence, 'pi-agent'), { recursive: true });
+          for (const file of ['pi-turns.jsonl', 'pi-agent/models.json', 'pi-agent/extensions', 'pi-agent/sessions']) {
+            const source = path.join(workerRoot, file);
+            if (existsSync(source)) await cp(source, path.join(evidence, file), { recursive: true });
+          }
+        } catch (error) { errors.push(`provider diagnostics: ${String(error)}`); }
+      }
       return [...errors, ...await stop()];
     }),
     // Tmux eval launches route through the gateway's remote shim; native cases inherit nodeEnv.
@@ -98,7 +117,7 @@ export default function(pi) {
   for (const name of cases) {
     if (controller.signal.aborted) break;
     if (name === 'blind-dispatch') {
-      inFlight = runBlindDispatch({ stack, evidence, worker, turnReceipts: path.join(evidence, 'pi-turns.jsonl'), signal: controller.signal, log, onCheck: options.onCheck });
+      inFlight = runBlindDispatch({ stack, evidence, worker, turnReceipts: turnsFile, signal: controller.signal, log, onCheck: options.onCheck });
       await inFlight;
       continue;
     }
@@ -269,7 +288,7 @@ export default function(pi) {
           check.failureText = check.error ?? failureText(run);
           check.timingsS = { ...fullflowTimings(run, ended), ...check.timingsS };
           check.modelCalls = (run.sessionUsage ?? []).reduce((sum, usage) => sum + (usage.turns ?? 0), 0);
-          const receiptsFile = path.join(evidence, 'pi-turns.jsonl');
+          const receiptsFile = turnsFile;
           if (worker.runner === 'pi' && existsSync(receiptsFile)) {
             const scoped = await readCanaryTurns(receiptsFile, stack.slotRepo(slotId));
             check.modelCalls = scoped.length + (run.sessionUsage ?? []).filter((usage) => usage.runner !== 'pi').reduce((sum, usage) => sum + (usage.turns ?? 0), 0);
@@ -282,7 +301,6 @@ export default function(pi) {
           if (task && existsSync(task)) await cp(task, path.join(dir, 'task'), { recursive: true });
           const runtime = path.join(stack.slotRepo(slotId), '.sandbox/farmslot-farm');
           if (existsSync(runtime)) await cp(runtime, path.join(dir, 'slot-runtime'), { recursive: true });
-          if (blindRuntime && existsSync(path.join(stack.slotRepo(slotId), blindRuntime))) await cp(path.join(stack.slotRepo(slotId), blindRuntime), path.join(dir, 'slot-runner-runtime'), { recursive: true });
           const retired = await retire(stack.call, run.id);
           if (retired) { check.status = 'fail'; check.differences.push(`cleanup: ${retired}`); }
           await writeJson(path.join(dir, 'slot-after-close.json'), await readSlot(stack.call, slotId));
