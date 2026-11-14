@@ -937,7 +937,8 @@ export async function evalTrialStart(
       effort: params.effort,
       app: params.app,
       safetyTier: params.safetyTier,
-      mode: templateResolution.mode,
+      // A blind trial has no operator to answer a gate, whatever its template's default mode.
+      mode: 'autonomous',
       executionTemplateId: templateResolution.executionTemplate?.id,
       taskTemplate: templateResolution.taskTemplate?.variant
         ? templateResolution.taskTemplate
