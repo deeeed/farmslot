@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.31.18 - 2026-11-14
+
+- Align published dependencies with the protocol 0.84 and runtime 0.47 release cohort.
+
 ## 0.31.17 - 2026-11-14
 
 - Reuse broker sockets for deferred recipe HUD updates while resolving the selected runtime on every update and preserving command deadlines.

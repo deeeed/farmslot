@@ -1,1 +1,0 @@
-- Compose complete review scope and criteria from validated prior rows plus current updates, and expose fenced same-session context compaction for review continuation.

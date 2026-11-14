@@ -27,7 +27,7 @@ interface MetadataQuery {
 }
 interface MetadataBatch {
   key: string;
-  connection: ConnectedNode['ws'];
+  connection: ConnectedNode['ws'] | undefined;
   until: number;
   pending: boolean;
   promise: Promise<Map<string, WorkspaceMetadataVersion>>;
@@ -37,22 +37,23 @@ const INTERVAL_MS = 15_000;
 
 async function remoteVersions(
   queries: MetadataQuery[],
+  inspectIndexes: boolean,
 ): Promise<Map<string, WorkspaceMetadataVersion>> {
   const first = queries[0];
   if (!first) return new Map();
   const connection = getNode(first.vars.machine)?.ws;
-  if (!connection) return new Map();
+  if (!connection && !slotFilesReadInProcess(first.vars)) return new Map();
   queries.sort((a, b) => a.root.slotId.localeCompare(b.root.slotId));
   const roots = queries.map((query) => ({
     ...query.root,
     ...(query.previous ? { previous: query.previous } : {}),
   }));
-  const key = JSON.stringify(queries.map(({ vars, root }) => [vars.host, root]));
+  const key = JSON.stringify([inspectIndexes, queries.map(({ vars, root }) => [vars.host, root])]);
   const cached = batches.get(first.vars.machine);
   if (
     cached?.key === key &&
     cached.connection === connection &&
-    (cached.pending || cached.until > Date.now())
+    (cached.pending || (!inspectIndexes && cached.until > Date.now()))
   )
     return cached.promise;
   const entry: MetadataBatch = {
@@ -64,9 +65,9 @@ async function remoteVersions(
       .then(async () => {
         const result = await readSlotProbe(
           first.vars,
-          workspaceMetadataCommand(roots),
+          workspaceMetadataCommand(roots, inspectIndexes),
           'workspace-metadata',
-          5000,
+          inspectIndexes ? 30_000 : 5000,
           '/',
         );
         // A replaced node must not attest the new connection's workspace metadata.
@@ -82,13 +83,25 @@ async function remoteVersions(
             typeof row.slotId !== 'string' ||
             !ids.delete(row.slotId) ||
             (row.version !== null && typeof row.version !== 'string') ||
-            typeof row.ancestryCacheable !== 'boolean'
+            typeof row.ancestryCacheable !== 'boolean' ||
+            (row.alternatesPath !== undefined &&
+              (typeof row.alternatesPath !== 'string' || row.alternatesPath.length === 0)) ||
+            [row.indexErrors, row.indexWarnings].some(
+              (value) =>
+                value !== undefined &&
+                (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string')),
+            )
           )
             throw new Error('Invalid workspace metadata row');
           if (typeof row.version === 'string')
             versions.set(row.slotId, {
               version: row.version,
               ancestryCacheable: row.ancestryCacheable,
+              ...(Array.isArray(row.indexErrors) ? { indexErrors: row.indexErrors } : {}),
+              ...(Array.isArray(row.indexWarnings) ? { indexWarnings: row.indexWarnings } : {}),
+              ...(typeof row.alternatesPath === 'string'
+                ? { alternatesPath: row.alternatesPath }
+                : {}),
             });
         }
         return versions;
@@ -109,8 +122,9 @@ async function remoteVersions(
 
 /** All passive roots share one metadata command per remote node per interval. */
 export async function passiveWorkspaceVersions(
-  slots: readonly SlotStatus[],
+  slots: readonly Pick<SlotStatus, 'slot'>[],
   previous: ReadonlyMap<string, WorkspaceMetadataVersion> = new Map(),
+  inspectIndexes = false,
 ): Promise<Map<string, WorkspaceMetadataVersion>> {
   // A scoped owner/source must never join a machine-wide read or cache.
   if (currentSlotCommandExecutor() || currentProjectSources()) return new Map();
@@ -137,7 +151,7 @@ export async function passiveWorkspaceVersions(
   await Promise.all(
     queries.map(async (query) => {
       if (!query) return;
-      if (slotFilesReadInProcess(query.vars)) {
+      if (!inspectIndexes && slotFilesReadInProcess(query.vars)) {
         try {
           const version = await localWorkspaceVersion(
             query.vars,
@@ -158,7 +172,8 @@ export async function passiveWorkspaceVersions(
   );
   await Promise.all(
     [...remote.values()].map(async (group) => {
-      for (const [slotId, version] of await remoteVersions(group)) versions.set(slotId, version);
+      for (const [slotId, version] of await remoteVersions(group, inspectIndexes))
+        versions.set(slotId, version);
     }),
   );
   return versions;

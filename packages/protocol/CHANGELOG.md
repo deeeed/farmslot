@@ -6,6 +6,14 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.84.0 - 2026-11-14
+
+- Retain the original repository identity in blind isolation provenance so parking does not trust worker-editable Git metadata.
+- Add the gateway `state.configBackups` path, `<home>/state/config-backups` in both layouts.
+- Filter the pool directory listing once per listing in `readPoolFiles`, not on every call; a backup-heavy pool directory made that filter most of each call.
+- BREAKING CHANGE: `RunUpdatedPayload.run` is now a `RunUpdateNotice`: the run's `id`, `project`, `status`, `slotId` and `updatedAt`, no longer the whole `Run`. Read the rest of the run with `run.get`.
+- Add optional same-session context compaction capability and durable continuation receipts.
+
 ## 0.83.2 - 2026-11-13
 
 - Carry multiline checklist step detail in progress and shared display state.

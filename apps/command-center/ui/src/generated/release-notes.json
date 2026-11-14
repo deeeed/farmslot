@@ -1,11 +1,7 @@
 {
-  "version": "0.36.2",
-  "date": "2026-11-13",
+  "version": "0.36.3",
+  "date": "2026-11-14",
   "items": [
-    "Expand checklist step titles to read their instructions, collapsed by default",
-    "View implementation and review costs, shared-session labels, and reasons for incomplete family pricing",
-    "Park local commits and dirty work before slot resets, with scoped list/restore and a bounded fleet summary",
-    "View reviewer, model, recorded duration and generation cost in review-chain rows, with a wrapping layout on narrow screens",
-    "View retained review machine, slot and checkout placement in run details and reviewer sessions"
+    "A run file that fails to load is no longer requested again on every render. It loads again when the run or file link changes, when the view opens again, or when the gateway connection comes back"
   ]
 }
