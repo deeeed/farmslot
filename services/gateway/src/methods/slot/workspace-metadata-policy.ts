@@ -51,4 +51,6 @@ export interface WorkspaceMetadataVersion {
   version: string;
   ancestryCacheable: boolean;
   alternatesPath?: string;
+  indexErrors?: string[];
+  indexWarnings?: string[];
 }

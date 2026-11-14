@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -66,4 +67,33 @@ test('workspace doctor flags borrowed objects for normal and linked slots, then 
   );
   assert.equal(cleared?.ok, true);
   assert.equal(cleared?.warn, undefined);
+});
+
+test('workspace doctor detects a missing cache-tree object in a prunable linked index', async () => {
+  const index = path.join(common, '.git/worktrees/scratch/index');
+  await mkdir(path.dirname(index), { recursive: true });
+  await writeFile(path.join(path.dirname(index), 'HEAD'), 'a'.repeat(40) + '\n');
+  await writeFile(path.join(path.dirname(index), 'gitdir'), '/absent/scratch/.git\n');
+  const header = Buffer.alloc(12);
+  header.write('DIRC');
+  header.writeUInt32BE(2, 4);
+  const tree = Buffer.concat([Buffer.from('\0' + '0 0\n'), Buffer.alloc(20, 0xbb)]);
+  const extension = Buffer.alloc(8);
+  extension.write('TREE');
+  extension.writeUInt32BE(tree.length, 4);
+  const body = Buffer.concat([header, extension, tree]);
+  const bytes = Buffer.concat([body, createHash('sha1').update(body).digest()]);
+  await writeFile(index, bytes);
+  const result = await gatewayDoctor({ sectionId: 'workspace' });
+  const check = result.sections[0]?.checks.find((check) => check.id === 'git-object-stores');
+  assert.equal(check?.ok, false);
+  assert.match(check?.detail ?? '', /fixture-2:.*worktrees\/scratch\/index/);
+  assert.match(check?.detail ?? '', /missing cache-tree object b{40}/);
+  await rm(index);
+  assert.equal(
+    (await gatewayDoctor({ sectionId: 'workspace' })).sections[0]?.checks.find(
+      (check) => check.id === 'git-object-stores',
+    )?.ok,
+    true,
+  );
 });

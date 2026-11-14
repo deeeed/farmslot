@@ -1,1 +1,1 @@
-- Doctor flags slots that borrow Git objects through alternates, using the shared local and remote metadata observations.
+- Doctor flags slot Git alternates and missing cache-tree objects in registered linked worktree indexes, including prunable scratch worktrees.

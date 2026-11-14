@@ -1,5 +1,6 @@
 import { shellQuote } from '../../core/tmux.js';
 
+import { WORKSPACE_INDEX_HEALTH_PROGRAM } from './workspace-index-health-program.js';
 import {
   WORKSPACE_METADATA_POLICY,
   type WorkspaceMetadataVersion,
@@ -14,10 +15,14 @@ export interface WorkspaceMetadataRoot {
 }
 
 /** Trusted passive probe, like workspace-probe. General node filesystem .git access stays denied. */
-export function workspaceMetadataCommand(roots: readonly WorkspaceMetadataRoot[]): string {
+export function workspaceMetadataCommand(
+  roots: readonly WorkspaceMetadataRoot[],
+  inspectIndexes = false,
+): string {
   return `python3 - ${shellQuote(JSON.stringify(roots))} ${shellQuote(JSON.stringify(WORKSPACE_METADATA_POLICY))} <<'FARMSLOT_WORKSPACE_METADATA'
 import json,os,pathlib,stat,sys
 policy=json.loads(sys.argv[2])
+${inspectIndexes ? WORKSPACE_INDEX_HEALTH_PROGRAM : ''}
 
 def version(root):
  repo,default=root['repo'],root['defaultBranch']
@@ -49,7 +54,7 @@ def version(root):
   else:
    value=file.lstat();metadata.append([value.st_mtime_ns/1000000,value.st_size])
  fingerprint=json.dumps([root['machine'],repo,default,os.path.normpath(gitdir),os.path.normpath(common),info.st_mtime_ns/1000000,info.st_size,head,refvalue,metadata],separators=(',',':'))
- previous=root.get('previous')
+ previous=${inspectIndexes ? 'None' : "root.get('previous')"}
  if previous and previous.get('version')==fingerprint: return previous
  cacheable=all(not entry.get('blocksAncestryCache') or metadata[index] is None for index,entry in enumerate(policy['files']))
  packed_index=next(index for index,entry in enumerate(policy['files']) if entry['directory']=='common' and entry['path']==policy['packedRefs'])
@@ -63,6 +68,7 @@ def version(root):
  value=dict(version=fingerprint,ancestryCacheable=cacheable)
  alternates_index=next(index for index,entry in enumerate(policy['files']) if entry['directory']=='common' and entry['path']==policy['alternates'])
  if metadata[alternates_index] is not None: value['alternatesPath']=os.path.normpath(pathlib.Path(common,policy['alternates']))
+ ${inspectIndexes ? 'value.update(index_health(gitdir,common))' : ''}
  return value
 
 rows=[]
@@ -71,7 +77,7 @@ for root in json.loads(sys.argv[1]):
  except OSError:
   # Optional metadata cannot justify reuse. The full inspection reports the actual failure.
   value=None
- rows.append(dict(slotId=root['slotId'],version=value['version'] if value else None,ancestryCacheable=value['ancestryCacheable'] if value else False,**({'alternatesPath':value['alternatesPath']} if value and 'alternatesPath' in value else {})))
+ rows.append(dict(slotId=root['slotId'],version=value['version'] if value else None,ancestryCacheable=value['ancestryCacheable'] if value else False,**({key:value[key] for key in ('alternatesPath','indexErrors','indexWarnings') if key in value} if value else {})))
 print(json.dumps(rows))
 FARMSLOT_WORKSPACE_METADATA`;
 }
