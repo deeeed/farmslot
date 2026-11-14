@@ -21,6 +21,63 @@ def reviewer_command(argv):
     return argv[0] in review.REVIEWERS
 
 
+class RuleSourceTests(unittest.TestCase):
+    def test_foreign_targets_receive_committed_owner_rules_and_self_review_uses_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            owner, target = root / "owner", root / "target"
+            rules = Path("projects/farmslot-farm/fixtures/runtime/review-quality.md")
+            def git(cwd, *args):
+                return subprocess.check_output([
+                    "git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
+                    "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                    *args], cwd=cwd, text=True).strip()
+            for repo in (owner, target):
+                repo.mkdir()
+                git(repo, "init", "-q", "-b", "main")
+                (repo / "README.md").write_text("fixture\n")
+                if repo == owner:
+                    (owner / rules).parent.mkdir(parents=True)
+                    (owner / rules).write_text("FSR-01 owner committed rules\n")
+                git(repo, "add", ".")
+                git(repo, "commit", "-qm", "test: fixture")
+            owner_sha = git(owner, "rev-parse", "HEAD")
+            target_sha = git(target, "rev-parse", "HEAD")
+            (owner / rules).write_text("uncommitted rules must not leak\n")
+            prompts = []
+            def command(argv, **kwargs):
+                if argv[0] == "node":
+                    return subprocess.CompletedProcess(argv, 0, "## Diff scope\n", "")
+                return common.run(argv, **kwargs)
+            def reviewer(_config, _name, prompt, _file, _cwd, fields, _prior):
+                prompts.append(prompt)
+                return f"VERDICT: APPROVE\nCOMMIT: {fields['head']}\n", {"transport": "fixture"}
+            config = {"state_dir": str(root / "state")}
+            args = argparse.Namespace(pr=12, cwd=str(target), report=str(root / "REPORT.md"),
+                                      base="main", conflict_only=False)
+            script = owner / ".agents/skills/cross-model-orchestrator/scripts/review.py"
+            with patch.object(review, "__file__", str(script)), \
+                    patch.object(review, "run", side_effect=command), \
+                    patch.object(review, "_reviewer", side_effect=reviewer):
+                for pack in ("core", "extension", "mobile"):
+                    args.repo = f"MetaMask/experimental-metamask-{pack}-farm"
+                    review.review(config, args)
+                    for prompt in prompts[-2:]:
+                        self.assertIn("FSR-01 owner committed rules", prompt)
+                        self.assertIn(owner_sha, prompt)
+                        self.assertNotIn("uncommitted rules must not leak", prompt)
+                        self.assertNotIn(f"git show {target_sha}:{rules}", prompt)
+                (target / rules).parent.mkdir(parents=True)
+                (target / rules).write_text("FSR-01 reviewed target rules\n")
+                git(target, "add", ".")
+                git(target, "commit", "-qm", "test: target rules")
+                args.repo = "deeeed/farmslot"
+                review.review(config, args)
+                for prompt in prompts[-2:]:
+                    self.assertIn("FSR-01 reviewed target rules", prompt)
+                    self.assertNotIn("FSR-01 owner committed rules", prompt)
+
+
 class WorkerReviewRulesTests(unittest.TestCase):
     def test_worker_quality_step_stops_when_rules_are_missing_and_reads_present_rules(self):
         root = Path(__file__).resolve().parents[4]
@@ -77,6 +134,10 @@ class ReviewTests(unittest.TestCase):
         self.commands.append(argv)
         if argv[:2] == ["git", "rev-parse"]:
             output = self.head
+        elif argv[:2] == ["git", "ls-tree"]:
+            output = "projects/farmslot-farm/fixtures/runtime/review-quality.md"
+        elif argv[:2] == ["git", "show"]:
+            output = "FSR-01 frozen fixture rules"
         elif argv[:2] == ["git", "merge-base"]:
             output = self.base
         elif argv[0] == "node" and argv[1].endswith("review-diff-scope.cjs"):
@@ -179,9 +240,9 @@ class ReviewTests(unittest.TestCase):
             review.review(self.config, self.args)
             saved = (self.directory() / f"r{number}" / "prompt.md").read_text()
             for prompt in (saved, *self.prompts[-2:]):
-                self.assertIn(f"git show {self.head}:{rules}", prompt)
+                self.assertIn(f"Rules source: {self.root.resolve()}@{self.head}:{rules}", prompt)
                 self.assertIn("Rule ID | Applies and why | Outcome | Frozen source/test evidence or gap", prompt)
-                self.assertIn("cannot be read, stop the review", prompt)
+                self.assertIn("rules are retained below", prompt)
                 self.assertIn("Confirmed applicable rule violations require REQUEST_CHANGES", prompt)
 
     def test_comment_is_a_valid_nonapproval_and_project_policy_reaches_the_renderer(self):
