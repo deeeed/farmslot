@@ -517,6 +517,25 @@ function resolveTarget(taskPath, stepNumber, markLast) {
 }
 
 const taskDir = path.dirname(signalPath);
+function autonomousContract() {
+  try {
+    return loadTerminalContract(taskDir, taskPath)?.mode === 'autonomous';
+  } catch {
+    return false; // The contract check below reports an unreadable contract.
+  }
+}
+// No operator answers a refused completion in an autonomous run (every blind
+// eval trial): the worker must end it, not wait for a review that never comes.
+if (terminalCommand === 'complete' && autonomousContract()) {
+  process.on('exit', (code) => {
+    if (code !== 0)
+      console.error(
+        'This autonomous run has no operator: a refused completion reaches no gate or reviewer. ' +
+          'Fix the refusal above and mark complete again, or end the run with it: ' +
+          `${path.join(taskDir, 'mark')} blocked --reason "<the refusal>"`,
+      );
+  });
+}
 if (terminalCommand === 'complete') materializeReviewCoverage(taskDir);
 
 // Validate existing declarations before a progress mark changes the checklist or
@@ -695,21 +714,6 @@ if (
 }
 
 if (terminalCommand) {
-  // No operator answers a refused completion in an autonomous run (every blind
-  // eval trial): the worker must end it, not wait for a review that never comes.
-  if (
-    terminalCommand === 'complete' &&
-    loadTerminalContract(taskDir, taskPath)?.mode === 'autonomous'
-  ) {
-    process.on('exit', (code) => {
-      if (code !== 0)
-        console.error(
-          'This autonomous run has no operator: a refused completion reaches no gate or reviewer. ' +
-            'Fix the refusal above and mark complete again, or end the run with it: ' +
-            `${path.join(taskDir, 'mark')} blocked --reason "<the refusal>"`,
-        );
-    });
-  }
   assertTerminalPackagedEvidence(taskPath, taskDir, terminalCommand);
 }
 

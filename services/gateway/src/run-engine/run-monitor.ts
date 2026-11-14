@@ -1809,7 +1809,13 @@ export async function monitorRun(
               exitReason: 'worker-done',
               violations: allViolations,
               snapshots,
-              workerSignal: { status: 'blocked', reason, timestamp: new Date().toISOString() },
+              workerSignal: {
+                status: 'blocked',
+                outcome: 'partial',
+                disposition: 'blocked',
+                reason,
+                timestamp: new Date().toISOString(),
+              },
             };
           } else if (latestRun.metrics.nudgeCount >= config.maxNudges) {
             // Max nudges exceeded — create decision

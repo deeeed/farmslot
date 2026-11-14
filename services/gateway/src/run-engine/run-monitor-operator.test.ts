@@ -667,6 +667,8 @@ for (const blind of [true, false]) {
         const result = await execution;
         assert.equal(result.exitReason, 'worker-done');
         assert.equal(result.workerSignal?.status, 'blocked');
+        assert.equal(result.workerSignal?.outcome, 'partial');
+        assert.equal(result.workerSignal?.disposition, 'blocked');
         assert.match(result.workerSignal?.reason ?? '', /without a terminal mark/);
         assert.deepEqual(getRun(f.run.id)!.decisions, []);
         return;
