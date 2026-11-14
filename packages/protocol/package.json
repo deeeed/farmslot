@@ -54,6 +54,11 @@
       "import": "./dist/recipe/index.js",
       "default": "./dist/recipe/index.js"
     },
+    "./recipe/pipeline-visual-judgments": {
+      "types": "./dist/recipe/pipeline-visual-judgments.d.ts",
+      "import": "./dist/recipe/pipeline-visual-judgments.js",
+      "default": "./dist/recipe/pipeline-visual-judgments.js"
+    },
     "./recipes/step-io": {
       "types": "./dist/recipes/step-io.d.ts",
       "import": "./dist/recipes/step-io.js",

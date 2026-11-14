@@ -2,16 +2,16 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { connect } from 'node:net';
 import { join } from 'node:path';
 
-import {
-  isNativeResultSchema,
-  type NativeApprovalMode,
-  type NativeContextCompactionRequest,
-  type NativeConversationCursor,
-  type NativeSessionCreateParams,
-  type NativeSessionEnsureParams,
-  type NativeSessionRequester,
-  type NativeSessionResponse,
+import type {
+  NativeApprovalMode,
+  NativeContextCompactionRequest,
+  NativeConversationCursor,
+  NativeSessionCreateParams,
+  NativeSessionEnsureParams,
+  NativeSessionRequester,
+  NativeSessionResponse,
 } from '@farmslot/protocol';
+import { isNativeResultSchema } from '@farmslot/protocol/recipe/pipeline-visual-judgments';
 
 import { parseNativeSessionRequester } from './requester.js';
 import {

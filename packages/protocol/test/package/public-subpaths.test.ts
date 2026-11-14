@@ -74,6 +74,7 @@ assert.equal(isTerminalRunStatus('done'), true);
 const packageRuns = await import('@farmslot/protocol/contracts/runs');
 const packageRunMethods = await import('@farmslot/protocol/rpc/run');
 const packageRecipeTypes = await import('@farmslot/protocol/contracts/recipes');
+const packageNativeResults = await import('@farmslot/protocol/recipe/pipeline-visual-judgments');
 const packageReviewTypes = await import('@farmslot/protocol/contracts/reviews');
 const packageFamilyTypes = await import('@farmslot/protocol/contracts/family');
 const packageSlotTypes = await import('@farmslot/protocol/contracts/slots');
@@ -85,6 +86,8 @@ const packageMachinePauseMethods = await import('@farmslot/protocol/rpc/machine-
 assert.ok(packageRuns.FLOW_STEPS['fix-bug'].includes('grade'));
 assert.equal(packageRunMethods.RunMethods.create, Methods.RUN_CREATE);
 assert.equal(packageRecipeTypes.LIVE_RECIPE_EVIDENCE_FILES.has('summary.json'), true);
+assert.equal(typeof packageNativeResults.nativeStructuredResult, 'function');
+assert.equal(packageNativeResults.isNativeResultSchema('pipeline-visual-judgments-v1'), true);
 assert.equal(packageReviewTypes.isReviewValidationDepth('full-live'), true);
 assert.equal(
   packageFamilyTypes.isFamilyDiffProvenance({

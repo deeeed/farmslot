@@ -206,7 +206,9 @@ const stopIfHomeRemoved = () => {
   stopHost(new Error(`Native session home ${root} was removed`));
 };
 try {
-  watch(root, stopIfHomeRemoved).on('error', stopIfHomeRemoved).unref();
+  // Watch the immutable file: macOS directory watches can miss removal immediately
+  // after registration, leaving the host alive until the periodic fallback.
+  watch(ownerFile, stopIfHomeRemoved).on('error', stopIfHomeRemoved).unref();
 } catch {
   stopIfHomeRemoved();
 }

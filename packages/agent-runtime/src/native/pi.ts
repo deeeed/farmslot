@@ -1,11 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 
-import {
-  type NativeSessionTool,
-  type NativeToolKind,
-  PI_THINKING_LEVELS,
-} from '@farmslot/protocol';
+import type { NativeSessionTool, NativeToolKind } from '@farmslot/protocol';
+import { PI_THINKING_LEVELS } from '@farmslot/protocol/contracts/runs';
 
 import { acpObject as piObject } from './acp-rpc.js';
 import { type PiRecord, PiRpc } from './pi-rpc.js';
