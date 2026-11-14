@@ -20,7 +20,7 @@ import type {
   WorkGraphSchedulerTickResult,
   WorkNode,
 } from '@farmslot/protocol';
-import { Methods, sourceObservationAge } from '@farmslot/protocol';
+import { Methods, runnerModelEffortParts, sourceObservationAge } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import '../shared/dispatch-config-editor.js';
@@ -1222,7 +1222,7 @@ export class WorkGraphPanel extends LitElement {
           ${this.renderDetailCell('Slots', item?.allowedSlots?.join(', ') || 'Any eligible')}
           ${this.renderDetailCell(
             'Runner/model',
-            [item?.runner, item?.model, item?.effort].filter(Boolean).join(' / '),
+            runnerModelEffortParts(item?.runner, item?.model, item?.effort).join(' / '),
           )}
           ${this.renderDetailCell('Queue', view?.queueItem?.id)}
           ${this.renderDetailCell('Run', view?.run?.id)}

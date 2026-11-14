@@ -153,6 +153,7 @@ async function resolvedSiblingRepos(vars: SlotVars): Promise<string[]> {
 
 /** Ignored caches a blind trial keeps in place when isolation moves earlier runs' leftovers aside. */
 export const DEFAULT_BLIND_KEEP_IGNORED = [
+  // Dependency and build caches.
   'node_modules',
   '.yarn/*',
   'ios/Pods',
@@ -162,6 +163,20 @@ export const DEFAULT_BLIND_KEEP_IGNORED = [
   'android/app/build',
   'build',
   'dist',
+  // Farm-installed agent tooling, the same for every run.
+  '.agents/skills',
+  '.claude/skills',
+  '.skills-cache',
+  '.cursor/rules',
+  '.skills.local',
+  '.tool-versions',
+  // Mobile: the deps-setup stamp and local toolchain config. Generated sources
+  // move; the stamp's readiness check then reruns yarn setup from the base.
+  'temp/farmslot/deps-setup.stamp',
+  'ios/.xcode.env.local',
+  '.yalc',
+  'yalc.lock',
+  '.metamask/cache',
 ];
 
 /** The project's cache list, plus this run's own task folder when it already exists. */
