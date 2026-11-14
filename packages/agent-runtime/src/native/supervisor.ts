@@ -105,6 +105,7 @@ const child = fork(fileURLToPath(new URL(`./host.${extension}`, import.meta.url)
   stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
 });
 let tree: NativeProcessTree | undefined;
+const runnerCleanupTrees: NativeProcessTree[] = [];
 let stopObservingTree: (() => void) | undefined;
 let hostReleased = false;
 let stopping = false;
@@ -161,7 +162,10 @@ function settle(): void {
         hostPid: child.pid,
         state: 'unknown',
         error: error.message,
-        observedProcesses: tree?.snapshot(),
+        observedProcesses: [
+          ...(tree?.snapshot() ?? []),
+          ...runnerCleanupTrees.flatMap((runnerTree) => runnerTree.snapshot()),
+        ],
       });
       process.stderr.write(`Native cleanup failed: ${error.message}\n`);
       process.exit(1);
@@ -241,15 +245,47 @@ async function cleanup(): Promise<void> {
           const info = entry.info;
           if (info.hostPid === child.pid && info.processPid && !info.processStopped) {
             records.push({ path, info });
-            if (info.processIdentity && matchesProcess(info.processPid, info.processIdentity))
-              signalGroup(info.processPid, 'SIGKILL');
           }
           break;
         }
       });
     }
+  for (const { info } of records) {
+    const { processPid, processIdentity } = info;
+    if (!processPid || !processIdentity) continue;
+    try {
+      if (matchesProcess(processPid, processIdentity)) {
+        // The host can die before the periodic census sees a runner's detached children.
+        const runnerTree = await NativeProcessTree.create(processPid);
+        if (!matchesProcess(processPid, processIdentity))
+          throw new Error('Native runner identity changed during cleanup');
+        runnerCleanupTrees.push(runnerTree);
+        attempt(() =>
+          durableWrite(join(root, 'cleanup.json'), {
+            hostPid: child.pid,
+            state: 'pending',
+            observedProcesses: [
+              ...(tree?.snapshot() ?? []),
+              ...runnerCleanupTrees.flatMap((observed) => observed.snapshot()),
+            ],
+          }),
+        );
+        await runnerTree.stop();
+      }
+    } catch (error) {
+      errors.push(error);
+    }
+    // A failed census still must stop the independently registered runner group.
+    attempt(() => {
+      if (matchesProcess(processPid, processIdentity)) signalGroup(processPid, 'SIGKILL');
+    });
+  }
   const stopped = async () =>
-    (!tree || (await tree.empty())) && records.every(({ info }) => !alive(-info.processPid!));
+    (!tree || (await tree.empty())) &&
+    (await Promise.all(runnerCleanupTrees.map((runnerTree) => runnerTree.empty()))).every(
+      Boolean,
+    ) &&
+    records.every(({ info }) => !alive(-info.processPid!));
   const deadline = Date.now() + 5_000;
   let confirmedStopped = await stopped();
   while (!confirmedStopped && Date.now() < deadline) {

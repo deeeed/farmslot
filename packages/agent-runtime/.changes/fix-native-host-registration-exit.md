@@ -1,1 +1,1 @@
-- Report supervisor loss before native host registration even when IPC disconnects during module loading.
+- Report early supervisor loss during native host startup and stop detached runner descendants after a host crash.
