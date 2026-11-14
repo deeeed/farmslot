@@ -22,6 +22,7 @@ async function withAliasExtension(check, environment = {}) {
   const native = new Map();
   const records = [];
   const messages = [];
+  const errors = [];
   const directory = mkdtempSync(join(tmpdir(), 'pi-router-alias-'));
   process.env = {
     PI_CODING_AGENT_DIR: join(directory, 'synthetic-agent'),
@@ -38,7 +39,9 @@ async function withAliasExtension(check, environment = {}) {
     assert.equal(String(input), 'https://models.invalid/v1/models', 'discovery only');
     return Response.json({ data: [{ id: MODEL }] });
   };
-  console.error = () => {};
+  console.error = (...args) => {
+    errors.push(args.map((arg) => String(arg)).join(' '));
+  };
   try {
     await install({
       on: (event, handler) => events.set(event, handler),
@@ -49,7 +52,7 @@ async function withAliasExtension(check, environment = {}) {
         else native.set(id.id, id);
       },
     });
-    await check({ configurations, native, events, records, directory, messages });
+    await check({ configurations, native, events, records, directory, messages, errors });
   } finally {
     await events.get('session_shutdown')?.({ reason: 'exit' });
     process.env = originalEnv;
@@ -116,72 +119,83 @@ test('blind workers keep registered provider keys out of the environment Pi give
 });
 
 test('alias request pricing joins its saved provider and cannot report unknown cost as zero', async () => {
-  await withAliasExtension(async ({ configurations, native, events, records, directory }) => {
-    const alias = native.get('router').getModels()[0];
-    const context = {
-      model: alias,
-      hasUI: false,
-      abort: () => assert.fail('unexpected abort'),
-      shutdown: () => assert.fail('unexpected shutdown'),
-    };
-    await events.get('session_start')({}, context);
-    const request = async () =>
-      (
-        await globalThis.fetch('https://models.invalid/v1/chat/completions', {
-          body: JSON.stringify({ model: MODEL, reasoning_effort: 'medium' }),
-        })
-      ).text();
-    await request();
-    const session = join(directory, 'session.jsonl');
-    writeFileSync(
-      session,
-      [
-        records[0],
-        {
-          type: 'message',
-          message: {
-            role: 'assistant',
-            provider: 'router',
-            model: MODEL,
-            usage: {
-              input: 100,
-              output: 10,
-              cacheRead: 0,
-              cacheWrite: 0,
-              cost: { total: 0, totalFromProvider: false },
+  await withAliasExtension(
+    async ({ configurations, native, events, records, directory, errors }) => {
+      const alias = native.get('router').getModels()[0];
+      const context = {
+        model: alias,
+        hasUI: false,
+        abort: () => assert.fail('unexpected abort'),
+        shutdown: () => assert.fail('unexpected shutdown'),
+      };
+      await events.get('session_start')({}, context);
+      const request = async () =>
+        (
+          await globalThis.fetch('https://models.invalid/v1/chat/completions', {
+            body: JSON.stringify({ model: MODEL, reasoning_effort: 'medium' }),
+          })
+        ).text();
+      await request();
+      const session = join(directory, 'session.jsonl');
+      writeFileSync(
+        session,
+        [
+          records[0],
+          {
+            type: 'message',
+            message: {
+              role: 'assistant',
+              provider: 'router',
+              model: MODEL,
+              usage: {
+                input: 100,
+                output: 10,
+                cacheRead: 0,
+                cacheWrite: 0,
+                cost: { total: 0, totalFromProvider: false },
+              },
             },
           },
-        },
-      ]
-        .map((record) => JSON.stringify(record))
-        .join('\n') + '\n',
-    );
-    const usage = await runSessionUsage({
-      repo: '',
-      slotId: 'synthetic-alias',
-      action: 'total',
-      forcedPath: session,
-      forcedRunner: 'pi',
-    });
-    assert.doesNotMatch(usage, /cost_usd=/);
-    assert.equal(records[0].data.provider, 'router');
-    assert.equal(records[0].data.cost, null);
+        ]
+          .map((record) => JSON.stringify(record))
+          .join('\n') + '\n',
+      );
+      const usage = await runSessionUsage({
+        repo: '',
+        slotId: 'synthetic-alias',
+        action: 'total',
+        forcedPath: session,
+        forcedRunner: 'pi',
+      });
+      assert.doesNotMatch(usage, /cost_usd=/);
+      assert.equal(records[0].customType, 'farmslot-model-request');
+      assert.equal(
+        errors.some((line) => line.startsWith('[farmslot-pi] request')),
+        false,
+      );
+      assert.equal(records[0].data.provider, 'router');
+      assert.equal(records[0].data.cost, null);
 
-    const canonical = { ...configurations.get('localsparks').models[0], provider: 'localsparks' };
-    await events.get('model_select')({ model: canonical }, context);
-    await request();
-    assert.equal(records[1].data.provider, 'localsparks');
-    await events.get('model_select')({ model: { ...alias, provider: 'litellm' } }, context);
-    await request();
-    assert.equal(
-      records[2].data.provider,
-      'localsparks',
-      'another source kind cannot rename the record',
-    );
-    await events.get('model_select')({ model: { ...alias, id: 'different-model' } }, context);
-    await request();
-    assert.equal(records[3].data.provider, 'localsparks', 'another model cannot rename the record');
-  });
+      const canonical = { ...configurations.get('localsparks').models[0], provider: 'localsparks' };
+      await events.get('model_select')({ model: canonical }, context);
+      await request();
+      assert.equal(records[1].data.provider, 'localsparks');
+      await events.get('model_select')({ model: { ...alias, provider: 'litellm' } }, context);
+      await request();
+      assert.equal(
+        records[2].data.provider,
+        'localsparks',
+        'another source kind cannot rename the record',
+      );
+      await events.get('model_select')({ model: { ...alias, id: 'different-model' } }, context);
+      await request();
+      assert.equal(
+        records[3].data.provider,
+        'localsparks',
+        'another model cannot rename the record',
+      );
+    },
+  );
 });
 
 const piBinary = (process.env.PATH ?? '')
