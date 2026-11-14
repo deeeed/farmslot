@@ -1,1 +1,0 @@
-- Deny blind worker writes, links and ancestor renames to retained trial capsules while preserving boundary logs and private worker temp.
