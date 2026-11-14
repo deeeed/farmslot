@@ -207,25 +207,47 @@ async function tmuxWindowExists(
   return result.exitCode === 0;
 }
 
+/** `rows` counts the lines tmux printed, before the session and window-name filters. */
+export type TargetPaneRead = {
+  exitCode: number;
+  stderr: string;
+  rows: number;
+  panes: TmuxPaneRuntime[];
+};
+
+/** Why a pane read produced nothing: the tmux exit code, its stderr, and rows it did print. */
+export function paneReadDetail(read: TargetPaneRead): string {
+  const parts = [`tmux exit ${read.exitCode}`, `rows ${read.rows}`];
+  if (read.stderr) parts.push(read.stderr);
+  return parts.join(', ');
+}
+
 async function readTargetPanes(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   session: string,
   target: string,
-): Promise<{ exitCode: number; panes: TmuxPaneRuntime[] }> {
+): Promise<TargetPaneRead> {
   const result = await execOnSlot(
     vars,
     tmuxShellSnippet(
       [
         `list-panes -t ${shellQuote(target)} `,
-        `-F '#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}' `,
-        '2>/dev/null',
+        `-F '#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}'`,
       ].join(''),
     ),
     { timeout: 3000 },
   );
-  if (result.exitCode !== 0) return { exitCode: result.exitCode, panes: [] };
+  // tmux stderr is kept: a failed read used to be indistinguishable from a window
+  // with no panes, which reported every transport or server failure as "no panes".
+  const stderr = result.stderr.trim();
+  // A timed-out or failed read keeps whatever rows it did deliver: reporting `rows 0`
+  // for output the execution layer preserved would contradict the diagnostic itself.
+  const rows = result.stdout.split('\n').filter((line) => line.trim()).length;
+  if (result.exitCode !== 0) return { exitCode: result.exitCode, stderr, rows, panes: [] };
   return {
     exitCode: 0,
+    stderr,
+    rows,
     panes: result.stdout
       .split('\n')
       .map((line) => parseTmuxPaneRuntime(line))
@@ -343,13 +365,14 @@ async function inspectContextRuntime(run: Run, ctx: AgentContext): Promise<Runti
       : ctx.target
         ? canonicalAgentContextTarget(ctx.target)
         : session;
-  const { exitCode: panesExit, panes } = await readTargetPanes(vars, session, target);
-  if (tmuxReadUnknown(panesExit))
+  const paneRead = await readTargetPanes(vars, session, target);
+  const panes = paneRead.panes;
+  if (tmuxReadUnknown(paneRead.exitCode))
     return {
       state: 'unknown',
       panes: [],
       runnerAlive: false,
-      detail: `tmux target ${target} could not be read (exit ${panesExit})`,
+      detail: `tmux target ${target} could not be read (${paneReadDetail(paneRead)})`,
     };
   if (panes.length === 0) {
     const binding = await sessionBindingForContext(vars, run, ctx);
@@ -440,9 +463,11 @@ async function ensureRestoredWindow(run: Run, ctx: AgentContext): Promise<TmuxWo
     }
     await new Promise((resolve) => setTimeout(resolve, TMUX_WINDOW_RESPAWN_SETTLE_MS));
   }
-  const panes = await listTargetPanes(vars, session, target);
-  if (panes.length === 0) throw new Error(`Restored tmux window ${target} has no panes`);
-  return workerRefFromPane(vars, panes[0]!);
+  const read = await readTargetPanes(vars, session, target);
+  if (read.panes.length === 0) {
+    throw new Error(`Restored tmux window ${target} has no panes (${paneReadDetail(read)})`);
+  }
+  return workerRefFromPane(vars, read.panes[0]!);
 }
 
 async function waitForRunnerAliveInTarget(
