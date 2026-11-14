@@ -60,12 +60,17 @@ runs:
       with:
         path: |
           packages/*/dist
-        key: builds-v1-${{ runner.os }}-${{ runner.arch }}-node22.23.4-${{ hashFiles('yarn.lock', 'packages/*/src/**', 'packages/*/tsconfig*.json', 'packages/*/package.json', 'apps/command-center/tsconfig.base.json', 'scripts/quality/ci-build-prerequisites.mjs') }}
+          .cache/ci-builds/receipt.json
+        key: builds-v2-${{ runner.os }}-${{ runner.arch }}-node22.23.4-${{ hashFiles('package.json', 'yarn.lock', '.yarnrc.yml', 'packages/*/src/**', 'packages/*/tsconfig*.json', 'packages/*/package.json', 'apps/command-center/tsconfig*.json', 'tsconfig*.json', 'scripts/lib/**', 'scripts/quality/ci-build*.mjs') }}
     - if: steps.builds.outputs.cache-hit != 'true'
       shell: bash
       run: node scripts/quality/ci-build-prerequisites.mjs
     - if: steps.builds.outputs.cache-hit != 'true'
       uses: actions/cache/save@v4
       with:
-        path: packages/*/dist
+        path: |
+          packages/*/dist
+          .cache/ci-builds/receipt.json
         key: ${{ steps.builds.outputs.cache-primary-key }}
+    - shell: bash
+      run: node --input-type=module -e "import { verifyBuildReceipt } from './scripts/quality/ci-build-state.mjs'; verifyBuildReceipt(process.cwd());"
