@@ -7,6 +7,7 @@ Normative reference for [ADR-030](../adr/030-replay-provenance-and-reference-eva
 These input rules describe the existing `dev` and `fix-bug` profiles. The [proof profile](#proof-profile) supplies the implementation as an allowed input.
 
 - An experiment must retain explicit problem text supplied from the ticket. A reference PR body or diff is not a problem-statement fallback.
+- Extract authored acceptance criteria from the problem text with the shared ticket Markdown parser. Preserve their order in the trial ticket and task handoff; task init assigns `AC-N` identities. Use the generic problem-statement criterion only when no authored criteria are present. Proof trials retain their separately frozen criteria.
 - The gateway resolves and freezes a full base commit identity before launching the worker. The reference answer must not be part of that base.
 - Task-specific worker inputs contain the problem statement and base identity. They must not contain the reference PR number, URL, commit, patch, package or experiment manifest, including paths to those inputs. Reference data stays gateway-side.
 - Normal framework instructions and tool provenance remain available. Forward task sync and replay must preserve the same input boundary.
