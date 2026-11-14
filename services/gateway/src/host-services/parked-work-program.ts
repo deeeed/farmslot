@@ -14,7 +14,8 @@ env.GIT_OPTIONAL_LOCKS = '0';
 const config = ['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','-c','commit.gpgSign=false','-c','gc.auto=0','-c','maintenance.auto=false','-c','submodule.recurse=false','-C',repo];
 function fail(code, message) { const error = new Error(message); error.code = code; throw error; }
 function git(args, options = {}) {
-  const result = cp.spawnSync('git', config.concat(args), { timeout: options.timeout, env: options.index ? { ...env, GIT_INDEX_FILE: options.index } : env, input: options.input, encoding: null, maxBuffer: 64 * 1024 * 1024 });
+  const gitEnv = options.localOnly ? { ...env, GIT_NO_LAZY_FETCH: '1' } : env;
+  const result = cp.spawnSync('git', config.concat(args), { timeout: options.timeout, env: options.index ? { ...gitEnv, GIT_INDEX_FILE: options.index } : gitEnv, input: options.input, encoding: null, maxBuffer: 64 * 1024 * 1024 });
   if (result.status !== 0 && !(options.allow || []).includes(result.status)) fail('GIT_FAILED', 'Git ' + args[0] + ' failed with exit ' + result.status + ': ' + (result.stderr || '').toString().slice(-500));
   return { status: result.status, stdout: result.stdout || Buffer.alloc(0) };
 }
@@ -234,9 +235,13 @@ function prune() {
     }
     reachable=new Set(advertised);
     if(advertised.size) {
-      const checked=git(['cat-file','--batch-check=%(objectname) %(objecttype)'],{input:Buffer.from([...advertised].join('\n')+'\n')}).stdout.toString('utf8');
+      const checked=git(['cat-file','--batch-check=%(objectname) %(objecttype)'],{localOnly:true,input:Buffer.from([...advertised].join('\n')+'\n')}).stdout.toString('utf8');
       const local=checked.split('\n').filter(l=>l.endsWith(' commit')).map(l=>l.split(' ')[0]);
-      if(local.length) for(const sha of text(['rev-list','--stdin'],{input:Buffer.from(local.join('\n')+'\n')}).split('\n')) if(sha)reachable.add(sha);
+      if(local.length) {
+        // An incomplete local promisor graph is unknown, so retain every unproven head.
+        const walked=git(['rev-list','--stdin'],{localOnly:true,allow:[128],input:Buffer.from(local.join('\n')+'\n')});
+        if(walked.status===0) for(const sha of walked.stdout.toString('utf8').trim().split('\n')) if(sha)reachable.add(sha);
+      }
     }
     return reachable;
   }
