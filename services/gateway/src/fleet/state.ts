@@ -461,6 +461,8 @@ interface RawSlot {
   mode?: string;
   dispatchable?: boolean;
   repo_blocker?: string;
+  /** When the probe behind `repo_blocker` started. */
+  repo_observed_at?: string;
   config_error?: string;
   lifecycle?: string;
   phase?: string | null;

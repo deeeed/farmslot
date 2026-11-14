@@ -144,11 +144,17 @@ export async function probeDefaultBranch(
  */
 export async function reprobeSlotRepoBlocker(vars: SlotVars): Promise<DefaultBranchProbe> {
   const { projectJson } = await loadProjectVars(vars.projectName);
+  const observedAt = new Date().toISOString();
   const probe = await probeDefaultBranch(
     vars,
     getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH,
   );
-  if (probe.readable) await updateSlotStatus(vars.slotId, { repo_blocker: probe.blocker });
+  // The fleet keeps the newer observation; see repoVerdict in methods/fleet.ts.
+  if (probe.readable)
+    await updateSlotStatus(vars.slotId, {
+      repo_blocker: probe.blocker,
+      repo_observed_at: observedAt,
+    });
   return probe;
 }
 

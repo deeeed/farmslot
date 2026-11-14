@@ -442,6 +442,17 @@ test('a finished trial restores its own Git and reports why it could not', async
   );
 });
 
+test('a failed isolate re-reads the slot repo verdict and keeps its own error', async (t) => {
+  await fixture(t);
+  verifyAllowed = false;
+  t.after(() => {
+    verifyAllowed = true;
+  });
+  reprobes = [];
+  await assert.rejects(prepareBlindTrialGit(run.id), /Blind trial Git isolate failed/);
+  assert.deepEqual(reprobes, [vars.slotId]);
+});
+
 test('retained redispatch accepts candidate progress while rechecking Git isolation', async (t) => {
   await fixture(t);
   checkout = head;
