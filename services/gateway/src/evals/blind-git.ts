@@ -60,6 +60,10 @@ export function blindHostRoots(
 }
 
 const script = readFileSync(new URL('./blind-git.py', import.meta.url), 'utf8');
+// blind-git.py runs on the node; it receives the gateway's credential shapes.
+const credentialShapes = JSON.parse(
+  readFileSync(new URL('../core/credential-shapes.json', import.meta.url), 'utf8'),
+);
 
 export function buildBlindGitCommand(
   action: 'plan' | 'isolate' | 'boundary' | 'verify' | 'restore',
@@ -68,7 +72,7 @@ export function buildBlindGitCommand(
   // Each slot's launch directory, own slot first, as tmux-launch-script.ts writes it.
   const launchDirs = [spec.repo, ...(spec.siblingRepos ?? [])].map(runnerLaunchDir);
   return withFarmGitConfig(
-    `python3 - ${shSingleQuote(JSON.stringify({ ...spec, launchDirs, action }))} <<'FARMSLOT_BLIND_GIT_PY'\n${script}\nFARMSLOT_BLIND_GIT_PY`,
+    `python3 - ${shSingleQuote(JSON.stringify({ ...spec, launchDirs, action, credentialShapes }))} <<'FARMSLOT_BLIND_GIT_PY'\n${script}\nFARMSLOT_BLIND_GIT_PY`,
   );
 }
 

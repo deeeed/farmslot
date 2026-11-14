@@ -1,0 +1,1 @@
+- Give credential value shapes one owner: `credential-shapes.json` holds the provider token patterns and the length and character-class rule. Gateway redaction and the blind boundary's Pi model scrubbing on the node both read it; the gateway sends it with every blind Git request. A parity test checks both classify the same fixtures identically.

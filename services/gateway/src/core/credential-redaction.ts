@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 // Records keep credential names, never their values. Only real credential
 // values are replaced: a secret-looking value assigned to a credential name, or
 // a known provider token shape anywhere in text.
@@ -8,30 +10,28 @@ export const REDACTED_CREDENTIAL = '[REDACTED]';
  * only end near one (API_KEY_INDEX, KEY_ID, MAX_TOKENS, GIT_CONFIG_KEY_0) are not credentials. */
 const CREDENTIAL_NAME = /(?:^|_)(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PAT|CREDENTIALS)$/;
 
+interface CredentialShapes {
+  providerTokens: string[];
+  slugOrPath: string;
+  characterClasses: string[];
+  minLength: number;
+  minCharacterClasses: number;
+}
+
+/** Shared with blind-git.py on the node; see credential-shapes.json. */
+export const CREDENTIAL_SHAPES: CredentialShapes = JSON.parse(
+  readFileSync(new URL('./credential-shapes.json', import.meta.url), 'utf8'),
+);
+
 /** Provider token shapes, redacted wherever they occur. */
 const PROVIDER_TOKEN = new RegExp(
-  '(?<![A-Za-z0-9_-])(?:' +
-    [
-      'sk-ant-[A-Za-z0-9_-]{16,}',
-      'sk-[A-Za-z0-9_-]{17,}',
-      'gh[pos]_[A-Za-z0-9]{20,}',
-      'github_pat_[A-Za-z0-9_]{20,}',
-      'ATATT[A-Za-z0-9_=-]{20,}',
-      'xox[bp]-[A-Za-z0-9-]{10,}',
-      'AKIA[0-9A-Z]{16}(?![0-9A-Z])',
-      'glpat-[A-Za-z0-9_-]{20,}',
-      'npm_[A-Za-z0-9]{36}(?![A-Za-z0-9])',
-      'AIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])',
-      'hf_[A-Za-z0-9]{30,}',
-      'xai-[A-Za-z0-9]{20,}',
-      'fw_[A-Za-z0-9]{20,}',
-    ].join('|') +
-    ')',
+  `(?<![A-Za-z0-9_-])(?:${CREDENTIAL_SHAPES.providerTokens.join('|')})`,
   'g',
 );
 const PROVIDER_TOKEN_VALUE = new RegExp(`^${PROVIDER_TOKEN.source}$`);
 /** A repo slug or file path such as org/repo or ~/dir/file. */
-const SLUG_OR_PATH = /^[~.]?\/?[\w.-]+(?:\/[\w.-]+)+\/?$/;
+const SLUG_OR_PATH = new RegExp(CREDENTIAL_SHAPES.slugOrPath);
+const CHARACTER_CLASSES = CREDENTIAL_SHAPES.characterClasses.map((pattern) => new RegExp(pattern));
 
 // NAME=value, NAME: value or "NAME": "value" with a literal value: shellQuote's
 // '…'\''…' form, a quoted string without expansions, or a bare word. A `$NAME`
@@ -70,8 +70,10 @@ export function isSecretValue(value: string, name = ''): boolean {
       !/^[a-z][\w+.-]*:\/\//i.test(value)
     );
   if (/\s/.test(value)) return false;
-  const classes = [/[a-z]/, /[A-Z]/, /\d/].filter((pattern) => pattern.test(value)).length;
-  return value.length >= 16 && classes >= 2;
+  const classes = CHARACTER_CLASSES.filter((pattern) => pattern.test(value)).length;
+  return (
+    value.length >= CREDENTIAL_SHAPES.minLength && classes >= CREDENTIAL_SHAPES.minCharacterClasses
+  );
 }
 
 /** Replaces credential values in text (shell lines, prose, embedded JSON). */

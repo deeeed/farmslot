@@ -423,19 +423,29 @@ def check_pi_agent_dir(spec, capsule):
 # Never copy a value under a credential-like key, at any depth: apiKey, headers,
 # accessToken, client_secret and the like. Schema fields such as maxTokensField stay.
 PI_SECRET_KEY = re.compile(r'(key|token|secret|password|passwd|credentials?|cookie|auth|authorization|bearer|headers?)$')
-PI_PROVIDER_TOKEN = re.compile(r'^(sk-|gh[pos]_|github_pat_|xox[bp]-|glpat-|hf_|xai-|fw_|AIza|AKIA|ATATT)')
+# Shape rules have one owner, core/credential-shapes.json. The gateway sends them
+# with every request (blind-git.ts); a direct load reads the file beside this script.
+CREDENTIAL_SHAPES = None
+
+
+def credential_shapes():
+    global CREDENTIAL_SHAPES
+    if CREDENTIAL_SHAPES is None:
+        CREDENTIAL_SHAPES = json.loads((Path(__file__).resolve().parent.parent / 'core/credential-shapes.json').read_text())
+    return CREDENTIAL_SHAPES
 
 
 def credential_shaped(value):
-    # credential-redaction.ts isSecretValue: provider shapes, or 16+ characters
-    # mixing two of lowercase, uppercase and digits. References, URLs and paths are not.
-    if PI_PROVIDER_TOKEN.match(value):
+    # credential-redaction.ts isSecretValue(value) without a credential name.
+    shapes = credential_shapes()
+    if re.fullmatch('(?:%s)' % '|'.join(shapes['providerTokens']), value, re.ASCII):
         return True
-    if '$' in value or re.search(r'\s', value) or re.match(r'^[a-z][\w+.-]*://', value, re.I):
+    if '$' in value or re.search(shapes['slugOrPath'], value, re.ASCII):
         return False
-    if re.fullmatch(r'[~.]?/?[\w.-]+(/[\w.-]+)+/?', value):
+    if re.search(r'\s', value):
         return False
-    return len(value) >= 16 and sum(bool(re.search(c, value)) for c in ['[a-z]', '[A-Z]', '[0-9]']) >= 2
+    classes = sum(bool(re.search(pattern, value, re.ASCII)) for pattern in shapes['characterClasses'])
+    return len(value) >= shapes['minLength'] and classes >= shapes['minCharacterClasses']
 
 
 def scrub_pi_value(value):
@@ -1248,6 +1258,7 @@ def restore(spec):
 if __name__ == '__main__':
     request = json.loads(sys.argv[1])
     action = request.pop('action')
+    CREDENTIAL_SHAPES = request.pop('credentialShapes', None)
     if action == 'plan':
         capsule = Path(request['repo']).resolve().parent / '.farmslot-blind-evals' / request['slotId'] / (request['runId'] + '-' + str(request['slotEpoch']))
         # Plan runs before the swap and before any worker. Never recover identity from a journal.
