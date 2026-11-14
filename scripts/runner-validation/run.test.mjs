@@ -372,13 +372,17 @@ test('runnerPromptDigest matches gateway normalization contract', () => {
   assert.equal(a, b);
 });
 
-test('grok session paths use realpath repo key on macOS', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-validate-grok-key-'));
+test('grok session paths use realpath repo key through a symlink', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-validate-grok-key-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const target = path.join(root, 'target');
+  const repo = path.join(root, 'repo');
+  fs.mkdirSync(target);
+  fs.symlinkSync(target, repo, 'dir');
   const summaryCwd = fs.realpathSync.native(repo);
   assert.notEqual(repo, summaryCwd);
   assert.equal(grokCwdMatches(summaryCwd, repo), true);
   assert.equal(grokCwdMatches('/tmp/other', repo), false);
-  fs.rmSync(repo, { recursive: true, force: true });
 });
 
 test('session-attribution modelsMatch aligns with protocol aliases', () => {
