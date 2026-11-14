@@ -153,6 +153,8 @@ export interface HostedTaskInput {
   binding: 'project' | 'static';
   task: Omit<TaskInitSpec, 'execution' | 'markCommand' | 'template'>;
   template: SelectedExecutionTemplate;
+  /** Frozen bytes for an experiment-local template, transported to the task runtime. */
+  candidateTemplateMarkdown?: string;
 }
 
 /** Keep CLI distribution, node pools and captured project scripts independently selected. */
@@ -189,6 +191,14 @@ export function hostedTaskRequest(slotId: string, input: HostedTaskInput): strin
       id: input.template.entry.id,
       sha256: input.template.entry.sha256,
       selectionReason: input.template.reason,
+      ...(input.candidateTemplateMarkdown !== undefined
+        ? {
+            candidate: {
+              relativePath: input.template.entry.relativePath,
+              markdown: input.candidateTemplateMarkdown,
+            },
+          }
+        : {}),
     },
     taskDocumentAdditions: input.task.taskDocumentAdditions,
     templateProvenance: input.task.handoff.templateProvenance,

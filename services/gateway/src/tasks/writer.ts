@@ -781,6 +781,7 @@ export async function writeTaskFile(
   const configuredTemplate = usesConfiguredCatalog
     ? await resolveConfiguredExecutionTemplateForSlot(projectVars, {
         flow: run.flowType,
+        candidateTemplate: run.engineState?.evalExperiment?.candidateTemplate,
         platform: slotVars.platform,
         runMode: run.mode!,
         ...(run.domain ? { explicitDomain: run.domain } : {}),
@@ -804,14 +805,18 @@ export async function writeTaskFile(
   }
   if (!configuredTemplate)
     throw new Error('Hosted tasks require a configured execution-template catalog.');
-  const templateName = path.basename(configuredTemplate.entry.relativePath);
+  const templateName = run.engineState?.evalExperiment?.candidateTemplate
+    ? configuredTemplate.entry.relativePath
+    : path.basename(configuredTemplate.entry.relativePath);
   const templatePath = configuredTemplate.entry.path;
   const template = configuredTemplate.markdown;
   const templateIdentity = parseProjectWorkerTemplateFileName(run.flowType, templateName);
   const templateProvenance = await buildTemplateProvenance({
     flowType: run.flowType,
     project: run.project,
-    templatePath,
+    templatePath: run.engineState?.evalExperiment?.candidateTemplate
+      ? configuredTemplate.entry.relativePath
+      : templatePath,
     templateName,
     templateContent: template,
     templateVariant: templateIdentity?.variant,
@@ -1450,6 +1455,9 @@ export async function writeTaskFile(
     binding: projectVars.projectJson.recipe?.provider ? 'project' : 'static',
     task: taskData,
     template: configuredTemplate,
+    ...(run.engineState?.evalExperiment?.candidateTemplate
+      ? { candidateTemplateMarkdown: template }
+      : {}),
   };
   // Refuse an oversized request now rather than after prepare.
   hostedTaskRequest(slotVars.slotId, input);
