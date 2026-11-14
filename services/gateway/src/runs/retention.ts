@@ -130,46 +130,143 @@ const bundleDigests = (run: Run, storeId: string) =>
     return resolved.storeId === storeId ? [resolved.bundleDigest] : [];
   });
 
+/** Storage kinds a run references by path; session archives and task pins are found otherwise. */
+type OwnedPathKind = Exclude<RunRetentionStore, 'session-archives' | 'task-pins'>;
+const OWNED_PATH_KINDS: readonly OwnedPathKind[] = [
+  'task-dirs',
+  'review-workspaces',
+  'native-sessions',
+  'run-bundles',
+];
+
+/** The paths (bundle digests for run bundles) one run references, by kind. */
+type RunPathLists = Record<OwnedPathKind, string[]>;
+
+function runPathLists(run: Run, roots: RunRetentionRoots): RunPathLists {
+  return {
+    'task-dirs': runTaskDirectories(run),
+    'review-workspaces': reviewWorkspaceDirs(run),
+    'native-sessions': nativeDirs(run, roots.nativeSessions),
+    'run-bundles': roots.bundles ? bundleDigests(run, roots.bundles.id) : [],
+  };
+}
+
+/** Whether retention may remove `file` of `kind` at all: only inside this gateway's own roots. */
+function removablePath(kind: OwnedPathKind, file: string, roots: RunRetentionRoots): boolean {
+  if (kind === 'task-dirs') return roots.taskRoots.some((root) => inside(root, file));
+  if (kind === 'review-workspaces') return inside(roots.reviewWorkspaces, file);
+  if (kind === 'native-sessions') return inside(path.join(roots.nativeSessions, 'workers'), file);
+  return true;
+}
+
+type RunOwnedPaths = Omit<RunRetentionPaths, 'task-pins'>;
+
+/** The paths of `removed` that are removable and that `isKept` does not claim, in their order. */
+function ownedPaths(
+  removed: Run[],
+  removedLists: RunPathLists[],
+  isKept: (kind: OwnedPathKind, file: string) => boolean,
+  roots: RunRetentionRoots,
+): RunOwnedPaths {
+  const owned = (kind: OwnedPathKind) =>
+    [...new Set(removedLists.flatMap((lists) => lists[kind]))].filter(
+      (file) => removablePath(kind, file, roots) && !isKept(kind, file),
+    );
+  const bundles = roots.bundles;
+  return {
+    'session-archives': removed.map((run) => roots.sessionArchive(run.id)),
+    'task-dirs': owned('task-dirs'),
+    'review-workspaces': owned('review-workspaces'),
+    'native-sessions': owned('native-sessions'),
+    'run-bundles': bundles
+      ? owned('run-bundles').map((digest) => path.join(bundles.root, 'sha256', digest))
+      : [],
+  };
+}
+
 /** The run-owned paths of `removed` runs that no `kept` run references. */
 export function runOwnedPaths(
   removed: Run[],
   kept: Run[],
   roots: RunRetentionRoots,
-): Omit<RunRetentionPaths, 'task-pins'> {
-  const owned = (paths: (run: Run) => string[], allowed: (file: string) => boolean) => {
-    const keep = new Set(kept.flatMap(paths));
-    return [...new Set(removed.flatMap(paths))].filter((file) => allowed(file) && !keep.has(file));
-  };
-  const bundles = roots.bundles;
-  return {
-    'session-archives': removed.map((run) => roots.sessionArchive(run.id)),
-    'task-dirs': owned(runTaskDirectories, (dir) =>
-      roots.taskRoots.some((root) => inside(root, dir)),
-    ),
-    'review-workspaces': owned(reviewWorkspaceDirs, (dir) => inside(roots.reviewWorkspaces, dir)),
-    'native-sessions': owned(
-      (run) => nativeDirs(run, roots.nativeSessions),
-      (dir) => inside(path.join(roots.nativeSessions, 'workers'), dir),
-    ),
-    'run-bundles': bundles
-      ? owned(
-          (run) => bundleDigests(run, bundles.id),
-          () => true,
-        ).map((digest) => path.join(bundles.root, 'sha256', digest))
-      : [],
-  };
+): RunOwnedPaths {
+  const keptLists = kept.map((run) => runPathLists(run, roots));
+  const keep = new Map(
+    OWNED_PATH_KINDS.map((kind) => [kind, new Set(keptLists.flatMap((lists) => lists[kind]))]),
+  );
+  return ownedPaths(
+    removed,
+    removed.map((run) => runPathLists(run, roots)),
+    (kind, file) => keep.get(kind)!.has(file),
+    roots,
+  );
 }
 
 /**
- * A task pin serves one task directory for its lifetime. Once that directory is gone
- * the pin can no longer be used, so retention removes it after the retention age.
+ * Which other runs reference a candidate's storage, for one retention pass, without recomputing
+ * every run's paths for every candidate. Archived records are never changed in place (the store
+ * replaces the object on each write), so their paths are indexed once. Live runs are changed in
+ * place, so their paths are computed again on every query.
+ *
+ * `view(live.filter(keeps), keeps).owned(run)` equals
+ * `runOwnedPaths([run], [...stable, ...live].filter(keeps), roots)`.
  */
-export async function retiredTaskPins(
-  pinRoot: string,
-  removedTaskDirs: ReadonlySet<string>,
-  { now, ageMs }: Pick<RunRetentionContext, 'now' | 'ageMs'>,
-  pendingTaskDirs: ReadonlySet<string> = new Set(),
-): Promise<string[]> {
+export class RetentionPathOwners {
+  private readonly index = new Map<OwnedPathKind, Map<string, Run[]>>(
+    OWNED_PATH_KINDS.map((kind) => [kind, new Map()]),
+  );
+
+  constructor(
+    private readonly roots: RunRetentionRoots,
+    stable: readonly Run[],
+  ) {
+    for (const run of stable) {
+      const lists = runPathLists(run, roots);
+      for (const kind of OWNED_PATH_KINDS) {
+        const owners = this.index.get(kind)!;
+        for (const file of new Set(lists[kind])) {
+          const list = owners.get(file);
+          if (list) list.push(run);
+          else owners.set(file, [run]);
+        }
+      }
+    }
+  }
+
+  /**
+   * The kept runs as of now: every stable run for which `keeps` holds, and `keptLive`, live runs
+   * the caller already chose. Their paths are read here, so take a new view after anything may
+   * have changed them.
+   */
+  view(keptLive: readonly Run[], keeps: (other: Run) => boolean): RetentionOwnersView {
+    const liveLists = keptLive.map((run) => runPathLists(run, this.roots));
+    const isKept = (kind: OwnedPathKind, file: string) =>
+      Boolean(this.index.get(kind)!.get(file)?.some(keeps)) ||
+      liveLists.some((lists) => lists[kind].includes(file));
+    return {
+      owned: (run) => ownedPaths([run], [runPathLists(run, this.roots)], isKept, this.roots),
+      keepsTaskDirectory: (dir) => isKept('task-dirs', dir),
+    };
+  }
+}
+
+/** What kept runs reference, at one moment of a retention pass. */
+export interface RetentionOwnersView {
+  /** Equals `runOwnedPaths([run], kept, roots)` for the view's kept runs. */
+  owned(run: Run): RunOwnedPaths;
+  /** Whether a kept run references task directory `dir`. */
+  keepsTaskDirectory(dir: string): boolean;
+}
+
+/** A task pin with the task directory its provenance names and when that was written. */
+export interface TaskPinEntry {
+  pin: string;
+  taskDir: string;
+  writtenAt: number;
+}
+
+/** Every readable task pin under `pinRoot`, in directory order. */
+export async function readTaskPins(pinRoot: string): Promise<TaskPinEntry[]> {
   let names: string[];
   try {
     names = await readdir(pinRoot);
@@ -177,7 +274,7 @@ export async function retiredTaskPins(
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw error;
   }
-  const retired: string[] = [];
+  const entries: TaskPinEntry[] = [];
   for (const name of names) {
     if (name.startsWith('.retention-')) continue; // Already staged by this pass, not a new orphan.
     const pin = path.join(pinRoot, name);
@@ -190,15 +287,51 @@ export async function retiredTaskPins(
     } catch {
       continue; // A pin still being written, or unreadable, is not retired.
     }
-    if (typeof taskDir !== 'string' || now - writtenAt < ageMs) continue;
+    if (typeof taskDir === 'string') entries.push({ pin, taskDir, writtenAt });
+  }
+  return entries;
+}
+
+/**
+ * The pins among `entries` whose task directory is gone or is being removed. `pending` names task
+ * directories other runs still use. With `present`, a pin is skipped once it no longer exists,
+ * as a pin read earlier in a pass may since have been staged.
+ */
+export async function retiredTaskPinsOf(
+  entries: readonly TaskPinEntry[],
+  removedTaskDirs: ReadonlySet<string>,
+  { now, ageMs }: Pick<RunRetentionContext, 'now' | 'ageMs'>,
+  pending: (dir: string) => boolean,
+  present?: (pin: string) => Promise<boolean>,
+): Promise<string[]> {
+  const retired: string[] = [];
+  for (const { pin, taskDir, writtenAt } of entries) {
+    if (now - writtenAt < ageMs) continue;
     const resolved = path.resolve(taskDir);
-    if (pendingTaskDirs.has(resolved) || isTaskDirectoryAdmitting(resolved)) continue;
+    if (pending(resolved) || isTaskDirectoryAdmitting(resolved)) continue;
+    if (present && !(await present(pin))) continue;
     if (removedTaskDirs.has(resolved) || !(await exists(resolved))) retired.push(pin);
   }
   return retired;
 }
 
-async function exists(file: string): Promise<boolean> {
+/**
+ * A task pin serves one task directory for its lifetime. Once that directory is gone
+ * the pin can no longer be used, so retention removes it after the retention age.
+ */
+export async function retiredTaskPins(
+  pinRoot: string,
+  removedTaskDirs: ReadonlySet<string>,
+  context: Pick<RunRetentionContext, 'now' | 'ageMs'>,
+  pendingTaskDirs: ReadonlySet<string> = new Set(),
+): Promise<string[]> {
+  return retiredTaskPinsOf(await readTaskPins(pinRoot), removedTaskDirs, context, (dir) =>
+    pendingTaskDirs.has(dir),
+  );
+}
+
+/** Whether `file` exists, without following a final symlink. */
+export async function exists(file: string): Promise<boolean> {
   try {
     await lstat(file);
     return true;
