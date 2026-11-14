@@ -131,6 +131,7 @@ function pre(value: string | null | undefined): string {
   return `<pre>${escape(value ?? 'Not available')}</pre>`;
 }
 function patchText(patch: EvalBenchPatch, file: string): string | null {
+  if (patch.text === null) return patch.missingReason;
   return file
     ? (patch.files.find((f) => f.path === file)?.text ??
         'This output does not change the selected file.')

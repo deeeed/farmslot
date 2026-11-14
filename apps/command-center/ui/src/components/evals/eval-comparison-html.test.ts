@@ -138,3 +138,24 @@ test('primary, merged and acceptance claims remain distinct; missing patches do 
   assert.match(drift, /Scope comparison unavailable/);
   assert.doesNotMatch(drift, /No extra files in retained patches/);
 });
+
+test('file selection preserves missing-patch evidence instead of claiming the file is unchanged', () => {
+  const data = fixture();
+  data.originalPatch = {
+    text: null,
+    sha256: null,
+    files: [],
+    totals: null,
+    missingReason: 'Retained original patch unavailable',
+  };
+  data.trials[0].patch.files.push({
+    path: 'src/example.ts',
+    text: '+candidate',
+    kind: 'code',
+    additions: 1,
+    deletions: 0,
+  });
+  const body = renderEvalComparisonBody(data, 'patches', 'src/example.ts');
+  assert.match(body, /Retained original patch unavailable/);
+  assert.doesNotMatch(body, /This output does not change the selected file/);
+});

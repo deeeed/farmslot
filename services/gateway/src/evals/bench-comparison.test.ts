@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { benchDiffFiles, readEvalBenchComparison } from './bench-comparison.js';
+import { benchDiffFiles } from '@farmslot/protocol';
+
+import { readEvalBenchComparison } from './bench-comparison.js';
 
 const base = 'a'.repeat(40);
 const patch =
@@ -96,7 +98,10 @@ test('comparison retains both score bases, patch provenance and claim/ledger dis
 test('unknown or different bases never produce a diff-of-diffs; missing evidence stays missing', async (t) => {
   const root = await fixture(t);
   const dir = path.join(root, 'workers/worker-11111111');
-  await writeFile(path.join(dir, 'metrics.json'), JSON.stringify({ blindBase: 'c'.repeat(40) }));
+  await writeFile(
+    path.join(dir, 'metrics.json'),
+    JSON.stringify({ runId: first, blindBase: 'c'.repeat(40) }),
+  );
   await rm(path.join(dir, 'task/artifacts/acceptance-status.json'));
   const value = await readEvalBenchComparison({ runIds: [first] }, root);
   assert.equal(value.trials[0].diffOfDiffs, null);
@@ -124,4 +129,72 @@ test('malformed retained JSON and mismatched worker identity are refused without
   );
   await writeFile(file, JSON.stringify({ runId: second, blindBase: base }));
   await assert.rejects(readEvalBenchComparison({ runIds: [first] }, root), /different trial/);
+});
+
+test('missing worker identity withholds patch, ledger and scope attribution', async (t) => {
+  const root = await fixture(t);
+  const file = path.join(root, 'workers/worker-11111111/metrics.json');
+  for (const metrics of [null, { blindBase: base }]) {
+    if (metrics === null) await rm(file);
+    else await writeFile(file, JSON.stringify(metrics));
+    const detail = (await readEvalBenchComparison({ runIds: [first] }, root)).trials[0];
+    assert.equal(detail.patch.text, null);
+    assert.equal(detail.patch.sha256, null);
+    assert.deepEqual(detail.patch.files, []);
+    assert.equal(detail.patch.totals, null);
+    assert.match(detail.patch.missingReason ?? '', /identity unverified/i);
+    assert.deepEqual(detail.criteria, []);
+    assert.match(detail.coverageNote ?? '', /identity unverified/i);
+    assert.deepEqual(detail.extraFiles, []);
+    assert.deepEqual(detail.missingFiles, []);
+  }
+});
+
+test('base verification requires full SHA equality, ignoring hex case only', async (t) => {
+  const root = await fixture(t);
+  const file = path.join(root, `trial-records/${first}.json`);
+  const record = JSON.parse(await readFile(file, 'utf8'));
+  for (const refBase of [base.slice(0, 7), base.slice(0, 10), base.toUpperCase()]) {
+    record.reference.prereview.base = refBase;
+    await writeFile(file, JSON.stringify(record));
+    const detail = (await readEvalBenchComparison({ runIds: [first] }, root)).trials[0];
+    if (refBase.length === 40) assert.notEqual(detail.diffOfDiffs, null);
+    else {
+      assert.equal(detail.diffOfDiffs, null);
+      assert(detail.fileComparisons.every((f) => f.diffOfDiffs === null));
+      assert.match(detail.comparisonNote ?? '', /not verified equal/);
+    }
+  }
+});
+
+test('large unrelated patches yield to timers and leave an explicit bounded-comparison note', async (t) => {
+  const root = await fixture(t);
+  const largePatch = (label: string) =>
+    'diff --git a/src/example.ts b/src/example.ts\n--- a/src/example.ts\n+++ b/src/example.ts\n' +
+    '@@ -0,0 +1,4000 @@\n' +
+    Array.from({ length: 4000 }, (_, i) => `+${label}-${i}\n`).join('');
+  await writeFile(path.join(root, 'refs/case-prereview.diff'), largePatch('original'));
+  await writeFile(
+    path.join(root, 'workers/worker-11111111/diff-vs-base.patch'),
+    largePatch('candidate'),
+  );
+  let previous = performance.now();
+  let maxTimerGapMs = 0;
+  const tick = () => {
+    const now = performance.now();
+    maxTimerGapMs = Math.max(maxTimerGapMs, now - previous);
+    previous = now;
+  };
+  const interval = setInterval(tick, 10);
+  t.after(() => clearInterval(interval));
+  const start = performance.now();
+  const detail = (await readEvalBenchComparison({ runIds: [first] }, root)).trials[0];
+  tick();
+  t.diagnostic(JSON.stringify({ elapsedMs: performance.now() - start, maxTimerGapMs }));
+  assert(maxTimerGapMs < 1000, `Gateway timers blocked for ${maxTimerGapMs}ms`);
+  assert.equal(detail.diffOfDiffs, null);
+  assert.match(detail.comparisonNote ?? '', /budget/i);
+  assert(
+    detail.fileComparisons.every((f) => f.diffOfDiffs === null && /budget/i.test(f.note ?? '')),
+  );
 });

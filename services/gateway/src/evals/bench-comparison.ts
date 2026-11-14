@@ -1,13 +1,14 @@
-import { createTwoFilesPatch, formatPatch, parsePatch } from 'diff';
-
-import type {
-  EvalBenchComparison,
-  EvalBenchComparisonGetParams,
-  EvalBenchCriterion,
-  EvalBenchDiffFile,
-  EvalBenchFinding,
-  EvalBenchPatch,
-  EvalBenchTrialDetail,
+import {
+  benchDiffFiles,
+  createBenchPatchDiff,
+  type EvalBenchComparison,
+  type EvalBenchComparisonGetParams,
+  type EvalBenchCriterion,
+  type EvalBenchDiffFile,
+  type EvalBenchFileComparison,
+  type EvalBenchFinding,
+  type EvalBenchPatch,
+  type EvalBenchTrialDetail,
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
@@ -23,37 +24,6 @@ import {
 
 function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
-}
-
-export function benchDiffFiles(patch: string): EvalBenchDiffFile[] {
-  let parsed: ReturnType<typeof parsePatch>;
-  try {
-    parsed = parsePatch(patch);
-  } catch {
-    throw new GatewayMethodError(
-      'BENCHMARK_SOURCE_INVALID',
-      'Retained unified patch cannot be parsed',
-    );
-  }
-  return parsed.map((file) => {
-    const name =
-      (file.newFileName === '/dev/null' ? file.oldFileName : file.newFileName) ??
-      file.index ??
-      'Unknown file';
-    const filePath = name.replace(/^[ab]\//, '');
-    const lines = file.hunks.flatMap((hunk) => hunk.lines);
-    const test =
-      /(^|\/)(__tests__|tests?|specs?)(\/|$)|\.(test|spec)\.[^/]+$|_test\.[^/]+$|(^|\/)test_[^/]+$/.test(
-        filePath,
-      );
-    return {
-      path: filePath,
-      additions: lines.filter((line) => line.startsWith('+')).length,
-      deletions: lines.filter((line) => line.startsWith('-')).length,
-      text: formatPatch(file),
-      kind: test ? 'test' : /\.(md|txt|json|ya?ml|lock)$/.test(filePath) ? 'other' : 'code',
-    };
-  });
 }
 
 async function optionalSource<T>(read: () => Promise<T>) {
@@ -74,7 +44,15 @@ async function patchSource(root: string, file: string): Promise<EvalBenchPatch> 
       totals: null,
       missingReason: 'Retained patch not available',
     };
-  const files = benchDiffFiles(source.text);
+  let files: EvalBenchDiffFile[];
+  try {
+    files = benchDiffFiles(source.text);
+  } catch {
+    throw new GatewayMethodError(
+      'BENCHMARK_SOURCE_INVALID',
+      'Retained unified patch cannot be parsed',
+    );
+  }
   if (source.text.trim() && !files.length)
     return {
       text: null,
@@ -165,6 +143,9 @@ export async function readEvalBenchComparison(
         missingReason: 'Pre-review original unavailable',
       };
   const trials: EvalBenchTrialDetail[] = [];
+  const deadline = performance.now() + 5000;
+  const budgetNote =
+    'Diff-of-diffs exceeds the comparison time or edit budget; retained patches remain available.';
   for (const trial of selected) {
     const indexEntry = index.trials
       .map((entry) => record(entry, 'index row'))
@@ -181,59 +162,66 @@ export async function readEvalBenchComparison(
     const judged =
       outcome.vsPrereview == null ? {} : record(outcome.vsPrereview, 'original judgment');
     const worker = `workers/worker-${trial.runId.slice(0, 8)}`;
-    const patch = await patchSource(root, `${worker}/diff-vs-base.patch`);
     const metrics = await optionalSource(() => readBenchSource(root, `${worker}/metrics.json`));
     const candidateBase = metrics ? text(record(metrics.value, 'worker metrics').blindBase) : null;
     const metricRun = metrics ? text(record(metrics.value, 'worker metrics').runId) : null;
     if (metricRun && metricRun !== trial.runId)
       throw new Error('Retained worker artifact belongs to a different trial');
+    const identityVerified = metricRun === trial.runId;
+    const identityNote =
+      'Retained worker identity unverified; patch and acceptance ledger are unavailable.';
+    const patch: EvalBenchPatch = identityVerified
+      ? await patchSource(root, `${worker}/diff-vs-base.patch`)
+      : { text: null, sha256: null, files: [], totals: null, missingReason: identityNote };
     const sameBase =
-      metricRun === trial.runId &&
+      identityVerified &&
       !!candidateBase &&
-      /^[0-9a-f]{7,40}$/i.test(first.reference.base) &&
+      /^[0-9a-f]{40}$/i.test(first.reference.base) &&
       /^[0-9a-f]{40}$/i.test(candidateBase) &&
-      candidateBase.startsWith(first.reference.base);
-    const ledger = await optionalSource(() =>
-      readBenchSource(root, `${worker}/task/artifacts/acceptance-status.json`),
-    );
+      candidateBase.toLowerCase() === first.reference.base.toLowerCase();
+    const ledger = identityVerified
+      ? await optionalSource(() =>
+          readBenchSource(root, `${worker}/task/artifacts/acceptance-status.json`),
+        )
+      : null;
     const redFirst = outcome.redFirst == null ? null : record(outcome.redFirst, 'baseline proof');
     const refFiles = new Set(originalPatch.files.map((f) => f.path));
     const candidateFiles = new Set(patch.files.map((f) => f.path));
+    const unavailable = !sameBase
+      ? 'Candidate and original bases are not verified equal; no diff-of-diffs is computed.'
+      : originalPatch.text === null || patch.text === null
+        ? 'Both retained patches are required for diff-of-diffs.'
+        : null;
+    const diff = async (before: string, after: string) =>
+      unavailable
+        ? null
+        : createBenchPatchDiff(
+            'pre-review-original.patch',
+            `${trial.runId}.patch`,
+            before,
+            after,
+            deadline - performance.now(),
+          );
+    const diffOfDiffs = await diff(originalPatch.text ?? '', patch.text ?? '');
+    const fileComparisons: EvalBenchFileComparison[] = [];
+    for (const file of new Set([...refFiles, ...candidateFiles])) {
+      const fileDiff = await diff(
+        originalPatch.files.find((f) => f.path === file)?.text ?? '',
+        patch.files.find((f) => f.path === file)?.text ?? '',
+      );
+      fileComparisons.push({
+        path: file,
+        diffOfDiffs: fileDiff,
+        note: unavailable ?? (fileDiff === null ? budgetNote : null),
+      });
+    }
     trials.push({
       trial,
       patch,
-      candidateBase,
-      diffOfDiffs:
-        sameBase && originalPatch.text !== null && patch.text !== null
-          ? createTwoFilesPatch(
-              'pre-review-original.patch',
-              `${trial.runId}.patch`,
-              originalPatch.text,
-              patch.text,
-            )
-          : null,
-      fileComparisons: [...new Set([...refFiles, ...candidateFiles])].map((file) => ({
-        path: file,
-        diffOfDiffs:
-          sameBase && originalPatch.text !== null && patch.text !== null
-            ? createTwoFilesPatch(
-                'pre-review-original.patch',
-                `${trial.runId}.patch`,
-                originalPatch.files.find((f) => f.path === file)?.text ?? '',
-                patch.files.find((f) => f.path === file)?.text ?? '',
-              )
-            : null,
-        note: !sameBase
-          ? 'Candidate and original bases are not verified equal.'
-          : originalPatch.text === null || patch.text === null
-            ? 'Both retained patches are required.'
-            : null,
-      })),
-      comparisonNote: !sameBase
-        ? 'Candidate and original bases are not verified equal; no diff-of-diffs is computed.'
-        : originalPatch.text === null || patch.text === null
-          ? 'Both retained patches are required for diff-of-diffs.'
-          : null,
+      candidateBase: identityVerified ? candidateBase : null,
+      diffOfDiffs,
+      fileComparisons,
+      comparisonNote: unavailable ?? (diffOfDiffs === null ? budgetNote : null),
       extraFiles:
         originalPatch.text === null || patch.text === null
           ? []
@@ -243,7 +231,11 @@ export async function readEvalBenchComparison(
           ? []
           : [...refFiles].filter((f) => !candidateFiles.has(f)),
       criteria: ledger ? criteria(ledger.value) : [],
-      coverageNote: ledger ? null : 'Retained acceptance ledger unavailable',
+      coverageNote: !identityVerified
+        ? identityNote
+        : ledger
+          ? null
+          : 'Retained acceptance ledger unavailable',
       acClaim: text(judged.acsMet),
       template: text(arm.template),
       originalGaps: strings(judged.gaps),

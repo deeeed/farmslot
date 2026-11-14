@@ -4,6 +4,7 @@ export * from './checklist-target.js';
 export * from './contracts/index.js';
 export * from './contracts/runner-reasoning.js';
 export { deepFreeze } from './deep-freeze.js';
+export * from './evals/bench-patch.js';
 export * from './evals/bench-rollup.js';
 export { isRacyStamp, RACY_STAMP_MS } from './file-stamp.js';
 export * from './fleet/host-load.js';
