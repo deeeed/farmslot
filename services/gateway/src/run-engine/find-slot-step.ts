@@ -2306,6 +2306,7 @@ async function findSlotAttempt(
             ? { overridePrincipalId: run.pressureOverride.principalId }
             : {}),
           includeProfileFit: false,
+          candidateTemplate: run.engineState?.evalExperiment?.candidateTemplate,
           automaticLoadPinned,
           sourcePlans,
           ...capabilitySelection,
