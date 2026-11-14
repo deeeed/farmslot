@@ -7,7 +7,7 @@ import path from 'node:path';
 import { after, before, test } from 'node:test';
 
 import { poolDirectory } from '../core/config.js';
-import { TMUX_FIELD_SEPARATOR } from '../core/tmux.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
 import { createRun, deleteRun, getRun, updateRun, updateRunAgentContexts } from '../runs/store.js';
 
 import { classifyPaneRows, paneReadDetail, restoreTmuxWorker } from './runtime-recovery.js';

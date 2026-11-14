@@ -7,7 +7,7 @@ import type { AgentContext, Run } from '@farmslot/protocol';
 // and only the slot, run-store and process probes these tests drive are faked.
 import * as realCore from '../core/index.js';
 import * as realTmux from '../core/tmux.js';
-import { TMUX_FIELD_SEPARATOR } from '../core/tmux.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
 import * as realRunStore from '../runs/store.js';
 
 import * as realSessionLifecycle from './session-lifecycle.js';

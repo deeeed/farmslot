@@ -6,7 +6,7 @@ import type { ActiveResourcePointer, Run, SlotResource } from '@farmslot/protoco
 
 import '../runtime/mock-pty.test-support.js';
 
-import { TMUX_FIELD_SEPARATOR } from '../core/tmux.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
 let clock = 1000;

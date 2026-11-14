@@ -13,7 +13,7 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
-import { TMUX_FIELD_SEPARATOR } from '../../core/tmux.js';
+import { TMUX_FIELD_SEPARATOR } from '../../core/tmux-fields.js';
 
 const runRoot = mkdtempSync(path.join(tmpdir(), 'release-owner-runs-'));
 process.env.FARMSLOT_RUNS_DIR = runRoot;

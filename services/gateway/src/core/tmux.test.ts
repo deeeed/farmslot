@@ -10,12 +10,12 @@ import {
   selectResolvedTmuxSession,
   shellQuote,
   throwIfTmuxQueryTimedOut,
-  TMUX_FIELD_SEPARATOR,
   tmuxDiscoveryFailedResult,
   tmuxSendTextCommand,
   tmuxSessionProbeShouldKeepConfigured,
   tmuxShellSnippet,
 } from './tmux.js';
+import { TMUX_FIELD_SEPARATOR } from './tmux-fields.js';
 
 describe('buildTmuxRespawnLaunchCommand', () => {
   it('returns a primary worker to its repo shell after the runner exits', () => {

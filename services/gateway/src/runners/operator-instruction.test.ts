@@ -7,7 +7,7 @@ import { after, mock, test, type TestContext } from 'node:test';
 
 import type { NativeSessionReadResult } from '@farmslot/protocol';
 
-import { TMUX_FIELD_SEPARATOR } from '../core/tmux.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
 
 const root = await mkdtemp(path.join(os.tmpdir(), 'operator-transport-'));
 process.env.FARMSLOT_HOME = root;

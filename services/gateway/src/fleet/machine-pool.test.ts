@@ -14,7 +14,7 @@ import { after, test } from 'node:test';
 
 import type { FleetStatus, NodeTmuxPane } from '@farmslot/protocol';
 
-import { TMUX_FIELD_SEPARATOR } from '../core/tmux.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
 
 const root = mkdtempSync(path.join(tmpdir(), 'machine-pool-'));
 for (const dir of ['scripts', 'services/gateway', 'pool', 'projects'])

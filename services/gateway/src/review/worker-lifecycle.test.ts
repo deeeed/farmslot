@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
 import type { SlotVars } from '../core/config.js';
-import { TMUX_FIELD_SEPARATOR } from '../core/tmux.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
 
 const vars = { slotId: 'macwork-mm-2', remoteRepo: '/tmp/repo' } as SlotVars;
 const issuedCommands: string[] = [];
@@ -67,7 +67,11 @@ mock.module('../core/exec.js', {
       if (cmdIncludes(cmd, "list-panes -s -t 'coredev-1'")) {
         return {
           exitCode: 0,
-          stdout: '1|dev|0|zsh\n2|rev-claude|0|claude\n3|zsh|0|claude',
+          stdout: [
+            ['1', 'dev', '0', 'zsh'].join(TMUX_FIELD_SEPARATOR),
+            ['2', 'rev-claude', '0', 'claude'].join(TMUX_FIELD_SEPARATOR),
+            ['3', 'zsh', '0', 'claude'].join(TMUX_FIELD_SEPARATOR),
+          ].join('\n'),
           stderr: '',
         };
       }
@@ -85,21 +89,39 @@ mock.module('../core/exec.js', {
       }
       // Stored target still hosts the runner: keep it without adopting another pane.
       if (cmdIncludes(cmd, "list-panes -s -t 'coredev-2'")) {
-        return { exitCode: 0, stdout: '1|dev|0|claude', stderr: '' };
+        return {
+          exitCode: 0,
+          stdout: ['1', 'dev', '0', 'claude'].join(TMUX_FIELD_SEPARATOR),
+          stderr: '',
+        };
       }
       if (cmdIncludes(cmd, 'display-message') && cmdIncludes(cmd, "'coredev-2:dev'")) {
         return { exitCode: 0, stdout: 'claude', stderr: '' };
       }
       // No runner pane anywhere in the session.
       if (cmdIncludes(cmd, "list-panes -s -t 'coredev-3'")) {
-        return { exitCode: 0, stdout: '1|dev|0|zsh\n2|zsh|0|zsh', stderr: '' };
+        return {
+          exitCode: 0,
+          stdout: [
+            ['1', 'dev', '0', 'zsh'].join(TMUX_FIELD_SEPARATOR),
+            ['2', 'zsh', '0', 'zsh'].join(TMUX_FIELD_SEPARATOR),
+          ].join('\n'),
+          stderr: '',
+        };
       }
       if (cmdIncludes(cmd, 'display-message') && cmdIncludes(cmd, 'coredev-3')) {
         return { exitCode: 0, stdout: 'zsh', stderr: '' };
       }
       // Runner pane exists elsewhere but is mid-turn, not at an accepting prompt.
       if (cmdIncludes(cmd, "list-panes -s -t 'coredev-4'")) {
-        return { exitCode: 0, stdout: '1|dev|0|zsh\n2|zsh|0|claude', stderr: '' };
+        return {
+          exitCode: 0,
+          stdout: [
+            ['1', 'dev', '0', 'zsh'].join(TMUX_FIELD_SEPARATOR),
+            ['2', 'zsh', '0', 'claude'].join(TMUX_FIELD_SEPARATOR),
+          ].join('\n'),
+          stderr: '',
+        };
       }
       if (cmdIncludes(cmd, 'display-message') && cmdIncludes(cmd, "'coredev-4:dev'")) {
         return { exitCode: 0, stdout: 'zsh', stderr: '' };
@@ -114,7 +136,14 @@ mock.module('../core/exec.js', {
       // is a grandchild of the tmux shell and must be found through the shared
       // descendant-tree probe rather than direct-child `pgrep -P`.
       if (cmdIncludes(cmd, "list-panes -s -t 'coredev-5'")) {
-        return { exitCode: 0, stdout: '1|dev|0|zsh|4141\n2|fix|0|2.1.220|4242', stderr: '' };
+        return {
+          exitCode: 0,
+          stdout: [
+            ['1', 'dev', '0', 'zsh', '4141'].join(TMUX_FIELD_SEPARATOR),
+            ['2', 'fix', '0', '2.1.220', '4242'].join(TMUX_FIELD_SEPARATOR),
+          ].join('\n'),
+          stderr: '',
+        };
       }
       if (cmdIncludes(cmd, 'display-message') && cmdIncludes(cmd, "'coredev-5:dev'")) {
         return { exitCode: 0, stdout: 'zsh', stderr: '' };

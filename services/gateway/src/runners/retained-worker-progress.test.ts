@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import type { AgentContext } from '@farmslot/protocol';
 
-import { TMUX_FIELD_SEPARATOR } from '../core/tmux.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
 
 import {
   readRetainedWorkerProgressTarget,

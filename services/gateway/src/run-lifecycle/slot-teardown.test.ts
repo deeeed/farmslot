@@ -17,7 +17,7 @@ import {
 // import graph reaches slot-teardown, which would then load before the mocks apply.
 import * as realCore from '../core/index.js';
 import * as realTmux from '../core/tmux.js';
-import { TMUX_FIELD_SEPARATOR } from '../core/tmux.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
 import * as realOwnedStop from '../runners/owned-stop.js';
 import * as realSessionArchive from '../runners/session-archive.js';
 import type { RunnerDescendantPidProbe } from '../runners/session-process.js';

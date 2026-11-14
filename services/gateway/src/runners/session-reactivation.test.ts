@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
 import type { SlotVars } from '../core/config.js';
-import { TMUX_FIELD_SEPARATOR } from '../core/tmux.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
 
 import type { ObservabilityReading, RunnerSessionDeliveryState } from './observability-types.js';
 

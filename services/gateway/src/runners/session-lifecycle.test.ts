@@ -3,7 +3,8 @@ import test from 'node:test';
 
 import type { MachinePauseRecoveryHandle } from '@farmslot/protocol';
 
-import { TMUX_FIELD_SEPARATOR, type TmuxWindowRef } from '../core/tmux.js';
+import { type TmuxWindowRef } from '../core/tmux.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
 
 import { RUNNER_LAUNCH_READY_TIMEOUT_MS } from './launch-command.js';
 import {

@@ -9,6 +9,7 @@ import { loadPoolConfigs } from '../fleet/state.js';
 
 import { loadSlotVars } from './config.js';
 import { execOnSlot } from './exec.js';
+import { splitTmuxFields, tmuxFieldFormat } from './tmux-fields.js';
 import { writeTmuxLaunchScript } from './tmux-launch-script.js';
 
 // Remote node RPC under load often exceeds 3s. Discovery is runner-agnostic
@@ -19,29 +20,9 @@ const TMUX_DISCOVERY_TIMEOUT_MS = 15_000;
 /** Passive slot infrastructure, never an agent window. */
 export const DEVSERVER_LOG_WINDOW_NAME = 'devserver-log';
 
-/**
- * Field separator for every tmux `-F` query. A literal tab cannot be used: tmux
- * 3.4 escapes control characters in format output, so a tab-separated row
- * arrives there as a single field (3.3a and 3.7 pass the tab through), and
- * every parser that splits on the tab silently saw no rows. The separator is
- * printable, so it survives on every version.
- */
-export const TMUX_FIELD_SEPARATOR = '<<FARMSLOT_TMUX_FIELD>>';
-
-/** A `-F` format body: `tmuxFieldFormat('#{pane_id}', '#{pane_pid}')`. */
-export function tmuxFieldFormat(...fields: string[]): string {
-  return fields.join(TMUX_FIELD_SEPARATOR);
-}
-
-/**
- * The fields of one `-F` row. A separator inside the last value — a path or a
- * command is free-form — keeps that value whole instead of adding a field.
- */
-export function splitTmuxFields(line: string, count: number): string[] {
-  const parts = line.split(TMUX_FIELD_SEPARATOR);
-  if (parts.length <= count) return parts;
-  return [...parts.slice(0, count - 1), parts.slice(count - 1).join(TMUX_FIELD_SEPARATOR)];
-}
+// The field contract lives in a leaf module so a test fixture can reach for the
+// separator without loading this module (and its exec import) ahead of its mock.
+export { splitTmuxFields, TMUX_FIELD_SEPARATOR, tmuxFieldFormat } from './tmux-fields.js';
 
 export function tmuxDiscoveryFailedResult(err: unknown): ExecResult | null {
   const message = err instanceof Error ? err.message : String(err);

@@ -28,6 +28,7 @@ import {
   DEVSERVER_LOG_WINDOW_NAME,
   resolveTmuxSession,
   shellQuote,
+  splitTmuxFields,
   tmuxFieldFormat,
   tmuxShellSnippet,
 } from '../core/tmux.js';
@@ -227,7 +228,7 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
   const sessionOrigins = new Map<string, string>();
   for (const line of listed.stdout.split('\n')) {
     const [session, paneId, panePid, cwd, origin, sessionId, createdAt, windowName] =
-      line.split('\t');
+      splitTmuxFields(line, 8);
     if (ownedPanes.has(paneId) && windowName !== DEVSERVER_LOG_WINDOW_NAME) {
       const worker = await probeRunnerDescendantPid(vars, panePid);
       if (worker.state !== 'absent')

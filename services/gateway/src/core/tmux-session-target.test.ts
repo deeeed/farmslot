@@ -4,7 +4,7 @@ import { mock, test } from 'node:test';
 import type { ExecResult } from '@farmslot/protocol';
 
 import type { SlotVars } from './config.js';
-import { TMUX_FIELD_SEPARATOR } from './tmux.js';
+import { TMUX_FIELD_SEPARATOR } from './tmux-fields.js';
 
 await import('../runtime/mock-pty.test-support.js');
 let output = '';

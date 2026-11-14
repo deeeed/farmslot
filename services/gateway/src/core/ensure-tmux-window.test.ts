@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, mock, test } from 'node:test';
 
 import type { SlotVars } from './config.js';
-import { TMUX_FIELD_SEPARATOR } from './tmux.js';
+import { TMUX_FIELD_SEPARATOR } from './tmux-fields.js';
 
 // ensureTmuxWindow is checked through the commands it issues to a mocked exec
 // layer, backed by an in-memory model of the slot's tmux server. No test here

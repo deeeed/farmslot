@@ -9,7 +9,7 @@ import type { Run } from '@farmslot/protocol';
 import type { RawPoolJson } from '@farmslot/slot-config';
 
 import { writePiHook } from '../../../../scripts/runners/pi-farmslot-hook-writer.mjs';
-import { TMUX_FIELD_SEPARATOR } from '../core/tmux.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
 
 const root = await mkdtemp(path.join(tmpdir(), 'workspace-pi-submit-'));
 process.env.FARMSLOT_HOME = root;

@@ -4,7 +4,7 @@ import { mock, test } from 'node:test';
 import type { AgentContext, Run } from '@farmslot/protocol';
 
 import { withSlotCommandExecutor } from '../core/exec-scope.js';
-import { TMUX_FIELD_SEPARATOR } from '../core/tmux.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
