@@ -1,0 +1,1 @@
+- Family report generation no longer leaves its 30-second deadline timer running after a report settles, and node links prune thousands of settled send intents in parallel batches instead of one file at a time.

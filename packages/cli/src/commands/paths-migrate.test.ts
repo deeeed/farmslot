@@ -19,7 +19,6 @@ import path from 'node:path';
 import test, { mock, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import type { FleetStatus } from '@farmslot/protocol';
 import { currentFarmPaths, resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { openRunBundleStore } from '@farmslot/run-bundle';
 
@@ -660,13 +659,14 @@ test('pass 2: backlog specPath stays inside the migrated spec directory', async 
   await readFile(path.join(paths.state.backlogSpecs, 'x.md'));
 });
 
-test('pass 3: relative backlog specPath reads, enqueues and rolls back its original bytes', async (t) => {
+test('pass 3: relative backlog specPath migrates and rolls back its original bytes', async (t) => {
   const started = performance.now();
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'farm-migrate-spec-')));
+  // Cleanup is registered first so it still runs when the timing check fails.
+  t.after(() => rm(root, { recursive: true, force: true }));
   t.after(() =>
     assert.ok(performance.now() - started < 5000, 'spec migration must stay under 5 s'),
   );
-  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'farm-migrate-spec-')));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const home = path.join(root, 'home');
   const checkout = path.join(root, 'checkout');
   await mkdir(home);
@@ -707,73 +707,14 @@ test('pass 3: relative backlog specPath reads, enqueues and rolls back its origi
   const before = await readFile(backlogFile);
   await migratePaths(f.options, 'apply');
   const paths = resolveFarmPaths({ home: f.home, role: 'gateway', env: {} });
-  const env = { ...process.env };
-  for (const key of Object.keys(env)) if (key.startsWith('FARMSLOT_')) delete env[key];
-  delete env.TMUX;
-  Object.assign(env, {
-    HOME: f.root,
-    FARMSLOT_HOME: f.home,
-    FARMSLOT_ROOT: f.checkout,
-    TMUX_TMPDIR: f.root,
-    FARMSLOT_DISABLE_ORCHESTRATION: '1',
-    NODE_TEST_CONTEXT: '1',
-    TSX_TSCONFIG_PATH: fileURLToPath(
-      new URL('../../../../services/gateway/tsconfig.json', import.meta.url),
-    ),
-  });
   const migratedBytes = await readFile(paths.state.backlogFile);
   const migrated = await json(paths.state.backlogFile);
   assert.ok(Array.isArray(migrated));
   assert.equal(migrated[0].notes, specPath);
   assert.deepEqual(migrated[1], { id: 'outside', specPath: 'tasks/unmoved.md' });
-  const fleet = {
-    checkedAt: new Date().toISOString(),
-    slots: [],
-    summary: {
-      total: 0,
-      ready: 0,
-      busy: 0,
-      held: 0,
-      manual: 0,
-      disabled: 0,
-      blocked: 0,
-      warmCount: 0,
-    },
-  } satisfies FleetStatus;
-  execFileSync(
-    process.execPath,
-    [
-      '--import',
-      'tsx',
-      '--input-type=module',
-      '-e',
-      `
-    import assert from 'node:assert/strict';
-    import * as backlog from './services/gateway/src/backlog/store.ts';
-    import * as queue from './services/gateway/src/backlog/dispatch-queue.ts';
-    import { setCachedFleetForTests } from './services/gateway/src/fleet/state.ts';
-    setCachedFleetForTests(${JSON.stringify(fleet)});
-    queue.initDispatchQueue(() => {}, async () => {});
-    await backlog.loadBacklog();
-    const spec = await backlog.getBacklogSpec({ itemId: 'item' });
-    assert.equal(spec.content, ${JSON.stringify(markdown)});
-    assert.equal(spec.path, ${JSON.stringify(path.join(paths.state.backlogSpecs, 'x.md'))});
-    const result = await backlog.enqueueBacklogItem(
-      { itemId: 'item' }, { dispatchOriginator: { kind: 'system' } }, { kind: 'system' },
-    );
-    assert.equal(result.item.status, 'queued');
-    assert.deepEqual(result.queueItem.ticketData.acceptanceCriteria, ['Works']);
-    await backlog.flushBacklogForTests();
-    await queue.persistQueueNow();
-  `,
-    ],
-    {
-      cwd: fileURLToPath(new URL('../../../../', import.meta.url)),
-      env,
-      encoding: 'utf8',
-    },
-  );
-  // Enqueue mutates the backlog; restore the applied bytes before testing migration rollback.
+  assert.equal(await readFile(path.join(paths.state.backlogSpecs, 'x.md'), 'utf8'), markdown);
+  // paths-migrate-gateway.live.ts reads and enqueues through a gateway child at this point, which
+  // mutates the backlog. Both tests restore the applied bytes before testing migration rollback.
   await writeFile(paths.state.backlogFile, migratedBytes);
   await migratePaths(f.options, 'rollback');
   assert.deepEqual(await readFile(backlogFile), before);
