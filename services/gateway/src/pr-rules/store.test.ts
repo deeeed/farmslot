@@ -665,3 +665,27 @@ test('an archive that cannot be written leaves the store as it was', async (t) =
   );
   assert.equal(await readFile(file, 'utf8'), before, 'no stub without its archived record');
 });
+
+test('identical dispatch patches do not manufacture a durable updatedAt change', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const { store, file } = await fixture(t);
+  const { team, rule } = await ruleFor(store, 'owner', true);
+  await store.applyPreview('owner', preview(team, rule));
+  const intent = store.snapshot().intents[0];
+  const before = await readFile(file, 'utf8');
+  const published = store.snapshot();
+  t.mock.timers.tick(1000);
+  const result = await store.updateDispatch(intent.id, {
+    status: intent.status,
+    waitingReason: intent.waitingReason,
+    runId: undefined,
+  });
+  assert.equal(result.updatedAt, intent.updatedAt);
+  assert.equal(store.snapshot(), published);
+  assert.equal(await readFile(file, 'utf8'), before);
+  await store.updateDispatch(intent.id, { waitingReason: 'A real new blocker' });
+  assert.equal(
+    (await PRRuleStore.load(file)).intent(intent.id)?.waitingReason,
+    'A real new blocker',
+  );
+});
