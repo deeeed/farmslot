@@ -11,6 +11,7 @@ import {
   type ResultPackageManifest,
 } from '@farmslot/protocol';
 
+import { farmslotRoot } from '../core/config.js';
 import {
   computeCandidateStrategyFingerprint,
   computeExperimentKey,
@@ -20,7 +21,6 @@ import {
   writeResultPackageManifest,
 } from '../evals/package-store.js';
 import { resolveReviewRunnerModel } from '../review/orchestrator.js';
-import { farmslotRoot } from '../core/config.js';
 import { normalizeEvalReplayForTaskWrite } from '../run-engine/eval-replay-normalization.js';
 import {
   createRun,
