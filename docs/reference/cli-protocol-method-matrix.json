@@ -377,6 +377,10 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
+    "eval.bench.comparison.get": {
+      "surface": "rpc-only",
+      "note": "Read-only comparison of selected benchmark trials and retained evidence via farmslot rpc eval.bench.comparison.get."
+    },
     "eval.bench.get": {
       "surface": "rpc-only",
       "note": "Read-only operator-configured benchmark results and rollups via farmslot rpc eval.bench.get."

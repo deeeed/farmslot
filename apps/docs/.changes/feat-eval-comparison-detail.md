@@ -1,0 +1,1 @@
+- Document the read-only benchmark comparison request and response.

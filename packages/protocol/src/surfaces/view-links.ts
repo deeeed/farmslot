@@ -1,7 +1,13 @@
 import { BACKLOG_STATUSES } from '../contracts/backlog.js';
 import type { TmuxWorkerRef } from '../rpc/tmux.js';
 
-import { EVAL_BENCH_FILTERS, EVAL_BENCH_VIEW } from './eval-view-state.js';
+import {
+  EVAL_BENCH_COMPARE,
+  EVAL_BENCH_FILE,
+  EVAL_BENCH_FILTERS,
+  EVAL_BENCH_TAB,
+  EVAL_BENCH_VIEW,
+} from './eval-view-state.js';
 import { DECISION_EVIDENCE_RECIPE_RUN_PARAM, RUN_VIEW_FIELDS } from './run-view-state.js';
 import { VIEW_STATE_PARAMETERS, viewListField, viewStateSearchParams } from './view-state.js';
 
@@ -56,6 +62,9 @@ export const VIEW_QUERY_PARAMETERS: ReadonlySet<string> = new Set([
   ).split(' '),
   ...ARTIFACT_BROWSER_PARAMS,
   EVAL_BENCH_VIEW.key,
+  EVAL_BENCH_COMPARE.key,
+  EVAL_BENCH_TAB.key,
+  EVAL_BENCH_FILE.key,
   ...Object.values(EVAL_BENCH_FILTERS).map((field) => field.key),
   RUN_VIEW_FIELDS.panels.key,
   ...VIEW_STATE_PARAMETERS,

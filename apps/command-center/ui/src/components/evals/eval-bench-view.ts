@@ -2,6 +2,7 @@ import { css, html, LitElement, nothing } from 'lit';
 import { customElement } from 'lit/decorators.js';
 
 import {
+  EVAL_BENCH_COMPARE,
   evalBenchCostSaving,
   type EvalBenchResult,
   evalBenchRollups,
@@ -10,6 +11,8 @@ import {
 } from '@farmslot/protocol';
 import { EVAL_BENCH_FILTERS, EVAL_BENCH_VIEW, type EvalBenchFilter } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
+
+import './eval-bench-comparison-view.js';
 
 import { browserViewState, ViewStateController } from '../../utils/view-state.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
@@ -88,6 +91,8 @@ export class EvalBenchView extends LitElement {
         <button @click=${() => void this.data.retry()}>Refresh</button>
         <button @click=${() => browserViewState.set(EVAL_BENCH_VIEW, 'plan')}>Plan trials</button>
       </div>`;
+    if (this.view.state.get(EVAL_BENCH_COMPARE).length)
+      return html`<eval-bench-comparison-view .bench=${data}></eval-bench-comparison-view>`;
     const trials = data.trials.filter(
       (t) =>
         (!this.filter('problem') || t.problemType === this.filter('problem')) &&
@@ -206,7 +211,11 @@ export class EvalBenchView extends LitElement {
                       (t) =>
                         html`<tr>
                           <td>
-                            <strong>${t.item} · ${t.model}</strong><br /><small
+                            <strong>${t.item} · ${t.model}</strong><br /><button
+                              @click=${() => this.view.state.set(EVAL_BENCH_COMPARE, [t.runId])}
+                            >
+                              Compare</button
+                            ><br /><small
                               >${t.area} · ${t.sizeClass} · ${t.route} · ${t.effort}</small
                             ><br /><a href=${`#run/${encodeURIComponent(t.runId)}`}
                               >${t.runId.slice(0, 8)}</a

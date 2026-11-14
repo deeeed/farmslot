@@ -1,6 +1,7 @@
 // run-route.ts — Gateway RPC dispatch boundary for run/eval/family method families
 
 import {
+  type EvalBenchComparisonGetParams,
   type EvalExperimentCreateParams,
   type EvalSuiteCapGetParams,
   type EvalSuiteCapUpdateParams,
@@ -56,6 +57,7 @@ import {
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
+import { readEvalBenchComparison } from '../evals/bench-comparison.js';
 import { readEvalBench } from '../evals/bench-store.js';
 import {
   evalExperimentCreate,
@@ -344,6 +346,8 @@ export async function routeRunMethod(
       return handled(evalExperimentCreate(p as EvalExperimentCreateParams));
     case Methods.EVAL_TRIAL_START:
       return handled(evalTrialStart(p as EvalTrialStartParams, emit));
+    case Methods.EVAL_BENCH_COMPARISON_GET:
+      return handled(readEvalBenchComparison(p as EvalBenchComparisonGetParams));
     case Methods.EVAL_BENCH_GET:
       return handled(readEvalBench());
     case Methods.EVAL_TRIAL_RESULT_GET:

@@ -387,6 +387,7 @@ export const Methods = {
   EVAL_TRIAL_START: 'eval.trial.start',
   EVAL_TRIAL_RESULT_GET: 'eval.trial.result.get',
   EVAL_BENCH_GET: 'eval.bench.get',
+  EVAL_BENCH_COMPARISON_GET: 'eval.bench.comparison.get',
   EVAL_SUITE_CAP_GET: 'eval.suite.cap.get',
   EVAL_SUITE_CAP_UPDATE: 'eval.suite.cap.update',
   FAMILY_OBSERVABILITY_GET: 'family.observability.get',

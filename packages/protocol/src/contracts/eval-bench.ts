@@ -70,3 +70,83 @@ export interface EvalBenchResult {
   rollups: EvalBenchRollup[];
   infraFailures: Array<{ runId: string; item: string; failedStep: string; error: string }>;
 }
+
+export interface EvalBenchDiffFile {
+  path: string;
+  additions: number;
+  deletions: number;
+  kind: 'code' | 'test' | 'other';
+  text: string;
+}
+
+export interface EvalBenchPatchTotals {
+  additions: number;
+  deletions: number;
+  codeLines: number;
+  testLines: number;
+  otherLines: number;
+}
+
+export interface EvalBenchPatch {
+  text: string | null;
+  sha256: string | null;
+  files: EvalBenchDiffFile[];
+  totals: EvalBenchPatchTotals | null;
+  missingReason: string | null;
+}
+
+export interface EvalBenchFinding {
+  severity: string;
+  text: string;
+  cause: string | null;
+  evidence: string | null;
+  sharedWithOriginal: boolean | null;
+}
+
+export interface EvalBenchCriterion {
+  id: string;
+  text: string;
+  verdict: string;
+  evidence: string[];
+  proofMode: string | null;
+  timing: string | null;
+}
+
+export interface EvalBenchFileComparison {
+  path: string;
+  diffOfDiffs: string | null;
+  note: string | null;
+}
+
+export interface EvalBenchTrialDetail {
+  trial: EvalBenchTrial;
+  patch: EvalBenchPatch;
+  candidateBase: string | null;
+  diffOfDiffs: string | null;
+  fileComparisons: EvalBenchFileComparison[];
+  comparisonNote: string | null;
+  extraFiles: string[];
+  missingFiles: string[];
+  criteria: EvalBenchCriterion[];
+  coverageNote: string | null;
+  acClaim: string | null;
+  template: string | null;
+  originalGaps: string[];
+  aheadOfOriginal: string[];
+  mergedGaps: string[];
+  fixedByOriginalReview: string[];
+  findings: EvalBenchFinding[];
+  driftNotes: string[];
+  gate: string | null;
+  redFirst: { tests: boolean | null; recipe: boolean | null; how: string | null } | null;
+}
+
+export interface EvalBenchComparison {
+  capturedAt: string;
+  dataset: string;
+  item: string;
+  reference: EvalBenchTrial['reference'];
+  original: EvalBenchOriginal | null;
+  originalPatch: EvalBenchPatch;
+  trials: EvalBenchTrialDetail[];
+}
