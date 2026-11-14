@@ -9,10 +9,23 @@ import { DiffTestFilterController } from '../shared/diff-test-filter-controller.
 
 import {
   renderReviewDiffFiles,
+  renderReviewPublicationError,
   renderReviewTopBar,
   reviewSeverityColor,
   reviewSeverityCounts,
 } from './review-workspace-shell-renderers.js';
+
+test('publication errors stay visible in the shared gate and saved-review renderer', () => {
+  const text = litText(
+    renderReviewPublicationError('Provider returned 500; publication uncertain'),
+  );
+  assert.match(text, /role="alert"/);
+  assert.match(text, /Review publication needs attention/);
+  assert.match(text, /Provider returned 500; publication uncertain/);
+  assert.doesNotMatch(text, /<button/);
+  assert.equal(litText(renderReviewPublicationError(undefined)), '');
+  assert.equal(litText(renderReviewPublicationError('')), '');
+});
 
 test('reviewSeverityCounts preserves severity buckets for top bar badges', () => {
   assert.deepEqual(

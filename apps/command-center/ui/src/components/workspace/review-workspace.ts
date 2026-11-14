@@ -90,6 +90,7 @@ import {
   renderReviewCommentItem,
   renderReviewDiffFiles,
   renderReviewLoadingBanner,
+  renderReviewPublicationError,
   renderReviewTabBar,
   renderReviewTopBar,
 } from './review-workspace-shell-renderers.js';
@@ -987,6 +988,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
   override render() {
     const observation = this._queries.run.state;
+    const observedRun = this._queries.run.belongsToWorkspace ? observation.data?.run : undefined;
     const observations = this._usesMockData
       ? nothing
       : html`
@@ -1010,6 +1012,9 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
           ${this._actionError
             ? html`<div role="alert" data-testid="review-action-error">${this._actionError}</div>`
             : nothing}
+          ${renderReviewPublicationError(
+            observedRun?.id === this.runId ? observedRun.reviewPublication?.error : undefined,
+          )}
         `;
     if (!this._queries.decision)
       return html`${observations}

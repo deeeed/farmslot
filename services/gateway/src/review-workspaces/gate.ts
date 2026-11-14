@@ -46,6 +46,8 @@ export async function holdWorkspaceReview(runId: string) {
 
       ...result,
     };
+    // A replay can recover an uncommitted gate snapshot without requesting a retry.
+    let explicitDecisionId: string | undefined;
     const action = await createEngineDecision(
       runId,
       'review_posting',
@@ -60,6 +62,9 @@ export async function holdWorkspaceReview(runId: string) {
       payload,
       {
         generation,
+        onWaiting: (decisionId) => {
+          explicitDecisionId = decisionId;
+        },
         canReplay: (decision) =>
           !retryError &&
           isDeepStrictEqual((decision.payload as ReviewGatePayload)?.reviewMd, result.reviewMd) &&
@@ -128,6 +133,9 @@ export async function holdWorkspaceReview(runId: string) {
           error: undefined,
           reviewPublication: {
             ...run.reviewPublication,
+            ...(action === 'post' && decision.id === explicitDecisionId
+              ? { error: undefined }
+              : {}),
             gate: { decisionId: decision.id, publication: selected },
             checkedAt: new Date().toISOString(),
           },

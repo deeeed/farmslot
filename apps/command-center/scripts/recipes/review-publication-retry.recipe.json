@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Review publication failure, fresh Post and saved-review retry",
+  "description": "Requires installed source workspaces and an existing isolated Agent Chrome CDP endpoint. Set PUBLICATION_PROOF_OUT, optionally FARMSLOT_CDP_PORT and PUBLICATION_PROOF_UI_PORT. Seeds completed static reviews in a private farm, creates errors through actual publication RPC and a loopback provider, then uses real browser controls. No worker/model launch, external publication or client-state injection.",
+  "workflow": {
+    "entry": "publication-recovery",
+    "nodes": {
+      "publication-recovery": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx apps/command-center/scripts/review-publication-proof.mjs",
+        "timeout_ms": 300000,
+        "intent": "Prove persisted provider errors are visible in both the saved review and real engine gate. Retry the saved review and confirm a fresh Post, then verify the errors clear and exactly one provider review exists per run.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
