@@ -36,14 +36,26 @@ function docs() {
   run(['yarn', 'quality:gateway-api-docs']);
 }
 
-function acceptance() {
+function acceptance(standalone = false) {
   run(['node', 'scripts/acceptance-evidence/check.mjs']);
   run(['node', '--test', 'scripts/acceptance-evidence/evaluate.test.mjs']);
   run(
     ['node', '--import', 'tsx', '--test', 'scripts/acceptance-evidence/gateway-parity.test.mts'],
     { env: { ...process.env, TSX_TSCONFIG_PATH: 'services/gateway/tsconfig.json' } },
   );
-  // The two acceptance-evidence gateway unit files have one owner: gateway shards.
+  // PR and full matrices already own these files in the gateway suite.
+  if (standalone)
+    run(
+      [
+        'node',
+        '--import',
+        'tsx',
+        '--test',
+        'services/gateway/src/methods/acceptance-evidence.rpc.test.ts',
+        'services/gateway/src/methods/acceptance-evidence.test.ts',
+      ],
+      { env: { ...process.env, TSX_TSCONFIG_PATH: 'services/gateway/tsconfig.json' } },
+    );
 }
 
 function transport() {
@@ -171,7 +183,7 @@ function verify() {
   verifyReceipts(plan, receipts);
   if (process.env.CI_MATRIX_RESULT !== 'success')
     throw new Error(`CI matrix result: ${process.env.CI_MATRIX_RESULT}`);
-  const text = `Verified ${plan.jobs.length} jobs, ${plan.selected.length} selected test files.\n`;
+  const text = `${plan.replayPr ? `Replay of PR #${plan.replayPr} at this checkout. This is not PR push acceptance. ` : ''}Verified ${plan.jobs.length} jobs, ${plan.selected.length} selected test files.\n`;
   console.log(text);
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, text);
 }
@@ -180,6 +192,7 @@ if (isMainModule(import.meta.url)) {
   const mode = process.argv[2];
   if (mode === 'docs') docs();
   else if (mode === 'acceptance') acceptance();
+  else if (mode === 'acceptance-standalone') acceptance(true);
   else if (mode === 'transport') transport();
   else if (mode === 'farm-proof') farmProof();
   else if (mode === 'verify') verify();

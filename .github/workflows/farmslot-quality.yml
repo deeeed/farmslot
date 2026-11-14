@@ -3,17 +3,24 @@ name: Farmslot Quality
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      replay_pr:
+        description: Replay a PR changed-file set against this checkout for timing proof
+        required: true
+        type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   prepare:
-    name: Prepare affected PR checks
+    name: ${{ github.event_name == 'workflow_dispatch' && 'Prepare replay checks' || 'Prepare affected PR checks' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -25,6 +32,8 @@ jobs:
       - uses: ./.github/actions/ci-setup
       - name: Plan dependency-affected tests and checks
         id: plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/quality/pr-ci-plan.mjs
       - uses: actions/upload-artifact@v4
         with:
@@ -33,7 +42,7 @@ jobs:
           path: .cache/pr-ci/plan.json
 
   checks:
-    name: PR checks (${{ matrix.id }})
+    name: ${{ github.event_name == 'workflow_dispatch' && 'Replay checks' || 'PR checks' }} (${{ matrix.id }})
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -43,6 +52,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/ci-setup
+        with:
+          lint-cache: ${{ matrix.lint && 'true' || 'false' }}
       - uses: actions/download-artifact@v4
         with:
           name: pr-ci-plan
@@ -63,7 +74,7 @@ jobs:
           if-no-files-found: error
 
   quality:
-    name: PR quality gates
+    name: ${{ github.event_name == 'workflow_dispatch' && 'Replay results' || 'PR quality gates' }}
     if: always()
     needs: [prepare, checks]
     runs-on: ubuntu-24.04

@@ -56,3 +56,22 @@ test('full selection ignores filters; parser does not treat commented imports as
     ['./actual.ts'],
   );
 });
+
+test('source-reading guards remain selected for basename and computed paths', () => {
+  const additions = {
+    'apps/app/src/panel.ts': 'export const panel = 1;',
+    'apps/app/src/panel.test.ts': "readFileSync(path.resolve(import.meta.dirname, 'panel.ts'));",
+    'apps/app/src/computed.test.ts': 'readFileSync(path.resolve(directory, `${name}.ts`));',
+  };
+  assert.deepEqual(select(['apps/app/src/panel.ts'], additions), [
+    'apps/app/src/panel.test.ts',
+    'apps/app/src/computed.test.ts',
+  ]);
+});
+
+test('release notes do not expand a narrow source change to the full consumer suite', () => {
+  assert.deepEqual(select(['packages/lib/src/index.ts', 'packages/lib/.changes/fix.md']), [
+    'apps/app/src/model.test.ts',
+  ]);
+  assert.deepEqual(select(['packages/lib/.changes/fix.md']), []);
+});

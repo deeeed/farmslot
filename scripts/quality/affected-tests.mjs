@@ -3,6 +3,8 @@ import path from 'node:path';
 
 import ts from 'typescript';
 
+import { isFragmentPath } from '../release/changelog-fragments.mjs';
+
 import { affectedWorkspaceNames } from './workspace-test-targets.mjs';
 
 export const SOURCE_FILE = /\.[cm]?[jt]sx?$/;
@@ -40,6 +42,7 @@ export function sourceReferences(source, file) {
   const references = new Set();
   const modules = new Set();
   let dynamic = false;
+  let runtimeRead = false;
   function visit(node) {
     if (ts.isStringLiteralLike(node)) references.add(node.text);
     if (
@@ -50,6 +53,13 @@ export function sourceReferences(source, file) {
       modules.add(node.moduleSpecifier.text);
     if (ts.isCallExpression(node)) {
       const expression = node.expression;
+      const called = ts.isIdentifier(expression)
+        ? expression.text
+        : ts.isPropertyAccessExpression(expression)
+          ? expression.name.text
+          : '';
+      if (['readFile', 'readFileSync', 'readdir', 'readdirSync'].includes(called))
+        runtimeRead = true;
       const moduleCall =
         expression.kind === ts.SyntaxKind.ImportKeyword ||
         (ts.isIdentifier(expression) && expression.text === 'require');
@@ -61,7 +71,7 @@ export function sourceReferences(source, file) {
     ts.forEachChild(node, visit);
   }
   visit(parsed);
-  return { references: [...references], modules, dynamic };
+  return { references: [...references], modules, dynamic, runtimeRead };
 }
 
 export function buildSourceGraph(files, workspaces, readSource) {
@@ -70,8 +80,8 @@ export function buildSourceGraph(files, workspaces, readSource) {
   const opaque = new Set();
   const unresolved = new Set();
   for (const file of files.filter((name) => SOURCE_FILE.test(name))) {
-    const { references, modules, dynamic } = sourceReferences(readSource(file), file);
-    if (dynamic) opaque.add(file);
+    const { references, modules, dynamic, runtimeRead } = sourceReferences(readSource(file), file);
+    if (dynamic || (runtimeRead && TEST_FILE.test(file))) opaque.add(file);
     for (const reference of references) {
       let dependency;
       if (reference.startsWith('.'))
@@ -94,6 +104,8 @@ export function buildSourceGraph(files, workspaces, readSource) {
           }
         }
       } else if (known.has(reference)) dependency = reference;
+      if (!dependency && SOURCE_FILE.test(reference))
+        dependency = resolveSource(path.posix.join(path.posix.dirname(file), reference), known);
       if (dependency) add(dependency, file);
       else if (modules.has(reference) && reference.startsWith('.')) unresolved.add(file);
     }
@@ -111,8 +123,9 @@ export function selectAffectedTests({ files, changed, workspaces, graph }) {
   const widened = new Set();
   // Runtime assets and config are not described reliably by static imports.
   for (const file of changed ?? []) {
+    const owner = ownerOf(file, workspaces);
+    if (owner && isFragmentPath(file, owner.dir)) continue;
     if (!SOURCE_FILE.test(file) || !files.includes(file)) {
-      const owner = ownerOf(file, workspaces);
       if (owner) for (const name of affectedWorkspaceNames(workspaces, [file])) widened.add(name);
       else if (!/\.(?:md|png|jpe?g|svg)$/.test(file))
         for (const name of affected) widened.add(name);

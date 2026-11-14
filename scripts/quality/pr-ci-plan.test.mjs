@@ -38,7 +38,8 @@ test('final verifier rejects missing, duplicate and incomplete jobs', () => {
 test('full workspace inventory has one test owner and splits the critical app suites', async () => {
   const { spawnSync } = await import('node:child_process');
   const { readFileSync } = await import('node:fs');
-  const { workspaceTestCatalog } = await import('./workspace-test-targets.mjs');
+  const { workspaceSuiteFiles, workspaceTestCatalog } =
+    await import('./workspace-test-targets.mjs');
   const { createPrPlan } = await import('./pr-ci-plan.mjs');
   const root = process.cwd();
   const listed = spawnSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' });
@@ -61,9 +62,61 @@ test('full workspace inventory has one test owner and splits the critical app su
   const assigned = tasks.flatMap((task) => task.tests ?? []);
   assert.equal(new Set(assigned).size, assigned.length);
   assert.deepEqual(
-    [...assigned].sort(),
-    selected.filter((file) => !file.startsWith('apps/docs/')).sort(),
+    assigned.filter((file) => file.endsWith('.test.ts')).sort(),
+    [...workspaceSuiteFiles(workspaces, root)].filter((file) => file.endsWith('.test.ts')).sort(),
   );
   assert.equal(tasks.filter(({ id }) => id === 'guard-lint').length, 1);
   assert.ok(tasks.some(({ id }) => id === 'tests-@farmslot/run-bundle'));
+  assert.ok(!plan.selected.includes('packages/cli/test/live/doctor.test.ts'));
+  assert.ok(!plan.selected.includes('packages/protocol/src/contracts/review-workspace.test.ts'));
+  const base = { root, workspaces, selected: [] };
+  const configPlan = createPrPlan({ ...base, changed: ['apps/command-center/tsconfig.base.json'] });
+  for (const name of ['gateway', 'node', 'command-center-ui', 'cli', 'protocol', 'recipe-runner'])
+    assert.ok(
+      configPlan.jobs
+        .flatMap(({ tasks }) => tasks)
+        .some(({ id }) => id === `types-@farmslot/${name}`),
+    );
+  const templatePlan = createPrPlan({
+    ...base,
+    changed: ['projects/farmslot-farm/templates/worker/review-pr.md'],
+  });
+  assert.ok(
+    templatePlan.selected.includes('services/gateway/src/review/static-review-execution.test.ts'),
+  );
+  const uiTask = tasks.find(({ id }) => id.startsWith('command-center-ui-'));
+  assert.equal(uiTask.args[uiTask.args.indexOf('--cwd') + 1], 'apps/command-center');
+  assert.equal(uiTask.args[uiTask.args.indexOf('--tsconfig') + 1], 'ui/tsconfig.json');
+  for (const task of tasks.filter(
+    (task) => task.id.startsWith('types-') && task.args.includes('bash'),
+  ))
+    assert.deepEqual(task.args.slice(0, 3), ['yarn', 'exec', 'bash']);
+});
+
+test('full validation supplements docs and suites omitted by package quality', async () => {
+  const { needsSupplementarySuite } = await import('./ci-full-supplement.mjs');
+  assert.equal(
+    needsSupplementarySuite({
+      dir: 'apps/docs',
+      test: 'node --test scripts/*.test.mjs',
+      quality: 'yarn test && yarn build',
+    }),
+    true,
+  );
+  assert.equal(
+    needsSupplementarySuite({
+      dir: 'packages/credential-store',
+      test: 'runner src',
+      quality: 'tsc --noEmit',
+    }),
+    true,
+  );
+  assert.equal(
+    needsSupplementarySuite({
+      dir: 'packages/run-bundle',
+      test: 'runner src',
+      quality: 'yarn test && tsc --noEmit',
+    }),
+    false,
+  );
 });

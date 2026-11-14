@@ -5,7 +5,11 @@ import path from 'node:path';
 import { isMainModule } from './lib/step-timing.mjs';
 import { ownerOf, readGraph, selectAffectedTests } from './affected-tests.mjs';
 import { ciParitySteps } from './ci-local.mjs';
-import { affectedWorkspaceNames, workspaceTestCatalog } from './workspace-test-targets.mjs';
+import {
+  affectedWorkspaceNames,
+  workspaceSuiteFiles,
+  workspaceTestCatalog,
+} from './workspace-test-targets.mjs';
 
 export function balance(items, count, weight = () => 1) {
   const bins = Array.from({ length: Math.min(count, items.length) }, () => ({
@@ -35,11 +39,23 @@ function command(id, args, seconds = 20, cwd = '.') {
 }
 
 export function createPrPlan({ root, changed, workspaces, selected, durations = {} }) {
+  const eligible = workspaceSuiteFiles(workspaces, root);
+  selected = selected.filter((file) => !ownerOf(file, workspaces) || eligible.has(file));
+  const parity = ciParitySteps(changed, root);
+  // Keep external-input guards in the plan even when imports cannot express their
+  // template trigger. The gateway shard then owns the forced file exactly once.
+  for (const [label] of parity) {
+    if (label === 'static review execution guard')
+      selected.push('services/gateway/src/review/static-review-execution.test.ts');
+    if (label === 'deterministic receipt guard')
+      selected.push('packages/agent-runtime/test/deterministic-checks.test.cjs');
+  }
+  selected = [...new Set(selected)];
   const affected = affectedWorkspaceNames(workspaces, changed);
   const tasks = [];
   const jobs = [];
   const assigned = new Set();
-  function splitTests(id, dir, count, tsconfig, workers) {
+  function splitTests(id, dir, count, tsconfig, workers, runnerDir = dir) {
     const suite = selected.filter(
       (file) => file.startsWith(`${dir}/`) && file.endsWith('.test.ts'),
     );
@@ -54,12 +70,12 @@ export function createPrPlan({ root, changed, workspaces, selected, durations = 
           'node',
           'scripts/quality/run-tsx-tests.mjs',
           '--cwd',
-          dir,
+          runnerDir,
           '--tsconfig',
           tsconfig,
           '--workers',
           String(workers),
-          ...chunk.map((file) => path.posix.relative(dir, file)),
+          ...chunk.map((file) => path.posix.relative(runnerDir, file)),
         ],
         120,
       );
@@ -69,7 +85,14 @@ export function createPrPlan({ root, changed, workspaces, selected, durations = 
     }
   }
   splitTests('gateway', 'services/gateway', 8, 'tsconfig.json', 4);
-  splitTests('command-center-ui', 'apps/command-center/ui', 4, 'tsconfig.json', 2);
+  splitTests(
+    'command-center-ui',
+    'apps/command-center/ui',
+    4,
+    'ui/tsconfig.json',
+    2,
+    'apps/command-center',
+  );
   for (const workspace of workspaces) {
     if (!affected.has(workspace.name)) continue;
     const pkg = JSON.parse(readFileSync(path.join(root, workspace.dir, 'package.json'), 'utf8'));
@@ -78,7 +101,7 @@ export function createPrPlan({ root, changed, workspaces, selected, durations = 
       tasks.push(
         command(
           `types-${workspace.name}`,
-          ['bash', '-e', '-o', 'pipefail', '-c', script],
+          ['yarn', 'exec', 'bash', '-e', '-o', 'pipefail', '-c', script],
           workspace.dir === 'apps/companion' ? 45 : 20,
           workspace.dir,
         ),
@@ -107,7 +130,7 @@ export function createPrPlan({ root, changed, workspaces, selected, durations = 
         // import graph. Keep the declared suite whenever its workspace is affected.
         const task = command(
           `tests-${workspace.name}`,
-          ['bash', '-e', '-o', 'pipefail', '-c', withoutBuilds(script)],
+          ['yarn', 'exec', 'bash', '-e', '-o', 'pipefail', '-c', withoutBuilds(script)],
           workspace.dir === 'packages/cli' ? 135 : 60,
           workspace.dir,
         );
@@ -118,9 +141,13 @@ export function createPrPlan({ root, changed, workspaces, selected, durations = 
     }
   }
   // ciParitySteps remains the shared owner of architecture and repository guards.
-  for (const [label, args] of ciParitySteps(changed, root)) {
+  for (const [label, args] of parity) {
     // Gateway and agent-runtime suites already own these test files.
-    if (['format', 'static review execution guard', 'deterministic receipt guard'].includes(label))
+    if (label === 'static review execution guard') continue;
+    if (
+      label === 'deterministic receipt guard' &&
+      assigned.has('packages/agent-runtime/test/deterministic-checks.test.cjs')
+    )
       continue;
     tasks.push(
       command(
@@ -136,29 +163,6 @@ export function createPrPlan({ root, changed, workspaces, selected, durations = 
       ),
     );
   }
-  const formatFiles = changed?.filter((file) => existsSync(path.join(root, file)));
-  if (
-    changed === null ||
-    changed.some((file) => ['.prettierrc.json', '.prettierignore'].includes(file))
-  )
-    tasks.push(command('format', ['yarn', 'format:check'], 40));
-  else if (formatFiles.length)
-    tasks.push(
-      command(
-        'format',
-        [
-          'yarn',
-          '--cwd',
-          'apps/command-center',
-          'exec',
-          'prettier',
-          '--check',
-          '--ignore-unknown',
-          ...formatFiles.map((file) => path.join(root, file)),
-        ],
-        15,
-      ),
-    );
   tasks.push(command('type-escape-ratchet', ['yarn', 'lint:type-escapes'], 15));
   const touches = (prefixes) =>
     changed === null || changed.some((file) => prefixes.some((prefix) => file.startsWith(prefix)));
@@ -313,30 +317,58 @@ if (isMainModule(import.meta.url)) {
   const root = process.cwd();
   const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
   const base = event.pull_request?.base?.sha;
-  if (!base) throw new Error('PR selection requires a pull request base SHA');
+  const replay =
+    process.env.GITHUB_EVENT_NAME === 'workflow_dispatch' ? event.inputs?.replay_pr : null;
+  if (!base && !replay) throw new Error('PR selection requires a pull request base SHA');
   const git = (args) => {
     const result = spawnSync('git', args, { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 });
     if (result.status !== 0) throw new Error(result.stderr);
     return result.stdout.split('\0').filter(Boolean);
   };
   const files = git(['ls-files', '-z']);
-  const changed = git(['diff', '--name-only', '-z', `${base}...HEAD`]);
+  let changed;
+  if (replay) {
+    if (!/^[1-9]\d*$/.test(replay)) throw new Error('Replay PR must be a positive number');
+    changed = [];
+    for (let page = 1; ; page++) {
+      const response = await fetch(
+        `https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/pulls/${replay}/files?per_page=100&page=${page}`,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+            Accept: 'application/vnd.github+json',
+          },
+        },
+      );
+      if (!response.ok) throw new Error(`Cannot load replay PR files: HTTP ${response.status}`);
+      const files = await response.json();
+      if (!Array.isArray(files) || files.some((file) => typeof file.filename !== 'string'))
+        throw new Error('Invalid replay PR file response');
+      changed.push(
+        ...files.flatMap((file) =>
+          file.previous_filename ? [file.previous_filename, file.filename] : [file.filename],
+        ),
+      );
+      if (files.length < 100) break;
+    }
+  } else changed = git(['diff', '--name-only', '-z', `${base}...HEAD`]);
   const workspaces = workspaceTestCatalog(root);
   const graph = readGraph(root, files, workspaces);
   const selected = selectAffectedTests({ files, changed, workspaces, graph });
   const durations = JSON.parse(readFileSync('scripts/quality/ci-test-durations.json', 'utf8'));
   const plan = createPrPlan({ root, files, changed, workspaces, selected, durations });
+  if (replay) plan.replayPr = Number(replay);
   mkdirSync('.cache/pr-ci', { recursive: true });
   writeFileSync('.cache/pr-ci/plan.json', `${JSON.stringify(plan, null, 2)}\n`);
   appendFileSync(
     process.env.GITHUB_OUTPUT,
-    `matrix=${JSON.stringify({ include: plan.jobs.map(({ id }) => ({ id })) })}\n`,
+    `matrix=${JSON.stringify({ include: plan.jobs.map(({ id, tasks }) => ({ id, lint: tasks.some((task) => task.id === 'guard-lint') })) })}\n`,
   );
   console.log(
     JSON.stringify(
       {
         changed: changed.length,
-        selected: selected.length,
+        selected: plan.selected.length,
         jobs: plan.jobs.map(({ id, tasks }) => ({ id, tasks: tasks.map((task) => task.id) })),
       },
       null,
