@@ -38,6 +38,7 @@ import {
 } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
+import { isArtifactOnlyRun } from '../run-completion/orchestrator.js';
 import {
   nativeWorkerLiveStatus,
   readNativeWorkerSnapshot,
@@ -1793,6 +1794,23 @@ export async function monitorRun(
             console.log(
               `[run-monitor] run ${runId.slice(0, 8)} — skipping ${v.type} nudge (human gate or live worker)`,
             );
+          } else if (
+            latestRun.engineState?.evalExperiment?.blind &&
+            isArtifactOnlyRun(latestRun) &&
+            (latestRun.metrics.nudgeCount >= config.maxNudges ||
+              !(await workerNudgesSupported(latestRun, slotId)))
+          ) {
+            // No operator answers a blind trial's decision: an idle worker that
+            // nudges cannot move ends the trial as its blocked, measured output.
+            const reason = `Blind trial worker went ${v.type} without a terminal mark and no nudge can move it: ${v.message}`;
+            console.log(`[run-monitor] run ${runId.slice(0, 8)} — ${reason}`);
+            return {
+              pollCount,
+              exitReason: 'worker-done',
+              violations: allViolations,
+              snapshots,
+              workerSignal: { status: 'blocked', reason, timestamp: new Date().toISOString() },
+            };
           } else if (latestRun.metrics.nudgeCount >= config.maxNudges) {
             // Max nudges exceeded — create decision
             console.log(
