@@ -515,6 +515,12 @@ test('QA binds retained change scope, reported revisions and declared suite', ()
     () => validateQaScope(result, { ...source, baseSha: 'c'.repeat(40) }, suite),
     /reported source/,
   );
+  // A scope that nests its revisions under `source` does not bind them.
+  const { baseSha, headSha, ...rest } = source;
+  assert.throws(
+    () => validateQaScope(result, { ...rest, source: { baseSha, headSha } }, suite),
+    /top-level baseSha and headSha/,
+  );
   assert.throws(() => validateQaScope(result, { ...source, files: [] }, suite), /scope digest/);
   assert.throws(() => validateQaScope(result, source, { ...suite, cases: [] }), /suite differs/);
 });
