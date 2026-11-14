@@ -46,16 +46,43 @@ export function runWorkerEffort(
 }
 
 /**
- * Word shown for a run's reasoning effort.
- * No value, and Pi's `off`, both mean no reasoning effort was sent. The model
- * keeps its own default and still reasons, so the list says `default`.
- * Any other stored level is shown as written. `none` is an explicit disable.
+ * Farmslot's own completions providers. Their adapter omits `reasoning_effort`
+ * for Pi `off`, and the model keeps its own default. Built-in Pi providers are
+ * absent: `off` there sends an explicit disable. A renamed router id is not
+ * known to the client, so only the default id `router` is included.
  */
-export function reasoningEffortLabel(effort: string | null | undefined): string {
+const COMPLETIONS_OFF_OMITS = new Set(['litellm', 'ollama', 'router']);
+
+function completionsOffOmitsEffort(model: string | null | undefined): boolean {
+  const provider = model?.split('/')[0]?.trim().toLowerCase() ?? '';
+  return COMPLETIONS_OFF_OMITS.has(provider);
+}
+
+/**
+ * Word shown for a stored reasoning effort.
+ * No value reads `default`. Pi `off` reads `default` only for the completions
+ * providers above. On any other model it reads `off`, an explicit disable.
+ * `none` is an explicit disable. Any other stored level is shown as written.
+ */
+export function reasoningEffortLabel(
+  effort: string | null | undefined,
+  model?: string | null,
+): string {
   const value = effort?.trim() ?? '';
-  if (value === '' || value.toLowerCase() === 'off') return 'default';
+  if (value === '') return 'default';
   if (value.toLowerCase() === 'none') return 'off';
+  if (value.toLowerCase() === 'off') return completionsOffOmitsEffort(model) ? 'default' : 'off';
   return value;
+}
+
+/** Runner, model, and the displayed effort. Blank effort is left out. */
+export function runnerModelEffortParts(
+  runner: string | null | undefined,
+  model: string | null | undefined,
+  effort: string | null | undefined,
+): string[] {
+  const shown = effort?.trim() ? reasoningEffortLabel(effort, model) : '';
+  return [runner?.trim(), model?.trim(), shown].filter((part): part is string => Boolean(part));
 }
 
 /** "runner/model · effort". Null when neither runner nor model is. */
@@ -66,5 +93,5 @@ export function runEngineLabel(engine: {
 }): string | null {
   const base = engine.model ? `${engine.runner ?? 'runner'}/${engine.model}` : engine.runner;
   if (!base) return null;
-  return `${base} · ${reasoningEffortLabel(engine.effort)}`;
+  return `${base} · ${reasoningEffortLabel(engine.effort, engine.model)}`;
 }

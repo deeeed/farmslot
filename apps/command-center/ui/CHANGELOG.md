@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Work-graph details, the dispatch queue, and assigned-run cards use the same reasoning-effort label as the run list.
 
 ## 0.36.3 - 2026-11-14
 

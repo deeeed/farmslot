@@ -12,7 +12,7 @@ import type {
   WorkGraphListResult,
   WorkGraphProjection,
 } from '@farmslot/protocol';
-import { Methods, sourceObservationAge } from '@farmslot/protocol';
+import { Methods, runnerModelEffortParts, sourceObservationAge } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import {
@@ -75,7 +75,7 @@ function graphContext(
     item.workNodeId ? `node:${item.workNodeId}` : '',
     backlog?.title ? `spec:${backlog.title}` : '',
     item.runner || item.model || item.effort
-      ? `exec:${[item.runner, item.model, item.effort].filter(Boolean).join('/')}`
+      ? `exec:${runnerModelEffortParts(item.runner, item.model, item.effort).join('/')}`
       : '',
     item.reviewSequence?.length
       ? `reviews:${item.reviewSequence.map((review) => [review.runner, review.model ?? 'default model', review.effort ?? 'default effort', review.mode.toUpperCase()].join('/')).join(', ')}`

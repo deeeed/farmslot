@@ -5,7 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
-- The run list says "default" when a run sends no reasoning effort. Pi's "off" omits that effort and the model still uses its own default. "none" is an explicit disable and still reads "off".
+- The run list says "default" when no reasoning effort is stored. Pi "off" on litellm, ollama, and the router also reads "default", because those adapters omit the effort and the model keeps its own. "off" on a built-in Pi provider still reads "off". "none" still reads "off".
 
 ## 0.84.0 - 2026-11-14
 

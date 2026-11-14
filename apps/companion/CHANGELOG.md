@@ -5,6 +5,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- An assigned review card uses the same reasoning-effort label as Command Center. Pi "off" on litellm, ollama, and the router reads "default". Built-in Pi "off" still reads "off".
 
 ## 0.11.0 - 2026-11-05
 
