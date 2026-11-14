@@ -1,4 +1,5 @@
 'use strict';
+const { claudeReadOnlyReviewArgs } = require('./workspace-trust.cjs');
 
 /** Adapter-owned recognition of the provider's structured maintenance boundary. */
 function claudeCompactionBoundary(message, nativeSessionId) {
@@ -39,10 +40,7 @@ function claudeCompactionArgs(sessionId, model) {
     '--output-format',
     'stream-json',
     '--verbose',
-    '--setting-sources',
-    '',
-    '--settings',
-    '{"disableAllHooks":true}',
+    ...claudeReadOnlyReviewArgs,
     '--strict-mcp-config',
     '--mcp-config',
     '{"mcpServers":{}}',

@@ -1,5 +1,6 @@
 import { CLAUDE_ACP_EFFORTS } from '@farmslot/agent-runtime/native/claude-acp';
 import { nativeRunnerDefinitions } from '@farmslot/agent-runtime/native/registry';
+import { claudeCompactionArgs } from '@farmslot/agent-runtime/scripts/context-compaction.cjs';
 
 import { piProviderEnvironment } from '../../../../scripts/runners/pi-farmslot-providers.mjs';
 
@@ -18,7 +19,6 @@ export {
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import path from 'node:path';
 
 import { parse as parseLaunchShell } from 'shell-quote';
@@ -454,12 +454,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
         workspace: 'retained',
         compaction: {
           protocol: 'claude-stream-json',
-          args: (sessionId, model) => {
-            const adapter = createRequire(import.meta.url)(
-              '../../../../packages/agent-runtime/scripts/context-compaction.cjs',
-            ) as { claudeCompactionArgs: (sessionId: string, model: string) => string[] };
-            return adapter.claudeCompactionArgs(sessionId, model);
-          },
+          args: claudeCompactionArgs,
         },
       },
     },

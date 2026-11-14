@@ -3,13 +3,13 @@
   "title": "WARM delta packet, coverage integrity and controlled cost",
   "description": "Run with FARMSLOT_WARM_DELTA_PROOF_OUT set to a new evidence directory, FARMSLOT_NATIVE_COMPACTION_PROOF_OUT set to a second new directory and an existing provider credential. A disposable authenticated gateway drives two real terminal reviews over a controlled two-commit delta, preserving the conversation and disabling publication. No shared broker or production run is changed.",
   "workflow": {
-    "entry": "coverage-integrity",
+    "entry": "profile-settings",
     "nodes": {
       "coverage-integrity": {
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test services/gateway/src/review-workspaces/coverage.live.ts",
         "timeout_ms": 120000,
-        "intent": "Compose and accept actual marked coverage; refuse forged rows, changed proof and post-cleanup tampering.",
+        "intent": "Compose and accept actual marked coverage; exclude upstream-only files after the publication branch advances, and refuse forged rows, changed proof and post-cleanup tampering.",
         "next": "controlled-warm"
       },
       "controlled-warm": {
@@ -29,6 +29,13 @@
         "timeout_ms": 300000,
         "intent": "Use the compiled native host IPC client with a subscription login. Require same-session structured maintenance, unchanged task-command count, exact receipt retry and retained finding recall. This proves native SDK maintenance, not native workspace WARM admission.",
         "next": "done"
+      },
+      "profile-settings": {
+        "action": "command",
+        "cmd": "node --test --test-name-pattern=\"same user settings\" packages/agent-runtime/test/review-compaction.test.cjs",
+        "timeout_ms": 30000,
+        "intent": "Require compaction to preserve the retained review account/profile setting source and hook policy through the shared adapter args.",
+        "next": "coverage-integrity"
       }
     }
   }

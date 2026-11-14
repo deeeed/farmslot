@@ -147,8 +147,7 @@ export async function prepareReviewCoverage(
       '--no-renames',
       '--name-only',
       '-z',
-      subject.contributionBaseSha,
-      subject.headSha,
+      `${subject.contributionBaseSha}...${subject.headSha}`,
       '--',
     ])
   )

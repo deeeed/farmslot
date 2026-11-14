@@ -12,6 +12,52 @@ import { withReviewWorkspaceTaskFixture } from './task-fixture.test-support.js';
 
 const exec = promisify(execFile);
 
+test('advancing the publication branch excludes upstream-only files from current coverage', async () => {
+  await withReviewWorkspaceTaskFixture(async (f) => {
+    const repo = f.run.reviewWorkspace!.checkoutPath;
+    const git = async (...args: string[]) =>
+      (await exec('git', ['-C', repo, ...args])).stdout.trim();
+    const commit = async () => {
+      await git('add', '-A');
+      await git(
+        '-c',
+        'core.hooksPath=/dev/null',
+        '-c',
+        'user.name=Fixture',
+        '-c',
+        'user.email=fixture@example.invalid',
+        '-c',
+        'commit.gpgsign=false',
+        'commit',
+        '-qm',
+        'fixture',
+      );
+      return git('rev-parse', 'HEAD');
+    };
+    await git('init', '-q', '-b', 'main');
+    await writeFile(path.join(repo, 'message.txt'), 'base\n');
+    await commit();
+    await git('checkout', '-b', 'feature');
+    await writeFile(path.join(repo, 'message.txt'), 'feature\n');
+    const feature = await commit();
+    await git('checkout', 'main');
+    await writeFile(path.join(repo, 'upstream-only.txt'), 'Unrelated upstream work\n');
+    const publicationBase = await commit();
+    await git('checkout', 'feature');
+    Object.assign(f.subject, {
+      baseSha: publicationBase,
+      contributionBaseSha: publicationBase,
+      headSha: feature,
+    });
+    f.run.repeatReviewContext = undefined;
+    await materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps);
+    const manifest = JSON.parse(
+      await readFile(path.join(f.task, 'inputs/instruction-manifest.json'), 'utf8'),
+    );
+    assert.deepEqual(manifest.reviewCoverage.scopePaths, ['message.txt']);
+  });
+});
+
 test('accepted coverage is independently checked, retained and revalidated after source cleanup', async () => {
   await withReviewWorkspaceTaskFixture(async (f) => {
     const repo = f.run.reviewWorkspace!.checkoutPath;

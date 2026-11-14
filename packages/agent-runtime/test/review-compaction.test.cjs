@@ -6,6 +6,18 @@ const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const test = require('node:test');
 const { main } = require('../scripts/review-compaction.cjs');
+const { claudeCompactionArgs } = require('../scripts/context-compaction.cjs');
+const { claudeReadOnlyReviewArgs } = require('../scripts/workspace-trust.cjs');
+
+test('compaction keeps the same user settings and hook policy as the retained review', () => {
+  const args = claudeCompactionArgs('saved-session', 'fixture-model');
+  const start = args.indexOf('--setting-sources');
+  assert(start >= 0);
+  assert.deepEqual(
+    args.slice(start, start + claudeReadOnlyReviewArgs.length),
+    claudeReadOnlyReviewArgs,
+  );
+});
 
 function fixture(t, mode = '') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'terminal-compact-'));
@@ -57,27 +69,35 @@ console.log(JSON.stringify({type:'result',session_id:id,is_error:false}));
   };
 }
 
-test('terminal maintenance confirms structured evidence once; inspection/retry never sends again', async (t) => {
-  const input = fixture(t);
-  const record = await main(input);
-  assert.equal(record.status, 'confirmed');
-  assert.equal(record.evidence.nativeSessionId, input.request.nativeSessionId);
-  assert.equal(record.evidence.preTokens, 100);
-  assert.equal(record.evidence.postTokens, 25);
-  assert.deepEqual(await main({ ...input, action: 'inspect' }), record);
-  assert.deepEqual(await main(input), record);
-  assert.equal(fs.readFileSync(input.log, 'utf8'), 'send\n');
-  await assert.rejects(
-    main({ ...input, request: { ...input.request, packetDigest: 'c'.repeat(64) } }),
-    /identity changed/,
-  );
-});
+test(
+  'terminal maintenance confirms structured evidence once; inspection/retry never sends again',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const input = fixture(t);
+    const record = await main(input);
+    assert.equal(record.status, 'confirmed');
+    assert.equal(record.evidence.nativeSessionId, input.request.nativeSessionId);
+    assert.equal(record.evidence.preTokens, 100);
+    assert.equal(record.evidence.postTokens, 25);
+    assert.deepEqual(await main({ ...input, action: 'inspect' }), record);
+    assert.deepEqual(await main(input), record);
+    assert.equal(fs.readFileSync(input.log, 'utf8'), 'send\n');
+    await assert.rejects(
+      main({ ...input, request: { ...input.request, packetDigest: 'c'.repeat(64) } }),
+      /identity changed/,
+    );
+  },
+);
 
 for (const mode of ['foreign', 'missing'])
-  test(`terminal maintenance retains ${mode} boundary uncertainty without a resend`, async (t) => {
-    const input = fixture(t, mode);
-    const record = await main(input);
-    assert.equal(record.status, 'unconfirmed');
-    assert.equal((await main(input)).status, 'unconfirmed');
-    assert.equal(fs.readFileSync(input.log, 'utf8'), 'send\n');
-  });
+  test(
+    `terminal maintenance retains ${mode} boundary uncertainty without a resend`,
+    { skip: process.platform !== 'darwin' },
+    async (t) => {
+      const input = fixture(t, mode);
+      const record = await main(input);
+      assert.equal(record.status, 'unconfirmed');
+      assert.equal((await main(input)).status, 'unconfirmed');
+      assert.equal(fs.readFileSync(input.log, 'utf8'), 'send\n');
+    },
+  );

@@ -58,6 +58,10 @@
       "types": "./scripts/review-coverage.d.cts",
       "default": "./scripts/review-coverage.cjs"
     },
+    "./scripts/context-compaction.cjs": {
+      "types": "./scripts/context-compaction.d.cts",
+      "default": "./scripts/context-compaction.cjs"
+    },
     "./scripts/evidence-manifest.cjs": {
       "types": "./scripts/evidence-manifest.d.cts",
       "default": "./scripts/evidence-manifest.cjs"
@@ -126,6 +130,8 @@
     "scripts/execution-template-cli.mjs",
     "scripts/git-diff.d.cts",
     "scripts/review-diff-scope.d.cts",
+    "scripts/review-coverage.d.cts",
+    "scripts/context-compaction.d.cts",
     "scripts/evidence-manifest.d.cts",
     "scripts/farm-git.d.cts"
   ],

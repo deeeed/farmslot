@@ -148,6 +148,10 @@ const packages = [
       'scripts/acceptance-cli.cjs',
       'scripts/acceptance-contract.cjs',
       'scripts/acceptance-contract.d.cts',
+      'scripts/review-coverage.cjs',
+      'scripts/review-coverage.d.cts',
+      'scripts/context-compaction.cjs',
+      'scripts/context-compaction.d.cts',
     ],
     packRequiredFiles: [
       'README.md',
@@ -162,9 +166,13 @@ const packages = [
       'scripts/acceptance-cli.cjs',
       'scripts/acceptance-contract.cjs',
       'scripts/acceptance-contract.d.cts',
+      'scripts/review-coverage.cjs',
+      'scripts/review-coverage.d.cts',
+      'scripts/context-compaction.cjs',
+      'scripts/context-compaction.d.cts',
     ],
     importCheck:
-      "const m = await import('./packages/agent-runtime/dist/index.js'); if (m.AGENT_RUNTIME_PACKAGE !== '@farmslot/agent-runtime') throw new Error('missing agent-runtime root export');",
+      "const m = await import('./packages/agent-runtime/dist/index.js'); if (m.AGENT_RUNTIME_PACKAGE !== '@farmslot/agent-runtime') throw new Error('missing agent-runtime root export'); const c = await import('@farmslot/agent-runtime/scripts/context-compaction.cjs'); const r = await import('@farmslot/agent-runtime/scripts/review-coverage.cjs'); if (typeof c.claudeCompactionArgs !== 'function' || typeof r.composeReviewArtifacts !== 'function') throw new Error('missing review helper exports');",
   },
   {
     name: '@farmslot/adapter-rn',

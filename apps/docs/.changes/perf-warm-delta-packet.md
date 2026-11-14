@@ -1,0 +1,1 @@
+- Document compact WARM delta packets, validated review coverage reuse and runner context compaction.
