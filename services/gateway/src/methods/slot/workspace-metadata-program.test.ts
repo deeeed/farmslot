@@ -70,3 +70,43 @@ test('one metadata command reads normal and linked roots, detects changes, and i
     'reftable compatibility HEAD cannot justify reuse',
   );
 });
+
+test('local and remote metadata bypass ancestry caches for shallow, grafted and replaced graphs', async (t) => {
+  const { localWorkspaceVersion } = await import('./workspace-version.js');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'metadata-graph-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'linked'),
+    common = path.join(root, 'shared'),
+    gitDir = path.join(common, 'worktrees/linked');
+  await mkdir(repo);
+  await mkdir(gitDir, { recursive: true });
+  await writeFile(path.join(repo, '.git'), `gitdir: ${gitDir}\n`);
+  await writeFile(path.join(gitDir, 'commondir'), '../..\n');
+  await writeFile(path.join(gitDir, 'HEAD'), 'a'.repeat(40) + '\n');
+  const vars = { host: 'localhost', machine: 'fixture', sshTarget: '', remoteRepo: repo };
+  const remote = async () => {
+    const result = await execLocal(
+      workspaceMetadataCommand([
+        { slotId: 'graph', machine: 'fixture', repo, defaultBranch: 'main' },
+      ]),
+      { timeout: 1000 },
+    );
+    assert.equal(result.exitCode, 0, result.stderr);
+    const rows: unknown = JSON.parse(result.stdout);
+    assert.ok(Array.isArray(rows));
+    const row: unknown = rows[0];
+    assert.ok(isRecord(row));
+    return row.ancestryCacheable;
+  };
+  assert.equal((await localWorkspaceVersion(vars, 'main'))?.ancestryCacheable, true);
+  assert.equal(await remote(), true);
+  for (const file of ['shallow', 'info/grafts', 'refs/replace']) {
+    const target = path.join(common, file);
+    await mkdir(path.dirname(target), { recursive: true });
+    if (file === 'refs/replace') await mkdir(target);
+    else await writeFile(target, 'graph rewrite\n');
+    assert.equal((await localWorkspaceVersion(vars, 'main'))?.ancestryCacheable, false, file);
+    assert.equal(await remote(), false, file);
+    await rm(target, { recursive: true, force: true });
+  }
+});

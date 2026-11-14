@@ -13,6 +13,7 @@ import {
 import { readSlotProbe } from '../../core/read-probes.js';
 import { type ConnectedNode, getNode } from '../../fleet/machine-registry.js';
 
+import type { WorkspaceMetadataVersion } from './workspace-metadata-policy.js';
 import {
   workspaceMetadataCommand,
   type WorkspaceMetadataRoot,
@@ -28,12 +29,14 @@ interface MetadataBatch {
   connection: ConnectedNode['ws'];
   until: number;
   pending: boolean;
-  promise: Promise<Map<string, string>>;
+  promise: Promise<Map<string, WorkspaceMetadataVersion>>;
 }
 const batches = new Map<string, MetadataBatch>();
 const INTERVAL_MS = 15_000;
 
-async function remoteVersions(queries: MetadataQuery[]): Promise<Map<string, string>> {
+async function remoteVersions(
+  queries: MetadataQuery[],
+): Promise<Map<string, WorkspaceMetadataVersion>> {
   const first = queries[0];
   if (!first) return new Map();
   const connection = getNode(first.vars.machine)?.ws;
@@ -66,7 +69,7 @@ async function remoteVersions(queries: MetadataQuery[]): Promise<Map<string, str
         if (getNode(first.vars.machine)?.ws !== connection) return new Map();
         const rows: unknown = JSON.parse(result.stdout);
         const ids = new Set(roots.map((root) => root.slotId));
-        const versions = new Map<string, string>();
+        const versions = new Map<string, WorkspaceMetadataVersion>();
         if (!Array.isArray(rows) || rows.length !== ids.size)
           throw new Error('Invalid workspace metadata batch');
         for (const row of rows) {
@@ -74,17 +77,22 @@ async function remoteVersions(queries: MetadataQuery[]): Promise<Map<string, str
             !isRecord(row) ||
             typeof row.slotId !== 'string' ||
             !ids.delete(row.slotId) ||
-            (row.version !== null && typeof row.version !== 'string')
+            (row.version !== null && typeof row.version !== 'string') ||
+            typeof row.ancestryCacheable !== 'boolean'
           )
             throw new Error('Invalid workspace metadata row');
-          if (typeof row.version === 'string') versions.set(row.slotId, row.version);
+          if (typeof row.version === 'string')
+            versions.set(row.slotId, {
+              version: row.version,
+              ancestryCacheable: row.ancestryCacheable,
+            });
         }
         return versions;
       })
       .catch(() => {
         // Metadata is an optimization. No version forces the authoritative full inspection,
         // including its existing errors and unavailable retry policy, rather than stale reuse.
-        return new Map<string, string>();
+        return new Map<string, WorkspaceMetadataVersion>();
       })
       .finally(() => {
         entry.pending = false;
@@ -98,7 +106,7 @@ async function remoteVersions(queries: MetadataQuery[]): Promise<Map<string, str
 /** All passive roots share one metadata command per remote node per interval. */
 export async function passiveWorkspaceVersions(
   slots: readonly SlotStatus[],
-): Promise<Map<string, string>> {
+): Promise<Map<string, WorkspaceMetadataVersion>> {
   // A scoped owner/source must never join a machine-wide read or cache.
   if (currentSlotCommandExecutor() || currentProjectSources()) return new Map();
   const queries = await Promise.all(
@@ -118,7 +126,7 @@ export async function passiveWorkspaceVersions(
       }
     }),
   );
-  const versions = new Map<string, string>();
+  const versions = new Map<string, WorkspaceMetadataVersion>();
   const remote = new Map<string, MetadataQuery[]>();
   await Promise.all(
     queries.map(async (query) => {

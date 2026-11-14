@@ -44,7 +44,8 @@ def version(root):
   if not file.exists(): metadata.append(None)
   else:
    value=file.lstat();metadata.append([value.st_mtime_ns/1000000,value.st_size])
- return json.dumps([root['machine'],repo,default,os.path.normpath(gitdir),os.path.normpath(common),info.st_mtime_ns/1000000,info.st_size,head,refvalue,metadata],separators=(',',':'))
+ fingerprint=json.dumps([root['machine'],repo,default,os.path.normpath(gitdir),os.path.normpath(common),info.st_mtime_ns/1000000,info.st_size,head,refvalue,metadata],separators=(',',':'))
+ return dict(version=fingerprint,ancestryCacheable=all(not entry.get('blocksAncestryCache') or metadata[index] is None for index,entry in enumerate(policy['files'])))
 
 rows=[]
 for root in json.loads(sys.argv[1]):
@@ -52,7 +53,7 @@ for root in json.loads(sys.argv[1]):
  except OSError:
   # Optional metadata cannot justify reuse. The full inspection reports the actual failure.
   value=None
- rows.append(dict(slotId=root['slotId'],version=value))
+ rows.append(dict(slotId=root['slotId'],version=value['version'] if value else None,ancestryCacheable=value['ancestryCacheable'] if value else False))
 print(json.dumps(rows))
 FARMSLOT_WORKSPACE_METADATA`;
 }

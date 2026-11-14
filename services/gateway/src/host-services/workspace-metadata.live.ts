@@ -220,7 +220,9 @@ try {
     ),
   );
   const shellsPerMinute = executions / 10.5;
-  const enforceBudget = process.argv.includes('--assert-budget');
+  const ancestryBudget = process.argv.includes('--assert-ancestry-budget');
+  const enforceBudget = process.argv.includes('--assert-budget') || ancestryBudget;
+  const budget = ancestryBudget ? 75 : 115;
   for (const stats of nodeStats) assert.ok(isRecord(stats) && typeof stats.executions === 'number');
   const physicalExecutions =
     nodeStats.reduce<number>((sum, stats) => {
@@ -246,14 +248,17 @@ try {
         executions,
         shellsPerLogicalMinute: shellsPerMinute,
         nodeStats,
-        result: !enforceBudget || shellsPerMinute <= 115 ? 'PASS' : 'FAIL',
+        result: !enforceBudget || shellsPerMinute <= budget ? 'PASS' : 'FAIL',
       },
       null,
       2,
     ),
   );
   if (enforceBudget)
-    assert.ok(shellsPerMinute <= 115, `metadata reuse shell budget exceeded: ${shellsPerMinute}`);
+    assert.ok(
+      shellsPerMinute <= budget,
+      `metadata reuse shell budget exceeded: ${shellsPerMinute}`,
+    );
   // Separate from the rate window: a new node must not join an old pending read.
   const { loadSlotVars } = await import('../core/config.js');
   const { readSlotProbe } = await import('../core/read-probes.js');

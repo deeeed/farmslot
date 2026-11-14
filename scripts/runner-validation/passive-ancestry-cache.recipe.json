@@ -1,0 +1,28 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Passive default ancestry reuse",
+  "description": "Count successful ancestry subprocesses on unchanged pairs while preserving metadata refresh and fresh acting reads.",
+  "workflow": {
+    "entry": "metadata-budget",
+    "nodes": {
+      "metadata-budget": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx services/gateway/src/host-services/workspace-metadata.live.ts --assert-budget --assert-ancestry-budget",
+        "timeout_ms": 240000,
+        "intent": "Replay the same 67-slot/two-node workload with actual production node handlers. Assert at most75 total executions per logical minute and preserve the 90-second workspace refresh, negative ancestry and node-replacement behavior.",
+        "next": "dispatch-smoke"
+      },
+      "dispatch-smoke": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx services/gateway/src/run-lifecycle/safe-idle-slot.live.ts",
+        "timeout_ms": 300000,
+        "intent": "Authenticated private create, write-task, prepare and dispatch, then cancel/archive/reset. Supply immutable FARMSLOT_CLI, fresh FARMSLOT_SAFE_IDLE_PROOF_OUT and TMPDIR on an eligible volume; normal 50GB floor remains.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

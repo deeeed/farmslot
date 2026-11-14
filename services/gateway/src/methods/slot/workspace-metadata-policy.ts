@@ -2,6 +2,7 @@ interface WorkspaceMetadataFile {
   directory: 'git' | 'common';
   path: string;
   appendDefaultBranch?: boolean;
+  blocksAncestryCache?: boolean;
 }
 interface WorkspaceMetadataPolicy {
   marker: string;
@@ -29,5 +30,13 @@ export const WORKSPACE_METADATA_POLICY: WorkspaceMetadataPolicy = {
     { directory: 'common', path: 'config' },
     { directory: 'common', path: 'refs/remotes/origin', appendDefaultBranch: true },
     { directory: 'git', path: 'FETCH_HEAD' },
+    { directory: 'common', path: 'shallow', blocksAncestryCache: true },
+    { directory: 'common', path: 'info/grafts', blocksAncestryCache: true },
+    { directory: 'common', path: 'refs/replace', blocksAncestryCache: true },
   ],
 };
+
+export interface WorkspaceMetadataVersion {
+  version: string;
+  ancestryCacheable: boolean;
+}

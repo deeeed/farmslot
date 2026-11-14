@@ -1,0 +1,1 @@
+- Reuse successful passive default-branch ancestry checks on unchanged commit pairs and metadata while preserving fresh acting checks and all negative/error results.

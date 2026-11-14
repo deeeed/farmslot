@@ -2,7 +2,10 @@ import path from 'node:path';
 
 import { slotFileExists, type SlotLocality, slotReadFile, slotStat } from '../../core/slot-io.js';
 
-import { WORKSPACE_METADATA_POLICY as policy } from './workspace-metadata-policy.js';
+import {
+  WORKSPACE_METADATA_POLICY as policy,
+  type WorkspaceMetadataVersion,
+} from './workspace-metadata-policy.js';
 
 interface WorkspaceVersionSource extends SlotLocality {
   remoteRepo: string;
@@ -18,7 +21,7 @@ function relativeTo(directory: string, file: string): string {
 export async function localWorkspaceVersion(
   vars: WorkspaceVersionSource,
   defaultBranch: string,
-): Promise<string | undefined> {
+): Promise<WorkspaceMetadataVersion | undefined> {
   const marker = path.posix.join(vars.remoteRepo, policy.marker);
   if (!(await slotFileExists(vars, marker))) return undefined;
   const markerStat = await slotStat(vars, marker);
@@ -61,7 +64,7 @@ export async function localWorkspaceVersion(
       return [value.mtimeMs, value.size];
     }),
   );
-  return JSON.stringify([
+  const version = JSON.stringify([
     vars.machine,
     vars.remoteRepo,
     defaultBranch,
@@ -73,4 +76,10 @@ export async function localWorkspaceVersion(
     refValue,
     metadata,
   ]);
+  return {
+    version,
+    ancestryCacheable: policy.files.every(
+      (file, index) => !file.blocksAncestryCache || metadata[index] === null,
+    ),
+  };
 }
