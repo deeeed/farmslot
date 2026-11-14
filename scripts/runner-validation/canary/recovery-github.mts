@@ -37,6 +37,15 @@ function pullRequest(holds: string, number: number) {
 
 function answer(holds: string, method: string, pathname: string, payload: unknown): unknown {
   if (
+    method === 'POST' &&
+    /^\/repos\/fixture\/recovery\/issues\/(101|102)\/comments$/.test(pathname)
+  )
+    return { html_url: 'https://fixture.invalid/recovery-comment' };
+  if (method === 'POST' && /^\/repos\/fixture\/recovery\/pulls\/(101|102)\/reviews$/.test(pathname))
+    return {};
+  if (method === 'GET' && pathname.startsWith('/repos/fixture/recovery/compare/'))
+    return { files: [], commits: [] };
+  if (
     method === 'GET' &&
     /^\/repos\/fixture\/recovery\/issues\/(101|102)\/comments$/.test(pathname)
   )
@@ -44,7 +53,7 @@ function answer(holds: string, method: string, pathname: string, payload: unknow
   const rest = /^\/repos\/fixture\/recovery\/pulls\/(101|102)(?:\/(files|reviews|commits))?$/.exec(
     pathname,
   );
-  if (method === 'GET' && rest) {
+  if (rest && (method === 'GET' || (method === 'PATCH' && !rest[2]))) {
     const pr = pullRequest(holds, Number(rest[1]));
     if (rest[2] === 'files' || rest[2] === 'reviews') return [];
     if (rest[2] === 'commits')

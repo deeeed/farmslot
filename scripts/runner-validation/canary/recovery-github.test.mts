@@ -10,6 +10,8 @@ import { fetchGitHubPR } from '../../../services/gateway/src/external/github.js'
 import { getPRRawData } from '../../../services/gateway/src/methods/pr/raw-cache.js';
 import {
   githubPrChecksOp,
+  githubPrCommentOp,
+  githubPrEditOp,
   githubPrViewOp,
 } from '../../../services/gateway/src/integrations/github-operations.js';
 
@@ -68,6 +70,10 @@ test('recovery CI reads use the HTTP fixture without a keyring and reject unknow
     const ticket = await fetchGitHubPR(`fixture/recovery#${number}`);
     assert.equal(ticket.headSha, heads.get(number));
     assert.equal(ticket.branch, `fix/recovery-${number}`);
+    const edit = await githubPrEditOp('fixture/recovery', number, { title: 'Completion' }, {});
+    assert.equal(edit.data.trim(), `https://github.com/fixture/recovery/pull/${number}`);
+    const comment = await githubPrCommentOp('fixture/recovery', number, 'Fixture report', {});
+    assert.equal(comment.data.trim(), 'https://fixture.invalid/recovery-comment');
     const pr = await githubPrViewOp('fixture/recovery', number, ['state', 'headRefOid'], {});
     assert.deepEqual(pr.data, { state: 'OPEN', headRefOid: heads.get(number) });
     const checks = await githubPrChecksOp('fixture/recovery', number, ['name', 'bucket'], {});
