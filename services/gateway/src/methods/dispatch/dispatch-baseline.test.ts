@@ -24,7 +24,8 @@ const snapshots = await import('../../run-engine/diff-artifacts.js');
 const admission = await import('../../backlog/pr-admission.js');
 const slots = await import('../slot.js');
 const { makeVars } = await import('../../runners/test-fixtures.js');
-const { createRun, deleteRun, getRun, updateRun } = await import('../../runs/store.js');
+const { createRun, deleteRun, getRun, persistRunNow, updateRun } =
+  await import('../../runs/store.js');
 const vars = makeVars({ projectName: 'dispatch-baseline', platform: 'cli' });
 const baseline = 'a058550f8d0ad59470460ca37afb252d17380b48';
 const fixedHead = 'f3f36fc1' + '1'.repeat(32);
@@ -199,7 +200,8 @@ for (const scenario of [
       ],
     }));
     t.after(async () => {
-      updateRun(run.id, { status: 'done' });
+      // Drain queued run writes before deleting the fixture directory.
+      await persistRunNow(updateRun(run.id, { status: 'done' }));
       await deleteRun(run.id);
     });
     prepares = 0;
@@ -281,7 +283,7 @@ for (const scenario of [
       metrics: { ...run.metrics, runner: 'claude', model: 'opus' },
     });
     t.after(async () => {
-      updateRun(run.id, { status: 'done' });
+      await persistRunNow(updateRun(run.id, { status: 'done' }));
       await deleteRun(run.id);
     });
     await core.rewriteStatusFile(() => ({
@@ -348,7 +350,7 @@ test('fresh dispatch validates inherited local commits before trusting its basel
   }));
   t.after(async () => {
     refuseInheritedUnsigned = false;
-    updateRun(run.id, { status: 'done' });
+    await persistRunNow(updateRun(run.id, { status: 'done' }));
     await deleteRun(run.id);
   });
   refuseInheritedUnsigned = true;
@@ -412,7 +414,7 @@ for (const scenario of [
     }));
     t.after(async () => {
       projectJson = {};
-      updateRun(run.id, { status: 'done' });
+      await persistRunNow(updateRun(run.id, { status: 'done' }));
       await deleteRun(run.id);
     });
     runtimeBoots = 0;
