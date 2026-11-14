@@ -689,3 +689,27 @@ test('identical dispatch patches do not manufacture a durable updatedAt change',
     'A real new blocker',
   );
 });
+
+test('committed intent lookups equal a scan of the committed intents at every version', async (t) => {
+  const { store } = await fixture(t);
+  const { team, rule } = await ruleFor(store, 'owner', true);
+  const scan = (id: string) =>
+    store.snapshot((data) => data.intents.find((item) => item.id === id));
+  const check = (label: string) => {
+    const ids = [...store.snapshot().intents.map((item) => item.id), 'missing'];
+    for (const id of ids) assert.equal(store.committedIntent(id), scan(id), `${label}: ${id}`);
+  };
+  check('empty');
+  for (let index = 0; index < 4; index++) {
+    await store.applyPreview('owner', preview(team, rule, `head-${index}`));
+    check(`after preview ${index}`);
+  }
+  const [first] = store.snapshot().intents;
+  const before = store.committedIntent(first.id);
+  await store.updateDispatch(first.id, { waitingReason: 'A new blocker' });
+  check('after a dispatch update');
+  // A new committed version is read, not the indexed old one.
+  assert.notEqual(store.committedIntent(first.id), before);
+  assert.equal(store.committedIntent(first.id)?.waitingReason, 'A new blocker');
+  assert.ok(Object.isFrozen(store.committedIntent(first.id)));
+});

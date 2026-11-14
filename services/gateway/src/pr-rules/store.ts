@@ -306,6 +306,23 @@ export class PRRuleStore {
     return structuredClone(this.data.intents.find((item) => item.id === id));
   }
 
+  /** Committed intents by id, built once per committed version; the first of an id wins. */
+  private intentIndex?: { data: PRRuleStoreData; byId: Map<string, PRReviewIntent> };
+
+  /**
+   * The committed intent, frozen and shared like `snapshot()`: callers only read it. The same
+   * answer as `snapshot((data) => data.intents.find((item) => item.id === id))`, without the scan.
+   */
+  committedIntent(id: string): PRReviewIntent | undefined {
+    this.assertReadable();
+    if (this.intentIndex?.data !== this.data) {
+      const byId = new Map<string, PRReviewIntent>();
+      for (const item of this.data.intents) if (!byId.has(item.id)) byId.set(item.id, item);
+      this.intentIndex = { data: this.data, byId };
+    }
+    return this.intentIndex.byId.get(id);
+  }
+
   action(id: string): PRRuleActionRecord | undefined {
     this.assertReadable();
     return structuredClone(this.data.actions?.find((item) => item.id === id));
