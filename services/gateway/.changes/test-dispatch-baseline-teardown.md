@@ -1,0 +1,1 @@
+- Await dispatch-baseline fixture writes before teardown to prevent intermittent CI cleanup failures.
