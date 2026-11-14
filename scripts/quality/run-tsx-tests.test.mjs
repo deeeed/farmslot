@@ -375,6 +375,7 @@ const SHARED_STATE_READ_ONLY = {
   'src/fleet/stale-publication.test.ts':
     'writes only the private status path supplied per file by the runner',
   'src/fleet/status-bindings.test.ts': 'uses a private mkdtemp farm root and status path',
+  'src/core/state-read-cache.test.ts': 'sets a private mkdtemp status path before state imports',
   'src/fleet/status-commit-race.test.ts': 'uses a private mkdtemp farm root and status path',
   'src/methods/native-catalog-targets.test.ts':
     'mocks core config and fleet state; poolDir is an inert fixture value',
