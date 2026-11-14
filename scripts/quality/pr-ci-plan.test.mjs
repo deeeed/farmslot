@@ -238,3 +238,70 @@ test('worker scopes the selection filter to suite commands and clears it for CI 
     'ok',
   );
 });
+
+test('script batches keep native Node tests separate from typed tests', async () => {
+  const { createPrPlan } = await import('./pr-ci-plan.mjs');
+  const path = await import('node:path');
+  const selected = ['scripts/native.test.mjs', 'scripts/native.test.cjs', 'scripts/typed.test.mts'];
+  const plan = createPrPlan({ root: process.cwd(), changed: selected, workspaces: [], selected });
+  const tasks = plan.jobs
+    .flatMap(({ tasks }) => tasks)
+    .filter(({ id }) => id.startsWith('other-selected-tests-'));
+  const assigned = tasks.flatMap(({ args }) => args.filter((arg) => selected.includes(arg)));
+  assert.deepEqual(assigned.sort(), [...selected].sort());
+  for (const task of tasks) {
+    if (task.args.some((arg) => /\.[cm]?js$/.test(arg))) {
+      assert.deepEqual(task.args.slice(0, 2), ['node', '--test']);
+      assert.ok(!task.args.includes('tsx'));
+      assert.ok(!task.args.some((arg) => arg.startsWith('TSX_TSCONFIG_PATH=')));
+    } else {
+      const config = task.args.find((arg) => arg.startsWith('TSX_TSCONFIG_PATH='));
+      assert.equal(config, `TSX_TSCONFIG_PATH=${path.resolve('services/gateway/tsconfig.json')}`);
+    }
+  }
+});
+
+test('native fixture children and typed tests work after changing cwd', async (t) => {
+  const { spawnSync } = await import('node:child_process');
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const path = await import('node:path');
+  const { createPrPlan } = await import('./pr-ci-plan.mjs');
+  const root = process.cwd();
+  const fixture = mkdtempSync(path.join(tmpdir(), 'script-test-cwd-'));
+  t.after(() => rmSync(fixture, { recursive: true, force: true }));
+  const native = path.join(fixture, 'native.test.mjs');
+  const typed = path.join(fixture, 'typed.test.mts');
+  const child = path.join(fixture, 'child.mts');
+  writeFileSync(path.join(fixture, 'child.cjs'), "process.stdout.write('native-child-ok');\n");
+  writeFileSync(child, "const value: string = 'typed-child-ok'; process.stdout.write(value);\n");
+  writeFileSync(
+    native,
+    `import assert from 'node:assert/strict'; import { test } from 'node:test'; import { execFileSync } from 'node:child_process';
+    test('native child has no tsx loader', () => {
+      assert.ok(!process.execArgv.includes('tsx'));
+      assert.equal(execFileSync(process.execPath, ['child.cjs'], { cwd: ${JSON.stringify(fixture)}, encoding: 'utf8' }), 'native-child-ok');
+    });\n`,
+  );
+  writeFileSync(
+    typed,
+    `import assert from 'node:assert/strict'; import { test } from 'node:test'; import { execFileSync } from 'node:child_process'; import path from 'node:path';
+    test('typed child uses absolute config from another cwd', () => {
+      assert.ok(path.isAbsolute(process.env.TSX_TSCONFIG_PATH));
+      assert.equal(execFileSync(process.execPath, ['--import', ${JSON.stringify(import.meta.resolve('tsx'))}, ${JSON.stringify(child)}], { cwd: ${JSON.stringify(fixture)}, encoding: 'utf8' }), 'typed-child-ok');
+    });\n`,
+  );
+  const selected = [native, typed];
+  const plan = createPrPlan({ root, changed: selected, workspaces: [], selected });
+  const tasks = plan.jobs
+    .flatMap(({ tasks }) => tasks)
+    .filter(({ id }) => id.startsWith('other-selected-tests-'));
+  for (const task of tasks) {
+    const result = spawnSync(task.args[0], task.args.slice(1), {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, TSX_TSCONFIG_PATH: 'services/gateway/tsconfig.json' },
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+  }
+});
