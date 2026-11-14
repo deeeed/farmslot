@@ -318,14 +318,20 @@ const GATEWAY_SERIAL_INVENTORY = [
   'src/core/state.test.ts', //                        rewrites the root .farm-status.json
   'src/live-recipe/context.test.ts', //               writes fixtures into the repo pool/
   'src/methods/config.test.ts', //                    real dirs under repo projects/
+  'src/methods/filesystem-conditional.test.ts', // isolation pragma reviewed with its fixture
   'src/methods/filesystem.test.ts', //                writes fixtures into the repo pool/
   'src/methods/run/archive-blocked-slot.test.ts', //  writes fleet state during archive fixtures
   'src/methods/run/replay-step.test.ts', //           rewrites the root .farm-status.json
   'src/methods/slot/release.test.ts', //              rewrites the root .farm-status.json
   'src/methods/terminal-attachment-target.test.ts', // writes fixtures into the repo pool/
+  'src/resources/fleet-writer-publication.test.ts', // isolation pragma reviewed with its fixture
+  'src/resources/workspace-writer-publication.test.ts', // isolation pragma reviewed with its fixture
   'src/roadmap/store.test.ts', //                     real dirs under repo projects/
   'src/run-completion/artifact-mirror.test.ts', //    real JSON under repo pool/
+  'src/run-engine/gate-refresh-review-policy.test.ts', // isolation pragma reviewed with its fixture
+  'src/run-engine/monitor-transport-abort.test.ts', // isolation pragma reviewed with its fixture
   'src/run-engine/publish-package-refresh.test.ts', // real JSON under repo pool/
+  'src/run-engine/run-monitor-operator.test.ts', // isolation pragma reviewed with its fixture
   'src/security/principal-core.test.ts', //           fixed credential-store fixtures
   'src/tasks/writer-golden.test.ts', //               shared .sandbox task directories
   'src/tasks/writer-split.test.ts', //                shared .sandbox task directories
@@ -361,34 +367,36 @@ export function reachesSharedState(source) {
 // accessors above must be serial, which is why the guard matches the accessor
 // rather than the write.
 const SHARED_STATE_READ_ONLY = {
-  'src/backlog/dispatch-queue.test.ts':
-    'writes one process-unique projects/ fixture (physical-devices-<pid>) and removes it on teardown',
-  'src/backlog/store.test.ts':
-    'writes only process-unique .sandbox and project fixture paths, so concurrent lanes cannot collide',
-  'src/intelligence/learnings-router.test.ts':
-    'uses a process-unique project fixture and restores every touched file',
   'src/projects/repo-root.test.ts': 'asserts resolved paths only; never writes',
   'src/runtime/session-usage-script.test.ts': 'declares its own temp poolDir under a mkdtemp root',
-  'src/methods/run.test.ts':
-    'writes under the real projectsDir but only via mkdtempSync, so every fixture path is unique ' +
-    'per call and cannot collide with another lane; it must move to the serial lane if it ever ' +
-    'writes a fixed name there',
   'src/methods/run/blocked-worker-resume.test.ts':
     'writes only the isolated per-file fleet status supplied by the test runner',
-  'src/node-support/remote-command.test.ts': 'uses process-unique project fixtures with teardown',
-  'src/pr-rules/automatic-qa.test.ts':
-    'redirects root, pool, projects and status to its own mkdtemp fixture',
-  'src/pr-rules/qa-workflow-defaults.test.ts':
-    'redirects root, pool, projects and status to its own mkdtemp fixture',
-  'src/pr-rules/source-review.test.ts':
-    'redirects root, pool, projects and status to its own mkdtemp fixture',
-  'src/review-workspaces/direct-defaults.test.ts':
-    'redirects root, pool, projects and status to its own mkdtemp fixture',
-  'src/run-completion/publish-body-race.test.ts':
-    'uses a process-unique project fixture with teardown',
-  'src/self-review/reviewed-inputs.test.ts':
-    'uses process-unique pool and task fixtures with teardown',
-  'src/self-review/templates.test.ts': 'uses process-unique project fixtures with teardown',
+  'src/core/cleanup-scope.test.ts': 'sets a private mkdtemp status path before state imports',
+  'src/fleet/stale-publication.test.ts':
+    'writes only the private status path supplied per file by the runner',
+  'src/fleet/status-bindings.test.ts': 'uses a private mkdtemp farm root and status path',
+  'src/fleet/status-commit-race.test.ts': 'uses a private mkdtemp farm root and status path',
+  'src/methods/native-catalog-targets.test.ts':
+    'mocks core config and fleet state; poolDir is an inert fixture value',
+  'src/methods/run/extend-review-budget.test.ts':
+    'uses per-file fleet status and unique run identifiers',
+  'src/methods/run/replay-signal-preservation.test.ts':
+    'selects a private mkdtemp status path before imports',
+  'src/methods/runner-models-pi-cli.test.ts':
+    'redirects pool and projects to a private mkdtemp farm root',
+  'src/methods/slot/workspace-cache.test.ts': 'writes only its private mkdtemp farm status file',
+  'src/node-support/remote-command-bundle-cache.test.ts':
+    'redirects pool and farm home to a private mkdtemp root',
+  'src/run-lifecycle/idle-devserver-service.test.ts':
+    'mocks state; real-state cases use the private per-file status path',
+  'src/run-lifecycle/validation-run-commits.test.ts':
+    'uses private Git fixtures and the per-file fleet status path',
+  'src/runners/native/worker-launch.test.ts':
+    'creates each pool fixture below its own mkdtemp task home',
+  'src/security/person-sessions.test.ts':
+    'selects a private mkdtemp farm root before state imports',
+  'src/tasks/writer-handoff-owner.test.ts':
+    'redirects all farm paths and status to a private mkdtemp root',
 };
 
 test('each executed test receives an isolated fleet status file', () => {
@@ -1135,3 +1143,24 @@ test('b', () => writeFileSync(${JSON.stringify(second)}, ''));
     assert.equal(existsSync(second), false, 'the interrupted run started another test file');
   },
 );
+
+test('CI selection runs the affected file and excludes an unrelated failing file', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'ci-selection-'));
+  try {
+    const included = path.join(root, 'included.test.ts');
+    writeFileSync(included, "import { test } from 'node:test'; test('selected', () => {});\n");
+    writeFileSync(path.join(root, 'excluded.test.ts'), "throw new Error('unrelated file ran');\n");
+    const selection = path.join(root, 'selection.json');
+    writeFileSync(selection, JSON.stringify({ root, files: [included] }));
+    const result = spawnSync(process.execPath, [RUNNER_PATH, '--cwd', REPO_ROOT, root], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      env: { ...process.env, FARMSLOT_CI_TEST_SELECTION: selection },
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /included\.test\.ts/);
+    assert.doesNotMatch(result.stdout + result.stderr, /unrelated file ran/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

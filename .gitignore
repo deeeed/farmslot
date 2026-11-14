@@ -46,6 +46,8 @@ projects/*/runs/
 /.yarn/*
 !/.yarn/patches
 /.cache/eslint/
+/.cache/pr-ci/
+/.cache/node-compile/
 
 **.DS_Store
 .claude/scheduled_tasks.lock

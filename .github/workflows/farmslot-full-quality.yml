@@ -1,0 +1,77 @@
+name: Farmslot Full Quality
+
+on:
+  push:
+    branches: [main]
+  merge_group:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+# Full validation uses two jobs and cannot occupy the PR worker matrix.
+concurrency:
+  group: full-quality-${{ github.event_name == 'push' && 'main' || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+permissions:
+  contents: read
+
+jobs:
+  full:
+    name: Full repository validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      FARMSLOT_TSX_TEST_WORKERS: '2'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/ci-setup
+      - name: Verify pinned tmux
+        run: test "$(tmux -V)" = "tmux 3.4"
+      - name: Full source, architecture, package, test and build gates
+        run: |
+          yarn ci:local
+          yarn quality
+          node --test scripts/quality/affected-tests.test.mjs scripts/quality/pr-ci-plan.test.mjs scripts/quality/workspace-test-targets.test.mjs
+          node scripts/quality/ci-full-supplement.mjs
+          yarn --cwd apps/companion quality:structure:ci
+          git diff --exit-code -- apps/docs/docs docs/reference/template-variables.md
+          yarn cc:build:pages
+          node scripts/quality/pr-ci-run.mjs acceptance
+          node scripts/quality/pr-ci-run.mjs transport
+          node scripts/quality/pr-ci-run.mjs farm-proof
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.16.0'
+      - name: CLI gateway transport on Node 24.16
+        working-directory: packages/cli
+        run: node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src/gateway-client.test.ts
+
+  desktop:
+    name: macOS installers and boundary tests
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+      - run: corepack enable
+      - run: yarn install --immutable
+      - run: yarn workspace @farmslot/command-center-desktop test
+      - run: yarn workspace @farmslot/command-center-desktop package:mac
+      - run: yarn workspace @farmslot/command-center-desktop exec electron-builder --config build/development.cjs --mac --arm64 --config.mac.identity=null
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v6
+        with:
+          name: farmslot-macos-arm64
+          retention-days: 7
+          path: |
+            apps/command-center-desktop/release/*.dmg
+            apps/command-center-desktop/release/*.zip
+            apps/command-center-desktop/release-dev/*.dmg
+            apps/command-center-desktop/release-dev/*.zip
+          if-no-files-found: error

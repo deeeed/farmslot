@@ -22,7 +22,7 @@ const SHARED_INPUTS = new Set([
   'scripts/quality/workspace-test-targets.mjs',
 ]);
 
-export function selectWorkspaceTests(workspaces, changedFiles, filters, jobIds) {
+export function affectedWorkspaceNames(workspaces, changedFiles) {
   const all =
     changedFiles === null ||
     changedFiles.some(
@@ -57,6 +57,12 @@ export function selectWorkspaceTests(workspaces, changedFiles, filters, jobIds) 
       }
     }
   } while (expanded);
+
+  return affected;
+}
+
+export function selectWorkspaceTests(workspaces, changedFiles, filters, jobIds) {
+  const affected = affectedWorkspaceNames(workspaces, changedFiles);
 
   const targets = new Set(Object.keys(filters).filter((name) => filters[name] === 'true'));
   // Existing filters also describe source dependencies outside package manifests.

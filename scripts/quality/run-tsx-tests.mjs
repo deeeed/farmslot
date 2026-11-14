@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -732,7 +733,19 @@ async function main() {
 
   normalizeTimingsDir();
   const workers = resolveWorkers(workersArg);
-  const tests = selectShard(discoverTests(roots, cwd), shard);
+  let tests = selectShard(discoverTests(roots, cwd), shard);
+  const selectionFile = process.env.FARMSLOT_CI_TEST_SELECTION;
+  if (selectionFile) {
+    const selection = JSON.parse(readFileSync(selectionFile, 'utf8'));
+    const selected = new Set(selection.files.map((file) => resolve(file)));
+    tests = tests.filter(
+      (file) => !file.startsWith(`${resolve(selection.root)}/`) || selected.has(file),
+    );
+    if (tests.length === 0) {
+      console.log('No dependency-affected tests in this invocation.');
+      return;
+    }
+  }
   if (tests.length === 0) {
     console.error(`No .test.ts files selected under: ${roots.join(', ')}`);
     process.exitCode = 1;
@@ -834,7 +847,7 @@ async function main() {
 
   for (const line of summaryLines(report)) console.log(line);
   const artifactPath = writeTimingArtifact(
-    `tsx-tests-${report.workspace}.json`,
+    `tsx-tests-${report.workspace}${selectionFile ? `-${createHash('sha256').update(roots.join('\0')).digest('hex').slice(0, 12)}` : ''}.json`,
     buildArtifact(report),
   );
   if (artifactPath) console.log(`[tsx-tests] timings artifact: ${artifactPath}`);
