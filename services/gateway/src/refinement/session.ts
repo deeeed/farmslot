@@ -9,6 +9,7 @@ import { literalReplacement } from '@farmslot/protocol/scripts/literal-replaceme
 
 import { isLocal } from '../core/exec.js';
 import { assertNoUnknownPlaceholders } from '../core/hooks.js';
+import { splitTmuxFields, tmuxFieldFormat } from '../core/tmux.js';
 import { resolveMachinePoolConfig } from '../fleet/machine-pool.js';
 import { farmslotRoot, loadPoolConfigs } from '../fleet/state.js';
 import { buildInteractiveRefinementRunnerCommand } from '../runners/launch-command.js';
@@ -50,11 +51,17 @@ export async function resolveTmuxSessionWorker(session: string): Promise<TmuxWor
     '-t',
     `=${session}`,
     '-F',
-    '#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_id}',
+    tmuxFieldFormat(
+      '#{session_name}',
+      '#{window_index}',
+      '#{window_name}',
+      '#{pane_index}',
+      '#{pane_id}',
+    ),
   ]);
   const [line] = stdout.split('\n').filter(Boolean);
   if (!line) throw new Error(`tmux session ${session} has no panes`);
-  const [sessionName, window, windowName, pane, paneId] = line.split('\t');
+  const [sessionName, window, windowName, pane, paneId] = splitTmuxFields(line, 5);
   const target = paneId || `${sessionName}:${window}.${pane}`;
   return {
     nodeId: await localTmuxWorkerNodeId(),
@@ -76,9 +83,15 @@ export async function resolveTmuxTargetWorker(target: string): Promise<TmuxWorke
       '-t',
       exactTarget,
       '-F',
-      '#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_id}',
+      tmuxFieldFormat(
+        '#{session_name}',
+        '#{window_index}',
+        '#{window_name}',
+        '#{pane_index}',
+        '#{pane_id}',
+      ),
     ]);
-    const [sessionName, window, windowName, pane, paneId] = stdout.trim().split('\t');
+    const [sessionName, window, windowName, pane, paneId] = splitTmuxFields(stdout.trim(), 5);
     if (!sessionName || !window || !pane) return null;
     return {
       nodeId: await localTmuxWorkerNodeId(),

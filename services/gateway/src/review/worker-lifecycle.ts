@@ -5,7 +5,14 @@ import { agentRoleWindow, isReviewerWindowName, primaryRoleForFlow } from '@farm
 import { resolveAgentTarget } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import { ensureTmuxWindow, firstWindowTarget, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
+import {
+  ensureTmuxWindow,
+  firstWindowTarget,
+  shellQuote,
+  splitTmuxFields,
+  tmuxFieldFormat,
+  tmuxShellSnippet,
+} from '../core/tmux.js';
 import {
   nativeWorkerLiveStatus,
   readNativeWorkerSnapshot,
@@ -265,7 +272,13 @@ export async function rediscoverAcceptingWorkerPane(
       await execOnSlot(
         vars,
         tmuxShellSnippet(
-          `list-panes -s -t ${shellQuote(session)} -F '#{window_index}|#{window_name}|#{pane_index}|#{pane_current_command}|#{pane_pid}' 2>/dev/null`,
+          `list-panes -s -t ${shellQuote(session)} -F '${tmuxFieldFormat(
+            '#{window_index}',
+            '#{window_name}',
+            '#{pane_index}',
+            '#{pane_current_command}',
+            '#{pane_pid}',
+          )}' 2>/dev/null`,
         ),
       )
     ).stdout.trim();
@@ -274,7 +287,7 @@ export async function rediscoverAcceptingWorkerPane(
       .map((line) => line.trim())
       .filter(Boolean)
       .map((line) => {
-        const [windowIndex, windowName, paneIndex, command, panePid] = line.split('|');
+        const [windowIndex, windowName, paneIndex, command, panePid] = splitTmuxFields(line, 5);
         return { windowIndex, windowName, paneIndex, command, panePid };
       })
       .filter((pane) => pane.windowIndex && pane.paneIndex);

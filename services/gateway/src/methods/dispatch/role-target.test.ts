@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { TMUX_FIELD_SEPARATOR } from '../../core/tmux-fields.js';
+
 import { canonicalAgentContextTarget, parseCapturedAgentPaneTarget } from './role-target.js';
 
 test('dispatch refuses to record the dev-server log pane as its worker', () => {
   assert.throws(
-    () => parseCapturedAgentPaneTarget('mmt-3', 'mmt-3:2.1|devserver-log|%250'),
+    () =>
+      parseCapturedAgentPaneTarget(
+        'mmt-3',
+        ['mmt-3:2.1', 'devserver-log', '%250'].join(TMUX_FIELD_SEPARATOR),
+      ),
     /devserver-log.*worker/,
   );
 });

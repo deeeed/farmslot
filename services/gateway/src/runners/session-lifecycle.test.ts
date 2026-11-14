@@ -3,7 +3,8 @@ import test from 'node:test';
 
 import type { MachinePauseRecoveryHandle } from '@farmslot/protocol';
 
-import type { TmuxWindowRef } from '../core/tmux.js';
+import { type TmuxWindowRef } from '../core/tmux.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
 
 import { RUNNER_LAUNCH_READY_TIMEOUT_MS } from './launch-command.js';
 import {
@@ -48,7 +49,7 @@ const handle: MachinePauseRecoveryHandle = {
   taskDir: 'tasks/run-1',
   capturedAt: '2026-08-21T00:00:00.000Z',
 };
-const EXACT_PANE_ROW = 'slot-1\tworker\t%1\t101\n';
+const EXACT_PANE_ROW = `slot-1${TMUX_FIELD_SEPARATOR}worker${TMUX_FIELD_SEPARATOR}%1${TMUX_FIELD_SEPARATOR}101\n`;
 /** Pane-scoped liveness for the graceful-exit poll: present until `liveProbes` are spent. */
 const paneLiveness = (liveProbes: number) => {
   let seen = 0;
@@ -225,7 +226,10 @@ test('runnerRunningForPark reports structured residual liveness', async () => {
 });
 
 test('parking accepts a proven stopped moved pane without sending or reloading it', async () => {
-  for (const row of ['slot-1-orch\tworker\t%1\t101\n', 'slot-1\tretired\t%1\t101\n']) {
+  for (const row of [
+    `slot-1-orch${TMUX_FIELD_SEPARATOR}worker${TMUX_FIELD_SEPARATOR}%1${TMUX_FIELD_SEPARATOR}101\n`,
+    `slot-1${TMUX_FIELD_SEPARATOR}retired${TMUX_FIELD_SEPARATOR}%1${TMUX_FIELD_SEPARATOR}101\n`,
+  ]) {
     const commands: string[] = [];
     const deps = {
       exec: async (_vars: unknown, command: string) => {
@@ -265,7 +269,9 @@ test('a moved pane refuses a foreign live session or an unreadable process tree'
       commands.push(command);
       return {
         exitCode: 0,
-        stdout: command.includes('display-message') ? 'slot-1-orch\tworker\t%1\t101\n' : '',
+        stdout: command.includes('display-message')
+          ? `slot-1-orch${TMUX_FIELD_SEPARATOR}worker${TMUX_FIELD_SEPARATOR}%1${TMUX_FIELD_SEPARATOR}101\n`
+          : '',
         stderr: '',
       };
     },
@@ -305,7 +311,9 @@ test('parking stops a moved live pane only after proving its saved conversation'
         commands.push(command);
         return {
           exitCode: 0,
-          stdout: command.includes('display-message') ? 'slot-1-orch\tworker\t%1\t101\n' : '',
+          stdout: command.includes('display-message')
+            ? `slot-1-orch${TMUX_FIELD_SEPARATOR}worker${TMUX_FIELD_SEPARATOR}%1${TMUX_FIELD_SEPARATOR}101\n`
+            : '',
           stderr: '',
         };
       },

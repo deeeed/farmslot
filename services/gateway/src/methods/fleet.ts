@@ -44,7 +44,13 @@ import {
   type SlotVars,
 } from '../core/index.js';
 import { lazyImport } from '../core/lazy-import.js';
-import { shellQuote, tmuxSessionCandidates, tmuxShellSnippet } from '../core/tmux.js';
+import {
+  shellQuote,
+  splitTmuxFields,
+  tmuxFieldFormat,
+  tmuxSessionCandidates,
+  tmuxShellSnippet,
+} from '../core/tmux.js';
 import {
   fleetStaleThresholdMs,
   isFleetCheckedAtStale,
@@ -1494,13 +1500,13 @@ async function checkMachineAgents(
     const listing = await execOnSlot(
       via,
       tmuxShellSnippet(
-        `list-panes -a -F '#{session_name}|#{window_active}|#{pane_pid}' 2>/dev/null`,
+        `list-panes -a -F '${tmuxFieldFormat('#{session_name}', '#{window_active}', '#{pane_pid}')}' 2>/dev/null`,
       ),
       machineWide,
     );
     if (listing.exitCode === 0)
       for (const line of listing.stdout.split('\n')) {
-        const [session, active, panePid] = line.trim().split('|');
+        const [session, active, panePid] = splitTmuxFields(line.trim(), 3);
         if (session && active === '1' && panePid && !activePane.has(session))
           activePane.set(session, panePid);
       }

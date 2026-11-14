@@ -6,6 +6,7 @@ import type { ActiveResourcePointer, Run, SlotResource } from '@farmslot/protoco
 
 import '../runtime/mock-pty.test-support.js';
 
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
 let clock = 1000;
@@ -141,7 +142,7 @@ const fixtureExec = async (_vars: unknown, command: string) => {
     return {
       stdout:
         tmuxState === 'present'
-          ? `fixture-session\t%7\t201\t${outsideRepo ? '/other-workspace' : '/fixture'}\t/fixture\n`
+          ? `fixture-session${TMUX_FIELD_SEPARATOR}%7${TMUX_FIELD_SEPARATOR}201${TMUX_FIELD_SEPARATOR}${outsideRepo ? '/other-workspace' : '/fixture'}${TMUX_FIELD_SEPARATOR}/fixture\n`
           : '',
       stderr: '',
       exitCode: tmuxState === 'present' ? 0 : tmuxState === 'timeout' ? 124 : 1,

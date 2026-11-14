@@ -8,6 +8,8 @@ import {
   resolveTmuxSession,
   respawnTmuxPaneWithCommand,
   shellQuote,
+  splitTmuxFields,
+  tmuxFieldFormat,
   tmuxSendTextCommand,
   tmuxShellSnippet,
 } from '../core/tmux.js';
@@ -933,7 +935,12 @@ async function inspectExactPane(
   const panes = await deps.exec(
     vars,
     tmuxShellSnippet(
-      `display-message -p -t ${shellQuote(paneId)} '#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_pid}' 2>/dev/null`,
+      `display-message -p -t ${shellQuote(paneId)} '${tmuxFieldFormat(
+        '#{session_name}',
+        '#{window_name}',
+        '#{pane_id}',
+        '#{pane_pid}',
+      )}' 2>/dev/null`,
     ),
     { timeout: timeoutMs },
   );
@@ -947,7 +954,7 @@ async function inspectExactPane(
   if (rows.length !== 1) {
     return { error: `Expected one exact tmux pane ${paneId}, found ${rows.length}` };
   }
-  const [session, windowName, observedPaneId, panePid] = rows[0]!.split('\t', 4);
+  const [session, windowName, observedPaneId, panePid] = splitTmuxFields(rows[0]!, 4);
   if (observedPaneId !== paneId || !panePid || !session) {
     return { error: `Tmux pane identity changed for ${paneId}` };
   }

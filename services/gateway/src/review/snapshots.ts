@@ -14,7 +14,12 @@ import { resolveReviewMode, reviewArtifactDir } from '@farmslot/review-dispatch'
 
 import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot, type ExecResult } from '../core/exec.js';
-import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
+import {
+  shellQuote,
+  TMUX_FIELD_SEPARATOR,
+  tmuxFieldFormat,
+  tmuxShellSnippet,
+} from '../core/tmux.js';
 import {
   writeLargeTextFileOnSlot,
   writeTextFileOnSlot,
@@ -682,7 +687,10 @@ export function tmuxListReviewWindowIdsSnippet(
     return `list-windows -t ${shellQuote(session)} -F '#{?#{==:#{window_name},${name}},#{window_id},}' 2>/dev/null | grep -E '^@' || true`;
   }
   // Match legacy review plus short rev-* / revN-* reviewer tabs.
-  return `list-windows -t ${shellQuote(session)} -F '#{window_id}\t#{window_name}' 2>/dev/null | awk -F'\\t' '$2=="${REVIEW_WINDOW}" || $2 ~ /^rev[0-9]*-/ { print $1 }' || true`;
+  return `list-windows -t ${shellQuote(session)} -F '${tmuxFieldFormat(
+    '#{window_id}',
+    '#{window_name}',
+  )}' 2>/dev/null | awk -F'${TMUX_FIELD_SEPARATOR}' '$2=="${REVIEW_WINDOW}" || $2 ~ /^rev[0-9]*-/ { print $1 }' || true`;
 }
 
 export async function killReviewWindow(

@@ -56,6 +56,8 @@ import {
   resolveTmuxPaneId,
   resolveTmuxSession,
   shellQuote,
+  splitTmuxFields,
+  tmuxFieldFormat,
   tmuxSendTextCommand,
   tmuxShellSnippet,
 } from '../core/tmux.js';
@@ -2834,10 +2836,14 @@ export async function execRunnerInput(
   const pane = await exec(
     vars,
     tmuxShellSnippet(
-      `display-message -p -t ${shellQuote(target)} '#{pane_id}|#{pane_pid}|#{pane_current_command}'`,
+      `display-message -p -t ${shellQuote(target)} '${tmuxFieldFormat(
+        '#{pane_id}',
+        '#{pane_pid}',
+        '#{pane_current_command}',
+      )}'`,
     ),
   );
-  const [paneId, panePid, foreground] = pane.stdout.trim().split('|');
+  const [paneId, panePid, foreground] = splitTmuxFields(pane.stdout.trim(), 3);
   if (pane.exitCode !== 0 || !/^%\d+$/.test(paneId ?? '') || !/^\d+$/.test(panePid ?? ''))
     throw new Error(`Runner input refused: terminal ${target} is unavailable; no input was sent`);
   const { buildRunnerInputHostGuardCommand, probeRunnerDescendantPid, isShellProcessCommand } =
@@ -4455,7 +4461,10 @@ export async function resolvePrimaryWorkerTarget(
   const result = await execOnSlot(
     vars,
     tmuxShellSnippet(
-      `list-windows -t ${shellQuote(`=${session}`)} -F '#{window_index} #{window_name}' 2>/dev/null`,
+      `list-windows -t ${shellQuote(`=${session}`)} -F '${tmuxFieldFormat(
+        '#{window_index}',
+        '#{window_name}',
+      )}' 2>/dev/null`,
     ),
   );
   if (result.exitCode !== 0)
@@ -4463,8 +4472,7 @@ export async function resolvePrimaryWorkerTarget(
       `Cannot inspect worker windows in ${session}: ${result.stderr || `exit ${result.exitCode}`}`,
     );
   for (const line of result.stdout.split('\n')) {
-    const [index, ...rest] = line.trim().split(/\s+/);
-    const name = rest.join(' ');
+    const [index, name] = splitTmuxFields(line.trim(), 2);
     if (index && name !== DEVSERVER_LOG_WINDOW_NAME && !isReviewerWindowName(name))
       return `${session}:${index}`;
   }

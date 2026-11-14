@@ -28,6 +28,8 @@ import {
   DEVSERVER_LOG_WINDOW_NAME,
   resolveTmuxSession,
   shellQuote,
+  splitTmuxFields,
+  tmuxFieldFormat,
   tmuxShellSnippet,
 } from '../core/tmux.js';
 import type { ResourceShutdownOutcome } from '../fleet/slot-cleanup.js';
@@ -184,7 +186,16 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
   const listed = await execOnSlot(
     vars,
     tmuxShellSnippet(
-      "list-panes -a -F '#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_path}\t#{session_path}\t#{session_id}\t#{session_created}\t#{window_name}'",
+      `list-panes -a -F '${tmuxFieldFormat(
+        '#{session_name}',
+        '#{pane_id}',
+        '#{pane_pid}',
+        '#{pane_current_path}',
+        '#{session_path}',
+        '#{session_id}',
+        '#{session_created}',
+        '#{window_name}',
+      )}'`,
     ),
     { cwd: '/' },
   );
@@ -217,7 +228,7 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
   const sessionOrigins = new Map<string, string>();
   for (const line of listed.stdout.split('\n')) {
     const [session, paneId, panePid, cwd, origin, sessionId, createdAt, windowName] =
-      line.split('\t');
+      splitTmuxFields(line, 8);
     if (ownedPanes.has(paneId) && windowName !== DEVSERVER_LOG_WINDOW_NAME) {
       const worker = await probeRunnerDescendantPid(vars, panePid);
       if (worker.state !== 'absent')

@@ -7,6 +7,8 @@ import { after, mock, test, type TestContext } from 'node:test';
 
 import type { NativeSessionReadResult } from '@farmslot/protocol';
 
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
+
 const root = await mkdtemp(path.join(os.tmpdir(), 'operator-transport-'));
 process.env.FARMSLOT_HOME = root;
 process.env.FARMSLOT_RUNS_DIR = path.join(root, 'runs');
@@ -93,7 +95,9 @@ mock.module('./session-lifecycle.js', {
         return lifecycle.reloadRunnerForPark(options, {
           exec: async (_vars, command) => ({
             exitCode: 0,
-            stdout: command.includes('display-message') ? 'proof\tworker\t%999999\t101\n' : '',
+            stdout: command.includes('display-message')
+              ? `proof${TMUX_FIELD_SEPARATOR}worker${TMUX_FIELD_SEPARATOR}%999999${TMUX_FIELD_SEPARATOR}101\n`
+              : '',
             stderr: '',
           }),
           findRunnerPid: async () => (live ? '202' : ''),

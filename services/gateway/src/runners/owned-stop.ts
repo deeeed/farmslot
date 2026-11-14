@@ -7,6 +7,8 @@ import {
   DEVSERVER_LOG_WINDOW_NAME,
   resolveExactTmuxWindowPane,
   shellQuote,
+  splitTmuxFields,
+  tmuxFieldFormat,
   tmuxSendTextCommand,
   tmuxShellSnippet,
 } from '../core/tmux.js';
@@ -68,10 +70,14 @@ async function exitPublishedRunWorker(
   // the live pane and its runner must still be the ones first checked.
   const pane = await exec(
     tmuxShellSnippet(
-      `display-message -p -t ${shellQuote(worker.paneId)} -F '#{session_name}\t#{pane_id}\t#{pane_pid}'`,
+      `display-message -p -t ${shellQuote(worker.paneId)} -F '${tmuxFieldFormat(
+        '#{session_name}',
+        '#{pane_id}',
+        '#{pane_pid}',
+      )}'`,
     ),
   );
-  if (pane.stdout.trim() !== `${worker.session}\t${worker.paneId}\t${worker.panePid}`)
+  if (pane.stdout.trim() !== tmuxFieldFormat(worker.session, worker.paneId, String(worker.panePid)))
     return 'the worker pane changed before the exit was sent';
   const before = await probe();
   if (before.state !== 'present' || before.pid !== worker.runnerPid)
@@ -182,7 +188,13 @@ export async function quiescentHistoricalWorkerPanes(
   const listed = await execOnSlot(
     vars,
     tmuxShellSnippet(
-      "list-panes -a -F '#{session_name}\t#{window_name}\t#{window_id}\t#{pane_id}\t#{pane_pid}'",
+      `list-panes -a -F '${tmuxFieldFormat(
+        '#{session_name}',
+        '#{window_name}',
+        '#{window_id}',
+        '#{pane_id}',
+        '#{pane_pid}',
+      )}'`,
     ),
     { cwd: '/' },
   );
@@ -197,7 +209,7 @@ export async function quiescentHistoricalWorkerPanes(
   if (listed.exitCode !== 0) return null;
   const panes: string[] = [];
   for (const line of listed.stdout.split('\n').filter(Boolean)) {
-    const [session, window, windowId, paneId, panePid] = line.split('\t');
+    const [session, window, windowId, paneId, panePid] = splitTmuxFields(line, 5);
     if (!/^%\d+$/.test(paneId ?? '') || !/^\d+$/.test(panePid ?? '')) return null;
     if (
       session !== target.session ||
@@ -266,13 +278,17 @@ export async function stopRunOwnedTmuxWorkers(
     const pane = await execOnSlot(
       vars,
       tmuxShellSnippet(
-        `display-message -p -t ${shellQuote(targetPaneId)} -F '#{session_name}\t#{pane_id}\t#{pane_pid}'`,
+        `display-message -p -t ${shellQuote(targetPaneId)} -F '${tmuxFieldFormat(
+          '#{session_name}',
+          '#{pane_id}',
+          '#{pane_pid}',
+        )}'`,
       ),
       { cwd: '/' },
     );
     if (pane.exitCode === 1) continue; // A historical pane that no longer exists owns nothing live.
     if (pane.exitCode !== 0) return `Worker ${context.id} pane inspection failed; cleanup deferred`;
-    const [session, paneId, panePid] = pane.stdout.trim().split('\t');
+    const [session, paneId, panePid] = splitTmuxFields(pane.stdout.trim(), 3);
     // Tmux can return exit 0 with empty fields for an absent exact target.
     if (!session && !paneId && !panePid) continue;
     if (session !== context.target.session || paneId !== targetPaneId)

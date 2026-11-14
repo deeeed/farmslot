@@ -48,6 +48,8 @@ import {
   firstWindowTarget,
   resolveTmuxSession,
   shellQuote,
+  splitTmuxFields,
+  tmuxFieldFormat,
   tmuxSendTextCommand,
   tmuxShellSnippet,
 } from '../../core/tmux.js';
@@ -1245,7 +1247,7 @@ export async function killAgentInSession(
   const listed = await execOnSlot(
     vars,
     tmuxShellSnippet(
-      `list-panes -s -t ${shellQuote(session)} -F '#{pane_id}\t#{pane_pid}' 2>/dev/null`,
+      `list-panes -s -t ${shellQuote(session)} -F '${tmuxFieldFormat('#{pane_id}', '#{pane_pid}')}' 2>/dev/null`,
     ),
     { timeout: TMUX_CMD_TIMEOUT },
   );
@@ -1254,7 +1256,7 @@ export async function killAgentInSession(
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
-      const [target, panePid] = line.split('\t', 2);
+      const [target, panePid] = splitTmuxFields(line, 2);
       return { target, panePid };
     })
     .filter((pane) => pane.target && pane.panePid);
@@ -1439,7 +1441,7 @@ export async function killAllAgentWindows(
     const listed = await execOnSlot(
       vars,
       tmuxShellSnippet(
-        `list-windows -t ${shellQuote(session)} -F '#{window_index}\t#{window_name}' 2>/dev/null`,
+        `list-windows -t ${shellQuote(session)} -F '${tmuxFieldFormat('#{window_index}', '#{window_name}')}' 2>/dev/null`,
       ),
       { timeout: TMUX_CMD_TIMEOUT },
     );
@@ -1450,7 +1452,7 @@ export async function killAllAgentWindows(
       .map((line) => line.trim())
       .filter(Boolean)
       .map((line) => {
-        const [index, name] = line.split('\t', 2);
+        const [index, name] = splitTmuxFields(line, 2);
         return { index, name };
       });
     maxObservedWindows = Math.max(maxObservedWindows, windows.length);

@@ -11,6 +11,7 @@ import type { ExecResult, Run } from '@farmslot/protocol';
 
 import { testGatewayIdentity } from '../../../../scripts/lib/test-gateway-identity-source.mjs';
 import type { RawProjectJson, SlotVars } from '../core/config.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
 import { seedRunnerObservabilityFixture } from '../node-support/support-test-fixtures.js';
 
 const executeFile = promisify(execFile);
@@ -147,7 +148,11 @@ async function slotExec(vars: SlotVars, command: string): Promise<ExecResult> {
       'no fixture prompt may be typed',
     );
     if (command.includes('#{pane_current_command}'))
-      return { exitCode: 0, stdout: `%1|${panePid}|sh`, stderr: '' };
+      return {
+        exitCode: 0,
+        stdout: `%1${TMUX_FIELD_SEPARATOR}${panePid}${TMUX_FIELD_SEPARATOR}sh`,
+        stderr: '',
+      };
     return { exitCode: 1, stdout: '', stderr: 'fixture has no tmux server' };
   }
   try {

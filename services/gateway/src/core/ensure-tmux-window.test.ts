@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, mock, test } from 'node:test';
 
 import type { SlotVars } from './config.js';
+import { TMUX_FIELD_SEPARATOR } from './tmux-fields.js';
 
 // ensureTmuxWindow is checked through the commands it issues to a mocked exec
 // layer, backed by an in-memory model of the slot's tmux server. No test here
@@ -34,8 +35,10 @@ mock.module('./exec.js', {
       issued.push(args);
       if (args.startsWith('list-panes -a')) {
         const lines = [...sessions].flatMap(([session, windows]) =>
-          windows.map(
-            (name, i) => `${session}\t${name}\t@${i + 1}\t${i}\t100\t%${i + 1}\t${4000 + i}`,
+          windows.map((name, i) =>
+            [session, name, `@${i + 1}`, `${i}`, '100', `%${i + 1}`, `${4000 + i}`].join(
+              TMUX_FIELD_SEPARATOR,
+            ),
           ),
         );
         return ok(lines.join('\n'));

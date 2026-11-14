@@ -3,6 +3,8 @@ import test from 'node:test';
 
 import type { AgentContext } from '@farmslot/protocol';
 
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
+
 import {
   readRetainedWorkerProgressTarget,
   type RetainedWorkerProgressTarget,
@@ -25,7 +27,10 @@ const context: AgentContext = {
 const vars = makeVars();
 
 test('a successful pane census confirms a vanished worker without a rerun', async () => {
-  for (const stdout of ['foreign\t%2\t201\n', 'owned\t%1\t101\n']) {
+  for (const stdout of [
+    `foreign${TMUX_FIELD_SEPARATOR}%2${TMUX_FIELD_SEPARATOR}201\n`,
+    `owned${TMUX_FIELD_SEPARATOR}%1${TMUX_FIELD_SEPARATOR}101\n`,
+  ]) {
     const actual = await readRetainedWorkerProgressTarget(vars, context, {
       exec: async () => ({ exitCode: 0, stdout, stderr: '' }),
       probe: async () => ({ state: 'absent' }),
@@ -39,7 +44,11 @@ test('absence needs no saved conversation; a live runner without one stays unkno
   const unbound = { ...context, runnerSessionId: null, runnerSessionPath: null };
   for (const live of [false, true]) {
     const actual = await readRetainedWorkerProgressTarget(vars, unbound, {
-      exec: async () => ({ exitCode: 0, stdout: 'owned\t%1\t101\n', stderr: '' }),
+      exec: async () => ({
+        exitCode: 0,
+        stdout: `owned${TMUX_FIELD_SEPARATOR}%1${TMUX_FIELD_SEPARATOR}101\n`,
+        stderr: '',
+      }),
       probe: async () => (live ? { state: 'present', pid: '202' } : { state: 'absent' }),
       binding: async () => assert.fail('no saved conversation to bind'),
     });
@@ -52,7 +61,7 @@ test('an unreadable census and malformed output remain unknown', async () => {
     { exitCode: 124, stdout: '', stderr: 'timeout' },
     { exitCode: 1, stdout: '', stderr: 'transport unavailable' },
     { exitCode: 0, stdout: '', stderr: '' },
-    { exitCode: 0, stdout: 'owned\t%1\t\n', stderr: '' },
+    { exitCode: 0, stdout: `owned${TMUX_FIELD_SEPARATOR}%1${TMUX_FIELD_SEPARATOR}\n`, stderr: '' },
   ]) {
     const actual = await readRetainedWorkerProgressTarget(vars, context, {
       exec: async () => result,
@@ -73,7 +82,11 @@ test('a surviving recorded pane is idle once its runner has exited, and unknown 
   for (const [runner, expected] of cases) {
     const actual = await readRetainedWorkerProgressTarget(vars, context, {
       // The runner exited 0 and left the role shell in its pane (F287, c9562e49).
-      exec: async () => ({ exitCode: 0, stdout: 'owned\t%288\t101\n', stderr: '' }),
+      exec: async () => ({
+        exitCode: 0,
+        stdout: `owned${TMUX_FIELD_SEPARATOR}%288${TMUX_FIELD_SEPARATOR}101\n`,
+        stderr: '',
+      }),
       probe: async (_vars, panePid) => {
         probed.push(panePid);
         return runner;
@@ -88,10 +101,14 @@ test('a surviving recorded pane is idle once its runner has exited, and unknown 
 test('an exited recorded pane yields to a live replacement only with the recorded conversation', async () => {
   const cases: Array<[string, boolean, RetainedWorkerProgressTarget]> = [
     // The pane moved to another session: it is still the recorded one.
-    ['moved\t%288\t101\n', true, { state: 'absent' }],
-    ['owned\t%288\t101\nowned\t%300\t301\n', true, { state: 'present', target: '%300' }],
+    [`moved${TMUX_FIELD_SEPARATOR}%288${TMUX_FIELD_SEPARATOR}101\n`, true, { state: 'absent' }],
     [
-      'owned\t%288\t101\nowned\t%300\t301\n',
+      `owned${TMUX_FIELD_SEPARATOR}%288${TMUX_FIELD_SEPARATOR}101\nowned${TMUX_FIELD_SEPARATOR}%300${TMUX_FIELD_SEPARATOR}301\n`,
+      true,
+      { state: 'present', target: '%300' },
+    ],
+    [
+      `owned${TMUX_FIELD_SEPARATOR}%288${TMUX_FIELD_SEPARATOR}101\nowned${TMUX_FIELD_SEPARATOR}%300${TMUX_FIELD_SEPARATOR}301\n`,
       false,
       { state: 'unknown', reason: 'Replacement worker conversation is unconfirmed or ambiguous' },
     ],
@@ -120,7 +137,10 @@ test('an exited recorded pane yields to a live replacement only with the recorde
 
 test('a recorded pane respawned during the check stays unknown', async () => {
   // A session reload respawns %288 in place: the probed process exited, its replacement runs.
-  const census = ['owned\t%288\t101\n', 'owned\t%288\t201\n'];
+  const census = [
+    `owned${TMUX_FIELD_SEPARATOR}%288${TMUX_FIELD_SEPARATOR}101\n`,
+    `owned${TMUX_FIELD_SEPARATOR}%288${TMUX_FIELD_SEPARATOR}201\n`,
+  ];
   const actual = await readRetainedWorkerProgressTarget(vars, context, {
     exec: async () => ({ exitCode: 0, stdout: census.shift()!, stderr: '' }),
     probe: async () => ({ state: 'absent' }),
@@ -135,7 +155,11 @@ test('a recorded pane respawned during the check stays unknown', async () => {
 test('a resumed worker on a new pane must match the recorded conversation', async () => {
   for (const matches of [false, true]) {
     const actual = await readRetainedWorkerProgressTarget(vars, context, {
-      exec: async () => ({ exitCode: 0, stdout: 'owned\t%1\t101\n', stderr: '' }),
+      exec: async () => ({
+        exitCode: 0,
+        stdout: `owned${TMUX_FIELD_SEPARATOR}%1${TMUX_FIELD_SEPARATOR}101\n`,
+        stderr: '',
+      }),
       probe: async (_vars, pid, runner) => {
         assert.equal(pid, '101');
         assert.equal(runner, 'claude');
@@ -168,7 +192,11 @@ test('a resumed worker on a new pane must match the recorded conversation', asyn
 test('uncertain process liveness or a second live session cannot establish quiescence', async () => {
   for (const state of ['unknown', 'ambiguous'] as const) {
     const actual = await readRetainedWorkerProgressTarget(vars, context, {
-      exec: async () => ({ exitCode: 0, stdout: 'owned\t%1\t101\nowned\t%2\t102\n', stderr: '' }),
+      exec: async () => ({
+        exitCode: 0,
+        stdout: `owned${TMUX_FIELD_SEPARATOR}%1${TMUX_FIELD_SEPARATOR}101\nowned${TMUX_FIELD_SEPARATOR}%2${TMUX_FIELD_SEPARATOR}102\n`,
+        stderr: '',
+      }),
       probe: async () =>
         state === 'unknown'
           ? { state: 'unknown', code: 'probe-timeout', reason: 'node busy' }

@@ -14,7 +14,7 @@
 
 import type { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
+import { shellQuote, splitTmuxFields, tmuxFieldFormat, tmuxShellSnippet } from '../core/tmux.js';
 
 import {
   probeRunnerDescendantPid,
@@ -83,7 +83,11 @@ export async function rediscoverRunnerSessionPane(
   const listed = await deps.exec(
     options.vars,
     tmuxShellSnippet(
-      `list-panes -s -t ${shellQuote(options.session)} -F '#{pane_id}|#{pane_pid}|#{window_name}' 2>/dev/null`,
+      `list-panes -s -t ${shellQuote(options.session)} -F '${tmuxFieldFormat(
+        '#{pane_id}',
+        '#{pane_pid}',
+        '#{window_name}',
+      )}' 2>/dev/null`,
     ),
     { timeout: 10_000 },
   );
@@ -103,7 +107,7 @@ export async function rediscoverRunnerSessionPane(
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
-      const [paneId, panePid, windowName] = line.split('|');
+      const [paneId, panePid, windowName] = splitTmuxFields(line, 3);
       return { paneId: paneId ?? '', panePid: panePid ?? '', windowName: windowName ?? '' };
     })
     .filter((pane) => /^%\d+$/.test(pane.paneId) && /^\d+$/.test(pane.panePid))

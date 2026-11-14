@@ -8,7 +8,12 @@ import { activePrepareSlots } from '../core/native-worker-exclusion.js';
 import { reportSlotResourceLifecycle } from '../core/resource-lifecycle-log.js';
 import { slotRealpath } from '../core/slot-io.js';
 import { markSlotStatusIf, readSlotRow } from '../core/state.js';
-import { resolveTmuxSession, tmuxShellSnippet } from '../core/tmux.js';
+import {
+  resolveTmuxSession,
+  splitTmuxFields,
+  tmuxFieldFormat,
+  tmuxShellSnippet,
+} from '../core/tmux.js';
 import {
   deleteActiveResource,
   getActiveResource,
@@ -155,7 +160,13 @@ const idleDevServers = new IdleDevServerReaper({
     const panes = await execOnSlot(
       vars,
       tmuxShellSnippet(
-        "list-panes -a -F '#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_path}\t#{session_path}'",
+        `list-panes -a -F '${tmuxFieldFormat(
+          '#{session_name}',
+          '#{pane_id}',
+          '#{pane_pid}',
+          '#{pane_current_path}',
+          '#{session_path}',
+        )}'`,
       ),
       { cwd: '/', timeout: 5_000 },
     );
@@ -177,7 +188,7 @@ const idleDevServers = new IdleDevServerReaper({
       ),
     );
     for (const line of panes.stdout.split('\n')) {
-      const [paneSession, paneId, panePid, cwd, origin] = line.split('\t');
+      const [paneSession, paneId, panePid, cwd, origin] = splitTmuxFields(line, 5);
       if (
         (paneSession === session ||
           (cwd && isWithinPath(repo, cwd)) ||

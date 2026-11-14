@@ -13,6 +13,8 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
+import { TMUX_FIELD_SEPARATOR } from '../../core/tmux-fields.js';
+
 const runRoot = mkdtempSync(path.join(tmpdir(), 'release-owner-runs-'));
 process.env.FARMSLOT_RUNS_DIR = runRoot;
 process.env.FARMSLOT_HOME = path.join(runRoot, 'home');
@@ -129,7 +131,8 @@ const execForTest = async (_vars: unknown, cmd: string) => {
   }
   if (cmd.includes('has-session'))
     return { stdout: '', stderr: '', exitCode: claimDuringPaneProbe ? 0 : 1 };
-  if (cmd.includes('list-panes')) return ok(cmd.includes('pane_pid') ? '%1\t123\n' : '%1\n');
+  if (cmd.includes('list-panes'))
+    return ok(cmd.includes('pane_pid') ? `%1${TMUX_FIELD_SEPARATOR}123\n` : '%1\n');
   if (cmd.includes('send-keys')) events.push('input-sent');
   if (cmd.startsWith('test -d') && hasMirrorArtifacts) return ok('yes');
   if (cmd.startsWith('rm -rf')) {

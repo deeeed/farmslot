@@ -9,6 +9,7 @@ import type { Run } from '@farmslot/protocol';
 import type { RawPoolJson } from '@farmslot/slot-config';
 
 import { writePiHook } from '../../../../scripts/runners/pi-farmslot-hook-writer.mjs';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
 
 const root = await mkdtemp(path.join(tmpdir(), 'workspace-pi-submit-'));
 process.env.FARMSLOT_HOME = root;
@@ -129,7 +130,9 @@ mock.module('../core/exec.js', {
       if (command.includes('display-message') || command.includes('list-panes'))
         return {
           exitCode: 0,
-          stdout: command.includes('#{pane_current_command}') ? `${pane}|123|pi` : pane,
+          stdout: command.includes('#{pane_current_command}')
+            ? [pane, '123', 'pi'].join(TMUX_FIELD_SEPARATOR)
+            : pane,
           stderr: '',
         };
       if (command.includes('set-buffer')) {
