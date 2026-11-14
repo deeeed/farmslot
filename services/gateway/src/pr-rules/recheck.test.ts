@@ -660,3 +660,38 @@ test('random combinations of recheck mutations decide as the whole-store compari
   }
   assert.ok(decisions.retained > 150 && decisions.persisted > 100, JSON.stringify(decisions));
 });
+
+test('optional and sparse record arrays decide as the whole-store comparison did', () => {
+  const both = (previous: PRRuleStoreData, draft: PRRuleStoreData, source: PRRecheckSource) => {
+    const reference = referenceRetainRecheckVersion(previous, structuredClone(draft), source);
+    assert.equal(retainRecheckVersion(previous, structuredClone(draft), source), reference);
+    return reference;
+  };
+  for (const source of sources) {
+    const base: PRRuleStoreData = baseStore(seeded(3));
+    // A rule recheck on a store without actions records `actions ??= []`; that is not quiet.
+    const withoutActions: PRRuleStoreData = { ...structuredClone(base), actions: undefined };
+    delete withoutActions.actions;
+    assert.equal(both(withoutActions, { ...structuredClone(base), actions: [] }, source), false);
+    assert.equal(both({ ...structuredClone(base), actions: [] }, withoutActions, source), false);
+    const withoutSubmissions: PRRuleStoreData = structuredClone(base);
+    delete withoutSubmissions.submissions;
+    assert.equal(
+      both(withoutSubmissions, { ...structuredClone(base), submissions: [] }, source),
+      false,
+    );
+    // A hole equals only a hole, as in a deep comparison of the arrays.
+    const action = base.actions?.[0];
+    if (!action) continue;
+    const sparse: PRRuleStoreData = { ...structuredClone(base), actions: new Array(2) };
+    sparse.actions![1] = structuredClone(action);
+    const dense: PRRuleStoreData = {
+      ...structuredClone(base),
+      actions: [structuredClone(action), structuredClone(action)],
+    };
+    assert.equal(both(sparse, dense, source), false);
+    assert.equal(both(dense, sparse, source), false);
+    // Matching holes compare equal in both implementations (both() asserts they agree).
+    both(sparse, structuredClone(sparse), source);
+  }
+});

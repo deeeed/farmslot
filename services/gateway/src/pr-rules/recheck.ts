@@ -32,19 +32,27 @@ function sameView(previous: RecheckView, draft: RecheckView): boolean {
   return isDeepStrictEqual(value(previous), value(draft));
 }
 
-/** Records compare by position, as in arrays of views. */
+/**
+ * Records compare by position, as `isDeepStrictEqual` compares arrays: a hole equals only a hole.
+ */
 function sameRecords(
   previous: readonly RecheckView[] | undefined,
   draft: readonly RecheckView[] | undefined,
 ): boolean {
   if (!previous || !draft) return !previous && !draft;
-  return (
-    previous.length === draft.length &&
-    previous.every((item, index) => sameView(item, draft[index]))
-  );
+  if (previous.length !== draft.length) return false;
+  for (let index = 0; index < previous.length; index += 1) {
+    const present = index in previous;
+    if (present !== index in draft) return false;
+    if (present && !sameView(previous[index], draft[index])) return false;
+  }
+  return true;
 }
 
-/** Only observation clocks and their mechanically advanced submission version are quiet. */
+/**
+ * Only observation clocks and their mechanically advanced submission version are quiet. Both
+ * stores are decoded PR-rule store data (`decodePRRuleStore` runs on each before this is called).
+ */
 export function retainRecheckVersion(
   previous: PRRuleStoreData,
   draft: PRRuleStoreData,
@@ -62,8 +70,9 @@ export function retainRecheckVersion(
   if (source.kind === 'submission' && (!oldSubmission || !submission)) return false;
   // The first intent with each id, as a search of `previous.intents` would find it.
   const oldIntents = new Map<string, PRReviewIntent>();
-  for (const intent of previous.intents)
+  previous.intents.forEach((intent) => {
     if (!oldIntents.has(intent.id)) oldIntents.set(intent.id, intent);
+  });
   // A valid refresh must repair an obsolete admission fence durably, even if facts match.
   if (oldSubmission)
     for (const intent of draft.intents) {
