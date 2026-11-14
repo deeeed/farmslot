@@ -23,6 +23,8 @@ import {
 } from './worker-launch.js';
 
 // The supervisor must durably register this PID before the host can bind or launch.
+// A disconnect during module loading has already emitted its event.
+if (!process.connected) throw new Error('Native supervisor stopped before host registration');
 await new Promise<void>((resolve, reject) => {
   process.once('message', (message) => {
     if (message === 'start') resolve();
