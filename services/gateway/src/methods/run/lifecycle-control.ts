@@ -369,6 +369,10 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
   }
   const slotId = run.slotId;
   if (!slotId) return { released: false };
+  // COMPLETE precedes finalization. Blind trials have no released-checkout receipt,
+  // so retain their owner until terminal cleanup can restore Git and park the output.
+  if (run.engineState?.evalExperiment?.blind && !isTerminalRunStatus(run.status))
+    return { released: false, skipped: 'Blind trial awaits terminal cleanup' };
   if (getRun(run.id)) {
     // An uncertain handoff can still have the parent on the slot row. Retire
     // this run's task leases before the release CAS; otherwise that CAS skips
