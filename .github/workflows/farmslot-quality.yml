@@ -80,10 +80,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      # Receipt verification uses only built-in Node modules and these two files.
       - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
         with:
-          node-version: '22.23.4'
+          sparse-checkout: |
+            /scripts/quality/pr-ci-run.mjs
+            /scripts/quality/lib/step-timing.mjs
+          sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@v4
         with:
           name: pr-ci-plan
@@ -95,4 +98,6 @@ jobs:
       - name: Require every selected check and test receipt
         env:
           CI_MATRIX_RESULT: ${{ needs.checks.result }}
-        run: node scripts/quality/pr-ci-run.mjs verify
+        run: |
+          node --version
+          node scripts/quality/pr-ci-run.mjs verify
