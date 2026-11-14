@@ -28,17 +28,20 @@ import { nativeSessionManager } from '../../runners/native/manager.js';
 import {
   DAY_MS,
   diskBytes,
+  exists,
   planRunRetention,
+  readTaskPins,
+  RetentionPathOwners,
   retentionStoreAction,
-  retiredTaskPins,
+  retiredTaskPinsOf,
   runIsSettled,
-  runOwnedPaths,
   type RunPrState,
   type RunRetentionContext,
   runRetentionHold,
   type RunRetentionPlan,
   type RunRetentionRoots,
   type RunRetentionStore,
+  type TaskPinEntry,
 } from '../../runs/retention.js';
 import {
   assertArchiveRoot,
@@ -58,7 +61,6 @@ import {
   recordRunStorageArchive,
   runsDirectory,
   runSessionArchiveDir,
-  runTaskDirectories,
 } from '../../runs/store.js';
 
 type Emit = (event: string, payload: unknown) => void;
@@ -307,6 +309,16 @@ export async function runRetentionPass(
     );
   }
   const processed = new Set<string>();
+  // Archived records in the snapshot are indexed once; live ones are read again per candidate.
+  const live = new Set(getAllRuns());
+  const liveAtStart = runs.filter((run) => live.has(run));
+  const owners = new RetentionPathOwners(
+    roots,
+    runs.filter((run) => !live.has(run)),
+  );
+  // Pins are listed once per pass; each candidate rechecks that a listed pin still exists.
+  let pinList: Promise<TaskPinEntry[]> | undefined;
+  const taskPins = () => (pinList ??= readTaskPins(roots.taskPins));
   for (const candidate of removable) {
     await turn(async () => {
       try {
@@ -320,12 +332,14 @@ export async function runRetentionPass(
           await keepStorageDeletions(roots.archiveRoot, candidate.id, hold ?? 'run missing');
           return;
         }
-        const others = [...runs, ...getAllRuns()].filter(
-          (other) =>
-            other.id !== run.id &&
-            (!processed.has(other.id) || Boolean(runRetentionHold(other, context))),
-        );
-        const owned = runOwnedPaths([run], others, roots);
+        // A run other than this one keeps what it references unless this pass already moved it
+        // and nothing holds it.
+        const keeps = (other: Run) =>
+          other.id !== run.id &&
+          (!processed.has(other.id) || Boolean(runRetentionHold(other, context)));
+        // As before: which runs are kept is decided here, their paths are read where used.
+        const keptLive = [...liveAtStart, ...getAllRuns()].filter(keeps);
+        const owned = owners.view(keptLive, keeps).owned(run);
         const files: { source: string; store: RunRetentionStore; bytes: number }[] = [];
         for (const store of Object.keys(owned) as (keyof typeof owned)[])
           for (const source of owned[store]) {
@@ -333,11 +347,13 @@ export async function runRetentionPass(
               continue;
             files.push({ source, store, bytes: await diskBytes(source) });
           }
-        const pins = await retiredTaskPins(
-          roots.taskPins,
+        const pending = owners.view(keptLive, keeps).keepsTaskDirectory;
+        const pins = await retiredTaskPinsOf(
+          await taskPins(),
           new Set(files.filter((file) => file.store === 'task-dirs').map((file) => file.source)),
           context,
-          new Set(others.flatMap(runTaskDirectories)),
+          pending,
+          exists,
         );
         for (const source of pins)
           files.push({ source, store: 'task-pins', bytes: await diskBytes(source) });
@@ -374,12 +390,8 @@ export async function runRetentionPass(
           () => {
             const latest = getCachedRunWithArchived(run.id);
             if (!latest || currentRetentionHold(latest, context)) return false;
-            const current = [...runs, ...getAllRuns()].filter(
-              (other) =>
-                other.id !== run.id &&
-                (!processed.has(other.id) || Boolean(runRetentionHold(other, context))),
-            );
-            const eligible = runOwnedPaths([run], current, roots);
+            const current = owners.view([...liveAtStart, ...getAllRuns()].filter(keeps), keeps);
+            const eligible = current.owned(run);
             return files.every((file) => {
               if (file.store === 'task-pins') {
                 const provenance: { taskDir?: unknown } = JSON.parse(
@@ -387,10 +399,7 @@ export async function runRetentionPass(
                 );
                 const taskDir = provenance.taskDir;
                 if (typeof taskDir !== 'string' || isTaskDirectoryAdmitting(taskDir)) return false;
-                if (
-                  current.some((other) => runTaskDirectories(other).includes(path.resolve(taskDir)))
-                )
-                  return false;
+                if (current.keepsTaskDirectory(path.resolve(taskDir))) return false;
                 return (
                   !existsSync(taskDir) ||
                   files.some(
