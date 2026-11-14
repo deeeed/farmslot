@@ -153,12 +153,13 @@ test('clearStalePrepareProcess returns true and kills the tracked in-flight pref
   assert.equal(isAlive(child.pid), false, 'tracked preflight should be terminated');
 });
 
-test('resolveWorkspaceRoot returns the workspace root (parent holding state.json), not $HOME/farmslot', () => {
+test('resolveWorkspaceRoot returns the workspace root (parent holding state.json), not $HOME/farmslot', (t) => {
   // Fake install layout: <ws>/farmslot (the clone) + <ws>/state.json. With no
   // FARMSLOT_WORKSPACE in env, the resolver must climb to the parent that holds
   // state.json — the same value the CLI's resolveWorkspace produces — so pack
   // runway scripts write under this workspace instead of $HOME/farmslot.
   const ws = mkdtempSync(path.join(os.tmpdir(), 'farmslot-ws-'));
+  t.after(() => rmSync(ws, { recursive: true, force: true }));
   const clone = path.join(ws, 'farmslot');
   mkdirSync(clone, { recursive: true });
   writeFileSync(path.join(ws, 'state.json'), '{"schema_version":1}\n');
@@ -169,8 +170,9 @@ test('resolveWorkspaceRoot returns the workspace root (parent holding state.json
   assert.notEqual(resolved, path.join(os.homedir(), 'farmslot'));
 });
 
-test('resolveWorkspaceRoot honours an explicit FARMSLOT_WORKSPACE without overriding it', () => {
+test('resolveWorkspaceRoot honours an explicit FARMSLOT_WORKSPACE without overriding it', (t) => {
   const explicit = mkdtempSync(path.join(os.tmpdir(), 'farmslot-explicit-'));
+  t.after(() => rmSync(explicit, { recursive: true, force: true }));
   const resolved = resolveWorkspaceRoot(
     { FARMSLOT_WORKSPACE: explicit } as NodeJS.ProcessEnv,
     '/some/unrelated/clone',
@@ -178,8 +180,9 @@ test('resolveWorkspaceRoot honours an explicit FARMSLOT_WORKSPACE without overri
   assert.equal(resolved, explicit);
 });
 
-test('resolveWorkspaceRoot returns null for a plain dev checkout with no workspace', () => {
+test('resolveWorkspaceRoot returns null for a plain dev checkout with no workspace', (t) => {
   const bare = mkdtempSync(path.join(os.tmpdir(), 'farmslot-bare-'));
+  t.after(() => rmSync(bare, { recursive: true, force: true }));
   const clone = path.join(bare, 'farmslot');
   mkdirSync(clone, { recursive: true });
   // No state.json beside the clone → no surrounding workspace.

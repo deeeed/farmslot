@@ -135,6 +135,11 @@ async function linkedNode(
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
   const calls: Array<{ method: string; params: unknown }> = [];
+  let cancelRequestId: string | undefined;
+  let markCancelAcknowledged!: () => void;
+  const cancelAcknowledged = new Promise<void>((resolve) => {
+    markCancelAcknowledged = resolve;
+  });
   let markDelayedReplyReady!: () => void;
   const delayedReplyReady = new Promise<void>((resolve) => {
     markDelayedReplyReady = resolve;
@@ -146,6 +151,7 @@ async function linkedNode(
   nodeSocket.on('message', async (raw) => {
     const frame = JSON.parse(raw.toString());
     calls.push({ method: frame.method, params: frame.params });
+    if (frame.method === 'node.link.cancel') cancelRequestId = frame.id;
     try {
       const payload =
         frame.method === 'fs.read' && fileReadFixture !== undefined
@@ -175,7 +181,7 @@ async function linkedNode(
   });
   gatewaySocket.on('message', (raw) => {
     const frame = JSON.parse(raw.toString());
-    if (frame.type === 'res')
+    if (frame.type === 'res') {
       handleNodeResponse(
         frame.id,
         frame.ok,
@@ -184,7 +190,9 @@ async function linkedNode(
         frame.error?.code,
         gatewaySocket,
       );
-    else if (frame.event === 'node.link.stream') acceptNodeLinkStream(gatewaySocket, frame.payload);
+      if (frame.id === cancelRequestId) markCancelAcknowledged();
+    } else if (frame.event === 'node.link.stream')
+      acceptNodeLinkStream(gatewaySocket, frame.payload);
   });
   registerNode(
     machine,
@@ -206,7 +214,7 @@ async function linkedNode(
       nodePrincipal: principal,
     },
   );
-  return { agent, principal, calls, delayedReplyReady, commandHandled };
+  return { agent, principal, calls, cancelAcknowledged, delayedReplyReady, commandHandled };
 }
 
 test('flagged task staging uses node commands, preserves existing artifacts and publishes executable marker last', async (t) => {
@@ -856,7 +864,7 @@ test(
       t.mock.timers.reset();
       await writeFile(release, '');
     });
-    const { principal } = await linkedNode(t, root, machine);
+    const { principal, cancelAcknowledged } = await linkedNode(t, root, machine);
     const controller = new AbortController();
     t.after(() => controller.abort());
     t.after(async () => {
@@ -916,10 +924,16 @@ test(
         onOutput: () => controller.abort(),
       },
     );
-    await sigterm;
-    t.mock.timers.tick(6000);
-    await writeFile(release, '');
-    const receipt = await pending;
+    const [receipt] = await Promise.all([
+      pending,
+      (async () => {
+        await sigterm;
+        // The child signal does not prove the cancel ACK cleared its 5 s transport timer.
+        await cancelAcknowledged;
+        t.mock.timers.tick(6000);
+        await writeFile(release, '');
+      })(),
+    ]);
     assert.equal(receipt.state, 'cancelled');
     assert.equal(receipt.closeoutConfirmed, true);
     assert.equal(await readFile(cleanup, 'utf8'), 'closed');
