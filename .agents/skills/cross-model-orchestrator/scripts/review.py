@@ -122,6 +122,13 @@ home or proof they are dead. Evidence must prove behavior; recipe captures need 
 New default tests must finish in 5 seconds each and the default suite in 5 minutes. No fixed waits
 of 1 second or more and no background processes without teardown. Require measured test durations.
 
+For a Farmslot contribution, read its canonical rules from the target commit:
+  git show {sha}:projects/farmslot-farm/fixtures/runtime/review-quality.md
+If that required file cannot be read, stop the review and report it incomplete; do not approve.
+Include the rules' criteria ledger in your verdict, with a row for every rule, including exclusions:
+Rule ID | Applies and why | Outcome | Frozen source/test evidence or gap
+Confirmed applicable rule violations require REQUEST_CHANGES; missing proof remains NOT_CHECKED.
+
 Earlier independent reviews, supplied only to verify fixes and preserve settled decisions:
 {previous or 'None, this is the first round.'}
 

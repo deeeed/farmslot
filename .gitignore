@@ -47,6 +47,8 @@ projects/*/runs/
 !/.yarn/patches
 /.cache/eslint/
 /.cache/pr-ci/
+/.cache/full-ci/
+/.cache/ci-builds/
 /.cache/node-compile/
 
 **.DS_Store

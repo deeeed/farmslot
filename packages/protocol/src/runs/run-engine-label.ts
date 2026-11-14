@@ -67,7 +67,32 @@ export function runWorkerEffort(
   return null;
 }
 
-/** "runner/model · effort"; the effort only when known. Null when neither runner nor model is. */
+/**
+ * Word shown for a stored reasoning effort.
+ * No value reads `default`. A stored level is shown as stored, and `off` stays `off`.
+ */
+export function reasoningEffortLabel(effort: string | null | undefined): string {
+  const value = effort?.trim() ?? '';
+  if (value === '') return 'default';
+  if (value.toLowerCase() === 'off') return 'off';
+  return value;
+}
+
+/** Runner, model, and the displayed effort. Blank effort reads `default`. */
+export function runnerModelEffortParts(
+  runner: string | null | undefined,
+  model: string | null | undefined,
+  effort: string | null | undefined,
+): string[] {
+  const runnerPart = runner?.trim() ?? '';
+  const modelPart = model?.trim() ?? '';
+  if (!runnerPart && !modelPart && !effort?.trim()) return [];
+  return [runnerPart, modelPart, reasoningEffortLabel(effort)].filter(
+    (part): part is string => part !== '',
+  );
+}
+
+/** "runner/model · effort". Null when neither runner nor model is. */
 export function runEngineLabel(engine: {
   runner: string | null;
   model: string | null;
@@ -75,5 +100,5 @@ export function runEngineLabel(engine: {
 }): string | null {
   const base = engine.model ? `${engine.runner ?? 'runner'}/${engine.model}` : engine.runner;
   if (!base) return null;
-  return engine.effort ? `${base} · ${engine.effort}` : base;
+  return `${base} · ${reasoningEffortLabel(engine.effort)}`;
 }

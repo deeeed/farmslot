@@ -618,3 +618,67 @@ test(
     assert.equal(getRun(f.run.id)!.status, 'monitoring');
   },
 );
+
+for (const blind of [true, false]) {
+  test(
+    `a stuck ${blind ? 'blind trial' : 'run'} whose nudges are spent ${blind ? 'ends blocked' : 'asks an operator'}`,
+    { timeout: 4000 },
+    async (t) => {
+      const f = await fixture(t);
+      await f.writeSignal({ ...f.waiting, waitingForOperator: undefined });
+      updateRun(f.run.id, {
+        completionPolicy: 'artifact-only',
+        ...(blind
+          ? {
+              engineState: {
+                evalExperiment: {
+                  experimentId: 'idle',
+                  experimentKey: 'idle',
+                  experimentManifestPath: '/fixture/experiment.json',
+                  packagePath: '/fixture/package.json',
+                  candidateStrategyFingerprint: 'idle',
+                  trialId: f.run.id,
+                  blind: {
+                    version: 1,
+                    baseSha: 'a'.repeat(40),
+                    problemDigest: 'fixture',
+                    referenceCommits: [],
+                    referencePatchId: 'fixture',
+                    forbiddenInputs: [],
+                  },
+                },
+              },
+            }
+          : {}),
+      });
+      const execution = f.start({
+        workerStatus: async () => 'working',
+        violations: async () => [
+          {
+            type: 'stuck',
+            message: 'no worker output for 20 minutes',
+            slotId: '',
+            nudgeSent: null,
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      });
+      if (blind) {
+        const result = await execution;
+        assert.equal(result.exitReason, 'worker-done');
+        assert.equal(result.workerSignal?.status, 'blocked');
+        assert.equal(result.workerSignal?.outcome, 'partial');
+        assert.equal(result.workerSignal?.disposition, 'blocked');
+        assert.match(result.workerSignal?.reason ?? '', /without a terminal mark/);
+        assert.deepEqual(getRun(f.run.id)!.decisions, []);
+        return;
+      }
+      for (let tick = 0; tick < 200 && !getRun(f.run.id)!.decisions?.length; tick++)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      const [decision] = getRun(f.run.id)!.decisions ?? [];
+      assert.ok(decision, 'a run with an operator still gets a monitor decision');
+      resolveMonitorDecision(decision.id, 'abort');
+      assert.equal((await execution).exitReason, 'aborted');
+    },
+  );
+}

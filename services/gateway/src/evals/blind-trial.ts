@@ -236,7 +236,13 @@ export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal):
     ...gitSpec(run, vars, blind, isolation.slotEpoch, isolation.capsulePath),
     keepIgnored: await keptIgnoredPaths(run, vars),
   };
-  await executeGit('isolate', vars, spec, signal);
+  try {
+    await executeGit('isolate', vars, spec, signal);
+  } catch (error) {
+    // A failed isolate rolls the checkout back, perhaps after a fleet probe saw it isolated.
+    await refreshRepoVerdict(vars);
+    throw error;
+  }
   // The worker sandbox denies the node's other slot checkouts, resolved as each slot's own launch resolves them.
   const siblingRepos = await resolvedSiblingRepos(vars);
   const paths = await blindFarmPaths(vars);
@@ -514,6 +520,20 @@ export async function restoreBlindTrialGit(
   )
     throw new Error('Blind trial Git restoration was not confirmed.');
   await assertOwnership();
+  await refreshRepoVerdict(vars);
+}
+
+/** Selection reads the saved repo verdict, which may still name this trial's isolated Git. */
+async function refreshRepoVerdict(vars: SlotVars): Promise<void> {
+  const { reprobeSlotRepoBlocker } = await import('../methods/slot/slot-tracking.js');
+  const probe = await reprobeSlotRepoBlocker(vars).catch((error: unknown) => ({
+    readable: false as const,
+    error: (error as Error).message,
+  }));
+  if (!probe.readable)
+    console.warn(
+      `[blind-trial] ${vars.slotId}: repo verdict not refreshed after restore: ${probe.error}`,
+    );
 }
 
 /** The blind trial whose isolated Git directory the slot repo still holds, if any. */

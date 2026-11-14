@@ -11,6 +11,7 @@ import {
   type PRRuleNotification,
   type PRTeamProfile,
   type QueueItem,
+  reasoningEffortLabel,
   type RunListRow,
   workspacePolicyTargetLabel,
 } from '@farmslot/protocol';
@@ -395,11 +396,11 @@ export function reviewCard(
     ${run?.slotId
       ? html`<p>
           Assigned ${run.slotId} ·
-          ${run.metrics.runner}/${run.metrics.model}${run.effort ? `/${run.effort}` : ''}
+          ${run.metrics.runner}/${run.metrics.model}/${reasoningEffortLabel(run.effort)}
         </p>`
       : queued?.slotId
         ? html`<p>
-            Selected ${queued.slotId} · ${queued.model}/${queued.effort ?? 'default effort'}
+            Selected ${queued.slotId} · ${queued.model}/${reasoningEffortLabel(queued.effort)}
           </p>`
         : nothing}
     ${trace

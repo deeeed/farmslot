@@ -111,6 +111,9 @@ mock.module('../../core/index.js', {
     }),
     readSlotField: async (_slotId: string, field: string) => slotRow[field] ?? null,
     readSlotRow: async () => slotRow,
+    updateSlotStatus: async (_slotId: string, fields: Record<string, unknown>) => {
+      slotRow = { ...slotRow, ...fields };
+    },
     markSlotStatusIf: async (
       _slotId: string,
       predicate: (slot: Record<string, unknown>) => boolean,
@@ -275,10 +278,13 @@ test('an unowned force release restores a detached blind trial Git before resett
   const { spec, candidate, reference } = blindSlot('restore', 'trial-detached');
   await detachedTrial(spec);
   assert.equal(realRuns.getRun(spec.runId)?.slotId, null);
+  // The fleet saved this verdict while the trial held the slot.
+  slotRow = { ...slotRow, repo_blocker: `isolated for blind trial ${spec.runId}` };
 
   const result = await slotRelease({ slotId: SLOT_ID, forceReset: true }, () => {});
 
   assert.deepEqual(result, { released: true });
+  assert.doesNotMatch(String(slotRow.repo_blocker ?? ''), /isolated for blind trial/);
   assert.equal(
     git(repo, 'config', '--get', 'remote.origin.fetch'),
     '+refs/heads/*:refs/remotes/origin/*',

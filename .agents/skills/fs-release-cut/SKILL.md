@@ -1,6 +1,6 @@
 ---
 name: fs-release-cut
-description: Succinct release-needed signal and manual release-cut workflow for Farmslot workspaces (Command Center, gateway, protocol, companion, npm packages). Run release-status first; curate Unreleased bullets; cut with reviewed proposal.
+description: Succinct release-needed signal and manual release-cut workflow for Farmslot workspaces (Command Center, gateway, protocol, companion, npm packages). Run release-status first; curate Unreleased bullets; run yarn test:release-live; cut with reviewed proposal.
 ---
 
 # FS Release Cut
@@ -49,10 +49,11 @@ Edit the JSON when the heuristic mis-classified items. Every Unreleased bullet s
 
 ## Step 3 — Execute cut
 
-After the proposal looks right:
+After the proposal looks right, run `yarn test:release-live` on the commit you cut from. Don't cut if it fails. It runs the suites listed in that script.
 
 ```bash
-yarn release:cut --group hosted-cc --from-proposal .release-cut/proposal.json --execute
+yarn test:release-live &&
+  yarn release:cut --group hosted-cc --from-proposal .release-cut/proposal.json --execute
 ```
 
 This bumps workspace versions, finalizes changelog sections, writes `release-notes.json`, and syncs `PROTOCOL_VERSION`, with the version line of the generated gateway API reference, when protocol is in the group.
@@ -78,6 +79,7 @@ Any PR that changes workspace code adds its release note as `<workspace>/.change
 ## Stop conditions
 
 - Do **not** `--execute` without reviewing `.release-cut/proposal.json`.
+- Do **not** `--execute` until `yarn test:release-live` has passed on the commit you cut from.
 - Do **not** skip changelog bullets on user-facing PRs.
 - Release-cut commits are exempt from the PR changelog delta guard.
 

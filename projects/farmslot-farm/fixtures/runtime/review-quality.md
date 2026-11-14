@@ -21,16 +21,16 @@ Respect the selected validation depth. A static review reads retained source, te
 ### FSR-01. Fix the demonstrated failure at its shared owner
 
 - Applies to fixes, migrations and new abstractions.
-- Inspect the approved trigger and the changed producer, sibling callers and replacement path. Prefer removing the failing work. Carry every required capability to its single owner; remove the replaced path instead of adding a shim, alias or parallel implementation.
-- Contradicted by a speculative fix with no approved scope or reproduction, a timeout increase that leaves the demonstrated redundant work, or a second implementation serving the same contract. Explicitly approved planned work is a valid trigger.
-- Failure: F310/F313 led to removing release copies in [#1747](https://github.com/deeeed/farmslot/pull/1747); F318 needed one worker/preflight environment in [#1758](https://github.com/deeeed/farmslot/pull/1758). F382 carries the standing no-shims and real-bugs-only requirements.
+- Inspect the approved trigger and the changed producer, sibling callers and replacement path. Prefer removing the failing work. Carry every required capability to its single owner; remove the replaced path instead of adding a shim, alias or parallel implementation. Derive credential shapes, provider lists and labels from their owning schema/catalog.
+- Contradicted by a speculative fix with no approved scope or reproduction, a timeout increase that leaves the demonstrated redundant work, or a second implementation serving the same contract, including copied credential shapes or hard-coded provider lists in consumers. Explicitly approved planned work is a valid trigger.
+- Failure: F310/F313 led to removing release copies in [#1747](https://github.com/deeeed/farmslot/pull/1747); F318 needed one worker/preflight environment in [#1758](https://github.com/deeeed/farmslot/pull/1758). F382 carries the standing no-shims and real-bugs-only requirements. [#2139](https://github.com/deeeed/farmslot/pull/2139) removed a second credential-shape definition.
 
 ### FSR-02. Use current authoritative facts, not inferred state
 
-- Applies to state classification, identity discovery, publication verification and configuration selection.
-- Inspect where each fact comes from and when it remains authoritative. Use explicit dispatch/API records, native receipts and the actual remote or producer. Never derive tickets, ownership, acceptance or completion from free prose, TUI appearance or a regex over incidental text. Parsing a documented wire format or identifying a process from argv is distinct from inferring its turn state.
-- Contradicted by a local tracking ref treated as proof of the actual remote branch, an unrecognized producer status treated as absence, or business state guessed from display text. Missing facts remain unknown or explicitly refused.
-- Failure: F301 lost a valid session status, fixed by [#1720](https://github.com/deeeed/farmslot/pull/1720); F326 rejected an already pushed branch from a stale ref, fixed by [#1767](https://github.com/deeeed/farmslot/pull/1767). F382 also carries the standing no-prose-inference requirement.
+- Applies to state classification, identity discovery, publication verification, configuration selection and error classification.
+- Inspect where each fact comes from and when it remains authoritative. Use explicit dispatch/API records, native receipts and the actual remote or producer. Never derive tickets, ownership, acceptance or completion from free prose, TUI appearance or a regex over incidental text. Parsing a documented wire format or identifying a process from argv is distinct from inferring its turn state. Error messages must name the failed stage and preserve the actual cause; check process status before interpreting its output.
+- Contradicted by a local tracking ref treated as proof of the actual remote branch, an unrecognized producer status treated as absence, business state guessed from display text, or a failed child command mislabeled as malformed output. Missing facts remain unknown or explicitly refused.
+- Failure: F301 lost a valid session status, fixed by [#1720](https://github.com/deeeed/farmslot/pull/1720); F326 rejected an already pushed branch from a stale ref, fixed by [#1767](https://github.com/deeeed/farmslot/pull/1767). F382 also carries the standing no-prose-inference requirement. [#2161](https://github.com/deeeed/farmslot/pull/2161) fixed child-command failures mislabeled as invalid JSON.
 
 ### FSR-03. Prove ownership and quiescence before destructive cleanup
 
@@ -56,28 +56,28 @@ Respect the selected validation depth. A static review reads retained source, te
 ### FSR-06. Bound work at the correct owner and keep idle reads cheap
 
 - Applies to polling, file acquisition, retention, locks, resource hooks and interactive reads.
-- Enumerate the work added per poll, slot and run, including subprocesses and bytes. Reuse retained results, batch host work and keep heavy acquisition off unviewed/interactive paths. Locks cover the owning run/resource, and timed-out effects cannot retain a farm-wide queue indefinitely.
-- Contradicted by recopying evidence during release, full per-slot inspection without a viewer, or unrelated runs waiting behind one unbounded hook. A larger deadline does not remove unnecessary work.
-- Failure: F313 removed duplicate acquisition in [#1747](https://github.com/deeeed/farmslot/pull/1747); F330 split the farm-wide queue in [#1778](https://github.com/deeeed/farmslot/pull/1778); F372 removed background workspace probes in [#1823](https://github.com/deeeed/farmslot/pull/1823).
+- Enumerate the work added per poll, slot and run, including subprocesses and bytes. Reuse retained results, batch host work and keep heavy acquisition off unviewed/interactive paths. Rechecks inspect changed entities through the existing incremental owner; count work as the store grows. Locks cover the owning run/resource, and timed-out effects cannot retain a farm-wide queue indefinitely.
+- Contradicted by recopying evidence during release, full per-slot inspection without a viewer, a whole-store rescan/deep comparison on every recheck, or unrelated runs waiting behind one unbounded hook. A larger deadline does not remove unnecessary work.
+- Failure: F313 removed duplicate acquisition in [#1747](https://github.com/deeeed/farmslot/pull/1747); F330 split the farm-wide queue in [#1778](https://github.com/deeeed/farmslot/pull/1778); F372 removed background workspace probes in [#1823](https://github.com/deeeed/farmslot/pull/1823). [#2133](https://github.com/deeeed/farmslot/pull/2133) added a whole PR-rule-store comparison per recheck.
 
 ### FSR-07. Bind evidence and caches to their actual retained identity
 
 - Applies to output acquisition, digests, caches, reports, review findings and publication evidence.
-- Trace producer through retention, selected attempt/head, consumer and displayed claim. Serialize competing writes at their owner. Keep task paths and recipe paths distinct. Exclude only paths explicitly omitted by the retained bundle, and preserve all other missing/changed refusals.
-- Contradicted by a stale-head cache used for a current package, overlapping captures that overwrite each other, an alias opening another artifact, or a pass derived from evidence belonging to another attempt. Missing or untimed evidence stays honestly labeled.
-- Failure: F304/F305 required exact exclusions and per-run acquisition in [#1722](https://github.com/deeeed/farmslot/pull/1722) and [#1731](https://github.com/deeeed/farmslot/pull/1731); F341/F343 corrected artifact and head identity in [#1794](https://github.com/deeeed/farmslot/pull/1794) and [#1795](https://github.com/deeeed/farmslot/pull/1795).
+- Trace producer through retention, selected attempt/head, consumer and displayed claim. Serialize competing writes at their owner. Keep task paths and recipe paths distinct. Exclude only paths explicitly omitted by the retained bundle, and preserve all other missing/changed refusals. Use the canonical producer and exact inputs for gate-validated JSON, including QA scope. If no producer exists, record that gap.
+- Contradicted by a stale-head cache used for a current package, overlapping captures that overwrite each other, an alias opening another artifact, a pass derived from evidence belonging to another attempt, or hand-written JSON replacing an available canonical producer. Missing or untimed evidence stays honestly labeled.
+- Failure: F304/F305 required exact exclusions and per-run acquisition in [#1722](https://github.com/deeeed/farmslot/pull/1722) and [#1731](https://github.com/deeeed/farmslot/pull/1731); F341/F343 corrected artifact and head identity in [#1794](https://github.com/deeeed/farmslot/pull/1794) and [#1795](https://github.com/deeeed/farmslot/pull/1795). [#2156](https://github.com/deeeed/farmslot/pull/2156) followed a hand-written QA scope rejected by the gate.
 
 ### FSR-08. Validate real contracts and make tests contradict the bug
 
-- Applies to boundary decoding, type changes, fixtures and regression tests.
-- Read the producer and every required field. Narrow unknown input or construct a typed fixture; never double-assert through `unknown`, `any` or an equivalent intermediate type. An invalid-input test names its expected type error. Verify the test reaches the changed behavior and fails when that behavior is removed, rather than asserting an unused field or rebuilding the implementation's answer.
+- Applies to boundary decoding, type changes, fixtures, regression tests and launch/sandbox/isolation changes.
+- Read the producer and every required field. Narrow unknown input or construct a typed fixture; never double-assert through `unknown`, `any` or an equivalent intermediate type. An invalid-input test names its expected type error. Verify the test reaches the changed behavior and fails when that behavior is removed, rather than asserting an unused field or rebuilding the implementation's answer. Launch, sandbox or isolation changes also need supplied evidence of one real launch reaching the model; synthetic tests alone do not prove that boundary.
 - Contradicted by a forced value presented as valid domain data, a fixture that passes only because its runner skips typechecking, or a purported behavior assertion that has no consumer-visible effect.
-- Failure: review of [#1698](https://github.com/deeeed/farmslot/pull/1698) found incomplete claim fixtures that passed execution but failed the contract typecheck, and a tested field unused by judgment controls. F382 retains the standing ban on double assertions.
+- Failure: review of [#1698](https://github.com/deeeed/farmslot/pull/1698) found incomplete claim fixtures that passed execution but failed the contract typecheck, and a tested field unused by judgment controls. F382 retains the standing ban on double assertions. [#2131](https://github.com/deeeed/farmslot/pull/2131) passed synthetic tests but broke real blind launches.
 
-### FSR-09. Test time through a controllable clock
+### FSR-09. Keep default tests fast and control time
 
-- Applies to tests of sleeps, polling, retry, timeout and cleanup timing.
-- Inspect the clock and scheduler the code actually reads. Drive elapsed time with fake timers or injected time, restore them on every exit, and wait for observable completion rather than a guessed delay. Live proof of external processes uses bounded condition checks in its authorized scope and does not substitute for a timer regression test.
+- Applies to new or changed default tests, especially sleeps, polling, retry, timeout and cleanup timing.
+- Inspect the clock and scheduler the code actually reads. Drive elapsed time with fake timers or injected time, restore them on every exit, and wait for observable completion rather than a guessed delay. Measure each changed test and default-suite duration. Tests over five seconds belong in the live tier outside default/CI; default suites stay within five minutes. Live proof of external processes uses bounded condition checks in its authorized scope and does not substitute for a timer regression test.
 - Contradicted by waiting out a production delay in a unit/CI test, a fixed sleep presented as proof that an effect finished, or fake timers that leave an asynchronous completion path untested.
 - Failure: review of [#1708](https://github.com/deeeed/farmslot/pull/1708) caught a fixed-sleep proof; F382 imports the standing real-timer prohibition after repeated slow and flaky tests.
 

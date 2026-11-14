@@ -347,12 +347,16 @@ export interface SlotCheckResult {
   mode: string;
   dispatchable: boolean;
   repoBlocker?: string;
+  /** When the repo probe behind `repoBlocker` started; an older observation never replaces a newer verdict. */
+  repoObservedAt?: string;
   /** Why the slot's config could not be loaded; the row keeps its pool resources but is not probed or dispatchable. */
   configError?: string;
   resources?: Record<string, Record<string, string | number | boolean>>;
 }
 
 interface PreviousSlotStatus {
+  repo_blocker?: string;
+  repo_observed_at?: string;
   workspace_recovery?: unknown;
   parked_work?: unknown;
   lifecycle?: string | null;
@@ -783,6 +787,23 @@ function missingRunningStepLeases(
   return lost;
 }
 
+/**
+ * The newer of this refresh's repo verdict and the saved one. A refresh that
+ * probed the slot before a restore re-probed it must not publish its older verdict.
+ */
+function repoVerdict(r: SlotCheckResult, prev: PreviousSlotStatus) {
+  const saved = prev.repo_observed_at;
+  if (saved && (!r.repoObservedAt || saved > r.repoObservedAt))
+    return {
+      ...(prev.repo_blocker ? { repo_blocker: prev.repo_blocker } : {}),
+      repo_observed_at: saved,
+    };
+  return {
+    ...(r.repoBlocker ? { repo_blocker: r.repoBlocker } : {}),
+    ...(r.repoObservedAt ? { repo_observed_at: r.repoObservedAt } : {}),
+  };
+}
+
 export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus) {
   // Map pool mode + old lifecycle values to new 5-state model.
   let lifecycle: string;
@@ -860,7 +881,7 @@ export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus
     enabled: r.enabled,
     mode: r.mode,
     dispatchable: r.dispatchable,
-    ...(r.repoBlocker ? { repo_blocker: r.repoBlocker } : {}),
+    ...repoVerdict(r, prev),
     ...(r.configError ? { config_error: r.configError } : {}),
     lifecycle,
     phase,
@@ -1264,6 +1285,7 @@ async function checkSingleSlot(
       ? undefined
       : defaultBranchProbeCommand(vars.remoteRepo, defaultBranch),
   ];
+  const repoObservedAt = new Date().toISOString();
   const [probed, agentStr, fixStr] = await Promise.all([
     runSlotProbes(vars, probes, SLOT_CHECK_TIMEOUT_MS),
     agents.then((states) => states.get(sid) ?? 'no-tmux'),
@@ -1277,7 +1299,9 @@ async function checkSingleSlot(
   const devserverStr = devServerCommand ? (devServerResult?.exitCode === 0 ? 'OK' : 'OFF') : '-';
   const [cdpStr, repoBlocker] = await Promise.all([
     healthCommand ? readHealth(projectJson, healthResult) : '-',
-    defaultBranch === undefined ? null : readSlotDefaultBranch(vars, defaultBranch, repoResult),
+    defaultBranch === undefined
+      ? undefined
+      : readSlotDefaultBranch(vars, defaultBranch, repoResult),
   ]);
 
   const dispatchable =
@@ -1310,6 +1334,8 @@ async function checkSingleSlot(
     mode,
     dispatchable,
     ...(repoBlocker ? { repoBlocker } : {}),
+    // Only a readable probe is an observation; no verdict leaves the saved one in place.
+    ...(repoBlocker !== undefined ? { repoObservedAt } : {}),
     resources: rawSlot.resources,
   };
 }
@@ -1357,17 +1383,17 @@ function readSlotDefaultBranch(
   vars: SlotVars,
   defaultBranch: string,
   result: SlotProbeOutcome,
-): string | null {
+): string | null | undefined {
   if (!result) {
     // Transport failure is not evidence about the repo; the SSH probe owns that verdict.
     console.warn(`[fleet.refresh] ${vars.slotId}: default-branch probe failed; no repo verdict`);
-    return null;
+    return undefined;
   }
   const probe = readDefaultBranchProbe(result, defaultBranch);
   if (probe.readable) return probe.blocker;
   // A failed git read is not evidence about the default branch: no verdict.
   console.warn(`[fleet.refresh] ${vars.slotId}: default-branch probe: ${probe.error}`);
-  return null;
+  return undefined;
 }
 
 function readLinkedWorktree(vars: SlotVars, result: SlotProbeOutcome): boolean {

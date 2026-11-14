@@ -49,14 +49,18 @@ interface ProbeFixture {
   format: { duration: string };
 }
 
-async function fixtureProbe(t: TestContext, probe: ProbeFixture) {
+async function fixtureProbe(
+  t: TestContext,
+  probe: ProbeFixture,
+  script = 'for file in "$@"; do :; done\ncat "$file"\n',
+) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'timeline-pts-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const input = path.join(root, 'probe.json');
   const executable = path.join(root, 'ffprobe');
   await writeFile(input, JSON.stringify(probe));
   // Substitute only ffprobe's process output; exercise the real parser and validator.
-  await writeFile(executable, '#!/bin/sh\nfor file in "$@"; do :; done\ncat "$file"\n', {
+  await writeFile(executable, `#!/bin/sh\n${script}`, {
     mode: 0o700,
   });
   return probeVideoTiming(
@@ -71,6 +75,76 @@ async function fixtureProbe(t: TestContext, probe: ProbeFixture) {
     executable,
   );
 }
+
+const validProbe: ProbeFixture = {
+  frames: [{ pts_time: '0' }, { pts_time: '0.1' }],
+  format: { duration: '0.2' },
+};
+
+test('clean full-frame probing uses automatic decoder threads without a serial retry', async (t) => {
+  const timing = await fixtureProbe(
+    t,
+    validProbe,
+    `
+[ "$1" = "-threads" ] && [ "$2" = "0" ] || exit 7
+case " $* " in *" -show_frames "*) ;; *) exit 8 ;; esac
+for file in "$@"; do :; done
+cat "$file"
+`,
+  );
+  assert.deepEqual(timing.framesMs, [0, 100]);
+  assert.equal(timing.durationMs, 200);
+});
+
+for (const diagnostic of ['decoder warning', ' ']) {
+  test(`parallel stderr ${JSON.stringify(diagnostic)} discards its output and retries the original probe`, async (t) => {
+    const timing = await fixtureProbe(
+      t,
+      validProbe,
+      `
+if [ "$1" = "-threads" ]; then
+  printf '%s' '${diagnostic}' >&2
+  printf '%s' '{"frames":[{"pts_time":"99"}],"format":{"duration":"100"}}'
+  exit 0
+fi
+[ "$1" = "-v" ] || exit 7
+for file in "$@"; do :; done
+cat "$file"
+`,
+    );
+    assert.deepEqual(timing.framesMs, [0, 100]);
+    assert.equal(timing.durationMs, 200);
+  });
+}
+
+test('a failed parallel process retries the original probe', async (t) => {
+  const timing = await fixtureProbe(
+    t,
+    validProbe,
+    `
+if [ "$1" = "-threads" ]; then exit 7; fi
+[ "$1" = "-v" ] || exit 8
+for file in "$@"; do :; done
+cat "$file"
+`,
+  );
+  assert.deepEqual(timing.framesMs, [0, 100]);
+});
+
+test('a failed serial fallback still reports its error', async (t) => {
+  await assert.rejects(
+    fixtureProbe(
+      t,
+      validProbe,
+      `
+if [ "$1" = "-threads" ]; then exit 7; fi
+printf '%s' 'serial decode failed' >&2
+exit 8
+`,
+    ),
+    /serial decode failed/,
+  );
+});
 
 test('real simctl PTS survives probing and timeline construction without dropping equal frames', async (t) => {
   const fixture: { durationSeconds: string; ptsAndBestEffortSeconds: [string, string][] } =
