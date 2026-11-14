@@ -40,3 +40,13 @@ Capture these values with the existing `@farmslot/slot-config` `runSessionUsage`
 ## Validation recipe
 
 `scripts/runner-validation/eval-benchmark-read.recipe.json` reads the configured gateway through an explicit `FARMSLOT_GATEWAY_PROFILE`. It takes no mutation action. Optional `FARMSLOT_EVAL_PROOF_ITEM`, `FARMSLOT_EVAL_EXPECT_PRIMARY`, `FARMSLOT_EVAL_EXPECT_MERGED` and `FARMSLOT_EVAL_REQUIRE_ORIGINAL=1` bind the expected live claim. `FARMSLOT_EVAL_PROOF_OUTPUT` retains the JSON receipt. Run with the repository recipe runner and `scripts/runner-validation/acceptance-evidence.action-manifest.json`; browser rendering is checked separately in Command Center.
+
+## Detailed comparison and export
+
+Compare selects one or two trials for the same case and pinned reference. The detailed read joins the index to retained `refs/<item>-prereview.diff`, `workers/worker-<run-prefix>/diff-vs-base.patch`, worker metrics and the task's acceptance ledger. All paths stay within the configured dataset. Missing artifacts remain explicit; the view never substitutes merged output for an unavailable pre-review original.
+
+Changed-line counts come from retained text patches, classified by test paths versus code and other files. Patch and ledger attribution requires an exact worker run ID. Diff-of-diffs additionally requires equal full 40-character base hashes. It yields between edit lengths, with a shared five-second request budget and a 1,024-edit limit per comparison; exceeding either limit leaves an explicit note and keeps the raw patches available. Selecting a file compares that file's patch on both sides. Ledger criteria remain separate from judge AC claims; findings retain cause, cited evidence and whether the original shared the issue. None of these reads creates a new grade or changes publication eligibility.
+
+Export HTML downloads the selected comparison with every section, inline styles and snapshot hashes. It needs no running gateway or application after download and includes no scripts or external resources. The original usage interval and price-estimate note stay attached to the exported values.
+
+The comparison recipe accepts `FARMSLOT_EVAL_COMPARE_EXPECT=verified|identity-unverified|base-unverified|budget|patch-missing`. Use a disposable, isolated dataset for negative cases. It checks missing-artifact file filtering and scope claims as well as the authenticated RPC and inert HTML export. Never alter the operator dataset for validation.

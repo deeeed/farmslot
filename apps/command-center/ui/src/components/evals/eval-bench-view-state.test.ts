@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { createViewStateContext, EVAL_BENCH_FILTERS, EVAL_BENCH_VIEW } from '@farmslot/protocol';
+import {
+  createViewStateContext,
+  EVAL_BENCH_COMPARE,
+  EVAL_BENCH_FILE,
+  EVAL_BENCH_FILTERS,
+  EVAL_BENCH_TAB,
+  EVAL_BENCH_VIEW,
+} from '@farmslot/protocol';
 import { validViewRoute } from '@farmslot/protocol/surfaces/view-links';
 
 test('benchmark choices use the shared context, preserve planner state and omit defaults', () => {
@@ -30,4 +37,15 @@ test('benchmark filter and planner choices survive the shared view-link contract
     validViewRoute('#evals?problem=dev&area=Core&size=medium&model=model-id&view=plan'),
     true,
   );
+});
+
+test('comparison selections, tab and file preserve order and survive the shared link contract', () => {
+  const params = new URLSearchParams();
+  EVAL_BENCH_COMPARE.write(params, ['second-trial', 'first-trial']);
+  EVAL_BENCH_TAB.write(params, 'acceptance');
+  EVAL_BENCH_FILE.write(params, 'src/example.ts');
+  assert.deepEqual(EVAL_BENCH_COMPARE.read(params), ['second-trial', 'first-trial']);
+  assert.equal(EVAL_BENCH_TAB.read(params), 'acceptance');
+  assert.equal(EVAL_BENCH_FILE.read(params), 'src/example.ts');
+  assert.equal(validViewRoute('#evals?' + params.toString()), true);
 });
