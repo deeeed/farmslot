@@ -232,6 +232,99 @@ test('retention uses parking age, protects required refs and never early-prunes 
   assert.equal((await readParkedGitWork(vars, 'proof', localExec)).receipts.length, 0);
 });
 
+test('retention keeps unknown promisor ancestry local and still prunes verified remote work', async (t) => {
+  const { root, repo, vars, git, options } = await fixture(t);
+  const capture = await parkGitWork(vars, options, localExec);
+  const receipt = capture.receipts[0];
+  const remote = path.join(root, 'remote.git');
+  git('push', '-q', 'origin', 'HEAD:refs/heads/published');
+  const intermediate = execFileSync(
+    'git',
+    [
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.invalid',
+      '--git-dir=' + remote,
+      'commit-tree',
+      git('rev-parse', 'HEAD^{tree}'),
+      '-p',
+      receipt.headSha,
+    ],
+    { input: 'unfetched intermediate\n', encoding: 'utf8' },
+  ).trim();
+  const next = execFileSync(
+    'git',
+    [
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.invalid',
+      '-c',
+      'commit.gpgsign=false',
+      '--git-dir=' + remote,
+      'commit-tree',
+      git('rev-parse', 'HEAD^{tree}'),
+      '-p',
+      intermediate,
+    ],
+    { input: 'unfetched remote tip\n', encoding: 'utf8' },
+  ).trim();
+  execFileSync('git', ['--git-dir=' + remote, 'update-ref', 'refs/heads/published', next]);
+  execFileSync('git', ['--git-dir=' + remote, 'config', 'uploadpack.allowFilter', 'true']);
+  git('config', 'remote.origin.promisor', 'true');
+  git('config', 'remote.origin.partialclonefilter', 'blob:none');
+  git('config', 'extensions.partialClone', 'origin');
+  const missing = execFileSync(
+    'git',
+    ['-C', repo, 'cat-file', '--batch-check=%(objectname) %(objecttype)'],
+    { input: next + '\n', encoding: 'utf8', env: { ...process.env, GIT_NO_LAZY_FETCH: '1' } },
+  );
+  assert.match(missing, / missing/);
+  const trace = path.join(root, 'retention.trace');
+  const tracedExec: typeof execOnSlot = async (_vars, command) => {
+    const result = await execute('bash', ['-c', command], {
+      env: { ...process.env, GIT_TRACE: trace },
+    });
+    return { ...result, exitCode: 0 };
+  };
+  const prune = (protectedRefs: string[] = []) =>
+    pruneParkedGitWork(
+      vars,
+      'proof',
+      capture.receipts,
+      protectedRefs,
+      '2026-11-01T00:00:00Z',
+      '2026-11-14T00:00:00Z',
+      tracedExec,
+    );
+  const unknown = await prune();
+  const observed = await readFile(trace, 'utf8');
+  assert.doesNotMatch(
+    observed,
+    /fetch origin/,
+    'a passive retention lookup must not fetch missing tips',
+  );
+  assert.match(observed, /ls-remote --heads origin/, 'advertisement must still be fresh');
+  assert.deepEqual(unknown, []);
+  assert.equal(git('rev-parse', receipt.ref), receipt.headSha);
+  // A locally cached remote tip can still have an unfetched promisor parent.
+  const tipBytes = execFileSync('git', ['--git-dir=' + remote, 'cat-file', 'commit', next]);
+  execFileSync('git', ['-C', repo, 'hash-object', '-t', 'commit', '-w', '--stdin'], {
+    input: tipBytes,
+  });
+  assert.deepEqual(await prune(), []);
+  assert.doesNotMatch(await readFile(trace, 'utf8'), /fetch origin/);
+  assert.equal(git('rev-parse', receipt.ref), receipt.headSha);
+  // Explicit acting fetch remains allowed and turns the unknown ancestry into a verified proof.
+  git('fetch', '-q', 'origin');
+  assert.deepEqual(await prune([receipt.ref]), []);
+  assert.equal(git('rev-parse', receipt.ref), receipt.headSha);
+  const published = await prune();
+  assert.equal(published[0]?.ref, receipt.ref);
+  assert.equal(published[0]?.pruneReason, 'remote');
+});
+
 test('an ignored file that reset would expose to clean is retained in the original snapshot', async (t) => {
   const { vars, repo, git, options, mutate } = await fixture(t);
   await writeFile(path.join(repo, '.gitignore'), '');
