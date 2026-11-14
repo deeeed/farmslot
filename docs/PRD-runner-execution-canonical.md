@@ -128,6 +128,11 @@ identity and quota remain unknown; credential presence does not prove subscripti
 
 ### 6. Native structured sessions
 
+Reasoning labels use the adapter's serialized request receipt when available. An omitted
+setting displays `default`, an explicit disable displays `off`, and a level displays its
+wire value. The receipt is bound to the worker's session, model and attempt for either
+transport. Runs without a receipt retain their existing effort label.
+
 Runner adapters own native protocol mechanics and declare supported interactions. Clients consume shared session commands and events for text, tools, approval, questions, interruption, and recovery. Acceptance, turn start, and turn completion are separate facts. Missing structured evidence remains unknown; unsupported operations fail closed.
 
 Each session has one authoritative input owner and a durable identity bound to its execution node, runner, account context, and native session. Commands and approval replies retain correlation IDs. An account switch cannot reuse another account's process, transcript, or pending request.

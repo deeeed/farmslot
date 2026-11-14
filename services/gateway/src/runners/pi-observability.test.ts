@@ -5,10 +5,59 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { writePiReasoningReceipt } from '../../../../scripts/runners/pi-farmslot-hook-writer.mjs';
+
 import {
   buildPiPromptAcceptanceCommand,
+  buildPiReasoningReceiptCommand,
   buildPiSessionDiscoveryCommand,
+  parsePiReasoningReceipt,
 } from './pi-observability.js';
+
+test('Pi request receipts fence the model, attempt, cwd and either transport session identity', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'pi-reasoning-receipt-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, 'timestamp_saved-pi.jsonl');
+  writeFileSync(file, JSON.stringify({ type: 'session', id: 'saved-pi', cwd: root }) + '\n');
+  const since = Date.now() - 1000;
+  const read = (sessionId = 'saved-pi', model = 'litellm/glm', cwd = root, started = since) =>
+    parsePiReasoningReceipt(
+      JSON.parse(
+        execFileSync(
+          'bash',
+          [
+            '-c',
+            buildPiReasoningReceiptCommand(cwd, {
+              sessionId,
+              sessionPath: file,
+              model,
+              since: started,
+            }),
+          ],
+          { encoding: 'utf8' },
+        ),
+      ),
+    );
+  assert.equal(read(), null);
+  writePiReasoningReceipt(file, {
+    provider: 'litellm',
+    model: 'glm',
+    effectiveReasoning: { mode: 'omitted' },
+  });
+  assert.equal(read()?.reasoning.mode, 'omitted');
+  assert.equal(read('timestamp_saved-pi')?.sessionId, 'timestamp_saved-pi');
+  assert.equal(read('foreign-session'), null);
+  assert.equal(read('saved-pi', 'litellm/other'), null);
+  assert.equal(read('saved-pi', 'litellm/glm', path.join(root, 'other')), null);
+  assert.equal(read('saved-pi', 'litellm/glm', root, Date.now() + 1000), null);
+  const filePath = `${file}.reasoning-request.json`;
+  const malformed = JSON.parse(readFileSync(filePath, 'utf8'));
+  malformed.reasoning = { mode: 'off' };
+  writeFileSync(filePath, JSON.stringify(malformed));
+  assert.equal(read(), null);
+  writeFileSync(`${file}.reasoning-request.json`, '{');
+  assert.equal(read(), null);
+});
 
 test('Pi startup accepts only the exact latest native user message in its saved session', (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'pi-native-acceptance-'));

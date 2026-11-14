@@ -77,6 +77,7 @@ export interface ClearedRunnerSessionContextPatch {
   runnerSessionId: null;
   runnerSessionPath: null;
   runnerSessionCapturedAt: undefined;
+  reasoningReceipt: undefined;
 }
 
 /**
@@ -90,6 +91,7 @@ export function clearedRunnerSessionContextPatch(): ClearedRunnerSessionContextP
     runnerSessionId: null,
     runnerSessionPath: null,
     runnerSessionCapturedAt: undefined,
+    reasoningReceipt: undefined,
   };
 }
 

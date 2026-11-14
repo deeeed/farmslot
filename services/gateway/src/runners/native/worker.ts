@@ -906,7 +906,11 @@ export async function dispatchNativeWorker(input: {
     );
   await save(
     { ...binding, generation: info.generation },
-    { runnerSessionId: info.nativeSessionId, runnerSessionPath: null },
+    {
+      runnerSessionId: info.nativeSessionId,
+      runnerSessionPath: info.nativeSessionPath ?? null,
+      reasoningReceipt: undefined,
+    },
   );
   if (!binding.acceptedAt) {
     try {

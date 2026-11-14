@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -24,7 +24,7 @@ const settle=(aborted=false)=>send({type:'agent_settled',aborted});
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
  if(!line.trim())return;
  const m=JSON.parse(line);fs.appendFileSync('wire',line+'\\n');
- if(m.type==='get_state')return reply(m,{sessionId:session,model:{provider,id},isStreaming:false});
+ if(m.type==='get_state')return reply(m,{sessionId:session,sessionFile:process.cwd()+'/session.jsonl',model:{provider,id},isStreaming:false});
  if(m.type==='get_available_models'){if(process.env.PI_FIXTURE_REFUSE)return send({id:m.id,type:'response',command:m.type,success:false,error:'no registry'});return reply(m,{models:process.env.PI_FIXTURE_NO_MODELS?[]:[{provider,id}]})}
  if(m.type==='clear_queue')return reply(m,{steering:[],followUp:[]});
  if(m.type==='abort'){settle(true);return reply(m)}
@@ -87,6 +87,10 @@ test('a Pi turn streams text and tools and completes when Pi settles', async () 
   );
   try {
     assert.equal(session.nativeSessionId, 'pi-session');
+    assert.equal(
+      events.find((event) => event.type === 'session.started')?.data?.sessionPath,
+      join(realpathSync(f.cwd), 'session.jsonl'),
+    );
     assert.deepEqual(JSON.parse(readFileSync(join(f.cwd, 'argv'), 'utf8')), [
       '--mode',
       'rpc',

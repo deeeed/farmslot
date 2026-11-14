@@ -94,6 +94,22 @@ function readSnapshot(directory, key) {
   }
 }
 
+/** Bounded request metadata beside the runner-owned transcript, for either transport. */
+export function writePiReasoningReceipt(sessionPath, configuration) {
+  if (!sessionPath || !configuration.effectiveReasoning) return;
+  const file = `${sessionPath}.reasoning-request.json`;
+  const pending = `${file}.${process.pid}.tmp`;
+  const receipt = {
+    sessionId: path.basename(sessionPath).replace(/\.jsonl?$/, ''),
+    provider: configuration.provider,
+    model: configuration.model,
+    observedAt: new Date().toISOString(),
+    reasoning: configuration.effectiveReasoning,
+  };
+  fs.writeFileSync(pending, `${JSON.stringify(receipt)}\n`, { mode: 0o600 });
+  fs.renameSync(pending, file);
+}
+
 /**
  * @param {{
  *   obsDir: string,

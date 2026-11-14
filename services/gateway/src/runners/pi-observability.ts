@@ -1,4 +1,9 @@
-import { isRecord, type Run } from '@farmslot/protocol';
+import {
+  isEffectiveReasoning,
+  isRecord,
+  type Run,
+  type RunnerReasoningReceipt,
+} from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
@@ -89,6 +94,19 @@ PY`;
 export function createPiHookObservability(): RunnerObservability {
   return {
     ...claudeHookObservability,
+    async getReasoningReceipt(vars, session) {
+      const result = await execOnSlot(
+        vars,
+        buildPiReasoningReceiptCommand(vars.remoteRepo, session),
+        {
+          timeout: 10_000,
+          maxBuffer: 8192,
+          selectNodeSupport: false,
+        },
+      );
+      if (result.exitCode !== 0) throw new Error('Pi request receipt read failed');
+      return parsePiReasoningReceipt(JSON.parse(result.stdout));
+    },
     async promptAcceptedInSession(vars, _target, sessionId, sessionPath, prompt, since) {
       const result = await execOnSlot(
         vars,
@@ -122,6 +140,56 @@ export function createPiHookObservability(): RunnerObservability {
       return JSON.parse(result.stdout) as string[];
     },
   };
+}
+
+export function parsePiReasoningReceipt(value: unknown): RunnerReasoningReceipt | null {
+  return isRecord(value) &&
+    typeof value.sessionId === 'string' &&
+    typeof value.provider === 'string' &&
+    typeof value.model === 'string' &&
+    typeof value.selectedModel === 'string' &&
+    typeof value.observedAt === 'string' &&
+    Number.isFinite(Date.parse(value.observedAt)) &&
+    isEffectiveReasoning(value.reasoning)
+    ? {
+        sessionId: value.sessionId,
+        provider: value.provider,
+        model: value.model,
+        selectedModel: value.selectedModel,
+        observedAt: value.observedAt,
+        reasoning: value.reasoning,
+      }
+    : null;
+}
+
+/** Read two small runner-owned records; never scan the conversation for a label. */
+export function buildPiReasoningReceiptCommand(
+  repo: string,
+  session: { sessionId: string; sessionPath: string; model: string; since: number },
+): string {
+  return `python3 - <<'PY'
+import json,os
+from datetime import datetime
+from pathlib import Path
+repo=${JSON.stringify(repo)}
+session=json.loads(${JSON.stringify(JSON.stringify(session))})
+file=Path(session['sessionPath'])
+def unavailable():
+ print('{}');raise SystemExit(0)
+try:
+ with file.open('rb') as stream:header=json.loads(stream.readline(65536))
+ with Path(str(file)+'.reasoning-request.json').open('rb') as stream:receipt=json.loads(stream.read(4096))
+ stamp=datetime.fromisoformat(receipt['observedAt'].replace('Z','+00:00')).timestamp()*1000
+except (OSError,ValueError,KeyError,TypeError,AttributeError):unavailable()
+if not isinstance(header,dict) or header.get('type')!='session' or os.path.realpath(header.get('cwd',''))!=os.path.realpath(repo):unavailable()
+if session['sessionId'] not in (header.get('id'),file.stem) or receipt.get('sessionId')!=file.stem or stamp<session['since']:unavailable()
+model=session['model']
+if model.rsplit(':',1)[-1] in ('off','minimal','low','medium','high','xhigh','max'):model=model.rsplit(':',1)[0]
+if model not in (receipt.get('model'),str(receipt.get('provider'))+'/'+str(receipt.get('model'))):unavailable()
+receipt['sessionId']=session['sessionId']
+receipt['selectedModel']=session['model']
+print(json.dumps(receipt))
+PY`;
 }
 
 /** The retained Pi header binds a bounded native user-message read to its exact cwd. */

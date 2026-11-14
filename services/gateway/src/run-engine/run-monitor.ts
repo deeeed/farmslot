@@ -2136,6 +2136,17 @@ export async function checkAgentLive(
     if (!vars.session) return 'idle';
     const session = (await source.target(slotId, { runId, role, contextId })).target;
     const turn = await source.turn(vars, session, runner ?? '');
+    if (runId) {
+      const currentRun = getRun(runId);
+      if (currentRun) {
+        const { captureRunnerReasoningReceipt } = await import('../runners/reasoning-receipt.js');
+        await captureRunnerReasoningReceipt(
+          currentRun,
+          selectAgentContext(currentRun, { role, contextId }),
+          vars,
+        );
+      }
+    }
     if (
       turn?.confidence === 'high' &&
       turn.source !== 'pane' &&
