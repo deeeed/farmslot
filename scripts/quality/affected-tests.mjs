@@ -44,6 +44,9 @@ export function sourceReferences(source, file) {
   let dynamic = false;
   let runtimeRead = false;
   function visit(node) {
+    // Tests also execute/copy source files by literal path. Keep those edges
+    // without treating production metadata descriptions as imports.
+    if (TEST_FILE.test(file) && ts.isStringLiteralLike(node)) references.add(node.text);
     if (
       (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
       node.moduleSpecifier &&

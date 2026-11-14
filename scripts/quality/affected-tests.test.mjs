@@ -99,3 +99,18 @@ test('an unresolved temporary import in a selected test does not widen its whole
     ['apps/app/src/model.test.ts'],
   );
 });
+
+test('script execution by a literal source path selects its test consumer', () => {
+  const input = {
+    'scripts/tool.mts': 'export const value = 1;',
+    'scripts/tool.test.mjs':
+      "execFile(process.execPath, [path.resolve(root, 'scripts/tool.mts')]);",
+    'scripts/other.test.mjs': 'export {};',
+  };
+  const files = Object.keys(input);
+  const graph = buildSourceGraph(files, [], (file) => input[file]);
+  assert.deepEqual(
+    selectAffectedTests({ files, changed: ['scripts/tool.mts'], workspaces: [], graph }),
+    ['scripts/tool.test.mjs'],
+  );
+});
