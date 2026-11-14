@@ -5,7 +5,30 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.39.4 - 2026-11-15
+
 - The settlement drop log says the run is gone, or that it no longer links a PR, instead of `another PR (#none)`.
+- Allow blind trials to freeze an experiment-local candidate template without changing live template selection.
+- An artifact-only blind eval trial whose worker is stuck or waiting, and that no nudge can move (the runner takes no nudges or the nudge budget is spent), now ends as a blocked trial output instead of opening a monitor decision that no operator answers.
+- Blind trial isolation keeps the farm-installed agent tooling (`.agents/skills`, `.claude/skills`, `.skills-cache`, `.cursor/rules`, `.skills.local`, `.tool-versions`) and local toolchain state (Mobile's deps-setup stamp, `ios/.xcode.env.local`, `.yalc`, `.metamask/cache`) in place by default. Generated sources still move, since an earlier run may have built them from its own fix. A folder that ignores itself (such as `.husky/_`), which Git lists along with each entry in it, no longer fails isolation.
+- Blind trial isolation on a partial (blobless) clone now fetches the base's missing objects in one batch before copying them, instead of one request per object, and fails fast with a clear message when they cannot be fetched. A capsule left mid-isolation by a killed isolate, or already restored, is restored and set aside on the next attempt, so retries work; one isolation runs per capsule at a time.
+- The prepare `artifact_check` hook receives a blind trial's verified base commit as `{{prepare_base_sha}}` (empty for other runs), so a probe can select the artifact built for that commit.
+- Restoring a blind trial's Git (release, cancel or finished-trial cleanup) re-reads the slot's saved repo verdict, so slot selection no longer refuses the slot as still "isolated for blind trial" until the next fleet refresh.
+- Blind trial isolation moves the slot checkout's gitignored leftovers from earlier runs (old task folders, the harness runtime's `status.json` and operations ledger, env files) into the trial capsule, where the worker cannot read them, and restores them byte-identical when the trial is restored, including after a killed isolate. Caches listed in the project's new `blind_keep_ignored` (default: `node_modules`, `.yarn/*`, iOS Pods and build, Android build and Gradle, `build`, `dist`) and the run's own prepared files stay in place.
+- Blind eval trials always run autonomous, so a template whose default mode is interactive no longer leaves a blind dev trial waiting for an operator.
+- Reuse frozen trial-local templates during slot-selection preview for fresh and replayed eval runs.
+- Add remote node initialization proof for trial-local candidate templates and retained tooling.
+- Blind implementation trials retain the ticket's authored acceptance criteria for recipe proof binding.
+- Doctor flags slot Git alternates and missing cache-tree objects in registered linked worktree indexes, including prunable scratch worktrees.
+- File listings survive early Git exits. Parked-work failures identify the failed command or receipt, preserving bounded, redacted diagnostics.
+- Record the adapter's effective reasoning request for each worker attempt so default reasoning is no longer labeled off.
+- The QA task contract and the farm QA template now name the scope artifact's top-level `baseSha` and `headSha` explicitly and point to the skill's scope resolver, and the completion gate's error names the expected fields.
+- Keep parked-work retention local-only when inspecting advertised Git history, retaining work whose ancestry is unavailable.
+- Require canonical Farmslot rules during worker and paired reviews, with current review-template fixtures.
+- A tmux restore that cannot read its window's panes now reports the tmux exit code, its stderr and the rows tmux printed, instead of claiming the restored window "has no panes" for every transport or server failure.
+- Unchanged PR-rule rechecks compare the records they touch by JSON text instead of parsing and deep-comparing copies, and find prior intents by id. On a 1.1 MB rule store the recheck comparison is about a third of its old cost, and a whole quiet recheck about 30% cheaper.
+- Family report generation no longer leaves its 30-second deadline timer running after a report settles, and node links prune thousands of settled send intents in parallel batches instead of one file at a time.
 
 ## 0.39.3 - 2026-11-14
 

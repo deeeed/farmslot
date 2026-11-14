@@ -1,1 +1,0 @@
-- Keep parked-work retention local-only when inspecting advertised Git history, retaining work whose ancestry is unavailable.

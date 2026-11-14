@@ -1,1 +1,0 @@
-- Blind implementation trials retain the ticket's authored acceptance criteria for recipe proof binding.
