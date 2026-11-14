@@ -27,9 +27,13 @@ VALIDATION_DEPTH: {{VALIDATION_DEPTH}}
 - [ ] **1. Start** — run `{{TASK_DIR}}/mark --checklist {{REVIEW_CHECKLIST}} --signal {{REVIEW_SIGNAL}} start` and `{{TASK_DIR}}/mark --checklist {{REVIEW_CHECKLIST}} --signal {{REVIEW_SIGNAL}} 1`.
 - [ ] **2. Read quality rules**:
   ```bash
-  cd {{REPO}}
-  cat {{RUNTIME_DIR}}/review-quality.md 2>/dev/null || true
+  cd "{{REPO}}" || exit 1
+  cat "{{RUNTIME_DIR}}/review-quality.md" || {
+    printf '%s\n' 'Required review rules missing or unreadable; stop the review and report the blocker.' >&2
+    exit 1
+  }
   ```
+  Do not mark this step complete or issue a verdict unless the required rules were read.
 - [ ] **3. Inspect the worker output**:
   ```bash
   cd {{REPO}}

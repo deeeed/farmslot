@@ -21,6 +21,28 @@ def reviewer_command(argv):
     return argv[0] in review.REVIEWERS
 
 
+class WorkerReviewRulesTests(unittest.TestCase):
+    def test_worker_quality_step_stops_when_rules_are_missing_and_reads_present_rules(self):
+        root = Path(__file__).resolve().parents[4]
+        template = (root / "projects/farmslot-farm/templates/worker/review.md").read_text()
+        step = template.split("**2. Read quality rules**", 1)[1].split("```bash", 1)[1].split("```", 1)[0]
+        with tempfile.TemporaryDirectory(prefix="review rules ") as directory:
+            runtime = Path(directory) / "runtime"
+            runtime.mkdir()
+            command = step.replace("{{REPO}}", directory).replace("{{RUNTIME_DIR}}", str(runtime))
+            # A later command must never run when the required rules read fails.
+            missing = subprocess.run(["bash", "-c", command + "\nprintf 'review continued'"],
+                                     capture_output=True, text=True, timeout=2)
+            self.assertNotEqual(0, missing.returncode)
+            self.assertIn("Required review rules", missing.stderr)
+            self.assertNotIn("review continued", missing.stdout)
+            rules = "# Canonical rules\nFSR-01\n"
+            (runtime / "review-quality.md").write_text(rules)
+            present = subprocess.run(["bash", "-c", command], capture_output=True, text=True, timeout=2)
+            self.assertEqual(0, present.returncode, present.stderr)
+            self.assertEqual(rules, present.stdout)
+
+
 class ReviewTests(unittest.TestCase):
     def test_existing_legacy_pr_cannot_restart_new_rounds(self):
         legacy = self.root / 'legacy' / 'project-12'
@@ -148,6 +170,19 @@ class ReviewTests(unittest.TestCase):
         self.assertIn("## Diff scope", prompt)
         scope_commands = [command for command in self.commands if command[0] == "node"]
         self.assertTrue(all(command[4] == "main" for command in scope_commands))
+
+    def test_active_prompts_require_frozen_farmslot_rules_in_every_round(self):
+        self.args.repo = "deeeed/farmslot"
+        rules = "projects/farmslot-farm/fixtures/runtime/review-quality.md"
+        for number in (1, 2):
+            self.head = f"{number:040x}"
+            review.review(self.config, self.args)
+            saved = (self.directory() / f"r{number}" / "prompt.md").read_text()
+            for prompt in (saved, *self.prompts[-2:]):
+                self.assertIn(f"git show {self.head}:{rules}", prompt)
+                self.assertIn("Rule ID | Applies and why | Outcome | Frozen source/test evidence or gap", prompt)
+                self.assertIn("cannot be read, stop the review", prompt)
+                self.assertIn("Confirmed applicable rule violations require REQUEST_CHANGES", prompt)
 
     def test_comment_is_a_valid_nonapproval_and_project_policy_reaches_the_renderer(self):
         self.config["projects"] = {self.args.repo: {"approvalPolicy": {"maxNits": 0}}}

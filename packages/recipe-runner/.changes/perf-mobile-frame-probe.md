@@ -1,0 +1,1 @@
+- Reduce recording finalization time with parallel full-frame decoding, retaining the original probe on errors or diagnostics and preserving frame timestamps and evidence timing.

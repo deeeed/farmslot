@@ -22,22 +22,26 @@ export async function probeVideoTiming(
     | { clock: RecipeVideoTiming['clock'] },
   ffprobePath = process.env.FFPROBE_PATH ?? 'ffprobe',
 ): Promise<RecipeVideoTiming> {
-  const { stdout } = await exec(
-    ffprobePath,
-    [
-      '-v',
-      'error',
-      '-select_streams',
-      'v:0',
-      '-show_frames',
-      '-show_entries',
-      'frame=pts_time,best_effort_timestamp_time,pkt_duration_time:format=duration',
-      '-of',
-      'json',
-      file,
-    ],
-    { timeout: 120_000, maxBuffer: 32 * 1024 * 1024 },
-  );
+  const args = [
+    '-v',
+    'error',
+    '-select_streams',
+    'v:0',
+    '-show_frames',
+    '-show_entries',
+    'frame=pts_time,best_effort_timestamp_time,pkt_duration_time:format=duration',
+    '-of',
+    'json',
+    file,
+  ];
+  const options = { timeout: 120_000, maxBuffer: 32 * 1024 * 1024 };
+  const parallel = await exec(ffprobePath, ['-threads', '0', ...args], options).catch(() => {
+    // Unsupported threading or a failed decode must use the original probe below.
+    return undefined;
+  });
+  // Decode every frame. Diagnostics can mean missing frames even with exit code zero.
+  const { stdout } =
+    parallel && !parallel.stderr ? parallel : await exec(ffprobePath, args, options);
   const probe = JSON.parse(stdout) as {
     frames?: {
       pts_time?: string;
