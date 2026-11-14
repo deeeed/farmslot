@@ -488,6 +488,7 @@ const EVAL_TRIAL_START_PARAMS: Record<keyof EvalTrialStartParams, true> = {
   project: true,
   experimentManifestPath: true,
   axes: true,
+  candidateTemplatePath: true,
   source: true,
   label: true,
   startRef: true,
@@ -511,6 +512,13 @@ const EVAL_TRIAL_START_PARAMS: Record<keyof EvalTrialStartParams, true> = {
 function assertEvalTrialStartParams(params: EvalTrialStartParams): void {
   if (!params || typeof params !== 'object' || Array.isArray(params))
     throw new Error(`${EVAL_TRIAL_START_VALIDATION_PREFIX} expected an object`);
+  if (
+    params.candidateTemplatePath !== undefined &&
+    (typeof params.candidateTemplatePath !== 'string' || !params.candidateTemplatePath.trim())
+  )
+    throw new Error(
+      `${EVAL_TRIAL_START_VALIDATION_PREFIX} candidateTemplatePath must be a non-empty string`,
+    );
   const unknown = Object.keys(params).filter((key) => !Object.hasOwn(EVAL_TRIAL_START_PARAMS, key));
   if (unknown.length)
     throw new Error(
@@ -732,6 +740,9 @@ export async function evalTrialStart(
     evalCase.taskProfile,
     axesDefaults,
     proof,
+    params.candidateTemplatePath
+      ? path.resolve(path.dirname(params.experimentManifestPath), params.candidateTemplatePath)
+      : undefined,
   );
   const axes = templateResolution.axes;
   if (!isEvalPackageAxes(axes)) throw new Error('Invalid candidate axes: expected EvalPackageAxes');
@@ -896,6 +907,14 @@ export async function evalTrialStart(
   const evalEngineState = {
     evalExperiment: {
       ...reviewOverride,
+      ...(params.candidateTemplatePath && templateResolution.executionTemplate
+        ? {
+            candidateTemplate: {
+              path: path.join(candidateDir, 'inputs', 'candidate-template.md'),
+              reference: templateResolution.executionTemplate,
+            },
+          }
+        : {}),
       blind,
       capGroupId: params.capGroupId,
       suiteId: params.suiteId,

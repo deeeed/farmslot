@@ -1,5 +1,6 @@
 """Gateway-owned Git isolation for one blind trial; sent to the node on stdin."""
 import fcntl
+import fnmatch
 import hashlib
 import json
 import os
@@ -1065,6 +1066,66 @@ def restore_submodule_entries(state):
             entry.unlink(missing_ok=True)
 
 
+def ignored_moves(repo, keep):
+    # Gitignored leftovers of earlier runs (task folders, runtime ledgers, env
+    # files), in the checkout and its initialized submodules, move into the capsule.
+    # Kept caches and this run's own files stay, at any depth: an ignored directory
+    # that holds one is entered and only its other entries move.
+    def kept(rel):
+        return any(fnmatch.fnmatchcase(rel, p) or fnmatch.fnmatchcase(rel, '*/' + p) for p in keep)
+    def holds_kept(rel):
+        if any(p.startswith(rel + '/') for p in keep):
+            return True
+        for directory, names, files in os.walk(repo / rel):
+            base = os.path.relpath(directory, repo)
+            if any(kept(base + '/' + name) for name in names + files):
+                return True
+        return False
+    moves = []
+    def visit(rel):
+        if kept(rel):
+            return
+        entry = repo / rel
+        if entry.is_dir() and not entry.is_symlink() and holds_kept(rel):
+            for child in sorted(entry.iterdir()):
+                visit(rel + '/' + child.name)
+        else:
+            moves.append(rel)
+    def scan(root, prefix):
+        listed = git(root, 'ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory').stdout
+        for name in listed.split(b'\0'):
+            if name:
+                visit(prefix + os.fsdecode(name).rstrip('/'))
+        for path in gitlinks(root, 'HEAD'):
+            if (root / path / '.git').exists():
+                scan(root / path, prefix + path + '/')
+    scan(repo, '')
+    return moves
+
+
+def move_back(source, destination, aside):
+    # Never delete: a path the trial created where an original returns is set aside in the capsule.
+    if not os.path.lexists(destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source.rename(destination)
+    elif (source.is_dir() and not source.is_symlink()
+          and destination.is_dir() and not destination.is_symlink()):
+        for child in sorted(source.iterdir()):
+            move_back(child, destination / child.name, aside / child.name)
+        source.rmdir()
+    else:
+        aside.parent.mkdir(parents=True, exist_ok=True)
+        destination.rename(aside)
+        source.rename(destination)
+
+
+def restore_ignored(repo, capsule, state):
+    for rel in state.get('ignoredMoved', []):
+        source = capsule / 'original-ignored' / rel
+        if os.path.lexists(source):
+            move_back(source, repo / rel, capsule / 'trial-ignored' / rel)
+
+
 # A partial clone fetches each missing object on demand, one request per object:
 # a Mobile base exceeded the isolate budget that way. Fetch them in one batch first,
 # within one deadline for every snapshot, well inside the gateway's 900 s isolate budget.
@@ -1130,9 +1191,10 @@ def isolate_locked(spec):
                 git(repo, 'update-ref', '-d', branch, spec['baseSha'])
             aside = capsule.with_name(capsule.name + '.interrupted-' + os.urandom(4).hex())
             capsule.rename(aside)
-            # Restored: no store there is referenced any more. Keep only its journal and receipts.
+            # Restored: no store there is referenced any more. Keep its journal and receipts,
+            # and any ignored files (originals or the trial's set-aside ones): never delete those.
             for entry in aside.iterdir():
-                if entry.suffix != '.json':
+                if entry.suffix != '.json' and entry.name not in ('original-ignored', 'trial-ignored'):
                     shutil.rmtree(entry) if entry.is_dir() and not entry.is_symlink() else entry.unlink()
             return isolate_locked(spec)
         if state['phase'] != 'isolated':
@@ -1162,31 +1224,37 @@ def isolate_locked(spec):
     state = {**spec, 'phase': 'preparing',
              'originalDirectory': str(original_directory),
              'originalHead': git(repo, 'rev-parse', 'HEAD').stdout.decode().strip(),
-             'originalIsDirectory': (repo / '.git').is_dir()}
-    save(journal, state)
-    git(repo, 'init', '-q', '--bare', '--template=', '--object-format=' + ('sha256' if len(spec['baseSha']) == 64 else 'sha1'), str(prepared))
-    objects = capsule / 'base.objects'
-    objects.write_bytes(git(repo, 'rev-list', '--objects', '--no-object-names', '--no-walk',
-                            spec['baseSha'], *([spec['proof']['baseSha']] if spec.get('proof') else [])).stdout)
-    pack_into(repo, prepared, [], objects)
-    git(repo, 'config', 'core.bare', 'false', git_dir=prepared)
-    git(repo, 'config', 'core.worktree', str(repo), git_dir=prepared)
-    git(repo, 'config', 'protocol.allow', 'never', git_dir=prepared)
-    git(repo, 'config', 'farmslot.blindRun', spec['runId'], git_dir=prepared)
-    copy_local_commit_settings(repo, original_directory, prepared)
-    snapshots = sorted({spec['baseSha']} | ({spec['proof']['baseSha']} if spec.get('proof') else set()))
-    (prepared / 'shallow').write_text('\n'.join(snapshots) + '\n')
-    git(repo, 'update-ref', 'refs/heads/' + spec['branch'], spec['baseSha'], git_dir=prepared)
-    # Project checks diff against origin/main (git merge-base origin/main HEAD). Point it at the
-    # verified base: a local tracking ref only, with no remote URL and no reference history.
-    git(repo, 'update-ref', 'refs/remotes/origin/main', spec['baseSha'], git_dir=prepared)
-    git(repo, 'symbolic-ref', 'HEAD', 'refs/heads/' + spec['branch'], git_dir=prepared)
-    git(repo, 'read-tree', spec['baseSha'], git_dir=prepared)
-    prepare_submodules(repo, original_directory, prepared,
-                       [spec['baseSha']] + ([spec['proof']['baseSha']] if spec.get('proof') else []),
-                       state, capsule)
+             'originalIsDirectory': (repo / '.git').is_dir(),
+             'ignoredMoved': ignored_moves(repo, spec.get('keepIgnored', []))}
     save(journal, state)
     try:
+        # Every step after the journal rolls back: ignored originals never strand in the capsule.
+        for rel in state['ignoredMoved']:
+            target = capsule / 'original-ignored' / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            (repo / rel).rename(target)
+        git(repo, 'init', '-q', '--bare', '--template=', '--object-format=' + ('sha256' if len(spec['baseSha']) == 64 else 'sha1'), str(prepared))
+        objects = capsule / 'base.objects'
+        objects.write_bytes(git(repo, 'rev-list', '--objects', '--no-object-names', '--no-walk',
+                                spec['baseSha'], *([spec['proof']['baseSha']] if spec.get('proof') else [])).stdout)
+        pack_into(repo, prepared, [], objects)
+        git(repo, 'config', 'core.bare', 'false', git_dir=prepared)
+        git(repo, 'config', 'core.worktree', str(repo), git_dir=prepared)
+        git(repo, 'config', 'protocol.allow', 'never', git_dir=prepared)
+        git(repo, 'config', 'farmslot.blindRun', spec['runId'], git_dir=prepared)
+        copy_local_commit_settings(repo, original_directory, prepared)
+        snapshots = sorted({spec['baseSha']} | ({spec['proof']['baseSha']} if spec.get('proof') else set()))
+        (prepared / 'shallow').write_text('\n'.join(snapshots) + '\n')
+        git(repo, 'update-ref', 'refs/heads/' + spec['branch'], spec['baseSha'], git_dir=prepared)
+        # Project checks diff against origin/main (git merge-base origin/main HEAD). Point it at the
+        # verified base: a local tracking ref only, with no remote URL and no reference history.
+        git(repo, 'update-ref', 'refs/remotes/origin/main', spec['baseSha'], git_dir=prepared)
+        git(repo, 'symbolic-ref', 'HEAD', 'refs/heads/' + spec['branch'], git_dir=prepared)
+        git(repo, 'read-tree', spec['baseSha'], git_dir=prepared)
+        prepare_submodules(repo, original_directory, prepared,
+                           [spec['baseSha']] + ([spec['proof']['baseSha']] if spec.get('proof') else []),
+                           state, capsule)
+        save(journal, state)
         (repo / '.git').rename(original)
         source = original if state['originalIsDirectory'] else original_directory
         # The original index knows which later tracked files must disappear.
@@ -1204,6 +1272,7 @@ def isolate_locked(spec):
             original.rename(repo / '.git')
             restore_submodule_entries(state)
             git(repo, 'reset', '--hard', state['originalHead'])
+        restore_ignored(repo, capsule, state)
         state['phase'] = 'restored'
         save(journal, state)
         raise
@@ -1265,6 +1334,7 @@ def restore(spec):
         elif git(repo, 'config', '--get', 'farmslot.blindRun', check=False).stdout.strip():
             raise RuntimeError('Blind trial interrupted preparation lost original Git metadata')
         restore_submodule_entries(state)
+        restore_ignored(repo, capsule, state)
         state['phase'] = 'restored'
         save(journal, state)
         remove_worker_temp(capsule)
@@ -1318,6 +1388,7 @@ def restore(spec):
     if retained.exists():
         shutil.copyfile(retained / 'index', directory / 'index')
         shutil.rmtree(retained)
+    restore_ignored(repo, capsule, state)
     state['phase'] = 'restored'
     save(journal, state)
     for name in ['base.objects', 'candidate.objects']:

@@ -265,4 +265,50 @@ test('split layout writes CHECKLIST.md verbatim and TASK.md as the task document
     await readFile(path.join(path.dirname(qaTask), 'inputs/qa.json'), 'utf8'),
     qaInputsText,
   );
+
+  // A local trial's task uses the snapshot, while the catalog default stays intact.
+  const { candidateExecutionTemplate } = await import('@farmslot/agent-runtime');
+  const candidatePath = path.join(projectsDir, 'candidate-template.md');
+  const candidateMarkdown = TEMPLATE_SOURCE.replace(
+    'Fixture fix-bug checklist',
+    'B1 trial checklist',
+  );
+  await writeFile(candidatePath, candidateMarkdown);
+  const candidate = candidateExecutionTemplate({
+    path: candidatePath,
+    relativePath: 'fix-bug/B1.md',
+    markdown: candidateMarkdown,
+    flow: 'fix-bug',
+  });
+  const trialRun = makeSplitRun(`B1-SPLIT-${Date.now()}`);
+  trialRun.id = 'run-b1-split';
+  trialRun.executionTemplateId = candidate.reference.id;
+  trialRun.executionTemplate = candidate.reference;
+  trialRun.engineState = {
+    evalExperiment: {
+      experimentId: 'local-B1',
+      experimentKey: 'local-B1',
+      experimentManifestPath: 'experiment.json',
+      packagePath: 'candidate.json',
+      candidateStrategyFingerprint: candidate.reference.sha256,
+      trialId: 'B1',
+      candidateTemplate: { path: candidatePath, reference: candidate.reference },
+    },
+  };
+  const trialTask = await writeTaskFixture(trialRun);
+  t.after(() => rm(path.dirname(trialTask), { recursive: true, force: true }));
+  assert.equal(
+    await readFile(path.join(path.dirname(trialTask), 'CHECKLIST.md'), 'utf8'),
+    candidateMarkdown,
+  );
+  const trialHandoff = JSON.parse(
+    await readFile(path.join(path.dirname(trialTask), HANDOFF_INPUT), 'utf8'),
+  );
+  assert.equal(trialHandoff.executionTemplate.sha256, candidate.reference.sha256);
+  assert.equal(trialHandoff.templateProvenance.contentHash, candidate.reference.sha256);
+  assert.equal(trialHandoff.templateProvenance.templatePath, 'fix-bug/B1.md');
+  assert.equal(
+    await readFile(path.join(tempProject, 'templates/worker/fix-bug.md'), 'utf8'),
+    TEMPLATE_SOURCE,
+  );
 });

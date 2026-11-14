@@ -750,6 +750,14 @@
       },
       "examples": [["expo run:ios --no-install --port {{port}}", "ios/Example App.xcworkspace"]]
     },
+    "blind_keep_ignored": {
+      "type": "array",
+      "description": "Gitignored caches a blind eval trial keeps in the slot checkout. Isolation moves every other ignored path (earlier runs' task folders, runtime state, env files) into the trial capsule and restores it afterwards. Each pattern also matches below any directory (node_modules covers packages/a/node_modules). Omit for the default list: node_modules, .yarn/*, ios/Pods, ios/build, android/.gradle, android/build, android/app/build, build, dist.",
+      "items": {
+        "type": "string"
+      },
+      "examples": [["node_modules", ".yarn/*", "ios/Pods"]]
+    },
     "diff_analysis": {
       "type": "object",
       "description": "Project-specific diff capture/filter settings used when building review inputs and source snapshots.",

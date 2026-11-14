@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { executionTemplateReference } from '@farmslot/agent-runtime';
+import { candidateExecutionTemplate, executionTemplateReference } from '@farmslot/agent-runtime';
 import {
   type EvalExperimentCreateParams,
   type EvalPackageAxes,
@@ -105,6 +105,7 @@ export async function resolveCandidateTemplateProvenance(
   taskProfile: EvalExperimentCreateParams['taskProfile'],
   axes: EvalPackageAxes,
   proof?: EvalProofInput,
+  candidateTemplatePath?: string,
 ): Promise<{
   axes: EvalPackageAxes;
   provenance?: TemplateProvenance;
@@ -114,6 +115,49 @@ export async function resolveCandidateTemplateProvenance(
   mode?: ExecutionTemplateRunMode;
   missingData: string[];
 }> {
+  if (candidateTemplatePath) {
+    if (taskProfile === 'proof')
+      throw new Error('Proof template cannot override the admitted QA snapshot.');
+    const selected = candidateExecutionTemplate({
+      path: candidateTemplatePath,
+      relativePath: `${taskProfile}/${path.basename(candidateTemplatePath)}`,
+      markdown: await readFile(candidateTemplatePath, 'utf8'),
+      flow: taskProfile,
+    });
+    const expectedHash = axes.template?.hash?.trim();
+    if (expectedHash && expectedHash !== selected.entry.sha256)
+      throw new Error(
+        `Candidate template hash mismatch: expected ${expectedHash}, resolved ${selected.entry.sha256}.`,
+      );
+    const provenance = await buildTemplateProvenance({
+      flowType: taskProfile,
+      project,
+      templatePath: candidateTemplatePath,
+      templateName: selected.entry.relativePath,
+      templateContent: selected.markdown,
+      role: 'eval-candidate',
+      source: 'external',
+    });
+    return {
+      axes: {
+        ...axes,
+        template: {
+          name: selected.entry.id,
+          path: selected.entry.relativePath,
+          hash: selected.entry.sha256,
+        },
+      },
+      provenance: {
+        ...provenance,
+        templatePath: selected.entry.relativePath,
+        executionTemplate: selected.reference,
+      },
+      executionTemplate: selected.reference,
+      templateContent: selected.markdown,
+      mode: 'autonomous',
+      missingData: [],
+    };
+  }
   if (taskProfile === 'proof') {
     if (!proof) throw new Error('Proof trial is missing its admitted input.');
     const frozen = proof.executionTemplate;

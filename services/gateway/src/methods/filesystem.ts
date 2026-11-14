@@ -427,17 +427,25 @@ function filterGitIgnored(repoPath: string, entries: string[]): Promise<Set<stri
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stdout = '';
+    let inputFailed = false;
+    // Git can exit before reading stdin. An incomplete query cannot hide any entries.
+    proc.stdin.on('error', () => {
+      inputFailed = true;
+    });
     proc.stdout.on('data', (data: Buffer) => {
       stdout += data.toString();
     });
-    proc.on('close', () => {
-      resolve(new Set(stdout.trim().split('\n').filter(Boolean)));
+    proc.on('close', (code) => {
+      resolve(
+        inputFailed || (code !== 0 && code !== 1)
+          ? new Set()
+          : new Set(stdout.trim().split('\n').filter(Boolean)),
+      );
     });
     proc.on('error', () => {
       resolve(new Set());
     });
-    proc.stdin.write(entries.join('\n'));
-    proc.stdin.end();
+    proc.stdin.end(entries.join('\n'));
   });
 }
 

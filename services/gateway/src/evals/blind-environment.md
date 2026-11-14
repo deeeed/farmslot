@@ -163,6 +163,42 @@ write or link them, and backups and other files there stay denied. A pool JSON's
 in node pool JSON. Today the only credential-named entry there,
 `FARMSLOT_PI_ROUTER_KEY`, holds the placeholder `local`.
 
+## Ignored leftovers
+
+Trials run on regular slots, whose checkouts keep gitignored state from earlier
+runs: task folders under `temp/tasks`, the harness runtime (`status.json`, the
+`operations/` ledger, proof output) and env files. A clean `git status` does not
+show them. Isolation lists the ignored paths with `git ls-files --others --ignored
+--exclude-standard --directory`, in the checkout and in each initialized submodule,
+and moves each one into the capsule (`original-ignored/`), which the worker cannot
+read. The journal records the list before the first move, and any failure before
+the Git swap moves the paths back. Restore, including restore after a killed
+isolate, moves each path back; finished-trial cleanup with no Git marker still finishes an unfinished journal (an isolate stopped before its swap, or a restore stopped before the ignored files returned). If the trial created a file at the same path, that file is moved
+to the capsule's `trial-ignored/` before the original returns, so nothing is
+deleted.
+
+Some paths stay in place: the project's `blind_keep_ignored` caches (default:
+`node_modules`, `.yarn/*`, `ios/Pods`, `ios/build`, `android/.gradle`,
+`android/build`, `android/app/build`, `build`, `dist`), plus the run's own task
+folder. Each pattern also matches below any directory, so
+`temp/generated-app/node_modules` and `packages/a/.yarn/cache` stay; isolation
+enters an ignored directory that holds a kept path and moves only its other
+entries. Prepare writes everything else this run uses (runtime
+context, `prepare.json`, fixtures, readiness) after isolation, in the fixtures
+phase and later. Before isolation it writes the node-support selection outside
+the checkout (`.farmslot-runtime`) and, on a local slot, the signing log under
+the runtime dir; that log moves aside with the older logs, and later phases
+write new ones.
+
+Ignored operator config that prepare does not write is moved aside as well, for
+example `android/local.properties` (Android SDK path) or `ios/.xcode.env.local`
+(Node path for Xcode builds). The Mobile and Extension packs write their env
+files (`.js.env`, `.ios.env`, `.android.env`, `.e2e.env`, `.metamaskrc`) as
+fixtures after isolation, and neither writes nor reads those two files. Gradle
+then takes the SDK from `ANDROID_HOME`, and Xcode uses the tracked
+`ios/.xcode.env`. A slot that relies on either file needs it in the project's
+`blind_keep_ignored`.
+
 ## Base ref
 
 The isolated repository has no remotes. Isolation records

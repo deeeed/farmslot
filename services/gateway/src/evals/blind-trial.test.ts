@@ -64,6 +64,7 @@ mock.module('../core/config.js', {
     loadProjectVars: async () => ({ projectJson: {} }),
     resolveProjectRuntimeDir: async () => '.runtime',
     resolveProjectTaskDirName: () => 'tasks',
+    getProjectFieldRaw: () => undefined,
     getOrchestratorTaskRoot: () => '/farm/tasks',
     loadMachineSlots: async () => [
       { id: 'owned', repo: '/owned', session: 'owned' },
@@ -171,6 +172,7 @@ mock.module('./proof-output.js', {
   },
 });
 const {
+  DEFAULT_BLIND_KEEP_IGNORED,
   freezeBlindTrialFirstOutput,
   prepareBlindTrialGit,
   restoreBlindTrialGit,
@@ -356,6 +358,8 @@ test('the worker boundary uses the pool-selected credential home and resolved si
   };
   assert.equal(spec('isolate').siblingRepos, undefined);
   assert.equal(spec('isolate').slotResourcePorts, undefined);
+  // Without a project list, isolation keeps the default caches and nothing else.
+  assert.deepEqual(spec('isolate').keepIgnored, DEFAULT_BLIND_KEEP_IGNORED);
   assert.equal(run.engineState!.evalExperiment!.blind!.isolation!.browserCdpPort, 19444);
   assert.equal(blindTrialWorkerBoundary(run)?.browserCdpPort, 19444);
   assert.equal(blindTrialWorkerBoundary(run, 'reviewer'), undefined);
@@ -396,9 +400,20 @@ test('a finished trial restores its own Git and reports why it could not', async
   slotCommands.length = 0;
   assert.equal(await restoreFinishedBlindTrialGit(run), null);
   assert.ok(slotCommands.some((command) => command.includes('"action":"restore"')));
+  // Without a marker the journal still decides: an isolate stopped before its Git
+  // swap, or a verified trial's restore stopped before its ignored files returned.
   marker = { exitCode: 1, stdout: '', stderr: '' };
+  for (const verified of [false, true]) {
+    if (verified) run.engineState!.evalExperiment!.blind!.isolation!.verifiedAt = 'now';
+    else delete run.engineState!.evalExperiment!.blind!.isolation!.verifiedAt;
+    slotCommands.length = 0;
+    assert.equal(await restoreFinishedBlindTrialGit(run), null);
+    assert.ok(slotCommands.some((command) => command.includes('"action":"restore"')));
+  }
+  // Another trial's marker is never restored by this one.
+  marker = { exitCode: 0, stdout: 'other-trial\n', stderr: '' };
   slotCommands.length = 0;
-  assert.equal(await restoreFinishedBlindTrialGit(run), null, 'already restored');
+  assert.equal(await restoreFinishedBlindTrialGit(run), null);
   assert.ok(!slotCommands.some((command) => command.includes('"action":"restore"')));
   marker = { exitCode: 255, stdout: '', stderr: 'ssh: connect to host timed out' };
   assert.match(
