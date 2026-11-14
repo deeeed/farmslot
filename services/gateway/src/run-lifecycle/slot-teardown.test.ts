@@ -1753,6 +1753,23 @@ function asFinishedBlindTrial() {
   };
 }
 
+test('a blind trial keeps its checkout owner through COMPLETE until terminal cleanup', async () => {
+  run.status = 'completing';
+  asFinishedBlindTrial();
+  idleReturnResult = { kind: 'unavailable', reason: 'Slot is working' };
+
+  assert.equal((await releaseCompletedRunSlot(run)).released, false);
+  assert.equal(slotRow?.current_run_id, RUN_ID);
+  assert.deepEqual(blindRestores, [], 'COMPLETE must not restore its still-active trial');
+  assert.equal(idleReturnCalls, 0);
+
+  run.status = 'done';
+  idleReturnResult = { kind: 'ready' };
+  assert.deepEqual(await releaseCompletedRunSlot(run), { released: true });
+  assert.deepEqual(blindRestores, [RUN_ID]);
+  assert.deepEqual(idleReturnRetained, [true]);
+});
+
 for (const status of ['done', 'failed'] as const) {
   test(`a ${status} blind trial gets its Git back while it owns the slot, then returns it idle`, async () => {
     run.status = status;

@@ -43,7 +43,6 @@ inherited Git configuration cannot cross the boundary.
 | `FARMSLOT_RUN_ID`                 | Locates task tools, task state or slot identity; Seatbelt still denies gateway credentials and RPC. |
 | `FARMSLOT_NODE22_BIN`             | Locates task tools, task state or slot identity; Seatbelt still denies gateway credentials and RPC. |
 | `CORE_NODE_BIN`                   | Selects installed toolchains or project build mode.                                                 |
-| `FARMSLOT_PROJECTS_DIR`           | Locates task tools, task state or slot identity; Seatbelt still denies gateway credentials and RPC. |
 | `FARMSLOT_POOL_DIR`               | Locates task tools, task state or slot identity; Seatbelt still denies gateway credentials and RPC. |
 | `FARMSLOT_RUNS_DIR`               | Locates task tools, task state or slot identity; Seatbelt still denies gateway credentials and RPC. |
 | `FARMSLOT_NATIVE_STATE_DIR`       | Locates task tools, task state or slot identity; Seatbelt still denies gateway credentials and RPC. |
@@ -244,6 +243,8 @@ Boundary preparation creates the own slot runtime, since the worker cannot creat
 it inside the denied tree. Measured in a live launch, the worker writes only
 `.agent/.observability` there; the gateway writes `.agent/.launch` from outside.
 
+`FARMSLOT_PROJECTS_DIR` is omitted from blind worker environments. Task-bound tools use the retained project pack through their existing fallback instead of scanning the node's live project registry. The pool selector remains available for the selected public harness installation.
+
 ## Host credential stores
 
 A credential sweep under a deployed blind sandbox found logins, API keys and
@@ -367,12 +368,16 @@ selection rules. Non-blind recipes retain slot and explicit-flag precedence.
 The boundary allocates a mode-0700 directory under `/private/tmp/fs-blind-*`,
 retains its protected `boundary/tmp` link across launches, and removes the
 directory during restoration. The wrapper assigns `TMPDIR`, `TMP`, `TEMP` and
-`MAC_CHROMIUM_TMPDIR` from that link, replacing ambient values. Chromium on macOS
-uses the latter for its singleton socket directory; `TMPDIR` alone does not
-redirect it. The boundary also creates a fixed `broker` child directory and sets
-`FARMSLOT_BLIND_BROKER_DIR` there. The shared broker package puts hashed socket
-paths there and ownership sidecars in general trial temp, outside `broker`.
-Non-blind broker paths remain independent of `TMPDIR`.
+`MAC_CHROMIUM_TMPDIR` from that link, replacing ambient values. macOS `mktemp`
+still ignores that `TMPDIR` and writes under `/var/folders`, which the profile
+denies. `boundary/bin/mktemp` is first on `PATH` and places a default, `-t`,
+combined-flag, or `--directory` template in the trial directory. An explicit
+template is unchanged, including a template after `--`. Chromium on macOS uses
+`MAC_CHROMIUM_TMPDIR` for its singleton socket directory; `TMPDIR` alone does
+not redirect it. The boundary also creates a fixed `broker` child directory
+and sets `FARMSLOT_BLIND_BROKER_DIR` there. The shared broker package puts
+hashed socket paths there and ownership sidecars in general trial temp,
+outside `broker`. Non-blind broker paths remain independent of `TMPDIR`.
 
 Seatbelt denies shared temporary writes, including `/tmp`, `/var/tmp` and
 `/var/folders`, then admits the trial directory and existing task write scope.

@@ -1,0 +1,1 @@
+- Retry publication after a fresh Post without discarding an uncertain provider receipt; replay leaves the previous publication error intact.

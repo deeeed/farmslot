@@ -7,7 +7,7 @@
 // behavioural test against a real project.json on disk.
 
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -149,4 +149,54 @@ test('a pack-copied project takes delegation and policy edits from runtime setti
   await writeSourceRuntimeSettings('pack-copied', { visual_claim_review: delegation });
   copied = (await loadProjectConfigs()).find((project) => project.name === 'pack-copied');
   assert.deepEqual(copied?.visualClaimReview, delegation);
+});
+
+test('a cached project config is frozen, shared, and replaced when project.json changes', async (t) => {
+  // Files written now look settled, so the cache trusts their stamps as it does in steady state.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 60_000 });
+  const file = path.join(ROOT, 'projects', 'no-block', 'project.json');
+  const original = readFileSync(file, 'utf8');
+  t.after(() => writeFileSync(file, original));
+  const first = (await loadProjectConfigs()).find((project) => project.name === 'no-block');
+  const second = (await loadProjectConfigs()).find((project) => project.name === 'no-block');
+  assert.ok(first);
+  assert.equal(second, first, 'an unchanged project.json is not normalized again');
+  assert.ok(Object.isFrozen(first) && Object.isFrozen(first.ci.checkGroups));
+  assert.throws(
+    () => first.ci.checkGroups.push({ ...first.ci.checkGroups[0], name: 'x' }),
+    TypeError,
+  );
+  assert.equal(Reflect.set(first, 'defaultBranch', 'other'), false);
+  assert.equal(
+    (await loadProjectConfigs()).find((project) => project.name === 'no-block')?.defaultBranch,
+    'main',
+    'a caller cannot change what the next caller reads',
+  );
+  // Same length as the original text, so only the stamp's mtime tells the versions apart.
+  writeFileSync(file, original.replace('"no-block"', '"no-blok2"'));
+  const names = (await loadProjectConfigs()).map((project) => project.name);
+  assert.ok(names.includes('no-blok2') && !names.includes('no-block'), names.join(','));
+});
+
+test('a strict read throws the parse error every time; a bare directory is still skipped', async () => {
+  mkdirSync(path.join(ROOT, 'projects', 'bare-dir'), { recursive: true });
+  const expected = (() => {
+    try {
+      JSON.parse('{ not json');
+    } catch (error) {
+      return error;
+    }
+    return assert.fail('the text is not JSON');
+  })();
+  assert.ok(expected instanceof SyntaxError);
+  for (let attempt = 0; attempt < 2; attempt++)
+    await assert.rejects(loadProjectConfigs(true), {
+      name: 'SyntaxError',
+      message: expected.message,
+    });
+  rmSync(path.join(ROOT, 'projects', 'broken'), { recursive: true, force: true });
+  assert.deepEqual((await loadProjectConfigs(true)).map((project) => project.name).sort(), [
+    'no-block',
+    'opted-in',
+  ]);
 });

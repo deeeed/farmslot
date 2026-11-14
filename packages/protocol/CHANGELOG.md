@@ -5,7 +5,12 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.85.0 - 2026-11-15
+
 - The run list says "default" when no reasoning effort is stored. A stored level is shown as stored, so "off" stays "off" and "none" stays "none". A blank effort in the runner and model parts also reads "default".
+- Allow blind trials to freeze an experiment-local candidate template without changing live template selection.
+- Show the worker's recorded reasoning request as default, off or its effective level, preserving labels on older runs.
 
 ## 0.84.0 - 2026-11-14
 

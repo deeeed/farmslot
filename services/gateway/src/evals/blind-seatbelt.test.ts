@@ -574,6 +574,8 @@ test('blind boundary strips gateway credentials, routing, tmux and SSH agent var
       FARMSLOT_GATEWAY: 'ws://127.0.0.1:1',
       FARMSLOT_GATEWAY_PROFILE: 'synthetic-profile',
       FARMSLOT_HOME: '/synthetic/tools-home',
+      FARMSLOT_PROJECTS_DIR: '/synthetic/live-projects',
+      FARMSLOT_POOL_DIR: '/synthetic/pool',
       FARMSLOT_TASK_DIR: '/synthetic/task',
       OPENAI_API_KEY: 'synthetic-provider',
       ZDOTDIR: '/synthetic/operator-zdotdir',
@@ -592,6 +594,8 @@ test('blind boundary strips gateway credentials, routing, tmux and SSH agent var
     worker.stdout,
     /^(?:FARMSLOT_(?:NODE_TOKEN|GATEWAY(?:_TOKEN|_PASSWORD|_PROFILE)?)|GW_URL|GATEWAY_URL)=/mu,
   );
+  assert.doesNotMatch(worker.stdout, /^FARMSLOT_PROJECTS_DIR=/mu);
+  assert.match(worker.stdout, /^FARMSLOT_POOL_DIR=\/synthetic\/pool$/mu);
   assert.match(worker.stdout, /^FARMSLOT_HOME=\/synthetic\/tools-home$/mu);
   assert.match(worker.stdout, /^FARMSLOT_TASK_DIR=\/synthetic\/task$/mu);
   assert.match(worker.stdout, /^OPENAI_API_KEY=synthetic-provider$/mu);
@@ -660,6 +664,129 @@ test('boundary ps refuses environment output in every option form and passes oth
     const result = ps(...args);
     assert.equal(result.status, 0, args.join(' '));
     assert.equal(result.stdout, `RAN unix2003 ${args.join(' ')}\n`);
+  }
+});
+
+test('boundary mktemp writes a default macOS temp file in the trial directory', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'blind-mktemp-')));
+  t.after(() => rmSync(root, { recursive: true }));
+  const trial = path.join(root, 'trial');
+  mkdirSync(trial);
+  const extracted = spawnSync(
+    'python3',
+    [
+      '-c',
+      "import runpy, sys; print(runpy.run_path(sys.argv[1], run_name='fixture')['MKTEMP_WRAPPER'], end='')",
+      fileURLToPath(new URL('./blind-git.py', import.meta.url)),
+    ],
+    { encoding: 'utf8', timeout: 4500 },
+  );
+  assert.equal(extracted.status, 0, extracted.stderr);
+  const wrapper = path.join(root, 'mktemp');
+  writeFileSync(wrapper, extracted.stdout, { mode: 0o700 });
+  const run = (args: string[], tmpdir = `${trial}/`) =>
+    spawnSync(wrapper, args, {
+      encoding: 'utf8',
+      cwd: root,
+      env: { PATH: '/usr/bin:/bin', TMPDIR: tmpdir, HOME: '/should-not-appear' },
+    });
+  const created = (args: string[]) => {
+    const result = run(args);
+    assert.equal(result.status, 0, `${args.join(' ')} ${result.stderr}`);
+    const out = result.stdout.trim();
+    assert.ok(out.startsWith(`${trial}/`), out);
+    return out;
+  };
+  const wantsDirectory = (args: string[]) =>
+    args.includes('-d') ||
+    args.includes('-dq') ||
+    args.includes('-dt') ||
+    args.includes('-dtprobe') ||
+    args.includes('--directory');
+  for (const args of [
+    [],
+    ['-d'],
+    ['-t', 'probe'],
+    ['-d', '-t', 'probe'],
+    ['-t', 'probe', '-d'],
+    ['-tprobe'],
+    ['-dq'],
+    ['-dt', 'probe'],
+    ['-dtprobe'],
+    ['-qt', 'probe'],
+    ['--directory', '-t', 'probe'],
+    ['--quiet', '-t', 'probe'],
+  ]) {
+    const out = created(args);
+    assert.equal(statSync(out).isDirectory(), wantsDirectory(args), args.join(' '));
+    assert.equal(path.dirname(out), trial);
+  }
+  const dry = created(['-q', '-u']);
+  assert.throws(() => statSync(dry));
+  const dryDir = run(['-du']);
+  assert.equal(dryDir.status, 0, dryDir.stderr);
+  const dryDirPath = dryDir.stdout.trim();
+  assert.ok(dryDirPath.startsWith(`${trial}/`), dryDirPath);
+  assert.throws(() => statSync(dryDirPath));
+  const explicit = path.join(root, 'explicit.XXXXXX');
+  const placed = run([explicit]);
+  assert.equal(placed.status, 0, placed.stderr);
+  const placedPath = placed.stdout.trim();
+  assert.ok(placedPath.startsWith(path.join(root, 'explicit.')));
+  assert.equal(path.dirname(placedPath), root);
+  assert.equal(statSync(placedPath).isFile(), true);
+  const missing = run(['-t']);
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /option requires an argument -- t/u);
+  const unknown = run(['-Z', "a b'$HOME'"]);
+  assert.notEqual(unknown.status, 0);
+  assert.equal(unknown.stdout, '');
+  const dashed = run(['--', "-z'a b'$HOME'.XXXXXX"]);
+  assert.equal(dashed.status, 0, dashed.stderr);
+  const dashedName = dashed.stdout.trim();
+  assert.ok(dashedName.startsWith("-z'a b'$HOME'."), dashedName);
+  assert.equal(dashedName.includes('/should-not-appear'), false);
+  assert.equal(statSync(path.join(root, dashedName)).isFile(), true);
+  const multi = run(["a b'$HOME'.XXXXXX", 'c"d.XXXXXX']);
+  const multiNames = ["a b'$HOME'", 'c"d'];
+  if (process.platform === 'darwin') {
+    assert.equal(multi.status, 0, multi.stderr);
+    const names = multi.stdout.trim().split('\n');
+    assert.equal(names.length, 2);
+    assert.ok(names[0].startsWith(`${multiNames[0]}.`), names[0]);
+    assert.ok(names[1].startsWith(`${multiNames[1]}.`), names[1]);
+    for (const name of names) {
+      assert.equal(name.includes('/should-not-appear'), false);
+      assert.equal(statSync(path.join(root, name)).isFile(), true);
+    }
+  } else {
+    // GNU mktemp accepts one template. Both arguments must still reach it unchanged.
+    assert.notEqual(multi.status, 0);
+    assert.match(multi.stderr, /too many templates/u);
+    assert.equal(multi.stdout, '');
+    assert.equal(
+      readdirSync(root).some((name) => multiNames.some((prefix) => name.startsWith(prefix))),
+      false,
+    );
+  }
+  if (process.platform === 'darwin') {
+    const bare = spawnSync('/usr/bin/mktemp', [], {
+      encoding: 'utf8',
+      env: { TMPDIR: trial, PATH: '/usr/bin:/bin' },
+    });
+    const stray = bare.stdout.trim();
+    t.after(() => {
+      if (stray) rmSync(stray, { force: true });
+    });
+    assert.equal(bare.status, 0, bare.stderr);
+    assert.match(stray, /^\/var\/folders\//u);
+    const ambient = run([], '');
+    const ambientPath = ambient.stdout.trim();
+    t.after(() => {
+      if (ambientPath) rmSync(ambientPath, { force: true });
+    });
+    assert.equal(ambient.status, 0, ambient.stderr);
+    assert.match(ambientPath, /^\/var\/folders\//u);
   }
 });
 

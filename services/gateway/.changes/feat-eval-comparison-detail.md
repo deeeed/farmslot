@@ -1,0 +1,1 @@
+- Read retained comparison patches, proof and findings with explicit missing-data and base-compatibility checks.

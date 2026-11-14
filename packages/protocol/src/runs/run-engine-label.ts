@@ -1,5 +1,6 @@
 import { workerRoleForFlow } from '../agents/roles.js';
 import type { AgentRole } from '../contracts/agents.js';
+import type { RunnerReasoningReceipt } from '../contracts/runner-reasoning.js';
 
 /** The runner and model a run is shown with. */
 export interface RunEngine {
@@ -14,7 +15,12 @@ export interface RunEffortSource {
   metrics?: RunEngine;
   agentContexts?: readonly {
     role: AgentRole;
+    runner?: string | null;
     effort?: string | null;
+    runnerSessionId?: string | null;
+    reasoningReceipt?: RunnerReasoningReceipt;
+    attemptStartedAt?: string;
+    startedAt?: string;
     nativeSession?: { effort?: string | null };
   }[];
   workflowExecution?: {
@@ -35,6 +41,22 @@ export function runWorkerEffort(
   // A flow type this client doesn't know has no worker role to read.
   const role = workerRoleForFlow(run.flowType);
   const worker = role ? run.agentContexts?.find((context) => context.role === role) : undefined;
+  const receipt = worker?.reasoningReceipt;
+  if (
+    receipt &&
+    worker?.runner === engine.runner &&
+    receipt.sessionId === worker?.runnerSessionId &&
+    (!(worker.attemptStartedAt ?? worker.startedAt) ||
+      receipt.attemptStartedAt === (worker.attemptStartedAt ?? worker.startedAt)) &&
+    engine.model === receipt.selectedModel
+  ) {
+    const reasoning = receipt.reasoning;
+    return reasoning.mode === 'omitted'
+      ? 'default'
+      : reasoning.mode === 'disabled'
+        ? 'off'
+        : reasoning.level;
+  }
   const choice = run.workflowExecution?.models.find(
     (entry) => entry.runner === engine.runner && (entry.model ?? null) === (engine.model ?? null),
   );

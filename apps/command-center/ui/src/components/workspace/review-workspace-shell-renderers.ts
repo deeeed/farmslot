@@ -50,6 +50,18 @@ export function renderReviewLoadingBanner(phase: string | null) {
   `;
 }
 
+export function renderReviewPublicationError(error: string | undefined) {
+  return error
+    ? html`<div
+        role="alert"
+        data-testid="review-publication-error"
+        style="padding: 8px 12px; color: ${colors.statusFail}; overflow-wrap: anywhere"
+      >
+        <strong>Review publication needs attention.</strong> ${error}
+      </div>`
+    : nothing;
+}
+
 export function renderReviewBranchBanner(input: {
   slotBranch: string;
   branch: string;

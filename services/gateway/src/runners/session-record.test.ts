@@ -287,6 +287,7 @@ test('clearing a session drops the capture timestamp with the id and path', () =
     runnerSessionId: null,
     runnerSessionPath: null,
     runnerSessionCapturedAt: undefined,
+    reasoningReceipt: undefined,
   });
   // upsertAgentContext merges patches: leaving capturedAt out would date a
   // session the respawn already destroyed.

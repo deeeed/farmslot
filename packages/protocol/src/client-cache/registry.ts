@@ -1468,6 +1468,34 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     dependencies: () => [],
   },
   // Setting a cap publishes no key yet.
+  [Methods.EVAL_BENCH_COMPARISON_GET]: {
+    timeoutMs: 30_000,
+    persisted: true,
+    maxBytes: 24 * mb,
+    retention: keptUpTo(48 * mb),
+    live: false,
+    normalizeParams: (params: unknown) => {
+      const value = domainParams(params, ['runIds']);
+      if (
+        !Array.isArray(value.runIds) ||
+        value.runIds.length < 1 ||
+        value.runIds.length > 2 ||
+        value.runIds.some((id) => typeof id !== 'string' || !id)
+      )
+        throw new Error('Select one or two benchmark run IDs');
+      return { runIds: value.runIds };
+    },
+    dependencies: () => [],
+  },
+  [Methods.EVAL_BENCH_GET]: {
+    timeoutMs: 30_000,
+    persisted: true,
+    maxBytes: 8 * mb,
+    retention: keptUpTo(16 * mb),
+    live: false,
+    normalizeParams: () => ({}),
+    dependencies: () => [],
+  },
   [Methods.EVAL_SUITE_CAP_GET]: {
     timeoutMs: 30_000,
     persisted: true,

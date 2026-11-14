@@ -13,9 +13,9 @@ import type { FixtureCommand } from './command-groups.test-support.js';
 
 // The background child runs every command in its own process group and owns it: however the child
 // goes away, none of its commands may outlive it, and the supervisor never signals a group. When
-// the child exits it kills its commands itself; when it is killed outright, each command's guard
-// does, within about a second. Tests of the child's own cleanup point the guards at this process
-// (FIXTURE_GUARD_OWNER), so only the child can have killed the command.
+// the child exits it kills its commands itself; when it is killed outright, its command watchdog
+// does. Tests of the child's own cleanup start it with no watchdog (FIXTURE_NO_WATCHDOG), so only
+// the child can have killed the command.
 const entry = fileURLToPath(new URL('./command-groups.test-support.ts', import.meta.url));
 const directory = await mkdtemp(path.join(os.tmpdir(), 'background-groups-'));
 after(() => rm(directory, { recursive: true, force: true }));
@@ -122,26 +122,43 @@ async function pids(pidFile: string, count = 2): Promise<number[]> {
   return found;
 }
 
-/** The group's processes other than its leader and the leader's own children: the guard. */
-function guards(leader: number): number[] {
+function processes(): { pid: number; ppid: number; pgid: number; command: string }[] {
   return execFileSync('ps', ['-axww', '-o', 'pid=,ppid=,pgid=,command='], { encoding: 'utf8' })
     .split('\n')
-    .map((line) => line.trim().split(/\s+/))
-    .filter(
-      ([pid, , pgid, command]) =>
-        Number(pgid) === leader && Number(pid) !== leader && command === '/bin/sh',
-    )
-    .map(([pid]) => Number(pid));
+    .filter(Boolean)
+    .map((line) => {
+      const [pid, ppid, pgid, ...command] = line.trim().split(/\s+/);
+      return {
+        pid: Number(pid),
+        ppid: Number(ppid),
+        pgid: Number(pgid),
+        command: command.join(' '),
+      };
+    });
 }
 
-/** Killed by the child itself (the guards watch this process), within the 5 s ceiling. */
+/** The group's shells other than its leader: a per-command guard, which commands no longer get. */
+function groupShells(leader: number): number[] {
+  return processes()
+    .filter((p) => p.pgid === leader && p.pid !== leader && p.command.startsWith('/bin/sh'))
+    .map((p) => p.pid);
+}
+
+/** The command watchdog the child started: a shell reading its registrations. */
+function watchdogs(child: number): number[] {
+  return processes()
+    .filter((p) => p.ppid === child && p.command.includes('while IFS= read -r l'))
+    .map((p) => p.pid);
+}
+
+/** Killed by the child itself (it runs no watchdog), within the 5 s ceiling. */
 async function goneAtOnce(found: number[], cause: string): Promise<void> {
   for (const pid of found) await until(() => !alive(pid), `${pid} to die after ${cause}`, 5_000);
 }
 
 const probe = { entries: [], ssh: [] };
-/** The guards watch this process, which outlives the child: only the child can kill its commands. */
-const ownCleanup = { FIXTURE_GUARD_OWNER: String(process.pid) };
+/** No watchdog: only the child can kill its commands. */
+const ownCleanup = { FIXTURE_NO_WATCHDOG: '1' };
 
 test('a command run by the child answers exactly as without the child, and leaves no process', async () => {
   const strayFile = path.join(directory, 'stray');
@@ -172,7 +189,7 @@ test('a command run by the child answers exactly as without the child, and leave
   assert.deepEqual(results.slice(0, compared.length), expected);
   assert.equal(expected[2].exitCode, 1, 'a signalled command reads as exit 1');
   assert.equal(expected[4].exitCode, 124);
-  // The guard leaves with its command: nothing of the group remains.
+  // Nothing of the finished command's group remains.
   const [leader] = await pids(strayFile, 1);
   await until(() => !alive(-leader), 'the finished command group to empty');
 });
@@ -189,14 +206,18 @@ test('a command that survives TERM dies with a child SIGKILLed between its TERM 
   const pending = background.request('fleet.probeMachine', probe, { deadlineMs: 120_000 });
   const [leader] = await pids(pidFile, 1);
   await until(async () => (await readOptional(`${pidFile}.term`)) !== '', 'the timeout TERM');
-  // TERM reached the whole group: the command lived through it, and so did its guard.
+  // TERM reached the whole group, and the command lived through it. The group holds no guard
+  // process; the watchdog sits outside it, so the group TERM did not reach it.
   assert.equal(alive(leader), true);
-  assert.equal(guards(leader).length, 1, 'the guard survives the group TERM');
+  assert.deepEqual(groupShells(leader), [], 'commands start no per-command guard');
   const child = background.status().pid;
   assert.ok(child);
+  const [watchdog] = watchdogs(child);
+  assert.ok(watchdog, 'the child runs one command watchdog');
   process.kill(child, 'SIGKILL');
   await assert.rejects(pending, /signal SIGKILL/);
-  await until(() => !alive(leader), 'the command to die by its guard', 5_000);
+  await until(() => !alive(leader), 'the command to die by the watchdog', 5_000);
+  await until(() => !alive(watchdog), 'the watchdog to exit', 5_000);
   groupSignals();
 });
 
@@ -211,7 +232,35 @@ test('an untimed command and its descendant die with a SIGKILLed child', async (
   assert.ok(child);
   process.kill(child, 'SIGKILL');
   await assert.rejects(pending, /signal SIGKILL/);
-  for (const pid of found) await until(() => !alive(pid), `${pid} to die by its guard`, 5_000);
+  for (const pid of found) await until(() => !alive(pid), `${pid} to die by the watchdog`, 5_000);
+  groupSignals();
+});
+
+test('a watchdog that dies is replaced, and the replacement still kills the commands', async (t) => {
+  const groupSignals = watchGroupSignals(t);
+  const { env, pidFile } = fixtureEnv('untimed');
+  const background = host(env);
+  background.start();
+  const pending = background.request('fleet.probeMachine', probe, { deadlineMs: 120_000 });
+  const found = await pids(pidFile);
+  const child = background.status().pid;
+  assert.ok(child);
+  const [first] = watchdogs(child);
+  assert.ok(first, 'the child runs one command watchdog');
+  process.kill(first, 'SIGKILL');
+  let replacement: number | undefined;
+  await until(() => {
+    replacement = watchdogs(child).find((pid) => pid !== first);
+    return replacement !== undefined;
+  }, 'a replacement watchdog');
+  assert.ok(replacement);
+  // The replacement learns the running command before it is needed.
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  process.kill(child, 'SIGKILL');
+  await assert.rejects(pending, /signal SIGKILL/);
+  for (const pid of found)
+    await until(() => !alive(pid), `${pid} to die by the replacement`, 5_000);
+  await until(() => !alive(replacement!), 'the replacement watchdog to exit', 5_000);
   groupSignals();
 });
 

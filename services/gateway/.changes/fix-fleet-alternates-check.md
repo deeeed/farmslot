@@ -1,1 +1,0 @@
-- Doctor flags slot Git alternates and missing cache-tree objects in registered linked worktree indexes, including prunable scratch worktrees.

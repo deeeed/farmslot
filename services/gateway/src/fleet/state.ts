@@ -10,6 +10,7 @@ import { watch } from 'chokidar';
 import {
   type ActiveResourcePointer,
   computeSummary,
+  deepFreeze,
   type FleetPoolReadError,
   type FleetStatus,
   isScriptedCommandRuntime,
@@ -48,7 +49,9 @@ import {
   normalizeRawStaticReview,
   projectPackRoot,
   type RawPoolJson,
+  readJsonFile,
   readSourceRuntimeSettings,
+  type SourceRuntimeSettings,
   usesRuntimeSettings,
 } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
@@ -1099,6 +1102,9 @@ export function startFileWatcher() {
 /** A pool file as written, including the legacy camel-case tmux worker key. */
 type RawPoolFile = RawPoolJson & { tmux_workers?: unknown; tmuxWorkers?: unknown };
 
+/** The config built from each cached pool file version, frozen and shared like the file. */
+const poolConfigCache = new WeakMap<RawPoolFile, PoolConfig>();
+
 export async function loadPoolConfigs(directory = poolDirectory()): Promise<PoolConfig[]> {
   const pools: PoolConfig[] = [];
   try {
@@ -1110,12 +1116,17 @@ export async function loadPoolConfigs(directory = poolDirectory()): Promise<Pool
         const entry = readCachedPoolFile<RawPoolFile>(path.join(directory, file));
         if (!entry) throw new Error('it is missing, not valid JSON or not a JSON object');
         const raw = entry.pool;
+        const cached = poolConfigCache.get(raw);
+        if (cached) {
+          pools.push(cached);
+          continue;
+        }
         const tmuxWorkers = normalizeTmuxWorkerFilters(raw.tmux_workers ?? raw.tmuxWorkers);
         const reviewWorkspaces = normalizeRawReviewWorkspaces(
           raw.review_workspaces,
           path.join(directory, file),
         );
-        const pool: PoolConfig = {
+        const pool: PoolConfig = deepFreeze({
           machine: raw.machine,
           project: raw.project,
           platform: raw.platform,
@@ -1132,11 +1143,11 @@ export async function loadPoolConfigs(directory = poolDirectory()): Promise<Pool
             repo: s.repo,
             session: s.session,
             ...(typeof s.app === 'string' && s.app ? { app: s.app } : {}),
-            // The cached pool is frozen and shared; each config gets its own copy.
-            resources: structuredClone(s.resources),
+            resources: s.resources,
           })),
-        };
+        });
         rememberPoolFile(pool, file);
+        poolConfigCache.set(raw, pool);
         pools.push(pool);
       } catch (error) {
         // Reject this pool so malformed capacity cannot authorize reviewer admission.
@@ -1177,20 +1188,52 @@ export async function loadPoolConfig(machine: string): Promise<PoolConfig | null
 
 // ─── Project configs ───
 
+/** The config normalized from one version of a project's project.json and runtime settings. */
+interface CachedProjectConfig {
+  configPath: string;
+  document: unknown;
+  settings: SourceRuntimeSettings | undefined;
+  config: ProjectConfig;
+}
+/** By project directory. Timers and watchers load every project's config many times a minute. */
+const projectConfigCache = new Map<string, CachedProjectConfig>();
+
+/**
+ * Every project's config. The configs are frozen and shared: each is normalized again only when
+ * readJsonFile hands back another version of its project.json or runtime settings. The array is
+ * new on each call.
+ */
 export async function loadProjectConfigs(strictRead = false): Promise<ProjectConfig[]> {
   const projects: ProjectConfig[] = [];
   try {
-    const dirs = declaredProjectNames() ?? (await readdir(projectsDirectory()));
+    // Resolved once per call: path resolution showed up in profiles at two calls per project.
+    const projectsDir = projectsDirectory();
+    const dirs = declaredProjectNames() ?? (await readdir(projectsDir));
     for (const dir of dirs) {
       try {
         const configPath = path.join(
-          await projectPackRoot(dir, path.join(projectsDirectory(), dir)),
+          await projectPackRoot(dir, path.join(projectsDir, dir)),
           'project.json',
         );
-        const content = await readFile(configPath, 'utf-8');
-        const raw = JSON.parse(content);
-        if (await usesRuntimeSettings(dir)) {
-          const settings = await readSourceRuntimeSettings(dir);
+        const document = await readJsonFile(configPath);
+        const settings = (await usesRuntimeSettings(dir))
+          ? await readSourceRuntimeSettings(dir)
+          : undefined;
+        const cached = projectConfigCache.get(dir);
+        if (
+          cached &&
+          cached.configPath === configPath &&
+          cached.document === document &&
+          cached.settings === settings
+        ) {
+          projects.push(cached.config);
+          continue;
+        }
+        // The cached document is shared and frozen: settings merge into a shallow copy of it.
+        // Untyped like the JSON.parse result it replaces; the normalizers below check each field.
+        const raw: any =
+          document === null || typeof document !== 'object' ? document : { ...document };
+        if (settings) {
           Object.assign(raw, settings);
           // Delegation is operator policy, not an authorization grant shipped by a pack.
           raw.visual_claim_review = settings.visual_claim_review;
@@ -1225,7 +1268,7 @@ export async function loadProjectConfigs(strictRead = false): Promise<ProjectCon
         // admission among them); without this the field is a type that nothing
         // ever produces, and every reader silently sees `undefined`.
         const runtimeCapabilities = normalizeRawRuntimeCapabilities(raw.runtime_capabilities);
-        projects.push({
+        const config: ProjectConfig = deepFreeze({
           name: raw.name || dir,
           visualClaimReview: parseProjectVisualClaimReviewPolicy(raw.visual_claim_review),
           repoUrl: raw.repo_url || '',
@@ -1358,6 +1401,8 @@ export async function loadProjectConfigs(strictRead = false): Promise<ProjectCon
             ? { executionTemplates: raw.execution_templates }
             : {}),
         });
+        projectConfigCache.set(dir, { configPath, document, settings, config });
+        projects.push(config);
       } catch (error) {
         // Still skipped — one bad project must not take the fleet down — but no
         // longer silently: a project.json that fails to parse would otherwise

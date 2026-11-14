@@ -732,7 +732,7 @@ export function assertPiModelThinking(model, requestedEffort, kind = model?.prov
     );
 }
 
-/** @typedef {{ provider: string, model: string, contextWindow: number, maxTokens: number, reasoning: boolean, effort?: string, requestedMaxTokens?: number, cost: PiModelCostMetadata | null }} PiModelRequestConfiguration */
+/** @typedef {{ provider: string, model: string, contextWindow: number, maxTokens: number, reasoning: boolean, effectiveReasoning?: import('@farmslot/protocol').EffectiveReasoning, effort?: string, requestedMaxTokens?: number, cost: PiModelCostMetadata | null }} PiModelRequestConfiguration */
 
 /**
  * Refuse undeclared effort changes before sending; record actual wire effort.
@@ -798,6 +798,14 @@ export function providerReasoningFetch(
           maxTokens: model.maxTokens,
           requestedMaxTokens: payload.max_completion_tokens ?? payload.max_tokens,
           reasoning: model.reasoning,
+          effectiveReasoning:
+            effort === undefined
+              ? { mode: 'omitted' }
+              : typeof effort === 'string' && effort.trim()
+                ? ['off', 'none'].includes(effort)
+                  ? { mode: 'disabled' }
+                  : { mode: 'level', level: effort }
+                : undefined,
           effort,
           cost: model.cost ?? null,
         });

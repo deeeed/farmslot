@@ -1,0 +1,1 @@
+- Define read-only detailed benchmark comparisons and preserve patch provenance and acceptance evidence separately from judge claims.

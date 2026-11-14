@@ -42,6 +42,8 @@ test('reads screens used to send directly are cached with stable identities', ()
     ['chat.sessions', {}],
     ['chat.listActions', { sessionId: 'session-1' }],
     ['intelligence.actions.summary', { limit: 20 }],
+    ['eval.bench.get', {}],
+    ['eval.bench.comparison.get', { runIds: ['run-1', 'run-2'] }],
     ['eval.suite.cap.get', { capGroupId: 'group-1' }],
     ['eval.trial.result.get', { runId: 'run-1' }],
     ['finetune.index', { project: 'p' }],

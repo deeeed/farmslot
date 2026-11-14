@@ -1179,6 +1179,8 @@ export class NativeSessionManager {
     record.events.push(enriched);
     if (event.type === 'session.started' && event.nativeId)
       record.info.nativeSessionId = event.nativeId;
+    if (event.type === 'session.started' && typeof event.data?.sessionPath === 'string')
+      record.info.nativeSessionPath = event.data.sessionPath;
     if (event.type === 'turn.started' && record.info.state !== 'closing')
       record.info.state = 'running';
     if (event.type === 'error' && event.status === 'failed') record.info.state = 'closing';

@@ -10,7 +10,8 @@ import {
   shouldHoldForMissingTerminalSignal,
 } from '../../run-engine/run-monitor.js';
 import { deleteTestRunIfPresent } from '../../run-engine/test-fixtures.js';
-import { createRun } from '../../runs/store.js';
+import { createRun, updateRun } from '../../runs/store.js';
+import { getRunnerObservability } from '../registry.js';
 import { makeVars } from '../test-fixtures.js';
 
 import { assertNativeWorkerSnapshot, nativeWorkerLiveStatus } from './worker-control.js';
@@ -192,4 +193,67 @@ test('worker observations reject another profile registration even with the same
   assert.throws(() => assertNativeWorkerSnapshot(binding, read), /changed/);
   read.session.accountContextId = 'another-registration';
   assert.throws(() => assertNativeWorkerSnapshot({ ...binding, profile }, read), /changed/);
+});
+
+test('optional reasoning read failure preserves liveness and cannot mask a runner failure', async (t) => {
+  const run = createRun({
+    project: 'fixture',
+    flowType: 'dev',
+    mode: 'interactive',
+    ticketOrPr: 'receipt failure fixture',
+    runner: 'pi',
+    model: 'litellm/model',
+    slotId: 'fixture-slot',
+    transport: 'tmux',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  updateRun(run.id, {
+    agentContexts: [
+      {
+        id: 'dev',
+        role: 'dev',
+        label: 'Fixture worker',
+        status: 'working',
+        runId: run.id,
+        slotId: 'fixture-slot',
+        runner: 'pi',
+        model: 'litellm/model',
+        runnerSessionId: 'session',
+        runnerSessionPath: '/fixture/session.jsonl',
+        target: { target: '%1', session: 'fixture', paneId: '%1' },
+      },
+    ],
+  });
+  const observer = getRunnerObservability('pi');
+  assert.ok(observer);
+  const original = observer.getReasoningReceipt;
+  t.after(() => {
+    observer.getReasoningReceipt = original;
+  });
+  let reads = 0;
+  const warnings: unknown[][] = [];
+  t.mock.method(console, 'warn', (...args: unknown[]) => warnings.push(args));
+  observer.getReasoningReceipt = async () => {
+    reads++;
+    throw new Error('receipt read unavailable');
+  };
+  const observe = (failure?: string) =>
+    checkAgentLive('fixture-slot', 'pi', run.id, 'dev', 'dev', {
+      slot: async () => makeVars(),
+      target: async () => ({ target: '%1', session: 'fixture' }),
+      turn: async () => ({
+        value: 'idle',
+        source: 'hook',
+        confidence: 'high',
+        observedAt: Date.now(),
+        ...(failure ? { failure } : {}),
+      }),
+      exec: async () => ({ exitCode: 0, stdout: '123', stderr: '' }),
+      process: async () => ({ state: 'present', pid: '124' }),
+    });
+  await assert.rejects(observe('runner authentication failed'), /runner authentication failed/);
+  assert.equal(reads, 0, 'operational failure is surfaced before optional metadata I/O');
+  assert.equal(await observe(), 'working');
+  assert.equal(reads, 1);
+  assert.equal(warnings.length, 1);
 });

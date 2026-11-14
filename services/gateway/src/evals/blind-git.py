@@ -90,6 +90,91 @@ for arg in "$@"; do
 done
 COMMAND_MODE=unix2003 exec REAL_PS "$@"
 '''
+# macOS mktemp ignores TMPDIR and writes under /var/folders, which the trial denies.
+# A missing template, -t, combined short flags, and --directory are created in the
+# trial directory. An explicit template is unchanged. -p and --tmpdir name a
+# directory, so those calls keep the original arguments.
+MKTEMP_WRAPPER = '''#!/bin/sh
+real=/usr/bin/mktemp
+dir=${TMPDIR:-}
+dir=${dir%/}
+[ -n "$dir" ] || exec "$real" "$@"
+directory=
+quiet=
+dry=
+prefix=
+template=
+need_t=
+opts_done=
+for arg in "$@"; do
+  if [ -n "$need_t" ]; then
+    prefix=$arg
+    need_t=
+    continue
+  fi
+  if [ -n "$opts_done" ]; then
+    [ -z "$template" ] || exec "$real" "$@"
+    template=$arg
+    continue
+  fi
+  case $arg in
+    --)
+      opts_done=1
+      ;;
+    --directory) directory=1 ;;
+    --quiet) quiet=1 ;;
+    --dry-run) dry=1 ;;
+    --tmpdir|--tmpdir=*) exec "$real" "$@" ;;
+    --*) exec "$real" "$@" ;;
+    -*)
+      flags=${arg#-}
+      while [ -n "$flags" ]; do
+        c=${flags%"${flags#?}"}
+        flags=${flags#?}
+        case $c in
+          d) directory=1 ;;
+          q) quiet=1 ;;
+          u) dry=1 ;;
+          t)
+            if [ -n "$flags" ]; then
+              prefix=$flags
+              flags=
+            else
+              need_t=1
+            fi
+            ;;
+          *) exec "$real" "$@" ;;
+        esac
+      done
+      ;;
+    *)
+      opts_done=1
+      template=$arg
+      ;;
+  esac
+done
+[ -z "$need_t" ] || { echo 'mktemp: option requires an argument -- t' >&2; exit 1; }
+case $prefix in
+  */*) exec "$real" "$@" ;;
+esac
+set --
+[ -n "$directory" ] && set -- "$@" -d
+[ -n "$quiet" ] && set -- "$@" -q
+[ -n "$dry" ] && set -- "$@" -u
+if [ -z "$prefix" ] && [ -z "$template" ]; then
+  prefix=tmp
+fi
+if [ -n "$prefix" ]; then
+  set -- "$@" "$dir/$prefix.XXXXXXXXXX"
+fi
+if [ -n "$template" ]; then
+  case $template in
+    -*) set -- "$@" -- "$template" ;;
+    *) set -- "$@" "$template" ;;
+  esac
+fi
+exec "$real" "$@"
+'''
 SANDBOX = '/usr/bin/sandbox-exec'
 SANDBOX_REQUIRED = 'Blind eval trials need macOS sandbox-exec on the slot node; refusing an unsandboxed worker'
 NODE_INSTALLATIONS = ['farmslot-node', 'farmslot-node-dev']
@@ -789,6 +874,9 @@ def prepare_boundary(spec, capsule):
     (root / 'bin/ps').unlink(missing_ok=True)
     (root / 'bin/ps').write_text(PS_WRAPPER.replace('REAL_PS', shlex.quote(str(ps))))
     (root / 'bin/ps').chmod(0o700)
+    # Bare macOS mktemp ignores TMPDIR. Workers find this wrapper first on PATH.
+    (root / 'bin/mktemp').write_text(MKTEMP_WRAPPER)
+    (root / 'bin/mktemp').chmod(0o700)
     script = BOUNDARY_SCRIPT.replace('ATTEMPTS', shlex.quote(str(root / 'attempts.log')))
     for name in ['gh', 'deny']:
         (root / 'bin' / name).write_text(script)

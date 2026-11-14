@@ -7,23 +7,16 @@
 //   <workspace>/state.json  — onboarding state (source, packs, migrations)
 import { existsSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import {
   readWorkspaceState,
   resolveWorkspaceRoot,
   WORKSPACE_STATE_FILE,
 } from '@farmslot/slot-config';
 
-/** Absolute path to the farmslot repo root that this CLI runs from. */
-export function repoRoot(): string {
-  return currentFarmPaths(
-    'gateway',
-    process.env,
-    resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..'),
-  ).code.checkout;
-}
+import { repoRoot } from './repo-root.js';
+
+export { repoRoot };
 
 export const STATE_SCHEMA_VERSION = 1;
 

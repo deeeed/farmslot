@@ -30,6 +30,10 @@ Changing selection changes the publication request, not the saved report.
 The view explains that the full report remains unchanged. Existing recommendation
 and attachment choices are preserved; unavailable evidence controls are omitted.
 
+A fresh explicit Post clears the previous publication error after the report and
+account checks pass. It retains the publication receipt and duplicate protection.
+Replaying a resolved decision retains the error and does not request another retry.
+
 Inspection labels the reviewed SHA and finding location. Source reads use
 `git.show` with that SHA and path, scoped to the review run or existing slot.
 The existing native diff/code viewer shows numbered context and the target line.

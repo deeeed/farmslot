@@ -166,13 +166,15 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## eval.\*
 
-| Method                   | Surface  | CLI command | TUI | Note                                                                                           |
-| ------------------------ | -------- | ----------- | --- | ---------------------------------------------------------------------------------------------- |
-| `eval.experiment.create` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `eval.trial.start`       | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `eval.trial.result.get`  | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `eval.suite.cap.get`     | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `eval.suite.cap.update`  | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| Method                      | Surface  | CLI command | TUI | Note                                                                                                                |
+| --------------------------- | -------- | ----------- | --- | ------------------------------------------------------------------------------------------------------------------- |
+| `eval.experiment.create`    | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                      |
+| `eval.trial.start`          | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                      |
+| `eval.trial.result.get`     | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                      |
+| `eval.bench.get`            | rpc-only |             |     | Read-only operator-configured benchmark results and rollups via farmslot rpc eval.bench.get.                        |
+| `eval.bench.comparison.get` | rpc-only |             |     | Read-only comparison of selected benchmark trials and retained evidence via farmslot rpc eval.bench.comparison.get. |
+| `eval.suite.cap.get`        | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                      |
+| `eval.suite.cap.update`     | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                      |
 
 ## family.\*
 

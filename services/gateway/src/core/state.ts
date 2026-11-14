@@ -8,7 +8,7 @@ import { type FileHandle, open, readFile, rename, rm } from 'node:fs/promises';
 import { assertStatusFileWritable, resolveStatusFilePath } from '../projects/repo-root.js';
 
 import { assertCleanupCurrent, withoutCleanupSignal } from './cleanup-scope.js';
-import { farmslotRoot } from './config.js';
+import { farmslotRoot, readJsonFile } from './config.js';
 
 const statusFile = resolveStatusFilePath(farmslotRoot());
 
@@ -344,14 +344,7 @@ export async function rewriteStatusFile(
 // Read a single field from a slot in .farm-status.json.
 
 export async function readSlotField(slotId: string, field: string): Promise<unknown> {
-  if (!existsSync(statusFile)) return undefined;
-
-  const content = await readFile(statusFile, 'utf-8');
-  const data = JSON.parse(content);
-
-  const slots: Array<Record<string, unknown>> = data.slots ?? [];
-  const slot = slots.find((s) => s.slot === slotId);
-  return slot?.[field];
+  return (await readSlotRow(slotId))?.[field];
 }
 
 // ─── Typed transition helpers ───
@@ -472,10 +465,23 @@ export async function readSlotRow(
   slotId: string,
 ): Promise<Readonly<Record<string, unknown>> | null> {
   if (!existsSync(statusFile)) return null;
-  const content = await readFile(statusFile, 'utf-8');
-  const data = JSON.parse(content);
-  const slots: Array<Record<string, unknown>> = data.slots ?? [];
-  return slots.find((s) => s.slot === slotId) ?? null;
+  // One parse of each file version, frozen and shared by every reader until the file changes.
+  const data = await readJsonFile(statusFile);
+  // A corrupt status file throws, as JSON.parse's untyped reads did: ownership checks must not
+  // mistake it for an absent row.
+  if (!isStatusRecord(data)) throw new TypeError(`${statusFile} is not a status object`);
+  const slots = data.slots ?? [];
+  if (!Array.isArray(slots)) throw new TypeError(`${statusFile} slots is not a list`);
+  for (const row of slots) {
+    if (!isStatusRecord(row))
+      throw new TypeError(`${statusFile} has a slot row that is not an object`);
+    if (row.slot === slotId) return row;
+  }
+  return null;
+}
+
+function isStatusRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** A reserved successor may write its task before worker ownership transfers. */

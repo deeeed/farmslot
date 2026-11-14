@@ -1,3 +1,4 @@
+import type { EvalBenchComparison } from '../contracts/eval-bench.js';
 import type {
   EvalComparisonEligibility,
   EvalExperimentManifest,
@@ -11,6 +12,8 @@ import type { QaInput } from '../contracts/qa.js';
 import { Methods } from './registry.js';
 
 export const EvalMethods = {
+  benchComparisonGet: Methods.EVAL_BENCH_COMPARISON_GET,
+  benchGet: Methods.EVAL_BENCH_GET,
   experimentCreate: Methods.EVAL_EXPERIMENT_CREATE,
   trialStart: Methods.EVAL_TRIAL_START,
   trialResultGet: Methods.EVAL_TRIAL_RESULT_GET,
@@ -144,3 +147,9 @@ export interface EvalSuiteCapUpdateParams {
 
 export type EvalSuiteCapGetResult = EvalSuiteCapSummary;
 export type EvalSuiteCapUpdateResult = EvalSuiteCapSummary;
+
+export interface EvalBenchComparisonGetParams {
+  /** One or two distinct trial IDs from the configured benchmark index. */
+  runIds: string[];
+}
+export type EvalBenchComparisonGetResult = EvalBenchComparison;
