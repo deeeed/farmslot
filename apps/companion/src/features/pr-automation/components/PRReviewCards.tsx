@@ -1,7 +1,7 @@
 import React from 'react';
 import { Text, View } from 'react-native';
 
-import { viewToggleMapField } from '@farmslot/protocol';
+import { reasoningEffortLabel, viewToggleMapField } from '@farmslot/protocol';
 
 import { useViewChoice } from '../../../components/view-state';
 import { prExecutionText, prReviewText } from '../../../lib/pr-automation';
@@ -134,7 +134,8 @@ export function PRReviewCards({ viewModel: vm, actions }: PRAutomationController
                 {(run?.slotId || queue?.slotId) && (
                   <Text style={styles.text}>
                     Assigned {run?.slotId ?? queue?.slotId} · {run?.metrics.runner ?? queue?.runner}
-                    /{run?.metrics.model ?? queue?.model}/{run?.effort ?? queue?.effort}
+                    /{run?.metrics.model ?? queue?.model}/
+                    {reasoningEffortLabel(run?.effort ?? queue?.effort)}
                   </Text>
                 )}
                 {intent.runId && (
