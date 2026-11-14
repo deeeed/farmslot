@@ -1,0 +1,1 @@
+- Document `{{prepare_base_sha}}`, a blind eval trial's verified base commit passed to the prepare `artifact_check` hook.

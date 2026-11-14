@@ -12,6 +12,15 @@ These input rules describe the existing `dev` and `fix-bug` profiles. The [proof
 - Normal framework instructions and tool provenance remain available. Forward task sync and replay must preserve the same input boundary.
 - Trials missing problem text, a usable reference comparison patch or verified isolation fail before worker dispatch. A legacy trial cannot silently resume through an unblinded path.
 
+## Trial-local candidate templates
+
+- `eval.trial.start` accepts optional `candidateTemplatePath` for `dev` and `fix-bug`. It names a Markdown file on the gateway, absolute or relative to the experiment manifest directory. The experiment owns the file; no configured catalog or shared template source is modified.
+- Resolve the file once at admission, preserve its metadata and raw Markdown, and record SHA-256 as `axes.template.hash` and template provenance. An explicit template hash must match. The candidate fingerprint includes this resolved identity. Reject this override for `proof`, whose QA snapshot is already frozen.
+- Retain the bytes as the candidate's existing `inputs/candidate-template.md`. Slot admission, queued dispatch, capability preparation and task writing reuse that snapshot and verify its hash, flow, platform and domain compatibility. They never select a current catalog entry in its place. Editing or removing the original file after admission cannot change the trial.
+- The final result retains the candidate template's source digest and the rendered task digest through existing execution-template provenance. Ordinary runs and trials without this parameter retain their current catalog selection.
+- Hosted task initialization transports the snapshot Markdown and its relative identity through the existing private task-init request. The CLI initializer validates it and materializes it under the current task inputs. Deploy matching gateway, CLI and agent-runtime readers before candidate dispatch.
+- A repeated admission supplies the local path again; passing the previous `axes.template.hash` detects edits before a new trial is created. Local source paths remain gateway-side; worker-facing template identity uses a relative flow/name path.
+
 ## Proof profile
 
 Status: proposed contract for ADR-030 Amendment 4.

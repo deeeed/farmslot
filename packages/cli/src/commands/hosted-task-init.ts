@@ -4,6 +4,7 @@ import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
+  candidateExecutionTemplate,
   executionTemplateCatalogFlow,
   type ExecutionTemplateSource,
   freezeRequiredSkills,
@@ -59,6 +60,7 @@ export interface HostedTaskInitRequest {
     id: string;
     sha256: string;
     selectionReason: SelectedExecutionTemplate['reason'];
+    candidate?: { relativePath: string; markdown: string };
   };
   taskDocumentAdditions?: string;
   templateProvenance?: HandoffMetadata['templateProvenance'];
@@ -255,6 +257,10 @@ function isHostedRequest(value: unknown): value is HostedTaskInitRequest {
         handoff(entry.handoff),
     ) ||
     !['sourceId', 'id', 'sha256', 'selectionReason'].every((key) => string(template[key])) ||
+    !optional(
+      template.candidate,
+      (entry) => isRecord(entry) && string(entry.relativePath) && string(entry.markdown),
+    ) ||
     !optional(value.taskDocumentAdditions, string)
   )
     return false;
@@ -342,6 +348,31 @@ export function selectHostedTaskTemplate(
   { project, slot, resolveSourceBinding }: HostedTaskTemplateCatalog,
   request: Pick<HostedTaskInitRequest, 'task' | 'template'>,
 ): HostedTaskTemplateSelection {
+  if (request.template.candidate) {
+    if (
+      !request.task.artifactOnlyReplay ||
+      !['dev', 'fix-bug'].includes(request.task.flow) ||
+      request.template.sourceId !== 'eval-candidate'
+    )
+      throw refusal('Local candidate templates require an artifact-only implementation trial.');
+    const selected = candidateExecutionTemplate({
+      path: path.join(request.task.taskDir, 'inputs/candidate-template.md'),
+      relativePath: request.template.candidate.relativePath,
+      markdown: request.template.candidate.markdown,
+      flow: request.task.flow,
+      platform: slot.platform,
+      domain: request.task.domain,
+    });
+    if (
+      selected.entry.id !== request.template.id ||
+      selected.entry.sha256 !== request.template.sha256
+    )
+      throw refusal(
+        'Frozen candidate template identity differs from the trial.',
+        'TASK_TEMPLATE_CHANGED',
+      );
+    return { sources: [], selected };
+  }
   const configured = resolveConfiguredExecutionTemplateSources(
     project.projectJson.execution_templates,
     {
@@ -533,6 +564,10 @@ export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResu
       },
       request,
     );
+    if (request.template.candidate) {
+      fs.mkdirSync(path.dirname(selected.entry.path), { recursive: true });
+      fs.writeFileSync(selected.entry.path, request.template.candidate.markdown);
+    }
     const {
       resolveWorkerTerminalContract,
     }: {
