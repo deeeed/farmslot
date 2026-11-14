@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/pr-rules-recheck.mjs \"$FARMSLOT_PR_RULES_PROOF_INPUT\" \"$FARMSLOT_PR_RULES_PROOF_OUTPUT\"",
         "timeout_ms": 120000,
-        "intent": "Unchanged rechecks preserve disk bytes and RPC views without notifications; a new head persists and notifies a real client.",
+        "intent": "Unchanged rechecks preserve disk bytes and RPC views without notifications; a new head persists and notifies a real client. Checkpoint-backed scheduled rule scans stay quiet, retain deadlines and publish new subjects.",
         "next": "done"
       },
       "done": {

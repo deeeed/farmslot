@@ -1,10 +1,24 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import type { PRReviewIntent } from '@farmslot/protocol';
+import type { PRReviewIntent, PRRuleSourceProgress } from '@farmslot/protocol';
 
 import type { PRRuleStoreData } from './store.js';
 
 export type PRRecheckSource = { kind: 'submission' | 'rule'; id: string };
+
+/** Completed traversals get new identities each poll; incomplete progress remains observable. */
+function progressView(progress: PRRuleSourceProgress | undefined): unknown {
+  if (!progress?.completedAt || progress.pendingConnections !== 0) return progress;
+  return {
+    ...progress,
+    id: undefined,
+    startedAt: undefined,
+    oldestObservationAt: undefined,
+    completedAt: 'complete',
+    requestsThisAttempt: undefined,
+    resumed: undefined,
+  };
+}
 
 /** Only observation clocks and their mechanically advanced submission version are quiet. */
 export function retainRecheckVersion(
@@ -65,7 +79,12 @@ export function retainRecheckVersion(
         ? JSON.parse(
             JSON.stringify({
               ...item,
-              scan: { ...item.scan, checkedAt: undefined, nextScanAt: undefined },
+              scan: {
+                ...item.scan,
+                checkedAt: undefined,
+                nextScanAt: undefined,
+                sourceProgress: progressView(item.scan.sourceProgress),
+              },
             }),
           )
         : item,

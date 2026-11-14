@@ -1012,6 +1012,7 @@ export class PRRuleStore {
         const observationOnly = recheck
           ? retainRecheckVersion(this.observedData, draft, recheck)
           : false;
+        // Admission callers need the retained version, not the transient refresh increment.
         const result = structuredClone(changed);
         const text = JSON.stringify(draft);
         if (text === this.observedText) return result;

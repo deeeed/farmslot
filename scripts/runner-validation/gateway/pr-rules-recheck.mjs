@@ -48,38 +48,45 @@ try {
   const { Methods } = await import('../../../packages/protocol/src/index.ts');
   const { startGitHubFixture } =
     await import('../../../services/gateway/src/integrations/github-test-fixtures.ts');
-  let head = 'a'.repeat(40);
+  let head = 'a'.repeat(40),
+    ruleHasSubject = false;
   githubFixture = await startGitHubFixture((request) => {
     if (request.path === '/user') return { body: { login: 'fixture' } };
     if (request.path === '/graphql' && request.json?.variables?.id)
       return { body: { data: { node: { headRefOid: head, baseRefOid: 'c'.repeat(40) } } } };
-    if (request.path === '/graphql')
+    if (request.path === '/graphql') {
+      const pr = {
+        id: 'PR_recheck_proof',
+        number: 999999,
+        title: 'Observation proof',
+        state: 'OPEN',
+        updatedAt: '2026-01-01T00:00:00Z',
+        reviewDecision: null,
+        viewerLatestReview: null,
+        viewerLatestReviewRequest: { id: 'requested' },
+        isDraft: false,
+        headRefOid: head,
+        baseRefOid: 'c'.repeat(40),
+        baseRefName: 'main',
+        headRefName: 'proof',
+        author: { login: 'author' },
+        repository: { nameWithOwner: 'fixture/recheck-proof' },
+        labels: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+      };
       return {
         body: {
           data: {
             repository: {
-              pullRequest: {
-                id: 'PR_recheck_proof',
-                number: 999999,
-                title: 'Observation proof',
-                state: 'OPEN',
-                updatedAt: '2026-01-01T00:00:00Z',
-                reviewDecision: null,
-                viewerLatestReview: null,
-                viewerLatestReviewRequest: { id: 'requested' },
-                isDraft: false,
-                headRefOid: head,
-                baseRefOid: 'c'.repeat(40),
-                baseRefName: 'main',
-                headRefName: 'proof',
-                author: { login: 'author' },
-                repository: { nameWithOwner: 'fixture/recheck-proof' },
-                labels: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+              pullRequest: pr,
+              pullRequests: {
+                nodes: ruleHasSubject ? [pr] : [],
+                pageInfo: { hasNextPage: false, endCursor: null },
               },
             },
           },
         },
       };
+    }
     return { status: 404, body: { message: 'Unconfigured fixture endpoint' } };
   });
   process.env.FARMSLOT_GITHUB_API_URL = githubFixture.origin;
@@ -207,6 +214,114 @@ try {
   assert(changed.intent, `Changed observation failed: ${changed.submission.error}`);
   assert.equal(changed.intent.headSha, head);
   assert(notices > quiet.notices, 'new facts must notify and re-read');
+  const submissionFinal = { notices, payloadBytes };
+  // Isolate scheduler work through supported mutations on this private store only.
+  const state = await connection.call('prRules.list', {});
+  for (const rule of state.rules)
+    if (rule.enabled)
+      await connection.call(Methods.PR_RULE_SET_ENABLED, {
+        id: rule.id,
+        revision: rule.revision,
+        enabled: false,
+        backfill: false,
+      });
+  for (const submission of state.submissions ?? []) {
+    const intent = state.intents.find((item) => item.id === submission.intentId);
+    if (
+      !submission.cancelledAt &&
+      !intent?.runId &&
+      !['running', 'completed', 'failed'].includes(intent?.status)
+    )
+      await connection.call(Methods.PR_REVIEW_REQUEST_CANCEL, {
+        id: submission.id,
+        revision: submission.revision,
+      });
+  }
+  const { rule: savedRule } = await connection.call(Methods.PR_RULE_SAVE, {
+    config: {
+      name: 'Checkpoint-backed rule proof',
+      teamId: team.id,
+      predicate: team.config.predicate,
+      actions: [{ kind: 'notify' }],
+      pollIntervalMs: 60_000,
+      maxAdmissionsPerScan: 1,
+      rereviewOnHeadChange: false,
+    },
+  });
+  const { rule: enabledRule } = await connection.call(Methods.PR_RULE_SET_ENABLED, {
+    id: savedRule.id,
+    revision: savedRule.revision,
+    enabled: true,
+    backfill: false,
+  });
+  assert(
+    enabledRule.scan.sourceProgress?.completedAt,
+    'rule uses a completed production checkpoint',
+  );
+  const ruleDisk = await readFile(storeFile),
+    ruleView = await connection.call('prRules.list', {});
+  const due = Date.parse(enabledRule.scan.nextScanAt);
+  // The pre-change baseline stores its scheduler deadline only in the published rule.
+  const deadline = () =>
+    service.store.nextScanAt?.(savedRule.id) ??
+    service.store.rule(savedRule.id, owner).scan.nextScanAt;
+  const priorNotices = notices;
+  measuring = true;
+  await runWithPrincipalOwner({ ownerId: owner }, () => service.tick(due - 1));
+  assert.equal(deadline(), enabledRule.scan.nextScanAt);
+  for (let i = 0; i < 2; i++) {
+    mock.timers.tick(60_000);
+    await runWithPrincipalOwner({ ownerId: owner }, () => service.tick(Date.now()));
+  }
+  const newestProgress = JSON.parse(
+    await readFile(path.join(fixture, '.pr-source-checkpoints.json'), 'utf8'),
+  );
+  assert.equal(newestProgress.traversals.length, 0, 'scheduler consumes each completed checkpoint');
+  const nextDue = deadline();
+  const requestsBeforeEarlyTick = githubFixture.requests.length;
+  await runWithPrincipalOwner({ ownerId: owner }, () => service.tick(Date.parse(nextDue) - 1));
+  assert.equal(
+    githubFixture.requests.length,
+    requestsBeforeEarlyTick,
+    'private deadline prevents an early provider read',
+  );
+  await connection.call('gateway.ping', {});
+  await Promise.all(pending);
+  measuring = false;
+  const ruleAfter = await readFile(storeFile),
+    ruleReadback = await connection.call('prRules.list', {});
+  if (mode === 'baseline') assert(notices > priorNotices);
+  else {
+    assert(
+      ruleAfter.equals(ruleDisk),
+      'completed unchanged rule traversals must preserve disk bytes',
+    );
+    assert(
+      isDeepStrictEqual(ruleReadback, ruleView),
+      'quiet rule traversals preserve the published RPC view',
+    );
+    assert.equal(notices, priorNotices, 'quiet rule traversals do not invalidate clients');
+  }
+  const ruleQuiet = {
+    notices: notices - priorNotices,
+    unchangedDisk: ruleAfter.equals(ruleDisk),
+    nextDue,
+  };
+  ruleHasSubject = true;
+  mock.timers.tick(60_000);
+  measuring = true;
+  await connection.call(Methods.PR_RULE_SCAN, { id: savedRule.id });
+  await connection.call('gateway.ping', {});
+  await Promise.all(pending);
+  measuring = false;
+  assert(notices > priorNotices + ruleQuiet.notices, 'new rule subjects notify');
+  const latestRuleView = await connection.call('prRules.list', {});
+  assert(
+    latestRuleView.actions.some(
+      (action) => action.ruleId === savedRule.id && action.subject.headSha === head,
+    ),
+    'new rule subject persists',
+  );
   unsubscribe();
   const result = {
     mode: mode ?? 'candidate',
@@ -214,10 +329,21 @@ try {
     inputDigest: createHash('sha256').update(raw).digest('hex'),
     quiet,
     realHeadChangePublished: true,
-    finalNotices: notices,
-    finalPayloadBytes: payloadBytes,
+    finalNotices: submissionFinal.notices,
+    ruleQuiet,
+    newRuleSubjectPublished: true,
+    finalPayloadBytes: submissionFinal.payloadBytes,
     providerRequests: githubFixture.requests.length,
-    protocolActions: [Methods.PR_TEAM_SAVE, 'prReview.submit', 'prRules.list', 'prReview.get'],
+    protocolActions: [
+      Methods.PR_TEAM_SAVE,
+      Methods.PR_RULE_SAVE,
+      Methods.PR_RULE_SET_ENABLED,
+      Methods.PR_RULE_SCAN,
+      Methods.PR_REVIEW_REQUEST_CANCEL,
+      'prReview.submit',
+      'prRules.list',
+      'prReview.get',
+    ],
     boundary:
       'Production RPC/service/store with a supported GitHub HTTP fixture; only the isolated store changes',
     operatorWrites: 0,
