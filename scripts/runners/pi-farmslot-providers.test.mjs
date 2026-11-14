@@ -658,6 +658,7 @@ test('router wire guard permits absent thinking and refuses invalid explicit eff
       maxTokens: 32768,
       requestedMaxTokens: 32768,
       reasoning: true,
+      effectiveReasoning: { mode: 'level', level: 'medium' },
       effort: 'medium',
       cost: null,
     },
@@ -701,6 +702,26 @@ function guardedRequest({ provider = 'litellm', thinking = 'max', model = {} } =
     });
   return { fetch, request, sent, records };
 }
+
+test('request receipts distinguish omission, explicit disabling and the serialized level', async () => {
+  const omitted = guardedRequest({ thinking: 'off' });
+  await omitted.request({});
+  assert.equal(Object.hasOwn(JSON.parse(omitted.sent[0].options.body), 'reasoning_effort'), false);
+  assert.deepEqual(omitted.records[0].effectiveReasoning, { mode: 'omitted' });
+
+  const disabled = guardedRequest({
+    thinking: 'off',
+    model: { reasoning: false, thinkingLevelMap: { off: 'none' } },
+  });
+  await disabled.request({ reasoning_effort: 'none' });
+  assert.equal(JSON.parse(disabled.sent[0].options.body).reasoning_effort, 'none');
+  assert.deepEqual(disabled.records[0].effectiveReasoning, { mode: 'disabled' });
+
+  const level = guardedRequest({ model: { thinkingLevelMap: { max: 'high' } } });
+  await level.request({ reasoning_effort: 'high' });
+  assert.equal(JSON.parse(level.sent[0].options.body).reasoning_effort, 'high');
+  assert.deepEqual(level.records[0].effectiveReasoning, { mode: 'level', level: 'high' });
+});
 
 test('wire guard refuses an undeclared max-to-high clamp before sending or recording', async () => {
   for (const provider of ['router', 'litellm', 'ollama']) {
@@ -1054,6 +1075,7 @@ async function checkExtension(extensionUrl, scenario, obsDir) {
                     'wire-mismatch',
                     'off-reasoning',
                     'no-thinking-reasoning',
+                    'receipt-write-failure',
                   ].includes(scenario),
                 }
               : {}),
@@ -1129,6 +1151,8 @@ async function checkExtension(extensionUrl, scenario, obsDir) {
         });
       },
     };
+    if (scenario === 'receipt-write-failure')
+      ctx.sessionManager = { getSessionFile: () => `${obsDir}/absent/session.jsonl` };
     if (scenario === 'wire-mismatch') {
       await before.events.get('session_start')?.({}, ctx);
       const { default: OpenAI } = await import('openai');
@@ -1258,6 +1282,14 @@ for (const scenario of [
     assert.equal(result.status, 0, result.stderr);
     assert.doesNotMatch(result.stderr, /PI_REASONING_EFFORT_MISMATCH/);
   });
+
+test('a failed optional receipt write does not abort the serialized model request', () => {
+  const result = runExtensionCheck('receipt-write-failure');
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /reasoning receipt unavailable/);
+  assert.match(result.stderr, /fixture inference attempted/);
+  assert.doesNotMatch(result.stderr, /PI_REASONING_EFFORT_MISMATCH/);
+});
 
 for (const [failure, routerId] of ['http', 'timeout', 'json', 'empty'].flatMap((failure) =>
   ['router', 'localsparks'].map((id) => [failure, id]),
