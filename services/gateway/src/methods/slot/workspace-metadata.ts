@@ -82,13 +82,18 @@ async function remoteVersions(
             typeof row.slotId !== 'string' ||
             !ids.delete(row.slotId) ||
             (row.version !== null && typeof row.version !== 'string') ||
-            typeof row.ancestryCacheable !== 'boolean'
+            typeof row.ancestryCacheable !== 'boolean' ||
+            (row.alternatesPath !== undefined &&
+              (typeof row.alternatesPath !== 'string' || row.alternatesPath.length === 0))
           )
             throw new Error('Invalid workspace metadata row');
           if (typeof row.version === 'string')
             versions.set(row.slotId, {
               version: row.version,
               ancestryCacheable: row.ancestryCacheable,
+              ...(typeof row.alternatesPath === 'string'
+                ? { alternatesPath: row.alternatesPath }
+                : {}),
             });
         }
         return versions;
@@ -109,7 +114,7 @@ async function remoteVersions(
 
 /** All passive roots share one metadata command per remote node per interval. */
 export async function passiveWorkspaceVersions(
-  slots: readonly SlotStatus[],
+  slots: readonly Pick<SlotStatus, 'slot'>[],
   previous: ReadonlyMap<string, WorkspaceMetadataVersion> = new Map(),
 ): Promise<Map<string, WorkspaceMetadataVersion>> {
   // A scoped owner/source must never join a machine-wide read or cache.

@@ -60,7 +60,10 @@ def version(root):
     fields=line.split()
     if len(fields)==2 and fields[1].startswith(policy['replacementRefs']+'/'):
      cacheable=False;break
- return dict(version=fingerprint,ancestryCacheable=cacheable)
+ value=dict(version=fingerprint,ancestryCacheable=cacheable)
+ alternates_index=next(index for index,entry in enumerate(policy['files']) if entry['directory']=='common' and entry['path']==policy['alternates'])
+ if metadata[alternates_index] is not None: value['alternatesPath']=os.path.normpath(pathlib.Path(common,policy['alternates']))
+ return value
 
 rows=[]
 for root in json.loads(sys.argv[1]):
@@ -68,7 +71,7 @@ for root in json.loads(sys.argv[1]):
  except OSError:
   # Optional metadata cannot justify reuse. The full inspection reports the actual failure.
   value=None
- rows.append(dict(slotId=root['slotId'],version=value['version'] if value else None,ancestryCacheable=value['ancestryCacheable'] if value else False))
+ rows.append(dict(slotId=root['slotId'],version=value['version'] if value else None,ancestryCacheable=value['ancestryCacheable'] if value else False,**({'alternatesPath':value['alternatesPath']} if value and 'alternatesPath' in value else {})))
 print(json.dumps(rows))
 FARMSLOT_WORKSPACE_METADATA`;
 }

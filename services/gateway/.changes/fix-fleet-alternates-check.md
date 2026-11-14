@@ -1,0 +1,1 @@
+- Doctor flags slots that borrow Git objects through alternates, using the shared local and remote metadata observations.
