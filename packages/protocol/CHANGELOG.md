@@ -5,7 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
-- The run list says "default" when no reasoning effort is stored. Pi "off" on litellm, ollama, and the router also reads "default", because those adapters omit the effort and the model keeps its own. "off" on a built-in Pi provider still reads "off". "none" still reads "off".
+- The run list says "default" when no reasoning effort is stored. Pi "off" reads "off" only for built-in Anthropic and OpenAI, which send an explicit disable. Every other provider, including litellm, ollama, and a renamed router, reads "default" because the farm omits the effort. "none" still reads "off". A blank effort in the runner and model parts also reads "default".
 
 ## 0.84.0 - 2026-11-14
 

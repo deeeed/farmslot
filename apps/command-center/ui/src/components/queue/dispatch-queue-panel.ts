@@ -12,7 +12,12 @@ import type {
   WorkGraphListResult,
   WorkGraphProjection,
 } from '@farmslot/protocol';
-import { Methods, runnerModelEffortParts, sourceObservationAge } from '@farmslot/protocol';
+import {
+  Methods,
+  reasoningEffortLabel,
+  runnerModelEffortParts,
+  sourceObservationAge,
+} from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import {
@@ -78,7 +83,16 @@ function graphContext(
       ? `exec:${runnerModelEffortParts(item.runner, item.model, item.effort).join('/')}`
       : '',
     item.reviewSequence?.length
-      ? `reviews:${item.reviewSequence.map((review) => [review.runner, review.model ?? 'default model', review.effort ?? 'default effort', review.mode.toUpperCase()].join('/')).join(', ')}`
+      ? `reviews:${item.reviewSequence
+          .map((review) =>
+            [
+              review.runner,
+              review.model ?? 'default model',
+              reasoningEffortLabel(review.effort, review.model),
+              review.mode.toUpperCase(),
+            ].join('/'),
+          )
+          .join(', ')}`
       : '',
   ].filter(Boolean);
   return parts.join(' · ');

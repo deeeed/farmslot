@@ -45,24 +45,20 @@ export function runWorkerEffort(
   return null;
 }
 
-/**
- * Farmslot's own completions providers. Their adapter omits `reasoning_effort`
- * for Pi `off`, and the model keeps its own default. Built-in Pi providers are
- * absent: `off` there sends an explicit disable. A renamed router id is not
- * known to the client, so only the default id `router` is included.
- */
-const COMPLETIONS_OFF_OMITS = new Set(['litellm', 'ollama', 'router']);
+// Source of truth: providerReasoningFetch omits Pi `off` for every source
+// listPiProviderSources registers. Only built-in Anthropic and OpenAI send an
+// explicit disable, so only those stay `off`.
+const EXPLICIT_DISABLE_PROVIDERS = new Set(['anthropic', 'openai']);
 
-function completionsOffOmitsEffort(model: string | null | undefined): boolean {
+function explicitDisableProvider(model: string | null | undefined): boolean {
   const provider = model?.split('/')[0]?.trim().toLowerCase() ?? '';
-  return COMPLETIONS_OFF_OMITS.has(provider);
+  return EXPLICIT_DISABLE_PROVIDERS.has(provider);
 }
 
 /**
  * Word shown for a stored reasoning effort.
- * No value reads `default`. Pi `off` reads `default` only for the completions
- * providers above. On any other model it reads `off`, an explicit disable.
- * `none` is an explicit disable. Any other stored level is shown as written.
+ * No value reads `default`. Pi `off` reads `off` only for the providers above.
+ * `none` reads `off`. Any other stored level is shown as written.
  */
 export function reasoningEffortLabel(
   effort: string | null | undefined,
@@ -71,18 +67,22 @@ export function reasoningEffortLabel(
   const value = effort?.trim() ?? '';
   if (value === '') return 'default';
   if (value.toLowerCase() === 'none') return 'off';
-  if (value.toLowerCase() === 'off') return completionsOffOmitsEffort(model) ? 'default' : 'off';
+  if (value.toLowerCase() === 'off') return explicitDisableProvider(model) ? 'off' : 'default';
   return value;
 }
 
-/** Runner, model, and the displayed effort. Blank effort is left out. */
+/** Runner, model, and the displayed effort. Blank effort reads `default`. */
 export function runnerModelEffortParts(
   runner: string | null | undefined,
   model: string | null | undefined,
   effort: string | null | undefined,
 ): string[] {
-  const shown = effort?.trim() ? reasoningEffortLabel(effort, model) : '';
-  return [runner?.trim(), model?.trim(), shown].filter((part): part is string => Boolean(part));
+  const runnerPart = runner?.trim() ?? '';
+  const modelPart = model?.trim() ?? '';
+  if (!runnerPart && !modelPart && !effort?.trim()) return [];
+  return [runnerPart, modelPart, reasoningEffortLabel(effort, model)].filter(
+    (part): part is string => part !== '',
+  );
 }
 
 /** "runner/model · effort". Null when neither runner nor model is. */

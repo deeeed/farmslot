@@ -82,8 +82,11 @@ test('the label says default when no reasoning effort was sent', () => {
   );
   assert.equal(reasoningEffortLabel(' OFF ', 'ollama/qwen'), 'default');
   assert.equal(reasoningEffortLabel('off', 'router/glm'), 'default');
+  assert.equal(reasoningEffortLabel('off', 'localsparks/GLM-5.3-Flash-s12'), 'default');
+  assert.equal(reasoningEffortLabel('off', 'xai/grok-4'), 'default');
   assert.equal(reasoningEffortLabel('off', 'anthropic/claude-haiku-4-5'), 'off');
-  assert.equal(reasoningEffortLabel('off'), 'off');
+  assert.equal(reasoningEffortLabel('off', 'openai/gpt-5.1'), 'off');
+  assert.equal(reasoningEffortLabel('off'), 'default');
   assert.equal(reasoningEffortLabel('none', 'openai/gpt-5.1'), 'off');
   assert.deepEqual(runnerModelEffortParts('pi', 'litellm/glm-5p3-flash', 'off'), [
     'pi',
@@ -95,7 +98,12 @@ test('the label says default when no reasoning effort was sent', () => {
     'openai/gpt-5.1',
     'off',
   ]);
-  assert.deepEqual(runnerModelEffortParts('pi', 'openai/gpt-5.1', '  '), ['pi', 'openai/gpt-5.1']);
+  assert.deepEqual(runnerModelEffortParts('pi', 'openai/gpt-5.1', '  '), [
+    'pi',
+    'openai/gpt-5.1',
+    'default',
+  ]);
+  assert.deepEqual(runnerModelEffortParts(undefined, undefined, '  '), []);
   assert.equal(runEngineLabel({ runner: null, model: 'opus' }), 'runner/opus · default');
   assert.equal(runEngineLabel({ runner: 'codex', model: null, effort: 'high' }), 'codex · high');
   assert.equal(runEngineLabel({ runner: null, model: null, effort: 'high' }), null);

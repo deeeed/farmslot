@@ -403,7 +403,8 @@ export function reviewCard(
         </p>`
       : queued?.slotId
         ? html`<p>
-            Selected ${queued.slotId} · ${queued.model}/${queued.effort ?? 'default effort'}
+            Selected ${queued.slotId} ·
+            ${queued.model}/${reasoningEffortLabel(queued.effort, queued.model)}
           </p>`
         : nothing}
     ${trace
