@@ -6,7 +6,9 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
+import { legacyRemoteFarmPaths, resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
+
+import { blindHostRoots } from './blind-git.js';
 
 test('blind capsule protects resolved config roots and refuses an unavailable sandbox', (t) => {
   const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'blind-farm-roots-')));
@@ -77,4 +79,25 @@ print('pool, runs, projects: direct and symlink rules pinned; unavailable sandbo
   if (process.platform === 'darwin') {
     assert.match(result.stdout, /direct and symlink writes denied; unrelated write allowed/);
   }
+});
+
+test('blind host roots cover farm data and archives while pins and installed code stay readable', () => {
+  const home = '/blind-host-fixture/instance';
+  const layout = resolveFarmPaths({ role: 'node', home, env: {} });
+  for (const paths of [layout, legacyRemoteFarmPaths({ FARMSLOT_HOME: home })]) {
+    const roots = blindHostRoots(paths);
+    assert.ok(roots.hostDeniedRoots?.includes(paths.home));
+    assert.ok(roots.hostDeniedRoots?.includes(paths.state.runs));
+    assert.ok(roots.hostReadableRoots?.includes(paths.code.cli));
+  }
+  const roots = blindHostRoots(layout);
+  for (const denied of [
+    layout.data.root,
+    layout.data.runArchive,
+    layout.data.runBundles,
+    layout.data.taskPinsArchive,
+    layout.backups,
+  ])
+    assert.ok(roots.hostDeniedRoots?.includes(denied), denied);
+  assert.ok(roots.hostReadableRoots?.includes(layout.state.taskPins));
 });

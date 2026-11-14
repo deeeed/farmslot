@@ -46,6 +46,36 @@ const PI_PROVIDER_ENVIRONMENT = Object.fromEntries(
   ]),
 );
 
+// Credentials the extension resolves into a provider registration.
+const PI_PROVIDER_CREDENTIALS = {
+  router: ['FARMSLOT_PI_ROUTER_KEY'],
+  litellm: ['LITELLM_API_KEY'],
+  ollama: ['OLLAMA_API_KEY'],
+};
+
+// Process memory only: an extension reload in the same Pi re-registers with them.
+const HELD_CREDENTIALS = Symbol.for('farmslot.pi.providerCredentials');
+
+/** The environment provider discovery reads, including credentials released earlier. */
+export function piProviderCredentialEnvironment(env = process.env) {
+  return { ...globalThis[HELD_CREDENTIALS], ...env };
+}
+
+/**
+ * Blind workers: once registered providers hold their keys, remove them from
+ * the environment Pi copies into every tool shell. Native Pi providers read
+ * their keys from the environment per request, so theirs stay.
+ */
+export function releasePiProviderCredentials(registered, env = process.env) {
+  if (env.FARMSLOT_BLIND_SEATBELT !== '1') return;
+  const held = (globalThis[HELD_CREDENTIALS] ??= {});
+  for (const source of registered)
+    for (const name of PI_PROVIDER_CREDENTIALS[source.kind] ?? []) {
+      if (env[name] !== undefined) held[name] = env[name];
+      delete env[name];
+    }
+}
+
 function piProviderKind(model, env) {
   const provider = model.split('/')[0];
   if (provider === 'litellm' || provider === 'ollama') return provider;

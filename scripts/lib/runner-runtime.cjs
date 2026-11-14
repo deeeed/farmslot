@@ -21,4 +21,9 @@ function runnerRuntimeDir(repo, runtimeDir = '.agent') {
   );
 }
 
-module.exports = { runnerRuntimeDir };
+// Tmux launch scripts inline pool credentials; blind worker sandboxes deny these.
+function runnerLaunchDir(repo) {
+  return path.join(runnerRuntimeDir(repo), '.launch');
+}
+
+module.exports = { runnerLaunchDir, runnerRuntimeDir };

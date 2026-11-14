@@ -63,6 +63,30 @@ printf '%s\\n' "$*" >> ATTEMPTS
 echo 'GitHub access is unavailable in this blind eval trial.' >&2
 exit 1
 '''
+# ps prints other processes' environments with -E, BSD-style e, or legacy -e.
+# Refuse those (and -e, use -A) before any option value; values are skipped.
+PS_WRAPPER = '''#!/bin/sh
+refuse() { echo 'ps: environment output is unavailable in this blind eval trial.' >&2; exit 1; }
+value=; first=1
+for arg in "$@"; do
+  if [ -n "$value" ]; then value=; first=; continue; fi
+  case "$arg" in
+    --) first=; continue ;;
+    -*) flags=${arg#-} ;;
+    *) [ -n "$first" ] || { case "$arg" in *[eE]*) refuse ;; esac; continue; }
+       flags=$arg ;;
+  esac
+  first=
+  while [ -n "$flags" ]; do
+    letter=${flags%"${flags#?}"}; flags=${flags#?}
+    case "$letter" in
+      e|E) refuse ;;
+      O|o|G|g|p|t|U|u) [ -n "$flags" ] || value=1; flags= ;;
+    esac
+  done
+done
+COMMAND_MODE=unix2003 exec REAL_PS "$@"
+'''
 SANDBOX = '/usr/bin/sandbox-exec'
 SANDBOX_REQUIRED = 'Blind eval trials need macOS sandbox-exec on the slot node; refusing an unsandboxed worker'
 NODE_INSTALLATIONS = ['farmslot-node', 'farmslot-node-dev']
@@ -86,10 +110,11 @@ def path_aliases(value):
     path = Path(value).absolute()
     paths = {str(path), str(path.resolve())}
     for item in list(paths):
-        if item.startswith('/private/tmp/'):
-            paths.add(item[len('/private'):])
-        elif item.startswith('/tmp/'):
-            paths.add('/private' + item)
+        for prefix in ['/tmp', '/var']:
+            if item == '/private' + prefix or item.startswith('/private' + prefix + '/'):
+                paths.add(item[len('/private'):])
+            elif item == prefix or item.startswith(prefix + '/'):
+                paths.add('/private' + item)
     return sorted(paths)
 
 
@@ -134,6 +159,9 @@ def worker_access_rules(repo):
         '(remote tcp "*:%s")' % port for port in [22, 512, 513, 514]) + ')']
     rules += ['(deny process-exec ' + ' '.join(
         '(literal "/usr/bin/%s")' % name for name in ['ssh', 'scp', 'sftp']) + ')']
+    # System ps prints other processes' environments; boundary/bin/ps refuses that.
+    rules += ['(deny process-exec ' + ' '.join(
+        '(literal %s)' % quote(p) for p in path_aliases('/bin/ps')) + ')']
     # Deployed task helpers and support bundles must remain executable.
     # Hide the rest of both legacy node installations, including dev-stack and
     # pool/project sources. Preserve a task checkout nested inside either root.
@@ -287,6 +315,20 @@ def gateway_credential_paths():
     return protected
 
 
+def operator_shell_secret_paths():
+    # Shell startup files export operator credentials; path_aliases adds each
+    # resolved dotfiles target. The worker's own ZDOTDIR is the empty boundary/shell.
+    home = Path.home()
+    homes = {home} | ({Path(os.path.expanduser(os.environ['ZDOTDIR']))} if os.environ.get('ZDOTDIR') else set())
+    startup = ['.zshenv', '.zshrc', '.zprofile', '.zlogin', '.zlogout', '.zsh_history', '.zsh_sessions']
+    protected = [root / name for root in homes for name in startup]
+    protected += [home / name for name in [
+        '.bashrc', '.bash_profile', '.bash_login', '.bash_logout', '.bash_history', '.profile',
+        '.config/secrets', '.netrc', '.npmrc', '.yarnrc', '.yarnrc.yml', '.pypirc',
+        '.docker/config.json', '.git-credentials', '.aws', '.kube/config', '.gnupg']]
+    return protected
+
+
 def worker_private_rules(capsule):
     quote = lambda value: json.dumps(str(value), ensure_ascii=False)
     rules = []
@@ -294,6 +336,7 @@ def worker_private_rules(capsule):
     # node_modules. Resolve symlinks before entering the sandbox as well.
     protected = [Path.home() / '.ssh', Path.home() / '.pi/agent/settings.json',
                  capsule / 'boundary/sandbox.sb'] + gateway_credential_paths() + operator_browser_paths()
+    protected += operator_shell_secret_paths()
     for value in protected:
         rules += ['(deny %s (subpath %s))' % (operation, quote(p))
                   for operation in ['file-read*', 'file-write*'] for p in path_aliases(value)]
@@ -307,6 +350,207 @@ def worker_private_rules(capsule):
     # Pi loads extensions inside this same seatbelt. File rules cannot distinguish
     # Pi's loader from its tool children; denying extension sources breaks startup.
     return rules
+
+
+def slot_launch_dirs(spec, repo, checkouts):
+    # Slot runtimes sit beside the checkouts (scripts/lib/runner-runtime.cjs) and
+    # hold every slot's tmux launch scripts. The gateway passes each slot's launch
+    # directory, own slot first; the fallback mirrors its default layout.
+    return [Path(os.path.expanduser(p)) for p in spec.get('launchDirs', [])] or [
+        p.parent / '.farmslot-runtime' / p.name / '.agent/.launch' for p in [repo] + checkouts]
+
+
+def slot_runtime_rules(spec, repo, checkouts):
+    quote = lambda value: json.dumps(str(value), ensure_ascii=False)
+    launches = slot_launch_dirs(spec, repo, checkouts)
+    own = launches[0].parent.parent
+    trees = sorted({p.parent.parent.parent for p in launches
+                    if p.parent.parent.parent.name == '.farmslot-runtime'})
+    operations = ['file-read*', 'file-write*', 'file-link']
+    # Every slot runtime is denied except this slot's own, which holds the
+    # worker's runner homes and observability bundle.
+    keep = ' '.join('(subpath %s)' % quote(p) for p in path_aliases(own))
+    rules = ['(deny %s (require-all (subpath %s) (require-not (require-any %s))))'
+             % (operation, quote(p), keep)
+             for operation in operations for tree in trees for p in path_aliases(tree)]
+    # Node realpath stats the root on the way to the own runtime's extensions.
+    rules += ['(allow file-read-metadata (literal %s))' % quote(p)
+              for tree in trees for p in path_aliases(tree)]
+    rules += ['(deny %s (subpath %s))' % (operation, quote(p))
+              for operation in operations for launch in launches for p in path_aliases(launch)]
+    # Slots this node does not list keep the same layout.
+    rules += ['(deny %s (regex #"/[.]farmslot-runtime/[^/]+/[.]agent/[.]launch(/|$)"))' % operation
+              for operation in operations]
+    return rules + rename_guard_rules(trees + launches)
+
+
+# Operator credential stores, runner sessions and transcripts under HOME;
+# gateway_homes() adds every farm home.
+HOME_SECRET_STORES = ['.claude', '.codex', '.pi', '.grok', '.config', 'farm-paths-brief',
+                      'xreview', 'Library/Application Support', 'Library/Preferences',
+                      'Library/HTTPStorages', 'Library/Keychains', 'Library/Cookies']
+# Operator stores at the root of a data volume that holds slot checkouts.
+VOLUME_SECRET_STORES = ['lanes', 'slot-retained', 'xreview', 'dev/xreview-personal', '*archive*']
+
+
+def blind_pi_home(spec, capsule):
+    # Pi's operator home holds its logins and every session, and Pi refuses an
+    # unreadable auth.json. A blind Pi without its own home gets one per trial.
+    runtime = slot_launch_dirs(spec, Path(spec['repo']).resolve(), [])[0].parent.parent
+    return runtime / '.blind-pi', runtime / '.blind-pi' / capsule.name
+
+
+# Providers the Farmslot Pi extension registers for a blind worker, and the
+# variable each takes its key from at runtime.
+PI_STATIC_PROVIDER_KEYS = {'litellm': 'LITELLM_API_KEY', 'ollama': 'OLLAMA_API_KEY'}
+PI_STATIC_PROVIDER_FIELDS = ['baseUrl', 'api', 'compat', 'models']
+PI_STATIC_MODEL_FIELDS = ['id', 'name', 'api', 'reasoning', 'input', 'cost', 'contextWindow',
+                          'maxTokens', 'thinkingLevelMap', 'compat']
+
+
+def check_pi_agent_dir(spec, capsule):
+    # A configured Pi home inside a denied store would reopen the operator's logins.
+    configured = os.environ.get('PI_CODING_AGENT_DIR')
+    if not configured:
+        return
+    agent = Path(os.path.expanduser(configured)).resolve()
+    repo = Path(spec['repo']).resolve()
+    if any(inside(agent, Path(p).resolve()) for p in host_secret_paths(spec, repo, capsule, [])):
+        raise RuntimeError('Blind trial PI_CODING_AGENT_DIR %s is inside a store the blind sandbox '
+                           'denies; unset it so the trial uses its own Pi home' % json.dumps(configured))
+
+
+# Never copy a value under a credential-like key, at any depth: apiKey, headers,
+# accessToken, client_secret and the like. Schema fields such as maxTokensField stay.
+PI_SECRET_KEY = re.compile(r'(key|token|secret|password|passwd|credentials?|cookie|auth|authorization|bearer|headers?)$')
+PI_PROVIDER_TOKEN = re.compile(r'^(sk-|gh[pos]_|github_pat_|xox[bp]-|glpat-|hf_|xai-|fw_|AIza|AKIA|ATATT)')
+
+
+def credential_shaped(value):
+    # credential-redaction.ts isSecretValue: provider shapes, or 16+ characters
+    # mixing two of lowercase, uppercase and digits. References, URLs and paths are not.
+    if PI_PROVIDER_TOKEN.match(value):
+        return True
+    if '$' in value or re.search(r'\s', value) or re.match(r'^[a-z][\w+.-]*://', value, re.I):
+        return False
+    if re.fullmatch(r'[~.]?/?[\w.-]+(/[\w.-]+)+/?', value):
+        return False
+    return len(value) >= 16 and sum(bool(re.search(c, value)) for c in ['[a-z]', '[A-Z]', '[0-9]']) >= 2
+
+
+def scrub_pi_value(value):
+    if isinstance(value, dict):
+        return {k: scrub_pi_value(v) for k, v in value.items()
+                if not PI_SECRET_KEY.search(re.sub(r'[^a-z]', '', k.lower())) and not (isinstance(v, str) and credential_shaped(v))}
+    if isinstance(value, list):
+        return [scrub_pi_value(v) for v in value if not (isinstance(v, str) and credential_shaped(v))]
+    return value
+
+
+def strip_json_comments(text):
+    # Pi's models.json loader (pi-coding-agent utils/json.js stripJsonComments):
+    # drop // line comments and trailing commas, leaving string literals intact.
+    string = r'"(?:\\.|[^"\\])*"'
+    text = re.sub(string + r'|//[^\n]*', lambda m: m.group(0) if m.group(0)[0] == '"' else '', text)
+    return re.sub(string + r'|,(\s*[}\]])', lambda m: m.group(1) if m.group(1) is not None else m.group(0), text)
+
+
+def private_dir(path):
+    # The worker can rename entries in its own Pi home; never follow a link it planted.
+    info = os.lstat(path)
+    if os.path.islink(path) or not os.path.isdir(path) or info.st_uid != os.getuid():
+        raise RuntimeError('Blind trial Pi home is not a private directory')
+
+
+def write_blind_pi_models(target):
+    # The extension keeps the operator's static model definitions for its
+    # providers (preservePiStaticModels). Copy only those definitions: keys are
+    # env references, and headers or any credential-like field are dropped.
+    keys = dict(PI_STATIC_PROVIDER_KEYS)
+    keys[os.environ.get('FARMSLOT_PI_ROUTER_ID') or 'router'] = 'FARMSLOT_PI_ROUTER_KEY'
+    try:
+        text = (Path.home() / '.pi/agent/models.json').read_text()
+        providers = json.loads(strip_json_comments(text)).get('providers', {})
+        static = {}
+        for name, key in keys.items():
+            provider = providers.get(name)
+            if not isinstance(provider, dict):
+                continue
+            url = urlsplit(provider.get('baseUrl') or '')
+            if url.username or url.password or url.query or url.fragment:
+                continue  # A URL can embed a credential; the extension supplies the endpoint.
+            entry = {field: provider[field] for field in PI_STATIC_PROVIDER_FIELDS if field in provider}
+            entry['compat'] = scrub_pi_value(entry.get('compat', {}))
+            entry['models'] = [{field: (model[field] if field in ('id', 'name') else scrub_pi_value(model[field]))
+                                for field in PI_STATIC_MODEL_FIELDS if field in model}
+                               for model in provider.get('models', []) if isinstance(model, dict)]
+            static[name] = {**entry, 'apiKey': '$' + key}
+    except FileNotFoundError:
+        static = {}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        # Never report parser details: they can quote the operator's key bytes.
+        raise RuntimeError('Cannot read the operator Pi static models for the blind trial') from None
+    # Write through the directory itself: a fresh exclusive temporary file, never
+    # an existing path or link, then an atomic rename that replaces any link at target.
+    private_dir(target.parent)
+    directory = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        name = '.models.%s.pending' % os.urandom(8).hex()
+        handle = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+        with os.fdopen(handle, 'w') as file:
+            file.write(json.dumps({'providers': static}, indent=1) + '\n')
+        os.replace(name, target.name, src_dir_fd=directory, dst_dir_fd=directory)
+    finally:
+        os.close(directory)
+
+
+def host_secret_paths(spec, repo, capsule, checkouts):
+    home = Path.home()
+    denied = [home / name for name in HOME_SECRET_STORES] + sorted(gateway_homes())
+    # Other trials' Pi homes in this slot runtime.
+    denied.append(blind_pi_home(spec, capsule)[0])
+    # The gateway passes the node's farm home, data, archive and run roots.
+    denied += [Path(os.path.expanduser(p)) for p in spec.get('hostDeniedRoots', [])]
+    volumes = {Path(*p.parts[:3]) for p in [repo] + checkouts
+               if len(p.parts) > 3 and p.parts[1] == 'Volumes'}
+    for volume in sorted(volumes):
+        denied += [p for name in VOLUME_SECRET_STORES
+                   for p in (volume.glob(name) if '*' in name else [volume / name])]
+    # Node-local additions from the machine environment, colon separated.
+    denied += [Path(os.path.expanduser(p))
+               for p in os.environ.get('FARMSLOT_BLIND_DENIED_PATHS', '').split(':') if p]
+    return denied
+
+
+def host_secret_rules(spec, repo, capsule, checkouts):
+    quote = lambda value: json.dumps(str(value), ensure_ascii=False)
+    # The worker's own checkout, capsule, slot runtime and Pi home stay usable.
+    writable = [repo, capsule, slot_launch_dirs(spec, repo, checkouts)[0].parent.parent,
+                blind_pi_home(spec, capsule)[1]]
+    # Read-only: pinned task CLIs, installed node code and Pi's managed fd/rg.
+    readable = writable + [Path.home() / '.pi/agent/bin']
+    readable += [h / p for h in gateway_homes() for p in ['task-pins', 'state/task-pins', 'code']]
+    readable += [Path(os.path.expanduser(p)) for p in spec.get('hostReadableRoots', [])]
+    home = Path.home().resolve()
+    roots = sorted({Path(p) for value in host_secret_paths(spec, repo, capsule, checkouts)
+                    for p in [Path(value).resolve()] if not inside(home, p)})
+    rules, metadata = [], set()
+    for operations, kept in [(['file-read*'], readable), (['file-write*', 'file-link'], writable)]:
+        kept = [Path(p).resolve() for p in kept]
+        for root in roots:
+            inner = [p for p in kept if inside(p, root)]
+            if root in inner:
+                continue
+            keep = ' '.join('(subpath %s)' % quote(a) for p in inner for a in path_aliases(p))
+            # Node realpath stats each ancestor on the way to an admitted path.
+            metadata |= {a for p in inner for parent in [p, *p.parents]
+                         if inside(parent, root) and parent != p for a in path_aliases(parent)}
+            rules += [('(deny %s (require-all (subpath %s) (require-not (require-any %s))))'
+                       % (operation, quote(a), keep)) if keep
+                      else '(deny %s (subpath %s))' % (operation, quote(a))
+                      for operation in operations for a in path_aliases(root)]
+    rules += ['(allow file-read-metadata (literal %s))' % quote(p) for p in sorted(metadata)]
+    return rules + rename_guard_rules(roots)
 
 
 def sandbox_profile(spec, capsule, tmux_sockets=None, network_ports=None):
@@ -336,8 +580,6 @@ def sandbox_profile(spec, capsule, tmux_sockets=None, network_ports=None):
                       *worker_access_rules(repo),
                       '(deny file-read* ' + ' '.join('(subpath %s)' % quote(path) for path in denied) + ')',
                       '(allow file-read* (subpath %s))' % quote((capsule / 'boundary').resolve())]
-    rules += ['(allow file-write* (literal %s))' % quote((capsule / 'boundary' / name).resolve())
-              for name in ['attempts.log', 'git-trace.jsonl']]
     if spec.get('proofBoundary'):
         scope = proof_scope(spec)
         rules += ['(deny file-read* ' + ' '.join('(subpath %s)' % quote(p) for p in scope['denied']) + ')',
@@ -345,6 +587,15 @@ def sandbox_profile(spec, capsule, tmux_sockets=None, network_ports=None):
                   '(deny file-write* (subpath %s))' % quote(repo)]
         rules += ['(allow file-write* (subpath %s))' % quote(p) for p in [scope['task']] + scope['runtime']]
         rules += ['(deny file-write* (subpath %s))' % quote(p) for p in scope['pinned']]
+    # Restore trusts the retained journal and stores. Protect this capsule and
+    # all sibling trees after checkout/runtime exceptions, including aliases.
+    protected_capsules = capsules | {capsule}
+    rules += ['(deny file-write* file-link (subpath %s))' % quote(p)
+              for value in sorted(protected_capsules) for p in path_aliases(value)]
+    rules += rename_guard_rules(protected_capsules)
+    rules += ['(allow file-write* (literal %s))' % quote(p)
+              for name in ['attempts.log', 'git-trace.jsonl']
+              for p in path_aliases(capsule / 'boundary' / name)]
     # Instance pool, runs and projects stay read-only, even through worker-created links.
     rules += ['(deny file-write* (subpath %s))' % quote(Path(os.path.expanduser(p)).resolve())
               for p in spec.get('farmConfigRoots', [])]
@@ -376,7 +627,13 @@ def sandbox_profile(spec, capsule, tmux_sockets=None, network_ports=None):
               '(require-not (require-any ' + ' '.join('(subpath %s)' % quote(p)
                   for p in path_aliases(temporary)) + '))))']
     rules += ['(deny file-write* (subpath %s))' % quote((capsule / 'boundary/bin').resolve())]
+    # Tmux launch scripts inline the node's pool environment, credentials included.
+    rules += ['(deny %s (subpath %s))' % (operation, quote(p))
+              for operation in ['file-read*', 'file-write*', 'file-link'] for p in path_aliases(repo / '.agent/.launch')]
+    rules += slot_runtime_rules(spec, repo, checkouts)
     rules += worker_private_rules(capsule)
+    # Last: no later allowance reopens a credential store.
+    rules += host_secret_rules(spec, repo, capsule, checkouts)
     return '\n'.join(rules + [''])
 
 
@@ -479,7 +736,25 @@ def prepare_boundary(spec, capsule):
     require_sandbox()
     root = capsule / 'boundary'
     (root / 'gh-config').mkdir(parents=True, exist_ok=True)
+    # Empty ZDOTDIR: worker zsh shells read no startup files. Seatbelt keeps it read-only.
+    (root / 'shell').mkdir(exist_ok=True)
     (root / 'bin').mkdir(exist_ok=True)
+    # The worker cannot create its slot runtime inside the denied runtime tree.
+    slot_launch_dirs(spec, Path(spec['repo']).resolve(), [])[0].parent.parent.mkdir(
+        parents=True, exist_ok=True)
+    # The launch selects this trial's Pi home (blind-environment.md), reusing the
+    # operator's managed fd/rg binaries read-only.
+    homes, pi = blind_pi_home(spec, capsule)
+    pi.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for directory in [homes, pi]:
+        private_dir(directory)
+    tools = Path.home() / '.pi/agent/bin'
+    if tools.is_dir() and not os.path.lexists(pi / 'bin'):
+        (pi / 'bin').symlink_to(tools)
+    if not (root / 'pi-agent').is_symlink():
+        (root / 'pi-agent').symlink_to(pi)
+    check_pi_agent_dir(spec, capsule)
+    write_blind_pi_models(pi / 'models.json')
     # Keep socket paths below sockaddr_un's macOS limit even for deep capsules.
     temporary = root / 'tmp'
     if not temporary.is_symlink():
@@ -489,12 +764,17 @@ def prepare_boundary(spec, capsule):
     if broker.is_symlink() or broker.stat().st_uid != os.getuid() or broker.stat().st_mode & 0o077:
         raise RuntimeError('Blind worker broker directory is not private')
     # macOS refuses setuid exec under Seatbelt. A non-setuid, ad-hoc signed
-    # system ps retains its CLI and sandbox, without a privileged helper.
-    ps = root / 'bin/ps'
+    # system ps retains its CLI and sandbox, without a privileged helper. The
+    # PATH entry is a wrapper that refuses environment output.
+    (root / 'libexec').mkdir(exist_ok=True)
+    ps = root / 'libexec/ps'
     shutil.copyfile('/bin/ps', ps)
     ps.chmod(0o700)
     subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', str(ps)],
                    check=True, capture_output=True)
+    (root / 'bin/ps').unlink(missing_ok=True)
+    (root / 'bin/ps').write_text(PS_WRAPPER.replace('REAL_PS', shlex.quote(str(ps))))
+    (root / 'bin/ps').chmod(0o700)
     script = BOUNDARY_SCRIPT.replace('ATTEMPTS', shlex.quote(str(root / 'attempts.log')))
     for name in ['gh', 'deny']:
         (root / 'bin' / name).write_text(script)

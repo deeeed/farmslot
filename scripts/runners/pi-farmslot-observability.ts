@@ -12,9 +12,11 @@ import {
   deadlinePiFetch,
   PI_REQUEST_TIMEOUT_RETRIES,
   PiProviderConfigurationError,
+  piProviderCredentialEnvironment,
   piSdkModels,
   preservePiStaticModels,
   providerReasoningFetch,
+  releasePiProviderCredentials,
   resolvePiProviderCatalog,
 } from './pi-farmslot-providers.mjs';
 import {
@@ -158,7 +160,7 @@ export default async function (pi: {
   });
   try {
     const sources: PiProviderDiscoverySource[] = [];
-    const discovered = await resolvePiProviderCatalog(process.env, {
+    const discovered = await resolvePiProviderCatalog(piProviderCredentialEnvironment(), {
       onDiscovery: (source: PiProviderDiscoverySource) => sources.push(source),
     });
     const catalog = await preservePiStaticModels(discovered, async (modelsPath: string) => {
@@ -246,6 +248,7 @@ export default async function (pi: {
           }),
         );
     }
+    releasePiProviderCredentials(catalog);
   } catch (error) {
     if (error instanceof PiProviderConfigurationError) throw error;
     // Optional local/router discovery must not block xAI/Grok launch.

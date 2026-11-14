@@ -265,7 +265,7 @@ test(
 test(
   'offline startup waits for remembered identity and hydrates stale data without a socket read',
   { timeout: 2000 },
-  async () => {
+  async (t) => {
     const source = fixture();
     const store = createMemoryResourceStore();
     await store.setMetadata(saved.metadata);
@@ -276,7 +276,7 @@ test(
     });
 
     for (const generation of [0, undefined]) {
-      test(
+      await t.test(
         `render identity survives transport loss without granting live access, generation ${generation}`,
         { timeout: 2000 },
         async () => {

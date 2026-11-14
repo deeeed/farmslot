@@ -35,6 +35,7 @@ import { resolveDispatchSafetyTier } from '../methods/dispatch/safety-tier.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 import { assertRunNotArchiving } from '../run-lifecycle/archive-fence.js';
 import {
+  blindLaunchEnvironment,
   buildRunnerSessionReloadCommand,
   effectiveModelQuestionsForRun,
   modelQuestionsForRun,
@@ -727,6 +728,7 @@ export async function restoreTmuxWorker(
       runTier: run.safetyTier,
       projectDefaultRaw: projectVars.projectJson.default_safety_tier,
     });
+    const blindTrialBoundary = blindTrialWorkerBoundary(run, selected.role);
     const launchCommand = `${WORKER_ENV_PREFIX} && ${buildRunnerSessionReloadCommand(
       vars,
       runner,
@@ -738,13 +740,16 @@ export async function restoreTmuxWorker(
         safetyTier,
         modelQuestions: modelQuestionsForRun(run),
         taskDir: run.taskFile ? path.posix.dirname(run.taskFile) : undefined,
-        blindTrialBoundary: blindTrialWorkerBoundary(run, selected.role),
+        blindTrialBoundary,
       },
     )}`;
     await respawnTmuxWindowWithCommand(vars, nextTarget.target, launchCommand, {
       // Retained review panes preserve the exact runner transcript just like a
       // freshly launched review pane; later cleanup owns their teardown.
       preserveWindowAfterExit: true,
+      blindEnvironment: blindTrialBoundary
+        ? blindLaunchEnvironment(vars, runner, selected.model ?? run.metrics.model)
+        : undefined,
       beforeRespawn: () => assertReloadStillOwnsSlot(run.id, params.slotId, entrySlotEpoch),
       // A blind resend after a lost reply would skip the ownership check
       // and could kill the worker of a run that took the slot meanwhile.

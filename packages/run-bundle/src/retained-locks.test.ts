@@ -140,8 +140,9 @@ test(
       /held by capture of run stuck .*past its 0s limit/.test(error.message);
     const first = withRunBundleStoreLock(store, async () => 'never');
     const second = withRunBundleStoreLock(store, async () => 'never');
-    await assert.rejects(first, stalled);
-    await assert.rejects(second, stalled);
+    // Both waiters time out on the same deadline, in either order; observe both
+    // before awaiting so neither rejection is unhandled while the other settles.
+    await Promise.all([assert.rejects(first, stalled), assert.rejects(second, stalled)]);
     // A caller arriving after those timeouts still queues behind the holder, not the file lock.
     await assert.rejects(
       withRunBundleStoreLock(store, async () => 'never'),

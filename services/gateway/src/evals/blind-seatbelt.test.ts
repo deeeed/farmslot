@@ -1,12 +1,31 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { withBlindTrialBoundary } from './blind-git.js';
+import { runnerLaunchDir } from '../../../../scripts/lib/runner-runtime.cjs';
+import { redactCommandCredentials } from '../core/credential-redaction.js';
+
+import { buildBlindGitCommand, withBlindTrialBoundary } from './blind-git.js';
+
+interface CapsuleProfileRules {
+  profile: string;
+  aliases: Record<string, string[]>;
+}
 
 function generatedProfile(
   t: TestContext,
@@ -69,6 +88,13 @@ function generatedProfile(
   );
   for (const directory of browserDirs) mkdirSync(directory, { recursive: true });
   symlinkSync(path.join(root, 'operator-debug'), path.join(home, '.chrome-farmslot-alias'));
+  // Startup files are links into a dotfiles checkout, as on farm hosts.
+  mkdirSync(path.join(root, 'dotfiles'));
+  mkdirSync(path.join(home, '.config/secrets'), { recursive: true });
+  for (const name of ['zshenv', 'zshrc']) {
+    writeFileSync(path.join(root, 'dotfiles', name), 'export FAKE_SECRET=fixture-value\n');
+    symlinkSync(path.join(root, 'dotfiles', name), path.join(home, `.${name}`));
+  }
   // Each home/config must contribute, rather than only the selected/active profile.
   const profileFiles = gatewayFiles.filter((file) => path.basename(file) === 'gateways.json');
   for (const [index, file] of profileFiles.entries())
@@ -211,6 +237,39 @@ test('blind profile denies gateway credentials after all runtime exceptions, inc
   }
 });
 
+test('blind profile denies shell startup and secret files, including resolved dotfile targets, after read exceptions', (t) => {
+  const { root, home, profile } = generatedProfile(t);
+  const files = [
+    ...[
+      '.zshenv',
+      '.zshrc',
+      '.zprofile',
+      '.zlogin',
+      '.bashrc',
+      '.bash_profile',
+      '.profile',
+      '.config/secrets',
+      '.netrc',
+      '.npmrc',
+      '.yarnrc.yml',
+      '.pypirc',
+      '.docker/config.json',
+    ].map((name) => path.join(home, name)),
+    path.join(root, 'dotfiles/zshenv'),
+    path.join(root, 'dotfiles/zshrc'),
+    path.join(root, '.agent/.launch'),
+  ];
+  for (const file of files)
+    for (const operation of ['file-read*', 'file-write*']) {
+      const rule = `(deny ${operation} (subpath ${JSON.stringify(file)}))`;
+      assert.ok(profile.includes(rule), file);
+      assert.ok(profile.indexOf(rule) > profile.lastIndexOf('(allow file-read*'), file);
+      assert.ok(profile.indexOf(rule) > profile.lastIndexOf('(allow file-write*'), file);
+    }
+  // Moving the dotfiles checkout must not carry the startup file out of the denial.
+  assert.ok(profile.includes(`(literal ${JSON.stringify(path.join(root, 'dotfiles'))})`));
+});
+
 test('blind profile denies outbound Unix sockets except the system DNS endpoint', (t) => {
   const { profile } = generatedProfile(t);
   for (const prefix of ['/tmp', '/private/tmp']) {
@@ -231,6 +290,7 @@ test('blind profile denies outbound Unix sockets except the system DNS endpoint'
   // /var/run resolves through /private on macOS and /run on Ubuntu.
   const resolverPaths = new Set([
     '/var/run/mDNSResponder',
+    '/private/var/run/mDNSResponder',
     path.join(realpathSync('/var/run'), 'mDNSResponder'),
   ]);
   assert.equal(
@@ -375,6 +435,60 @@ test('blind profile hides boundary and node internals after runtime read excepti
     assert.ok(profile.includes(`(deny file-write* (subpath ${JSON.stringify(file)}))`));
 });
 
+test('blind profile denies capsule writes and links after checkout allowances, with narrow log exceptions', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'capsule-profile-')));
+  t.after(() => rmSync(root, { recursive: true }));
+  const result = spawnSync(
+    'python3',
+    [
+      '-c',
+      `
+import json, os, pathlib, runpy, sys
+from unittest.mock import patch
+blind = runpy.run_path(sys.argv[1], run_name='fixture')
+root = pathlib.Path(sys.argv[2])
+capsules = root / '.farmslot-blind-evals'
+capsule = capsules / 'slot/run-epoch'
+capsule.mkdir(parents=True)
+(capsule / 'state.json').write_text('{"originalIsDirectory":true}')
+link = root / 'capsule-link'
+link.symlink_to(capsule)
+with patch.dict(os.environ, {'HOME': str(root)}, clear=True):
+    print(json.dumps({'profile': blind['sandbox_profile']({'repo': str(root / 'checkout'), 'siblingRepos': [str(root / 'other/checkout')]}, link, [], []),
+                      'aliases': {str(p): blind['path_aliases'](p) for p in [capsules, capsule, link, root / 'other/.farmslot-blind-evals']}}))
+`,
+      fileURLToPath(new URL('./blind-git.py', import.meta.url)),
+      root,
+    ],
+    { encoding: 'utf8', timeout: 4500 },
+  );
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  const { profile, aliases }: CapsuleProfileRules = JSON.parse(result.stdout);
+  const checkoutRule = `(allow file-write* (subpath ${JSON.stringify(path.join(root, 'checkout'))}))`;
+  const logRules = ['attempts.log', 'git-trace.jsonl'].map(
+    (name) =>
+      `(allow file-write* (literal ${JSON.stringify(path.join(root, '.farmslot-blind-evals/slot/run-epoch/boundary', name))}))`,
+  );
+  for (const paths of Object.values(aliases))
+    for (const alias of paths) {
+      const rule = `(deny file-write* file-link (subpath ${JSON.stringify(alias)}))`;
+      // The explicit capsule link and the inferred trees must both be protected.
+      assert.ok(profile.includes(rule), rule);
+      assert.ok(profile.indexOf(rule) > profile.indexOf(checkoutRule));
+      for (const logRule of logRules) assert.ok(profile.indexOf(logRule) > profile.indexOf(rule));
+      const parent = path.dirname(alias);
+      assert.ok(profile.includes(`(literal ${JSON.stringify(parent)})`), parent);
+    }
+  for (const rule of logRules) assert.ok(profile.includes(rule), rule);
+  if (root.startsWith('/private/var/'))
+    assert.ok(
+      Object.values(aliases)
+        .flat()
+        .some((alias) => alias.startsWith('/var/')),
+    );
+});
+
 test('blind browser allocation skips protected and assigned ports and stays stable', (t) => {
   const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'blind-cdp-unit-')));
   t.after(() => rmSync(root, { recursive: true }));
@@ -389,7 +503,8 @@ import json, os, pathlib, runpy, sys
 from unittest.mock import patch, Mock
 blind = runpy.run_path(sys.argv[1], run_name='fixture')
 root = pathlib.Path(sys.argv[2])
-spec = {'repo': str(root), 'slotResourcePorts': {'cdp_port': 19222}}
+spec = {'repo': str(root), 'slotResourcePorts': {'cdp_port': 19222},
+        'launchDirs': [str(root / '.farmslot-runtime/repo/.agent/.launch')]}
 temporary = root / 'temporary'
 temporary.mkdir()
 globals = blind['prepare_boundary'].__globals__
@@ -462,6 +577,9 @@ test('blind boundary strips gateway credentials, routing, tmux and SSH agent var
       FARMSLOT_HOME: '/synthetic/tools-home',
       FARMSLOT_TASK_DIR: '/synthetic/task',
       OPENAI_API_KEY: 'synthetic-provider',
+      ZDOTDIR: '/synthetic/operator-zdotdir',
+      BASH_ENV: '/synthetic/operator-bashrc',
+      ENV: '/synthetic/operator-profile',
     },
     timeout: 4500,
   });
@@ -484,4 +602,515 @@ test('blind boundary strips gateway credentials, routing, tmux and SSH agent var
   assert.match(worker.stdout, /^CDP_PORT=19444$/mu);
   assert.match(worker.stdout, /^FARMSLOT_BLIND_CDP_PORT=19444$/mu);
   assert.match(worker.stdout, /^FARMSLOT_CI_BASE_REF=a{40}$/mu);
+  assert.ok(worker.stdout.includes(`ZDOTDIR=${root}/boundary/shell\n`));
+  assert.doesNotMatch(worker.stdout, /^(?:BASH_ENV|ENV)=/mu);
+});
+
+test('blind profile denies system ps execution, including aliases', (t) => {
+  const { profile } = generatedProfile(t);
+  assert.match(profile, /^\(deny process-exec \(literal "\/bin\/ps"\)/mu);
+});
+
+test('boundary ps refuses environment output in every option form and passes other calls through', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'blind-ps-')));
+  t.after(() => rmSync(root, { recursive: true }));
+  const real = path.join(root, 'real-ps');
+  writeFileSync(real, '#!/bin/sh\necho "RAN $COMMAND_MODE $*"\n', { mode: 0o700 });
+  const extracted = spawnSync(
+    'python3',
+    [
+      '-c',
+      "import runpy, sys; print(runpy.run_path(sys.argv[1], run_name='fixture')['PS_WRAPPER'], end='')",
+      fileURLToPath(new URL('./blind-git.py', import.meta.url)),
+    ],
+    { encoding: 'utf8', timeout: 4500 },
+  );
+  assert.equal(extracted.status, 0, extracted.stderr);
+  const wrapper = path.join(root, 'ps');
+  writeFileSync(wrapper, extracted.stdout.replace('REAL_PS', real), { mode: 0o700 });
+  const ps = (...args: string[]) =>
+    spawnSync(wrapper, args, {
+      encoding: 'utf8',
+      env: { PATH: '/usr/bin:/bin', COMMAND_MODE: 'legacy' },
+    });
+  for (const args of [
+    ['eww', '-p', '1'],
+    ['e'],
+    ['axe'],
+    ['-E'],
+    ['-e'],
+    ['-axE', '-o', 'pid'],
+    ['-ww', '-p', '1', '-E'],
+    ['-ww', 'eww'],
+    ['ax', '-e'],
+    ['--', 'e'],
+  ]) {
+    const result = ps(...args);
+    assert.equal(result.status, 1, args.join(' '));
+    assert.match(result.stderr, /environment output is unavailable/u);
+    assert.equal(result.stdout, '');
+  }
+  for (const args of [
+    ['-ww', '-p', '1', '-o', 'lstart='],
+    ['-ww', '-p', '1', '-o', 'etime=,rss='],
+    ['-axo', 'pid=,command='],
+    ['-opid=,etime=', '-p', '1'],
+    ['axo', 'etime'],
+    ['-A'],
+  ]) {
+    const result = ps(...args);
+    assert.equal(result.status, 0, args.join(' '));
+    assert.equal(result.stdout, `RAN unix2003 ${args.join(' ')}\n`);
+  }
+});
+
+test('blind profile denies every slot runtime but its own, and every launch directory', () => {
+  // Nothing is created: rules come from paths alone, outside /tmp and /var aliases.
+  const root = '/blind-runtime-fixture';
+  const repo = path.join(root, 'slots/product-1');
+  const sibling = path.join(root, 'other/product-2');
+  const spec = {
+    slotId: 'slot',
+    slotEpoch: 1,
+    repo,
+    capsule: path.join(root, 'capsule'),
+    siblingRepos: [sibling],
+    runId: 'run',
+    branch: 'blind',
+    baseSha: 'a'.repeat(40),
+    referenceCommits: [],
+  };
+  // The gateway passes each slot's launch directory from the same helper tmux uses.
+  const command = buildBlindGitCommand('boundary', spec);
+  const launchDirs = [runnerLaunchDir(repo), runnerLaunchDir(sibling)];
+  assert.ok(command.includes(JSON.stringify(launchDirs).slice(1, -1)));
+  const rules = (withLaunchDirs: boolean) => {
+    const result = spawnSync(
+      'python3',
+      [
+        '-c',
+        `import json, pathlib, runpy, sys
+blind = runpy.run_path(sys.argv[1], run_name='fixture')
+spec = json.loads(sys.argv[2])
+print('\\n'.join(blind['slot_runtime_rules'](spec, pathlib.Path(spec['repo']), [pathlib.Path(p) for p in spec['siblingRepos']])))`,
+        fileURLToPath(new URL('./blind-git.py', import.meta.url)),
+        JSON.stringify(withLaunchDirs ? { ...spec, launchDirs } : spec),
+      ],
+      { encoding: 'utf8', timeout: 4500 },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout;
+  };
+  // With launchDirs, and with the fallback a directly prepared boundary uses.
+  for (const profile of [rules(true), rules(false)]) {
+    assert.equal(profile, rules(true));
+    const own = path.join(root, 'slots/.farmslot-runtime/product-1');
+    for (const operation of ['file-read*', 'file-write*', 'file-link']) {
+      for (const tree of ['slots', 'other'])
+        assert.ok(
+          profile.includes(
+            `(deny ${operation} (require-all (subpath ${JSON.stringify(path.join(root, tree, '.farmslot-runtime'))}) (require-not (require-any (subpath ${JSON.stringify(own)})))))`,
+          ),
+          `${operation} ${tree}`,
+        );
+      for (const launch of launchDirs)
+        assert.ok(profile.includes(`(deny ${operation} (subpath ${JSON.stringify(launch)}))`));
+      assert.ok(
+        profile.includes(
+          `(deny ${operation} (regex #"/[.]farmslot-runtime/[^/]+/[.]agent/[.]launch(/|$)"))`,
+        ),
+      );
+    }
+    // Renaming a runtime tree must not carry a launch script out of the denial.
+    assert.ok(profile.includes(`(literal ${JSON.stringify(path.join(root, 'other'))})`));
+  }
+});
+
+test('blind profile denies host credential stores last, except the trial own paths and pinned code', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'seatbelt-host-')));
+  t.after(() => rmSync(root, { recursive: true }));
+  const home = path.join(root, 'home');
+  // Paths only: rules come from names; the farm homes are discovered as directories.
+  for (const name of ['.farmslot-dev', '.farmslot-rollout-backups'])
+    mkdirSync(path.join(home, name), { recursive: true });
+  const repo = path.join(root, 'ws/product');
+  const capsule = path.join(root, 'ws/.farmslot-blind-evals/slot/run-1');
+  mkdirSync(capsule, { recursive: true });
+  writeFileSync(path.join(capsule, 'state.json'), '{"originalIsDirectory":true}');
+  const data = path.join(root, 'data');
+  const spec = {
+    repo,
+    hostDeniedRoots: [data],
+    hostReadableRoots: [path.join(data, 'state/task-pins')],
+  };
+  const result = spawnSync(
+    'python3',
+    [
+      '-c',
+      `import json, os, pathlib, runpy, sys
+from unittest.mock import patch
+blind = runpy.run_path(sys.argv[1], run_name='fixture')
+spec, capsule = json.loads(sys.argv[2]), pathlib.Path(sys.argv[3])
+with patch.dict(os.environ, {'HOME': sys.argv[4], 'FARMSLOT_BLIND_DENIED_PATHS': sys.argv[5]}, clear=True):
+    profile = blind['sandbox_profile'](spec, capsule, [], set())
+    volume = blind['host_secret_paths']({'repo': '/Volumes/fixture/dev/org/product'}, pathlib.Path('/Volumes/fixture/dev/org/product'), capsule, [])
+print(json.dumps({'profile': profile, 'volume': [str(p) for p in volume]}))`,
+      fileURLToPath(new URL('./blind-git.py', import.meta.url)),
+      JSON.stringify(spec),
+      capsule,
+      home,
+      path.join(root, 'extra'),
+    ],
+    { encoding: 'utf8', timeout: 4500 },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const { profile, volume } = JSON.parse(result.stdout) as { profile: string; volume: string[] };
+  const lines = profile.trim().split('\n');
+  const q = JSON.stringify;
+  const denial = (operation: string, store: string) =>
+    lines.findIndex(
+      (line) =>
+        line.startsWith(`(deny ${operation} (subpath ${q(store)})`) ||
+        line.startsWith(`(deny ${operation} (require-all (subpath ${q(store)}) `),
+    );
+  const stores = [
+    ...[
+      '.claude',
+      '.codex',
+      '.pi',
+      '.grok',
+      '.config',
+      '.farmslot',
+      '.farmslot-dev',
+      '.farmslot-rollout-backups',
+      'farm-paths-brief',
+      'xreview',
+      'Library/Application Support',
+      'Library/Preferences',
+      'Library/HTTPStorages',
+      'Library/Keychains',
+      'Library/Cookies',
+    ].map((name) => path.join(home, name)),
+    data,
+    path.join(root, 'extra'),
+    path.join(root, 'ws/.farmslot-runtime/product/.blind-pi'),
+  ];
+  const lastAllow = Math.max(
+    profile.lastIndexOf('(allow file-read*'),
+    profile.lastIndexOf('(allow file-write*'),
+  );
+  const first = Math.min(
+    ...stores.map((store) => denial('file-read*', store)).filter((index) => index >= 0),
+  );
+  for (const store of stores)
+    for (const operation of ['file-read*', 'file-write*', 'file-link']) {
+      const index = denial(operation, store);
+      assert.ok(index >= 0, `${operation} ${store}`);
+      // No later allowance can reopen a store.
+      assert.ok(profile.indexOf(lines[index]!) > lastAllow, `${operation} ${store} is not last`);
+    }
+  for (const line of lines.slice(first))
+    assert.match(line, /^\(deny |^\(allow file-read-metadata \(literal "[^"]+"\)\)$/u, line);
+  // Reads keep pinned task CLIs, installed code and Pi's tools; writes keep none of them.
+  const farm = lines[denial('file-read*', path.join(home, '.farmslot-dev'))]!;
+  for (const kept of ['task-pins', 'state/task-pins', 'code'])
+    assert.ok(farm.includes(`(subpath ${q(path.join(home, '.farmslot-dev', kept))})`), kept);
+  assert.ok(
+    lines[denial('file-read*', data)]!.includes(
+      `(subpath ${q(path.join(data, 'state/task-pins'))})`,
+    ),
+  );
+  assert.ok(
+    lines[denial('file-read*', path.join(home, '.pi'))]!.includes(
+      `(subpath ${q(path.join(home, '.pi/agent/bin'))})`,
+    ),
+  );
+  for (const store of [path.join(home, '.farmslot-dev'), path.join(home, '.pi'), data])
+    assert.ok(lines.includes(`(deny file-write* (subpath ${q(store)}))`), store);
+  // Only this trial's Pi home survives in the slot runtime's Pi homes.
+  const piHomes = path.join(root, 'ws/.farmslot-runtime/product/.blind-pi');
+  for (const operation of ['file-read*', 'file-write*', 'file-link']) {
+    const rule = lines[denial(operation, piHomes)]!;
+    assert.ok(rule.includes(`(require-not (require-any `), rule);
+    assert.ok(rule.includes(`(subpath ${q(path.join(piHomes, 'run-1'))})`), rule);
+  }
+  assert.ok(
+    profile.includes(`(allow file-read-metadata (literal ${q(path.join(home, '.pi/agent'))}))`),
+  );
+  // A rename of an ancestor cannot carry a store out of its denial.
+  assert.ok(profile.includes(`(literal ${q(path.join(home, 'Library'))})`));
+  for (const name of ['lanes', 'slot-retained', 'xreview', 'dev/xreview-personal'])
+    assert.ok(volume.includes(path.join('/Volumes/fixture', name)), name);
+  // The legacy in-checkout launch directory also refuses hard links.
+  assert.ok(lines.includes(`(deny file-link (subpath ${q(path.join(repo, '.agent/.launch'))}))`));
+});
+
+test('blind Pi static models keep only extension providers, with env key references and no credential', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'seatbelt-pi-models-')));
+  t.after(() => rmSync(root, { recursive: true }));
+  const home = path.join(root, 'home');
+  mkdirSync(path.join(home, '.pi/agent'), { recursive: true });
+  const model = (id: string) => ({
+    id,
+    name: id,
+    reasoning: true,
+    input: ['text'],
+    contextWindow: 65536,
+    maxTokens: 1024,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    headers: { 'x-api-key': 'sk-FAKESECRETmodelheader0123456789' },
+    apiKey: 'FAKE_SECRET-model-key',
+  });
+  writeFileSync(
+    path.join(home, '.pi/agent/models.json'),
+    JSON.stringify({
+      providers: {
+        localsparks: {
+          baseUrl: 'http://192.0.2.1:8890/v1',
+          api: 'openai-completions',
+          apiKey: 'sk-FAKESECRETrouterkey0123456789abc',
+          headers: { Authorization: 'Bearer sk-FAKESECRETbearer0123456789abc' },
+          compat: { supportsDeveloperRole: false },
+          models: [model('GLM-fixture-s1234')],
+        },
+        litellm: {
+          baseUrl: 'https://litellm.example.invalid/v1',
+          api: 'openai-completions',
+          apiKey: 'Fake0Secret1Litellm2Key3',
+          models: [model('fixture-litellm')],
+        },
+        // A key in the URL drops the provider; the extension supplies the endpoint.
+        ollama: {
+          baseUrl: 'http://user:FakeSecret0123456789@192.0.2.2/v1',
+          models: [model('fixture-ollama')],
+        },
+        lmstudio: { baseUrl: 'http://192.0.2.3/v1', apiKey: 'Fake0Secret1Studio2Key3', models: [] },
+      },
+    }),
+  );
+  const target = path.join(root, 'models.json');
+  const result = spawnSync(
+    'python3',
+    [
+      '-c',
+      `import os, pathlib, runpy, sys
+from unittest.mock import patch
+blind = runpy.run_path(sys.argv[1], run_name='fixture')
+with patch.dict(os.environ, {'HOME': sys.argv[2], 'FARMSLOT_PI_ROUTER_ID': 'localsparks'}, clear=True):
+    blind['write_blind_pi_models'](pathlib.Path(sys.argv[3]))`,
+      fileURLToPath(new URL('./blind-git.py', import.meta.url)),
+      home,
+      target,
+    ],
+    { encoding: 'utf8', timeout: 4500 },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const text = readFileSync(target, 'utf8');
+  assert.equal(statSync(target).mode & 0o777, 0o600);
+  // The shared redaction check finds no credential-shaped value.
+  assert.equal(redactCommandCredentials(text).count, 0, text);
+  assert.doesNotMatch(text, /FAKE|Fake|headers|user:/u);
+  const providers = JSON.parse(text).providers as Record<
+    string,
+    { apiKey: string; models: { id: string }[] }
+  >;
+  assert.deepEqual(Object.keys(providers).sort(), ['litellm', 'localsparks']);
+  assert.equal(providers.localsparks!.apiKey, '$FARMSLOT_PI_ROUTER_KEY');
+  assert.equal(providers.litellm!.apiKey, '$LITELLM_API_KEY');
+  for (const provider of Object.values(providers)) {
+    assert.match(provider.apiKey, /^\$[A-Z_][A-Z0-9_]*$/u);
+    for (const entry of provider.models) assert.ok(!('apiKey' in entry) && !('headers' in entry));
+  }
+  assert.deepEqual(
+    providers.localsparks!.models.map((entry) => entry.id),
+    ['GLM-fixture-s1234'],
+  );
+});
+
+test('blind boundary refuses a configured Pi home inside a denied store', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'seatbelt-pi-home-')));
+  t.after(() => rmSync(root, { recursive: true }));
+  const home = path.join(root, 'home');
+  mkdirSync(home);
+  const check = (agentDir?: string) =>
+    spawnSync(
+      'python3',
+      [
+        '-c',
+        `import os, pathlib, runpy, sys
+from unittest.mock import patch
+blind = runpy.run_path(sys.argv[1], run_name='fixture')
+env = {'HOME': sys.argv[2]}
+if len(sys.argv) > 4: env['PI_CODING_AGENT_DIR'] = sys.argv[4]
+with patch.dict(os.environ, env, clear=True):
+    blind['check_pi_agent_dir']({'repo': sys.argv[3]}, pathlib.Path(sys.argv[3]) / 'capsule')`,
+        fileURLToPath(new URL('./blind-git.py', import.meta.url)),
+        home,
+        path.join(root, 'repo'),
+        ...(agentDir === undefined ? [] : [agentDir]),
+      ],
+      { encoding: 'utf8', timeout: 4500 },
+    );
+  for (const denied of ['~/.pi/agent', path.join(home, '.pi'), path.join(home, '.config/pi')]) {
+    const result = check(denied);
+    assert.notEqual(result.status, 0, denied);
+    assert.match(
+      result.stderr,
+      /PI_CODING_AGENT_DIR .* is inside a store the blind sandbox denies/u,
+    );
+  }
+  for (const allowed of [undefined, path.join(root, 'pool-pi-home')])
+    assert.equal(check(allowed).status, 0, String(allowed));
+});
+
+test('a non-blind pi launch keeps the pool launcher and operator Pi home, with no blind boundary', async () => {
+  const { buildLaunchCommand, buildRunnerSessionReloadCommand } =
+    await import('../runners/launch-command.js');
+  const { makeVars } = await import('../runners/test-fixtures.js');
+  const launcher = '/Users/operator/.npm-global/bin/farmslot-pi-anthropic';
+  const vars = makeVars({ remoteRepo: '/work/product', piPath: launcher });
+  const model = 'localsparks/GLM-fixture-s1234';
+  const blind = { blindTrialBoundary: { capsule: '/work/capsule', baseSha: 'a'.repeat(40) } };
+  const commands = {
+    fresh: buildLaunchCommand(vars, 'pi', model, 'Task', { taskDir: '/work/product/task' }),
+    retained: buildRunnerSessionReloadCommand(vars, 'pi', model, 'session-1', {}),
+  };
+  for (const [stage, command] of Object.entries(commands)) {
+    assert.ok(command.includes(launcher), stage);
+    // Pi resolves its default operator home; nothing selects or denies another.
+    assert.doesNotMatch(command, /PI_CODING_AGENT_DIR|pi-agent|sandbox-exec|blind/u, stage);
+  }
+  // Only the blind launch selects the trial's home.
+  assert.match(
+    buildLaunchCommand(vars, 'pi', model, 'Task', { taskDir: '/work/product/task', ...blind }),
+    /PI_CODING_AGENT_DIR=.*\/work\/capsule\/boundary\/pi-agent/u,
+  );
+});
+
+function writeBlindPiModels(t: TestContext, operatorModels: string, prepare = '') {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'seatbelt-pi-write-')));
+  t.after(() => rmSync(root, { recursive: true }));
+  const home = path.join(root, 'home');
+  mkdirSync(path.join(home, '.pi/agent'), { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(home, '.pi/agent/models.json'), operatorModels);
+  const trial = path.join(root, 'trial-pi');
+  mkdirSync(trial, { mode: 0o700 });
+  const result = spawnSync(
+    'python3',
+    [
+      '-c',
+      `import os, pathlib, runpy, sys
+from unittest.mock import patch
+blind = runpy.run_path(sys.argv[1], run_name='fixture')
+root, trial = pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
+${prepare}
+with patch.dict(os.environ, {'HOME': str(root / 'home'), 'FARMSLOT_PI_ROUTER_ID': 'localsparks'}, clear=True):
+    blind['write_blind_pi_models'](trial / 'models.json')`,
+      fileURLToPath(new URL('./blind-git.py', import.meta.url)),
+      root,
+      trial,
+    ],
+    { encoding: 'utf8', timeout: 4500 },
+  );
+  return { root, trial, result };
+}
+
+const piModel = { id: 'GLM-fixture-s1234', name: 'Fixture', contextWindow: 65536, maxTokens: 1024 };
+
+test('blind Pi static models drop credentials nested in provider and model compat', (t) => {
+  const { trial, result } = writeBlindPiModels(
+    t,
+    JSON.stringify({
+      providers: {
+        localsparks: {
+          baseUrl: 'http://192.0.2.1:8890/v1',
+          compat: {
+            supportsStore: true,
+            apiKey: 'sk-FAKESECRETcompatkey0123456789',
+            headers: { Authorization: 'Bearer sk-FAKESECRETcompatheader01234' },
+            chatTemplateKwargs: { enable_thinking: true, token: 'Fake0Secret1Kwargs2Token3' },
+          },
+          models: [
+            {
+              ...piModel,
+              compat: {
+                maxTokensField: 'max_tokens',
+                accessToken: 'Fake0Secret1Model2Token3',
+                nested: {
+                  client_secret: 'Fake0Secret1Nested2Value3',
+                  note: 'Fake0Secret1Bare2Value3',
+                },
+              },
+            },
+          ],
+        },
+      },
+    }),
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const text = readFileSync(path.join(trial, 'models.json'), 'utf8');
+  assert.equal(redactCommandCredentials(text).count, 0, text);
+  assert.doesNotMatch(text, /FAKE|Fake|Bearer|apiKey": "sk|headers|token"|secret/u);
+  const provider = JSON.parse(text).providers.localsparks;
+  assert.equal(provider.apiKey, '$FARMSLOT_PI_ROUTER_KEY');
+  assert.deepEqual(provider.compat, {
+    supportsStore: true,
+    chatTemplateKwargs: { enable_thinking: true },
+  });
+  assert.deepEqual(provider.models[0].compat, { maxTokensField: 'max_tokens', nested: {} });
+  assert.equal(provider.models[0].id, 'GLM-fixture-s1234');
+});
+
+test('blind Pi static models parse the operator file as Pi does, with comments and trailing commas', (t) => {
+  const { trial, result } = writeBlindPiModels(
+    t,
+    `{
+  // Local Sparks router, as operators annotate it.
+  "providers": {
+    "localsparks": {
+      "baseUrl": "http://192.0.2.1:8890/v1", // endpoint
+      "models": [{ "id": "GLM-fixture-s1234", "name": "Fixture // not a comment", },],
+    },
+  },
+}
+`,
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const models = JSON.parse(readFileSync(path.join(trial, 'models.json'), 'utf8')).providers
+    .localsparks.models as { id: string; name: string }[];
+  assert.deepEqual(models, [{ id: 'GLM-fixture-s1234', name: 'Fixture // not a comment' }]);
+});
+
+test('blind Pi static models never write through a link the worker planted in its Pi home', (t) => {
+  const operator = JSON.stringify({ providers: { localsparks: { models: [piModel] } } });
+  // Every pending name and the target itself point at a fake operator login.
+  const planted = `auth = root / 'operator-auth.json'
+auth.write_text('FAKE_SECRET operator login')
+for name in ['models.pending', 'models.json']:
+    (trial / name).symlink_to(auth)`;
+  const { root, trial, result } = writeBlindPiModels(t, operator, planted);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    readFileSync(path.join(root, 'operator-auth.json'), 'utf8'),
+    'FAKE_SECRET operator login',
+  );
+  assert.ok(!lstatSync(path.join(trial, 'models.json')).isSymbolicLink());
+  assert.equal(
+    JSON.parse(readFileSync(path.join(trial, 'models.json'), 'utf8')).providers.localsparks
+      .models[0].id,
+    piModel.id,
+  );
+  // A Pi home swapped for a link is refused before anything is written.
+  const swapped = writeBlindPiModels(
+    t,
+    operator,
+    `import shutil
+target = root / 'elsewhere'
+target.mkdir(mode=0o700)
+shutil.rmtree(trial)
+trial.symlink_to(target)`,
+  );
+  assert.notEqual(swapped.result.status, 0);
+  assert.match(swapped.result.stderr, /Blind trial Pi home is not a private directory/u);
+  assert.deepEqual(readdirSync(path.join(swapped.root, 'elsewhere')), []);
 });

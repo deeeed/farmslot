@@ -25,6 +25,12 @@
   },
   {
     "file": "services/gateway/src/evals/blind-git.py",
+    "literal": ".farmslot-runtime",
+    "reason": "Blind worker denials cover every slot runtime beside the supplied checkouts, matching runner-runtime.cjs, not an instance root.",
+    "count": 2
+  },
+  {
+    "file": "services/gateway/src/evals/blind-git.py",
     "literal": "farmslot-node",
     "reason": "Blind worker security denials cover both legacy node installations, independently of the selected instance, and guard their ancestors against renames.",
     "count": 1
@@ -81,6 +87,12 @@
     "file": "services/gateway/src/runners/launch-command.ts",
     "literal": "farm=\"$1\"; support=\"$2\"; shift 2; export FARMSLOT_POOL_DIR=\"${FARMSLOT_POOL_DIR:-$farm/pool}\"; export FARMSLOT_ROOT=\"$support\"; source \"$support/scripts/lib/resolve-farmslot-cli.sh\" && exec \"$FARMSLOT_CLI\" \"$@\"",
     "reason": "Shell command receives farm/support roots as arguments; pool and projects are context-selected leaves. Shell transport migration is deferred to Pass 3.",
+    "count": 1
+  },
+  {
+    "file": "services/gateway/src/runs/credential-scrub.ts",
+    "literal": "run-archive",
+    "reason": "One-shot credential scrub also scans the run-archive directory beside the resolved run bundle store in its data directory; the canonical roots come from resolveReportedFarmPaths.",
     "count": 1
   },
   {

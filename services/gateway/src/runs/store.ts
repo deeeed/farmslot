@@ -39,6 +39,7 @@ import {
   normalizeFlowType,
   normalizeRunTags,
   type ParkedRunCommits,
+  parseGitHubPullUrl,
   parseNativeProfileReference,
   pipelineStepsForRun,
   primaryRoleForFlow,
@@ -69,6 +70,7 @@ import { planRunSources } from '@farmslot/slot-config';
 
 import { assertNoAutomatedPRConflict, assertPRRunActivation } from '../backlog/pr-admission.js';
 import { projectTaskRoots } from '../core/config.js';
+import { redactStepOutputCommands } from '../core/credential-redaction.js';
 import { isGatewayTestProcess, isolatedTestPath } from '../core/isolated-test-path.js';
 import { readSlotField } from '../core/state.js';
 import { assertStorageVolumePresent } from '../core/storage-volume.js';
@@ -750,6 +752,8 @@ export function normalizePersistedRun(run: Run): boolean {
       changed = true;
     }
   }
+  // Older records stored launch lines with inlined pool credentials.
+  for (const step of run.steps ?? []) if (redactStepOutputCommands(step.outputs)) changed = true;
   return changed;
 }
 
@@ -1388,6 +1392,47 @@ function retainDecisionHistory(run: Run, decisions: RunDecision[]): RunDecision[
   return retired;
 }
 
+/**
+ * The PR a run links to: its `prNumber`, which is authoritative, and the repository of its PR
+ * link. A link's own number can be a guess (the highest number the ticket names), so it is not
+ * compared.
+ */
+function linkedPRIdentity(run: Pick<Run, 'prNumber' | 'links'>): {
+  number?: number;
+  repo?: string;
+} {
+  const url = run.links?.find((link) => link.label.toLowerCase() === 'pr')?.url;
+  if (url === undefined) return { number: run.prNumber };
+  const pull = parseGitHubPullUrl(url);
+  return { number: run.prNumber, repo: (pull ? pull.repo : url).toLowerCase() };
+}
+
+/**
+ * A recorded merge or close (`prState`, `mergedAt`) describes the PR the run was linked to when
+ * it was observed. A different PR number, a PR link in another repository, or a removed PR link
+ * clears them, so nothing reads the old PR's outcome as the new one's. Adding a first PR link
+ * is not a relink.
+ */
+export function prSettlementCleared(
+  run: Pick<Run, 'prNumber' | 'links' | 'prState' | 'mergedAt'>,
+  next: Pick<Run, 'prNumber' | 'links'>,
+): Pick<Run, 'prState' | 'mergedAt'> | undefined {
+  if (run.prState === undefined && run.mergedAt === undefined) return undefined;
+  return prRelinked(run, next) ? { prState: undefined, mergedAt: undefined } : undefined;
+}
+
+/** Whether `next` links another PR than `run`: a different number, or a PR link moved or removed. */
+export function prRelinked(
+  run: Pick<Run, 'prNumber' | 'links'>,
+  next: Pick<Run, 'prNumber' | 'links'>,
+): boolean {
+  const before = linkedPRIdentity(run);
+  const after = linkedPRIdentity(next);
+  return (
+    before.number !== after.number || (before.repo !== undefined && before.repo !== after.repo)
+  );
+}
+
 export function updateRun(id: string, partial: Partial<Run>, authorization?: symbol): Run {
   const run = runs.get(id);
   if (!run) throw new Error(`Run not found: ${id}`);
@@ -1556,8 +1601,17 @@ export function updateRun(id: string, partial: Partial<Run>, authorization?: sym
     const retained = registerContextSessionUsage(run, updatedAt);
     if (retained) run.sessionUsage = retained;
   }
+  // A new PR identity starts unsettled; values the same update sets explicitly still win.
+  const settlement =
+    'prNumber' in partial || 'links' in partial
+      ? prSettlementCleared(run, {
+          prNumber: 'prNumber' in partial ? partial.prNumber : run.prNumber,
+          links: 'links' in partial ? partial.links : run.links,
+        })
+      : undefined;
   Object.assign(
     run,
+    settlement ?? {},
     partial,
     { updatedAt },
     decisionHistoryCount ? { decisionHistoryCount } : {},
@@ -1646,7 +1700,7 @@ export function updateRunAgentContexts(
   return updateRun(id, { agentContexts: mutator(run, currentContexts) });
 }
 
-export function updateRunStep(id: string, stepName: string, partial: Partial<RunStep>): Run {
+export function updateRunStep(id: string, stepName: string, update: Partial<RunStep>): Run {
   const run = runs.get(id);
   if (!run) throw new Error(`Run not found: ${id}`);
   if (run.engineState?.operatorForceCompleted === true) {
@@ -1658,6 +1712,9 @@ export function updateRunStep(id: string, stepName: string, partial: Partial<Run
 
   const step = run.steps.find((s) => s.name === stepName);
   if (!step) throw new Error(`Step not found: ${stepName}`);
+  // Command outputs are persisted, broadcast and served: keep credential names only.
+  const outputs = update.outputs && { ...update.outputs };
+  const partial = redactStepOutputCommands(outputs) ? { ...update, outputs } : update;
 
   // A step that stops running ends a wait still open on it (a claim not yet
   // granted, a decision a worker signal outran): that time stays queue time.
@@ -2233,6 +2290,7 @@ export function commitRunPublication(
       const patch = build(run);
       return {
         ...run,
+        ...prSettlementCleared(run, patch),
         prNumber: patch.prNumber,
         links: patch.links,
         prPublications: patch.prPublications,

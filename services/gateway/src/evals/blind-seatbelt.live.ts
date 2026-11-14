@@ -11,10 +11,12 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { createServer } from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -27,7 +29,7 @@ import { buildLaunchCommand, buildRunnerSessionReloadCommand } from '../runners/
 import { getRunnerDefinition } from '../runners/registry.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
-import { withBlindTrialBoundary } from './blind-git.js';
+import { type BlindGitSpec, buildBlindGitCommand, withBlindTrialBoundary } from './blind-git.js';
 
 const python = fileURLToPath(new URL('./blind-git.py', import.meta.url));
 const adapter = fileURLToPath(new URL('../../../../packages/adapter-web/', import.meta.url));
@@ -45,11 +47,17 @@ const env = {
   TMUX_TMPDIR: process.env.TMUX_TMPDIR,
   PYTHONDONTWRITEBYTECODE: '1',
 };
+const fixtureCapsules = new Map<string, string>();
 
 function fixture() {
   const root = realpathSync(mkdtempSync(path.join(syntheticHome, 'blind-seatbelt-live-')));
-  mkdirSync(path.join(root, 'boundary'));
-  writeFileSync(path.join(root, 'state.json'), '{"originalIsDirectory":true}');
+  const capsule = path.join(root, '.farmslot-blind-evals/fixture/run-epoch');
+  fixtureCapsules.set(root, capsule);
+  mkdirSync(path.join(capsule, 'boundary'), { recursive: true });
+  writeFileSync(path.join(capsule, 'state.json'), '{"originalIsDirectory":true}');
+  // Keep probe paths stable while using a separate checkout and capsule, as in production.
+  symlinkSync(path.join(capsule, 'boundary'), path.join(root, 'boundary'));
+  symlinkSync(path.join(capsule, 'state.json'), path.join(root, 'state.json'));
   writeFileSync(
     path.join(root, 'owned-cleanup.mjs'),
     `
@@ -85,11 +93,12 @@ function profile(
 import json, pathlib, runpy, sys
 blind = runpy.run_path(sys.argv[1], run_name='fixture')
 root = pathlib.Path(sys.argv[2])
-blind['prepare_boundary']({'repo': str(root), 'siblingRepos': [str(root / 'hidden')], 'slotResourcePorts': json.loads(sys.argv[3])}, root)
+blind['prepare_boundary']({'repo': str(root), 'siblingRepos': [str(root / 'hidden')], 'slotResourcePorts': json.loads(sys.argv[3])}, pathlib.Path(sys.argv[4]))
 `,
       python,
       root,
       JSON.stringify(slotResourcePorts),
+      fixtureCapsules.get(root) ?? root,
     ],
     { env: launchEnv, encoding: 'utf8', timeout: 10_000 },
   );
@@ -110,7 +119,7 @@ function worker(
       withBlindTrialBoundary(
         command,
         {
-          capsule: root,
+          capsule: fixtureCapsules.get(root) ?? root,
           baseSha: 'a'.repeat(40),
           browserCdpPort: JSON.parse(readFileSync(path.join(root, 'state.json'), 'utf8'))
             .browserCdpPort,
@@ -125,6 +134,174 @@ function worker(
     },
   );
 }
+
+test(
+  'blind worker cannot mutate capsule journals, stores, siblings or ancestors while checkout and logs stay writable',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const root = fixture();
+    t.after(() => rmSync(root, { recursive: true }));
+    const repo = path.join(root, 'checkout');
+    mkdirSync(repo);
+    const gitEnv = { ...env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-C', repo, ...args], { env: gitEnv, encoding: 'utf8' }).trim();
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.name', 'Fixture');
+    git('config', 'user.email', 'fixture@example.invalid');
+    git('config', 'commit.gpgsign', 'false');
+    writeFileSync(path.join(repo, 'value'), 'base\n');
+    git('add', '.');
+    git('commit', '-qm', 'base');
+    const capsule = path.join(root, '.farmslot-blind-evals/slot/run-epoch');
+    const spec: BlindGitSpec = {
+      repo,
+      capsule,
+      slotId: 'slot',
+      slotEpoch: 1,
+      runId: 'run',
+      branch: 'eval/run',
+      baseSha: git('rev-parse', 'HEAD'),
+      referenceCommits: [],
+      siblingRepos: [path.join(root, 'other/checkout')],
+    };
+    for (const action of ['isolate', 'boundary'] as const)
+      execFileSync('/bin/sh', ['-c', buildBlindGitCommand(action, spec)], {
+        env: gitEnv,
+        encoding: 'utf8',
+        timeout: 10_000,
+      });
+    allocatedTempRoots.add(realpathSync(path.join(capsule, 'boundary/tmp')));
+    const targets = [
+      path.join(capsule, 'state.json'),
+      path.join(capsule, 'original.entry/config'),
+      path.join(capsule, 'prepared.git/config'),
+      path.join(capsule, 'candidate.git/config'),
+      path.join(capsule, 'boundary/gh-config/config'),
+      path.join(root, '.farmslot-blind-evals/slot/other-run/state.json'),
+      path.join(root, '.farmslot-blind-evals/sibling/run/state.json'),
+      path.join(root, 'other/.farmslot-blind-evals/sibling/run/state.json'),
+    ];
+    for (const target of targets) {
+      mkdirSync(path.dirname(target), { recursive: true });
+      if (!existsSync(target)) writeFileSync(target, 'synthetic retained store');
+    }
+    const saved = targets.map((target) => readFileSync(target));
+    const alias = path.join(repo, 'capsule-alias');
+    symlinkSync(capsule, alias);
+    const aliases = [...targets, path.join(alias, 'state.json')];
+    const routing = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'capsule-alias-')));
+    t.after(() => rmSync(routing, { recursive: true }));
+    symlinkSync(capsule, path.join(routing, 'capsule'));
+    aliases.push(path.join(routing, 'capsule/state.json'));
+    // Exercise both spellings of the macOS /var or /tmp alias, independent of TMPDIR.
+    for (const target of [...targets, path.join(routing, 'capsule/state.json')])
+      if (/^\/private\/(var|tmp)\//u.test(target)) aliases.push(target.slice('/private'.length));
+
+    await t.test('boundary logs, private temp and normal checkout Git writes succeed', () => {
+      const result = worker(
+        capsule,
+        `exec ${q(process.execPath)} --input-type=module -e ${q(`
+import assert from 'node:assert/strict'; import * as fs from 'node:fs'; import { execFileSync } from 'node:child_process';
+const repo = ${JSON.stringify(repo)};
+for (const name of ['attempts.log', 'git-trace.jsonl'])
+  fs.appendFileSync(${JSON.stringify(capsule)} + '/boundary/' + name, 'synthetic log\\n');
+fs.writeFileSync(process.env.TMPDIR + '/worker-file', 'synthetic temp');
+fs.writeFileSync(repo + '/value', 'candidate\\n');
+for (const args of [['add', 'value'], ['commit', '-qm', 'candidate'], ['status', '--porcelain']])
+  execFileSync('git', ['-C', repo, ...args]);
+assert.equal(fs.readFileSync(repo + '/value', 'utf8'), 'candidate\\n');
+`)}`,
+        gitEnv,
+      );
+      assert.ifError(result.error);
+      assert.equal(result.status, 0, result.stderr);
+      for (const name of ['attempts.log', 'git-trace.jsonl'])
+        assert.match(readFileSync(path.join(capsule, 'boundary', name), 'utf8'), /synthetic log/u);
+      assert.equal(git('log', '-1', '--format=%s'), 'candidate');
+    });
+
+    for (const operation of [
+      'write',
+      'append',
+      'create',
+      'rename-in',
+      'rename-out',
+      'unlink',
+      'link-in',
+      'link-out',
+      'symlink',
+    ])
+      await t.test(`${operation} is denied for every capsule target and alias`, () => {
+        const incoming = path.join(repo, 'incoming');
+        writeFileSync(incoming, 'synthetic replacement');
+        const result = worker(
+          capsule,
+          `exec ${q(process.execPath)} --input-type=module -e ${q(`
+import * as fs from 'node:fs';
+const results = [];
+for (const [index, target] of ${JSON.stringify(aliases)}.entries()) {
+  const outgoing = ${JSON.stringify(repo)} + '/outgoing-' + index;
+  try {
+    switch (${JSON.stringify(operation)}) {
+      case 'write': fs.writeFileSync(target, 'tampered'); break;
+      case 'append': fs.appendFileSync(target, 'tampered'); break;
+      case 'create': fs.writeFileSync(target + '.new', 'tampered'); break;
+      case 'rename-in': fs.renameSync(${JSON.stringify(incoming)}, target); break;
+      case 'rename-out': fs.renameSync(target, outgoing); break;
+      case 'unlink': fs.unlinkSync(target); break;
+      case 'link-in': fs.linkSync(${JSON.stringify(incoming)}, target + '.link'); break;
+      case 'link-out': fs.linkSync(target, outgoing); break;
+      case 'symlink': fs.symlinkSync(${JSON.stringify(incoming)}, target + '.symlink'); break;
+    }
+    results.push('ALLOWED');
+  } catch (error) { results.push(error.code); }
+}
+console.log(JSON.stringify(results));
+`)}`,
+          gitEnv,
+        );
+        // Reset outside Seatbelt so every attack also runs independently on the vulnerable profile.
+        for (const [index, target] of targets.entries()) writeFileSync(target, saved[index]);
+        for (const target of targets)
+          for (const suffix of ['.new', '.link', '.symlink'])
+            rmSync(target + suffix, { force: true });
+        for (const index of aliases.keys())
+          rmSync(path.join(repo, 'outgoing-' + index), { force: true });
+        assert.ifError(result.error);
+        assert.equal(result.status, 0, result.stderr);
+        const outcomes: string[] = JSON.parse(result.stdout);
+        for (const [index, outcome] of outcomes.entries())
+          assert.equal(outcome, 'EPERM', `${operation}: ${aliases[index]}`);
+      });
+
+    for (const directory of [
+      capsule,
+      path.dirname(capsule),
+      path.dirname(path.dirname(capsule)),
+      path.join(root, 'other/.farmslot-blind-evals'),
+      path.join(root, 'other'),
+      root,
+    ])
+      await t.test(
+        `ancestor rename is denied: ${path.relative(root, directory) || 'fixture root'}`,
+        () => {
+          const moved = directory + '-moved';
+          const result = worker(
+            capsule,
+            `exec ${q(process.execPath)} --input-type=module -e ${q(`
+import assert from 'node:assert/strict'; import { renameSync } from 'node:fs';
+assert.throws(() => renameSync(${JSON.stringify(directory)}, ${JSON.stringify(moved)}), { code: 'EPERM' });
+`)}`,
+            gitEnv,
+          );
+          if (existsSync(moved)) renameSync(moved, directory);
+          assert.ifError(result.error);
+          assert.equal(result.status, 0, result.stderr);
+        },
+      );
+  },
+);
 
 test(
   'directory imports cannot acquire broker connect access under the real blind wrapper',
@@ -1410,7 +1587,7 @@ for (const file of ${JSON.stringify(denied.filter((file) => file !== profileAlia
   assert.throws(() => renameSync(file, file + '-moved'), { code: 'EPERM' });
   assert.throws(() => linkSync(file, file + '-linked'), { code: 'EPERM' });
 }
-for (const directory of ${JSON.stringify(['.pi', '.pi/agent', 'farmslot-node', 'farmslot-node-dev'].map((file) => path.join(home, file)).concat([path.join(root, 'boundary')]))}) assert.throws(() => renameSync(directory, directory + '-moved'), { code: 'EPERM' });
+for (const directory of ${JSON.stringify(['.pi', '.pi/agent', 'farmslot-node', 'farmslot-node-dev'].map((file) => path.join(home, file)).concat([realpathSync(path.join(root, 'boundary'))]))}) assert.throws(() => renameSync(directory, directory + '-moved'), { code: 'EPERM' });
 for (const installation of ['farmslot-node', 'farmslot-node-dev']) assert.throws(() => readdirSync(${JSON.stringify(home)} + '/' + installation), { code: 'EPERM' });
 for (const file of ${JSON.stringify(allowed.map((file) => path.join(home, file)))}) {
   assert.equal(readFileSync(file, 'utf8'), "console.log('synthetic helper executed');");
@@ -2041,6 +2218,327 @@ try {
     }
     t.diagnostic(
       'pi local-provider turn and version/help, Git repository/hash operations, Node DNS/child spawning passed with only mDNSResponder allowed; syslog needs no exception; Chrome/CDP covered separately',
+    );
+  },
+);
+
+test(
+  'worker shells start without operator startup files or their secrets',
+  { skip: process.platform !== 'darwin' },
+  (t) => {
+    const root = fixture();
+    t.after(() => rmSync(root, { recursive: true }));
+    // Synthetic operator home: startup files are links into a dotfiles checkout
+    // and source a secrets file, as on farm hosts. Fake values only.
+    const home = path.join(root, 'home');
+    const dotfiles = path.join(root, 'dotfiles');
+    mkdirSync(path.join(home, '.config/secrets'), { recursive: true });
+    mkdirSync(dotfiles);
+    const secrets = path.join(home, '.config/secrets/env.zsh');
+    writeFileSync(secrets, 'export FAKE_SECRET=fixture-value\n');
+    const startup = `export FAKE_SECRET=fixture-value\n. ${q(secrets)}\n`;
+    for (const name of ['zshenv', 'zshrc', 'zprofile']) {
+      writeFileSync(path.join(dotfiles, name), startup);
+      symlinkSync(path.join(dotfiles, name), path.join(home, `.${name}`));
+    }
+    for (const name of ['.bashrc', '.bash_profile', '.profile'])
+      writeFileSync(path.join(home, name), startup);
+    const launchEnv = {
+      ...env,
+      HOME: home,
+      FAKE_SECRET: 'fixture-value',
+      BASH_ENV: path.join(home, '.bashrc'),
+      ENV: path.join(home, '.profile'),
+    };
+    profile(root, launchEnv);
+    const shells = ['env', 'zsh -c env', 'bash -lc env', 'zsh -ic env', 'bash -ic env'];
+    const script = [
+      ...shells.map((shell) => `echo ${q(`== ${shell}`)}; ${shell} </dev/null 2>&1`),
+      // Seatbelt alone: a worker that drops the boundary's ZDOTDIR still reads nothing.
+      'echo "== unset ZDOTDIR"; (unset ZDOTDIR; zsh -lic env) </dev/null 2>&1',
+      ...[path.join(home, '.zshenv'), path.join(dotfiles, 'zshenv'), secrets].map(
+        (file) => `if cat ${q(file)} >/dev/null 2>&1; then echo READ; else echo DENIED; fi`,
+      ),
+    ].join('; ');
+    const started = Date.now();
+    const result = worker(root, script, launchEnv);
+    const output = `${result.stdout}\n${result.stderr}`;
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(output, /fixture-value|FAKE_SECRET/u);
+    assert.equal(output.match(/^HOME=/gmu)?.length, shells.length + 1, 'each shell printed env');
+    assert.deepEqual(output.match(/^(?:READ|DENIED)$/gmu), ['DENIED', 'DENIED', 'DENIED']);
+    t.diagnostic(`six shells and three reads checked in ${Date.now() - started}ms`);
+  },
+);
+
+test(
+  'worker ps cannot print other processes environments while its own tools keep working',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const root = fixture();
+    const secretEnv = { ...env, FAKE_SECRET: 'fixture-value' };
+    // Same-uid stand-ins holding a fake secret: gateway, private tmux server and pane.
+    const gateway = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      env: secretEnv,
+      stdio: 'ignore',
+    });
+    const socketDir = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'ps-tmux-')));
+    const socket = path.join(socketDir, 's');
+    t.after(() => {
+      gateway.kill('SIGKILL');
+      spawnSync('tmux', ['-S', socket, 'kill-server'], { env });
+      rmSync(socketDir, { recursive: true, force: true });
+      rmSync(root, { recursive: true });
+    });
+    execFileSync('tmux', ['-S', socket, '-f', '/dev/null', 'new-session', '-d', 'sleep 300'], {
+      env: secretEnv,
+    });
+    const tmuxServer = execFileSync('tmux', ['-S', socket, 'display-message', '-p', '#{pid}'], {
+      env,
+      encoding: 'utf8',
+    }).trim();
+    const tmuxPane = execFileSync('tmux', ['-S', socket, 'display-message', '-p', '#{pane_pid}'], {
+      env,
+      encoding: 'utf8',
+    }).trim();
+    profile(root, env);
+    const repo = path.join(root, 'tools-repo');
+    const nodeTest = path.join(root, 'tiny.test.mjs');
+    writeFileSync(nodeTest, "import test from 'node:test'; test('tiny', () => {});\n");
+    const others = [String(gateway.pid), tmuxServer, tmuxPane];
+    // $PPID is the launching shell, the stand-in for Pi's parent, which also holds the secret.
+    const script = [
+      'set -u',
+      ...[...others, '$PPID'].flatMap((pid) => [
+        `ps eww -p ${pid} 2>&1`,
+        `ps -E -p ${pid} 2>&1`,
+        `ps -ww e -p ${pid} 2>&1`,
+        `/bin/ps eww -p ${pid} 2>&1`,
+      ]),
+      'ps eww -ax 2>&1',
+      'ps -e 2>&1',
+      'echo ==own',
+      '/bin/sleep 30 & child=$!',
+      'ps -o pid=,command= -p "$child"',
+      'ps -ax -o pid=,ppid= | awk -v c="$child" -v p="$$" \'$1 == c && $2 == p { print "OWN-CHILD-LISTED" }\'',
+      'ps -ww -p $$ -o lstart= >/dev/null && echo OWN-LSTART',
+      'kill "$child"',
+      `git init -q ${q(repo)} && git -C ${q(repo)} -c user.name=f -c user.email=f@example.invalid commit -q --allow-empty -m fixture && git -C ${q(repo)} rev-parse --verify -q HEAD >/dev/null && echo GIT-OK`,
+      `${q(process.execPath)} --test ${q(nodeTest)} >/dev/null 2>&1 && echo NODE-TEST-OK`,
+    ].join('\n');
+    const started = Date.now();
+    const result = spawnSync(
+      '/bin/sh',
+      [
+        '-c',
+        withBlindTrialBoundary(script, {
+          capsule: fixtureCapsules.get(root) ?? root,
+          baseSha: 'a'.repeat(40),
+        }),
+      ],
+      { env: secretEnv, encoding: 'utf8', timeout: 45_000 },
+    );
+    const elapsed = Date.now() - started;
+    const output = `${result.stdout}\n${result.stderr}`;
+    assert.equal(result.status, 0, output);
+    assert.doesNotMatch(output, /fixture-value|FAKE_SECRET/u);
+    const [denied = '', own = ''] = output.split('==own');
+    assert.ok(denied.includes('environment output is unavailable'), denied);
+    for (const marker of [
+      '/bin/sleep 30',
+      'OWN-CHILD-LISTED',
+      'OWN-LSTART',
+      'GIT-OK',
+      'NODE-TEST-OK',
+    ])
+      assert.ok(own.includes(marker), `${marker}\n${own}`);
+    // Residual, documented in blind-environment.md: Seatbelt cannot filter a raw
+    // KERN_PROCARGS2 sysctl, so a deliberate read still sees same-uid environments.
+    t.diagnostic(
+      `ps forms refused for gateway, tmux server, pane and parent; own tools passed in ${elapsed}ms`,
+    );
+  },
+);
+
+test(
+  'host credential stores are EPERM while the trial checkout, runtime, pins and own Pi home work',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const root = fixture();
+    let server: ReturnType<typeof createServer> | undefined;
+    t.after(async () => {
+      if (server) await new Promise((resolve) => server!.close(resolve));
+      rmSync(root, { recursive: true });
+    });
+    // Synthetic operator home and data volume holding fake credentials only.
+    const home = path.join(root, 'home');
+    const data = path.join(root, 'data');
+    const volume = path.join(root, 'volume');
+    const secrets = [
+      ...[
+        '.claude/.credentials.json',
+        '.claude/sessions/s.json',
+        '.codex/auth.json',
+        '.codex/sessions/s.jsonl',
+        '.pi/agent/auth.json',
+        '.pi/agent/sessions/--other--/s.jsonl',
+        '.grok/sessions/s.json',
+        '.config/litellm/api-key',
+        '.config/farmslot-env/env',
+        '.farmslot-dev/credentials.json',
+        '.farmslot-dev/operator-backups/x.json',
+        '.farmslot-rollout-backups/home/credentials.json',
+        'Library/Application Support/x/secret',
+        'Library/Preferences/x.plist',
+        'Library/Keychains/x.keychain-db',
+        'Library/Cookies/Cookies.binarycookies',
+        'xreview/notes.md',
+        'farm-paths-brief/x.md',
+      ].map((name) => path.join(home, name)),
+      path.join(data, 'run-archive/run/transcript.jsonl'),
+      path.join(volume, 'lanes/lane/REPORT.md'),
+      path.join(volume, 'farmslot-archive/run.json'),
+    ];
+    for (const file of secrets) {
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, 'FAKE_SECRET synthetic credential only');
+    }
+    const pin = path.join(home, '.farmslot-dev/task-pins/pin/cli/farmslot.mjs');
+    mkdirSync(path.dirname(pin), { recursive: true });
+    writeFileSync(pin, 'synthetic pinned CLI');
+    mkdirSync(path.join(home, '.pi/agent/bin'), { recursive: true });
+    const tool = path.join(home, '.pi/agent/bin/fd');
+    writeFileSync(tool, '#!/bin/sh\necho fd-fixture\n', { mode: 0o755 });
+    // The Pi home of another trial in the same slot runtime.
+    const otherPi = path.join(
+      path.dirname(root),
+      '.farmslot-runtime',
+      path.basename(root),
+      '.blind-pi/other-run/s.jsonl',
+    );
+    mkdirSync(path.dirname(otherPi), { recursive: true });
+    writeFileSync(otherPi, 'FAKE_SECRET other trial session');
+    const launchEnv = {
+      ...env,
+      HOME: home,
+      FARMSLOT_BLIND_DENIED_PATHS: [
+        path.join(volume, 'lanes'),
+        path.join(volume, 'farmslot-archive'),
+      ].join(':'),
+    };
+    execFileSync(
+      'python3',
+      [
+        '-c',
+        `import json, pathlib, runpy, sys
+blind = runpy.run_path(sys.argv[1], run_name='fixture')
+blind['prepare_boundary'](json.loads(sys.argv[2]), pathlib.Path(sys.argv[3]))`,
+        python,
+        JSON.stringify({ repo: root, siblingRepos: [], hostDeniedRoots: [data] }),
+        fixtureCapsules.get(root)!,
+      ],
+      { env: launchEnv, encoding: 'utf8', timeout: 10_000 },
+    );
+    allocatedTempRoots.add(realpathSync(path.join(root, 'boundary/tmp')));
+    execFileSync('git', ['-C', root, 'init', '-q', '-b', 'main'], { env });
+    writeFileSync(
+      path.join(root, 'tiny.test.mjs'),
+      "import test from 'node:test'; test('tiny', () => {});\n",
+    );
+    // Pi refuses an unreadable auth.json; the trial's own Pi home must serve it.
+    server = createServer((request, response) => {
+      request.resume();
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      const chunk = {
+        id: 'f',
+        object: 'chat.completion.chunk',
+        created: 0,
+        model: 'fixture',
+        choices: [
+          {
+            index: 0,
+            delta: { role: 'assistant', content: 'host-deny-fixture-ok' },
+            finish_reason: null,
+          },
+        ],
+      };
+      response.write(`data: ${JSON.stringify(chunk)}\n\n`);
+      response.write(
+        `data: ${JSON.stringify({ ...chunk, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`,
+      );
+      response.end('data: [DONE]\n\n');
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const port = (server.address() as { port: number }).port;
+    const extension = path.join(root, 'fixture-provider.mjs');
+    writeFileSync(
+      extension,
+      `export default function (pi) { pi.registerProvider('fixture', { baseUrl: 'http://127.0.0.1:${port}/v1', api: 'openai-completions', apiKey: 'fixture-only', models: [{ id: 'fixture', name: 'Fixture', reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 4096, maxTokens: 128 }] }); }\n`,
+    );
+    const pi = execFileSync('/usr/bin/which', ['pi'], { env, encoding: 'utf8' }).trim();
+    const probe = path.join(root, 'host-probe.mjs');
+    writeFileSync(
+      probe,
+      `
+import assert from 'node:assert/strict';
+import { linkSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+const code = (action) => { try { action(); return 'OK'; } catch (error) { return error.code; } };
+for (const file of ${JSON.stringify([...secrets, otherPi])}) {
+  assert.equal(code(() => readFileSync(file)), 'EPERM', file);
+  assert.equal(code(() => linkSync(file, ${JSON.stringify(path.join(root, 'linked'))})), 'EPERM', 'link ' + file);
+}
+for (const directory of ${JSON.stringify(['.config', '.claude', 'Library/Keychains'].map((name) => path.join(home, name)))})
+  assert.equal(code(() => readdirSync(directory)), 'EPERM', directory);
+assert.equal(readFileSync(${JSON.stringify(pin)}, 'utf8'), 'synthetic pinned CLI');
+assert.equal(code(() => writeFileSync(${JSON.stringify(pin)}, 'x')), 'EPERM', 'pinned CLI write');
+assert.ok(process.env.PI_CODING_AGENT_DIR.startsWith(${JSON.stringify(path.dirname(path.dirname(otherPi)))} + '/'), 'own Pi home');
+writeFileSync(${JSON.stringify(path.join(root, 'checkout-write'))}, 'ok');
+console.log('host stores EPERM; own checkout, pin and Pi home usable');
+`,
+    );
+    const script = [
+      `${q(process.execPath)} ${q(probe)}`,
+      `${q(tool)} | grep -q fd-fixture && echo PI-TOOL-OK`,
+      `git -C ${q(root)} status --porcelain >/dev/null && echo GIT-OK`,
+      `cd ${q(root)} && ${q(process.execPath)} --test tiny.test.mjs >/dev/null 2>&1 && echo NODE-TEST-OK`,
+      'ps -o pid= -p $$ >/dev/null && echo PS-OK',
+      `cd ${q(root)} && ${q(pi)} --print --approve --extension ${q(extension)} --provider fixture --model fixture Reply </dev/null`,
+    ].join(' && ');
+    const started = Date.now();
+    // Asynchronous: the fixture model endpoint is served from this process.
+    const child = spawn(
+      '/bin/sh',
+      [
+        '-c',
+        withBlindTrialBoundary(script, {
+          capsule: fixtureCapsules.get(root)!,
+          baseSha: 'a'.repeat(40),
+        }),
+      ],
+      { env: launchEnv, stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    let output = '';
+    child.stdout.on('data', (chunk) => (output += chunk));
+    child.stderr.on('data', (chunk) => (output += chunk));
+    const timer = setTimeout(() => child.kill('SIGKILL'), 60_000);
+    const [status] = await once(child, 'close');
+    clearTimeout(timer);
+    assert.equal(status, 0, output.replaceAll('FAKE_SECRET', '[fake]'));
+    assert.doesNotMatch(output, /FAKE_SECRET/u);
+    for (const marker of [
+      'host stores EPERM',
+      'PI-TOOL-OK',
+      'GIT-OK',
+      'NODE-TEST-OK',
+      'PS-OK',
+      'host-deny-fixture-ok',
+    ])
+      assert.ok(output.includes(marker), marker);
+    // The real Pi wrote its session into the trial's home, never the operator's.
+    assert.ok(!existsSync(path.join(home, '.pi/agent/auth.json.lock')));
+    t.diagnostic(
+      `${secrets.length + 1} stores EPERM; own tools and real Pi passed in ${Date.now() - started}ms`,
     );
   },
 );

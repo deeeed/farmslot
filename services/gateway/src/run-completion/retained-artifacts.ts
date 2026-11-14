@@ -167,14 +167,22 @@ export function runBundleHome(): string {
     : path.dirname(paths.data.runBundles);
 }
 
+/** The retained bundle store root: the configured `storeRoot`, else the farm's run-bundles directory. */
+export function runBundleStoreRoot(home = runBundleHome()): string {
+  const configured = runBundleRetentionSettings(home).storeRoot;
+  const paths = currentFarmPaths('gateway');
+  return (
+    configured ?? (paths.layout === 2 ? paths.data.runBundles : path.join(home, 'run-bundles'))
+  );
+}
+
 export async function runBundleStore(create = false) {
   if (create && process.env.FARMSLOT_SANDBOX_HOME)
     throw new Error('Sandbox gateways may only read the owning gateway retained bundle store.');
   const home = runBundleHome();
   const configured = runBundleRetentionSettings(home).storeRoot;
   const paths = currentFarmPaths('gateway');
-  const root =
-    configured ?? (paths.layout === 2 ? paths.data.runBundles : path.join(home, 'run-bundles'));
+  const root = runBundleStoreRoot(home);
   try {
     if (configured) await assertHeavyWriteRootPresent(root, 'runBundleRetention.storeRoot');
     assertStorageVolumePresent(root);

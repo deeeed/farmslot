@@ -97,6 +97,7 @@ inherited Git configuration cannot cross the boundary.
 | `NODE_ENV`                        | Selects installed toolchains or project build mode.                                                 |
 | `PYTHONDONTWRITEBYTECODE`         | Selects installed toolchains or project build mode.                                                 |
 | `GH_CONFIG_DIR`                   | Assigned by the boundary wrapper; prevents inherited transport or browser authority.                |
+| `ZDOTDIR`                         | Assigned by the boundary wrapper to the empty, read-only `boundary/shell`; zsh reads no home rc.    |
 | `GIT_TERMINAL_PROMPT`             | Assigned by the boundary wrapper; prevents inherited transport or browser authority.                |
 | `FARMSLOT_CI_BASE_REF`            | Assigned by the boundary wrapper; prevents inherited transport or browser authority.                |
 | `FARMSLOT_BLIND_SEATBELT`         | Assigned by the boundary wrapper; prevents inherited transport or browser authority.                |
@@ -113,8 +114,11 @@ inherited Git configuration cannot cross the boundary.
 
 The runner registry's `blindModelEnvironment` capability adds the runner's
 model authentication, endpoint and provider configuration variables. Authentication
-entries are deliberate credential exceptions, visible to that model's tools just
-as its own login files are.
+entries are deliberate credential exceptions. Native runner keys stay visible to
+that model's tools just as its own login files are. Pi's provider extension holds
+the router, LiteLLM and Ollama keys it registers and removes them from its
+environment before any tool shell starts; Pi's built-in providers read their keys
+from the environment per request, so those remain visible to Pi's tool shells.
 
 | Runner or selected provider            | Additional exact entries                                                                     | Reason                                                                                                   |
 | -------------------------------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -147,6 +151,132 @@ Pi's default and unqualified `grok-*` models resolve to `xai/…` through its sh
 model adapter. Custom providers that require another environment name must add
 an exact capability entry and a regression test. Prefer the runner's own config
 for custom provider authentication.
+
+## Shell startup files
+
+`BASH_ENV`, `ENV` and the operator's `ZDOTDIR` never cross `env -i`. The wrapper
+sets `ZDOTDIR` to the capsule's empty `boundary/shell`. Seatbelt also denies reads
+and writes of the operator's zsh and bash startup files and histories,
+`~/.config/secrets`, `~/.netrc`, `~/.npmrc`, `~/.yarnrc(.yml)`, `~/.pypirc`,
+`~/.docker/config.json`, `~/.git-credentials`, `~/.aws`, `~/.kube/config`,
+`~/.gnupg` and the checkout's `.agent/.launch` scripts, with each resolved symlink
+target. A worker that resets `ZDOTDIR` or runs `bash -l` still reads none of them.
+Tools that read those files for registry authentication see them as absent.
+
+Tmux launch scripts live in the slot runtime beside each checkout
+(`<parent>/.farmslot-runtime/<slot>/.agent/.launch`, from `runnerLaunchDir`), and
+a non-blind one inlines its pool credentials. The gateway passes every slot's
+launch directory to the boundary. Seatbelt denies reads, writes and links in each
+`.farmslot-runtime` tree except the trial's own slot runtime, which holds its
+runner homes and observability bundle. It also denies every launch directory,
+the trial's own included, and any `.farmslot-runtime/*/.agent/.launch` path.
+Boundary preparation creates the own slot runtime, since the worker cannot create
+it inside the denied tree. Measured in a live launch, the worker writes only
+`.agent/.observability` there; the gateway writes `.agent/.launch` from outside.
+
+## Host credential stores
+
+A credential sweep under a deployed blind sandbox found logins, API keys and
+session transcripts readable across the operator's home and data volume. The
+last rules in the profile deny reads, writes and hard links in these stores,
+with each resolved alias and rename guards on their ancestors:
+
+| Store                                                                                                                          | Holds                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| `~/.claude`, `~/.codex`, `~/.pi`, `~/.grok`                                                                                    | Runner logins, sessions, histories and shell snapshots. |
+| `~/.config`                                                                                                                    | Provider API keys, environment files and backups.       |
+| `~/.farmslot` and every other `~/.farmslot*` directory, `FARMSLOT_HOME`, `FARMSLOT_CONFIG_DIR`                                 | Gateway credentials, native sessions, operator backups. |
+| `~/Library/{Application Support,Preferences,HTTPStorages,Keychains,Cookies}`                                                   | Application tokens, keychains and cookies.              |
+| `~/farm-paths-brief`, `~/xreview`                                                                                              | Operator notes and review lanes.                        |
+| The gateway's farm home, data root, backups, run bundles, run and task pin archives, runs                                      | Other runs' transcripts, artifacts and backups.         |
+| On a `/Volumes/<name>` volume holding slot checkouts: `lanes`, `slot-retained`, `xreview`, `dev/xreview-personal`, `*archive*` | Lanes, retained slots and archives.                     |
+| `FARMSLOT_BLIND_DENIED_PATHS` (machine environment, colon separated)                                                           | Node-local additions.                                   |
+| `<slot runtime>/.blind-pi` except this trial's directory                                                                       | Earlier trials' Pi homes on this slot.                  |
+
+A store that contains the operator's home is skipped. These carve-outs remain,
+each excluded from the denial only, never added as an allowance:
+
+| Kept                                                                                                                               | Access         | Reason                                                                                    |
+| ---------------------------------------------------------------------------------------------------------------------------------- | -------------- | ----------------------------------------------------------------------------------------- |
+| The trial's checkout, capsule and slot runtime                                                                                     | Read and write | The worker's own work; earlier rules still apply.                                         |
+| `<slot runtime>/.blind-pi/<capsule>`                                                                                               | Read and write | This trial's Pi home (below).                                                             |
+| `task-pins`, `state/task-pins` and `code` in each farm home, and the gateway's pin store and CLI, support and runtime script roots | Read only      | `./mark` and task tools run the pinned CLI; layout 2 installs node code in the farm home. |
+| `~/.pi/agent/bin`                                                                                                                  | Read only      | Pi's managed `fd`, linked from the trial's Pi home.                                       |
+
+Each kept path's ancestors inside a store admit `file-read-metadata` only, for
+Node's realpath.
+
+Pi locks and reads `auth.json` in its agent directory before using any provider
+and refuses one it cannot read. When `PI_CODING_AGENT_DIR` is unset, boundary
+preparation creates `<slot runtime>/.blind-pi/<capsule>` and links it as
+`boundary/pi-agent`; the launch wrapper exports it. The trial's Pi sessions,
+trust and lock files stay there across retained launches.
+
+The Farmslot extension keeps static model definitions from `models.json` in Pi's
+home (`preservePiStaticModels`); router models such as `localsparks/*` exist only
+there. Boundary preparation reads the operator's `~/.pi/agent/models.json` outside
+the sandbox and writes the trial's `models.json` (mode 0600) with only the
+providers the extension registers: the router id, `litellm` and `ollama`. It keeps
+`baseUrl`, `api`, `compat` and each model's definition fields. Every `apiKey` is
+an environment reference (`$FARMSLOT_PI_ROUTER_KEY`, `$LITELLM_API_KEY`,
+`$OLLAMA_API_KEY`); the extension supplies the key from the worker's admitted
+environment at runtime. Headers, other fields and providers whose URL carries
+user information, a query or a fragment are dropped. Within `compat` and the
+other copied model fields, any key named like a credential (`apiKey`, `headers`,
+`accessToken`, `client_secret` and similar) and any credential-shaped string are
+dropped at every depth. The operator file is parsed as Pi parses it: `//`
+comments and trailing commas are allowed. The file is written through the trial
+home directory with a fresh exclusive temporary name and an atomic rename, so a
+link the worker plants there is replaced, never followed; boundary preparation
+refuses a Pi home or `.blind-pi` directory that is a link or not the operator's.
+The trial never reads the operator's `models.json`, `settings.json` or `auth.json`.
+
+An explicitly configured `PI_CODING_AGENT_DIR` is kept only outside the denied
+stores; boundary preparation refuses one inside them. A pool `pi_path` launcher
+runs inside the sandbox, so one that assigns `PI_CODING_AGENT_DIR` (for example
+`export PI_CODING_AGENT_DIR="$HOME/.pi/agent"`) points Pi back at the denied
+operator home, and Pi stops with `EPERM` before any model request. Such a
+launcher must keep an existing value:
+`export PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"`. Non-blind
+launches are unchanged.
+
+Residual: other runs' task pins (pinned CLI copies and retained recipe inputs)
+stay readable; `~/.claude.json`, other home files, other checkouts on the volume
+that are not slots of this node, and anything outside these lists remain
+readable until reads are denied by default under a separate uid. Claude, Codex,
+Grok and OpenCode blind workers must use a runner home outside the denied
+stores.
+
+## Launch shells
+
+A blind tmux launch (fresh dispatch, retained reload and parked-worker reload)
+starts its pane as `exec bash --noprofile --norc -c <stage>`. The stage execs
+`/usr/bin/env -i` into a startup-file-free bash holding only `HOME`, `USER`,
+`LOGNAME`, `PATH`, `SHELL`, `TMPDIR`, `LANG`, `LC_ALL`, `LC_CTYPE`,
+`LC_MESSAGES`, `TZ`, `TERM`, `COLORTERM`, `NO_COLOR`, `TMUX` and `TMUX_PANE`. The
+values of the worker's exact names (the table above plus its model entries) reach
+the launch script on fd 3. The script keeps them in an unexported array and
+exports them only inside the worker subshell, which then runs the boundary's
+`env -i`. Pool `env` entries outside those names are not written into the
+launch script. The script body runs in that shell, never in a child's argv.
+
+The pane's own shell and the stage are replaced by `exec`. The stage's
+substitution child, which writes the values to fd 3, exits once they are
+written. The long-lived
+ancestors of the sandboxed worker are the launch bash and its worker subshell.
+Both start with only the names above, and neither argv carries a value. Only
+the sandboxed chain (`sandbox-exec`'s `/bin/sh` and the runner) holds the model
+key. Non-blind launches are unchanged: they still run `bash <script>` and
+`bash -lc`.
+
+The launch body no longer runs as a login shell, so `~/.bash_profile` does not
+add to `PATH`. A blind worker's `PATH` is the pane's `PATH` plus the pool's.
+
+`blind-launch-env.live.ts` launches a synthetic Pi worker through both production
+paths on a private tmux server. It reads every ancestor up to the server through
+`KERN_PROCARGS2`. macOS returns no environment for Apple platform binaries such
+as `/bin/sh` and `/bin/bash`, so that test runs the launch shells with a
+Homebrew bash, as an operator's `PATH` usually does.
 
 ## Trial browser routing
 
@@ -192,13 +322,35 @@ can bind its singleton in general temp, but that socket has no connect allowance
 The harness reuses its browser through TCP CDP; Metro also uses TCP. Neither
 needs another Unix-connect exception.
 
-macOS refuses the setuid `/bin/ps` inside Seatbelt. Boundary preparation copies
-the installed system binary, removes setuid and signs the copy ad hoc. The
-protected `boundary/bin/ps` handles PATH-based harness calls inside the same
-sandbox. It gains no process-info allowance. Seatbelt target filters do not
-restrict `ps`'s sysctl process-table reads, so process listing is not confined to
-the trial's descendants. `/bin/ps` remains unavailable. No outside-sandbox
-process helper is used.
+macOS refuses the setuid `/bin/ps` inside Seatbelt, and the profile also denies
+executing it. Boundary preparation copies the installed system binary to
+`boundary/libexec/ps`, removes setuid and signs the copy ad hoc. The protected
+`boundary/bin/ps` on PATH is a wrapper for harness identity and health calls
+(`-o lstart=`, `-axo pid=,command=` and similar). It refuses every
+environment-printing form: `-E`, BSD-style `e` in any cluster (`eww`, `axe`),
+and `-e`, which legacy mode reads as environment (use `-A`). It runs the copy
+with `COMMAND_MODE=unix2003`. It gains no process-info allowance. Seatbelt
+target filters do not restrict `ps`'s sysctl process-table reads, so process
+listing is not confined to the trial's descendants. No outside-sandbox process
+helper is used.
+
+### Residual: other processes' environments
+
+The wrapper closes the casual route only. The worker runs as the operator's uid,
+and the kernel returns any same-uid process's start-up environment through the
+`KERN_PROCARGS2` sysctl. A deliberate numeric read (for example `python3`
+ctypes, or running `boundary/libexec/ps` directly) still shows the gateway's,
+the tmux server's and other panes' environments. The trial's own launch shells
+hold no credential (see Launch shells). The tmux server keeps the environment of
+whoever started it, which usually includes operator credentials. Seatbelt cannot block it on
+macOS 27.2. Measured on a fake process with these rules added: `(deny
+process-info* (target others))`, `(deny process-info-pidinfo (target others))`,
+`(deny sysctl-read (sysctl-name "kern.procargs2"))`, `sysctl-name-prefix
+"kern.procargs"` and `"kern.proc"`, and `(deny syscall-unix (syscall-number
+202))` all leave the read working. `(deny sysctl-read)` stops `ps` only because
+it reads `kern.argmax` first, still leaves the numeric read working, and aborts
+Node. `(deny process-info*)` aborts Python. The fix is to run blind workers
+under a separate macOS uid; that is follow-up work.
 
 Mobile producers and clients must use a broker package version supporting this
 directory override. A harness pinned to an earlier package still uses `/tmp` and

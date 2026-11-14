@@ -18,6 +18,7 @@ import {
   reconcileReviewIntent,
   reviewIntentId,
   sameReviewPurpose,
+  setReviewContribution,
   updateReviewDisplay,
 } from './intents.js';
 import { samePublicationAuthority } from './publication-policy.js';
@@ -199,9 +200,7 @@ export async function applyReviewSubmission(
           ? { acceptedAt: previous.acceptedAt, deferredAt: previous.deferredAt }
           : {}),
       };
-      intent.contributions = intent.contributions
-        .filter((entry) => entry.submissionId !== id)
-        .concat(source);
+      setReviewContribution(intent, source);
       intent.updatedAt = submission.checkedAt;
       submission.intentId = intent.id;
     }
