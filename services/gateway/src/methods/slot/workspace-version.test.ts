@@ -18,12 +18,12 @@ test('unchanged Git metadata reuses a version; index writes and same-branch comm
   const vars = { remoteRepo: repo, host: 'localhost', machine: 'local', sshTarget: '' };
   const first = await localWorkspaceVersion(vars, 'main');
   assert(first);
-  assert.equal(await localWorkspaceVersion(vars, 'main'), first);
+  assert.deepEqual(await localWorkspaceVersion(vars, 'main'), first);
   await utimes(index, 1_700_000_001, 1_700_000_001);
   const staged = await localWorkspaceVersion(vars, 'main');
-  assert.notEqual(staged, first);
+  assert.notDeepEqual(staged, first);
   await writeFile(path.join(repo, '.git/refs/heads/main'), 'b'.repeat(40) + '\n');
-  assert.notEqual(await localWorkspaceVersion(vars, 'main'), staged);
+  assert.notDeepEqual(await localWorkspaceVersion(vars, 'main'), staged);
 });
 
 test('linked worktrees observe their own index and the common packed refs', async (t) => {
@@ -44,20 +44,20 @@ test('linked worktrees observe their own index and the common packed refs', asyn
   assert(first);
   await writeFile(packed, 'b'.repeat(40) + ' refs/heads/main\n');
   await utimes(packed, 1_700_000_001, 1_700_000_001);
-  assert.notEqual(await localWorkspaceVersion(vars, 'main'), first);
+  assert.notDeepEqual(await localWorkspaceVersion(vars, 'main'), first);
   const beforeIndex = await localWorkspaceVersion(vars, 'main');
   await writeFile(path.join(gitDir, 'index'), 'worktree index');
-  assert.notEqual(await localWorkspaceVersion(vars, 'main'), beforeIndex);
+  assert.notDeepEqual(await localWorkspaceVersion(vars, 'main'), beforeIndex);
   await writeFile(path.join(gitDir, 'HEAD'), 'c'.repeat(40) + '\n');
-  assert.notEqual(await localWorkspaceVersion(vars, 'main'), beforeIndex);
+  assert.notDeepEqual(await localWorkspaceVersion(vars, 'main'), beforeIndex);
 });
 
 test('missing repositories and reftable compatibility HEADs cannot justify reuse', async (t) => {
   const repo = await mkdtemp(path.join(os.tmpdir(), 'workspace-unknown-version-'));
   t.after(() => rm(repo, { recursive: true, force: true }));
   const vars = { remoteRepo: repo, host: 'localhost', machine: 'local', sshTarget: '' };
-  assert.equal(await localWorkspaceVersion(vars, 'main'), undefined);
+  assert.deepEqual(await localWorkspaceVersion(vars, 'main'), undefined);
   await mkdir(path.join(repo, '.git'));
   await writeFile(path.join(repo, '.git/HEAD'), 'ref: refs/heads/.invalid\n');
-  assert.equal(await localWorkspaceVersion(vars, 'main'), undefined);
+  assert.deepEqual(await localWorkspaceVersion(vars, 'main'), undefined);
 });

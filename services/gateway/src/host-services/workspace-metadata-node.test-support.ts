@@ -15,6 +15,10 @@ process.env.FARMSLOT_METADATA_PROOF_NODE_PID = String(process.pid);
 const controllers = new Map<string, AbortController>();
 let executions = 0;
 let denied = 0;
+let ancestryChecks = 0,
+  positiveAncestry = 0,
+  negativeAncestry = 0,
+  failedAncestry = 0;
 function execParams(params: Record<string, unknown>): NodeExecParams {
   if (typeof params.cwd !== 'string') throw new Error('Missing fixture cwd');
   const options = {
@@ -46,7 +50,18 @@ async function answer(raw: unknown): Promise<void> {
     let result: unknown;
     if (method === 'exec') {
       executions++;
-      result = await exec(execParams(params), undefined, controller.signal);
+      const execution = execParams(params);
+      const ancestry = (execution.cmd ?? execution.argv?.join(' ') ?? '').includes(
+        ' merge-base --is-ancestor ',
+      );
+      const completed = await exec(execution, undefined, controller.signal);
+      result = completed;
+      if (ancestry) {
+        ancestryChecks++;
+        if (completed.exitCode === 0) positiveAncestry++;
+        else if (completed.exitCode === 1) negativeAncestry++;
+        else failedAncestry++;
+      }
     } else if (method === 'exec.cancel') {
       if (typeof params.requestId === 'string') controllers.get(params.requestId)?.abort();
       result = { cancelled: true };
@@ -77,6 +92,14 @@ socket.on('close', () => {
   process.disconnect?.();
 });
 process.on('message', (message) => {
-  if (isRecord(message) && message.type === 'stats') process.send?.({ executions, denied });
+  if (isRecord(message) && message.type === 'stats')
+    process.send?.({
+      executions,
+      denied,
+      ancestryChecks,
+      positiveAncestry,
+      negativeAncestry,
+      failedAncestry,
+    });
   if (isRecord(message) && message.type === 'shutdown') socket.close();
 });
