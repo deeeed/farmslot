@@ -5,6 +5,7 @@ import { execOnSlot } from '../core/exec.js';
 import { withFarmGitConfig } from '../core/farm-git.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { shellQuote } from '../core/tmux.js';
+import { redactLogContent } from '../observability/log-redaction.js';
 import { registerHostOperations, withHostOperation } from '../observability/performance.js';
 
 import { PARKED_WORK_PROGRAM } from './parked-work-program.js';
@@ -76,12 +77,19 @@ export interface ParkedInspection {
   namespace: string;
 }
 
-function parseJson(text: string): unknown {
+function parseJson(
+  text: string,
+  description = 'parked-work response',
+  failedProcess?: ParkedWorkError,
+): unknown {
   try {
     return JSON.parse(text);
   } catch (error) {
     if (error instanceof SyntaxError)
-      throw new ParkedWorkError('INVALID_METADATA', 'The parked-work response is not valid JSON');
+      throw (
+        failedProcess ??
+        new ParkedWorkError('INVALID_METADATA', `The ${description} is not valid JSON`)
+      );
     throw error;
   }
 }
@@ -154,16 +162,32 @@ async function request(
       noRetry: true,
       selectNodeSupport: false,
     });
-    const envelope = parseJson(result.stdout);
+    const failedProcess =
+      result.exitCode !== 0
+        ? new ParkedWorkError(
+            'PARK_FAILED',
+            `Parked-work ${op} on ${vars.slotId} failed (exit ${result.exitCode}): ${redactLogContent(result.stderr.trim()).slice(-1500) || `no stderr output; received ${Buffer.byteLength(result.stdout)} stdout bytes`}`,
+          )
+        : undefined;
+    const envelope = parseJson(
+      result.stdout,
+      `parked-work ${op} response from ${vars.slotId} (exit ${result.exitCode})`,
+      failedProcess,
+    );
     if (!isRecord(envelope) || typeof envelope.ok !== 'boolean')
-      throw new ParkedWorkError('INVALID_METADATA', 'The parked-work response has no result');
+      throw (
+        failedProcess ??
+        new ParkedWorkError(
+          'INVALID_METADATA',
+          `The parked-work ${op} response from ${vars.slotId} has no result`,
+        )
+      );
     if (!envelope.ok)
       throw new ParkedWorkError(
         typeof envelope.code === 'string' ? envelope.code : 'PARK_FAILED',
         typeof envelope.message === 'string' ? envelope.message : 'Parked-work operation failed',
       );
-    if (result.exitCode !== 0)
-      throw new ParkedWorkError('PARK_FAILED', 'The parked-work process did not complete');
+    if (failedProcess) throw failedProcess;
     return envelope.value;
   });
 }
@@ -182,7 +206,9 @@ function receiptsFromRows(rows: unknown, repoKey: string, namespace: string): Pa
     }
     if (typeof row.metadata !== 'string')
       throw new ParkedWorkError('INVALID_METADATA', 'Missing parked receipt');
-    const record = decodeParkedReceipt(parseJson(row.metadata));
+    const record = decodeParkedReceipt(
+      parseJson(row.metadata, `parked receipt ${row.ref} metadata`),
+    );
     if (
       !record ||
       record.ref !== row.ref ||
