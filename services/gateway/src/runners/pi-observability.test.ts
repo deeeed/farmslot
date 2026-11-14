@@ -50,12 +50,12 @@ test('Pi request receipts fence the model, attempt, cwd and either transport ses
   assert.equal(read('saved-pi', 'litellm/other'), null);
   assert.equal(read('saved-pi', 'litellm/glm', path.join(root, 'other')), null);
   assert.equal(read('saved-pi', 'litellm/glm', root, Date.now() + 1000), null);
-  const filePath = `${file}.farmslot-request.json`;
+  const filePath = `${file}.reasoning-request.json`;
   const malformed = JSON.parse(readFileSync(filePath, 'utf8'));
   malformed.reasoning = { mode: 'off' };
   writeFileSync(filePath, JSON.stringify(malformed));
   assert.equal(read(), null);
-  writeFileSync(`${file}.farmslot-request.json`, '{');
+  writeFileSync(`${file}.reasoning-request.json`, '{');
   assert.equal(read(), null);
 });
 

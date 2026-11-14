@@ -97,7 +97,7 @@ function readSnapshot(directory, key) {
 /** Bounded request metadata beside the runner-owned transcript, for either transport. */
 export function writePiReasoningReceipt(sessionPath, configuration) {
   if (!sessionPath || !configuration.effectiveReasoning) return;
-  const file = `${sessionPath}.farmslot-request.json`;
+  const file = `${sessionPath}.reasoning-request.json`;
   const pending = `${file}.${process.pid}.tmp`;
   const receipt = {
     sessionId: path.basename(sessionPath).replace(/\.jsonl?$/, ''),

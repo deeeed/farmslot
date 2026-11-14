@@ -67,6 +67,7 @@ test(
     });
     delete process.env.TMUX;
     delete process.env.TMUX_PANE;
+    delete process.env.FARMSLOT_SLOT_ID;
     const tmux = (...args: string[]) => execFileSync('tmux', args, { encoding: 'utf8' }).trim();
     const wire: Array<Record<string, unknown>> = [];
     const provider = http.createServer(async (req, res) => {
@@ -174,6 +175,7 @@ test(
     for (const name of Object.keys(process.env))
       if (/TOKEN|API_KEY|PASSWORD|AUTH_TOKEN|FARMSLOT_PI_|ANTHROPIC_|OPENAI_|LITELLM_/u.test(name))
         delete process.env[name];
+    execFileSync('git', ['init', '-q', repo]);
     const managed: Array<{ info: NativeSessionInfo; leaseId: string }> = [];
     const { nativeSessionManager } =
       await import('../../services/gateway/src/runners/native/manager.js');
@@ -194,6 +196,8 @@ test(
     const store = await import('../../services/gateway/src/runs/store.js');
     const { loadSlotVars } = await import('../../services/gateway/src/core/config.js');
     const { checkAgentLive } = await import('../../services/gateway/src/run-engine/run-monitor.js');
+    const { readReviewWorkspaceWorker } =
+      await import('../../services/gateway/src/runners/native/review-workspace.js');
     const { readNativeWorkerSnapshot } =
       await import('../../services/gateway/src/runners/native/worker-control.js');
     const { captureRunnerSessionMetadata } =
@@ -215,8 +219,11 @@ test(
     });
     const vars = await loadSlotVars('receipt-slot');
     const results: unknown[] = [];
-    for (const transport of ['tmux', 'native'] as const)
+    for (const scenario of ['tmux', 'native', 'native-review'] as const)
       for (const effort of ['off', 'medium']) {
+        const slotless = scenario === 'native-review';
+        const transport = slotless ? 'native' : scenario;
+        const taskPath = path.join(root, 'review-task-' + effort);
         const environment = {
           PATH: path.dirname(process.execPath) + ':/opt/homebrew/bin:/usr/bin:/bin',
           HOME: root,
@@ -226,17 +233,21 @@ test(
           FARMSLOT_PI_OLLAMA: '0',
           LITELLM_URL: 'http://127.0.0.1:' + address.port + '/v1',
           LITELLM_API_KEY: 'loopback-proof-only',
-          FARMSLOT_OBS_DIR: path.join(repo, '.agent/.observability'),
-          FARMSLOT_SLOT_ID: 'receipt-slot',
+          FARMSLOT_OBS_DIR: slotless
+            ? path.join(taskPath, '.observability')
+            : path.join(repo, '.agent/.observability'),
+          ...(slotless ? {} : { FARMSLOT_SLOT_ID: 'receipt-slot' }),
           FARMSLOT_THINKING: effort,
         };
         const run = store.createRun(
           {
             project: 'fixture',
-            flowType: 'dev',
+            flowType: slotless ? 'review-pr' : 'dev',
             mode: 'interactive',
             ticketOrPr: 'reasoning receipt proof',
-            slotId: 'receipt-slot',
+            ...(slotless
+              ? { reviewWorkspaceTarget: { machine: 'local' } }
+              : { slotId: 'receipt-slot' }),
             runner: 'pi',
             model: 'litellm/synthetic-model',
             effort,
@@ -245,17 +256,30 @@ test(
           { createdByPrincipalId: owner, nativeOwnerPrincipalId: owner },
         );
         const context: AgentContext = {
-          id: 'dev',
-          role: 'dev',
+          id: slotless ? 'review' : 'dev',
+          role: slotless ? 'review' : 'dev',
           label: 'Receipt proof',
           status: 'working',
-          slotId: 'receipt-slot',
+          slotId: slotless ? null : 'receipt-slot',
           runId: run.id,
           runner: 'pi',
           model: 'litellm/synthetic-model',
           effort,
           attemptStartedAt: new Date().toISOString(),
         };
+        if (slotless) {
+          await mkdir(path.join(taskPath, 'artifacts'), { recursive: true });
+          store.updateRun(run.id, {
+            reviewWorkspace: {
+              workspaceId: randomUUID(),
+              machine: 'local',
+              executionNodeId: 'local',
+              checkoutPath: repo,
+              taskPath,
+              artifactPath: path.join(taskPath, 'artifacts'),
+            },
+          });
+        }
         const requestIndex = wire.length;
         if (transport === 'tmux') {
           const paneId = tmux('display-message', '-p', '-t', 'receipt-proof', '#{pane_id}');
@@ -366,6 +390,14 @@ test(
               effort,
               environment: { set: environment, unset: [] },
               safetyTier: 'sandboxed',
+              ...(slotless
+                ? {
+                    filesystemPolicy: {
+                      readOnlyRoots: [repo],
+                      writableRoots: [taskPath, path.join(taskPath, 'artifacts')],
+                    },
+                  }
+                : {}),
             },
           );
           managed.push({ info, leaseId });
@@ -389,10 +421,11 @@ test(
           );
         }
         const observed = await until('Gateway did not persist the adapter receipt', async () => {
-          if (transport === 'native') await readNativeWorkerSnapshot(run.id, 'dev', 'dev');
+          if (slotless) await readReviewWorkspaceWorker(run.id);
+          else if (transport === 'native') await readNativeWorkerSnapshot(run.id, 'dev', 'dev');
           else await checkAgentLive('receipt-slot', 'pi', run.id, 'dev', 'dev');
           const record = (await connection.call<RunGetResult>('run.get', { runId: run.id })).run;
-          return record.agentContexts?.find((item) => item.id === 'dev')?.reasoningReceipt
+          return record.agentContexts?.find((item) => item.id === context.id)?.reasoningReceipt
             ? record
             : undefined;
         });
@@ -408,6 +441,7 @@ test(
         await store.persistRunNow(store.getRun(run.id)!, 'real Pi reasoning receipt proof');
         console.log(
           JSON.stringify({
+            scenario,
             transport,
             effort,
             label,
@@ -415,11 +449,12 @@ test(
           }),
         );
         results.push({
+          scenario,
           transport,
           effort,
           wireEffort: wire[requestIndex].reasoning_effort ?? 'omitted',
           label,
-          receipt: observed.agentContexts?.find((item) => item.id === 'dev')?.reasoningReceipt,
+          receipt: observed.agentContexts?.find((item) => item.id === context.id)?.reasoningReceipt,
         });
       }
     if (output) {

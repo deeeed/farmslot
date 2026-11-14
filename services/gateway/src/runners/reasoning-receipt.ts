@@ -5,7 +5,7 @@ import { loadSlotVars } from '../core/config.js';
 
 import type { SlotVars } from './observability-types.js';
 import { getRunnerObservability } from './registry.js';
-import { reviewWorkspaceRunnerVars } from './review-workspace-context.js';
+import { reviewWorkspaceExecutionVars } from './review-workspace-context.js';
 
 /** Record the adapter's request decision on the exact attempt whose progress is being read. */
 export async function captureRunnerReasoningReceipt(
@@ -33,7 +33,7 @@ export async function captureRunnerReasoningReceipt(
     attemptStartedAt,
   };
   vars ??= run.reviewWorkspace
-    ? ((await reviewWorkspaceRunnerVars(run)) ?? undefined)
+    ? ((await reviewWorkspaceExecutionVars(run)) ?? undefined)
     : run.slotId
       ? await loadSlotVars(run.slotId)
       : undefined;

@@ -178,7 +178,7 @@ def unavailable():
  print('{}');raise SystemExit(0)
 try:
  with file.open('rb') as stream:header=json.loads(stream.readline(65536))
- with Path(str(file)+'.farmslot-request.json').open('rb') as stream:receipt=json.loads(stream.read(4096))
+ with Path(str(file)+'.reasoning-request.json').open('rb') as stream:receipt=json.loads(stream.read(4096))
  stamp=datetime.fromisoformat(receipt['observedAt'].replace('Z','+00:00')).timestamp()*1000
 except (OSError,ValueError,KeyError,TypeError,AttributeError):unavailable()
 if not isinstance(header,dict) or header.get('type')!='session' or os.path.realpath(header.get('cwd',''))!=os.path.realpath(repo):unavailable()
