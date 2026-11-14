@@ -36,12 +36,11 @@ data directory: `FARMSLOT_DATA/run-bundles` on layout 2 (the instance's `dataRoo
 else `FARMSLOT_DATA`, else `<owner FARMSLOT_HOME>/data`), and
 `<owner FARMSLOT_HOME>/run-bundles` on the legacy layout. On the legacy layout with
 `FARMSLOT_RUNS_DIR` set and no `FARMSLOT_HOME`, it is `<runs dir>/bundle-home/run-bundles`.
-All readers,
-capture writers and GC resolve that same binding, keyed by the canonical Run
-store, including when `FARMSLOT_RUNS_DIR` is shared. A sandbox's isolated
-authentication home MUST NOT establish or replace that binding. A missing or
-mismatched store pairing refuses capture, reference writes and GC, leaving the
-owner's history untouched. Read-only sharing uses the owner's bound store;
+All readers, capture writers and GC resolve that same binding, keyed by the
+canonical Run store, including when `FARMSLOT_RUNS_DIR` is shared. A sandbox's
+isolated authentication home MUST NOT establish or replace that binding. A
+missing or mismatched store pairing refuses capture, reference writes and GC,
+leaving the owner's history untouched. Read-only sharing uses the owner's bound store;
 private validation uses an isolated Run store and imported references.
 
 The digest is SHA-256 of the exact stored `manifest.json` bytes. Existing manifest
