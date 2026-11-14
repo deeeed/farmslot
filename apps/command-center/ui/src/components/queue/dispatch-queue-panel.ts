@@ -88,7 +88,7 @@ function graphContext(
             [
               review.runner,
               review.model ?? 'default model',
-              reasoningEffortLabel(review.effort, review.model),
+              reasoningEffortLabel(review.effort),
               review.mode.toUpperCase(),
             ].join('/'),
           )

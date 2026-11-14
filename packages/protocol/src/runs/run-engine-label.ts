@@ -45,29 +45,14 @@ export function runWorkerEffort(
   return null;
 }
 
-// Source of truth: providerReasoningFetch omits Pi `off` for every source
-// listPiProviderSources registers. Only built-in Anthropic and OpenAI send an
-// explicit disable, so only those stay `off`.
-const EXPLICIT_DISABLE_PROVIDERS = new Set(['anthropic', 'openai']);
-
-function explicitDisableProvider(model: string | null | undefined): boolean {
-  const provider = model?.split('/')[0]?.trim().toLowerCase() ?? '';
-  return EXPLICIT_DISABLE_PROVIDERS.has(provider);
-}
-
 /**
  * Word shown for a stored reasoning effort.
- * No value reads `default`. Pi `off` reads `off` only for the providers above.
- * `none` reads `off`. Any other stored level is shown as written.
+ * No value reads `default`. A stored level is shown as stored, and `off` stays `off`.
  */
-export function reasoningEffortLabel(
-  effort: string | null | undefined,
-  model?: string | null,
-): string {
+export function reasoningEffortLabel(effort: string | null | undefined): string {
   const value = effort?.trim() ?? '';
   if (value === '') return 'default';
-  if (value.toLowerCase() === 'none') return 'off';
-  if (value.toLowerCase() === 'off') return explicitDisableProvider(model) ? 'off' : 'default';
+  if (value.toLowerCase() === 'off') return 'off';
   return value;
 }
 
@@ -80,7 +65,7 @@ export function runnerModelEffortParts(
   const runnerPart = runner?.trim() ?? '';
   const modelPart = model?.trim() ?? '';
   if (!runnerPart && !modelPart && !effort?.trim()) return [];
-  return [runnerPart, modelPart, reasoningEffortLabel(effort, model)].filter(
+  return [runnerPart, modelPart, reasoningEffortLabel(effort)].filter(
     (part): part is string => part !== '',
   );
 }
@@ -93,5 +78,5 @@ export function runEngineLabel(engine: {
 }): string | null {
   const base = engine.model ? `${engine.runner ?? 'runner'}/${engine.model}` : engine.runner;
   if (!base) return null;
-  return `${base} · ${reasoningEffortLabel(engine.effort, engine.model)}`;
+  return `${base} · ${reasoningEffortLabel(engine.effort)}`;
 }

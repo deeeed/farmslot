@@ -135,10 +135,7 @@ export function PRReviewCards({ viewModel: vm, actions }: PRAutomationController
                   <Text style={styles.text}>
                     Assigned {run?.slotId ?? queue?.slotId} · {run?.metrics.runner ?? queue?.runner}
                     /{run?.metrics.model ?? queue?.model}/
-                    {reasoningEffortLabel(
-                      run?.effort ?? queue?.effort,
-                      run?.metrics.model ?? queue?.model,
-                    )}
+                    {reasoningEffortLabel(run?.effort ?? queue?.effort)}
                   </Text>
                 )}
                 {intent.runId && (

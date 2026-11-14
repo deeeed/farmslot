@@ -396,15 +396,11 @@ export function reviewCard(
     ${run?.slotId
       ? html`<p>
           Assigned ${run.slotId} ·
-          ${run.metrics.runner}/${run.metrics.model}/${reasoningEffortLabel(
-            run.effort,
-            run.metrics.model,
-          )}
+          ${run.metrics.runner}/${run.metrics.model}/${reasoningEffortLabel(run.effort)}
         </p>`
       : queued?.slotId
         ? html`<p>
-            Selected ${queued.slotId} ·
-            ${queued.model}/${reasoningEffortLabel(queued.effort, queued.model)}
+            Selected ${queued.slotId} · ${queued.model}/${reasoningEffortLabel(queued.effort)}
           </p>`
         : nothing}
     ${trace
