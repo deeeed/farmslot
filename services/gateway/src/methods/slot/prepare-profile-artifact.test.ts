@@ -139,3 +139,22 @@ test('artifact_available substitutes an empty work ref (no hardcoded branch leak
   await checkPrepareRequirement('artifact_available', noWorkRefCtx);
   assert.match(execCommands[0], /--branch "" --default-branch main/);
 });
+
+test('artifact_available threads a blind trial base commit, empty otherwise', async () => {
+  const hook = 'bash artifact-check.sh --base "{{prepare_base_sha}}"';
+  const base = 'b'.repeat(40);
+  for (const [prepareBaseSha, expected] of [
+    [base, `--base "${base}"`],
+    [undefined, '--base ""'],
+  ] as const) {
+    execCommands.length = 0;
+    nextResult = { stdout: '', stderr: '', exitCode: 0 };
+    await checkPrepareRequirement('artifact_available', {
+      vars: makeSlotVars('/repo'),
+      projectJson: { hooks: { artifact_check: hook } },
+      runtimeDir: '.agent',
+      prepareBaseSha,
+    });
+    assert.ok(execCommands[0]?.includes(expected), execCommands[0]);
+  }
+});

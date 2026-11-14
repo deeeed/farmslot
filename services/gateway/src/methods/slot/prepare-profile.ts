@@ -145,6 +145,11 @@ export interface RequirementCheckContext {
    * the default branch name in the project script.
    */
   prepareDefaultRef?: string;
+  /**
+   * A blind trial's verified base commit, exposed as {{prepare_base_sha}} (empty
+   * otherwise) so a probe can select the artifact built for the trial's base.
+   */
+  prepareBaseSha?: string;
 }
 
 // Deps inputs hashed for the deps_current sentinel. Keep in sync with
@@ -248,7 +253,15 @@ export async function checkPrepareRequirement(
   requirement: PrepareRequirement,
   ctx: RequirementCheckContext,
 ): Promise<RequirementCheckResult> {
-  const { vars, projectJson, projectVars, runtimeDir, prepareRef, prepareDefaultRef } = ctx;
+  const {
+    vars,
+    projectJson,
+    projectVars,
+    runtimeDir,
+    prepareRef,
+    prepareDefaultRef,
+    prepareBaseSha,
+  } = ctx;
   switch (requirement) {
     case 'deps_current': {
       const sentinel = depsSentinelPath(runtimeDir);
@@ -308,6 +321,7 @@ export async function checkPrepareRequirement(
       const hook = expandHook('artifact_check', projectJson, vars, projectVars, {
         prepare_ref: prepareRef ?? '',
         prepare_default_ref: prepareDefaultRef ?? '',
+        prepare_base_sha: prepareBaseSha ?? '',
       });
       if (!hook) {
         return { requirement, ok: false, detail: 'project has no artifact_check hook' };

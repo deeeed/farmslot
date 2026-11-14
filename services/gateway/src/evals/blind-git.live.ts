@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { once } from 'node:events';
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -641,4 +644,98 @@ test('proof Git admits both source snapshots and keeps product and pinned inputs
   writeFileSync(path.join(repo, 'value.txt'), 'supplied\n');
   writeFileSync(path.join(task, 'inputs/qa.json'), '{"tampered":true}');
   assert.throws(() => command('verify', spec), /input.*changed/);
+});
+
+test('blind isolate batches a partial clone fetch and heals a capsule a killed isolate left behind', async (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'blind-partial-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  // A blobless clone checked out past the base: none of the base's blobs are local.
+  const source = path.join(root, 'source');
+  mkdirSync(source);
+  git(source, 'init', '-q', '-b', 'main');
+  for (let index = 0; index < 400; index++)
+    writeFileSync(path.join(source, `file-${index}.txt`), `base ${index}\n`);
+  const baseSha = commit(source, 'base');
+  for (let index = 0; index < 400; index++)
+    writeFileSync(path.join(source, `file-${index}.txt`), `later ${index}\n`);
+  commit(source, 'later');
+  git(source, 'config', 'uploadpack.allowFilter', 'true');
+  const repo = path.join(root, 'slot');
+  execFileSync('git', ['clone', '-q', '--filter=blob:none', `file://${source}`, repo], { env });
+  const missing = () =>
+    git(repo, 'rev-list', '--objects', '--no-object-names', '--no-walk', '--missing=print', baseSha)
+      .split('\n')
+      .filter((line) => line.startsWith('?')).length;
+  assert.equal(missing(), 400);
+  const capsule = path.join(root, '.farmslot-blind-evals/partial-fixture/trial-1');
+  const spec: BlindGitSpec = {
+    slotId: 'partial-fixture',
+    slotEpoch: 1,
+    repo,
+    capsule,
+    runId: 'trial',
+    branch: 'eval/trial',
+    baseSha,
+    referenceCommits: [],
+  };
+  // An isolate killed mid-swap (as a caller's timeout does) leaves its capsule preparing.
+  const killed = spawnSync(
+    'python3',
+    [
+      '-c',
+      `import json, os, runpy, sys
+blind = runpy.run_path(sys.argv[1], run_name='fixture')
+blind['isolate'].__globals__['pack_into'] = lambda *args, **kwargs: os._exit(9)
+blind['isolate'](json.loads(sys.argv[2]))`,
+      new URL('./blind-git.py', import.meta.url).pathname,
+      JSON.stringify(spec),
+    ],
+    { env, encoding: 'utf8', timeout: 60_000 },
+  );
+  assert.equal(killed.status, 9, killed.stderr);
+  assert.equal(
+    JSON.parse(readFileSync(path.join(capsule, 'state.json'), 'utf8')).phase,
+    'preparing',
+  );
+  // The batch fetch already ran: one request, not one per blob.
+  assert.equal(missing(), 0);
+  const started = Date.now();
+  assert.equal(command('isolate', spec).status, 'isolated');
+  t.diagnostic(`retried isolate in ${Date.now() - started}ms`);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), baseSha);
+  const parent = path.dirname(capsule);
+  assert.equal(
+    readdirSync(parent).filter((name) => name.startsWith('trial-1.interrupted-')).length,
+    1,
+    'the interrupted capsule is kept aside',
+  );
+  assert.equal(command('restore', spec).status, 'restored');
+  // A second isolation of the same capsule waits for none: the lock refuses it.
+  const holder = spawn('python3', [
+    '-c',
+    `import fcntl, sys, time
+lock = open(sys.argv[1], 'a'); fcntl.flock(lock, fcntl.LOCK_EX); print('held', flush=True); time.sleep(30)`,
+    path.join(parent, 'trial-2.lock'),
+  ]);
+  t.after(() => holder.kill('SIGKILL'));
+  await once(holder.stdout!, 'data');
+  assert.throws(
+    () => command('isolate', { ...spec, capsule: path.join(parent, 'trial-2'), runId: 'trial-2' }),
+    /isolation is already running for this capsule/,
+  );
+  // Objects that cannot be fetched fail at once, before any capsule exists.
+  const offline = path.join(root, 'offline-slot');
+  execFileSync('git', ['clone', '-q', '--filter=blob:none', `file://${source}`, offline], { env });
+  renameSync(source, `${source}-gone`);
+  const offlineSpec = {
+    ...spec,
+    repo: offline,
+    capsule: path.join(parent, 'trial-3'),
+    runId: 'trial-3',
+  };
+  assert.throws(
+    () => command('isolate', offlineSpec),
+    /missing from this partial clone and could not be fetched/,
+  );
+  assert.equal(existsSync(offlineSpec.capsule), false);
 });
