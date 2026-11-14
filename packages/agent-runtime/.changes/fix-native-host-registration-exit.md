@@ -1,0 +1,1 @@
+- Report supervisor loss before native host registration even when IPC disconnects during module loading.
