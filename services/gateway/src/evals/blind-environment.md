@@ -221,8 +221,15 @@ providers the extension registers: the router id, `litellm` and `ollama`. It kee
 an environment reference (`$FARMSLOT_PI_ROUTER_KEY`, `$LITELLM_API_KEY`,
 `$OLLAMA_API_KEY`); the extension supplies the key from the worker's admitted
 environment at runtime. Headers, other fields and providers whose URL carries
-user information, a query or a fragment are dropped. The trial never reads the
-operator's `models.json`, `settings.json` or `auth.json`.
+user information, a query or a fragment are dropped. Within `compat` and the
+other copied model fields, any key named like a credential (`apiKey`, `headers`,
+`accessToken`, `client_secret` and similar) and any credential-shaped string are
+dropped at every depth. The operator file is parsed as Pi parses it: `//`
+comments and trailing commas are allowed. The file is written through the trial
+home directory with a fresh exclusive temporary name and an atomic rename, so a
+link the worker plants there is replaced, never followed; boundary preparation
+refuses a Pi home or `.blind-pi` directory that is a link or not the operator's.
+The trial never reads the operator's `models.json`, `settings.json` or `auth.json`.
 
 An explicitly configured `PI_CODING_AGENT_DIR` is kept only outside the denied
 stores; boundary preparation refuses one inside them. A pool `pi_path` launcher

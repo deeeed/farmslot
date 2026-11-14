@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -983,4 +985,132 @@ test('a non-blind pi launch keeps the pool launcher and operator Pi home, with n
     buildLaunchCommand(vars, 'pi', model, 'Task', { taskDir: '/work/product/task', ...blind }),
     /PI_CODING_AGENT_DIR=.*\/work\/capsule\/boundary\/pi-agent/u,
   );
+});
+
+function writeBlindPiModels(t: TestContext, operatorModels: string, prepare = '') {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'seatbelt-pi-write-')));
+  t.after(() => rmSync(root, { recursive: true }));
+  const home = path.join(root, 'home');
+  mkdirSync(path.join(home, '.pi/agent'), { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(home, '.pi/agent/models.json'), operatorModels);
+  const trial = path.join(root, 'trial-pi');
+  mkdirSync(trial, { mode: 0o700 });
+  const result = spawnSync(
+    'python3',
+    [
+      '-c',
+      `import os, pathlib, runpy, sys
+from unittest.mock import patch
+blind = runpy.run_path(sys.argv[1], run_name='fixture')
+root, trial = pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
+${prepare}
+with patch.dict(os.environ, {'HOME': str(root / 'home'), 'FARMSLOT_PI_ROUTER_ID': 'localsparks'}, clear=True):
+    blind['write_blind_pi_models'](trial / 'models.json')`,
+      fileURLToPath(new URL('./blind-git.py', import.meta.url)),
+      root,
+      trial,
+    ],
+    { encoding: 'utf8', timeout: 4500 },
+  );
+  return { root, trial, result };
+}
+
+const piModel = { id: 'GLM-fixture-s1234', name: 'Fixture', contextWindow: 65536, maxTokens: 1024 };
+
+test('blind Pi static models drop credentials nested in provider and model compat', (t) => {
+  const { trial, result } = writeBlindPiModels(
+    t,
+    JSON.stringify({
+      providers: {
+        localsparks: {
+          baseUrl: 'http://192.0.2.1:8890/v1',
+          compat: {
+            supportsStore: true,
+            apiKey: 'sk-FAKESECRETcompatkey0123456789',
+            headers: { Authorization: 'Bearer sk-FAKESECRETcompatheader01234' },
+            chatTemplateKwargs: { enable_thinking: true, token: 'Fake0Secret1Kwargs2Token3' },
+          },
+          models: [
+            {
+              ...piModel,
+              compat: {
+                maxTokensField: 'max_tokens',
+                accessToken: 'Fake0Secret1Model2Token3',
+                nested: {
+                  client_secret: 'Fake0Secret1Nested2Value3',
+                  note: 'Fake0Secret1Bare2Value3',
+                },
+              },
+            },
+          ],
+        },
+      },
+    }),
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const text = readFileSync(path.join(trial, 'models.json'), 'utf8');
+  assert.equal(redactCommandCredentials(text).count, 0, text);
+  assert.doesNotMatch(text, /FAKE|Fake|Bearer|apiKey": "sk|headers|token"|secret/u);
+  const provider = JSON.parse(text).providers.localsparks;
+  assert.equal(provider.apiKey, '$FARMSLOT_PI_ROUTER_KEY');
+  assert.deepEqual(provider.compat, {
+    supportsStore: true,
+    chatTemplateKwargs: { enable_thinking: true },
+  });
+  assert.deepEqual(provider.models[0].compat, { maxTokensField: 'max_tokens', nested: {} });
+  assert.equal(provider.models[0].id, 'GLM-fixture-s1234');
+});
+
+test('blind Pi static models parse the operator file as Pi does, with comments and trailing commas', (t) => {
+  const { trial, result } = writeBlindPiModels(
+    t,
+    `{
+  // Local Sparks router, as operators annotate it.
+  "providers": {
+    "localsparks": {
+      "baseUrl": "http://192.0.2.1:8890/v1", // endpoint
+      "models": [{ "id": "GLM-fixture-s1234", "name": "Fixture // not a comment", },],
+    },
+  },
+}
+`,
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const models = JSON.parse(readFileSync(path.join(trial, 'models.json'), 'utf8')).providers
+    .localsparks.models as { id: string; name: string }[];
+  assert.deepEqual(models, [{ id: 'GLM-fixture-s1234', name: 'Fixture // not a comment' }]);
+});
+
+test('blind Pi static models never write through a link the worker planted in its Pi home', (t) => {
+  const operator = JSON.stringify({ providers: { localsparks: { models: [piModel] } } });
+  // Every pending name and the target itself point at a fake operator login.
+  const planted = `auth = root / 'operator-auth.json'
+auth.write_text('FAKE_SECRET operator login')
+for name in ['models.pending', 'models.json']:
+    (trial / name).symlink_to(auth)`;
+  const { root, trial, result } = writeBlindPiModels(t, operator, planted);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    readFileSync(path.join(root, 'operator-auth.json'), 'utf8'),
+    'FAKE_SECRET operator login',
+  );
+  assert.ok(!lstatSync(path.join(trial, 'models.json')).isSymbolicLink());
+  assert.equal(
+    JSON.parse(readFileSync(path.join(trial, 'models.json'), 'utf8')).providers.localsparks
+      .models[0].id,
+    piModel.id,
+  );
+  // A Pi home swapped for a link is refused before anything is written.
+  const swapped = writeBlindPiModels(
+    t,
+    operator,
+    `import shutil
+target = root / 'elsewhere'
+target.mkdir(mode=0o700)
+shutil.rmtree(trial)
+trial.symlink_to(target)`,
+  );
+  assert.notEqual(swapped.result.status, 0);
+  assert.match(swapped.result.stderr, /Blind trial Pi home is not a private directory/u);
+  assert.deepEqual(readdirSync(path.join(swapped.root, 'elsewhere')), []);
 });
