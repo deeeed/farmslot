@@ -6,11 +6,13 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  watch,
   writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { mock, test } from 'node:test';
+import { mock, test, type TestContext } from 'node:test';
+import { setImmediate as nextTurn } from 'node:timers/promises';
 
 import type { Run, SlotLifecycle, TaskProgressResult } from '@farmslot/protocol';
 // See replay-step-nested-checklist.test.ts: mock.module replaces a module
@@ -23,7 +25,6 @@ import '../runtime/mock-pty.test-support.js';
 
 import * as realConfig from '../core/config.js';
 import * as realState from '../core/state.js';
-import { withWatcherClock } from '../core/watch-clock.test-support.js';
 import * as realFleetState from '../fleet/state.js';
 import { resourceRevisions } from '../resources/revisions.js';
 import * as realRunStore from '../runs/store.js';
@@ -142,6 +143,7 @@ const {
   watchSlot,
 } = await import('./watcher.js');
 const { taskProgress } = await import('../methods/task.js');
+const { WORKER_MIRROR_SUFFIX } = await import('./sidecars.js');
 
 const PARENT_MARKDOWN = [
   '# Worker',
@@ -250,6 +252,37 @@ function registerChild(dir: string): void {
 }
 
 /**
+ * Return once a write into `subtasks/` reaches directory watches.
+ *
+ * macOS only: libuv runs every directory watch in the process through one FSEvents stream and
+ * restarts it asynchronously each time a watch is added, so a write that lands during the
+ * restart is never reported (Linux inotify has no such window). The task watcher adds several
+ * directory watches while it arms. This keeps one more watch open for the rest of the test and
+ * writes a probe the task watcher ignores (a `.worker` mirror name) until that watch reports
+ * it; from then on the shared stream, the gateway's `subtasks/` watch included, is live.
+ */
+async function untilSubtasksWatchLive(t: TestContext, taskDir: string): Promise<void> {
+  const dir = path.join(taskDir, 'subtasks');
+  const probe = `watch-probe${WORKER_MIRROR_SUFFIX}`;
+  let seen = false;
+  const watcher = watch(dir, (_event, name) => {
+    if (name === probe) seen = true;
+  });
+  t.after(() => watcher.close());
+  let wroteAt = Number.NEGATIVE_INFINITY;
+  const deadline = performance.now() + 10_000;
+  while (!seen) {
+    assert.ok(performance.now() < deadline, `no directory watch event for ${dir}`);
+    if (performance.now() - wroteAt >= 10) {
+      writeFileSync(path.join(dir, probe), '');
+      wroteAt = performance.now();
+    }
+    await clock.turn();
+  }
+  rmSync(path.join(dir, probe));
+}
+
+/**
  * Register the child once and wait for the watcher to report it.
  *
  * One write is enough: the watch subject is the `subtasks/` DIRECTORY, so a file
@@ -257,7 +290,8 @@ function registerChild(dir: string): void {
  * retry loop because the watch was registered on the not-yet-existing
  * `index.json` path, which only fsevents replays.
  */
-async function registerChildAndWait(dir: string, label: string): Promise<Emitted> {
+async function registerChildAndWait(t: TestContext, dir: string, label: string): Promise<Emitted> {
+  await untilSubtasksWatchLive(t, dir);
   registerChild(dir);
   // The initial parent signal can also include this child. Wait for the
   // child-driven report whose parentChecklist contract these tests verify.
@@ -268,6 +302,61 @@ async function registerChildAndWait(dir: string, label: string): Promise<Emitted
   );
 }
 
+/** How much faster than real time the production timers run. */
+const CLOCK_SPEEDUP = 20;
+/** Largest single clock step, so native events still land between debounce resets. */
+const CLOCK_MAX_STEP_MS = 25;
+
+interface WatcherTestClock {
+  /** Arm a watch with production timers held, then drain chokidar's ≤1000 ms startup throttles. */
+  arm<T>(start: () => Promise<T>): Promise<T>;
+  /** One event-loop turn, after which the clock catches up on the real time that passed. */
+  turn(): Promise<void>;
+  /** Turn until the clock has moved `ms`. */
+  pass(ms: number): Promise<void>;
+}
+
+/**
+ * Production timers (chokidar throttles, the 1 s watcher debounce, the 200 ms publication
+ * cadence) run on one mocked clock for the whole test, never reset midway: a chokidar throttle
+ * whose clear-timer is dropped suppresses that path's events for good. Native filesystem events
+ * arrive in real time, and the clock moves at most CLOCK_MAX_STEP_MS per turn, so writes that
+ * land within a debounce window still coalesce as they do in production.
+ */
+function watcherTestClock(t: TestContext): WatcherTestClock {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  // Fire what is still pending before the runner resets the mock and drops it: module-level
+  // schedulers (the resource publication cadence) would otherwise stay "scheduled" for good.
+  t.after(() => t.mock.timers.runAll());
+  let realAt = performance.now();
+  let elapsedMs = 0;
+  const turn = async () => {
+    await nextTurn();
+    const now = performance.now();
+    const step = Math.min(CLOCK_MAX_STEP_MS, Math.floor((now - realAt) * CLOCK_SPEEDUP));
+    if (step < 1) return;
+    realAt = now;
+    elapsedMs += step;
+    t.mock.timers.tick(step);
+  };
+  return {
+    async arm(start) {
+      const value = await start();
+      t.mock.timers.tick(1001);
+      elapsedMs += 1001;
+      realAt = performance.now();
+      return value;
+    },
+    turn,
+    async pass(ms) {
+      const until = elapsedMs + ms;
+      while (elapsedMs < until) await turn();
+    },
+  };
+}
+
+let clock: WatcherTestClock;
+
 /**
  * Wait out the watcher's debounce twice over, then report how many updates landed.
  * Asserting that a SECOND update never arrives needs a quiet window — there is no
@@ -275,7 +364,7 @@ async function registerChildAndWait(dir: string, label: string): Promise<Emitted
  * (1s) rather than a race against it.
  */
 async function emissionsAfterQuietPeriod(): Promise<number> {
-  await new Promise((resolve) => setTimeout(resolve, 2_500));
+  await clock.pass(2_500);
   return emitted.length;
 }
 
@@ -291,7 +380,7 @@ async function waitFor(
   while (Date.now() < deadline) {
     const match = emitted.find(predicate);
     if (match) return match;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await clock.turn();
   }
   throw new Error(
     `timed out waiting for ${label}; emitted ${emitted.length} update(s): ${JSON.stringify(
@@ -312,15 +401,16 @@ function childProgressOf(entry: Emitted) {
 }
 
 test('the watcher discovers a child unit registered mid-run and emits its marks', async (t) => {
+  clock = watcherTestClock(t);
   useIds('discovery');
   const root = writeTaskDir();
   emitted.length = 0;
   try {
-    await withWatcherClock(t, () => watchSlot(SLOT_ID, { runId: RUN_ID }));
+    await clock.arm(() => watchSlot(SLOT_ID, { runId: RUN_ID }));
 
     // The registry appears only when the worker runs `mark sub start`: the watch
     // must pick it up without a re-dispatch.
-    const registered = await registerChildAndWait(taskDirAbs(), 'the child registration update');
+    const registered = await registerChildAndWait(t, taskDirAbs(), 'the child registration update');
     // A child-driven update carries the parent checklist so the acceptance rule
     // can place it, and it is never a WORKER_SIGNAL — the child does not drive
     // the run's lifecycle.
@@ -370,6 +460,7 @@ test('the watcher discovers a child unit registered mid-run and emits its marks'
 });
 
 test('a corrupt child registry is reported at error level, and the watch survives it', async (t) => {
+  clock = watcherTestClock(t);
   useIds('corrupt-registry');
   const root = writeTaskDir();
   emitted.length = 0;
@@ -379,8 +470,8 @@ test('a corrupt child registry is reported at error level, and the watch survive
     errors.push(args.map(String).join(' '));
   };
   try {
-    await withWatcherClock(t, () => watchSlot(SLOT_ID, { runId: RUN_ID }));
-    await registerChildAndWait(taskDirAbs(), 'the child registration update');
+    await clock.arm(() => watchSlot(SLOT_ID, { runId: RUN_ID }));
+    await registerChildAndWait(t, taskDirAbs(), 'the child registration update');
 
     // `mark sub` is the registry's only writer, so a file that does not parse is
     // a real fault. The watch must not die, and the operator must be able to see
@@ -393,7 +484,7 @@ test('a corrupt child registry is reported at error level, and the watch survive
       progress: errors.find((line) => line.includes('progress read failed')),
     });
     while (Date.now() < deadline && !(seen().registry && seen().progress)) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await clock.turn();
     }
     const { registry, progress } = seen();
     assert.ok(registry, `expected a registry error report; saw ${JSON.stringify(errors)}`);
@@ -410,6 +501,7 @@ test('a corrupt child registry is reported at error level, and the watch survive
     // without a re-dispatch.
     emitted.length = 0;
     const recovered = await registerChildAndWait(
+      t,
       taskDirAbs(),
       'the update after the registry is repaired',
     );
@@ -422,6 +514,7 @@ test('a corrupt child registry is reported at error level, and the watch survive
 });
 
 test('a child registered after the watch is armed, with subtasks/ empty, is observed', async (t) => {
+  clock = watcherTestClock(t);
   useIds('arm-then-register');
   // The regression this guards: the watch used to be registered on the
   // not-yet-existing `subtasks/index.json` path. fsevents replays that creation,
@@ -431,11 +524,11 @@ test('a child registered after the watch is armed, with subtasks/ empty, is obse
   const root = writeTaskDir({ withSubtasksDir: true });
   emitted.length = 0;
   try {
-    await withWatcherClock(t, () => watchSlot(SLOT_ID, { runId: RUN_ID }));
+    await clock.arm(() => watchSlot(SLOT_ID, { runId: RUN_ID }));
     // Armed, and the directory is real but empty: nothing has been reported yet.
     assert.deepEqual(emitted, []);
 
-    const observed = await registerChildAndWait(taskDirAbs(), 'the first registration');
+    const observed = await registerChildAndWait(t, taskDirAbs(), 'the first registration');
     assert.equal(observed.parentChecklist, 'CHECKLIST.md');
     assert.equal(childProgressOf(observed)?.id, 'perps-review');
     assert.equal(childProgressOf(observed)?.progress.totalSteps, 2);
@@ -446,6 +539,7 @@ test('a child registered after the watch is armed, with subtasks/ empty, is obse
 });
 
 test('a child registered when subtasks/ did not exist at arm time is observed', async (t) => {
+  clock = watcherTestClock(t);
   useIds('arm-without-dir');
   // `subtasks/` appears only with the first `mark sub start`. The gateway creates
   // it before attaching (both watch primitives observe a file through its parent),
@@ -455,12 +549,12 @@ test('a child registered when subtasks/ did not exist at arm time is observed', 
   emitted.length = 0;
   try {
     assert.equal(existsSync(path.join(taskDirAbs(), 'subtasks')), false);
-    await withWatcherClock(t, () => watchSlot(SLOT_ID, { runId: RUN_ID }));
+    await clock.arm(() => watchSlot(SLOT_ID, { runId: RUN_ID }));
     // The observer created the contract directory and wrote nothing into it.
     assert.equal(existsSync(path.join(taskDirAbs(), 'subtasks')), true);
     assert.deepEqual(readdirSync(path.join(taskDirAbs(), 'subtasks')), []);
 
-    const observed = await registerChildAndWait(taskDirAbs(), 'the first registration');
+    const observed = await registerChildAndWait(t, taskDirAbs(), 'the first registration');
     assert.equal(observed.parentChecklist, 'CHECKLIST.md');
   } finally {
     await unwatchSlot(SLOT_ID);
@@ -468,7 +562,8 @@ test('a child registered when subtasks/ did not exist at arm time is observed', 
   }
 });
 
-test('a registry that already exists when the watch arms is picked up with no further write', async () => {
+test('a registry that already exists when the watch arms is picked up with no further write', async (t) => {
+  clock = watcherTestClock(t);
   useIds('registry-before-arm');
   // A gateway restart mid-run, or a worker that registered before the watch was
   // set up: no filesystem event will ever describe it, so setup reads it once.
@@ -476,7 +571,7 @@ test('a registry that already exists when the watch arms is picked up with no fu
   registerChild(taskDirAbs());
   emitted.length = 0;
   try {
-    await watchSlot(SLOT_ID, { runId: RUN_ID });
+    await clock.arm(() => watchSlot(SLOT_ID, { runId: RUN_ID }));
     const observed = await waitFor(
       'the setup read of an existing registry',
       (entry) => childProgressOf(entry)?.id === 'perps-review',
@@ -500,6 +595,7 @@ test('a registry that already exists when the watch arms is picked up with no fu
     );
 
     // And the watch is live afterwards: a child mark still arrives, exactly once.
+    await untilSubtasksWatchLive(t, taskDirAbs());
     emitted.length = 0;
     writeFileSync(
       path.join(taskDirAbs(), 'subtasks', 'perps-review.md'),
@@ -521,7 +617,8 @@ test('a registry that already exists when the watch arms is picked up with no fu
   }
 });
 
-test('a registry with two units still yields exactly one progress update', async () => {
+test('a registry with two units still yields exactly one progress update', async (t) => {
+  clock = watcherTestClock(t);
   useIds('two-units-one-update');
   // One update describes the whole projection: both children hang off this
   // checklist and arrive inside it. Emitting per registered unit would make a
@@ -530,7 +627,7 @@ test('a registry with two units still yields exactly one progress update', async
   registerTwoChildren(taskDirAbs());
   emitted.length = 0;
   try {
-    await watchSlot(SLOT_ID, { runId: RUN_ID });
+    await clock.arm(() => watchSlot(SLOT_ID, { runId: RUN_ID }));
     const observed = await waitFor(
       'the setup read of a two-unit registry',
       (entry) => childProgressOf(entry)?.id === 'perps-review',
@@ -552,13 +649,17 @@ test('a registry with two units still yields exactly one progress update', async
 
 // Observe the actual batched resource.changed payload, not a publication helper.
 async function publicationTurn(): Promise<void> {
-  const until = Date.now() + 240; // progress publication cadence is 200ms.
-  while (Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 10));
+  await clock.pass(240); // progress publication cadence is 200ms.
 }
 function changedKeyIds(keys: ResourceKey[]): string[] {
   return [...new Set(keys.map((key) => resourceKeyId(key)))].sort();
 }
-async function withResourceWatch(suffix: string, work: (keys: ResourceKey[]) => Promise<void>) {
+async function withResourceWatch(
+  t: TestContext,
+  suffix: string,
+  work: (keys: ResourceKey[]) => Promise<void>,
+) {
+  clock = watcherTestClock(t);
   useIds(suffix);
   resourceContext = true;
   const root = writeTaskDir();
@@ -568,21 +669,23 @@ async function withResourceWatch(suffix: string, work: (keys: ResourceKey[]) => 
   });
   try {
     emitted.length = 0;
-    await watchSlot(SLOT_ID, {
-      runId: RUN_ID,
-      contexts: [
-        {
-          id: 'worker',
-          role: 'primary',
-          label: 'Worker',
-          status: 'working',
-          slotId: SLOT_ID,
-          runId: RUN_ID,
-          taskFile: path.join(taskDirAbs(), 'TASK.md'),
-          signalFile: path.join(taskDirAbs(), 'SIGNAL.json'),
-        },
-      ],
-    });
+    await clock.arm(() =>
+      watchSlot(SLOT_ID, {
+        runId: RUN_ID,
+        contexts: [
+          {
+            id: 'worker',
+            role: 'primary',
+            label: 'Worker',
+            status: 'working',
+            slotId: SLOT_ID,
+            runId: RUN_ID,
+            taskFile: path.join(taskDirAbs(), 'TASK.md'),
+            signalFile: path.join(taskDirAbs(), 'SIGNAL.json'),
+          },
+        ],
+      }),
+    );
     await publicationTurn();
     keys.length = 0;
     emitted.length = 0;
@@ -603,8 +706,8 @@ function expectedWatchKeys(): ResourceKey[] {
   ];
 }
 
-test('actual slot checklist write publishes exact run/context progress and slot keys', async () => {
-  await withResourceWatch('resource-checklist', async (keys) => {
+test('actual slot checklist write publishes exact run/context progress and slot keys', async (t) => {
+  await withResourceWatch(t, 'resource-checklist', async (keys) => {
     writeFileSync(
       path.join(taskDirAbs(), 'CHECKLIST.md'),
       PARENT_MARKDOWN.replace('- [ ]', '- [x]'),
@@ -621,8 +724,8 @@ test('actual slot checklist write publishes exact run/context progress and slot 
 });
 
 for (const lifecycle of ['busy', 'manual'] as const)
-  test(`startup restores verified progress for a live worker in a ${lifecycle} slot`, async () => {
-    await withResourceWatch(`restart-progress-${lifecycle}`, async () => {
+  test(`startup restores verified progress for a live worker in a ${lifecycle} slot`, async (t) => {
+    await withResourceWatch(t, `restart-progress-${lifecycle}`, async () => {
       const params = { slotId: SLOT_ID, runId: RUN_ID, contextId: 'worker' };
       await unwatchSlot(SLOT_ID);
       assert.throws(() => assertLiveSlotProgressObservationAdmitted(params), {
@@ -630,7 +733,7 @@ for (const lifecycle of ['busy', 'manual'] as const)
       });
       slotLifecycle = lifecycle;
       try {
-        await startWatchingActiveSlots();
+        await clock.arm(() => startWatchingActiveSlots());
       } finally {
         slotLifecycle = 'busy';
       }
@@ -652,8 +755,8 @@ for (const lifecycle of ['busy', 'manual'] as const)
     });
   });
 
-test('actual slot signal-only timing mark publishes exact progress and slot keys', async () => {
-  await withResourceWatch('resource-signal', async (keys) => {
+test('actual slot signal-only timing mark publishes exact progress and slot keys', async (t) => {
+  await withResourceWatch(t, 'resource-signal', async (keys) => {
     const checkedAt = '2026-10-24T00:01:00.000Z';
     writeFileSync(
       path.join(taskDirAbs(), 'SIGNAL.json'),

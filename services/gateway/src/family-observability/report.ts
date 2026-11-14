@@ -56,6 +56,7 @@ export async function generateFamilyReport(
     if (cached) return cached;
   }
 
+  let timeout: NodeJS.Timeout | undefined;
   try {
     const cfg = getLLMConfig();
     const prompt = [
@@ -74,9 +75,9 @@ export async function generateFamilyReport(
         userPrompt: prompt,
         maxTokens: 1200,
       }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('family report generation timed out')), 30000),
-      ),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('family report generation timed out')), 30000);
+      }),
     ]);
     const parsed = JSON.parse(result.text) as {
       summary: string;
@@ -109,5 +110,8 @@ export async function generateFamilyReport(
     // the gateway restarts. Returning the fallback unchanged means the next
     // call retries the LLM rather than serving the stale failure.
     return buildFallbackReport(snapshot, error instanceof Error ? error.message : String(error));
+  } finally {
+    // A settled call must not leave its 30 s deadline holding the event loop open.
+    clearTimeout(timeout);
   }
 }

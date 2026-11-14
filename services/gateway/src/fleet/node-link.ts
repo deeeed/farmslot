@@ -420,6 +420,28 @@ async function invokeUnqueued(
 }
 
 const intentPrunes = new Map<string, number>();
+/** Intents read and pruned at once; a full directory holds 4096. */
+const INTENT_PRUNE_BATCH = 32;
+
+async function pruneSettledIntent(file: string, now: number): Promise<void> {
+  const value: unknown = JSON.parse(await readFile(file, 'utf8'));
+  if (!isIntent(value))
+    throw new NodeLinkFailure('INTENT_CORRUPT', 'Cannot prune an invalid intent.');
+  const receipt = value.receipt;
+  if (
+    nodeLinkCommandDeadline(value.command.commandId) !== value.command.expiresAt ||
+    (value.sent && !receipt?.closeoutConfirmed) ||
+    Math.max(value.command.expiresAt, receipt?.settledAt ?? value.command.expiresAt) +
+      NODE_LINK_RECEIPT_RETENTION_MS >=
+      now ||
+    pendingInvocations.has(
+      invocationKey({ commandId: value.command.commandId, target: value.command.target }),
+    )
+  )
+    return;
+  await unlink(file);
+}
+
 async function pruneSettledIntents(
   directory: string,
   currentFile: string,
@@ -428,25 +450,20 @@ async function pruneSettledIntents(
   const now = Date.now();
   if (!force && now - (intentPrunes.get(directory) ?? 0) < 30_000) return;
   intentPrunes.set(directory, now);
-  for (const entry of await readdir(directory)) {
-    const file = path.join(directory, entry);
-    if (file === currentFile || !/^[a-f0-9]{64}\.json$/.test(entry)) continue;
-    const value: unknown = JSON.parse(await readFile(file, 'utf8'));
-    if (!isIntent(value))
-      throw new NodeLinkFailure('INTENT_CORRUPT', 'Cannot prune an invalid intent.');
-    const receipt = value.receipt;
-    if (
-      nodeLinkCommandDeadline(value.command.commandId) !== value.command.expiresAt ||
-      (value.sent && !receipt?.closeoutConfirmed) ||
-      Math.max(value.command.expiresAt, receipt?.settledAt ?? value.command.expiresAt) +
-        NODE_LINK_RECEIPT_RETENTION_MS >=
-        now ||
-      pendingInvocations.has(
-        invocationKey({ commandId: value.command.commandId, target: value.command.target }),
-      )
-    )
-      continue;
-    await unlink(file);
+  const files = (await readdir(directory))
+    .filter((entry) => /^[a-f0-9]{64}\.json$/.test(entry))
+    .map((entry) => path.join(directory, entry))
+    .filter((file) => file !== currentFile);
+  // Each batch settles completely before its first failure in file order is thrown, so no read
+  // or unlink is still running when the caller sees it, and no later batch starts.
+  for (let start = 0; start < files.length; start += INTENT_PRUNE_BATCH) {
+    const results = await Promise.allSettled(
+      files.slice(start, start + INTENT_PRUNE_BATCH).map((file) => pruneSettledIntent(file, now)),
+    );
+    const failed = results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    );
+    if (failed) throw failed.reason;
   }
 }
 
