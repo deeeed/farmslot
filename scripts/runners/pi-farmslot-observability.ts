@@ -193,7 +193,6 @@ export default async function (pi: {
             ? { provider: selectedModel.provider }
             : {}),
         };
-        console.error('[farmslot-pi] request', JSON.stringify(record));
         pi.appendEntry?.('farmslot-model-request', record);
       },
       process.env.FARMSLOT_THINKING,
