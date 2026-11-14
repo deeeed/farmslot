@@ -1,0 +1,1 @@
+- A tmux restore that cannot read its window's panes now reports the tmux exit code, its stderr and the rows tmux printed, instead of claiming the restored window "has no panes" for every transport or server failure.
