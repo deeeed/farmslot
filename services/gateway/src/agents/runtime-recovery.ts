@@ -208,7 +208,7 @@ async function tmuxWindowExists(
 }
 
 /** `rows` counts the lines tmux printed, before the session and window-name filters. */
-type TargetPaneRead = {
+export type TargetPaneRead = {
   exitCode: number;
   stderr: string;
   rows: number;
@@ -216,7 +216,7 @@ type TargetPaneRead = {
 };
 
 /** Why a pane read produced nothing: the tmux exit code, its stderr, and rows it did print. */
-function paneReadDetail(read: TargetPaneRead): string {
+export function paneReadDetail(read: TargetPaneRead): string {
   const parts = [`tmux exit ${read.exitCode}`, `rows ${read.rows}`];
   if (read.stderr) parts.push(read.stderr);
   return parts.join(', ');
@@ -240,8 +240,10 @@ async function readTargetPanes(
   // tmux stderr is kept: a failed read used to be indistinguishable from a window
   // with no panes, which reported every transport or server failure as "no panes".
   const stderr = result.stderr.trim();
-  if (result.exitCode !== 0) return { exitCode: result.exitCode, stderr, rows: 0, panes: [] };
+  // A timed-out or failed read keeps whatever rows it did deliver: reporting `rows 0`
+  // for output the execution layer preserved would contradict the diagnostic itself.
   const rows = result.stdout.split('\n').filter((line) => line.trim()).length;
+  if (result.exitCode !== 0) return { exitCode: result.exitCode, stderr, rows, panes: [] };
   return {
     exitCode: 0,
     stderr,

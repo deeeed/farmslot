@@ -9,7 +9,7 @@ import { after, before, test } from 'node:test';
 import { poolDirectory } from '../core/config.js';
 import { createRun, deleteRun, getRun, updateRun, updateRunAgentContexts } from '../runs/store.js';
 
-import { restoreTmuxWorker } from './runtime-recovery.js';
+import { paneReadDetail, restoreTmuxWorker } from './runtime-recovery.js';
 
 // Real tmux only on the test runner's private server (scripts/quality/run-tsx-tests.mjs):
 // no $TMUX, and plain `tmux` (from the code under test) resolving to that socket.
@@ -131,6 +131,28 @@ before(() => {
 after(() => {
   killTmuxSession();
   rmSync(testPoolFile, { force: true });
+});
+
+test('pane-read detail reports the exit code, the rows printed and tmux stderr', () => {
+  // A failed read that still delivered rows must say so: the count is what tmux
+  // printed before the session and window-name filters, not what survived them.
+  assert.equal(
+    paneReadDetail({
+      exitCode: 1,
+      stderr: "can't find window: dev",
+      rows: 0,
+      panes: [],
+    }),
+    "tmux exit 1, rows 0, can't find window: dev",
+  );
+  assert.equal(
+    paneReadDetail({ exitCode: 124, stderr: '', rows: 2, panes: [] }),
+    'tmux exit 124, rows 2',
+  );
+  assert.equal(
+    paneReadDetail({ exitCode: 0, stderr: '', rows: 1, panes: [] }),
+    'tmux exit 0, rows 1',
+  );
 });
 
 test('restore-window preserves working status for an already-live runner', async (t) => {
