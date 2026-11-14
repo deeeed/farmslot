@@ -5,7 +5,7 @@ import ts from 'typescript';
 
 import { isFragmentPath } from '../release/changelog-fragments.mjs';
 
-import { affectedWorkspaceNames } from './workspace-test-targets.mjs';
+import { affectedWorkspaceNames, runtimeImpactFiles } from './workspace-test-targets.mjs';
 
 export const SOURCE_FILE = /\.[cm]?[jt]sx?$/;
 export const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
@@ -44,13 +44,14 @@ export function sourceReferences(source, file) {
   let dynamic = false;
   let runtimeRead = false;
   function visit(node) {
-    if (ts.isStringLiteralLike(node)) references.add(node.text);
     if (
       (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
       node.moduleSpecifier &&
       ts.isStringLiteralLike(node.moduleSpecifier)
-    )
+    ) {
       modules.add(node.moduleSpecifier.text);
+      references.add(node.moduleSpecifier.text);
+    }
     if (ts.isCallExpression(node)) {
       const expression = node.expression;
       const called = ts.isIdentifier(expression)
@@ -58,16 +59,33 @@ export function sourceReferences(source, file) {
         : ts.isPropertyAccessExpression(expression)
           ? expression.name.text
           : '';
-      if (['readFile', 'readFileSync', 'readdir', 'readdirSync'].includes(called))
+      if (['readFile', 'readFileSync', 'readdir', 'readdirSync'].includes(called)) {
         runtimeRead = true;
+        const paths = (part) => {
+          if (ts.isStringLiteralLike(part) && /\.[a-z]+$/i.test(part.text))
+            references.add(part.text);
+          ts.forEachChild(part, paths);
+        };
+        if (node.arguments[0]) paths(node.arguments[0]);
+      }
       const moduleCall =
         expression.kind === ts.SyntaxKind.ImportKeyword ||
         (ts.isIdentifier(expression) && expression.text === 'require');
-      if (moduleCall && node.arguments[0] && ts.isStringLiteralLike(node.arguments[0]))
+      if (moduleCall && node.arguments[0] && ts.isStringLiteralLike(node.arguments[0])) {
         modules.add(node.arguments[0].text);
+        references.add(node.arguments[0].text);
+      }
       if (moduleCall && (!node.arguments[0] || !ts.isStringLiteralLike(node.arguments[0])))
         dynamic = true;
     }
+    if (
+      ts.isNewExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'URL' &&
+      node.arguments?.[0] &&
+      ts.isStringLiteralLike(node.arguments[0])
+    )
+      references.add(node.arguments[0].text);
     ts.forEachChild(node, visit);
   }
   visit(parsed);
@@ -84,12 +102,16 @@ export function buildSourceGraph(files, workspaces, readSource) {
     if (dynamic || (runtimeRead && TEST_FILE.test(file))) opaque.add(file);
     for (const reference of references) {
       let dependency;
-      if (reference.startsWith('.'))
-        dependency = resolveSource(
-          path.posix.normalize(path.posix.join(path.posix.dirname(file), reference)),
-          known,
+      if (reference.startsWith('.')) {
+        const candidate = path.posix.normalize(
+          path.posix.join(path.posix.dirname(file), reference),
         );
-      else if (reference.startsWith('@farmslot/')) {
+        dependency = modules.has(reference)
+          ? resolveSource(candidate, known)
+          : known.has(candidate)
+            ? candidate
+            : undefined;
+      } else if (modules.has(reference) && reference.startsWith('@farmslot/')) {
         const workspace = workspaces.find(
           ({ name }) => reference === name || reference.startsWith(`${name}/`),
         );
@@ -118,11 +140,12 @@ export function buildSourceGraph(files, workspaces, readSource) {
 }
 
 export function selectAffectedTests({ files, changed, workspaces, graph }) {
-  const affected = affectedWorkspaceNames(workspaces, changed);
+  const runtimeChanges = runtimeImpactFiles(changed);
+  const affected = affectedWorkspaceNames(workspaces, runtimeChanges);
   const all = changed === null;
   const widened = new Set();
   // Runtime assets and config are not described reliably by static imports.
-  for (const file of changed ?? []) {
+  for (const file of runtimeChanges ?? []) {
     const owner = ownerOf(file, workspaces);
     if (owner && isFragmentPath(file, owner.dir)) continue;
     if (!SOURCE_FILE.test(file) || !files.includes(file)) {
@@ -153,7 +176,7 @@ export function selectAffectedTests({ files, changed, workspaces, graph }) {
     }
   }
   for (const file of graph.unresolved ?? []) {
-    if (reached.has(file)) {
+    if (reached.has(file) && !TEST_FILE.test(file)) {
       const owner = ownerOf(file, workspaces);
       if (owner) widened.add(owner.name);
     }

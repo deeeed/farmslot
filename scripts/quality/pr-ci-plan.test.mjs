@@ -70,6 +70,25 @@ test('full workspace inventory has one test owner and splits the critical app su
   assert.ok(!plan.selected.includes('packages/cli/test/live/doctor.test.ts'));
   assert.ok(!plan.selected.includes('packages/protocol/src/contracts/review-workspace.test.ts'));
   const base = { root, workspaces, selected: [] };
+  const controls = createPrPlan({
+    ...base,
+    changed: ['.github/workflows/farmslot-quality.yml', 'scripts/quality/run-tsx-tests.mjs'],
+  });
+  const controlTasks = controls.jobs.flatMap(({ tasks }) => tasks);
+  assert.equal(controls.jobs.filter(({ id }) => id.startsWith('gateway-')).length, 1);
+  assert.ok(controls.selected.includes('packages/run-bundle/src/retained-locks.test.ts'));
+  assert.ok(controlTasks.some(({ id }) => id.startsWith('command-center-ui-')));
+  assert.ok(!controlTasks.some(({ id }) => id.startsWith('tests-')));
+  const mixed = createPrPlan({
+    ...base,
+    changed: ['scripts/quality/run-tsx-tests.mjs', 'apps/command-center/ui/src/utils/url-state.ts'],
+  });
+  assert.ok(mixed.jobs.some(({ id }) => id.startsWith('run-bundle-smoke-')));
+  const offline = mixed.jobs.find(({ tasks }) =>
+    tasks.some(({ id }) => id === 'guard-offline-first reads'),
+  );
+  assert.equal(offline.tasks.length, 1);
+
   const configPlan = createPrPlan({ ...base, changed: ['apps/command-center/tsconfig.base.json'] });
   for (const name of ['gateway', 'node', 'command-center-ui', 'cli', 'protocol', 'recipe-runner'])
     assert.ok(

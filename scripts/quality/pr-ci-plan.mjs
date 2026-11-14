@@ -7,6 +7,8 @@ import { ownerOf, readGraph, selectAffectedTests } from './affected-tests.mjs';
 import { ciParitySteps } from './ci-local.mjs';
 import {
   affectedWorkspaceNames,
+  isCiControlFile,
+  runtimeImpactFiles,
   workspaceSuiteFiles,
   workspaceTestCatalog,
 } from './workspace-test-targets.mjs';
@@ -41,6 +43,21 @@ function command(id, args, seconds = 20, cwd = '.') {
 export function createPrPlan({ root, changed, workspaces, selected, durations = {} }) {
   const eligible = workspaceSuiteFiles(workspaces, root);
   selected = selected.filter((file) => !ownerOf(file, workspaces) || eligible.has(file));
+  const impact = runtimeImpactFiles(changed);
+  const affected = affectedWorkspaceNames(workspaces, impact);
+  for (const file of selected) {
+    const owner = ownerOf(file, workspaces);
+    if (owner) affected.add(owner.name);
+  }
+  const ciOnly = changed?.length > 0 && impact.length === 0;
+  if (changed?.some(isCiControlFile))
+    selected.push(
+      'services/gateway/src/projects/repo-root.test.ts',
+      'services/gateway/src/methods/acceptance-evidence.rpc.test.ts',
+      'services/gateway/src/methods/acceptance-evidence.test.ts',
+      'apps/command-center/ui/src/utils/url-state.test.ts',
+      'packages/run-bundle/src/retained-locks.test.ts',
+    );
   const parity = ciParitySteps(changed, root);
   // Keep external-input guards in the plan even when imports cannot express their
   // template trigger. The gateway shard then owns the forced file exactly once.
@@ -51,7 +68,6 @@ export function createPrPlan({ root, changed, workspaces, selected, durations = 
       selected.push('packages/agent-runtime/test/deterministic-checks.test.cjs');
   }
   selected = [...new Set(selected)];
-  const affected = affectedWorkspaceNames(workspaces, changed);
   const tasks = [];
   const jobs = [];
   const assigned = new Set();
@@ -84,15 +100,17 @@ export function createPrPlan({ root, changed, workspaces, selected, durations = 
       chunk.forEach((file) => assigned.add(file));
     }
   }
-  splitTests('gateway', 'services/gateway', 8, 'tsconfig.json', 4);
+  splitTests('gateway', 'services/gateway', ciOnly ? 1 : 8, 'tsconfig.json', 4);
   splitTests(
     'command-center-ui',
     'apps/command-center/ui',
-    4,
+    ciOnly ? 1 : 4,
     'ui/tsconfig.json',
     2,
     'apps/command-center',
   );
+  if (changed?.some(isCiControlFile) && !affected.has('@farmslot/run-bundle'))
+    splitTests('run-bundle-smoke', 'packages/run-bundle', 1, 'tsconfig.json', 2);
   for (const workspace of workspaces) {
     if (!affected.has(workspace.name)) continue;
     const pkg = JSON.parse(readFileSync(path.join(root, workspace.dir, 'package.json'), 'utf8'));
@@ -301,15 +319,21 @@ export function createPrPlan({ root, changed, workspaces, selected, durations = 
   }
   if (selected.some((file) => !assigned.has(file)))
     throw new Error('Selected tests lack a CI owner');
+  // Keep the expensive whole-program analysis independent of cheap guards.
+  // Adding even one small task to it spends the PR's remaining wall budget.
+  const isolated = tasks.filter((task) => task.seconds > 150);
+  for (const [index, task] of isolated.entries())
+    jobs.push({ id: `checks-${index + 1}`, tasks: [task] });
+  const grouped = tasks.filter((task) => task.seconds <= 150);
   for (const [index, chunk] of balance(
-    tasks,
+    grouped,
     Math.min(
-      8,
-      Math.max(1, Math.ceil(tasks.reduce((total, task) => total + task.seconds, 0) / 150)),
+      8 - isolated.length,
+      Math.max(1, Math.ceil(grouped.reduce((total, task) => total + task.seconds, 0) / 150)),
     ),
     (task) => task.seconds,
   ).entries())
-    jobs.push({ id: `checks-${index + 1}`, tasks: chunk });
+    jobs.push({ id: `checks-${isolated.length + index + 1}`, tasks: chunk });
   return { schemaVersion: 1, changed, selected, jobs };
 }
 

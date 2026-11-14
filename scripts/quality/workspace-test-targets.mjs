@@ -26,6 +26,21 @@ const SHARED_INPUTS = new Set([
   '.github/actions/ci-setup/action.yml',
 ]);
 
+// CI implementation changes exercise their own contracts and runtime bootstrap
+// smokes on PRs. The full workspace suites are owned by main/merge/nightly.
+export function isCiControlFile(file) {
+  return (
+    file.startsWith('.github/workflows/') ||
+    file.startsWith('.github/actions/') ||
+    file.startsWith('scripts/quality/') ||
+    ['.gitignore', '.prettierrc.json', '.prettierignore', 'eslint.config.mjs'].includes(file)
+  );
+}
+
+export function runtimeImpactFiles(files) {
+  return files === null ? null : files.filter((file) => !isCiControlFile(file));
+}
+
 export function affectedWorkspaceNames(workspaces, changedFiles) {
   changedFiles =
     changedFiles?.filter((file) => !workspaces.some(({ dir }) => isFragmentPath(file, dir))) ??

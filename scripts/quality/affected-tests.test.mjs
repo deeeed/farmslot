@@ -75,3 +75,27 @@ test('release notes do not expand a narrow source change to the full consumer su
   ]);
   assert.deepEqual(select(['packages/lib/.changes/fix.md']), []);
 });
+
+test('descriptive paths in protocol metadata do not make UI files gateway dependencies', () => {
+  const input = {
+    'apps/app/src/panel.ts': 'export const panel = 1;',
+    'apps/app/src/panel.test.ts': "import './panel.js';",
+    'packages/lib/src/index.ts': "export const location = 'apps/app/src/panel.ts';",
+    'packages/lib/src/metadata.test.ts': "import './index.js';",
+  };
+  const files = Object.keys(input);
+  const graph = buildSourceGraph(files, workspaces, (file) => input[file]);
+  assert.deepEqual(
+    selectAffectedTests({ files, changed: ['apps/app/src/panel.ts'], workspaces, graph }),
+    ['apps/app/src/panel.test.ts'],
+  );
+});
+
+test('an unresolved temporary import in a selected test does not widen its whole workspace', () => {
+  assert.deepEqual(
+    select(['apps/app/src/model.test.ts'], {
+      'apps/app/src/model.test.ts': "import './model.js'; require('./temporary-fixture.js');",
+    }),
+    ['apps/app/src/model.test.ts'],
+  );
+});
