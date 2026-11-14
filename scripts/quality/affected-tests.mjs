@@ -100,6 +100,11 @@ export function buildSourceGraph(files, workspaces, readSource) {
   const reverse = new Map();
   const opaque = new Set();
   const unresolved = new Set();
+  // The renderer resolves these project inputs at runtime rather than importing them.
+  const reviewGoldens = 'services/gateway/src/review/templates-golden.test.ts';
+  if (known.has(reviewGoldens))
+    for (const name of ['review.md', 'review.static-code.md', 'review.full-live.md'])
+      add(`projects/farmslot-farm/templates/worker/${name}`, reviewGoldens);
   for (const file of files.filter((name) => SOURCE_FILE.test(name))) {
     const { references, modules, dynamic, runtimeRead } = sourceReferences(readSource(file), file);
     if (dynamic || (runtimeRead && TEST_FILE.test(file))) opaque.add(file);
