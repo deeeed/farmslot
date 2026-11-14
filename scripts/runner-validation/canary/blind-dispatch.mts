@@ -1,6 +1,6 @@
 // A single model/tool call through blind admission, on the fullflow stack's own slot and manifest.
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { copyFile, cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -8,6 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import {
   cancelledRunSlotHold,
   isTerminalRunStatus,
+  type EvalBlindTrial,
   type EvalExperimentCreateResult,
   type EvalTrialStartResult,
   type WorkerSessionHistoryGetResult,
@@ -163,9 +164,10 @@ export async function runBlindDispatch(options: BlindDispatchOptions): Promise<v
         'Blind dispatch did not reach a model/tool call within five minutes',
       );
       run = (await stack.call<{ run: Run }>('run.get', { runId: run.id })).run;
-      const isolation = run.engineState?.evalExperiment?.blind?.isolation;
+      const isolation: EvalBlindTrial['isolation'] =
+        run.engineState?.evalExperiment?.blind?.isolation;
       if (!referenceHidden && isolation?.verifiedAt) {
-        const probe = spawnSync(
+        const probe: SpawnSyncReturns<string> = spawnSync(
           '/usr/bin/sandbox-exec',
           [
             '-f',
