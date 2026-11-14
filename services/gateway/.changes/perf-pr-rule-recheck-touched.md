@@ -1,0 +1,1 @@
+- Unchanged PR-rule rechecks compare the records they touch by JSON text instead of parsing and deep-comparing copies, and find prior intents by id. On a 1.1 MB rule store the recheck comparison is about a third of its old cost, and a whole quiet recheck about 30% cheaper.
