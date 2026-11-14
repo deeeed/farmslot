@@ -41,6 +41,7 @@ import { assertStorageVolumePresent } from '../../core/storage-volume.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { farmCommandRootsForSlot } from '../../fleet/farm-paths.js';
 import { excludeSlotScaffolding } from '../../fleet/slot-scaffolding.js';
+import { waitForSlotGitIndex } from '../../host-services/parked-work.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
 import {
   assertNoOperatorCollision,
@@ -840,6 +841,7 @@ async function slotPrepareInner(
         throw new Error(`Replay branch creation failed: ${create.stderr || create.stdout}`);
       step('branch', `Created ${branch} after prepare failed before branch setup`);
     } else if (current !== branch) {
+      await waitForSlotGitIndex(vars, execOnSlot);
       const checkoutR = await mutateGit(
         `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)}`,
       );

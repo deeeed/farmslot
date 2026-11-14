@@ -11,6 +11,7 @@ import { registerHostOperations, withHostOperation } from '../observability/perf
 import { PARKED_WORK_PROGRAM } from './parked-work-program.js';
 
 const OPS = {
+  waitIndex: 'parkedWork.waitIndex',
   park: 'parkedWork.park',
   list: 'parkedWork.list',
   lookup: 'parkedWork.lookup',
@@ -28,6 +29,15 @@ export class ParkedWorkError extends GatewayMethodError {
     });
     this.name = 'ParkedWorkError';
   }
+}
+
+/** A replay checkout cannot overlap an index writer left by preceding Git work. */
+export async function waitForSlotGitIndex(
+  vars: SlotVars,
+  exec: Executor = execOnSlot,
+): Promise<void> {
+  if ((await request(vars, 'waitIndex', { slotId: vars.slotId }, exec)) !== true)
+    throw new ParkedWorkError('INVALID_METADATA', 'Git index settlement was not confirmed');
 }
 
 export interface ParkedSourceHead {
