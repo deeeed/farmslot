@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, unlink } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import net from 'node:net';
 import os from 'node:os';
@@ -38,7 +38,7 @@ async function fixture() {
   const requests: Request[] = [];
   const targets: Target[] = [{ deviceId: 'device-1', name: 'phone-1', generation: 1 }];
   const state = { connections: 0, targets, stall: false };
-  const server = net.createServer((socket) => {
+  const onConnection = (socket: net.Socket) => {
     state.connections++;
     sockets.add(socket);
     socket.on('close', () => sockets.delete(socket));
@@ -63,20 +63,27 @@ async function fixture() {
         }
       }
     });
-  });
+  };
+  let server = net.createServer(onConnection);
   cleanups.push(async () => {
     for (const socket of sockets) socket.destroy();
     if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
     await rm(root, { recursive: true, force: true });
   });
   await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+  const restart = async () => {
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    server = net.createServer(onConnection);
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+  };
   const session = createBrokerHudSession(socketPath, { IOS_SIMULATOR: 'phone-1' });
   cleanups.push(() => session.close());
   const show = () =>
     session.send('show-step-json-deferred', [
       JSON.stringify({ intent: 'Observe Perps', id: 'n1' }),
     ]);
-  return { state, requests, session, show };
+  return { state, requests, session, show, restart, socketPath };
 }
 
 test('reuses two broker sockets while resolving the target for every deferred update', async () => {
@@ -110,6 +117,23 @@ test('replaces the selected connection after runtime generation changes', async 
   state.targets[0].generation++;
   await show();
   assert.equal(state.connections, 3);
+});
+
+test('replaces cached sockets when the broker restarts with the same target generation', async () => {
+  const { state, requests, session, show, restart } = await fixture();
+  await show();
+  await restart();
+  await session.send('hide-step-deferred', [], 200);
+  assert.equal(state.connections, 4);
+  assert.equal(requests.filter((r) => r.action === 'hud-update').length, 2);
+});
+
+test('reports a disappearing broker socket as an unavailable target without submitting an update', async () => {
+  const { socketPath, session, show, requests } = await fixture();
+  await show();
+  await unlink(socketPath);
+  await assert.rejects(() => session.send('hide-step-deferred', [], 200), { code: 'NO_TARGET' });
+  assert.equal(requests.filter((r) => r.action === 'hud-update').length, 1);
 });
 
 test('refuses missing or ambiguous selected targets before sending the HUD update', async () => {

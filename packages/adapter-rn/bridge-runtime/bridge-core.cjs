@@ -1367,12 +1367,14 @@ function createBrokerHudSession(socketPath, env = process.env) {
   let discovery;
   let selected;
   let identity;
+  let brokerIdentity;
   let closed = false;
   let tail = Promise.resolve();
   function release() {
     discovery?.close();
     selected?.close();
     discovery = selected = identity = undefined;
+    brokerIdentity = undefined;
   }
   return {
     send(command, args, timeoutMs = 5000) {
@@ -1389,6 +1391,12 @@ function createBrokerHudSession(socketPath, env = process.env) {
       };
       const result = tail.then(async () => {
         try {
+          const socket = fs.statSync(socketPath, { bigint: true });
+          const currentBroker = `${socket.dev}:${socket.ino}:${socket.birthtimeNs}`;
+          if (brokerIdentity !== currentBroker) {
+            release();
+            brokerIdentity = currentBroker;
+          }
           discovery ??= await createBrokerClient(socketPath, '', remaining());
           const target = selectBrokerTarget(
             await readBrokerTargets(discovery, remaining(), env, { retainIdentity: true }),
@@ -1415,7 +1423,10 @@ function createBrokerHudSession(socketPath, env = process.env) {
           );
         } catch (error) {
           release();
-          const code = error?.code || classifyBridgeErrorMessage(error?.message);
+          const code =
+            error?.code === 'ENOENT'
+              ? BRIDGE_ERROR_CODES.NO_TARGET
+              : error?.code || classifyBridgeErrorMessage(error?.message);
           throw code ? coded(error, code) : error;
         }
       });
