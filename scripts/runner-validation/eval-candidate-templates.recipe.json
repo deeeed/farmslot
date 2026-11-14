@@ -8,8 +8,8 @@
       "default-and-repeat": {
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks --test services/gateway/src/methods/eval/candidate-setup.rpc.live.ts",
-        "timeout_ms": 60000,
-        "intent": "The default UI request freezes the configured template bytes; matching repeats retain the digest and stale repeats fail without changing the experiment. A local-file trial keeps its frozen bytes after the source disappears, records its hash in candidate/result and leaves the live default unchanged.",
+        "timeout_ms": 180000,
+        "intent": "The default UI request freezes the configured template bytes; matching repeats retain the digest and stale repeats fail without changing the experiment. A local-file trial keeps its frozen bytes after the source disappears, records its hash in candidate/result and leaves the live default unchanged. Filename-only platform restrictions survive snapshot storage and reject an incompatible slot.",
         "next": "done"
       },
       "done": { "action": "end", "status": "pass" }

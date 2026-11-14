@@ -338,8 +338,8 @@ test('trial-local snapshot leaves the live catalog and default unchanged', async
     path.join(root, 'templates/worker/fix-bug.md'),
     '# Live default\n\n- [ ] Keep live behavior.\n',
   );
-  const source = path.join(experiment, 'B1.md');
-  const markdown = '---\nplatforms: [core]\n---\n# Trial B1\n\n- [ ] Use the local candidate.\n';
+  const source = path.join(experiment, 'B1.core.md');
+  const markdown = '# Trial B1\n\n- [ ] Use the local candidate.\n';
   await writeFile(source, markdown);
   const vars = await loadProjectVars(name);
   const query = { flow: 'fix-bug', platform: 'core', runMode: 'autonomous' as const };
@@ -354,6 +354,7 @@ test('trial-local snapshot leaves the live catalog and default unchanged', async
   );
   assert.equal(candidate.templateContent, markdown);
   assert.equal(candidate.executionTemplate?.sourceId, 'eval-candidate');
+  assert.deepEqual(candidate.executionTemplate?.platforms, ['core']);
   assert.equal(candidate.axes.template?.hash, candidate.provenance?.contentHash);
   assert.ok(candidate.executionTemplate);
   const snapshot = path.join(experiment, 'candidate-template.md');
@@ -370,6 +371,7 @@ test('trial-local snapshot leaves the live catalog and default unchanged', async
     'Task writing uses the frozen bytes after the original file is removed.',
   );
   assert.equal(selected.reference.sha256, candidate.axes.template?.hash);
+  assert.deepEqual(selected.reference.platforms, ['core']);
   assert.deepEqual(await configuredExecutionTemplateOptions(vars, query), before);
   assert.deepEqual(await resolveConfiguredExecutionTemplateForSlot(vars, query), live);
   await assert.rejects(

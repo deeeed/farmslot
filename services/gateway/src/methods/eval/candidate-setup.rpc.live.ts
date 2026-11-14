@@ -167,12 +167,12 @@ test('eval RPC freezes the configured default and rejects a stale repeated strat
   });
   assert.equal(repeated.candidatePackage.axes.template?.hash, frozen?.sha256);
   // An experiment-local file is admitted without becoming a project catalog entry.
-  const localFile = path.join(artifacts, 'B1.md');
+  const localFile = path.join(artifacts, 'B1.core.md');
   const candidateMarkdown = '# Local B1\n\n- [ ] Use only the admitted experiment bytes.\n';
   await writeFile(localFile, candidateMarkdown);
   const local = await client.call<EvalTrialStartResult>('eval.trial.start', {
     ...params,
-    candidateTemplatePath: 'B1.md',
+    candidateTemplatePath: 'B1.core.md',
     trialId: 'local-B1',
     review: false,
   });
@@ -192,6 +192,15 @@ test('eval RPC freezes the configured default and rejects a stale repeated strat
     candidateTemplate: snapshot,
   });
   assert.equal(selected.markdown, candidateMarkdown);
+  assert.deepEqual(selected.reference.platforms, ['core']);
+  await assert.rejects(
+    resolveConfiguredExecutionTemplateForSlot(vars, {
+      ...slotQuery,
+      platform: 'ios',
+      candidateTemplate: snapshot,
+    }),
+    /incompatible/,
+  );
   assert.equal(selected.reference.sha256, local.candidatePackage.axes.template?.hash);
   assert.equal(
     (await resolveConfiguredExecutionTemplateForSlot(vars, slotQuery)).reference.sha256,

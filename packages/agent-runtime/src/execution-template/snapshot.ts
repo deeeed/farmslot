@@ -87,17 +87,21 @@ export interface CandidateExecutionTemplateInput {
 export function candidateExecutionTemplate(
   input: CandidateExecutionTemplateInput,
 ): SelectedExecutionTemplate & { markdown: string } {
-  const entry = inferTemplateMetadata({
-    absolutePath: input.path,
-    relativePath: input.relativePath,
-    source: {
-      id: 'eval-candidate',
-      kind: 'custom',
-      root: path.dirname(input.path),
-      layout: 'flow-tree',
-    },
-    text: input.markdown,
-  });
+  const entry = {
+    ...inferTemplateMetadata({
+      // Storage names must not change filename-derived platform metadata.
+      absolutePath: input.relativePath,
+      relativePath: input.relativePath,
+      source: {
+        id: 'eval-candidate',
+        kind: 'custom',
+        root: path.dirname(input.path),
+        layout: 'flow-tree',
+      },
+      text: input.markdown,
+    }),
+    path: input.path,
+  };
   if (!executionTemplateEntryCompatible(entry, input))
     throw new Error('Candidate template is incompatible with the trial flow, platform or domain.');
   return {

@@ -506,10 +506,10 @@ test('a worker task cannot claim the scripted-command contract to drop its gates
 
 test('hosted trial selects transported candidate bytes without changing the node catalog', (t) => {
   const { catalog } = qaCatalog(t, true);
-  const markdown = '---\nplatforms: [core]\n---\n# B1\n\n- [ ] Trial candidate.\n';
+  const markdown = '# B1\n\n- [ ] Trial candidate.\n';
   const selected = candidateExecutionTemplate({
-    path: '/experiment/B1.md',
-    relativePath: 'fix-bug/B1.md',
+    path: '/experiment/B1.core.md',
+    relativePath: 'fix-bug/B1.core.md',
     markdown,
     flow: 'fix-bug',
   });
@@ -526,6 +526,12 @@ test('hosted trial selects transported candidate bytes without changing the node
   assert.deepEqual(parseHostedTaskInitRequest(input), input);
   const trial = selectHostedTaskTemplate(catalog, input);
   assert.deepEqual(trial.sources, []);
+  assert.deepEqual(trial.selected.reference.platforms, ['core']);
+  assert.throws(
+    () =>
+      selectHostedTaskTemplate({ ...catalog, slot: { ...catalog.slot, platform: 'ios' } }, input),
+    /incompatible/,
+  );
   assert.equal(trial.selected.reference.sha256, selected.reference.sha256);
   assert.equal(
     trial.selected.entry.path,
