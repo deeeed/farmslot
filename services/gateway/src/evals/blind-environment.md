@@ -169,17 +169,22 @@ Trials run on regular slots, whose checkouts keep gitignored state from earlier
 runs: task folders under `temp/tasks`, the harness runtime (`status.json`, the
 `operations/` ledger, proof output) and env files. A clean `git status` does not
 show them. Isolation lists the ignored paths with `git ls-files --others --ignored
---exclude-standard --directory` and moves each one into the capsule
-(`original-ignored/`), which the worker cannot read. The journal records the list
-before the first move. Restore, including restore after a killed isolate, moves
-each path back. If the trial created a file at the same path, that file is moved
+--exclude-standard --directory`, in the checkout and in each initialized submodule,
+and moves each one into the capsule (`original-ignored/`), which the worker cannot
+read. The journal records the list before the first move, and any failure before
+the Git swap moves the paths back. Restore, including restore after a killed
+isolate, moves each path back; finished-trial cleanup also restores an isolate
+that stopped before its swap left a Git marker. If the trial created a file at the same path, that file is moved
 to the capsule's `trial-ignored/` before the original returns, so nothing is
 deleted.
 
 Some paths stay in place: the project's `blind_keep_ignored` caches (default:
-`node_modules` at any depth, `.yarn/*`, `ios/Pods`, `ios/build`,
-`android/.gradle`, `android/build`, `android/app/build`, `build`, `dist`), plus
-the run's own task folder. Prepare writes everything else this run uses (runtime
+`node_modules`, `.yarn/*`, `ios/Pods`, `ios/build`, `android/.gradle`,
+`android/build`, `android/app/build`, `build`, `dist`), plus the run's own task
+folder. Each pattern also matches below any directory, so
+`temp/generated-app/node_modules` and `packages/a/.yarn/cache` stay; isolation
+enters an ignored directory that holds a kept path and moves only its other
+entries. Prepare writes everything else this run uses (runtime
 context, `prepare.json`, fixtures, readiness) after isolation, in the fixtures
 phase and later. Before isolation it writes the node-support selection outside
 the checkout (`.farmslot-runtime`) and, on a local slot, the signing log under

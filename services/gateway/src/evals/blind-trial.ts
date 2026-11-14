@@ -27,6 +27,7 @@ import { withMachineEnv } from '../core/project-env.js';
 import { ownsRunSlotCleanup, readSlotRow } from '../core/state.js';
 import { atomicWriteTextFile } from '../run-engine/diff-artifact-utils.js';
 import { captureRunDiffSnapshot } from '../run-engine/diff-artifacts.js';
+import { workerTaskDirectory } from '../run-engine/worker-task-dir.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { farmslotDirectoryForSlot } from '../tasks/agent-runtime-script.js';
 
@@ -164,17 +165,20 @@ export const DEFAULT_BLIND_KEEP_IGNORED = [
 ];
 
 /** The project's cache list, plus this run's own task folder when it already exists. */
-async function keptIgnoredPaths(run: Run): Promise<string[]> {
+async function keptIgnoredPaths(run: Run, vars: SlotVars): Promise<string[]> {
   const project = await loadProjectVars(run.project);
   const configured = getProjectFieldRaw(project.projectJson, 'blind_keep_ignored');
   return [
     ...(Array.isArray(configured) ? configured.map(String) : DEFAULT_BLIND_KEEP_IGNORED),
     ...(run.taskFile
       ? [
-          path.posix.join(
-            resolveProjectTaskDirName(project.projectJson),
-            path.basename(path.dirname(path.dirname(run.taskFile))),
-            path.basename(path.dirname(run.taskFile)),
+          path.posix.relative(
+            vars.remoteRepo,
+            workerTaskDirectory(
+              run.taskFile,
+              vars.remoteRepo,
+              resolveProjectTaskDirName(project.projectJson),
+            ),
           ),
         ]
       : []),
@@ -215,7 +219,7 @@ export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal):
     );
   const spec = {
     ...gitSpec(run, vars, blind, isolation.slotEpoch, isolation.capsulePath),
-    keepIgnored: await keptIgnoredPaths(run),
+    keepIgnored: await keptIgnoredPaths(run, vars),
   };
   await executeGit('isolate', vars, spec, signal);
   // The worker sandbox denies the node's other slot checkouts, resolved as each slot's own launch resolves them.
@@ -522,7 +526,10 @@ export async function restoreFinishedBlindTrialGit(run: Run): Promise<string | n
   if (!isolation || isolation.slotId !== run.slotId) return null;
   try {
     const vars = await loadSlotVars(isolation.slotId);
-    if ((await readBlindTrialMarker(vars)) !== run.id) return null;
+    // An isolate stopped before its Git swap leaves no marker, but its capsule
+    // may already hold the checkout's ignored files: restore that journal too.
+    const marker = await readBlindTrialMarker(vars);
+    if (marker !== run.id && (marker !== null || isolation.verifiedAt)) return null;
     const epoch = Number((await readSlotRow(isolation.slotId))?.slot_epoch);
     const assertOwnership = async () => {
       const row = await readSlotRow(isolation.slotId);

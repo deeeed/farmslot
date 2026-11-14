@@ -954,3 +954,100 @@ test('healing a restored capsule keeps its ignored files and isolates the leftov
   for (const [name, text] of Object.entries(files))
     assert.equal(readFileSync(path.join(repo, name), 'utf8'), text, `${name} restored`);
 });
+
+test('a failure before the Git swap returns every moved ignored path', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'blind-ignored-rollback-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const { repo, spec, files } = ignoredFixture(root);
+  // Fail after the moves, while the prepared Git is still being built.
+  const failed = spawnSync(
+    'python3',
+    [
+      '-c',
+      `
+import json, runpy, sys
+module = runpy.run_path(sys.argv[1], run_name='blind_git_fixture')
+def fail(*args, **kwargs):
+    raise RuntimeError('fixture pack failure')
+module['isolate'].__globals__['pack_into'] = fail
+module['isolate'](json.loads(sys.argv[2]))
+`,
+      new URL('./blind-git.py', import.meta.url).pathname,
+      JSON.stringify(spec),
+    ],
+    { env, encoding: 'utf8', timeout: 60_000 },
+  );
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.stderr, /fixture pack failure/);
+  for (const [name, text] of Object.entries(files))
+    assert.equal(readFileSync(path.join(repo, name), 'utf8'), text, `${name} restored`);
+  assert.equal(
+    JSON.parse(readFileSync(path.join(spec.capsule, 'state.json'), 'utf8')).phase,
+    'restored',
+  );
+});
+
+test('isolation moves ignored leftovers inside submodules and keeps nested caches', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'blind-ignored-nested-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const upstream = path.join(root, 'module-upstream');
+  mkdirSync(upstream);
+  git(upstream, 'init', '-q', '-b', 'main');
+  writeFileSync(path.join(upstream, '.gitignore'), 'proof/\n');
+  writeFileSync(path.join(upstream, 'value.txt'), 'module\n');
+  commit(upstream, 'module');
+  const repo = path.join(root, 'repo');
+  mkdirSync(repo);
+  git(repo, 'init', '-q', '-b', 'main');
+  writeFileSync(path.join(repo, '.gitignore'), 'temp/\npackages/a/.yarn/\n');
+  mkdirSync(path.join(repo, 'packages/a'), { recursive: true });
+  writeFileSync(path.join(repo, 'packages/a/index.js'), 'base\n');
+  git(
+    repo,
+    '-c',
+    'protocol.file.allow=always',
+    'submodule',
+    'add',
+    '-q',
+    `file://${upstream}`,
+    'sdk',
+  );
+  const baseSha = commit(repo, 'base');
+  const files: Record<string, string> = {
+    'sdk/proof/answer.json': 'FAKE_EARLIER_ANSWER\n',
+    'temp/generated-app/answer.txt': 'FAKE_EARLIER_ANSWER\n',
+    'temp/generated-app/node_modules/pkg/index.js': 'cache\n',
+    'packages/a/.yarn/cache/pkg.zip': 'cache\n',
+  };
+  for (const [name, text] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(repo, name)), { recursive: true });
+    writeFileSync(path.join(repo, name), text);
+  }
+  const spec: BlindGitSpec = {
+    slotId: 'ignored-nested-fixture',
+    slotEpoch: 1,
+    repo,
+    capsule: path.join(root, '.farmslot-blind-evals/ignored-nested-fixture/trial-1'),
+    runId: 'trial',
+    branch: 'eval/trial',
+    baseSha,
+    referenceCommits: [],
+    keepIgnored: ['node_modules', '.yarn/*'],
+  };
+  assert.equal(command('isolate', spec).status, 'isolated');
+  assert.equal(existsSync(path.join(repo, 'sdk/proof/answer.json')), false, 'submodule leftover');
+  assert.equal(existsSync(path.join(repo, 'temp/generated-app/answer.txt')), false);
+  assert.equal(
+    readFileSync(path.join(repo, 'temp/generated-app/node_modules/pkg/index.js'), 'utf8'),
+    'cache\n',
+    'a cache under a collapsed ignored parent stays',
+  );
+  assert.equal(
+    readFileSync(path.join(repo, 'packages/a/.yarn/cache/pkg.zip'), 'utf8'),
+    'cache\n',
+    'a nested .yarn cache stays',
+  );
+  assert.equal(command('restore', spec).status, 'restored');
+  for (const [name, text] of Object.entries(files))
+    assert.equal(readFileSync(path.join(repo, name), 'utf8'), text, `${name} restored`);
+});
