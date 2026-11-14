@@ -328,6 +328,10 @@ mock.module('../methods/dispatch.js', {
       params: import('@farmslot/protocol').DispatchPreviewParams,
       options: Parameters<typeof import('../methods/dispatch/preview.js').dispatchPreview>[1],
     ) => {
+      assert.deepEqual(
+        options?.candidateTemplate,
+        run.engineState?.evalExperiment?.candidateTemplate,
+      );
       if (!run.slotId) assert.equal(params.targetBranch, expectedTarget);
       beforePreview?.();
       previewPins.push(options?.automaticLoadPinned);
@@ -2241,3 +2245,38 @@ test('an actual caller slot pin keeps its user-specified audit', async () => {
   assert.equal(result.inputs?.requestedSlotId, run.requestedSlotId);
   assert.equal(result.outputs?.selectionMethod, 'user-specified');
 });
+
+for (const state of ['fresh', 'replayed'] as const) {
+  test(`${state} trial forwards its frozen candidate into production dispatch preview`, async () => {
+    reset('fix-bug', 'TAT-4137');
+    const reference: NonNullable<Run['executionTemplate']> = {
+      id: 'fix-bug/B1',
+      sourceId: 'eval-candidate',
+      flow: 'fix-bug',
+      platforms: ['*'],
+      labels: [],
+      relativePath: 'fix-bug/B1.md',
+      sha256: 'a'.repeat(64),
+    };
+    run.mode = 'autonomous';
+    run.slotId = slots[0]!.slot;
+    run.allowedSlots = [run.slotId];
+    run.executionTemplateId = reference.id;
+    run.executionTemplate = state === 'fresh' ? reference : undefined;
+    run.engineState = {
+      ...run.engineState,
+      evalExperiment: {
+        experimentId: 'local',
+        experimentKey: 'local',
+        experimentManifestPath: 'experiment.json',
+        packagePath: 'candidate.json',
+        candidateStrategyFingerprint: reference.sha256,
+        trialId: 'B1',
+        candidateTemplate: { path: '/fixture/inputs/candidate-template.md', reference },
+      },
+    };
+    const result = await executeFindSlotStep(run.id, run, 0, context);
+    assert.equal(result.outputs?.selectedSlot, run.slotId);
+    assert.deepEqual(claims, [run.slotId]);
+  });
+}
