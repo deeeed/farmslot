@@ -206,7 +206,11 @@ test('isolated blind prepare parking survives restore', async (t) => {
       );
       assert.equal(command('isolate', spec).status, 'isolated');
       assert.equal(git(repo, 'remote'), '');
-      assert.equal(git(repo, 'for-each-ref', '--format=%(refname)'), `refs/heads/${spec.branch}`);
+      // The branch, and the local origin/main tracking ref at the trial base.
+      assert.equal(
+        git(repo, 'for-each-ref', '--format=%(refname) %(objectname)'),
+        `refs/heads/${spec.branch} ${baseSha}\nrefs/remotes/origin/main ${baseSha}`,
+      );
       const reset = () =>
         mutateSlotGit(
           vars,
@@ -398,6 +402,14 @@ for (const linked of [false, true])
       referenceCommits: [reference],
     };
     assert.equal(command('isolate', spec).status, 'isolated');
+    // Project checks run git merge-base origin/main HEAD: the tracking ref is the trial base.
+    assert.equal(
+      execFileSync('git', ['-C', repo, 'merge-base', 'origin/main', 'HEAD'], {
+        encoding: 'utf8',
+      }).trim(),
+      base,
+    );
+    assert.equal(execFileSync('git', ['-C', repo, 'remote'], { encoding: 'utf8' }).trim(), '');
     // A node without sandbox-exec refuses the worker instead of starting it unsandboxed.
     const unsandboxed = spawnSync(
       'python3',
@@ -467,6 +479,9 @@ module['boundary'](json.loads(sys.argv[2]))
             'test -z "${GH_TOKEN-}${GITHUB_TOKEN-}"',
             `test "$FARMSLOT_CI_BASE_REF" = '${base}'`,
             `git -C ${q(repo)} diff "$FARMSLOT_CI_BASE_REF" -- value.txt`,
+            // Project checks diff against origin/main; it is the verified base, with no remote.
+            `test "$(git -C ${q(repo)} merge-base origin/main HEAD)" = '${base}'`,
+            `test -z "$(git -C ${q(repo)} remote)"`,
             `test "$(cat ${q(path.join(repo, 'value.txt'))})" = base`,
             `! cat ${q(path.join(sibling, 'answer.txt'))}`,
             `! ls ${q(path.join(root, '.farmslot-blind-evals'))}`,
